@@ -1,0 +1,186 @@
+# The test gates. Everything here must be green before a change lands.
+#
+# The jobs are split so that a failure names its own cause: a formatting slip
+# does not hide a determinism regression three jobs down.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  lint:
+    name: Format, lint and docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Clippy
+        # Warnings are errors. `missing_docs` is a warning, so this is also
+        # what enforces that every public item is documented.
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Documentation builds without warnings
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: No private material in the public repository
+        run: |
+          test ! -e docs && test ! -e CLAUDE.md && test ! -e .claude
+          ! git ls-files | grep -E '(^|/)[0-9]{2}_[A-Z_]+\.md$'
+
+  test:
+    name: Test ${{ matrix.os }} (${{ matrix.profile }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        profile: [debug, release]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.profile }}
+      - name: Test (debug)
+        if: matrix.profile == 'debug'
+        # Debug carries the debug_asserts that catch a null id being used as an
+        # index, which release deliberately does not check.
+        run: cargo test --workspace
+      - name: Test (release)
+        if: matrix.profile == 'release'
+        # The performance floors in `tests/perf.rs` are only enforced here:
+        # a debug build's timings say nothing about a shipped wheel.
+        run: cargo test --workspace --release
+
+  determinism:
+    name: Determinism gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Determinism tests, with rayon
+        run: cargo test -p openmobisim-core-types --release --test determinism
+      - name: Determinism tests, without rayon
+        run: cargo test -p openmobisim-core-types --release --no-default-features --test determinism
+
+      # The bit-identity gate, below `core-sim`. `determinism_probe` prints a
+      # fingerprint of every mechanism whose output may depend on the seed and
+      # on nothing else. Two runs of it must agree byte for byte, and so must
+      # a run under a different thread count and a run of the sequential
+      # build. This stays as the fast, narrow check of the primitives;
+      # `kpis_determinism_probe` below is the same idea run through the whole
+      # Phase 1 pipeline.
+      - name: Build the probe
+        run: cargo build -p openmobisim-core-types --release --example determinism_probe
+      - name: The same binary, run twice
+        run: |
+          cargo run -q -p openmobisim-core-types --release --example determinism_probe > first.txt
+          cargo run -q -p openmobisim-core-types --release --example determinism_probe > second.txt
+          diff first.txt second.txt
+      - name: The same binary, under a different thread count
+        run: |
+          RAYON_NUM_THREADS=1 cargo run -q -p openmobisim-core-types --release --example determinism_probe > one-thread.txt
+          RAYON_NUM_THREADS=7 cargo run -q -p openmobisim-core-types --release --example determinism_probe > seven-threads.txt
+          diff one-thread.txt seven-threads.txt
+          diff first.txt one-thread.txt
+      - name: The sequential build agrees with the parallel one
+        run: |
+          cargo run -q -p openmobisim-core-types --release --no-default-features \
+            --example determinism_probe > sequential.txt
+          # Only the reported build flag may differ.
+          diff <(grep -v parallel_build first.txt) <(grep -v parallel_build sequential.txt)
+
+      # The whole-pipeline gate (S111's promised form once `core-sim` landed):
+      # demand through S133's placeholder routing through level-0 loading
+      # through `io-parquet`'s writers, on the N3 grid fixture. Two runs must
+      # agree byte for byte, including the four artifacts actually written to
+      # disk, not just the printed digest.
+      - name: Build the pipeline probe
+        run: cargo build -p openmobisim-io-parquet --release --example kpis_determinism_probe
+      - name: The same binary, run twice
+        run: |
+          cargo run -q -p openmobisim-io-parquet --release --example kpis_determinism_probe > pipeline-first.txt
+          cp -r "${TMPDIR:-/tmp}/openmobisim-kpis-determinism-probe" pipeline-first-artifacts
+          cargo run -q -p openmobisim-io-parquet --release --example kpis_determinism_probe > pipeline-second.txt
+          diff pipeline-first.txt pipeline-second.txt
+          diff -r pipeline-first-artifacts "${TMPDIR:-/tmp}/openmobisim-kpis-determinism-probe"
+
+  features:
+    name: Feature combinations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: No default features
+        run: cargo test -p openmobisim-core-types --no-default-features
+      - name: All features
+        run: cargo test --workspace --all-features
+
+  msrv:
+    name: Minimum supported Rust version
+    runs-on: ubuntu-latest
+    env:
+      # Overrides rust-toolchain.toml, which pins the `stable` channel.
+      RUSTUP_TOOLCHAIN: "1.85.0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+      - name: Check against the declared MSRV
+        # Keep this in step with `rust-version` in Cargo.toml. Edition 2024
+        # needs 1.85, and so do rand_core and rand_chacha, so 1.85 is the floor
+        # whatever we would prefer.
+        run: cargo check --workspace --all-targets
+
+  python:
+    name: Python ${{ matrix.python }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the build and test tooling
+        run: python -m pip install --upgrade pip "maturin>=1.9,<2.0" pytest ruff
+      - name: Lint the Python surface
+        run: |
+          ruff check python
+          ruff format --check python
+      - name: Build and install the extension
+        # `maturin develop` requires an activated virtualenv or conda
+        # environment, which this runner has neither of. `pip install -e .`
+        # goes through the same maturin PEP 517/660 build backend but is
+        # driven by pip, which installs into whatever interpreter is active
+        # without needing one.
+        run: pip install -e .
+      - name: Test across the boundary
+        run: pytest

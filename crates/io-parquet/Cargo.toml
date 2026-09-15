@@ -1,0 +1,36 @@
+[package]
+name = "openmobisim-io-parquet"
+description = "Output writers for openmobisim: kpis.parquet, diagnostics.parquet, events.parquet, manifest.json (Foundations §6)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+openmobisim-core-types = { workspace = true }
+openmobisim-core-graph = { workspace = true }
+openmobisim-core-demand = { workspace = true }
+openmobisim-core-sim = { workspace = true }
+# Same codec choice as `core-demand` (S131): `default-features = false` plus
+# an explicit list excludes `zstd`, whose Rust bindings pull in `zstd-sys`
+# and compile the C zstd library. `snap`/`lz4_flex`/`brotli` are pure-Rust;
+# `flate2-zlib-rs` is the same pure-Rust zlib `io-osm` already depends on.
+parquet = { version = "59", default-features = false, features = [
+    "arrow",
+    "snap",
+    "lz4",
+    "flate2-zlib-rs",
+    "brotli",
+] }
+arrow-array = { version = "59", default-features = false }
+arrow-schema = { version = "59", default-features = false }
+
+[dev-dependencies]
+proptest = { workspace = true }

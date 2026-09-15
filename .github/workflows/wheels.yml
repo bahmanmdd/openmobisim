@@ -1,0 +1,123 @@
+# Wheels on Linux, macOS and Windows, from day one.
+#
+# Building wheels for all three platforms before there is anything to simulate
+# is deliberate. "Easy to install" is a non-negotiable requirement, and the
+# machinery that delivers it is far cheaper to get right against a skeleton
+# than against a finished simulator.
+#
+# One wheel per platform covers Python 3.11 and every later version, because
+# the extension is built against the stable ABI (abi3-py311).
+
+name: Wheels
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: wheels-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.platform }} ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+            target: x86_64
+          - platform: linux
+            runner: ubuntu-latest
+            target: aarch64
+          - platform: macos
+            runner: macos-latest
+            target: x86_64
+          - platform: macos
+            runner: macos-latest
+            target: aarch64
+          - platform: windows
+            runner: windows-latest
+            target: x64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Build the wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          # `auto` picks the oldest manylinux the toolchain can manage, which
+          # is what makes the wheel installable on an unfashionable cluster.
+          manylinux: auto
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.platform }}-${{ matrix.target }}
+          path: dist
+
+  sdist:
+    name: Source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sdist
+          path: dist
+
+  smoke-test:
+    # The acceptance criterion: install the CI-built wheel on a clean machine
+    # and get a working import. A wheel that builds but does not install is not
+    # a wheel.
+    name: Install the wheel on ${{ matrix.os }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: wheel-linux-x86_64
+          - os: macos-latest
+            artifact: wheel-macos-aarch64
+          - os: windows-latest
+            artifact: wheel-windows-x64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          # Deliberately not 3.11: the wheel is tagged abi3-py311, so a later
+          # interpreter must accept the same file. If this step fails, the
+          # stable-ABI promise is broken.
+          python-version: "3.13"
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist
+      - name: Install from the wheel and nothing else
+        shell: bash
+        run: |
+          # `--no-index` on the openmobisim install below is what makes this a
+          # real test of the wheel rather than a rebuild from source; numpy
+          # is openmobisim's one runtime dependency and still needs to come from
+          # PyPI, so it is installed up front, outside that constraint.
+          python -m pip install --upgrade pip pytest numpy
+          python -m pip install --no-index --find-links dist openmobisim
+      - name: Import and report
+        shell: bash
+        run: python -c "import openmobisim, json; print(json.dumps(openmobisim.build_info(), indent=2))"
+      - name: Run the boundary tests against the installed wheel
+        shell: bash
+        run: pytest python/tests

@@ -1,0 +1,31 @@
+[package]
+name = "openmobisim-core-types"
+description = "Foundational types for openmobisim: dense ids, the seconds clock, unit newtypes, deterministic reductions, counter-based RNG, diagnostics and the plugin registry."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["parallel"]
+# `parallel` only changes *where* chunks are reduced, never the order in which
+# their results are combined. Results are bit-identical with and without it,
+# and `tests/determinism.rs` asserts exactly that.
+parallel = ["dep:rayon"]
+
+[dependencies]
+rand_chacha = { workspace = true }
+rayon = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+# Used by `tests/determinism.rs` to prove the reduction gives the same answer
+# under differently sized thread pools. Not a runtime dependency of the tests.
+rayon = { workspace = true }

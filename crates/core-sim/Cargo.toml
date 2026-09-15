@@ -1,0 +1,23 @@
+[package]
+name = "openmobisim-core-sim"
+description = "The Run for openmobisim: orchestration, the event queue in seconds (S88), one KPI, trip completion statistics (S57)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+openmobisim-core-types = { workspace = true }
+openmobisim-core-graph = { workspace = true }
+openmobisim-core-demand = { workspace = true }
+openmobisim-core-loading = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

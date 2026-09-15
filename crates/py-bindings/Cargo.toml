@@ -1,0 +1,35 @@
+[package]
+name = "openmobisim-py-bindings"
+description = "PyO3 bindings for openmobisim. The only crate that knows Python exists."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+# The compiled module is imported as `openmobisim._core`; the Python package in
+# `python/openmobisim` is the public surface and re-exports from it.
+name = "_core"
+crate-type = ["cdylib"]
+
+[features]
+# On by default so that `cargo build` produces a loadable extension module.
+# `maturin` relies on it too. Turn it off only to link against libpython for a
+# standalone binary, which openmobisim does not currently do.
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+openmobisim-core-types = { workspace = true }
+openmobisim-core-graph = { workspace = true }
+openmobisim-core-demand = { workspace = true }
+openmobisim-core-sim = { workspace = true }
+openmobisim-io-parquet = { workspace = true }
+# abi3-py311: one wheel per platform covers Python 3.11 and every later
+# version, which is the whole reason installation is a plain `pip install`.
+pyo3 = { workspace = true, features = ["abi3-py311"] }

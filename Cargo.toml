@@ -1,0 +1,73 @@
+# openmobisim — Cargo workspace root.
+#
+# Layout and the two rules that govern it (Foundations §10):
+#   1. `core-types` depends on nothing (no internal crate, and as few external
+#      crates as we can manage). Everything else depends on it.
+#   2. `py-bindings` is the only crate that knows Python exists. Every other
+#      crate is usable, testable and benchmarkable without an interpreter.
+
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/bahmanmdd/openmobisim"
+authors = ["The openmobisim authors"]
+keywords = ["mobility", "simulation", "transport", "traffic", "multimodal"]
+categories = ["science", "simulation"]
+
+[workspace.dependencies]
+# Internal
+openmobisim-core-types = { path = "crates/core-types", version = "0.1.0" }
+openmobisim-core-graph = { path = "crates/core-graph", version = "0.1.0" }
+openmobisim-io-osm = { path = "crates/io-osm", version = "0.1.0" }
+openmobisim-core-demand = { path = "crates/core-demand", version = "0.1.0" }
+openmobisim-core-loading = { path = "crates/core-loading", version = "0.1.0" }
+openmobisim-core-sim = { path = "crates/core-sim", version = "0.1.0" }
+openmobisim-io-parquet = { path = "crates/io-parquet", version = "0.1.0" }
+
+# External — kept deliberately short. Every addition to this list is a decision.
+rand_chacha = { version = "0.10", default-features = false }
+rayon = "1.11"
+pyo3 = "0.29"
+proptest = "1.9"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+# Correctness and determinism guard-rails. See CONTRIBUTING.md.
+undocumented_unsafe_blocks = "warn"
+float_cmp = "warn"
+cast_possible_truncation = "warn"
+cast_precision_loss = "warn"
+cast_sign_loss = "warn"
+needless_pass_by_value = "warn"
+must_use_candidate = "allow"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+
+# --- Profiles ---------------------------------------------------------------
+#
+# `panic` is deliberately left at "unwind": PyO3 converts Rust panics into
+# Python exceptions, which requires unwinding. Do not set panic = "abort".
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = 1          # keep line tables: profiling a release build is routine here
+
+[profile.bench]
+inherits = "release"
+
+# A release build with full debug info, for perf/instruments sessions.
+[profile.profiling]
+inherits = "release"
+debug = 2
+strip = "none"

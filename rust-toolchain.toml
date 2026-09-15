@@ -1,0 +1,11 @@
+# Pinned to the `stable` channel rather than an exact version.
+#
+# Bit-identical output is guaranteed per-platform for a *given binary* from a
+# given seed (Foundations §3.5); it does not depend on the compiler version, so
+# an exact pin would only cost every contributor a toolchain download. The
+# minimum supported version is `rust-version` in Cargo.toml and is enforced by
+# a dedicated CI job.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

@@ -1,0 +1,32 @@
+[package]
+name = "openmobisim-io-osm"
+description = "OpenStreetMap import for openmobisim: PBF reading, tag interpretation, way splitting and network construction."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["pbf"]
+# Reading `.osm.pbf` files. On by default; turning it off leaves the tag
+# interpretation and network construction, which is what the tests exercise and
+# what a different input format would reuse.
+pbf = ["dep:osmpbf"]
+
+[dependencies]
+openmobisim-core-types = { workspace = true }
+openmobisim-core-graph = { workspace = true }
+# `rust-zlib` rather than the default: it selects flate2's pure-Rust backend, so
+# the whole dependency tree stays free of C, which is what keeps the wheels
+# buildable everywhere without a compiler. See S118.
+osmpbf = { version = "0.3", default-features = false, features = ["rust-zlib"], optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

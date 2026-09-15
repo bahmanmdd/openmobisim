@@ -1,0 +1,74 @@
+[build-system]
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "openmobisim"
+description = "An agent-based multimodal mobility simulator for infrastructure planning and optimisation."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "The openmobisim authors" }]
+keywords = ["mobility", "simulation", "transport", "traffic", "multimodal", "optimisation"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering",
+]
+
+# The runtime dependency list is numpy and nothing else, on purpose: every
+# addition is something a user has to install to run a simulation, and the
+# promise is `pip install openmobisim` with no compiler and no conda-only path.
+dependencies = ["numpy>=1.24"]
+
+# Version comes from Cargo.toml, so there is one place to bump it.
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/bahmanmdd/openmobisim"
+
+[project.optional-dependencies]
+# The notebook stack is an extra, not a dependency: a user running openmobisim
+# inside an optimisation loop should not be made to install Jupyter.
+notebooks = [
+    "jupyterlab>=4.0",
+    "matplotlib>=3.8",
+    "pandas>=2.0",
+    "polars>=1.0",
+    "pyarrow>=15.0",
+]
+dev = [
+    "maturin>=1.9,<2.0",
+    "pytest>=8.0",
+    "pytest-xdist>=3.5",
+    "ruff>=0.6",
+]
+
+[tool.maturin]
+manifest-path = "crates/py-bindings/Cargo.toml"
+module-name = "openmobisim._core"
+python-source = "python"
+strip = true
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "D"]
+ignore = ["D203", "D213"]
+
+[tool.ruff.lint.per-file-ignores]
+# A test's name is its documentation; a docstring repeating it is noise. The
+# module docstring still explains what the file is defending.
+"python/tests/*" = ["D103"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

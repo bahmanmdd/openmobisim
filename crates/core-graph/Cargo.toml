@@ -1,0 +1,20 @@
+[package]
+name = "openmobisim-core-graph"
+description = "The multilayer network for openmobisim: projection, CSR structures, the OSM defaults table, links and turns."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+openmobisim-core-types = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

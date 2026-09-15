@@ -1,0 +1,42 @@
+[package]
+name = "openmobisim-core-demand"
+description = "Demand for openmobisim: the trips.parquet/persons.parquet readers, travellers as structure-of-arrays with integer weights, and vehicle-location state."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+openmobisim-core-types = { workspace = true }
+openmobisim-core-graph = { workspace = true }
+# `default-features = false` plus an explicit codec list excludes `zstd`: the
+# `zstd` crate's Rust bindings pull in `zstd-sys`, which bundles and compiles
+# the C zstd library — the same test that picked `flate2`'s pure-Rust backend
+# for `io-osm` (S118) and ruled out PROJ (S81) rules this out too. `snap`
+# (Snappy, Parquet's usual default), `lz4_flex` and `brotli` are pure-Rust
+# reimplementations; `flate2-zlib-rs` selects the same pure-Rust zlib `io-osm`
+# already depends on. Verified empirically (`cargo build -v`, S118's method):
+# no `cc`/`clang` invocation appears in the build of this crate or its
+# dependents on any of the three target OSes reachable from this session.
+parquet = { version = "59", default-features = false, features = [
+    "arrow",
+    "snap",
+    "lz4",
+    "flate2-zlib-rs",
+    "brotli",
+] }
+# The same version `parquet`'s own "arrow" feature already resolves — named
+# directly here only so this crate's code can name `RecordBatch` and the typed
+# array types, not to add anything to the dependency graph.
+arrow-array = { version = "59", default-features = false }
+arrow-schema = { version = "59", default-features = false }
+
+[dev-dependencies]
+proptest = { workspace = true }

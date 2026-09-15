@@ -1,0 +1,38 @@
+# Rust
+target/
+**/*.rs.bk
+*.pdb
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+wheels/
+
+# Native extension artefacts landing in the source tree
+python/openmobisim/*.so
+python/openmobisim/*.pyd
+python/openmobisim/*.dylib
+
+# openmobisim run outputs and caches
+/runs/
+/.openmobisim-cache/
+*.parquet
+!tests/data/**/*.parquet
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Private workspace siblings — never part of the public repository
+/docs/
+/CLAUDE.md
+/.claude/

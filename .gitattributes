@@ -1,0 +1,16 @@
+# One line ending everywhere. Contributors on Windows check out LF, commit LF.
+* text=auto eol=lf
+
+*.rs    text eol=lf
+*.py    text eol=lf
+*.toml  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.sh    text eol=lf
+
+*.parquet binary
+*.png     binary
+*.jpg     binary
+*.pbf     binary
+*.zip     binary

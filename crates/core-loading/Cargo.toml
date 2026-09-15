@@ -1,0 +1,21 @@
+[package]
+name = "openmobisim-core-loading"
+description = "The flow motor for openmobisim: vehicles on the curves (S85), starting at level 0 — free-flow traversal, no iterative LTM yet."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+openmobisim-core-types = { workspace = true }
+openmobisim-core-graph = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

@@ -1,0 +1,30 @@
+# Dependency updates, weekly and grouped, so that review is one pull request
+# rather than nine.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    ignore:
+      # Not a version of the action — this ref selects the Rust toolchain
+      # channel the msrv job checks against, pinned to the declared MSRV in
+      # Cargo.toml (`rust-version`). dtolnay/rust-toolchain publishes a new
+      # ref like this per Rust release, which Dependabot reads as an update
+      # to take; bumping it would silently stop the job enforcing the floor.
+      # Move the MSRV forward by editing ci.yml directly, as its own decision.
+      - dependency-name: "dtolnay/rust-toolchain"
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly

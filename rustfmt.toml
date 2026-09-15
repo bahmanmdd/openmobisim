@@ -1,0 +1,5 @@
+# Defaults, with two deviations that suit a codebase full of short numeric
+# expressions and long explanatory comments.
+edition = "2024"
+max_width = 100
+use_small_heuristics = "Max"
