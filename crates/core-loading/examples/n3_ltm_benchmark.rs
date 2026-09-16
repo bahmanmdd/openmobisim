@@ -1,13 +1,7 @@
-//! Phase 2 item 2's cold-run CPU benchmark, on the N3 fixture (S84, S91).
-//!
-//! The roadmap asks for two things before the iterative LTM prototype
-//! (`crate::ltm`) counts as de-risked: that vehicle hand-over survives
-//! crossing several links within one loading step on a real-shaped network
-//! (`crate::ltm`'s own tests cover that on hand-built fixtures), and a
-//! cold-run CPU number against N3 (`06_INTERFACE_V0.md` §3:
-//! `manhattan_grid(n=5, block_metres=200, signals=True)`, the same
-//! parameters `io-parquet`'s `kpis_determinism_probe` uses). This is that
-//! second thing.
+//! A cold-run CPU benchmark of the level-4 loading on the N3 fixture (S84,
+//! S91): `manhattan_grid(n=5, block_metres=200, signals=true)`, the same
+//! parameters `io-parquet`'s `kpis_determinism_probe` uses. For real networks,
+//! see the `extract_benchmark` example.
 //!
 //! S91: **every published performance number is for a cold run** — this
 //! process does the one run and exits; nothing here warm-starts.

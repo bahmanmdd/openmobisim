@@ -1,6 +1,6 @@
 [package]
 name = "openmobisim-core-loading"
-description = "The flow motor for openmobisim: vehicles on the curves (S85), starting at level 0 — free-flow traversal, no iterative LTM yet."
+description = "The flow motor for openmobisim: free-flow traversal (level 0) and the link transmission model with vehicles on the curves (levels 2–4)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -19,3 +19,5 @@ openmobisim-core-graph = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# Only for the `extract_benchmark` example, which loads a real `.osm.pbf`.
+openmobisim-io-osm = { workspace = true }

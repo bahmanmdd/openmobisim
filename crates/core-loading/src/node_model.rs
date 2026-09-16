@@ -1,12 +1,14 @@
-//! The node model (S48, qualified by S77): per-turn demand, per-link supply,
-//! proportional distribution, full-blocking FIFO on the incoming approach.
+//! The node model (S48, qualified by S77) in aggregate form: per-turn demand,
+//! per-link supply, proportional distribution, full-blocking FIFO on the
+//! incoming approach.
 //!
-//! One call solves one node for one loading step — **no fixed point** (S48).
-//! Run once per node per step, reading only state already committed at the
-//! start of the step, this is what [`crate::ltm`] calls "Jacobi": every
-//! node's turns are computed from the same, previous-step snapshot, so the
-//! network-level result does not depend on the order nodes are visited in
-//! (S77's invariant).
+//! One call solves one node for one interval of flow — **no fixed point**
+//! (S48). This is the reference statement of the rules. [`crate::ltm`] applies
+//! the same rules to individual vehicles in time order (supply shared in
+//! proportion to discharge capacity, a blocked vehicle blocking its whole
+//! approach) and does not call this function; it stays for aggregate loadings
+//! (a volume-delay level, a static screening mode) and as the specification
+//! the vehicle form is checked against.
 
 use openmobisim_core_types::ids::LinkId;
 use openmobisim_core_types::units::Flow;

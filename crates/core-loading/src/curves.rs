@@ -1,152 +1,162 @@
-//! Cumulative vehicle curves: the aggregate half of S85's split (design
-//! §10.3–10.4, S84's iterative LTM).
+//! Cumulative vehicle counts per link, kept only as far back as the loading
+//! ever reads them (S84, S85; S151).
 //!
-//! One [`LinkCurves`] per link holds two monotone step functions — `N_up(t)`,
-//! the cumulative PCU that have entered the link, and `N_dn(t)`, the
-//! cumulative PCU that have left it — sampled at the loading step boundaries.
-//! Sending and receiving flow (Yperman's link transmission model, the
-//! mechanism behind Himpe/Corthout/Tampère 2016's iterative form, S84) read
-//! these curves **shifted by the link's free-flow and wave travel time**, so
-//! Δt never has to be small enough for a vehicle to stay on one link for a
-//! whole step — the "no stability limit" property S84 records.
+//! A [`LinkCurves`] records the two cumulative counts of Newell's simplified
+//! kinematic wave theory for one link — `N_up`, the PCU that have entered it,
+//! and `N_dn`, the PCU that have left — **as whole vehicles move**, never as
+//! fractional flow. That is what keeps the curves and the vehicles on them in
+//! exact agreement (S150's D1 and D2 were fractional flow and vehicles being
+//! counted separately).
 //!
-//! Nothing here knows about individual vehicles; [`crate::ltm`] is what maps
-//! vehicles onto positions on these curves (S85).
+//! The only backward-looking read the loading needs is `N_dn(t − τ_w)`, the
+//! downstream count one backward-wave travel time ago, for the receiving
+//! condition. So a link keeps its exits only as far back as its own `τ_w`
+//! plus one loading step, and forgets the rest ([`LinkCurves::forget_before`]):
+//! memory per link is bounded by the link's discharge in that window, not by
+//! the length of the run (S150's G2).
 
-use openmobisim_core_graph::defaults::LinkParameters;
-use openmobisim_core_types::units::{Duration, Flow, Metres, Pcu};
+use std::collections::VecDeque;
 
-/// One link's cumulative curves, sampled at every loading step boundary.
+use openmobisim_core_types::units::{Duration, Pcu};
+
+/// Headroom a link must have, in PCU, for the next vehicle to enter it.
 ///
-/// `times[0] == Duration::ZERO`, `up[0] == dn[0] == Pcu::ZERO`: every curve
-/// starts empty at the run's origin.
+/// Positive and tiny: a link admits a vehicle while it has **any** room left,
+/// so a vehicle longer than a very short link can still enter it (S151's
+/// overhang rule). The epsilon only absorbs floating-point noise in the
+/// cumulative sums.
+pub const ROOM_EPSILON: f64 = 1e-9;
+
+/// One link's cumulative counts and its recent exits.
 #[derive(Clone, Debug)]
 pub struct LinkCurves {
-    times: Vec<Duration>,
-    up: Vec<Pcu>,
-    dn: Vec<Pcu>,
+    cumulative_in: f64,
+    cumulative_out: f64,
+    /// `N_dn` before the oldest retained exit.
+    out_before_retained: f64,
+    /// `(exit time, N_dn just after that exit)`, oldest first. Times are
+    /// non-decreasing; counts strictly increasing.
+    exits: VecDeque<(f64, f64)>,
+    last_entry: f64,
+    last_exit: f64,
 }
 
 impl LinkCurves {
-    /// A link with nothing on it yet.
+    /// An empty link: nothing has entered or left.
     #[must_use]
     pub fn new() -> Self {
-        Self { times: vec![Duration::ZERO], up: vec![Pcu::ZERO], dn: vec![Pcu::ZERO] }
+        Self {
+            cumulative_in: 0.0,
+            cumulative_out: 0.0,
+            out_before_retained: 0.0,
+            exits: VecDeque::new(),
+            last_entry: f64::NEG_INFINITY,
+            last_exit: f64::NEG_INFINITY,
+        }
     }
 
-    /// The most recently committed sample time.
-    ///
-    /// # Panics
-    ///
-    /// Never: a [`LinkCurves`] always has at least the origin sample.
+    /// `N_up` now: every PCU that has entered the link.
     #[inline]
     #[must_use]
-    pub fn now(&self) -> Duration {
-        *self.times.last().expect("a LinkCurves always has at least the origin sample")
+    pub fn cumulative_in(&self) -> Pcu {
+        Pcu(self.cumulative_in)
     }
 
-    /// `N_up` at the most recently committed sample.
-    ///
-    /// # Panics
-    ///
-    /// Never: a [`LinkCurves`] always has at least the origin sample.
+    /// `N_dn` as committed: every PCU that has left the link.
     #[inline]
     #[must_use]
-    pub fn up_now(&self) -> Pcu {
-        *self.up.last().expect("a LinkCurves always has at least the origin sample")
+    pub fn cumulative_out(&self) -> Pcu {
+        Pcu(self.cumulative_out)
     }
 
-    /// `N_dn` at the most recently committed sample.
-    ///
-    /// # Panics
-    ///
-    /// Never: a [`LinkCurves`] always has at least the origin sample.
+    /// `N_dn(t)`: the PCU that had left by time `t`, as a step function of the
+    /// retained exits. Exact for any `t` no earlier than the last
+    /// [`Self::forget_before`] cut-off.
+    #[must_use]
+    pub fn out_at(&self, t: Duration) -> Pcu {
+        let t = t.get();
+        // Exits are time-ordered: count those at or before `t`.
+        let k = self.exits.partition_point(|&(time, _)| time <= t);
+        if k == 0 { Pcu(self.out_before_retained) } else { Pcu(self.exits[k - 1].1) }
+    }
+
+    /// The earliest retained exit time after which `N_dn` exceeds `level`, if
+    /// one has happened.
+    #[must_use]
+    pub fn first_exit_exceeding(&self, level: Pcu) -> Option<Duration> {
+        let level = level.get();
+        if self.out_before_retained > level {
+            return Some(Duration(f64::NEG_INFINITY));
+        }
+        let k = self.exits.partition_point(|&(_, count)| count <= level);
+        self.exits.get(k).map(|&(time, _)| Duration(time))
+    }
+
+    /// When the last vehicle entered, or `-∞` if none has.
     #[inline]
     #[must_use]
-    pub fn dn_now(&self) -> Pcu {
-        *self.dn.last().expect("a LinkCurves always has at least the origin sample")
+    pub fn last_entry(&self) -> Duration {
+        Duration(self.last_entry)
     }
 
-    /// `N_up(t)`, linearly interpolated between committed samples.
-    ///
-    /// Flat before the origin (nothing has happened yet) and flat after the
-    /// last committed sample (the curve is not known beyond "now" — callers
-    /// only ever query the past or present, never the future).
+    /// When the last vehicle left, or `-∞` if none has.
+    #[inline]
     #[must_use]
-    pub fn up_at(&self, t: Duration) -> Pcu {
-        interpolate(&self.times, &self.up, t)
+    pub fn last_exit(&self) -> Duration {
+        Duration(self.last_exit)
     }
 
-    /// `N_dn(t)`, linearly interpolated between committed samples.
-    #[must_use]
-    pub fn dn_at(&self, t: Duration) -> Pcu {
-        interpolate(&self.times, &self.dn, t)
+    /// A vehicle of `pcu` entered at `t` from an upstream link, using the
+    /// link's inflow capacity.
+    pub fn record_entry(&mut self, t: Duration, pcu: Pcu) {
+        self.cumulative_in += pcu.get();
+        self.last_entry = t.get();
     }
 
-    /// Sending flow for the step `[now, now + dt)`: how much this link could
-    /// discharge, bounded by what free-flow travel has already delivered to
-    /// its downstream end and by capacity.
-    ///
-    /// `S(t) = min( (N_up(t − τ_f) − N_dn(t)) / dt, capacity )`
-    #[must_use]
-    pub fn sending_flow(&self, dt: Duration, params: LinkParameters, length: Metres) -> Flow {
-        let tau_f = length / params.free_flow_speed;
-        let sendable = (self.up_at(self.now() - tau_f) - self.dn_now()).non_negative();
-        (sendable / dt).min(params.capacity)
+    /// A vehicle of `pcu` departed onto this link: it occupies the link but,
+    /// arriving from outside the network, does not use its inflow capacity.
+    pub fn record_departure(&mut self, pcu: Pcu) {
+        self.cumulative_in += pcu.get();
     }
 
-    /// Receiving flow for the step `[now, now + dt)`: how much this link
-    /// could accept, bounded by the storage a backward-moving wave has
-    /// already freed and by capacity.
-    ///
-    /// `R(t) = min( capacity, (N_dn(t − τ_w) + storage − N_up(t)) / dt )`
-    #[must_use]
-    pub fn receiving_flow(
-        &self,
-        dt: Duration,
-        params: LinkParameters,
-        length: Metres,
-        storage: Pcu,
-    ) -> Flow {
-        let tau_w = length / params.wave_speed;
-        let space = (self.dn_at(self.now() - tau_w) + storage - self.up_now()).non_negative();
-        (space / dt).min(params.capacity)
-    }
-
-    /// Commit the result of a step: `entered`/`exited` PCU add to `N_up`/
-    /// `N_dn`, and a new sample lands at `now() + dt`.
+    /// A vehicle of `pcu` left at `t`. Exits must be recorded in time order.
     ///
     /// # Panics
     ///
-    /// In debug builds, panics if either curve would stop being
-    /// non-decreasing — the one invariant every caller must preserve.
-    pub fn commit(&mut self, dt: Duration, entered: Pcu, exited: Pcu) {
-        debug_assert!(entered.get() >= 0.0, "entered PCU must be non-negative, got {entered:?}");
-        debug_assert!(exited.get() >= 0.0, "exited PCU must be non-negative, got {exited:?}");
-        let up = self.up_now() + entered;
-        let dn = self.dn_now() + exited;
+    /// Panics in debug builds if `t` is earlier than the last recorded exit.
+    pub fn record_exit(&mut self, t: Duration, pcu: Pcu) {
         debug_assert!(
-            dn.get() <= up.get() + 1e-6,
-            "a link cannot discharge more than it has received: dn={dn:?} up={up:?}"
+            t.get() >= self.exits.back().map_or(f64::NEG_INFINITY, |e| e.0),
+            "exits must be recorded in time order"
         );
-        self.times.push(self.now() + dt);
-        self.up.push(up);
-        self.dn.push(dn);
+        self.cumulative_out += pcu.get();
+        self.exits.push_back((t.get(), self.cumulative_out));
     }
 
-    /// Add PCU to the current `N_up` sample without advancing time — a
-    /// vehicle departing mid-curve (its first link) or arriving on a link by
-    /// hand-over within a step, rather than through a committed step.
-    ///
-    /// Safe because [`Self::up_at`]/[`Self::sending_flow`] only ever look
-    /// *backward* from `now()`: a value bumped in place at `now()` cannot
-    /// retroactively change a flow already computed for an earlier step.
-    ///
-    /// # Panics
-    ///
-    /// Never: a [`LinkCurves`] always has at least the origin sample.
-    pub fn inject_up(&mut self, pcu: Pcu) {
-        *self.up.last_mut().expect("a LinkCurves always has at least the origin sample") += pcu;
+    /// Move the discharge headway clock: the last vehicle released at `t`.
+    pub fn set_last_exit(&mut self, t: Duration) {
+        self.last_exit = t.get();
+    }
+
+    /// Forget exits strictly before `t`; `N_dn` at those times is kept as a
+    /// single number. Every later [`Self::out_at`] read must be at or after `t`.
+    pub fn forget_before(&mut self, t: Duration) {
+        let t = t.get();
+        while let Some(&(time, count)) = self.exits.front() {
+            if time >= t {
+                break;
+            }
+            self.out_before_retained = count;
+            self.exits.pop_front();
+        }
+    }
+
+    /// How many exits are retained — the memory this link holds beyond its
+    /// fixed fields.
+    #[inline]
+    #[must_use]
+    pub fn retained(&self) -> usize {
+        self.exits.len()
     }
 }
 
@@ -156,137 +166,96 @@ impl Default for LinkCurves {
     }
 }
 
-/// Linear interpolation of a monotone step-sampled curve, flat outside the
-/// sampled range.
-fn interpolate(times: &[Duration], values: &[Pcu], t: Duration) -> Pcu {
-    let last = times.len() - 1;
-    if t <= times[0] {
-        return values[0];
+/// The room a link has for one more vehicle at time `t`: its storage, plus
+/// what had left it one backward-wave travel time ago, minus what has entered.
+///
+/// This is the LTM receiving condition in vehicle form (S84, Yperman's
+/// formulation); the node model admits a vehicle while this is positive.
+/// **S76's nesting is visible in the formula:** infinite `storage` is the
+/// point queue (level 2, never any shortage of room); a zero `wave_lag` is
+/// the spatial queue (level 3, room freed downstream is known upstream at
+/// once).
+#[must_use]
+pub fn room_at(curves: &LinkCurves, storage: Pcu, wave_lag: Duration, t: Duration) -> Pcu {
+    if !storage.is_finite() {
+        return Pcu::INFINITE;
     }
-    if t >= times[last] {
-        return values[last];
-    }
-    let idx = times.partition_point(|&x| x <= t).saturating_sub(1).min(last - 1);
-    let (t0, t1) = (times[idx], times[idx + 1]);
-    let (v0, v1) = (values[idx], values[idx + 1]);
-    let span = (t1 - t0).get();
-    let frac = if span > 0.0 { (t - t0).get() / span } else { 0.0 };
-    v0 + (v1 - v0) * frac
+    storage + curves.out_at(t - wave_lag) - curves.cumulative_in()
 }
 
 #[cfg(test)]
 mod tests {
-    use openmobisim_core_types::units::{Density, Duration, Speed};
-
     use super::*;
 
-    /// A plausible triangular diagram: 72 km/h free flow, 1800 veh/h
-    /// capacity, 18 km/h backward wave speed, no control delay.
-    fn diagram() -> LinkParameters {
-        LinkParameters {
-            free_flow_speed: Speed::from_km_per_hour(72.0),
-            capacity: Flow::from_veh_per_hour(1800.0),
-            jam_density: Density::from_veh_per_km(130.0),
-            wave_speed: Speed::from_km_per_hour(18.0),
-            control_delay: Duration::ZERO,
+    fn filled(entered: f64, exits: &[(f64, f64)]) -> LinkCurves {
+        let mut c = LinkCurves::new();
+        c.record_entry(Duration::ZERO, Pcu(entered));
+        for &(t, p) in exits {
+            c.record_exit(Duration(t), Pcu(p));
         }
+        c
     }
 
     #[test]
-    fn a_fresh_curve_is_zero_everywhere() {
+    fn a_fresh_link_is_empty() {
         let c = LinkCurves::new();
-        assert_eq!(c.up_at(Duration(-10.0)), Pcu::ZERO);
-        assert_eq!(c.up_at(Duration::ZERO), Pcu::ZERO);
-        assert_eq!(c.up_at(Duration(1000.0)), Pcu::ZERO);
+        assert_eq!(c.cumulative_in(), Pcu::ZERO);
+        assert_eq!(c.cumulative_out(), Pcu::ZERO);
+        assert_eq!(c.out_at(Duration(1e9)), Pcu::ZERO);
+        assert_eq!(c.first_exit_exceeding(Pcu::ZERO), None);
     }
 
     #[test]
-    fn interpolation_is_linear_between_samples() {
-        let mut c = LinkCurves::new();
-        c.commit(Duration(10.0), Pcu(20.0), Pcu(0.0));
-        assert_eq!(c.up_at(Duration(5.0)), Pcu(10.0));
-        assert_eq!(c.up_at(Duration(10.0)), Pcu(20.0));
-        // Beyond the last sample: flat, not extrapolated.
-        assert_eq!(c.up_at(Duration(50.0)), Pcu(20.0));
+    fn out_at_is_a_step_function_of_exits() {
+        let c = filled(3.0, &[(10.0, 1.0), (20.0, 2.0)]);
+        assert_eq!(c.out_at(Duration(9.9)), Pcu(0.0));
+        assert_eq!(c.out_at(Duration(10.0)), Pcu(1.0));
+        assert_eq!(c.out_at(Duration(19.0)), Pcu(1.0));
+        assert_eq!(c.out_at(Duration(25.0)), Pcu(3.0));
+        assert_eq!(c.first_exit_exceeding(Pcu(0.5)), Some(Duration(10.0)));
+        assert_eq!(c.first_exit_exceeding(Pcu(1.0)), Some(Duration(20.0)));
+        assert_eq!(c.first_exit_exceeding(Pcu(3.0)), None);
     }
 
     #[test]
-    fn commit_is_cumulative_and_monotone() {
-        let mut c = LinkCurves::new();
-        c.commit(Duration(10.0), Pcu(5.0), Pcu(1.0));
-        c.commit(Duration(10.0), Pcu(3.0), Pcu(4.0));
-        assert_eq!(c.up_now(), Pcu(8.0));
-        assert_eq!(c.dn_now(), Pcu(5.0));
-        assert_eq!(c.now(), Duration(20.0));
+    fn forgetting_keeps_every_later_read_exact() {
+        let mut c = filled(5.0, &[(10.0, 1.0), (20.0, 1.0), (30.0, 1.0), (40.0, 1.0)]);
+        let before: Vec<Pcu> =
+            [25.0, 30.0, 35.0, 50.0].iter().map(|&t| c.out_at(Duration(t))).collect();
+        c.forget_before(Duration(25.0));
+        assert_eq!(c.retained(), 2);
+        let after: Vec<Pcu> =
+            [25.0, 30.0, 35.0, 50.0].iter().map(|&t| c.out_at(Duration(t))).collect();
+        assert_eq!(before, after);
+        assert_eq!(c.first_exit_exceeding(Pcu(1.5)), Some(Duration(f64::NEG_INFINITY)));
     }
 
-    /// S76's first exact assertion: **level 4 with storage → ∞ reproduces
-    /// level 2** (design §10.1's fidelity table: "point queue ... LTM with
-    /// infinite storage"). A jammed link (`up_now` far exceeds any
-    /// realistic storage) has zero remaining receiving flow under a real,
-    /// finite storage — but exactly `capacity` under infinite storage: with
-    /// nothing left to bound `space`, only the link's own discharge
-    /// capacity limits it, precisely the point-queue definition — "flow
-    /// capacity + vertical queue at exit, loses queue length / physical
-    /// extent".
+    /// S76, first exact assertion, at the formula: **infinite storage is the
+    /// point queue** — a jammed link with real storage has no room, the same
+    /// link with infinite storage always has room.
     #[test]
     fn infinite_storage_reproduces_the_point_queue_exactly() {
-        let params = diagram();
-        let mut c = LinkCurves::new();
-        // 1000 PCU already on a link with 50 PCU of real storage: fully jammed.
-        c.commit(Duration(10.0), Pcu(1000.0), Pcu::ZERO);
-        let dt = Duration(10.0);
-        let length = Metres(200.0);
-
-        let finite = c.receiving_flow(dt, params, length, Pcu(50.0));
-        assert_eq!(finite, Flow::ZERO, "a jammed link with real storage has no room left");
-
-        let infinite = c.receiving_flow(dt, params, length, Pcu::INFINITE);
-        assert_eq!(
-            infinite, params.capacity,
-            "with no storage bound, only the link's own capacity limits it — the point-queue \
-             definition, exactly"
-        );
+        let jammed = filled(1000.0, &[]);
+        assert!(room_at(&jammed, Pcu(50.0), Duration(20.0), Duration(100.0)).get() <= 0.0);
+        assert_eq!(room_at(&jammed, Pcu::INFINITE, Duration(20.0), Duration(100.0)), Pcu::INFINITE);
     }
 
-    /// S76's second exact assertion: **level 4 with backward wave speed →
-    /// ∞ reproduces level 3** (design §10.1: "+ storage capacity →
-    /// spillback ... LTM with infinite backward wave speed", "loses
-    /// discharge timing accuracy"). A real, finite wave speed reports
-    /// receiving flow computed from a *stale* downstream count — the
-    /// physical lag a shockwave takes to travel back up the link; infinite
-    /// wave speed collapses that lag to zero, reading the *current* count
-    /// instead. The two must differ by exactly the PCU the downstream
-    /// discharged during the lag window — no more, no less.
+    /// S76, second exact assertion, at the formula: **zero wave lag is the
+    /// spatial queue** — the lagged read misses exactly the PCU that left
+    /// during the lag, and nothing else.
     #[test]
-    fn infinite_wave_speed_reproduces_the_spatial_queue_exactly() {
-        // A high capacity, deliberately: this test isolates the wave-speed
-        // term, so capacity must not be the binding constraint on either side.
-        let params = LinkParameters { capacity: Flow::from_veh_per_hour(200_000.0), ..diagram() };
-        // 100 m at 18 km/h = 5 m/s -> tau_w = 20 s exactly.
-        let length = Metres(100.0);
-        let mut c = LinkCurves::new();
-        c.commit(Duration(10.0), Pcu(20.0), Pcu::ZERO); // now = 10, dn = 0
-        c.commit(Duration(10.0), Pcu(0.0), Pcu(20.0)); // now = 20, dn = 20: a burst discharges
-        c.commit(Duration(10.0), Pcu(0.0), Pcu(0.0)); // now = 30, dn stays 20
-        assert_eq!(c.now(), Duration(30.0));
+    fn zero_wave_lag_reproduces_the_spatial_queue_exactly() {
+        // 20 PCU entered; a burst of 20 left at t = 20 s. Read at t = 30 s.
+        let c = filled(20.0, &[(20.0, 20.0)]);
         let storage = Pcu(100.0);
-        let dt = Duration(10.0);
-
-        let finite = c.receiving_flow(dt, params, length, storage);
-        let infinite_wave = LinkParameters { wave_speed: Speed::INFINITE, ..params };
-        let infinite = c.receiving_flow(dt, infinite_wave, length, storage);
-
-        // Finite: reads dn(30 - 20) = dn(10) = 0 -> space = 0 + 100 - up_now(20) = 80.
-        // Infinite: reads dn(30 - 0) = dn(30) = 20 -> space = 20 + 100 - 20 = 100.
-        // The 20 PCU difference is exactly the burst the finite wave hasn't "heard about" yet.
-        let expected_finite = (Pcu(80.0) / dt).min(params.capacity);
-        let expected_infinite = (Pcu(100.0) / dt).min(params.capacity);
-        assert_eq!(finite, expected_finite);
-        assert_eq!(infinite, expected_infinite);
-        assert!(
-            (infinite - finite).get() > 0.0,
-            "the infinite-wave-speed reading must be strictly ahead of the lagged one"
+        let lagged = room_at(&c, storage, Duration(20.0), Duration(30.0)); // reads N_dn(10) = 0
+        let instant = room_at(&c, storage, Duration::ZERO, Duration(30.0)); // reads N_dn(30) = 20
+        assert_eq!(lagged, Pcu(80.0));
+        assert_eq!(instant, Pcu(100.0));
+        assert_eq!(
+            instant - lagged,
+            Pcu(20.0),
+            "the difference is exactly the burst the wave has not reached yet"
         );
     }
 }

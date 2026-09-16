@@ -634,6 +634,7 @@ version = "0.1.0"
 dependencies = [
  "openmobisim-core-graph",
  "openmobisim-core-types",
+ "openmobisim-io-osm",
  "proptest",
 ]
 
