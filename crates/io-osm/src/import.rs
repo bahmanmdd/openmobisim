@@ -137,6 +137,8 @@ struct ProtoLink {
     class: RoadClass,
     lanes: Option<u8>,
     maxspeed_km_h: Option<f64>,
+    /// Part of a roundabout's circulating carriageway (`junction=roundabout`).
+    roundabout: bool,
     length_m: f64,
     /// This link's own polyline, `from` to `to` (S125). Carried alongside
     /// `length_m` — computed from the same points, at the same place, and
@@ -155,6 +157,7 @@ impl ProtoLink {
     fn mergeable_with(&self, next: &Self) -> bool {
         self.class == next.class
             && self.lanes == next.lanes
+            && self.roundabout == next.roundabout
             && match (self.maxspeed_km_h, next.maxspeed_km_h) {
                 (Some(a), Some(b)) => (a - b).abs() < 1e-9,
                 (None, None) => true,
@@ -277,6 +280,7 @@ pub fn import(
                 maxspeed_km_h: link.maxspeed_km_h,
                 signalised: signalised.contains(&link.to),
                 length_m: Some(link.length_m),
+                roundabout: link.roundabout,
             },
         );
     }
@@ -325,6 +329,9 @@ fn split_way(
         diagnostics.record(DiagKey::run_level(Category::DataQuality, code, Severity::Info));
     }
     let maxspeed_km_h = speed.value_km_h();
+    // Only `roundabout`: OSM's `circular` does not imply that entering traffic
+    // gives way (S155).
+    let roundabout = crate::source::tag_of(&way.tags, "junction") == Some("roundabout");
 
     // Drop nodes the extract does not contain — normal where a bounding box
     // cuts a way — and record it once per way rather than once per node.
@@ -377,6 +384,7 @@ fn split_way(
                     class,
                     lanes: lane_counts.forward,
                     maxspeed_km_h,
+                    roundabout,
                     length_m,
                     geometry: geometry.clone(),
                 });
@@ -391,6 +399,7 @@ fn split_way(
                     class,
                     lanes: lane_counts.backward,
                     maxspeed_km_h,
+                    roundabout,
                     length_m,
                     geometry: backward_geometry,
                 });
@@ -512,6 +521,7 @@ fn contract(
                     class: a.class,
                     lanes: a.lanes,
                     maxspeed_km_h: a.maxspeed_km_h,
+                    roundabout: a.roundabout,
                     length_m: a.length_m + b.length_m,
                     geometry,
                 });

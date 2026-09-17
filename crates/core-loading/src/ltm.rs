@@ -43,14 +43,27 @@
 //! link, and the vehicle behind it on the link it is leaving cannot move: it is
 //! physically in the way (S77's full blocking).
 //!
+//! # Roundabouts: entering traffic gives way
+//!
+//! Where a link is part of a roundabout's circulating carriageway (OSM
+//! `junction=roundabout`), a vehicle entering it from outside the roundabout —
+//! from an approach, an origin or a stop line — waits while the circulating
+//! link before it holds any vehicle bound for the same link (S155): the
+//! priority merge, where circulating traffic that wants the room gets it
+//! first, so entries use only room circulating traffic does not need. Without
+//! this, entries compete equally for room and fill the ring until it locks
+//! (S153). It costs one flag per link and, per entry into a roundabout link, a
+//! look at the few vehicles on the circulating link before it.
+//!
 //! # When traffic stops
 //!
 //! A vehicle waits for exactly two things: room on the link ahead, or the rear
 //! of the vehicle in front clearing a link end — which in turn waits for room
 //! ahead of that vehicle. Any room is used as soon as it is heard, by the one
 //! vehicle entitled to it. So a set of vehicles waiting on one another forever
-//! must be waiting on links that are all full: **traffic stops only at jam
-//! density**, where the fundamental diagram's flow is zero (S152, S153). No
+//! must be waiting on links that are all full (to within [`MIN_PART`]; an
+//! entry giving way at a roundabout also waits on a circulating vehicle, which
+//! itself waits for room): **traffic stops only at jam density**, where the fundamental diagram's flow is zero (S152, S153). No
 //! vehicle is removed or forced. [`LtmNetwork::waiting_cycles`] lists such
 //! stops.
 //!
@@ -97,6 +110,12 @@
 //!   it closes up as the room arrives. Its PCU is always counted in full.
 //! - **The smallest part a vehicle's front takes** is [`MIN_PART`] PCU, or the
 //!   whole of a link's storage if that is less.
+//! - **Give way is keyed to the OSM tag only** (S154, S155): a ring mapped
+//!   without `junction=roundabout` does not give way, and can still lock at jam
+//!   density — [`LtmNetwork::waiting_cycles`] reports it. Priority is by
+//!   presence on the circulating link before the entry, not by a critical gap
+//!   in time: a long circulating link holds entries back further ahead of an
+//!   arriving vehicle than a driver would (roundabout pieces are short).
 //! - **Signal delay is a cycle average** at the stop line (S90): queues within a
 //!   cycle are not represented. Vehicles serving their delay are counted on no
 //!   link, so while a signalised approach is held back by a full next link it
@@ -456,8 +475,8 @@ impl<'a> LtmNetwork<'a> {
     /// each as its links in waiting order. A link's front waits on the link its
     /// queue is parked on or, while the vehicle ahead still straddles the
     /// link's end, on the link that vehicle's front is on. By the module docs'
-    /// argument every link in such a loop is full: this is where traffic has
-    /// reached jam density.
+    /// argument every link whose room is waited for in such a loop is full, to
+    /// within [`MIN_PART`]: this is where traffic has reached jam density.
     #[must_use]
     pub fn waiting_cycles(&self) -> Vec<Vec<LinkId>> {
         const UNSEEN: u8 = 0;
@@ -694,7 +713,7 @@ impl<'a> LtmNetwork<'a> {
                         if self.stop_delay[i] <= 0.0 && self.inflow_blocks(j, pcu, queue, t, t0) {
                             return;
                         }
-                        match self.admissible(j, pcu, t) {
+                        match self.admissible(j, pcu, t, Some(i)) {
                             Ok(room) => room,
                             Err(blocked) => return self.block(queue, blocked, t, t0),
                         }
@@ -704,7 +723,7 @@ impl<'a> LtmNetwork<'a> {
             }
             Place::Origin => {
                 let first = vehicle.route[0].index();
-                match self.admissible(first, pcu, t) {
+                match self.admissible(first, pcu, t, None) {
                     Ok(room) => {
                         self.pop_front(queue, t0);
                         self.enter_from_outside(front.slot, 0, t, room, false, t0);
@@ -718,7 +737,7 @@ impl<'a> LtmNetwork<'a> {
                     if self.inflow_blocks(j, pcu, queue, t, t0) {
                         return;
                     }
-                    match self.admissible(j, pcu, t) {
+                    match self.admissible(j, pcu, t, Some(i)) {
                         Ok(r) => room = r,
                         Err(blocked) => return self.block(queue, blocked, t, t0),
                     }
@@ -736,12 +755,17 @@ impl<'a> LtmNetwork<'a> {
     }
 
     /// Whether link `j` can take a vehicle's front at `t`, and the room it has:
-    /// nothing straddles its upstream end, and its room is at least a part —
+    /// nothing straddles its upstream end, no circulating vehicle it must give
+    /// way to is waiting for it, and its room is at least a part —
     /// [`MIN_PART`], the vehicle, or the link's whole storage, whichever is
-    /// least. If not, what to wait for.
-    fn admissible(&self, j: usize, pcu: f64, t: f64) -> Result<f64, Blocked> {
+    /// least. `from` is the link the vehicle comes from (`None` at an origin).
+    /// If not, what to wait for.
+    fn admissible(&self, j: usize, pcu: f64, t: f64, from: Option<usize>) -> Result<f64, Blocked> {
         if self.straddling_in[j] != NONE {
             return Err(Blocked { link: j, retry_at: None });
+        }
+        if let Some(r) = self.must_give_way(j, from) {
+            return Err(Blocked { link: r, retry_at: None });
         }
         let storage = self.storage[j];
         if storage.is_infinite() {
@@ -752,6 +776,29 @@ impl<'a> LtmNetwork<'a> {
             return Ok(room.max(0.0));
         }
         Err(Blocked { link: j, retry_at })
+    }
+
+    /// A vehicle entering roundabout link `j` from `from` (not itself on the
+    /// roundabout) gives way while the circulating link before `j` holds any
+    /// vehicle bound for `j` — the priority merge: circulating traffic that
+    /// wants the room gets it first. Returns that link; its next departure
+    /// wakes the entry.
+    fn must_give_way(&self, j: usize, from: Option<usize>) -> Option<usize> {
+        let ring = |l: usize| self.network.is_roundabout(LinkId::from_index(l));
+        if !ring(j) || from.is_some_and(ring) {
+            return None;
+        }
+        let node = self.network.link_from(LinkId::from_index(j));
+        self.network.in_links(node).iter().map(|l| l.index()).find(|&r| {
+            Some(r) != from
+                && ring(r)
+                && self.queues[r].iter().any(|q| {
+                    self.vehicles[q.slot as usize]
+                        .route
+                        .get(q.leg as usize + 1)
+                        .is_some_and(|l| l.index() == j)
+                })
+        })
     }
 
     /// Link `j`'s room as heard at its upstream end at `t`, and when room
@@ -796,6 +843,10 @@ impl<'a> LtmNetwork<'a> {
         let front = self.queues[i].pop_front().expect("advancing a front vehicle");
         let slot = front.slot;
         let vehicle = self.vehicles[slot as usize];
+        if self.first_parked[i] != NONE && self.network.is_roundabout(LinkId::from_index(i)) {
+            // Entries giving way to this link's front may go now.
+            self.wake(i, t, t0);
+        }
         self.curves[i].set_last_exit(Duration(t));
         self.discharged[i] += vehicle.pcu.get();
         self.service_tag[i] = tag;

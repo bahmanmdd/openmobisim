@@ -441,3 +441,20 @@ fn a_corner_is_contracted_because_it_is_a_bend_not_a_junction() {
         "the merged link must keep the length of both legs"
     );
 }
+
+/// S155: a way tagged `junction=roundabout` marks its links as roundabout
+/// links (one-way, as OSM implies), and contraction does not merge them with an
+/// untagged continuation. `junction=circular` is not marked (and so merges
+/// with the untagged one-way street before it).
+#[test]
+fn roundabout_ways_mark_their_links_and_do_not_merge_with_others() {
+    let source = MemorySource::new()
+        .nodes([node(1, 0.0), node(2, 1.0), node(3, 2.0), node(4, 3.0)])
+        .way(OsmWay::new(100, [1, 2], [("highway", "primary"), ("junction", "roundabout")]))
+        .way(OsmWay::new(101, [2, 3], [("highway", "primary"), ("oneway", "yes")]))
+        .way(OsmWay::new(102, [3, 4], [("highway", "primary"), ("junction", "circular")]));
+    let (net, _, _) = run(&source);
+    let flagged = (0..net.link_count()).filter(|&i| net.is_roundabout(LinkId::new(i))).count();
+    assert_eq!(net.link_count(), 2, "the roundabout link stays separate");
+    assert_eq!(flagged, 1, "only the roundabout way is marked");
+}

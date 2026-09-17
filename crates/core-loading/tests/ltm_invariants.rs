@@ -21,6 +21,7 @@ use openmobisim_core_graph::examples::{manhattan_grid, node_name};
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
+use openmobisim_core_loading::ltm::MIN_PART;
 use openmobisim_core_loading::{FidelityLevel, LtmNetwork, Trajectory, Vehicle, run_ltm};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
@@ -761,8 +762,12 @@ fn departures_wait_at_the_origin_and_the_wait_counts() {
 
 /// A one-way ring of pieces with the given lengths (metres), each ring node
 /// with a 100-m entry and a 100-m exit: `ring[i]` runs from node `i` to node
-/// `i + 1`, `entries[i]` ends at node `i`, `exits[i]` starts there.
-fn roundabout(pieces: &[f64]) -> (RoadNetwork, Vec<LinkId>, Vec<LinkId>, Vec<LinkId>) {
+/// `i + 1`, `entries[i]` ends at node `i`, `exits[i]` starts there. With
+/// `tagged`, the ring is marked as a roundabout, so entries give way (S155).
+fn roundabout(
+    pieces: &[f64],
+    tagged: bool,
+) -> (RoadNetwork, Vec<LinkId>, Vec<LinkId>, Vec<LinkId>) {
     let k = pieces.len();
     let angle = |r: f64| pieces.iter().map(|l| 2.0 * (l / (2.0 * r)).min(1.0).asin()).sum::<f64>();
     let (mut lo, mut hi) = (pieces.iter().copied().fold(0.0, f64::max) / 2.0, 1e5);
@@ -787,7 +792,7 @@ fn roundabout(pieces: &[f64]) -> (RoadNetwork, Vec<LinkId>, Vec<LinkId>, Vec<Lin
             format!("ring{i}"),
             format!("r{i}"),
             format!("r{}", (i + 1) % k),
-            LinkSpec::new(RoadClass::Residential),
+            LinkSpec { roundabout: tagged, ..LinkSpec::new(RoadClass::Residential) },
         );
         b.add_link(
             format!("in{i}"),
@@ -825,7 +830,7 @@ fn roundabout(pieces: &[f64]) -> (RoadNetwork, Vec<LinkId>, Vec<LinkId>, Vec<Lin
 #[test]
 fn an_overloaded_roundabout_stops_only_at_jam_density() {
     let pieces = [3.0, 4.5, 6.0, 7.5, 8.5, 10.0, 11.5, 13.0, 15.5, 18.0, 22.0, 30.0];
-    let (net, ring, entries, exits) = roundabout(&pieces);
+    let (net, ring, entries, exits) = roundabout(&pieces, false);
     let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
     let k = pieces.len();
     for (i, &l) in ring.iter().enumerate() {
@@ -865,7 +870,7 @@ fn an_overloaded_roundabout_stops_only_at_jam_density() {
                 stops += 1;
                 for &l in &cycle {
                     assert!(
-                        s.counted_pcu(l).get() >= net.storage(l).get() - 1e-6,
+                        s.counted_pcu(l).get() >= net.storage(l).get() - MIN_PART,
                         "{label}: a waiting loop {cycle:?} stands with room on {l:?}: {} of {}",
                         s.counted_pcu(l).get(),
                         net.storage(l).get()
@@ -878,5 +883,43 @@ fn an_overloaded_roundabout_stops_only_at_jam_density() {
             done.len(),
             vehicles.len()
         );
+    }
+}
+
+/// **Property (S155, give way at roundabouts):** the same overloaded
+/// roundabout, tagged as one, keeps moving — entries wait for circulating
+/// traffic instead of filling the ring — and every trip completes once demand
+/// ends, for cars and for a mix of cars and buses.
+#[test]
+fn a_tagged_roundabout_gives_way_and_keeps_moving() {
+    let pieces = [3.0, 4.5, 6.0, 7.5, 8.5, 10.0, 11.5, 13.0, 15.5, 18.0, 22.0, 30.0];
+    let (net, ring, entries, exits) = roundabout(&pieces, true);
+    assert!(ring.iter().all(|&l| net.is_roundabout(l)) && !net.is_roundabout(entries[0]));
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    let k = pieces.len();
+    for (label, size) in [
+        ("cars", (|_: usize| 1.0) as fn(usize) -> f64),
+        ("one bus in five", |n| if n % 5 == 0 { 2.5 } else { 1.0 }),
+    ] {
+        let mut vehicles = Vec::new();
+        for i in 0..k {
+            for n in 0..360u32 {
+                let hops = 1 + ((n as usize + 3 * i) % (k - 1));
+                let mut route = vec![entries[i]];
+                route.extend((0..hops).map(|h| ring[(i + h) % k]));
+                route.push(exits[(i + hops) % k]);
+                let id = VehicleId::new(vehicles.len() as u32);
+                vehicles.push(Vehicle::new(id, route, Pcu(size(n as usize + i)), Second(n * 5)));
+            }
+        }
+        let mut sim = LtmNetwork::new(&net, &turns);
+        vehicles.iter().for_each(|v| sim.depart(v));
+        let done = run_checked(&mut sim, 300.0, 6.0 * 3600.0, |s| {
+            for &l in &ring {
+                assert!(s.counted_pcu(l).get() <= net.storage(l).get() + 1e-6, "{label}: overfull");
+            }
+        });
+        assert!(sim.waiting_cycles().is_empty(), "{label}: a loop is left standing");
+        assert_eq!(done.len(), vehicles.len(), "{label}: every trip completes");
     }
 }

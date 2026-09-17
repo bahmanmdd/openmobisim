@@ -86,13 +86,24 @@ pub struct LinkSpec {
     /// network that has already been split at every geometry point and wrong
     /// for one that has not — so the importer passes the measured value.
     pub length_m: Option<f64>,
+    /// Whether the link is part of a roundabout's circulating carriageway
+    /// (OSM `junction=roundabout`): traffic entering it gives way to traffic
+    /// already circulating (S155).
+    pub roundabout: bool,
 }
 
 impl LinkSpec {
     /// A link of `class` with everything else defaulted.
     #[must_use]
     pub const fn new(class: RoadClass) -> Self {
-        Self { class, lanes: None, maxspeed_km_h: None, signalised: false, length_m: None }
+        Self {
+            class,
+            lanes: None,
+            maxspeed_km_h: None,
+            signalised: false,
+            length_m: None,
+            roundabout: false,
+        }
     }
 }
 
@@ -205,6 +216,7 @@ impl RoadNetworkBuilder {
         let mut link_from = Vec::with_capacity(self.links.len());
         let mut link_to = Vec::with_capacity(self.links.len());
         let mut link_class = Vec::with_capacity(self.links.len());
+        let mut link_roundabout = Vec::with_capacity(self.links.len());
         let mut link_lanes = Vec::with_capacity(self.links.len());
         let mut link_length = Vec::with_capacity(self.links.len());
         let mut link_params: Vec<LinkParameters> = Vec::with_capacity(self.links.len());
@@ -272,6 +284,7 @@ impl RoadNetworkBuilder {
             link_from.push(from_node);
             link_to.push(to_node);
             link_class.push(spec.class);
+            link_roundabout.push(spec.roundabout);
             link_lanes.push(lanes);
             link_length.push(Metres(length));
             link_params.push(params);
@@ -304,6 +317,7 @@ impl RoadNetworkBuilder {
             link_from,
             link_to,
             link_class,
+            link_roundabout,
             link_lanes,
             link_length,
             link_params,
@@ -330,6 +344,7 @@ pub struct RoadNetwork {
     link_from: Vec<NodeId>,
     link_to: Vec<NodeId>,
     link_class: Vec<RoadClass>,
+    link_roundabout: Vec<bool>,
     link_lanes: Vec<u8>,
     link_length: Vec<Metres>,
     link_params: Vec<LinkParameters>,
@@ -402,6 +417,13 @@ impl RoadNetwork {
     #[must_use]
     pub fn link_class(&self, link: LinkId) -> RoadClass {
         self.link_class[link.index()]
+    }
+
+    /// Whether a link is part of a roundabout's circulating carriageway (S155).
+    #[inline]
+    #[must_use]
+    pub fn is_roundabout(&self, link: LinkId) -> bool {
+        self.link_roundabout[link.index()]
     }
 
     /// A link's lane count in its own direction.
@@ -515,7 +537,7 @@ impl RoadNetwork {
         n * (2 * size_of::<f64>() + size_of::<LonLat>() + 1)
             + l * (2 * size_of::<NodeId>()
                 + size_of::<RoadClass>()
-                + 1
+                + 2
                 + size_of::<Metres>()
                 + size_of::<LinkParameters>()
                 + size_of::<Duration>()
