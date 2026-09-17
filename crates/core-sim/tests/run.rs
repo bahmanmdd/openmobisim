@@ -53,14 +53,19 @@ fn trip(
     }
 }
 
-/// The same three nodes, plus a fourth, `z`, with no link to any of them —
-/// an isolated island to make `shortest_path` fail on purpose.
+/// The same three nodes, plus an island far away: `z` and `y`, joined by a
+/// two-way street of their own and linked to nothing else — to make
+/// `shortest_path` fail on purpose. (The island has a road: a node with no
+/// car link at all is not a place a car trip starts or ends.)
 fn network_with_an_unreachable_node() -> RoadNetwork {
     let mut b = RoadNetworkBuilder::new();
     b.add_node("a", LonLat::new(4.800, 45.700));
     b.add_node("b", LonLat::new(4.801, 45.700));
     b.add_node("c", LonLat::new(4.802, 45.700));
     b.add_node("z", LonLat::new(5.500, 46.500));
+    b.add_node("y", LonLat::new(5.501, 46.500));
+    b.add_link("zy", "z", "y", LinkSpec::new(RoadClass::Primary));
+    b.add_link("yz", "y", "z", LinkSpec::new(RoadClass::Primary));
     b.add_link("ab", "a", "b", LinkSpec::new(RoadClass::Primary));
     b.add_link("ba", "b", "a", LinkSpec::new(RoadClass::Primary));
     b.add_link("bc", "b", "c", LinkSpec::new(RoadClass::Primary));
@@ -112,6 +117,42 @@ fn a_single_car_trip_completes_with_the_right_travel_time() {
     {
         assert_eq!(result.completion.completion_rate(), 1.0);
         assert_eq!(result.total_travel_time.get(), f64::from(expected_a_to_c_seconds(&network)));
+    }
+}
+
+/// S153: a car neither starts at a footway-only node nor routes over a
+/// footway, even when the footway is the shorter way.
+#[test]
+fn a_car_trip_ignores_footways() {
+    let mut b = RoadNetworkBuilder::new();
+    b.add_node("a", LonLat::new(4.800, 45.700));
+    b.add_node("b", LonLat::new(4.801, 45.701));
+    b.add_node("c", LonLat::new(4.802, 45.700));
+    b.add_node("p", LonLat::new(4.7999, 45.700)); // closest to A, on the footway only
+    b.add_link("ab", "a", "b", LinkSpec::new(RoadClass::Primary));
+    b.add_link("bc", "b", "c", LinkSpec::new(RoadClass::Primary));
+    b.add_link("pa", "p", "a", LinkSpec::new(RoadClass::Footway));
+    b.add_link("ac", "a", "c", LinkSpec::new(RoadClass::Footway));
+    let network = Arc::new(
+        b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+            .expect("buildable"),
+    );
+    let raw_trips = vec![trip("alice", 0, (4.7999, 45.700), C, 0)];
+    let (travellers, trips) =
+        build_travellers(raw_trips, Vec::new(), &car_owning_defaults(), 1, &mut Diagnostics::new())
+            .expect("buildable");
+    let mut run =
+        Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1_000_000));
+    let result = run.execute(&mut Diagnostics::new());
+
+    assert_eq!(result.completion.completed, 1);
+    let id = |e: &str| network.link_external_ids().typed_id_of::<LinkId>(e).expect("link");
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "test assertion")]
+    let by_road = network.free_flow_time(id("ab")).get() as u32
+        + network.free_flow_time(id("bc")).get() as u32;
+    #[allow(clippy::float_cmp, reason = "both sides are small integer seconds, exactly")]
+    {
+        assert_eq!(result.total_travel_time.get(), f64::from(by_road), "the car takes ab, bc");
     }
 }
 

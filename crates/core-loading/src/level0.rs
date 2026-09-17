@@ -36,6 +36,9 @@ pub struct LinkTraversal {
 pub struct Trajectory {
     /// The vehicle this trajectory belongs to.
     pub vehicle: VehicleId,
+    /// When the vehicle was scheduled to depart. Its first link's entry can be
+    /// later, if it waited at the origin for room (levels 2–4).
+    pub departure: Second,
     /// One entry per link of the vehicle's route, in route order. Never
     /// empty: [`Vehicle::route`] is never empty, and this has one entry per
     /// route link.
@@ -54,15 +57,11 @@ impl Trajectory {
         self.links.last().expect("a trajectory always has at least one link").exit
     }
 
-    /// When the vehicle entered the first link of its route.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the trajectory has no links, which cannot happen for a
-    /// [`Trajectory`] this crate produced.
+    /// When the vehicle was scheduled to depart — the start of its travel
+    /// time, including any wait at the origin.
     #[must_use]
     pub fn departure(&self) -> Second {
-        self.links.first().expect("a trajectory always has at least one link").enter
+        self.departure
     }
 
     /// Total travel time from departure to arrival.
@@ -90,7 +89,7 @@ pub fn traverse_free_flow(vehicle: &Vehicle, network: &RoadNetwork) -> Trajector
         links.push(LinkTraversal { link, enter: clock, exit });
         clock = exit;
     }
-    Trajectory { vehicle: vehicle.id, links }
+    Trajectory { vehicle: vehicle.id, departure: vehicle.departure, links }
 }
 
 /// Every vehicle's trajectory, independently — level 0 has no interaction

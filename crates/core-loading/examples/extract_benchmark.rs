@@ -2,9 +2,10 @@
 //! (S91: every performance number is for a cold run).
 //!
 //! The demand is a **load fixture, not a forecast**: random origins, each
-//! routed along the shortest free-flow path (respecting the turn table) to a
-//! random node reachable within `max_route_seconds`, departing uniformly over
-//! the first three quarters of the window. It exists to measure cost and to
+//! routed along the shortest free-flow path (respecting the turn table, over
+//! links that carry motor traffic) to a random link reachable within
+//! `max_route_seconds`, departing uniformly over the first three quarters of
+//! the window. It exists to measure cost and to
 //! exercise the loading on real link-length distributions — short links,
 //! signals, one-way streets — not to say anything about a place.
 //!
@@ -132,8 +133,8 @@ fn main() {
     );
 }
 
-/// Shortest free-flow routes over the turn table, from random links to random
-/// reachable links.
+/// Shortest free-flow routes over the turn table and motor-traffic links, from
+/// random nodes to random reachable links.
 fn fixture(
     network: &RoadNetwork,
     turns: &TurnTable,
@@ -159,6 +160,9 @@ fn fixture(
         let origin = NodeId::from_index(rng.below(network.node_count() as usize));
         let mut heap = BinaryHeap::new();
         for &l in network.out_links(origin) {
+            if !network.link_class(l).carries_motor_traffic() {
+                continue;
+            }
             dist[l.index()] = free_flow[l.index()];
             touched.push(l.index());
             heap.push(Reverse((free_flow[l.index()].to_bits(), l.index())));
@@ -172,6 +176,9 @@ fn fixture(
             settled.push(u);
             for &t in turns.turns_from(LinkId::from_index(u)) {
                 let v = turns.outgoing(t).index();
+                if !network.link_class(LinkId::from_index(v)).carries_motor_traffic() {
+                    continue;
+                }
                 let nd = d + free_flow[v];
                 if nd <= max_route && nd < dist[v] {
                     if dist[v].is_infinite() {

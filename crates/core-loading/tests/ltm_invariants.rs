@@ -113,8 +113,9 @@ fn grid_route(
 
 // --- D1/D2: vehicles and curves agree -------------------------------------
 
-/// **Property (D1):** one vehicle of PCU `p` over a chain leaves exactly `p`
-/// in and `p` out on every link — never a multiple of `p`.
+/// **Property (D1):** one vehicle of PCU `p` over a chain — including a link
+/// shorter than it — is counted once on every link: what enters a link leaves
+/// it, never more than `p` is counted, and exactly `p` passes each link's end.
 #[test]
 fn a_vehicle_is_counted_once_on_every_link() {
     let (net, route) = chain(&[101.0, 101.0, 4.7, 101.0], RoadClass::Residential, &[]);
@@ -126,12 +127,14 @@ fn a_vehicle_is_counted_once_on_every_link() {
         let done = run_checked(&mut sim, 60.0, 600.0, |_| {});
         assert_eq!(done.len(), 1, "the vehicle completes (pcu {pcu})");
         for &l in &route {
+            let (i, o) = (sim.cumulative_in(l).get(), sim.cumulative_out(l).get());
             assert!(
-                (sim.cumulative_in(l).get() - pcu).abs() < 1e-9
-                    && (sim.cumulative_out(l).get() - pcu).abs() < 1e-9,
-                "link {l:?} must carry exactly {pcu} PCU in and out, got in {:?} out {:?}",
-                sim.cumulative_in(l),
-                sim.cumulative_out(l)
+                (i - o).abs() < 1e-9 && i <= pcu + 1e-9 && i > 0.0,
+                "link {l:?}: in {i} and out {o} must match and not exceed {pcu}"
+            );
+            assert!(
+                (sim.discharged_pcu(l).get() - pcu).abs() < 1e-9,
+                "exactly one vehicle passes {l:?}"
             );
         }
     }
@@ -172,7 +175,6 @@ proptest! {
         }
         let mut violation = None;
         let mut overfull = None;
-        let firsts: Vec<LinkId> = vehicles.iter().map(|v| v.route[0]).collect();
         let done = run_checked(&mut sim, step, 3600.0, |s| {
             for idx in 0..net.link_count() {
                 let l = LinkId::from_index(idx as usize);
@@ -180,15 +182,15 @@ proptest! {
                 if (i - o - q).abs() > 1e-6 || o > i + 1e-9 || o < 0.0 {
                     violation.get_or_insert((l, i, o, q));
                 }
-                // Storage holds on links nobody departs onto (departures arrive
-                // from outside the network and are not admission-controlled).
-                if !firsts.contains(&l) && i - o > net.storage(l).get() + pcu + 1e-6 {
-                    overfull.get_or_insert((l, i - o, net.storage(l).get()));
+                // Storage holds on every link, whatever its length against the
+                // vehicles' (S153), departures included.
+                if s.counted_pcu(l).get() > net.storage(l).get() + 1e-6 {
+                    overfull.get_or_insert((l, s.counted_pcu(l).get(), net.storage(l).get()));
                 }
             }
         });
         prop_assert!(violation.is_none(), "curves and vehicles disagree: (link, in, out, queued) = {violation:?}");
-        prop_assert!(overfull.is_none(), "a link holds more than its storage plus one vehicle: (link, held, storage) = {overfull:?}");
+        prop_assert!(overfull.is_none(), "a link counts more than its storage: (link, counted, storage) = {overfull:?}");
         // No vehicle leaves a link before its free-flow time (one-second floor).
         for t in &done {
             for tr in &t.links {
@@ -258,7 +260,7 @@ fn a_queue_discharges_at_capacity_for_any_vehicle_size() {
                 t += step;
                 if t >= ff {
                     let expected = ((t - ff) * cap + pcu).min(pcu * f64::from(count));
-                    let got = sim.cumulative_out(a).get();
+                    let got = sim.discharged_pcu(a).get();
                     assert!(
                         (got - expected).abs() <= pcu + 1e-6,
                         "pcu {pcu}, step {step}, t {t}: discharged {got:.2} PCU, capacity allows {expected:.2}"
@@ -267,6 +269,42 @@ fn a_queue_discharges_at_capacity_for_any_vehicle_size() {
             }
         }
     }
+}
+
+/// **Property (S153, vehicles straddle links):** a queue passes through a link at
+/// capacity whatever the link's length relative to the vehicles — including
+/// links shorter than one vehicle and links just above any size. Each piece
+/// of the chain is fed by a standing queue, so its entries are limited by
+/// room, not by arrivals.
+#[test]
+fn a_queue_passes_links_of_any_length_at_capacity() {
+    let mut failures = Vec::new();
+    for len in [3.0, 6.0, 9.0, 12.0, 15.0, 18.0, 22.0, 30.0, 45.0, 70.0] {
+        let (net, route) = chain(&[len, len, len, 3000.0], RoadClass::Residential, &[]);
+        let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+        let piece = route[2];
+        let cap = net.link_parameters(piece).capacity.get();
+        for pcu in [1.0, 10.0] {
+            let count = (2.0 * cap * 900.0 / pcu).ceil() as u32 + 2;
+            let vehicles: Vec<Vehicle> = (0..count)
+                .map(|i| Vehicle::new(VehicleId::new(i), route.clone(), Pcu(pcu), Second(0)))
+                .collect();
+            let mut sim = LtmNetwork::new(&net, &turns);
+            vehicles.iter().for_each(|v| sim.depart(v));
+            let _ = sim.step(Duration(300.0));
+            let before = sim.discharged_pcu(piece).get();
+            let _ = sim.step(Duration(600.0));
+            let passed = sim.discharged_pcu(piece).get() - before;
+            let expected = cap * 600.0;
+            if (passed - expected).abs() > 2.0 * pcu + 1e-6 {
+                failures.push(format!(
+                    "{len} m (storage {:.2}), pcu {pcu}: {passed:.1} PCU in 600 s, capacity {expected:.1}",
+                    net.storage(piece).get()
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 /// **Property (G1):** a signalised approach discharges at capacity × g/C.
@@ -288,8 +326,11 @@ fn a_signalised_approach_discharges_at_green_time_capacity() {
     }
     let _ = sim.step(Duration(300.0));
     let _ = sim.step(Duration(300.0));
-    let expected = (600.0 - ff) * rate + 1.0;
-    let got = sim.cumulative_out(a).get();
+    // Vehicles pass the stop line after the travel time, before the signal
+    // delay (which is spent at the stop line, S153).
+    let travel = ff - net.link_parameters(a).control_delay.get();
+    let expected = (600.0 - travel) * rate + 1.0;
+    let got = sim.discharged_pcu(a).get();
     assert!(
         (got - expected).abs() <= 1.0 + 1e-6,
         "discharged {got:.2} PCU in 600 s, g/C capacity allows {expected:.2}"
@@ -319,14 +360,14 @@ fn heavy_and_light_vehicles_have_the_same_throughput() {
     for s in 0..12 {
         let _ = sl.step(Duration(60.0));
         let _ = sh.step(Duration(60.0));
-        let (ol, oh) = (sl.cumulative_out(route[2]).get(), sh.cumulative_out(route[2]).get());
+        let (ol, oh) = (sl.discharged_pcu(route[2]).get(), sh.discharged_pcu(route[2]).get());
         assert!(
             (ol - oh).abs() <= 10.0 + 1e-6,
             "step {s}: light {ol} PCU vs heavy {oh} PCU past the short link"
         );
     }
     assert!(
-        sh.cumulative_out(route[2]).get() >= 50.0 - 1e-6,
+        sh.discharged_pcu(route[2]).get() >= 50.0 - 1e-6,
         "every heavy vehicle gets past the short link"
     );
 }
@@ -489,14 +530,11 @@ fn a_bottleneck_queue_matches_the_deterministic_queue_by_hand() {
 }
 
 /// **Property (spillback):** a saturated short link downstream holds the
-/// upstream link's discharge to its own rate, and never holds more than its
-/// storage plus one vehicle.
+/// upstream link's discharge to its own rate, and never counts more than its
+/// storage.
 #[test]
 fn spillback_limits_upstream_discharge_to_the_bottleneck_rate() {
-    // a -> b: 1 km; b -> c: 100 m, signalised at c; c -> d: long. Not shorter:
-    // S90's control delay is time spent on the link, so a signalised link
-    // shorter than about storage × delay / capacity holds its own throughput
-    // below g/C capacity — a property of S90, recorded in S151, not this test's.
+    // a -> b: 1 km; b -> c: 100 m, signalised at c; c -> d: long.
     let (net, route) = chain(&[1000.0, 100.0, 3000.0], RoadClass::Secondary, &[2]);
     let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
     let (ab, bc) = (route[0], route[1]);
@@ -516,8 +554,8 @@ fn spillback_limits_upstream_discharge_to_the_bottleneck_rate() {
     for s in 0..8 {
         let _ = sim.step(Duration(step));
         let out = sim.cumulative_out(ab).get();
-        let held = sim.cumulative_in(bc).get() - sim.cumulative_out(bc).get();
-        assert!(held <= net.storage(bc).get() + 1.0 + 1e-6, "step {s}: bc holds {held} PCU");
+        let held = sim.counted_pcu(bc).get();
+        assert!(held <= net.storage(bc).get() + 1e-6, "step {s}: bc counts {held} PCU");
         if s >= 2 {
             let rate = (out - previous) / step;
             assert!(
@@ -574,4 +612,271 @@ fn saturated_merges_share_room_in_proportion_to_capacity() {
         (share - expected).abs() <= 0.05,
         "the primary approach took {share:.3} of the merge, capacity share {expected:.3}"
     );
+}
+
+// --- Stop lines, origins and waiting cycles (S153) -------------------------
+
+/// **Property (S153, stop line):** a signalised approach shorter than its
+/// queue's delay would need still discharges at capacity × g/C: the signal
+/// delay is spent at the stop line, off the approach's storage. A lone
+/// vehicle still takes the approach's free-flow time including the delay.
+#[test]
+fn a_short_signalised_approach_discharges_at_green_time_capacity() {
+    let (net, route) = chain(&[200.0, 20.0, 3000.0], RoadClass::Residential, &[2]);
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    let short = route[1];
+    let delay = net.link_parameters(short).control_delay.get();
+    let cap = net.link_parameters(short).capacity.get();
+    let rate =
+        cap * f64::from(turns.capacity_fraction(turns.find(short, route[2]).expect("through")));
+    assert!(delay > 0.0 && rate < cap, "the fixture's approach is signalised");
+    assert!(
+        net.storage(short).get() < delay * rate,
+        "the fixture needs an approach too short to hold its queue's delay"
+    );
+
+    let lone = Vehicle::new(VehicleId::new(0), route.clone(), Pcu(1.0), Second(0));
+    let done = run_ltm(&net, &turns, &[lone], Duration(900.0), Duration(60.0), FidelityLevel::Full);
+    assert_eq!(done.len(), 1);
+    for tr in &done[0].links {
+        let took = f64::from(tr.exit.get() - tr.enter.get());
+        let ff = net.free_flow_time(tr.link).get();
+        assert!((took - ff).abs() <= 1.0, "link {:?} took {took} s, free flow {ff:.2} s", tr.link);
+    }
+
+    let vehicles: Vec<Vehicle> = (0..1000)
+        .map(|i| Vehicle::new(VehicleId::new(i), route.clone(), Pcu(1.0), Second(0)))
+        .collect();
+    let mut sim = LtmNetwork::new(&net, &turns);
+    vehicles.iter().for_each(|v| sim.depart(v));
+    let _ = sim.step(Duration(300.0));
+    let before = sim.discharged_pcu(short).get();
+    let _ = sim.step(Duration(600.0));
+    let passed = sim.discharged_pcu(short).get() - before;
+    assert!(
+        (passed - rate * 600.0).abs() <= 2.0,
+        "passed {passed:.1} PCU in 600 s, g/C capacity allows {:.1}",
+        rate * 600.0
+    );
+}
+
+/// **Property (S153, stop line and spillback):** a full link ahead holds a
+/// signalised approach back — the approach discharges at the bottleneck's
+/// rate, its stop line holds no more than one control delay's worth of
+/// vehicles, and the short link ahead never counts more than its storage. A
+/// short link after a signal is not throttled by the
+/// signal's delay.
+#[test]
+fn spillback_holds_back_a_signalised_approach() {
+    // ab: 1 km primary, signalised at b; bc: 30 m residential, signalised at
+    // c — the bottleneck; cd: long.
+    let mut b = RoadNetworkBuilder::new();
+    let at = |m: f64| LonLat::new(4.8 + m / M_PER_DEG_LON, 45.7);
+    b.add_node("a", at(0.0));
+    b.add_node("b", at(1000.0));
+    b.add_node("c", at(1030.0));
+    b.add_node("d", at(4030.0));
+    b.mark_signalised("b");
+    b.mark_signalised("c");
+    b.add_link("ab", "a", "b", LinkSpec::new(RoadClass::Primary));
+    b.add_link("bc", "b", "c", LinkSpec::new(RoadClass::Residential));
+    b.add_link("cd", "c", "d", LinkSpec::new(RoadClass::Residential));
+    let net = b
+        .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable");
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    let id = |e: &str| net.link_external_ids().typed_id_of::<LinkId>(e).expect("link");
+    let (ab, bc, cd) = (id("ab"), id("bc"), id("cd"));
+    let green = |l: LinkId, next: LinkId| {
+        f64::from(turns.capacity_fraction(turns.find(l, next).expect("through movement")))
+    };
+    let upstream = net.link_parameters(ab).capacity.get() * green(ab, bc);
+    let bottleneck = net.link_parameters(bc).capacity.get() * green(bc, cd);
+    assert!(bottleneck < 0.8 * upstream, "the fixture needs a real bottleneck");
+    let buffer = (upstream * net.link_parameters(ab).control_delay.get()).ceil() + 1.0;
+
+    let vehicles: Vec<Vehicle> = (0..3000)
+        .map(|i| Vehicle::new(VehicleId::new(i), vec![ab, bc, cd], Pcu(1.0), Second(0)))
+        .collect();
+    let mut sim = LtmNetwork::new(&net, &turns);
+    vehicles.iter().for_each(|v| sim.depart(v));
+    let bound = net.storage(bc).get();
+    let step = 300.0;
+    let mut previous = 0.0;
+    for s in 0..6 {
+        let _ = sim.step(Duration(step));
+        assert!(sim.counted_pcu(bc).get() <= bound + 1e-6, "step {s}: bc counts too much");
+        assert!(
+            sim.waiting_at_stop_line(ab) as f64 <= buffer,
+            "step {s}: {} vehicles wait at ab's stop line, one control delay is {buffer}",
+            sim.waiting_at_stop_line(ab)
+        );
+        let out = sim.discharged_pcu(bc).get();
+        if s >= 2 {
+            let rate = (out - previous) / step;
+            assert!(
+                (rate - bottleneck).abs() <= 0.05 * bottleneck + 2.0 / step,
+                "step {s}: bc passes {rate:.4} PCU/s, its g/C capacity is {bottleneck:.4}"
+            );
+        }
+        previous = out;
+    }
+    assert!(sim.queue_len(ab) > 20, "the queue spills back onto ab");
+}
+
+/// **Property (S153, origins):** departures wait outside the network until
+/// their first link has room, never overfilling it, and the wait is part of
+/// the travel time.
+#[test]
+fn departures_wait_at_the_origin_and_the_wait_counts() {
+    let (net, route) = chain(&[30.0, 3000.0], RoadClass::Residential, &[]);
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    let first = route[0];
+    let vehicles: Vec<Vehicle> = (0..40)
+        .map(|i| Vehicle::new(VehicleId::new(i), route.clone(), Pcu(1.0), Second(0)))
+        .collect();
+    let mut sim = LtmNetwork::new(&net, &turns);
+    vehicles.iter().for_each(|v| sim.depart(v));
+    let _ = sim.step(Duration(1.0));
+    assert!(sim.counted_pcu(first).get() <= net.storage(first).get() + 1e-6);
+    assert!(sim.waiting_at_origin(first) > 30, "most departures wait outside the network");
+    let mut done = run_checked(&mut sim, 60.0, 1800.0, |s| {
+        assert!(s.counted_pcu(first).get() <= net.storage(first).get() + 1e-6);
+    });
+    assert_eq!(done.len(), 40, "every departure completes");
+    done.sort_by_key(|t| t.vehicle.raw());
+    let headway = 1.0 / net.link_parameters(first).capacity.get();
+    let ff = free_flow(&net, &route);
+    for (k, t) in done.iter().enumerate() {
+        assert_eq!(t.departure(), Second(0));
+        let travel = f64::from(t.arrival().get() - t.departure().get());
+        assert!(
+            travel >= ff + (k as f64) * headway - 2.0,
+            "vehicle {k}: travel {travel} s, but it cannot leave before {:.1} s",
+            ff + (k as f64) * headway
+        );
+    }
+    assert!(done[39].links[0].enter.get() > 0, "the last vehicle entered after waiting");
+}
+
+/// A one-way ring of pieces with the given lengths (metres), each ring node
+/// with a 100-m entry and a 100-m exit: `ring[i]` runs from node `i` to node
+/// `i + 1`, `entries[i]` ends at node `i`, `exits[i]` starts there.
+fn roundabout(pieces: &[f64]) -> (RoadNetwork, Vec<LinkId>, Vec<LinkId>, Vec<LinkId>) {
+    let k = pieces.len();
+    let angle = |r: f64| pieces.iter().map(|l| 2.0 * (l / (2.0 * r)).min(1.0).asin()).sum::<f64>();
+    let (mut lo, mut hi) = (pieces.iter().copied().fold(0.0, f64::max) / 2.0, 1e5);
+    for _ in 0..200 {
+        let mid = 0.5 * (lo + hi);
+        if angle(mid) > std::f64::consts::TAU { lo = mid } else { hi = mid }
+    }
+    let r = 0.5 * (lo + hi);
+    let at = |x: f64, y: f64| LonLat::new(4.8 + x / M_PER_DEG_LON, 45.7 + y / 111_320.0);
+    let mut b = RoadNetworkBuilder::new();
+    let mut theta: f64 = 0.0;
+    for (i, l) in pieces.iter().enumerate() {
+        let (x, y) = (r * theta.cos(), r * theta.sin());
+        b.add_node(format!("r{i}"), at(x, y));
+        let out = (r + 100.0) / r;
+        b.add_node(format!("a{i}"), at(x * out + 20.0 * theta.sin(), y * out - 20.0 * theta.cos()));
+        b.add_node(format!("x{i}"), at(x * out - 20.0 * theta.sin(), y * out + 20.0 * theta.cos()));
+        theta += 2.0 * (l / (2.0 * r)).asin();
+    }
+    for i in 0..k {
+        b.add_link(
+            format!("ring{i}"),
+            format!("r{i}"),
+            format!("r{}", (i + 1) % k),
+            LinkSpec::new(RoadClass::Residential),
+        );
+        b.add_link(
+            format!("in{i}"),
+            format!("a{i}"),
+            format!("r{i}"),
+            LinkSpec::new(RoadClass::Residential),
+        );
+        b.add_link(
+            format!("out{i}"),
+            format!("r{i}"),
+            format!("x{i}"),
+            LinkSpec::new(RoadClass::Residential),
+        );
+    }
+    let net = b
+        .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable");
+    let ids = |name: &str| -> Vec<LinkId> {
+        (0..k)
+            .map(|i| {
+                net.link_external_ids().typed_id_of::<LinkId>(&format!("{name}{i}")).expect("link")
+            })
+            .collect()
+    };
+    let (ring, entries, exits) = (ids("ring"), ids("in"), ids("out"));
+    (net, ring, entries, exits)
+}
+
+/// **Property (S153, traffic stops only at jam density):** a roundabout
+/// whose pieces span the whole range of lengths — shorter than one vehicle,
+/// just above one, one and a half, two — under demand far above its capacity,
+/// with cars, with vehicles aggregated 10 to a unit, and with a mix of cars and
+/// buses: no piece ever counts more than its storage, and wherever vehicles
+/// wait on one another in a loop, every link of the loop is full.
+#[test]
+fn an_overloaded_roundabout_stops_only_at_jam_density() {
+    let pieces = [3.0, 4.5, 6.0, 7.5, 8.5, 10.0, 11.5, 13.0, 15.5, 18.0, 22.0, 30.0];
+    let (net, ring, entries, exits) = roundabout(&pieces);
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    let k = pieces.len();
+    for (i, &l) in ring.iter().enumerate() {
+        assert!((net.link_length(l).get() - pieces[i]).abs() < 0.5, "piece {i} length");
+    }
+    for (label, every, size) in [
+        ("cars", 5u32, (|_: usize| 1.0) as fn(usize) -> f64),
+        ("aggregates of 10", 50, |_| 10.0),
+        ("one bus in five", 5, |n| if n % 5 == 0 { 2.5 } else { 1.0 }),
+    ] {
+        let mut vehicles = Vec::new();
+        for i in 0..k {
+            for n in 0..(1800 / every) {
+                let id = vehicles.len() as u32;
+                let hops = 1 + ((n as usize + 3 * i) % (k - 1));
+                let mut route = vec![entries[i]];
+                route.extend((0..hops).map(|h| ring[(i + h) % k]));
+                route.push(exits[(i + hops) % k]);
+                let pcu = size(n as usize + i);
+                vehicles.push(Vehicle::new(VehicleId::new(id), route, Pcu(pcu), Second(n * every)));
+            }
+        }
+        let mut sim = LtmNetwork::new(&net, &turns);
+        vehicles.iter().for_each(|v| sim.depart(v));
+        let mut stops = 0;
+        let done = run_checked(&mut sim, 300.0, 6.0 * 3600.0, |s| {
+            for idx in 0..net.link_count() {
+                let l = LinkId::from_index(idx as usize);
+                assert!(
+                    s.counted_pcu(l).get() <= net.storage(l).get() + 1e-6,
+                    "{label}: {l:?} counts {} on {} of storage",
+                    s.counted_pcu(l).get(),
+                    net.storage(l).get()
+                );
+            }
+            for cycle in s.waiting_cycles() {
+                stops += 1;
+                for &l in &cycle {
+                    assert!(
+                        s.counted_pcu(l).get() >= net.storage(l).get() - 1e-6,
+                        "{label}: a waiting loop {cycle:?} stands with room on {l:?}: {} of {}",
+                        s.counted_pcu(l).get(),
+                        net.storage(l).get()
+                    );
+                }
+            }
+        });
+        println!(
+            "{label}: {} of {} trips completed; waiting loops seen at {stops} step ends",
+            done.len(),
+            vehicles.len()
+        );
+    }
 }

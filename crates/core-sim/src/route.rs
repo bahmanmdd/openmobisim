@@ -17,8 +17,11 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
-/// The network node closest to `point`, by straight-line distance in the
-/// network's own projection.
+/// The network node closest to `point` that a car can use, by straight-line
+/// distance in the network's own projection: a node with at least one link
+/// that carries motor traffic (S153 — footways and cycleways are not car
+/// origins). A network with no such link falls back to the closest node of
+/// any kind.
 ///
 /// Brute-force over every node — a placeholder for the real access/egress
 /// correction S96 describes (the walk layer, corrected per traveller
@@ -34,19 +37,34 @@ use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 #[must_use]
 pub fn nearest_node(network: &RoadNetwork, point: LonLat) -> NodeId {
     let target = network.projection().project(point);
-    (0..network.node_count())
-        .map(NodeId::new)
-        .min_by(|&a, &b| {
-            let da = network.node_position(a).distance_to(target);
-            let db = network.node_position(b).distance_to(target);
-            da.total_cmp(&db).then_with(|| a.cmp(&b))
-        })
+    let closest = |drivable_only: bool| {
+        (0..network.node_count())
+            .map(NodeId::new)
+            .filter(|&node| {
+                !drivable_only
+                    || network.out_links(node).iter().any(|&l| drivable(network, l))
+                    || network.in_links(node).iter().any(|&l| drivable(network, l))
+            })
+            .min_by(|&a, &b| {
+                let da = network.node_position(a).distance_to(target);
+                let db = network.node_position(b).distance_to(target);
+                da.total_cmp(&db).then_with(|| a.cmp(&b))
+            })
+    };
+    closest(true)
+        .or_else(|| closest(false))
         .expect("a built RoadNetwork always has at least one node")
 }
 
-/// The shortest path from `from` to `to`, by free-flow travel time
+/// Whether a car may use `link`: its class carries motor traffic.
+fn drivable(network: &RoadNetwork, link: LinkId) -> bool {
+    network.link_class(link).carries_motor_traffic()
+}
+
+/// The shortest path for a car from `from` to `to`, by free-flow travel time
 /// (`RoadNetwork::free_flow_time`, which already includes S90's control
-/// delay). `None` if no path exists. `Some(&[])` if `from == to`.
+/// delay), over links that carry motor traffic only. `None` if no such path
+/// exists. `Some(&[])` if `from == to`.
 ///
 /// Dijkstra over the network's own adjacency (`RoadNetwork::out_links`),
 /// with a deterministic tie-break on node id when two frontier entries have
@@ -74,6 +92,9 @@ pub fn shortest_path(network: &RoadNetwork, from: NodeId, to: NodeId) -> Option<
             continue; // a stale entry: a cheaper way to `node` was found later
         }
         for &out_link in network.out_links(node) {
+            if !drivable(network, out_link) {
+                continue;
+            }
             let next = network.link_to(out_link);
             let next_cost = cost + network.free_flow_time(out_link).get();
             if next_cost < best_cost[next.index()] {

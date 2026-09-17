@@ -1,69 +1,109 @@
 //! The loading at levels 2–4: the link transmission model with vehicles on
-//! the curves (S84, S85), in S147's hybrid form (S151).
+//! the curves (S84, S85), in S147's hybrid form (S151), with vehicles that
+//! straddle links, stop lines and origin queues (S153).
 //!
 //! # What it computes
 //!
 //! Every vehicle carries its route (S85) and its own clock. Every link has a
-//! triangular fundamental diagram (S113) that limits three things:
+//! triangular fundamental diagram (S113) that limits four things:
 //!
-//! 1. **Free-flow travel** — a vehicle can leave a link no earlier than its
-//!    entry time plus the link's free-flow time, which already includes the
-//!    signal control delay (S90).
-//! 2. **Discharge capacity** — vehicles leave a link no closer together than
-//!    `PCU / (capacity × g/C)` seconds, the saturation headway of the approach
-//!    (S90's green-time fraction; 1 at an unsignalised node). This is the
-//!    queue, and the delay behind a bottleneck.
-//! 3. **Receiving capacity** — a vehicle enters a link only while the link has
-//!    room: its storage, plus what had left it one backward-wave travel time
-//!    earlier, minus what has entered ([`crate::curves::room_at`], the LTM
-//!    receiving condition in continuous time); and no closer behind the
-//!    previous entrant than `PCU / capacity`. This is spillback. A link with
-//!    *any* room admits the next vehicle, so a vehicle longer than a very
-//!    short link still enters it (the overhang rule — without it, weighted
-//!    travellers deadlock on short links, S148).
+//! 1. **Free-flow travel** — a vehicle's front reaches the downstream end of a
+//!    link no earlier than it entered plus the link's free-flow travel time.
+//! 2. **Discharge capacity** — vehicle fronts pass the downstream end no closer
+//!    together than `PCU / (capacity × g/C)` seconds, the saturation headway of
+//!    the approach (S90's green-time fraction; 1 at an unsignalised node).
+//! 3. **Signal delay at the stop line** — on a signalised approach, a vehicle
+//!    passes the stop line when the next link has room for it, leaves the
+//!    approach, and waits S90's control delay at the stop line before
+//!    entering the next link, checking its room again. The delay belongs to
+//!    the approach in the vehicle's trajectory but holds no storage — neither
+//!    the approach's nor the next link's — so a short signalised approach, and
+//!    a short link after it, pass `capacity × g/C`. A full next link stops
+//!    vehicles reaching the stop line, so the approach fills and spills back.
+//! 4. **Receiving capacity** — a vehicle's front enters a link only if the link
+//!    has room (below), and no closer behind the previous entrant than
+//!    `PCU / capacity`. Room is the LTM receiving condition: storage, plus what
+//!    had left one backward-wave travel time earlier, minus what has entered
+//!    ([`crate::curves::room_at`]).
 //!
-//! The curves change **only when a whole vehicle moves** (S150's D1–D4 came
-//! from fractional flow and vehicles being counted separately), so the PCU a
-//! link's curves say it holds is always exactly the PCU of the vehicles on it.
+//! # Vehicles straddle links: no length threshold
+//!
+//! A link's storage is jam density × length × lanes, in PCU; nothing compares a
+//! vehicle's length with a link's. A vehicle's front enters a link when the
+//! link has any room, and **takes only the room there is: the rest of the
+//! vehicle stays counted on the link behind it** (or outside the network, at
+//! an origin or a stop line), as it physically does. As room appears ahead,
+//! the vehicle moves onto it and releases the same amount from its rear. So a
+//! car crossing a 3-m junction piece is counted on three pieces at once, a bus
+//! on a 12-m piece hangs back onto the approach, and a 300-m street holds
+//! forty cars — one rule, whatever the length, and **no link ever counts more
+//! than its storage**.
+//!
+//! While a vehicle straddles a link's upstream end, nothing else enters that
+//! link, and the vehicle behind it on the link it is leaving cannot move: it is
+//! physically in the way (S77's full blocking).
+//!
+//! # When traffic stops
+//!
+//! A vehicle waits for exactly two things: room on the link ahead, or the rear
+//! of the vehicle in front clearing a link end — which in turn waits for room
+//! ahead of that vehicle. Any room is used as soon as it is heard, by the one
+//! vehicle entitled to it. So a set of vehicles waiting on one another forever
+//! must be waiting on links that are all full: **traffic stops only at jam
+//! density**, where the fundamental diagram's flow is zero (S152, S153). No
+//! vehicle is removed or forced. [`LtmNetwork::waiting_cycles`] lists such
+//! stops.
+//!
+//! # Origins
+//!
+//! A departing vehicle waits outside the network, in its first link's origin
+//! queue, until the link has room. It does not use the link's inflow capacity.
+//! The wait is part of its travel time: a [`Trajectory`] keeps the scheduled
+//! departure.
 //!
 //! # How: in time order
 //!
-//! Within a loading step, vehicle movements are processed **in time order**
-//! from one event queue. An event says "the vehicle at the front of link `i`
-//! is due at time `t`"; processing it either releases the vehicle into its
-//! next link (or out of the network), reschedules it to the moment the next
-//! link will have room or inflow capacity, or parks the approach until the
-//! next link discharges. Because every constraint is checked at the moment it
-//! applies, with every earlier movement already committed, the result is
-//! exact in continuous time: no sub-step sweeps, no smear, no step-resolved
-//! spillback, and first-in-first-out on every link.
+//! Vehicle movements are processed **in time order** from one event queue. An
+//! event says "the vehicle at the front of queue `q` is due at time `t`", where
+//! `q` is a link, an origin queue or a stop line — or "room released on link
+//! `l` reaches its upstream end now", which lets the vehicle straddling that
+//! end move further onto it and wakes the queues waiting for the link.
+//! Processing an event moves a vehicle on, reschedules it to the moment the
+//! next link will have room or inflow capacity, or parks its queue until the
+//! link it needs has room to hear of or an upstream end clears.
+//! Because every constraint is checked at the moment it applies, with every
+//! earlier movement committed, the result is exact in continuous time: FIFO on
+//! every queue, spillback resolved to the second.
 //!
-//! Events are ordered by `(time, service tag, link id)` — a total order, so
-//! the result never depends on input order or on how anything was stored
-//! (S77's requirement, met by ordering rather than by Jacobi sweeps; S88's
-//! event-queue convention). The **service tag** is each approach's virtual
-//! clock, advanced by one saturation headway per vehicle it releases: approaches
-//! that are never held back are served first come, first served, and saturated
-//! approaches competing for the same room are served in proportion to their
-//! discharge capacities (S48). A vehicle that cannot enter its next link blocks
-//! everything behind it on its own link (S77's full blocking, FIFO on the whole
-//! approach).
+//! Events are ordered by `(time, service tag, queue)` — a total order, so the
+//! result never depends on input order (S77's requirement, met by ordering;
+//! S88's event-queue convention). The **service tag** is each approach's
+//! virtual clock, advanced by one saturation headway per vehicle it releases:
+//! approaches that are never held back are served first come, first served,
+//! and saturated approaches competing for the same room are served in
+//! proportion to their discharge capacities (S48). A vehicle that cannot move
+//! blocks everything behind it in its queue (S77's full blocking).
 //!
-//! The loading step is an output and bookkeeping boundary, not a numerical
-//! one (S84): nothing about a vehicle's timing depends on it. At each step's
-//! end every link forgets exits older than one backward-wave travel time
-//! ([`crate::curves::LinkCurves::forget_before`]), bounding memory. The work is
-//! proportional to vehicle movements, and a link nobody uses costs nothing.
+//! The loading step is an output and bookkeeping boundary (S84): nothing about
+//! a vehicle's timing depends on it. At each step's end every link forgets
+//! exits older than one backward-wave travel time
+//! ([`crate::curves::LinkCurves::forget_before`]).
 //!
 //! # Recorded biases
 //!
-//! - **The overhang rule** lets a link exceed its storage by less than one
-//!   vehicle, so it spills back one vehicle later than the continuous model.
-//! - **Service tags restart at each step's start**, so an approach backlogged
-//!   for a long time cannot hold priority over a newcomer for more than one
-//!   step; within a step, sharing is capacity-proportional.
-//! - **Departures do not use inflow capacity**: they appear on their first link
-//!   from outside the network, occupying its storage.
+//! - **A straddling vehicle can stretch.** It moves onto room it has heard of,
+//!   so its part on a link it spans end to end can be shorter than the link
+//!   while the rest of that link's room has not yet reached its upstream end;
+//!   it closes up as the room arrives. Its PCU is always counted in full.
+//! - **The smallest part a vehicle's front takes** is [`MIN_PART`] PCU, or the
+//!   whole of a link's storage if that is less.
+//! - **Signal delay is a cycle average** at the stop line (S90): queues within a
+//!   cycle are not represented. Vehicles serving their delay are counted on no
+//!   link, so while a signalised approach is held back by a full next link it
+//!   stores, beyond its own storage, the vehicles that passed its stop line in
+//!   the last control delay (at most `capacity × g/C × delay`).
+//! - **Service tags restart at each step's start**, so a long-backlogged
+//!   approach cannot hold priority over a newcomer for more than one step.
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, VecDeque};
@@ -78,12 +118,17 @@ use crate::curves::{LinkCurves, ROOM_EPSILON, room_at};
 use crate::level0::{LinkTraversal, Trajectory};
 use crate::vehicle::Vehicle;
 
-/// Two times closer than this are the same instant (float noise in sums of
-/// headways).
+/// The smallest part of a vehicle its front moves onto a link (PCU): room
+/// below this is left until more appears, unless the link's whole storage is
+/// smaller. About 7 cm of a car; it keeps float-sized slivers from moving.
+pub const MIN_PART: f64 = 0.01;
+
+/// Two times closer than this are the same instant.
 const TIME_EPSILON: f64 = 1e-9;
 
-/// No link: the end of an intrusive list.
-const NO_LINK: u32 = u32::MAX;
+/// No queue, link or vehicle: the end of an intrusive list, or "outside the
+/// network" in a vehicle's parts.
+const NONE: u32 = u32::MAX;
 
 /// Which term of the triangular diagram this run keeps — design §10.1's
 /// nesting: levels 2–4 are **the same code**, called with a limiting
@@ -104,30 +149,31 @@ pub enum FidelityLevel {
     Full,
 }
 
-/// One vehicle on a link.
+/// One vehicle in a queue: its front on a link, or the vehicle at an origin
+/// or at a stop line.
 ///
 /// Stored once per vehicle in flight, so its size is asserted.
 #[derive(Clone, Copy, Debug)]
-struct OnLink {
+struct Queued {
     /// Index into [`LtmNetwork::vehicles`].
     slot: u32,
-    /// Position of this link in the vehicle's route.
+    /// Position in the vehicle's route of the link this queue belongs to.
     leg: u32,
-    /// When the vehicle entered the link, in seconds.
+    /// When the vehicle's front entered the link (for origins: its departure).
     enter: f64,
-    /// Entry time plus the link's free-flow time.
-    earliest_exit: f64,
+    /// The earliest time it can be served at the front of this queue.
+    ready: f64,
 }
 
-/// "The front vehicle of `link` is due at `time`."
+/// "The vehicle at the front of queue `queue` is due at `time`."
 ///
 /// Superseded events are skipped rather than removed: each schedule bumps the
-/// link's generation.
+/// queue's generation.
 #[derive(Clone, Copy, Debug)]
 struct Event {
     time: f64,
     tag: f64,
-    link: u32,
+    queue: u32,
     generation: u32,
 }
 
@@ -150,20 +196,42 @@ impl Ord for Event {
         self.time
             .total_cmp(&other.time)
             .then(self.tag.total_cmp(&other.tag))
-            .then(self.link.cmp(&other.link))
+            .then(self.queue.cmp(&other.queue))
             .then(self.generation.cmp(&other.generation))
     }
 }
 
-/// The running state of a loading: every link's counts and queue, and every
-/// vehicle's trajectory so far.
+/// What a vehicle waits for when it cannot move.
+#[derive(Clone, Copy, Debug)]
+struct Blocked {
+    /// The link whose release of room (or of its upstream end) it needs.
+    link: usize,
+    /// A committed exit whose room reaches the vehicle later, if one exists.
+    retry_at: Option<f64>,
+}
+
+/// Where a queue or event index points.
+#[derive(Clone, Copy, Debug)]
+enum Place {
+    Link(usize),
+    Origin,
+    StopLine(usize),
+    /// Room released on this link reaches its upstream end.
+    Heard(usize),
+}
+
+/// The running state of a loading.
 pub struct LtmNetwork<'a> {
     network: &'a RoadNetwork,
     level: FidelityLevel,
     now: f64,
+    /// The time of the movement being processed: nothing is scheduled before it.
+    clock: f64,
+    links: usize,
 
-    // Per link, fixed for the run (structure of arrays).
-    free_flow: Vec<f64>,
+    // Per link, fixed for the run.
+    travel: Vec<f64>,
+    stop_delay: Vec<f64>,
     discharge_rate: Vec<f64>,
     inflow_rate: Vec<f64>,
     storage: Vec<f64>,
@@ -171,19 +239,32 @@ pub struct LtmNetwork<'a> {
 
     // Per link, running.
     curves: Vec<LinkCurves>,
-    queues: Vec<VecDeque<OnLink>>,
-    /// Each approach's service tag: the virtual time its last released
-    /// vehicle was due (see the module docs).
+    /// Whole PCU of the vehicles whose fronts have passed each link's
+    /// downstream end (its stop line, on a signalised approach).
+    discharged: Vec<f64>,
+    first_parked: Vec<u32>,
+    /// The vehicle straddling each link's upstream end, or `NONE`.
+    straddling_in: Vec<u32>,
+    /// The vehicle straddling each link's downstream end, or `NONE`.
+    straddling_out: Vec<u32>,
+    /// When a room-heard event is pending for each link, or `+∞`.
+    heard_due: Vec<f64>,
+
+    // Per queue: links `0..n`, origins `n..2n`, stop lines `2n..3n`. Room-heard
+    // events use `3n..4n`.
+    queues: Vec<VecDeque<Queued>>,
     service_tag: Vec<f64>,
     generation: Vec<u32>,
-    /// Head of the list of approaches parked until this link discharges.
-    first_blocked: Vec<u32>,
-    /// Next approach in the list this link is parked on.
-    next_blocked: Vec<u32>,
+    next_parked: Vec<u32>,
+    parked_on: Vec<u32>,
 
     // Per vehicle.
     vehicles: Vec<&'a Vehicle>,
     traversals: Vec<Vec<LinkTraversal>>,
+    /// Where a vehicle's PCU is counted: `(link, PCU)` from its front to its
+    /// rear, `NONE` for a part still outside the network. Empty when it is
+    /// counted on no link (waiting at an origin or a stop line, or done).
+    parts: Vec<VecDeque<(u32, f64)>>,
     /// Slots not yet departed, latest departure first (so `pop` is next).
     pending: Vec<u32>,
     pending_sorted: bool,
@@ -200,12 +281,14 @@ impl<'a> LtmNetwork<'a> {
     #[must_use]
     pub fn new(network: &'a RoadNetwork, turns: &TurnTable) -> Self {
         let n = network.link_count() as usize;
+        let mut travel = Vec::with_capacity(n);
+        let mut stop_delay = Vec::with_capacity(n);
         let mut discharge_rate = Vec::with_capacity(n);
         let mut inflow_rate = Vec::with_capacity(n);
-        let mut free_flow = Vec::with_capacity(n);
         for idx in 0..n {
             let link = LinkId::from_index(idx);
-            let capacity = network.link_parameters(link).capacity.get().max(f64::MIN_POSITIVE);
+            let params = network.link_parameters(link);
+            let capacity = params.capacity.get().max(f64::MIN_POSITIVE);
             let green = turns
                 .turns_from(link)
                 .iter()
@@ -213,27 +296,40 @@ impl<'a> LtmNetwork<'a> {
                 .reduce(f64::max)
                 .unwrap_or(1.0)
                 .max(f64::MIN_POSITIVE);
+            let delay = params.control_delay.get().max(0.0);
+            let free_flow = network.free_flow_time(link).get();
+            travel.push((free_flow - delay).max(0.0));
+            stop_delay.push(delay);
             discharge_rate.push(capacity * green);
             inflow_rate.push(capacity);
-            free_flow.push(network.free_flow_time(link).get());
         }
+        let queues = 3 * n;
         let mut sim = Self {
             network,
             level: FidelityLevel::Full,
             now: 0.0,
-            free_flow,
+            clock: 0.0,
+            links: n,
+            travel,
+            stop_delay,
             discharge_rate,
             inflow_rate,
             storage: Vec::new(),
             wave_lag: Vec::new(),
             curves: (0..n).map(|_| LinkCurves::new()).collect(),
-            queues: (0..n).map(|_| VecDeque::new()).collect(),
-            service_tag: vec![f64::NEG_INFINITY; n],
-            generation: vec![0; n],
-            first_blocked: vec![NO_LINK; n],
-            next_blocked: vec![NO_LINK; n],
+            discharged: vec![0.0; n],
+            first_parked: vec![NONE; n],
+            straddling_in: vec![NONE; n],
+            straddling_out: vec![NONE; n],
+            heard_due: vec![f64::INFINITY; n],
+            queues: (0..queues).map(|_| VecDeque::new()).collect(),
+            service_tag: vec![f64::NEG_INFINITY; queues],
+            generation: vec![0; queues + n],
+            next_parked: vec![NONE; queues],
+            parked_on: vec![NONE; queues],
             vehicles: Vec::new(),
             traversals: Vec::new(),
+            parts: Vec::new(),
             pending: Vec::new(),
             pending_sorted: true,
             events: BinaryHeap::new(),
@@ -251,10 +347,9 @@ impl<'a> LtmNetwork<'a> {
     }
 
     fn apply_level(&mut self) {
-        let n = self.network.link_count() as usize;
         self.storage.clear();
         self.wave_lag.clear();
-        for idx in 0..n {
+        for idx in 0..self.links {
             let link = LinkId::from_index(idx);
             let storage = match self.level {
                 FidelityLevel::PointQueue => f64::INFINITY,
@@ -302,17 +397,53 @@ impl<'a> LtmNetwork<'a> {
         self.curves[link.index()].cumulative_out()
     }
 
-    /// How many vehicles are on a link.
+    /// The whole PCU of every vehicle whose front has passed a link's
+    /// downstream end (its stop line, on a signalised approach).
+    #[must_use]
+    pub fn discharged_pcu(&self, link: LinkId) -> Pcu {
+        Pcu(self.discharged[link.index()])
+    }
+
+    /// How many vehicles have their front on a link (not at its stop line).
     #[must_use]
     pub fn queue_len(&self, link: LinkId) -> usize {
         self.queues[link.index()].len()
     }
 
-    /// The PCU of the vehicles on a link. Between steps, always equal to
-    /// `cumulative_in − cumulative_out`.
+    /// The PCU of every vehicle part on a link, found by walking the vehicles
+    /// themselves — for tests: it always equals `cumulative_in −
+    /// cumulative_out`. Takes time proportional to the vehicles scheduled.
     #[must_use]
     pub fn queued_pcu(&self, link: LinkId) -> Pcu {
-        self.queues[link.index()].iter().map(|q| self.vehicles[q.slot as usize].pcu).sum()
+        let l = link_u32(link.index());
+        Pcu(self.parts.iter().flatten().filter(|p| p.0 == l).map(|p| p.1).sum())
+    }
+
+    /// Everything counted against a link's storage now,
+    /// `cumulative_in − cumulative_out`. Never more than its storage.
+    #[must_use]
+    pub fn counted_pcu(&self, link: LinkId) -> Pcu {
+        self.cumulative_in(link) - self.cumulative_out(link)
+    }
+
+    /// How many vehicles wait outside the network to depart onto a link.
+    #[must_use]
+    pub fn waiting_at_origin(&self, link: LinkId) -> usize {
+        self.queues[self.links + link.index()].len()
+    }
+
+    /// How many vehicles wait at a link's stop line, serving its signal delay
+    /// or waiting for room on the next link.
+    #[must_use]
+    pub fn waiting_at_stop_line(&self, link: LinkId) -> usize {
+        self.queues[2 * self.links + link.index()].len()
+    }
+
+    /// The link a link's front vehicle is waiting on, if it is parked.
+    #[must_use]
+    pub fn parked_on(&self, link: LinkId) -> Option<LinkId> {
+        let p = self.parked_on[link.index()];
+        (p != NONE).then(|| LinkId::from_index(p as usize))
     }
 
     /// How many exits a link retains for its receiving-condition reads.
@@ -321,9 +452,57 @@ impl<'a> LtmNetwork<'a> {
         self.curves[link.index()].retained()
     }
 
-    /// Schedule a vehicle. It joins the first link of its route at its own
-    /// departure second, during whichever step contains it; a departure
-    /// earlier than [`Self::now`] joins at the start of the next step.
+    /// Closed loops of links whose front vehicles wait on one another now,
+    /// each as its links in waiting order. A link's front waits on the link its
+    /// queue is parked on or, while the vehicle ahead still straddles the
+    /// link's end, on the link that vehicle's front is on. By the module docs'
+    /// argument every link in such a loop is full: this is where traffic has
+    /// reached jam density.
+    #[must_use]
+    pub fn waiting_cycles(&self) -> Vec<Vec<LinkId>> {
+        const UNSEEN: u8 = 0;
+        const ON_PATH: u8 = 1;
+        const DONE: u8 = 2;
+        let waits_on = |i: usize| -> Option<usize> {
+            let ahead = self.straddling_out[i];
+            if ahead != NONE {
+                return self.parts[ahead as usize].front().map(|p| p.0 as usize);
+            }
+            (self.parked_on[i] != NONE).then(|| self.parked_on[i] as usize)
+        };
+        let mut state = vec![UNSEEN; self.links];
+        let mut cycles = Vec::new();
+        let mut path = Vec::new();
+        for first in 0..self.links {
+            path.clear();
+            let mut at = first;
+            let mut closed = false;
+            while state[at] == UNSEEN {
+                state[at] = ON_PATH;
+                path.push(at);
+                match waits_on(at) {
+                    None => break,
+                    Some(next) => {
+                        closed = state[next] == ON_PATH;
+                        at = next;
+                    }
+                }
+            }
+            if closed {
+                if let Some(from) = path.iter().position(|&p| p == at) {
+                    cycles.push(path[from..].iter().map(|&p| LinkId::from_index(p)).collect());
+                }
+            }
+            for &p in &path {
+                state[p] = DONE;
+            }
+        }
+        cycles
+    }
+
+    /// Schedule a vehicle. It departs at its own departure second, waiting at
+    /// its first link's origin until the link can take it; a departure earlier
+    /// than [`Self::now`] departs at the start of the next step.
     ///
     /// # Panics
     ///
@@ -334,6 +513,7 @@ impl<'a> LtmNetwork<'a> {
         let slot = u32::try_from(self.vehicles.len()).expect("vehicle count fits u32");
         self.vehicles.push(vehicle);
         self.traversals.push(Vec::with_capacity(vehicle.route.len()));
+        self.parts.push(VecDeque::new());
         self.pending.push(slot);
         self.pending_sorted = false;
     }
@@ -349,23 +529,26 @@ impl<'a> LtmNetwork<'a> {
         let (t0, t1) = (self.now, self.now + dt.get());
         let mut completed = Vec::new();
         self.sort_pending();
+        self.clock = self.clock.max(t0);
 
         loop {
             let next_event = self.events.peek().map(|Reverse(e)| e.time);
             let next_departure = self.next_departure_time(t0);
             match (next_event, next_departure) {
                 (_, Some(d)) if d < t1 && next_event.is_none_or(|e| d <= e) => {
+                    self.clock = self.clock.max(d);
                     self.depart_next(t0);
                 }
                 (Some(e), _) if e < t1 => {
                     let Reverse(event) = self.events.pop().expect("just peeked");
+                    self.clock = self.clock.max(event.time);
                     self.process(event, t0, &mut completed);
                 }
                 _ => break,
             }
         }
 
-        for idx in 0..self.curves.len() {
+        for idx in 0..self.links {
             if self.curves[idx].retained() > 0 {
                 self.curves[idx].forget_before(Duration(t1 - self.wave_lag[idx]));
             }
@@ -391,150 +574,463 @@ impl<'a> LtmNetwork<'a> {
             .map(|&slot| f64::from(self.vehicles[slot as usize].departure.get()).max(t0))
     }
 
-    /// The next pending vehicle joins its first link.
+    /// The next pending vehicle joins its first link's origin queue.
     fn depart_next(&mut self, t0: f64) {
         let slot = self.pending.pop().expect("a departure is pending");
         let vehicle = self.vehicles[slot as usize];
-        let first = vehicle.route[0].index();
-        let enter = f64::from(vehicle.departure.get()).max(t0);
-        self.curves[first].record_departure(vehicle.pcu);
-        self.join(
-            first,
-            OnLink { slot, leg: 0, enter, earliest_exit: enter + self.free_flow[first] },
-            t0,
-        );
+        let at = f64::from(vehicle.departure.get()).max(t0);
+        let origin = self.links + vehicle.route[0].index();
+        self.join(origin, Queued { slot, leg: 0, enter: at, ready: at }, t0);
     }
 
-    /// Put a vehicle at the back of link `i`'s queue; if it is the front,
-    /// schedule it.
-    fn join(&mut self, i: usize, on_link: OnLink, t0: f64) {
-        self.queues[i].push_back(on_link);
-        if self.queues[i].len() == 1 {
-            self.schedule_front(i, t0, f64::NEG_INFINITY);
+    fn place(&self, queue: usize) -> Place {
+        let n = self.links;
+        if queue < n {
+            Place::Link(queue)
+        } else if queue < 2 * n {
+            Place::Origin
+        } else if queue < 3 * n {
+            Place::StopLine(queue - 2 * n)
+        } else {
+            Place::Heard(queue - 3 * n)
         }
     }
 
-    /// The front vehicle of link `i`: `(when it is ready to leave, its tag)`.
-    fn front_due(&self, i: usize, t0: f64) -> Option<(f64, f64)> {
-        let front = self.queues[i].front()?;
-        let headway = self.vehicles[front.slot as usize].pcu.get() / self.discharge_rate[i];
-        let tag = front.earliest_exit.max(self.service_tag[i] + headway).max(t0);
-        let ready = tag.max(self.curves[i].last_exit().get() + headway);
-        Some((ready, tag))
+    /// Put a vehicle at the back of a queue; if it is the front, schedule it.
+    fn join(&mut self, queue: usize, queued: Queued, t0: f64) {
+        self.queues[queue].push_back(queued);
+        if self.queues[queue].len() == 1 {
+            self.schedule_front(queue, t0, f64::NEG_INFINITY);
+        }
     }
 
-    /// Schedule link `i`'s front vehicle, no earlier than `not_before`.
-    fn schedule_front(&mut self, i: usize, t0: f64, not_before: f64) {
-        if let Some((ready, tag)) = self.front_due(i, t0) {
-            self.generation[i] = self.generation[i].wrapping_add(1);
+    /// The front vehicle of a queue: `(when it is ready to move, its tag)`.
+    fn front_due(&self, queue: usize, t0: f64) -> Option<(f64, f64)> {
+        let front = self.queues[queue].front()?;
+        match self.place(queue) {
+            Place::Link(i) => {
+                let pcu = self.vehicles[front.slot as usize].pcu.get();
+                let headway = pcu / self.discharge_rate[i];
+                let tag = front.ready.max(self.service_tag[queue] + headway).max(t0);
+                let ready = tag.max(self.curves[i].last_exit().get() + headway);
+                Some((ready, tag))
+            }
+            Place::Origin | Place::StopLine(_) | Place::Heard(_) => {
+                let ready = front.ready.max(t0);
+                Some((ready, ready))
+            }
+        }
+    }
+
+    /// Schedule a queue's front vehicle, no earlier than `not_before`.
+    fn schedule_front(&mut self, queue: usize, t0: f64, not_before: f64) {
+        if let Some((ready, tag)) = self.front_due(queue, t0) {
+            self.generation[queue] = self.generation[queue].wrapping_add(1);
             self.events.push(Reverse(Event {
-                time: ready.max(not_before),
+                time: ready.max(not_before).max(self.clock),
                 tag,
-                link: link_u32(i),
-                generation: self.generation[i],
+                queue: queue_u32(queue),
+                generation: self.generation[queue],
             }));
         }
     }
 
-    fn process(&mut self, event: Event, t0: f64, completed: &mut Vec<Trajectory>) {
-        let i = event.link as usize;
-        if event.generation != self.generation[i] {
+    /// Schedule room released on link `l` to be heard at its upstream end at
+    /// `at`, unless an earlier hearing is pending: whoever it serves then finds
+    /// any later release from the link's retained exits.
+    fn schedule_heard(&mut self, l: usize, at: f64) {
+        let at = at.max(self.clock);
+        if at >= self.heard_due[l] {
             return;
         }
-        let Some((ready, tag)) = self.front_due(i, t0) else {
+        self.heard_due[l] = at;
+        let queue = 3 * self.links + l;
+        self.generation[queue] = self.generation[queue].wrapping_add(1);
+        self.events.push(Reverse(Event {
+            time: at,
+            tag: at,
+            queue: queue_u32(queue),
+            generation: self.generation[queue],
+        }));
+    }
+
+    fn process(&mut self, event: Event, t0: f64, completed: &mut Vec<Trajectory>) {
+        let queue = event.queue as usize;
+        if event.generation != self.generation[queue] {
+            return;
+        }
+        if let Place::Heard(l) = self.place(queue) {
+            self.heard_due[l] = f64::INFINITY;
+            // The straddling vehicle is entitled to the room first.
+            self.close_straddle(l, event.time, t0);
+            return self.wake(l, event.time, t0);
+        }
+        let Some((ready, tag)) = self.front_due(queue, t0) else {
             return;
         };
         let t = ready.max(event.time);
-        let front = *self.queues[i].front().expect("front_due found one");
+        if t > event.time + TIME_EPSILON {
+            // Not due yet after all: keep time order.
+            return self.schedule_front(queue, t0, t);
+        }
+        let front = *self.queues[queue].front().expect("front_due found one");
         let vehicle = self.vehicles[front.slot as usize];
         let pcu = vehicle.pcu.get();
-        let Some(j) = vehicle.route.get(front.leg as usize + 1).map(|l| l.index()) else {
-            self.release(i, t, tag, None, t0, completed);
-            return;
-        };
+        let next_leg = front.leg as usize + 1;
+        let next = vehicle.route.get(next_leg).map(|l| l.index());
 
-        // Inflow capacity of the next link.
-        let inflow_ok = self.curves[j].last_entry().get() + pcu / self.inflow_rate[j];
-        if inflow_ok > t + TIME_EPSILON {
-            self.schedule_front(i, t0, inflow_ok);
-            return;
-        }
-        // Room on the next link.
-        let (storage, lag) = (Pcu(self.storage[j]), Duration(self.wave_lag[j]));
-        if room_at(&self.curves[j], storage, lag, Duration(t)).get() > ROOM_EPSILON {
-            self.release(i, t, tag, Some(j), t0, completed);
-            return;
-        }
-        let needed = self.curves[j].cumulative_in() - storage + Pcu(ROOM_EPSILON);
-        match self.curves[j].first_exit_exceeding(needed) {
-            Some(freed) if freed.get() + lag.get() > t + TIME_EPSILON => {
-                self.schedule_front(i, t0, freed.get() + lag.get());
+        match self.place(queue) {
+            Place::Link(i) => {
+                if self.straddling_out[i] != NONE {
+                    // The vehicle ahead is still in the way; its rear clearing
+                    // the link end reschedules this queue.
+                    return;
+                }
+                let room = match next {
+                    None => f64::INFINITY,
+                    Some(j) => {
+                        // On a signalised approach the inflow headway applies
+                        // when the vehicle leaves the stop line.
+                        if self.stop_delay[i] <= 0.0 && self.inflow_blocks(j, pcu, queue, t, t0) {
+                            return;
+                        }
+                        match self.admissible(j, pcu, t) {
+                            Ok(room) => room,
+                            Err(blocked) => return self.block(queue, blocked, t, t0),
+                        }
+                    }
+                };
+                self.advance(i, tag, t, room, t0, completed);
             }
-            Some(_) => {
-                // The room was freed at `t`, within float noise of the read above.
-                self.release(i, t, tag, Some(j), t0, completed);
+            Place::Origin => {
+                let first = vehicle.route[0].index();
+                match self.admissible(first, pcu, t) {
+                    Ok(room) => {
+                        self.pop_front(queue, t0);
+                        self.enter_from_outside(front.slot, 0, t, room, false, t0);
+                    }
+                    Err(blocked) => self.block(queue, blocked, t, t0),
+                }
             }
-            None => {
-                // Parked until `j` discharges (S77: nothing behind it moves).
-                self.next_blocked[i] = self.first_blocked[j];
-                self.first_blocked[j] = link_u32(i);
+            Place::StopLine(i) => {
+                let mut room = f64::INFINITY;
+                if let Some(j) = next {
+                    if self.inflow_blocks(j, pcu, queue, t, t0) {
+                        return;
+                    }
+                    match self.admissible(j, pcu, t) {
+                        Ok(r) => room = r,
+                        Err(blocked) => return self.block(queue, blocked, t, t0),
+                    }
+                }
+                self.pop_front(queue, t0);
+                self.traversals[front.slot as usize].push(traversal(i, front.enter, t));
+                if next.is_some() {
+                    self.enter_from_outside(front.slot, next_leg, t, room, true, t0);
+                } else {
+                    self.complete(front.slot, t, t0, completed);
+                }
+            }
+            Place::Heard(_) => unreachable!("room-heard events are handled first"),
+        }
+    }
+
+    /// Whether link `j` can take a vehicle's front at `t`, and the room it has:
+    /// nothing straddles its upstream end, and its room is at least a part —
+    /// [`MIN_PART`], the vehicle, or the link's whole storage, whichever is
+    /// least. If not, what to wait for.
+    fn admissible(&self, j: usize, pcu: f64, t: f64) -> Result<f64, Blocked> {
+        if self.straddling_in[j] != NONE {
+            return Err(Blocked { link: j, retry_at: None });
+        }
+        let storage = self.storage[j];
+        if storage.is_infinite() {
+            return Ok(f64::INFINITY);
+        }
+        let (room, retry_at) = self.heard_room(j, t);
+        if room + ROOM_EPSILON >= pcu.min(storage).min(MIN_PART) {
+            return Ok(room.max(0.0));
+        }
+        Err(Blocked { link: j, retry_at })
+    }
+
+    /// Link `j`'s room as heard at its upstream end at `t`, and when room
+    /// already released downstream will next be heard there.
+    fn heard_room(&self, j: usize, t: f64) -> (f64, Option<f64>) {
+        // Room freed by an exit reaches the upstream end exactly one wave
+        // travel time later; the epsilon keeps that instant inclusive.
+        let heard_until = t + TIME_EPSILON;
+        let lag = self.wave_lag[j];
+        let room =
+            room_at(&self.curves[j], Pcu(self.storage[j]), Duration(lag), Duration(heard_until))
+                .get();
+        let next =
+            self.curves[j].first_exit_after(Duration(heard_until - lag)).map(|e| e.get() + lag);
+        (room, next)
+    }
+
+    /// Whether the next link's inflow headway holds the vehicle back; if so,
+    /// the queue is rescheduled for when it will not.
+    fn inflow_blocks(&mut self, j: usize, pcu: f64, queue: usize, t: f64, t0: f64) -> bool {
+        let clear = self.curves[j].last_entry().get() + pcu / self.inflow_rate[j];
+        if clear > t + TIME_EPSILON {
+            self.schedule_front(queue, t0, clear);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The front vehicle of link `i` moves on at `t`: across the stop line on a
+    /// signalised approach, onto the next link where `room` is heard, or out
+    /// of the network. Everything that could hold it back has been checked.
+    fn advance(
+        &mut self,
+        i: usize,
+        tag: f64,
+        t: f64,
+        room: f64,
+        t0: f64,
+        completed: &mut Vec<Trajectory>,
+    ) {
+        let front = self.queues[i].pop_front().expect("advancing a front vehicle");
+        let slot = front.slot;
+        let vehicle = self.vehicles[slot as usize];
+        self.curves[i].set_last_exit(Duration(t));
+        self.discharged[i] += vehicle.pcu.get();
+        self.service_tag[i] = tag;
+        self.schedule_front(i, t0, t);
+        let next_leg = front.leg as usize + 1;
+        if self.stop_delay[i] > 0.0 {
+            self.release_all(slot, t, t0);
+            let waiting = Queued { ready: t + self.stop_delay[i], ..front };
+            self.join(2 * self.links + i, waiting, t0);
+        } else {
+            self.traversals[slot as usize].push(traversal(i, front.enter, t));
+            if next_leg < vehicle.route.len() {
+                self.enter_from_link(slot, next_leg, t, room, t0);
+            } else {
+                self.complete(slot, t, t0, completed);
             }
         }
     }
 
-    fn release(
+    /// How much of a vehicle of `pcu` moves onto a link with `room`.
+    fn part_taken(room: f64, pcu: f64) -> f64 {
+        if room + ROOM_EPSILON >= pcu { pcu } else { room.max(0.0) }
+    }
+
+    /// A vehicle's front moves from the link it is on onto the link at `leg`
+    /// of its route, taking the `room` there; its rear releases as much.
+    fn enter_from_link(&mut self, slot: u32, leg: usize, t: f64, room: f64, t0: f64) {
+        let s = slot as usize;
+        let vehicle = self.vehicles[s];
+        let j = vehicle.route[leg].index();
+        let take = Self::part_taken(room, vehicle.pcu.get());
+        let from = self.parts[s].front().expect("a vehicle on a link has parts").0 as usize;
+        self.curves[j].record_in(Pcu(take));
+        self.curves[j].set_last_entry(Duration(t));
+        self.parts[s].push_front((link_u32(j), take));
+        // It straddles the link end it crosses until its rear has cleared it.
+        self.straddling_out[from] = slot;
+        self.straddling_in[j] = slot;
+        self.release_rear(s, 0, take, t, t0);
+        let queued = Queued { slot, leg: leg_u32(leg), enter: t, ready: t + self.travel[j] };
+        self.join(j, queued, t0);
+        if self.straddling_in[j] == slot {
+            self.expect_heard(j, t);
+        }
+    }
+
+    /// A vehicle waiting outside the network — at an origin, or at a stop line
+    /// — moves onto the link at `leg` of its route, taking the `room` there;
+    /// the rest of it stays outside until more room is heard.
+    fn enter_from_outside(
         &mut self,
-        i: usize,
-        at: f64,
-        tag: f64,
-        next: Option<usize>,
+        slot: u32,
+        leg: usize,
+        t: f64,
+        room: f64,
+        uses_inflow: bool,
         t0: f64,
-        completed: &mut Vec<Trajectory>,
     ) {
-        let on_link = self.queues[i].pop_front().expect("releasing the front vehicle");
-        let slot = on_link.slot as usize;
-        let vehicle = self.vehicles[slot];
-        self.traversals[slot].push(LinkTraversal {
-            link: LinkId::from_index(i),
-            enter: floor_to_second(on_link.enter),
-            exit: floor_to_second(at),
-        });
-        self.curves[i].record_exit(Duration(at), vehicle.pcu);
-        self.curves[i].set_last_exit(Duration(at));
-        self.service_tag[i] = tag;
-
-        // Room has been freed on `i`: wake every approach parked on it, at the
-        // moment the news reaches `i`'s upstream end.
-        let woken_at = at + self.wave_lag[i];
-        let mut parked = std::mem::replace(&mut self.first_blocked[i], NO_LINK);
-        while parked != NO_LINK {
-            let u = parked as usize;
-            parked = std::mem::replace(&mut self.next_blocked[u], NO_LINK);
-            self.schedule_front(u, t0, woken_at);
+        let s = slot as usize;
+        let vehicle = self.vehicles[s];
+        let pcu = vehicle.pcu.get();
+        let j = vehicle.route[leg].index();
+        let take = Self::part_taken(room, pcu);
+        debug_assert!(self.parts[s].is_empty(), "a vehicle outside the network has no parts");
+        self.curves[j].record_in(Pcu(take));
+        if uses_inflow {
+            self.curves[j].set_last_entry(Duration(t));
         }
+        self.parts[s].push_back((link_u32(j), take));
+        if take < pcu {
+            self.parts[s].push_back((NONE, pcu - take));
+            self.straddling_in[j] = slot;
+        }
+        let queued = Queued { slot, leg: leg_u32(leg), enter: t, ready: t + self.travel[j] };
+        self.join(j, queued, t0);
+        if self.straddling_in[j] == slot {
+            self.expect_heard(j, t);
+        }
+    }
 
-        match next {
-            Some(j) => {
-                self.curves[j].record_entry(Duration(at), vehicle.pcu);
-                let on_next = OnLink {
-                    slot: on_link.slot,
-                    leg: on_link.leg + 1,
-                    enter: at,
-                    earliest_exit: at + self.free_flow[j],
-                };
-                self.join(j, on_next, t0);
+    /// A vehicle has just straddled link `j`'s upstream end, taking the room
+    /// heard there: it closes up when more room is heard.
+    fn expect_heard(&mut self, j: usize, t: f64) {
+        if let (_, Some(at)) = self.heard_room(j, t) {
+            self.schedule_heard(j, at);
+        }
+    }
+
+    /// The vehicle straddling link `l`'s upstream end moves further onto `l`, as
+    /// far as the room heard there allows, releasing its rear.
+    fn close_straddle(&mut self, l: usize, t: f64, t0: f64) {
+        let slot = self.straddling_in[l];
+        if slot == NONE {
+            return;
+        }
+        let s = slot as usize;
+        let parts = &self.parts[s];
+        let Some(k) =
+            parts.iter().take(parts.len().saturating_sub(1)).rposition(|p| p.0 as usize == l)
+        else {
+            debug_assert!(false, "a straddling vehicle has a part on the link and one behind");
+            return;
+        };
+        let behind: f64 = parts.iter().skip(k + 1).map(|p| p.1).sum();
+        let (room, next) = self.heard_room(l, t);
+        let take = Self::part_taken(room, behind);
+        if take + ROOM_EPSILON >= behind.min(MIN_PART).min(self.storage[l]) {
+            self.parts[s][k].1 += take;
+            self.curves[l].record_in(Pcu(take));
+            self.release_rear(s, k, take, t, t0);
+        }
+        if self.straddling_in[l] == slot {
+            if let Some(at) = next {
+                if at > t + TIME_EPSILON {
+                    self.schedule_heard(l, at);
+                }
             }
-            None => completed.push(Trajectory {
-                vehicle: vehicle.id,
-                links: std::mem::take(&mut self.traversals[slot]),
-            }),
         }
-        self.schedule_front(i, t0, at);
+    }
+
+    /// Release `amount` PCU from the rear of vehicle `s`, never from its first
+    /// `keep + 1` parts. A part released whole clears the link end it
+    /// straddled.
+    fn release_rear(&mut self, s: usize, keep: usize, mut amount: f64, t: f64, t0: f64) {
+        let slot = queue_u32(s);
+        while self.parts[s].len() > keep + 1 {
+            let last = self.parts[s].len() - 1;
+            let (link, part) = self.parts[s][last];
+            if part > amount + ROOM_EPSILON {
+                if amount > 0.0 {
+                    if link != NONE {
+                        self.release_on(link as usize, amount, t);
+                    }
+                    self.parts[s][last].1 = part - amount;
+                }
+                return;
+            }
+            amount -= part;
+            if link != NONE && part > 0.0 {
+                self.release_on(link as usize, part, t);
+            }
+            self.parts[s].pop_back();
+            let ahead = self.parts[s].back().expect("at least `keep + 1` parts remain").0 as usize;
+            if self.straddling_in[ahead] == slot {
+                self.straddling_in[ahead] = NONE;
+                self.wake(ahead, t, t0);
+            }
+            if link != NONE && self.straddling_out[link as usize] == slot {
+                self.straddling_out[link as usize] = NONE;
+                self.schedule_front(link as usize, t0, t);
+            }
+        }
+    }
+
+    /// Everything of a vehicle leaves the links it is on.
+    fn release_all(&mut self, slot: u32, t: f64, t0: f64) {
+        let s = slot as usize;
+        self.release_rear(s, 0, f64::INFINITY, t, t0);
+        if let Some((link, part)) = self.parts[s].pop_front() {
+            if link != NONE {
+                self.release_on(link as usize, part, t);
+            }
+        }
+    }
+
+    /// `amount` PCU leaves link `l` at `t`: the room is heard upstream one wave
+    /// travel time later, by whoever waits for it then.
+    fn release_on(&mut self, l: usize, amount: f64, t: f64) {
+        self.curves[l].record_out(Duration(t), Pcu(amount));
+        if self.straddling_in[l] != NONE || self.first_parked[l] != NONE {
+            self.schedule_heard(l, t + self.wave_lag[l]);
+        }
+    }
+
+    fn pop_front(&mut self, queue: usize, t0: f64) {
+        self.queues[queue].pop_front();
+        self.schedule_front(queue, t0, f64::NEG_INFINITY);
+    }
+
+    fn complete(&mut self, slot: u32, t: f64, t0: f64, completed: &mut Vec<Trajectory>) {
+        self.release_all(slot, t, t0);
+        let s = slot as usize;
+        let vehicle = self.vehicles[s];
+        completed.push(Trajectory {
+            vehicle: vehicle.id,
+            departure: vehicle.departure,
+            links: std::mem::take(&mut self.traversals[s]),
+        });
+    }
+
+    /// Hold a queue: retry at a known time, or park until `blocked.link`
+    /// releases room or its upstream end.
+    fn block(&mut self, queue: usize, blocked: Blocked, t: f64, t0: f64) {
+        if let Some(at) = blocked.retry_at {
+            if at > t + TIME_EPSILON {
+                return self.schedule_front(queue, t0, at);
+            }
+        }
+        let l = blocked.link;
+        self.next_parked[queue] = self.first_parked[l];
+        self.first_parked[l] = queue_u32(queue);
+        self.parked_on[queue] = link_u32(l);
+    }
+
+    /// Room has been heard on link `l`, or its upstream end has cleared:
+    /// reschedule everything parked on it, no earlier than `at`.
+    fn wake(&mut self, l: usize, at: f64, t0: f64) {
+        let mut parked = std::mem::replace(&mut self.first_parked[l], NONE);
+        while parked != NONE {
+            let q = parked as usize;
+            parked = std::mem::replace(&mut self.next_parked[q], NONE);
+            self.parked_on[q] = NONE;
+            self.schedule_front(q, t0, at);
+        }
+    }
+}
+
+fn traversal(link: usize, enter: f64, exit: f64) -> LinkTraversal {
+    LinkTraversal {
+        link: LinkId::from_index(link),
+        enter: floor_to_second(enter),
+        exit: floor_to_second(exit),
     }
 }
 
 fn link_u32(index: usize) -> u32 {
     u32::try_from(index).expect("link ids are u32 (Foundations §1)")
+}
+
+fn queue_u32(index: usize) -> u32 {
+    u32::try_from(index).expect("three queues per link fit u32")
+}
+
+fn leg_u32(index: usize) -> u32 {
+    u32::try_from(index).expect("route lengths fit u32")
 }
 
 /// Floor a time in seconds onto the whole-second clock (S88).
@@ -553,10 +1049,9 @@ fn floor_to_second(seconds: f64) -> Second {
 /// Run every vehicle to completion or to the end of `window`, whichever
 /// comes first: the whole-network entry point.
 ///
-/// Vehicles depart at their own departure second. Trips still in flight when
-/// `window` ends are **not** returned; `core-sim` counts them as truncated
-/// (S57). `level` picks which term of the triangular diagram is in force
-/// (S76).
+/// Trips still in flight when `window` ends are **not** returned; `core-sim`
+/// counts them as truncated (S57). `level` picks which term of the triangular
+/// diagram is in force (S76).
 ///
 /// # Panics
 ///
@@ -608,8 +1103,8 @@ mod tests {
 
     /// Size check: one of these exists per vehicle in flight.
     #[test]
-    fn a_vehicle_on_a_link_is_24_bytes() {
-        assert_eq!(std::mem::size_of::<OnLink>(), 24);
+    fn a_queued_vehicle_is_24_bytes() {
+        assert_eq!(std::mem::size_of::<Queued>(), 24);
     }
 
     /// Size check: the event queue holds about one of these per busy link.
