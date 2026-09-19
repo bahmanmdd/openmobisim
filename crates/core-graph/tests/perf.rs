@@ -40,10 +40,12 @@ fn check(name: &str, iterations: u64, release_millis: u64, body: impl FnOnce()) 
 
 #[test]
 fn projection_throughput() {
-    // Runs once per OSM node: a city extract is a few million of them.
+    // Runs once per OSM node: a city extract is a few million of them. About
+    // 125 ns/op on a laptop and 3.6× that on a Windows CI runner, so the
+    // budget sits ~12× above the former and ~3× above the latter (S160).
     let proj = Projection::wgs84(UtmZone::new(31, Hemisphere::North));
     let n = 1_000_000u32;
-    check("Projection::project", u64::from(n), 400, || {
+    check("Projection::project", u64::from(n), 1_500, || {
         let mut acc = 0.0f64;
         for i in 0..n {
             let p = LonLat::new(4.8 + f64::from(i % 1000) * 1e-4, 45.7 + f64::from(i % 997) * 1e-4);
