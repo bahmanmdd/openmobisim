@@ -325,6 +325,12 @@ class RunSummary:
     diagnostics_path: str
     events_path: str
     manifest_path: str
+    #: The written ``link_bins.parquet``, if the run recorded per-link results.
+    link_bins_path: str | None
+    #: The run's master seed.
+    master_seed: int
+    #: The run's fingerprint: 16 hex digits of a hash of every input that decides its results.
+    fingerprint: str
     total_trips: int
     completed: int
     truncated: int
@@ -352,6 +358,7 @@ def run_pipeline(
     link_bin_s: int | None = None,
     route_method: str = "penalty",
     route_options: dict[str, float] | None = None,
+    master_seed: int = 0,
 ) -> RunSummary:
     """Run the whole Phase 1 pipeline and write all four output artifacts.
 
@@ -386,6 +393,9 @@ def run_pipeline(
             many seconds.
         route_method: How route sets are generated (see :func:`route_methods`).
         route_options: That method's options.
+        master_seed: The scenario's master seed, the one number that starts
+            every random stream. Nothing draws from it yet, so today it changes
+            only the run's fingerprint.
 
     Returns:
         A :class:`RunSummary`.

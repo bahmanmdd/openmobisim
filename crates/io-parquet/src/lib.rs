@@ -6,6 +6,7 @@
 //! | [`kpis`] | Long format: `run_id, design_id, replication, iteration, metric, value` |
 //! | [`diagnostics`] | Aggregated counters, from [`openmobisim_core_types::diagnostics::Diagnostics`] |
 //! | [`events`] | Sampled per-trip event rows, from [`openmobisim_core_sim::RunResult::events`] |
+//! | [`link_bins`] | Per-link, per-time-bin results (S168), from [`openmobisim_core_sim::RunResult::link_bins`] |
 //! | [`manifest`] | [`manifest::Manifest`] — the file that makes a run reproducible |
 //!
 //! # What Foundations §6 asks for that this does not write yet
@@ -25,12 +26,14 @@
 //! - **`events.parquet`**: no `payload` column — Phase 1 has no boardings,
 //!   hub or store events, or disruptions to put one on (S135's `EventRow`
 //!   already documents this).
-//! - **`manifest.json`**: no `master_seed`, `design_vector`, `replication`
-//!   count, `scenario_hash`, per-artifact fingerprints, live stochastic
-//!   streams, warm-start source, `adaptation` or `max_parallel_runs` — every
-//!   one of these names a mechanism (the RNG, the artifact cache, disruption
-//!   scheduling, `run_batch`) that does not exist in the pipeline yet. Add
-//!   the field when the mechanism lands, not before.
+//! - **`manifest.json`**: no `design_vector`, `replication` count,
+//!   `scenario_hash` (S168's `run_fingerprint` is its Phase 1 form), per-artifact
+//!   fingerprints beyond the network's, live stochastic streams, warm-start
+//!   source, `adaptation` or `max_parallel_runs` — every one of these names a
+//!   mechanism (the artifact cache, disruption scheduling, `run_batch`) that
+//!   does not exist in the pipeline yet. Add the field when the mechanism
+//!   lands, not before. (`master_seed` is written since S168: the seed and
+//!   `RngKey` exist, though no stochastic step draws from them yet.)
 
 use core::fmt;
 
@@ -38,11 +41,13 @@ pub mod diagnostics;
 pub mod events;
 mod io;
 pub mod kpis;
+pub mod link_bins;
 pub mod manifest;
 
 pub use diagnostics::write_diagnostics;
 pub use events::write_events;
 pub use kpis::write_kpis;
+pub use link_bins::write_link_bins;
 pub use manifest::{Manifest, write_manifest};
 
 /// Something that went wrong writing an output artifact.

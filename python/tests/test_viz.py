@@ -303,3 +303,21 @@ def test_maps_carry_a_north_arrow_and_a_distance_scale_that_is_true():
     # And the matrix, which is not a map, has neither.
     matrix = viz.chart_demand_matrix(toy_run()[1], cell_m=100.0, top=6, size=(8, 4.5), dpi=60)
     assert "N" not in {t.get_text() for t in matrix.texts}
+
+
+def test_the_footer_names_the_runs_seed_and_fingerprint():
+    run, _ = toy_run()
+    for size in ((16, 9), (6, 3.4)):
+        fig = viz.map_link(run, size=size, dpi=60)
+        footer = [
+            t for t in fig.texts if "openmobisim" in t.get_text() and "run viz-test" in t.get_text()
+        ]
+        assert len(footer) == 1, "one footer"
+        assert f"seed 0 · fingerprint {run.fingerprint[:8]}" in footer[0].get_text()
+        # It fits: the footer ends before the logo lockup begins.
+        fig.canvas.draw()
+        width = fig.canvas.get_renderer()
+        box = footer[0].get_window_extent(width)
+        assert box.x1 < fig.bbox.width * 0.86, (
+            f"footer overruns at {size}: {box.x1} of {fig.bbox.width}"
+        )

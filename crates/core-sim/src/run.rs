@@ -29,6 +29,7 @@ use openmobisim_core_types::time::{EventKey, Second};
 use openmobisim_core_types::units::{Duration, Pcu};
 
 use crate::events::{EventRow, EventType};
+use crate::identity::{Inputs, RunDescription, describe};
 
 /// Which loading engine a [`Run`] uses.
 ///
@@ -150,6 +151,9 @@ pub struct Run {
     link_bin_seconds: Option<u32>,
     /// How route sets are generated (S165): the penalty method by default.
     route_generator: Arc<dyn RouteSetGenerator>,
+    /// The scenario's master seed (S168): the one number that starts every
+    /// random stream. Nothing draws from it yet; see [`RunDescription`].
+    master_seed: u64,
 }
 
 impl Run {
@@ -173,6 +177,7 @@ impl Run {
             flow_motor: FlowMotor::default(),
             link_bin_seconds: None,
             route_generator: Arc::from(default_generator()),
+            master_seed: 0,
         }
     }
 
@@ -192,6 +197,35 @@ impl Run {
     pub fn with_route_generator(mut self, generator: Arc<dyn RouteSetGenerator>) -> Self {
         self.route_generator = generator;
         self
+    }
+
+    /// The same run, with `master_seed` as its master seed (S168; default 0).
+    ///
+    /// Every random stream of a run is keyed from this one number, so a run
+    /// is reproduced by giving it the same seed. No stochastic step draws from
+    /// it yet (the choice layer is the first), so today it changes the run's
+    /// [`fingerprint`](RunDescription::fingerprint) and nothing else.
+    #[must_use]
+    pub fn with_master_seed(mut self, master_seed: u64) -> Self {
+        self.master_seed = master_seed;
+        self
+    }
+
+    /// What went into this run: its seed and its fingerprint (S168). Take it
+    /// before [`Self::execute`]; it depends only on the inputs.
+    #[must_use]
+    pub fn description(&self) -> RunDescription {
+        describe(&Inputs {
+            network: &self.network,
+            travellers: &self.travellers,
+            trips: &self.trips,
+            window: self.window,
+            flow_motor: &self.flow_motor,
+            link_bin_seconds: self.link_bin_seconds,
+            route_method: self.route_generator.name(),
+            route_descriptor: &self.route_generator.descriptor(),
+            master_seed: self.master_seed,
+        })
     }
 
     /// The same run, also recording per-link, per-time-bin results (S163) in

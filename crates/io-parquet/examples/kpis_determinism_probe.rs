@@ -127,6 +127,7 @@ fn main() {
     let window = Second(WINDOW_S);
 
     let mut run = Run::new(network.clone(), travellers.clone(), trips, window);
+    let description = run.description();
     let mut run_diagnostics = Diagnostics::new();
     let result = run.execute(&mut run_diagnostics);
 
@@ -146,7 +147,7 @@ fn main() {
         openmobisim_io_parquet::events::DEFAULT_SAMPLE_RATE,
     )
     .expect("write events");
-    let manifest = Manifest::for_run(&travellers, &result, window, 1);
+    let manifest = Manifest::for_run(&travellers, &result, window, 1, &description);
     write_manifest(dir.join("manifest.json"), &manifest).expect("write manifest");
 
     // --- The report ----------------------------------------------------
@@ -159,6 +160,9 @@ fn main() {
         network.node_count(),
         network.link_count()
     );
+    // The run's fingerprint is a pure function of its inputs: it must be the
+    // same on every run and at any thread count (S168).
+    println!("run_fingerprint       {}", description.fingerprint_hex());
     println!("travellers            {}", travellers.len());
     println!("total_trips           {}", result.completion.total_trips);
     println!("completed             {}", result.completion.completed);

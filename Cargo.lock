@@ -727,6 +727,7 @@ dependencies = [
  "arrow-schema",
  "openmobisim-core-demand",
  "openmobisim-core-graph",
+ "openmobisim-core-loading",
  "openmobisim-core-sim",
  "openmobisim-core-types",
  "parquet",

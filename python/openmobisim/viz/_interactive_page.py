@@ -236,8 +236,10 @@ function resize() {
   canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
 }
 function fitTo(x0, y0, x1, y1, pad) {
-  const w = Math.max(x1 - x0, 60), h = Math.max(y1 - y0, 60);
-  S.mpp = Math.max(w / (W * (1 - pad)), h / (H * (1 - pad))); S.cx = (x0 + x1) / 2; S.cy = (y0 + y1) / 2;
+  // Fit into the part of the window the panel leaves free (it sits on the right of a wide window).
+  const w = Math.max(x1 - x0, 60), h = Math.max(y1 - y0, 60), reserve = W > 760 ? 340 : 0;
+  S.mpp = Math.max(w / ((W - reserve) * (1 - pad)), h / (H * (1 - pad)));
+  S.cx = (x0 + x1) / 2 + reserve / 2 * S.mpp; S.cy = (y0 + y1) / 2;
 }
 function levelMpp(i) { return Math.max(MIN_MPP, FIT.mpp / Math.pow(3.2, i)); }
 function currentLevel() { let best = 0, bd = 1e9; for (let i = 0; i < LEVELS.length; i++) { const d = Math.abs(Math.log(S.mpp / levelMpp(i))); if (d < bd) { bd = d; best = i; } } return best; }
@@ -259,23 +261,52 @@ function colourIndex(l) {
   return Math.max(0, Math.min(NCOL - 1, Math.round(t * (NCOL - 1))));
 }
 // Screen-space polyline of link l, offset to the driver's right by `off` pixels, thinned to ~`gap` px.
-const PX = new Float32Array(4096), PY = new Float32Array(4096);
+let PX = new Float32Array(4096), PY = new Float32Array(4096);
+function ensure(n) { if (PX.length < n) { PX = new Float32Array(n * 2); PY = new Float32Array(n * 2); } }
+// Move the n points in PX/PY to the driver's right by `off` pixels, by vertex normals (screen: right of (dx,dy) is (-dy,dx)), averaged.
+function offsetLine(n, off) {
+  if (off === 0 || n < 2) return;
+  const nx = new Float32Array(n), ny = new Float32Array(n), fx = new Float32Array(n), fy = new Float32Array(n);
+  for (let i = 0; i < n - 1; i++) {
+    const dx = PX[i + 1] - PX[i], dy = PY[i + 1] - PY[i], m = Math.hypot(dx, dy);
+    if (m < 1e-6) continue;
+    const ux = -dy / m, uy = dx / m;
+    nx[i] += ux; ny[i] += uy; nx[i + 1] += ux; ny[i + 1] += uy;
+    if (fx[i] === 0 && fy[i] === 0) { fx[i] = ux; fy[i] = uy; }
+    fx[i + 1] = ux; fy[i + 1] = uy;
+  }
+  for (let i = 0; i < n; i++) {
+    let m = Math.hypot(nx[i], ny[i]), ax = nx[i], ay = ny[i];
+    if (m < 0.35) { ax = fx[i]; ay = fy[i]; m = Math.hypot(ax, ay) || 1; }   // a U-turn cancels the normals: keep the last segment's
+    PX[i] += ax / m * off; PY[i] += ay / m * off;
+  }
+}
+// Screen-space polyline of link l, offset to the driver's right by `off` pixels, thinned to ~`gap` px.
 function screenLine(l, off, gap) {
+  const v0 = VS[l], v1 = VS[l + 1]; ensure(v1 - v0 + 2);
   let n = 0, lx = 0, ly = 0;
-  const v0 = VS[l], v1 = VS[l + 1];
-  for (let v = v0; v < v1 && n < 4090; v++) {
+  for (let v = v0; v < v1; v++) {
     const x = sx(X[v]), y = sy(Y[v]);
     if (n === 0 || v === v1 - 1 || Math.abs(x - lx) + Math.abs(y - ly) >= gap) { PX[n] = x; PY[n] = y; n++; lx = x; ly = y; }
   }
-  if (off !== 0 && n > 1) {
-    // vertex normals to the right of travel (screen: right of (dx,dy) is (-dy,dx)), averaged
-    const nx = new Float32Array(n), ny = new Float32Array(n);
-    for (let i = 0; i < n - 1; i++) {
-      const dx = PX[i + 1] - PX[i], dy = PY[i + 1] - PY[i], m = Math.hypot(dx, dy) || 1;
-      nx[i] += -dy / m; ny[i] += dx / m; nx[i + 1] += -dy / m; ny[i + 1] += dx / m;
+  offsetLine(n, off);
+  return n;
+}
+// One route as a single polyline, so a turn is offset like a bend and never leaves a gap or a spike.
+function routeLine(r, off, gap) {
+  let total = 0; for (let i = RST[r]; i < RST[r + 1]; i++) total += VS[RLK[i] + 1] - VS[RLK[i]];
+  ensure(total + 2);
+  let n = 0, lx = 0, ly = 0, wx = NaN, wy = NaN;
+  for (let i = RST[r]; i < RST[r + 1]; i++) {
+    const l = RLK[i], v0 = VS[l], v1 = VS[l + 1];
+    for (let v = v0; v < v1; v++) {
+      if (v === v0 && X[v] === wx && Y[v] === wy) continue;   // the node this link shares with the last one
+      const x = sx(X[v]), y = sy(Y[v]);
+      if (n === 0 || v === v0 || v === v1 - 1 || Math.abs(x - lx) + Math.abs(y - ly) >= gap) { PX[n] = x; PY[n] = y; n++; lx = x; ly = y; }
+      wx = X[v]; wy = Y[v];
     }
-    for (let i = 0; i < n; i++) { const m = Math.hypot(nx[i], ny[i]) || 1; PX[i] += nx[i] / m * off; PY[i] += ny[i] / m * off; }
   }
+  offsetLine(n, off);
   return n;
 }
 function addLine(path, l, off, gap) {
@@ -343,13 +374,8 @@ function drawRoutes() {
   const k = S.pair, r0 = SS[k], r1 = SS[k + 1], step = 3.8;
   for (let r = r0; r < r1; r++) {
     const own = r - r0, path = new Path2D(), off = (own + 0.5) * step;
-    // One continuous path per route: each link's offset line is joined to the last, so a turn has no gap.
-    let started = false;
-    for (let i = RST[r]; i < RST[r + 1]; i++) {
-      const n = screenLine(RLK[i], off, 1.2); if (n < 2) continue;
-      if (started) path.lineTo(PX[0], PY[0]); else { path.moveTo(PX[0], PY[0]); started = true; }
-      for (let j = 1; j < n; j++) path.lineTo(PX[j], PY[j]);
-    }
+    const n = routeLine(r, off, 1.2);
+    if (n >= 2) { path.moveTo(PX[0], PY[0]); for (let j = 1; j < n; j++) path.lineTo(PX[j], PY[j]); }
     const hl = S.hoverRoute === own, dim = S.hoverRoute >= 0 && !hl;
     ctx.globalAlpha = dim ? 0.3 : 1;
     ctx.strokeStyle = TH.surface; ctx.lineWidth = (hl ? 6 : 4.6); ctx.stroke(path);

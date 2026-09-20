@@ -173,6 +173,18 @@ pub enum FidelityLevel {
     Full,
 }
 
+impl FidelityLevel {
+    /// The level's number in the fidelity ladder (design §10.1): 2, 3 or 4.
+    #[must_use]
+    pub const fn number(self) -> u32 {
+        match self {
+            Self::PointQueue => 2,
+            Self::SpatialQueue => 3,
+            Self::Full => 4,
+        }
+    }
+}
+
 /// One vehicle in a queue: its front on a link, or the vehicle at an origin
 /// or at a stop line.
 ///

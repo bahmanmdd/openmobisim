@@ -187,6 +187,7 @@ def test_the_page_starts_in_the_asked_theme_and_names_its_source(tmp_path):
     assert meta["theme"] == "night" and meta["logo"] is False
     assert set(meta["tokens"]) >= {"paper", "night", "route"}
     assert "run interactive-test" in meta["provenance"] and "level 4 (full)" in meta["provenance"]
+    assert f"seed 0 · fingerprint {run.fingerprint[:8]}" in meta["provenance"]
     assert meta["provenance"].startswith(f"openmobisim {ms.__version__}")
 
 

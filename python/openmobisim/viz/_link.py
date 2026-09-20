@@ -22,6 +22,7 @@ from openmobisim.viz._figure import (
     ramp_rgb,
     rgb,
 )
+from openmobisim.viz._provenance import run_identity
 from openmobisim.viz._style import Theme, get_theme
 
 __all__ = ["link_table", "map_link"]
@@ -299,7 +300,7 @@ def map_link(
     )
     provenance = (
         f"openmobisim {__version__} · run {run.run_id} · level {run.flow_level} ({level})"
-        f"{stepping} · bin {step} s · {source}"
+        f"{stepping} · bin {step} s · {run_identity(run)} · {source}"
     )
     sample_values = [nice_number(vmax / 10), nice_number(vmax / 3), nice_number(vmax)]
     samples = [

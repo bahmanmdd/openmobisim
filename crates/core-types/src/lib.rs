@@ -44,6 +44,7 @@ const _: () = assert!(
 );
 
 pub mod diagnostics;
+pub mod hash;
 pub mod ids;
 pub mod reduce;
 pub mod registry;

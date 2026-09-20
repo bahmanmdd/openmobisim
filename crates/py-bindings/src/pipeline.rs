@@ -44,7 +44,9 @@ use crate::network::PyNetwork;
 use crate::routes::{PyRouteSets, to_options};
 use openmobisim_core_routes::Registry;
 use openmobisim_io_parquet::manifest::Manifest;
-use openmobisim_io_parquet::{write_diagnostics, write_events, write_kpis, write_manifest};
+use openmobisim_io_parquet::{
+    write_diagnostics, write_events, write_kpis, write_link_bins, write_manifest,
+};
 
 /// One `trips.parquet` row, as a plain tuple in `RawTrip`'s field order.
 type TripRow = (String, u32, f64, f64, f64, f64, u32, String, Option<u32>);
@@ -97,6 +99,17 @@ pub struct PyRunSummary {
     /// Path to the written `manifest.json`.
     #[pyo3(get)]
     pub manifest_path: String,
+    /// Path to the written `link_bins.parquet`, if the run recorded per-link
+    /// results (S168).
+    #[pyo3(get)]
+    pub link_bins_path: Option<String>,
+    /// The run's master seed (S168).
+    #[pyo3(get)]
+    pub master_seed: u64,
+    /// The run's fingerprint: 16 hex digits of a hash of every input that
+    /// decides its results (S168).
+    #[pyo3(get)]
+    pub fingerprint: String,
     /// Every trip in the demand.
     #[pyo3(get)]
     pub total_trips: u32,
@@ -201,7 +214,7 @@ fn to_value_error<E: std::fmt::Display>(e: E) -> PyErr {
     persons=None, persons_path=None,
     class_defaults=None, default_weight=1, window_s=86_400,
     flow_level=0, flow_step_s=300, link_bin_s=None,
-    route_method="penalty", route_options=None,
+    route_method="penalty", route_options=None, master_seed=0,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -224,6 +237,7 @@ pub fn run_pipeline(
     link_bin_s: Option<u32>,
     route_method: &str,
     route_options: Option<HashMap<String, f64>>,
+    master_seed: u64,
 ) -> PyResult<PyRunSummary> {
     // Refuse a bad method or option before doing any work.
     let generator = Registry::builtin()
@@ -294,6 +308,9 @@ pub fn run_pipeline(
         }
         run = run.with_link_bins(bin);
     }
+    run = run.with_master_seed(master_seed);
+    // What went in, taken before it runs (S168).
+    let description = run.description();
     let mut run_diagnostics = Diagnostics::new();
     let result = run.execute(&mut run_diagnostics);
 
@@ -316,14 +333,27 @@ pub fn run_pipeline(
         openmobisim_io_parquet::events::DEFAULT_SAMPLE_RATE,
     )
     .map_err(to_value_error)?;
-    let manifest = Manifest::for_run(&travellers, &result, Second(window_s), default_weight);
+    let manifest =
+        Manifest::for_run(&travellers, &result, Second(window_s), default_weight, &description);
     write_manifest(&manifest_path, &manifest).map_err(to_value_error)?;
+    let link_bins_path = match &result.link_bins {
+        Some(bins) => {
+            let path = dir.join("link_bins.parquet");
+            write_link_bins(&path, run_id, bins, &network.inner, &description)
+                .map_err(to_value_error)?;
+            Some(path.to_string_lossy().into_owned())
+        }
+        None => None,
+    };
 
     Ok(PyRunSummary {
         kpis_path: kpis_path.to_string_lossy().into_owned(),
         diagnostics_path: diagnostics_path.to_string_lossy().into_owned(),
         events_path: events_path.to_string_lossy().into_owned(),
         manifest_path: manifest_path.to_string_lossy().into_owned(),
+        link_bins_path,
+        master_seed,
+        fingerprint: description.fingerprint_hex(),
         total_trips: result.completion.total_trips,
         completed: result.completion.completed,
         truncated: result.completion.truncated,

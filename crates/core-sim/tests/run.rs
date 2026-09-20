@@ -13,10 +13,13 @@ use openmobisim_core_demand::{ClassDefaults, Ownership, RawTrip, build_traveller
 use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
-use openmobisim_core_sim::Run;
+use openmobisim_core_graph::turns::TurnTable;
+use openmobisim_core_loading::FidelityLevel;
+use openmobisim_core_sim::{FlowMotor, Run};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::LinkId;
 use openmobisim_core_types::time::Second;
+use openmobisim_core_types::units::Duration;
 
 /// Three nodes in a line, `a -> b -> c`, each leg its own two-way street:
 /// `RoadNetworkBuilder::add_link` is directed and makes exactly one link per
@@ -454,4 +457,149 @@ fn the_method_is_selectable_and_changes_nothing_while_only_the_best_route_is_use
     assert_eq!(default.route_sets.as_ref().map(|s| s.routes(0).count()), Some(2));
     assert_eq!(plain.completion, default.completion);
     assert_eq!(plain.total_travel_time, default.total_travel_time);
+}
+
+// --- the run's identity: seed and fingerprint (S168) ---------------------------------
+
+/// Everything a run's fingerprint should notice, as knobs on the diamond run.
+#[derive(Clone)]
+struct Knobs {
+    seed: u64,
+    top_length_m: f64,
+    departure: u32,
+    weight: Option<u32>,
+    car: bool,
+    window: u32,
+    step: Option<(f64, FidelityLevel)>,
+    method: &'static str,
+    bins: Option<u32>,
+}
+
+impl Knobs {
+    fn base() -> Self {
+        Self {
+            seed: 0,
+            top_length_m: 100.0,
+            departure: 60,
+            weight: None,
+            car: true,
+            window: 3600,
+            step: None,
+            method: "penalty",
+            bins: None,
+        }
+    }
+
+    fn run(&self) -> Run {
+        let mut b = RoadNetworkBuilder::new();
+        for (n, x, y) in
+            [("a", 0.0, 0.0), ("b", 100.0, 60.0), ("c", 100.0, -60.0), ("d", 200.0, 0.0)]
+        {
+            b.add_node(n, LonLat::new(4.8 + x / 77_800.0, 45.7 + y / 110_574.0));
+        }
+        for (name, from, to, len) in [
+            ("ab", "a", "b", self.top_length_m),
+            ("bd", "b", "d", 100.0),
+            ("ac", "a", "c", 120.0),
+            ("cd", "c", "d", 120.0),
+        ] {
+            let mut spec = LinkSpec::new(RoadClass::Residential);
+            spec.length_m = Some(len);
+            b.add_link(name, from, to, spec);
+        }
+        let network = Arc::new(
+            b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+                .expect("buildable"),
+        );
+        let at = |x: f64, y: f64| (4.8 + x / 77_800.0, 45.7 + y / 110_574.0);
+        let mut alice = trip("alice", 0, at(0.0, 0.0), at(200.0, 0.0), self.departure);
+        alice.weight = self.weight;
+        let defaults = ClassDefaults::new()
+            .with_default("commuter", Ownership { car: self.car, ..Ownership::NONE });
+        let (travellers, trips) =
+            build_travellers(vec![alice], Vec::new(), &defaults, 1, &mut Diagnostics::new())
+                .expect("buildable");
+        let mut run =
+            Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(self.window))
+                .with_master_seed(self.seed)
+                .with_route_generator(Arc::from(
+                    openmobisim_core_routes::generator(self.method, &Default::default())
+                        .expect("built in"),
+                ));
+        if let Some((step, level)) = self.step {
+            let turns = Arc::new(TurnTable::build(&network, SignalDefaults::SHIPPED));
+            run = run.with_flow_motor(FlowMotor::Ltm { turns, step: Duration(step), level });
+        }
+        if let Some(bin) = self.bins {
+            run = run.with_link_bins(bin);
+        }
+        run
+    }
+
+    fn fingerprint(&self) -> u64 {
+        self.run().description().fingerprint
+    }
+}
+
+#[test]
+fn a_fingerprint_is_the_same_for_the_same_inputs_before_and_after_the_run() {
+    let mut run = Knobs::base().run();
+    let before = run.description();
+    assert_eq!(before, Knobs::base().run().description());
+    let _ = run.execute(&mut Diagnostics::new());
+    assert_eq!(before, run.description(), "running does not change what went in");
+    assert_eq!(before.fingerprint_hex().len(), 16);
+    assert_eq!(before.master_seed, 0);
+    assert_eq!(before.route_method, "penalty");
+    assert!(before.route_descriptor.starts_with("penalty"), "{}", before.route_descriptor);
+    assert_eq!(
+        (before.flow_level, before.flow_step_seconds, before.link_bin_seconds),
+        (0, None, None)
+    );
+}
+
+#[test]
+fn every_input_that_decides_a_run_changes_its_fingerprint() {
+    let base = Knobs::base().fingerprint();
+    let changed: Vec<(&str, Knobs)> = vec![
+        ("seed", Knobs { seed: 1, ..Knobs::base() }),
+        ("a link's length", Knobs { top_length_m: 101.0, ..Knobs::base() }),
+        ("a departure", Knobs { departure: 61, ..Knobs::base() }),
+        ("a weight", Knobs { weight: Some(3), ..Knobs::base() }),
+        ("what a traveller owns", Knobs { car: false, ..Knobs::base() }),
+        ("the window", Knobs { window: 7200, ..Knobs::base() }),
+        ("the loading engine", Knobs { step: Some((300.0, FidelityLevel::Full)), ..Knobs::base() }),
+        ("the route method", Knobs { method: "shortest", ..Knobs::base() }),
+        ("the bin length", Knobs { bins: Some(300), ..Knobs::base() }),
+    ];
+    for (what, knobs) in &changed {
+        assert_ne!(knobs.fingerprint(), base, "{what} must change the fingerprint");
+    }
+    // Within the loading engine: its step and its level each count.
+    let ltm = |step, level| Knobs { step: Some((step, level)), ..Knobs::base() }.fingerprint();
+    let reference = ltm(300.0, FidelityLevel::Full);
+    assert_ne!(ltm(60.0, FidelityLevel::Full), reference, "the step");
+    assert_ne!(ltm(300.0, FidelityLevel::PointQueue), reference, "the level");
+    let bins = |b| Knobs { bins: Some(b), ..Knobs::base() }.fingerprint();
+    assert_ne!(bins(300), bins(600), "the bin length itself");
+    // Nothing changed, nothing moves.
+    assert_eq!(Knobs::base().fingerprint(), base);
+}
+
+#[test]
+fn the_description_names_the_loading_engine_and_the_bins() {
+    let knobs = Knobs {
+        step: Some((120.0, FidelityLevel::SpatialQueue)),
+        bins: Some(600),
+        ..Knobs::base()
+    };
+    let d = knobs.run().description();
+    assert_eq!(
+        (d.flow_level, d.flow_step_seconds, d.link_bin_seconds),
+        (3, Some(120.0), Some(600))
+    );
+    // The network fingerprint is of ids only: a longer link changes the run's fingerprint, not that.
+    let longer = Knobs { top_length_m: 250.0, ..Knobs::base() }.run().description();
+    assert_eq!(longer.network_fingerprint, Knobs::base().run().description().network_fingerprint);
+    assert_ne!(longer.fingerprint, Knobs::base().run().description().fingerprint);
 }

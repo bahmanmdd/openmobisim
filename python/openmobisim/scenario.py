@@ -99,6 +99,28 @@ class Run:
         """The network this run loaded."""
         return self._network
 
+    @property
+    def fingerprint(self) -> str:
+        """A hash of everything that decides this run's results (16 hex digits).
+
+        The network's content, the demand, every setting, the route method and
+        its options, the master seed and the code version. Two runs with the
+        same fingerprint were given the same inputs; on one machine they give
+        the same results. Figures print its first eight digits, every results
+        file carries it, so a picture or a table traces back to its run.
+        """
+        return self._summary.fingerprint
+
+    @property
+    def master_seed(self) -> int:
+        """The run's master seed (``Scenario`` argument ``master_seed``).
+
+        The one number that starts every random stream. Nothing draws from it
+        yet (the choice layer is the first that will), so today it changes only
+        the fingerprint.
+        """
+        return self._summary.master_seed
+
     def route_sets(self) -> _core.RouteSets:
         """The route sets the trips were routed from.
 
@@ -115,9 +137,30 @@ class Run:
         One row per (bin, link) that saw traffic: how much traffic left the
         link in that bin, and how long it took. Every traversal that finished
         inside the window counts, including those of trips still under way
-        when it ended. Held in memory only; not written to a file.
+        when it ended. The same table is written to ``link_bins.parquet``: read
+        it with ``Run.link_bins_table()``.
         """
         return self._summary.link_bins
+
+    def link_bins_table(self) -> Table | None:
+        """``link_bins.parquet``: the per-link results as a table, or ``None``.
+
+        ``None`` unless the scenario was built with ``link_bin_s``. One row per
+        (bin, link) that saw traffic, sorted by bin then link, with columns
+        ``run_id, bin, start_s, link, link_index, crossings, pcu, pcu_seconds``:
+
+        * ``link`` is the link's external id (an OSM way and direction, say),
+          the id that survives a rebuilt network; ``link_index`` is its row in
+          the network's arrays, meaningful only next to this run's network
+          fingerprint, which the file's metadata carries.
+        * ``crossings`` counts traversals that finished in the bin; ``pcu`` is
+          the traffic that left the link (traveller weight and vehicle size
+          included); ``pcu_seconds`` is the PCU-weighted time they took. Mean
+          traversal time is ``pcu_seconds / pcu`` and the flow in PCU per hour
+          is ``pcu * 3600 / bin_seconds``.
+        """
+        path = self._summary.link_bins_path
+        return None if path is None else Table(path)
 
     def kpis(self) -> Table:
         """``kpis.parquet``: long format, one row per metric (Foundations §6)."""
@@ -195,6 +238,7 @@ class Scenario:
         link_bin_s: int | None = None,
         route_method: str = "penalty",
         route_options: dict[str, float] | None = None,
+        master_seed: int = 0,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
         if flow_level not in FLOW_LEVELS:
@@ -203,6 +247,10 @@ class Scenario:
             raise ValueError(f"flow_step_s must be positive, got {flow_step_s}")
         if link_bin_s is not None and link_bin_s <= 0:
             raise ValueError(f"link_bin_s must be positive, got {link_bin_s}")
+        if not 0 <= master_seed < 2**64:
+            raise ValueError(
+                f"master_seed must be an integer from 0 to 2**64 - 1, got {master_seed}"
+            )
         self._network = network
         self._trips = trips
         self._trips_path = trips_path
@@ -216,6 +264,7 @@ class Scenario:
         self._link_bin_s = link_bin_s
         self._route_method = route_method
         self._route_options = route_options
+        self._master_seed = master_seed
 
     @classmethod
     def from_parts(
@@ -231,6 +280,7 @@ class Scenario:
         link_bin_s: int | None = None,
         route_method: str = "penalty",
         route_options: dict[str, float] | None = None,
+        master_seed: int = 0,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -267,6 +317,10 @@ class Scenario:
                 sets you can inspect (``Run.route_sets()``) but not the run.
             route_options: The method's options, numbers by name; unknown names
                 and out-of-range values are refused.
+            master_seed: The one number that starts every random stream, so a
+                run is reproduced by giving it the same one. Nothing draws from
+                it yet (the choice layer will), so today it changes only the run's
+                fingerprint. A non-negative integer below 2**64.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -289,6 +343,7 @@ class Scenario:
             link_bin_s=link_bin_s,
             route_method=route_method,
             route_options=route_options,
+            master_seed=master_seed,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
@@ -322,6 +377,7 @@ class Scenario:
             link_bin_s=self._link_bin_s,
             route_method=self._route_method,
             route_options=self._route_options,
+            master_seed=self._master_seed,
         )
         return Run(
             summary,

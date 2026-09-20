@@ -32,6 +32,7 @@
 
 use std::collections::HashMap;
 
+use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, LinkId};
 
 use crate::geometry::{LonLat, polyline_length_metres};
@@ -87,38 +88,6 @@ impl NetworkFingerprint {
             hash.write_bytes(external.as_bytes());
         }
         Self(hash.finish())
-    }
-}
-
-/// A hand-written FNV-1a 64-bit hash.
-///
-/// Not a cryptographic hash and not meant as one — [`NetworkFingerprint`]
-/// only has to catch an accidental mismatch, not resist a deliberate one. A
-/// dependency-free ten-line function does that without adding to the
-/// dependency graph the wheel-building promise has to keep pure Rust (§3).
-struct Fnv1a(u64);
-
-impl Fnv1a {
-    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
-    const PRIME: u64 = 0x0000_0100_0000_01b3;
-
-    fn new() -> Self {
-        Self(Self::OFFSET_BASIS)
-    }
-
-    fn write_bytes(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.0 ^= u64::from(b);
-            self.0 = self.0.wrapping_mul(Self::PRIME);
-        }
-    }
-
-    fn write_u32(&mut self, v: u32) {
-        self.write_bytes(&v.to_le_bytes());
-    }
-
-    fn finish(self) -> u64 {
-        self.0
     }
 }
 

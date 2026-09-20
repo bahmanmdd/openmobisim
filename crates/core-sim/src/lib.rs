@@ -4,6 +4,7 @@
 //! |---|---|
 //! | [`run`] | [`run::Run`] — the orchestration loop, [`run::RunResult`], [`run::TripCompletionStats`] (S57) |
 //! | [`events`] | [`events::EventRow`] — one row per trip outcome, what `io-parquet`'s `events.parquet` writer reads from |
+//! | [`identity`] | [`identity::RunDescription`] — a run's master seed and fingerprint, made before it executes (S168) |
 //!
 //! # What this crate is, and is not, yet
 //!
@@ -26,7 +27,9 @@
 //! to add it.
 
 pub mod events;
+pub mod identity;
 pub mod run;
 
 pub use events::{EventRow, EventType};
+pub use identity::RunDescription;
 pub use run::{FlowMotor, Run, RunResult, TripCompletionStats};
