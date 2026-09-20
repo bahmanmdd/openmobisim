@@ -8,6 +8,8 @@ so related ones sort and complete together: ``map_*`` draws on a map,
   of every link, width = volume, colour = delay over free flow.
 * :func:`map_demand` — demand as origin-destination desire lines.
 * :func:`map_route` — the alternative routes of one origin-destination pair.
+* :func:`map_interactive` — a run and its route sets as one interactive HTML file:
+  zoom levels, time, colour, hover, and route inspection. Needs no matplotlib.
 * :func:`chart_demand_matrix` — the origin-destination matrix as a heat-map.
 
 matplotlib is imported when a figure is drawn, not when this package is, so
@@ -15,7 +17,8 @@ matplotlib is imported when a figure is drawn, not when this package is, so
 """
 
 from openmobisim.viz._demand import chart_demand_matrix, map_demand
+from openmobisim.viz._interactive import map_interactive
 from openmobisim.viz._link import map_link
 from openmobisim.viz._route import map_route
 
-__all__ = ["chart_demand_matrix", "map_demand", "map_link", "map_route"]
+__all__ = ["chart_demand_matrix", "map_demand", "map_interactive", "map_link", "map_route"]
