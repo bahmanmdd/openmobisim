@@ -9,7 +9,7 @@
 //! | [`network`] | The road network itself: structure of arrays, built once, then immutable |
 //! | [`turns`] | (incoming link, outgoing link) pairs — the node model's unit of work |
 //! | [`link_geometry`] | The shape of each street, kept outside `RoadNetwork` (S125) |
-//! | [`examples`] | `manhattan_grid` — the shared synthetic-network fixture (S105) |
+//! | [`examples`] | `manhattan_grid` and `toy_network` — the shared synthetic-network fixtures (S105, S161) |
 //!
 //! # The one thing to know
 //!
@@ -34,7 +34,7 @@ pub use defaults::{
     DEFAULTS_VERSION, DefaultRow, GlobalMultipliers, LinkParameters, ParameterNote, RoadClass,
     SignalDefaults, default_row,
 };
-pub use examples::manhattan_grid;
+pub use examples::{manhattan_grid, toy_network};
 pub use geometry::{
     Hemisphere, LonLat, Projected, Projection, ProjectionError, UtmZone, ground_distance_metres,
     haversine_metres, polyline_length_metres, scale_factor,

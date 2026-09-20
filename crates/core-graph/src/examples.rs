@@ -1,4 +1,5 @@
-//! `manhattan_grid` — the shared synthetic-network fixture (S105).
+//! `manhattan_grid` and `toy_network` — the shared synthetic-network fixtures
+//! (S105, S161).
 //!
 //! A grid is the right shape for a fixture that has to double as both a
 //! correctness check and a demo: every count — nodes, links, turns — is
@@ -110,5 +111,106 @@ pub fn manhattan_grid(n: u32, block_metres: f64, signals: bool) -> (RoadNetwork,
     let network = builder
         .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut diagnostics)
         .expect("a manhattan_grid is always projectable: coordinates are built, not read");
+    (network, diagnostics)
+}
+
+/// The toy network's road part (I-m, S161): a small, one-way network on which
+/// every number the loading produces can be checked by hand.
+///
+/// Sixteen nodes and sixteen links, each a mechanism in a few lines. Streets
+/// are `residential` unless stated, `length_m` is set exactly (so hand
+/// derivations are exact), and node positions agree with those lengths.
+///
+/// ```text
+///  N1 ─s1 300─┐                                         ┌─ a4 300 ─▶ D1
+///             ▼                                         │
+///  W ─a1 300─▶ S* ─a2 200─▶ M ─a3 400─▶ X0 ▷c1▷c2▷c3▷ X3 ┤   c1–c3: 4 m each
+///                           ▲                           └─ a5 60 (service) ─▶ R1
+///  N2 ═m1 300, 2 lanes══════┘                                                  │
+///                                                                      ring r1–r4
+///  N3 ─n3 100─▶ R4 (top right); the ring runs R1→R2→R3→R4→R1               (4 × 30 m,
+///  counter-clockwise; `e2` (300 m) leaves it at R2 towards D2.        junction=roundabout)
+/// ```
+///
+/// - `S` is signalised: `a1` and `s1` are its approaches, both leading to
+///   `a2`.
+/// - `M` merges `a2` with the two-lane `m1` into `a3`.
+/// - `c1`–`c3` are shorter than a vehicle (4 m against 7.14 m of jam spacing):
+///   the sub-vehicle-length case.
+/// - `X3` diverges into `a4` and the slower service road `a5`, which enters
+///   the roundabout ring at `R1`; `n3` enters it at `R4`. The ring's four
+///   links carry the `junction=roundabout` flag.
+/// - `D2` is reserved as the site of a hub for the multimodal part.
+///
+/// Link and node external ids are the names above (`"a1"`, `"S"`, …).
+///
+/// # Panics
+///
+/// Never in practice: coordinates are built, not read.
+#[must_use]
+pub fn toy_network() -> (RoadNetwork, Diagnostics) {
+    // (name, east metres, north metres)
+    const NODES: [(&str, f64, f64); 16] = [
+        ("W", 0.0, 0.0),
+        ("N1", 300.0, 300.0),
+        ("S", 300.0, 0.0),
+        ("N2", 500.0, 300.0),
+        ("M", 500.0, 0.0),
+        ("X0", 900.0, 0.0),
+        ("X1", 904.0, 0.0),
+        ("X2", 908.0, 0.0),
+        ("X3", 912.0, 0.0),
+        ("D1", 1212.0, 0.0),
+        ("R1", 912.0, -60.0),
+        ("R2", 912.0, -90.0),
+        ("R3", 942.0, -90.0),
+        ("R4", 942.0, -60.0),
+        ("N3", 1042.0, -60.0),
+        ("D2", 912.0, -390.0),
+    ];
+    // (name, from, to, length in metres, class, lanes, roundabout)
+    type LinkRow = (&'static str, &'static str, &'static str, f64, RoadClass, Option<u8>, bool);
+    const LINKS: [LinkRow; 16] = [
+        ("a1", "W", "S", 300.0, RoadClass::Residential, None, false),
+        ("s1", "N1", "S", 300.0, RoadClass::Residential, None, false),
+        ("a2", "S", "M", 200.0, RoadClass::Residential, None, false),
+        ("m1", "N2", "M", 300.0, RoadClass::Residential, Some(2), false),
+        ("a3", "M", "X0", 400.0, RoadClass::Residential, None, false),
+        ("c1", "X0", "X1", 4.0, RoadClass::Residential, None, false),
+        ("c2", "X1", "X2", 4.0, RoadClass::Residential, None, false),
+        ("c3", "X2", "X3", 4.0, RoadClass::Residential, None, false),
+        ("a4", "X3", "D1", 300.0, RoadClass::Residential, None, false),
+        ("a5", "X3", "R1", 60.0, RoadClass::Service, None, false),
+        ("r1", "R1", "R2", 30.0, RoadClass::Residential, None, true),
+        ("r2", "R2", "R3", 30.0, RoadClass::Residential, None, true),
+        ("r3", "R3", "R4", 30.0, RoadClass::Residential, None, true),
+        ("r4", "R4", "R1", 30.0, RoadClass::Residential, None, true),
+        ("n3", "N3", "R4", 100.0, RoadClass::Residential, None, false),
+        ("e2", "R2", "D2", 300.0, RoadClass::Residential, None, false),
+    ];
+
+    let mut builder = RoadNetworkBuilder::new();
+    for (name, east, north) in NODES {
+        builder.add_node(
+            name,
+            LonLat::new(
+                4.8 + east / metres_per_degree_lon(),
+                REFERENCE_LATITUDE_DEG + north / METRES_PER_DEGREE_LAT,
+            ),
+        );
+    }
+    builder.mark_signalised("S");
+    for (name, from, to, length_m, class, lanes, roundabout) in LINKS {
+        let mut spec = LinkSpec::new(class);
+        spec.length_m = Some(length_m);
+        spec.lanes = lanes;
+        spec.roundabout = roundabout;
+        builder.add_link(name, from, to, spec);
+    }
+
+    let mut diagnostics = Diagnostics::new();
+    let network = builder
+        .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut diagnostics)
+        .expect("the toy network is always projectable: coordinates are built, not read");
     (network, diagnostics)
 }
