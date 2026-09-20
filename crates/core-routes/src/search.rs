@@ -1,0 +1,334 @@
+//! The turn-aware shortest-path search every generator is built on.
+//!
+//! A search runs over **links**, not nodes: a state is "having just entered
+//! link `l`", and the next links are the turns the [`TurnTable`] allows from
+//! it. Today the table only removes U-turns, so the costs equal a node-based
+//! search's; when turn restrictions or turn delays arrive they drop in here
+//! without touching a generator.
+//!
+//! **Costs** are free-flow travel times (control delay included, S90) over
+//! links that carry motor traffic; other links cost infinity. A generator can
+//! multiply any link's cost with [`LinkFactors`] for the next search (the
+//! penalty method does), and asks [`Search::max_overlap`] how much of a route lies
+//! on routes it has [marked](Search::mark).
+//!
+//! A search can be **bounded** ([`Search::shortest_within`]): a label whose true
+//! (unpenalised) cost already exceeds a bound is dropped, since no way of
+//! finishing it can come back under. The penalty method uses this with its
+//! detour bound; without it, compounding penalties send the search far past
+//! the routes it would accept (a hundredfold cost on a country-sized network,
+//! measured in S165). The bound is a resource limit on a constrained search:
+//! it never lets a route past the bound through, and on rare occasions can miss
+//! one that a fuller search would have found.
+//!
+//! **Cost of a search:** one label per touched link; the scratch is reset by
+//! visiting only what was touched, so a search costs what it explores, not the
+//! size of the network. **Scratch per thread:** 20 bytes per link plus the
+//! heap.
+//!
+//! **Determinism:** ties are broken by link id, so a search never depends on
+//! heap insertion order (Foundations §1).
+
+use core::cmp::Ordering;
+use std::collections::BinaryHeap;
+
+use openmobisim_core_graph::network::RoadNetwork;
+use openmobisim_core_graph::turns::TurnTable;
+use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
+
+/// The most routes a set can hold: one bit each in a per-link mask.
+pub const MAX_ROUTES_PER_SET: usize = 32;
+
+/// One route: the links from an origin node to a destination node.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Route {
+    /// The links in driving order.
+    pub links: Vec<LinkId>,
+    /// The route's free-flow travel time in seconds, **unpenalised**: what the
+    /// route costs, not what a penalised search thought it cost.
+    pub cost: f64,
+    /// The largest share of this route's cost that it has in common with any
+    /// route accepted before it (0 for the first).
+    pub overlap: f64,
+}
+
+/// What every search shares: the network, its turns, and each link's cost.
+#[derive(Debug)]
+pub struct SearchContext<'a> {
+    /// The network searched.
+    pub network: &'a RoadNetwork,
+    /// The turns a search may take.
+    pub turns: &'a TurnTable,
+    cost: Vec<f64>,
+}
+
+impl<'a> SearchContext<'a> {
+    /// Costs are read from `network` once, here: 8 bytes per link, shared by
+    /// every thread.
+    #[must_use]
+    pub fn new(network: &'a RoadNetwork, turns: &'a TurnTable) -> Self {
+        let cost = (0..network.link_count())
+            .map(|i| {
+                let link = LinkId::new(i);
+                if network.link_class(link).carries_motor_traffic() {
+                    network.free_flow_time(link).get()
+                } else {
+                    f64::INFINITY
+                }
+            })
+            .collect();
+        Self { network, turns, cost }
+    }
+
+    /// A link's cost in seconds, infinite if a car cannot use it.
+    #[inline]
+    #[must_use]
+    pub fn link_cost(&self, link: LinkId) -> f64 {
+        self.cost[link.index()]
+    }
+
+    /// The summed cost of `links`.
+    #[must_use]
+    pub fn route_cost(&self, links: &[LinkId]) -> f64 {
+        links.iter().map(|&l| self.link_cost(l)).sum()
+    }
+}
+
+/// Per-link cost multipliers for the next searches; every link is 1 until set.
+#[derive(Debug)]
+pub struct LinkFactors {
+    factor: Vec<f64>,
+    touched: Vec<u32>,
+}
+
+impl LinkFactors {
+    fn new(links: usize) -> Self {
+        Self { factor: vec![1.0; links], touched: Vec::new() }
+    }
+
+    /// Multiply `link`'s cost by `by` from now on.
+    pub fn multiply(&mut self, link: LinkId, by: f64) {
+        let f = &mut self.factor[link.index()];
+        #[allow(clippy::float_cmp, reason = "1.0 is the exact value of an untouched link")]
+        if *f == 1.0 {
+            self.touched.push(link.raw());
+        }
+        *f *= by;
+    }
+
+    /// Set every link back to 1, visiting only those changed.
+    pub fn reset(&mut self) {
+        for &l in &self.touched {
+            self.factor[l as usize] = 1.0;
+        }
+        self.touched.clear();
+    }
+
+    #[inline]
+    fn get(&self, link: LinkId) -> f64 {
+        self.factor[link.index()]
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Entry {
+    cost: f64,
+    link: u32,
+}
+
+impl PartialEq for Entry {
+    fn eq(&self, other: &Self) -> bool {
+        self.cost.to_bits() == other.cost.to_bits() && self.link == other.link
+    }
+}
+impl Eq for Entry {}
+impl PartialOrd for Entry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Entry {
+    // Reversed: `BinaryHeap` is a max-heap and the cheapest entry pops first;
+    // the link id breaks ties.
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.cost.total_cmp(&self.cost).then_with(|| other.link.cmp(&self.link))
+    }
+}
+
+const NONE: u32 = u32::MAX;
+
+/// One thread's search state. Cheap to keep and reuse: every method leaves it clean.
+#[derive(Debug)]
+pub struct Search<'a> {
+    ctx: &'a SearchContext<'a>,
+    dist: Vec<f64>,
+    /// The unpenalised cost of the route each label stands for.
+    true_dist: Vec<f64>,
+    pred: Vec<u32>,
+    touched: Vec<u32>,
+    heap: BinaryHeap<Entry>,
+    /// Cost multipliers for the next searches.
+    pub factors: LinkFactors,
+    marks: Vec<u32>,
+    marked: Vec<u32>,
+}
+
+impl<'a> Search<'a> {
+    /// A fresh scratch over `ctx`: 20 bytes per link plus 4 for the marks.
+    #[must_use]
+    pub fn new(ctx: &'a SearchContext<'a>) -> Self {
+        let n = ctx.network.link_count() as usize;
+        Self {
+            ctx,
+            dist: vec![f64::INFINITY; n],
+            true_dist: vec![0.0; n],
+            pred: vec![NONE; n],
+            touched: Vec::new(),
+            heap: BinaryHeap::new(),
+            factors: LinkFactors::new(n),
+            marks: vec![0; n],
+            marked: Vec::new(),
+        }
+    }
+
+    /// The context this search runs over.
+    #[must_use]
+    pub fn context(&self) -> &'a SearchContext<'a> {
+        self.ctx
+    }
+
+    /// The cheapest route from `origin` to `destination` under the current
+    /// [`Self::factors`], or `None` if there is none. `Some` with no links if
+    /// they are the same node.
+    pub fn shortest(&mut self, origin: NodeId, destination: NodeId) -> Option<Route> {
+        self.shortest_within(origin, destination, f64::INFINITY)
+    }
+
+    /// [`Self::shortest`], dropping every label whose unpenalised cost exceeds
+    /// `max_true_cost`: the route returned, if any, costs at most that. See the
+    /// module docs for what the bound trades.
+    pub fn shortest_within(
+        &mut self,
+        origin: NodeId,
+        destination: NodeId,
+        max_true_cost: f64,
+    ) -> Option<Route> {
+        if origin == destination {
+            return Some(Route { links: Vec::new(), cost: 0.0, overlap: 0.0 });
+        }
+        let ctx = self.ctx;
+        for &l in ctx.network.out_links(origin) {
+            let raw = ctx.link_cost(l);
+            let c = raw * self.factors.get(l);
+            if c.is_finite() && raw <= max_true_cost && c < self.dist[l.index()] {
+                self.set(l.index(), c, raw, NONE);
+                self.heap.push(Entry { cost: c, link: l.raw() });
+            }
+        }
+        let mut found = None;
+        while let Some(Entry { cost, link }) = self.heap.pop() {
+            let l = LinkId::new(link);
+            if cost > self.dist[l.index()] {
+                continue; // stale: a cheaper way to this link was found later
+            }
+            if ctx.network.link_to(l) == destination {
+                found = Some(link);
+                break;
+            }
+            let true_cost = self.true_dist[l.index()];
+            for &t in ctx.turns.turns_from(l) {
+                let m = ctx.turns.outgoing(t);
+                let raw = ctx.link_cost(m);
+                if !raw.is_finite() || true_cost + raw > max_true_cost {
+                    continue;
+                }
+                let nd = cost + raw * self.factors.get(m);
+                if nd < self.dist[m.index()] {
+                    self.set(m.index(), nd, true_cost + raw, link);
+                    self.heap.push(Entry { cost: nd, link: m.raw() });
+                }
+            }
+        }
+        let route = found.map(|last| {
+            let mut links = Vec::new();
+            let mut at = last;
+            while at != NONE {
+                links.push(LinkId::new(at));
+                at = self.pred[at as usize];
+            }
+            links.reverse();
+            let cost = ctx.route_cost(&links);
+            Route { links, cost, overlap: 0.0 }
+        });
+        self.clean();
+        route
+    }
+
+    fn set(&mut self, link: usize, dist: f64, true_dist: f64, pred: u32) {
+        if self.dist[link].is_infinite() {
+            self.touched.push(u32::try_from(link).expect("link ids are u32"));
+        }
+        self.dist[link] = dist;
+        self.true_dist[link] = true_dist;
+        self.pred[link] = pred;
+    }
+
+    fn clean(&mut self) {
+        for &l in &self.touched {
+            self.dist[l as usize] = f64::INFINITY;
+            self.pred[l as usize] = NONE;
+        }
+        self.touched.clear();
+        self.heap.clear();
+    }
+
+    /// Remember that `links` belong to route number `index` (below
+    /// [`MAX_ROUTES_PER_SET`]) of the set being built.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index` is [`MAX_ROUTES_PER_SET`] or more.
+    pub fn mark(&mut self, links: &[LinkId], index: usize) {
+        assert!(
+            index < MAX_ROUTES_PER_SET,
+            "a route set holds at most {MAX_ROUTES_PER_SET} routes"
+        );
+        for &l in links {
+            let m = &mut self.marks[l.index()];
+            if *m == 0 {
+                self.marked.push(l.raw());
+            }
+            *m |= 1 << index;
+        }
+    }
+
+    /// The largest share of `links`' cost that it has in common with any one
+    /// marked route.
+    #[must_use]
+    pub fn max_overlap(&self, links: &[LinkId]) -> f64 {
+        let mut shared = [0.0f64; MAX_ROUTES_PER_SET];
+        let mut total = 0.0;
+        for &l in links {
+            let c = self.ctx.link_cost(l);
+            total += c;
+            let mut m = self.marks[l.index()];
+            while m != 0 {
+                shared[m.trailing_zeros() as usize] += c;
+                m &= m - 1;
+            }
+        }
+        if total <= 0.0 {
+            return 0.0;
+        }
+        shared.iter().fold(0.0f64, |a, &s| a.max(s / total))
+    }
+
+    /// Forget every mark and every factor, ready for the next key.
+    pub fn clear_route_state(&mut self) {
+        for &l in &self.marked {
+            self.marks[l as usize] = 0;
+        }
+        self.marked.clear();
+        self.factors.reset();
+    }
+}

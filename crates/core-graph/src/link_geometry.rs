@@ -68,6 +68,12 @@ const LENGTH_AGREEMENT_TOLERANCE_M: f64 = 1e-6;
 pub struct NetworkFingerprint(u64);
 
 impl NetworkFingerprint {
+    /// The fingerprint as a number, for storing in an artifact's header.
+    #[must_use]
+    pub fn value(self) -> u64 {
+        self.0
+    }
+
     /// Fingerprint a built network's identity.
     #[must_use]
     pub fn of(network: &RoadNetwork) -> Self {

@@ -1,0 +1,25 @@
+[package]
+name = "openmobisim-core-routes"
+description = "Route sets for openmobisim: generation behind one pluggable interface, the store, and the spatial snapping demand needs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Generate sets for many keys in parallel. Results are identical either way: keys are
+# split into fixed chunks and the chunks are joined in order.
+default = ["parallel"]
+parallel = ["dep:rayon"]
+
+[dependencies]
+openmobisim-core-types = { workspace = true }
+openmobisim-core-graph = { workspace = true }
+rayon = { workspace = true, optional = true }

@@ -132,7 +132,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: No default features
-        run: cargo test -p openmobisim-core-types --no-default-features
+        run: |
+          cargo test -p openmobisim-core-types --no-default-features
+          cargo test -p openmobisim-core-routes --no-default-features
       - name: All features
         run: cargo test --workspace --all-features
 

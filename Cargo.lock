@@ -680,12 +680,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "openmobisim-core-routes"
+version = "0.1.0"
+dependencies = [
+ "openmobisim-core-graph",
+ "openmobisim-core-types",
+ "rayon",
+]
+
+[[package]]
 name = "openmobisim-core-sim"
 version = "0.1.0"
 dependencies = [
  "openmobisim-core-demand",
  "openmobisim-core-graph",
  "openmobisim-core-loading",
+ "openmobisim-core-routes",
  "openmobisim-core-types",
  "proptest",
 ]
@@ -731,6 +741,7 @@ dependencies = [
  "openmobisim-core-demand",
  "openmobisim-core-graph",
  "openmobisim-core-loading",
+ "openmobisim-core-routes",
  "openmobisim-core-sim",
  "openmobisim-core-types",
  "openmobisim-io-osm",
