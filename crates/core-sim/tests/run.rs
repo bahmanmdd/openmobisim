@@ -83,14 +83,13 @@ fn car_owning_defaults() -> ClassDefaults {
     ClassDefaults::new().with_default("commuter", Ownership { car: true, ..Ownership::NONE })
 }
 
-/// The free-flow time of `a -> b -> c`, floored per link the same way
-/// `core-loading` does — the exact number a completed a-to-c trip's travel
-/// time must equal at weight 1.
+/// The free-flow time of `a -> b -> c`, floored once (S88; S161, F1) — the
+/// exact number a completed a-to-c trip's travel time must equal at weight 1.
 fn expected_a_to_c_seconds(network: &RoadNetwork) -> u32 {
     let ab = network.link_external_ids().typed_id_of::<LinkId>("ab").expect("known link");
     let bc = network.link_external_ids().typed_id_of::<LinkId>("bc").expect("known link");
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "test assertion")]
-    let seconds = network.free_flow_time(ab).get() as u32 + network.free_flow_time(bc).get() as u32;
+    let seconds = (network.free_flow_time(ab).get() + network.free_flow_time(bc).get()) as u32;
     seconds
 }
 
@@ -148,8 +147,8 @@ fn a_car_trip_ignores_footways() {
     assert_eq!(result.completion.completed, 1);
     let id = |e: &str| network.link_external_ids().typed_id_of::<LinkId>(e).expect("link");
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "test assertion")]
-    let by_road = network.free_flow_time(id("ab")).get() as u32
-        + network.free_flow_time(id("bc")).get() as u32;
+    let by_road =
+        (network.free_flow_time(id("ab")).get() + network.free_flow_time(id("bc")).get()) as u32;
     #[allow(clippy::float_cmp, reason = "both sides are small integer seconds, exactly")]
     {
         assert_eq!(result.total_travel_time.get(), f64::from(by_road), "the car takes ab, bc");

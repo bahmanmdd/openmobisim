@@ -61,14 +61,14 @@ fn a_two_link_route_chains_enter_and_exit_correctly() {
         "the second link must start exactly where the first one ends"
     );
 
-    // The accumulation must match flooring after each link individually,
-    // not flooring the sum once — the same order the implementation uses.
+    // Recorded times are the exact cumulative times floored once each (S88) —
+    // not a clock floored link by link, which would lose every link's
+    // sub-second remainder (S161, F1).
+    let (t_ab, t_bc) = (network.free_flow_time(ab).get(), network.free_flow_time(bc).get());
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "test assertion")]
-    let exit_ab = network.free_flow_time(ab).get() as u32;
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "test assertion")]
-    let exit_bc = network.free_flow_time(bc).get() as u32;
+    let (exit_ab, arrival) = (t_ab as u32, (t_ab + t_bc) as u32);
     assert_eq!(trajectory.links[0].exit, Second(exit_ab));
-    assert_eq!(trajectory.arrival(), Second(exit_ab + exit_bc));
+    assert_eq!(trajectory.arrival(), Second(arrival));
     #[allow(
         clippy::float_cmp,
         reason = "both sides are small integer seconds converted to f64 exactly; no \
@@ -77,7 +77,7 @@ fn a_two_link_route_chains_enter_and_exit_correctly() {
     {
         assert_eq!(
             trajectory.total_travel_time().get(),
-            f64::from(exit_ab + exit_bc),
+            f64::from(arrival),
             "total travel time must match arrival minus departure"
         );
     }

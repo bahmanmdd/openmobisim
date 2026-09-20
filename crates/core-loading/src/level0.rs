@@ -76,7 +76,11 @@ impl Trajectory {
 #[must_use]
 pub fn traverse_free_flow(vehicle: &Vehicle, network: &RoadNetwork) -> Trajectory {
     let mut links = Vec::with_capacity(vehicle.route.len());
-    let mut clock = vehicle.departure;
+    // The clock stays exact; only what is *recorded* is floored to a whole
+    // second (S88). Flooring the clock itself would drop the sub-second
+    // remainder of every link — about half a second each on average, so a
+    // hundred-link trip would come out a minute short (S161, F1).
+    let mut clock = f64::from(vehicle.departure.get());
     for (i, &link) in vehicle.route.iter().enumerate() {
         if i > 0 {
             let previous = vehicle.route[i - 1];
@@ -85,9 +89,9 @@ pub fn traverse_free_flow(vehicle: &Vehicle, network: &RoadNetwork) -> Trajector
                 "route is discontinuous: {previous:?} does not lead to {link:?}"
             );
         }
-        let exit = floored_exit(clock, network.free_flow_time(link));
-        links.push(LinkTraversal { link, enter: clock, exit });
-        clock = exit;
+        let end = clock + free_flow_seconds(network.free_flow_time(link));
+        links.push(LinkTraversal { link, enter: floored(clock), exit: floored(end) });
+        clock = end;
     }
     Trajectory { vehicle: vehicle.id, departure: vehicle.departure, links }
 }
@@ -103,20 +107,23 @@ pub fn load_level_0<'a>(
     vehicles.into_iter().map(|v| traverse_free_flow(v, network)).collect()
 }
 
-/// `base + duration`, floored to a whole second (S88's convention).
-fn floored_exit(base: Second, duration: Duration) -> Second {
+/// A link's free-flow time in seconds, checked to be usable as a duration.
+fn free_flow_seconds(duration: Duration) -> f64 {
     debug_assert!(
         duration.get().is_finite() && duration.get() >= 0.0,
         "a link's free-flow time must be finite and non-negative, got {}",
         duration.get()
     );
+    duration.get()
+}
+
+/// An exact time floored to a whole second (S88's convention).
+fn floored(seconds: f64) -> Second {
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "duration is finite and non-negative (asserted above); truncating is the \
-                  deliberate floor to a whole second S88 requires, and f64-to-u32 `as` casts \
-                  saturate rather than wrap on overflow"
+        reason = "the clock is finite and non-negative (departures are unsigned, durations are                   checked); truncating is the deliberate floor to a whole second S88 requires,                   and f64-to-u32 `as` casts saturate rather than wrap on overflow"
     )]
-    let whole_seconds = duration.get() as u32;
-    base.saturating_add(whole_seconds)
+    let whole_seconds = seconds as u32;
+    Second(whole_seconds)
 }
