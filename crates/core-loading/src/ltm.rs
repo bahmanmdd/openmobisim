@@ -90,12 +90,18 @@
 //!
 //! Events are ordered by `(time, service tag, queue)` — a total order, so the
 //! result never depends on input order (S77's requirement, met by ordering;
-//! S88's event-queue convention). The **service tag** is each approach's
-//! virtual clock, advanced by one saturation headway per vehicle it releases:
-//! approaches that are never held back are served first come, first served,
-//! and saturated approaches competing for the same room are served in
-//! proportion to their discharge capacities (S48). A vehicle that cannot move
-//! blocks everything behind it in its queue (S77's full blocking).
+//! S88's event-queue convention). The **service tag** is weighted fair
+//! queueing's virtual finish time: an approach's tag advances by one saturation
+//! headway per vehicle it releases, and a queue that has just become
+//! backlogged starts from the link's **virtual time** — the largest tag released
+//! onto the link it is bound for. Approaches that are never held back are
+//! served first come, first served (by `time`), and saturated approaches
+//! competing for the same room are served in proportion to their discharge
+//! capacities (S48), whatever the loading step. Tags are in their own units and
+//! are never compared with real seconds: under saturation the virtual clock
+//! runs slower than the real one, and mixing them let the queue that had waited
+//! longest win merges regardless of capacity (S161, K31). A vehicle that cannot
+//! move blocks everything behind it in its queue (S77's full blocking).
 //!
 //! The loading step is an output and bookkeeping boundary (S84): nothing about
 //! a vehicle's timing depends on it. At each step's end every link forgets
@@ -121,8 +127,6 @@
 //!   link, so while a signalised approach is held back by a full next link it
 //!   stores, beyond its own storage, the vehicles that passed its stop line in
 //!   the last control delay (at most `capacity × g/C × delay`).
-//! - **Service tags restart at each step's start**, so a long-backlogged
-//!   approach cannot hold priority over a newcomer for more than one step.
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, VecDeque};
@@ -268,10 +272,14 @@ pub struct LtmNetwork<'a> {
     straddling_out: Vec<u32>,
     /// When a room-heard event is pending for each link, or `+∞`.
     heard_due: Vec<f64>,
+    /// The largest service tag released onto each link: the virtual time a
+    /// queue that has just become backlogged for it starts from (S161, K31).
+    virtual_time: Vec<f64>,
 
     // Per queue: links `0..n`, origins `n..2n`, stop lines `2n..3n`. Room-heard
     // events use `3n..4n`.
     queues: Vec<VecDeque<Queued>>,
+    /// Each link queue's service tag: the tag of the vehicle it released last.
     service_tag: Vec<f64>,
     generation: Vec<u32>,
     next_parked: Vec<u32>,
@@ -341,6 +349,7 @@ impl<'a> LtmNetwork<'a> {
             straddling_in: vec![NONE; n],
             straddling_out: vec![NONE; n],
             heard_due: vec![f64::INFINITY; n],
+            virtual_time: vec![0.0; n],
             queues: (0..queues).map(|_| VecDeque::new()).collect(),
             service_tag: vec![f64::NEG_INFINITY; queues],
             generation: vec![0; queues + n],
@@ -628,10 +637,16 @@ impl<'a> LtmNetwork<'a> {
         let front = self.queues[queue].front()?;
         match self.place(queue) {
             Place::Link(i) => {
-                let pcu = self.vehicles[front.slot as usize].pcu.get();
-                let headway = pcu / self.discharge_rate[i];
-                let tag = front.ready.max(self.service_tag[queue] + headway).max(t0);
-                let ready = tag.max(self.curves[i].last_exit().get() + headway);
+                let vehicle = self.vehicles[front.slot as usize];
+                let headway = vehicle.pcu.get() / self.discharge_rate[i];
+                // When it can move: it has reached the end, its approach's
+                // headway has passed, and the step has begun. Real seconds.
+                let ready = front.ready.max(self.curves[i].last_exit().get() + headway).max(t0);
+                // Who goes first among approaches ready for the same room: a
+                // virtual time, in its own units, never mixed with `ready`.
+                let onto = vehicle.route.get(front.leg as usize + 1);
+                let virtual_now = onto.map_or(0.0, |l| self.virtual_time[l.index()]);
+                let tag = virtual_now.max(self.service_tag[queue] + headway);
                 Some((ready, tag))
             }
             Place::Origin | Place::StopLine(_) | Place::Heard(_) => {
@@ -850,8 +865,12 @@ impl<'a> LtmNetwork<'a> {
         self.curves[i].set_last_exit(Duration(t));
         self.discharged[i] += vehicle.pcu.get();
         self.service_tag[i] = tag;
-        self.schedule_front(i, t0, t);
         let next_leg = front.leg as usize + 1;
+        if let Some(onto) = vehicle.route.get(next_leg) {
+            let v = &mut self.virtual_time[onto.index()];
+            *v = v.max(tag);
+        }
+        self.schedule_front(i, t0, t);
         if self.stop_delay[i] > 0.0 {
             self.release_all(slot, t, t0);
             let waiting = Queued { ready: t + self.stop_delay[i], ..front };
