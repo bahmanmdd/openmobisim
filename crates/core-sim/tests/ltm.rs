@@ -16,7 +16,7 @@ use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::FidelityLevel;
 use openmobisim_core_sim::{FlowMotor, Run};
 use openmobisim_core_types::diagnostics::Diagnostics;
-use openmobisim_core_types::ids::LinkId;
+use openmobisim_core_types::ids::{EntityId, LinkId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 
@@ -213,5 +213,67 @@ fn heavier_demand_never_completes_faster_than_lighter_demand() {
         heavy_avg >= light_avg,
         "average travel time under heavy demand ({heavy_avg}) must not be lower than under \
          light demand ({light_avg}) — real vehicles sharing real link capacity"
+    );
+}
+
+// --- Per-link, per-time-bin results (S163) ------------------------------------------
+
+/// Two cars A -> C: every link on the way has two crossings in the table, at
+/// the free-flow time, under either loading engine.
+#[test]
+fn a_run_can_report_per_link_bins_under_either_engine() {
+    for ltm in [false, true] {
+        let network = Arc::new(line_network());
+        let raw_trips = vec![trip("alice", 0, A, C, 0), trip("bob", 0, A, C, 600)];
+        let mut d = Diagnostics::new();
+        let (travellers, trips) =
+            build_travellers(raw_trips, Vec::new(), &car_owning_defaults(), 1, &mut d)
+                .expect("buildable");
+        let mut run =
+            Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(3600))
+                .with_link_bins(300);
+        if ltm {
+            run = run.with_flow_motor(ltm_motor(&network));
+        }
+        let result = run.execute(&mut Diagnostics::new());
+        let bins = result.link_bins.expect("asked for");
+        let id = |e: &str| network.link_external_ids().typed_id_of::<LinkId>(e).expect("link");
+        for name in ["ab", "bc"] {
+            let link = id(name);
+            let rows: Vec<usize> =
+                (0..bins.len()).filter(|&r| bins.links()[r] == link.raw()).collect();
+            assert_eq!(rows.iter().map(|&r| bins.crossings()[r]).sum::<u32>(), 2, "{name}");
+            for r in rows {
+                assert!(
+                    (bins.mean_seconds(r) - network.free_flow_time(link).get()).abs() < 1e-6,
+                    "{name}: mean {} s, free flow {} s (ltm {ltm})",
+                    bins.mean_seconds(r),
+                    network.free_flow_time(link).get()
+                );
+            }
+        }
+        assert!(bins.links().iter().all(|&l| l == id("ab").raw() || l == id("bc").raw()));
+    }
+}
+
+/// Without `with_link_bins` nothing is recorded, and the result is unchanged.
+#[test]
+fn per_link_bins_are_off_unless_asked_for() {
+    let network = Arc::new(line_network());
+    let raw_trips = vec![trip("alice", 0, A, C, 0)];
+    let mut d = Diagnostics::new();
+    let (travellers, trips) =
+        build_travellers(raw_trips, Vec::new(), &car_owning_defaults(), 1, &mut d)
+            .expect("buildable");
+    let (travellers, trips) = (Arc::new(travellers), Arc::new(trips));
+    let plain = Run::new(network.clone(), travellers.clone(), trips.clone(), Second(3600))
+        .execute(&mut Diagnostics::new());
+    let binned = Run::new(network, travellers, trips, Second(3600))
+        .with_link_bins(60)
+        .execute(&mut Diagnostics::new());
+    assert!(plain.link_bins.is_none());
+    assert_eq!(
+        (plain.total_travel_time, plain.completion, &plain.events),
+        (binned.total_travel_time, binned.completion, &binned.events)
     );
 }

@@ -11,10 +11,11 @@
 //! levels 1–4 will reuse, not a numerical method — there isn't one yet.
 
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_types::ids::{LinkId, VehicleId};
+use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 
+use crate::link_bins::{LinkBinRecorder, LinkBins};
 use crate::vehicle::Vehicle;
 
 /// One vehicle's time on one link of its route.
@@ -75,6 +76,16 @@ impl Trajectory {
 /// with any other vehicle — level 0's whole mechanism.
 #[must_use]
 pub fn traverse_free_flow(vehicle: &Vehicle, network: &RoadNetwork) -> Trajectory {
+    traverse_exact(vehicle, network, |_, _, _| {})
+}
+
+/// [`traverse_free_flow`], reporting each link's exact `(link, enter, exit)`
+/// times, in seconds and unfloored, to `on_link` as it goes.
+fn traverse_exact(
+    vehicle: &Vehicle,
+    network: &RoadNetwork,
+    mut on_link: impl FnMut(LinkId, f64, f64),
+) -> Trajectory {
     let mut links = Vec::with_capacity(vehicle.route.len());
     // The clock stays exact; only what is *recorded* is floored to a whole
     // second (S88). Flooring the clock itself would drop the sub-second
@@ -91,6 +102,7 @@ pub fn traverse_free_flow(vehicle: &Vehicle, network: &RoadNetwork) -> Trajector
         }
         let end = clock + free_flow_seconds(network.free_flow_time(link));
         links.push(LinkTraversal { link, enter: floored(clock), exit: floored(end) });
+        on_link(link, clock, end);
         clock = end;
     }
     Trajectory { vehicle: vehicle.id, departure: vehicle.departure, links }
@@ -105,6 +117,45 @@ pub fn load_level_0<'a>(
     network: &RoadNetwork,
 ) -> Vec<Trajectory> {
     vehicles.into_iter().map(|v| traverse_free_flow(v, network)).collect()
+}
+
+/// [`load_level_0`], also returning the per-link, per-time-bin results (S163):
+/// every link traversal that finishes inside `window` seconds, in bins of
+/// `bin_seconds`, with each traversal's exact free-flow time.
+///
+/// Level 0 visits vehicles one at a time, so the traversals are collected and
+/// put in exit-time order before they are binned: `16` bytes per link
+/// crossing while it runs.
+///
+/// # Panics
+///
+/// Panics if `bin_seconds` is zero.
+pub fn load_level_0_binned<'a>(
+    vehicles: impl IntoIterator<Item = &'a Vehicle>,
+    network: &RoadNetwork,
+    window: f64,
+    bin_seconds: u32,
+) -> (Vec<Trajectory>, LinkBins) {
+    let mut crossings: Vec<(f64, f64, u32, f64)> = Vec::new();
+    let trajectories: Vec<Trajectory> = vehicles
+        .into_iter()
+        .map(|v| {
+            let pcu = v.pcu.get();
+            traverse_exact(v, network, |link, enter, exit| {
+                crossings.push((exit, enter, link.raw(), pcu));
+            })
+        })
+        .collect();
+    // Exit time first, then link and enter time: a total order, so the table
+    // never depends on the order the vehicles were given.
+    crossings.sort_by(|a, b| {
+        a.0.total_cmp(&b.0).then(a.2.cmp(&b.2)).then(a.1.total_cmp(&b.1)).then(a.3.total_cmp(&b.3))
+    });
+    let mut recorder = LinkBinRecorder::new(network.link_count() as usize, bin_seconds, window);
+    for (exit, enter, link, pcu) in crossings {
+        recorder.record(LinkId::from_index(link as usize), enter, exit, pcu);
+    }
+    (trajectories, recorder.finish())
 }
 
 /// A link's free-flow time in seconds, checked to be usable as a duration.

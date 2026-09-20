@@ -6,6 +6,7 @@
 //! | [`level0`] | Level 0 of the fidelity ladder: free-flow traversal, no curves, no interaction |
 //! | [`curves`] | [`curves::LinkCurves`] — per-link cumulative counts with bounded history; the receiving condition |
 //! | [`node_model`] | S48/S77's node model in aggregate form, the reference statement of the rules [`ltm`] applies per vehicle |
+//! | [`link_bins`] | [`link_bins::LinkBins`] — per-link, per-time-bin results recorded as the loading runs (S163) |
 //! | [`ltm`] | [`ltm::run_ltm`] — levels 2–4: the LTM with vehicles on the curves, processed in time order (S151) |
 //!
 //! # Where this crate is, and where it is going
@@ -22,12 +23,16 @@
 
 pub mod curves;
 pub mod level0;
+pub mod link_bins;
 pub mod ltm;
 pub mod node_model;
 pub mod vehicle;
 
 pub use curves::LinkCurves;
-pub use level0::{LinkTraversal, Trajectory, load_level_0, traverse_free_flow};
-pub use ltm::{FidelityLevel, LtmNetwork, run_ltm};
+pub use level0::{
+    LinkTraversal, Trajectory, load_level_0, load_level_0_binned, traverse_free_flow,
+};
+pub use link_bins::{LinkBinRecorder, LinkBins};
+pub use ltm::{FidelityLevel, LtmNetwork, run_ltm, run_ltm_binned};
 pub use node_model::{TurnDemand, solve_node};
 pub use vehicle::Vehicle;

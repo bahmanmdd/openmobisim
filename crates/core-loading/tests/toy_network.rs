@@ -431,6 +431,17 @@ fn t9_a_signalised_junction_gives_each_approach_its_green_time() {
     }
 }
 
+/// Streams of 1, 1 and 2 PCU through a signalised merge, the chain, a diverge and the ring.
+fn mixed_demand(toy: &Toy) -> Vec<Vehicle> {
+    let mut v = Vec::new();
+    for k in 0..40 {
+        v.push(toy.vehicle(k, &["a1", "a2", "a3", "c1", "c2", "c3", "a4"], 1.0, 4 * k));
+        v.push(toy.vehicle(100 + k, &["m1", "a3", "c1", "c2", "c3", "a5", "r1", "e2"], 1.0, 3 * k));
+        v.push(toy.vehicle(200 + k, &["s1", "a2", "a3", "c1", "c2", "c3", "a4"], 2.0, 5 * k));
+    }
+    v
+}
+
 /// **T0 · Properties every case has.** Identical on repeat and under reversed
 /// input order (K26), and identical for any loading step: the step is
 /// bookkeeping only (S84, K2).
@@ -463,6 +474,10 @@ fn t0_every_case_is_repeatable_order_free_and_step_free() {
             600.0,
         ),
         ("t8", (0..10).map(|k| toy.vehicle(k, &["a1", "a2"], 2.0, 3 * k)).collect(), 900.0),
+        // Three streams of different sizes through a signalised merge, the
+        // chain and a diverge: queues that wait across step boundaries must
+        // be served in arrival order whatever the step (S163).
+        ("mixed", mixed_demand(&toy), 20_000.0),
     ];
     let shape = |done: &[Trajectory]| -> Vec<TripShape> {
         done.iter()

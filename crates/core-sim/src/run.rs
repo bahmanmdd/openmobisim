@@ -14,7 +14,9 @@ use std::sync::Arc;
 use openmobisim_core_demand::{Travellers, Trips, VehicleKind, VehicleLocations};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
-use openmobisim_core_loading::{FidelityLevel, Vehicle, run_ltm, traverse_free_flow};
+use openmobisim_core_loading::{
+    FidelityLevel, LinkBins, Vehicle, load_level_0_binned, run_ltm_binned, traverse_free_flow,
+};
 use openmobisim_core_types::diagnostics::{
     Category, DiagKey, Diagnostics, ElementRef, Severity, codes,
 };
@@ -119,6 +121,11 @@ pub struct RunResult {
     /// sampling is a property of the output format, not of what a run
     /// tracks internally.
     pub events: Vec<EventRow>,
+    /// Per-link, per-time-bin results, when asked for with
+    /// [`Run::with_link_bins`] (S163): every link traversal that finished
+    /// inside the window, including those of trips still under way when it
+    /// ended.
+    pub link_bins: Option<LinkBins>,
 }
 
 /// One simulation run: immutable shared inputs plus the mutable state
@@ -132,6 +139,8 @@ pub struct Run {
     /// Trips still in progress after this second are truncated (S57).
     window: Second,
     flow_motor: FlowMotor,
+    /// Length of the time bins of the per-link results, if asked for.
+    link_bin_seconds: Option<u32>,
 }
 
 impl Run {
@@ -146,7 +155,15 @@ impl Run {
         window: Second,
     ) -> Self {
         let vehicles = VehicleLocations::at_first_trip_origin(&travellers, &trips);
-        Self { network, travellers, trips, vehicles, window, flow_motor: FlowMotor::default() }
+        Self {
+            network,
+            travellers,
+            trips,
+            vehicles,
+            window,
+            flow_motor: FlowMotor::default(),
+            link_bin_seconds: None,
+        }
     }
 
     /// The same run, loaded by `flow_motor` instead of the default
@@ -154,6 +171,20 @@ impl Run {
     #[must_use]
     pub fn with_flow_motor(mut self, flow_motor: FlowMotor) -> Self {
         self.flow_motor = flow_motor;
+        self
+    }
+
+    /// The same run, also recording per-link, per-time-bin results (S163) in
+    /// bins of `bin_seconds`. Costs 20 bytes per link of scratch and a
+    /// 28-byte row per (link, bin) that saw traffic; nothing when not asked.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bin_seconds` is zero.
+    #[must_use]
+    pub fn with_link_bins(mut self, bin_seconds: u32) -> Self {
+        assert!(bin_seconds > 0, "a time bin must be at least one second long");
+        self.link_bin_seconds = Some(bin_seconds);
         self
     }
 
@@ -197,6 +228,11 @@ impl Run {
         // alongside since `Vehicle` itself only carries PCU (weight already
         // multiplied in).
         let mut pending_ltm: Vec<(TripId, Vehicle, u32)> = Vec::new();
+        // Only used under `FlowMotor::Level0` when per-link results are asked
+        // for: level 0 visits vehicles one at a time, so they are kept to be
+        // binned together afterwards.
+        let mut level0_vehicles: Vec<Vehicle> = Vec::new();
+        let mut link_bins: Option<LinkBins> = None;
 
         while let Some(Reverse(key)) = queue.pop() {
             let trip = TripId::new(key.entity);
@@ -257,6 +293,9 @@ impl Run {
                                     departure,
                                 );
                                 let trajectory = traverse_free_flow(&vehicle, &self.network);
+                                if self.link_bin_seconds.is_some() {
+                                    level0_vehicles.push(vehicle);
+                                }
                                 if trajectory.arrival() <= self.window {
                                     completion.completed += 1;
                                     total_travel_time +=
@@ -313,7 +352,32 @@ impl Run {
             let vehicles: Vec<Vehicle> =
                 pending_ltm.iter().map(|(_, vehicle, _)| vehicle.clone()).collect();
             let window = Duration::from_clock(self.window);
-            let trajectories = run_ltm(&self.network, turns, &vehicles, window, *step, *level);
+            let (trajectories, bins) = match self.link_bin_seconds {
+                Some(bin_seconds) => {
+                    let (t, b) = run_ltm_binned(
+                        &self.network,
+                        turns,
+                        &vehicles,
+                        window,
+                        *step,
+                        *level,
+                        bin_seconds,
+                    );
+                    (t, Some(b))
+                }
+                None => (
+                    openmobisim_core_loading::run_ltm(
+                        &self.network,
+                        turns,
+                        &vehicles,
+                        window,
+                        *step,
+                        *level,
+                    ),
+                    None,
+                ),
+            };
+            link_bins = bins;
             let by_vehicle: HashMap<VehicleId, _> =
                 trajectories.into_iter().map(|t| (t.vehicle, t)).collect();
 
@@ -342,7 +406,13 @@ impl Run {
             }
         }
 
-        RunResult { total_travel_time, completion, events }
+        if let (FlowMotor::Level0, Some(bin_seconds)) = (&self.flow_motor, self.link_bin_seconds) {
+            let window = f64::from(self.window.get());
+            link_bins =
+                Some(load_level_0_binned(&level0_vehicles, &self.network, window, bin_seconds).1);
+        }
+
+        RunResult { total_travel_time, completion, events, link_bins }
     }
 
     fn enqueue(&self, queue: &mut BinaryHeap<Reverse<EventKey>>, trip: TripId) {

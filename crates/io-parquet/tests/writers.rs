@@ -60,6 +60,7 @@ fn sample_result() -> RunResult {
             EventRow::trip(Second(200), EventType::TripTruncated, TripId::new(2)),
             EventRow::trip(Second(0), EventType::NoVehicleAvailable, TripId::new(3)),
         ],
+        link_bins: None,
     }
 }
 
