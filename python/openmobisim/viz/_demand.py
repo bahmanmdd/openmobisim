@@ -218,6 +218,7 @@ def map_demand(
         colour_legend=("Trips per pair", th.ramp_volume, "few", f"{wmax:g}"),
         credit=credit,
         logo=logo,
+        compass=True,
     )
     del mpp
     if path is not None:
@@ -342,6 +343,7 @@ def chart_demand_matrix(
         colour_legend=("Trips per pair", th.ramp_volume, "0", f"{wmax:g}"),
         credit=credit,
         logo=logo,
+        compass=False,
     )
     if path is not None:
         page.fig.savefig(path, facecolor=th.surface)

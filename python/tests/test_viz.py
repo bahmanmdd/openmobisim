@@ -286,3 +286,20 @@ def test_a_small_page_keeps_its_proportions():
     assert len(np.unique(image.reshape(-1, 4), axis=0)) > 20
     sizes = {round(t.get_fontsize(), 1) for t in small.texts}
     assert max(sizes) < 10.0, "furniture text shrinks with the page (21 pt at 16 inches)"
+
+
+def test_maps_carry_a_north_arrow_and_a_distance_scale_that_is_true():
+    import re
+
+    run, _ = toy_run()
+    fig = viz.map_link(run, size=(8, 4.5), dpi=60)
+    words = [t.get_text() for t in fig.texts]
+    scale = [w for w in words if re.fullmatch(r"\d+(\.\d+)? (m|km)", w)]
+    assert "N" in words and len(scale) == 1
+    metres = float(scale[0].split()[0]) * (1000.0 if scale[0].endswith("km") else 1.0)
+    # The bar is a round number close to a tenth of the map's width, in metres.
+    width_m = fig.axes[0].get_xlim()[1] - fig.axes[0].get_xlim()[0]
+    assert 0.05 * width_m <= metres <= 0.25 * width_m
+    # And the matrix, which is not a map, has neither.
+    matrix = viz.chart_demand_matrix(toy_run()[1], cell_m=100.0, top=6, size=(8, 4.5), dpi=60)
+    assert "N" not in {t.get_text() for t in matrix.texts}

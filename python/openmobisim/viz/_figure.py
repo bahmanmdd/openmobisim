@@ -123,6 +123,7 @@ def draw_furniture(
     colour_legend: tuple[str, tuple[str, ...], str, str] | None = None,
     credit: str | None = None,
     logo: bool = True,
+    compass: bool = True,
 ) -> None:
     """Title with the signal glyph, legends, the provenance strip and the logo.
 
@@ -191,7 +192,7 @@ def draw_furniture(
         bar = fig.add_axes((cx, ly + 0.008, 0.16, 0.012), facecolor=t.surface)
         bar.set_axis_off()
         bar.imshow(ramp_rgb(stops, np.linspace(0, 1, 256))[None, :, :], aspect="auto")
-        fig.text(cx, ly - 0.006, low, color=t.muted, fontsize=8.5 * k, fontfamily=mono)
+        fig.text(cx, ly - 0.006, low, color=t.ink2, fontsize=8.5 * k, fontfamily=mono)
         fig.text(
             cx + 0.16,
             ly - 0.006,
@@ -213,7 +214,84 @@ def draw_furniture(
         )
     )
     fig.text(0.0235, 0.0105, provenance, color=t.muted, fontsize=8.6 * k, fontfamily=mono)
+    if compass:
+        _draw_compass(page)
     _draw_logo(page, credit, logo)
+
+
+def _draw_compass(page: Page) -> None:
+    """A north arrow and a distance scale, inside the map at its lower left.
+
+    Maps here are always north-up, so the arrow is fixed; the scale's length is
+    the round number (1, 2 or 5 times a power of ten) nearest a tenth of the
+    map's width, converted through the map's own metres-per-point.
+    """
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Polygon
+
+    fig, t, k = page.fig, page.theme, page.k
+    w, h = page.size
+    left, bottom, width, height = MAP_RECT
+    map_width_m = page.metres_per_point * width * w * 72.0
+    metres = nice_number(map_width_m * 0.11)
+    bar = metres / page.metres_per_point / (72.0 * w)  # in figure widths
+    x0, y0 = left + 0.014, bottom + 0.030
+    tick = 0.006 * k
+    # The bar: a line with an end tick at each end.
+    for xs, ys in (
+        ([x0, x0 + bar], [y0, y0]),
+        ([x0, x0], [y0 - tick, y0 + tick]),
+        ([x0 + bar, x0 + bar], [y0 - tick, y0 + tick]),
+    ):
+        fig.add_artist(
+            Line2D(
+                xs,
+                ys,
+                transform=fig.transFigure,
+                color=t.ink,
+                linewidth=1.6 * k,
+                solid_capstyle="butt",
+            )
+        )
+    label = f"{metres / 1000:g} km" if metres >= 1000 else f"{metres:g} m"
+    fig.text(x0, y0 + 2.2 * tick, label, color=t.ink, fontsize=9.5 * k, fontfamily=font_mono())
+    # North: a small arrow above the bar's start, with its letter.
+    ax_x, ax_y = x0 + 0.004, y0 + 0.075
+    arrow = 0.022
+    aw = 0.0045 * k
+    fig.add_artist(
+        Line2D(
+            [ax_x, ax_x],
+            [ax_y, ax_y + arrow * 0.7],
+            transform=fig.transFigure,
+            color=t.ink,
+            linewidth=1.6 * k,
+        )
+    )
+    fig.add_artist(
+        Polygon(
+            [
+                (ax_x, ax_y + arrow),
+                (ax_x - aw, ax_y + arrow * 0.55),
+                (ax_x + aw, ax_y + arrow * 0.55),
+            ],
+            closed=True,
+            transform=fig.transFigure,
+            facecolor=t.ink,
+            edgecolor="none",
+        )
+    )
+    fig.text(
+        ax_x,
+        ax_y - 0.004,
+        "N",
+        color=t.ink,
+        fontsize=9.5 * k,
+        fontweight="bold",
+        ha="center",
+        va="top",
+        fontfamily=font_sans(),
+    )
 
 
 def _draw_logo(page: Page, credit: str | None, logo: bool) -> None:

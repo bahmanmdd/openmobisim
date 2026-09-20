@@ -324,6 +324,7 @@ def map_link(
         colour_legend=(legend_label, legend_stops, low, high),
         credit=credit,
         logo=logo,
+        compass=True,
     )
     if path is not None:
         page.fig.savefig(path, facecolor=th.surface)
