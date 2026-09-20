@@ -40,8 +40,12 @@ notebooks = [
     "polars>=1.0",
     "pyarrow>=15.0",
 ]
+# Figures (`openmobisim.viz`). An extra, not a dependency: a run inside an
+# optimisation loop should not pull in a plotting library.
+viz = ["matplotlib>=3.8"]
 dev = [
     "maturin>=1.9,<2.0",
+    "matplotlib>=3.8",
     "pytest>=8.0",
     "pytest-xdist>=3.5",
     "ruff>=0.6",

@@ -82,6 +82,10 @@ revision:
   position. No shared mutable generator, no thread-local, anywhere.
 - **`core-types` depends on nothing**, and **`py-bindings` is the only crate
   that knows Python exists.** Behaviour goes in Python, physics goes in Rust.
+- **Python names put the category first**, then the thing: `map_link`,
+  `map_demand`, `link_bins`, not `link_map`. Names that share a prefix sort and
+  complete together, so a group of functions, methods, variables or figures
+  that do the same kind of thing is found in one place.
 
 If you believe one of these is wrong, that is a design discussion to open
 first, not a pull request to write.

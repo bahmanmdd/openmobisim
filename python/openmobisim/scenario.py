@@ -18,6 +18,11 @@ from openmobisim import _core
 
 __all__ = ["Run", "Scenario", "Table"]
 
+#: The flow-motor levels ``Scenario`` accepts (design §10.1): 0 is free flow
+#: with no interaction between vehicles; 2, 3 and 4 are the link transmission
+#: model as a point queue, a spatial queue and the full triangular diagram.
+FLOW_LEVELS = (0, 2, 3, 4)
+
 
 class Table:
     """A results table backed by a Parquet file.
@@ -71,9 +76,39 @@ class Table:
 class Run:
     """What one run produced."""
 
-    def __init__(self, summary: _core.RunSummary) -> None:
-        """Wrap a `RunSummary` from `run_pipeline`."""
+    def __init__(
+        self,
+        summary: _core.RunSummary,
+        *,
+        network: _core.Network | None = None,
+        run_id: str = "run",
+        flow_level: int = 0,
+        flow_step_s: int = 300,
+        window_s: int = 86_400,
+    ) -> None:
+        """Wrap a `RunSummary` from `run_pipeline`, with what it was run on."""
         self._summary = summary
+        self._network = network
+        self.run_id = run_id
+        self.flow_level = flow_level
+        self.flow_step_s = flow_step_s
+        self.window_s = window_s
+
+    @property
+    def network(self) -> _core.Network | None:
+        """The network this run loaded."""
+        return self._network
+
+    def link_bins(self) -> _core.LinkBins | None:
+        """Per-link, per-time-bin results, or ``None`` if the run did not ask.
+
+        Ask with ``Scenario.run(...)`` on a scenario built with ``link_bin_s``.
+        One row per (bin, link) that saw traffic: how much traffic left the
+        link in that bin, and how long it took. Every traversal that finished
+        inside the window counts, including those of trips still under way
+        when it ended. Held in memory only; not written to a file.
+        """
+        return self._summary.link_bins
 
     def kpis(self) -> Table:
         """``kpis.parquet``: long format, one row per metric (Foundations §6)."""
@@ -146,8 +181,17 @@ class Scenario:
         class_defaults: dict[str, tuple[bool, bool, bool]] | None = None,
         default_weight: int = 1,
         window_hours: float = 24.0,
+        flow_level: int = 0,
+        flow_step_s: int = 300,
+        link_bin_s: int | None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
+        if flow_level not in FLOW_LEVELS:
+            raise ValueError(f"flow_level must be one of {FLOW_LEVELS}, got {flow_level}")
+        if flow_step_s <= 0:
+            raise ValueError(f"flow_step_s must be positive, got {flow_step_s}")
+        if link_bin_s is not None and link_bin_s <= 0:
+            raise ValueError(f"link_bin_s must be positive, got {link_bin_s}")
         self._network = network
         self._trips = trips
         self._trips_path = trips_path
@@ -156,6 +200,9 @@ class Scenario:
         self._class_defaults = class_defaults
         self._default_weight = default_weight
         self._window_s = round(window_hours * 3600)
+        self._flow_level = flow_level
+        self._flow_step_s = flow_step_s
+        self._link_bin_s = link_bin_s
 
     @classmethod
     def from_parts(
@@ -166,6 +213,9 @@ class Scenario:
         class_defaults: dict[str, tuple[bool, bool, bool]] | None = None,
         default_weight: int = 1,
         window_hours: float = 24.0,
+        flow_level: int = 0,
+        flow_step_s: int = 300,
+        link_bin_s: int | None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -185,6 +235,16 @@ class Scenario:
                 `default`, 10 for `fast`, for a trip whose row gives none.
             window_hours: Trips still in progress after this many hours are
                 truncated (S57).
+            flow_level: How vehicles load the network. ``0`` (the default) is
+                free flow: no vehicle affects another, so there is no
+                congestion to show. ``2``, ``3`` and ``4`` are the link
+                transmission model (design §10.1): a point queue, a spatial
+                queue, and the full triangular diagram with spillback.
+            flow_step_s: The loading step in seconds, for levels 2-4. It is a
+                bookkeeping boundary: results do not depend on it.
+            link_bin_s: If given, also record per-link results in time bins of
+                this many seconds, read with ``Run.link_bins()`` and drawn
+                with ``openmobisim.viz.map_link``.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -202,6 +262,9 @@ class Scenario:
             class_defaults=class_defaults,
             default_weight=default_weight,
             window_hours=window_hours,
+            flow_level=flow_level,
+            flow_step_s=flow_step_s,
+            link_bin_s=link_bin_s,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
@@ -230,5 +293,15 @@ class Scenario:
             class_defaults=self._class_defaults,
             default_weight=self._default_weight,
             window_s=self._window_s,
+            flow_level=self._flow_level,
+            flow_step_s=self._flow_step_s,
+            link_bin_s=self._link_bin_s,
         )
-        return Run(summary)
+        return Run(
+            summary,
+            network=self._network,
+            run_id=run_id,
+            flow_level=self._flow_level,
+            flow_step_s=self._flow_step_s,
+            window_s=self._window_s,
+        )

@@ -5,6 +5,9 @@ Rust and Python, and writing them out is how that contract stays visible on
 the Python side.
 """
 
+import numpy as np
+import numpy.typing as npt
+
 __version__: str
 
 def build_info() -> dict[str, object]:
@@ -74,12 +77,80 @@ def choice_draw(
     """
 
 class Network:
-    """A road network, opaque from Python.
+    """A road network.
 
-    Built by :func:`manhattan_grid`, passed straight back into
-    :func:`run_pipeline` (or held by a ``Scenario``). Nothing on the Python
-    side reads its fields directly.
+    Built by :func:`manhattan_grid`, :func:`toy_network` or
+    :func:`network_read_osm`; passed to a ``Scenario``; read as numpy arrays.
+    Every per-link array is indexed by the link's internal id, the same index
+    the per-link results (:class:`LinkBins`) use.
     """
+
+    #: Where the network came from: ``"osm"`` or ``"synthetic"``.
+    source: str
+    #: How many nodes.
+    node_count: int
+    #: How many directed links.
+    link_count: int
+
+    def node_lonlat(self, name: str) -> tuple[float, float]:
+        """The WGS84 ``(lon, lat)`` of the node with external id ``name``.
+
+        Raises:
+            ValueError: If there is no such node.
+        """
+
+    def link_geometry(self) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.uint32]]:
+        """Every link's polyline as ``(coordinates, offsets)``.
+
+        ``coordinates`` is ``(n_points, 2)`` WGS84 ``(lon, lat)``; link ``i``'s
+        points are ``coordinates[offsets[i]:offsets[i + 1]]``, in the direction
+        of travel. A link without stored street geometry is the straight line
+        between its nodes.
+        """
+
+    def link_length_m(self) -> npt.NDArray[np.float64]:
+        """Every link's length in metres."""
+
+    def link_free_flow_s(self) -> npt.NDArray[np.float64]:
+        """Every link's free-flow traversal time in seconds, control delay included."""
+
+    def link_class(self) -> npt.NDArray[np.uint8]:
+        """Every link's road class as a number (0 = motorway)."""
+
+    def link_lanes(self) -> npt.NDArray[np.uint8]:
+        """Every link's lane count in its own direction."""
+
+    def link_storage_pcu(self) -> npt.NDArray[np.float64]:
+        """Every link's storage at jam density, in PCU."""
+
+class LinkBins:
+    """Per-link, per-time-bin results: one row per (bin, link) that saw traffic.
+
+    Rows are sorted by bin then link. A row counts the traversals of the link
+    that *finished* in the bin, including those of trips still under way when
+    the window ended.
+    """
+
+    #: The length of one time bin, in seconds.
+    bin_seconds: int
+
+    def __len__(self) -> int:
+        """How many rows."""
+
+    def bins(self) -> npt.NDArray[np.uint32]:
+        """Each row's bin index; bin ``b`` covers ``[b, b + 1) * bin_seconds``."""
+
+    def links(self) -> npt.NDArray[np.uint32]:
+        """Each row's link, as an index into the network's link arrays."""
+
+    def crossings(self) -> npt.NDArray[np.uint32]:
+        """Each row's number of finished traversals, unweighted."""
+
+    def pcu(self) -> npt.NDArray[np.float64]:
+        """Each row's traffic that left the link, in PCU (weight and vehicle size included)."""
+
+    def pcu_seconds(self) -> npt.NDArray[np.float64]:
+        """Each row's PCU-weighted traversal time, in PCU-seconds."""
 
 def manhattan_grid(n: int, block_metres: float, signals: bool) -> Network:
     """Build an n x n grid network, block_metres apart (S105, N3).
@@ -94,6 +165,30 @@ def manhattan_grid(n: int, block_metres: float, signals: bool) -> Network:
 
     Raises:
         ValueError: If ``n < 2``.
+    """
+
+def toy_network() -> Network:
+    """The toy network's road part: sixteen nodes and links, every number checkable by hand.
+
+    Returns:
+        A :class:`Network`. Node names are ``"W"``, ``"N1"``, ``"S"``,
+        ``"M"``, … (see :meth:`Network.node_lonlat`).
+    """
+
+def network_read_osm(path: str, contract: bool = True) -> Network:
+    """Read a road network from an OpenStreetMap ``.osm.pbf`` extract.
+
+    Args:
+        path: The extract.
+        contract: Merge chains of degree-two nodes whose links agree on every
+            parameter (the default; turn it off only to debug an import).
+
+    Returns:
+        A :class:`Network` with the defaults table's parameters and the street
+        geometry kept for maps.
+
+    Raises:
+        ValueError: If the file cannot be read or holds no usable road network.
     """
 
 def grid_node_lonlat(network: Network, row: int, col: int) -> tuple[float, float]:
@@ -131,6 +226,8 @@ class RunSummary:
     no_vehicle_available: int
     no_feasible_path: int
     total_travel_time_s: float
+    #: Per-link, per-time-bin results, if the run asked for them.
+    link_bins: LinkBins | None
 
 def run_pipeline(
     network: Network,
@@ -143,6 +240,9 @@ def run_pipeline(
     class_defaults: dict[str, tuple[bool, bool, bool]] | None = None,
     default_weight: int = 1,
     window_s: int = 86_400,
+    flow_level: int = 0,
+    flow_step_s: int = 300,
+    link_bin_s: int | None = None,
 ) -> RunSummary:
     """Run the whole Phase 1 pipeline and write all four output artifacts.
 
@@ -170,6 +270,11 @@ def run_pipeline(
             whose row gives none.
         window_s: Trips still in progress after this second are truncated
             (S57).
+        flow_level: 0 for free flow, or 2, 3, 4 for the link transmission
+            model as a point queue, a spatial queue and the full diagram.
+        flow_step_s: The loading step in seconds, for levels 2-4.
+        link_bin_s: If given, also record per-link results in bins of this
+            many seconds.
 
     Returns:
         A :class:`RunSummary`.
