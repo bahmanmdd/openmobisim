@@ -34,6 +34,8 @@ openmobisim-io-parquet = { path = "crates/io-parquet", version = "0.1.0" }
 rand_chacha = { version = "0.10", default-features = false }
 rayon = "1.11"
 pyo3 = "0.29"
+# Hands arrays to Python as numpy arrays without a copy per element (S163).
+numpy = "0.29"
 proptest = "1.9"
 
 [workspace.lints.rust]

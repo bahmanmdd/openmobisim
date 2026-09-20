@@ -25,63 +25,24 @@ use std::sync::Arc;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+use numpy::{IntoPyArray, PyArray1};
+
 use openmobisim_core_demand::{
     ClassDefaults, Ownership, RawPerson, RawTrip, build_travellers, read_persons_parquet,
     read_trips_parquet,
 };
-use openmobisim_core_graph::examples::manhattan_grid as build_manhattan_grid;
+use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::geometry::LonLat;
-use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_sim::Run as CoreRun;
+use openmobisim_core_graph::turns::TurnTable;
+use openmobisim_core_loading::{FidelityLevel, LinkBins};
+use openmobisim_core_sim::{FlowMotor, Run as CoreRun};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::time::Second;
+use openmobisim_core_types::units::Duration;
+
+use crate::network::PyNetwork;
 use openmobisim_io_parquet::manifest::Manifest;
 use openmobisim_io_parquet::{write_diagnostics, write_events, write_kpis, write_manifest};
-
-/// A road network, opaque from Python — built by [`manhattan_grid`] and
-/// passed straight back into [`run_pipeline`].
-#[pyclass(name = "Network", module = "openmobisim._core")]
-pub struct PyNetwork {
-    pub(crate) inner: Arc<RoadNetwork>,
-}
-
-/// `manhattan_grid(n, block_metres, signals)` — the N3 fixture (S105),
-/// matching `06_INTERFACE_V0.md` §3's `ms.examples.manhattan_grid`
-/// parameter for parameter.
-///
-/// # Errors
-///
-/// `ValueError` if `n < 2` — a grid needs at least one edge to be a network.
-#[pyfunction]
-pub fn manhattan_grid(n: u32, block_metres: f64, signals: bool) -> PyResult<PyNetwork> {
-    if n < 2 {
-        return Err(PyValueError::new_err("manhattan_grid needs at least 2x2 nodes"));
-    }
-    let (network, diagnostics) = build_manhattan_grid(n, block_metres, signals);
-    debug_assert!(diagnostics.is_empty(), "a clean synthetic grid produces no diagnostics");
-    Ok(PyNetwork { inner: Arc::new(network) })
-}
-
-/// The WGS84 lon/lat of grid position `(row, col)` — grid-specific
-/// introspection (not a general `Network` method: a network built any other
-/// way has no row/col positions to look up), so that `python/openmobisim`'s
-/// `examples.fixed_car_trips` can build demand between named grid positions
-/// without duplicating `core_graph::examples::node_name`'s convention.
-///
-/// # Errors
-///
-/// `ValueError` if `(row, col)` is not a node `network` was built with.
-#[pyfunction]
-pub fn grid_node_lonlat(network: PyRef<'_, PyNetwork>, row: u32, col: u32) -> PyResult<(f64, f64)> {
-    let name = openmobisim_core_graph::examples::node_name(row, col);
-    let id = network
-        .inner
-        .node_external_ids()
-        .typed_id_of(&name)
-        .ok_or_else(|| PyValueError::new_err(format!("no such grid node: ({row}, {col})")))?;
-    let point = network.inner.node_lonlat(id);
-    Ok((point.lon, point.lat))
-}
 
 /// One `trips.parquet` row, as a plain tuple in `RawTrip`'s field order.
 type TripRow = (String, u32, f64, f64, f64, f64, u32, String, Option<u32>);
@@ -152,6 +113,63 @@ pub struct PyRunSummary {
     /// Total travel time, traveller-weight-scaled (S135, confirmed S136).
     #[pyo3(get)]
     pub total_travel_time_s: f64,
+    /// Per-link, per-time-bin results, if the run asked for them (S163).
+    #[pyo3(get)]
+    pub link_bins: Option<Py<PyLinkBins>>,
+}
+
+/// Per-link, per-time-bin results (S163), as numpy columns.
+///
+/// One row per (bin, link) that saw traffic, sorted by bin then link. A row
+/// counts the traversals of the link that *finished* in the bin, including
+/// those of trips still under way when the window ended.
+#[pyclass(name = "LinkBins", module = "openmobisim._core")]
+pub struct PyLinkBins {
+    inner: LinkBins,
+}
+
+#[pymethods]
+impl PyLinkBins {
+    /// The length of one time bin, in seconds.
+    #[getter]
+    fn bin_seconds(&self) -> u32 {
+        self.inner.bin_seconds()
+    }
+
+    /// How many rows.
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Each row's bin index (uint32); bin `b` covers `[b, b + 1) × bin_seconds`.
+    fn bins<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
+        self.inner.bins().to_vec().into_pyarray(py)
+    }
+
+    /// Each row's link, as an index into the network's link arrays (uint32).
+    fn links<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
+        self.inner.links().to_vec().into_pyarray(py)
+    }
+
+    /// Each row's number of finished traversals, unweighted (uint32).
+    fn crossings<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
+        self.inner.crossings().to_vec().into_pyarray(py)
+    }
+
+    /// Each row's traffic that left the link, in PCU, traveller weight and
+    /// vehicle size included (float64).
+    fn pcu<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.pcu().to_vec().into_pyarray(py)
+    }
+
+    /// Each row's PCU-weighted traversal time, in PCU·seconds (float64).
+    fn pcu_seconds<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.pcu_seconds().to_vec().into_pyarray(py)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("LinkBins({} rows, {} s bins)", self.inner.len(), self.inner.bin_seconds())
+    }
 }
 
 fn to_value_error<E: std::fmt::Display>(e: E) -> PyErr {
@@ -177,12 +195,14 @@ fn to_value_error<E: std::fmt::Display>(e: E) -> PyErr {
     trips=None, trips_path=None,
     persons=None, persons_path=None,
     class_defaults=None, default_weight=1, window_s=86_400,
+    flow_level=0, flow_step_s=300, link_bin_s=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
     reason = "the Phase 1 pipeline boundary; python/openmobisim.Scenario is where this becomes ergonomic"
 )]
 pub fn run_pipeline(
+    py: Python<'_>,
     network: PyRef<'_, PyNetwork>,
     run_id: &str,
     output_dir: &str,
@@ -193,6 +213,9 @@ pub fn run_pipeline(
     class_defaults: Option<HashMap<String, (bool, bool, bool)>>,
     default_weight: u32,
     window_s: u32,
+    flow_level: u32,
+    flow_step_s: u32,
+    link_bin_s: Option<u32>,
 ) -> PyResult<PyRunSummary> {
     let raw_trips = match (trips, trips_path) {
         (Some(rows), None) => rows.into_iter().map(trip_from_row).collect(),
@@ -230,6 +253,34 @@ pub fn run_pipeline(
 
     let mut run =
         CoreRun::new(network.inner.clone(), travellers.clone(), trips_table, Second(window_s));
+    let level = match flow_level {
+        0 => None,
+        2 => Some(FidelityLevel::PointQueue),
+        3 => Some(FidelityLevel::SpatialQueue),
+        4 => Some(FidelityLevel::Full),
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "flow_level must be 0 (free flow), 2, 3 or 4, got {other}"
+            )));
+        }
+    };
+    if let Some(level) = level {
+        if flow_step_s == 0 {
+            return Err(PyValueError::new_err("flow_step_s must be positive"));
+        }
+        let turns = Arc::new(TurnTable::build(&network.inner, SignalDefaults::SHIPPED));
+        run = run.with_flow_motor(FlowMotor::Ltm {
+            turns,
+            step: Duration(f64::from(flow_step_s)),
+            level,
+        });
+    }
+    if let Some(bin) = link_bin_s {
+        if bin == 0 {
+            return Err(PyValueError::new_err("link_bin_s must be positive"));
+        }
+        run = run.with_link_bins(bin);
+    }
     let mut run_diagnostics = Diagnostics::new();
     let result = run.execute(&mut run_diagnostics);
 
@@ -266,5 +317,6 @@ pub fn run_pipeline(
         no_vehicle_available: result.completion.no_vehicle_available,
         no_feasible_path: result.completion.no_feasible_path,
         total_travel_time_s: result.total_travel_time.get(),
+        link_bins: result.link_bins.map(|inner| Py::new(py, PyLinkBins { inner })).transpose()?,
     })
 }

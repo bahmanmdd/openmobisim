@@ -29,7 +29,10 @@ openmobisim-core-types = { workspace = true }
 openmobisim-core-graph = { workspace = true }
 openmobisim-core-demand = { workspace = true }
 openmobisim-core-sim = { workspace = true }
+openmobisim-core-loading = { workspace = true }
+openmobisim-io-osm = { workspace = true }
 openmobisim-io-parquet = { workspace = true }
 # abi3-py311: one wheel per platform covers Python 3.11 and every later
 # version, which is the whole reason installation is a plain `pip install`.
 pyo3 = { workspace = true, features = ["abi3-py311"] }
+numpy = { workspace = true }

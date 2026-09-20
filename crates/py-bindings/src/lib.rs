@@ -33,8 +33,10 @@ use openmobisim_core_types::{
     time::{Second, StepGrid},
 };
 
+mod network;
 mod pipeline;
-use pipeline::{PyNetwork, PyRunSummary, grid_node_lonlat, manhattan_grid, run_pipeline};
+use network::{PyNetwork, grid_node_lonlat, manhattan_grid, network_read_osm, toy_network};
+use pipeline::{PyLinkBins, PyRunSummary, run_pipeline};
 
 /// Facts about the compiled core, as a dict.
 ///
@@ -143,7 +145,10 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(choice_draw, m)?)?;
     m.add_class::<PyNetwork>()?;
     m.add_class::<PyRunSummary>()?;
+    m.add_class::<PyLinkBins>()?;
     m.add_function(wrap_pyfunction!(manhattan_grid, m)?)?;
+    m.add_function(wrap_pyfunction!(toy_network, m)?)?;
+    m.add_function(wrap_pyfunction!(network_read_osm, m)?)?;
     m.add_function(wrap_pyfunction!(grid_node_lonlat, m)?)?;
     m.add_function(wrap_pyfunction!(run_pipeline, m)?)?;
     Ok(())
