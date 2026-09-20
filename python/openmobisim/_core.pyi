@@ -92,6 +92,13 @@ class Network:
     #: How many directed links.
     link_count: int
 
+    def node_nearest(self, lon: float, lat: float) -> int:
+        """The index of the drivable node nearest to ``(lon, lat)``.
+
+        This is the node a trip starting or ending there is routed from or to,
+        and node indices key :class:`RouteSets`.
+        """
+
     def node_lonlat(self, name: str) -> tuple[float, float]:
         """The WGS84 ``(lon, lat)`` of the node with external id ``name``.
 
@@ -128,6 +135,98 @@ class Network:
 
     def link_storage_pcu(self) -> npt.NDArray[np.float64]:
         """Every link's storage at jam density, in PCU."""
+
+class RouteSets:
+    """The alternative routes of many origin-destination pairs.
+
+    Keys are pairs of node indices (see :meth:`Network.node_nearest`), sorted.
+    Route ``r`` is ``links()[route_offsets()[r]:route_offsets()[r + 1]]``; key
+    ``k`` owns the routes ``set_offsets()[k]:set_offsets()[k + 1]``, best first.
+    """
+
+    #: The method that made these sets, for example ``"penalty"``.
+    method: str
+    #: The method and every option with defaults filled in, as one string.
+    descriptor: str
+    #: A short hex identity of the network and the method with its options.
+    identity: str
+    #: How many origin-destination pairs have a set.
+    key_count: int
+    #: How many routes in all.
+    route_count: int
+    #: Bytes held.
+    bytes: int
+
+    def keys(self) -> tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32]]:
+        """The keys as ``(origin_nodes, destination_nodes)``, sorted."""
+
+    def set_offsets(self) -> npt.NDArray[np.uint32]:
+        """``key_count + 1`` offsets into the routes."""
+
+    def route_offsets(self) -> npt.NDArray[np.uint32]:
+        """``route_count + 1`` offsets into :meth:`links`."""
+
+    def links(self) -> npt.NDArray[np.uint32]:
+        """Every route's links, one flat array of link indices."""
+
+    def costs(self) -> npt.NDArray[np.float32]:
+        """Every route's free-flow cost in seconds."""
+
+    def overlaps(self) -> npt.NDArray[np.float32]:
+        """Every route's largest share of its cost shared with a route found before it."""
+
+    def find(self, origin: int, destination: int) -> int | None:
+        """The position of the pair among the keys, or ``None`` if it has no set."""
+
+    def routes(self, key_index: int) -> list[npt.NDArray[np.uint32]]:
+        """The routes of the key at ``key_index``, best first, each as link indices.
+
+        Raises:
+            ValueError: If ``key_index`` is out of range.
+        """
+
+    def link_routes(self, link: int) -> npt.NDArray[np.uint32]:
+        """The route numbers that use ``link``, ascending (the inverted index).
+
+        Raises:
+            ValueError: If ``link`` is out of range.
+        """
+
+    def route_key(self, route: int) -> int:
+        """The key (position among the keys) that route number ``route`` belongs to.
+
+        Raises:
+            ValueError: If ``route`` is out of range.
+        """
+
+def route_methods() -> list[str]:
+    """The route-set methods that can be selected, the default (``"penalty"``) first."""
+
+def route_sets_build(
+    network: Network,
+    od_lonlat: list[tuple[float, float, float, float]],
+    method: str = "penalty",
+    options: dict[str, float] | None = None,
+) -> RouteSets:
+    """Make route sets for origin-destination pairs given as coordinates.
+
+    Args:
+        network: The network to route on.
+        od_lonlat: Pairs ``(origin_lon, origin_lat, destination_lon,
+            destination_lat)``. Each end is snapped to the nearest drivable
+            node; pairs that snap to one node are dropped.
+        method: A name from :func:`route_methods`.
+        options: The method's options, numbers by name. For ``"penalty"``:
+            ``max_paths`` (5), ``max_detour`` (1.3), ``max_overlap`` (0.75),
+            ``penalty`` (1.5), ``max_attempts`` (15).
+
+    Returns:
+        The sets, one per distinct pair, best route first.
+
+    Raises:
+        ValueError: For an unknown method, an unknown option or an
+            out-of-range value.
+    """
 
 class LinkBins:
     """Per-link, per-time-bin results: one row per (bin, link) that saw traffic.
@@ -234,6 +333,8 @@ class RunSummary:
     total_travel_time_s: float
     #: Per-link, per-time-bin results, if the run asked for them.
     link_bins: LinkBins | None
+    #: The route sets the trips were routed from.
+    route_sets: RouteSets
 
 def run_pipeline(
     network: Network,
@@ -249,6 +350,8 @@ def run_pipeline(
     flow_level: int = 0,
     flow_step_s: int = 300,
     link_bin_s: int | None = None,
+    route_method: str = "penalty",
+    route_options: dict[str, float] | None = None,
 ) -> RunSummary:
     """Run the whole Phase 1 pipeline and write all four output artifacts.
 
@@ -281,6 +384,8 @@ def run_pipeline(
         flow_step_s: The loading step in seconds, for levels 2-4.
         link_bin_s: If given, also record per-link results in bins of this
             many seconds.
+        route_method: How route sets are generated (see :func:`route_methods`).
+        route_options: That method's options.
 
     Returns:
         A :class:`RunSummary`.

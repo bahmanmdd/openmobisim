@@ -35,8 +35,10 @@ use openmobisim_core_types::{
 
 mod network;
 mod pipeline;
+mod routes;
 use network::{PyNetwork, grid_node_lonlat, manhattan_grid, network_read_osm, toy_network};
 use pipeline::{PyLinkBins, PyRunSummary, run_pipeline};
+use routes::{PyRouteSets, route_methods, route_sets_build};
 
 /// Facts about the compiled core, as a dict.
 ///
@@ -146,6 +148,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNetwork>()?;
     m.add_class::<PyRunSummary>()?;
     m.add_class::<PyLinkBins>()?;
+    m.add_class::<PyRouteSets>()?;
+    m.add_function(wrap_pyfunction!(route_methods, m)?)?;
+    m.add_function(wrap_pyfunction!(route_sets_build, m)?)?;
     m.add_function(wrap_pyfunction!(manhattan_grid, m)?)?;
     m.add_function(wrap_pyfunction!(toy_network, m)?)?;
     m.add_function(wrap_pyfunction!(network_read_osm, m)?)?;

@@ -124,11 +124,13 @@ def draw_furniture(
     credit: str | None = None,
     logo: bool = True,
     compass: bool = True,
+    route_legend: list[tuple[np.ndarray, str]] | None = None,
 ) -> None:
     """Title with the signal glyph, legends, the provenance strip and the logo.
 
     `width_legend` is ``(label, [(value, width_pt), ...], unit)``; `colour_legend`
-    is ``(label, ramp_stops, low_label, high_label)``. `credit` is the user's own
+    is ``(label, ramp_stops, low_label, high_label)``; `route_legend` is a list of
+    ``(rgb, text)`` rows, one per route, in place of both. `credit` is the user's own
     line (a name, an institution, their copyright) placed before the logo; the
     logo is a signature, not a claim over the figure or its data.
     """
@@ -185,6 +187,22 @@ def draw_furniture(
                 fontsize=8.5 * k,
                 fontfamily=mono,
             )
+    if route_legend:
+        for i, (colour, text) in enumerate(route_legend[:8]):
+            col, row = divmod(i, 4)
+            x0 = 0.585 + col * 0.20
+            y0 = 0.950 - row * 0.021
+            fig.add_artist(
+                Line2D(
+                    [x0, x0 + 0.018],
+                    [y0 + 0.004] * 2,
+                    transform=fig.transFigure,
+                    color=colour,
+                    linewidth=3.0 * k,
+                    solid_capstyle="round",
+                )
+            )
+            fig.text(x0 + 0.024, y0, text, color=t.ink2, fontsize=9 * k, fontfamily=mono)
     if colour_legend is not None:
         label, stops, low, high = colour_legend
         cx = 0.815

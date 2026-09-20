@@ -6,7 +6,7 @@
 //! figures and any array-shaped analysis need (S163). Every array is indexed
 //! by the link's internal id, the same index the per-link results use.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods};
 use pyo3::exceptions::PyValueError;
@@ -15,8 +15,10 @@ use pyo3::prelude::*;
 use openmobisim_core_graph::examples::{
     manhattan_grid as build_manhattan_grid, toy_network as build_toy_network,
 };
+use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::link_geometry::LinkGeometry;
 use openmobisim_core_graph::network::RoadNetwork;
+use openmobisim_core_routes::NodeSnapper;
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId};
 use openmobisim_io_osm::{ImportOptions, PbfSource, import};
@@ -36,10 +38,34 @@ pub struct PyNetwork {
     /// `"osm"` (an OpenStreetMap extract) or `"synthetic"`.
     #[pyo3(get)]
     pub(crate) source: String,
+    /// The nearest-drivable-node index, built the first time it is asked for.
+    pub(crate) snapper: OnceLock<NodeSnapper>,
+}
+
+impl PyNetwork {
+    pub(crate) fn new(
+        inner: Arc<RoadNetwork>,
+        geometry: Option<Arc<LinkGeometry>>,
+        source: &str,
+    ) -> Self {
+        Self { inner, geometry, source: source.to_string(), snapper: OnceLock::new() }
+    }
+
+    /// The snapper, built on first use.
+    pub(crate) fn snapper(&self) -> &NodeSnapper {
+        self.snapper.get_or_init(|| NodeSnapper::new(&self.inner))
+    }
 }
 
 #[pymethods]
 impl PyNetwork {
+    /// The index of the drivable node nearest to `(lon, lat)`: the node a trip
+    /// starting or ending there is routed from or to. Node indices key route
+    /// sets.
+    fn node_nearest(&self, lon: f64, lat: f64) -> u32 {
+        self.snapper().nearest(&self.inner, LonLat::new(lon, lat)).raw()
+    }
+
     /// The WGS84 `(lon, lat)` of the node with external id `name` — for
     /// building demand between named places (a synthetic network's node
     /// names are documented with it; an OSM network's are OSM node ids).
@@ -179,7 +205,7 @@ pub fn manhattan_grid(n: u32, block_metres: f64, signals: bool) -> PyResult<PyNe
     }
     let (network, diagnostics) = build_manhattan_grid(n, block_metres, signals);
     debug_assert!(diagnostics.is_empty(), "a clean synthetic grid produces no diagnostics");
-    Ok(PyNetwork { inner: Arc::new(network), geometry: None, source: "synthetic".into() })
+    Ok(PyNetwork::new(Arc::new(network), None, "synthetic"))
 }
 
 /// The toy network's road part (I-m, S161): sixteen nodes and links on which
@@ -188,7 +214,7 @@ pub fn manhattan_grid(n: u32, block_metres: f64, signals: bool) -> PyResult<PyNe
 pub fn toy_network() -> PyNetwork {
     let (network, diagnostics) = build_toy_network();
     debug_assert!(diagnostics.is_empty(), "the toy network builds cleanly");
-    PyNetwork { inner: Arc::new(network), geometry: None, source: "synthetic".into() }
+    PyNetwork::new(Arc::new(network), None, "synthetic")
 }
 
 /// Read a road network from an OpenStreetMap `.osm.pbf` extract, with the
@@ -207,11 +233,7 @@ pub fn network_read_osm(py: Python<'_>, path: &str, contract: bool) -> PyResult<
             import(&PbfSource::new(&path), options, &mut Diagnostics::new())
         })
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    Ok(PyNetwork {
-        inner: Arc::new(network),
-        geometry: Some(Arc::new(geometry)),
-        source: "osm".into(),
-    })
+    Ok(PyNetwork::new(Arc::new(network), Some(Arc::new(geometry)), "osm"))
 }
 
 /// The WGS84 lon/lat of grid position `(row, col)` — grid-specific

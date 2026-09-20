@@ -99,6 +99,15 @@ class Run:
         """The network this run loaded."""
         return self._network
 
+    def route_sets(self) -> _core.RouteSets:
+        """The route sets the trips were routed from.
+
+        Every alternative the method found for every origin-destination pair
+        the demand asked for. Draw one pair's alternatives with
+        ``openmobisim.viz.map_route``.
+        """
+        return self._summary.route_sets
+
     def link_bins(self) -> _core.LinkBins | None:
         """Per-link, per-time-bin results, or ``None`` if the run did not ask.
 
@@ -184,6 +193,8 @@ class Scenario:
         flow_level: int = 0,
         flow_step_s: int = 300,
         link_bin_s: int | None = None,
+        route_method: str = "penalty",
+        route_options: dict[str, float] | None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
         if flow_level not in FLOW_LEVELS:
@@ -203,6 +214,8 @@ class Scenario:
         self._flow_level = flow_level
         self._flow_step_s = flow_step_s
         self._link_bin_s = link_bin_s
+        self._route_method = route_method
+        self._route_options = route_options
 
     @classmethod
     def from_parts(
@@ -216,6 +229,8 @@ class Scenario:
         flow_level: int = 0,
         flow_step_s: int = 300,
         link_bin_s: int | None = None,
+        route_method: str = "penalty",
+        route_options: dict[str, float] | None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -245,6 +260,13 @@ class Scenario:
             link_bin_s: If given, also record per-link results in time bins of
                 this many seconds, read with ``Run.link_bins()`` and drawn
                 with ``openmobisim.viz.map_link``.
+            route_method: How route sets are generated, by name (see
+                ``openmobisim.route_methods()``; the default ``"penalty"``
+                finds distinct alternatives). Until choice exists each trip
+                takes the best route of its pair, so the method changes the
+                sets you can inspect (``Run.route_sets()``) but not the run.
+            route_options: The method's options, numbers by name; unknown names
+                and out-of-range values are refused.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -265,6 +287,8 @@ class Scenario:
             flow_level=flow_level,
             flow_step_s=flow_step_s,
             link_bin_s=link_bin_s,
+            route_method=route_method,
+            route_options=route_options,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
@@ -296,6 +320,8 @@ class Scenario:
             flow_level=self._flow_level,
             flow_step_s=self._flow_step_s,
             link_bin_s=self._link_bin_s,
+            route_method=self._route_method,
+            route_options=self._route_options,
         )
         return Run(
             summary,

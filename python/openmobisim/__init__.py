@@ -22,6 +22,8 @@ from openmobisim._core import (
     choice_draw,
     fixed_order_sum_f64,
     network_read_osm,
+    route_methods,
+    route_sets_build,
     step_of,
 )
 from openmobisim.scenario import Run, Scenario, Table
@@ -38,5 +40,7 @@ __all__ = [
     "examples",
     "fixed_order_sum_f64",
     "network_read_osm",
+    "route_methods",
+    "route_sets_build",
     "step_of",
 ]

@@ -41,6 +41,8 @@ use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 
 use crate::network::PyNetwork;
+use crate::routes::{PyRouteSets, to_options};
+use openmobisim_core_routes::Registry;
 use openmobisim_io_parquet::manifest::Manifest;
 use openmobisim_io_parquet::{write_diagnostics, write_events, write_kpis, write_manifest};
 
@@ -116,6 +118,9 @@ pub struct PyRunSummary {
     /// Per-link, per-time-bin results, if the run asked for them (S163).
     #[pyo3(get)]
     pub link_bins: Option<Py<PyLinkBins>>,
+    /// The route sets the trips were routed from (S165).
+    #[pyo3(get)]
+    pub route_sets: Option<Py<PyRouteSets>>,
 }
 
 /// Per-link, per-time-bin results (S163), as numpy columns.
@@ -196,6 +201,7 @@ fn to_value_error<E: std::fmt::Display>(e: E) -> PyErr {
     persons=None, persons_path=None,
     class_defaults=None, default_weight=1, window_s=86_400,
     flow_level=0, flow_step_s=300, link_bin_s=None,
+    route_method="penalty", route_options=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -216,7 +222,13 @@ pub fn run_pipeline(
     flow_level: u32,
     flow_step_s: u32,
     link_bin_s: Option<u32>,
+    route_method: &str,
+    route_options: Option<HashMap<String, f64>>,
 ) -> PyResult<PyRunSummary> {
+    // Refuse a bad method or option before doing any work.
+    let generator = Registry::builtin()
+        .create(route_method, &to_options(route_options))
+        .map_err(to_value_error)?;
     let raw_trips = match (trips, trips_path) {
         (Some(rows), None) => rows.into_iter().map(trip_from_row).collect(),
         (None, Some(path)) => read_trips_parquet(path).map_err(to_value_error)?,
@@ -275,6 +287,7 @@ pub fn run_pipeline(
             level,
         });
     }
+    run = run.with_route_generator(Arc::from(generator));
     if let Some(bin) = link_bin_s {
         if bin == 0 {
             return Err(PyValueError::new_err("link_bin_s must be positive"));
@@ -318,5 +331,9 @@ pub fn run_pipeline(
         no_feasible_path: result.completion.no_feasible_path,
         total_travel_time_s: result.total_travel_time.get(),
         link_bins: result.link_bins.map(|inner| Py::new(py, PyLinkBins { inner })).transpose()?,
+        route_sets: result
+            .route_sets
+            .map(|sets| Py::new(py, PyRouteSets::new(Arc::new(sets), network.inner.link_count())))
+            .transpose()?,
     })
 }
