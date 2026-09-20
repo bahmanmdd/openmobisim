@@ -183,6 +183,42 @@ fn failed(e: &PyErr) -> ChoiceError {
 }
 
 impl ChoiceModel for PythonChoice {
+    fn probabilities(&self, batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
+        Python::attach(|py| {
+            let model = self.model.bind(py);
+            // Optional: a model that can say how likely each alternative is has a
+            // ``probabilities(batch)`` method returning one number per alternative.
+            if !model.getattr("probabilities").is_ok_and(|p| p.is_callable()) {
+                return Ok(None);
+            }
+            let rng = StreamRng::new(
+                openmobisim_core_types::rng::RngKey::from_seed(0),
+                openmobisim_core_types::rng::Stream::Choice,
+            );
+            let arg = build_batch(py, batch, &rng).map_err(|e| failed(&e))?;
+            let answer = model.call_method1("probabilities", (arg,)).map_err(|e| failed(&e))?;
+            if answer.is_none() {
+                return Ok(None);
+            }
+            let numpy = py.import("numpy").map_err(|e| failed(&e))?;
+            let array = as_array(&numpy, &answer, "float64")?;
+            let read: PyReadonlyArray1<'_, f64> = array.extract().map_err(|_| {
+                ChoiceError::BadAnswer(
+                    "probabilities() must return a one-dimensional array of numbers".to_string(),
+                )
+            })?;
+            let p = read.as_slice().map_err(|e| failed(&e.into()))?.to_vec();
+            if p.len() != batch.alternatives() {
+                return Err(ChoiceError::BadAnswer(format!(
+                    "probabilities() gave {} numbers for {} alternatives",
+                    p.len(),
+                    batch.alternatives()
+                )));
+            }
+            Ok(Some(p))
+        })
+    }
+
     fn name(&self) -> &str {
         &self.name
     }

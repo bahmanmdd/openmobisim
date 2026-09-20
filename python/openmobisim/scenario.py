@@ -131,6 +131,49 @@ class Run:
         """
         return self._summary.choice_model
 
+    @property
+    def equilibration(self) -> str:
+        """The name of the equilibration strategy: ``"none"`` or ``"msa"``."""
+        return self._summary.equilibration
+
+    @property
+    def converged(self) -> bool:
+        """Whether the run stopped before its most iterations because it had converged."""
+        return self._summary.converged
+
+    def convergence(self) -> dict[str, Any]:
+        """What each iteration showed: how far the run is from an equilibrium.
+
+        NumPy arrays, one entry per loading (a run without equilibration has one).
+        ``nan`` marks a number that was not measured. The result of the run
+        (``completion``, ``total_travel_time_s``, ``link_bins()``, ``route_choices()``)
+        is that of the **last** iteration.
+
+        * ``iteration`` — 0 is everyone's first choice, on free-flow costs.
+        * ``reselected_share``, ``changed_share`` — the share of trips (by weight) that
+          chose again on the way to this iteration, and the share whose route changed.
+        * ``total_travel_time_s``, ``completed``, ``truncated`` — this loading's.
+        * ``time_change`` — how much the link times moved since the last loading, as a
+          share of it, weighted by traffic. The stability of the pattern.
+        * ``gap_flow`` — the share of travellers whose route differs from where the
+          model's probabilities, at the times this loading produced, would put them
+          (half the total variation between observed and expected route flows, by
+          origin-destination pair). ``gap_flow_floor`` — what that would be by chance
+          alone: the same measure for a fresh sample drawn from the same probabilities.
+          ``gap_flow_excess`` — the difference: the disequilibrium left after noise,
+          near zero at a stochastic user equilibrium (and positive or negative by a
+          little from noise, more with few travellers per pair).
+        * ``gap_cost`` — the travel time the chosen routes cost over what the model
+          expects a traveller to pay, as a share of the former: 0 at equilibrium.
+
+        The gaps need a model that can give probabilities (``"logit"`` and
+        ``"deterministic"`` do; a Python model may have a ``probabilities(batch)``
+        method) and are ``nan`` without one.
+
+        The same numbers are in ``kpis.parquet``, a row per metric per iteration.
+        """
+        return dict(self._summary.convergence)
+
     def route_sets(self) -> _core.RouteSets:
         """The route sets the trips were routed from.
 
@@ -264,6 +307,8 @@ class Scenario:
         master_seed: int = 0,
         choice_model: str | Any = "deterministic",
         choice_options: dict[str, float] | None = None,
+        equilibration: str = "none",
+        equilibration_options: dict[str, float] | None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
         if flow_level not in FLOW_LEVELS:
@@ -292,6 +337,8 @@ class Scenario:
         self._master_seed = master_seed
         self._choice_model = choice_model
         self._choice_options = choice_options
+        self._equilibration = equilibration
+        self._equilibration_options = equilibration_options
 
     @classmethod
     def from_parts(
@@ -310,6 +357,8 @@ class Scenario:
         master_seed: int = 0,
         choice_model: str | Any = "deterministic",
         choice_options: dict[str, float] | None = None,
+        equilibration: str = "none",
+        equilibration_options: dict[str, float] | None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -364,6 +413,22 @@ class Scenario:
                 ``beta_detour``, ``beta_overlap``, ``beta_n_links`` (0). Unknown
                 names and non-numbers are refused. The defaults are an
                 assumption, not a calibration.
+            equilibration: How choice and loading are repeated (see
+                ``openmobisim.equilibration_strategies()``). ``"none"`` (the
+                default) chooses every trip's route once, on free-flow costs, and
+                loads the network once. ``"msa"`` is the method of successive
+                averages in traveller form: load the network, read the link times it
+                produced, let a share ``1/(i + 1)`` of travellers choose again on
+                those times at iteration ``i``, load again. It only changes anything
+                when vehicles interact (``flow_level`` 2 to 4) and a choice model
+                gives travellers something to choose between (``"logit"``).
+                ``Run.convergence()`` says how the iterations went.
+            equilibration_options: The strategy's options, numbers by name: for
+                ``"msa"``, ``iterations`` (10; the most loadings), ``gap_tolerance``
+                (0: never stop early; otherwise stop once the flow gap in excess of
+                chance, averaged over the last three iterations, is at most this share
+                of travellers) and ``cost_bin_s`` (300: the length of the time bins the
+                link times are read in).
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -389,6 +454,8 @@ class Scenario:
             master_seed=master_seed,
             choice_model=choice_model,
             choice_options=choice_options,
+            equilibration=equilibration,
+            equilibration_options=equilibration_options,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
@@ -425,6 +492,8 @@ class Scenario:
             master_seed=self._master_seed,
             choice_model=self._choice_model,
             choice_options=self._choice_options,
+            equilibration=self._equilibration,
+            equilibration_options=self._equilibration_options,
         )
         return Run(
             summary,

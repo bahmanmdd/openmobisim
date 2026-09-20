@@ -79,6 +79,37 @@ impl ChoiceBatch {
         *self.offsets.last_mut().expect("offsets is never empty") += 1;
     }
 
+    /// A new batch holding only the situations in `which` (indices into this
+    /// one, in the order given), with their alternatives and attributes copied.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an index is out of range.
+    #[must_use]
+    pub fn subset(&self, which: &[usize]) -> Self {
+        let mut out = Self {
+            iteration: self.iteration,
+            names: self.names.clone(),
+            traveller: Vec::with_capacity(which.len()),
+            trip: Vec::with_capacity(which.len()),
+            offsets: vec![0],
+            identity: Vec::new(),
+            columns: vec![Vec::new(); self.columns.len()],
+        };
+        for &s in which {
+            let range = self.range(s);
+            out.traveller.push(self.traveller[s]);
+            out.trip.push(self.trip[s]);
+            out.identity.extend_from_slice(&self.identity[range.clone()]);
+            for (dst, src) in out.columns.iter_mut().zip(&self.columns) {
+                dst.extend_from_slice(&src[range.clone()]);
+            }
+            out.offsets
+                .push(u32::try_from(out.identity.len()).expect("fewer than 2^32 alternatives"));
+        }
+        out
+    }
+
     /// The iteration this batch is for. Part of the address of every random draw.
     #[must_use]
     pub fn iteration(&self) -> u32 {

@@ -15,7 +15,7 @@ use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 
-use crate::link_bins::{LinkBinRecorder, LinkBins};
+use crate::link_bins::{EntryTables, LinkBinRecorder, LinkBins};
 use crate::vehicle::Vehicle;
 
 /// One vehicle's time on one link of its route.
@@ -156,6 +156,42 @@ pub fn load_level_0_binned<'a>(
         recorder.record(LinkId::from_index(link as usize), enter, exit, pcu);
     }
     (trajectories, recorder.finish())
+}
+
+/// [`load_level_0_binned`], also returning the traversals filed by the bin they
+/// **entered** their link in (S170).
+///
+/// # Panics
+///
+/// Panics only if the recorder's entry tables were not built, which they always are
+/// here.
+#[must_use]
+pub fn load_level_0_recorded<'a>(
+    vehicles: impl IntoIterator<Item = &'a Vehicle>,
+    network: &RoadNetwork,
+    window: f64,
+    bin_seconds: u32,
+) -> (Vec<Trajectory>, LinkBins, EntryTables) {
+    let mut crossings: Vec<(f64, f64, u32, f64)> = Vec::new();
+    let trajectories: Vec<Trajectory> = vehicles
+        .into_iter()
+        .map(|v| {
+            let pcu = v.pcu.get();
+            traverse_exact(v, network, |link, enter, exit| {
+                crossings.push((exit, enter, link.raw(), pcu));
+            })
+        })
+        .collect();
+    crossings.sort_by(|a, b| {
+        a.0.total_cmp(&b.0).then(a.2.cmp(&b.2)).then(a.1.total_cmp(&b.1)).then(a.3.total_cmp(&b.3))
+    });
+    let mut recorder =
+        LinkBinRecorder::new(network.link_count() as usize, bin_seconds, window).with_entry_bins();
+    for (exit, enter, link, pcu) in crossings {
+        recorder.record(LinkId::from_index(link as usize), enter, exit, pcu);
+    }
+    let (exit, tables) = recorder.finish_with_entry();
+    (trajectories, exit, tables.expect("entry bins were asked for"))
 }
 
 /// A link's free-flow time in seconds, checked to be usable as a duration.

@@ -20,6 +20,8 @@
 //!
 //! A traversal is filed under the bin of its **exit** time.
 
+use std::collections::HashMap;
+
 use openmobisim_core_types::ids::{EntityId, LinkId};
 
 /// The recorded table: one row per (bin, link) that saw traffic, sorted by
@@ -103,6 +105,21 @@ impl LinkBins {
     }
 }
 
+/// What a loading learned about how long a traveller about to set out would take
+/// (S170): the two tables an iterated run costs its routes from.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EntryTables {
+    /// Traversals by the bin they **entered** their link in: the time to cross a
+    /// link when arriving at it (its queue included; the wait to enter it from an
+    /// origin is not).
+    pub entry: LinkBins,
+    /// The wait to get from an origin onto a first link, by the bin the traveller
+    /// **departed** in: how long those who set out then waited outside the
+    /// network before their first link had room. `crossings`, `pcu` and
+    /// `pcu_seconds` are as in any [`LinkBins`], with the wait as the time.
+    pub origin_wait: LinkBins,
+}
+
 /// Builds a [`LinkBins`] from traversals fed **in exit-time order**.
 #[derive(Debug)]
 pub struct LinkBinRecorder {
@@ -115,6 +132,20 @@ pub struct LinkBinRecorder {
     pcu_seconds: Vec<f64>,
     touched: Vec<u32>,
     out: LinkBins,
+    /// If asked for (S170): the same traversals filed under the bin they
+    /// **entered** the link in, which is what a traveller about to enter it needs
+    /// to know. Sparse: entries arrive out of order.
+    entry: Option<HashMap<u64, EntryCell>>,
+    /// The waits at origins, by departure bin, when `entry` is on.
+    origin_wait: Option<HashMap<u64, EntryCell>>,
+}
+
+/// What one (entry bin, link) cell has seen so far.
+#[derive(Clone, Copy, Debug, Default)]
+struct EntryCell {
+    crossings: u32,
+    pcu: f64,
+    pcu_seconds: f64,
 }
 
 impl LinkBinRecorder {
@@ -137,6 +168,66 @@ impl LinkBinRecorder {
             pcu_seconds: vec![0.0; link_count],
             touched: Vec::new(),
             out: LinkBins { bin_seconds, ..LinkBins::default() },
+            entry: None,
+            origin_wait: None,
+        }
+    }
+
+    /// The same recorder, also filing every traversal under the bin it
+    /// **entered** in (S170), for [`Self::finish_with_entry`].
+    ///
+    /// The exit-time table says how much traffic left a link in each bin, which is
+    /// what a flow map draws; a traveller about to enter the link needs the time
+    /// taken by those who *entered* when they would, and in a growing queue the two
+    /// differ by the queue's length. Costs a hash-map insert per traversal (about
+    /// 30 ns) and 40 bytes per (link, bin) cell that saw traffic. It also files the
+    /// wait of every vehicle at its origin ([`Self::record_origin_wait`]).
+    #[must_use]
+    pub fn with_entry_bins(mut self) -> Self {
+        self.entry = Some(HashMap::new());
+        self.origin_wait = Some(HashMap::new());
+        self
+    }
+
+    /// Record that a vehicle of `pcu` PCU that set out at `departure` onto `link` has
+    /// waited outside the network until `until`: the second it got onto the link, or
+    /// the window's end if it never did (then a lower bound). Only the entry-time
+    /// tables see it. Does nothing unless [`Self::with_entry_bins`] was called.
+    pub fn record_origin_wait(&mut self, link: LinkId, departure: f64, until: f64, pcu: f64) {
+        if let Some(waits) = self.origin_wait.as_mut() {
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a non-negative time in seconds over a bin length; within the u32 clock"
+            )]
+            let bin = (departure.max(0.0) / self.bin_seconds) as u32;
+            let cell = waits.entry((u64::from(bin) << 32) | u64::from(link.raw())).or_default();
+            cell.crossings += 1;
+            cell.pcu += pcu;
+            cell.pcu_seconds += pcu * (until - departure).max(0.0);
+        }
+    }
+
+    /// Record a traversal that had **not finished** when the window ended: a
+    /// vehicle of `pcu` PCU that entered `link` at `enter` and was still on it, or
+    /// waiting to enter it, at `end` (S170). Only the entry-time table sees it, and
+    /// with the time it had taken so far, a **lower bound** on the time it will
+    /// take: without it, a queue that outlasts the window would show only the
+    /// vehicles that got through, and read as if it were short. Does nothing
+    /// unless [`Self::with_entry_bins`] was called.
+    pub fn record_unfinished(&mut self, link: LinkId, enter: f64, end: f64, pcu: f64) {
+        if let Some(entry) = self.entry.as_mut() {
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a non-negative time in seconds over a bin length; within the u32 clock"
+            )]
+            let entry_bin = (enter.max(0.0) / self.bin_seconds) as u32;
+            let cell =
+                entry.entry((u64::from(entry_bin) << 32) | u64::from(link.raw())).or_default();
+            cell.crossings += 1;
+            cell.pcu += pcu;
+            cell.pcu_seconds += pcu * (end - enter).max(0.0);
         }
     }
 
@@ -164,6 +255,19 @@ impl LinkBinRecorder {
         self.crossings[l] += 1;
         self.pcu[l] += pcu;
         self.pcu_seconds[l] += pcu * (exit - enter);
+        if let Some(entry) = self.entry.as_mut() {
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a non-negative time in seconds over a bin length; within the u32 clock"
+            )]
+            let entry_bin = (enter.max(0.0) / self.bin_seconds) as u32;
+            let cell =
+                entry.entry((u64::from(entry_bin) << 32) | u64::from(link.raw())).or_default();
+            cell.crossings += 1;
+            cell.pcu += pcu;
+            cell.pcu_seconds += pcu * (exit - enter);
+        }
     }
 
     /// Move the current bin's scratch into sorted sparse rows.
@@ -185,6 +289,38 @@ impl LinkBinRecorder {
     pub fn finish(mut self) -> LinkBins {
         self.flush();
         self.out
+    }
+
+    /// The finished table (by exit time), and, if [`Self::with_entry_bins`] asked
+    /// for them, the entry-time tables ([`EntryTables`]), each sorted by bin then
+    /// link like the first.
+    #[must_use]
+    pub fn finish_with_entry(mut self) -> (LinkBins, Option<EntryTables>) {
+        self.flush();
+        let bin_seconds = self.out.bin_seconds;
+        let table = |cells: HashMap<u64, EntryCell>| {
+            let mut keys: Vec<u64> = cells.keys().copied().collect();
+            keys.sort_unstable();
+            let mut table = LinkBins { bin_seconds, ..LinkBins::default() };
+            for key in keys {
+                let c = cells[&key];
+                #[allow(clippy::cast_possible_truncation, reason = "the two halves of the key")]
+                let (bin, link) = ((key >> 32) as u32, key as u32);
+                table.bin.push(bin);
+                table.link.push(link);
+                table.crossings.push(c.crossings);
+                table.pcu.push(c.pcu);
+                table.pcu_seconds.push(c.pcu_seconds);
+            }
+            table
+        };
+        let tables = match (self.entry.take(), self.origin_wait.take()) {
+            (Some(entry), Some(waits)) => {
+                Some(EntryTables { entry: table(entry), origin_wait: table(waits) })
+            }
+            _ => None,
+        };
+        (self.out, tables)
     }
 }
 

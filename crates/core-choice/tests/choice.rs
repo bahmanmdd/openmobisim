@@ -49,7 +49,7 @@ fn two_routes_three_minutes_apart_split_by_the_closed_form() {
     // U = -0.2 t with path size 1, and the slow route 3 minutes worse:
     // P(fast) = 1 / (1 + e^-0.6) and P(slow) = 1 / (1 + e^0.6).
     let b = batch_of(0, &[(1, 1, vec![(1, 10.0, 1.0, 5.0), (2, 13.0, 1.0, 5.0)])]);
-    let p = logit().probabilities(&b).expect("probabilities");
+    let p = logit().probabilities_by_situation(&b).expect("probabilities");
     assert!((p[0][0] - 0.645_656_306_225_795_4).abs() < 1e-12, "{p:?}");
     assert!((p[0][1] - 0.354_343_693_774_204_6).abs() < 1e-12);
     assert!((p[0][0] + p[0][1] - 1.0).abs() < 1e-15);
@@ -59,21 +59,21 @@ fn two_routes_three_minutes_apart_split_by_the_closed_form() {
 fn the_path_size_term_splits_the_share_of_routes_that_overlap() {
     // U = -0.2 t + ln PS: A = -2, B = -2 + ln 0.5, C = -2.4. Weights are e^U.
     let b = batch_of(0, &[(1, 1, three_routes())]);
-    let p = logit().probabilities(&b).expect("probabilities");
+    let p = logit().probabilities_by_situation(&b).expect("probabilities");
     let expect = [0.460_761_536_910_938_5, 0.230_380_768_455_469_2, 0.308_857_694_633_592_25];
     for (got, want) in p[0].iter().zip(expect) {
         assert!((got - want).abs() < 1e-9, "{p:?}");
     }
     // Without the term the overlapping route is as likely as its twin: the logit's known flaw.
     let plain = Logit::from_options(&Options::from([("beta_ln_path_size".into(), 0.0)])).unwrap();
-    let q = plain.probabilities(&b).expect("probabilities");
+    let q = plain.probabilities_by_situation(&b).expect("probabilities");
     assert!((q[0][0] - q[0][1]).abs() < 1e-15);
 }
 
 #[test]
 fn a_huge_gap_cannot_overflow_the_logit() {
     let b = batch_of(0, &[(1, 1, vec![(1, 1.0, 1.0, 1.0), (2, 1e6, 1.0, 1.0)])]);
-    let p = logit().probabilities(&b).expect("probabilities");
+    let p = logit().probabilities_by_situation(&b).expect("probabilities");
     assert_eq!(p[0][0], 1.0);
     assert_eq!(p[0][1], 0.0);
 }
@@ -105,7 +105,7 @@ fn sampled_choices_follow_the_logit_probabilities() {
     let model = logit();
     let c = model.choose(&b, &rng(7)).expect("choose");
     c.validate(&b).expect("fits");
-    let p = &model.probabilities(&b).expect("probabilities")[0];
+    let p = &model.probabilities_by_situation(&b).expect("probabilities")[0];
     let mut counts = [0_u32; 3];
     for &k in &c.chosen {
         counts[k as usize] += 1;
@@ -330,4 +330,59 @@ fn a_researchers_model_is_selected_by_name_like_a_built_in() {
     let took_b = u32::try_from(chosen.iter().filter(|&&k| k == 1).count()).expect("few");
     let share_b = f64::from(took_b) / f64::from(n);
     assert!(share_b < 0.05, "the overlapping route is avoided: {share_b}");
+}
+
+// --- probabilities as a trait method, and subsets (S170) -----------------------------------
+
+#[test]
+fn every_built_in_model_gives_probabilities_that_sum_to_one_per_situation() {
+    let b = batch_of(
+        0,
+        &[
+            (1, 1, three_routes()),
+            (2, 2, vec![(9, 5.0, 1.0, 1.0)]),
+            (3, 3, vec![(4, 8.0, 1.0, 2.0), (5, 6.0, 1.0, 2.0)]),
+        ],
+    );
+    let l = logit();
+    let flat = ChoiceModel::probabilities(&l, &b).expect("ok").expect("a logit has them");
+    let nested = l.probabilities_by_situation(&b).expect("ok");
+    assert_eq!(flat, nested.into_iter().flatten().collect::<Vec<_>>());
+    for s in 0..b.situations() {
+        let total: f64 = flat[b.range(s)].iter().sum();
+        assert!((total - 1.0).abs() < 1e-12);
+    }
+    // All-or-nothing puts everything on the least time, the first of a tie.
+    let d = Deterministic.probabilities(&b).expect("ok").expect("has them");
+    assert_eq!(d, [1.0, 0.0, 0.0, 1.0, 0.0, 1.0]);
+}
+
+#[test]
+fn a_model_without_probabilities_says_so() {
+    let b = batch_of(0, &[(1, 1, three_routes())]);
+    assert!(AverseToSharing { weight: 1.0 }.probabilities(&b).expect("ok").is_none());
+}
+
+#[test]
+fn a_subset_holds_exactly_the_situations_asked_for() {
+    let b = batch_of(
+        4,
+        &[
+            (10, 100, three_routes()),
+            (11, 101, vec![(9, 5.0, 1.0, 1.0)]),
+            (12, 102, vec![(4, 8.0, 0.5, 2.0), (5, 6.0, 1.0, 2.0)]),
+        ],
+    );
+    let sub = b.subset(&[2, 0]);
+    assert_eq!((sub.situations(), sub.alternatives(), sub.iteration()), (2, 5, 4));
+    assert_eq!(sub.travellers(), [12, 10]);
+    assert_eq!(sub.trips(), [102, 100]);
+    assert_eq!(sub.identities(), [4, 5, 11, 22, 33]);
+    assert_eq!(sub.offsets(), [0, 2, 5]);
+    assert_eq!(sub.attribute("time_min").unwrap(), [8.0, 6.0, 10.0, 10.0, 12.0]);
+    sub.validate().expect("still a valid batch");
+    // Choosing on a subset gives what choosing on the whole gave, for those situations.
+    let whole = logit().choose(&b, &rng(3)).expect("choose").chosen;
+    let part = logit().choose(&sub, &rng(3)).expect("choose").chosen;
+    assert_eq!(part, [whole[2], whole[0]]);
 }

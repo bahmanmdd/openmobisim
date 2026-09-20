@@ -3,7 +3,9 @@
 //! | Module | What it owns |
 //! |---|---|
 //! | [`run`] | [`run::Run`] — the orchestration loop, [`run::RunResult`], [`run::TripCompletionStats`] (S57) |
+//! | [`equilibration`] | [`equilibration::Equilibration`] — repeating choice and loading: `none` and `msa` in traveller form, and the per-iteration [`equilibration::IterationReport`] (S170) |
 //! | [`events`] | [`events::EventRow`] — one row per trip outcome, what `io-parquet`'s `events.parquet` writer reads from |
+//! | [`link_times`] | [`link_times::LinkTimes`] — link travel times by time of day from the last loading, and the change between two loadings (S170) |
 //! | [`route_choice`] | [`route_choice::RouteChoices`] — which route each trip takes, from its pair's route set and a choice model (S169) |
 //! | [`identity`] | [`identity::RunDescription`] — a run's master seed and fingerprint, made before it executes (S168) |
 //!
@@ -27,12 +29,16 @@
 //! second metric row lands when that happens — nothing here needs to change
 //! to add it.
 
+pub mod equilibration;
 pub mod events;
 pub mod identity;
+pub mod link_times;
 pub mod route_choice;
 pub mod run;
 
+pub use equilibration::{Equilibration, IterationReport, Msa, NoEquilibration};
 pub use events::{EventRow, EventType};
 pub use identity::RunDescription;
+pub use link_times::{LinkTimes, relative_time_change};
 pub use route_choice::{NO_ROUTE, ROUTE_ATTRIBUTES, RouteChoices};
 pub use run::{FlowMotor, Run, RunError, RunResult, TripCompletionStats};

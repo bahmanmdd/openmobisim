@@ -155,6 +155,7 @@ fn main() {
     // the same on every run and at any thread count.
     let sampled =
         Arc::from(openmobisim_core_choice::model("logit", &Default::default()).expect("built in"));
+    let trips2 = trips.clone();
     let mut sampled_run = Run::new(network.clone(), travellers.clone(), trips, window)
         .with_master_seed(20_260_921)
         .with_choice_model(sampled);
@@ -163,6 +164,41 @@ fn main() {
     let mut choice_digest = 0u64;
     for r in &sampled_result.route_choices.as_ref().expect("recorded").route {
         choice_digest = choice_digest.wrapping_mul(0x0100_0000_01b3).wrapping_add(u64::from(*r));
+    }
+
+    // And iterated (S170): four loadings under the method of successive averages, on the same
+    // demand. Who chooses again is a keyed draw, the link times are read back from each
+    // loading, and the gap is measured against a fresh sample: every one of those must be
+    // the same on every run and at any thread count.
+    let iterated =
+        Arc::from(openmobisim_core_choice::model("logit", &Default::default()).expect("built in"));
+    let msa = Arc::from(
+        openmobisim_core_sim::equilibration::strategy(
+            "msa",
+            &[("iterations".to_string(), 4.0)].into_iter().collect(),
+        )
+        .expect("built in"),
+    );
+    let mut iterated_run = Run::new(network.clone(), travellers.clone(), trips2, window)
+        .with_master_seed(20_260_921)
+        .with_choice_model(iterated)
+        .with_equilibration(msa);
+    let iterated_description = iterated_run.description();
+    let iterated_result = iterated_run.execute(&mut Diagnostics::new());
+    let mut iterated_digest = 0u64;
+    for report in &iterated_result.iterations {
+        for x in [
+            report.reselected_share,
+            report.changed_share,
+            report.total_travel_time_s,
+            report.time_change,
+            report.gap_flow,
+            report.gap_flow_floor,
+            report.gap_cost,
+        ] {
+            iterated_digest =
+                iterated_digest.wrapping_mul(0x0100_0000_01b3).wrapping_add(x.to_bits());
+        }
     }
 
     // --- The report ----------------------------------------------------
@@ -189,6 +225,9 @@ fn main() {
     println!("events                {}", result.events.len());
     println!("choice_fingerprint    {}", sampled_description.fingerprint_hex());
     println!("choice_routes_digest  {choice_digest:016x}");
+    println!("msa_fingerprint       {}", iterated_description.fingerprint_hex());
+    println!("msa_reports_digest    {iterated_digest:016x}");
+    println!("msa_iterations        {}", iterated_result.iterations.len());
     println!("choice_total_time_s   {:016x}", sampled_result.total_travel_time.get().to_bits());
 
     let mut event_digest = 0u64;

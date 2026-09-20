@@ -170,6 +170,21 @@ pub trait ChoiceModel: Send + Sync {
     ///
     /// [`ChoiceError`] if an attribute is missing or the model fails.
     fn choose(&self, batch: &ChoiceBatch, rng: &StreamRng) -> Result<Choices, ChoiceError>;
+
+    /// The probability the model gives **every** alternative in `batch`, one
+    /// value per alternative (each situation's sum to one), or `None` if it has
+    /// no probabilities to give.
+    ///
+    /// Optional, and what turns a model that only *samples* into one whose
+    /// equilibrium can be measured: the convergence report of an iterated run
+    /// compares the choices made with these probabilities (design §11.2).
+    ///
+    /// # Errors
+    ///
+    /// [`ChoiceError`] if an attribute is missing or the model fails.
+    fn probabilities(&self, _batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
+        Ok(None)
+    }
 }
 
 // --- helpers a new model builds on ------------------------------------------------

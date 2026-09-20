@@ -139,7 +139,7 @@ use openmobisim_core_types::units::{Duration, Pcu};
 
 use crate::curves::{LinkCurves, ROOM_EPSILON, room_at};
 use crate::level0::{LinkTraversal, Trajectory};
-use crate::link_bins::{LinkBinRecorder, LinkBins};
+use crate::link_bins::{EntryTables, LinkBinRecorder, LinkBins};
 use crate::vehicle::Vehicle;
 
 /// The smallest part of a vehicle its front moves onto a link (PCU): room
@@ -397,6 +397,42 @@ impl<'a> LtmNetwork<'a> {
     pub fn with_link_bins(mut self, bin_seconds: u32, window: f64) -> Self {
         self.recorder = Some(LinkBinRecorder::new(self.links, bin_seconds, window));
         self
+    }
+
+    /// The same network, also recording each traversal under the bin it
+    /// **entered** its link in (S170; see [`LinkBinRecorder::with_entry_bins`]).
+    /// Needs [`Self::with_link_bins`] first; collect with
+    /// [`Self::take_link_bins_with_entry`].
+    #[must_use]
+    pub fn with_entry_bins(mut self) -> Self {
+        self.recorder = self.recorder.map(LinkBinRecorder::with_entry_bins);
+        self
+    }
+
+    /// Tell the recorder about every vehicle still on a link, or waiting at an
+    /// origin to enter one, at second `end` (S170; see
+    /// [`LinkBinRecorder::record_unfinished`]). Call once, after the last step.
+    pub fn record_unfinished(&mut self, end: f64) {
+        let n = self.links;
+        let Some(recorder) = self.recorder.as_mut() else { return };
+        for queue in 0..2 * n {
+            let link = LinkId::from_index(queue % n);
+            for q in &self.queues[queue] {
+                let pcu = self.vehicles[q.slot as usize].pcu.get();
+                if queue < n {
+                    recorder.record_unfinished(link, q.enter, end, pcu);
+                } else {
+                    // Still waiting outside the network: `enter` is its departure.
+                    recorder.record_origin_wait(link, q.enter, end, pcu);
+                }
+            }
+        }
+    }
+
+    /// [`Self::take_link_bins`], and the entry-time table if asked for.
+    #[must_use]
+    pub fn take_link_bins_with_entry(&mut self) -> Option<(LinkBins, Option<EntryTables>)> {
+        self.recorder.take().map(LinkBinRecorder::finish_with_entry)
     }
 
     /// The per-link, per-bin results recorded so far, if
@@ -973,6 +1009,14 @@ impl<'a> LtmNetwork<'a> {
         let vehicle = self.vehicles[s];
         let pcu = vehicle.pcu.get();
         let j = vehicle.route[leg].index();
+        if leg == 0 {
+            // Out of the origin queue and onto the first link: the wait is the cost of
+            // setting out then (S170).
+            let departure = f64::from(vehicle.departure.get());
+            if let Some(recorder) = self.recorder.as_mut() {
+                recorder.record_origin_wait(LinkId::from_index(j), departure, t, pcu);
+            }
+        }
         let take = Self::part_taken(room, pcu);
         debug_assert!(self.parts[s].is_empty(), "a vehicle outside the network has no parts");
         self.curves[j].record_in(Pcu(take));
@@ -1210,8 +1254,31 @@ pub fn run_ltm_binned(
     bin_seconds: u32,
 ) -> (Vec<Trajectory>, LinkBins) {
     let (done, bins) =
-        run_ltm_inner(network, turns, vehicles, window, step, level, Some(bin_seconds));
-    (done, bins.expect("bins were asked for"))
+        run_ltm_inner(network, turns, vehicles, window, step, level, Some((bin_seconds, false)));
+    (done, bins.expect("bins were asked for").0)
+}
+
+/// [`run_ltm_binned`], also returning the same traversals filed by the bin they
+/// **entered** their link in (S170): what an iterated run reads back as link
+/// travel times by time of entry.
+///
+/// # Panics
+///
+/// Panics if `step` is not positive.
+#[must_use]
+pub fn run_ltm_recorded(
+    network: &RoadNetwork,
+    turns: &TurnTable,
+    vehicles: &[Vehicle],
+    window: Duration,
+    step: Duration,
+    level: FidelityLevel,
+    bin_seconds: u32,
+) -> (Vec<Trajectory>, LinkBins, EntryTables) {
+    let (done, bins) =
+        run_ltm_inner(network, turns, vehicles, window, step, level, Some((bin_seconds, true)));
+    let (exit, tables) = bins.expect("bins were asked for");
+    (done, exit, tables.expect("entry bins were asked for"))
 }
 
 fn run_ltm_inner(
@@ -1221,8 +1288,8 @@ fn run_ltm_inner(
     window: Duration,
     step: Duration,
     level: FidelityLevel,
-    bin_seconds: Option<u32>,
-) -> (Vec<Trajectory>, Option<LinkBins>) {
+    recording: Option<(u32, bool)>,
+) -> (Vec<Trajectory>, Option<(LinkBins, Option<EntryTables>)>) {
     assert!(step.get() > 0.0, "the loading step must be positive, got {step:?}");
     #[allow(
         clippy::cast_possible_truncation,
@@ -1232,8 +1299,13 @@ fn run_ltm_inner(
     let n_steps = (window.get() / step.get()).ceil().max(0.0) as usize;
 
     let mut sim = LtmNetwork::new(network, turns).with_level(level);
-    if let Some(bin_seconds) = bin_seconds {
+    // `recording`: the bin length, and whether to also file by entry time (S170).
+    let entry_bins = recording.is_some_and(|(_, entry)| entry);
+    if let Some((bin_seconds, entry)) = recording {
         sim = sim.with_link_bins(bin_seconds, window.get());
+        if entry {
+            sim = sim.with_entry_bins();
+        }
     }
     for vehicle in vehicles {
         if Duration::from_clock(vehicle.departure) < window {
@@ -1245,7 +1317,10 @@ fn run_ltm_inner(
         completed.extend(sim.step(step));
     }
     completed.retain(|t| Duration::from_clock(t.arrival()) <= window);
-    (completed, sim.take_link_bins())
+    if entry_bins {
+        sim.record_unfinished(window.get());
+    }
+    (completed, sim.take_link_bins_with_entry())
 }
 
 #[cfg(test)]

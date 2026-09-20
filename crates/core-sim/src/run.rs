@@ -17,7 +17,8 @@ use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    FidelityLevel, LinkBins, Vehicle, load_level_0_binned, run_ltm_binned, traverse_free_flow,
+    EntryTables, FidelityLevel, LinkBins, Vehicle, load_level_0_binned, load_level_0_recorded,
+    run_ltm_binned, run_ltm_recorded, traverse_free_flow,
 };
 use openmobisim_core_routes::{
     NodeSnapper, RouteKey, RouteSetGenerator, RouteSets, default_generator,
@@ -30,8 +31,10 @@ use openmobisim_core_types::rng::{RngKey, Stream, StreamRng};
 use openmobisim_core_types::time::{EventKey, Second};
 use openmobisim_core_types::units::{Duration, Pcu};
 
+use crate::equilibration::{Equilibration, IterationReport, NoEquilibration};
 use crate::events::{EventRow, EventType};
 use crate::identity::{Inputs, RunDescription, describe};
+use crate::link_times::{LinkTimes, relative_time_change};
 use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 
 /// Which loading engine a [`Run`] uses.
@@ -170,6 +173,26 @@ pub struct RunResult {
     /// Which route each trip took, out of how many, and how likely the model
     /// found it (S169).
     pub route_choices: Option<RouteChoices>,
+    /// What each iteration showed (S170): one report for a run without
+    /// equilibration, one per loading under `msa`. `route_choices`, `events`,
+    /// `link_bins`, the completion counts and the total travel time are those of
+    /// the last.
+    pub iterations: Vec<IterationReport>,
+    /// Whether the strategy stopped before its most iterations because it had
+    /// converged.
+    pub converged: bool,
+}
+
+/// One loading of the demand.
+struct Loaded {
+    total_travel_time: Duration,
+    completion: TripCompletionStats,
+    events: Vec<EventRow>,
+    /// Traffic by the bin it left each link in: what a flow map draws.
+    link_bins: Option<LinkBins>,
+    /// Link times by the bin of entry and waits at origins by the bin of departure:
+    /// what costs the next iteration's routes (only recorded when there is one).
+    entry_bins: Option<EntryTables>,
 }
 
 /// One simulation run: immutable shared inputs plus the mutable state
@@ -193,6 +216,8 @@ pub struct Run {
     /// How each trip picks a route from its pair's set (S169): all-or-nothing on
     /// the best route by default, so a run is what it was before choice existed.
     choice_model: Arc<dyn ChoiceModel>,
+    /// How choice and loading are repeated (S170): once, by default.
+    equilibration: Arc<dyn Equilibration>,
 }
 
 impl Run {
@@ -218,6 +243,7 @@ impl Run {
             route_generator: Arc::from(default_generator()),
             master_seed: 0,
             choice_model: Arc::new(Deterministic),
+            equilibration: Arc::new(NoEquilibration),
         }
     }
 
@@ -261,6 +287,15 @@ impl Run {
         self
     }
 
+    /// The same run, repeating choice and loading under `strategy` instead of
+    /// once (S170). Select a built-in one by name with
+    /// [`crate::equilibration::strategy`], or pass your own [`Equilibration`].
+    #[must_use]
+    pub fn with_equilibration(mut self, strategy: Arc<dyn Equilibration>) -> Self {
+        self.equilibration = strategy;
+        self
+    }
+
     /// What went into this run: its seed and its fingerprint (S168). Take it
     /// before [`Self::execute`]; it depends only on the inputs.
     #[must_use]
@@ -278,6 +313,10 @@ impl Run {
             choice_model: self.choice_model.name(),
             choice_descriptor: &self.choice_model.descriptor(),
             choice_sampled: self.choice_model.is_sampled(),
+            equilibration: self.equilibration.name(),
+            equilibration_descriptor: &self.equilibration.descriptor(),
+            equilibration_draws: self.equilibration.draws_reselection(),
+            max_iterations: self.equilibration.max_iterations(),
         })
     }
 
@@ -324,8 +363,12 @@ impl Run {
     ///
     /// [`RunError::Choice`] if the choice model needs an attribute routes do not
     /// carry, fails, or gives an answer that does not fit its batch.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the panic guards the invariant that at least one
+    /// iteration always runs.
     pub fn try_execute(&mut self, diagnostics: &mut Diagnostics) -> Result<RunResult, RunError> {
-        let mut queue: BinaryHeap<Reverse<EventKey>> = BinaryHeap::new();
         let total_trips = self.trips.len();
 
         // Route sets for every origin-destination pair the demand asks for,
@@ -349,18 +392,137 @@ impl Run {
         let route_sets =
             RouteSets::generate(&self.network, &turns, &trip_keys, self.route_generator.as_ref());
 
-        // Each trip's route, chosen once for the whole demand (S169).
-        let rng = StreamRng::new(RngKey::from_seed(self.master_seed), Stream::Choice);
-        let route_choices = route_choice::choose_routes(&route_choice::Inputs {
-            network: &self.network,
-            travellers: &self.travellers,
-            trips: &self.trips,
+        // Choice and equilibration (S169, S170): every trip chooses a route on
+        // free-flow costs; then, under an equilibration strategy, the network is
+        // loaded, the link times it produced re-cost the routes, some travellers
+        // choose again, and the network is loaded again.
+        let choice_rng = StreamRng::new(RngKey::from_seed(self.master_seed), Stream::Choice);
+        let reselect_rng =
+            StreamRng::new(RngKey::from_seed(self.master_seed), Stream::MsaReselection);
+        // Shared handles, so the loading (which moves vehicles about in `self`) and the
+        // chooser (which only reads the inputs) do not borrow each other.
+        let (network, travellers, trips) =
+            (self.network.clone(), self.travellers.clone(), self.trips.clone());
+        let model = self.choice_model.clone();
+        let inputs = route_choice::Inputs {
+            network: &network,
+            travellers: &travellers,
+            trips: &trips,
             trip_keys: &trip_keys,
             route_sets: &route_sets,
-            model: self.choice_model.as_ref(),
-            rng: &rng,
-            iteration: 0,
-        })?;
+            model: model.as_ref(),
+        };
+        let chooser = route_choice::Chooser::new(&inputs)?;
+        let mut route_choices = chooser.choose_all(&choice_rng, 0)?;
+
+        let strategy = self.equilibration.clone();
+        let max_iterations = strategy.max_iterations().max(1);
+        // Link times are recorded whenever there is a next iteration to cost, at the
+        // user's bin length if they asked for one, else the strategy's.
+        let record_bins = if max_iterations > 1 {
+            Some(self.link_bin_seconds.unwrap_or_else(|| strategy.cost_bin_seconds()))
+        } else {
+            self.link_bin_seconds
+        };
+        let mut reports: Vec<IterationReport> = Vec::new();
+        let mut previous_bins: Option<EntryTables> = None;
+        // Who moved on the way to this iteration: (share that chose again, share that changed).
+        let mut arrived_by = (1.0, f64::NAN);
+        let mut converged = false;
+        let mut last: Option<(Loaded, Diagnostics)> = None;
+
+        for iteration in 0..max_iterations {
+            let mut iteration_diagnostics = Diagnostics::new();
+            let loaded = self.load_once(
+                &trip_keys,
+                &route_sets,
+                &route_choices,
+                record_bins,
+                max_iterations > 1,
+                &mut iteration_diagnostics,
+            );
+            let mut report = IterationReport::unmeasured(iteration);
+            report.reselected_share = arrived_by.0;
+            report.changed_share = arrived_by.1;
+            report.total_travel_time_s = loaded.total_travel_time.get();
+            report.completed = loaded.completion.completed;
+            report.truncated = loaded.completion.truncated;
+            if let (Some(before), Some(now)) = (&previous_bins, &loaded.entry_bins) {
+                report.time_change = relative_time_change(&self.network, before, now);
+            }
+
+            let mut changes = Vec::new();
+            if max_iterations > 1 {
+                if let Some(bins) = &loaded.entry_bins {
+                    let times = LinkTimes::from_tables(&self.network, bins);
+                    let next = iteration + 1;
+                    let strategy_for_next =
+                        (next < max_iterations).then_some((strategy.as_ref(), &reselect_rng));
+                    let update = chooser.update(
+                        &route_choices,
+                        &times,
+                        next,
+                        strategy_for_next,
+                        &choice_rng,
+                    )?;
+                    report.gap_flow = update.assessment.gap_flow;
+                    report.gap_flow_floor = update.assessment.gap_flow_floor;
+                    report.gap_flow_excess =
+                        update.assessment.gap_flow - update.assessment.gap_flow_floor;
+                    report.gap_cost = update.assessment.gap_cost;
+                    arrived_by =
+                        (update.assessment.reselected_share, update.assessment.changed_share);
+                    changes = update.changes;
+                }
+            }
+            reports.push(report);
+            previous_bins = loaded.entry_bins.clone();
+            last = Some((loaded, iteration_diagnostics));
+
+            if iteration + 1 == max_iterations {
+                break;
+            }
+            if strategy.is_converged(&reports) {
+                converged = true;
+                break;
+            }
+            for c in changes {
+                route_choices.route[c.trip] = c.route;
+                route_choices.probability[c.trip] = c.probability;
+            }
+        }
+
+        let (loaded, iteration_diagnostics) = last.expect("at least one iteration ran");
+        diagnostics.merge(&iteration_diagnostics);
+        // The per-link table is the user's only if they asked for it.
+        let link_bins = if self.link_bin_seconds.is_some() { loaded.link_bins } else { None };
+        Ok(RunResult {
+            total_travel_time: loaded.total_travel_time,
+            completion: loaded.completion,
+            events: loaded.events,
+            link_bins,
+            route_sets: Some(route_sets),
+            route_choices: Some(route_choices),
+            iterations: reports,
+            converged,
+        })
+    }
+
+    /// Load the whole demand once, each trip on the route `route_choices` gives it,
+    /// recording per-link results in bins of `record_bins` seconds if asked.
+    fn load_once(
+        &mut self,
+        trip_keys: &[RouteKey],
+        route_sets: &RouteSets,
+        route_choices: &RouteChoices,
+        record_bins: Option<u32>,
+        want_entry: bool,
+        diagnostics: &mut Diagnostics,
+    ) -> Loaded {
+        let total_trips = self.trips.len();
+        let mut queue: BinaryHeap<Reverse<EventKey>> = BinaryHeap::new();
+        // Every iteration starts from where the day starts.
+        self.vehicles = VehicleLocations::at_first_trip_origin(&self.travellers, &self.trips);
 
         // Every traveller's first trip is enqueued unconditionally, even one
         // who owns no car at all: `VehicleLocations::is_at_origin` already
@@ -389,6 +551,7 @@ impl Run {
         // binned together afterwards.
         let mut level0_vehicles: Vec<Vehicle> = Vec::new();
         let mut link_bins: Option<LinkBins> = None;
+        let mut entry_bins: Option<EntryTables> = None;
 
         while let Some(Reverse(key)) = queue.pop() {
             let trip = TripId::new(key.entity);
@@ -461,7 +624,7 @@ impl Run {
                                     departure,
                                 );
                                 let trajectory = traverse_free_flow(&vehicle, &self.network);
-                                if self.link_bin_seconds.is_some() {
+                                if record_bins.is_some() {
                                     level0_vehicles.push(vehicle);
                                 }
                                 if trajectory.arrival() <= self.window {
@@ -520,7 +683,19 @@ impl Run {
             let vehicles: Vec<Vehicle> =
                 pending_ltm.iter().map(|(_, vehicle, _)| vehicle.clone()).collect();
             let window = Duration::from_clock(self.window);
-            let (trajectories, bins) = match self.link_bin_seconds {
+            let (trajectories, bins, entry) = match record_bins {
+                Some(bin_seconds) if want_entry => {
+                    let (t, b, e) = run_ltm_recorded(
+                        &self.network,
+                        turns,
+                        &vehicles,
+                        window,
+                        *step,
+                        *level,
+                        bin_seconds,
+                    );
+                    (t, Some(b), Some(e))
+                }
                 Some(bin_seconds) => {
                     let (t, b) = run_ltm_binned(
                         &self.network,
@@ -531,7 +706,7 @@ impl Run {
                         *level,
                         bin_seconds,
                     );
-                    (t, Some(b))
+                    (t, Some(b), None)
                 }
                 None => (
                     openmobisim_core_loading::run_ltm(
@@ -543,9 +718,11 @@ impl Run {
                         *level,
                     ),
                     None,
+                    None,
                 ),
             };
             link_bins = bins;
+            entry_bins = entry;
             let by_vehicle: HashMap<VehicleId, _> =
                 trajectories.into_iter().map(|t| (t.vehicle, t)).collect();
 
@@ -574,20 +751,21 @@ impl Run {
             }
         }
 
-        if let (FlowMotor::Level0, Some(bin_seconds)) = (&self.flow_motor, self.link_bin_seconds) {
+        if let (FlowMotor::Level0, Some(bin_seconds)) = (&self.flow_motor, record_bins) {
             let window = f64::from(self.window.get());
-            link_bins =
-                Some(load_level_0_binned(&level0_vehicles, &self.network, window, bin_seconds).1);
+            if want_entry {
+                let (_, exit, entry) =
+                    load_level_0_recorded(&level0_vehicles, &self.network, window, bin_seconds);
+                link_bins = Some(exit);
+                entry_bins = Some(entry);
+            } else {
+                link_bins = Some(
+                    load_level_0_binned(&level0_vehicles, &self.network, window, bin_seconds).1,
+                );
+            }
         }
 
-        Ok(RunResult {
-            total_travel_time,
-            completion,
-            events,
-            link_bins,
-            route_sets: Some(route_sets),
-            route_choices: Some(route_choices),
-        })
+        Loaded { total_travel_time, completion, events, link_bins, entry_bins }
     }
 
     fn enqueue(&self, queue: &mut BinaryHeap<Reverse<EventKey>>, trip: TripId) {

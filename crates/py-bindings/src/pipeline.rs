@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use numpy::{IntoPyArray, PyArray1};
 
@@ -110,6 +111,16 @@ pub struct PyRunSummary {
     /// The choice model's name (S169).
     #[pyo3(get)]
     pub choice_model: String,
+    /// The equilibration strategy's name (S170).
+    #[pyo3(get)]
+    pub equilibration: String,
+    /// What each iteration showed, as numpy arrays by name (S170); see
+    /// `Run.convergence()`.
+    #[pyo3(get)]
+    pub convergence: Py<PyDict>,
+    /// Whether the strategy stopped early because it had converged.
+    #[pyo3(get)]
+    pub converged: bool,
     /// The run's fingerprint: 16 hex digits of a hash of every input that
     /// decides its results (S168).
     #[pyo3(get)]
@@ -201,6 +212,38 @@ fn to_value_error<E: std::fmt::Display>(e: E) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
+/// The per-iteration numbers as a dict of numpy arrays, one entry per iteration.
+fn convergence_arrays(
+    py: Python<'_>,
+    reports: &[openmobisim_core_sim::IterationReport],
+) -> PyResult<Py<PyDict>> {
+    let dict = PyDict::new(py);
+    let floats = |f: fn(&openmobisim_core_sim::IterationReport) -> f64| -> Vec<f64> {
+        reports.iter().map(f).collect()
+    };
+    dict.set_item(
+        "iteration",
+        reports.iter().map(|r| r.iteration).collect::<Vec<_>>().into_pyarray(py),
+    )?;
+    dict.set_item("reselected_share", floats(|r| r.reselected_share).into_pyarray(py))?;
+    dict.set_item("changed_share", floats(|r| r.changed_share).into_pyarray(py))?;
+    dict.set_item("total_travel_time_s", floats(|r| r.total_travel_time_s).into_pyarray(py))?;
+    dict.set_item(
+        "completed",
+        reports.iter().map(|r| r.completed).collect::<Vec<_>>().into_pyarray(py),
+    )?;
+    dict.set_item(
+        "truncated",
+        reports.iter().map(|r| r.truncated).collect::<Vec<_>>().into_pyarray(py),
+    )?;
+    dict.set_item("time_change", floats(|r| r.time_change).into_pyarray(py))?;
+    dict.set_item("gap_flow", floats(|r| r.gap_flow).into_pyarray(py))?;
+    dict.set_item("gap_flow_floor", floats(|r| r.gap_flow_floor).into_pyarray(py))?;
+    dict.set_item("gap_flow_excess", floats(|r| r.gap_flow_excess).into_pyarray(py))?;
+    dict.set_item("gap_cost", floats(|r| r.gap_cost).into_pyarray(py))?;
+    Ok(dict.unbind())
+}
+
 /// Run the whole Phase 1 pipeline: demand through S133's placeholder
 /// routing through level-0 loading, writing all four output artifacts to
 /// `output_dir`.
@@ -223,6 +266,7 @@ fn to_value_error<E: std::fmt::Display>(e: E) -> PyErr {
     flow_level=0, flow_step_s=300, link_bin_s=None,
     route_method="penalty", route_options=None, master_seed=0,
     choice_model=None, choice_options=None,
+    equilibration="none", equilibration_options=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -248,9 +292,16 @@ pub fn run_pipeline(
     master_seed: u64,
     choice_model: Option<&Bound<'_, PyAny>>,
     choice_options: Option<HashMap<String, f64>>,
+    equilibration: &str,
+    equilibration_options: Option<HashMap<String, f64>>,
 ) -> PyResult<PyRunSummary> {
     // Refuse a bad method, model or option before doing any work.
     let choice = make_choice_model(choice_model, choice_options)?;
+    let strategy = openmobisim_core_sim::equilibration::strategy(
+        equilibration,
+        &to_options(equilibration_options),
+    )
+    .map_err(to_value_error)?;
     let generator = Registry::builtin()
         .create(route_method, &to_options(route_options))
         .map_err(to_value_error)?;
@@ -319,7 +370,10 @@ pub fn run_pipeline(
         }
         run = run.with_link_bins(bin);
     }
-    run = run.with_master_seed(master_seed).with_choice_model(choice);
+    run = run
+        .with_master_seed(master_seed)
+        .with_choice_model(choice)
+        .with_equilibration(Arc::from(strategy));
     // What went in, taken before it runs (S168).
     let description = run.description();
     let mut run_diagnostics = Diagnostics::new();
@@ -365,6 +419,9 @@ pub fn run_pipeline(
         link_bins_path,
         master_seed,
         choice_model: description.choice_model.clone(),
+        equilibration: description.equilibration.clone(),
+        convergence: convergence_arrays(py, &result.iterations)?,
+        converged: result.converged,
         fingerprint: description.fingerprint_hex(),
         total_trips: result.completion.total_trips,
         completed: result.completion.completed,
@@ -382,4 +439,16 @@ pub fn run_pipeline(
             .map(|sets| Py::new(py, PyRouteSets::new(Arc::new(sets), network.inner.link_count())))
             .transpose()?,
     })
+}
+
+/// The equilibration strategies that can be selected by name, the default first.
+#[pyfunction]
+pub fn equilibration_strategies() -> Vec<String> {
+    let mut names: Vec<String> = openmobisim_core_sim::equilibration::Registry::builtin()
+        .names()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    names.sort_by_key(|n| (n != openmobisim_core_sim::equilibration::DEFAULT_STRATEGY, n.clone()));
+    names
 }

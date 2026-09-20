@@ -160,5 +160,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(network_read_osm, m)?)?;
     m.add_function(wrap_pyfunction!(grid_node_lonlat, m)?)?;
     m.add_function(wrap_pyfunction!(run_pipeline, m)?)?;
+    m.add_function(wrap_pyfunction!(pipeline::equilibration_strategies, m)?)?;
     Ok(())
 }

@@ -11,10 +11,10 @@ Figures live in ``openmobisim.viz`` (``pip install 'openmobisim[viz]'``); it is
 imported on demand, so ``import openmobisim`` never needs matplotlib.
 
 The scenario surface is intentionally narrow: a network, a trips table, one
-run, its output artifacts, and route choice among each trip's alternatives
-(``openmobisim.choice`` says how to add your own choice model). No hubs, no
-equilibration, no disruptions — those arrive with the mechanisms that give
-them meaning.
+run, its output artifacts, route choice among each trip's alternatives
+(``openmobisim.choice`` says how to add your own choice model) and, optionally,
+iteration towards an equilibrium (``equilibration="msa"``). No hubs, no
+disruptions — those arrive with the mechanisms that give them meaning.
 """
 
 from openmobisim import _core, choice, examples
@@ -22,6 +22,7 @@ from openmobisim._core import (
     build_info,
     choice_draw,
     choice_models,
+    equilibration_strategies,
     fixed_order_sum_f64,
     network_read_osm,
     route_methods,
@@ -41,6 +42,7 @@ __all__ = [
     "choice",
     "choice_draw",
     "choice_models",
+    "equilibration_strategies",
     "examples",
     "fixed_order_sum_f64",
     "network_read_osm",

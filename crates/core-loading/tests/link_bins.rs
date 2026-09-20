@@ -4,7 +4,8 @@
 
 #![allow(
     clippy::cast_possible_truncation,
-    reason = "test fixtures: a handful of vehicles, counts far below u32::MAX"
+    clippy::cast_sign_loss,
+    reason = "test fixtures: a handful of vehicles, counts far below u32::MAX, and a positive storage"
 )]
 
 use openmobisim_core_graph::defaults::SignalDefaults;
@@ -12,7 +13,8 @@ use openmobisim_core_graph::examples::toy_network;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    FidelityLevel, LinkBins, LtmNetwork, Vehicle, load_level_0_binned, run_ltm, run_ltm_binned,
+    FidelityLevel, LinkBinRecorder, LinkBins, LtmNetwork, Vehicle, load_level_0_binned,
+    load_level_0_recorded, run_ltm, run_ltm_binned, run_ltm_recorded,
 };
 use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
 use openmobisim_core_types::time::Second;
@@ -197,4 +199,139 @@ fn a_level_0_table_does_not_depend_on_input_order() {
     let b = load_level_0_binned(&reversed, &toy.net, 3600.0, 30).1;
     assert_eq!(a, b);
     assert!(!a.is_empty());
+}
+
+// --- the tables an iterated run costs its routes from (S170) ---------------------------------
+
+#[test]
+fn the_entry_table_files_each_traversal_under_the_bin_it_entered_in() {
+    let mut r = LinkBinRecorder::new(4, 60, 3600.0).with_entry_bins();
+    let (a, b) = (LinkId::new(0), LinkId::new(1));
+    // Entered in bin 0, left in bin 1: 20 s. Entered and left in bin 1: 10 s.
+    r.record(a, 50.0, 70.0, 1.0);
+    r.record(b, 80.0, 90.0, 2.0);
+    // Entered in bin 1 and left in bin 2, on link a again: 50 s.
+    r.record(a, 100.0, 150.0, 1.0);
+    let (exit, tables) = r.finish_with_entry();
+    let tables = tables.expect("asked for");
+    // By exit: a's traversals are in bin 1 (the first) and bin 2 (the third).
+    assert_eq!((exit.bins(), exit.links()), (&[1, 1, 2][..], &[0, 1, 0][..]));
+    // By entry: bin 0 has a's first; bin 1 has b's and a's third.
+    let entry = &tables.entry;
+    assert_eq!((entry.bins(), entry.links()), (&[0, 1, 1][..], &[0, 0, 1][..]));
+    assert_eq!(entry.crossings(), [1, 1, 1]);
+    assert_eq!(entry.pcu(), [1.0, 1.0, 2.0]);
+    assert_eq!(entry.pcu_seconds(), [20.0, 50.0, 20.0]);
+    assert!((entry.mean_seconds(2) - 10.0).abs() < 1e-12);
+    assert!(tables.origin_wait.is_empty(), "nobody set out from an origin");
+    // Without asking, there is none.
+    assert!(LinkBinRecorder::new(4, 60, 3600.0).finish_with_entry().1.is_none());
+}
+
+#[test]
+fn the_entry_table_holds_the_same_traversals_as_the_exit_table() {
+    let toy = Toy::new();
+    let demand = mixed_demand(&toy);
+    let (_, exit, tables) = run_ltm_recorded(
+        &toy.net,
+        &toy.turns,
+        &demand,
+        Duration(3600.0),
+        Duration(300.0),
+        FidelityLevel::Full,
+        60,
+    );
+    // Every vehicle finishes inside the window, so the two tables count the same vehicles and the
+    // same time on every link; only the bins differ.
+    for l in 0..toy.net.link_count() {
+        let link = LinkId::new(l);
+        let entry_pcu = pcu_of(&tables.entry, link);
+        assert!((entry_pcu - pcu_of(&exit, link)).abs() < 1e-9, "link {l}");
+    }
+    let time = |t: &LinkBins| t.pcu_seconds().iter().sum::<f64>();
+    assert!((time(&tables.entry) - time(&exit)).abs() < 1e-6);
+    // And the tables record no more than the plain run does: same exit table.
+    let (_, plain) = run_ltm_binned(
+        &toy.net,
+        &toy.turns,
+        &demand,
+        Duration(3600.0),
+        Duration(300.0),
+        FidelityLevel::Full,
+        60,
+    );
+    assert_eq!(plain, exit);
+}
+
+#[test]
+fn waiting_at_an_origin_is_recorded_by_departure_and_grows_with_the_queue() {
+    let toy = Toy::new();
+    let mean_wait = |n: u32| {
+        // n cars set out together onto a1: the k-th waits for the k cars ahead of it.
+        let cars: Vec<Vehicle> = (0..n).map(|k| toy.car(k, &["a1"], 1.0, 0)).collect();
+        let (_, _, tables) = run_ltm_recorded(
+            &toy.net,
+            &toy.turns,
+            &cars,
+            Duration(3600.0),
+            Duration(300.0),
+            FidelityLevel::Full,
+            60,
+        );
+        let waits = tables.origin_wait;
+        assert_eq!(waits.len(), 1, "all set out in bin 0, from one link");
+        assert_eq!((waits.bins()[0], waits.links()[0]), (0, toy.id("a1").raw()));
+        assert_eq!(waits.crossings()[0], n);
+        waits.mean_seconds(0)
+    };
+    // Cars go straight onto the link while it has room, so nobody waits until its storage is full;
+    // after that each car waits for the room the discharge frees, one headway apart.
+    let storage = toy.net.storage(toy.id("a1")).get();
+    let room = storage.floor() as u32;
+    assert!(mean_wait(1).abs() < 1e-9 && mean_wait(room - 1).abs() < 1e-9, "no queue, no wait");
+    let (some, more) = (mean_wait(room + 30), mean_wait(room + 60));
+    assert!(some > 0.0, "the {}th car and after wait", room + 1);
+    assert!(more > some, "a longer queue waits longer: {some} then {more}");
+}
+
+#[test]
+fn vehicles_still_waiting_when_the_window_ends_are_counted_with_the_wait_so_far() {
+    let toy = Toy::new();
+    let n = toy.net.storage(toy.id("a1")).get().floor() as u32 + 60;
+    let cars: Vec<Vehicle> = (0..n).map(|k| toy.car(k, &["a1"], 1.0, 0)).collect();
+    let (_, _, tables) = run_ltm_recorded(
+        &toy.net,
+        &toy.turns,
+        &cars,
+        Duration(20.0),
+        Duration(10.0),
+        FidelityLevel::Full,
+        60,
+    );
+    let waits = tables.origin_wait;
+    // Every car is in the table once: those that got onto the link with the wait they had, the
+    // rest with the 20 s they had waited when the window ended.
+    assert_eq!(waits.crossings().iter().sum::<u32>(), n);
+    assert!(waits.mean_seconds(0) <= 20.0 + 1e-9 && waits.mean_seconds(0) > 1.0);
+    // The link entries too: those still on the link at the end have the time so far.
+    assert!(tables.entry.crossings().iter().sum::<u32>() >= 1);
+}
+
+#[test]
+fn level_zero_has_no_origin_wait_and_the_same_entry_times_as_its_exit_times() {
+    let toy = Toy::new();
+    let demand = mixed_demand(&toy);
+    let (_, exit, tables) = load_level_0_recorded(&demand, &toy.net, 3600.0, 60);
+    assert!(tables.origin_wait.is_empty());
+    for l in 0..toy.net.link_count() {
+        assert!(
+            (pcu_of(&tables.entry, LinkId::new(l)) - pcu_of(&exit, LinkId::new(l))).abs() < 1e-9
+        );
+    }
+    // Free flow: every traversal of a link takes the same time, so its mean is the same in any bin.
+    for r in 0..tables.entry.len() {
+        let l = LinkId::new(tables.entry.links()[r]);
+        let free = toy.net.free_flow_time(l).get();
+        assert!((tables.entry.mean_seconds(r) - free).abs() < 1e-6);
+    }
 }

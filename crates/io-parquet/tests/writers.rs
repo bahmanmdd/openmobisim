@@ -10,7 +10,9 @@ use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefau
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_loading::LinkBinRecorder;
-use openmobisim_core_sim::{EventRow, EventType, RunDescription, RunResult, TripCompletionStats};
+use openmobisim_core_sim::{
+    EventRow, EventType, IterationReport, RunDescription, RunResult, TripCompletionStats,
+};
 use openmobisim_core_types::diagnostics::{
     Category, DiagKey, Diagnostics, ElementRef, Severity, codes,
 };
@@ -69,6 +71,8 @@ fn sample_result() -> RunResult {
         link_bins: None,
         route_sets: None,
         route_choices: None,
+        iterations: Vec::new(),
+        converged: false,
     }
 }
 
@@ -245,6 +249,9 @@ fn sample_description(step: Option<f64>, bins: Option<u32>) -> RunDescription {
         choice_model: "logit".to_string(),
         choice_descriptor: "logit;beta_time_min=-0.2".to_string(),
         live_streams: vec!["choice".to_string()],
+        equilibration: "none".to_string(),
+        equilibration_descriptor: "none".to_string(),
+        max_iterations: 1,
     }
 }
 
@@ -322,4 +329,85 @@ fn link_bins_writer_handles_a_run_with_no_traffic() {
     write_link_bins(&path, "quiet", &bins, &network, &sample_description(None, Some(300)))
         .expect("write");
     assert_eq!(count_rows(&path), 0);
+}
+
+#[test]
+fn an_iterated_run_writes_a_row_set_per_iteration() {
+    let mut result = sample_result();
+    let report = |iteration: u32, gap: f64| IterationReport {
+        iteration,
+        reselected_share: if iteration == 0 { 1.0 } else { 0.5 },
+        changed_share: if iteration == 0 { f64::NAN } else { 0.25 },
+        total_travel_time_s: 1000.0 - 100.0 * f64::from(iteration),
+        completed: 4,
+        truncated: 1,
+        time_change: if iteration == 0 { f64::NAN } else { 0.1 },
+        gap_flow: gap,
+        gap_flow_floor: 0.01,
+        gap_flow_excess: gap - 0.01,
+        gap_cost: 0.02,
+    };
+    result.iterations = vec![report(0, 0.3), report(1, 0.1), report(2, 0.05)];
+    let path = temp_path("kpis_iterated.parquet");
+    write_kpis(&path, "run-i", "design-a", 0, 99, &result).expect("write");
+
+    let batch = read_first_batch(&path);
+    let iteration = batch.column(3).as_any().downcast_ref::<UInt32Array>().unwrap();
+    let metric = batch.column(4).as_any().downcast_ref::<StringArray>().unwrap();
+    let value = batch.column(5).as_any().downcast_ref::<Float64Array>().unwrap();
+    let get = |i: u32, name: &str| {
+        (0..batch.num_rows())
+            .find(|&r| iteration.value(r) == i && metric.value(r) == name)
+            .map(|r| value.value(r))
+    };
+    // The iteration comes from the report (the 99 given is for a run that did not iterate).
+    assert!((0..batch.num_rows()).all(|r| iteration.value(r) <= 2));
+    assert_eq!(get(1, "total_travel_time_s"), Some(900.0));
+    assert_eq!(get(2, "gap_flow_excess"), Some(0.05 - 0.01));
+    assert_eq!(get(1, "changed_share"), Some(0.25));
+    // A number that was not measured has no row.
+    assert_eq!(get(0, "changed_share"), None);
+    assert_eq!(get(0, "time_change"), None);
+    assert_eq!(get(0, "reselected_share"), Some(1.0));
+    // What cannot change between loadings is written once, for the last iteration.
+    let count = |name: &str| (0..batch.num_rows()).filter(|&r| metric.value(r) == name).count();
+    assert_eq!((count("completion_rate"), count("no_feasible_path_trips")), (1, 1));
+    assert_eq!(get(2, "completion_rate"), Some(3.0 / 4.0));
+    assert_eq!(count("total_travel_time_s"), 3);
+}
+
+#[test]
+fn the_manifest_says_how_many_loadings_were_made_and_whether_it_converged() {
+    let mut result = sample_result();
+    result.iterations = vec![IterationReport::unmeasured(0), IterationReport::unmeasured(1)];
+    result.converged = true;
+    let mut description = sample_description(None, None);
+    description.equilibration = "msa".to_string();
+    description.equilibration_descriptor =
+        "msa;cost_bin_s=300;gap_tolerance=0.05;iterations=10".to_string();
+    description.live_streams = vec!["choice".to_string(), "msa_reselection".to_string()];
+    let raw = vec![RawTrip {
+        traveller_id: "a".to_string(),
+        trip_seq: 0,
+        origin: LonLat::new(4.8, 45.7),
+        destination: LonLat::new(4.81, 45.7),
+        departure_time: Second(0),
+        user_class: "commuter".to_string(),
+        weight: None,
+    }];
+    let (travellers, _) = build_travellers(
+        raw,
+        Vec::new(),
+        &ClassDefaults::new().with_default("commuter", Ownership { car: true, ..Ownership::NONE }),
+        1,
+        &mut Diagnostics::new(),
+    )
+    .expect("buildable");
+    let json = Manifest::for_run(&travellers, &result, Second(3600), 1, &description).to_json();
+    assert!(json.contains("\"equilibration\": \"msa\""), "{json}");
+    assert!(json.contains(
+        "\"equilibration_descriptor\": \"msa;cost_bin_s=300;gap_tolerance=0.05;iterations=10\""
+    ));
+    assert!(json.contains("\"iterations_run\": 2") && json.contains("\"converged\": true"));
+    assert!(json.contains("\"live_streams\": [\"choice\", \"msa_reselection\"]"));
 }

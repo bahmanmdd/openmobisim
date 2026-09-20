@@ -15,31 +15,83 @@ use openmobisim_core_sim::RunResult;
 use crate::WriteError;
 use crate::io::write_single_batch;
 
-/// Every metric this Phase 1 cut can report, as `(name, value)` pairs.
+/// Every metric of a run, as `(iteration, name, value)`.
+///
+/// A run without equilibration has one iteration (given by the caller, as
+/// before): the six totals. A run that iterated (S170) has a row set per
+/// iteration: the total travel time and the completed and truncated trips of that
+/// loading, and what the iteration showed of the pattern settling
+/// (`reselected_share`, `changed_share`, `time_change`, `gap_flow`,
+/// `gap_flow_floor`, `gap_flow_excess`, `gap_cost`; a number that was not measured
+/// has no row); the counts that cannot change from one loading to the next
+/// (`no_vehicle_available_trips`, `no_feasible_path_trips`, `completion_rate`) are
+/// written once, for the last.
 ///
 /// `total_travel_time_s` is traveller-weight-scaled (`Σ w · travel_time`) —
 /// see `core-sim`'s own docs for why, and for the standing note that an
 /// unweighted metric row joins this list, rather than replacing this one,
 /// once comprehensive KPIs exist (confirmed by the user, 2026-09-14).
-fn metrics(result: &RunResult) -> [(&'static str, f64); 6] {
+fn metrics(result: &RunResult, single_iteration: u32) -> Vec<(u32, &'static str, f64)> {
     let c = &result.completion;
-    [
-        ("total_travel_time_s", result.total_travel_time.get()),
-        ("completed_trips", f64::from(c.completed)),
-        ("truncated_trips", f64::from(c.truncated)),
-        ("no_vehicle_available_trips", f64::from(c.no_vehicle_available)),
-        ("no_feasible_path_trips", f64::from(c.no_feasible_path)),
-        ("completion_rate", c.completion_rate()),
-    ]
+    let fixed = |iteration: u32| {
+        vec![
+            (iteration, "no_vehicle_available_trips", f64::from(c.no_vehicle_available)),
+            (iteration, "no_feasible_path_trips", f64::from(c.no_feasible_path)),
+            (iteration, "completion_rate", c.completion_rate()),
+        ]
+    };
+    if result.iterations.len() <= 1 {
+        let mut rows = vec![
+            (single_iteration, "total_travel_time_s", result.total_travel_time.get()),
+            (single_iteration, "completed_trips", f64::from(c.completed)),
+            (single_iteration, "truncated_trips", f64::from(c.truncated)),
+        ];
+        rows.extend(fixed(single_iteration));
+        return rows;
+    }
+    let mut rows = Vec::new();
+    let last = result.iterations.last().map_or(0, |r| r.iteration);
+    for r in &result.iterations {
+        let i = r.iteration;
+        rows.push((i, "total_travel_time_s", r.total_travel_time_s));
+        rows.push((i, "completed_trips", f64::from(r.completed)));
+        rows.push((i, "truncated_trips", f64::from(r.truncated)));
+        for (name, value) in [
+            ("reselected_share", r.reselected_share),
+            ("changed_share", r.changed_share),
+            ("time_change", r.time_change),
+            ("gap_flow", r.gap_flow),
+            ("gap_flow_floor", r.gap_flow_floor),
+            ("gap_flow_excess", r.gap_flow_excess),
+            ("gap_cost", r.gap_cost),
+        ] {
+            if value.is_finite() {
+                rows.push((i, name, value));
+            }
+        }
+        if i == last {
+            rows.extend(fixed(i));
+        }
+    }
+    rows
 }
 
 /// Write `kpis.parquet` for one run.
 ///
-/// `design_id`, `replication` and `iteration` are accepted as given rather
-/// than computed here: Phase 1 has no `DesignSpace`/`run_batch` (P7/P12) and
-/// no equilibration, so there is exactly one design, one replication and one
-/// (implicit) iteration — the caller states that rather than this module
-/// inventing an identity for concepts that do not exist yet.
+/// A run that iterated (S170) writes a row set for every iteration it made and
+/// takes each row's `iteration` from its report: the total travel time and the
+/// completed and truncated trips of that loading, and what the iteration showed of
+/// the pattern settling (`reselected_share`, `changed_share`, `time_change`,
+/// `gap_flow`, `gap_flow_floor`, `gap_flow_excess`, `gap_cost`; a number that was
+/// not measured has no row). The counts that cannot change from one loading to the
+/// next (`no_vehicle_available_trips`, `no_feasible_path_trips`,
+/// `completion_rate`) are written once, for the last iteration. The `iteration`
+/// argument is used only for a run that did not iterate.
+///
+/// `design_id` and `replication` are accepted as given rather than computed
+/// here: there is no `DesignSpace`/`run_batch` (P7/P12) yet, so there is exactly
+/// one design and one replication — the caller states that rather than this
+/// module inventing an identity for concepts that do not exist yet.
 ///
 /// # Errors
 ///
@@ -53,17 +105,18 @@ pub fn write_kpis(
     iteration: u32,
     result: &RunResult,
 ) -> Result<(), WriteError> {
-    let rows = metrics(result);
+    let rows = metrics(result, iteration);
     let n = rows.len();
 
     let run_id_col: ArrayRef = Arc::new(StringArray::from(vec![run_id; n]));
     let design_id_col: ArrayRef = Arc::new(StringArray::from(vec![design_id; n]));
     let replication_col: ArrayRef = Arc::new(UInt32Array::from(vec![replication; n]));
-    let iteration_col: ArrayRef = Arc::new(UInt32Array::from(vec![iteration; n]));
+    let iteration_col: ArrayRef =
+        Arc::new(UInt32Array::from(rows.iter().map(|(i, _, _)| *i).collect::<Vec<_>>()));
     let metric_col: ArrayRef =
-        Arc::new(StringArray::from(rows.iter().map(|(name, _)| *name).collect::<Vec<_>>()));
+        Arc::new(StringArray::from(rows.iter().map(|(_, name, _)| *name).collect::<Vec<_>>()));
     let value_col: ArrayRef =
-        Arc::new(Float64Array::from(rows.iter().map(|(_, value)| *value).collect::<Vec<_>>()));
+        Arc::new(Float64Array::from(rows.iter().map(|(_, _, value)| *value).collect::<Vec<_>>()));
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("run_id", DataType::Utf8, false),

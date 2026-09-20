@@ -71,6 +71,22 @@ impl ChoiceModel for Deterministic {
         let probability = vec![1.0; batch.situations()];
         Ok(Choices { chosen, probability })
     }
+
+    fn probabilities(&self, batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
+        // All the probability on the alternative `choose` would take.
+        let chosen = self.choose(
+            batch,
+            &openmobisim_core_types::rng::StreamRng::new(
+                openmobisim_core_types::rng::RngKey::from_seed(0),
+                openmobisim_core_types::rng::Stream::Choice,
+            ),
+        )?;
+        let mut p = vec![0.0; batch.alternatives()];
+        for (s, &c) in chosen.chosen.iter().enumerate() {
+            p[batch.range(s).start + c as usize] = 1.0;
+        }
+        Ok(Some(p))
+    }
 }
 
 /// A logit whose utility is linear in named attributes:
@@ -169,7 +185,10 @@ impl Logit {
     /// # Errors
     ///
     /// As [`Logit::utilities`].
-    pub fn probabilities(&self, batch: &ChoiceBatch) -> Result<Vec<Vec<f64>>, ChoiceError> {
+    pub fn probabilities_by_situation(
+        &self,
+        batch: &ChoiceBatch,
+    ) -> Result<Vec<Vec<f64>>, ChoiceError> {
         let utility = self.utilities(batch)?;
         Ok((0..batch.situations()).map(|s| logit_probabilities(&utility[batch.range(s)])).collect())
     }
@@ -195,5 +214,9 @@ impl ChoiceModel for Logit {
 
     fn choose(&self, batch: &ChoiceBatch, rng: &StreamRng) -> Result<Choices, ChoiceError> {
         Ok(sample_random_utility(batch, &self.utilities(batch)?, rng))
+    }
+
+    fn probabilities(&self, batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
+        Ok(Some(self.probabilities_by_situation(batch)?.into_iter().flatten().collect()))
     }
 }

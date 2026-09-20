@@ -15,8 +15,8 @@
 //! density, wave speed, control delay); every traveller (id, class, weight,
 //! what they own) and every trip (traveller, departure, origin, destination);
 //! the window; the loading engine, its level and its step; the route method
-//! and its options; the choice model and its options; the bin length of the
-//! per-link results.
+//! and its options; the choice model and its options; the equilibration
+//! strategy and its options; the bin length of the per-link results.
 //!
 //! **What is not.** The platform and the crate version (the manifest carries
 //! them next to the fingerprint: a fingerprint says *what was run*, the
@@ -68,9 +68,15 @@ pub struct RunDescription {
     pub choice_model: String,
     /// The choice model with every option and default, canonical.
     pub choice_descriptor: String,
-    /// The random streams the run draws from: `["choice"]` under a sampled
-    /// choice model, none under an all-or-nothing one.
+    /// The random streams the run draws from: `"choice"` under a sampled choice
+    /// model, `"msa_reselection"` under an equilibration that iterates.
     pub live_streams: Vec<String>,
+    /// The equilibration strategy's name (S170).
+    pub equilibration: String,
+    /// The strategy with every option and default, canonical.
+    pub equilibration_descriptor: String,
+    /// The most loadings the run makes.
+    pub max_iterations: u32,
 }
 
 impl RunDescription {
@@ -101,6 +107,10 @@ pub(crate) struct Inputs<'a> {
     pub choice_model: &'a str,
     pub choice_descriptor: &'a str,
     pub choice_sampled: bool,
+    pub equilibration: &'a str,
+    pub equilibration_descriptor: &'a str,
+    pub equilibration_draws: bool,
+    pub max_iterations: u32,
 }
 
 pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
@@ -126,6 +136,8 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     h.write_str(inputs.route_descriptor);
     h.write_str(inputs.choice_model);
     h.write_str(inputs.choice_descriptor);
+    h.write_str(inputs.equilibration);
+    h.write_str(inputs.equilibration_descriptor);
 
     RunDescription {
         fingerprint: h.finish(),
@@ -138,7 +150,19 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         link_bin_seconds: inputs.link_bin_seconds,
         choice_model: inputs.choice_model.to_string(),
         choice_descriptor: inputs.choice_descriptor.to_string(),
-        live_streams: if inputs.choice_sampled { vec!["choice".to_string()] } else { Vec::new() },
+        live_streams: {
+            let mut streams = Vec::new();
+            if inputs.choice_sampled {
+                streams.push("choice".to_string());
+            }
+            if inputs.equilibration_draws {
+                streams.push("msa_reselection".to_string());
+            }
+            streams
+        },
+        equilibration: inputs.equilibration.to_string(),
+        equilibration_descriptor: inputs.equilibration_descriptor.to_string(),
+        max_iterations: inputs.max_iterations,
     }
 }
 

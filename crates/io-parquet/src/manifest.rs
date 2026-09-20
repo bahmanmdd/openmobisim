@@ -75,8 +75,17 @@ pub struct Manifest {
     /// The choice model with every option and default, canonical.
     pub choice_descriptor: String,
     /// The random streams the run drew from: `choice` under a sampled choice
-    /// model, none under the all-or-nothing default.
+    /// model, `msa_reselection` under an equilibration that iterates.
     pub live_streams: Vec<String>,
+    /// The equilibration strategy's name (S170).
+    pub equilibration: String,
+    /// The strategy with every option and default, canonical.
+    pub equilibration_descriptor: String,
+    /// How many loadings the run made.
+    pub iterations_run: u32,
+    /// Whether the strategy stopped before its most iterations because it had
+    /// converged.
+    pub converged: bool,
 }
 
 impl Manifest {
@@ -127,6 +136,10 @@ impl Manifest {
             choice_model: description.choice_model.clone(),
             choice_descriptor: description.choice_descriptor.clone(),
             live_streams: description.live_streams.clone(),
+            equilibration: description.equilibration.clone(),
+            equilibration_descriptor: description.equilibration_descriptor.clone(),
+            iterations_run: u32::try_from(result.iterations.len().max(1)).unwrap_or(u32::MAX),
+            converged: result.converged,
         }
     }
 
@@ -142,7 +155,7 @@ impl Manifest {
     pub fn to_json(&self) -> String {
         let text = |v: &str| format!("\"{}\"", escape(v));
         let optional = |v: Option<String>| v.unwrap_or_else(|| "null".to_string());
-        let fields: [(&str, String); 22] = [
+        let fields: [(&str, String); 26] = [
             ("openmobisim_version", text(&self.openmobisim_version)),
             ("code_version", self.code_version.to_string()),
             ("defaults_version", self.defaults_version.to_string()),
@@ -169,6 +182,10 @@ impl Manifest {
                     self.live_streams.iter().map(|s| text(s)).collect::<Vec<_>>().join(", ")
                 ),
             ),
+            ("equilibration", text(&self.equilibration)),
+            ("equilibration_descriptor", text(&self.equilibration_descriptor)),
+            ("iterations_run", self.iterations_run.to_string()),
+            ("converged", self.converged.to_string()),
             ("link_bin_seconds", optional(self.link_bin_seconds.map(|s| s.to_string()))),
             ("link_bins_file", optional(self.link_bin_seconds.map(|_| text("link_bins.parquet")))),
         ];

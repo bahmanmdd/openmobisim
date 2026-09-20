@@ -273,6 +273,9 @@ class RouteChoices:
 
     def __len__(self) -> int: ...
 
+def equilibration_strategies() -> list[str]:
+    """The equilibration strategies that can be selected by name, the default (``"none"``) first."""
+
 def choice_models() -> list[str]:
     """The choice models that can be selected by name, the default (``"deterministic"``) first."""
 
@@ -379,6 +382,12 @@ class RunSummary:
     master_seed: int
     #: The choice model's name.
     choice_model: str
+    #: The equilibration strategy's name.
+    equilibration: str
+    #: What each iteration showed, as arrays by name (see ``Run.convergence``).
+    convergence: dict[str, npt.NDArray[np.float64] | npt.NDArray[np.uint32]]
+    #: Whether the strategy stopped before its most iterations, having converged.
+    converged: bool
     #: The run's fingerprint: 16 hex digits of a hash of every input that decides its results.
     fingerprint: str
     total_trips: int
@@ -413,6 +422,8 @@ def run_pipeline(
     master_seed: int = 0,
     choice_model: str | object | None = None,
     choice_options: dict[str, float] | None = None,
+    equilibration: str = "none",
+    equilibration_options: dict[str, float] | None = None,
 ) -> RunSummary:
     """Run the whole Phase 1 pipeline and write all four output artifacts.
 
@@ -456,6 +467,11 @@ def run_pipeline(
             ``"deterministic"``), or an object with a ``choose(batch)`` method.
         choice_options: A built-in model's options, numbers by name (for
             ``"logit"``, ``beta_<attribute>`` coefficients).
+        equilibration: How choice and loading are repeated: a name from
+            :func:`equilibration_strategies` (``"none"``, the default, is one choice
+            and one loading; ``"msa"`` iterates).
+        equilibration_options: The strategy's options, numbers by name (for
+            ``"msa"``: ``iterations``, ``gap_tolerance``, ``cost_bin_s``).
 
     Returns:
         A :class:`RunSummary`.

@@ -47,7 +47,11 @@ situations, one situation being one traveller's one trip):
 
 Return the chosen indices **within each situation** (an integer array, one per
 situation), or ``(indices, probabilities)`` when the model knows how likely each
-choice was. Optional attributes of the model: ``name``, ``descriptor`` (both in
+choice was. A model may also have a ``probabilities(batch)`` method returning the
+probability of **every** alternative (one number per alternative, summing to one
+within each situation): it lets an iterated run (``equilibration="msa"``) measure
+how far the pattern is from equilibrium; without it those measures are ``nan``.
+ Optional attributes of the model: ``name``, ``descriptor`` (both in
 the manifest and part of the run's fingerprint: **change the descriptor when the
 model's behaviour changes**, or two different models look like one run),
 ``sampled`` (``False`` if it never uses ``batch.gumbel``; default ``True``) and
