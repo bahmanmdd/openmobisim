@@ -120,6 +120,12 @@ class Network:
     def link_lanes(self) -> npt.NDArray[np.uint8]:
         """Every link's lane count in its own direction."""
 
+    def link_capacity_pcu_h(self) -> npt.NDArray[np.float64]:
+        """Every link's capacity across all its lanes, in PCU per hour.
+
+        The most the link can discharge, before any signal takes its share.
+        """
+
     def link_storage_pcu(self) -> npt.NDArray[np.float64]:
         """Every link's storage at jam density, in PCU."""
 

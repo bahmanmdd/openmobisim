@@ -141,6 +141,15 @@ impl PyNetwork {
             .into_pyarray(py)
     }
 
+    /// Every link's capacity across all its lanes, in PCU per hour (float64):
+    /// the most it can discharge, before any signal takes its share.
+    fn link_capacity_pcu_h<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        (0..self.inner.link_count())
+            .map(|i| self.inner.link_parameters(LinkId::new(i)).capacity.get() * 3600.0)
+            .collect::<Vec<_>>()
+            .into_pyarray(py)
+    }
+
     /// Every link's storage capacity at jam density, in PCU (float64).
     fn link_storage_pcu<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         self.inner.storages().iter().map(|p| p.get()).collect::<Vec<_>>().into_pyarray(py)

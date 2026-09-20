@@ -26,9 +26,17 @@ from openmobisim.viz._style import Theme, get_theme
 
 __all__ = ["link_table", "map_link"]
 
+_COLOUR_WORDS = {
+    "delay": "delay over free flow",
+    "volume": "volume",
+    "volume_capacity": "volume over capacity",
+}
 _LEVEL_NAMES = {0: "free flow", 2: "point queue", 3: "spatial queue", 4: "full"}
 #: Ribbon width in points at zero and at maximum volume, before the view scale.
 _WIDTH_MIN_PT, _WIDTH_SPAN_PT = 0.5, 5.2
+#: No ribbon is thinner than this many points (at 16 inches wide), whatever the
+#: view scale: a link with any traffic must stay visible.
+_WIDTH_FLOOR_PT = 0.9
 #: A delay of this share of the free-flow time is the top of the colour ramp.
 _DELAY_TOP = 0.70
 #: Below this delay a ribbon counts as free flow.
@@ -81,6 +89,7 @@ def map_link(
     *,
     bins: int | tuple[int, int] | None = None,
     colour: str = "delay",
+    ramp: str = "spectrum",
     theme: str | Theme = "paper",
     title: str | None = None,
     subtitle: str | None = None,
@@ -90,7 +99,9 @@ def map_link(
     dpi: int = 120,
     scale: float | None = None,
     chevrons: bool | None = None,
-    min_volume: float = 8.0,
+    min_volume: float = 0.0,
+    credit: str | None = None,
+    logo: bool = True,
     path: str | None = None,
 ) -> Any:
     """Draw a run's traffic on its network: one ribbon per direction of every link.
@@ -106,7 +117,12 @@ def map_link(
         bins: Which time bins to show: ``None`` for every bin from the first to
             the last that saw traffic, an ``int`` for one bin, or
             ``(first, stop)`` for a range (``stop`` excluded).
-        colour: ``"delay"`` (default) or ``"volume"``.
+        colour: What the colour shows: ``"delay"`` (default; delay over free
+            flow), ``"volume"``, or ``"volume_capacity"`` (volume over the
+            link's capacity, so 1 is a link at capacity and beyond it is over).
+        ramp: For delay and volume-over-capacity, ``"spectrum"`` (default:
+            blue-green for little, gold in the middle, deeper red for more) or
+            ``"ember"`` (the single-hue ramp of the first version).
         theme: ``"paper"`` (print, slides) or ``"night"`` (screens, video).
         title: Figure title; defaults to a description of what is drawn.
         subtitle: A line under the title; defaults to the time window and the encodings.
@@ -120,7 +136,12 @@ def map_link(
             for a whole region and bolder when zoomed to a town.
         chevrons: Draw a small direction triangle on each ribbon; by default
             only when the view is a few kilometres across.
-        min_volume: Links carrying less than this (PCU/h) are drawn only as canvas.
+        min_volume: Links carrying no more than this (PCU/h) are drawn only as
+            canvas; the default 0 draws every link that saw any traffic, at least
+            a fine line wide.
+        credit: A line of your own before the logo (a name, an institution, your
+            copyright). The logo is a signature, not a claim on your figure.
+        logo: Draw the openmobisim logo at the bottom right (``False`` for none).
         path: If given, also save the figure there (PNG, SVG or PDF by extension).
 
     Returns:
@@ -133,8 +154,10 @@ def map_link(
     load_matplotlib()
     from matplotlib.collections import LineCollection, PolyCollection
 
-    if colour not in ("delay", "volume"):
-        raise ValueError(f"colour must be 'delay' or 'volume', got {colour!r}")
+    if colour not in ("delay", "volume", "volume_capacity"):
+        raise ValueError(f"colour must be 'delay', 'volume' or 'volume_capacity', got {colour!r}")
+    if ramp not in ("spectrum", "ember"):
+        raise ValueError(f"ramp must be 'spectrum' or 'ember', got {ramp!r}")
     link_bins = run.link_bins()
     network = run.network
     if link_bins is None or network is None:
@@ -153,7 +176,7 @@ def map_link(
     first, stop = _bin_range(bins)
     table = link_table(link_bins, n_links, network.link_free_flow_s(), first=first, stop=stop)
     volume, delay = table["volume"], table["delay"]
-    active = volume >= min_volume
+    active = (volume > 0) & (volume >= min_volume)
 
     # The view, in metres.
     if view is None:
@@ -175,7 +198,10 @@ def map_link(
     vmax = float(np.percentile(volume[active], 99)) if active.any() else 1.0
     vmax = max(vmax, min_volume)
     frac = np.sqrt(np.minimum(volume, vmax) / vmax)
-    width_pt = np.where(active, (_WIDTH_MIN_PT + _WIDTH_SPAN_PT * frac) * zs, 0.0)
+    floor = _WIDTH_FLOOR_PT * page.k
+    width_pt = np.where(
+        active, np.maximum((_WIDTH_MIN_PT + _WIDTH_SPAN_PT * frac) * zs * page.k, floor), 0.0
+    )
 
     # 1. The canvas: every link, thin, in the network's own geometry.
     everything = np.arange(n_links)
@@ -192,14 +218,22 @@ def map_link(
     # 2. One ribbon per directed link, offset to the driver's side.
     offset_m = (width_pt / 2 + 0.25) * mpp
     ribbon_points = geo.offset_points(points, owner, offset_m)
+    stops = th.ramp_delay if ramp == "spectrum" else th.ramp_delay_ember
     if colour == "delay":
         t = np.clip((delay - _DELAY_FREE) / _DELAY_TOP, 0.0, 1.0)
-        link_rgb = np.where(
-            (delay < _DELAY_FREE)[:, None], rgb(th.free)[None, :], ramp_rgb(th.ramp_delay, t)
-        )
+        link_rgb = ramp_rgb(stops, t)
+        if ramp == "ember":  # the first version: free flow recedes as a quiet slate
+            link_rgb = np.where((delay < _DELAY_FREE)[:, None], rgb(th.free)[None, :], link_rgb)
         severity = delay
-        legend_stops, low, high = th.ramp_delay, "0%", f"{_DELAY_TOP:.0%}+"
+        legend_stops, low, high = stops, "0%", f"{_DELAY_TOP:.0%}+"
         legend_label = "Delay over free flow"
+    elif colour == "volume_capacity":
+        capacity = network.link_capacity_pcu_h()
+        ratio = np.where(capacity > 0, volume / np.maximum(capacity, 1e-9), 0.0)
+        link_rgb = ramp_rgb(stops, np.clip(ratio, 0.0, 1.0))
+        severity = ratio
+        legend_stops, low, high = stops, "0", "1.0+"
+        legend_label = "Volume over capacity"
     else:
         t = np.sqrt(np.minimum(volume, vmax) / vmax)
         link_rgb = ramp_rgb(th.ramp_volume, t)
@@ -254,7 +288,7 @@ def map_link(
     end = (stop if stop is not None else int(link_bins.bins().max()) + 1) * step
     default_subtitle = (
         f"{_minutes(window)}–{_minutes(end)} min · one ribbon per direction · "
-        f"width = volume, colour = {'delay over free flow' if colour == 'delay' else 'volume'}"
+        f"width = volume, colour = {_COLOUR_WORDS[colour]}"
     )
     level = _LEVEL_NAMES.get(run.flow_level, str(run.flow_level))
     stepping = f" · step {run.flow_step_s} s" if run.flow_level else ""
@@ -269,7 +303,15 @@ def map_link(
     )
     sample_values = [nice_number(vmax / 10), nice_number(vmax / 3), nice_number(vmax)]
     samples = [
-        (v, (_WIDTH_MIN_PT + _WIDTH_SPAN_PT * float(np.sqrt(min(v, vmax) / vmax))) * zs)
+        (
+            v,
+            max(
+                (_WIDTH_MIN_PT + _WIDTH_SPAN_PT * float(np.sqrt(min(v, vmax) / vmax)))
+                * zs
+                * page.k,
+                floor,
+            ),
+        )
         for v in sample_values
     ]
     draw_furniture(
@@ -280,6 +322,8 @@ def map_link(
         provenance=provenance,
         width_legend=("Volume per direction", samples, "PCU/h"),
         colour_legend=(legend_label, legend_stops, low, high),
+        credit=credit,
+        logo=logo,
     )
     if path is not None:
         page.fig.savefig(path, facecolor=th.surface)

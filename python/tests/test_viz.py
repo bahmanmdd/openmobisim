@@ -199,3 +199,90 @@ def test_a_figure_without_matplotlib_says_how_to_get_it(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", refuse)
     with pytest.raises(ImportError, match=r"openmobisim\[viz\]"):
         _figure.load_matplotlib()
+
+
+# --- colour, visibility and furniture (S164) -----------------------------------------
+
+
+def luminance(colour):
+    """Relative luminance of an ``(r, g, b)`` triple in ``[0, 1]``."""
+    r, g, b = (c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in colour)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+@pytest.mark.parametrize("theme", ["paper", "night"])
+def test_more_delay_is_always_a_deeper_red(theme):
+    from openmobisim.viz import _style
+    from openmobisim.viz._figure import ramp_rgb
+
+    th = _style.get_theme(theme)
+    t = np.linspace(0.0, 1.0, 101)
+    colours = ramp_rgb(th.ramp_delay, t)
+    high = colours[-1]
+    assert high[0] > 0.5 and high[0] > 2 * high[1] and high[0] > 2 * high[2], "the top is a red"
+    assert colours[0][2] > colours[0][0], "the bottom is blue-green, not red"
+    # From the gold in the middle up to the top the colour only gets darker.
+    from_gold = np.array([luminance(c) for c in colours[34:]])
+    assert (np.diff(from_gold) <= 1e-9).all(), "past the middle, more delay is darker"
+    # The spectrum has the first version's ember ramp available for reversal.
+    assert len(th.ramp_delay_ember) >= 4
+
+
+@pytest.mark.parametrize("theme", ["paper", "night"])
+def test_every_colour_of_the_spectrum_stands_out_from_its_surface(theme):
+    from openmobisim.viz import _style
+    from openmobisim.viz._figure import ramp_rgb, rgb
+
+    th = _style.get_theme(theme)
+    surface = luminance(rgb(th.surface))
+    for colour in ramp_rgb(th.ramp_delay, np.linspace(0, 1, 21)):
+        lum = luminance(colour)
+        ratio = (max(lum, surface) + 0.05) / (min(lum, surface) + 0.05)
+        assert ratio >= 2.0, f"{theme}: a ribbon colour is too close to the page ({ratio:.2f}:1)"
+
+
+def test_a_link_with_almost_no_traffic_is_still_drawn():
+    net = ms.examples.toy_network()
+    (olon, olat), (dlon, dlat) = net.node_lonlat("W"), net.node_lonlat("D1")
+    rows = [("only", 0, olon, olat, dlon, dlat, 0, "commuter", None)]
+    run = ms.Scenario.from_parts(
+        net, rows, class_defaults=CAR, window_hours=2, flow_level=4, link_bin_s=3600
+    ).run("one-car")
+    kwargs = {"size": (6, 3.4), "dpi": 60, "chevrons": False}
+    shown = pixels(viz.map_link(run, **kwargs))
+    hidden = pixels(viz.map_link(run, min_volume=1e9, **kwargs))
+    assert (shown != hidden).any(), "one car an hour must still show as a line"
+
+
+def test_volume_over_capacity_and_the_first_ramp_are_available():
+    run, _ = toy_run()
+    kwargs = {"size": (6, 3.4), "dpi": 60}
+    vc = pixels(viz.map_link(run, colour="volume_capacity", **kwargs))
+    delay = pixels(viz.map_link(run, colour="delay", **kwargs))
+    ember = pixels(viz.map_link(run, ramp="ember", **kwargs))
+    assert (vc != delay).any() and (ember != delay).any()
+    with pytest.raises(ValueError, match="ramp"):
+        viz.map_link(run, ramp="rainbow")
+
+
+def test_the_logo_and_the_credit_are_optional_and_never_a_copyright_claim():
+    run, _ = toy_run()
+    kwargs = {"size": (8, 4.5), "dpi": 60}
+    plain = viz.map_link(run, **kwargs)
+    no_logo = viz.map_link(run, logo=False, **kwargs)
+    credited = viz.map_link(run, credit="Ada Lovelace, Analytical Engines", **kwargs)
+    words = {t.get_text() for t in plain.texts}
+    assert "openmobisim" in words and not any("©" in w and "openmobisim" in w for w in words)
+    assert "openmobisim" not in {t.get_text() for t in no_logo.texts}
+    assert "Ada Lovelace, Analytical Engines" in {t.get_text() for t in credited.texts}
+    assert "Ada Lovelace" not in " ".join(words)
+
+
+def test_a_small_page_keeps_its_proportions():
+    run, _ = toy_run()
+    small = viz.map_link(run, size=(4.0, 2.4), dpi=100)
+    image = pixels(small)
+    assert image.shape == (240, 400, 4)
+    assert len(np.unique(image.reshape(-1, 4), axis=0)) > 20
+    sizes = {round(t.get_fontsize(), 1) for t in small.texts}
+    assert max(sizes) < 10.0, "furniture text shrinks with the page (21 pt at 16 inches)"

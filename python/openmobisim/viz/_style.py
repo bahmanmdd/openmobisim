@@ -5,10 +5,18 @@ defined here, so changing the look is a change to this file and nothing else.
 
 The two brand ramps were built in OKLCH and checked with a lightness-monotone,
 adjacent-step, single-hue and contrast validator: *ion* is a cool azure for
-volume, *ember* a warm coral-crimson for delay. Usable ranges: on the paper
-theme steps 400-700 (more = darker); on the night theme steps 100-600
-(more = lighter, so that congestion glows). The pair is also the diverging
-scale for differences between scenarios.
+volume, *ember* a warm coral-crimson for delay and congestion. The pair is also
+the diverging scale for differences between scenarios.
+
+**Delay is a spectrum** (S164): a blue-green for little delay, gold in the
+middle, and ember for a lot, so more delay is always a deeper red on both
+themes. Three hues and no more, to stay clean. The single-hue ember ramp it
+replaced (S162) is kept as ``ramp_delay_ember`` and selectable with
+``map_link(..., ramp="ember")``; its night version ran the other way (lighter =
+more) so that congestion glowed, which read as backwards and was dropped.
+
+The paper theme's greys were darkened in S164 for contrast; the S162 values are
+noted beside each.
 """
 
 from __future__ import annotations
@@ -39,6 +47,11 @@ EMBER = {
 #: The middle lamp of the signal glyph.
 AMBER = "#fab219"
 
+#: The low and middle stops of the delay spectrum, per theme (S164). Built with
+#: the same OKLCH generator as the brand ramps; the high end is ember.
+TEAL_PAPER, GOLD_PAPER = "#04938e", "#ce9c0f"  # 3.7:1 and 2.4:1 on the paper surface
+TEAL_NIGHT, GOLD_NIGHT = "#40c8c1", "#f7cd3a"  # 9.2:1 and 12.3:1 on the night surface
+
 _SANS = ("Inter", "Helvetica Neue", "Segoe UI", "DejaVu Sans")
 _MONO = ("JetBrains Mono", "Menlo", "Consolas", "DejaVu Sans Mono")
 
@@ -58,8 +71,11 @@ class Theme:
     free: str
     #: Whether flows get a soft glow (night) or a hairline halo (paper).
     glow: bool
-    #: Delay, low to high, as the colour stops of a continuous ramp.
+    #: Delay, low to high: the spectrum (blue-green, gold, ember). More delay is
+    #: always a deeper red.
     ramp_delay: tuple[str, ...]
+    #: The single-hue delay ramp of S162, kept for reversal.
+    ramp_delay_ember: tuple[str, ...]
     #: Volume, low to high.
     ramp_volume: tuple[str, ...]
 
@@ -69,13 +85,14 @@ THEMES: dict[str, Theme] = {
         name="paper",
         surface="#fbfcfd",
         ink="#0a1626",
-        ink2="#4b5b6e",
-        muted="#8593a6",
-        base="#dce3ea",
-        free="#8fa1b5",
+        ink2="#3d4c5f",  # S162: #4b5b6e
+        muted="#66768a",  # S162: #8593a6
+        base="#c5cfda",  # S162: #dce3ea
+        free="#5d7189",  # S162: #8fa1b5
         glow=False,
-        ramp_delay=(EMBER[300], EMBER[400], EMBER[500], EMBER[600], EMBER[700]),
-        ramp_volume=(ION[300], ION[400], ION[500], ION[600], ION[700]),
+        ramp_delay=(TEAL_PAPER, GOLD_PAPER, EMBER[500], EMBER[700]),
+        ramp_delay_ember=(EMBER[300], EMBER[400], EMBER[500], EMBER[600], EMBER[700]),
+        ramp_volume=(ION[400], ION[500], ION[600], ION[700]),  # S162: from ION[300]
     ),
     "night": Theme(
         name="night",
@@ -86,7 +103,8 @@ THEMES: dict[str, Theme] = {
         base="#1f2c40",
         free="#4f6684",
         glow=True,
-        ramp_delay=(EMBER[600], EMBER[500], EMBER[400], EMBER[300]),
+        ramp_delay=(TEAL_NIGHT, GOLD_NIGHT, EMBER[500], EMBER[600]),
+        ramp_delay_ember=(EMBER[600], EMBER[500], EMBER[400], EMBER[300]),
         ramp_volume=(ION[600], ION[500], ION[400], ION[300], ION[200]),
     ),
 }

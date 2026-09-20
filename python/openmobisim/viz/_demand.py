@@ -80,6 +80,8 @@ def map_demand(
     note: str | None = None,
     size: tuple[float, float] = (16.0, 9.0),
     dpi: int = 120,
+    credit: str | None = None,
+    logo: bool = True,
     path: str | None = None,
 ) -> Any:
     """Draw demand as origin-destination desire lines on a map.
@@ -101,6 +103,8 @@ def map_demand(
         note: A third, italic line.
         size: Figure size in inches.
         dpi: Dots per inch.
+        credit: A line of your own before the logo (a name, an institution).
+        logo: Draw the openmobisim logo at the bottom right.
         path: If given, also save the figure there.
 
     Returns:
@@ -212,6 +216,8 @@ def map_demand(
         provenance=provenance,
         width_legend=("Trips per pair", samples_pt, "trips"),
         colour_legend=("Trips per pair", th.ramp_volume, "few", f"{wmax:g}"),
+        credit=credit,
+        logo=logo,
     )
     del mpp
     if path is not None:
@@ -229,6 +235,8 @@ def chart_demand_matrix(
     note: str | None = None,
     size: tuple[float, float] = (16.0, 9.0),
     dpi: int = 120,
+    credit: str | None = None,
+    logo: bool = True,
     path: str | None = None,
 ) -> Any:
     """Draw the origin-destination matrix as a heat-map.
@@ -246,6 +254,8 @@ def chart_demand_matrix(
         note: A third, italic line.
         size: Figure size in inches.
         dpi: Dots per inch.
+        credit: A line of your own before the logo (a name, an institution).
+        logo: Draw the openmobisim logo at the bottom right.
         path: If given, also save the figure there.
 
     Returns:
@@ -330,6 +340,8 @@ def chart_demand_matrix(
         note=note,
         provenance=f"openmobisim {__version__} · demand · cells {cell_m:g} m",
         colour_legend=("Trips per pair", th.ramp_volume, "0", f"{wmax:g}"),
+        credit=credit,
+        logo=logo,
     )
     if path is not None:
         page.fig.savefig(path, facecolor=th.surface)

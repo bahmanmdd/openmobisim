@@ -30,7 +30,12 @@ def test_a_network_reads_as_flat_arrays():
     assert coords.dtype == np.float64 and coords.shape[1] == 2
     assert offsets.dtype == np.uint32 and len(offsets) == 17 and offsets[0] == 0
     assert offsets[-1] == len(coords)
-    for array in (net.link_length_m(), net.link_free_flow_s(), net.link_storage_pcu()):
+    for array in (
+        net.link_length_m(),
+        net.link_free_flow_s(),
+        net.link_storage_pcu(),
+        net.link_capacity_pcu_h(),
+    ):
         assert array.dtype == np.float64 and array.shape == (16,) and (array > 0).all()
     assert net.link_class().dtype == np.uint8 and net.link_lanes().dtype == np.uint8
     # A network built from nodes alone has straight two-point links.
@@ -140,3 +145,14 @@ def test_a_real_extract_runs_and_reports_link_bins():
     bins = run.link_bins()
     assert len(bins) > 0 and run.completion["completed"] > 0
     assert bins.links().max() < net.link_count
+
+
+def test_link_capacity_follows_class_and_lanes():
+    net = ms.examples.toy_network()
+    capacity = net.link_capacity_pcu_h()
+    assert capacity.dtype == np.float64
+    # The toy network: residential one-lane links carry 1400/h, the two-lane
+    # link twice that, and the service road 800/h.
+    assert sorted(set(np.round(capacity).astype(int))) == [800, 1400, 2800]
+    lanes = net.link_lanes()
+    assert (capacity[lanes == 2] > capacity[lanes == 1].min()).all()

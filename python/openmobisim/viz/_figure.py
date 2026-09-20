@@ -81,6 +81,9 @@ class Page:
     size: tuple[float, float]
     #: Metres on the map per typographic point on the page.
     metres_per_point: float
+    #: Furniture and ribbons scale with the page: 1 at 16 inches wide, less
+    #: below, so a journal-column figure keeps the same proportions.
+    k: float = 1.0
 
     @classmethod
     def new(
@@ -105,7 +108,8 @@ class Page:
         mpp = float(max(span[0] / box_pt[0], span[1] / box_pt[1]))
         ax.set_xlim(centre[0] - mpp * box_pt[0] / 2, centre[0] + mpp * box_pt[0] / 2)
         ax.set_ylim(centre[1] - mpp * box_pt[1] / 2, centre[1] + mpp * box_pt[1] / 2)
-        return cls(fig=fig, ax=ax, theme=theme, size=size, metres_per_point=mpp)
+        k = float(np.clip(size[0] / 16.0, 0.4, 1.5))
+        return cls(fig=fig, ax=ax, theme=theme, size=size, metres_per_point=mpp, k=k)
 
 
 def draw_furniture(
@@ -117,16 +121,20 @@ def draw_furniture(
     provenance: str,
     width_legend: tuple[str, list[tuple[float, float]], str] | None = None,
     colour_legend: tuple[str, tuple[str, ...], str, str] | None = None,
+    credit: str | None = None,
+    logo: bool = True,
 ) -> None:
-    """Title with the signal glyph, legends, and the provenance strip.
+    """Title with the signal glyph, legends, the provenance strip and the logo.
 
     `width_legend` is ``(label, [(value, width_pt), ...], unit)``; `colour_legend`
-    is ``(label, ramp_stops, low_label, high_label)``.
+    is ``(label, ramp_stops, low_label, high_label)``. `credit` is the user's own
+    line (a name, an institution, their copyright) placed before the logo; the
+    logo is a signature, not a claim over the figure or its data.
     """
     from matplotlib.lines import Line2D
     from matplotlib.patches import Ellipse
 
-    fig, t = page.fig, page.theme
+    fig, t, k = page.fig, page.theme, page.k
     w, h = page.size
     sans, mono = font_sans(), font_mono()
 
@@ -135,25 +143,29 @@ def draw_furniture(
         fig.add_artist(
             Ellipse(
                 (0.0235 + i * 0.0105, 0.943),
-                0.0084,
-                0.0084 * w / h,
+                0.0084 * k,
+                0.0084 * k * w / h,
                 transform=fig.transFigure,
                 facecolor=colour,
                 edgecolor="none",
             )
         )
-    fig.text(0.0755, 0.9345, title, color=t.ink, fontsize=21, fontweight="bold", fontfamily=sans)
-    fig.text(0.0235, 0.9075, subtitle, color=t.ink2, fontsize=11.5, fontfamily=sans)
+    fig.text(
+        0.0755, 0.9345, title, color=t.ink, fontsize=21 * k, fontweight="bold", fontfamily=sans
+    )
+    fig.text(0.0235, 0.9075, subtitle, color=t.ink2, fontsize=11.5 * k, fontfamily=sans)
     if note:
-        fig.text(0.0235, 0.885, note, color=t.muted, fontsize=10, fontfamily=sans, style="italic")
+        fig.text(
+            0.0235, 0.885, note, color=t.muted, fontsize=10 * k, fontfamily=sans, style="italic"
+        )
 
     # Legends, top right.
     lx, ly = 0.585, 0.905
     if width_legend is not None:
         label, samples, unit = width_legend
-        fig.text(lx, ly + 0.030, label, color=t.ink2, fontsize=9.5, fontfamily=sans)
-        for k, (value, width_pt) in enumerate(samples):
-            x0 = lx + k * 0.075
+        fig.text(lx, ly + 0.030, label, color=t.ink2, fontsize=9.5 * k, fontfamily=sans)
+        for i, (value, width_pt) in enumerate(samples):
+            x0 = lx + i * 0.075
             fig.add_artist(
                 Line2D(
                     [x0, x0 + 0.05],
@@ -165,18 +177,29 @@ def draw_furniture(
                 )
             )
             fig.text(
-                x0, ly - 0.006, f"{value:g} {unit}", color=t.muted, fontsize=8.5, fontfamily=mono
+                x0,
+                ly - 0.006,
+                f"{value:g} {unit}",
+                color=t.muted,
+                fontsize=8.5 * k,
+                fontfamily=mono,
             )
     if colour_legend is not None:
         label, stops, low, high = colour_legend
         cx = 0.815
-        fig.text(cx, ly + 0.030, label, color=t.ink2, fontsize=9.5, fontfamily=sans)
+        fig.text(cx, ly + 0.030, label, color=t.ink2, fontsize=9.5 * k, fontfamily=sans)
         bar = fig.add_axes((cx, ly + 0.008, 0.16, 0.012), facecolor=t.surface)
         bar.set_axis_off()
         bar.imshow(ramp_rgb(stops, np.linspace(0, 1, 256))[None, :, :], aspect="auto")
-        fig.text(cx, ly - 0.006, low, color=t.muted, fontsize=8.5, fontfamily=mono)
+        fig.text(cx, ly - 0.006, low, color=t.muted, fontsize=8.5 * k, fontfamily=mono)
         fig.text(
-            cx + 0.16, ly - 0.006, high, color=t.muted, fontsize=8.5, fontfamily=mono, ha="right"
+            cx + 0.16,
+            ly - 0.006,
+            high,
+            color=t.muted,
+            fontsize=8.5 * k,
+            fontfamily=mono,
+            ha="right",
         )
 
     # The provenance strip: what is needed to regenerate the figure.
@@ -189,14 +212,68 @@ def draw_furniture(
             linewidth=0.8,
         )
     )
-    fig.text(0.0235, 0.0105, provenance, color=t.muted, fontsize=8.6, fontfamily=mono)
-    fig.text(
-        0.9765,
-        0.0105,
-        "openmobisim",
-        color=t.ink2,
-        fontsize=10.5,
-        fontweight="bold",
-        ha="right",
-        fontfamily=sans,
-    )
+    fig.text(0.0235, 0.0105, provenance, color=t.muted, fontsize=8.6 * k, fontfamily=mono)
+    _draw_logo(page, credit, logo)
+
+
+def _draw_logo(page: Page, credit: str | None, logo: bool) -> None:
+    """The signature at the bottom right: an optional credit, then the mark.
+
+    The mark is the three-lamp signal and the wordmark, a lockup like a
+    publisher's imprint. It is a logo, not a copyright notice: a figure and its
+    data belong to whoever made the run, so the credit line is theirs to fill.
+    """
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Ellipse
+
+    fig, t, k = page.fig, page.theme, page.k
+    w, h = page.size
+    sans = font_sans()
+    canvas = FigureCanvasAgg(fig)
+    renderer = canvas.get_renderer()
+    inverse = fig.transFigure.inverted()
+    right, y = 0.9765, 0.0105
+    if logo:
+        word = fig.text(
+            right,
+            y,
+            "openmobisim",
+            color=t.ink,
+            fontsize=11.5 * k,
+            fontweight="bold",
+            ha="right",
+            fontfamily=sans,
+        )
+        box = word.get_window_extent(renderer).transformed(inverse)
+        radius = 0.0034 * k
+        gap = 0.0075 * k
+        lamp_y = y + (box.y1 - box.y0) * 0.36
+        x = box.x0 - gap
+        for colour in (ION[400], AMBER, EMBER[500]):  # read left to right: ember, amber, ion
+            x -= radius
+            fig.add_artist(
+                Ellipse(
+                    (x, lamp_y),
+                    2 * radius,
+                    2 * radius * w / h,
+                    transform=fig.transFigure,
+                    facecolor=colour,
+                    edgecolor="none",
+                )
+            )
+            x -= radius + 0.0022 * k
+        right = x - 0.0035 * k
+    if credit:
+        if logo:
+            fig.add_artist(
+                Line2D(
+                    [right - 0.006 * k] * 2,
+                    [y - 0.002, y + 0.018],
+                    transform=fig.transFigure,
+                    color=t.base,
+                    linewidth=1.0,
+                )
+            )
+            right -= 0.012 * k
+        fig.text(right, y, credit, color=t.ink2, fontsize=9.5 * k, ha="right", fontfamily=sans)
