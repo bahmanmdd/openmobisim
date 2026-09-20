@@ -31,6 +31,7 @@ openmobisim-core-demand = { workspace = true }
 openmobisim-core-sim = { workspace = true }
 openmobisim-core-loading = { workspace = true }
 openmobisim-core-routes = { workspace = true }
+openmobisim-core-choice = { workspace = true }
 openmobisim-io-osm = { workspace = true }
 openmobisim-io-parquet = { workspace = true }
 # abi3-py311: one wheel per platform covers Python 3.11 and every later

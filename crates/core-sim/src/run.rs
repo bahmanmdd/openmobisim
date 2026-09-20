@@ -11,6 +11,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 
+use openmobisim_core_choice::{ChoiceError, ChoiceModel, Deterministic};
 use openmobisim_core_demand::{Travellers, Trips, VehicleKind, VehicleLocations};
 use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::network::RoadNetwork;
@@ -25,11 +26,13 @@ use openmobisim_core_types::diagnostics::{
     Category, DiagKey, Diagnostics, ElementRef, Severity, codes,
 };
 use openmobisim_core_types::ids::{EntityId, EntityKind, LinkId, TravellerId, TripId, VehicleId};
+use openmobisim_core_types::rng::{RngKey, Stream, StreamRng};
 use openmobisim_core_types::time::{EventKey, Second};
 use openmobisim_core_types::units::{Duration, Pcu};
 
 use crate::events::{EventRow, EventType};
 use crate::identity::{Inputs, RunDescription, describe};
+use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 
 /// Which loading engine a [`Run`] uses.
 ///
@@ -109,6 +112,36 @@ impl TripCompletionStats {
     }
 }
 
+/// Why a run could not finish.
+#[derive(Clone, PartialEq, Debug)]
+pub enum RunError {
+    /// The choice model could not choose (S169): it needs an attribute routes do
+    /// not carry, it failed, or its answer does not fit.
+    Choice(ChoiceError),
+}
+
+impl core::fmt::Display for RunError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Choice(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for RunError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Choice(e) => Some(e),
+        }
+    }
+}
+
+impl From<ChoiceError> for RunError {
+    fn from(e: ChoiceError) -> Self {
+        Self::Choice(e)
+    }
+}
+
 /// What a run produced: Phase 1's one KPI, the statistics that make it
 /// honest about what it did and did not simulate, and the per-trip events
 /// `io-parquet`'s `events.parquet` writer reads from.
@@ -132,8 +165,11 @@ pub struct RunResult {
     pub link_bins: Option<LinkBins>,
     /// The route sets the trips were routed from (S165): every alternative the
     /// method found for every origin-destination pair the demand asked for.
-    /// Until the choice layer exists each trip takes its pair's best route.
+    /// Each trip takes the route the choice model picks from its pair's set.
     pub route_sets: Option<RouteSets>,
+    /// Which route each trip took, out of how many, and how likely the model
+    /// found it (S169).
+    pub route_choices: Option<RouteChoices>,
 }
 
 /// One simulation run: immutable shared inputs plus the mutable state
@@ -154,6 +190,9 @@ pub struct Run {
     /// The scenario's master seed (S168): the one number that starts every
     /// random stream. Nothing draws from it yet; see [`RunDescription`].
     master_seed: u64,
+    /// How each trip picks a route from its pair's set (S169): all-or-nothing on
+    /// the best route by default, so a run is what it was before choice existed.
+    choice_model: Arc<dyn ChoiceModel>,
 }
 
 impl Run {
@@ -178,6 +217,7 @@ impl Run {
             link_bin_seconds: None,
             route_generator: Arc::from(default_generator()),
             master_seed: 0,
+            choice_model: Arc::new(Deterministic),
         }
     }
 
@@ -211,6 +251,16 @@ impl Run {
         self
     }
 
+    /// The same run, choosing each trip's route with `model` instead of the
+    /// default all-or-nothing [`Deterministic`] (S169). Select a built-in model
+    /// by name with `openmobisim_core_choice::model`, or pass your own
+    /// [`ChoiceModel`].
+    #[must_use]
+    pub fn with_choice_model(mut self, model: Arc<dyn ChoiceModel>) -> Self {
+        self.choice_model = model;
+        self
+    }
+
     /// What went into this run: its seed and its fingerprint (S168). Take it
     /// before [`Self::execute`]; it depends only on the inputs.
     #[must_use]
@@ -225,6 +275,9 @@ impl Run {
             route_method: self.route_generator.name(),
             route_descriptor: &self.route_generator.descriptor(),
             master_seed: self.master_seed,
+            choice_model: self.choice_model.name(),
+            choice_descriptor: &self.choice_model.descriptor(),
+            choice_sampled: self.choice_model.is_sampled(),
         })
     }
 
@@ -256,7 +309,22 @@ impl Run {
     /// traveller's own trips still have to be *collected* trip-by-trip, in
     /// order, for vehicle-location hand-over between them to mean anything —
     /// which is exactly what the event queue gives for free.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the choice model cannot choose (see [`Self::try_execute`], which
+    /// reports that instead). The built-in models never fail on route choice.
     pub fn execute(&mut self, diagnostics: &mut Diagnostics) -> RunResult {
+        self.try_execute(diagnostics).unwrap_or_else(|e| panic!("the run could not finish: {e}"))
+    }
+
+    /// [`Self::execute`], reporting a failed choice as an error.
+    ///
+    /// # Errors
+    ///
+    /// [`RunError::Choice`] if the choice model needs an attribute routes do not
+    /// carry, fails, or gives an answer that does not fit its batch.
+    pub fn try_execute(&mut self, diagnostics: &mut Diagnostics) -> Result<RunResult, RunError> {
         let mut queue: BinaryHeap<Reverse<EventKey>> = BinaryHeap::new();
         let total_trips = self.trips.len();
 
@@ -280,6 +348,19 @@ impl Run {
         };
         let route_sets =
             RouteSets::generate(&self.network, &turns, &trip_keys, self.route_generator.as_ref());
+
+        // Each trip's route, chosen once for the whole demand (S169).
+        let rng = StreamRng::new(RngKey::from_seed(self.master_seed), Stream::Choice);
+        let route_choices = route_choice::choose_routes(&route_choice::Inputs {
+            network: &self.network,
+            travellers: &self.travellers,
+            trips: &self.trips,
+            trip_keys: &trip_keys,
+            route_sets: &route_sets,
+            model: self.choice_model.as_ref(),
+            rng: &rng,
+            iteration: 0,
+        })?;
 
         // Every traveller's first trip is enqueued unconditionally, even one
         // who owns no car at all: `VehicleLocations::is_at_origin` already
@@ -337,9 +418,15 @@ impl Run {
                 let route = if route_key.origin == route_key.destination {
                     Some(Vec::new())
                 } else {
-                    route_sets
-                        .best(route_key)
-                        .map(|r| r.links.iter().map(|&l| LinkId::new(l)).collect::<Vec<LinkId>>())
+                    let chosen = route_choices.route[trip.index()];
+                    (chosen != NO_ROUTE).then(|| {
+                        route_sets
+                            .route(chosen as usize)
+                            .links
+                            .iter()
+                            .map(|&l| LinkId::new(l))
+                            .collect::<Vec<LinkId>>()
+                    })
                 };
                 match route {
                     None => {
@@ -493,7 +580,14 @@ impl Run {
                 Some(load_level_0_binned(&level0_vehicles, &self.network, window, bin_seconds).1);
         }
 
-        RunResult { total_travel_time, completion, events, link_bins, route_sets: Some(route_sets) }
+        Ok(RunResult {
+            total_travel_time,
+            completion,
+            events,
+            link_bins,
+            route_sets: Some(route_sets),
+            route_choices: Some(route_choices),
+        })
     }
 
     fn enqueue(&self, queue: &mut BinaryHeap<Reverse<EventKey>>, trip: TripId) {

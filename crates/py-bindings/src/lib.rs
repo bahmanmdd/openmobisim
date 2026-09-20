@@ -33,6 +33,7 @@ use openmobisim_core_types::{
     time::{Second, StepGrid},
 };
 
+mod choice;
 mod network;
 mod pipeline;
 mod routes;
@@ -149,6 +150,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRunSummary>()?;
     m.add_class::<PyLinkBins>()?;
     m.add_class::<PyRouteSets>()?;
+    m.add_class::<choice::PyChoiceBatch>()?;
+    m.add_class::<choice::PyRouteChoices>()?;
+    m.add_function(wrap_pyfunction!(choice::choice_models, m)?)?;
     m.add_function(wrap_pyfunction!(route_methods, m)?)?;
     m.add_function(wrap_pyfunction!(route_sets_build, m)?)?;
     m.add_function(wrap_pyfunction!(manhattan_grid, m)?)?;

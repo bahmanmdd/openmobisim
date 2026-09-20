@@ -650,6 +650,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "openmobisim-core-choice"
+version = "0.1.0"
+dependencies = [
+ "openmobisim-core-types",
+]
+
+[[package]]
 name = "openmobisim-core-demand"
 version = "0.1.0"
 dependencies = [
@@ -692,6 +699,7 @@ dependencies = [
 name = "openmobisim-core-sim"
 version = "0.1.0"
 dependencies = [
+ "openmobisim-core-choice",
  "openmobisim-core-demand",
  "openmobisim-core-graph",
  "openmobisim-core-loading",
@@ -725,6 +733,7 @@ version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
+ "openmobisim-core-choice",
  "openmobisim-core-demand",
  "openmobisim-core-graph",
  "openmobisim-core-loading",
@@ -739,6 +748,7 @@ name = "openmobisim-py-bindings"
 version = "0.1.0"
 dependencies = [
  "numpy",
+ "openmobisim-core-choice",
  "openmobisim-core-demand",
  "openmobisim-core-graph",
  "openmobisim-core-loading",

@@ -40,6 +40,7 @@ use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 
+use crate::choice::{PyRouteChoices, make_choice_model};
 use crate::network::PyNetwork;
 use crate::routes::{PyRouteSets, to_options};
 use openmobisim_core_routes::Registry;
@@ -106,6 +107,9 @@ pub struct PyRunSummary {
     /// The run's master seed (S168).
     #[pyo3(get)]
     pub master_seed: u64,
+    /// The choice model's name (S169).
+    #[pyo3(get)]
+    pub choice_model: String,
     /// The run's fingerprint: 16 hex digits of a hash of every input that
     /// decides its results (S168).
     #[pyo3(get)]
@@ -134,6 +138,9 @@ pub struct PyRunSummary {
     /// The route sets the trips were routed from (S165).
     #[pyo3(get)]
     pub route_sets: Option<Py<PyRouteSets>>,
+    /// Which route each trip took, out of how many (S169).
+    #[pyo3(get)]
+    pub route_choices: Option<Py<PyRouteChoices>>,
 }
 
 /// Per-link, per-time-bin results (S163), as numpy columns.
@@ -215,6 +222,7 @@ fn to_value_error<E: std::fmt::Display>(e: E) -> PyErr {
     class_defaults=None, default_weight=1, window_s=86_400,
     flow_level=0, flow_step_s=300, link_bin_s=None,
     route_method="penalty", route_options=None, master_seed=0,
+    choice_model=None, choice_options=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -238,8 +246,11 @@ pub fn run_pipeline(
     route_method: &str,
     route_options: Option<HashMap<String, f64>>,
     master_seed: u64,
+    choice_model: Option<&Bound<'_, PyAny>>,
+    choice_options: Option<HashMap<String, f64>>,
 ) -> PyResult<PyRunSummary> {
-    // Refuse a bad method or option before doing any work.
+    // Refuse a bad method, model or option before doing any work.
+    let choice = make_choice_model(choice_model, choice_options)?;
     let generator = Registry::builtin()
         .create(route_method, &to_options(route_options))
         .map_err(to_value_error)?;
@@ -308,11 +319,11 @@ pub fn run_pipeline(
         }
         run = run.with_link_bins(bin);
     }
-    run = run.with_master_seed(master_seed);
+    run = run.with_master_seed(master_seed).with_choice_model(choice);
     // What went in, taken before it runs (S168).
     let description = run.description();
     let mut run_diagnostics = Diagnostics::new();
-    let result = run.execute(&mut run_diagnostics);
+    let result = run.try_execute(&mut run_diagnostics).map_err(to_value_error)?;
 
     let mut diagnostics = build_diagnostics;
     diagnostics.merge(&run_diagnostics);
@@ -353,6 +364,7 @@ pub fn run_pipeline(
         manifest_path: manifest_path.to_string_lossy().into_owned(),
         link_bins_path,
         master_seed,
+        choice_model: description.choice_model.clone(),
         fingerprint: description.fingerprint_hex(),
         total_trips: result.completion.total_trips,
         completed: result.completion.completed,
@@ -361,6 +373,10 @@ pub fn run_pipeline(
         no_feasible_path: result.completion.no_feasible_path,
         total_travel_time_s: result.total_travel_time.get(),
         link_bins: result.link_bins.map(|inner| Py::new(py, PyLinkBins { inner })).transpose()?,
+        route_choices: match (&result.route_choices, &result.route_sets) {
+            (Some(choices), Some(sets)) => Some(PyRouteChoices::new(py, choices, sets)?),
+            _ => None,
+        },
         route_sets: result
             .route_sets
             .map(|sets| Py::new(py, PyRouteSets::new(Arc::new(sets), network.inner.link_count())))

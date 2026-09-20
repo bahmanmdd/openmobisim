@@ -228,6 +228,54 @@ def route_sets_build(
             out-of-range value.
     """
 
+class ChoiceBatch:
+    """What a Python choice model is handed: situations × alternatives, as arrays.
+
+    A situation is one traveller's one trip; it offers a few alternatives (routes),
+    each with the same numeric attributes. See :mod:`openmobisim.choice`.
+    """
+
+    #: The iteration these choices are for.
+    iteration: int
+    #: The attributes on offer.
+    attribute_names: list[str]
+    #: ``situations + 1`` offsets: situation ``s`` owns alternatives ``offsets[s]:offsets[s + 1]``.
+    offsets: npt.NDArray[np.uint32]
+    #: Each situation's traveller and trip.
+    traveller: npt.NDArray[np.uint32]
+    trip: npt.NDArray[np.uint32]
+    #: Each alternative's identity (stable when other alternatives come and go).
+    identity: npt.NDArray[np.uint32]
+    #: Which situation each alternative belongs to.
+    situation_of: npt.NDArray[np.uint32]
+    #: The attributes by name, one float64 value per alternative.
+    attributes: dict[str, npt.NDArray[np.float64]]
+    #: Each alternative's standard Gumbel error, keyed on (traveller, trip, iteration, identity).
+    gumbel: npt.NDArray[np.float64]
+
+    def __len__(self) -> int: ...
+
+class RouteChoices:
+    """What every trip chose, one entry per trip (``-1`` where a trip has no route)."""
+
+    #: The route taken, as an index into the run's route sets.
+    route: npt.NDArray[np.int64]
+    #: Its position in its pair's set (0 is the best route).
+    rank: npt.NDArray[np.int64]
+    #: Its pair's index in the route sets.
+    pair: npt.NDArray[np.int64]
+    #: How many routes the trip could choose from.
+    alternatives: npt.NDArray[np.uint32]
+    #: What the model gave the route taken (``nan`` if it gave none).
+    probability: npt.NDArray[np.float64]
+    #: How many people the trip stands for.
+    weight: npt.NDArray[np.uint32]
+
+    def __len__(self) -> int: ...
+
+def choice_models() -> list[str]:
+    """The choice models that can be selected by name, the default (``"deterministic"``) first."""
+
 class LinkBins:
     """Per-link, per-time-bin results: one row per (bin, link) that saw traffic.
 
@@ -329,6 +377,8 @@ class RunSummary:
     link_bins_path: str | None
     #: The run's master seed.
     master_seed: int
+    #: The choice model's name.
+    choice_model: str
     #: The run's fingerprint: 16 hex digits of a hash of every input that decides its results.
     fingerprint: str
     total_trips: int
@@ -341,6 +391,8 @@ class RunSummary:
     link_bins: LinkBins | None
     #: The route sets the trips were routed from.
     route_sets: RouteSets
+    #: Which route each trip took, out of how many.
+    route_choices: RouteChoices
 
 def run_pipeline(
     network: Network,
@@ -359,6 +411,8 @@ def run_pipeline(
     route_method: str = "penalty",
     route_options: dict[str, float] | None = None,
     master_seed: int = 0,
+    choice_model: str | object | None = None,
+    choice_options: dict[str, float] | None = None,
 ) -> RunSummary:
     """Run the whole Phase 1 pipeline and write all four output artifacts.
 
@@ -394,8 +448,14 @@ def run_pipeline(
         route_method: How route sets are generated (see :func:`route_methods`).
         route_options: That method's options.
         master_seed: The scenario's master seed, the one number that starts
-            every random stream. Nothing draws from it yet, so today it changes
-            only the run's fingerprint.
+            every random stream. Under a sampled choice model it decides who
+            takes which route; under the default all-or-nothing model it
+            changes only the run's fingerprint.
+        choice_model: How each trip picks a route from its pair's set: a name
+            from :func:`choice_models` (``None`` is the default,
+            ``"deterministic"``), or an object with a ``choose(batch)`` method.
+        choice_options: A built-in model's options, numbers by name (for
+            ``"logit"``, ``beta_<attribute>`` coefficients).
 
     Returns:
         A :class:`RunSummary`.

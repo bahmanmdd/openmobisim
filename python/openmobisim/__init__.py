@@ -10,16 +10,18 @@ and ``Table`` (``openmobisim.scenario``) and the fixture helpers in
 Figures live in ``openmobisim.viz`` (``pip install 'openmobisim[viz]'``); it is
 imported on demand, so ``import openmobisim`` never needs matplotlib.
 
-Phase 1's scenario surface is intentionally narrow: a network, a trips
-table, one run, four output artifacts. No hubs, no equilibration, no
-disruptions, no route choice — those arrive with the mechanisms that give
+The scenario surface is intentionally narrow: a network, a trips table, one
+run, its output artifacts, and route choice among each trip's alternatives
+(``openmobisim.choice`` says how to add your own choice model). No hubs, no
+equilibration, no disruptions — those arrive with the mechanisms that give
 them meaning.
 """
 
-from openmobisim import _core, examples
+from openmobisim import _core, choice, examples
 from openmobisim._core import (
     build_info,
     choice_draw,
+    choice_models,
     fixed_order_sum_f64,
     network_read_osm,
     route_methods,
@@ -36,7 +38,9 @@ __all__ = [
     "Table",
     "__version__",
     "build_info",
+    "choice",
     "choice_draw",
+    "choice_models",
     "examples",
     "fixed_order_sum_f64",
     "network_read_osm",

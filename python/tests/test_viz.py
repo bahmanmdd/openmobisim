@@ -313,7 +313,10 @@ def test_the_footer_names_the_runs_seed_and_fingerprint():
             t for t in fig.texts if "openmobisim" in t.get_text() and "run viz-test" in t.get_text()
         ]
         assert len(footer) == 1, "one footer"
-        assert f"seed 0 · fingerprint {run.fingerprint[:8]}" in footer[0].get_text()
+        assert (
+            f"choice deterministic · seed 0 · fingerprint {run.fingerprint[:8]}"
+            in footer[0].get_text()
+        )
         # It fits: the footer ends before the logo lockup begins.
         fig.canvas.draw()
         width = fig.canvas.get_renderer()

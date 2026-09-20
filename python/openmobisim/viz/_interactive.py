@@ -192,7 +192,8 @@ def map_interactive(
     route_sets = run.route_sets() if routes is True else (routes or None)
     n_pairs = n_routes = 0
     if route_sets is not None and route_sets.key_count:
-        n_pairs, n_routes = _add_routes(blob, route_sets, keep, new_id, max_route_pairs)
+        usage = _route_usage(run) if routes is True else None
+        n_pairs, n_routes = _add_routes(blob, route_sets, keep, new_id, max_route_pairs, usage)
     has_routes = n_pairs > 0
 
     level = _LEVEL_NAMES.get(run.flow_level, str(run.flow_level))
@@ -207,7 +208,6 @@ def map_interactive(
         + (f" · bin {bin_seconds} s" if bin_seconds else "")
         + f" · {run_identity(run)}"
         + (f" · route set {route_sets.identity[:8]} ({route_sets.method})" if has_routes else "")
-        + f" · {source}"
     )
     payload = blob.packed()
     meta: dict[str, Any] = {
@@ -215,7 +215,8 @@ def map_interactive(
         "n_bins": n_bins, "bin_seconds": bin_seconds, "has_routes": has_routes,
         "n_pairs": n_pairs, "n_routes": n_routes, "class_names": _CLASS_NAMES,
         "title": title or _default_title(bins is not None and n_bins > 0, has_routes),
-        "note": note, "credit": credit, "logo": bool(logo), "provenance": provenance,
+        "note": note, "credit": credit, "logo": bool(logo),
+        "provenance": provenance, "source": source,
         "arrays": blob.table, "tokens": _tokens(),
     }  # fmt: skip
     body = len(payload) + len(PAGE_JS) + len(PAGE_CSS) + len(PAGE_HTML)
@@ -241,6 +242,19 @@ def map_interactive(
     return out
 
 
+def _route_usage(run: Any) -> np.ndarray | None:
+    """How many travellers took each route of the run's route sets, or ``None``."""
+    choices = run.route_choices()
+    if choices is None:
+        return None
+    routed = choices.route >= 0
+    return np.bincount(
+        choices.route[routed],
+        weights=choices.weight[routed],
+        minlength=run.route_sets().route_count,
+    )
+
+
 def _default_title(has_traffic: bool, has_routes: bool) -> str:
     if has_traffic and has_routes:
         return "Traffic and route alternatives"
@@ -252,7 +266,12 @@ def _html_text(text: str) -> str:
 
 
 def _add_routes(
-    blob: _Blob, sets: Any, keep: np.ndarray, new_id: np.ndarray, max_pairs: int
+    blob: _Blob,
+    sets: Any,
+    keep: np.ndarray,
+    new_id: np.ndarray,
+    max_pairs: int,
+    usage: np.ndarray | None = None,
 ) -> tuple[int, int]:
     """Embed the route sets: only routes wholly inside `keep`, the richest pairs first."""
     set_off = sets.set_offsets().astype(np.int64)
@@ -278,4 +297,6 @@ def _add_routes(
     blob.add("rlk", new_id[links[take[link_of_route]]], "u32")
     blob.add("rc", sets.costs()[take], "f32")
     blob.add("ro", sets.overlaps()[take], "f32")
+    if usage is not None:
+        blob.add("ru", usage[take], "f32")
     return int(chosen.sum()), int(take.sum())

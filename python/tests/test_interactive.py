@@ -187,8 +187,11 @@ def test_the_page_starts_in_the_asked_theme_and_names_its_source(tmp_path):
     assert meta["theme"] == "night" and meta["logo"] is False
     assert set(meta["tokens"]) >= {"paper", "night", "route"}
     assert "run interactive-test" in meta["provenance"] and "level 4 (full)" in meta["provenance"]
-    assert f"seed 0 · fingerprint {run.fingerprint[:8]}" in meta["provenance"]
+    assert (
+        f"choice deterministic · seed 0 · fingerprint {run.fingerprint[:8]}" in meta["provenance"]
+    )
     assert meta["provenance"].startswith(f"openmobisim {ms.__version__}")
+    assert meta["source"] == "synthetic network" and "synthetic" not in meta["provenance"]
 
 
 def test_it_needs_no_matplotlib():
@@ -209,3 +212,26 @@ def test_the_script_is_valid_javascript(tmp_path):
     js.write_text(max(scripts, key=len), encoding="utf-8")
     result = subprocess.run(["node", "--check", str(js)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_the_page_carries_how_many_travellers_took_each_route(tmp_path):
+    for model in ("deterministic", "logit"):
+        _, run = grid_run(choice_model=model, master_seed=3)
+        _, meta, a = decode(
+            viz.map_interactive(run, tmp_path / f"{model}.html", max_route_pairs=10_000)
+        )
+        assert "ru" in a and len(a["ru"]) == meta["n_routes"]
+        rc, sets = run.route_choices(), run.route_sets()
+        routed = rc.route >= 0
+        taken = np.bincount(rc.route[routed], weights=rc.weight[routed], minlength=sets.route_count)
+        assert a["ru"].sum() <= taken.sum() + 1e-6 and a["ru"].sum() > 0
+        if model == "deterministic":
+            # Everyone takes the first route of their pair.
+            for k in range(meta["n_pairs"]):
+                use = a["ru"][a["ss"][k] : a["ss"][k + 1]]
+                assert (use[1:] == 0).all()
+        else:
+            second = [
+                a["ru"][a["ss"][k] + 1 : a["ss"][k + 1]].sum() for k in range(meta["n_pairs"])
+            ]
+            assert max(second) > 0, "someone takes a second route"

@@ -49,8 +49,8 @@ pub struct Manifest {
     /// `kpis.parquet` row is).
     pub kpi_weighting: String,
     /// The scenario's master seed (S168): the one number that starts every
-    /// random stream. No stochastic step draws from it yet, so today it
-    /// changes only `run_fingerprint`.
+    /// random stream. Under a sampled choice model it decides who takes which
+    /// route; under the all-or-nothing default it changes only `run_fingerprint`.
     pub master_seed: u64,
     /// A hash of every input that decides the results (16 hex digits): the
     /// network, the demand, each setting, the route method, the seed, the code
@@ -70,6 +70,13 @@ pub struct Manifest {
     pub route_descriptor: String,
     /// The bin length of `link_bins.parquet`, if the run recorded it.
     pub link_bin_seconds: Option<u32>,
+    /// The choice model's name (S169).
+    pub choice_model: String,
+    /// The choice model with every option and default, canonical.
+    pub choice_descriptor: String,
+    /// The random streams the run drew from: `choice` under a sampled choice
+    /// model, none under the all-or-nothing default.
+    pub live_streams: Vec<String>,
 }
 
 impl Manifest {
@@ -117,6 +124,9 @@ impl Manifest {
             route_method: description.route_method.clone(),
             route_descriptor: description.route_descriptor.clone(),
             link_bin_seconds: description.link_bin_seconds,
+            choice_model: description.choice_model.clone(),
+            choice_descriptor: description.choice_descriptor.clone(),
+            live_streams: description.live_streams.clone(),
         }
     }
 
@@ -132,7 +142,7 @@ impl Manifest {
     pub fn to_json(&self) -> String {
         let text = |v: &str| format!("\"{}\"", escape(v));
         let optional = |v: Option<String>| v.unwrap_or_else(|| "null".to_string());
-        let fields: [(&str, String); 19] = [
+        let fields: [(&str, String); 22] = [
             ("openmobisim_version", text(&self.openmobisim_version)),
             ("code_version", self.code_version.to_string()),
             ("defaults_version", self.defaults_version.to_string()),
@@ -150,6 +160,15 @@ impl Manifest {
             ("flow_step_seconds", optional(self.flow_step_seconds.map(|s| s.to_string()))),
             ("route_method", text(&self.route_method)),
             ("route_descriptor", text(&self.route_descriptor)),
+            ("choice_model", text(&self.choice_model)),
+            ("choice_descriptor", text(&self.choice_descriptor)),
+            (
+                "live_streams",
+                format!(
+                    "[{}]",
+                    self.live_streams.iter().map(|s| text(s)).collect::<Vec<_>>().join(", ")
+                ),
+            ),
             ("link_bin_seconds", optional(self.link_bin_seconds.map(|s| s.to_string()))),
             ("link_bins_file", optional(self.link_bin_seconds.map(|_| text("link_bins.parquet")))),
         ];

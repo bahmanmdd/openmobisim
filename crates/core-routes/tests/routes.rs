@@ -452,3 +452,90 @@ fn a_bounded_search_never_returns_a_route_past_its_bound() {
         "the search leaves nothing behind"
     );
 }
+
+// --- route attributes: length and path size (S169) -----------------------------------------
+
+/// A -> S (100 m, shared), then S -> B -> D (100 + 100) or S -> C -> D (120 + 120).
+fn shared_start() -> RoadNetwork {
+    let mut b = RoadNetworkBuilder::new();
+    for (n, x, y) in [
+        ("A", -100.0, 0.0),
+        ("S", 0.0, 0.0),
+        ("B", 100.0, 60.0),
+        ("C", 100.0, -60.0),
+        ("D", 200.0, 0.0),
+    ] {
+        b.add_node(n, LonLat::new(4.8 + x / 77_800.0, 45.7 + y / 110_574.0));
+    }
+    for (name, from, to, len) in [
+        ("as", "A", "S", 100.0),
+        ("sb", "S", "B", 100.0),
+        ("bd", "B", "D", 100.0),
+        ("sc", "S", "C", 120.0),
+        ("cd", "C", "D", 120.0),
+    ] {
+        let mut spec = LinkSpec::new(RoadClass::Residential);
+        spec.length_m = Some(len);
+        b.add_link(name, from, to, spec);
+    }
+    b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable")
+}
+
+#[test]
+fn routes_that_share_no_link_each_have_a_path_size_of_one() {
+    let net = diamond();
+    let (a, d) = (node(&net, "A"), node(&net, "D"));
+    let sets = RouteSets::generate(
+        &net,
+        &turns_of(&net),
+        &[RouteKey::new(a, d)],
+        generator(DEFAULT_METHOD, &no_options()).expect("default").as_ref(),
+    );
+    let attributes = sets.attributes(&net);
+    assert_eq!(attributes.length_m, [200.0, 240.0]);
+    assert!(attributes.path_size.iter().all(|&p| (p - 1.0).abs() < 1e-12), "{attributes:?}");
+}
+
+#[test]
+fn a_shared_first_link_lowers_both_path_sizes_by_hand() {
+    let net = shared_start();
+    let (a, d) = (node(&net, "A"), node(&net, "D"));
+    let sets = RouteSets::generate(
+        &net,
+        &turns_of(&net),
+        &[RouteKey::new(a, d)],
+        generator(DEFAULT_METHOD, &no_options()).expect("default").as_ref(),
+    );
+    assert_eq!(sets.routes(0).count(), 2);
+    let attributes = sets.attributes(&net);
+    // Route 0: 300 m, of which the shared 100 m counts half: (50 + 100 + 100) / 300.
+    // Route 1: 340 m: (50 + 120 + 120) / 340.
+    assert_eq!(attributes.length_m, [300.0, 340.0]);
+    assert!((attributes.path_size[0] - 250.0 / 300.0).abs() < 1e-12);
+    assert!((attributes.path_size[1] - 290.0 / 340.0).abs() < 1e-12);
+}
+
+#[test]
+fn one_keys_links_do_not_leak_into_the_next_keys_path_size() {
+    let net = shared_start();
+    let (a, s, d) = (node(&net, "A"), node(&net, "S"), node(&net, "D"));
+    let keys = [RouteKey::new(a, d), RouteKey::new(s, d)];
+    let sets = RouteSets::generate(
+        &net,
+        &turns_of(&net),
+        &keys,
+        generator(DEFAULT_METHOD, &no_options()).expect("default").as_ref(),
+    );
+    let attributes = sets.attributes(&net);
+    let second = sets.route_range(sets.key_index(keys[1]).expect("key"));
+    assert_eq!(second.len(), 2);
+    for r in second {
+        assert!(
+            (attributes.path_size[r] - 1.0).abs() < 1e-12,
+            "route {r} shares nothing in its own set"
+        );
+    }
+    // A lone route has a path size of one, and the attributes are the same on a second call.
+    assert_eq!(attributes, sets.attributes(&net));
+}

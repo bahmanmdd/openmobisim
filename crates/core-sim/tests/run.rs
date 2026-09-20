@@ -603,3 +603,158 @@ fn the_description_names_the_loading_engine_and_the_bins() {
     assert_eq!(longer.network_fingerprint, Knobs::base().run().description().network_fingerprint);
     assert_ne!(longer.fingerprint, Knobs::base().run().description().fingerprint);
 }
+
+// --- route choice (S169) ---------------------------------------------------------------
+
+/// `n` travellers, each with one trip from `a` to `d` across the diamond, on distinct departures.
+fn choosing_run(
+    n: u32,
+    model: Option<Arc<dyn openmobisim_core_choice::ChoiceModel>>,
+    seed: u64,
+) -> Run {
+    let network = Arc::new(diamond_network());
+    let at = |x: f64, y: f64| (4.8 + x / 77_800.0, 45.7 + y / 110_574.0);
+    let raw: Vec<RawTrip> =
+        (0..n).map(|i| trip(&format!("p{i}"), 0, at(0.0, 0.0), at(200.0, 0.0), i % 3000)).collect();
+    let (travellers, trips) =
+        build_travellers(raw, Vec::new(), &car_owning_defaults(), 1, &mut Diagnostics::new())
+            .expect("buildable");
+    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(7200))
+        .with_master_seed(seed);
+    if let Some(m) = model {
+        run = run.with_choice_model(m);
+    }
+    run
+}
+
+fn logit_with(options: &[(&str, f64)]) -> Arc<dyn openmobisim_core_choice::ChoiceModel> {
+    let o: openmobisim_core_choice::Options =
+        options.iter().map(|&(k, v)| (k.to_string(), v)).collect();
+    Arc::from(openmobisim_core_choice::model("logit", &o).expect("built in"))
+}
+
+/// How many of the trips took route `k` of their (single) set.
+fn took(result: &openmobisim_core_sim::RunResult, k: usize) -> u32 {
+    let sets = result.route_sets.as_ref().expect("sets");
+    let choices = result.route_choices.as_ref().expect("choices");
+    let first = sets.route_range(0).start;
+    u32::try_from(choices.route.iter().filter(|&&r| r as usize == first + k).count()).expect("few")
+}
+
+#[test]
+fn by_default_everyone_takes_the_best_route_and_the_run_says_so() {
+    let result = choosing_run(50, None, 0).execute(&mut Diagnostics::new());
+    let choices = result.route_choices.expect("recorded");
+    assert_eq!(choices.len(), 50);
+    let sets = result.route_sets.expect("sets");
+    assert!(choices.route.iter().all(|&r| r as usize == sets.route_range(0).start));
+    assert!(choices.alternatives.iter().all(|&a| a == 2), "the top road and the bottom road");
+    assert!(choices.probability.iter().all(|&p| (p - 1.0).abs() < 1e-15));
+    assert!(choices.weight.iter().all(|&w| w == 1));
+}
+
+#[test]
+fn a_logit_with_no_aversion_splits_travellers_evenly_and_the_loading_follows() {
+    let n = 4_000;
+    let even = logit_with(&[("beta_time_min", 0.0), ("beta_ln_path_size", 0.0)]);
+    let result = choosing_run(n, Some(even), 11).execute(&mut Diagnostics::new());
+    let (top, bottom) = (took(&result, 0), took(&result, 1));
+    assert_eq!(top + bottom, n);
+    let sigma = (f64::from(n) * 0.25).sqrt();
+    assert!((f64::from(top) - f64::from(n) / 2.0).abs() < 5.0 * sigma, "{top} on the top road");
+    let choices = result.route_choices.as_ref().expect("choices");
+    assert!(choices.probability.iter().all(|&p| (p - 0.5).abs() < 1e-12));
+    // The loading took each trip down the road it chose: total time is what those roads cost.
+    let sets = result.route_sets.as_ref().expect("sets");
+    let expected: f64 = choices.route.iter().map(|&r| f64::from(sets.route(r as usize).cost)).sum();
+    assert!(
+        (result.total_travel_time.get() - expected).abs() <= f64::from(n),
+        "{} against {expected}",
+        result.total_travel_time.get()
+    );
+    // ... which differs from everyone on the top road by thousands of seconds.
+    let all_top = f64::from(n) * f64::from(sets.route(sets.route_range(0).start).cost);
+    assert!(result.total_travel_time.get() > all_top + 5_000.0);
+}
+
+#[test]
+fn a_strong_time_aversion_sends_almost_everyone_down_the_faster_road() {
+    let keen = logit_with(&[("beta_time_min", -3.0)]);
+    let result = choosing_run(1_000, Some(keen), 3).execute(&mut Diagnostics::new());
+    // The bottom road is about 4.8 s (0.08 min) slower: e^-0.24 = 0.79, so it is still taken by
+    // more than a third; a much stronger aversion is needed to empty it.
+    assert!(took(&result, 1) > 300, "{}", took(&result, 1));
+    let very = logit_with(&[("beta_time_min", -60.0)]);
+    let result = choosing_run(1_000, Some(very), 3).execute(&mut Diagnostics::new());
+    assert!(took(&result, 1) < 40, "{}", took(&result, 1));
+}
+
+#[test]
+fn the_seed_decides_a_sampled_choice_and_nothing_else() {
+    let even = || logit_with(&[("beta_time_min", 0.0), ("beta_ln_path_size", 0.0)]);
+    let run = |seed| choosing_run(500, Some(even()), seed).execute(&mut Diagnostics::new());
+    let (a, again, other) = (run(1), run(1), run(2));
+    assert_eq!(a.route_choices, again.route_choices, "the same seed, the same choices");
+    assert_ne!(a.route_choices, other.route_choices, "another seed, another draw");
+    // The all-or-nothing default draws nothing: the seed cannot change who goes where.
+    let det = |seed| choosing_run(500, None, seed).execute(&mut Diagnostics::new());
+    assert_eq!(det(1).route_choices, det(2).route_choices);
+}
+
+#[test]
+fn the_description_names_the_choice_model_and_the_streams_it_draws_from() {
+    let default = choosing_run(5, None, 0).description();
+    assert_eq!((default.choice_model.as_str(), default.live_streams.len()), ("deterministic", 0));
+    let sampled = choosing_run(5, Some(logit_with(&[])), 0).description();
+    assert_eq!(sampled.choice_model, "logit");
+    assert_eq!(sampled.live_streams, ["choice"]);
+    assert!(sampled.choice_descriptor.starts_with("logit;beta_ln_path_size=1"));
+    assert_ne!(default.fingerprint, sampled.fingerprint);
+    let tweaked = choosing_run(5, Some(logit_with(&[("beta_time_min", -0.3)])), 0).description();
+    assert_ne!(tweaked.fingerprint, sampled.fingerprint, "a coefficient is an input");
+}
+
+#[test]
+fn a_model_that_needs_an_attribute_routes_lack_stops_the_run_and_says_what_exists() {
+    let mut run = choosing_run(5, Some(logit_with(&[("beta_comfort", 1.0)])), 0);
+    let error = run.try_execute(&mut Diagnostics::new()).unwrap_err().to_string();
+    assert!(error.contains("comfort") && error.contains("time_min"), "{error}");
+}
+
+/// A model written outside the crate: everyone takes the slowest route.
+struct Slowest;
+
+impl openmobisim_core_choice::ChoiceModel for Slowest {
+    fn name(&self) -> &str {
+        "slowest"
+    }
+    fn descriptor(&self) -> String {
+        "slowest".to_string()
+    }
+    fn is_sampled(&self) -> bool {
+        false
+    }
+    fn required_attributes(&self) -> Option<Vec<String>> {
+        Some(vec!["time_min".to_string()])
+    }
+    fn choose(
+        &self,
+        batch: &openmobisim_core_choice::ChoiceBatch,
+        _rng: &openmobisim_core_types::rng::StreamRng,
+    ) -> Result<openmobisim_core_choice::Choices, openmobisim_core_choice::ChoiceError> {
+        let chosen: Vec<u32> = (0..batch.situations())
+            .map(|s| u32::try_from(batch.range(s).len() - 1).expect("few"))
+            .collect();
+        let probability = vec![f64::NAN; chosen.len()];
+        Ok(openmobisim_core_choice::Choices { chosen, probability })
+    }
+}
+
+#[test]
+fn a_model_from_outside_the_crate_drives_the_run() {
+    let result = choosing_run(30, Some(Arc::new(Slowest)), 0).execute(&mut Diagnostics::new());
+    assert_eq!((took(&result, 0), took(&result, 1)), (0, 30), "everyone on the bottom road");
+    let choices = result.route_choices.expect("recorded");
+    assert!(choices.probability.iter().all(|p| p.is_nan()), "no probability was given");
+    assert_eq!(result.completion.completed, 30);
+}

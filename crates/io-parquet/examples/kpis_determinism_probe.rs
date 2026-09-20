@@ -126,7 +126,7 @@ fn main() {
 
     let window = Second(WINDOW_S);
 
-    let mut run = Run::new(network.clone(), travellers.clone(), trips, window);
+    let mut run = Run::new(network.clone(), travellers.clone(), trips.clone(), window);
     let description = run.description();
     let mut run_diagnostics = Diagnostics::new();
     let result = run.execute(&mut run_diagnostics);
@@ -150,6 +150,21 @@ fn main() {
     let manifest = Manifest::for_run(&travellers, &result, window, 1, &description);
     write_manifest(dir.join("manifest.json"), &manifest).expect("write manifest");
 
+    // The same demand again, each trip choosing its route from the logit (S169): the
+    // draws are keyed on (traveller, trip, iteration, route), so the choices must be
+    // the same on every run and at any thread count.
+    let sampled =
+        Arc::from(openmobisim_core_choice::model("logit", &Default::default()).expect("built in"));
+    let mut sampled_run = Run::new(network.clone(), travellers.clone(), trips, window)
+        .with_master_seed(20_260_921)
+        .with_choice_model(sampled);
+    let sampled_description = sampled_run.description();
+    let sampled_result = sampled_run.execute(&mut Diagnostics::new());
+    let mut choice_digest = 0u64;
+    for r in &sampled_result.route_choices.as_ref().expect("recorded").route {
+        choice_digest = choice_digest.wrapping_mul(0x0100_0000_01b3).wrapping_add(u64::from(*r));
+    }
+
     // --- The report ----------------------------------------------------
     // Floats as raw bits: the property under test is bit-identity, and a
     // decimal rendering would hide exactly the difference the gate exists
@@ -172,6 +187,9 @@ fn main() {
     println!("completion_rate       {:016x}", result.completion.completion_rate().to_bits());
     println!("total_travel_time_s   {:016x}", result.total_travel_time.get().to_bits());
     println!("events                {}", result.events.len());
+    println!("choice_fingerprint    {}", sampled_description.fingerprint_hex());
+    println!("choice_routes_digest  {choice_digest:016x}");
+    println!("choice_total_time_s   {:016x}", sampled_result.total_travel_time.get().to_bits());
 
     let mut event_digest = 0u64;
     for e in &result.events {

@@ -46,7 +46,7 @@ __CSS__
   <div id="linkinfo" hidden></div>
 </aside>
 <div id="compass"><svg width="22" height="34" viewBox="0 0 22 34"><path d="M11 2 L17 20 L11 16 L5 20 Z" fill="currentColor"/><text x="11" y="32" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" font-family="sans-serif">N</text></svg><div id="scalelabel"></div><div id="scalebar"></div></div>
-<footer><span id="provenance"></span><span class="right"><span id="budget"></span><span id="credit" hidden></span><span id="logo"><i style="background:__EMBER__"></i><i style="background:__AMBER__"></i><i style="background:__ION__"></i><b>openmobisim</b></span></span></footer>
+<footer><span id="provenance"></span><span id="source"></span><span class="right"><span id="budget"></span><span id="credit" hidden></span><span id="logo"><i style="background:__EMBER__"></i><i style="background:__AMBER__"></i><i style="background:__ION__"></i><b>openmobisim</b></span></span></footer>
 <div id="tip" hidden></div>
 <script id="meta" type="application/json">__META__</script>
 <script id="blob" type="text/plain">__BLOB__</script>
@@ -89,6 +89,9 @@ label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2);
 .route:hover { background: color-mix(in srgb, var(--base) 45%, transparent); }
 .route i { width: 22px; height: 4px; border-radius: 2px; display: inline-block; }
 .route span { color: var(--muted); }
+.route small { display: block; margin-top: 1px; font-size: 10.5px; color: var(--ink); font-weight: 600; }
+.route { align-items: flex-start; }
+.route i { margin-top: 6px; flex: none; }
 #routehint, #linkinfo div { color: var(--ink2); font-size: 12px; }
 #linkinfo { border-top: 1px solid var(--base); margin-top: 10px; padding-top: 8px; }
 .pairs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
@@ -100,7 +103,9 @@ label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2);
 #compass svg { display: block; margin: 0 0 6px 2px; }
 #scalebar { height: 6px; border: 2px solid var(--ink); border-top: 0; margin-top: 3px; }
 footer { position: fixed; left: 0; right: 0; bottom: 0; height: 30px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-top: 1px solid var(--base); background: color-mix(in srgb, var(--surface) 92%, transparent); font: 11px var(--mono); color: var(--muted); }
-footer .right { display: flex; align-items: center; gap: 10px; font-family: var(--sans); }
+footer .right { display: flex; align-items: center; gap: 10px; font-family: var(--sans); flex: none; white-space: nowrap; }
+footer #provenance { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 12px; }
+footer #source { flex: none; white-space: nowrap; margin-right: 16px; }
 #credit { color: var(--ink2); font-size: 12px; padding-right: 10px; border-right: 1px solid var(--base); }
 #logo { display: inline-flex; align-items: center; gap: 4px; color: var(--ink); font-weight: 700; font-size: 13px; }
 #logo i { width: 8px; height: 8px; } #logo b { margin-left: 5px; }
@@ -189,9 +194,9 @@ let VHIGH = 0;
 
 // routes
 const HAS_ROUTES = !!META.has_routes;
-let SS, RST, RLK, RC, RO, ROUTE_KEY, LROUTE_START, LROUTES;
+let SS, RST, RLK, RC, RO, RU, ROUTE_KEY, LROUTE_START, LROUTES;
 if (HAS_ROUTES) {
-  SS = A.ss; RST = A.rst; RLK = A.rlk; RC = A.rc; RO = A.ro;
+  SS = A.ss; RST = A.rst; RLK = A.rlk; RC = A.rc; RO = A.ro; RU = A.ru || null;
   const nk = SS.length - 1, nr = RC.length;
   ROUTE_KEY = new Uint32Array(nr);
   for (let k = 0; k < nk; k++) for (let r = SS[k]; r < SS[k + 1]; r++) ROUTE_KEY[r] = k;
@@ -469,9 +474,12 @@ function routePanel() {
   $("routehint").hidden = true;
   const k = S.pair, r0 = SS[k], n = pairRoutes(k), best = RC[r0];
   if (n === 0) { box.textContent = "No route between this pair."; return; }
+  let used = 0; if (RU) for (let i = 0; i < n; i++) used += RU[r0 + i];
   for (let i = 0; i < n; i++) {
     const r = r0 + i, row = document.createElement("div"); row.className = "route";
-    row.innerHTML = '<i style="background:' + routeColour(i) + '"></i><b>' + (i + 1) + "</b> " + (RC[r] / 60).toFixed(1) + " min <span>+" + Math.round((RC[r] / best - 1) * 100) + "% · overlap " + Math.round(RO[r] * 100) + "%</span>";
+    const u = RU ? RU[r] : 0;
+    row.innerHTML = '<i style="background:' + routeColour(i) + '"></i><div><b>' + (i + 1) + "</b> " + (RC[r] / 60).toFixed(1) + " min <span>+" + Math.round((RC[r] / best - 1) * 100) + "% · overlap " + Math.round(RO[r] * 100) + "%</span>" +
+      (RU ? "<small>" + fmt(u) + (u === 1 ? " traveller" : " travellers") + (used > 0 ? " · " + Math.round(u / used * 100) + "%" : "") + "</small>" : "") + "</div>";
     row.addEventListener("pointerenter", () => { S.hoverRoute = i; redraw(false); }); row.addEventListener("pointerleave", () => { S.hoverRoute = -1; redraw(false); });
     box.appendChild(row);
   }
@@ -552,7 +560,7 @@ function wire() {
 // ---------------------------------------------------------------- start ----
 function start() {
   $("title").textContent = META.title; $("note").textContent = META.note || ""; $("note").hidden = !META.note;
-  $("provenance").textContent = META.provenance; if (META.credit) { $("credit").textContent = META.credit; $("credit").hidden = false; }
+  $("provenance").textContent = META.provenance; $("provenance").title = META.provenance; $("source").textContent = META.source; if (META.credit) { $("credit").textContent = META.credit; $("credit").hidden = false; }
   $("logo").hidden = !META.logo; $("budget").textContent = META.size_note;
   document.title = META.title + " · openmobisim";
   $("trafficgroup").hidden = !HAS_TRAFFIC; $("routegroup").hidden = !HAS_ROUTES;

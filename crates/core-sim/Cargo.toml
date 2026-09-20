@@ -19,6 +19,7 @@ openmobisim-core-graph = { workspace = true }
 openmobisim-core-demand = { workspace = true }
 openmobisim-core-loading = { workspace = true }
 openmobisim-core-routes = { workspace = true }
+openmobisim-core-choice = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

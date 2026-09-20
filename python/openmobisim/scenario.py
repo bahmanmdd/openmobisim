@@ -115,11 +115,21 @@ class Run:
     def master_seed(self) -> int:
         """The run's master seed (``Scenario`` argument ``master_seed``).
 
-        The one number that starts every random stream. Nothing draws from it
-        yet (the choice layer is the first that will), so today it changes only
-        the fingerprint.
+        The one number that starts every random stream. Under a sampled choice
+        model (``"logit"``) it decides who takes which route; under the default
+        ``"deterministic"`` nothing draws from it and it changes only the
+        fingerprint.
         """
         return self._summary.master_seed
+
+    @property
+    def choice_model(self) -> str:
+        """The name of the choice model that picked each trip's route.
+
+        ``"deterministic"`` or ``"logit"``, or the ``name`` of a model written in
+        Python.
+        """
+        return self._summary.choice_model
 
     def route_sets(self) -> _core.RouteSets:
         """The route sets the trips were routed from.
@@ -129,6 +139,19 @@ class Run:
         ``openmobisim.viz.map_route``.
         """
         return self._summary.route_sets
+
+    def route_choices(self) -> _core.RouteChoices:
+        """Which route each trip took, out of how many, and how likely.
+
+        NumPy arrays with one entry per trip, in the order of the demand:
+        ``route`` (an index into ``route_sets()``), ``rank`` (0 is the pair's best
+        route), ``pair``, ``alternatives`` (how many it could choose from),
+        ``probability`` (what the model gave the route taken; ``nan`` if it gave
+        none) and ``weight`` (how many people the trip stands for). ``-1`` marks a
+        trip with no route. ``np.bincount(rc.route[rc.route >= 0], rc.weight[rc.route >= 0],
+        minlength=route_sets.route_count)`` is each route's number of travellers.
+        """
+        return self._summary.route_choices
 
     def link_bins(self) -> _core.LinkBins | None:
         """Per-link, per-time-bin results, or ``None`` if the run did not ask.
@@ -239,6 +262,8 @@ class Scenario:
         route_method: str = "penalty",
         route_options: dict[str, float] | None = None,
         master_seed: int = 0,
+        choice_model: str | Any = "deterministic",
+        choice_options: dict[str, float] | None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
         if flow_level not in FLOW_LEVELS:
@@ -265,6 +290,8 @@ class Scenario:
         self._route_method = route_method
         self._route_options = route_options
         self._master_seed = master_seed
+        self._choice_model = choice_model
+        self._choice_options = choice_options
 
     @classmethod
     def from_parts(
@@ -281,6 +308,8 @@ class Scenario:
         route_method: str = "penalty",
         route_options: dict[str, float] | None = None,
         master_seed: int = 0,
+        choice_model: str | Any = "deterministic",
+        choice_options: dict[str, float] | None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -318,9 +347,23 @@ class Scenario:
             route_options: The method's options, numbers by name; unknown names
                 and out-of-range values are refused.
             master_seed: The one number that starts every random stream, so a
-                run is reproduced by giving it the same one. Nothing draws from
-                it yet (the choice layer will), so today it changes only the run's
-                fingerprint. A non-negative integer below 2**64.
+                run is reproduced by giving it the same one. Under a sampled
+                choice model (``"logit"``) it decides who takes which route;
+                under the default ``"deterministic"`` nothing draws from it and
+                it changes only the run's fingerprint. A non-negative integer
+                below 2**64.
+            choice_model: How each trip picks a route from its pair's set: a
+                name from ``openmobisim.choice_models()`` or an object with a
+                ``choose(batch)`` method (see ``openmobisim.choice`` for how to
+                write one). ``"deterministic"`` (the default) sends everyone
+                down the best route; ``"logit"`` is the standard path-size
+                logit, sampled per traveller.
+            choice_options: A built-in model's options, numbers by name: for
+                ``"logit"`` a coefficient per attribute, ``beta_time_min`` (default
+                -0.2), ``beta_ln_path_size`` (1), ``beta_length_km``,
+                ``beta_detour``, ``beta_overlap``, ``beta_n_links`` (0). Unknown
+                names and non-numbers are refused. The defaults are an
+                assumption, not a calibration.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -344,6 +387,8 @@ class Scenario:
             route_method=route_method,
             route_options=route_options,
             master_seed=master_seed,
+            choice_model=choice_model,
+            choice_options=choice_options,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
@@ -378,6 +423,8 @@ class Scenario:
             route_method=self._route_method,
             route_options=self._route_options,
             master_seed=self._master_seed,
+            choice_model=self._choice_model,
+            choice_options=self._choice_options,
         )
         return Run(
             summary,

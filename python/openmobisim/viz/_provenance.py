@@ -15,5 +15,8 @@ _SHOWN = 8
 
 
 def run_identity(run: Any) -> str:
-    """``seed 0 · fingerprint 29ff0a1c``: what identifies the run in a footer."""
-    return f"seed {run.master_seed} · fingerprint {run.fingerprint[:_SHOWN]}"
+    """``choice logit · seed 0 · fingerprint 29ff0a1c``: what identifies the run in a footer."""
+    return (
+        f"choice {run.choice_model} · seed {run.master_seed} · "
+        f"fingerprint {run.fingerprint[:_SHOWN]}"
+    )

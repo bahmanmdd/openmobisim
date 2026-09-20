@@ -1,0 +1,17 @@
+[package]
+name = "openmobisim-core-choice"
+description = "The choice layer for openmobisim: one interface for choice models, built-in models, and a by-name registry researchers extend."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+openmobisim-core-types = { workspace = true }

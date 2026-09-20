@@ -28,6 +28,7 @@ openmobisim-io-osm = { path = "crates/io-osm", version = "0.1.0" }
 openmobisim-core-demand = { path = "crates/core-demand", version = "0.1.0" }
 openmobisim-core-loading = { path = "crates/core-loading", version = "0.1.0" }
 openmobisim-core-routes = { path = "crates/core-routes", version = "0.1.0" }
+openmobisim-core-choice = { path = "crates/core-choice", version = "0.1.0" }
 openmobisim-core-sim = { path = "crates/core-sim", version = "0.1.0" }
 openmobisim-io-parquet = { path = "crates/io-parquet", version = "0.1.0" }
 

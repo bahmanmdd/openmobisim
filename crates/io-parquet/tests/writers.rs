@@ -68,6 +68,7 @@ fn sample_result() -> RunResult {
         ],
         link_bins: None,
         route_sets: None,
+        route_choices: None,
     }
 }
 
@@ -214,6 +215,9 @@ fn manifest_reports_the_fields_phase_1_actually_has() {
     assert!(json.contains("\"network_fingerprint\": \"00000000000000ab\""));
     assert!(json.contains("\"flow_level\": 0"));
     assert!(json.contains("\"flow_step_seconds\": null"));
+    assert!(json.contains("\"choice_model\": \"logit\""));
+    assert!(json.contains("\"choice_descriptor\": \"logit;beta_time_min=-0.2\""));
+    assert!(json.contains("\"live_streams\": [\"choice\"]"));
     assert!(json.contains("\"route_descriptor\": \"penalty(max_paths=5)\""));
     assert!(
         json.contains("\"link_bin_seconds\": null") && json.contains("\"link_bins_file\": null")
@@ -238,6 +242,9 @@ fn sample_description(step: Option<f64>, bins: Option<u32>) -> RunDescription {
         route_method: "penalty".to_string(),
         route_descriptor: "penalty(max_paths=5)".to_string(),
         link_bin_seconds: bins,
+        choice_model: "logit".to_string(),
+        choice_descriptor: "logit;beta_time_min=-0.2".to_string(),
+        live_streams: vec!["choice".to_string()],
     }
 }
 

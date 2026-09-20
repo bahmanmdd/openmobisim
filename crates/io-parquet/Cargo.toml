@@ -35,3 +35,5 @@ arrow-schema = { version = "59", default-features = false }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# The determinism probe runs a sampled route choice too (S169).
+openmobisim-core-choice = { workspace = true }

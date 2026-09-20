@@ -15,7 +15,8 @@
 //! density, wave speed, control delay); every traveller (id, class, weight,
 //! what they own) and every trip (traveller, departure, origin, destination);
 //! the window; the loading engine, its level and its step; the route method
-//! and its options; the bin length of the per-link results.
+//! and its options; the choice model and its options; the bin length of the
+//! per-link results.
 //!
 //! **What is not.** The platform and the crate version (the manifest carries
 //! them next to the fingerprint: a fingerprint says *what was run*, the
@@ -44,9 +45,9 @@ pub struct RunDescription {
     /// platform. Show it with [`RunDescription::fingerprint_hex`].
     pub fingerprint: u64,
     /// The scenario's master seed: the one number that starts every random
-    /// stream (`RngKey`). No stochastic step draws from it yet, so today it
-    /// changes nothing but the fingerprint; the choice layer is the first to
-    /// use it.
+    /// stream (`RngKey`). Under a sampled choice model it decides who takes
+    /// which route; under the all-or-nothing default nothing draws from it and
+    /// it changes only the fingerprint.
     pub master_seed: u64,
     /// A hash of the network's ids, as stored in every artifact's header
     /// (`NetworkFingerprint`): an internal id means something only next to it.
@@ -63,6 +64,13 @@ pub struct RunDescription {
     pub route_descriptor: String,
     /// The bin length of the per-link results, if asked for.
     pub link_bin_seconds: Option<u32>,
+    /// The choice model's name (S169).
+    pub choice_model: String,
+    /// The choice model with every option and default, canonical.
+    pub choice_descriptor: String,
+    /// The random streams the run draws from: `["choice"]` under a sampled
+    /// choice model, none under an all-or-nothing one.
+    pub live_streams: Vec<String>,
 }
 
 impl RunDescription {
@@ -90,6 +98,9 @@ pub(crate) struct Inputs<'a> {
     pub route_method: &'a str,
     pub route_descriptor: &'a str,
     pub master_seed: u64,
+    pub choice_model: &'a str,
+    pub choice_descriptor: &'a str,
+    pub choice_sampled: bool,
 }
 
 pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
@@ -113,6 +124,8 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     h.write_u32(inputs.link_bin_seconds.unwrap_or(0));
     h.write_str(inputs.route_method);
     h.write_str(inputs.route_descriptor);
+    h.write_str(inputs.choice_model);
+    h.write_str(inputs.choice_descriptor);
 
     RunDescription {
         fingerprint: h.finish(),
@@ -123,6 +136,9 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         route_method: inputs.route_method.to_string(),
         route_descriptor: inputs.route_descriptor.to_string(),
         link_bin_seconds: inputs.link_bin_seconds,
+        choice_model: inputs.choice_model.to_string(),
+        choice_descriptor: inputs.choice_descriptor.to_string(),
+        live_streams: if inputs.choice_sampled { vec!["choice".to_string()] } else { Vec::new() },
     }
 }
 
