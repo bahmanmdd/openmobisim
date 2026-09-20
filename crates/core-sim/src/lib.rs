@@ -3,7 +3,6 @@
 //! | Module | What it owns |
 //! |---|---|
 //! | [`run`] | [`run::Run`] — the orchestration loop, [`run::RunResult`], [`run::TripCompletionStats`] (S57) |
-//! | [`route`] | A placeholder shortest-path function (S133) — **not** the Phase 2 route-set system |
 //! | [`events`] | [`events::EventRow`] — one row per trip outcome, what `io-parquet`'s `events.parquet` writer reads from |
 //!
 //! # What this crate is, and is not, yet
@@ -27,7 +26,6 @@
 //! to add it.
 
 pub mod events;
-pub mod route;
 pub mod run;
 
 pub use events::{EventRow, EventType};

@@ -1,4 +1,4 @@
-//! `Run`: the Phase 1 vertical slice — demand through S133's placeholder
+//! `Run`: the Phase 1 vertical slice — demand through route sets (S165; S133's placeholder before that)
 //! routing through level-0 loading to one KPI and S57's completion stats.
 //!
 //! Fixtures are hand-built directly (`RoadNetworkBuilder` for the network,
@@ -388,4 +388,70 @@ fn events_are_one_row_per_trip_and_match_the_completion_buckets() {
         count(EventType::NoVehicleAvailable),
         result.completion.no_vehicle_available as usize
     );
+}
+
+// --- Route sets (S165) --------------------------------------------------------------
+
+/// A -> B -> D on top (200 m) and A -> C -> D below (240 m).
+fn diamond_network() -> RoadNetwork {
+    let mut b = RoadNetworkBuilder::new();
+    for (n, x, y) in [("a", 0.0, 0.0), ("b", 100.0, 60.0), ("c", 100.0, -60.0), ("d", 200.0, 0.0)] {
+        b.add_node(n, LonLat::new(4.8 + x / 77_800.0, 45.7 + y / 110_574.0));
+    }
+    for (name, from, to, len) in [
+        ("ab", "a", "b", 100.0),
+        ("bd", "b", "d", 100.0),
+        ("ac", "a", "c", 120.0),
+        ("cd", "c", "d", 120.0),
+    ] {
+        let mut spec = LinkSpec::new(RoadClass::Residential);
+        spec.length_m = Some(len);
+        b.add_link(name, from, to, spec);
+    }
+    b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable")
+}
+
+fn diamond_run(
+    generator: Option<std::sync::Arc<dyn openmobisim_core_routes::RouteSetGenerator>>,
+) -> openmobisim_core_sim::RunResult {
+    let network = Arc::new(diamond_network());
+    let at = |x: f64, y: f64| (4.8 + x / 77_800.0, 45.7 + y / 110_574.0);
+    let raw = vec![
+        trip("alice", 0, at(0.0, 0.0), at(200.0, 0.0), 0),
+        trip("bob", 0, at(0.0, 0.0), at(200.0, 0.0), 60),
+    ];
+    let mut d = Diagnostics::new();
+    let (travellers, trips) =
+        build_travellers(raw, Vec::new(), &car_owning_defaults(), 1, &mut d).expect("buildable");
+    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(3600));
+    if let Some(g) = generator {
+        run = run.with_route_generator(g);
+    }
+    run.execute(&mut Diagnostics::new())
+}
+
+#[test]
+fn a_run_keeps_the_route_sets_it_routed_from_and_takes_each_pairs_best_route() {
+    let result = diamond_run(None);
+    let sets = result.route_sets.expect("kept");
+    assert_eq!(sets.keys().len(), 1, "both trips share one origin-destination pair");
+    assert_eq!(sets.routes(0).count(), 2, "the top road and the bottom road");
+    assert_eq!(sets.method(), "penalty");
+    // The trips took the top road: 200 m at 30 km/h.
+    let top = sets.routes(0).next().expect("best").cost;
+    assert_eq!(result.completion.completed, 2);
+    assert!((result.total_travel_time.get() - 2.0 * f64::from(top).floor()).abs() <= 2.0);
+}
+
+#[test]
+fn the_method_is_selectable_and_changes_nothing_while_only_the_best_route_is_used() {
+    let shortest =
+        openmobisim_core_routes::generator("shortest", &Default::default()).expect("built in");
+    let plain = diamond_run(Some(std::sync::Arc::from(shortest)));
+    let default = diamond_run(None);
+    assert_eq!(plain.route_sets.as_ref().map(|s| s.routes(0).count()), Some(1));
+    assert_eq!(default.route_sets.as_ref().map(|s| s.routes(0).count()), Some(2));
+    assert_eq!(plain.completion, default.completion);
+    assert_eq!(plain.total_travel_time, default.total_travel_time);
 }

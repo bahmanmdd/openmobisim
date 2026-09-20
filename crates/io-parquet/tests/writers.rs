@@ -61,6 +61,7 @@ fn sample_result() -> RunResult {
             EventRow::trip(Second(0), EventType::NoVehicleAvailable, TripId::new(3)),
         ],
         link_bins: None,
+        route_sets: None,
     }
 }
 

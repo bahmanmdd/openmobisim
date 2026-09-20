@@ -12,20 +12,23 @@ use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 
 use openmobisim_core_demand::{Travellers, Trips, VehicleKind, VehicleLocations};
+use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
     FidelityLevel, LinkBins, Vehicle, load_level_0_binned, run_ltm_binned, traverse_free_flow,
 };
+use openmobisim_core_routes::{
+    NodeSnapper, RouteKey, RouteSetGenerator, RouteSets, default_generator,
+};
 use openmobisim_core_types::diagnostics::{
     Category, DiagKey, Diagnostics, ElementRef, Severity, codes,
 };
-use openmobisim_core_types::ids::{EntityId, EntityKind, TravellerId, TripId, VehicleId};
+use openmobisim_core_types::ids::{EntityId, EntityKind, LinkId, TravellerId, TripId, VehicleId};
 use openmobisim_core_types::time::{EventKey, Second};
 use openmobisim_core_types::units::{Duration, Pcu};
 
 use crate::events::{EventRow, EventType};
-use crate::route;
 
 /// Which loading engine a [`Run`] uses.
 ///
@@ -126,6 +129,10 @@ pub struct RunResult {
     /// inside the window, including those of trips still under way when it
     /// ended.
     pub link_bins: Option<LinkBins>,
+    /// The route sets the trips were routed from (S165): every alternative the
+    /// method found for every origin-destination pair the demand asked for.
+    /// Until the choice layer exists each trip takes its pair's best route.
+    pub route_sets: Option<RouteSets>,
 }
 
 /// One simulation run: immutable shared inputs plus the mutable state
@@ -141,6 +148,8 @@ pub struct Run {
     flow_motor: FlowMotor,
     /// Length of the time bins of the per-link results, if asked for.
     link_bin_seconds: Option<u32>,
+    /// How route sets are generated (S165): the penalty method by default.
+    route_generator: Arc<dyn RouteSetGenerator>,
 }
 
 impl Run {
@@ -163,6 +172,7 @@ impl Run {
             window,
             flow_motor: FlowMotor::default(),
             link_bin_seconds: None,
+            route_generator: Arc::from(default_generator()),
         }
     }
 
@@ -171,6 +181,16 @@ impl Run {
     #[must_use]
     pub fn with_flow_motor(mut self, flow_motor: FlowMotor) -> Self {
         self.flow_motor = flow_motor;
+        self
+    }
+
+    /// The same run, routing its trips from route sets made by `generator`
+    /// instead of the default penalty method (S165). Any
+    /// [`RouteSetGenerator`] works: select a built-in one by name with
+    /// `openmobisim_core_routes::generator`, or pass your own.
+    #[must_use]
+    pub fn with_route_generator(mut self, generator: Arc<dyn RouteSetGenerator>) -> Self {
+        self.route_generator = generator;
         self
     }
 
@@ -205,6 +225,27 @@ impl Run {
     pub fn execute(&mut self, diagnostics: &mut Diagnostics) -> RunResult {
         let mut queue: BinaryHeap<Reverse<EventKey>> = BinaryHeap::new();
         let total_trips = self.trips.len();
+
+        // Route sets for every origin-destination pair the demand asks for,
+        // made once, in parallel, before any trip runs (S165): each trip's
+        // endpoints are snapped to the nearest drivable node with a grid, not
+        // a scan, and the pair's set is looked up, not searched for.
+        let snapper = NodeSnapper::new(&self.network);
+        let trip_keys: Vec<RouteKey> = (0..total_trips)
+            .map(|i| {
+                let trip = TripId::new(i);
+                RouteKey::new(
+                    snapper.nearest(&self.network, self.trips.origin(trip)),
+                    snapper.nearest(&self.network, self.trips.destination(trip)),
+                )
+            })
+            .collect();
+        let turns = match &self.flow_motor {
+            FlowMotor::Ltm { turns, .. } => turns.clone(),
+            FlowMotor::Level0 => Arc::new(TurnTable::build(&self.network, SignalDefaults::SHIPPED)),
+        };
+        let route_sets =
+            RouteSets::generate(&self.network, &turns, &trip_keys, self.route_generator.as_ref());
 
         // Every traveller's first trip is enqueued unconditionally, even one
         // who owns no car at all: `VehicleLocations::is_at_origin` already
@@ -258,9 +299,15 @@ impl Run {
                 completion.no_vehicle_available += 1;
                 events.push(EventRow::trip(departure, EventType::NoVehicleAvailable, trip));
             } else {
-                let from = route::nearest_node(&self.network, origin);
-                let to = route::nearest_node(&self.network, destination);
-                match route::shortest_path(&self.network, from, to) {
+                let route_key = trip_keys[trip.index()];
+                let route = if route_key.origin == route_key.destination {
+                    Some(Vec::new())
+                } else {
+                    route_sets
+                        .best(route_key)
+                        .map(|r| r.links.iter().map(|&l| LinkId::new(l)).collect::<Vec<LinkId>>())
+                };
+                match route {
                     None => {
                         diagnostics.record(DiagKey::new(
                             Category::Modelling,
@@ -412,7 +459,7 @@ impl Run {
                 Some(load_level_0_binned(&level0_vehicles, &self.network, window, bin_seconds).1);
         }
 
-        RunResult { total_travel_time, completion, events, link_bins }
+        RunResult { total_travel_time, completion, events, link_bins, route_sets: Some(route_sets) }
     }
 
     fn enqueue(&self, queue: &mut BinaryHeap<Reverse<EventKey>>, trip: TripId) {
