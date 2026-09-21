@@ -123,6 +123,16 @@ jobs:
           cargo run -q -p openmobisim-io-parquet --release --example kpis_determinism_probe > pipeline-second.txt
           diff pipeline-first.txt pipeline-second.txt
           diff -r pipeline-first-artifacts "${TMPDIR:-/tmp}/openmobisim-kpis-determinism-probe"
+      # The same whole-pipeline probe under other thread counts. It includes a run whose
+      # route sets grow between iterations (S176), where the routes are searched for in
+      # parallel and merged in key order: one thread and seven must agree with each other
+      # and with the default.
+      - name: The pipeline probe, under a different thread count
+        run: |
+          RAYON_NUM_THREADS=1 cargo run -q -p openmobisim-io-parquet --release --example kpis_determinism_probe > pipeline-one-thread.txt
+          RAYON_NUM_THREADS=7 cargo run -q -p openmobisim-io-parquet --release --example kpis_determinism_probe > pipeline-seven-threads.txt
+          diff pipeline-one-thread.txt pipeline-seven-threads.txt
+          diff pipeline-first.txt pipeline-one-thread.txt
 
   features:
     name: Feature combinations

@@ -17,7 +17,7 @@ CAR = {"commuter": (True, False, False)}
 FIELDS = [
     "iteration", "reselected_share", "changed_share", "total_travel_time_s", "completed",
     "truncated", "time_change", "gap", "gap_network", "gap_flow", "gap_flow_floor",
-    "gap_flow_excess",
+    "gap_flow_excess", "routes_added", "route_searches",
 ]  # fmt: skip
 
 

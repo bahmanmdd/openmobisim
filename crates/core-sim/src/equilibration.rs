@@ -84,6 +84,13 @@ pub struct IterationReport {
     /// `gap_flow − gap_flow_floor`: the disequilibrium of the stochastic model left
     /// after noise.
     pub gap_flow_excess: f64,
+    /// How many routes the route update (S176) added to the sets **after this loading**,
+    /// for the next iteration to choose among; 0 without an update, at the last
+    /// iteration (no choice follows it) and when no route beat the set. **`gap` is measured
+    /// against the sets as grown**, the routes the travellers may now choose from.
+    pub routes_added: u32,
+    /// How many searches the route update made to find them.
+    pub route_searches: u32,
 }
 
 /// A gap below this is good (the user, S171: "perfect").
@@ -149,6 +156,8 @@ impl PartialEq for IterationReport {
         self.iteration == other.iteration
             && self.completed == other.completed
             && self.truncated == other.truncated
+            && self.routes_added == other.routes_added
+            && self.route_searches == other.route_searches
             && floats(self) == floats(other)
     }
 }
@@ -170,6 +179,8 @@ impl IterationReport {
             gap_flow: f64::NAN,
             gap_flow_floor: f64::NAN,
             gap_flow_excess: f64::NAN,
+            routes_added: 0,
+            route_searches: 0,
         }
     }
 }
@@ -310,7 +321,8 @@ pub struct Msa {
     pub iterations: u32,
     /// Stop once the gap ([`IterationReport::gap`]), averaged over the last three
     /// iterations, is below this share; 0 means never stop early. 0.05 is a good
-    /// gap, 0.15 an acceptable one ([`GAP_GOOD`], [`GAP_ACCEPTABLE`]).
+    /// gap, 0.15 an acceptable one ([`GAP_GOOD`], [`GAP_ACCEPTABLE`]). Never while a
+    /// route update is still adding routes (S176): the last update must have added none.
     pub gap_tolerance: f64,
     /// How many trips are tested against the whole network at the last iteration
     /// (0 to 100 000; 0 means none): the sample that
@@ -405,6 +417,11 @@ impl Equilibration for Msa {
         // pattern), and the first iteration, which is everyone's choice on free flow,
         // never counts.
         if self.gap_tolerance <= 0.0 || reports.len() < 4 {
+            return false;
+        }
+        // While the sets are still growing (S176) the pattern has not settled: the gap is
+        // measured against the sets as grown, and a route just added has not been chosen yet.
+        if reports.last().is_some_and(|r| r.routes_added > 0) {
             return false;
         }
         let last = &reports[reports.len() - 3..];

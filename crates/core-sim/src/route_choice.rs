@@ -22,6 +22,8 @@
 //! change when other routes are added to or removed from the set, and the
 //! draws of every route that stays are exactly as they were.
 
+use std::sync::Arc;
+
 use openmobisim_core_choice::{ChoiceBatch, ChoiceError, ChoiceModel};
 use openmobisim_core_demand::{Travellers, Trips};
 use openmobisim_core_graph::network::RoadNetwork;
@@ -75,6 +77,29 @@ impl PartialEq for RouteChoices {
 }
 
 impl RouteChoices {
+    /// Renumber after the sets grew (S176): `shift` is what [`RouteSets::extended`] returned
+    /// for the store `old`, `grown` is the new store and `trip_keys` each trip's pair. A trip
+    /// keeps the route it had (now a different number where routes were added before it), and
+    /// its number of alternatives is the size of its pair's grown set. Probabilities are what
+    /// the model gave the route when it was taken, and stay so.
+    pub(crate) fn grown(
+        &mut self,
+        old: &RouteSets,
+        shift: &[u32],
+        grown: &RouteSets,
+        trip_keys: &[RouteKey],
+    ) {
+        for t in 0..self.route.len() {
+            if self.route[t] == NO_ROUTE {
+                continue;
+            }
+            self.route[t] += shift[old.key_of_route(self.route[t] as usize)];
+            let key = grown.key_index(trip_keys[t]).expect("a routed trip has a set");
+            self.alternatives[t] =
+                u32::try_from(grown.route_range(key).len()).expect("few alternatives");
+        }
+    }
+
     /// How many trips.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -94,7 +119,6 @@ pub(crate) struct Inputs<'a> {
     pub travellers: &'a Travellers,
     pub trips: &'a Trips,
     pub trip_keys: &'a [RouteKey],
-    pub route_sets: &'a RouteSets,
     pub model: &'a dyn ChoiceModel,
     pub turns: &'a TurnTable,
 }
@@ -147,9 +171,12 @@ pub(crate) struct Update {
 
 /// The parts of route choice that do not change from one iteration to the next:
 /// which attributes to fill, the routes' lengths and path sizes, their
-/// identities.
+/// identities. **It belongs to one state of the route sets**: when they grow (S176) the
+/// run makes a new one, which costs a pass over the store (~50 ms at 53 000 routes) and is
+/// done only then.
 pub(crate) struct Chooser<'a> {
     inputs: &'a Inputs<'a>,
+    route_sets: Arc<RouteSets>,
     wanted: Vec<&'static str>,
     attributes: Option<RouteAttributes>,
     identity: Vec<u32>,
@@ -163,9 +190,11 @@ impl<'a> Chooser<'a> {
     ///
     /// [`ChoiceError::MissingAttribute`] if the model reads an attribute routes
     /// do not carry.
-    pub(crate) fn new(inputs: &'a Inputs<'a>) -> Result<Self, ChoiceError> {
-        let (route_sets, trips, travellers, network) =
-            (inputs.route_sets, inputs.trips, inputs.travellers, inputs.network);
+    pub(crate) fn new(
+        inputs: &'a Inputs<'a>,
+        route_sets: Arc<RouteSets>,
+    ) -> Result<Self, ChoiceError> {
+        let (trips, travellers, network) = (inputs.trips, inputs.travellers, inputs.network);
         // The attributes to fill: what the model reads, or all of them.
         let wanted: Vec<&'static str> = match inputs.model.required_attributes() {
             None => ROUTE_ATTRIBUTES.to_vec(),
@@ -199,7 +228,7 @@ impl<'a> Chooser<'a> {
         let weight = (0..trips.len())
             .map(|i| travellers.weight(trips.traveller(TripId::from_index(i as usize))))
             .collect();
-        Ok(Self { inputs, wanted, attributes, identity, weight })
+        Ok(Self { inputs, route_sets, wanted, attributes, identity, weight })
     }
 
     /// Put trips `from..to` that have a set into `batch`, with `times` as their cost
@@ -215,7 +244,8 @@ impl<'a> Chooser<'a> {
         range: core::ops::Range<usize>,
         times: Option<&LinkTimes>,
     ) {
-        let Inputs { trips, trip_keys, route_sets, .. } = *self.inputs;
+        let Inputs { trips, trip_keys, .. } = *self.inputs;
+        let route_sets = &*self.route_sets;
         batch.clear();
         first_route.clear();
         trip_of.clear();
@@ -286,7 +316,8 @@ impl<'a> Chooser<'a> {
         sample: u32,
         rng: &StreamRng,
     ) -> f64 {
-        let Inputs { network, trips, trip_keys, route_sets, turns, .. } = *self.inputs;
+        let Inputs { network, trips, trip_keys, turns, .. } = *self.inputs;
+        let route_sets = &*self.route_sets;
         let mut keyed: Vec<(f64, usize)> = (0..current.route.len())
             .filter(|&t| current.route[t] != NO_ROUTE)
             .map(|t| {
@@ -406,7 +437,7 @@ impl<'a> Chooser<'a> {
         rng: &StreamRng,
     ) -> Result<Update, ChoiceError> {
         let total = self.inputs.trips.len() as usize;
-        let sets = self.inputs.route_sets;
+        let sets = &*self.route_sets;
         let mut batch = ChoiceBatch::new(iteration, &self.wanted);
         let (mut first_route, mut trip_of) = (Vec::new(), Vec::new());
         let mut alt_seconds = Vec::new();

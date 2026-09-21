@@ -114,6 +114,10 @@ pub struct PyRunSummary {
     /// The equilibration strategy's name (S170).
     #[pyo3(get)]
     pub equilibration: String,
+    /// The route update's name (S176): `"none"` if the route sets stayed as
+    /// generated.
+    #[pyo3(get)]
+    pub route_update: String,
     /// What each iteration showed, as numpy arrays by name (S170); see
     /// `Run.convergence()`.
     #[pyo3(get)]
@@ -242,6 +246,14 @@ fn convergence_arrays(
     dict.set_item("gap_flow", floats(|r| r.gap_flow).into_pyarray(py))?;
     dict.set_item("gap_flow_floor", floats(|r| r.gap_flow_floor).into_pyarray(py))?;
     dict.set_item("gap_flow_excess", floats(|r| r.gap_flow_excess).into_pyarray(py))?;
+    dict.set_item(
+        "routes_added",
+        reports.iter().map(|r| r.routes_added).collect::<Vec<_>>().into_pyarray(py),
+    )?;
+    dict.set_item(
+        "route_searches",
+        reports.iter().map(|r| r.route_searches).collect::<Vec<_>>().into_pyarray(py),
+    )?;
     Ok(dict.unbind())
 }
 
@@ -268,6 +280,7 @@ fn convergence_arrays(
     route_method="penalty", route_options=None, master_seed=0,
     choice_model=None, choice_options=None,
     equilibration="none", equilibration_options=None,
+    route_update="none", route_update_options=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -295,6 +308,8 @@ pub fn run_pipeline(
     choice_options: Option<HashMap<String, f64>>,
     equilibration: &str,
     equilibration_options: Option<HashMap<String, f64>>,
+    route_update: &str,
+    route_update_options: Option<HashMap<String, f64>>,
 ) -> PyResult<PyRunSummary> {
     // Refuse a bad method, model or option before doing any work.
     let choice = make_choice_model(choice_model, choice_options)?;
@@ -306,6 +321,9 @@ pub fn run_pipeline(
     let generator = Registry::builtin()
         .create(route_method, &to_options(route_options))
         .map_err(to_value_error)?;
+    let update =
+        openmobisim_core_sim::route_update::update(route_update, &to_options(route_update_options))
+            .map_err(to_value_error)?;
     let raw_trips = match (trips, trips_path) {
         (Some(rows), None) => rows.into_iter().map(trip_from_row).collect(),
         (None, Some(path)) => read_trips_parquet(path).map_err(to_value_error)?,
@@ -374,7 +392,8 @@ pub fn run_pipeline(
     run = run
         .with_master_seed(master_seed)
         .with_choice_model(choice)
-        .with_equilibration(Arc::from(strategy));
+        .with_equilibration(Arc::from(strategy))
+        .with_route_update(Arc::from(update));
     // What went in, taken before it runs (S168).
     let description = run.description();
     let mut run_diagnostics = Diagnostics::new();
@@ -421,6 +440,7 @@ pub fn run_pipeline(
         master_seed,
         choice_model: description.choice_model.clone(),
         equilibration: description.equilibration.clone(),
+        route_update: description.route_update.clone(),
         convergence: convergence_arrays(py, &result.iterations)?,
         converged: result.converged,
         fingerprint: description.fingerprint_hex(),
@@ -440,6 +460,18 @@ pub fn run_pipeline(
             .map(|sets| Py::new(py, PyRouteSets::new(Arc::new(sets), network.inner.link_count())))
             .transpose()?,
     })
+}
+
+/// The route updates that can be selected by name, the default first (S176).
+#[pyfunction]
+pub fn route_update_methods() -> Vec<String> {
+    let mut names: Vec<String> = openmobisim_core_sim::route_update::Registry::builtin()
+        .names()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    names.sort_by_key(|n| (n != openmobisim_core_sim::route_update::DEFAULT_UPDATE, n.clone()));
+    names
 }
 
 /// The equilibration strategies that can be selected by name, the default first.

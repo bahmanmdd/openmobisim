@@ -21,6 +21,12 @@
 //! it never lets a route past the bound through, and on rare occasions can miss
 //! one that a fuller search would have found.
 //!
+//! A generator can also perturb every link's cost at random for the next search
+//! ([`Search::set_noise`]): each link's factor is `1 + sigma · u · bias`, `u` a uniform draw
+//! that is a **pure function of (seed, link)** — a few integer operations, no generator to
+//! carry, no array to fill — so a search is the same for any thread and order. The Monte
+//! Carlo method uses it (S176).
+//!
 //! **Cost of a search:** one label per touched link; the scratch is reset by
 //! visiting only what was touched, so a search costs what it explores, not the
 //! size of the network. **Scratch per thread:** 20 bytes per link plus the
@@ -31,6 +37,7 @@
 
 use core::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::sync::Arc;
 
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
@@ -130,6 +137,36 @@ impl LinkFactors {
     }
 }
 
+/// Random link-cost factors for one search: `1 + sigma · u · bias(link)`.
+#[derive(Clone, Debug)]
+struct Noise {
+    seed: u64,
+    sigma: f64,
+    /// Per link, in `[0, 1]`: how much of `sigma` the link gets. `None` is 1 everywhere.
+    bias: Option<Arc<[f32]>>,
+}
+
+impl Noise {
+    /// The factor of `link`: a pure function of the seed and the link.
+    #[inline]
+    fn factor(&self, link: LinkId) -> f64 {
+        // The finalizer of SplitMix64 over the seed and the link id.
+        let mut x = self.seed ^ u64::from(link.raw()).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        x ^= x >> 30;
+        x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        x ^= x >> 27;
+        x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
+        x ^= x >> 31;
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "the top 53 bits of a u64 fit an f64 exactly"
+        )]
+        let u = (x >> 11) as f64 / (1_u64 << 53) as f64;
+        let bias = self.bias.as_ref().map_or(1.0, |b| f64::from(b[link.index()]));
+        1.0 + self.sigma * u * bias
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Entry {
     cost: f64,
@@ -169,6 +206,8 @@ pub struct Search<'a> {
     heap: BinaryHeap<Entry>,
     /// Cost multipliers for the next searches.
     pub factors: LinkFactors,
+    /// Random cost factors for the next searches, if a generator asked for them.
+    noise: Option<Noise>,
     marks: Vec<u32>,
     marked: Vec<u32>,
 }
@@ -186,8 +225,41 @@ impl<'a> Search<'a> {
             touched: Vec::new(),
             heap: BinaryHeap::new(),
             factors: LinkFactors::new(n),
+            noise: None,
             marks: vec![0; n],
             marked: Vec::new(),
+        }
+    }
+
+    /// Perturb every link's cost at random in the next searches: link `l` costs its cost
+    /// times `1 + sigma · u · bias[l]`, `u` a uniform draw in `[0, 1)` that is a pure function
+    /// of `seed` and the link. `bias` is per link, in `[0, 1]` (`None` is 1 everywhere): 0
+    /// leaves a link's cost alone, 1 lets it change by up to `sigma` times itself. Reported
+    /// costs stay the **true** ones, and a bound ([`Self::shortest_within`]) is on them.
+    ///
+    /// Stays until [`Self::clear_noise`] or [`Self::clear_route_state`]. Costs one integer
+    /// hash per link a search touches, nothing when not set.
+    ///
+    /// # Panics
+    ///
+    /// Panics (when a link is first costed) if `bias` has fewer entries than the network
+    /// has links.
+    pub fn set_noise(&mut self, seed: u64, sigma: f64, bias: Option<Arc<[f32]>>) {
+        self.noise = Some(Noise { seed, sigma, bias });
+    }
+
+    /// Stop perturbing costs.
+    pub fn clear_noise(&mut self) {
+        self.noise = None;
+    }
+
+    /// A link's cost multiplier for the search now: the factors set, and the noise if any.
+    #[inline]
+    fn factor(&self, link: LinkId) -> f64 {
+        let base = self.factors.get(link);
+        match &self.noise {
+            None => base,
+            Some(noise) => base * noise.factor(link),
         }
     }
 
@@ -219,7 +291,7 @@ impl<'a> Search<'a> {
         let ctx = self.ctx;
         for &l in ctx.network.out_links(origin) {
             let raw = ctx.link_cost(l);
-            let c = raw * self.factors.get(l);
+            let c = raw * self.factor(l);
             if c.is_finite() && raw <= max_true_cost && c < self.dist[l.index()] {
                 self.set(l.index(), c, raw, NONE);
                 self.heap.push(Entry { cost: c, link: l.raw() });
@@ -242,7 +314,7 @@ impl<'a> Search<'a> {
                 if !raw.is_finite() || true_cost + raw > max_true_cost {
                     continue;
                 }
-                let nd = cost + raw * self.factors.get(m);
+                let nd = cost + raw * self.factor(m);
                 if nd < self.dist[m.index()] {
                     self.set(m.index(), nd, true_cost + raw, link);
                     self.heap.push(Entry { cost: nd, link: m.raw() });
@@ -288,8 +360,57 @@ impl<'a> Search<'a> {
         wait: &dyn Fn(u32, f64) -> f64,
         seconds: &dyn Fn(u32, f64) -> f64,
     ) -> Option<f64> {
+        let found = self.earliest_arrival(origin, destination, departure, bound, wait, seconds);
+        self.clean();
+        found.map(|(time, _)| time)
+    }
+
+    /// [`Self::fastest_time`], and the route that takes that time: the links of the
+    /// earliest-arrival route, in driving order (none if the two are one node).
+    ///
+    /// Same bound, same exactness. Where several routes take the least time the one
+    /// returned is fixed by link ids (the heap breaks ties by them), so the same table of
+    /// times always gives the same route. Costs a walk back along the predecessors, the
+    /// route's length, on top of the search.
+    pub fn fastest_route(
+        &mut self,
+        origin: NodeId,
+        destination: NodeId,
+        departure: f64,
+        bound: f64,
+        wait: &dyn Fn(u32, f64) -> f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Option<(f64, Vec<LinkId>)> {
+        let found = self.earliest_arrival(origin, destination, departure, bound, wait, seconds);
+        let route = found.map(|(time, last)| {
+            let mut links = Vec::new();
+            let mut at = last;
+            while at != NONE {
+                links.push(LinkId::new(at));
+                at = self.pred[at as usize];
+            }
+            links.reverse();
+            (time, links)
+        });
+        self.clean();
+        route
+    }
+
+    /// The earliest-arrival search behind [`Self::fastest_time`] and
+    /// [`Self::fastest_route`]: the travel time and the last link of the route found.
+    /// **Leaves its labels in place** so the caller can read the predecessors, and must
+    /// [`Self::clean`] them.
+    fn earliest_arrival(
+        &mut self,
+        origin: NodeId,
+        destination: NodeId,
+        departure: f64,
+        bound: f64,
+        wait: &dyn Fn(u32, f64) -> f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Option<(f64, u32)> {
         if origin == destination {
-            return Some(0.0);
+            return Some((0.0, NONE));
         }
         let ctx = self.ctx;
         let limit = departure + bound;
@@ -311,7 +432,7 @@ impl<'a> Search<'a> {
                 continue;
             }
             if ctx.network.link_to(l) == destination {
-                found = Some(cost - departure);
+                found = Some((cost - departure, link));
                 break;
             }
             for &t in ctx.turns.turns_from(l) {
@@ -326,7 +447,6 @@ impl<'a> Search<'a> {
                 }
             }
         }
-        self.clean();
         found
     }
 
@@ -389,8 +509,9 @@ impl<'a> Search<'a> {
         shared.iter().fold(0.0f64, |a, &s| a.max(s / total))
     }
 
-    /// Forget every mark and every factor, ready for the next key.
+    /// Forget every mark, every factor and any noise, ready for the next key.
     pub fn clear_route_state(&mut self) {
+        self.noise = None;
         for &l in &self.marked {
             self.marks[l as usize] = 0;
         }

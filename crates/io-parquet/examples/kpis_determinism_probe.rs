@@ -20,11 +20,15 @@
 use std::sync::Arc;
 
 use openmobisim_core_demand::{ClassDefaults, Ownership, RawTrip, build_travellers};
+use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::examples::{manhattan_grid, node_name};
 use openmobisim_core_graph::geometry::LonLat;
-use openmobisim_core_sim::Run;
+use openmobisim_core_graph::turns::TurnTable;
+use openmobisim_core_loading::FidelityLevel;
+use openmobisim_core_sim::{FlowMotor, Run};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::time::Second;
+use openmobisim_core_types::units::Duration;
 use openmobisim_io_parquet::manifest::Manifest;
 use openmobisim_io_parquet::{write_diagnostics, write_events, write_kpis, write_manifest};
 
@@ -97,6 +101,32 @@ fn demand(node: impl Fn(u32, u32) -> LonLat) -> Vec<RawTrip> {
     trips.push(trip("late_0", 1, (4, 4), (0, 4), WINDOW_S - 50, "commuter", None));
 
     trips
+}
+
+/// A demand that jams the grid's middle: 2 000 travellers, each crossing from one side to the
+/// other (pairs from a fixed generator, so it never changes), leaving within a minute.
+fn jammed_demand(node: impl Fn(u32, u32) -> LonLat) -> Vec<RawTrip> {
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    let mut next = |bound: u32| -> u32 {
+        state =
+            state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        u32::try_from((state >> 33) % u64::from(bound)).expect("a small bound")
+    };
+    (0..2_000u32)
+        .map(|i| {
+            let row = next(GRID_N);
+            let (from, to) = ((row, 0), (GRID_N - 1 - row, GRID_N - 1));
+            RawTrip {
+                traveller_id: format!("jam_{i}"),
+                trip_seq: 0,
+                origin: node(from.0, from.1),
+                destination: node(to.0, to.1),
+                departure_time: Second(next(60)),
+                user_class: "commuter".to_string(),
+                weight: None,
+            }
+        })
+        .collect()
 }
 
 fn main() {
@@ -202,6 +232,67 @@ fn main() {
         }
     }
 
+    // And adapting (S176): the link transmission model on a jammed grid, four loadings, the
+    // route sets growing between them by best responses to the congested times. The searches
+    // run in parallel over pairs and are merged in key order: the routes added, and so every
+    // number after them, must be the same on every run and at any thread count.
+    let jam = jammed_demand(node);
+    let (jam_travellers, jam_trips) = build_travellers(
+        jam,
+        Vec::new(),
+        &class_defaults,
+        /* default_weight */ 1,
+        &mut Diagnostics::new(),
+    )
+    .expect("the generated demand is well-formed");
+    let turns = Arc::new(TurnTable::build(&network, SignalDefaults::SHIPPED));
+    let mut adapting_run =
+        Run::new(network.clone(), Arc::new(jam_travellers), Arc::new(jam_trips), window)
+            .with_flow_motor(FlowMotor::Ltm {
+                turns,
+                step: Duration(30.0),
+                level: FidelityLevel::Full,
+            })
+            .with_master_seed(20_260_921)
+            .with_choice_model(Arc::from(
+                openmobisim_core_choice::model("logit", &Default::default()).expect("built in"),
+            ))
+            .with_equilibration(Arc::from(
+                openmobisim_core_sim::equilibration::strategy(
+                    "msa",
+                    &[("iterations".to_string(), 4.0)].into_iter().collect(),
+                )
+                .expect("built in"),
+            ))
+            .with_route_update(Arc::from(
+                openmobisim_core_sim::route_update::update("best_response", &Default::default())
+                    .expect("built in"),
+            ));
+    let adapting_description = adapting_run.description();
+    let adapting_result = adapting_run.execute(&mut Diagnostics::new());
+    let step = |digest: u64, x: u64| digest.wrapping_mul(0x0100_0000_01b3).wrapping_add(x);
+    let mut adapting_digest = 0u64;
+    for report in &adapting_result.iterations {
+        for x in [report.total_travel_time_s, report.gap, report.gap_network, report.time_change] {
+            adapting_digest = step(adapting_digest, x.to_bits());
+        }
+        adapting_digest = step(adapting_digest, u64::from(report.routes_added));
+        adapting_digest = step(adapting_digest, u64::from(report.route_searches));
+    }
+    let grown = adapting_result.route_sets.as_ref().expect("recorded");
+    let mut sets_digest = 0u64;
+    for r in 0..grown.route_count() {
+        for &l in grown.route(r).links {
+            sets_digest = step(sets_digest, u64::from(l));
+        }
+        sets_digest = step(sets_digest, u64::from(grown.stamps()[r]));
+    }
+    for r in &adapting_result.route_choices.as_ref().expect("recorded").route {
+        sets_digest = step(sets_digest, u64::from(*r));
+    }
+    let routes_added: u32 = adapting_result.iterations.iter().map(|it| it.routes_added).sum();
+    assert!(routes_added > 0, "the probe must exercise the update: nothing was added");
+
     // --- The report ----------------------------------------------------
     // Floats as raw bits: the property under test is bit-identity, and a
     // decimal rendering would hide exactly the difference the gate exists
@@ -230,6 +321,12 @@ fn main() {
     println!("msa_reports_digest    {iterated_digest:016x}");
     println!("msa_iterations        {}", iterated_result.iterations.len());
     println!("choice_total_time_s   {:016x}", sampled_result.total_travel_time.get().to_bits());
+    println!("adapt_fingerprint     {}", adapting_description.fingerprint_hex());
+    println!("adapt_reports_digest  {adapting_digest:016x}");
+    println!("adapt_routes_added    {routes_added}");
+    println!("adapt_routes          {}", grown.route_count());
+    println!("adapt_sets_digest     {sets_digest:016x}");
+    println!("adapt_sets_identity   {:016x}", grown.identity());
 
     let mut event_digest = 0u64;
     for e in &result.events {

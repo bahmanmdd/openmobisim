@@ -706,6 +706,7 @@ dependencies = [
  "openmobisim-core-routes",
  "openmobisim-core-types",
  "proptest",
+ "rayon",
 ]
 
 [[package]]

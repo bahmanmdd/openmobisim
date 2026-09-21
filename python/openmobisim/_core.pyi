@@ -226,14 +226,20 @@ class RouteSets:
 
     Keys are pairs of node indices (see :meth:`Network.node_nearest`), sorted.
     Route ``r`` is ``links()[route_offsets()[r]:route_offsets()[r + 1]]``; key
-    ``k`` owns the routes ``set_offsets()[k]:set_offsets()[k + 1]``, best first.
+    ``k`` owns the routes ``set_offsets()[k]:set_offsets()[k + 1]``: the method's routes
+    best first, then, if a route update grew the sets during a run, the routes it added, in
+    the order added (``stamps()`` says when).
     """
 
     #: The method that made these sets, for example ``"penalty"``.
     method: str
     #: The method and every option with defaults filled in, as one string.
     descriptor: str
-    #: A short hex identity of the network and the method with its options.
+    #: The route update that grew the sets after the method made them, with its options, as
+    #: one string; empty for sets as the method made them.
+    update: str
+    #: A short hex identity of the network and the method with its options (and the update,
+    #: if the sets were grown).
     identity: str
     #: How many origin-destination pairs have a set.
     key_count: int
@@ -257,6 +263,13 @@ class RouteSets:
     def costs(self) -> npt.NDArray[np.float32]:
         """Every route's free-flow cost in seconds."""
 
+    def stamps(self) -> npt.NDArray[np.uint32]:
+        """Every route's stamp: 0 if the method made it, else the iteration it was added for.
+
+        A route update adds routes between iterations; the stamp is the iteration whose
+        choice they were added for.
+        """
+
     def overlaps(self) -> npt.NDArray[np.float32]:
         """Every route's largest share of its cost shared with a route found before it."""
 
@@ -264,7 +277,9 @@ class RouteSets:
         """The position of the pair among the keys, or ``None`` if it has no set."""
 
     def routes(self, key_index: int) -> list[npt.NDArray[np.uint32]]:
-        """The routes of the key at ``key_index``, best first, each as link indices.
+        """The routes of the key at ``key_index``, each as link indices.
+
+        The method's routes come best first, then any a route update added.
 
         Raises:
             ValueError: If ``key_index`` is out of range.
@@ -304,6 +319,10 @@ def route_sets_build(
         options: The method's options, numbers by name. For ``"penalty"``:
             ``max_paths`` (5), ``max_detour`` (1.3), ``max_overlap`` (0.75),
             ``penalty`` (1.5), ``max_attempts`` (15).
+            For ``"montecarlo"``: ``draws`` (16), ``sigma`` (4), ``max_detour`` (2),
+            ``max_overlap`` (0.9), ``max_paths`` (10), ``seed`` (0) and ``biased`` (1; 0 for
+            none). The method's noise is biased towards the links the demand is likely to
+            congest; here the demand is the given pairs, one traveller each, leaving at once.
 
     Returns:
         The sets, one per distinct pair, best route first.
@@ -360,6 +379,9 @@ class RouteChoices:
 
 def equilibration_strategies() -> list[str]:
     """The equilibration strategies that can be selected by name, the default (``"none"``) first."""
+
+def route_update_methods() -> list[str]:
+    """The route updates that can be selected by name, the default (``"none"``) first."""
 
 def choice_models() -> list[str]:
     """The choice models that can be selected by name, the default (``"deterministic"``) first."""
@@ -497,6 +519,8 @@ class RunSummary:
     choice_model: str
     #: The equilibration strategy's name.
     equilibration: str
+    #: The route update's name: ``"none"`` if the route sets stayed as the method made them.
+    route_update: str
     #: What each iteration showed, as arrays by name (see ``Run.convergence``).
     convergence: dict[str, npt.NDArray[np.float64] | npt.NDArray[np.uint32]]
     #: Whether the strategy stopped before its most iterations, having converged.
@@ -537,6 +561,8 @@ def run_pipeline(
     choice_options: dict[str, float] | None = None,
     equilibration: str = "none",
     equilibration_options: dict[str, float] | None = None,
+    route_update: str = "none",
+    route_update_options: dict[str, float] | None = None,
 ) -> RunSummary:
     """Run the whole Phase 1 pipeline and write all four output artifacts.
 
@@ -585,6 +611,11 @@ def run_pipeline(
             and one loading; ``"msa"`` iterates).
         equilibration_options: The strategy's options, numbers by name (for
             ``"msa"``: ``iterations``, ``gap_tolerance``, ``gap_sample``, ``cost_bin_s``).
+        route_update: How the route sets grow between iterations: a name from
+            :func:`route_update_methods` (``"none"``, the default, leaves them as the method made
+            them; ``"best_response"`` adds each pair's fastest route at the congested times).
+        route_update_options: The update's options, numbers by name (for
+            ``"best_response"``: ``searches``, ``max_routes``).
 
     Returns:
         A :class:`RunSummary`.

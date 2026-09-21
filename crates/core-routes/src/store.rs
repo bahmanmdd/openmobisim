@@ -10,6 +10,12 @@
 //! method that made it; [`RouteSets::identity`] combines them, so a set made
 //! with other settings, or on another network, is never mistaken for this one.
 //!
+//! **Order.** A key's routes are the generator's, best first; a store that has
+//! been [extended](RouteSets::extended) (S176: routes added between the iterations of a
+//! run) has the added routes after them, in the order they were added, and
+//! [`RouteSets::stamps`] says in which iteration each came. Nothing that already
+//! has a number changes it except by a fixed shift per key.
+//!
 //! **Cost.** 4 bytes per link of every route, 12 bytes per route, and 12 bytes
 //! per key: a 100-link route costs about 400 bytes.
 //!
@@ -30,6 +36,38 @@ use rayon::prelude::*;
 /// Keys per unit of parallel work: fixed, so the split never depends on the
 /// thread count and the result is the same for any.
 const CHUNK: usize = 16;
+
+/// Run `work` on every item of `items`, each thread with a [`Search`] of its own, and
+/// return the results **in the order of the items**.
+///
+/// The items are split into chunks of a fixed size and the chunks joined in order, so
+/// the result is the same for any number of threads, and the same without the
+/// `parallel` feature, **provided `work` is a function of its item and the context
+/// alone** (a `Search` leaves no state behind). This is what generates the sets of many
+/// keys ([`RouteSets::generate`]) and what searches for the routes to add to them.
+pub fn search_map<'a, T, R, F>(ctx: &'a SearchContext<'a>, items: &[T], work: F) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+    F: Fn(&mut Search<'a>, &T) -> R + Sync,
+{
+    #[cfg(feature = "parallel")]
+    {
+        let per_chunk: Vec<Vec<R>> = items
+            .par_chunks(CHUNK)
+            .map_init(
+                || Search::new(ctx),
+                |search, chunk| chunk.iter().map(|item| work(search, item)).collect(),
+            )
+            .collect();
+        per_chunk.into_iter().flatten().collect()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut search = Search::new(ctx);
+        items.iter().map(|item| work(&mut search, item)).collect()
+    }
+}
 
 /// What a set of routes is keyed by: an origin and a destination node.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -65,6 +103,9 @@ pub struct RouteSets {
     network: NetworkFingerprint,
     method: String,
     descriptor: String,
+    /// The descriptor of the update that has grown the sets since they were generated
+    /// (S176); empty for a store as its generator made it.
+    update: String,
     keys: Vec<RouteKey>,
     /// `keys.len() + 1` offsets into the route arrays.
     set_start: Vec<u32>,
@@ -75,7 +116,8 @@ pub struct RouteSets {
     overlap: Vec<f32>,
     /// When each route's cost was taken: 0 is free flow at generation. A later
     /// cost update stamps the routes it re-costs, so a stale cost can be told
-    /// from a fresh one.
+    /// from a fresh one. A route added to a grown store ([`RouteSets::extended`]) is
+    /// stamped with the iteration that added it, and its cost is its free-flow cost.
     stamp: Vec<u32>,
 }
 
@@ -106,29 +148,15 @@ impl RouteSets {
         keys.dedup();
 
         let ctx = SearchContext::new(network, turns);
-        let work = |search: &mut Search<'_>, chunk: &[RouteKey]| -> Vec<Vec<Route>> {
-            chunk
-                .iter()
-                .map(|k| {
-                    generator.generate(search, NodeId::new(k.origin), NodeId::new(k.destination))
-                })
-                .collect()
-        };
-        #[cfg(feature = "parallel")]
-        let per_chunk: Vec<Vec<Vec<Route>>> = keys
-            .par_chunks(CHUNK)
-            .map_init(|| Search::new(&ctx), |search, chunk| work(search, chunk))
-            .collect();
-        #[cfg(not(feature = "parallel"))]
-        let per_chunk: Vec<Vec<Vec<Route>>> = {
-            let mut search = Search::new(&ctx);
-            keys.chunks(CHUNK).map(|chunk| work(&mut search, chunk)).collect()
-        };
+        let per_key: Vec<Vec<Route>> = search_map(&ctx, &keys, |search, k| {
+            generator.generate(search, NodeId::new(k.origin), NodeId::new(k.destination))
+        });
 
         let mut sets = Self {
             network: NetworkFingerprint::of(network),
             method: generator.name().to_string(),
             descriptor: generator.descriptor(),
+            update: String::new(),
             keys,
             set_start: vec![0],
             route_start: vec![0],
@@ -137,7 +165,7 @@ impl RouteSets {
             overlap: Vec::new(),
             stamp: Vec::new(),
         };
-        for routes in per_chunk.into_iter().flatten() {
+        for routes in per_key {
             for route in routes {
                 sets.links.extend(route.links.iter().map(|l| l.raw()));
                 sets.route_start.push(u32::try_from(sets.links.len()).expect("links fit u32"));
@@ -153,6 +181,92 @@ impl RouteSets {
         sets
     }
 
+    /// These sets with routes added to some keys (S176: the routes a run finds between
+    /// iterations, see `core-sim`'s `RouteUpdate`).
+    ///
+    /// `additions` are `(key index, routes)` in **strictly ascending key order**, one entry
+    /// per key; a key's new routes go **after its existing ones**, in the order given, each
+    /// stamped `stamp` (the iteration that adds them: not 0, which marks a route as the
+    /// generator made it). `update` is the descriptor of whatever found them, kept apart
+    /// from the generator's and part of the new store's [identity](Self::identity).
+    ///
+    /// Returns the new store and, per key, how many routes were added to the keys **before**
+    /// it: route `r` of key `k` of *this* store is route `r + shift[k]` of the new one.
+    /// Every route keeps its links, cost, overlap and stamp; the routes of a key that got
+    /// nothing keep their order. **Cost:** one copy of the store (4 bytes per link and 12 per
+    /// route), a few milliseconds at the size of a country's network.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `additions` is not in strictly ascending key order or names a key the store
+    /// does not have, or if the links or routes of the result exceed the `u32` id space.
+    #[must_use]
+    pub fn extended(
+        &self,
+        additions: &[(usize, Vec<Route>)],
+        stamp: u32,
+        update: &str,
+    ) -> (Self, Vec<u32>) {
+        assert!(
+            additions.windows(2).all(|w| w[0].0 < w[1].0),
+            "additions must be in strictly ascending key order, one entry per key"
+        );
+        assert!(
+            additions.last().is_none_or(|a| a.0 < self.keys.len()),
+            "an addition names a key the store does not have"
+        );
+        let added: usize = additions.iter().map(|(_, routes)| routes.len()).sum();
+        let added_links: usize =
+            additions.iter().flat_map(|(_, routes)| routes).map(|r| r.links.len()).sum();
+        let mut out = Self {
+            network: self.network,
+            method: self.method.clone(),
+            descriptor: self.descriptor.clone(),
+            update: update.to_string(),
+            keys: self.keys.clone(),
+            set_start: Vec::with_capacity(self.set_start.len()),
+            route_start: Vec::with_capacity(self.route_start.len() + added),
+            links: Vec::with_capacity(self.links.len() + added_links),
+            cost: Vec::with_capacity(self.cost.len() + added),
+            overlap: Vec::with_capacity(self.cost.len() + added),
+            stamp: Vec::with_capacity(self.cost.len() + added),
+        };
+        out.set_start.push(0);
+        out.route_start.push(0);
+        let mut shift = Vec::with_capacity(self.keys.len());
+        let mut before = 0_u32;
+        let mut next = additions.iter().peekable();
+        for k in 0..self.keys.len() {
+            shift.push(before);
+            for r in self.route_range(k) {
+                let view = self.route(r);
+                out.links.extend_from_slice(view.links);
+                out.route_start.push(u32::try_from(out.links.len()).expect("links fit u32"));
+                out.cost.push(view.cost);
+                out.overlap.push(view.overlap);
+                out.stamp.push(self.stamp[r]);
+            }
+            if let Some((_, routes)) = next.next_if(|(key, _)| *key == k) {
+                for route in routes {
+                    out.links.extend(route.links.iter().map(|l| l.raw()));
+                    out.route_start.push(u32::try_from(out.links.len()).expect("links fit u32"));
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        reason = "f32 costs are the stored form"
+                    )]
+                    {
+                        out.cost.push(route.cost as f32);
+                        out.overlap.push(route.overlap as f32);
+                    }
+                    out.stamp.push(stamp);
+                    before += 1;
+                }
+            }
+            out.set_start.push(u32::try_from(out.cost.len()).expect("routes fit u32"));
+        }
+        (out, shift)
+    }
+
     /// The name of the method that made this store.
     #[must_use]
     pub fn method(&self) -> &str {
@@ -165,8 +279,16 @@ impl RouteSets {
         &self.descriptor
     }
 
+    /// The descriptor of the update that grew these sets after they were generated
+    /// ([`Self::extended`]): empty for a store as its method made it.
+    #[must_use]
+    pub fn update(&self) -> &str {
+        &self.update
+    }
+
     /// A number that is equal exactly when the network and the method with all
-    /// its options are the same (FNV-1a over the fingerprint and descriptor).
+    /// its options are the same, and the sets have been grown by the same update if
+    /// they have (FNV-1a over the fingerprint, descriptor and update).
     #[must_use]
     pub fn identity(&self) -> u64 {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -178,6 +300,11 @@ impl RouteSets {
         };
         feed(&self.network.value().to_le_bytes());
         feed(self.descriptor.as_bytes());
+        // A store nobody has grown hashes as it always did.
+        if !self.update.is_empty() {
+            feed(b"+update:");
+            feed(self.update.as_bytes());
+        }
         h
     }
 
@@ -279,7 +406,8 @@ impl RouteSets {
         &self.overlap
     }
 
-    /// Every route's cost stamp.
+    /// Every route's stamp: 0 for a route the generator made, otherwise the iteration
+    /// that added it ([`Self::extended`]).
     #[must_use]
     pub fn stamps(&self) -> &[u32] {
         &self.stamp

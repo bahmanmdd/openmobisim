@@ -34,7 +34,7 @@ def corner_pairs(net, n=6):
 
 def test_the_default_method_is_listed_first_and_others_can_be_selected():
     names = ms.route_methods()
-    assert names[0] == "penalty" and "shortest" in names
+    assert names[0] == "penalty" and {"shortest", "montecarlo"} <= set(names)
 
 
 def test_the_store_is_a_consistent_set_of_flat_arrays():
@@ -178,3 +178,62 @@ def test_map_route_says_what_is_wrong():
         viz.map_route(rs, net, lack[0], size=(6, 3.4), dpi=60)
     with pytest.raises(ValueError, match="out of range"):
         viz.map_route(rs, net, 99)
+
+
+# --- the congestion-biased Monte Carlo method (S176) ---------------------------------------------
+
+
+def test_montecarlo_is_biased_by_the_demand_it_is_generated_for():
+    net = ms.examples.manhattan_grid(n=8, block_metres=200.0, signals=False)
+    rows = ms.examples.trips_random(net, 300, seed=5, min_m=300.0, max_m=1400.0, spread_s=300)
+
+    def sets(weight, method="montecarlo"):
+        run = ms.Scenario.from_parts(
+            net,
+            rows,
+            class_defaults={"commuter": (True, False, False)},
+            window_hours=2,
+            flow_level=4,
+            default_weight=weight,
+            route_method=method,
+        ).run(f"mc-{method}-{weight}")
+        return run.route_sets(), run
+
+    (light, light_run), (heavy, _), (shortest, shortest_run) = (
+        sets(1),
+        sets(1000),
+        sets(1, "shortest"),
+    )
+    assert light.method == "montecarlo" and "bias=demand" in light.descriptor
+    assert light_run.fingerprint != shortest_run.fingerprint
+    # Every pair's first route is a shortest one.
+    first = light.set_offsets()[:-1]
+    assert np.allclose(light.costs()[first], shortest.costs(), atol=1e-3)
+    # The people the trips stand for decide how much noise the links get: on the same trips, more
+    # people put more of the network near capacity, so more alternatives are worth finding.
+    assert heavy.route_count > light.route_count > shortest.route_count
+
+
+def test_montecarlo_sets_can_be_built_for_pairs_and_follow_their_options():
+    net = grid(8)
+    pairs = corner_pairs(net, 8)
+    base = ms.route_sets_build(net, pairs, method="montecarlo")
+    assert base.method == "montecarlo" and base.key_count == 4
+    again = ms.route_sets_build(net, pairs, method="montecarlo")
+    assert (base.links() == again.links()).all() and base.identity == again.identity
+    # The seed is another set of draws, and part of the set's identity.
+    other = ms.route_sets_build(net, pairs, method="montecarlo", options={"seed": 2})
+    assert other.identity != base.identity
+    # Without the bias, noise on every link finds many more routes.
+    unbiased = ms.route_sets_build(net, pairs, method="montecarlo", options={"biased": 0})
+    assert "bias=none" in unbiased.descriptor and unbiased.route_count > base.route_count
+
+
+def test_montecarlo_options_are_refused_before_any_work():
+    net = grid()
+    pairs = corner_pairs(net)
+    with pytest.raises(ValueError, match='"biased", "draws", "max_detour", "max_overlap"'):
+        ms.route_sets_build(net, pairs, method="montecarlo", options={"nope": 1})
+    for name, value in [("draws", 1001), ("max_paths", 0), ("sigma", 0), ("max_detour", 0.5)]:
+        with pytest.raises(ValueError, match=name):
+            ms.route_sets_build(net, pairs, method="montecarlo", options={name: value})

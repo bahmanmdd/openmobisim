@@ -137,6 +137,14 @@ class Run:
         return self._summary.equilibration
 
     @property
+    def route_update(self) -> str:
+        """The name of the route update that grew the route sets between iterations.
+
+        ``"none"`` (the sets stayed as the route method made them) or ``"best_response"``.
+        """
+        return self._summary.route_update
+
+    @property
     def converged(self) -> bool:
         """Whether the run stopped before its most iterations because it had converged."""
         return self._summary.converged
@@ -210,7 +218,15 @@ class Run:
         ``"deterministic"`` do; a Python model may have a ``probabilities(batch)``
         method) and are ``nan`` without one; ``gap`` does not.
 
-        The same numbers are in ``kpis.parquet``, a row per metric per iteration.
+        * ``routes_added``, ``route_searches`` — under a route update
+          (``route_update="best_response"``), how many routes it added to the route sets
+          **after** this loading, for the next iteration to choose among, and how many
+          searches that took; 0 without one, and at the last iteration, which no choice
+          follows. **``gap`` is measured against the sets as grown**: the routes the
+          travellers may choose from next.
+
+        The numbers up to ``gap_flow_excess`` are also in ``kpis.parquet``, a row per metric
+        per iteration.
         """
         return dict(self._summary.convergence)
 
@@ -218,8 +234,9 @@ class Run:
         """The route sets the trips were routed from.
 
         Every alternative the method found for every origin-destination pair
-        the demand asked for. Draw one pair's alternatives with
-        ``openmobisim.viz.map_route``.
+        the demand asked for, and, if the run had a route update, the routes it added
+        while iterating (``stamps()`` says in which iteration each was added; 0 for the
+        method's own). Draw one pair's alternatives with ``openmobisim.viz.map_route``.
         """
         return self._summary.route_sets
 
@@ -349,6 +366,8 @@ class Scenario:
         choice_options: dict[str, float] | None = None,
         equilibration: str = "none",
         equilibration_options: dict[str, float] | None = None,
+        route_update: str = "none",
+        route_update_options: dict[str, float] | None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
         if flow_level not in FLOW_LEVELS:
@@ -379,6 +398,8 @@ class Scenario:
         self._choice_options = choice_options
         self._equilibration = equilibration
         self._equilibration_options = equilibration_options
+        self._route_update = route_update
+        self._route_update_options = route_update_options
 
     @classmethod
     def from_parts(
@@ -399,6 +420,8 @@ class Scenario:
         choice_options: dict[str, float] | None = None,
         equilibration: str = "none",
         equilibration_options: dict[str, float] | None = None,
+        route_update: str = "none",
+        route_update_options: dict[str, float] | None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -429,12 +452,24 @@ class Scenario:
                 this many seconds, read with ``Run.link_bins()`` and drawn
                 with ``openmobisim.viz.map_link``.
             route_method: How route sets are generated, by name (see
-                ``openmobisim.route_methods()``; the default ``"penalty"``
-                finds distinct alternatives). Until choice exists each trip
-                takes the best route of its pair, so the method changes the
-                sets you can inspect (``Run.route_sets()``) but not the run.
+                ``openmobisim.route_methods()``). ``"penalty"`` (the default) finds
+                distinct alternatives by penalising the links of the routes found.
+                ``"shortest"`` makes one route per pair. ``"montecarlo"`` finds routes
+                by searching under random link costs **biased towards the links the
+                demand is likely to congest** (the busiest half-hour's load on shortest
+                routes over each link's capacity, from this scenario's trips and their
+                weights): routes that go round what the demand will jam. It has been
+                measured on few networks: better alternatives than ``"penalty"`` on one
+                city's heavy load, worse on another's. Which route a trip takes among its
+                alternatives is ``choice_model``'s business.
             route_options: The method's options, numbers by name; unknown names
-                and out-of-range values are refused.
+                and out-of-range values are refused. For ``"penalty"``: ``max_paths``
+                (5), ``max_detour`` (1.3), ``max_overlap`` (0.75), ``penalty`` (1.5),
+                ``max_attempts`` (15). For ``"montecarlo"``: ``draws`` (16),
+                ``sigma`` (4: how far a link's cost may rise, times its bias),
+                ``max_detour`` (2), ``max_overlap`` (0.9), ``max_paths`` (10), ``seed``
+                (0: another seed is another set of draws) and ``biased`` (1; 0 for no
+                bias, which measured worse on the one heavy load it was tried on).
             master_seed: The one number that starts every random stream, so a
                 run is reproduced by giving it the same one. Under a sampled
                 choice model (``"logit"``) it decides who takes which route;
@@ -470,6 +505,25 @@ class Scenario:
                 ``gap_sample`` (300; how many trips are tested against the whole
                 network at the last iteration, 0 for none) and ``cost_bin_s`` (300: the
                 length of the time bins the link times are read in).
+            route_update: How the route sets grow between iterations (see
+                ``openmobisim.route_update_methods()``). ``"none"`` (the default) leaves
+                them as the route method made them, at free-flow costs. ``"best_response"``
+                is for a run that iterates: after each loading it searches, for every
+                origin-destination pair, the fastest route at the congested times the
+                loading produced, and adds it to the pair's set if it is new and at least as
+                fast as the best route already there, before travellers choose again. It
+                closes the gap that ``Run.convergence()["gap_network"]`` shows when traffic
+                has made a route worthwhile that no set held. Where nothing queues it adds
+                little or nothing. It is for congestion that is heavy but not gridlock: near
+                gridlock it can make a run worse. **The equilibrium is then over the sets the
+                route method and the update produce**, which the run's fingerprint and
+                manifest say.
+            route_update_options: The update's options, numbers by name: for
+                ``"best_response"``, ``searches`` (1: how many searches per pair per
+                iteration, at spread quantiles of the pair's departures; more finds routes
+                that pay only at some hours and makes bigger sets) and ``max_routes`` (10:
+                the most routes a pair's set may hold; a pair at the limit is not searched).
+                Unknown names and out-of-range values are refused.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -497,6 +551,8 @@ class Scenario:
             choice_options=choice_options,
             equilibration=equilibration,
             equilibration_options=equilibration_options,
+            route_update=route_update,
+            route_update_options=route_update_options,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
@@ -535,6 +591,8 @@ class Scenario:
             choice_options=self._choice_options,
             equilibration=self._equilibration,
             equilibration_options=self._equilibration_options,
+            route_update=self._route_update,
+            route_update_options=self._route_update_options,
         )
         return Run(
             summary,

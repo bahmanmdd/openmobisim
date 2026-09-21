@@ -21,7 +21,7 @@ use openmobisim_core_loading::{
     run_ltm_binned, run_ltm_recorded, traverse_free_flow,
 };
 use openmobisim_core_routes::{
-    NodeSnapper, RouteKey, RouteSetGenerator, RouteSets, default_generator,
+    Demand, NodeSnapper, RouteKey, RouteSetGenerator, RouteSets, TripDemand, default_generator,
 };
 use openmobisim_core_types::diagnostics::{
     Category, DiagKey, Diagnostics, ElementRef, Severity, codes,
@@ -36,6 +36,7 @@ use crate::events::{EventRow, EventType};
 use crate::identity::{Inputs, RunDescription, describe};
 use crate::link_times::{LinkTimes, relative_time_change};
 use crate::route_choice::{self, NO_ROUTE, RouteChoices};
+use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext};
 
 /// Which loading engine a [`Run`] uses.
 ///
@@ -218,6 +219,8 @@ pub struct Run {
     choice_model: Arc<dyn ChoiceModel>,
     /// How choice and loading are repeated (S170): once, by default.
     equilibration: Arc<dyn Equilibration>,
+    /// How the route sets grow between iterations (S176): not at all, by default.
+    route_update: Arc<dyn RouteUpdate>,
 }
 
 impl Run {
@@ -244,6 +247,7 @@ impl Run {
             master_seed: 0,
             choice_model: Arc::new(Deterministic),
             equilibration: Arc::new(NoEquilibration),
+            route_update: Arc::new(NoRouteUpdate),
         }
     }
 
@@ -296,6 +300,17 @@ impl Run {
         self
     }
 
+    /// The same run, growing its route sets between iterations with `update` instead of
+    /// leaving them as the generator made them (S176). Select a built-in one by name with
+    /// [`crate::route_update::update`], or pass your own [`RouteUpdate`]. It changes nothing
+    /// unless the run iterates (an [`Equilibration`] with more than one loading): the
+    /// sets grow *between* loadings.
+    #[must_use]
+    pub fn with_route_update(mut self, update: Arc<dyn RouteUpdate>) -> Self {
+        self.route_update = update;
+        self
+    }
+
     /// What went into this run: its seed and its fingerprint (S168). Take it
     /// before [`Self::execute`]; it depends only on the inputs.
     #[must_use]
@@ -317,6 +332,9 @@ impl Run {
             equilibration_descriptor: &self.equilibration.descriptor(),
             equilibration_draws: self.equilibration.draws_reselection(),
             max_iterations: self.equilibration.max_iterations(),
+            route_update: self.route_update.name(),
+            route_update_descriptor: &self.route_update.descriptor(),
+            route_update_active: self.route_update.is_active(),
         })
     }
 
@@ -389,8 +407,28 @@ impl Run {
             FlowMotor::Ltm { turns, .. } => turns.clone(),
             FlowMotor::Level0 => Arc::new(TurnTable::build(&self.network, SignalDefaults::SHIPPED)),
         };
-        let route_sets =
-            RouteSets::generate(&self.network, &turns, &trip_keys, self.route_generator.as_ref());
+        // A method that reads the demand (the Monte Carlo method's bias, S176) is told it
+        // first; one that does not costs nothing here.
+        let generator: Arc<dyn RouteSetGenerator> = if self.route_generator.reads_demand() {
+            let trips_demand: Vec<TripDemand> = (0..total_trips)
+                .map(|i| {
+                    let trip = TripId::new(i);
+                    TripDemand {
+                        key: trip_keys[i as usize],
+                        weight: self.travellers.weight(self.trips.traveller(trip)),
+                        departure: self.trips.departure(trip).get(),
+                    }
+                })
+                .collect();
+            let demand = Demand { network: &self.network, turns: &turns, trips: &trips_demand };
+            self.route_generator
+                .with_demand(&demand)
+                .map_or_else(|| self.route_generator.clone(), Arc::from)
+        } else {
+            self.route_generator.clone()
+        };
+        let mut route_sets =
+            Arc::new(RouteSets::generate(&self.network, &turns, &trip_keys, generator.as_ref()));
 
         // Choice and equilibration (S169, S170): every trip chooses a route on
         // free-flow costs; then, under an equilibration strategy, the network is
@@ -409,12 +447,12 @@ impl Run {
             travellers: &travellers,
             trips: &trips,
             trip_keys: &trip_keys,
-            route_sets: &route_sets,
             model: model.as_ref(),
             turns: &turns,
         };
-        let chooser = route_choice::Chooser::new(&inputs)?;
+        let mut chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
         let mut route_choices = chooser.choose_all(&choice_rng, 0)?;
+        let route_update = self.route_update.clone();
 
         let strategy = self.equilibration.clone();
         let max_iterations = strategy.max_iterations().max(1);
@@ -458,6 +496,33 @@ impl Run {
                 if let Some(bins) = &loaded.entry_bins {
                     let times = LinkTimes::from_tables(&self.network, bins);
                     let next = iteration + 1;
+                    // The sets grow between loadings (S176): routes the congested times of
+                    // this one show to be worth having, for the next to choose among. Not
+                    // after the last loading, which no choice follows.
+                    if next < max_iterations && route_update.is_active() {
+                        let found = route_update.update(&UpdateContext {
+                            network: &network,
+                            turns: &turns,
+                            trips: &trips,
+                            trip_keys: &trip_keys,
+                            route_sets: &route_sets,
+                            times: &times,
+                            iteration: next,
+                        });
+                        report.route_searches = found.searches;
+                        report.routes_added =
+                            u32::try_from(found.route_count()).expect("few routes are added");
+                        if !found.routes.is_empty() {
+                            let (grown, shift) = route_sets.extended(
+                                &found.routes,
+                                next,
+                                &route_update.descriptor(),
+                            );
+                            route_choices.grown(&route_sets, &shift, &grown, &trip_keys);
+                            route_sets = Arc::new(grown);
+                            chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
+                        }
+                    }
                     let strategy_for_next =
                         (next < max_iterations).then_some((strategy.as_ref(), &reselect_rng));
                     let update = chooser.update(
@@ -507,6 +572,10 @@ impl Run {
 
         let (loaded, iteration_diagnostics) = last.expect("at least one iteration ran");
         diagnostics.merge(&iteration_diagnostics);
+        // The chooser holds the other handle on the sets; without it they are ours.
+        drop(chooser);
+        let route_sets =
+            Arc::try_unwrap(route_sets).unwrap_or_else(|shared| RouteSets::clone(&shared));
         // The per-link table is the user's only if they asked for it.
         let link_bins = if self.link_bin_seconds.is_some() { loaded.link_bins } else { None };
         Ok(RunResult {

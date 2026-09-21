@@ -252,6 +252,8 @@ fn sample_description(step: Option<f64>, bins: Option<u32>) -> RunDescription {
         equilibration: "none".to_string(),
         equilibration_descriptor: "none".to_string(),
         max_iterations: 1,
+        route_update: "none".to_string(),
+        route_update_descriptor: "none".to_string(),
     }
 }
 
@@ -347,6 +349,8 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
         gap_flow: gap,
         gap_flow_floor: 0.01,
         gap_flow_excess: gap - 0.01,
+        routes_added: 0,
+        route_searches: 0,
     };
     result.iterations = vec![report(0, 0.3), report(1, 0.1), report(2, 0.05)];
     let path = temp_path("kpis_iterated.parquet");
@@ -414,4 +418,14 @@ fn the_manifest_says_how_many_loadings_were_made_and_whether_it_converged() {
     ));
     assert!(json.contains("\"iterations_run\": 2") && json.contains("\"converged\": true"));
     assert!(json.contains("\"live_streams\": [\"choice\", \"msa_reselection\"]"));
+    // No update: the manifest says so, in words (S176).
+    assert!(json.contains("\"route_update\": \"none\""), "{json}");
+    // And an update, with its options, is named.
+    description.route_update = "best_response".to_string();
+    description.route_update_descriptor = "best_response;max_routes=10;searches=1".to_string();
+    let json = Manifest::for_run(&travellers, &result, Second(3600), 1, &description).to_json();
+    assert!(json.contains("\"route_update\": \"best_response\""), "{json}");
+    assert!(
+        json.contains("\"route_update_descriptor\": \"best_response;max_routes=10;searches=1\"")
+    );
 }

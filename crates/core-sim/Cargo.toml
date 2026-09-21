@@ -23,3 +23,5 @@ openmobisim-core-choice = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# Runs of one scenario at other thread counts, to check they agree.
+rayon = { workspace = true }

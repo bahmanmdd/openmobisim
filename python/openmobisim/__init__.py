@@ -13,7 +13,8 @@ imported on demand, so ``import openmobisim`` never needs matplotlib.
 The scenario surface is intentionally narrow: a network, a trips table, one
 run, its output artifacts, route choice among each trip's alternatives
 (``openmobisim.choice`` says how to add your own choice model) and, optionally,
-iteration towards an equilibrium (``equilibration="msa"``). No hubs, no
+iteration towards an equilibrium (``equilibration="msa"``), during which the route sets
+may grow (``route_update="best_response"``). No hubs, no
 disruptions — those arrive with the mechanisms that give them meaning.
 """
 
@@ -27,6 +28,7 @@ from openmobisim._core import (
     network_read_osm,
     route_methods,
     route_sets_build,
+    route_update_methods,
     step_of,
 )
 from openmobisim.scenario import Run, Scenario, Table
@@ -48,5 +50,6 @@ __all__ = [
     "network_read_osm",
     "route_methods",
     "route_sets_build",
+    "route_update_methods",
     "step_of",
 ]

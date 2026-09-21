@@ -310,11 +310,11 @@ fn a_store_knows_what_made_it() {
 #[test]
 fn methods_are_selected_by_name_and_bad_choices_say_what_is_wrong() {
     let names = Registry::builtin().names().into_iter().map(str::to_string).collect::<Vec<_>>();
-    assert_eq!(names, ["penalty", "shortest"]);
+    assert_eq!(names, ["penalty", "shortest", "montecarlo"]);
     assert_eq!(DEFAULT_METHOD, "penalty");
     match generator("teleport", &no_options()).err() {
         Some(RouteError::UnknownMethod { name, known }) => {
-            assert!(name == "teleport" && known.len() == 2)
+            assert!(name == "teleport" && known.len() == 3)
         }
         other => panic!("{other:?}"),
     }
@@ -353,7 +353,7 @@ fn methods_are_selected_by_name_and_bad_choices_say_what_is_wrong() {
 fn a_new_method_plugs_in_without_changing_anything_else() {
     let mut registry = Registry::builtin();
     registry.register("my_method", |options| Ok(Box::new(Shortest::from_options(options)?)));
-    assert_eq!(registry.names(), ["penalty", "shortest", "my_method"]);
+    assert_eq!(registry.names(), ["penalty", "shortest", "montecarlo", "my_method"]);
     let net = diamond();
     let turns = turns_of(&net);
     let key = RouteKey::new(node(&net, "A"), node(&net, "D"));
@@ -586,4 +586,192 @@ fn the_fastest_time_follows_the_times_at_the_moment_each_link_is_entered() {
     // The same place is no time at all, and the search leaves itself clean for the next.
     assert_eq!(search.fastest_time(a, a, 0.0, 1.0, &no_wait, &seconds), Some(0.0));
     assert_eq!(search.shortest(a, d).map(|r| r.links.len()), Some(2));
+}
+
+#[test]
+fn the_fastest_route_is_the_route_the_fastest_time_prices() {
+    // The same times as above; now the route itself is asked for, and it is the one whose
+    // walk through those times takes the time the search reports.
+    let net = diamond();
+    let turns = turns_of(&net);
+    let id = |n: &str| net.link_external_ids().typed_id_of::<LinkId>(n).expect("link");
+    let (ab, bd, ac, cd) = (id("ab"), id("bd"), id("ac"), id("cd"));
+    let (a, d) = (node(&net, "A"), node(&net, "D"));
+    let ctx = openmobisim_core_routes::SearchContext::new(&net, &turns);
+    let mut search = openmobisim_core_routes::Search::new(&ctx);
+    let seconds = |l: u32, at: f64| {
+        if l == ab.raw() {
+            if at < 100.0 { 50.0 } else { 500.0 }
+        } else if l == bd.raw() {
+            25.0
+        } else if l == ac.raw() || l == cd.raw() {
+            30.0
+        } else {
+            f64::INFINITY
+        }
+    };
+    let jam_bottom = |l: u32, at: f64| if l == ac.raw() { 400.0 } else { seconds(l, at) };
+    let no_wait = |_: u32, _: f64| 0.0;
+    let inf = f64::INFINITY;
+    // Leaving at 0 s the bottom road (60 s) beats the top (75 s); with the bottom jammed, the top
+    // wins (75 s); leaving at 200 s the top's first link has jammed and the bottom wins again.
+    let mut check =
+        |times: &dyn Fn(u32, f64) -> f64, departure: f64, expected: f64, via: [LinkId; 2]| {
+            let (time, route) =
+                search.fastest_route(a, d, departure, inf, &no_wait, times).expect("a route");
+            assert!((time - expected).abs() < 1e-12, "{time}");
+            assert_eq!(route, via.to_vec());
+            assert_eq!(
+                search.fastest_time(a, d, departure, inf, &no_wait, times),
+                Some(time),
+                "the two agree"
+            );
+        };
+    check(&seconds, 0.0, 60.0, [ac, cd]);
+    check(&jam_bottom, 0.0, 75.0, [ab, bd]);
+    check(&seconds, 200.0, 60.0, [ac, cd]);
+    // A bound nothing meets; the same place is no time and no links; and the search is left clean.
+    assert_eq!(search.fastest_route(a, d, 0.0, 50.0, &no_wait, &seconds), None);
+    assert_eq!(search.fastest_route(a, a, 0.0, 1.0, &no_wait, &seconds), Some((0.0, Vec::new())));
+    assert_eq!(
+        search.fastest_route(a, d, 0.0, 60.0, &no_wait, &seconds).map(|(_, r)| r),
+        Some(vec![ac, cd]),
+        "a bound of exactly the time still finds it"
+    );
+}
+
+// --- growing a store (S176) -------------------------------------------------------------------------
+
+fn added(links: &[u32], cost: f64) -> openmobisim_core_routes::Route {
+    openmobisim_core_routes::Route {
+        links: links.iter().map(|&l| LinkId::new(l)).collect(),
+        cost,
+        overlap: 0.25,
+    }
+}
+
+#[test]
+fn an_extended_store_keeps_every_route_and_puts_the_new_ones_last() {
+    let (net, _) = manhattan_grid(6, 200.0, true);
+    let turns = turns_of(&net);
+    let keys = grid_keys(&net, 6, 40, 5);
+    let old = RouteSets::generate(&net, &turns, &keys, &Penalty::default());
+    let key_count = old.keys().len();
+    assert!(key_count > 10);
+    // Routes added to keys 2, 5 and the last one: one, three and two of them.
+    let picks = [(2, 1), (5, 3), (key_count - 1, 2)];
+    let links = net.link_count();
+    // Made-up routes: the store holds what it is given, so only the link ids must exist.
+    let additions: Vec<(usize, Vec<_>)> = picks
+        .iter()
+        .map(|&(k, n)| {
+            let route =
+                |i: u32| added(&[7, 8, (9 + i + 10 * k as u32) % links], 100.0 + f64::from(i));
+            (k, (0..n).map(route).collect())
+        })
+        .collect();
+    let (grown, shift) = old.extended(&additions, 4, "best_response;test");
+
+    // Sizes and identity.
+    assert_eq!(grown.keys(), old.keys());
+    assert_eq!(grown.route_count(), old.route_count() + 6);
+    assert_eq!((grown.method(), grown.descriptor()), (old.method(), old.descriptor()));
+    assert_eq!((old.update(), grown.update()), ("", "best_response;test"));
+    assert_ne!(old.identity(), grown.identity(), "grown sets are not the sets the method made");
+    assert!(grown.matches(&net));
+    // Every old route is where the shift says, with what it had.
+    assert_eq!(shift.len(), key_count);
+    for (k, &shifted) in shift.iter().enumerate() {
+        let before: u32 =
+            additions.iter().filter(|(a, _)| *a < k).map(|(_, r)| r.len() as u32).sum();
+        assert_eq!(shifted, before, "key {k}");
+        for r in old.route_range(k) {
+            let (o, g) = (old.route(r), grown.route(r + shifted as usize));
+            assert_eq!(
+                (o.links, o.cost.to_bits(), o.overlap.to_bits()),
+                (g.links, g.cost.to_bits(), g.overlap.to_bits())
+            );
+            assert_eq!(old.stamps()[r], grown.stamps()[r + shifted as usize]);
+            assert_eq!(grown.key_of_route(r + shifted as usize), k);
+        }
+    }
+    // The new routes follow the old ones of their key, in the order given, stamped, costed as given.
+    for (k, routes) in &additions {
+        let range = grown.route_range(*k);
+        assert_eq!(range.len(), old.route_range(*k).len() + routes.len());
+        for (i, route) in routes.iter().enumerate() {
+            let r = range.start + old.route_range(*k).len() + i;
+            let v = grown.route(r);
+            let expected: Vec<u32> = route.links.iter().map(|l| l.raw()).collect();
+            assert_eq!(v.links, expected.as_slice());
+            assert!(
+                (f64::from(v.cost) - route.cost).abs() < 1e-4 && (v.overlap - 0.25).abs() < 1e-6
+            );
+            assert_eq!(grown.stamps()[r], 4);
+        }
+    }
+    assert_eq!(grown.stamps().iter().filter(|&&s| s == 4).count(), 6);
+    // Keys nobody added to keep their sizes; the inverted index and the offsets are consistent.
+    assert_eq!(*grown.set_start().last().unwrap() as usize, grown.route_count());
+    assert_eq!(*grown.route_start().last().unwrap() as usize, grown.links().len());
+    let index = grown.link_index(net.link_count());
+    assert!(index.routes_using(7).len() >= 6, "the added routes are in the inverted index");
+    // Adding nothing is a copy: equal, with the same identity.
+    let (same, none) = old.extended(&[], 1, "");
+    assert_eq!(same, old);
+    assert_eq!(same.identity(), old.identity());
+    assert!(none.iter().all(|&s| s == 0));
+    // Growing twice is growing once with both: the second update's descriptor is the store's.
+    let (twice, _) = grown.extended(&[(0, vec![added(&[1, 2], 10.0)])], 5, "best_response;other");
+    assert_eq!(twice.update(), "best_response;other");
+    assert_eq!(twice.route_count(), grown.route_count() + 1);
+}
+
+#[test]
+#[should_panic(expected = "strictly ascending")]
+fn additions_out_of_key_order_are_refused() {
+    let net = diamond();
+    let (a, d) = (node(&net, "A"), node(&net, "D"));
+    let sets = RouteSets::generate(
+        &net,
+        &turns_of(&net),
+        &[RouteKey::new(a, d), RouteKey::new(d, a)],
+        &Shortest,
+    );
+    let _ = sets.extended(&[(1, vec![added(&[0], 1.0)]), (0, vec![added(&[0], 1.0)])], 1, "x");
+}
+
+#[test]
+#[should_panic(expected = "key the store does not have")]
+fn additions_to_a_key_that_does_not_exist_are_refused() {
+    let net = diamond();
+    let (a, d) = (node(&net, "A"), node(&net, "D"));
+    let sets = RouteSets::generate(&net, &turns_of(&net), &[RouteKey::new(a, d)], &Shortest);
+    let _ = sets.extended(&[(1, vec![added(&[0], 1.0)])], 1, "x");
+}
+
+#[test]
+fn a_search_over_many_items_returns_its_results_in_the_order_of_the_items() {
+    let (net, _) = manhattan_grid(8, 150.0, true);
+    let turns = turns_of(&net);
+    let ctx = openmobisim_core_routes::SearchContext::new(&net, &turns);
+    let items = grid_keys(&net, 8, 200, 17);
+    let work = |search: &mut openmobisim_core_routes::Search<'_>, k: &RouteKey| {
+        search.shortest(NodeId::new(k.origin), NodeId::new(k.destination)).map(|r| r.links)
+    };
+    let sequential: Vec<_> = {
+        let mut search = openmobisim_core_routes::Search::new(&ctx);
+        items.iter().map(|k| work(&mut search, k)).collect()
+    };
+    assert_eq!(openmobisim_core_routes::search_map(&ctx, &items, work), sequential);
+    #[cfg(feature = "parallel")]
+    for threads in [1, 3, 8] {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().expect("pool");
+        assert_eq!(
+            pool.install(|| openmobisim_core_routes::search_map(&ctx, &items, work)),
+            sequential,
+            "{threads} threads"
+        );
+    }
+    assert!(openmobisim_core_routes::search_map(&ctx, &Vec::<RouteKey>::new(), work).is_empty());
 }

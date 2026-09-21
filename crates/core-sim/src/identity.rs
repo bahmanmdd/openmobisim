@@ -16,7 +16,8 @@
 //! what they own) and every trip (traveller, departure, origin, destination);
 //! the window; the loading engine, its level and its step; the route method
 //! and its options; the choice model and its options; the equilibration
-//! strategy and its options; the bin length of the per-link results.
+//! strategy and its options; the route update and its options, if there is one (S176);
+//! the bin length of the per-link results.
 //!
 //! **What is not.** The platform and the crate version (the manifest carries
 //! them next to the fingerprint: a fingerprint says *what was run*, the
@@ -77,6 +78,10 @@ pub struct RunDescription {
     pub equilibration_descriptor: String,
     /// The most loadings the run makes.
     pub max_iterations: u32,
+    /// The route update's name (S176): `"none"` if the sets stay as generated.
+    pub route_update: String,
+    /// The update with every option and default, canonical.
+    pub route_update_descriptor: String,
 }
 
 impl RunDescription {
@@ -111,6 +116,9 @@ pub(crate) struct Inputs<'a> {
     pub equilibration_descriptor: &'a str,
     pub equilibration_draws: bool,
     pub max_iterations: u32,
+    pub route_update: &'a str,
+    pub route_update_descriptor: &'a str,
+    pub route_update_active: bool,
 }
 
 pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
@@ -138,6 +146,12 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     h.write_str(inputs.choice_descriptor);
     h.write_str(inputs.equilibration);
     h.write_str(inputs.equilibration_descriptor);
+    // Off means absent (S176): a run without an update hashes as it did before there was one.
+    if inputs.route_update_active {
+        h.write_str("route-update");
+        h.write_str(inputs.route_update);
+        h.write_str(inputs.route_update_descriptor);
+    }
 
     RunDescription {
         fingerprint: h.finish(),
@@ -163,6 +177,8 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         equilibration: inputs.equilibration.to_string(),
         equilibration_descriptor: inputs.equilibration_descriptor.to_string(),
         max_iterations: inputs.max_iterations,
+        route_update: inputs.route_update.to_string(),
+        route_update_descriptor: inputs.route_update_descriptor.to_string(),
     }
 }
 
