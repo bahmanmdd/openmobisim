@@ -16,7 +16,7 @@
 //! what they own) and every trip (traveller, departure, origin, destination);
 //! the window; the loading engine, its level and its step; the route method
 //! and its options; the choice model and its options; the equilibration
-//! strategy and its options; the route update and its options, if there is one (S176);
+//! strategy and its options; the choice-set detour limit (S178); the route update and its options, if there is one (S176);
 //! the bin length of the per-link results.
 //!
 //! **What is not.** The platform and the crate version (the manifest carries
@@ -78,6 +78,9 @@ pub struct RunDescription {
     pub equilibration_descriptor: String,
     /// The most loadings the run makes.
     pub max_iterations: u32,
+    /// How far above the best route's expected time a route may be and still be offered to a
+    /// traveller (S178); 0 offers every route.
+    pub choice_detour_limit: f64,
     /// The route update's name (S176): `"none"` if the sets stay as generated.
     pub route_update: String,
     /// The update with every option and default, canonical.
@@ -119,6 +122,7 @@ pub(crate) struct Inputs<'a> {
     pub route_update: &'a str,
     pub route_update_descriptor: &'a str,
     pub route_update_active: bool,
+    pub choice_detour_limit: f64,
 }
 
 pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
@@ -146,6 +150,7 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     h.write_str(inputs.choice_descriptor);
     h.write_str(inputs.equilibration);
     h.write_str(inputs.equilibration_descriptor);
+    h.write_f64(inputs.choice_detour_limit);
     // Off means absent (S176): a run without an update hashes as it did before there was one.
     if inputs.route_update_active {
         h.write_str("route-update");
@@ -177,12 +182,13 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         equilibration: inputs.equilibration.to_string(),
         equilibration_descriptor: inputs.equilibration_descriptor.to_string(),
         max_iterations: inputs.max_iterations,
+        choice_detour_limit: inputs.choice_detour_limit,
         route_update: inputs.route_update.to_string(),
         route_update_descriptor: inputs.route_update_descriptor.to_string(),
     }
 }
 
-fn hash_network(h: &mut Fnv1a, network: &RoadNetwork, ids: u64) {
+pub(crate) fn hash_network(h: &mut Fnv1a, network: &RoadNetwork, ids: u64) {
     h.write_u64(ids);
     for raw in 0..network.node_count() {
         let node = NodeId::new(raw);

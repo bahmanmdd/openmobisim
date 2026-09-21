@@ -153,26 +153,31 @@ class Run:
     def convergence_gap(self) -> float:
         """How far the run ended from equilibrium.
 
-        **The worse of** the last iteration's gap against the choice set
-        (``convergence()["gap"][-1]``) and against the whole network
-        (``convergence()["gap_network"][-1]``, a sample), so a route the choice set was
-        missing cannot hide behind a small in-set gap.
+        **The worse of** the last iteration's disequilibrium against the choice set
+        (``convergence()["gap_excess"][-1]``) and against the whole network
+        (``convergence()["gap_network_excess"][-1]``, a sample), so a route the choice set
+        was missing cannot hide behind a small in-set number. The disequilibrium is the gap
+        **less what the choice model itself expects** (a logit sends some travellers down
+        a slower route by design, so its gap is never 0); where the model gives no
+        probabilities the plain gaps are used instead.
 
         ``nan`` if no gap was measured (a run without equilibration). See
         ``convergence_verdict``.
         """
         c = self._summary.convergence
-        gaps = [float(c[k][-1]) for k in ("gap", "gap_network")]
-        finite = [g for g in gaps if g == g]  # not nan
+        values = []
+        for excess, plain in (("gap_excess", "gap"), ("gap_network_excess", "gap_network")):
+            value = float(c[excess][-1])
+            values.append(value if value == value else float(c[plain][-1]))
+        finite = [v for v in values if v == v]  # not nan
         return max(finite) if finite else float("nan")
 
     @property
     def convergence_verdict(self) -> str | None:
-        """``"good"`` (gap below 5%), ``"acceptable"`` (below 15%) or ``"poor"``.
+        """``"good"`` (disequilibrium below 5%), ``"acceptable"`` (below 15%) or ``"poor"``.
 
-        ``None`` if no gap was measured (no equilibration). The thresholds are those of
-        the usual practice for a stochastic dynamic assignment, which cannot reach full
-        equilibrium.
+        ``None`` if no gap was measured (no equilibration). Judged on
+        ``convergence_gap``, the disequilibrium: what the choice model does not explain.
         """
         gap = self.convergence_gap
         if gap != gap:  # nan
@@ -193,19 +198,30 @@ class Run:
         * ``total_travel_time_s``, ``completed``, ``truncated`` — this loading's.
         * ``time_change`` — how much the link times moved since the last loading, as a
           share of it, weighted by traffic. The stability of the pattern.
-        * ``gap`` — **the gap**, the usual measure of how far an assignment is from
-          equilibrium: how much more travel time the routes chosen cost than the
-          cheapest route of the same choice set at the times this loading produced,
-          ``Σ w (t_chosen − t_least) / Σ w t_least``. 0 when nobody could do better by
-          changing route. **Below 0.05 is good, below 0.15 acceptable** for a
-          stochastic dynamic assignment, which cannot reach full equilibrium (a
-          logit sends some travellers down a slower route by design). It does not
-          need the model's probabilities.
+        * ``gap`` — the usual measure of how far an assignment is from equilibrium: how
+          much more travel time the routes chosen cost than the cheapest route of the same
+          choice set at the times this loading produced, ``Σ w (t_chosen − t_least) /
+          Σ w t_least``, **over the trips that finished** (the times of trips still under way
+          when the window ended are lower bounds, not measurements). **A stochastic choice model
+          does not reach 0 by design**: a logit at −0.2 per minute has a gap of about 7% at
+          equilibrium.
+        * ``gap_expected`` — **the gap the choice model itself expects** at these times: the
+          same sum with each traveller's expected travel time under the model's
+          probabilities. 0 for the all-or-nothing ``"deterministic"`` model; ``nan`` for a
+          model that gives no probabilities.
+        * ``gap_excess`` — **the disequilibrium**, ``gap − gap_expected``: what the choice
+          model does not explain (it also holds the sampling noise of a finite population).
+          **Below 0.05 is good, below 0.15 acceptable**; it is what ``gap_tolerance`` stops on
+          and what ``convergence_verdict`` judges. Equal to ``gap`` for ``"deterministic"``.
+        * ``incomplete_share`` — the share of travellers (by weight) whose trip had not finished
+          when the window ended, who are left out of the gaps.
         * ``gap_network`` — the same measure against the **whole network**: the least
           time over *any* route at the current times (a time-dependent search), for a
-          sample of trips (the ``gap_sample`` option) at the **last** iteration only,
-          ``nan`` elsewhere. It shows whether the choice set was missing a route that
-          traffic has made worthwhile.
+          sample of the trips that finished (the ``gap_sample`` option) at the **last**
+          iteration only, ``nan`` elsewhere. It shows whether the choice set was missing a
+          route that traffic has made worthwhile.
+        * ``gap_network_excess`` — its disequilibrium: ``gap_network`` less what the model
+          explains *inside the set*, so a route the set was missing counts in full.
         * ``gap_flow``, ``gap_flow_floor``, ``gap_flow_excess`` — a check of the
           stochastic choice model with itself, needing its probabilities: the share of
           travellers whose route differs from where the probabilities at the current
@@ -368,6 +384,8 @@ class Scenario:
         equilibration_options: dict[str, float] | None = None,
         route_update: str = "none",
         route_update_options: dict[str, float] | None = None,
+        choice_detour_limit: float | None = None,
+        route_cache: bool = False,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
         if flow_level not in FLOW_LEVELS:
@@ -400,6 +418,8 @@ class Scenario:
         self._equilibration_options = equilibration_options
         self._route_update = route_update
         self._route_update_options = route_update_options
+        self._choice_detour_limit = choice_detour_limit
+        self._route_cache = route_cache
 
     @classmethod
     def from_parts(
@@ -422,6 +442,8 @@ class Scenario:
         equilibration_options: dict[str, float] | None = None,
         route_update: str = "none",
         route_update_options: dict[str, float] | None = None,
+        choice_detour_limit: float | None = None,
+        route_cache: bool = False,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -488,6 +510,25 @@ class Scenario:
                 ``beta_detour``, ``beta_overlap``, ``beta_n_links`` (0). Unknown
                 names and non-numbers are refused. The defaults are an
                 assumption, not a calibration.
+            choice_detour_limit: A **time-dependent choice set**: a traveller is offered only the
+                routes of the pair's set whose expected time, at the times of the last loading
+                (free flow for the first choice), is within this share of the best route's:
+                ``0.5`` offers a route only if it is at most 50% slower than the best right now.
+                A route far slower than the best is no realistic alternative, and in a logit it
+                only takes probability that belongs to routes that compete (the gap grows with the
+                size of the set). ``0`` offers every route of the set; ``None`` (the default) is the
+                library's default. The best route is always offered; a route left out is still in
+                the set and returns when times change. The gaps are still measured against the whole
+                set. The ``ln_path_size`` attribute is computed over the whole set.
+            route_cache: Keep the generated route sets in memory for the next run **of this
+                process** that asks for the same: the same network, the same origin-destination
+                pairs, the same route method and options and, for a method that reads the demand
+                (``"montecarlo"``), the same trips. Generating them is the largest single cost of
+                a run that iterates, so a study that runs one scenario many times, changing only
+                the equilibration, the choice model, the flow level or a seed, pays it once. Results
+                do not depend on whether the cache was used. Holds at most four sets (about 17 MB at
+                the scale of a country's network each); ``openmobisim.route_cache_clear()`` forgets
+                them, ``openmobisim.route_cache_info()`` says ``(hits, misses, held)``.
             equilibration: How choice and loading are repeated (see
                 ``openmobisim.equilibration_strategies()``). ``"none"`` (the
                 default) chooses every trip's route once, on free-flow costs, and
@@ -504,7 +545,10 @@ class Scenario:
                 last three iterations, is below this: 0.05 is good, 0.15 acceptable),
                 ``gap_sample`` (300; how many trips are tested against the whole
                 network at the last iteration, 0 for none) and ``cost_bin_s`` (300: the
-                length of the time bins the link times are read in).
+                length of the time bins the link times are read in) and ``warmup`` (0: how many of
+                the first loadings use the point-queue model, which cannot gridlock; the last
+                loading, the run's result, always uses ``flow_level``. A narrow route set is often
+                in gridlock in its first loading, and every later iteration inherits its times).
             route_update: How the route sets grow between iterations (see
                 ``openmobisim.route_update_methods()``). ``"none"`` (the default) leaves
                 them as the route method made them, at free-flow costs. ``"best_response"``
@@ -522,7 +566,10 @@ class Scenario:
                 ``"best_response"``, ``searches`` (1: how many searches per pair per
                 iteration, at spread quantiles of the pair's departures; more finds routes
                 that pay only at some hours and makes bigger sets) and ``max_routes`` (10:
-                the most routes a pair's set may hold; a pair at the limit is not searched).
+                the most routes a pair's set may hold; a pair at the limit is not searched) and
+                ``slack`` (0: a pair is not searched while its set's best route is within this
+                share of free flow, since nothing is faster than free flow and so at most that
+                much is left to gain).
                 Unknown names and out-of-range values are refused.
 
         Returns:
@@ -553,6 +600,8 @@ class Scenario:
             equilibration_options=equilibration_options,
             route_update=route_update,
             route_update_options=route_update_options,
+            choice_detour_limit=choice_detour_limit,
+            route_cache=route_cache,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
@@ -593,6 +642,8 @@ class Scenario:
             equilibration_options=self._equilibration_options,
             route_update=self._route_update,
             route_update_options=self._route_update_options,
+            choice_detour_limit=self._choice_detour_limit,
+            route_cache=self._route_cache,
         )
         return Run(
             summary,

@@ -254,6 +254,7 @@ fn sample_description(step: Option<f64>, bins: Option<u32>) -> RunDescription {
         max_iterations: 1,
         route_update: "none".to_string(),
         route_update_descriptor: "none".to_string(),
+        choice_detour_limit: 0.0,
     }
 }
 
@@ -351,6 +352,10 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
         gap_flow_excess: gap - 0.01,
         routes_added: 0,
         route_searches: 0,
+        gap_expected: f64::NAN,
+        gap_excess: f64::NAN,
+        incomplete_share: f64::NAN,
+        gap_network_excess: f64::NAN,
     };
     result.iterations = vec![report(0, 0.3), report(1, 0.1), report(2, 0.05)];
     let path = temp_path("kpis_iterated.parquet");

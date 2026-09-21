@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -243,6 +243,10 @@ fn convergence_arrays(
     dict.set_item("time_change", floats(|r| r.time_change).into_pyarray(py))?;
     dict.set_item("gap", floats(|r| r.gap).into_pyarray(py))?;
     dict.set_item("gap_network", floats(|r| r.gap_network).into_pyarray(py))?;
+    dict.set_item("gap_expected", floats(|r| r.gap_expected).into_pyarray(py))?;
+    dict.set_item("gap_excess", floats(|r| r.gap_excess).into_pyarray(py))?;
+    dict.set_item("gap_network_excess", floats(|r| r.gap_network_excess).into_pyarray(py))?;
+    dict.set_item("incomplete_share", floats(|r| r.incomplete_share).into_pyarray(py))?;
     dict.set_item("gap_flow", floats(|r| r.gap_flow).into_pyarray(py))?;
     dict.set_item("gap_flow_floor", floats(|r| r.gap_flow_floor).into_pyarray(py))?;
     dict.set_item("gap_flow_excess", floats(|r| r.gap_flow_excess).into_pyarray(py))?;
@@ -281,6 +285,7 @@ fn convergence_arrays(
     choice_model=None, choice_options=None,
     equilibration="none", equilibration_options=None,
     route_update="none", route_update_options=None,
+    choice_detour_limit=None, route_cache=false,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -310,7 +315,16 @@ pub fn run_pipeline(
     equilibration_options: Option<HashMap<String, f64>>,
     route_update: &str,
     route_update_options: Option<HashMap<String, f64>>,
+    choice_detour_limit: Option<f64>,
+    route_cache: bool,
 ) -> PyResult<PyRunSummary> {
+    if let Some(limit) = choice_detour_limit {
+        if !(limit.is_finite() && limit >= 0.0) {
+            return Err(PyValueError::new_err(format!(
+                "choice_detour_limit must be 0 (offer every route) or more, got {limit}"
+            )));
+        }
+    }
     // Refuse a bad method, model or option before doing any work.
     let choice = make_choice_model(choice_model, choice_options)?;
     let strategy = openmobisim_core_sim::equilibration::strategy(
@@ -394,6 +408,12 @@ pub fn run_pipeline(
         .with_choice_model(choice)
         .with_equilibration(Arc::from(strategy))
         .with_route_update(Arc::from(update));
+    if let Some(limit) = choice_detour_limit {
+        run = run.with_choice_detour_limit(limit);
+    }
+    if route_cache {
+        run = run.with_route_cache(route_cache_handle().clone());
+    }
     // What went in, taken before it runs (S168).
     let description = run.description();
     let mut run_diagnostics = Diagnostics::new();
@@ -460,6 +480,25 @@ pub fn run_pipeline(
             .map(|sets| Py::new(py, PyRouteSets::new(Arc::new(sets), network.inner.link_count())))
             .transpose()?,
     })
+}
+
+/// The route sets kept between runs of this process (S178), when a run asks for the cache.
+fn route_cache_handle() -> &'static Arc<openmobisim_core_sim::RouteSetCache> {
+    static CACHE: OnceLock<Arc<openmobisim_core_sim::RouteSetCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Arc::new(openmobisim_core_sim::RouteSetCache::default()))
+}
+
+/// Forget every route set the cache holds (S178). The counters of `route_cache_info` stay.
+#[pyfunction]
+pub fn route_cache_clear() {
+    route_cache_handle().clear();
+}
+
+/// What the route-set cache has done: ``(hits, misses, sets held)`` (S178).
+#[pyfunction]
+pub fn route_cache_info() -> (u64, u64, usize) {
+    let s = route_cache_handle().stats();
+    (s.hits, s.misses, s.held)
 }
 
 /// The route updates that can be selected by name, the default first (S176).

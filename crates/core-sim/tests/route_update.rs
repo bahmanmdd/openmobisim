@@ -230,7 +230,7 @@ fn a_road_that_only_pays_under_congestion_enters_the_set_and_the_gap_to_the_netw
     let rc = with.route_choices.as_ref().unwrap();
     assert!(rc.alternatives.iter().all(|&a| a == 2), "alternatives follow the grown set");
     assert!(rc.route.iter().all(|&r| r != NO_ROUTE && r < 2));
-    assert_eq!(sets.update(), "best_response;max_routes=10;searches=1");
+    assert_eq!(sets.update(), "best_response;max_routes=10;searches=1;slack=0.02");
 }
 
 #[test]
@@ -286,22 +286,28 @@ fn an_update_is_part_of_what_a_run_was() {
     assert_ne!(base.fingerprint, one.fingerprint);
     assert_ne!(one.fingerprint, two.fingerprint, "its options too");
     assert_eq!(one.route_update, "best_response");
-    assert_eq!(one.route_update_descriptor, "best_response;max_routes=10;searches=1");
+    assert_eq!(one.route_update_descriptor, "best_response;max_routes=10;searches=1;slack=0.02");
     assert_eq!(base.route_update_descriptor, "none");
 }
 
 #[test]
 fn light_demand_adds_nothing_and_changes_nothing_but_the_fingerprint() {
     // Twenty travellers in fifteen minutes never queue: no route beats the fast road's, so no
-    // search finds one, and the run is the run without the update.
+    // search finds one, and the run is the run without the update. With the default slack the
+    // update does not even look (the best route is at free flow: nothing to gain); with a slack of
+    // 0 it looks after every loading but the last and finds nothing.
     let with = Setup::new(20).go();
     let without = Setup::new(20).without_update().go();
     assert!(with.iterations.iter().all(|it| it.routes_added == 0), "{:?}", with.iterations);
-    let last = with.iterations.len() - 1;
+    assert!(with.iterations.iter().all(|it| it.route_searches == 0), "no search: nothing to gain");
+    let looked = Setup { update: ("best_response", vec![("slack", 0.0)]), ..Setup::new(20) }.go();
+    let last = looked.iterations.len() - 1;
+    assert!(looked.iterations.iter().all(|it| it.routes_added == 0));
     assert!(
-        with.iterations[..last].iter().all(|it| it.route_searches == 1),
-        "it looked, every time"
+        looked.iterations[..last].iter().all(|it| it.route_searches == 1),
+        "with no slack it looked, every time"
     );
+    assert_eq!(looked.route_choices, with.route_choices);
     let (rw, ro) = (with.route_sets.as_ref().unwrap(), without.route_sets.as_ref().unwrap());
     assert_eq!(rw.route_count(), 1);
     assert_eq!(rw.stamps(), ro.stamps());
@@ -335,11 +341,19 @@ fn a_pair_at_its_limit_is_not_searched_and_a_limit_is_kept() {
 
 #[test]
 fn several_searches_a_pair_are_spread_over_its_departures() {
-    let three =
-        Setup { update: ("best_response", vec![("searches", 3.0)]), ..Setup::new(1_500) }.go();
+    // (A slack of 0, so that every departure is searched; the early ones are at free flow.)
+    let three = Setup {
+        update: ("best_response", vec![("searches", 3.0), ("slack", 0.0)]),
+        ..Setup::new(1_500)
+    }
+    .go();
     assert_eq!(three.iterations[0].route_searches, 3, "three quantiles of the pair's departures");
     // Fewer trips than searches: one search each, at most.
-    let few = Setup { update: ("best_response", vec![("searches", 16.0)]), ..Setup::new(4) }.go();
+    let few = Setup {
+        update: ("best_response", vec![("searches", 16.0), ("slack", 0.0)]),
+        ..Setup::new(4)
+    }
+    .go();
     assert_eq!(few.iterations[0].route_searches, 4);
 }
 
@@ -364,6 +378,9 @@ fn updates_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
         ("max_routes", 0.0),
         ("max_routes", 33.0),
         ("max_routes", f64::NAN),
+        ("slack", -0.1),
+        ("slack", 1.5),
+        ("slack", f64::NAN),
     ] {
         let e =
             route_update::update("best_response", &options(&[(name, bad)])).err().expect("refused");
@@ -375,14 +392,14 @@ fn updates_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
         &options(&[("searches", 16.0), ("max_routes", 32.0)]),
     )
     .unwrap();
-    assert_eq!(ok.descriptor(), "best_response;max_routes=32;searches=16");
+    assert_eq!(ok.descriptor(), "best_response;max_routes=32;searches=16;slack=0.02");
 }
 
 // --- the stopping rule --------------------------------------------------------------------------
 
 #[test]
 fn a_tolerance_is_not_met_while_routes_are_still_being_added() {
-    let msa = Msa { iterations: 10, gap_tolerance: 0.1, gap_sample: 0, cost_bin_s: 300 };
+    let msa = Msa { iterations: 10, gap_tolerance: 0.1, gap_sample: 0, cost_bin_s: 300, warmup: 0 };
     let report = |i: u32, added: u32| IterationReport {
         gap: 0.01,
         routes_added: added,
@@ -469,7 +486,7 @@ fn an_equally_good_route_is_added_and_a_route_the_set_holds_never_is() {
                 strategy("msa", &[("iterations".to_string(), 3.0)].into_iter().collect()).unwrap(),
             ))
             .with_route_update(Arc::from(
-                route_update::update("best_response", &options(&[])).unwrap(),
+                route_update::update("best_response", &options(&[("slack", 0.0)])).unwrap(),
             ));
         let result = run.execute(&mut Diagnostics::new());
         let sets = result.route_sets.as_ref().unwrap();
@@ -603,6 +620,62 @@ fn the_demand_decides_what_the_congestion_biased_method_finds() {
         1,
         "light demand: nothing likely to congest, nothing to avoid"
     );
+}
+
+// --- the slack: no search where there is nothing to gain -----------------------------------------------
+
+#[test]
+fn a_pair_within_the_slack_of_free_flow_is_not_searched_and_one_beyond_it_is() {
+    use openmobisim_core_loading::{EntryTables, LinkBinRecorder};
+    use openmobisim_core_routes::{RouteKey, RouteSets};
+    use openmobisim_core_sim::LinkTimes;
+    use openmobisim_core_sim::route_update::{BestResponse, RouteUpdate, UpdateContext};
+
+    // The fast road takes 72 s at free flow (its set's only route); the slow road 84 s, where
+    // nobody was recorded. Hand-made times: the fast road took `took` seconds for everyone.
+    let network = bottleneck();
+    let turns = TurnTable::build(&network, SignalDefaults::SHIPPED);
+    let node = |n: &str| network.node_external_ids().typed_id_of::<NodeId>(n).unwrap();
+    let key = RouteKey::new(node("o"), node("d"));
+    let sets = RouteSets::generate(&network, &turns, &[key], &openmobisim_core_routes::Shortest);
+    let free = f64::from(sets.route(0).cost);
+    assert!((free - 72.0).abs() < 1.0, "the fast road: {free}");
+    let (travellers, raw) =
+        build_travellers(trips(40, 900), Vec::new(), &car_owning(), 1, &mut Diagnostics::new())
+            .unwrap();
+    let trip_keys = vec![key; raw.len() as usize];
+    let fast = network.link_external_ids().typed_id_of::<LinkId>("fast").unwrap();
+    let searches = |took: f64, slack: f64| {
+        let mut recorder = LinkBinRecorder::new(network.link_count() as usize, 3_600, 3_600.0);
+        recorder.record(fast, 0.0, took, 1.0);
+        let empty = LinkBinRecorder::new(network.link_count() as usize, 3_600, 3_600.0).finish();
+        let times = LinkTimes::from_tables(
+            &network,
+            &EntryTables { entry: recorder.finish(), origin_wait: empty },
+        );
+        let update = BestResponse { searches: 1, max_routes: 10, slack };
+        let found = update.update(&UpdateContext {
+            network: &network,
+            turns: &turns,
+            trips: &raw,
+            trip_keys: &trip_keys,
+            route_sets: &sets,
+            times: &times,
+            iteration: 1,
+        });
+        (found.searches, found.route_count())
+    };
+    let _ = travellers;
+    // 10% over free flow: within a 12% slack (skipped), beyond a 5% one (searched, nothing better than the fast road).
+    assert_eq!(searches(1.10 * free, 0.12), (0, 0));
+    assert_eq!(searches(1.10 * free, 0.05), (1, 0));
+    // No slack: searched even at free flow, where there is nothing to find.
+    assert_eq!(searches(free, 0.0), (1, 0));
+    // The bound: 39% over free flow (100 s) is beyond any slack under 0.39; the slow road (84 s) is then found.
+    assert_eq!(searches(100.0, 0.3), (1, 1));
+    assert_eq!(searches(100.0, 0.02), (1, 1));
+    // A slack over the excess leaves it: at most `slack` was left to gain, and here more was (16 s of 100).
+    assert_eq!(searches(100.0, 0.45), (0, 0));
 }
 
 // --- what is added ---------------------------------------------------------------------------------

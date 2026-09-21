@@ -21,7 +21,8 @@
 //! **What `best_response` costs.** One search per pair per iteration (`searches` of them), each
 //! bounded by the best time the set already offers, so it explores what could beat that and no
 //! more: about 0.5 ms of core time on Stockholm's inner city, 1.2 ms on Seoul (S174), in
-//! parallel over pairs. With demand between zones (a few hundred pairs, not one per trip) an
+//! parallel over pairs, and **not made for a pair whose best route is already within `slack` (2%) of
+//! free flow**, which is most pairs when demand is light or moderate. With demand between zones (a few hundred pairs, not one per trip) an
 //! update is a small part of a loading. Then one copy of the store
 //! ([`RouteSets::extended`]), and a chooser rebuilt on it. **What it adds to the store:** a
 //! pair ends with about four routes (S174); at most `max_routes`. **Light demand adds little,
@@ -50,6 +51,10 @@ use openmobisim_core_routes::{
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
 
 use crate::link_times::LinkTimes;
+
+/// The share of free flow within which `best_response` does not search a pair (S178; see
+/// [`BestResponse::slack`]).
+pub const DEFAULT_SLACK: f64 = 0.02;
 
 /// The update used unless another is asked for.
 pub const DEFAULT_UPDATE: &str = "none";
@@ -152,7 +157,7 @@ impl NoRouteUpdate {
 
 /// Add each pair's fastest route at the congested times, if it is new and no slower than the
 /// set's best.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BestResponse {
     /// How many searches per pair per iteration, at evenly spread quantiles of the pair's
     /// departures (1 is the median). More finds routes that only pay at some hours, at the
@@ -162,16 +167,25 @@ pub struct BestResponse {
     /// The most routes a pair's set may hold (1 to [`MAX_ROUTES_PER_SET`]); a pair at the
     /// limit is not searched.
     pub max_routes: u32,
+    /// A pair is **not searched** while the set's best route at its departure is within this share
+    /// of the route's free-flow time (0 to 1; 0 searches every pair; [`DEFAULT_SLACK`], S178). No
+    /// route can be faster than free flow, so a pair this close to it has at most this much to gain:
+    /// **the regret left is bounded by `slack`**. Measured (S178, `msa` × 8–10 iterations, the
+    /// disequilibrium unchanged to the third decimal): at 2%, Manhattan's searches fell from 62 877
+    /// to 7 569 and the run from 5.9 s to 4.0 s, Singapore's from 27 576 to 313, Stockholm's inner
+    /// city (heavy) from 78 512 to 46 205 (−8% of the run); at 5%, 58% of Stockholm's searches.
+    /// Assumes the method's routes include a free-flow shortest one, as every built-in method's do.
+    pub slack: f64,
 }
 
 impl Default for BestResponse {
     fn default() -> Self {
-        Self { searches: 1, max_routes: 10 }
+        Self { searches: 1, max_routes: 10, slack: DEFAULT_SLACK }
     }
 }
 
 impl BestResponse {
-    const OPTIONS: [&'static str; 2] = ["max_routes", "searches"];
+    const OPTIONS: [&'static str; 3] = ["max_routes", "searches", "slack"];
 
     /// Make the update from its options, defaults for those not given.
     ///
@@ -202,6 +216,16 @@ impl BestResponse {
         for (option, &v) in options {
             match option.as_str() {
                 "searches" => m.searches = whole(option, v, 1, 16)?,
+                "slack" => {
+                    if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
+                        return Err(RouteUpdateError::BadOption {
+                            update: "best_response".to_string(),
+                            option: option.to_string(),
+                            reason: format!("must be from 0 to 1, got {v}"),
+                        });
+                    }
+                    m.slack = v;
+                }
                 _ => {
                     m.max_routes = whole(option, v, 1, MAX_ROUTES)?;
                 }
@@ -223,7 +247,10 @@ impl RouteUpdate for BestResponse {
     }
 
     fn descriptor(&self) -> String {
-        format!("best_response;max_routes={};searches={}", self.max_routes, self.searches)
+        format!(
+            "best_response;max_routes={};searches={};slack={}",
+            self.max_routes, self.searches, self.slack
+        )
     }
 
     fn update(&self, cx: &UpdateContext<'_>) -> Additions {
@@ -238,6 +265,9 @@ impl RouteUpdate for BestResponse {
             let seconds = |link: u32, at: f64| cx.times.link_seconds(link, at);
             let mut added: Vec<Route> = Vec::new();
             let mut searches = 0_u32;
+            // The set's free-flow shortest time: no route is faster than it.
+            let free_flow =
+                set.clone().map(|r| f64::from(sets.route(r).cost)).fold(f64::INFINITY, f64::min);
             for &second in &departures[job.departures.clone()] {
                 let departure = f64::from(second);
                 if set.len() + added.len() >= max_routes {
@@ -252,6 +282,10 @@ impl RouteUpdate for BestResponse {
                         cx.times.route_seconds(&raw, departure)
                     }))
                     .fold(f64::INFINITY, f64::min);
+                // At most `slack` left to gain here: nothing beats free flow.
+                if self.slack > 0.0 && best <= free_flow * (1.0 + self.slack) {
+                    continue;
+                }
                 searches += 1;
                 let Some((_, links)) = search.fastest_route(
                     NodeId::new(key.origin),

@@ -380,6 +380,12 @@ class RouteChoices:
 def equilibration_strategies() -> list[str]:
     """The equilibration strategies that can be selected by name, the default (``"none"``) first."""
 
+def route_cache_clear() -> None:
+    """Forget every route set the cache holds (the counters of :func:`route_cache_info` stay)."""
+
+def route_cache_info() -> tuple[int, int, int]:
+    """What the route-set cache has done: ``(hits, misses, sets held)``."""
+
 def route_update_methods() -> list[str]:
     """The route updates that can be selected by name, the default (``"none"``) first."""
 
@@ -563,6 +569,8 @@ def run_pipeline(
     equilibration_options: dict[str, float] | None = None,
     route_update: str = "none",
     route_update_options: dict[str, float] | None = None,
+    choice_detour_limit: float | None = None,
+    route_cache: bool = False,
 ) -> RunSummary:
     """Run the whole Phase 1 pipeline and write all four output artifacts.
 
@@ -610,12 +618,17 @@ def run_pipeline(
             :func:`equilibration_strategies` (``"none"``, the default, is one choice
             and one loading; ``"msa"`` iterates).
         equilibration_options: The strategy's options, numbers by name (for
-            ``"msa"``: ``iterations``, ``gap_tolerance``, ``gap_sample``, ``cost_bin_s``).
+            ``"msa"``: ``iterations``, ``gap_tolerance``, ``gap_sample``, ``cost_bin_s``,
+            ``warmup``).
         route_update: How the route sets grow between iterations: a name from
             :func:`route_update_methods` (``"none"``, the default, leaves them as the method made
             them; ``"best_response"`` adds each pair's fastest route at the congested times).
         route_update_options: The update's options, numbers by name (for
-            ``"best_response"``: ``searches``, ``max_routes``).
+            ``"best_response"``: ``searches``, ``max_routes``, ``slack``).
+        route_cache: Keep the generated route sets for the next run of this process that asks for
+            the same (same network, pairs, method and, for a method that reads it, demand).
+        choice_detour_limit: Offer a traveller only the routes whose expected time is within this
+            share of the best's (``0`` offers every route, ``None`` the library's default).
 
     Returns:
         A :class:`RunSummary`.

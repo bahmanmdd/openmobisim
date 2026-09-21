@@ -60,18 +60,42 @@ pub struct IterationReport {
     /// How much the link times moved since the last loading, as a share of the
     /// last loading's, weighted by traffic. `NaN` at iteration 0.
     pub time_change: f64,
-    /// **The gap** (the headline; S171): how much more travel time the chosen routes
-    /// cost than the least-cost route of the same choice set at the times this
-    /// loading produced, `Σ w (t_chosen − t_least) / Σ w t_least` over travellers. The
-    /// usual relative gap of traffic assignment, against the shortest congested path
-    /// among the alternatives: 0 when nobody could do better by changing route.
-    /// Below [`GAP_GOOD`] is good, below [`GAP_ACCEPTABLE`] acceptable ([`gap_verdict`]).
+    /// **The gap** (S171): how much more travel time the chosen routes cost than the
+    /// least-cost route of the same choice set at the times this loading produced,
+    /// `Σ w (t_chosen − t_least) / Σ w t_least`, **over the travellers whose trip finished
+    /// inside the window** (S178: the times of trips still under way at the end are lower
+    /// bounds, not measurements; [`Self::incomplete_share`] says how many were left out). The
+    /// usual relative gap of traffic assignment, against the shortest congested path among the
+    /// alternatives. **A stochastic choice model does not reach 0 by design**: some travellers
+    /// take slower routes with the probability the model gives them ([`Self::gap_expected`]);
+    /// what says how far a run is from equilibrium is [`Self::gap_excess`].
     pub gap: f64,
+    /// **What the choice model itself expects the gap to be** at these times (S178): the same
+    /// sum with each traveller's *expected* travel time under the model's probabilities in
+    /// place of the time of the route sampled. It is the gap a perfectly converged run has, by
+    /// design (about 7% for a logit at −0.2 per minute). 0 for an all-or-nothing model; `NaN` for
+    /// a model that gives no probabilities.
+    pub gap_expected: f64,
+    /// **The disequilibrium** (the headline, S178): `gap − gap_expected`, the part of the gap the
+    /// choice model does not explain, over the trips that finished (it also holds the
+    /// sampling noise of a finite population). Below [`GAP_GOOD`] is good, below
+    /// [`GAP_ACCEPTABLE`] acceptable ([`gap_verdict`]); it is what `gap_tolerance` stops on.
+    /// Equal to `gap` for an all-or-nothing model; `NaN` if the model gives no probabilities
+    /// ([`Self::disequilibrium`] then falls back to `gap`).
+    pub gap_excess: f64,
+    /// The share of travellers (by weight) whose trip had not finished when the window ended, and
+    /// who are therefore left out of the gaps.
+    pub incomplete_share: f64,
     /// The same measure against the **whole network**: the least travel time over
     /// *any* route at the current times (found by a time-dependent search), for a
-    /// keyed sample of trips at the last iteration only; `NaN` elsewhere. Shows
-    /// whether the choice set was missing a route that traffic has made worthwhile.
+    /// keyed sample of the trips that finished, at the last iteration only; `NaN` elsewhere.
+    /// Shows whether the choice set was missing a route that traffic has made worthwhile.
     pub gap_network: f64,
+    /// The disequilibrium against the whole network (S178): `gap_network` less the part the choice
+    /// model explains **inside the set** (what a converged run over the same set would still show
+    /// by design), so a route the set was missing counts in full. `NaN` where `gap_network` is, or
+    /// if the model gives no probabilities.
+    pub gap_network_excess: f64,
     /// A consistency check of the stochastic choice model with itself: the share of
     /// travellers whose route differs from where the model's probabilities, at the
     /// current times, would put them (half the total variation between observed and
@@ -93,10 +117,10 @@ pub struct IterationReport {
     pub route_searches: u32,
 }
 
-/// A gap below this is good (the user, S171: "perfect").
+/// A disequilibrium below this is good (the user, S171: "perfect"; S178: 5% on the disequilibrium).
 pub const GAP_GOOD: f64 = 0.05;
 
-/// A gap below this is acceptable for a stochastic dynamic assignment, which cannot
+/// A disequilibrium below this is acceptable for a stochastic dynamic assignment, which cannot
 /// reach full equilibrium (the user, S171: "anything below 10–15% is acceptable").
 pub const GAP_ACCEPTABLE: f64 = 0.15;
 
@@ -146,7 +170,11 @@ impl PartialEq for IterationReport {
                 r.total_travel_time_s,
                 r.time_change,
                 r.gap,
+                r.gap_expected,
+                r.gap_excess,
+                r.incomplete_share,
                 r.gap_network,
+                r.gap_network_excess,
                 r.gap_flow,
                 r.gap_flow_floor,
                 r.gap_flow_excess,
@@ -163,6 +191,13 @@ impl PartialEq for IterationReport {
 }
 
 impl IterationReport {
+    /// The number a run is judged by (S178): [`Self::gap_excess`], the disequilibrium, or the
+    /// plain [`Self::gap`] where the model gives no probabilities and the two cannot be told apart.
+    #[must_use]
+    pub fn disequilibrium(&self) -> f64 {
+        if self.gap_excess.is_nan() { self.gap } else { self.gap_excess }
+    }
+
     /// A report with the run's numbers and nothing else measured.
     #[must_use]
     pub fn unmeasured(iteration: u32) -> Self {
@@ -175,7 +210,11 @@ impl IterationReport {
             truncated: 0,
             time_change: f64::NAN,
             gap: f64::NAN,
+            gap_expected: f64::NAN,
+            gap_excess: f64::NAN,
+            incomplete_share: f64::NAN,
             gap_network: f64::NAN,
+            gap_network_excess: f64::NAN,
             gap_flow: f64::NAN,
             gap_flow_floor: f64::NAN,
             gap_flow_excess: f64::NAN,
@@ -271,6 +310,16 @@ pub trait Equilibration: Send + Sync {
         0
     }
 
+    /// How many of the first loadings the run makes with the **point-queue model** (level 2),
+    /// which cannot gridlock, in place of the full one (S178). The first loading of a narrow
+    /// route set is often in permanent gridlock (S177: 3 215 of 9 619 trips never finish) and every
+    /// later iteration inherits its times. At most `max_iterations − 1` are used, so the last
+    /// loading, the run's result, is always at the full level; no effect under a loading model that
+    /// is not the link transmission model or is already at level 2.
+    fn warmup_iterations(&self) -> u32 {
+        0
+    }
+
     /// Whether to stop before `max_iterations`, given every report so far.
     fn is_converged(&self, _reports: &[IterationReport]) -> bool {
         false
@@ -319,9 +368,10 @@ impl NoEquilibration {
 pub struct Msa {
     /// How many loadings to make at most (1 to [`MAX_ITERATIONS`]).
     pub iterations: u32,
-    /// Stop once the gap ([`IterationReport::gap`]), averaged over the last three
-    /// iterations, is below this share; 0 means never stop early. 0.05 is a good
-    /// gap, 0.15 an acceptable one ([`GAP_GOOD`], [`GAP_ACCEPTABLE`]). Never while a
+    /// Stop once the **disequilibrium** ([`IterationReport::disequilibrium`]: the gap less what
+    /// the choice model itself expects, S178), averaged over the last three iterations, is below
+    /// this share; 0 means never stop early. 0.05 is good, 0.15 acceptable
+    /// ([`GAP_GOOD`], [`GAP_ACCEPTABLE`]). Never while a
     /// route update is still adding routes (S176): the last update must have added none.
     pub gap_tolerance: f64,
     /// How many trips are tested against the whole network at the last iteration
@@ -331,16 +381,20 @@ pub struct Msa {
     /// The length in seconds of the time bins link times are recorded in (at
     /// least 1). Shorter follows a queue more closely and costs more memory.
     pub cost_bin_s: u32,
+    /// How many of the first loadings use the point-queue model (0 to [`MAX_ITERATIONS`]; see
+    /// [`Equilibration::warmup_iterations`]). 0 by default.
+    pub warmup: u32,
 }
 
 impl Default for Msa {
     fn default() -> Self {
-        Self { iterations: 10, gap_tolerance: 0.0, gap_sample: 300, cost_bin_s: 300 }
+        Self { iterations: 10, gap_tolerance: 0.0, gap_sample: 300, cost_bin_s: 300, warmup: 0 }
     }
 }
 
 impl Msa {
-    const OPTIONS: [&'static str; 4] = ["cost_bin_s", "gap_sample", "gap_tolerance", "iterations"];
+    const OPTIONS: [&'static str; 5] =
+        ["cost_bin_s", "gap_sample", "gap_tolerance", "iterations", "warmup"];
 
     /// Make the strategy from its options, defaults for those not given.
     ///
@@ -374,6 +428,7 @@ impl Msa {
                 "iterations" => m.iterations = whole(option, v, 1, MAX_ITERATIONS)?,
                 "cost_bin_s" => m.cost_bin_s = whole(option, v, 1, 86_400)?,
                 "gap_sample" => m.gap_sample = whole(option, v, 0, 100_000)?,
+                "warmup" => m.warmup = whole(option, v, 0, MAX_ITERATIONS)?,
                 _ => {
                     if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
                         return Err(bad(option, &format!("must be from 0 to 1, got {v}")));
@@ -392,8 +447,8 @@ impl Equilibration for Msa {
     }
     fn descriptor(&self) -> String {
         format!(
-            "msa;cost_bin_s={};gap_sample={};gap_tolerance={};iterations={}",
-            self.cost_bin_s, self.gap_sample, self.gap_tolerance, self.iterations
+            "msa;cost_bin_s={};gap_sample={};gap_tolerance={};iterations={};warmup={}",
+            self.cost_bin_s, self.gap_sample, self.gap_tolerance, self.iterations, self.warmup
         )
     }
     fn max_iterations(&self) -> u32 {
@@ -407,6 +462,9 @@ impl Equilibration for Msa {
     }
     fn network_gap_sample(&self) -> u32 {
         self.gap_sample
+    }
+    fn warmup_iterations(&self) -> u32 {
+        self.warmup
     }
     fn reselects(&self, rng: &StreamRng, traveller: u32, iteration: u32) -> bool {
         rng.unit(DrawAddress::from_pair(traveller, iteration)) < 1.0 / (f64::from(iteration) + 1.0)
@@ -425,7 +483,7 @@ impl Equilibration for Msa {
             return false;
         }
         let last = &reports[reports.len() - 3..];
-        last.iter().map(|r| r.gap).sum::<f64>() / 3.0 < self.gap_tolerance
+        last.iter().map(IterationReport::disequilibrium).sum::<f64>() / 3.0 < self.gap_tolerance
     }
 }
 

@@ -14,7 +14,7 @@ import openmobisim as ms
 import pytest
 
 CAR = {"commuter": (True, False, False)}
-UPDATE = "best_response;max_routes=10;searches=1"
+UPDATE = "best_response;max_routes=10;searches=1;slack=0.02"
 
 
 def scenario(trips=1_800, **kwargs):
@@ -119,7 +119,13 @@ def test_when_nothing_beats_the_set_nothing_is_added_and_nothing_changes():
     c = run.convergence()
     assert run.route_update == "best_response" and run.fingerprint != plain.fingerprint
     assert (c["routes_added"] == 0).all()
-    assert c["route_searches"].tolist() == [1, 1, 0]
+    # With the default slack of 2% nobody looks: the best route is at free flow, nothing to gain.
+    assert c["route_searches"].tolist() == [0, 0, 0]
+    looked = ms.Scenario.from_parts(
+        net, rows, route_update="best_response", route_update_options={"slack": 0}, **settings
+    ).run("ru-empty-looked")
+    assert looked.convergence()["route_searches"].tolist() == [1, 1, 0]
+    assert (looked.convergence()["routes_added"] == 0).all()
     assert (
         run.route_sets().update == "" and run.route_sets().identity == plain.route_sets().identity
     )
@@ -143,7 +149,7 @@ def test_the_options_change_what_it_does():
     assert (capped.convergence()["routes_added"] == 0).all()
     assert (capped.convergence()["route_searches"] == 0).all()
     three = go("ru-3", route_update="best_response", route_update_options={"searches": 3})
-    assert three.route_sets().update == "best_response;max_routes=10;searches=3"
+    assert three.route_sets().update == "best_response;max_routes=10;searches=3;slack=0.02"
     assert three.convergence()["route_searches"][0] > one.convergence()["route_searches"][0]
 
 
@@ -176,5 +182,8 @@ def test_bad_settings_are_refused_before_any_work():
     ]:
         with pytest.raises(ValueError, match=f"{name}.*whole number"):
             build(route_update="best_response", route_update_options={name: value})
+    for value in (-0.1, 1.5):
+        with pytest.raises(ValueError, match="slack.*from 0 to 1"):
+            build(route_update="best_response", route_update_options={"slack": value})
     with pytest.raises(ValueError, match="no options"):
         build(route_update="none", route_update_options={"searches": 1})

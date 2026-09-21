@@ -17,7 +17,8 @@ CAR = {"commuter": (True, False, False)}
 FIELDS = [
     "iteration", "reselected_share", "changed_share", "total_travel_time_s", "completed",
     "truncated", "time_change", "gap", "gap_network", "gap_flow", "gap_flow_floor",
-    "gap_flow_excess", "routes_added", "route_searches",
+    "gap_flow_excess", "routes_added", "route_searches", "gap_expected", "gap_excess",
+    "gap_network_excess", "incomplete_share",
 ]  # fmt: skip
 
 
@@ -201,9 +202,14 @@ def test_the_gap_has_a_verdict_and_the_network_is_tested_at_the_last_iteration()
     c = run.convergence()
     assert np.isfinite(c["gap"]).all() and (c["gap"] >= 0).all()
     assert np.isnan(c["gap_network"][:-1]).all() and np.isfinite(c["gap_network"][-1])
-    assert run.convergence_gap == max(c["gap"][-1], c["gap_network"][-1])
+    # The verdict is on the disequilibrium: the gap less what the logit itself expects (S178).
+    assert np.allclose(c["gap_excess"], c["gap"] - c["gap_expected"])
+    assert (c["gap_expected"] >= 0).all() and (c["incomplete_share"] == 0).all()
+    assert np.isnan(c["gap_network_excess"][:-1]).all() and np.isfinite(c["gap_network_excess"][-1])
+    worst = max(c["gap_excess"][-1], c["gap_network_excess"][-1])
+    assert run.convergence_gap == worst
     assert run.convergence_verdict == (
-        "good" if c["gap"][-1] < 0.05 else "acceptable" if c["gap"][-1] < 0.15 else "poor"
+        "good" if worst < 0.05 else "acceptable" if worst < 0.15 else "poor"
     )
     # Free flow, a strong preference for the faster route: a small gap. Without equilibration, none.
     assert run.convergence_verdict in {"good", "acceptable"}
@@ -224,3 +230,81 @@ def test_the_footer_says_the_run_iterated():
     fig = viz.map_link(run, size=(12, 6.75), dpi=50)
     text = " ".join(t.get_text() for t in fig.texts)
     assert "choice logit · msa 3 it, gap " in text and "% · seed 3" in text
+
+
+# --- the disequilibrium, the choice-set limit and the warm-up (S178) ----------------------------
+
+
+def test_the_disequilibrium_is_what_the_choice_model_does_not_explain():
+    logit = go("eq-diseq-logit", equilibration_options={"iterations": 4}, **MSA)
+    c = logit.convergence()
+    # A logit's gap is never 0 by design; the model expects it, and what is left is small.
+    assert (c["gap_expected"][:-1] > 0).all() and np.allclose(
+        c["gap_excess"], c["gap"] - c["gap_expected"]
+    )
+    assert abs(c["gap_excess"][-1]) < 0.05 and logit.convergence_verdict == "good"
+    # An all-or-nothing model expects no gap: its disequilibrium is its gap.
+    aon = go(
+        "eq-diseq-aon", equilibration="msa", equilibration_options={"iterations": 3}, master_seed=3
+    )
+    a = aon.convergence()
+    assert np.allclose(a["gap_expected"], 0) and np.allclose(a["gap_excess"], a["gap"])
+    assert (a["incomplete_share"] == 0).all()
+
+
+def test_the_choice_detour_limit_is_offered_routes_within_it_of_the_best():
+    net = ms.examples.toy_network()
+    rows = [
+        (f"t{i}", 0, *net.node_lonlat("W"), *net.node_lonlat("D1"), 10 * i, "commuter", None)
+        for i in range(400)
+    ]
+
+    def routes(limit):
+        run = ms.Scenario.from_parts(
+            net,
+            rows,
+            class_defaults=CAR,
+            choice_model="logit",
+            choice_options={"beta_time_min": -0.05},
+            choice_detour_limit=limit,
+            master_seed=3,
+        ).run("eq-limit")
+        return run.route_choices()
+
+    everyone = routes(0.0)
+    assert routes(None).route.tolist() == everyone.route.tolist(), "0 is the library's default"
+    # A tiny limit leaves only the best route on offer: everyone takes it, certainly.
+    only = routes(1e-9)
+    assert (only.rank == 0).all() and (only.probability == 1.0).all()
+    assert (everyone.alternatives == only.alternatives).all(), "the set is the same"
+    with pytest.raises(ValueError, match="choice_detour_limit"):
+        routes(-0.1)
+    with pytest.raises(ValueError, match="choice_detour_limit"):
+        routes(float("nan"))
+
+
+def test_a_warmup_needs_a_whole_number_and_leaves_the_last_loading_at_full_fidelity():
+    # A jammed grid, where the point-queue model and the full one differ.
+    heavy = {"trips": 3_500, **MSA}
+    warm = go(
+        "eq-warm",
+        equilibration_options={"iterations": 3, "warmup": 1, "gap_sample": 50},
+        **heavy,
+    )
+    plain = go("eq-warm-plain", equilibration_options={"iterations": 3, "gap_sample": 50}, **heavy)
+    # The first loading is the point-queue model's: not the same; the run says what it was told.
+    first = "total_travel_time_s"
+    assert warm.convergence()[first][0] != plain.convergence()[first][0]
+    assert "warmup=1" in warm.manifest()["equilibration_descriptor"]
+    assert warm.fingerprint != plain.fingerprint
+    # Cut to leave the last loading: 9 warm-up loadings of 3 are 2.
+    cut = go(
+        "eq-warm-cut", equilibration_options={"iterations": 3, "warmup": 9, "gap_sample": 50}, **MSA
+    )
+    two = go(
+        "eq-warm-two", equilibration_options={"iterations": 3, "warmup": 2, "gap_sample": 50}, **MSA
+    )
+    assert cut.total_travel_time_s == two.total_travel_time_s
+    for bad in (-1, 1.5, 1001):
+        with pytest.raises(ValueError, match="warmup"):
+            go("eq-warm-bad", equilibration_options={"iterations": 3, "warmup": bad}, **MSA)

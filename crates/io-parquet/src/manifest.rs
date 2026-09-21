@@ -86,6 +86,9 @@ pub struct Manifest {
     pub route_update: String,
     /// The update with every option and default, canonical.
     pub route_update_descriptor: String,
+    /// How far above the best route's expected time a route may be and still be offered to a
+    /// traveller (S178); 0 offers every route of the pair's set.
+    pub choice_detour_limit: f64,
     /// How many loadings the run made.
     pub iterations_run: u32,
     /// Whether the strategy stopped before its most iterations because it had
@@ -145,6 +148,7 @@ impl Manifest {
             equilibration_descriptor: description.equilibration_descriptor.clone(),
             route_update: description.route_update.clone(),
             route_update_descriptor: description.route_update_descriptor.clone(),
+            choice_detour_limit: description.choice_detour_limit,
             iterations_run: u32::try_from(result.iterations.len().max(1)).unwrap_or(u32::MAX),
             converged: result.converged,
         }
@@ -162,7 +166,7 @@ impl Manifest {
     pub fn to_json(&self) -> String {
         let text = |v: &str| format!("\"{}\"", escape(v));
         let optional = |v: Option<String>| v.unwrap_or_else(|| "null".to_string());
-        let fields: [(&str, String); 28] = [
+        let fields: [(&str, String); 29] = [
             ("openmobisim_version", text(&self.openmobisim_version)),
             ("code_version", self.code_version.to_string()),
             ("defaults_version", self.defaults_version.to_string()),
@@ -193,6 +197,7 @@ impl Manifest {
             ("equilibration_descriptor", text(&self.equilibration_descriptor)),
             ("route_update", text(&self.route_update)),
             ("route_update_descriptor", text(&self.route_update_descriptor)),
+            ("choice_detour_limit", self.choice_detour_limit.to_string()),
             ("iterations_run", self.iterations_run.to_string()),
             ("converged", self.converged.to_string()),
             ("link_bin_seconds", optional(self.link_bin_seconds.map(|s| s.to_string()))),

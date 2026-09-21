@@ -162,5 +162,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_pipeline, m)?)?;
     m.add_function(wrap_pyfunction!(pipeline::equilibration_strategies, m)?)?;
     m.add_function(wrap_pyfunction!(pipeline::route_update_methods, m)?)?;
+    m.add_function(wrap_pyfunction!(pipeline::route_cache_clear, m)?)?;
+    m.add_function(wrap_pyfunction!(pipeline::route_cache_info, m)?)?;
     Ok(())
 }

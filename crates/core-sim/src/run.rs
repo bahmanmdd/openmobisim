@@ -35,6 +35,7 @@ use crate::equilibration::{Equilibration, IterationReport, NoEquilibration};
 use crate::events::{EventRow, EventType};
 use crate::identity::{Inputs, RunDescription, describe};
 use crate::link_times::{LinkTimes, relative_time_change};
+use crate::route_cache::{RouteSetCache, generation_key};
 use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext};
 
@@ -184,6 +185,18 @@ pub struct RunResult {
     pub converged: bool,
 }
 
+/// How one loading is made besides the routes it follows.
+#[derive(Clone, Copy)]
+struct LoadPlan {
+    /// Record per-link results in bins of this many seconds, if asked.
+    record_bins: Option<u32>,
+    /// Also record the entry-time tables the next iteration's costs are read from.
+    want_entry: bool,
+    /// Load with this level of the link transmission model instead of the run's (S178: the
+    /// warm-up's point-queue model).
+    level_override: Option<FidelityLevel>,
+}
+
 /// One loading of the demand.
 struct Loaded {
     total_travel_time: Duration,
@@ -221,7 +234,16 @@ pub struct Run {
     equilibration: Arc<dyn Equilibration>,
     /// How the route sets grow between iterations (S176): not at all, by default.
     route_update: Arc<dyn RouteUpdate>,
+    /// A traveller is offered only the routes whose expected time is within this share of the
+    /// best's (S178); 0 offers them all. [`DEFAULT_CHOICE_DETOUR_LIMIT`] by default.
+    choice_detour_limit: f64,
+    /// Generated route sets kept for the next run that asks for the same (S178): none, by default.
+    route_cache: Option<Arc<RouteSetCache>>,
 }
+
+/// The share above the best route's expected time beyond which a route is not offered to a
+/// traveller, unless the run says otherwise (S178). 0 offers every route of the pair's set.
+pub const DEFAULT_CHOICE_DETOUR_LIMIT: f64 = 0.0;
 
 impl Run {
     /// Build a run. Vehicle locations are seeded per S129: every owned car
@@ -248,6 +270,8 @@ impl Run {
             choice_model: Arc::new(Deterministic),
             equilibration: Arc::new(NoEquilibration),
             route_update: Arc::new(NoRouteUpdate),
+            choice_detour_limit: DEFAULT_CHOICE_DETOUR_LIMIT,
+            route_cache: None,
         }
     }
 
@@ -311,6 +335,37 @@ impl Run {
         self
     }
 
+    /// The same run, offering each traveller only the routes of the pair's set whose expected time
+    /// (at the times of the last loading; at free flow for the first choice) is within `limit`
+    /// of the best route's: **a time-dependent choice set** (S178). A route far slower than
+    /// the best at the moment is no realistic alternative, and in a logit it only takes
+    /// probability that belongs to routes that compete (the gap grows with the size of the set, S177).
+    /// `0.0` offers every route, as before. The best route is always offered; a route dropped
+    /// keeps its place in the sets and can return when the times change. The gap is still
+    /// measured against the whole set.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `limit` is negative or not finite.
+    #[must_use]
+    pub fn with_choice_detour_limit(mut self, limit: f64) -> Self {
+        assert!(
+            limit.is_finite() && limit >= 0.0,
+            "the detour limit must be 0 or more, got {limit}"
+        );
+        self.choice_detour_limit = limit;
+        self
+    }
+
+    /// The same run, taking its route sets from `cache` if it holds the sets this run would
+    /// generate, and leaving them there if not (S178): see [`RouteSetCache`]. Results do not depend
+    /// on whether the cache was used.
+    #[must_use]
+    pub fn with_route_cache(mut self, cache: Arc<RouteSetCache>) -> Self {
+        self.route_cache = Some(cache);
+        self
+    }
+
     /// What went into this run: its seed and its fingerprint (S168). Take it
     /// before [`Self::execute`]; it depends only on the inputs.
     #[must_use]
@@ -335,6 +390,7 @@ impl Run {
             route_update: self.route_update.name(),
             route_update_descriptor: &self.route_update.descriptor(),
             route_update_active: self.route_update.is_active(),
+            choice_detour_limit: self.choice_detour_limit,
         })
     }
 
@@ -409,8 +465,8 @@ impl Run {
         };
         // A method that reads the demand (the Monte Carlo method's bias, S176) is told it
         // first; one that does not costs nothing here.
-        let generator: Arc<dyn RouteSetGenerator> = if self.route_generator.reads_demand() {
-            let trips_demand: Vec<TripDemand> = (0..total_trips)
+        let demand_rows: Option<Vec<TripDemand>> = self.route_generator.reads_demand().then(|| {
+            (0..total_trips)
                 .map(|i| {
                     let trip = TripId::new(i);
                     TripDemand {
@@ -419,16 +475,33 @@ impl Run {
                         departure: self.trips.departure(trip).get(),
                     }
                 })
-                .collect();
-            let demand = Demand { network: &self.network, turns: &turns, trips: &trips_demand };
-            self.route_generator
-                .with_demand(&demand)
-                .map_or_else(|| self.route_generator.clone(), Arc::from)
-        } else {
-            self.route_generator.clone()
+                .collect()
+        });
+        let generate = || {
+            let generator: Arc<dyn RouteSetGenerator> = match &demand_rows {
+                Some(rows) => {
+                    let demand = Demand { network: &self.network, turns: &turns, trips: rows };
+                    self.route_generator
+                        .with_demand(&demand)
+                        .map_or_else(|| self.route_generator.clone(), Arc::from)
+                }
+                None => self.route_generator.clone(),
+            };
+            RouteSets::generate(&self.network, &turns, &trip_keys, generator.as_ref())
         };
-        let mut route_sets =
-            Arc::new(RouteSets::generate(&self.network, &turns, &trip_keys, generator.as_ref()));
+        // Sets already generated for these inputs are handed back, if the run has a cache (S178).
+        let mut route_sets = match &self.route_cache {
+            Some(cache) => {
+                let key = generation_key(
+                    &self.network,
+                    self.route_generator.as_ref(),
+                    &trip_keys,
+                    demand_rows.as_deref(),
+                );
+                cache.get_or_generate(key, generate)
+            }
+            None => Arc::new(generate()),
+        };
 
         // Choice and equilibration (S169, S170): every trip chooses a route on
         // free-flow costs; then, under an equilibration strategy, the network is
@@ -449,6 +522,7 @@ impl Run {
             trip_keys: &trip_keys,
             model: model.as_ref(),
             turns: &turns,
+            detour_limit: self.choice_detour_limit,
         };
         let mut chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
         let mut route_choices = chooser.choose_all(&choice_rng, 0)?;
@@ -470,14 +544,20 @@ impl Run {
         let mut converged = false;
         let mut last: Option<(Loaded, Diagnostics)> = None;
 
+        // The first loadings may be made with the point-queue model, which cannot gridlock (S178);
+        // the last, the run's result, never is.
+        let warmup = strategy.warmup_iterations().min(max_iterations - 1);
         for iteration in 0..max_iterations {
             let mut iteration_diagnostics = Diagnostics::new();
             let loaded = self.load_once(
                 &trip_keys,
                 &route_sets,
                 &route_choices,
-                record_bins,
-                max_iterations > 1,
+                LoadPlan {
+                    record_bins,
+                    want_entry: max_iterations > 1,
+                    level_override: (iteration < warmup).then_some(FidelityLevel::PointQueue),
+                },
                 &mut iteration_diagnostics,
             );
             let mut report = IterationReport::unmeasured(iteration);
@@ -492,6 +572,9 @@ impl Run {
 
             let mut changes = Vec::new();
             let mut times_now: Option<LinkTimes> = None;
+            // What the assessment left for the whole-network gap: who was left out, and what the
+            // model expected of each trip.
+            let mut assessed: Option<(Vec<bool>, Vec<f64>)> = None;
             if max_iterations > 1 {
                 if let Some(bins) = &loaded.entry_bins {
                     let times = LinkTimes::from_tables(&self.network, bins);
@@ -525,14 +608,26 @@ impl Run {
                     }
                     let strategy_for_next =
                         (next < max_iterations).then_some((strategy.as_ref(), &reselect_rng));
+                    // The trips still under way at the end have no measured time: the gaps leave
+                    // them out (S178).
+                    let mut unfinished = vec![false; total_trips as usize];
+                    for e in &loaded.events {
+                        if e.event_type == EventType::TripTruncated {
+                            unfinished[e.entity_id as usize] = true;
+                        }
+                    }
                     let update = chooser.update(
                         &route_choices,
                         &times,
                         next,
                         strategy_for_next,
                         &choice_rng,
+                        &unfinished,
                     )?;
                     report.gap = update.assessment.gap;
+                    report.gap_expected = update.assessment.gap_expected;
+                    report.gap_excess = update.assessment.gap_excess;
+                    report.incomplete_share = update.assessment.incomplete_share;
                     report.gap_flow = update.assessment.gap_flow;
                     report.gap_flow_floor = update.assessment.gap_flow_floor;
                     report.gap_flow_excess =
@@ -541,6 +636,7 @@ impl Run {
                     arrived_by =
                         (update.assessment.reselected_share, update.assessment.changed_share);
                     changes = update.changes;
+                    assessed = Some((unfinished, update.expected_seconds));
                 }
             }
             reports.push(report);
@@ -550,15 +646,20 @@ impl Run {
             let stop = iteration + 1 == max_iterations || strategy.is_converged(&reports);
             if stop {
                 // The last iteration is also tested against the whole network (S171).
-                if let (Some(times), true) = (&times_now, strategy.network_gap_sample() > 0) {
-                    let gap = chooser.network_gap(
+                if let (Some(times), Some((unfinished, expected)), true) =
+                    (&times_now, &assessed, strategy.network_gap_sample() > 0)
+                {
+                    let (gap, excess) = chooser.network_gap(
                         &route_choices,
                         times,
                         strategy.network_gap_sample(),
                         &reselect_rng,
+                        unfinished,
+                        expected,
                     );
                     if let Some(last_report) = reports.last_mut() {
                         last_report.gap_network = gap;
+                        last_report.gap_network_excess = excess;
                     }
                 }
                 converged = iteration + 1 < max_iterations;
@@ -597,10 +698,10 @@ impl Run {
         trip_keys: &[RouteKey],
         route_sets: &RouteSets,
         route_choices: &RouteChoices,
-        record_bins: Option<u32>,
-        want_entry: bool,
+        plan: LoadPlan,
         diagnostics: &mut Diagnostics,
     ) -> Loaded {
+        let LoadPlan { record_bins, want_entry, level_override } = plan;
         let total_trips = self.trips.len();
         let mut queue: BinaryHeap<Reverse<EventKey>> = BinaryHeap::new();
         // Every iteration starts from where the day starts.
@@ -762,6 +863,7 @@ impl Run {
         }
 
         if let FlowMotor::Ltm { turns, step, level } = &self.flow_motor {
+            let level = &level_override.unwrap_or(*level);
             let vehicles: Vec<Vehicle> =
                 pending_ltm.iter().map(|(_, vehicle, _)| vehicle.clone()).collect();
             let window = Duration::from_clock(self.window);

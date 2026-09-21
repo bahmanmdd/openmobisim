@@ -332,11 +332,34 @@ fn the_gap_is_the_relative_excess_over_the_cheapest_route_and_has_a_closed_form(
                 it.gap,
                 slow_share * 12.0 / 72.0
             );
+            // What the model expects is the same closed form, **exactly**: it is worked out from
+            // the probabilities, not from who was sampled (S178). So what is left, the
+            // disequilibrium, is only the sampling noise of 6 000 travellers.
+            assert!(
+                (it.gap_expected - slow_share * 12.0 / 72.0).abs() < 1e-9,
+                "beta {b}: expected {} against {}",
+                it.gap_expected,
+                slow_share * 12.0 / 72.0
+            );
+            assert!((it.gap_excess - (it.gap - it.gap_expected)).abs() < 1e-12);
+            assert!(
+                it.gap_excess.abs() < 0.006,
+                "beta {b}: the model explains the gap: {}",
+                it.gap_excess
+            );
+            assert!(it.incomplete_share.abs() < 1e-12, "nobody is left out at level 0");
         }
     }
-    // All-or-nothing: everyone on the cheapest road, so nothing to gain.
+    // All-or-nothing: everyone on the cheapest road, so nothing to gain, and nothing expected.
     let deterministic = setup_level0(1_000, "deterministic", &[]).go();
     assert!(deterministic.iterations.iter().all(|it| it.gap.abs() < 1e-12));
+    assert!(
+        deterministic
+            .iterations
+            .iter()
+            .all(|it| it.gap_expected.abs() < 1e-12 && it.gap_excess.abs() < 1e-12),
+        "the disequilibrium of an all-or-nothing model is its gap"
+    );
     assert_eq!(took(&deterministic, 1), 0, "all-or-nothing takes the faster road");
     // The stochastic model's own consistency, separate from the gap: a fresh sample has no excess.
     let result = setup_level0(6_000, "logit", &[("beta_time_min", -1.0)]).go();
@@ -478,10 +501,11 @@ fn the_gap_and_the_link_times_settle_as_the_iterations_go_on() {
 }
 
 #[test]
-fn a_tolerance_stops_the_run_only_once_the_gap_has_stayed_below_it() {
-    // Level 0, a logit at -1 per minute: the gap is 0.45 x 12 / 72 = 7.5% at every iteration. A
-    // tolerance of 10% is met from the first moment the run can judge (three iterations after the
-    // first); a tolerance of 5% never is, because the stochastic choice keeps the gap above it.
+fn a_tolerance_stops_the_run_only_once_the_disequilibrium_has_stayed_below_it() {
+    // Level 0, a logit at -1 per minute: the gap is 0.45 x 12 / 72 = 7.5% at every iteration, **and the
+    // model itself expects exactly that** (S178): the disequilibrium, the part it does not explain, is
+    // nothing. So a tolerance of 5% is met from the first moment the run can judge (three iterations
+    // after the first), as is one of 10%; before S178 a 5% tolerance could never be met by a logit.
     let with = |tolerance: f64| {
         Setup {
             equilibration: ("msa", vec![("iterations", 8.0), ("gap_tolerance", tolerance)]),
@@ -489,14 +513,20 @@ fn a_tolerance_stops_the_run_only_once_the_gap_has_stayed_below_it() {
         }
         .go()
     };
-    let stop = with(0.10);
-    assert!(stop.converged);
-    assert_eq!(stop.iterations.len(), 4);
-    let never = with(0.05);
-    assert!(!never.converged && never.iterations.len() == 8);
-    // The whole-network test happens at the iteration the run stops at.
-    assert!(stop.iterations.last().unwrap().gap_network.is_finite());
-    assert!(stop.iterations[..3].iter().all(|it| it.gap_network.is_nan()));
+    for tolerance in [0.10, 0.05] {
+        let stop = with(tolerance);
+        assert!(stop.converged, "tolerance {tolerance}");
+        assert_eq!(stop.iterations.len(), 4, "tolerance {tolerance}");
+        let gap = stop.iterations.last().unwrap();
+        assert!(
+            (gap.gap - 0.075).abs() < 0.01 && (gap.gap_expected - 0.075).abs() < 0.01,
+            "{gap:?}"
+        );
+        assert!(gap.gap_excess.abs() < 0.02, "the model explains it: {}", gap.gap_excess);
+        // The whole-network test happens at the iteration the run stops at.
+        assert!(gap.gap_network.is_finite() && gap.gap_network_excess.is_finite());
+        assert!(stop.iterations[..3].iter().all(|it| it.gap_network.is_nan()));
+    }
     // On the bottleneck a tolerance that cannot be met runs every iteration, and 0 means never.
     for tolerance in [1e-6, 0.0] {
         let run = Setup {
@@ -610,7 +640,7 @@ fn the_description_names_the_strategy_and_the_streams_it_draws_from() {
     assert_eq!(msa.live_streams, ["msa_reselection"]);
     assert_eq!(
         msa.equilibration_descriptor,
-        "msa;cost_bin_s=300;gap_sample=300;gap_tolerance=0;iterations=10"
+        "msa;cost_bin_s=300;gap_sample=300;gap_tolerance=0;iterations=10;warmup=0"
     );
     assert_eq!(run(("msa", vec![]), "logit").live_streams, ["choice", "msa_reselection"]);
     // One iteration has nobody to re-select.

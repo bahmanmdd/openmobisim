@@ -121,6 +121,9 @@ pub(crate) struct Inputs<'a> {
     pub trip_keys: &'a [RouteKey],
     pub model: &'a dyn ChoiceModel,
     pub turns: &'a TurnTable,
+    /// An alternative is offered only if its expected time is within this share of the best's
+    /// (0: all of them; S178).
+    pub detour_limit: f64,
 }
 
 /// The identity of a route: a 32-bit hash of its links.
@@ -148,8 +151,13 @@ const FLOOR_KEY: u32 = 0x8000_0000;
 pub(crate) struct Assessment {
     pub reselected_share: f64,
     pub changed_share: f64,
-    /// The relative gap to the least-cost route of the choice set (S171).
+    /// The relative gap to the least-cost route of the choice set (S171), over the trips that
+    /// finished (S178), the gap the model itself expects, and the difference.
     pub gap: f64,
+    pub gap_expected: f64,
+    pub gap_excess: f64,
+    /// The share of travellers (by weight) left out because their trip had not finished.
+    pub incomplete_share: f64,
     pub gap_flow: f64,
     pub gap_flow_floor: f64,
 }
@@ -167,6 +175,40 @@ pub(crate) struct Change {
 pub(crate) struct Update {
     pub assessment: Assessment,
     pub changes: Vec<Change>,
+    /// Each trip's expected travel time under the model at these times, in seconds (`NaN`
+    /// for a trip with no set, or if the model gives no probabilities): what
+    /// [`Chooser::network_gap`] needs to tell the model's dispersion from disequilibrium.
+    pub expected_seconds: Vec<f64>,
+}
+
+/// What [`Chooser::fill`] leaves next to the batch: per situation (one trip's choice among its
+/// pair's routes) and per alternative offered.
+#[derive(Default)]
+struct Filled {
+    /// Per situation: its trip.
+    trip_of: Vec<usize>,
+    /// Per situation: the store index of its set's route 0, and how many routes the set has.
+    set_first: Vec<usize>,
+    set_len: Vec<usize>,
+    /// Per situation: where its set's expected seconds start in `set_seconds`.
+    set_at: Vec<usize>,
+    /// The expected seconds of every route of every situation's set, offered or not, in order.
+    set_seconds: Vec<f64>,
+    /// Per alternative offered, as the batch holds them: its route's store index, and its expected seconds.
+    alt_route: Vec<u32>,
+    alt_seconds: Vec<f64>,
+}
+
+impl Filled {
+    fn clear(&mut self) {
+        self.trip_of.clear();
+        self.set_first.clear();
+        self.set_len.clear();
+        self.set_at.clear();
+        self.set_seconds.clear();
+        self.alt_route.clear();
+        self.alt_seconds.clear();
+    }
 }
 
 /// The parts of route choice that do not change from one iteration to the next:
@@ -231,27 +273,22 @@ impl<'a> Chooser<'a> {
         Ok(Self { inputs, route_sets, wanted, attributes, identity, weight })
     }
 
-    /// Put trips `from..to` that have a set into `batch`, with `times` as their cost
-    /// (free flow if `None`). `first_route[s]` is the store index of situation `s`'s
-    /// route 0, `trip_of[s]` its trip, and `alt_seconds[a]` alternative `a`'s expected
-    /// travel time in seconds.
+    /// Put trips `from..to` that have a set into `batch`, with `times` as their cost (free flow
+    /// if `None`). Each situation offers the routes of its pair's set **whose expected time is
+    /// within [`Inputs::detour_limit`] of the best's** (all of them if the limit is 0: the best
+    /// route is always offered). What is left besides the batch is in `filled`.
     fn fill(
         &self,
         batch: &mut ChoiceBatch,
-        first_route: &mut Vec<usize>,
-        trip_of: &mut Vec<usize>,
-        alt_seconds: &mut Vec<f64>,
+        filled: &mut Filled,
         range: core::ops::Range<usize>,
         times: Option<&LinkTimes>,
     ) {
-        let Inputs { trips, trip_keys, .. } = *self.inputs;
+        let Inputs { trips, trip_keys, detour_limit, .. } = *self.inputs;
         let route_sets = &*self.route_sets;
         batch.clear();
-        first_route.clear();
-        trip_of.clear();
-        alt_seconds.clear();
+        filled.clear();
         let mut row = vec![0.0; self.wanted.len()];
-        let mut seconds: Vec<f64> = Vec::new();
         for i in range {
             let key = trip_keys[i];
             if key.origin == key.destination {
@@ -267,17 +304,22 @@ impl<'a> Chooser<'a> {
             let departure = f64::from(trips.departure(trip).get());
             // Each route's expected time: at free flow the store's, later the link
             // times of the last loading walked from this trip's departure.
-            seconds.clear();
-            seconds.extend(set.clone().map(|r| {
+            let at = filled.set_seconds.len();
+            filled.set_seconds.extend(set.clone().map(|r| {
                 let view = route_sets.route(r);
                 times.map_or_else(
                     || f64::from(view.cost),
                     |t| t.route_seconds(view.links, departure),
                 )
             }));
+            let seconds = &filled.set_seconds[at..];
             let best = seconds.iter().copied().fold(f64::INFINITY, f64::min);
-            alt_seconds.extend_from_slice(&seconds);
+            let reach =
+                if detour_limit > 0.0 { best * (1.0 + detour_limit) } else { f64::INFINITY };
             for (a, r) in set.clone().enumerate() {
+                if seconds[a] > reach {
+                    continue;
+                }
                 let view = route_sets.route(r);
                 for (slot, name) in row.iter_mut().zip(&self.wanted) {
                     *slot = match *name {
@@ -294,16 +336,24 @@ impl<'a> Chooser<'a> {
                     };
                 }
                 batch.push_alternative(self.identity[r], &row);
+                filled.alt_route.push(u32::try_from(r).expect("route ids fit in 32 bits"));
+                filled.alt_seconds.push(seconds[a]);
             }
-            first_route.push(set.start);
-            trip_of.push(i);
+            filled.set_first.push(set.start);
+            filled.set_len.push(set.len());
+            filled.set_at.push(at);
+            filled.trip_of.push(i);
         }
     }
 
-    /// The gap against the **whole network** (S171), for a keyed sample of `sample`
-    /// routed trips: `Σ w t_chosen / Σ w t_fastest − 1`, where `t_fastest` is the least
-    /// travel time over *any* route at the times `times` gives, found by a bounded
-    /// time-dependent search (no worse than the cheapest of the trip's choice set).
+    /// The gap against the **whole network** (S171), for a keyed sample of `sample` of the
+    /// routed trips that **finished** (`unfinished[t]` false; S178): `Σ w t_chosen / Σ w t_fastest − 1`,
+    /// where `t_fastest` is the least travel time over *any* route at the times `times` gives,
+    /// found by a bounded time-dependent search (no worse than the cheapest of the trip's choice
+    /// set). Returns it with the **disequilibrium** version (S178): the same less what the
+    /// model itself expects inside the set, `Σ w (t_chosen − t_expected + t_least_in_set −
+    /// t_fastest) / Σ w t_fastest`, where `expected_seconds[t]` is trip `t`'s expected time
+    /// under the model (`NaN`: the model gave no probabilities; the second number is then `NaN`).
     ///
     /// The sample is the `sample` trips with the smallest keyed draws (a draw on the trip
     /// alone, from the re-selection stream), so it is the same for any thread count and
@@ -315,11 +365,13 @@ impl<'a> Chooser<'a> {
         times: &LinkTimes,
         sample: u32,
         rng: &StreamRng,
-    ) -> f64 {
+        unfinished: &[bool],
+        expected_seconds: &[f64],
+    ) -> (f64, f64) {
         let Inputs { network, trips, trip_keys, turns, .. } = *self.inputs;
         let route_sets = &*self.route_sets;
         let mut keyed: Vec<(f64, usize)> = (0..current.route.len())
-            .filter(|&t| current.route[t] != NO_ROUTE)
+            .filter(|&t| current.route[t] != NO_ROUTE && !unfinished[t])
             .map(|t| {
                 let key = rng.unit(DrawAddress::from_pair(
                     u32::try_from(t).expect("trip ids fit in 32 bits"),
@@ -330,7 +382,7 @@ impl<'a> Chooser<'a> {
             .collect();
         let take = (sample as usize).min(keyed.len());
         if take == 0 {
-            return f64::NAN;
+            return (f64::NAN, f64::NAN);
         }
         keyed.select_nth_unstable_by(take - 1, |a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
         let mut chosen: Vec<usize> = keyed[..take].iter().map(|&(_, t)| t).collect();
@@ -340,7 +392,7 @@ impl<'a> Chooser<'a> {
         let mut search = Search::new(&ctx);
         let wait = |link: u32, departure: f64| times.origin_wait_seconds(link, departure);
         let seconds = |link: u32, at: f64| times.link_seconds(link, at);
-        let (mut paid, mut fastest) = (0.0, 0.0);
+        let (mut paid, mut fastest, mut excess) = (0.0, 0.0, 0.0);
         for t in chosen {
             let key = trip_keys[t];
             let departure = f64::from(trips.departure(TripId::from_index(t)).get());
@@ -363,10 +415,16 @@ impl<'a> Chooser<'a> {
                 &seconds,
             );
             let w = f64::from(current.weight[t]);
+            let best = found.map_or(in_set, |f| f.min(in_set));
             paid += w * taken;
-            fastest += w * found.map_or(in_set, |f| f.min(in_set));
+            fastest += w * best;
+            excess += w * (taken - expected_seconds[t] + in_set - best);
         }
-        if fastest > 0.0 { (paid - fastest) / fastest } else { f64::NAN }
+        if fastest > 0.0 {
+            ((paid - fastest) / fastest, excess / fastest)
+        } else {
+            (f64::NAN, f64::NAN)
+        }
     }
 
     fn empty_choices(&self) -> RouteChoices {
@@ -393,24 +451,22 @@ impl<'a> Chooser<'a> {
         let total = self.inputs.trips.len() as usize;
         let mut out = self.empty_choices();
         let mut batch = ChoiceBatch::new(iteration, &self.wanted);
-        let (mut first_route, mut trip_of) = (Vec::new(), Vec::new());
-        let mut alt_seconds = Vec::new();
+        let mut filled = Filled::default();
         let mut i = 0;
         while i < total {
             let end = (i + CHUNK).min(total);
-            self.fill(&mut batch, &mut first_route, &mut trip_of, &mut alt_seconds, i..end, None);
+            self.fill(&mut batch, &mut filled, i..end, None);
             i = end;
-            if trip_of.is_empty() {
+            if filled.trip_of.is_empty() {
                 continue;
             }
             batch.validate()?;
             let choices = self.inputs.model.choose(&batch, rng)?;
             choices.validate(&batch)?;
-            for (s, &t) in trip_of.iter().enumerate() {
-                out.route[t] = u32::try_from(first_route[s] + choices.chosen[s] as usize)
-                    .expect("route ids fit in 32 bits");
-                out.alternatives[t] =
-                    u32::try_from(batch.range(s).len()).expect("few alternatives");
+            for (s, &t) in filled.trip_of.iter().enumerate() {
+                out.route[t] = filled.alt_route[batch.range(s).start + choices.chosen[s] as usize];
+                // How many routes its pair's set holds, however many were offered.
+                out.alternatives[t] = u32::try_from(filled.set_len[s]).expect("few alternatives");
                 out.probability[t] = choices.probability[s];
             }
         }
@@ -423,7 +479,9 @@ impl<'a> Chooser<'a> {
     /// [`Update::changes`] if the run goes on (it may stop first, having converged).
     ///
     /// The assessment (the flow and cost gaps against their floor, design §11.2)
-    /// is of `current` as it was loaded.
+    /// is of `current` as it was loaded. **The cost gaps leave out the trips still under
+    /// way when the window ended** (`unfinished[t]`, S178: their times are lower bounds), and
+    /// say how many those are; the expected gap is what the model itself expects of the rest.
     ///
     /// # Errors
     ///
@@ -435,60 +493,67 @@ impl<'a> Chooser<'a> {
         iteration: u32,
         strategy: Option<(&dyn Equilibration, &StreamRng)>,
         rng: &StreamRng,
+        unfinished: &[bool],
     ) -> Result<Update, ChoiceError> {
         let total = self.inputs.trips.len() as usize;
         let sets = &*self.route_sets;
         let mut batch = ChoiceBatch::new(iteration, &self.wanted);
-        let (mut first_route, mut trip_of) = (Vec::new(), Vec::new());
-        let mut alt_seconds = Vec::new();
+        let mut filled = Filled::default();
         let routes = sets.route_count();
         let (mut observed, mut expected, mut sample) =
             (vec![0.0; routes], vec![0.0; routes], vec![0.0; routes]);
-        let (mut w_all, mut w_reselected, mut w_changed) = (0.0, 0.0, 0.0);
-        let (mut paid, mut least) = (0.0, 0.0);
+        let (mut w_all, mut w_reselected, mut w_changed, mut w_unfinished) = (0.0, 0.0, 0.0, 0.0);
+        let (mut paid, mut least, mut expected_paid) = (0.0, 0.0, 0.0);
+        let mut expected_seconds = vec![f64::NAN; total];
         let mut measured = true;
         let mut changes: Vec<Change> = Vec::new();
         let mut i = 0;
         while i < total {
             let end = (i + CHUNK).min(total);
-            self.fill(
-                &mut batch,
-                &mut first_route,
-                &mut trip_of,
-                &mut alt_seconds,
-                i..end,
-                Some(times),
-            );
+            self.fill(&mut batch, &mut filled, i..end, Some(times));
             i = end;
-            if trip_of.is_empty() {
+            if filled.trip_of.is_empty() {
                 continue;
             }
             batch.validate()?;
             let probabilities = self.inputs.model.probabilities(&batch)?;
             measured &= probabilities.is_some();
             let mut moving: Vec<usize> = Vec::new();
-            for (s, &t) in trip_of.iter().enumerate() {
+            for (s, &t) in filled.trip_of.iter().enumerate() {
                 let w = f64::from(current.weight[t]);
                 w_all += w;
                 let range = batch.range(s);
                 let taken = current.route[t] as usize;
                 // The gap: what the route taken costs against the cheapest of the set, at the
-                // times this loading produced.
-                let times_of_set = &alt_seconds[range.clone()];
-                paid += w * times_of_set[taken - first_route[s]];
-                least += w * times_of_set.iter().copied().fold(f64::INFINITY, f64::min);
+                // times this loading produced (the whole set, offered or not).
+                let set_seconds = &filled.set_seconds[filled.set_at[s]..][..filled.set_len[s]];
+                let least_here = set_seconds.iter().copied().fold(f64::INFINITY, f64::min);
+                let finished = !unfinished[t];
+                if finished {
+                    paid += w * set_seconds[taken - filled.set_first[s]];
+                    least += w * least_here;
+                } else {
+                    w_unfinished += w;
+                }
                 if let Some(p) = &probabilities {
                     observed[taken] += w;
                     let u = floor_draw(rng, &batch, s, iteration);
                     let mut cumulative = 0.0;
                     let mut drawn = false;
+                    let mut expected_here = 0.0;
                     for (a, r) in range.clone().enumerate() {
-                        expected[first_route[s] + a] += w * p[r];
+                        let route = filled.alt_route[r] as usize;
+                        expected[route] += w * p[r];
+                        expected_here += p[r] * filled.alt_seconds[r];
                         cumulative += p[r];
                         if !drawn && (u < cumulative || a + 1 == range.len()) {
-                            sample[first_route[s] + a] += w;
+                            sample[route] += w;
                             drawn = true;
                         }
+                    }
+                    expected_seconds[t] = expected_here;
+                    if finished {
+                        expected_paid += w * expected_here;
                     }
                 }
                 if let Some((strategy, msa_rng)) = strategy {
@@ -502,10 +567,9 @@ impl<'a> Chooser<'a> {
                 let choices = self.inputs.model.choose(&sub, rng)?;
                 choices.validate(&sub)?;
                 for (m, &s) in moving.iter().enumerate() {
-                    let t = trip_of[s];
+                    let t = filled.trip_of[s];
                     let w = f64::from(current.weight[t]);
-                    let new = u32::try_from(first_route[s] + choices.chosen[m] as usize)
-                        .expect("route ids fit in 32 bits");
+                    let new = filled.alt_route[batch.range(s).start + choices.chosen[m] as usize];
                     w_reselected += w;
                     if new != current.route[t] {
                         w_changed += w;
@@ -520,14 +584,28 @@ impl<'a> Chooser<'a> {
         }
         let share = |x: f64| if w_all > 0.0 { x / w_all } else { 0.0 };
         let tv = |a: &[f64]| 0.5 * a.iter().zip(&expected).map(|(x, e)| (x - e).abs()).sum::<f64>();
+        let (gap, gap_expected, gap_excess) = if least > 0.0 {
+            let gap = (paid - least) / least;
+            if measured {
+                let expected_gap = (expected_paid - least) / least;
+                (gap, expected_gap, gap - expected_gap)
+            } else {
+                (gap, f64::NAN, f64::NAN)
+            }
+        } else {
+            (f64::NAN, f64::NAN, f64::NAN)
+        };
         let assessment = Assessment {
             reselected_share: share(w_reselected),
             changed_share: share(w_changed),
-            gap: if least > 0.0 { (paid - least) / least } else { f64::NAN },
+            gap,
+            gap_expected,
+            gap_excess,
+            incomplete_share: share(w_unfinished),
             gap_flow: if measured { share(tv(&observed)) } else { f64::NAN },
             gap_flow_floor: if measured { share(tv(&sample)) } else { f64::NAN },
         };
-        Ok(Update { assessment, changes })
+        Ok(Update { assessment, changes, expected_seconds })
     }
 }
 
