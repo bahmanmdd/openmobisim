@@ -121,3 +121,25 @@ jobs:
       - name: Run the boundary tests against the installed wheel
         shell: bash
         run: pytest python/tests
+
+  publish:
+    # Publishes to PyPI when a version tag (v0.1.0a1, v0.1.0, ...) is pushed, and
+    # only then: pushes and pull requests build and test but never upload. No
+    # token is stored anywhere: PyPI trusts this workflow and this environment
+    # (a "trusted publisher"), and GitHub hands it a short-lived identity.
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, sdist, smoke-test]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "{wheel-*,sdist}"
+          merge-multiple: true
+          path: dist
+      - name: List what will be uploaded
+        run: ls -l dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
