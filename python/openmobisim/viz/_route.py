@@ -213,7 +213,7 @@ def map_route(
         ),
         note=note,
         provenance=(
-            f"openmobisim {__version__} · route set {routes.identity[:8]} · "
+            f"{__version__} · route set {routes.identity[:8]} · "
             f"{routes.descriptor.replace(';', ' ')} · {source}"
         ),
         route_legend=legend,

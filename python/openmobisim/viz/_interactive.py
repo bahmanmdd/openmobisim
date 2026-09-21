@@ -203,7 +203,7 @@ def map_interactive(
         else f"{network.source} network"
     )
     provenance = (
-        f"openmobisim {__version__} · run {run.run_id} · level {run.flow_level} ({level})"
+        f"{__version__} · run {run.run_id} · level {run.flow_level} ({level})"
         + (f" · step {run.flow_step_s} s" if run.flow_level else "")
         + (f" · bin {bin_seconds} s" if bin_seconds else "")
         + f" · {run_identity(run)}"
