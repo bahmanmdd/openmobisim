@@ -309,9 +309,7 @@ def test_the_footer_names_the_runs_seed_and_fingerprint():
     run, _ = toy_run()
     for size in ((16, 9), (6, 3.4)):
         fig = viz.map_link(run, size=size, dpi=60)
-        footer = [
-            t for t in fig.texts if "openmobisim" in t.get_text() and "run viz-test" in t.get_text()
-        ]
+        footer = [t for t in fig.texts if "run viz-test" in t.get_text()]
         assert len(footer) == 1, "one footer"
         assert (
             f"choice deterministic · seed 0 · fingerprint {run.fingerprint[:8]}"

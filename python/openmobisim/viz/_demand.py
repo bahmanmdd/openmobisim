@@ -203,8 +203,7 @@ def map_demand(
         "lines bend to the right of their direction"
     )
     provenance = (
-        f"openmobisim {__version__} · demand · {len(w)} of {len(od['trips'])} pairs drawn · "
-        f"cells {cell_m:g} m"
+        f"{__version__} · demand · {len(w)} of {len(od['trips'])} pairs drawn · cells {cell_m:g} m"
     )
     sample_values = [nice_number(wmax / 10), nice_number(wmax / 3), nice_number(wmax)]
     samples_pt = [(v, 0.6 + 5.4 * float(np.sqrt(min(v, wmax) / wmax))) for v in sample_values]
@@ -339,7 +338,7 @@ def chart_demand_matrix(
             f"{shown:,.0f} of {total:,.0f} inter-cell trips shown"
         ),
         note=note,
-        provenance=f"openmobisim {__version__} · demand · cells {cell_m:g} m",
+        provenance=f"{__version__} · demand · cells {cell_m:g} m",
         colour_legend=("Trips per pair", th.ramp_volume, "0", f"{wmax:g}"),
         credit=credit,
         logo=logo,

@@ -299,7 +299,7 @@ def map_link(
         else f"{network.source} network"
     )
     provenance = (
-        f"openmobisim {__version__} · run {run.run_id} · level {run.flow_level} ({level})"
+        f"{__version__} · run {run.run_id} · level {run.flow_level} ({level})"
         f"{stepping} · bin {step} s · {run_identity(run)} · {source}"
     )
     sample_values = [nice_number(vmax / 10), nice_number(vmax / 3), nice_number(vmax)]
