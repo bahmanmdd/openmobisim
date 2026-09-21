@@ -27,8 +27,12 @@ def scenario(trips=1_800, **kwargs):
         "flow_level": 4,
         "choice_model": "logit",
         "equilibration": "msa",
-        "equilibration_options": {"iterations": 6, "gap_sample": 300},
+        "equilibration_options": {"iterations": 6, "gap_sample": 300, "warmup": 0},
         "master_seed": 3,
+        # The method's own sets unless a test asks for the update (S179 made an update and one
+        # route per pair the default of an iterating run).
+        "route_method": "penalty",
+        "route_update": "none",
     }
     settings.update(kwargs)
     return ms.Scenario.from_parts(net, rows, **settings)
@@ -111,9 +115,10 @@ def test_when_nothing_beats_the_set_nothing_is_added_and_nothing_changes():
         "equilibration": "msa",
         "equilibration_options": {"iterations": 3, "gap_sample": 10},
         "master_seed": 3,
+        "route_update": "none",
     }
     plain = ms.Scenario.from_parts(net, rows, **settings).run("ru-empty-plain")
-    run = ms.Scenario.from_parts(net, rows, route_update="best_response", **settings).run(
+    run = ms.Scenario.from_parts(net, rows, **{**settings, "route_update": "best_response"}).run(
         "ru-empty"
     )
     c = run.convergence()
@@ -122,7 +127,10 @@ def test_when_nothing_beats_the_set_nothing_is_added_and_nothing_changes():
     # With the default slack of 2% nobody looks: the best route is at free flow, nothing to gain.
     assert c["route_searches"].tolist() == [0, 0, 0]
     looked = ms.Scenario.from_parts(
-        net, rows, route_update="best_response", route_update_options={"slack": 0}, **settings
+        net,
+        rows,
+        **{**settings, "route_update": "best_response"},
+        route_update_options={"slack": 0},
     ).run("ru-empty-looked")
     assert looked.convergence()["route_searches"].tolist() == [1, 1, 0]
     assert (looked.convergence()["routes_added"] == 0).all()

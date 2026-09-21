@@ -718,7 +718,7 @@ fn a_route_that_was_in_the_set_keeps_its_identity_when_another_is_added() {
     // must be drawn as they were. The model is shown each situation's alternatives' identities.
     let spy = Arc::new(Identities { seen: Mutex::new(Vec::new()) });
     let setup = Setup { iterations: 3.0, ..Setup::new(1_500) };
-    let run = setup.run().with_choice_model(spy.clone());
+    let run = setup.run().with_choice_model(spy.clone()).with_choice_detour_limit(0.0);
     let mut run = run;
     let result = run.execute(&mut Diagnostics::new());
     assert_eq!(result.route_sets.as_ref().unwrap().route_count(), 2);

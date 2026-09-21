@@ -153,7 +153,8 @@ fn a_route_more_than_the_limit_slower_than_the_best_is_not_offered() {
     assert!((took(&both, 0) as f64 - 0.6 * f64::from(n)).abs() < 5.0 * sigma);
     // 0 offers every route, and a limit past the slow road's detour offers it too: the same choices.
     assert_eq!(all.route_choices, both.route_choices);
-    assert_eq!(default.route_choices, all.route_choices, "off (0) is the default today");
+    // The default (0.5) offers the slow road too at free flow, where it is a sixth dearer.
+    assert_eq!(default.route_choices, all.route_choices);
     // A limit under 1/6 offers the fast road alone: everyone takes it, and with probability 1.
     let only = Setup { iterations: 2.0, limit: Some(0.1), ..Setup::free_flow(n) }.go();
     assert_eq!((took(&only, 0), took(&only, 1)), (n as usize, 0));

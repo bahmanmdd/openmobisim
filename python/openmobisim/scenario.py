@@ -375,14 +375,14 @@ class Scenario:
         flow_level: int = 0,
         flow_step_s: int = 300,
         link_bin_s: int | None = None,
-        route_method: str = "penalty",
+        route_method: str | None = None,
         route_options: dict[str, float] | None = None,
         master_seed: int = 0,
         choice_model: str | Any = "deterministic",
         choice_options: dict[str, float] | None = None,
         equilibration: str = "none",
         equilibration_options: dict[str, float] | None = None,
-        route_update: str = "none",
+        route_update: str | None = None,
         route_update_options: dict[str, float] | None = None,
         choice_detour_limit: float | None = None,
         route_cache: bool = False,
@@ -409,6 +409,18 @@ class Scenario:
         self._flow_level = flow_level
         self._flow_step_s = flow_step_s
         self._link_bin_s = link_bin_s
+        iterates = (
+            equilibration != "none" and int((equilibration_options or {}).get("iterations", 10)) > 1
+        )
+        if route_method is None:
+            # An iterating run starts from one route per pair and lets the route update find the
+            # rest (S179); a run that loads once has no next iteration to choose among new
+            # routes. Options given for a method mean the default method of a single loading.
+            route_method = "shortest" if iterates and route_options is None else "penalty"
+        if route_update is None:
+            route_update = "best_response" if iterates or route_update_options else "none"
+        if iterates and equilibration == "msa" and "warmup" not in (equilibration_options or {}):
+            equilibration_options = {**(equilibration_options or {}), "warmup": 1}
         self._route_method = route_method
         self._route_options = route_options
         self._master_seed = master_seed
@@ -433,14 +445,14 @@ class Scenario:
         flow_level: int = 0,
         flow_step_s: int = 300,
         link_bin_s: int | None = None,
-        route_method: str = "penalty",
+        route_method: str | None = None,
         route_options: dict[str, float] | None = None,
         master_seed: int = 0,
         choice_model: str | Any = "deterministic",
         choice_options: dict[str, float] | None = None,
         equilibration: str = "none",
         equilibration_options: dict[str, float] | None = None,
-        route_update: str = "none",
+        route_update: str | None = None,
         route_update_options: dict[str, float] | None = None,
         choice_detour_limit: float | None = None,
         route_cache: bool = False,
@@ -474,7 +486,13 @@ class Scenario:
                 this many seconds, read with ``Run.link_bins()`` and drawn
                 with ``openmobisim.viz.map_link``.
             route_method: How route sets are generated, by name (see
-                ``openmobisim.route_methods()``). ``"penalty"`` (the default) finds
+                ``openmobisim.route_methods()``). **The default depends on the run:** a run
+                that loads once uses ``"penalty"``; a run that **iterates** (an
+                ``equilibration`` with more than one iteration) starts from ``"shortest"``, one
+                route per pair, and lets the route update find the rest (measured: as good
+                as the alternatives of the other methods at about half the time). Naming a
+                method, or giving ``route_options``, overrides this (options alone mean
+                ``"penalty"``). ``"penalty"`` finds
                 distinct alternatives by penalising the links of the routes found.
                 ``"shortest"`` makes one route per pair. ``"montecarlo"`` finds routes
                 by searching under random link costs **biased towards the links the
@@ -517,9 +535,10 @@ class Scenario:
                 A route far slower than the best is no realistic alternative, and in a logit it
                 only takes probability that belongs to routes that compete (the gap grows with the
                 size of the set). ``0`` offers every route of the set; ``None`` (the default) is the
-                library's default. The best route is always offered; a route left out is still in
-                the set and returns when times change. The gaps are still measured against the whole
-                set. The ``ln_path_size`` attribute is computed over the whole set.
+                library's default, **0.5**. The best route is always offered; a route left out is
+                still in the set and returns when times change. The gaps are still measured
+                against the whole set. The ``ln_path_size`` attribute is computed over the whole
+                set.
             route_cache: Keep the generated route sets in memory for the next run **of this
                 process** that asks for the same: the same network, the same origin-destination
                 pairs, the same route method and options and, for a method that reads the demand
@@ -545,13 +564,16 @@ class Scenario:
                 last three iterations, is below this: 0.05 is good, 0.15 acceptable),
                 ``gap_sample`` (300; how many trips are tested against the whole
                 network at the last iteration, 0 for none) and ``cost_bin_s`` (300: the
-                length of the time bins the link times are read in) and ``warmup`` (0: how many of
+                length of the time bins the link times are read in) and ``warmup`` (1 for a run
+                that iterates, else 0: how many of
                 the first loadings use the point-queue model, which cannot gridlock; the last
                 loading, the run's result, always uses ``flow_level``. A narrow route set is often
                 in gridlock in its first loading, and every later iteration inherits its times).
             route_update: How the route sets grow between iterations (see
-                ``openmobisim.route_update_methods()``). ``"none"`` (the default) leaves
-                them as the route method made them, at free-flow costs. ``"best_response"``
+                ``openmobisim.route_update_methods()``). **The default depends on the run:**
+                ``"best_response"`` when the run iterates (or ``route_update_options`` is
+                given), ``"none"`` when it loads once. ``"none"`` leaves
+                the sets as the route method made them, at free-flow costs. ``"best_response"``
                 is for a run that iterates: after each loading it searches, for every
                 origin-destination pair, the fastest route at the congested times the
                 loading produced, and adds it to the pair's set if it is new and at least as

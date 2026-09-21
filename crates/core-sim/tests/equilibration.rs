@@ -132,7 +132,10 @@ impl Setup {
                 openmobisim_core_routes::generator(name, &Default::default()).expect("built in");
             run = run.with_route_generator(Arc::from(g));
         }
-        run.with_choice_model(Arc::from(model(self.choice.0, &choice).expect("built in")))
+        // These tests defend the equilibration on the pair's whole set (the limit on what a traveller
+        // is offered has its own, in `choice_set.rs`).
+        run.with_choice_detour_limit(0.0)
+            .with_choice_model(Arc::from(model(self.choice.0, &choice).expect("built in")))
             .with_equilibration(Arc::from(
                 strategy(self.equilibration.0, &options(&self.equilibration.1)).expect("built in"),
             ))

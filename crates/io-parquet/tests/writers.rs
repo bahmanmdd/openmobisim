@@ -352,10 +352,11 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
         gap_flow_excess: gap - 0.01,
         routes_added: 0,
         route_searches: 0,
-        gap_expected: f64::NAN,
-        gap_excess: f64::NAN,
-        incomplete_share: f64::NAN,
-        gap_network_excess: f64::NAN,
+        // The disequilibrium and what goes with it (S178): measured from the second iteration on.
+        gap_expected: if iteration == 0 { f64::NAN } else { gap / 4.0 },
+        gap_excess: if iteration == 0 { f64::NAN } else { gap / 2.0 - gap / 4.0 },
+        incomplete_share: if iteration == 0 { f64::NAN } else { 0.0 },
+        gap_network_excess: if iteration == 2 { 0.03 } else { f64::NAN },
     };
     result.iterations = vec![report(0, 0.3), report(1, 0.1), report(2, 0.05)];
     let path = temp_path("kpis_iterated.parquet");
@@ -378,6 +379,13 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
     assert_eq!(get(2, "gap_network"), Some(0.04), "measured at the last iteration only");
     assert_eq!(get(1, "gap_network"), None);
     assert_eq!(get(1, "changed_share"), Some(0.25));
+    // The disequilibrium rows (S178), one per iteration where they were measured.
+    assert_eq!(get(1, "gap_expected"), Some(0.1 / 4.0));
+    assert_eq!(get(2, "gap_excess"), Some(0.05 / 2.0 - 0.05 / 4.0));
+    assert_eq!(get(1, "incomplete_share"), Some(0.0), "0 is measured: it has a row");
+    assert_eq!(get(2, "gap_network_excess"), Some(0.03));
+    assert_eq!(get(1, "gap_network_excess"), None);
+    assert_eq!(get(0, "gap_excess"), None);
     // A number that was not measured has no row.
     assert_eq!(get(0, "changed_share"), None);
     assert_eq!(get(0, "time_change"), None);

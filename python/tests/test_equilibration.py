@@ -34,7 +34,15 @@ def go(name, **kwargs):
     return scenario(**kwargs).run(name)
 
 
-MSA = {"choice_model": "logit", "equilibration": "msa", "master_seed": 3}
+# These tests defend equilibration on the method's own sets: no route update, whatever an iterating
+# run defaults to (S179; `test_an_iterating_run_defaults_...` below defends that).
+MSA = {
+    "choice_model": "logit",
+    "equilibration": "msa",
+    "master_seed": 3,
+    "route_method": "penalty",
+    "route_update": "none",
+}
 
 
 def test_the_strategies_are_listed_with_the_default_first():
@@ -106,6 +114,12 @@ def test_the_kpis_file_has_a_row_set_per_iteration():
     assert sorted(df["iteration"].unique()) == [0, 1, 2, 3]
     total = df[df["metric"] == "total_travel_time_s"].sort_values("iteration")["value"].to_numpy()
     assert np.allclose(total, run.convergence()["total_travel_time_s"])
+    # The disequilibrium and what goes with it are in the file (S178), from the iteration measured.
+    assert {"gap_expected", "gap_excess", "incomplete_share"} <= set(df["metric"])
+    diseq = df[df["metric"] == "gap_excess"].sort_values("iteration")["value"].to_numpy()
+    assert np.allclose(
+        diseq, run.convergence()["gap_excess"][np.isfinite(run.convergence()["gap_excess"])]
+    )
     excess = df[df["metric"] == "gap_flow_excess"].sort_values("iteration")["value"].to_numpy()
     assert np.allclose(excess, run.convergence()["gap_flow_excess"])
     # A number not measured has no row; what cannot change between loadings is written once.
@@ -291,7 +305,11 @@ def test_a_warmup_needs_a_whole_number_and_leaves_the_last_loading_at_full_fidel
         equilibration_options={"iterations": 3, "warmup": 1, "gap_sample": 50},
         **heavy,
     )
-    plain = go("eq-warm-plain", equilibration_options={"iterations": 3, "gap_sample": 50}, **heavy)
+    plain = go(
+        "eq-warm-plain",
+        equilibration_options={"iterations": 3, "warmup": 0, "gap_sample": 50},
+        **heavy,
+    )
     # The first loading is the point-queue model's: not the same; the run says what it was told.
     first = "total_travel_time_s"
     assert warm.convergence()[first][0] != plain.convergence()[first][0]
@@ -308,3 +326,43 @@ def test_a_warmup_needs_a_whole_number_and_leaves_the_last_loading_at_full_fidel
     for bad in (-1, 1.5, 1001):
         with pytest.raises(ValueError, match="warmup"):
             go("eq-warm-bad", equilibration_options={"iterations": 3, "warmup": bad}, **MSA)
+
+
+def test_an_iterating_run_defaults_to_one_route_per_pair_an_update_and_a_warmup():
+    net = ms.examples.manhattan_grid(n=6, block_metres=200.0, signals=False)
+    rows = ms.examples.trips_random(net, 300, seed=5, min_m=300.0, max_m=1000.0, spread_s=300)
+
+    def run(name, **kwargs):
+        settings = {"class_defaults": CAR, "flow_level": 4, "choice_model": "logit"}
+        settings.update(kwargs)
+        return ms.Scenario.from_parts(net, rows, **settings).run(name)
+
+    # One loading: the penalty method's alternatives, no update (nothing to iterate over).
+    once = run("eq-default-once")
+    assert once.route_sets().method == "penalty" and once.route_update == "none"
+    # One iteration of msa is one loading too.
+    one = run("eq-default-one", equilibration="msa", equilibration_options={"iterations": 1})
+    assert one.route_sets().method == "penalty" and one.route_update == "none"
+    # Iterating: one route per pair to start, the update to find the rest, a warm-up of one loading.
+    many = run("eq-default-many", equilibration="msa", equilibration_options={"iterations": 3})
+    assert many.route_sets().method == "shortest" and many.route_update == "best_response"
+    assert "warmup=1" in many.manifest()["equilibration_descriptor"]
+    assert many.manifest()["route_method"] == "shortest"
+    # Every default can be overridden, and options alone mean the method they belong to.
+    named = run(
+        "eq-default-named",
+        equilibration="msa",
+        equilibration_options={"iterations": 3, "warmup": 0},
+        route_method="penalty",
+        route_update="none",
+    )
+    assert named.route_sets().method == "penalty" and named.route_update == "none"
+    assert "warmup=0" in named.manifest()["equilibration_descriptor"]
+    opts = run(
+        "eq-default-options",
+        equilibration="msa",
+        equilibration_options={"iterations": 3},
+        route_options={"max_paths": 2},
+    )
+    assert opts.route_sets().method == "penalty" and opts.route_update == "best_response"
+    assert "max_paths=2" in opts.route_sets().descriptor, "the options reached the method"

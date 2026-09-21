@@ -61,7 +61,7 @@ def test_a_run_that_grows_its_sets_does_not_change_the_cached_ones():
         "route_cache": True,
     }
     grown = scenario(trips=1500, route_update="best_response", **settings).run("rc-grown")
-    plain = scenario(trips=1500, **settings).run("rc-plain-again")
+    plain = scenario(trips=1500, route_update="none", **settings).run("rc-plain-again")
     assert ms.route_cache_info()[0] >= 1
     assert plain.route_sets().update == "" and (plain.route_sets().stamps() == 0).all()
     assert grown.route_sets().route_count >= plain.route_sets().route_count

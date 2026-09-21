@@ -242,8 +242,12 @@ pub struct Run {
 }
 
 /// The share above the best route's expected time beyond which a route is not offered to a
-/// traveller, unless the run says otherwise (S178). 0 offers every route of the pair's set.
-pub const DEFAULT_CHOICE_DETOUR_LIMIT: f64 = 0.0;
+/// traveller, unless the run says otherwise (S178; the user chose 0.5, S179). 0 offers every route
+/// of the pair's set. At 0.5 a route is offered only if it is at most 50% slower than the best;
+/// every built-in method's routes are within 30% (`penalty`) or 100% (`montecarlo`) of the best
+/// at free flow, so a run that does not iterate changes only for `montecarlo`, and an iterating
+/// one drops the routes congestion has made much slower than the best.
+pub const DEFAULT_CHOICE_DETOUR_LIMIT: f64 = 0.5;
 
 impl Run {
     /// Build a run. Vehicle locations are seeded per S129: every owned car

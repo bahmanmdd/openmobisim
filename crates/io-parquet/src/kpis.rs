@@ -21,9 +21,9 @@ use crate::io::write_single_batch;
 /// before): the six totals. A run that iterated (S170) has a row set per
 /// iteration: the total travel time and the completed and truncated trips of that
 /// loading, and what the iteration showed of the pattern settling
-/// (`reselected_share`, `changed_share`, `time_change`, `gap`, `gap_network`,
-/// `gap_flow`, `gap_flow_floor`, `gap_flow_excess`; a number that was not measured
-/// has no row); the counts that cannot change from one loading to the next
+/// (`reselected_share`, `changed_share`, `time_change`, `gap`, `gap_expected`, `gap_excess`,
+/// `incomplete_share`, `gap_network`, `gap_network_excess`, `gap_flow`, `gap_flow_floor`,
+/// `gap_flow_excess`; a number that was not measured has no row); the counts that cannot change from one loading to the next
 /// (`no_vehicle_available_trips`, `no_feasible_path_trips`, `completion_rate`) are
 /// written once, for the last.
 ///
@@ -61,7 +61,11 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<(u32, &'static str,
             ("changed_share", r.changed_share),
             ("time_change", r.time_change),
             ("gap", r.gap),
+            ("gap_expected", r.gap_expected),
+            ("gap_excess", r.gap_excess),
+            ("incomplete_share", r.incomplete_share),
             ("gap_network", r.gap_network),
+            ("gap_network_excess", r.gap_network_excess),
             ("gap_flow", r.gap_flow),
             ("gap_flow_floor", r.gap_flow_floor),
             ("gap_flow_excess", r.gap_flow_excess),
@@ -83,8 +87,9 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<(u32, &'static str,
 /// takes each row's `iteration` from its report: the total travel time and the
 /// completed and truncated trips of that loading, and what the iteration showed of
 /// the pattern settling (`reselected_share`, `changed_share`, `time_change`,
-/// `gap`, `gap_network`, `gap_flow`, `gap_flow_floor`, `gap_flow_excess`; a number that was
-/// not measured has no row). The counts that cannot change from one loading to the
+/// `gap`, `gap_expected`, `gap_excess` (the disequilibrium, S178), `incomplete_share`,
+/// `gap_network`, `gap_network_excess`, `gap_flow`, `gap_flow_floor`, `gap_flow_excess`; a
+/// number that was not measured has no row). The counts that cannot change from one loading to the
 /// next (`no_vehicle_available_trips`, `no_feasible_path_trips`,
 /// `completion_rate`) are written once, for the last iteration. The `iteration`
 /// argument is used only for a run that did not iterate.
