@@ -237,10 +237,11 @@ fn convergence_arrays(
         reports.iter().map(|r| r.truncated).collect::<Vec<_>>().into_pyarray(py),
     )?;
     dict.set_item("time_change", floats(|r| r.time_change).into_pyarray(py))?;
+    dict.set_item("gap", floats(|r| r.gap).into_pyarray(py))?;
+    dict.set_item("gap_network", floats(|r| r.gap_network).into_pyarray(py))?;
     dict.set_item("gap_flow", floats(|r| r.gap_flow).into_pyarray(py))?;
     dict.set_item("gap_flow_floor", floats(|r| r.gap_flow_floor).into_pyarray(py))?;
     dict.set_item("gap_flow_excess", floats(|r| r.gap_flow_excess).into_pyarray(py))?;
-    dict.set_item("gap_cost", floats(|r| r.gap_cost).into_pyarray(py))?;
     Ok(dict.unbind())
 }
 

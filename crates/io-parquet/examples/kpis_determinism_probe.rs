@@ -192,9 +192,10 @@ fn main() {
             report.changed_share,
             report.total_travel_time_s,
             report.time_change,
+            report.gap,
+            report.gap_network,
             report.gap_flow,
             report.gap_flow_floor,
-            report.gap_cost,
         ] {
             iterated_digest =
                 iterated_digest.wrapping_mul(0x0100_0000_01b3).wrapping_add(x.to_bits());

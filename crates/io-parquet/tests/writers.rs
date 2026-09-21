@@ -342,10 +342,11 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
         completed: 4,
         truncated: 1,
         time_change: if iteration == 0 { f64::NAN } else { 0.1 },
+        gap: gap / 2.0,
+        gap_network: if iteration == 2 { 0.04 } else { f64::NAN },
         gap_flow: gap,
         gap_flow_floor: 0.01,
         gap_flow_excess: gap - 0.01,
-        gap_cost: 0.02,
     };
     result.iterations = vec![report(0, 0.3), report(1, 0.1), report(2, 0.05)];
     let path = temp_path("kpis_iterated.parquet");
@@ -364,6 +365,9 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
     assert!((0..batch.num_rows()).all(|r| iteration.value(r) <= 2));
     assert_eq!(get(1, "total_travel_time_s"), Some(900.0));
     assert_eq!(get(2, "gap_flow_excess"), Some(0.05 - 0.01));
+    assert_eq!(get(1, "gap"), Some(0.05));
+    assert_eq!(get(2, "gap_network"), Some(0.04), "measured at the last iteration only");
+    assert_eq!(get(1, "gap_network"), None);
     assert_eq!(get(1, "changed_share"), Some(0.25));
     // A number that was not measured has no row.
     assert_eq!(get(0, "changed_share"), None);

@@ -14,9 +14,11 @@
 //! | `msa` | The method of successive averages **in traveller form** (S86): at iteration `i` (from 1; iteration 0 is everyone's first choice) each traveller chooses again with probability `1/(i + 1)`, decided by a draw keyed on `(traveller, iteration)` from its own stream, so who moves does not depend on thread count or order; the others keep their route. In expectation the route flows are the average of the flows of every iteration so far, which is classical MSA with step `1/(i + 1)` |
 //!
 //! **Every iteration is reported** ([`IterationReport`]): the stability of the
-//! pattern (who changed, how much the link times moved) and the gap to a
-//! stochastic user equilibrium, measured against its sampling floor. The gap
-//! formulas and what they mean: [`IterationReport`].
+//! pattern (who changed, how much the link times moved) and **the gap**: how much
+//! more the chosen routes cost than the shortest congested route, the usual measure
+//! of how far an assignment is from equilibrium. Below 5% is good and below 15%
+//! acceptable for a stochastic dynamic assignment ([`gap_verdict`]); what each number
+//! is: [`IterationReport`].
 //!
 //! # Extending it
 //!
@@ -58,22 +60,76 @@ pub struct IterationReport {
     /// How much the link times moved since the last loading, as a share of the
     /// last loading's, weighted by traffic. `NaN` at iteration 0.
     pub time_change: f64,
-    /// The flow gap: the share of travellers whose route differs from where the
-    /// model's probabilities at the current times would put them, by pair
-    /// (half the total variation between observed and expected route flows).
+    /// **The gap** (the headline; S171): how much more travel time the chosen routes
+    /// cost than the least-cost route of the same choice set at the times this
+    /// loading produced, `Σ w (t_chosen − t_least) / Σ w t_least` over travellers. The
+    /// usual relative gap of traffic assignment, against the shortest congested path
+    /// among the alternatives: 0 when nobody could do better by changing route.
+    /// Below [`GAP_GOOD`] is good, below [`GAP_ACCEPTABLE`] acceptable ([`gap_verdict`]).
+    pub gap: f64,
+    /// The same measure against the **whole network**: the least travel time over
+    /// *any* route at the current times (found by a time-dependent search), for a
+    /// keyed sample of trips at the last iteration only; `NaN` elsewhere. Shows
+    /// whether the choice set was missing a route that traffic has made worthwhile.
+    pub gap_network: f64,
+    /// A consistency check of the stochastic choice model with itself: the share of
+    /// travellers whose route differs from where the model's probabilities, at the
+    /// current times, would put them (half the total variation between observed and
+    /// expected route flows, by pair). Not a gap to the shortest path: a logit sends
+    /// some travellers down slower routes at equilibrium, by design.
     pub gap_flow: f64,
-    /// What that gap would be by chance alone: the same measure for a fresh
-    /// sample drawn from the same probabilities.
+    /// What `gap_flow` would be by chance alone: the same measure for a fresh sample
+    /// drawn from the same probabilities.
     pub gap_flow_floor: f64,
-    /// `gap_flow − gap_flow_floor`: the disequilibrium left after noise.
+    /// `gap_flow − gap_flow_floor`: the disequilibrium of the stochastic model left
+    /// after noise.
     pub gap_flow_excess: f64,
-    /// The cost gap: the travel time chosen routes cost over what the model
-    /// expects a traveller to pay, as a share of the former.
-    pub gap_cost: f64,
 }
 
-/// Equal when every number is, comparing by bits so that a number that was not
-/// measured (`NaN`) equals itself.
+/// A gap below this is good (the user, S171: "perfect").
+pub const GAP_GOOD: f64 = 0.05;
+
+/// A gap below this is acceptable for a stochastic dynamic assignment, which cannot
+/// reach full equilibrium (the user, S171: "anything below 10–15% is acceptable").
+pub const GAP_ACCEPTABLE: f64 = 0.15;
+
+/// How close to equilibrium a gap says a run is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GapVerdict {
+    /// Below [`GAP_GOOD`].
+    Good,
+    /// Below [`GAP_ACCEPTABLE`], not good.
+    Acceptable,
+    /// [`GAP_ACCEPTABLE`] or more.
+    Poor,
+}
+
+impl GapVerdict {
+    /// `"good"`, `"acceptable"` or `"poor"`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Good => "good",
+            Self::Acceptable => "acceptable",
+            Self::Poor => "poor",
+        }
+    }
+}
+
+/// What a relative `gap` says, or `None` if it was not measured (`NaN`).
+#[must_use]
+pub fn gap_verdict(gap: f64) -> Option<GapVerdict> {
+    if gap.is_nan() {
+        None
+    } else if gap < GAP_GOOD {
+        Some(GapVerdict::Good)
+    } else if gap < GAP_ACCEPTABLE {
+        Some(GapVerdict::Acceptable)
+    } else {
+        Some(GapVerdict::Poor)
+    }
+}
+
 impl PartialEq for IterationReport {
     fn eq(&self, other: &Self) -> bool {
         let floats = |r: &Self| {
@@ -82,10 +138,11 @@ impl PartialEq for IterationReport {
                 r.changed_share,
                 r.total_travel_time_s,
                 r.time_change,
+                r.gap,
+                r.gap_network,
                 r.gap_flow,
                 r.gap_flow_floor,
                 r.gap_flow_excess,
-                r.gap_cost,
             ]
             .map(f64::to_bits)
         };
@@ -108,10 +165,11 @@ impl IterationReport {
             completed: 0,
             truncated: 0,
             time_change: f64::NAN,
+            gap: f64::NAN,
+            gap_network: f64::NAN,
             gap_flow: f64::NAN,
             gap_flow_floor: f64::NAN,
             gap_flow_excess: f64::NAN,
-            gap_cost: f64::NAN,
         }
     }
 }
@@ -196,6 +254,12 @@ pub trait Equilibration: Send + Sync {
     /// on order or threads.
     fn reselects(&self, rng: &StreamRng, traveller: u32, iteration: u32) -> bool;
 
+    /// How many trips to test against the whole network at the last iteration
+    /// ([`IterationReport::gap_network`]); 0 means none.
+    fn network_gap_sample(&self) -> u32 {
+        0
+    }
+
     /// Whether to stop before `max_iterations`, given every report so far.
     fn is_converged(&self, _reports: &[IterationReport]) -> bool {
         false
@@ -244,9 +308,14 @@ impl NoEquilibration {
 pub struct Msa {
     /// How many loadings to make at most (1 to [`MAX_ITERATIONS`]).
     pub iterations: u32,
-    /// Stop once the flow gap in excess of its floor, averaged over the last three
-    /// iterations, is at most this share of travellers; 0 means never stop early.
+    /// Stop once the gap ([`IterationReport::gap`]), averaged over the last three
+    /// iterations, is below this share; 0 means never stop early. 0.05 is a good
+    /// gap, 0.15 an acceptable one ([`GAP_GOOD`], [`GAP_ACCEPTABLE`]).
     pub gap_tolerance: f64,
+    /// How many trips are tested against the whole network at the last iteration
+    /// (0 to 100 000; 0 means none): the sample that
+    /// [`IterationReport::gap_network`] is measured on.
+    pub gap_sample: u32,
     /// The length in seconds of the time bins link times are recorded in (at
     /// least 1). Shorter follows a queue more closely and costs more memory.
     pub cost_bin_s: u32,
@@ -254,12 +323,12 @@ pub struct Msa {
 
 impl Default for Msa {
     fn default() -> Self {
-        Self { iterations: 10, gap_tolerance: 0.0, cost_bin_s: 300 }
+        Self { iterations: 10, gap_tolerance: 0.0, gap_sample: 300, cost_bin_s: 300 }
     }
 }
 
 impl Msa {
-    const OPTIONS: [&'static str; 3] = ["cost_bin_s", "gap_tolerance", "iterations"];
+    const OPTIONS: [&'static str; 4] = ["cost_bin_s", "gap_sample", "gap_tolerance", "iterations"];
 
     /// Make the strategy from its options, defaults for those not given.
     ///
@@ -292,6 +361,7 @@ impl Msa {
             match option.as_str() {
                 "iterations" => m.iterations = whole(option, v, 1, MAX_ITERATIONS)?,
                 "cost_bin_s" => m.cost_bin_s = whole(option, v, 1, 86_400)?,
+                "gap_sample" => m.gap_sample = whole(option, v, 0, 100_000)?,
                 _ => {
                     if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
                         return Err(bad(option, &format!("must be from 0 to 1, got {v}")));
@@ -310,8 +380,8 @@ impl Equilibration for Msa {
     }
     fn descriptor(&self) -> String {
         format!(
-            "msa;cost_bin_s={};gap_tolerance={};iterations={}",
-            self.cost_bin_s, self.gap_tolerance, self.iterations
+            "msa;cost_bin_s={};gap_sample={};gap_tolerance={};iterations={}",
+            self.cost_bin_s, self.gap_sample, self.gap_tolerance, self.iterations
         )
     }
     fn max_iterations(&self) -> u32 {
@@ -323,19 +393,22 @@ impl Equilibration for Msa {
     fn draws_reselection(&self) -> bool {
         self.iterations > 1
     }
+    fn network_gap_sample(&self) -> u32 {
+        self.gap_sample
+    }
     fn reselects(&self, rng: &StreamRng, traveller: u32, iteration: u32) -> bool {
         rng.unit(DrawAddress::from_pair(traveller, iteration)) < 1.0 / (f64::from(iteration) + 1.0)
     }
     fn is_converged(&self, reports: &[IterationReport]) -> bool {
-        // The mean of the last three, not the last: on a bottleneck the excess gap is
-        // noisy (a single dip below the tolerance is not a settled pattern), and the
-        // first iteration, which is everyone's choice on free flow, never counts.
+        // The mean of the last three, not the last: with sampled choice and a queue that
+        // reacts to it, the gap is noisy (one dip below the tolerance is not a settled
+        // pattern), and the first iteration, which is everyone's choice on free flow,
+        // never counts.
         if self.gap_tolerance <= 0.0 || reports.len() < 4 {
             return false;
         }
         let last = &reports[reports.len() - 3..];
-        let mean = last.iter().map(|r| r.gap_flow_excess).sum::<f64>() / 3.0;
-        mean <= self.gap_tolerance
+        last.iter().map(|r| r.gap).sum::<f64>() / 3.0 < self.gap_tolerance
     }
 }
 

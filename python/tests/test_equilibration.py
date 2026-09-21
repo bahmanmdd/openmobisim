@@ -16,7 +16,8 @@ import pytest
 CAR = {"commuter": (True, False, False)}
 FIELDS = [
     "iteration", "reselected_share", "changed_share", "total_travel_time_s", "completed",
-    "truncated", "time_change", "gap_flow", "gap_flow_floor", "gap_flow_excess", "gap_cost",
+    "truncated", "time_change", "gap", "gap_network", "gap_flow", "gap_flow_floor",
+    "gap_flow_excess",
 ]  # fmt: skip
 
 
@@ -130,7 +131,7 @@ def test_bad_settings_are_refused_before_any_work():
         ValueError, match='no equilibration strategy called "replanning".*none, msa'
     ):
         build(equilibration="replanning")
-    with pytest.raises(ValueError, match="cost_bin_s, gap_tolerance, iterations"):
+    with pytest.raises(ValueError, match="cost_bin_s, gap_sample, gap_tolerance, iterations"):
         build(equilibration="msa", equilibration_options={"steps": 3})
     for bad in (0, 1001, 2.5):
         with pytest.raises(ValueError, match="whole number from 1 to 1000"):
@@ -142,13 +143,13 @@ def test_bad_settings_are_refused_before_any_work():
 
 
 def test_a_tolerance_stops_a_run_that_has_nothing_left_to_equilibrate():
-    # Free flow: costs never change, so the excess gap is noise around zero from the start.
+    # Free flow: costs never change, so the gap is what the logit's dispersion gives.
     run = go(
         "eq-stop",
         flow_level=0,
         choice_model="logit",
         equilibration="msa",
-        equilibration_options={"iterations": 12, "gap_tolerance": 0.05},
+        equilibration_options={"iterations": 12, "gap_tolerance": 0.5},
         master_seed=3,
     )
     assert run.converged and len(run.convergence()["iteration"]) == 4
@@ -175,15 +176,44 @@ def test_a_model_without_probabilities_has_no_gap_and_one_with_them_has():
     without = go("eq-plain", choice_model=Plain(), equilibration="msa",
                  equilibration_options={"iterations": 3})  # fmt: skip
     c = without.convergence()
-    assert np.isnan(c["gap_flow"]).all() and np.isnan(c["gap_cost"]).all()
+    assert np.isnan(c["gap_flow"]).all(), "no probabilities, no consistency check"
+    assert np.isfinite(c["gap"]).all(), "but the gap does not need them"
     assert np.isfinite(c["time_change"][1:]).all(), "the stability is measured whatever the model"
     knowing = go("eq-knowing", choice_model=Knowing(), equilibration="msa",
                  equilibration_options={"iterations": 3})  # fmt: skip
     k = knowing.convergence()
-    assert np.isfinite(k["gap_flow"]).all() and np.isfinite(k["gap_cost"]).all()
+    assert np.isfinite(k["gap_flow"]).all() and np.isfinite(k["gap"]).all()
     # It always takes the first route and says so with certainty; the flow gap is then the share
     # who should be elsewhere at the current times, and the fresh sample is the same route again.
     assert np.allclose(k["gap_flow_floor"], 0.0)
+
+
+def test_the_gap_has_a_verdict_and_the_network_is_tested_at_the_last_iteration():
+    run = go(
+        "eq-gap",
+        flow_level=0,
+        choice_model="logit",
+        choice_options={"beta_time_min": -2.0},
+        equilibration="msa",
+        equilibration_options={"iterations": 4, "gap_sample": 100},
+        master_seed=3,
+    )
+    c = run.convergence()
+    assert np.isfinite(c["gap"]).all() and (c["gap"] >= 0).all()
+    assert np.isnan(c["gap_network"][:-1]).all() and np.isfinite(c["gap_network"][-1])
+    assert run.convergence_gap == max(c["gap"][-1], c["gap_network"][-1])
+    assert run.convergence_verdict == (
+        "good" if c["gap"][-1] < 0.05 else "acceptable" if c["gap"][-1] < 0.15 else "poor"
+    )
+    # Free flow, a strong preference for the faster route: a small gap. Without equilibration, none.
+    assert run.convergence_verdict in {"good", "acceptable"}
+    none = go("eq-gap-none")
+    assert np.isnan(none.convergence_gap) and none.convergence_verdict is None
+    off = go(
+        "eq-gap-off", flow_level=0, choice_model="logit", equilibration="msa",
+        equilibration_options={"iterations": 3, "gap_sample": 0},
+    )  # fmt: skip
+    assert np.isnan(off.convergence()["gap_network"]).all()
 
 
 def test_the_footer_says_the_run_iterated():
@@ -193,4 +223,4 @@ def test_the_footer_says_the_run_iterated():
     run = go("eq-footer", equilibration_options={"iterations": 3}, **MSA)
     fig = viz.map_link(run, size=(12, 6.75), dpi=50)
     text = " ".join(t.get_text() for t in fig.texts)
-    assert "choice logit · msa 3 it · seed 3" in text
+    assert "choice logit · msa 3 it, gap " in text and "% · seed 3" in text

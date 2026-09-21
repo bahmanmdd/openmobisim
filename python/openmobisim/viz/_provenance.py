@@ -15,10 +15,13 @@ _SHOWN = 8
 
 
 def run_identity(run: Any) -> str:
-    """``choice logit · msa 6 it · seed 0 · fingerprint 29ff0a1c``: the run, in a footer."""
+    """``choice logit · msa 6 it, gap 4.2% · seed 0 · fingerprint 29ff0a1c``, for a footer."""
     parts = [f"choice {run.choice_model}"]
     if run.equilibration != "none":
-        iterations = len(run.convergence()["iteration"])
-        parts.append(f"{run.equilibration} {iterations} it")
+        text = f"{run.equilibration} {len(run.convergence()['iteration'])} it"
+        gap = run.convergence_gap
+        if gap == gap:  # not nan
+            text += f", gap {100 * gap:.1f}%"
+        parts.append(text)
     parts += [f"seed {run.master_seed}", f"fingerprint {run.fingerprint[:_SHOWN]}"]
     return " · ".join(parts)

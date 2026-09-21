@@ -411,6 +411,7 @@ impl Run {
             trip_keys: &trip_keys,
             route_sets: &route_sets,
             model: model.as_ref(),
+            turns: &turns,
         };
         let chooser = route_choice::Chooser::new(&inputs)?;
         let mut route_choices = chooser.choose_all(&choice_rng, 0)?;
@@ -452,6 +453,7 @@ impl Run {
             }
 
             let mut changes = Vec::new();
+            let mut times_now: Option<LinkTimes> = None;
             if max_iterations > 1 {
                 if let Some(bins) = &loaded.entry_bins {
                     let times = LinkTimes::from_tables(&self.network, bins);
@@ -465,11 +467,12 @@ impl Run {
                         strategy_for_next,
                         &choice_rng,
                     )?;
+                    report.gap = update.assessment.gap;
                     report.gap_flow = update.assessment.gap_flow;
                     report.gap_flow_floor = update.assessment.gap_flow_floor;
                     report.gap_flow_excess =
                         update.assessment.gap_flow - update.assessment.gap_flow_floor;
-                    report.gap_cost = update.assessment.gap_cost;
+                    times_now = Some(times);
                     arrived_by =
                         (update.assessment.reselected_share, update.assessment.changed_share);
                     changes = update.changes;
@@ -479,11 +482,21 @@ impl Run {
             previous_bins = loaded.entry_bins.clone();
             last = Some((loaded, iteration_diagnostics));
 
-            if iteration + 1 == max_iterations {
-                break;
-            }
-            if strategy.is_converged(&reports) {
-                converged = true;
+            let stop = iteration + 1 == max_iterations || strategy.is_converged(&reports);
+            if stop {
+                // The last iteration is also tested against the whole network (S171).
+                if let (Some(times), true) = (&times_now, strategy.network_gap_sample() > 0) {
+                    let gap = chooser.network_gap(
+                        &route_choices,
+                        times,
+                        strategy.network_gap_sample(),
+                        &reselect_rng,
+                    );
+                    if let Some(last_report) = reports.last_mut() {
+                        last_report.gap_network = gap;
+                    }
+                }
+                converged = iteration + 1 < max_iterations;
                 break;
             }
             for c in changes {

@@ -539,3 +539,51 @@ fn one_keys_links_do_not_leak_into_the_next_keys_path_size() {
     // A lone route has a path size of one, and the attributes are the same on a second call.
     assert_eq!(attributes, sets.attributes(&net));
 }
+
+// --- the fastest way when times depend on when a link is entered (S171) ------------------
+
+#[test]
+fn the_fastest_time_follows_the_times_at_the_moment_each_link_is_entered() {
+    let net = diamond();
+    let turns = turns_of(&net);
+    let id = |n: &str| net.link_external_ids().typed_id_of::<LinkId>(n).expect("link").raw();
+    let (ab, bd, ac, cd) = (id("ab"), id("bd"), id("ac"), id("cd"));
+    let (a, d) = (node(&net, "A"), node(&net, "D"));
+    let ctx = openmobisim_core_routes::SearchContext::new(&net, &turns);
+    let mut search = openmobisim_core_routes::Search::new(&ctx);
+    // The top road's first link takes 50 s if entered before 100 s and 500 s after; every other
+    // link takes its length in seconds over 4 (100 m: 25 s, 120 m: 30 s).
+    let seconds = |l: u32, at: f64| {
+        if l == ab {
+            if at < 100.0 { 50.0 } else { 500.0 }
+        } else if l == bd {
+            25.0
+        } else if l == ac || l == cd {
+            30.0
+        } else {
+            f64::INFINITY
+        }
+    };
+    let no_wait = |_: u32, _: f64| 0.0;
+    // Leaving at 0 s: the top road takes 50 + 25 = 75 s, the bottom 30 + 30 = 60 s: the bottom wins.
+    let t = search.fastest_time(a, d, 0.0, f64::INFINITY, &no_wait, &seconds).expect("a route");
+    assert!((t - 60.0).abs() < 1e-12, "{t}");
+    // Make the bottom road slow too: the top is then 75 s. And leaving at 200 s, after the top's
+    // first link has jammed (500 s), the bottom road's 60 s is the fastest again.
+    let jam_bottom = |l: u32, at: f64| if l == ac { 400.0 } else { seconds(l, at) };
+    let t = search.fastest_time(a, d, 0.0, f64::INFINITY, &no_wait, &jam_bottom).expect("a route");
+    assert!((t - 75.0).abs() < 1e-12, "{t}");
+    let t = search.fastest_time(a, d, 200.0, f64::INFINITY, &no_wait, &seconds).expect("a route");
+    assert!((t - 60.0).abs() < 1e-12, "{t}");
+    // Waiting outside the network before the first link counts: 10 s before `ab`, but the bottom's
+    // first link is free to enter, so the bottom road still costs 60 s and the top 10 + 50 + 25.
+    let wait_top = |l: u32, _: f64| if l == ab { 10.0 } else { 0.0 };
+    let t = search.fastest_time(a, d, 0.0, f64::INFINITY, &wait_top, &jam_bottom).expect("a route");
+    assert!((t - 85.0).abs() < 1e-12, "{t}");
+    // A bound: nothing beats 50 s, so the search says so; a bound of 60 finds the bottom road.
+    assert_eq!(search.fastest_time(a, d, 0.0, 50.0, &no_wait, &seconds), None);
+    assert!(search.fastest_time(a, d, 0.0, 60.0, &no_wait, &seconds).is_some());
+    // The same place is no time at all, and the search leaves itself clean for the next.
+    assert_eq!(search.fastest_time(a, a, 0.0, 1.0, &no_wait, &seconds), Some(0.0));
+    assert_eq!(search.shortest(a, d).map(|r| r.links.len()), Some(2));
+}

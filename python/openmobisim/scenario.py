@@ -141,6 +141,36 @@ class Run:
         """Whether the run stopped before its most iterations because it had converged."""
         return self._summary.converged
 
+    @property
+    def convergence_gap(self) -> float:
+        """How far the run ended from equilibrium.
+
+        **The worse of** the last iteration's gap against the choice set
+        (``convergence()["gap"][-1]``) and against the whole network
+        (``convergence()["gap_network"][-1]``, a sample), so a route the choice set was
+        missing cannot hide behind a small in-set gap.
+
+        ``nan`` if no gap was measured (a run without equilibration). See
+        ``convergence_verdict``.
+        """
+        c = self._summary.convergence
+        gaps = [float(c[k][-1]) for k in ("gap", "gap_network")]
+        finite = [g for g in gaps if g == g]  # not nan
+        return max(finite) if finite else float("nan")
+
+    @property
+    def convergence_verdict(self) -> str | None:
+        """``"good"`` (gap below 5%), ``"acceptable"`` (below 15%) or ``"poor"``.
+
+        ``None`` if no gap was measured (no equilibration). The thresholds are those of
+        the usual practice for a stochastic dynamic assignment, which cannot reach full
+        equilibrium.
+        """
+        gap = self.convergence_gap
+        if gap != gap:  # nan
+            return None
+        return "good" if gap < 0.05 else "acceptable" if gap < 0.15 else "poor"
+
     def convergence(self) -> dict[str, Any]:
         """What each iteration showed: how far the run is from an equilibrium.
 
@@ -155,20 +185,30 @@ class Run:
         * ``total_travel_time_s``, ``completed``, ``truncated`` — this loading's.
         * ``time_change`` — how much the link times moved since the last loading, as a
           share of it, weighted by traffic. The stability of the pattern.
-        * ``gap_flow`` — the share of travellers whose route differs from where the
-          model's probabilities, at the times this loading produced, would put them
-          (half the total variation between observed and expected route flows, by
-          origin-destination pair). ``gap_flow_floor`` — what that would be by chance
-          alone: the same measure for a fresh sample drawn from the same probabilities.
-          ``gap_flow_excess`` — the difference: the disequilibrium left after noise,
-          near zero at a stochastic user equilibrium (and positive or negative by a
-          little from noise, more with few travellers per pair).
-        * ``gap_cost`` — the travel time the chosen routes cost over what the model
-          expects a traveller to pay, as a share of the former: 0 at equilibrium.
+        * ``gap`` — **the gap**, the usual measure of how far an assignment is from
+          equilibrium: how much more travel time the routes chosen cost than the
+          cheapest route of the same choice set at the times this loading produced,
+          ``Σ w (t_chosen − t_least) / Σ w t_least``. 0 when nobody could do better by
+          changing route. **Below 0.05 is good, below 0.15 acceptable** for a
+          stochastic dynamic assignment, which cannot reach full equilibrium (a
+          logit sends some travellers down a slower route by design). It does not
+          need the model's probabilities.
+        * ``gap_network`` — the same measure against the **whole network**: the least
+          time over *any* route at the current times (a time-dependent search), for a
+          sample of trips (the ``gap_sample`` option) at the **last** iteration only,
+          ``nan`` elsewhere. It shows whether the choice set was missing a route that
+          traffic has made worthwhile.
+        * ``gap_flow``, ``gap_flow_floor``, ``gap_flow_excess`` — a check of the
+          stochastic choice model with itself, needing its probabilities: the share of
+          travellers whose route differs from where the probabilities at the current
+          times would put them (half the total variation between observed and expected
+          route flows, by origin-destination pair), what that would be by chance alone
+          (the same measure for a fresh sample from the same probabilities), and the
+          difference. Not a gap to the shortest path.
 
-        The gaps need a model that can give probabilities (``"logit"`` and
+        ``gap_flow*`` need a model that can give probabilities (``"logit"`` and
         ``"deterministic"`` do; a Python model may have a ``probabilities(batch)``
-        method) and are ``nan`` without one.
+        method) and are ``nan`` without one; ``gap`` does not.
 
         The same numbers are in ``kpis.parquet``, a row per metric per iteration.
         """
@@ -425,10 +465,11 @@ class Scenario:
                 ``Run.convergence()`` says how the iterations went.
             equilibration_options: The strategy's options, numbers by name: for
                 ``"msa"``, ``iterations`` (10; the most loadings), ``gap_tolerance``
-                (0: never stop early; otherwise stop once the flow gap in excess of
-                chance, averaged over the last three iterations, is at most this share
-                of travellers) and ``cost_bin_s`` (300: the length of the time bins the
-                link times are read in).
+                (0: never stop early; otherwise stop once the gap, averaged over the
+                last three iterations, is below this: 0.05 is good, 0.15 acceptable),
+                ``gap_sample`` (300; how many trips are tested against the whole
+                network at the last iteration, 0 for none) and ``cost_bin_s`` (300: the
+                length of the time bins the link times are read in).
 
         Returns:
             A ``Scenario``, ready to ``.run()``.

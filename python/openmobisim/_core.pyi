@@ -471,7 +471,7 @@ def run_pipeline(
             :func:`equilibration_strategies` (``"none"``, the default, is one choice
             and one loading; ``"msa"`` iterates).
         equilibration_options: The strategy's options, numbers by name (for
-            ``"msa"``: ``iterations``, ``gap_tolerance``, ``cost_bin_s``).
+            ``"msa"``: ``iterations``, ``gap_tolerance``, ``gap_sample``, ``cost_bin_s``).
 
     Returns:
         A :class:`RunSummary`.

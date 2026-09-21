@@ -264,6 +264,72 @@ impl<'a> Search<'a> {
         route
     }
 
+    /// The least time to drive from `origin` to `destination` when setting out at
+    /// second `departure`, if a link's time depends on when it is entered (S171): the
+    /// earliest arrival, found by a search whose labels are arrival times.
+    ///
+    /// `wait(link, departure)` is the time spent outside the network before the first
+    /// link `link` can be entered; `seconds(link, entered)` the time to cross a link
+    /// entered at second `entered`. Links a car cannot use are never taken. **The
+    /// search is bounded**: a label whose travel time already exceeds `bound` is
+    /// dropped, so it explores only what could beat `bound` (a route already known:
+    /// the cheapest of a choice set, say). `None` if nothing does. `Some(0)` if the
+    /// two are one node.
+    ///
+    /// The earliest-arrival search is exact when a later entry never means an earlier
+    /// exit (FIFO). Times read from time bins can step down at a bin's edge, so it can
+    /// miss a route that exploits the step; the error is bounded by that step.
+    pub fn fastest_time(
+        &mut self,
+        origin: NodeId,
+        destination: NodeId,
+        departure: f64,
+        bound: f64,
+        wait: &dyn Fn(u32, f64) -> f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Option<f64> {
+        if origin == destination {
+            return Some(0.0);
+        }
+        let ctx = self.ctx;
+        let limit = departure + bound;
+        for &l in ctx.network.out_links(origin) {
+            if !ctx.link_cost(l).is_finite() {
+                continue;
+            }
+            let entered = departure + wait(l.raw(), departure);
+            let arrive = entered + seconds(l.raw(), entered);
+            if arrive <= limit && arrive < self.dist[l.index()] {
+                self.set(l.index(), arrive, 0.0, NONE);
+                self.heap.push(Entry { cost: arrive, link: l.raw() });
+            }
+        }
+        let mut found = None;
+        while let Some(Entry { cost, link }) = self.heap.pop() {
+            let l = LinkId::new(link);
+            if cost > self.dist[l.index()] {
+                continue;
+            }
+            if ctx.network.link_to(l) == destination {
+                found = Some(cost - departure);
+                break;
+            }
+            for &t in ctx.turns.turns_from(l) {
+                let m = ctx.turns.outgoing(t);
+                if !ctx.link_cost(m).is_finite() {
+                    continue;
+                }
+                let arrive = cost + seconds(m.raw(), cost);
+                if arrive <= limit && arrive < self.dist[m.index()] {
+                    self.set(m.index(), arrive, 0.0, link);
+                    self.heap.push(Entry { cost: arrive, link: m.raw() });
+                }
+            }
+        }
+        self.clean();
+        found
+    }
+
     fn set(&mut self, link: usize, dist: f64, true_dist: f64, pred: u32) {
         if self.dist[link].is_infinite() {
             self.touched.push(u32::try_from(link).expect("link ids are u32"));

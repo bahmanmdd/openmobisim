@@ -28,7 +28,9 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{EntryTables, FidelityLevel, LinkBinRecorder, LinkBins};
-use openmobisim_core_sim::equilibration::{Options, Registry, strategy};
+use openmobisim_core_sim::equilibration::{
+    GAP_ACCEPTABLE, GAP_GOOD, GapVerdict, Options, Registry, gap_verdict, strategy,
+};
 use openmobisim_core_sim::{
     Equilibration, FlowMotor, IterationReport, LinkTimes, Run, RunResult, relative_time_change,
 };
@@ -86,6 +88,8 @@ struct Setup {
     choice: (&'static str, Vec<(&'static str, f64)>),
     equilibration: (&'static str, Vec<(&'static str, f64)>),
     seed: u64,
+    /// A route-set method by name; the default (`penalty`) if `None`.
+    generator: Option<&'static str>,
 }
 
 impl Setup {
@@ -98,6 +102,7 @@ impl Setup {
             choice: ("logit", vec![("beta_time_min", -2.0)]),
             equilibration: ("msa", vec![("iterations", 8.0)]),
             seed: 1,
+            generator: None,
         }
     }
 
@@ -122,6 +127,11 @@ impl Setup {
         };
         let choice: ChoiceOptions =
             self.choice.1.iter().map(|&(k, v)| (k.to_string(), v)).collect();
+        if let Some(name) = self.generator {
+            let g =
+                openmobisim_core_routes::generator(name, &Default::default()).expect("built in");
+            run = run.with_route_generator(Arc::from(g));
+        }
         run.with_choice_model(Arc::from(model(self.choice.0, &choice).expect("built in")))
             .with_equilibration(Arc::from(
                 strategy(self.equilibration.0, &options(&self.equilibration.1)).expect("built in"),
@@ -306,37 +316,39 @@ fn iterating_is_repeatable_and_follows_the_seed() {
 // --- the gap, against what chance alone gives ----------------------------------------------
 
 #[test]
-fn where_costs_never_change_a_fresh_sample_has_no_excess_gap() {
-    // Level 0: vehicles never interact, so every loading leaves the free-flow times. The
-    // assignment at every iteration is then a sample from the model's probabilities, and
-    // its gap to those probabilities is exactly what chance gives: the excess is zero.
-    let n = 6_000;
-    let result = setup_level0(n, "logit", &[("beta_time_min", -1.0)]).go();
+fn the_gap_is_the_relative_excess_over_the_cheapest_route_and_has_a_closed_form() {
+    // Level 0: vehicles never interact, so the times never change, and the fast road (72 s) beats
+    // the slow (84 s) by 12 s for everyone. A logit with a time coefficient b per minute sends
+    // a share P = 1 / (1 + e^(0.2 |b|)) down the slow road, so the gap, the relative excess over
+    // the cheapest route, is P x 12 / 72 exactly, at every iteration.
+    for b in [-2.0_f64, -0.2, -1.0] {
+        let slow_share = 1.0 / (1.0 + (0.2 * b.abs()).exp());
+        let result = setup_level0(6_000, "logit", &[("beta_time_min", b)]).go();
+        for it in &result.iterations {
+            assert!(
+                (it.gap - slow_share * 12.0 / 72.0).abs() < 0.006,
+                "beta {b}, iteration {}: {} against {}",
+                it.iteration,
+                it.gap,
+                slow_share * 12.0 / 72.0
+            );
+        }
+    }
+    // All-or-nothing: everyone on the cheapest road, so nothing to gain.
+    let deterministic = setup_level0(1_000, "deterministic", &[]).go();
+    assert!(deterministic.iterations.iter().all(|it| it.gap.abs() < 1e-12));
+    assert_eq!(took(&deterministic, 1), 0, "all-or-nothing takes the faster road");
+    // The stochastic model's own consistency, separate from the gap: a fresh sample has no excess.
+    let result = setup_level0(6_000, "logit", &[("beta_time_min", -1.0)]).go();
     for it in &result.iterations {
-        assert!(
-            it.gap_flow > 0.0 && it.gap_flow < 0.03,
-            "iteration {}: {}",
-            it.iteration,
-            it.gap_flow
-        );
+        assert!(it.gap_flow > 0.0 && it.gap_flow < 0.03, "{}", it.gap_flow);
         assert!(
             it.gap_flow_excess.abs() < 0.01,
             "iteration {}: {}",
             it.iteration,
             it.gap_flow_excess
         );
-        assert!(it.gap_cost.abs() < 0.005, "iteration {}: {}", it.iteration, it.gap_cost);
     }
-    // ... while the same measure, with a systematically wrong assignment, is large: everyone on
-    // the slower road, though the logit puts more on the faster.
-    let sets_slower = |r: &RunResult| took(r, 1);
-    let deterministic = Setup {
-        equilibration: ("msa", vec![("iterations", 2.0)]),
-        ..setup_level0(1_000, "deterministic", &[])
-    }
-    .go();
-    assert_eq!(sets_slower(&deterministic), 0, "all-or-nothing takes the faster road");
-    assert!(deterministic.iterations[1].gap_flow.abs() < 1e-12, "and needs no other");
 }
 
 #[test]
@@ -348,13 +360,55 @@ fn all_or_nothing_on_a_jammed_road_is_far_from_equilibrium_and_the_gap_says_so()
     };
     let result = setup.go();
     let first = result.iterations[0];
-    // Everyone took the fast road on free-flow costs; the queue it made costs them more than
-    // the slow road, so nearly everyone is on the wrong one, and by all-or-nothing the
-    // fresh sample would have been the argmin: no floor.
-    assert!(first.gap_flow > 0.7, "{}", first.gap_flow);
-    assert!(first.gap_flow_floor.abs() < 1e-12);
-    assert!((first.gap_flow_excess - first.gap_flow).abs() < 1e-12);
-    assert!(first.gap_cost > 0.1, "{}", first.gap_cost);
+    // Everyone took the fast road on free-flow costs; the queue it made costs them several times
+    // what the slow road does: the gap is the excess over the cheapest route, several hundred %.
+    assert!(first.gap > 2.0, "{}", first.gap);
+    assert_eq!(gap_verdict(first.gap), Some(GapVerdict::Poor));
+    // And by the model's own probabilities (all on the argmin) nearly all are on the wrong road.
+    assert!(first.gap_flow > 0.7 && first.gap_flow_floor.abs() < 1e-12);
+}
+
+#[test]
+fn the_verdict_follows_five_and_fifteen_percent() {
+    assert_eq!((GAP_GOOD, GAP_ACCEPTABLE), (0.05, 0.15));
+    assert_eq!(gap_verdict(0.0), Some(GapVerdict::Good));
+    assert_eq!(gap_verdict(0.049), Some(GapVerdict::Good));
+    assert_eq!(gap_verdict(0.05), Some(GapVerdict::Acceptable));
+    assert_eq!(gap_verdict(0.149), Some(GapVerdict::Acceptable));
+    assert_eq!(gap_verdict(0.15), Some(GapVerdict::Poor));
+    assert_eq!(gap_verdict(f64::NAN), None);
+    assert_eq!(GapVerdict::Acceptable.as_str(), "acceptable");
+}
+
+#[test]
+fn a_gap_against_the_choice_set_can_hide_a_route_the_network_has() {
+    // Only the fast road is in the choice set ("shortest" makes one route per pair): everyone is
+    // on the cheapest route *of the set*, so that gap is nothing, however jammed the road is. The
+    // slow road, which the set does not hold, is several times faster: only the test against the
+    // whole network sees it.
+    let setup = Setup {
+        generator: Some("shortest"),
+        choice: ("deterministic", vec![]),
+        equilibration: ("msa", vec![("iterations", 3.0), ("gap_sample", 200.0)]),
+        ..Setup::bottleneck(1_500)
+    };
+    let result = setup.go();
+    let last = result.iterations.last().unwrap();
+    assert!(last.gap.abs() < 1e-12, "against the set: {}", last.gap);
+    assert!(last.gap_network > 2.0, "against the network: {}", last.gap_network);
+    // Only the last iteration is tested against the network; the others say nothing.
+    assert!(result.iterations[..2].iter().all(|it| it.gap_network.is_nan()));
+    // With the sample off, nothing is measured against the network.
+    let off = Setup {
+        equilibration: ("msa", vec![("iterations", 3.0), ("gap_sample", 0.0)]),
+        ..Setup {
+            generator: Some("shortest"),
+            choice: ("deterministic", vec![]),
+            ..Setup::bottleneck(300)
+        }
+    }
+    .go();
+    assert!(off.iterations.iter().all(|it| it.gap_network.is_nan()));
 }
 
 #[test]
@@ -389,16 +443,29 @@ fn the_gap_and_the_link_times_settle_as_the_iterations_go_on() {
         |from: usize, to: usize, f: &dyn Fn(&openmobisim_core_sim::IterationReport) -> f64| {
             it[from..to].iter().map(f).sum::<f64>() / (to - from) as f64
         };
-    // Far from equilibrium at first: everyone chose on free-flow costs, and the jam that made
-    // is nowhere in them (the excess gap is the share who would choose differently now, less
-    // what chance alone gives; the cost gap is the excess of the times paid over those expected).
-    assert!(it[0].gap_flow_excess > 0.4, "{}", it[0].gap_flow_excess);
-    assert!(it[0].gap_cost > 0.5, "{}", it[0].gap_cost);
-    // Noisily, but surely, it settles: the late mean is a fraction of the early one.
-    let early = mean(1, 4, &|r| r.gap_flow_excess);
-    let late = mean(10, 20, &|r| r.gap_flow_excess);
-    assert!(late < 0.5 * early && late < 0.1, "excess gap: {early:.3} early, {late:.3} late");
-    assert!(mean(10, 20, &|r| r.gap_cost).abs() < 0.03);
+    // Far from equilibrium at first: everyone chose on free-flow costs, and the jam that made is
+    // nowhere in them: the routes taken cost five times what the cheapest cost.
+    assert!(it[0].gap > 1.0, "{}", it[0].gap);
+    assert_eq!(gap_verdict(it[0].gap), Some(GapVerdict::Poor));
+    // Noisily, but surely, it settles: the late mean is a fraction of the early one, and within
+    // what is acceptable for a stochastic assignment (a logit sends some travellers down a
+    // slower road at equilibrium, by design, so the gap does not go to zero).
+    let early = mean(1, 4, &|r| r.gap);
+    let late = mean(10, 20, &|r| r.gap);
+    assert!(late < 0.5 * early, "the gap: {early:.3} early, {late:.3} late");
+    assert!(late < GAP_ACCEPTABLE, "{late}");
+    assert!(
+        it[10..].iter().all(|r| r.gap < GAP_ACCEPTABLE),
+        "{:?}",
+        it[10..].iter().map(|r| r.gap).collect::<Vec<_>>()
+    );
+    // At the last iteration the whole network agrees: no faster route was missing.
+    let last = it.last().unwrap();
+    assert!(
+        last.gap_network.is_finite() && last.gap_network < GAP_ACCEPTABLE,
+        "{}",
+        last.gap_network
+    );
     // The link times move less and less.
     assert!(it[1].time_change > 5.0 * mean(10, 20, &|r| r.time_change));
     // The share that chooses again shrinks as 1/(i + 1) ...
@@ -411,31 +478,41 @@ fn the_gap_and_the_link_times_settle_as_the_iterations_go_on() {
 }
 
 #[test]
-fn a_tolerance_stops_the_run_only_once_the_excess_gap_has_stayed_small() {
-    // Level 0: costs never change, so the excess gap is noise around zero from the start; the
-    // run stops at the first moment it can judge (three iterations after the first).
-    let stop = Setup {
-        equilibration: ("msa", vec![("iterations", 10.0), ("gap_tolerance", 0.02)]),
-        ..setup_level0(6_000, "logit", &[("beta_time_min", -1.0)])
-    }
-    .go();
+fn a_tolerance_stops_the_run_only_once_the_gap_has_stayed_below_it() {
+    // Level 0, a logit at -1 per minute: the gap is 0.45 x 12 / 72 = 7.5% at every iteration. A
+    // tolerance of 10% is met from the first moment the run can judge (three iterations after the
+    // first); a tolerance of 5% never is, because the stochastic choice keeps the gap above it.
+    let with = |tolerance: f64| {
+        Setup {
+            equilibration: ("msa", vec![("iterations", 8.0), ("gap_tolerance", tolerance)]),
+            ..setup_level0(6_000, "logit", &[("beta_time_min", -1.0)])
+        }
+        .go()
+    };
+    let stop = with(0.10);
     assert!(stop.converged);
     assert_eq!(stop.iterations.len(), 4);
-    // On the bottleneck a tolerance that cannot be met runs every iteration.
-    let never = Setup {
-        equilibration: ("msa", vec![("iterations", 5.0), ("gap_tolerance", 1e-6)]),
+    let never = with(0.05);
+    assert!(!never.converged && never.iterations.len() == 8);
+    // The whole-network test happens at the iteration the run stops at.
+    assert!(stop.iterations.last().unwrap().gap_network.is_finite());
+    assert!(stop.iterations[..3].iter().all(|it| it.gap_network.is_nan()));
+    // On the bottleneck a tolerance that cannot be met runs every iteration, and 0 means never.
+    for tolerance in [1e-6, 0.0] {
+        let run = Setup {
+            equilibration: ("msa", vec![("iterations", 5.0), ("gap_tolerance", tolerance)]),
+            ..Setup::bottleneck(1_500)
+        }
+        .go();
+        assert!(!run.converged && run.iterations.len() == 5, "tolerance {tolerance}");
+    }
+    // A loose one is met on the bottleneck too, as soon as the jam is relieved.
+    let loose = Setup {
+        equilibration: ("msa", vec![("iterations", 20.0), ("gap_tolerance", 0.15)]),
         ..Setup::bottleneck(1_500)
     }
     .go();
-    assert!(!never.converged);
-    assert_eq!(never.iterations.len(), 5);
-    // And tolerance 0 means never.
-    let off = Setup {
-        equilibration: ("msa", vec![("iterations", 6.0)]),
-        ..setup_level0(6_000, "logit", &[("beta_time_min", -1.0)])
-    }
-    .go();
-    assert!(!off.converged && off.iterations.len() == 6);
+    assert!(loose.converged && loose.iterations.len() < 12, "{}", loose.iterations.len());
 }
 
 // --- what the model is told, and how a strategy is chosen ----------------------------------
@@ -506,10 +583,12 @@ fn from_the_second_iteration_the_model_is_told_the_times_the_last_loading_gave()
     assert!(!later.is_empty() && later.len() < 600);
     assert!(later.iter().any(|s| s.1 > 300.0), "some see a long queue on the fast road");
     assert!(later.iter().all(|s| (s.2 - 84.0).abs() < 1.0), "the slow road is not loaded");
-    // A model with no probabilities has no gap to report; the rest is measured.
+    // A model with no probabilities has no consistency check to report, but the gap does not need
+    // its probabilities: it is what the routes taken cost over the cheapest, and it is measured.
     for it in &result.iterations {
-        assert!(it.gap_flow.is_nan() && it.gap_cost.is_nan() && it.total_travel_time_s > 0.0);
+        assert!(it.gap_flow.is_nan() && it.gap.is_finite() && it.total_travel_time_s > 0.0);
     }
+    assert!(result.iterations[0].gap > 1.0, "the queue the spy made costs it dear");
     // The spy always takes the fast road, so nothing moves: the same assignment loads to the very
     // same link times, and the change between two loadings is exactly zero.
     assert!(result.iterations[1].time_change.abs() < 1e-12);
@@ -529,7 +608,10 @@ fn the_description_names_the_strategy_and_the_streams_it_draws_from() {
     let msa = run(("msa", vec![]), "deterministic");
     assert_eq!((msa.equilibration.as_str(), msa.max_iterations), ("msa", 10));
     assert_eq!(msa.live_streams, ["msa_reselection"]);
-    assert_eq!(msa.equilibration_descriptor, "msa;cost_bin_s=300;gap_tolerance=0;iterations=10");
+    assert_eq!(
+        msa.equilibration_descriptor,
+        "msa;cost_bin_s=300;gap_sample=300;gap_tolerance=0;iterations=10"
+    );
     assert_eq!(run(("msa", vec![]), "logit").live_streams, ["choice", "msa_reselection"]);
     // One iteration has nobody to re-select.
     assert!(run(("msa", vec![("iterations", 1.0)]), "deterministic").live_streams.is_empty());
@@ -560,7 +642,9 @@ fn strategies_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
     };
     assert!(err("replanning", &[]).contains("none, msa"));
     assert!(err("none", &[("iterations", 3.0)]).contains("no options"));
-    assert!(err("msa", &[("steps", 3.0)]).contains("cost_bin_s, gap_tolerance, iterations"));
+    assert!(
+        err("msa", &[("steps", 3.0)]).contains("cost_bin_s, gap_sample, gap_tolerance, iterations")
+    );
     for bad in [0.0, 1001.0, 2.5, f64::NAN] {
         assert!(
             err("msa", &[("iterations", bad)]).contains("whole number from 1 to 1000"),
@@ -569,6 +653,8 @@ fn strategies_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
     }
     assert!(err("msa", &[("cost_bin_s", 0.0)]).contains("cost_bin_s"));
     assert!(err("msa", &[("gap_tolerance", 2.0)]).contains("from 0 to 1"));
+    assert!(err("msa", &[("gap_sample", -1.0)]).contains("gap_sample"));
+    assert!(err("msa", &[("gap_sample", 100_001.0)]).contains("whole number from 0 to 100000"));
     assert!(strategy("msa", &opts(&[("iterations", 1000.0)])).is_ok());
 }
 
