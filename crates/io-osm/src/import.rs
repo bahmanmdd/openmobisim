@@ -27,6 +27,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use openmobisim_core_graph::connectivity::strong_components;
 use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
 use openmobisim_core_graph::geometry::{LonLat, polyline_length_metres};
 use openmobisim_core_graph::link_geometry::LinkGeometry;
@@ -57,6 +58,35 @@ pub mod codes {
     pub const MISSING_NODE: DiagCode = DiagCode("osm_missing_node");
     /// A way was dropped because too few of its nodes survived.
     pub const WAY_LOST_TO_MISSING_NODES: DiagCode = DiagCode("osm_way_lost_to_missing_nodes");
+    /// A way with missing nodes in its middle was imported as separate pieces
+    /// rather than bridged across the gap (S172).
+    pub const WAY_CUT_INTO_PIECES: DiagCode = DiagCode("osm_way_cut_into_pieces");
+    /// A closed way with no junction but its own end could not become a link
+    /// (it would start and end at one node) and was dropped (S172).
+    pub const CLOSED_LOOP_DROPPED: DiagCode = DiagCode("osm_closed_loop_dropped");
+}
+
+/// What the importer does about roads the rest of the network cannot reach, or
+/// that cannot reach it (S172).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Connectivity {
+    /// Import everything that is a road. Trips between some pairs of nodes have
+    /// no route, and the network says nothing about it; see
+    /// [`openmobisim_core_graph::connectivity`] to find out.
+    #[default]
+    Keep,
+    /// Keep only the **largest strongly connected component of the drivable
+    /// network**: every node a car can use reaches every other. Whole links are
+    /// removed, never edited: nothing is added, joined or reversed, and every
+    /// link that remains is exactly the link the extract gave. What was removed
+    /// is counted in the [`ImportReport`] and returned as [`DroppedLink`]s to
+    /// look at.
+    ///
+    /// Only links a car may use take part (`RoadClass::carries_motor_traffic`):
+    /// footways, steps, paths, cycleways and pedestrian streets are neither
+    /// tested nor removed, since they belong to the walk and cycle layers and
+    /// a footway joining two road fragments does not connect them for a car.
+    Strong,
 }
 
 /// How the importer should behave.
@@ -68,18 +98,37 @@ pub struct ImportOptions {
     /// which is useful when debugging an import against the raw data and
     /// wasteful otherwise.
     pub contract: bool,
+    /// Contract the drivable links as if the links a car may not use were not
+    /// there (S172). Off by default.
+    ///
+    /// A footway that crosses a street shares a node with it, and so does every
+    /// sidewalk that meets a driveway; the importer counts those as junctions
+    /// and, wherever a way touches a node, will not merge the links either side
+    /// of it. In a city that maps its sidewalks that splits a third of the car
+    /// network into pieces a few metres long, at nodes where no driver has a
+    /// choice. With this on, car links are merged across such nodes by the usual
+    /// rule (same class, lanes and speed; no signal, stop or barrier; nothing a
+    /// car could turn into), the node stays for the footway, and the footway
+    /// links are exactly as they were. Only meaningful with `contract`.
+    pub contract_drivable: bool,
     /// The global multipliers handed to the defaults table.
     pub multipliers: GlobalMultipliers,
     /// The signal defaults handed to the defaults table.
     pub signals: SignalDefaults,
+    /// What to do about roads outside the main strongly connected component.
+    /// [`Connectivity::Keep`] by default: a default import behaves as it always
+    /// has.
+    pub connectivity: Connectivity,
 }
 
 impl Default for ImportOptions {
     fn default() -> Self {
         Self {
             contract: true,
+            contract_drivable: false,
             multipliers: GlobalMultipliers::default(),
             signals: SignalDefaults::SHIPPED,
+            connectivity: Connectivity::Keep,
         }
     }
 }
@@ -108,6 +157,31 @@ pub struct ImportReport {
     pub links_after_contraction: u64,
     /// Nodes removed by contraction.
     pub nodes_contracted: u64,
+    /// Closed ways with no junction but their own end, which cannot be a link
+    /// and were dropped (S172).
+    pub closed_loops_dropped: u64,
+    /// Strongly connected components the split graph had, singletons included;
+    /// `0` unless [`Connectivity::Strong`] was asked for.
+    pub components_before: u64,
+    /// Links removed for not being in the largest component (S172).
+    pub links_disconnected: u64,
+    /// Nodes removed with them.
+    pub nodes_disconnected: u64,
+    /// Their total length, in whole metres.
+    pub length_disconnected_m: u64,
+    /// Links a car may use, in the network handed to the graph builder.
+    pub drivable_links: u64,
+    /// Their total length, in whole metres.
+    pub drivable_length_m: u64,
+    /// How many of them carry an explicit `maxspeed` (the rest take the class
+    /// default) — the coverage of the defaults table's speeds (S172).
+    pub drivable_maxspeed_links: u64,
+    /// Their length, in whole metres.
+    pub drivable_maxspeed_length_m: u64,
+    /// How many carry an explicit lane count (the rest take the class default).
+    pub drivable_lanes_links: u64,
+    /// Their length, in whole metres.
+    pub drivable_lanes_length_m: u64,
 }
 
 impl ImportReport {
@@ -166,12 +240,48 @@ impl ProtoLink {
     }
 }
 
+/// Why a road was left out of the network, for the ones that can be drawn.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DropReason {
+    /// A closed way with no junction but its own end (S172).
+    ClosedLoop,
+    /// Not in the largest strongly connected component (S172).
+    NotStronglyConnected,
+}
+
+/// A road the importer left out, with its shape, so that it can be looked at.
+#[derive(Clone, Debug)]
+pub struct DroppedLink {
+    /// The OSM way it came from.
+    pub way_id: i64,
+    /// Why it was left out.
+    pub reason: DropReason,
+    /// Its road class, so that what was removed can be summed by kind.
+    pub class: RoadClass,
+    /// Its polyline, in the direction the link would have run.
+    pub geometry: Vec<LonLat>,
+}
+
+/// Everything an import produced.
+#[derive(Debug)]
+pub struct ImportOutput {
+    /// The network.
+    pub network: RoadNetwork,
+    /// The counts.
+    pub report: ImportReport,
+    /// The street shapes, kept beside the network (S125).
+    pub geometry: LinkGeometry,
+    /// Roads left out because of what they were (a loop) or where they were (cut
+    /// off from the rest), one entry per directed link, in a fixed order.
+    pub dropped: Vec<DroppedLink>,
+}
+
 /// Import a road network from an OSM source.
 ///
 /// Returns the network, the import report, and the [`LinkGeometry`] artifact
 /// (S125) — the polyline of every street, kept separately from the network
 /// rather than as one of its fields, so that nothing which never reads
-/// geometry pays for it.
+/// geometry pays for it. [`import_detailed`] also returns the roads left out.
 ///
 /// # Errors
 ///
@@ -184,6 +294,20 @@ pub fn import(
     options: ImportOptions,
     diagnostics: &mut Diagnostics,
 ) -> Result<(RoadNetwork, ImportReport, LinkGeometry), OsmError> {
+    let out = import_detailed(source, options, diagnostics)?;
+    Ok((out.network, out.report, out.geometry))
+}
+
+/// [`import`], and the roads that were left out as well.
+///
+/// # Errors
+///
+/// As [`import`].
+pub fn import_detailed(
+    source: &dyn OsmSource,
+    options: ImportOptions,
+    diagnostics: &mut Diagnostics,
+) -> Result<ImportOutput, OsmError> {
     let mut report = ImportReport::default();
 
     // --- 1. Ways ------------------------------------------------------------
@@ -243,17 +367,56 @@ pub fn import(
     report.junction_nodes = is_junction.len() as u64;
 
     let mut links: Vec<ProtoLink> = Vec::new();
+    let mut dropped: Vec<DroppedLink> = Vec::new();
     for way in &kept_ways {
-        split_way(way, &positions, &is_junction, diagnostics, &mut links);
+        split_way(way, &positions, &is_junction, diagnostics, &mut links, &mut dropped);
+    }
+    report.closed_loops_dropped = dropped.len() as u64;
+
+    // --- 3b. Connectivity (optional) ----------------------------------------
+    // Before contraction, so that what is dropped is whole split links with
+    // their own geometry, and contraction then merges across the gaps that
+    // dropping leaves.
+    if options.connectivity == Connectivity::Strong {
+        let nodes_before = used_nodes(&links).len();
+        let (kept, out, components) = keep_largest_strong_component(links);
+        links = kept;
+        report.components_before = components;
+        report.links_disconnected = out.len() as u64;
+        report.nodes_disconnected = (nodes_before - used_nodes(&links).len()) as u64;
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a total length in whole metres is far below 2^63"
+        )]
+        {
+            report.length_disconnected_m =
+                out.iter().map(|l| l.length_m).sum::<f64>().round() as u64;
+        }
+        dropped.extend(out.into_iter().map(|l| DroppedLink {
+            way_id: l.way_id,
+            reason: DropReason::NotStronglyConnected,
+            class: l.class,
+            geometry: l.geometry,
+        }));
     }
     report.links_before_contraction = links.len() as u64;
 
     // --- 4. Contract --------------------------------------------------------
     let nodes_before = used_nodes(&links).len();
-    if options.contract {
-        links = contract(links, &signalised, &forced_splits);
+    if options.contract && options.contract_drivable {
+        // Cars first, on their own; the rest keep every node a car link touches
+        // as a junction, so what a pedestrian sees is unchanged.
+        let (cars, rest): (Vec<ProtoLink>, Vec<ProtoLink>) =
+            links.into_iter().partition(|l| l.class.carries_motor_traffic());
+        let car_nodes: HashSet<i64> = cars.iter().flat_map(|l| [l.from, l.to]).collect();
+        links = contract(cars, &signalised, &forced_splits, &HashSet::new());
+        links.extend(contract(rest, &signalised, &forced_splits, &car_nodes));
+    } else if options.contract {
+        links = contract(links, &signalised, &forced_splits, &HashSet::new());
     }
     report.links_after_contraction = links.len() as u64;
+    record_coverage(&links, &mut report);
     report.nodes_contracted = (nodes_before - used_nodes(&links).len()) as u64;
 
     // --- 5. Hand to the graph builder ---------------------------------------
@@ -291,7 +454,7 @@ pub fn import(
 
     let geometry = LinkGeometry::build(&network, &geometry_by_external_id);
 
-    Ok((network, report, geometry))
+    Ok(ImportOutput { network, report, geometry, dropped })
 }
 
 /// Record a way rejection, except the overwhelmingly common "it is not a road".
@@ -309,12 +472,20 @@ fn record_rejection(diagnostics: &mut Diagnostics, reason: Rejection) {
 }
 
 /// Split one way into directed links between its junction nodes.
+///
+/// Nodes the extract does not contain — normal where a bounding box cuts a way,
+/// and what a [`crate::region::ClippedSource`] produces on purpose — break the
+/// way into **pieces**, each a run of consecutive nodes that are present. A
+/// piece is split at its junctions like any way; nothing is bridged across a
+/// gap, because a straight link through territory the extract does not hold is
+/// a street that does not exist (S172; before, such a way was joined up).
 fn split_way(
     way: &OsmWay,
     positions: &HashMap<i64, LonLat>,
     is_junction: &HashSet<i64>,
     diagnostics: &mut Diagnostics,
     out: &mut Vec<ProtoLink>,
+    dropped: &mut Vec<DroppedLink>,
 ) {
     let Ok(class) = tags::classify(&way.tags, way.node_ids.len()) else { return };
     let direction = tags::direction(&way.tags, class);
@@ -333,16 +504,23 @@ fn split_way(
     // gives way (S155).
     let roundabout = crate::source::tag_of(&way.tags, "junction") == Some("roundabout");
 
-    // Drop nodes the extract does not contain — normal where a bounding box
-    // cuts a way — and record it once per way rather than once per node.
-    let mut present: Vec<i64> = Vec::with_capacity(way.node_ids.len());
+    // Runs of consecutive nodes the extract contains; record the missing ones
+    // once per way rather than once per node.
+    let mut pieces: Vec<Vec<i64>> = Vec::new();
+    let mut current: Vec<i64> = Vec::new();
     let mut missing = 0u32;
     for &n in &way.node_ids {
         if positions.contains_key(&n) {
-            present.push(n);
+            current.push(n);
         } else {
             missing += 1;
+            if !current.is_empty() {
+                pieces.push(std::mem::take(&mut current));
+            }
         }
+    }
+    if !current.is_empty() {
+        pieces.push(current);
     }
     if missing > 0 {
         diagnostics.record_n(
@@ -350,7 +528,8 @@ fn split_way(
             u64::from(missing),
         );
     }
-    if present.len() < 2 {
+    let usable = pieces.iter().filter(|p| p.len() >= 2).count();
+    if usable == 0 {
         diagnostics.record(DiagKey::run_level(
             Category::DataQuality,
             codes::WAY_LOST_TO_MISSING_NODES,
@@ -358,56 +537,162 @@ fn split_way(
         ));
         return;
     }
-
-    let mut segment_start = 0usize;
-    for i in 1..present.len() {
-        let at_end = i + 1 == present.len();
-        if !is_junction.contains(&present[i]) && !at_end {
-            continue;
-        }
-
-        let geometry: Vec<LonLat> =
-            present[segment_start..=i].iter().map(|n| positions[n]).collect();
-        let length_m = polyline_length_metres(&geometry);
-        let (from, to) = (present[segment_start], present[i]);
-
-        // A segment that starts and ends at the same node is a closed loop with
-        // no junction on it — a roundabout mapped as one way, say. It cannot
-        // become a link, and splitting it further is the importer's job on the
-        // next pass, not a special case here.
-        if from != to {
-            if direction.has_forward() {
-                out.push(ProtoLink {
-                    way_id: way.id,
-                    from,
-                    to,
-                    class,
-                    lanes: lane_counts.forward,
-                    maxspeed_km_h,
-                    roundabout,
-                    length_m,
-                    geometry: geometry.clone(),
-                });
-            }
-            if direction.has_backward() {
-                let mut backward_geometry = geometry.clone();
-                backward_geometry.reverse();
-                out.push(ProtoLink {
-                    way_id: way.id,
-                    from: to,
-                    to: from,
-                    class,
-                    lanes: lane_counts.backward,
-                    maxspeed_km_h,
-                    roundabout,
-                    length_m,
-                    geometry: backward_geometry,
-                });
-            }
-        }
-
-        segment_start = i;
+    if missing > 0 {
+        diagnostics.record(DiagKey::run_level(
+            Category::DataQuality,
+            codes::WAY_CUT_INTO_PIECES,
+            Severity::Info,
+        ));
     }
+
+    for present in pieces.iter().filter(|p| p.len() >= 2) {
+        let mut segment_start = 0usize;
+        for i in 1..present.len() {
+            let at_end = i + 1 == present.len();
+            if !is_junction.contains(&present[i]) && !at_end {
+                continue;
+            }
+
+            let geometry: Vec<LonLat> =
+                present[segment_start..=i].iter().map(|n| positions[n]).collect();
+            let length_m = polyline_length_metres(&geometry);
+            let (from, to) = (present[segment_start], present[i]);
+
+            // A segment that starts and ends at the same node is a closed loop
+            // with no junction on it but its own end. It cannot become a link
+            // (a link from a node to itself is not a street anyone can route
+            // through), so it is dropped — and recorded, with its shape, so that
+            // dropping it is a thing that can be looked at (S172).
+            if from == to {
+                diagnostics.record(DiagKey::run_level(
+                    Category::DataQuality,
+                    codes::CLOSED_LOOP_DROPPED,
+                    Severity::Info,
+                ));
+                dropped.push(DroppedLink {
+                    way_id: way.id,
+                    reason: DropReason::ClosedLoop,
+                    class,
+                    geometry,
+                });
+            } else {
+                if direction.has_forward() {
+                    out.push(ProtoLink {
+                        way_id: way.id,
+                        from,
+                        to,
+                        class,
+                        lanes: lane_counts.forward,
+                        maxspeed_km_h,
+                        roundabout,
+                        length_m,
+                        geometry: geometry.clone(),
+                    });
+                }
+                if direction.has_backward() {
+                    let mut backward_geometry = geometry;
+                    backward_geometry.reverse();
+                    out.push(ProtoLink {
+                        way_id: way.id,
+                        from: to,
+                        to: from,
+                        class,
+                        lanes: lane_counts.backward,
+                        maxspeed_km_h,
+                        roundabout,
+                        length_m,
+                        geometry: backward_geometry,
+                    });
+                }
+            }
+
+            segment_start = i;
+        }
+    }
+}
+
+/// Count the drivable links, and how many say their own speed and lane count.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a length in whole metres is far below 2^63"
+)]
+fn record_coverage(links: &[ProtoLink], report: &mut ImportReport) {
+    let metres = |l: &ProtoLink| l.length_m.round() as u64;
+    for l in links.iter().filter(|l| l.class.carries_motor_traffic()) {
+        report.drivable_links += 1;
+        report.drivable_length_m += metres(l);
+        if l.maxspeed_km_h.is_some() {
+            report.drivable_maxspeed_links += 1;
+            report.drivable_maxspeed_length_m += metres(l);
+        }
+        if l.lanes.is_some() {
+            report.drivable_lanes_links += 1;
+            report.drivable_lanes_length_m += metres(l);
+        }
+    }
+}
+
+/// Keep only the drivable links inside the largest strongly connected component
+/// of the drivable node graph; links a car may not use are kept untouched.
+///
+/// Returns the links kept (in their original order), the links removed (same
+/// order), and how many components the drivable graph had. A link is kept when
+/// both its ends are in the largest component — exactly the links a path
+/// between two of its nodes can use, so the kept part is again strongly
+/// connected, and one round is enough. Nothing else about a kept link changes.
+///
+/// The largest is the one with the most nodes; the first found on a tie,
+/// which is a pure function of the sorted node ids, so the choice is
+/// deterministic.
+///
+/// Cost: linear in links, and a few bytes per node and link while it runs.
+fn keep_largest_strong_component(links: Vec<ProtoLink>) -> (Vec<ProtoLink>, Vec<ProtoLink>, u64) {
+    let drivable = |l: &ProtoLink| l.class.carries_motor_traffic();
+    let drivable_links: Vec<&ProtoLink> = links.iter().filter(|l| drivable(l)).collect();
+
+    // Dense ids for the nodes drivable links touch.
+    let mut nodes: Vec<i64> = drivable_links.iter().flat_map(|l| [l.from, l.to]).collect();
+    nodes.sort_unstable();
+    nodes.dedup();
+    let index = |n: i64| -> u32 {
+        u32::try_from(nodes.binary_search(&n).expect("every link end is a used node"))
+            .expect("node count fits u32")
+    };
+
+    let mut offsets = vec![0u32; nodes.len() + 1];
+    for l in &drivable_links {
+        offsets[index(l.from) as usize + 1] += 1;
+    }
+    for i in 0..nodes.len() {
+        offsets[i + 1] += offsets[i];
+    }
+    let mut targets = vec![0u32; drivable_links.len()];
+    let mut fill = offsets.clone();
+    for l in &drivable_links {
+        let f = index(l.from) as usize;
+        targets[fill[f] as usize] = index(l.to);
+        fill[f] += 1;
+    }
+
+    let components = strong_components(&offsets, &targets);
+    let Some(largest) = components.largest() else {
+        return (links, Vec::new(), 0);
+    };
+    let count = components.count() as u64;
+
+    let (mut kept, mut out) = (Vec::with_capacity(links.len()), Vec::new());
+    for l in links {
+        let inside = !drivable(&l)
+            || (components.component_of(index(l.from) as usize) == largest
+                && components.component_of(index(l.to) as usize) == largest);
+        if inside {
+            kept.push(l);
+        } else {
+            out.push(l);
+        }
+    }
+    (kept, out, count)
 }
 
 /// Every node some link touches.
@@ -435,7 +720,8 @@ fn used_nodes(links: &[ProtoLink]) -> Vec<i64> {
 /// * it has exactly one incoming and one outgoing link (a one-way street), or
 ///   exactly two of each which pair up as reverses (a two-way street);
 /// * the links to be merged agree on class, lanes and speed limit;
-/// * merging would not create a link from a node to itself.
+/// * merging would not create a link from a node to itself;
+/// * it is not in `also_blocked` (nodes the caller needs to keep).
 ///
 /// The last condition is what protects cul-de-sacs: contracting the far end of
 /// a stub would turn `A → X → A` into `A → A`, which is not a street.
@@ -446,6 +732,7 @@ fn contract(
     links: Vec<ProtoLink>,
     signalised: &HashSet<i64>,
     forced_splits: &HashSet<i64>,
+    also_blocked: &HashSet<i64>,
 ) -> Vec<ProtoLink> {
     let mut links = links;
 
@@ -468,7 +755,10 @@ fn contract(
         let mut any = false;
 
         for node in candidates {
-            if signalised.contains(&node) || forced_splits.contains(&node) {
+            if signalised.contains(&node)
+                || forced_splits.contains(&node)
+                || also_blocked.contains(&node)
+            {
                 continue;
             }
             let (Some(ins), Some(outs)) = (incoming.get(&node), outgoing.get(&node)) else {

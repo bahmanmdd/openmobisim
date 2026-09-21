@@ -3,6 +3,7 @@
 //! | Module | What it owns |
 //! |---|---|
 //! | [`source`] | Where elements come from — a trait, an in-memory source, and the PBF adapter |
+//! | [`region`] | Cutting a study area (a rectangle or a polygon) out of a larger extract |
 //! | [`tags`] | Interpreting OSM tags: class, direction, lanes, speed limits |
 //! | [`mod@import`] | Classifying, splitting, contracting, and handing the result to the graph builder |
 //! | [`pbf`] | The `.osm.pbf` adapter — thin, and the only part that knows about a file format |
@@ -30,11 +31,16 @@ pub mod import;
 #[cfg(feature = "pbf")]
 #[cfg_attr(docsrs, doc(cfg(feature = "pbf")))]
 pub mod pbf;
+pub mod region;
 pub mod source;
 pub mod tags;
 
-pub use import::{ImportOptions, ImportReport, import};
+pub use import::{
+    Connectivity, DropReason, DroppedLink, ImportOptions, ImportOutput, ImportReport, import,
+    import_detailed,
+};
 #[cfg(feature = "pbf")]
 pub use pbf::PbfSource;
+pub use region::{ClippedSource, Region, RegionError};
 pub use source::{MemorySource, OsmError, OsmNode, OsmSource, OsmWay};
 pub use tags::{Direction, Lanes, Maxspeed, Rejection};

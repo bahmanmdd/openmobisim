@@ -136,6 +136,91 @@ class Network:
     def link_storage_pcu(self) -> npt.NDArray[np.float64]:
         """Every link's storage at jam density, in PCU."""
 
+    def link_drivable(self) -> npt.NDArray[np.bool_]:
+        """Whether each link may be used by a car.
+
+        ``False`` for footways, steps, paths, tracks, cycleways and pedestrian
+        streets: they are in the network for the walk and cycle layers, and a
+        car is never routed over them.
+        """
+
+    def link_roundabout(self) -> npt.NDArray[np.bool_]:
+        """Whether each link is part of a roundabout's circulating carriageway."""
+
+    def node_signalised(self) -> npt.NDArray[np.bool_]:
+        """Whether each node is signalised, indexed by node index."""
+
+    def link_from(self) -> npt.NDArray[np.uint32]:
+        """Every link's start node, as a node index."""
+
+    def link_to(self) -> npt.NDArray[np.uint32]:
+        """Every link's end node, as a node index."""
+
+    def report_connectivity(self, mode: str = "car") -> dict[str, object]:
+        """Whether the network is strongly connected, and how far from it if not.
+
+        Args:
+            mode: ``"car"`` (the default) asks about the links a car may use
+                only, so a footway joining two roads does not join them for a
+                car; ``"all"`` asks about every link.
+
+        Returns:
+            A dict of counts. ``strongly_connected`` is the verdict: every node
+            reaches every other. ``node_components`` and ``node_largest`` say
+            how many pieces there are and how many nodes the largest holds,
+            ``sources`` and ``sinks`` count the nodes a vehicle can only leave
+            or only reach, and ``node_component_sizes_top`` lists the ten
+            largest pieces. ``link_components`` and ``link_largest`` are the
+            same for the link graph through the legal turns, which is
+            informational: a vehicle cannot U-turn except at a dead end, so a
+            two-way triangle of streets is two components there, one for each
+            way round. ``turns``, ``u_turns`` and ``max_turns_per_node`` describe
+            the turn table.
+
+        Raises:
+            ValueError: If ``mode`` is not one of the two.
+        """
+
+    def report_import(self) -> dict[str, object] | None:
+        """What the OSM import did; ``None`` for a network not read from OSM.
+
+        The counts (``ways_seen``, ``ways_kept``, ``nodes_seen``, ``nodes_kept``,
+        ``junction_nodes``, ``links_before_contraction``,
+        ``links_after_contraction``, ``nodes_contracted``), what was left out
+        (``closed_loops_dropped``; and, with ``connectivity="strong"``,
+        ``components_before``, ``links_disconnected``, ``nodes_disconnected``,
+        ``length_disconnected_m``), how much of the drivable network states its own
+        speed limit and lane count rather than taking the class default
+        (``drivable_links``, ``drivable_length_m``, ``drivable_maxspeed_links``,
+        ``drivable_maxspeed_length_m``, ``drivable_lanes_links``,
+        ``drivable_lanes_length_m``), the options used (``connectivity``,
+        ``region``) and ``diagnostics``: every data-quality diagnostic as
+        ``{code: {"severity": ..., "count": ...}}``.
+        """
+
+    def report_dropped(
+        self,
+    ) -> (
+        tuple[
+            npt.NDArray[np.float64],
+            npt.NDArray[np.uint32],
+            npt.NDArray[np.int64],
+            npt.NDArray[np.uint8],
+            npt.NDArray[np.uint8],
+        ]
+        | None
+    ):
+        """The roads the import left out, so that they can be looked at.
+
+        Returns ``None`` for a network not read from OSM, otherwise
+        ``(coordinates, offsets, way_ids, reasons, classes)``: like
+        :meth:`link_geometry`, ``(n_points, 2)`` WGS84 ``(lon, lat)`` with
+        ``offsets`` into it, and per dropped link its OSM way id, the reason
+        (0 = a closed loop that could not be a link, 1 = outside the largest
+        strongly connected part of the drivable network) and its road class
+        (numbered as :meth:`link_class`).
+        """
+
 class RouteSets:
     """The alternative routes of many origin-destination pairs.
 
@@ -331,20 +416,48 @@ def toy_network() -> Network:
         ``"M"``, … (see :meth:`Network.node_lonlat`).
     """
 
-def network_read_osm(path: str, contract: bool = True) -> Network:
+def network_read_osm(
+    path: str,
+    contract: bool = True,
+    region: tuple[float, float, float, float] | list[tuple[float, float]] | None = None,
+    connectivity: str = "keep",
+    contract_drivable: bool = False,
+) -> Network:
     """Read a road network from an OpenStreetMap ``.osm.pbf`` extract.
 
     Args:
         path: The extract.
         contract: Merge chains of degree-two nodes whose links agree on every
             parameter (the default; turn it off only to debug an import).
+        region: Cut a study area out of the extract: a rectangle
+            ``(west, south, east, north)`` in degrees, or a polygon as a list of
+            ``(lon, lat)`` vertices. Nodes outside are dropped and a road that
+            crosses the edge ends at its last node inside; a road that leaves
+            and re-enters is two roads, never one bridged across the gap.
+        connectivity: ``"keep"`` (the default) imports every road.
+            ``"strong"`` keeps only the largest strongly connected part of the
+            drivable network, so that every node a car can use reaches every
+            other. Whole links are removed and none is changed; footways and
+            other links a car may not use are untouched. What was removed is
+            counted in :meth:`Network.report_import` and drawn from
+            :meth:`Network.report_dropped`.
+        contract_drivable: Merge car links across nodes that only footways,
+            cycleways or pedestrian streets touch. A footway crossing a street
+            shares a node with it, and so does every sidewalk that meets a
+            driveway; by default such a node is a junction and splits the street,
+            which in a city that maps its sidewalks cuts a third of the car
+            network into pieces a few metres long. With this on they merge (by
+            the usual rule: same class, lanes and speed, no signal, stop or
+            barrier, nothing a car could turn into), the node stays for the
+            footway and the footway links are unchanged. Needs ``contract``.
 
     Returns:
         A :class:`Network` with the defaults table's parameters and the street
         geometry kept for maps.
 
     Raises:
-        ValueError: If the file cannot be read or holds no usable road network.
+        ValueError: If the file cannot be read, ``region`` or ``connectivity`` is
+            not valid, or the result holds no usable road network.
     """
 
 def grid_node_lonlat(network: Network, row: int, col: int) -> tuple[float, float]:

@@ -11,17 +11,24 @@ use std::sync::{Arc, OnceLock};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
+use openmobisim_core_graph::connectivity::{analyse, analyse_by};
+use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::examples::{
     manhattan_grid as build_manhattan_grid, toy_network as build_toy_network,
 };
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::link_geometry::LinkGeometry;
 use openmobisim_core_graph::network::RoadNetwork;
+use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::NodeSnapper;
 use openmobisim_core_types::diagnostics::Diagnostics;
-use openmobisim_core_types::ids::{EntityId, LinkId};
-use openmobisim_io_osm::{ImportOptions, PbfSource, import};
+use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
+use openmobisim_io_osm::{
+    ClippedSource, Connectivity, DropReason, DroppedLink, ImportOptions, ImportReport, PbfSource,
+    Region, import_detailed,
+};
 
 /// A link polyline array and its per-link offsets, as numpy arrays.
 type GeometryArrays<'py> = (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray1<u32>>);
@@ -40,6 +47,20 @@ pub struct PyNetwork {
     pub(crate) source: String,
     /// The nearest-drivable-node index, built the first time it is asked for.
     pub(crate) snapper: OnceLock<NodeSnapper>,
+    /// What the import did, for a network read from OSM (S172).
+    import: Option<Arc<ImportInfo>>,
+}
+
+/// What an OSM import did, kept beside the network so that it can be looked at.
+struct ImportInfo {
+    report: ImportReport,
+    /// `(code, severity, count)` for every diagnostic the import recorded.
+    diagnostics: Vec<(String, String, u64)>,
+    dropped: Vec<DroppedLink>,
+    connectivity: &'static str,
+    contract_drivable: bool,
+    /// The region as the caller gave it, for the record.
+    region: Option<String>,
 }
 
 impl PyNetwork {
@@ -48,7 +69,7 @@ impl PyNetwork {
         geometry: Option<Arc<LinkGeometry>>,
         source: &str,
     ) -> Self {
-        Self { inner, geometry, source: source.to_string(), snapper: OnceLock::new() }
+        Self { inner, geometry, source: source.to_string(), snapper: OnceLock::new(), import: None }
     }
 
     /// The snapper, built on first use.
@@ -181,6 +202,187 @@ impl PyNetwork {
         self.inner.storages().iter().map(|p| p.get()).collect::<Vec<_>>().into_pyarray(py)
     }
 
+    /// Whether each link may be used by a car (bool): false for footways,
+    /// steps, paths, tracks, cycleways and pedestrian streets.
+    fn link_drivable<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
+        (0..self.inner.link_count())
+            .map(|i| self.inner.link_class(LinkId::new(i)).carries_motor_traffic())
+            .collect::<Vec<_>>()
+            .into_pyarray(py)
+    }
+
+    /// Whether each link is part of a roundabout's circulating carriageway (bool).
+    fn link_roundabout<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
+        (0..self.inner.link_count())
+            .map(|i| self.inner.is_roundabout(LinkId::new(i)))
+            .collect::<Vec<_>>()
+            .into_pyarray(py)
+    }
+
+    /// Whether each node is signalised (bool), indexed by node index.
+    fn node_signalised<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
+        (0..self.inner.node_count())
+            .map(|i| self.inner.is_signalised(NodeId::new(i)))
+            .collect::<Vec<_>>()
+            .into_pyarray(py)
+    }
+
+    /// Every link's start node, as a node index (uint32).
+    fn link_from<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
+        (0..self.inner.link_count())
+            .map(|i| self.inner.link_from(LinkId::new(i)).raw())
+            .collect::<Vec<_>>()
+            .into_pyarray(py)
+    }
+
+    /// Every link's end node, as a node index (uint32).
+    fn link_to<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
+        (0..self.inner.link_count())
+            .map(|i| self.inner.link_to(LinkId::new(i)).raw())
+            .collect::<Vec<_>>()
+            .into_pyarray(py)
+    }
+
+    /// Whether the network is strongly connected, and how far from it if not.
+    ///
+    /// `mode` is `"car"` (the default: only the links a car may use, so a
+    /// footway that joins two roads does not join them) or `"all"` (every
+    /// link). Two tests, both linear in links: on the **node graph** (every
+    /// node reaches every other: the verdict, `strongly_connected`) and on the
+    /// **link graph through the legal turns** (informational: a two-way
+    /// triangle is two components there, one for each way round). Returns a
+    /// dict of counts.
+    #[pyo3(signature = (mode="car"))]
+    fn report_connectivity<'py>(
+        &self,
+        py: Python<'py>,
+        mode: &str,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let turns = TurnTable::build(&self.inner, SignalDefaults::SHIPPED);
+        let r = match mode {
+            "car" => analyse_by(&self.inner, &turns, |l| {
+                self.inner.link_class(l).carries_motor_traffic()
+            }),
+            "all" => analyse(&self.inner, &turns),
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "mode must be \"car\" or \"all\", not {other:?}"
+                )));
+            }
+        };
+        let d = PyDict::new(py);
+        d.set_item("strongly_connected", r.is_strongly_connected())?;
+        d.set_item("nodes", r.nodes)?;
+        d.set_item("links", r.links)?;
+        d.set_item("node_components", r.node_components)?;
+        d.set_item("node_largest", r.node_largest)?;
+        d.set_item("links_in_node_largest", r.links_in_node_largest)?;
+        d.set_item("link_components", r.link_components)?;
+        d.set_item("link_largest", r.link_largest)?;
+        d.set_item("sources", r.sources)?;
+        d.set_item("sinks", r.sinks)?;
+        d.set_item("node_component_sizes_top", r.node_component_sizes_top)?;
+        d.set_item("turns", turns.len())?;
+        d.set_item("u_turns", turns.u_turn_count())?;
+        d.set_item("max_turns_per_node", turns.max_turns_per_node())?;
+        Ok(d)
+    }
+
+    /// What the import did, for a network read from OSM (`None` otherwise): the
+    /// counts (ways and nodes seen and kept, links before and after
+    /// contraction, what connectivity removed), the options used, and every
+    /// data-quality diagnostic with its count.
+    fn report_import<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(info) = &self.import else { return Ok(None) };
+        let r = info.report;
+        let d = PyDict::new(py);
+        d.set_item("ways_seen", r.ways_seen)?;
+        d.set_item("ways_kept", r.ways_kept)?;
+        d.set_item("nodes_seen", r.nodes_seen)?;
+        d.set_item("nodes_kept", r.nodes_kept)?;
+        d.set_item("junction_nodes", r.junction_nodes)?;
+        d.set_item("links_before_contraction", r.links_before_contraction)?;
+        d.set_item("links_after_contraction", r.links_after_contraction)?;
+        d.set_item("nodes_contracted", r.nodes_contracted)?;
+        d.set_item("closed_loops_dropped", r.closed_loops_dropped)?;
+        d.set_item("components_before", r.components_before)?;
+        d.set_item("links_disconnected", r.links_disconnected)?;
+        d.set_item("nodes_disconnected", r.nodes_disconnected)?;
+        d.set_item("length_disconnected_m", r.length_disconnected_m)?;
+        d.set_item("drivable_links", r.drivable_links)?;
+        d.set_item("drivable_length_m", r.drivable_length_m)?;
+        d.set_item("drivable_maxspeed_links", r.drivable_maxspeed_links)?;
+        d.set_item("drivable_maxspeed_length_m", r.drivable_maxspeed_length_m)?;
+        d.set_item("drivable_lanes_links", r.drivable_lanes_links)?;
+        d.set_item("drivable_lanes_length_m", r.drivable_lanes_length_m)?;
+        d.set_item("connectivity", info.connectivity)?;
+        d.set_item("contract_drivable", info.contract_drivable)?;
+        d.set_item("region", info.region.clone())?;
+        let diagnostics = PyDict::new(py);
+        for (code, severity, count) in &info.diagnostics {
+            let row = PyDict::new(py);
+            row.set_item("severity", severity)?;
+            row.set_item("count", count)?;
+            diagnostics.set_item(code, row)?;
+        }
+        d.set_item("diagnostics", diagnostics)?;
+        Ok(Some(d))
+    }
+
+    /// The roads the import left out, so that they can be looked at: a closed
+    /// loop that could not be a link, or a road outside the largest strongly
+    /// connected component. `None` for a network not read from OSM.
+    ///
+    /// Returns `(coordinates, offsets, way_ids, reasons, classes)`: like
+    /// `link_geometry`, a `(n_points, 2)` array of WGS84 `(lon, lat)` and
+    /// `offsets` into it, and for each dropped link its OSM way id (int64),
+    /// reason (uint8: 0 = closed loop, 1 = not strongly connected) and road
+    /// class (uint8, numbered as `link_class`).
+    #[allow(clippy::type_complexity, reason = "four flat arrays, documented above")]
+    fn report_dropped<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<
+        Option<(
+            Bound<'py, PyArray2<f64>>,
+            Bound<'py, PyArray1<u32>>,
+            Bound<'py, PyArray1<i64>>,
+            Bound<'py, PyArray1<u8>>,
+            Bound<'py, PyArray1<u8>>,
+        )>,
+    > {
+        let Some(info) = &self.import else { return Ok(None) };
+        let mut flat: Vec<f64> = Vec::new();
+        let mut offsets: Vec<u32> = vec![0];
+        let mut ways: Vec<i64> = Vec::with_capacity(info.dropped.len());
+        let mut reasons: Vec<u8> = Vec::with_capacity(info.dropped.len());
+        let mut classes: Vec<u8> = Vec::with_capacity(info.dropped.len());
+        for link in &info.dropped {
+            for p in &link.geometry {
+                flat.extend([p.lon, p.lat]);
+            }
+            offsets.push(
+                u32::try_from(flat.len() / 2)
+                    .map_err(|_| PyValueError::new_err("more than 2^32 geometry points"))?,
+            );
+            ways.push(link.way_id);
+            classes.push(link.class as u8);
+            reasons.push(match link.reason {
+                DropReason::ClosedLoop => 0,
+                DropReason::NotStronglyConnected => 1,
+            });
+        }
+        let rows = flat.len() / 2;
+        let coordinates = flat.into_pyarray(py).reshape([rows, 2])?;
+        Ok(Some((
+            coordinates,
+            offsets.into_pyarray(py),
+            ways.into_pyarray(py),
+            reasons.into_pyarray(py),
+            classes.into_pyarray(py),
+        )))
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "Network({} nodes, {} links{})",
@@ -220,20 +422,91 @@ pub fn toy_network() -> PyNetwork {
 /// Read a road network from an OpenStreetMap `.osm.pbf` extract, with the
 /// defaults table's parameters and street geometry kept for maps.
 ///
+/// `region` cuts a study area out of the extract — a rectangle
+/// `(west, south, east, north)` or a polygon, a list of `(lon, lat)` vertices —
+/// and `connectivity` is `"keep"` (everything that is a road) or `"strong"`
+/// (only the largest strongly connected part). `contract_drivable` merges car
+/// links across nodes that only footways touch (the crossings and sidewalk
+/// joins of a city that maps its sidewalks), leaving the footways as they were.
+///
 /// # Errors
 ///
-/// `ValueError` if the file cannot be read or holds no usable road network.
+/// `ValueError` if the file cannot be read, the region or `connectivity` is not
+/// valid, or the result holds no usable road network.
 #[pyfunction]
-#[pyo3(signature = (path, contract=true))]
-pub fn network_read_osm(py: Python<'_>, path: &str, contract: bool) -> PyResult<PyNetwork> {
+#[pyo3(signature = (path, contract=true, region=None, connectivity="keep", contract_drivable=false))]
+pub fn network_read_osm(
+    py: Python<'_>,
+    path: &str,
+    contract: bool,
+    region: Option<&Bound<'_, PyAny>>,
+    connectivity: &str,
+    contract_drivable: bool,
+) -> PyResult<PyNetwork> {
+    let connectivity_mode = match connectivity {
+        "keep" => Connectivity::Keep,
+        "strong" => Connectivity::Strong,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "connectivity must be \"keep\" or \"strong\", not {other:?}"
+            )));
+        }
+    };
+    let region = region.map(parse_region).transpose()?;
+    let region_text = region.as_ref().map(|r| format!("{r:?}"));
     let path = path.to_owned();
-    let (network, _, geometry) = py
+    let out = py
         .detach(move || {
-            let options = ImportOptions { contract, ..ImportOptions::default() };
-            import(&PbfSource::new(&path), options, &mut Diagnostics::new())
+            let options = ImportOptions {
+                contract,
+                contract_drivable,
+                connectivity: connectivity_mode,
+                ..ImportOptions::default()
+            };
+            let mut diagnostics = Diagnostics::new();
+            let source = PbfSource::new(&path);
+            let out = match &region {
+                Some(r) => {
+                    import_detailed(&ClippedSource::new(&source, r), options, &mut diagnostics)
+                }
+                None => import_detailed(&source, options, &mut diagnostics),
+            }?;
+            Ok::<_, openmobisim_io_osm::OsmError>((out, diagnostics))
         })
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    Ok(PyNetwork::new(Arc::new(network), Some(Arc::new(geometry)), "osm"))
+    let (out, diagnostics) = out;
+    let rows = diagnostics
+        .rows()
+        .into_iter()
+        .map(|row| (row.key.code.0.to_string(), format!("{:?}", row.key.severity), row.count))
+        .collect();
+    let mut network = PyNetwork::new(Arc::new(out.network), Some(Arc::new(out.geometry)), "osm");
+    network.import = Some(Arc::new(ImportInfo {
+        report: out.report,
+        diagnostics: rows,
+        dropped: out.dropped,
+        connectivity: match connectivity_mode {
+            Connectivity::Keep => "keep",
+            Connectivity::Strong => "strong",
+        },
+        contract_drivable,
+        region: region_text,
+    }));
+    Ok(network)
+}
+
+/// A rectangle `(west, south, east, north)` or a list of `(lon, lat)` vertices.
+fn parse_region(value: &Bound<'_, PyAny>) -> PyResult<Region> {
+    let made = if let Ok((w, s, e, n)) = value.extract::<(f64, f64, f64, f64)>() {
+        Region::bbox(w, s, e, n)
+    } else if let Ok(vertices) = value.extract::<Vec<(f64, f64)>>() {
+        Region::polygon(vertices)
+    } else {
+        return Err(PyValueError::new_err(
+            "region must be (west, south, east, north) or a list of (lon, lat) vertices",
+        ));
+    };
+    made.map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
 /// The WGS84 lon/lat of grid position `(row, col)` — grid-specific

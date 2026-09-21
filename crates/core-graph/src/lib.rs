@@ -4,6 +4,7 @@
 //! | Module | What it owns |
 //! |---|---|
 //! | [`geometry`] | WGS84 → projected metres, from scratch, UTM only (S81) |
+//! | [`connectivity`] | Strongly connected components of the node graph and of the link graph (legal turns) |
 //! | [`csr`] | The compressed-sparse-row adjacency every structure here is built from |
 //! | [`defaults`] | The versioned, cited, overridable table that turns OSM tags into a fundamental diagram |
 //! | [`network`] | The road network itself: structure of arrays, built once, then immutable |
@@ -21,6 +22,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+pub mod connectivity;
 pub mod csr;
 pub mod defaults;
 pub mod examples;
