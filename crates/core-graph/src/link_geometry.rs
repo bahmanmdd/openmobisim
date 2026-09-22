@@ -36,7 +36,7 @@ use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, LinkId};
 
 use crate::geometry::{LonLat, polyline_length_metres};
-use crate::network::RoadNetwork;
+use crate::network::{MIN_LINK_LENGTH_M, RoadNetwork};
 
 /// The sentinel meaning "this link has no stored geometry".
 const NO_STREET: u32 = u32::MAX;
@@ -147,9 +147,18 @@ impl LinkGeometry {
             let Some(external) = network.link_external_ids().external_of(link) else { continue };
             let Some(own_points) = points_of.get(external) else { continue };
 
+            // A link at or below `MIN_LINK_LENGTH_M` may have had its raw,
+            // near-zero measured length floored there (`RoadNetworkBuilder::
+            // build`'s degenerate-length rule) while its stored geometry keeps
+            // the real, smaller points — the two are supposed to disagree
+            // then, by design, so the micrometre check below is skipped for
+            // exactly that case rather than firing on every OSM extract that
+            // happens to contain a duplicate-node or mapping-error link
+            // (found on a real Andorra import, checkpoint 8b).
             debug_assert!(
-                (polyline_length_metres(own_points) - network.link_length(link).get()).abs()
-                    < LENGTH_AGREEMENT_TOLERANCE_M,
+                network.link_length(link).get() <= MIN_LINK_LENGTH_M
+                    || (polyline_length_metres(own_points) - network.link_length(link).get()).abs()
+                        < LENGTH_AGREEMENT_TOLERANCE_M,
                 "stored geometry for {link:?} does not remeasure to its stored length"
             );
 
