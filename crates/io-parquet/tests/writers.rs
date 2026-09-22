@@ -236,6 +236,63 @@ fn manifest_reports_the_fields_phase_1_actually_has() {
     assert!(json.contains("\"link_bins_file\": \"link_bins.parquet\""));
 }
 
+#[test]
+fn a_descriptor_containing_a_quote_or_a_backslash_still_writes_valid_json() {
+    // route_descriptor/choice_descriptor are the one string here that can hold
+    // arbitrary characters (a Python-authored choice model's own descriptor,
+    // design §24): found untested in the 8b checkpoint's adversarial pass —
+    // dropping the escaping broke nothing in the suite as it stood.
+    let mut description = sample_description(None, None);
+    description.route_descriptor = "penalty(name=\"a\\b\")".to_string();
+    let raw_trips = vec![RawTrip {
+        traveller_id: "alice".to_string(),
+        trip_seq: 0,
+        origin: LonLat::new(4.80, 45.70),
+        destination: LonLat::new(4.81, 45.70),
+        departure_time: Second(0),
+        user_class: "commuter".to_string(),
+        weight: None,
+    }];
+    let class_defaults =
+        ClassDefaults::new().with_default("commuter", Ownership { car: true, ..Ownership::NONE });
+    let (travellers, _trips) =
+        build_travellers(raw_trips, Vec::new(), &class_defaults, 1, &mut Diagnostics::new())
+            .expect("buildable");
+    let json =
+        Manifest::for_run(&travellers, &sample_result(), Second(3600), 1, &description).to_json();
+
+    assert_eq!(
+        json_string_field(&json, "route_descriptor"),
+        "penalty(name=\"a\\b\")",
+        "the escaped value must decode back to exactly what was given: {json}"
+    );
+}
+
+/// Extract a top-level `"field": "value"` string field's *decoded* value from
+/// a small hand-written JSON document, honouring `\"` and `\\` — a minimal,
+/// dependency-free round-trip check for `manifest::escape`, in keeping with
+/// this crate's own "no JSON library" reasoning (`manifest.rs`'s `to_json` doc
+/// comment).
+fn json_string_field(json: &str, field: &str) -> String {
+    let needle = format!("\"{field}\": \"");
+    let start = json.find(&needle).unwrap_or_else(|| panic!("field {field:?} not found in {json}"))
+        + needle.len();
+    let mut out = String::new();
+    let mut chars = json[start..].chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some('"') => out.push('"'),
+                Some('\\') => out.push('\\'),
+                other => panic!("unexpected escape {other:?} in {json}"),
+            },
+            '"' => return out,
+            other => out.push(other),
+        }
+    }
+    panic!("unterminated string field {field:?} in {json}");
+}
+
 fn sample_description(step: Option<f64>, bins: Option<u32>) -> RunDescription {
     RunDescription {
         fingerprint: 0xdead_beef,

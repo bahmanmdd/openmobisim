@@ -139,6 +139,40 @@ fn took(result: &RunResult, k: usize) -> usize {
     routes.iter().filter(|&&r| r as usize == first + k).count()
 }
 
+// --- the `detour` route attribute -------------------------------------------------------------------
+
+#[test]
+fn the_detour_attribute_is_time_over_the_bests_within_the_set() {
+    // Free flow: fast = 72 s (the set's best, detour 0), slow = 84 s (detour = 84/72 - 1 = 1/6).
+    // Zeroing beta_time_min and driving the split with beta_detour alone makes the observed choices
+    // a direct, hand-checkable readout of `detour`'s own value — found untested by checkpoint 8b's
+    // adversarial pass (hardcoding `detour` to 0.0 broke nothing in the suite as it stood).
+    let n = 6_000;
+    let network = Arc::new(bottleneck());
+    let classes =
+        ClassDefaults::new().with_default("commuter", Ownership { car: true, ..Ownership::NONE });
+    let (travellers, raw) =
+        build_travellers(trips(n), Vec::new(), &classes, 1, &mut Diagnostics::new())
+            .expect("buildable");
+    let choice: ChoiceOptions =
+        [("beta_time_min".to_string(), 0.0), ("beta_detour".to_string(), -2.0)]
+            .into_iter()
+            .collect();
+    let mut run = Run::new(network, Arc::new(travellers), Arc::new(raw), Second(3600))
+        .with_master_seed(1)
+        .with_choice_model(Arc::from(model("logit", &choice).expect("built in")));
+    let result = run.execute(&mut Diagnostics::new());
+    // U_fast = -2 * 0 = 0; U_slow = -2 * 1/6 = -1/3; P(fast) = 1 / (1 + e^(-1/3)).
+    let expected = 1.0 / (1.0 + (-1.0_f64 / 3.0).exp());
+    let sigma = (expected * (1.0 - expected) * f64::from(n)).sqrt();
+    assert!(
+        (took(&result, 0) as f64 - expected * f64::from(n)).abs() < 5.0 * sigma,
+        "took {} of {n} on the fast route, expected close to {}",
+        took(&result, 0),
+        expected * f64::from(n)
+    );
+}
+
 // --- a time-dependent choice set ------------------------------------------------------------------
 
 #[test]

@@ -265,6 +265,83 @@ fn generation_does_not_depend_on_threads_or_key_order() {
     }
 }
 
+/// `n` independent copies of a diamond whose two roads are **exactly** the same length (200 m
+/// each way, unlike `diamond()`'s 200-vs-240), so their free-flow costs tie exactly rather than
+/// approximately — the existing diamond never exercises the search's tie-break at all.
+fn tied_diamonds(n: u32) -> (RoadNetwork, Vec<RouteKey>) {
+    let mut b = RoadNetworkBuilder::new();
+    for i in 0..n {
+        let x0 = f64::from(i) * 1000.0;
+        for (n, dx, dy) in
+            [("a", 0.0, 0.0), ("b", 100.0, 60.0), ("c", 100.0, -60.0), ("d", 200.0, 0.0)]
+        {
+            b.add_node(
+                format!("{n}{i}"),
+                LonLat::new(4.8 + (x0 + dx) / 77_800.0, 45.7 + dy / 110_574.0),
+            );
+        }
+        for (name, from, to) in
+            [("ab", "a", "b"), ("bd", "b", "d"), ("ac", "a", "c"), ("cd", "c", "d")]
+        {
+            let mut spec = LinkSpec::new(RoadClass::Residential);
+            spec.length_m = Some(100.0);
+            b.add_link(format!("{name}{i}"), format!("{from}{i}"), format!("{to}{i}"), spec);
+        }
+    }
+    let net = b
+        .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable");
+    let keys = (0..n)
+        .map(|i| RouteKey::new(node(&net, &format!("a{i}")), node(&net, &format!("d{i}"))))
+        .collect();
+    (net, keys)
+}
+
+#[test]
+fn an_exact_cost_tie_is_broken_the_same_way_regardless_of_threads_or_key_order() {
+    // `search.rs`'s `Entry` orders by link id once costs tie — checkpoint 8b's adversarial pass
+    // found no test exercising an exact tie at all (`diamond()`'s two roads, 200 m and 240 m,
+    // never actually tie), and confirmed this one: 30 independent, geometrically identical tied
+    // diamonds give the parallel driver real work to spread across keys and threads, and every
+    // single search must still resolve its own tie the same way every time. Note (checked while
+    // adding this): removing the explicit `.then_with(link cmp)` tie-break did **not** make this
+    // test fail — `BinaryHeap`'s pop order is itself a deterministic function of push order on
+    // this target, so today's stability comes from links being visited in the same fixed order
+    // every time, not from the tie-break specifically. The tie-break's doc comment reads as a
+    // guarantee against that assumption changing later (a different visitation order, a
+    // different heap), which this test cannot isolate from outside — recorded here rather than
+    // claimed as proven.
+    let (net, keys) = tied_diamonds(30);
+    let turns = turns_of(&net);
+    let g = Shortest;
+    let reference = RouteSets::generate(&net, &turns, &keys, &g);
+    // Every diamond is geometrically identical (only translated), so whichever road the
+    // tie-break favours, it must favour the *same one* — by link id, not by chance — in every
+    // one of the 30 copies. "Which road" is read off the external id's own name (`ab`/`bd` for
+    // the top road, `ac`/`cd` for the bottom), not the internal id, since ids are assigned by
+    // sorted external id across the *whole* network, not per diamond.
+    // links[0] is always "ab<i>" (top road) or "ac<i>" (bottom road): its second character.
+    let road_of = |link: LinkId| -> char {
+        net.link_external_ids().external_of(link).expect("named")[1..2].chars().next().unwrap()
+    };
+    let first_choice = road_of(LinkId::new(reference.routes(0).next().expect("a route").links[0]));
+    for i in 0..keys.len() {
+        let chosen = road_of(LinkId::new(reference.routes(i).next().expect("a route").links[0]));
+        assert_eq!(chosen, first_choice, "diamond {i} broke its tie differently from diamond 0");
+    }
+    let mut shuffled = keys.clone();
+    shuffled.reverse();
+    shuffled.rotate_left(7);
+    assert_eq!(reference, RouteSets::generate(&net, &turns, &shuffled, &g), "key order");
+    assert_eq!(reference, RouteSets::generate(&net, &turns, &keys, &g), "repeat");
+    #[cfg(feature = "parallel")]
+    for threads in [1, 3, 8] {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().expect("pool");
+        let made = pool.install(|| RouteSets::generate(&net, &turns, &keys, &g));
+        assert_eq!(reference, made, "{threads} threads");
+    }
+}
+
 #[test]
 fn the_inverted_index_finds_exactly_the_routes_that_use_a_link() {
     let (net, _) = manhattan_grid(6, 200.0, false);
@@ -376,6 +453,66 @@ fn snapping_agrees_with_a_scan_of_every_node() {
     for _ in 0..400 {
         // Inside the grid and well outside it.
         let (x, y) = (next(-400.0, 1500.0), next(-400.0, 1500.0));
+        let brute = (0..net.node_count())
+            .map(NodeId::new)
+            .min_by(|&a, &b| {
+                let d = |n: NodeId| {
+                    let p = net.node_position(n);
+                    (p.x - x).hypot(p.y - y)
+                };
+                d(a).total_cmp(&d(b)).then(a.cmp(&b))
+            })
+            .expect("nodes");
+        assert_eq!(snapper.nearest_xy(x, y), brute, "at ({x:.1}, {y:.1})");
+    }
+}
+
+/// Three small, tight clusters of nodes far apart, with wide empty space between them — unlike
+/// `manhattan_grid`'s uniform density, most grid cells here hold nothing at all, so a query in
+/// the empty space genuinely exercises how many *empty* rings the search must cross before
+/// finding a cluster (checkpoint 8b's adversarial pass: the ring early-stop bound, off by one
+/// cell either way, was not caught by `snapping_agrees_with_a_scan_of_every_node` above, whose
+/// uniform grid structurally can't expose it).
+fn clustered_network() -> RoadNetwork {
+    let mut b = RoadNetworkBuilder::new();
+    for (cluster, (cx, cy)) in [(0, (0.0, 0.0)), (1, (3000.0, 100.0)), (2, (1200.0, 2800.0))] {
+        for i in 0..4 {
+            #[allow(clippy::cast_precision_loss, reason = "a handful of nodes per cluster")]
+            let offset = f64::from(i) * 8.0;
+            b.add_node(
+                format!("c{cluster}n{i}"),
+                LonLat::new(4.8 + (cx + offset) / 77_800.0, 45.7 + cy / 110_574.0),
+            );
+        }
+        for i in 0..3 {
+            let mut spec = LinkSpec::new(RoadClass::Residential);
+            spec.length_m = Some(8.0);
+            b.add_link(
+                format!("c{cluster}l{i}"),
+                format!("c{cluster}n{i}"),
+                format!("c{cluster}n{}", i + 1),
+                spec,
+            );
+        }
+    }
+    b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable")
+}
+
+#[test]
+fn snapping_agrees_with_a_scan_across_wide_empty_gaps_between_clusters() {
+    let net = clustered_network();
+    let snapper = NodeSnapper::new(&net);
+    assert_eq!(snapper.len() as u32, net.node_count());
+    let mut state = 29u64;
+    let mut next = |lo: f64, hi: f64| -> f64 {
+        state =
+            state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        lo + (hi - lo) * ((state >> 11) as f64 / (1u64 << 53) as f64)
+    };
+    for _ in 0..1_000 {
+        // The whole bounding box, dominated by the empty space between clusters.
+        let (x, y) = (next(-200.0, 3200.0), next(-200.0, 3000.0));
         let brute = (0..net.node_count())
             .map(NodeId::new)
             .min_by(|&a, &b| {

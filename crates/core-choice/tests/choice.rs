@@ -78,6 +78,24 @@ fn a_huge_gap_cannot_overflow_the_logit() {
     assert_eq!(p[0][1], 0.0);
 }
 
+#[test]
+fn a_large_positive_utility_does_not_overflow_the_logit() {
+    // The test above only ever drives a huge NEGATIVE utility (time_min = 1e6
+    // at beta = -0.2 underflows toward 0 whether or not the exp-stabilisation
+    // guard is there — checkpoint 8b's adversarial pass confirmed removing the
+    // guard changes nothing on that fixture). A large POSITIVE utility is the
+    // case the guard actually exists for: unstabilised, exp(u) itself
+    // overflows to `inf` past about u = 709.78, and inf/inf is NaN. Very
+    // negative times push the utility there directly while keeping the same
+    // 3-minute *gap* as the ordinary-scale closed-form test above, so a
+    // correct (stabilised) computation must reproduce exactly the same split.
+    let b = batch_of(0, &[(1, 1, vec![(1, -100_000.0, 1.0, 5.0), (2, -99_997.0, 1.0, 5.0)])]);
+    let p = logit().probabilities_by_situation(&b).expect("probabilities");
+    assert!(p[0][0].is_finite() && p[0][1].is_finite(), "must not be NaN: {p:?}");
+    assert!((p[0][0] - 0.645_656_306_225_795_4).abs() < 1e-9, "{p:?}");
+    assert!((p[0][1] - 0.354_343_693_774_204_6).abs() < 1e-9, "{p:?}");
+}
+
 // --- deterministic -------------------------------------------------------------------
 
 #[test]

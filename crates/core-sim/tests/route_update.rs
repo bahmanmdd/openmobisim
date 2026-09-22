@@ -777,6 +777,11 @@ fn what_is_added_is_a_route_of_the_network_and_new_to_its_set() {
     assert!(added > 20, "the test needs routes to check: {added} were added");
     assert_eq!(sets.stamps().iter().filter(|&&s| s > 0).count(), added);
     let mut checked = 0_usize;
+    // `(0.0..=1.0).contains(&view.overlap)` below is a range check a hardcoded 0.0 would also
+    // pass (checkpoint 8b's adversarial pass, S186): a grid has many added routes that genuinely
+    // share part of their cost with a route already in their set, so track that at least one
+    // checked route actually has a *partial* overlap, not just a legal-looking number.
+    let mut saw_partial_overlap = false;
     for k in 0..sets.keys().len() {
         let key = sets.keys()[k];
         let mut seen: Vec<&[u32]> = Vec::new();
@@ -818,9 +823,17 @@ fn what_is_added_is_a_route_of_the_network_and_new_to_its_set() {
             }
             assert!((f64::from(view.cost) - cost).abs() < 1e-2 * cost.max(1.0), "free-flow cost");
             assert!((0.0..=1.0).contains(&view.overlap));
+            if (0.01..0.99).contains(&view.overlap) {
+                saw_partial_overlap = true;
+            }
         }
     }
     assert_eq!(checked, added);
+    assert!(
+        saw_partial_overlap,
+        "expected at least one added route to genuinely share part of its cost with a route \
+         already in its set on a grid this size — a hardcoded overlap would not show this"
+    );
     // The choices are consistent with the grown sets.
     let rc = result.route_choices.as_ref().unwrap();
     for t in 0..rc.route.len() {

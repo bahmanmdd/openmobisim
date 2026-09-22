@@ -237,6 +237,35 @@ fn a_lone_vehicle_takes_free_flow_time_for_any_step() {
     }
 }
 
+/// Every timing check elsewhere in this crate tolerates ±1 s (S88's own tolerance;
+/// `a_lone_vehicle_takes_free_flow_time_for_any_step` above, and every case in
+/// `toy_network.rs`), wide enough to hide flooring vs. rounding entirely — confirmed live in
+/// checkpoint 8b's adversarial pass: floor-to-nearest-second changed to round-to-nearest
+/// survived all 60 tests this crate had at the time. A length chosen so the free-flow time's
+/// own fractional part is 0.6 makes floor and round disagree by a whole second, checked at a
+/// tolerance tight enough (0.05 s) that only flooring — S88's documented rule — can pass.
+#[test]
+fn recorded_times_are_floored_not_rounded() {
+    let (net, route) = chain(&[105.0], RoadClass::Residential, &[]);
+    let ff = net.free_flow_time(route[0]).get();
+    assert!(
+        (ff.fract() - 0.6).abs() < 0.02,
+        "fixture must land near a whole number plus 0.6 s to tell floor from round apart: {ff}"
+    );
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    let v = Vehicle::new(VehicleId::new(0), route.clone(), Pcu(1.0), Second(0));
+    let done =
+        run_ltm(&net, &turns, &[v], Duration(ff + 10.0), Duration(60.0), FidelityLevel::Full);
+    assert_eq!(done.len(), 1);
+    let tr = &done[0].links[0];
+    let took = f64::from(tr.exit.get() - tr.enter.get());
+    assert!(
+        (took - ff.floor()).abs() < 0.05,
+        "took {took} s for a free-flow time of {ff} s: expected the floor ({}), not a round",
+        ff.floor()
+    );
+}
+
 /// **Property (D3):** a saturated approach discharges at its capacity,
 /// whatever the vehicles' PCU and the step length — within one vehicle.
 #[test]
