@@ -387,4 +387,34 @@ def network_read_table(
             "was not intended; TNTP's numeric `link_type` is not one of them.",
             stacklevel=2,
         )
+
+    # A stated capacity can ask for more than the class row's jam density can
+    # carry at the link's free-flow speed (design §12.1: no triangular diagram
+    # exists past that point) — common precisely where `class` fell back to
+    # unclassified's single, modest lane, as a high-capacity TNTP corridor
+    # does. The core resolves it (capacity is reduced to what the diagram can
+    # hold, recorded as a diagnostic) rather than failing, but nothing in
+    # `network_from_columns` surfaces that diagnostic to Python yet, so a
+    # requested capacity silently becoming a different number needs its own
+    # check here: sort by id, the same rule `RoadNetworkBuilder::build` orders
+    # links by, so this lines up with `link_capacity_pcu_h()` regardless of
+    # what the caller's own ids look like.
+    order = sorted(range(len(link_ids)), key=lambda i: link_ids[i])
+    actual_capacity = network.link_capacity_pcu_h()
+    reduced = sum(
+        1
+        for rank, i in enumerate(order)
+        if link_capacity_veh_h[i] is not None
+        and abs(actual_capacity[rank] - link_capacity_veh_h[i]) > 1.0
+    )
+    if reduced:
+        warnings.warn(
+            f"{reduced} link(s) asked for a capacity the class row's jam density cannot carry "
+            "at the link's free-flow speed, and were reduced to the largest value that diagram "
+            "admits (design §12.1's rule for an inconsistent triangular diagram — not a failure, "
+            "but the capacity used is not the one asked for). A `class` that fell back to "
+            "unclassified assumes a single modest lane; give a `lanes` value, or a `class` this "
+            "table recognises, if you know the real one.",
+            stacklevel=2,
+        )
     return network
