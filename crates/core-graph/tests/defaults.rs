@@ -24,6 +24,7 @@ fn derive(class: RoadClass, signalised: bool) -> (LinkParameters, ParameterNote)
         SignalDefaults::SHIPPED,
         GlobalMultipliers::default(),
         None,
+        None,
     )
 }
 
@@ -159,6 +160,7 @@ fn multipliers_move_what_they_say_they_move() {
         SignalDefaults::SHIPPED,
         GlobalMultipliers::default(),
         None,
+        None,
     )
     .0;
     let scaled = LinkParameters::from_defaults(
@@ -167,6 +169,7 @@ fn multipliers_move_what_they_say_they_move() {
         true,
         SignalDefaults::SHIPPED,
         GlobalMultipliers { capacity: 0.9, ..GlobalMultipliers::default() },
+        None,
         None,
     )
     .0;
@@ -188,8 +191,34 @@ fn an_osm_maxspeed_overrides_the_row() {
         SignalDefaults::SHIPPED,
         GlobalMultipliers::default(),
         Some(50.0),
+        None,
     );
     assert!((p.free_flow_speed.as_km_per_hour() - 50.0).abs() < 1e-9);
+}
+
+#[test]
+fn a_table_capacity_overrides_the_row_and_leaves_speed_and_jam_density_alone() {
+    // I-y: a link table that states capacity directly (TNTP-style networks give
+    // it in vehicles/hour, not through highway x lanes) must be able to override
+    // just that one quantity, the same way an OSM maxspeed overrides just speed.
+    let row = default_row(RoadClass::Residential);
+    let (p, note) = LinkParameters::from_defaults(
+        row,
+        1,
+        false,
+        SignalDefaults::SHIPPED,
+        GlobalMultipliers::default(),
+        None,
+        Some(1000.0),
+    );
+    assert_eq!(note, ParameterNote::Consistent);
+    assert!((p.capacity.as_veh_per_hour() - 1000.0).abs() < 1e-9);
+    // Free-flow speed and jam density are the row's own; only capacity moved.
+    assert!((p.free_flow_speed.as_km_per_hour() - row.free_flow_km_h).abs() < 1e-9);
+    assert!((p.jam_density.as_veh_per_km() - row.jam_density_veh_km_lane).abs() < 1e-9);
+    // The wave speed still moved, because it is derived from all three.
+    let (unscaled, _) = derive(RoadClass::Residential, false);
+    assert!(p.wave_speed != unscaled.wave_speed);
 }
 
 #[test]
@@ -203,6 +232,7 @@ fn impossible_parameters_are_resolved_and_recorded_never_raised() {
         false,
         SignalDefaults::SHIPPED,
         GlobalMultipliers { capacity: 20.0, ..GlobalMultipliers::default() },
+        None,
         None,
     );
     assert_eq!(note, ParameterNote::CapacityReducedToFitJamDensity);
@@ -263,6 +293,7 @@ proptest! {
         jam_mult in 0.3f64..3.0,
         signalised in any::<bool>(),
         maxspeed in prop::option::of(5.0f64..140.0),
+        capacity_override in prop::option::of(50.0f64..20_000.0),
     ) {
         let class = RoadClass::ALL[class_index];
         let (p, note) = LinkParameters::from_defaults(
@@ -278,6 +309,7 @@ proptest! {
                 green_fraction: 1.0,
             },
             maxspeed,
+            capacity_override,
         );
 
         prop_assert!(p.free_flow_speed.get() > 0.0 && p.free_flow_speed.is_finite());

@@ -466,12 +466,21 @@ impl LinkParameters {
     /// Derive a link's internal parameters from a defaults row.
     ///
     /// `lanes` is the lane count for this direction, from OSM where present and
-    /// from the row otherwise.
+    /// from the row otherwise. `maxspeed_km_h` and `capacity_veh_h` each
+    /// override the row's own free-flow speed and total capacity when the
+    /// caller already knows them (I-y: a link table that states one or both
+    /// directly, rather than through `highway` × `lanes`); either or both may
+    /// be `None`, in which case that quantity still comes from the row. Jam
+    /// density has no override yet — no source this table reads from states it
+    /// (design §12.1: it is the quantity that varies least between road
+    /// types), so it always comes from the row.
     ///
     /// Returns the parameters and a note saying whether anything had to be
     /// adjusted; the caller records the note as a diagnostic. **Nothing here
-    /// ever fails** — an impossible parameter combination is resolved by a
-    /// documented rule and recorded, because the simulation never stops (§3c).
+    /// ever fails** — an impossible parameter combination (an overridden
+    /// capacity too high for the row's jam density, say) is resolved by the
+    /// same documented rule as an inconsistent default row, because the
+    /// simulation never stops (§3c).
     #[must_use]
     pub fn from_defaults(
         row: DefaultRow,
@@ -480,11 +489,13 @@ impl LinkParameters {
         signals: SignalDefaults,
         multipliers: GlobalMultipliers,
         maxspeed_km_h: Option<f64>,
+        capacity_veh_h: Option<f64>,
     ) -> (Self, ParameterNote) {
         let lanes = f64::from(lanes.max(1));
 
         let v_km_h = maxspeed_km_h.unwrap_or(row.free_flow_km_h) * multipliers.free_flow_speed;
-        let mut q_veh_h = row.saturation_flow_veh_h_lane * lanes * multipliers.capacity;
+        let mut q_veh_h =
+            capacity_veh_h.unwrap_or(row.saturation_flow_veh_h_lane * lanes) * multipliers.capacity;
         let mut k_j_veh_km = row.jam_density_veh_km_lane * lanes * multipliers.jam_density;
 
         // Critical density: where the free-flow branch meets capacity.

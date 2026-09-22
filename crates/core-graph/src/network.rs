@@ -90,6 +90,11 @@ pub struct LinkSpec {
     /// (OSM `junction=roundabout`): traffic entering it gives way to traffic
     /// already circulating (S155).
     pub roundabout: bool,
+    /// The link's capacity across all its lanes, in vehicles per hour, if the
+    /// caller already knows it (I-y: a link table that states capacity
+    /// directly, rather than through `highway` × `lanes`). `None` uses the
+    /// class row's `saturation_flow_veh_h_lane × lanes`, as OSM does.
+    pub capacity_veh_h: Option<f64>,
 }
 
 impl LinkSpec {
@@ -103,6 +108,7 @@ impl LinkSpec {
             signalised: false,
             length_m: None,
             roundabout: false,
+            capacity_veh_h: None,
         }
     }
 }
@@ -252,6 +258,7 @@ impl RoadNetworkBuilder {
                 signals,
                 multipliers,
                 spec.maxspeed_km_h,
+                spec.capacity_veh_h,
             );
 
             let new_id = u32::try_from(link_from.len()).expect("link count fits u32");

@@ -37,7 +37,10 @@ mod choice;
 mod network;
 mod pipeline;
 mod routes;
-use network::{PyNetwork, grid_node_lonlat, manhattan_grid, network_read_osm, toy_network};
+use network::{
+    PyNetwork, grid_node_lonlat, manhattan_grid, network_from_columns, network_read_osm,
+    toy_network,
+};
 use pipeline::{PyLinkBins, PyRunSummary, run_pipeline};
 use routes::{PyRouteSets, route_methods, route_sets_build};
 
@@ -158,6 +161,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(manhattan_grid, m)?)?;
     m.add_function(wrap_pyfunction!(toy_network, m)?)?;
     m.add_function(wrap_pyfunction!(network_read_osm, m)?)?;
+    m.add_function(wrap_pyfunction!(network_from_columns, m)?)?;
     m.add_function(wrap_pyfunction!(grid_node_lonlat, m)?)?;
     m.add_function(wrap_pyfunction!(run_pipeline, m)?)?;
     m.add_function(wrap_pyfunction!(pipeline::equilibration_strategies, m)?)?;

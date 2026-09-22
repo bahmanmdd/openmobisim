@@ -33,6 +33,7 @@ from openmobisim._core import (
     route_update_methods,
     step_of,
 )
+from openmobisim.network import network_read_table
 from openmobisim.scenario import Run, Scenario, Table
 
 __version__: str = _core.__version__
@@ -50,6 +51,7 @@ __all__ = [
     "examples",
     "fixed_order_sum_f64",
     "network_read_osm",
+    "network_read_table",
     "route_methods",
     "route_cache_clear",
     "route_cache_info",

@@ -444,6 +444,7 @@ pub fn import_detailed(
                 signalised: signalised.contains(&link.to),
                 length_m: Some(link.length_m),
                 roundabout: link.roundabout,
+                capacity_veh_h: None,
             },
         );
     }

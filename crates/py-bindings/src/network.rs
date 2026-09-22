@@ -14,16 +14,18 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use openmobisim_core_graph::connectivity::{analyse, analyse_by};
-use openmobisim_core_graph::defaults::SignalDefaults;
+use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
 use openmobisim_core_graph::examples::{
     manhattan_grid as build_manhattan_grid, toy_network as build_toy_network,
 };
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::link_geometry::LinkGeometry;
-use openmobisim_core_graph::network::RoadNetwork;
+use openmobisim_core_graph::network::{
+    self as network_mod, LinkSpec, RoadNetwork, RoadNetworkBuilder,
+};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::NodeSnapper;
-use openmobisim_core_types::diagnostics::Diagnostics;
+use openmobisim_core_types::diagnostics::{Category, Diagnostics, Severity};
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 use openmobisim_io_osm::{
     ClippedSource, Connectivity, DropReason, DroppedLink, ImportOptions, ImportReport, PbfSource,
@@ -493,6 +495,123 @@ pub fn network_read_osm(
         region: region_text,
     }));
     Ok(network)
+}
+
+/// Build a network from plain column arrays (I-y): one entry per node, one
+/// per link — a two-way street is two rows, as `RoadNetworkBuilder::add_link`
+/// documents. `openmobisim.network_read_table` does the file-or-rows
+/// resolution, the TNTP/CSV parsing and every unit conversion in Python
+/// (there is no reason for a second, Rust-side table parser); this function
+/// does only what `RoadNetworkBuilder` already does for an OSM import, one
+/// row at a time, so nothing about how a link becomes a fundamental diagram
+/// is duplicated.
+///
+/// An optional link column (`lanes`, `length_m`, `capacity_veh_h`,
+/// `free_flow_km_h`) is `None` for a row the table did not state; that link's
+/// value then comes from `link_class`'s row of the defaults table, exactly as
+/// an OSM way with no `lanes`/`maxspeed` tag does. An empty `link_class` value
+/// also defaults, quietly (no row is required to state its class); a
+/// non-empty one this table does not model falls back the same way an
+/// unfamiliar OSM `highway` tag does, with a diagnostic.
+///
+/// # Errors
+///
+/// `ValueError` if an array's length disagrees with `node_ids`/`link_ids`, a
+/// link names a `from`/`to` node that is not in `node_ids`, or the result
+/// holds no usable network — the same failures
+/// [`RoadNetworkBuilder::build`] can report for any other input.
+#[pyfunction]
+#[allow(clippy::too_many_arguments, reason = "one array per column of a plain link/node table")]
+#[pyo3(signature = (
+    node_ids, node_lon, node_lat, node_signalised,
+    link_ids, link_from, link_to, link_class, link_lanes,
+    link_length_m, link_capacity_veh_h, link_free_flow_km_h, link_signalised, link_roundabout,
+))]
+pub fn network_from_columns(
+    node_ids: Vec<String>,
+    node_lon: Vec<f64>,
+    node_lat: Vec<f64>,
+    node_signalised: Vec<bool>,
+    link_ids: Vec<String>,
+    link_from: Vec<String>,
+    link_to: Vec<String>,
+    link_class: Vec<String>,
+    link_lanes: Vec<Option<u8>>,
+    link_length_m: Vec<Option<f64>>,
+    link_capacity_veh_h: Vec<Option<f64>>,
+    link_free_flow_km_h: Vec<Option<f64>>,
+    link_signalised: Vec<bool>,
+    link_roundabout: Vec<bool>,
+) -> PyResult<PyNetwork> {
+    let nodes = node_ids.len();
+    for (name, len) in [
+        ("node_lon", node_lon.len()),
+        ("node_lat", node_lat.len()),
+        ("node_signalised", node_signalised.len()),
+    ] {
+        if len != nodes {
+            return Err(PyValueError::new_err(format!(
+                "{name} has {len} entries, node_ids has {nodes}"
+            )));
+        }
+    }
+    let links = link_ids.len();
+    for (name, len) in [
+        ("link_from", link_from.len()),
+        ("link_to", link_to.len()),
+        ("link_class", link_class.len()),
+        ("link_lanes", link_lanes.len()),
+        ("link_length_m", link_length_m.len()),
+        ("link_capacity_veh_h", link_capacity_veh_h.len()),
+        ("link_free_flow_km_h", link_free_flow_km_h.len()),
+        ("link_signalised", link_signalised.len()),
+        ("link_roundabout", link_roundabout.len()),
+    ] {
+        if len != links {
+            return Err(PyValueError::new_err(format!(
+                "{name} has {len} entries, link_ids has {links}"
+            )));
+        }
+    }
+
+    let mut builder = RoadNetworkBuilder::new();
+    for i in 0..nodes {
+        builder.add_node(node_ids[i].clone(), LonLat::new(node_lon[i], node_lat[i]));
+        if node_signalised[i] {
+            builder.mark_signalised(node_ids[i].clone());
+        }
+    }
+
+    let mut diagnostics = Diagnostics::new();
+    for i in 0..links {
+        let class = if link_class[i].is_empty() {
+            RoadClass::Unclassified
+        } else {
+            RoadClass::from_osm_highway(&link_class[i]).unwrap_or_else(|| {
+                diagnostics.record_run_level(
+                    Category::DataQuality,
+                    network_mod::codes::UNKNOWN_HIGHWAY_CLASS,
+                    Severity::Warning,
+                );
+                RoadClass::Unclassified
+            })
+        };
+        let spec = LinkSpec {
+            class,
+            lanes: link_lanes[i],
+            maxspeed_km_h: link_free_flow_km_h[i],
+            signalised: link_signalised[i],
+            length_m: link_length_m[i],
+            roundabout: link_roundabout[i],
+            capacity_veh_h: link_capacity_veh_h[i],
+        };
+        builder.add_link(link_ids[i].clone(), link_from[i].clone(), link_to[i].clone(), spec);
+    }
+
+    let network = builder
+        .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut diagnostics)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(PyNetwork::new(Arc::new(network), None, "table"))
 }
 
 /// A rectangle `(west, south, east, north)` or a list of `(lon, lat)` vertices.
