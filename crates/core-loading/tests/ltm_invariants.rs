@@ -141,6 +141,53 @@ fn a_vehicle_is_counted_once_on_every_link() {
     }
 }
 
+/// **Property (K17, S189):** a route may visit the same link twice — go round
+/// a small loop once, then leave through the same link it entered the loop
+/// by. Nothing about a link's state is keyed to "has this vehicle been here
+/// before": the second pass is a second, independent traversal, with its own
+/// later enter/exit times, and the link's cumulative counts and discharge
+/// reflect the vehicle crossing it twice, not once.
+#[test]
+fn a_route_may_cross_the_same_link_twice() {
+    let mut b = RoadNetworkBuilder::new();
+    b.add_node("x", LonLat::new(4.8000, 45.700));
+    b.add_node("y", LonLat::new(4.8010, 45.700));
+    b.add_node("z", LonLat::new(4.8010, 45.701));
+    b.add_node("w", LonLat::new(4.8020, 45.700));
+    b.add_link("ring0", "x", "y", LinkSpec::new(RoadClass::Residential));
+    b.add_link("ring1", "y", "z", LinkSpec::new(RoadClass::Residential));
+    b.add_link("ring2", "z", "x", LinkSpec::new(RoadClass::Residential));
+    b.add_link("exit", "y", "w", LinkSpec::new(RoadClass::Residential));
+    let mut diag = Diagnostics::new();
+    let net = b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut diag).unwrap();
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    let id = |name: &str| net.link_external_ids().typed_id_of::<LinkId>(name).expect("link");
+    let (ring0, ring1, ring2, exit) = (id("ring0"), id("ring1"), id("ring2"), id("exit"));
+
+    // Round the loop once (ring0, ring1, ring2), then leave through ring0 again.
+    let route = vec![ring0, ring1, ring2, ring0, exit];
+    let pcu = 1.0;
+    let v = Vehicle::new(VehicleId::new(0), route.clone(), Pcu(pcu), Second(0));
+    let mut sim = LtmNetwork::new(&net, &turns);
+    sim.depart(&v);
+    let done = run_checked(&mut sim, 60.0, 600.0, |_| {});
+
+    assert_eq!(done.len(), 1, "the vehicle completes despite the repeated link");
+    let traversal = &done[0].links;
+    assert_eq!(traversal.len(), 5, "every leg is recorded, including both ring0 passes");
+    let ring0_passes: Vec<_> = traversal.iter().filter(|t| t.link == ring0).collect();
+    assert_eq!(ring0_passes.len(), 2, "ring0 appears twice in the trajectory");
+    assert!(
+        ring0_passes[1].enter >= ring0_passes[0].exit,
+        "the second pass starts no earlier than the first pass ends: {:?}",
+        ring0_passes
+    );
+    // Discharge and cumulative counts reflect the front crossing ring0 twice, not once.
+    assert!((sim.discharged_pcu(ring0).get() - 2.0 * pcu).abs() < 1e-9);
+    assert!((sim.cumulative_in(ring0).get() - 2.0 * pcu).abs() < 1e-9);
+    assert!((sim.cumulative_out(ring0).get() - 2.0 * pcu).abs() < 1e-9);
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 24, .. ProptestConfig::default() })]
 
@@ -595,6 +642,73 @@ fn spillback_limits_upstream_discharge_to_the_bottleneck_rate() {
         }
         previous = out;
     }
+}
+
+/// **Property (K22, S189):** a link that is every vehicle's *destination*
+/// never inherits congestion from beyond it — there is no "beyond" for it to
+/// inherit from — even though the identical link, carrying the identical
+/// demand onward into a genuine bottleneck, spills back and throttles its own
+/// approach exactly as the property above shows. `bc` is the same link, same
+/// capacity, same demand, in both halves; only whether a route continues past
+/// it differs.
+#[test]
+fn a_destination_link_is_never_throttled_by_what_is_not_there() {
+    let mut b = RoadNetworkBuilder::new();
+    b.add_node("a", LonLat::new(4.800, 45.700));
+    b.add_node("b", LonLat::new(4.803, 45.700));
+    b.add_node("c", LonLat::new(4.806, 45.700));
+    b.add_node("d", LonLat::new(4.8061, 45.700));
+    b.add_link("ab", "a", "b", LinkSpec::new(RoadClass::Secondary));
+    b.add_link("bc", "b", "c", LinkSpec::new(RoadClass::Secondary));
+    // cd: short and low-capacity on purpose — a real bottleneck once through
+    // traffic reaches it, so bc fills and spills back onto ab (the contrast).
+    b.add_link("cd", "c", "d", LinkSpec::new(RoadClass::Service));
+    let mut diag = Diagnostics::new();
+    let net = b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut diag).unwrap();
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    let id = |name: &str| net.link_external_ids().typed_id_of::<LinkId>(name).expect("link");
+    let (ab, bc, cd) = (id("ab"), id("bc"), id("cd"));
+    assert!(
+        net.link_parameters(cd).capacity.get() < net.link_parameters(ab).capacity.get() * 0.5,
+        "the fixture needs cd to be a real bottleneck"
+    );
+
+    // `Flow::get` is already PCU/s (the internal unit, `Flow::from_veh_per_hour`'s doc comment).
+    let free_capacity_pcu_s = net.link_parameters(ab).capacity.get();
+    let discharge_rate = |route: Vec<LinkId>| -> f64 {
+        let vehicles: Vec<Vehicle> = (0..3000)
+            .map(|i| Vehicle::new(VehicleId::new(i), route.clone(), Pcu(1.0), Second(0)))
+            .collect();
+        let mut sim = LtmNetwork::new(&net, &turns);
+        vehicles.iter().for_each(|v| sim.depart(v));
+        let step = 300.0;
+        let mut previous = 0.0;
+        let mut last_rate = 0.0;
+        for _ in 0..8 {
+            let _ = sim.step(Duration(step));
+            let out = sim.cumulative_out(ab).get();
+            last_rate = (out - previous) / step;
+            previous = out;
+        }
+        last_rate
+    };
+
+    let through = discharge_rate(vec![ab, bc, cd]);
+    let destination = discharge_rate(vec![ab, bc]);
+    assert!(
+        through < 0.7 * free_capacity_pcu_s,
+        "the fixture needs the through case to actually spill back: {through:.4} of \
+         {free_capacity_pcu_s:.4} PCU/s free"
+    );
+    assert!(
+        destination > 0.9 * free_capacity_pcu_s,
+        "bc as a destination must not inherit cd's jam: ab discharges {destination:.4} of \
+         {free_capacity_pcu_s:.4} PCU/s free"
+    );
+    assert!(
+        destination > 1.3 * through,
+        "the destination case must clearly outrun the through case: {destination:.4} vs {through:.4}"
+    );
 }
 
 /// **Property (S48, proportional to capacity):** two saturated approaches

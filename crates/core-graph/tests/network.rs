@@ -160,6 +160,38 @@ fn a_zero_length_link_is_given_a_minimum_and_recorded() {
 }
 
 #[test]
+fn an_explicit_zero_negative_or_nan_length_is_also_floored() {
+    // K5, closed properly (S189): the floor above only exercises the *implicit*
+    // path (coincident nodes give a zero straight-line distance). A caller can
+    // also supply `length_m` directly — a hand-built network, or a link table's
+    // (S181) row — and it must be floored exactly the same way: the check in
+    // `RoadNetworkBuilder::build` is `!(length.is_finite() && length >=
+    // MIN_LINK_LENGTH_M)` on `length_m.unwrap_or(straight)`, so every source
+    // goes through one gate, not two.
+    for length_m in [0.0, -5.0, f64::NAN, f64::NEG_INFINITY] {
+        let mut b = RoadNetworkBuilder::new();
+        b.add_node("a", LonLat::new(4.80, 45.70));
+        b.add_node("b", LonLat::new(4.81, 45.70)); // distinct nodes: not the coincident-node path
+        b.add_link(
+            "explicit",
+            "a",
+            "b",
+            LinkSpec { length_m: Some(length_m), ..LinkSpec::new(RoadClass::Residential) },
+        );
+        let mut diag = Diagnostics::new();
+        let net =
+            b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut diag).unwrap();
+        let link = LinkId::new(0);
+        assert!(
+            (net.link_length(link).get() - MIN_LINK_LENGTH_M).abs() < 1e-9,
+            "length_m {length_m}: not floored"
+        );
+        assert!(net.storage(link).get() > 0.0, "length_m {length_m}: storage must stay positive");
+        assert_eq!(diag.count_of(codes::DEGENERATE_LINK_LENGTH), 1, "length_m {length_m}");
+    }
+}
+
+#[test]
 fn an_explicit_length_overrides_the_straight_line() {
     // A link that has not been split at every geometry point is longer than the
     // straight line between its ends, and the importer knows by how much.
