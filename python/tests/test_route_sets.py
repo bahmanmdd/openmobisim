@@ -127,7 +127,18 @@ def test_bad_method_and_bad_options_say_what_is_wrong():
 def test_a_run_routes_from_its_sets_and_the_method_does_not_change_the_run():
     net = grid()
     rows = ms.examples.trips_random(net, 60, seed=5, min_m=300.0, max_m=900.0)
-    kwargs = {"class_defaults": CAR, "window_hours": 1, "flow_level": 4, "link_bin_s": 300}
+    # Pinned to "none"/"deterministic" as this test's own fixture default (not the library's,
+    # "msa"/"logit" since S187): an iterating run's route_method defaults to "shortest" (S179),
+    # which would defeat the whole point of comparing "penalty" (the non-iterating default)
+    # against an explicit "shortest".
+    kwargs = {
+        "class_defaults": CAR,
+        "window_hours": 1,
+        "flow_level": 4,
+        "link_bin_s": 300,
+        "choice_model": "deterministic",
+        "equilibration": "none",
+    }
     penalty = ms.Scenario.from_parts(net, rows, **kwargs).run("penalty-run")
     shortest = ms.Scenario.from_parts(net, rows, route_method="shortest", **kwargs).run("short-run")
     assert penalty.route_sets().method == "penalty" and shortest.route_sets().method == "shortest"

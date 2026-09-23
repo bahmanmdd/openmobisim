@@ -73,7 +73,15 @@ def test_kpis_table_round_trips_through_pandas() -> None:
     pytest.importorskip("pandas")
     g = small_grid()
     trips = ms.examples.fixed_car_trips(g, [("dana", (0, 0), (2, 2), 8.0, None)])
-    sc = ms.Scenario.from_parts(network=g, demand=trips, class_defaults=car_owning_commuters())
+    # Pinned to the pre-car-ready-checkpoint defaults (S187 flipped the library's bare default
+    # to "logit"/"msa"): this test is about the plain, single-loading kpis shape.
+    sc = ms.Scenario.from_parts(
+        network=g,
+        demand=trips,
+        class_defaults=car_owning_commuters(),
+        choice_model="deterministic",
+        equilibration="none",
+    )
     run = sc.run(run_id="pytest-kpis-pandas")
 
     df = run.kpis().to_pandas()

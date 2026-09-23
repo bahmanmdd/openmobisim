@@ -125,8 +125,12 @@ def test_the_kpis_file_has_a_row_set_per_iteration():
     # A number not measured has no row; what cannot change between loadings is written once.
     assert 0 not in df[df["metric"] == "time_change"]["iteration"].tolist()
     assert (df["metric"] == "completion_rate").sum() == 1
-    # Without iterating, the file is what it was.
-    plain = go("eq-kpis-plain").kpis().to_pandas()
+    # Without iterating, the file is what it was. Pinned to the pre-car-ready-checkpoint
+    # defaults (S187 flipped the library's bare default to "logit"/"msa"): this assertion is
+    # about the plain, single-loading file shape, not the library's own default.
+    plain = (
+        go("eq-kpis-plain", choice_model="deterministic", equilibration="none").kpis().to_pandas()
+    )
     assert sorted(plain["metric"]) == sorted(
         [
             "total_travel_time_s", "completed_trips", "truncated_trips",

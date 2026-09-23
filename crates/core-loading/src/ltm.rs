@@ -55,6 +55,26 @@
 //! (S153). It costs one flag per link and, per entry into a roundabout link, a
 //! look at the few vehicles on the circulating link before it.
 //!
+//! # Any local lock: don't seal it from outside
+//!
+//! The roundabout rule above is one case of a general one (I-u idea 1, S157):
+//! a vehicle whose own link is not already part of a forming waiting loop may
+//! not take the last room on a link when doing so would close that loop back
+//! on itself — an outsider does not seal a lock shut, whether or not the ring
+//! is tagged `junction=roundabout` (K30) or is a roundabout at all (any
+//! junction cluster can close this way).
+//! A vehicle already circulating within the forming loop is let through: this
+//! is what keeps a loop's own traffic moving for as long as it still can. On
+//! its own this is prevention, not a guarantee — a loop can still fill through
+//! its own circulation alone; **idea 2 (creep)**, S157's other half, is meant
+//! to guarantee a standing lock resolves, but is not built yet: a
+//! "give-equals-receive rotation" (every member gives what it moves to the
+//! next and receives that much from the one before, so no link's occupancy
+//! changes) only manages one round before every member permanently straddles,
+//! since occupancy never actually drops. Resolving that needs the
+//! straddle-closing and front-crossing paths threaded together iteratively —
+//! real design, attempted and set aside rather than shipped half-working.
+//!
 //! # When traffic stops
 //!
 //! A vehicle waits for exactly two things: room on the link ahead, or the rear
@@ -149,6 +169,14 @@ pub const MIN_PART: f64 = 0.01;
 
 /// Two times closer than this are the same instant.
 const TIME_EPSILON: f64 = 1e-9;
+
+/// How many waiting-front links [`LtmNetwork::closes_a_waiting_loop`] walks
+/// before giving up. A genuine local lock (a roundabout, a small junction
+/// cluster) closes within a handful of links; a chain this long that has not
+/// closed is not the kind of local lock idea 1 (S157) targets, and is left
+/// alone rather than walked further — a bounded, defendable cost per check,
+/// not a claim that no longer chain could ever matter.
+const MAX_LOOP_WALK: usize = 64;
 
 /// No queue, link or vehicle: the end of an intrusive list, or "outside the
 /// network" in a vehicle's parts.
@@ -556,24 +584,27 @@ impl<'a> LtmNetwork<'a> {
         self.curves[link.index()].retained()
     }
 
+    /// The link `i`'s front currently waits on, if it is blocked: the link its
+    /// queue is parked on, or, while the vehicle ahead still straddles the
+    /// link's end, the link that vehicle's front is on. `None` means `i`'s
+    /// front is not currently waiting for anything.
+    fn front_waits_on(&self, i: usize) -> Option<usize> {
+        let ahead = self.straddling_out[i];
+        if ahead != NONE {
+            return self.parts[ahead as usize].front().map(|p| p.0 as usize);
+        }
+        (self.parked_on[i] != NONE).then(|| self.parked_on[i] as usize)
+    }
+
     /// Closed loops of links whose front vehicles wait on one another now,
-    /// each as its links in waiting order. A link's front waits on the link its
-    /// queue is parked on or, while the vehicle ahead still straddles the
-    /// link's end, on the link that vehicle's front is on. By the module docs'
-    /// argument every link whose room is waited for in such a loop is full, to
-    /// within [`MIN_PART`]: this is where traffic has reached jam density.
+    /// each as its links in waiting order. By the module docs' argument every
+    /// link whose room is waited for in such a loop is full, to within
+    /// [`MIN_PART`]: this is where traffic has reached jam density.
     #[must_use]
     pub fn waiting_cycles(&self) -> Vec<Vec<LinkId>> {
         const UNSEEN: u8 = 0;
         const ON_PATH: u8 = 1;
         const DONE: u8 = 2;
-        let waits_on = |i: usize| -> Option<usize> {
-            let ahead = self.straddling_out[i];
-            if ahead != NONE {
-                return self.parts[ahead as usize].front().map(|p| p.0 as usize);
-            }
-            (self.parked_on[i] != NONE).then(|| self.parked_on[i] as usize)
-        };
         let mut state = vec![UNSEEN; self.links];
         let mut cycles = Vec::new();
         let mut path = Vec::new();
@@ -584,7 +615,7 @@ impl<'a> LtmNetwork<'a> {
             while state[at] == UNSEEN {
                 state[at] = ON_PATH;
                 path.push(at);
-                match waits_on(at) {
+                match self.front_waits_on(at) {
                     None => break,
                     Some(next) => {
                         closed = state[next] == ON_PATH;
@@ -868,9 +899,43 @@ impl<'a> LtmNetwork<'a> {
         }
         let (room, retry_at) = self.heard_room(j, t);
         if room + ROOM_EPSILON >= pcu.min(storage).min(MIN_PART) {
+            // Idea 1 (S157): an outsider may not take the last room on `j` when
+            // doing so would close a waiting loop back to `j`. A link is down to
+            // its last room once anything smaller would already have failed the
+            // check just above, so gating the (bounded) walk on that keeps it
+            // off the common, uncongested case entirely.
+            if room < MIN_PART + ROOM_EPSILON && self.closes_a_waiting_loop(j, from) {
+                return Err(Blocked { link: j, retry_at: None });
+            }
             return Ok(room.max(0.0));
         }
         Err(Blocked { link: j, retry_at })
+    }
+
+    /// Whether granting `j` the room it has left would close a waiting loop
+    /// back to `j` itself, sealed by a vehicle from **outside** that loop —
+    /// idea 1 (S157), generalising S155's roundabout give-way to any local
+    /// lock, tagged or not (K30). Walks `j`'s current chain of waiting fronts
+    /// ([`Self::front_waits_on`]) forward; if it returns to `j`, this
+    /// admission would complete the cycle. A vehicle whose own link (`from`)
+    /// is already a member of that chain is circulating within the loop, not
+    /// sealing it from outside, and is let through — this is what keeps a
+    /// loop's own traffic moving while it still can. Idea 1 does not, on its
+    /// own, guarantee a loop never locks (S156): it can still fill through its
+    /// own circulation; idea 2 (creep) is the guarantee.
+    fn closes_a_waiting_loop(&self, j: usize, from: Option<usize>) -> bool {
+        let mut at = j;
+        for _ in 0..MAX_LOOP_WALK {
+            let Some(next) = self.front_waits_on(at) else { return false };
+            if Some(next) == from {
+                return false;
+            }
+            if next == j {
+                return true;
+            }
+            at = next;
+        }
+        false
     }
 
     /// A vehicle entering roundabout link `j` from `from` (not itself on the
@@ -1451,5 +1516,71 @@ mod tests {
             assert!(sim.step(Duration(300.0)).is_empty());
             assert_eq!(sim.now(), Duration(300.0));
         }
+    }
+
+    /// A 2-link ring (`ring0`: r0→r1, `ring1`: r1→r0) plus one outside approach
+    /// into r0 (`entry`), **none tagged as a roundabout** — idea 1 (S157) is
+    /// the tag-free rule, unlike S155's `must_give_way`. Returns the network
+    /// and the three link indices `(ring0, ring1, entry)`.
+    fn tiny_ring() -> (RoadNetwork, usize, usize, usize) {
+        let mut b = RoadNetworkBuilder::new();
+        b.add_node("r0", LonLat::new(4.8000, 45.700));
+        b.add_node("r1", LonLat::new(4.8005, 45.700));
+        b.add_node("e", LonLat::new(4.7995, 45.700));
+        b.add_link("ring0", "r0", "r1", LinkSpec::new(RoadClass::Residential));
+        b.add_link("ring1", "r1", "r0", LinkSpec::new(RoadClass::Residential));
+        b.add_link("entry", "e", "r0", LinkSpec::new(RoadClass::Residential));
+        let network = b
+            .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+            .expect("buildable");
+        let (ring0, ring1, entry) =
+            (link(&network, "ring0"), link(&network, "ring1"), link(&network, "entry"));
+        assert!(!network.is_roundabout(ring0) && !network.is_roundabout(ring1));
+        (network, ring0.index(), ring1.index(), entry.index())
+    }
+
+    /// **Property (idea 1, S157):** with `ring0`'s own front already parked
+    /// waiting for room on `ring1`, and `ring1`'s front already parked waiting
+    /// for room on `ring0` — a mutual block, the closed 2-link loop
+    /// `ring0 → ring1 → ring0` — a vehicle asking for `ring0`'s one remaining
+    /// sliver of room (exactly [`MIN_PART`]) is admitted when nothing is
+    /// waiting on it (no loop yet), refused when granting it would be sealing
+    /// that loop shut from the outside, and admitted again for a vehicle
+    /// coming from `ring1` itself — a loop's own circulation is not what idea
+    /// 1 refuses, only an outsider closing it. (The two `parked_on` pointers
+    /// are set directly: **S157's exact scenario**, not derived from a full
+    /// run, the same hand-built-fixture style `node_model.rs` uses for
+    /// `solve_node` — see the module doc's "Any local lock" section for why
+    /// this state is physically reachable, not merely convenient.)
+    #[test]
+    fn an_outsider_may_not_take_the_last_room_that_would_close_a_waiting_loop() {
+        let (network, ring0, ring1, entry) = tiny_ring();
+        let turns = TurnTable::build(&network, SignalDefaults::SHIPPED);
+        let mut sim = LtmNetwork::new(&network, &turns);
+
+        let storage = network.storage(LinkId::from_index(ring0)).get();
+        assert!(storage > MIN_PART, "the fixture needs room for more than the last sliver");
+        // ring0 is down to exactly its last admissible sliver of room.
+        sim.curves[ring0].record_in(Pcu(storage - MIN_PART));
+        let t = sim.now().get();
+
+        assert!(
+            sim.admissible(ring0, MIN_PART, t, Some(entry)).is_ok(),
+            "no loop is waiting yet: the outsider is admitted normally"
+        );
+
+        // ring0's front is parked on ring1, and ring1's front is parked on
+        // ring0: the loop ring0 -> ring1 -> ring0 is one grant away from closed.
+        sim.parked_on[ring0] = link_u32(ring1);
+        sim.parked_on[ring1] = link_u32(ring0);
+
+        assert!(
+            sim.admissible(ring0, MIN_PART, t, Some(entry)).is_err(),
+            "an outsider may not seal the loop shut with ring0's last sliver of room"
+        );
+        assert!(
+            sim.admissible(ring0, MIN_PART, t, Some(ring1)).is_ok(),
+            "a vehicle circulating from within the loop itself still gets through"
+        );
     }
 }

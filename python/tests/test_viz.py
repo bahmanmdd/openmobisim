@@ -311,8 +311,10 @@ def test_the_footer_names_the_runs_seed_and_fingerprint():
         fig = viz.map_link(run, size=size, dpi=60)
         footer = [t for t in fig.texts if "run viz-test" in t.get_text()]
         assert len(footer) == 1, "one footer"
+        # "logit" / "msa" since S187 is toy_run()'s (and the library's) bare default; this
+        # test is about the footer correctly naming whatever the run's own settings are.
         assert (
-            f"choice deterministic · seed 0 · fingerprint {run.fingerprint[:8]}"
+            f"choice logit · msa 10 it, gap 0.0% · seed 0 · fingerprint {run.fingerprint[:8]}"
             in footer[0].get_text()
         )
         # It fits: the footer ends before the logo lockup begins.
