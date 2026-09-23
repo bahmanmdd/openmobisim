@@ -1,10 +1,13 @@
 """``Scenario`` and what ``.run()`` returns.
 
-Phase 1's cut of the interface doc's API: a network, demand (an in-memory
-table or a ``trips.parquet`` path — the same schema either way, S97), and
-the handful of parameters a run needs. No hubs, no equilibration, no
-disruptions — those arrive with the layers and mechanisms that give them
-meaning (Foundations §10).
+A network, demand (an in-memory table or a ``trips.parquet`` path — the same
+schema either way, S97), route choice among each trip's alternatives
+(sampled by a ``"logit"`` by default) and, since the car-ready checkpoint
+(2026-09-23), iteration towards an equilibrium by default (``"msa"``), during
+which the route sets may grow (``route_update="best_response"``) — design
+§4/§5's stated v1 defaults all along, held back until the numbers were in.
+No hubs, no disruptions — those arrive with the layers and mechanisms that
+give them meaning (Foundations §10).
 """
 
 from __future__ import annotations
@@ -378,9 +381,9 @@ class Scenario:
         route_method: str | None = None,
         route_options: dict[str, float] | None = None,
         master_seed: int = 0,
-        choice_model: str | Any = "deterministic",
+        choice_model: str | Any = "logit",
         choice_options: dict[str, float] | None = None,
-        equilibration: str = "none",
+        equilibration: str = "msa",
         equilibration_options: dict[str, float] | None = None,
         route_update: str | None = None,
         route_update_options: dict[str, float] | None = None,
@@ -448,9 +451,9 @@ class Scenario:
         route_method: str | None = None,
         route_options: dict[str, float] | None = None,
         master_seed: int = 0,
-        choice_model: str | Any = "deterministic",
+        choice_model: str | Any = "logit",
         choice_options: dict[str, float] | None = None,
-        equilibration: str = "none",
+        equilibration: str = "msa",
         equilibration_options: dict[str, float] | None = None,
         route_update: str | None = None,
         route_update_options: dict[str, float] | None = None,
@@ -512,16 +515,20 @@ class Scenario:
                 bias, which measured worse on the one heavy load it was tried on).
             master_seed: The one number that starts every random stream, so a
                 run is reproduced by giving it the same one. Under a sampled
-                choice model (``"logit"``) it decides who takes which route;
-                under the default ``"deterministic"`` nothing draws from it and
-                it changes only the run's fingerprint. A non-negative integer
-                below 2**64.
+                choice model (``"logit"``, the default) it decides who takes
+                which route; under ``"deterministic"`` nothing draws from it
+                and it changes only the run's fingerprint. A non-negative
+                integer below 2**64.
             choice_model: How each trip picks a route from its pair's set: a
                 name from ``openmobisim.choice_models()`` or an object with a
                 ``choose(batch)`` method (see ``openmobisim.choice`` for how to
-                write one). ``"deterministic"`` (the default) sends everyone
-                down the best route; ``"logit"`` is the standard path-size
-                logit, sampled per traveller.
+                write one). ``"logit"`` (the default since the car-ready
+                checkpoint, 2026-09-23 — design §4's stated v1 default all
+                along, held back at ``"deterministic"`` until the numbers
+                were in) is the standard path-size logit, sampled per
+                traveller; ``"deterministic"`` sends everyone down the best
+                route, with probability 1 — useful for debugging or an upper
+                bound, not for a result to report.
             choice_options: A built-in model's options, numbers by name: for
                 ``"logit"`` a coefficient per attribute, ``beta_time_min`` (default
                 -0.2), ``beta_ln_path_size`` (1), ``beta_length_km``,
@@ -549,15 +556,25 @@ class Scenario:
                 the scale of a country's network each); ``openmobisim.route_cache_clear()`` forgets
                 them, ``openmobisim.route_cache_info()`` says ``(hits, misses, held)``.
             equilibration: How choice and loading are repeated (see
-                ``openmobisim.equilibration_strategies()``). ``"none"`` (the
-                default) chooses every trip's route once, on free-flow costs, and
-                loads the network once. ``"msa"`` is the method of successive
-                averages in traveller form: load the network, read the link times it
-                produced, let a share ``1/(i + 1)`` of travellers choose again on
-                those times at iteration ``i``, load again. It only changes anything
-                when vehicles interact (``flow_level`` 2 to 4) and a choice model
-                gives travellers something to choose between (``"logit"``).
-                ``Run.convergence()`` says how the iterations went.
+                ``openmobisim.equilibration_strategies()``). ``"msa"`` (the
+                default since the car-ready checkpoint, 2026-09-23 — design
+                §5's stated v1 default all along) is the method of successive
+                averages in traveller form: load the network, read the link
+                times it produced, let a share ``1/(i + 1)`` of travellers
+                choose again on those times at iteration ``i``, load again.
+                ``"none"`` chooses every trip's route once, on free-flow
+                costs, and loads the network once — still the right choice
+                for a one-shot, day-of or disruption study (design §11.4).
+                Either way, equilibration only changes anything when vehicles
+                interact (``flow_level`` 2 to 4) and a choice model gives
+                travellers something to choose between (``"logit"``): at the
+                library's other default, ``flow_level=0`` (free flow, no
+                interaction), ``"msa"`` still runs but has nothing to
+                disagree with itself about, so it settles immediately at the
+                choice model's own floor — set ``flow_level`` yourself for
+                iteration to show anything. ``Run.convergence()`` says how
+                the iterations went, and ``Run.convergence_verdict`` judges
+                the disequilibrium the last iteration ended at.
             equilibration_options: The strategy's options, numbers by name: for
                 ``"msa"``, ``iterations`` (10; the most loadings), ``gap_tolerance``
                 (0: never stop early; otherwise stop once the gap, averaged over the

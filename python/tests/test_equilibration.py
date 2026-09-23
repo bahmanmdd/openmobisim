@@ -50,7 +50,7 @@ def test_the_strategies_are_listed_with_the_default_first():
 
 
 def test_without_equilibration_there_is_one_iteration_and_no_gap():
-    run = go("eq-none")
+    run = go("eq-none", choice_model="deterministic", equilibration="none")
     c = run.convergence()
     assert set(c) == set(FIELDS) and all(len(v) == 1 for v in c.values())
     assert c["iteration"].tolist() == [0] and c["reselected_share"][0] == 1.0
@@ -87,7 +87,7 @@ def test_msa_reports_every_iteration_and_the_run_is_the_last_one():
 
 
 def test_one_iteration_of_msa_is_the_run_without_it():
-    base = go("eq-one-none", choice_model="logit", master_seed=3)
+    base = go("eq-one-none", choice_model="logit", equilibration="none", master_seed=3)
     one = go("eq-one-msa", equilibration_options={"iterations": 1}, **MSA)
     assert one.total_travel_time_s == base.total_travel_time_s
     assert (one.route_choices().route == base.route_choices().route).all()
@@ -227,7 +227,7 @@ def test_the_gap_has_a_verdict_and_the_network_is_tested_at_the_last_iteration()
     )
     # Free flow, a strong preference for the faster route: a small gap. Without equilibration, none.
     assert run.convergence_verdict in {"good", "acceptable"}
-    none = go("eq-gap-none")
+    none = go("eq-gap-none", choice_model="deterministic", equilibration="none")
     assert np.isnan(none.convergence_gap) and none.convergence_verdict is None
     off = go(
         "eq-gap-off", flow_level=0, choice_model="logit", equilibration="msa",
@@ -338,7 +338,7 @@ def test_an_iterating_run_defaults_to_one_route_per_pair_an_update_and_a_warmup(
         return ms.Scenario.from_parts(net, rows, **settings).run(name)
 
     # One loading: the penalty method's alternatives, no update (nothing to iterate over).
-    once = run("eq-default-once")
+    once = run("eq-default-once", equilibration="none")
     assert once.route_sets().method == "penalty" and once.route_update == "none"
     # One iteration of msa is one loading too.
     one = run("eq-default-one", equilibration="msa", equilibration_options={"iterations": 1})

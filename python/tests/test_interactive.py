@@ -182,7 +182,11 @@ def test_text_is_escaped_and_bad_choices_are_refused(tmp_path):
 
 
 def test_the_page_starts_in_the_asked_theme_and_names_its_source(tmp_path):
-    _, run = grid_run()
+    # Pinned to the pre-car-ready-checkpoint defaults: this test is about the footer's theme
+    # and provenance text, not about the choice model or equilibration (the library's own
+    # defaults since 2026-09-23 are "logit"/"msa" — `test_the_footer_says_the_run_iterated`
+    # in test_equilibration.py covers what the footer says once a run has iterated).
+    _, run = grid_run(choice_model="deterministic", equilibration="none")
     _, meta, _ = decode(viz.map_interactive(run, tmp_path / "n.html", theme="night", logo=False))
     assert meta["theme"] == "night" and meta["logo"] is False
     assert set(meta["tokens"]) >= {"paper", "night", "route"}
@@ -216,7 +220,10 @@ def test_the_script_is_valid_javascript(tmp_path):
 
 def test_the_page_carries_how_many_travellers_took_each_route(tmp_path):
     for model in ("deterministic", "logit"):
-        _, run = grid_run(choice_model=model, master_seed=3)
+        # equilibration="none" keeps the route sets at the "penalty" default's several
+        # alternatives per pair — an iterating run instead starts from one route per pair
+        # (S179), which would leave the logit nothing to spread over on this small a fixture.
+        _, run = grid_run(choice_model=model, equilibration="none", master_seed=3)
         _, meta, a = decode(
             viz.map_interactive(run, tmp_path / f"{model}.html", max_route_pairs=10_000)
         )

@@ -16,9 +16,20 @@ CAR = {"commuter": (True, False, False)}
 
 
 def grid_run(trips=400, seed=5, **kwargs):
+    # This file tests the choice layer itself, one loading at a time: pinned to the
+    # library's pre-car-ready-checkpoint defaults (deterministic, no equilibration) as
+    # this *file's own* fixture default, not the library's (which is "logit"/"msa" since
+    # 2026-09-23) — individual tests below still override `choice_model` freely.
     net = ms.examples.manhattan_grid(n=8, block_metres=200.0, signals=False)
     rows = ms.examples.trips_random(net, trips, seed=seed, min_m=300.0, max_m=1200.0)
-    settings = {"class_defaults": CAR, "window_hours": 1, "flow_level": 4, "link_bin_s": 300}
+    settings = {
+        "class_defaults": CAR,
+        "window_hours": 1,
+        "flow_level": 4,
+        "link_bin_s": 300,
+        "choice_model": "deterministic",
+        "equilibration": "none",
+    }
     settings.update(kwargs)
     scenario = ms.Scenario.from_parts(net, rows, **settings)
     return net, rows, scenario
@@ -35,8 +46,8 @@ def test_the_models_are_listed_with_the_default_first():
     assert ms.choice_models() == ["deterministic", "logit"]
 
 
-def test_by_default_everyone_takes_the_best_route():
-    run = go("choice-default")
+def test_the_deterministic_model_sends_everyone_down_the_best_route():
+    run = go("choice-deterministic")
     rc = run.route_choices()
     routed = rc.rank >= 0
     assert routed.sum() > 300 and (rc.rank[routed] == 0).all()
@@ -45,11 +56,7 @@ def test_by_default_everyone_takes_the_best_route():
     # The route is the first of its pair's set.
     sets = run.route_sets()
     assert (rc.route[routed] == sets.set_offsets()[rc.pair[routed]]).all()
-    # Asking for it by name changes nothing.
-    named = go("choice-default-named", choice_model="deterministic")
-    assert (named.route_choices().route == rc.route).all()
-    assert named.total_travel_time_s == run.total_travel_time_s
-    assert named.manifest()["live_streams"] == []
+    assert run.manifest()["live_streams"] == []
 
 
 def test_a_logit_spreads_travellers_over_the_alternatives():

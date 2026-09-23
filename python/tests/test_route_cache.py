@@ -13,7 +13,12 @@ CAR = {"commuter": (True, False, False)}
 def scenario(trips=200, **kwargs):
     net = ms.examples.manhattan_grid(n=6, block_metres=200.0, signals=False)
     rows = ms.examples.trips_random(net, trips, seed=5, min_m=300.0, max_m=1000.0, spread_s=300)
-    settings = {"class_defaults": CAR, "window_hours": 1, "master_seed": 3}
+    # Pinned to "none" as this file's own fixture default (not the library's, "msa" since
+    # 2026-09-23): most tests here are about the route cache keying on generation inputs
+    # (route_method defaults to "shortest" once a run iterates, S179, which would otherwise
+    # collide with an explicit route_method="shortest" case below) — the one test that wants
+    # an iterating run sets `equilibration` itself.
+    settings = {"class_defaults": CAR, "window_hours": 1, "master_seed": 3, "equilibration": "none"}
     settings.update(kwargs)
     return ms.Scenario.from_parts(net, rows, **settings)
 

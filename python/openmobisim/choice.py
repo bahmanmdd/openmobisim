@@ -5,14 +5,15 @@ alternatives are the routes of the trip's origin-destination pair; the same
 interface will carry modes, hubs and departure times. openmobisim ships two
 models, selected by name (``choice_models()``):
 
-* ``"deterministic"`` (the default): everyone takes the route with the least
-  travel time. All-or-nothing; no randomness.
-* ``"logit"``: a random utility model, linear in named attributes and sampled
-  exactly (Gumbel-max). With its defaults it is the standard **path-size
-  logit** for route choice: ``U = -0.2 · time_min + 1 · ln_path_size``. Set any
-  coefficient with ``choice_options``: ``{"beta_time_min": -0.3,
-  "beta_length_km": -0.1}``. **The defaults are an assumption, not a
-  calibration**; pass estimated coefficients for real work.
+* ``"deterministic"``: everyone takes the route with the least travel time.
+  All-or-nothing; no randomness. Useful for debugging or an upper bound.
+* ``"logit"`` (``Scenario.from_parts``'s default since the car-ready
+  checkpoint, 2026-09-23): a random utility model, linear in named attributes
+  and sampled exactly (Gumbel-max). With its defaults it is the standard
+  **path-size logit** for route choice: ``U = -0.2 · time_min + 1 ·
+  ln_path_size``. Set any coefficient with ``choice_options``:
+  ``{"beta_time_min": -0.3, "beta_length_km": -0.1}``. **The defaults are an
+  assumption, not a calibration**; pass estimated coefficients for real work.
 
 **Your own model** is any object with a ``choose(batch)`` method (no base class
 needed), passed as ``Scenario.from_parts(..., choice_model=my_model)``. It is

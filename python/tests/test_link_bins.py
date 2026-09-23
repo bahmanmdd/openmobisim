@@ -164,7 +164,17 @@ def test_link_capacity_follows_class_and_lanes():
 def toy_run(**kwargs):
     net = ms.examples.toy_network()
     rows = toy_rows(net, [("W", "D1", 30, 10)])
-    settings = {"class_defaults": CAR, "window_hours": 1, "flow_level": 4, "link_bin_s": 300}
+    # Pinned to the pre-car-ready-checkpoint defaults as this file's own fixture default (not
+    # the library's, "logit"/"msa" since 2026-09-23): this file is about link-bin output and
+    # fingerprint/manifest identity, not the choice model or equilibration.
+    settings = {
+        "class_defaults": CAR,
+        "window_hours": 1,
+        "flow_level": 4,
+        "link_bin_s": 300,
+        "choice_model": "deterministic",
+        "equilibration": "none",
+    }
     settings.update(kwargs)
     return net, rows, ms.Scenario.from_parts(net, rows, **settings).run("identity-test")
 
