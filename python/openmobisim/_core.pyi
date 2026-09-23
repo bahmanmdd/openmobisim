@@ -422,7 +422,7 @@ class LinkBins:
         """Each row's PCU-weighted traversal time, in PCU-seconds."""
 
 def manhattan_grid(n: int, block_metres: float, signals: bool) -> Network:
-    """Build an n x n grid network, block_metres apart (S105, N3).
+    """Build an n x n grid network, block_metres apart.
 
     Args:
         n: Nodes per side. At least 2.
@@ -448,8 +448,8 @@ def network_read_osm(
     path: str,
     contract: bool = True,
     region: tuple[float, float, float, float] | list[tuple[float, float]] | None = None,
-    connectivity: str = "keep",
-    contract_drivable: bool = False,
+    connectivity: str = "strong",
+    contract_drivable: bool = True,
 ) -> Network:
     """Read a road network from an OpenStreetMap ``.osm.pbf`` extract.
 
@@ -462,22 +462,24 @@ def network_read_osm(
             ``(lon, lat)`` vertices. Nodes outside are dropped and a road that
             crosses the edge ends at its last node inside; a road that leaves
             and re-enters is two roads, never one bridged across the gap.
-        connectivity: ``"keep"`` (the default) imports every road.
-            ``"strong"`` keeps only the largest strongly connected part of the
-            drivable network, so that every node a car can use reaches every
-            other. Whole links are removed and none is changed; footways and
-            other links a car may not use are untouched. What was removed is
-            counted in :meth:`Network.report_import` and drawn from
-            :meth:`Network.report_dropped`.
+        connectivity: ``"strong"`` (the default) keeps only the largest
+            strongly connected part of the drivable network, so that every node
+            a car can use reaches every other: an extract is cut out of a larger
+            network, and without this some trips have no route at all. Whole
+            links are removed and none is changed; footways and other links a
+            car may not use are untouched. What was removed is counted in
+            :meth:`Network.report_import` and drawn from
+            :meth:`Network.report_dropped`. ``"keep"`` imports every road.
         contract_drivable: Merge car links across nodes that only footways,
             cycleways or pedestrian streets touch. A footway crossing a street
             shares a node with it, and so does every sidewalk that meets a
-            driveway; by default such a node is a junction and splits the street,
-            which in a city that maps its sidewalks cuts a third of the car
-            network into pieces a few metres long. With this on they merge (by
-            the usual rule: same class, lanes and speed, no signal, stop or
-            barrier, nothing a car could turn into), the node stays for the
-            footway and the footway links are unchanged. Needs ``contract``.
+            driveway; without this (``False``) such a node is a junction and
+            splits the street, which in a city that maps its sidewalks cuts a
+            third of the car network into pieces a few metres long. With it (the
+            default) they merge (by the usual rule: same class, lanes and speed,
+            no signal, stop or barrier, nothing a car could turn into), the node
+            stays for the footway and the footway links are unchanged. Only
+            acts with ``contract``.
 
     Returns:
         A :class:`Network` with the defaults table's parameters and the street
@@ -572,7 +574,7 @@ def run_pipeline(
     choice_detour_limit: float | None = None,
     route_cache: bool = False,
 ) -> RunSummary:
-    """Run the whole Phase 1 pipeline and write all four output artifacts.
+    """Run the whole pipeline and write all four output artifacts.
 
     Prefer ``openmobisim.Scenario`` to calling this directly — it manages
     ``output_dir`` and the trips/trips_path (and persons/persons_path)
@@ -586,18 +588,17 @@ def run_pipeline(
             ``(traveller_id, trip_seq, origin_lon, origin_lat,
             destination_lon, destination_lat, departure_time_s, user_class,
             weight)``. Exactly one of `trips`/`trips_path` must be given.
-        trips_path: A ``trips.parquet`` path (S97), instead of `trips`.
+        trips_path: A ``trips.parquet`` path, instead of `trips`.
         persons: An in-memory persons table — rows of
             ``(traveller_id, owns_car, owns_bike, has_transit_pass,
             user_class)``, each field but `traveller_id` optional. At most
             one of `persons`/`persons_path` may be given.
         persons_path: A ``persons.parquet`` path, instead of `persons`.
         class_defaults: ``{class_name: (owns_car, owns_bike,
-            has_transit_pass)}`` — S127's per-class default ownership.
-        default_weight: The scenario's `traveller_weight` (S89), for a trip
-            whose row gives none.
-        window_s: Trips still in progress after this second are truncated
-            (S57).
+            has_transit_pass)}`` — what each class owns by default.
+        default_weight: How many people a simulated traveller stands for, for
+            a trip whose row gives none.
+        window_s: Trips still in progress after this second are truncated.
         flow_level: 0 for free flow, or 2, 3, 4 for the link transmission
             model as a point queue, a spatial queue and the full diagram.
         flow_step_s: The loading step in seconds, for levels 2-4.

@@ -174,7 +174,7 @@ def test_the_filter_removes_what_it_reports_and_changes_nothing_else():
     assert offsets[0] == 0 and offsets[-1] == len(coords)
     assert (reasons == 1).sum() == r["links_disconnected"]
     assert (reasons == 0).sum() == r["closed_loops_dropped"]
-    # The default keeps everything, so its report has nothing removed for connectivity.
+    # `keep` keeps everything, so its report has nothing removed for connectivity.
     kr = keep.report_import()
     assert kr["links_disconnected"] == 0 and kr["components_before"] == 0
 
@@ -200,11 +200,20 @@ def test_a_region_is_a_subset_and_a_polygon_equal_to_the_box_gives_the_same_netw
 @needs_pbf
 def test_contracting_past_footways_keeps_the_streets_as_long_as_they_were():
     path = os.environ["OPENMOBISIM_TEST_PBF"]
-    plain = ms.network_read_osm(path)
-    merged = ms.network_read_osm(path, contract_drivable=True)
+    plain = ms.network_read_osm(path, connectivity="keep", contract_drivable=False)
+    merged = ms.network_read_osm(path, connectivity="keep", contract_drivable=True)
     assert merged.link_count <= plain.link_count
     length = lambda n: n.link_length_m()[n.link_drivable()].sum()  # noqa: E731
     assert length(merged) == pytest.approx(length(plain), rel=1e-9)
     footway = lambda n: n.link_length_m()[~n.link_drivable()].sum()  # noqa: E731
     assert footway(merged) == pytest.approx(footway(plain), rel=1e-9)
     assert merged.report_import()["contract_drivable"] is True
+
+
+@needs_pbf
+def test_the_default_import_is_strongly_connected_and_contracted_past_footways():
+    # The defaults since 0.1 (S191): every trip between two drivable nodes has a route.
+    net = ms.network_read_osm(os.environ["OPENMOBISIM_TEST_PBF"])
+    r = net.report_import()
+    assert r["connectivity"] == "strong" and r["contract_drivable"] is True
+    assert net.report_connectivity("car")["strongly_connected"]

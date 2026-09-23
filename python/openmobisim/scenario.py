@@ -1,13 +1,11 @@
 """``Scenario`` and what ``.run()`` returns.
 
 A network, demand (an in-memory table or a ``trips.parquet`` path — the same
-schema either way, S97), route choice among each trip's alternatives
-(sampled by a ``"logit"`` by default) and, since the car-ready checkpoint
-(2026-09-23), iteration towards an equilibrium by default (``"msa"``), during
-which the route sets may grow (``route_update="best_response"``) — design
-§4/§5's stated v1 defaults all along, held back until the numbers were in.
-No hubs, no disruptions — those arrive with the layers and mechanisms that
-give them meaning (Foundations §10).
+schema either way), a loading with queues and spillback (``flow_level=4``),
+route choice among each trip's alternatives (a path-size ``"logit"``) and
+iteration towards an equilibrium (``"msa"``), during which the route sets may
+grow (``route_update="best_response"``) — all by default. Car trips only: no
+walking, cycling, transit or hubs, and no disruptions yet.
 """
 
 from __future__ import annotations
@@ -21,7 +19,7 @@ from openmobisim import _core
 
 __all__ = ["Run", "Scenario", "Table"]
 
-#: The flow-motor levels ``Scenario`` accepts (design §10.1): 0 is free flow
+#: The flow levels ``Scenario`` accepts: 0 is free flow
 #: with no interaction between vehicles; 2, 3 and 4 are the link transmission
 #: model as a point queue, a spatial queue and the full triangular diagram.
 FLOW_LEVELS = (0, 2, 3, 4)
@@ -30,11 +28,9 @@ FLOW_LEVELS = (0, 2, 3, 4)
 class Table:
     """A results table backed by a Parquet file.
 
-    Phase 1's form of the interface doc's zero-copy ``openmobisim.Table``:
-    ``.to_polars()``/``.to_pandas()`` read the file on demand rather than
-    streaming Arrow across the boundary without a copy — the call shape the
-    real zero-copy ``Table`` will keep, so nothing at a call site has to
-    change when that lands; only the mechanism underneath does.
+    ``.to_polars()``/``.to_pandas()`` read the file on demand. A later version
+    may hand the table over without reading a file; the call shape stays the
+    same.
     """
 
     def __init__(self, path: str) -> None:
@@ -119,7 +115,7 @@ class Run:
         """The run's master seed (``Scenario`` argument ``master_seed``).
 
         The one number that starts every random stream. Under a sampled choice
-        model (``"logit"``) it decides who takes which route; under the default
+        model (``"logit"``, the default) it decides who takes which route; under
         ``"deterministic"`` nothing draws from it and it changes only the
         fingerprint.
         """
@@ -305,7 +301,7 @@ class Run:
         return None if path is None else Table(path)
 
     def kpis(self) -> Table:
-        """``kpis.parquet``: long format, one row per metric (Foundations §6)."""
+        """``kpis.parquet``: long format, one row per metric."""
         return Table(self._summary.kpis_path)
 
     def diagnostics(self) -> Table:
@@ -324,7 +320,7 @@ class Run:
 
     @property
     def completion(self) -> dict[str, int]:
-        """S57's completion statistics, without reading any file.
+        """How many trips completed, and why the others did not, without reading any file.
 
         Keys: ``total_trips``, ``completed``, ``truncated``,
         ``no_vehicle_available``, ``no_feasible_path``.
@@ -340,16 +336,16 @@ class Run:
 
     @property
     def total_travel_time_s(self) -> float:
-        """Phase 1's one KPI: total travel time, traveller-weight-scaled.
+        """Total travel time of the completed trips, in seconds, scaled by traveller weight.
 
-        Confirmed by the user (S136): once comprehensive KPIs exist, an
-        unweighted form joins this as a second ``kpis.parquet`` row, not a
-        replacement for it.
+        Each trip counts as many times as the people it stands for (its
+        traveller weight): the population's total, not the sum over simulated
+        travellers.
         """
         return self._summary.total_travel_time_s
 
     def __repr__(self) -> str:
-        """S57's completion counts, as a one-line summary."""
+        """The completion counts, as a one-line summary."""
         c = self.completion
         return (
             f"Run(completed={c['completed']}, truncated={c['truncated']}, "
@@ -359,7 +355,7 @@ class Run:
 
 
 class Scenario:
-    """A network, demand, and the parameters a Phase 1 run needs.
+    """A network, demand, and the settings of a run.
 
     Build with ``from_parts`` rather than the constructor directly.
     """
@@ -375,7 +371,7 @@ class Scenario:
         class_defaults: dict[str, tuple[bool, bool, bool]] | None = None,
         default_weight: int = 1,
         window_hours: float = 24.0,
-        flow_level: int = 0,
+        flow_level: int = 4,
         flow_step_s: int = 300,
         link_bin_s: int | None = None,
         route_method: str | None = None,
@@ -445,7 +441,7 @@ class Scenario:
         class_defaults: dict[str, tuple[bool, bool, bool]] | None = None,
         default_weight: int = 1,
         window_hours: float = 24.0,
-        flow_level: int = 0,
+        flow_level: int = 4,
         flow_step_s: int = 300,
         link_bin_s: int | None = None,
         route_method: str | None = None,
@@ -466,23 +462,27 @@ class Scenario:
             network: Built by, for example, ``examples.manhattan_grid``.
             demand: Either an in-memory trips table (rows in the schema
                 ``examples.fixed_car_trips`` returns, or hand-built the same
-                way) or a path to a ``trips.parquet`` file (S97) — the same
+                way) or a path to a ``trips.parquet`` file — the same
                 schema either way, never two different shapes.
             persons: The ``persons.parquet`` equivalent — an in-memory table,
                 a file path, or ``None`` if every traveller takes their
                 class's default ownership.
             class_defaults: ``{class_name: (owns_car, owns_bike,
-                has_transit_pass)}`` — S127's per-class default. A class not
+                has_transit_pass)}`` — what each class owns by default. A class not
                 listed here owns nothing unless a `persons` row overrides it.
-            default_weight: The scenario's ``traveller_weight`` (S89): 1 for
-                `default`, 10 for `fast`, for a trip whose row gives none.
+            default_weight: How many people a simulated traveller stands for,
+                for a trip whose row gives no weight. 1 simulates everyone; a
+                larger number is faster and coarser.
             window_hours: Trips still in progress after this many hours are
-                truncated (S57).
-            flow_level: How vehicles load the network. ``0`` (the default) is
+                truncated.
+            flow_level: How vehicles load the network. ``4`` (the default) is
+                the link transmission model with the full triangular
+                fundamental diagram: queues that take up road space and spill
+                back to the links upstream. ``3`` is a spatial queue and ``2`` a
+                point queue (queues without spillback, so no gridlock). ``0`` is
                 free flow: no vehicle affects another, so there is no
-                congestion to show. ``2``, ``3`` and ``4`` are the link
-                transmission model (design §10.1): a point queue, a spatial
-                queue, and the full triangular diagram with spillback.
+                congestion, and a run that iterates has nothing to settle — for
+                debugging, or as a lower bound.
             flow_step_s: The loading step in seconds, for levels 2-4. It is a
                 bookkeeping boundary: results do not depend on it.
             link_bin_s: If given, also record per-link results in time bins of
@@ -523,9 +523,7 @@ class Scenario:
                 name from ``openmobisim.choice_models()`` or an object with a
                 ``choose(batch)`` method (see ``openmobisim.choice`` for how to
                 write one). ``"logit"`` (the default since the car-ready
-                checkpoint, 2026-09-23 — design §4's stated v1 default all
-                along, held back at ``"deterministic"`` until the numbers
-                were in) is the standard path-size logit, sampled per
+                checkpoint, 2026-09-23) is the standard path-size logit, sampled per
                 traveller; ``"deterministic"`` sends everyone down the best
                 route, with probability 1 — useful for debugging or an upper
                 bound, not for a result to report.
@@ -557,22 +555,20 @@ class Scenario:
                 them, ``openmobisim.route_cache_info()`` says ``(hits, misses, held)``.
             equilibration: How choice and loading are repeated (see
                 ``openmobisim.equilibration_strategies()``). ``"msa"`` (the
-                default since the car-ready checkpoint, 2026-09-23 — design
-                §5's stated v1 default all along) is the method of successive
+                default since the car-ready checkpoint, 2026-09-23) is the method of successive
                 averages in traveller form: load the network, read the link
                 times it produced, let a share ``1/(i + 1)`` of travellers
                 choose again on those times at iteration ``i``, load again.
                 ``"none"`` chooses every trip's route once, on free-flow
                 costs, and loads the network once — still the right choice
-                for a one-shot, day-of or disruption study (design §11.4).
+                for a one-shot, day-of or disruption study.
                 Either way, equilibration only changes anything when vehicles
-                interact (``flow_level`` 2 to 4) and a choice model gives
-                travellers something to choose between (``"logit"``): at the
-                library's other default, ``flow_level=0`` (free flow, no
-                interaction), ``"msa"`` still runs but has nothing to
-                disagree with itself about, so it settles immediately at the
-                choice model's own floor — set ``flow_level`` yourself for
-                iteration to show anything. ``Run.convergence()`` says how
+                interact (``flow_level`` 2 to 4, the default 4) and a choice
+                model gives travellers something to choose between
+                (``"logit"``): at ``flow_level=0`` (free flow, no interaction),
+                ``"msa"`` still runs but has nothing to disagree with itself
+                about, so it settles immediately at the choice model's own
+                floor. ``Run.convergence()`` says how
                 the iterations went, and ``Run.convergence_verdict`` judges
                 the disequilibrium the last iteration ended at.
             equilibration_options: The strategy's options, numbers by name: for
@@ -650,8 +646,8 @@ class Scenario:
             run_id: Recorded in every output row; also names the default
                 output directory.
             output_dir: Where ``kpis.parquet`` etc. are written. Defaults to
-                a directory under the system temp directory — Phase 1 has no
-                artifact cache (S65 is Phase 2 item 1) to place it in yet.
+                a directory under the system temp directory, named after
+                ``run_id``.
 
         Returns:
             A ``Run`` with the four artifacts and the completion statistics.

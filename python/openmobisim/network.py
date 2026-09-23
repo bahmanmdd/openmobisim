@@ -1,4 +1,4 @@
-"""``network_read_table``: a ``Network`` from a plain link table (I-y).
+"""``network_read_table``: a ``Network`` from a plain link table.
 
 The only network source before this was OpenStreetMap (or the two synthetic
 fixtures, ``examples.manhattan_grid`` and ``examples.toy_network``). A link
@@ -204,7 +204,7 @@ def network_read_table(
             loading. Recognised columns: ``id`` (``node``) — **required**;
             ``x``/``y`` or ``lon``/``lat`` depending on `coordinates`;
             ``signalised`` (``signal``) — every approach to a signalised node
-            gets a control delay and a green-time fraction (design §12.2).
+            gets a control delay and a green-time fraction.
         length_unit: The unit of a `links` ``length`` column: ``"m"``
             (the default), ``"km"`` or ``"mi"``.
         speed_unit: The unit of a `links` ``free_flow_speed`` column:
@@ -247,8 +247,7 @@ def network_read_table(
     Example:
         Sioux Falls, from its published TNTP files (``sioux_falls_net.tntp``,
         tab-separated, lengths in miles, times in minutes; a node file with
-        arbitrary ``x``/``y``, kept in ``data/`` and never committed, per this
-        project's rule for input data — S172's networks are its precedent)::
+        arbitrary ``x``/``y``)::
 
             net = network_read_table(
                 "data/sioux_falls_net.tntp",
@@ -411,7 +410,7 @@ def network_read_table(
         warnings.warn(
             f"{reduced} link(s) asked for a capacity the class row's jam density cannot carry "
             "at the link's free-flow speed, and were reduced to the largest value that diagram "
-            "admits (design §12.1's rule for an inconsistent triangular diagram — not a failure, "
+            "admits (the rule for an inconsistent triangular diagram — not a failure, "
             "but the capacity used is not the one asked for). A `class` that fell back to "
             "unclassified assumes a single modest lane; give a `lanes` value, or a `class` this "
             "table recognises, if you know the real one.",

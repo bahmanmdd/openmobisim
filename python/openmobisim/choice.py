@@ -1,4 +1,4 @@
-"""Choice models: what to write to add your own (S169).
+"""Choice models: what to write to add your own.
 
 A *choice model* says which alternative each traveller takes. Today the
 alternatives are the routes of the trip's origin-destination pair; the same

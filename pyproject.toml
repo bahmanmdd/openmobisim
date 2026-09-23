@@ -7,12 +7,12 @@ name = "openmobisim"
 description = "An agent-based multimodal mobility simulator for infrastructure planning and optimisation."
 readme = "README.md"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 authors = [{ name = "The openmobisim authors" }]
 keywords = ["mobility", "simulation", "transport", "traffic", "multimodal", "optimisation"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "Programming Language :: Rust",
     "Programming Language :: Python :: 3 :: Only",

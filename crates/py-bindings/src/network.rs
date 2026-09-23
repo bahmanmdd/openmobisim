@@ -40,7 +40,7 @@ type GeometryArrays<'py> = (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray1<u32>>
 #[pyclass(name = "Network", module = "openmobisim._core")]
 pub struct PyNetwork {
     pub(crate) inner: Arc<RoadNetwork>,
-    /// Street shapes captured at import (S125); `None` for a network built
+    /// Street shapes captured at import; `None` for a network built
     /// from nodes alone, whose links are straight lines between their nodes.
     pub(crate) geometry: Option<Arc<LinkGeometry>>,
     /// Where the network came from, for attribution on figures:
@@ -49,7 +49,7 @@ pub struct PyNetwork {
     pub(crate) source: String,
     /// The nearest-drivable-node index, built the first time it is asked for.
     pub(crate) snapper: OnceLock<NodeSnapper>,
-    /// What the import did, for a network read from OSM (S172).
+    /// What the import did, for a network read from OSM.
     import: Option<Arc<ImportInfo>>,
 }
 
@@ -395,9 +395,9 @@ impl PyNetwork {
     }
 }
 
-/// `manhattan_grid(n, block_metres, signals)` — the N3 fixture (S105),
-/// matching `06_INTERFACE_V0.md` §3's `ms.examples.manhattan_grid`
-/// parameter for parameter.
+/// `manhattan_grid(n, block_metres, signals)`: an `n` x `n` grid of two-way
+/// streets `block_metres` apart, with every interior junction signalised if
+/// `signals` is true.
 ///
 /// # Errors
 ///
@@ -412,8 +412,8 @@ pub fn manhattan_grid(n: u32, block_metres: f64, signals: bool) -> PyResult<PyNe
     Ok(PyNetwork::new(Arc::new(network), None, "synthetic"))
 }
 
-/// The toy network's road part (I-m, S161): sixteen nodes and links on which
-/// every loading number can be checked by hand.
+/// The toy network: sixteen nodes and links on which every loading number
+/// can be checked by hand.
 #[pyfunction]
 pub fn toy_network() -> PyNetwork {
     let (network, diagnostics) = build_toy_network();
@@ -426,17 +426,19 @@ pub fn toy_network() -> PyNetwork {
 ///
 /// `region` cuts a study area out of the extract — a rectangle
 /// `(west, south, east, north)` or a polygon, a list of `(lon, lat)` vertices —
-/// and `connectivity` is `"keep"` (everything that is a road) or `"strong"`
-/// (only the largest strongly connected part). `contract_drivable` merges car
-/// links across nodes that only footways touch (the crossings and sidewalk
-/// joins of a city that maps its sidewalks), leaving the footways as they were.
+/// and `connectivity` is `"strong"` (the default: only the largest strongly
+/// connected part) or `"keep"` (everything that is a road). `contract_drivable`
+/// (on by default) merges car links across nodes that only footways touch (the
+/// crossings and sidewalk joins of a city that maps its sidewalks), leaving the
+/// footways as they were. These two defaults are the Python layer's (S191);
+/// `ImportOptions::default()` in `io-osm` keeps both off.
 ///
 /// # Errors
 ///
 /// `ValueError` if the file cannot be read, the region or `connectivity` is not
 /// valid, or the result holds no usable road network.
 #[pyfunction]
-#[pyo3(signature = (path, contract=true, region=None, connectivity="keep", contract_drivable=false))]
+#[pyo3(signature = (path, contract=true, region=None, connectivity="strong", contract_drivable=true))]
 pub fn network_read_osm(
     py: Python<'_>,
     path: &str,
@@ -497,7 +499,7 @@ pub fn network_read_osm(
     Ok(network)
 }
 
-/// Build a network from plain column arrays (I-y): one entry per node, one
+/// Build a network from plain column arrays: one entry per node, one
 /// per link — a two-way street is two rows, as `RoadNetworkBuilder::add_link`
 /// documents. `openmobisim.network_read_table` does the file-or-rows
 /// resolution, the TNTP/CSV parsing and every unit conversion in Python

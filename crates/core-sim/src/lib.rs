@@ -13,12 +13,11 @@
 //!
 //! # What this crate is, and is not, yet
 //!
-//! This is Phase 1 step 6: enough orchestration to turn `core-demand`'s
-//! travellers and trips into `core-loading` trajectories and report one
-//! number. No hubs, no equilibration, no convergence report, no multi-
-//! iteration — Foundations §10 names all of those as `core-sim`'s eventual
-//! job; this is its first, narrowest vertical slice, car trips only (S127's
-//! `Ownership::car`), because no other mode layer exists yet.
+//! Orchestration for car trips (S127's `Ownership::car`), because no other
+//! mode layer exists yet: route sets, route choice, a loading, and repeated
+//! choice and loading towards an equilibrium with a convergence report per
+//! iteration (see the table above). No hubs and no other modes — Foundations
+//! §10 names those as `core-sim`'s later job.
 //!
 //! **[`run::RunResult::total_travel_time`] is *traveller-weight-scaled***
 //! (population total, `Σ w · travel_time` over completed trips), not the raw

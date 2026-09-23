@@ -7,7 +7,7 @@
 //! rather than only what the code currently produces, and a reader can
 //! eyeball a small one on a map. This is the same builder the notebook
 //! ladder's `ms.examples.manhattan_grid(n, block_metres, signals)` wraps
-//! (`06_INTERFACE_V0.md` §3, N3) and that `core-graph`'s own test suite
+//! (the N3 fixture) and that `core-graph`'s own test suite
 //! already used privately before this module existed to promote it into
 //! (roadmap Phase 1 step 8).
 //!
@@ -60,7 +60,7 @@ pub fn link_count(n: u32) -> u32 {
 ///
 /// `signals` marks every interior node (not on the grid's outer ring) as
 /// signal-controlled, which is how the control-delay and turn-capacity
-/// paths get exercised — matching `06_INTERFACE_V0.md`'s
+/// paths get exercised — matching Python's
 /// `ms.examples.manhattan_grid(n, block_metres, signals)`.
 ///
 /// # Panics

@@ -11,7 +11,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
@@ -22,15 +22,15 @@ categories = ["science", "simulation"]
 
 [workspace.dependencies]
 # Internal
-openmobisim-core-types = { path = "crates/core-types", version = "0.1.0-alpha.1" }
-openmobisim-core-graph = { path = "crates/core-graph", version = "0.1.0-alpha.1" }
-openmobisim-io-osm = { path = "crates/io-osm", version = "0.1.0-alpha.1" }
-openmobisim-core-demand = { path = "crates/core-demand", version = "0.1.0-alpha.1" }
-openmobisim-core-loading = { path = "crates/core-loading", version = "0.1.0-alpha.1" }
-openmobisim-core-routes = { path = "crates/core-routes", version = "0.1.0-alpha.1" }
-openmobisim-core-choice = { path = "crates/core-choice", version = "0.1.0-alpha.1" }
-openmobisim-core-sim = { path = "crates/core-sim", version = "0.1.0-alpha.1" }
-openmobisim-io-parquet = { path = "crates/io-parquet", version = "0.1.0-alpha.1" }
+openmobisim-core-types = { path = "crates/core-types", version = "0.1.0" }
+openmobisim-core-graph = { path = "crates/core-graph", version = "0.1.0" }
+openmobisim-io-osm = { path = "crates/io-osm", version = "0.1.0" }
+openmobisim-core-demand = { path = "crates/core-demand", version = "0.1.0" }
+openmobisim-core-loading = { path = "crates/core-loading", version = "0.1.0" }
+openmobisim-core-routes = { path = "crates/core-routes", version = "0.1.0" }
+openmobisim-core-choice = { path = "crates/core-choice", version = "0.1.0" }
+openmobisim-core-sim = { path = "crates/core-sim", version = "0.1.0" }
+openmobisim-io-parquet = { path = "crates/io-parquet", version = "0.1.0" }
 
 # External — kept deliberately short. Every addition to this list is a decision.
 rand_chacha = { version = "0.10", default-features = false }

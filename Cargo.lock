@@ -651,14 +651,14 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "openmobisim-core-choice"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "openmobisim-core-types",
 ]
 
 [[package]]
 name = "openmobisim-core-demand"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -670,7 +670,7 @@ dependencies = [
 
 [[package]]
 name = "openmobisim-core-graph"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "openmobisim-core-types",
  "proptest",
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "openmobisim-core-loading"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "openmobisim-core-graph",
  "openmobisim-core-types",
@@ -688,7 +688,7 @@ dependencies = [
 
 [[package]]
 name = "openmobisim-core-routes"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "openmobisim-core-graph",
  "openmobisim-core-types",
@@ -697,7 +697,7 @@ dependencies = [
 
 [[package]]
 name = "openmobisim-core-sim"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "openmobisim-core-choice",
  "openmobisim-core-demand",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "openmobisim-core-types"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "proptest",
  "rand_chacha 0.10.0",
@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "openmobisim-io-osm"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "openmobisim-core-graph",
  "openmobisim-core-types",
@@ -730,7 +730,7 @@ dependencies = [
 
 [[package]]
 name = "openmobisim-io-parquet"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -746,7 +746,7 @@ dependencies = [
 
 [[package]]
 name = "openmobisim-py-bindings"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "numpy",
  "openmobisim-core-choice",

@@ -4,8 +4,8 @@ The public Python surface. Most of it is a thin re-export of the compiled
 core (``openmobisim._core``), which is private: its shape is free to change behind
 this module, whereas this module is a semver contract. ``Scenario``, ``Run``
 and ``Table`` (``openmobisim.scenario``) and the fixture helpers in
-``openmobisim.examples`` are where the core becomes ergonomic — Foundations §10's
-"behaviour in Python, physics in Rust".
+``openmobisim.examples`` are where the core becomes ergonomic: behaviour in
+Python, physics in Rust.
 
 Figures live in ``openmobisim.viz`` (``pip install 'openmobisim[viz]'``); it is
 imported on demand, so ``import openmobisim`` never needs matplotlib.

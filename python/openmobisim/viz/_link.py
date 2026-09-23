@@ -130,8 +130,10 @@ def map_link(
         note: A third, italic line, for example to say the demand is a fixture.
         view: ``((lon_min, lat_min), (lon_max, lat_max))`` to zoom to; the whole
             network by default.
-        size: Figure size in inches. 16 x 9 is a full-screen frame; 3.5 x 2.3
-            is a journal column.
+        size: Figure size in inches. 16 x 9 is a full-screen frame. The text is
+            laid out for figures **8 inches wide or more**; narrower, the footer
+            runs into the logo and the legends crowd (a layout for a journal
+            column is planned).
         dpi: Dots per inch.
         scale: Ribbon width multiplier; by default it follows the view, thin
             for a whole region and bolder when zoomed to a town.

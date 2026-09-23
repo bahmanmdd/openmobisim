@@ -1,11 +1,11 @@
 """Built-in fixtures for getting started without any input data.
 
-``toy_network`` is the hand-verifiable fixture (I-m). ``manhattan_grid`` is the
-N3 fixture (``06_INTERFACE_V0.md`` §3, S105).
+``toy_network`` is a small network whose every loading number can be checked by
+hand. ``manhattan_grid`` is a square grid of two-way streets, optionally signalised.
 ``fixed_car_trips`` is deliberately thin: "car, fixed departure time, from
 here to there" is not a different demand format from the general one — it
 is what the same trips schema already expresses when a class's
-``class_defaults`` give it a car and nothing else (S127). This helper only
+``class_defaults`` give it a car and nothing else. This helper only
 saves writing out the eight-column table by hand; it does not introduce a
 second demand shape.
 """

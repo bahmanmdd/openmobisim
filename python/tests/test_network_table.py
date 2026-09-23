@@ -7,7 +7,7 @@ does (I-y's own promise); explicit units convert correctly; an unrecognised
 silence and not a crash; a node table's `x`/`y` and a coordinate-free table's
 placeholder layout are both deterministic; the TNTP text dialect (a metadata
 block, a ``~``-prefixed header, ``;``-terminated rows) parses the same way a
-plain CSV does; and the round trip promised by the roadmap (I-y, `05_ROADMAP.md`)
+plain CSV does; and the round trip promised by I-y
 holds: a table's links and their attributes come back out of the network
 unchanged.
 """

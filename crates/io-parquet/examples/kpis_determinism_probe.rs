@@ -32,7 +32,7 @@ use openmobisim_core_types::units::Duration;
 use openmobisim_io_parquet::manifest::Manifest;
 use openmobisim_io_parquet::{write_diagnostics, write_events, write_kpis, write_manifest};
 
-/// The N3 fixture's own parameters (`06_INTERFACE_V0.md` §3):
+/// The N3 fixture's own parameters:
 /// `manhattan_grid(n=5, block_metres=200, signals=True)`.
 const GRID_N: u32 = 5;
 const BLOCK_METRES: f64 = 200.0;

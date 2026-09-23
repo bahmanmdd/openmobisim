@@ -1,11 +1,18 @@
-//! The `Run` (S62): orchestration for Phase 1 — one KPI, trip completion
-//! statistics (S57), driven by an event queue in seconds (S88).
+//! The `Run` (S62): orchestration, trip completion statistics (S57), driven
+//! by an event queue in seconds (S88).
 //!
-//! Phase 1's whole vertical slice: `core-demand`'s travellers and trips,
-//! S133's placeholder routing, `core-loading`'s level-0 traversal, one
-//! number out. No hubs, no equilibration, no convergence report — those are
-//! part of `core-sim`'s eventual job (Foundations §10) but not this first,
-//! narrowest cut of it.
+//! One run, car trips only: `core-demand`'s travellers and trips, a route set
+//! for every origin-destination pair (`core-routes`, S166), a route per trip
+//! from a choice model (`core-choice`, S169), a loading by the chosen
+//! [`FlowMotor`], and — under an [`Equilibration`] — choice and loading
+//! repeated, with the route sets grown between iterations by a
+//! [`RouteUpdate`] and a convergence report per iteration (S170, S176). No
+//! hubs and no other mode yet: those are `core-sim`'s later job (Foundations
+//! §10).
+//!
+//! The defaults here are the core's own and unconditional (`Level0`,
+//! `deterministic`, `none`); the Python `Scenario` layers its own on top
+//! (S179, S187, S191).
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};

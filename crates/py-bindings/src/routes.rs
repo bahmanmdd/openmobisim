@@ -55,7 +55,7 @@ impl PyRouteSets {
         self.inner.descriptor().to_string()
     }
 
-    /// The route update that grew these sets after they were generated (S176),
+    /// The route update that grew these sets after they were generated,
     /// with its options, as one string; empty for sets as their method made them.
     #[getter]
     fn update(&self) -> String {
@@ -118,7 +118,7 @@ impl PyRouteSets {
     }
 
     /// Every route's stamp (uint32): 0 for a route the method made, otherwise the
-    /// iteration whose choice it was added for (S176; see ``update``).
+    /// iteration whose choice it was added for (see ``update``).
     fn stamps<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
         self.inner.stamps().to_vec().into_pyarray(py)
     }

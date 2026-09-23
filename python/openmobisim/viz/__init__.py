@@ -1,4 +1,4 @@
-"""Figures for openmobisim runs, in one recognisable look (S162, S163).
+"""Figures for openmobisim runs, in one recognisable look.
 
 ``pip install 'openmobisim[viz]'``. Functions are named with their kind first,
 so related ones sort and complete together: ``map_*`` draws on a map,

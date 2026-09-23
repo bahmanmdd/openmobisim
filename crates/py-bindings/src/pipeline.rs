@@ -102,23 +102,23 @@ pub struct PyRunSummary {
     #[pyo3(get)]
     pub manifest_path: String,
     /// Path to the written `link_bins.parquet`, if the run recorded per-link
-    /// results (S168).
+    /// results.
     #[pyo3(get)]
     pub link_bins_path: Option<String>,
-    /// The run's master seed (S168).
+    /// The run's master seed.
     #[pyo3(get)]
     pub master_seed: u64,
-    /// The choice model's name (S169).
+    /// The choice model's name.
     #[pyo3(get)]
     pub choice_model: String,
-    /// The equilibration strategy's name (S170).
+    /// The equilibration strategy's name.
     #[pyo3(get)]
     pub equilibration: String,
-    /// The route update's name (S176): `"none"` if the route sets stayed as
+    /// The route update's name: `"none"` if the route sets stayed as
     /// generated.
     #[pyo3(get)]
     pub route_update: String,
-    /// What each iteration showed, as numpy arrays by name (S170); see
+    /// What each iteration showed, as numpy arrays by name; see
     /// `Run.convergence()`.
     #[pyo3(get)]
     pub convergence: Py<PyDict>,
@@ -126,7 +126,7 @@ pub struct PyRunSummary {
     #[pyo3(get)]
     pub converged: bool,
     /// The run's fingerprint: 16 hex digits of a hash of every input that
-    /// decides its results (S168).
+    /// decides its results.
     #[pyo3(get)]
     pub fingerprint: String,
     /// Every trip in the demand.
@@ -135,7 +135,7 @@ pub struct PyRunSummary {
     /// Arrived within the simulation window.
     #[pyo3(get)]
     pub completed: u32,
-    /// Still in progress when the window ended (S57).
+    /// Still in progress when the window ended.
     #[pyo3(get)]
     pub truncated: u32,
     /// No owned car was at the trip's origin.
@@ -144,21 +144,21 @@ pub struct PyRunSummary {
     /// A car was available, but no path existed to the destination.
     #[pyo3(get)]
     pub no_feasible_path: u32,
-    /// Total travel time, traveller-weight-scaled (S135, confirmed S136).
+    /// Total travel time, traveller-weight-scaled.
     #[pyo3(get)]
     pub total_travel_time_s: f64,
-    /// Per-link, per-time-bin results, if the run asked for them (S163).
+    /// Per-link, per-time-bin results, if the run asked for them.
     #[pyo3(get)]
     pub link_bins: Option<Py<PyLinkBins>>,
-    /// The route sets the trips were routed from (S165).
+    /// The route sets the trips were routed from.
     #[pyo3(get)]
     pub route_sets: Option<Py<PyRouteSets>>,
-    /// Which route each trip took, out of how many (S169).
+    /// Which route each trip took, out of how many.
     #[pyo3(get)]
     pub route_choices: Option<Py<PyRouteChoices>>,
 }
 
-/// Per-link, per-time-bin results (S163), as numpy columns.
+/// Per-link, per-time-bin results, as numpy columns.
 ///
 /// One row per (bin, link) that saw traffic, sorted by bin then link. A row
 /// counts the traversals of the link that *finished* in the bin, including
@@ -261,13 +261,15 @@ fn convergence_arrays(
     Ok(dict.unbind())
 }
 
-/// Run the whole Phase 1 pipeline: demand through S133's placeholder
-/// routing through level-0 loading, writing all four output artifacts to
-/// `output_dir`.
+/// Run the whole pipeline — demand, route sets, route choice, loading and,
+/// under an equilibration, iterations of choice and loading — writing all four
+/// output artifacts to `output_dir`. `openmobisim.Scenario` is the public way
+/// in; its defaults differ from this function's (`flow_level` 4, `"logit"`,
+/// `"msa"`).
 ///
 /// Exactly one of `trips`/`trips_path` must be given, and at most one of
 /// `persons`/`persons_path` — the in-memory and file forms of the same
-/// schema (S97), never both at once for the same input.
+/// schema, never both at once for the same input.
 ///
 /// # Errors
 ///
@@ -482,26 +484,26 @@ pub fn run_pipeline(
     })
 }
 
-/// The route sets kept between runs of this process (S178), when a run asks for the cache.
+/// The route sets kept between runs of this process, when a run asks for the cache.
 fn route_cache_handle() -> &'static Arc<openmobisim_core_sim::RouteSetCache> {
     static CACHE: OnceLock<Arc<openmobisim_core_sim::RouteSetCache>> = OnceLock::new();
     CACHE.get_or_init(|| Arc::new(openmobisim_core_sim::RouteSetCache::default()))
 }
 
-/// Forget every route set the cache holds (S178). The counters of `route_cache_info` stay.
+/// Forget every route set the cache holds. The counters of `route_cache_info` stay.
 #[pyfunction]
 pub fn route_cache_clear() {
     route_cache_handle().clear();
 }
 
-/// What the route-set cache has done: ``(hits, misses, sets held)`` (S178).
+/// What the route-set cache has done: ``(hits, misses, sets held)``.
 #[pyfunction]
 pub fn route_cache_info() -> (u64, u64, usize) {
     let s = route_cache_handle().stats();
     (s.hits, s.misses, s.held)
 }
 
-/// The route updates that can be selected by name, the default first (S176).
+/// The route updates that can be selected by name, the default first.
 #[pyfunction]
 pub fn route_update_methods() -> Vec<String> {
     let mut names: Vec<String> = openmobisim_core_sim::route_update::Registry::builtin()
