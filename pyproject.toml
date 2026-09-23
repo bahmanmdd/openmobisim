@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [{ name = "The openmobisim authors" }]
 keywords = ["mobility", "simulation", "transport", "traffic", "multimodal", "optimisation"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Science/Research",
     "Programming Language :: Rust",
     "Programming Language :: Python :: 3 :: Only",
