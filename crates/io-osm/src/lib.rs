@@ -36,11 +36,11 @@ pub mod source;
 pub mod tags;
 
 pub use import::{
-    Connectivity, DropReason, DroppedLink, ImportOptions, ImportOutput, ImportReport, import,
-    import_detailed,
+    Connectivity, DropReason, DroppedLink, ImportOptions, ImportOutput, ImportReport, LayerImport,
+    LayerOptions, LayerReport, import, import_detailed,
 };
 #[cfg(feature = "pbf")]
 pub use pbf::PbfSource;
 pub use region::{ClippedSource, Region, RegionError};
 pub use source::{MemorySource, OsmError, OsmNode, OsmSource, OsmWay};
-pub use tags::{Direction, Lanes, Maxspeed, Rejection};
+pub use tags::{BikeWay, Direction, Lanes, Maxspeed, Rejection};

@@ -35,7 +35,9 @@ use std::io::Write;
 
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId};
-use openmobisim_io_osm::import::{ImportOptions, import};
+use openmobisim_io_osm::import::{
+    Connectivity, ImportOptions, LayerOptions, import, import_detailed,
+};
 use openmobisim_io_osm::pbf::PbfSource;
 use openmobisim_io_osm::source::{OsmError, OsmSource};
 
@@ -162,4 +164,68 @@ fn imports_a_real_extract_when_one_is_pointed_at() {
         network.link_count()
     );
     assert!(geometry.street_count() > 0, "no streets were stored");
+}
+
+/// On a real extract, the bike and walk layers (S195) leave the road network
+/// exactly as it is without them, and each layer is a usable graph. Prints the
+/// layers' sizes and what building them cost.
+///
+/// Skipped when `OPENMOBISIM_TEST_PBF` is unset.
+#[test]
+fn a_real_extract_s_layers_leave_its_road_network_unchanged() {
+    let Ok(path) = std::env::var("OPENMOBISIM_TEST_PBF") else {
+        eprintln!("skipped: set OPENMOBISIM_TEST_PBF to a .osm.pbf file to run this");
+        return;
+    };
+    let source = PbfSource::new(&path);
+    // The options the Python reader uses (S191), with and without layers.
+    let base = ImportOptions {
+        connectivity: Connectivity::Strong,
+        contract_drivable: true,
+        ..ImportOptions::default()
+    };
+    let started = std::time::Instant::now();
+    let plain = import_detailed(&source, base, &mut Diagnostics::new()).expect("imports");
+    let plain_s = started.elapsed().as_secs_f64();
+    let started = std::time::Instant::now();
+    let layered = import_detailed(
+        &source,
+        ImportOptions { layers: LayerOptions::BOTH, ..base },
+        &mut Diagnostics::new(),
+    )
+    .expect("imports");
+    let layered_s = started.elapsed().as_secs_f64();
+
+    let (a, b) = (&plain.network, &layered.network);
+    assert_eq!(a.link_count(), b.link_count());
+    assert_eq!(a.node_count(), b.node_count());
+    for link in LinkId::iter_space(a.link_count()) {
+        assert_eq!(a.link_from(link), b.link_from(link));
+        assert_eq!(a.link_to(link), b.link_to(link));
+        assert_eq!(a.link_length(link), b.link_length(link));
+    }
+    assert_eq!(plain.report, layered.report);
+
+    println!("{path}: import {plain_s:.2} s without layers, {layered_s:.2} s with");
+    println!("  road  {:>9} links {:>12} bytes", a.link_count(), a.bytes());
+    for layer in [layered.bike.as_ref().unwrap(), layered.walk.as_ref().unwrap()] {
+        let g = layer.network.network();
+        let r = layer.report;
+        println!(
+            "  {:<5} {:>9} links {:>12} bytes; {} ways, {} of {} m dedicated, \
+             {} links trimmed of {} components, {} degenerate",
+            layer.network.layer().as_str(),
+            g.link_count(),
+            layer.network.bytes(),
+            r.ways_kept,
+            r.dedicated_length_m,
+            r.length_m,
+            r.links_disconnected,
+            r.components_before,
+            r.degenerate_links,
+        );
+        assert!(g.link_count() > 0, "an empty {} layer", layer.network.layer().as_str());
+        assert!(layer.geometry.matches(g));
+        assert_eq!(g.projection(), a.projection());
+    }
 }

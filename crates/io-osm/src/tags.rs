@@ -26,6 +26,7 @@
 //! now.
 
 use openmobisim_core_graph::defaults::RoadClass;
+use openmobisim_core_graph::layers::BikeInfrastructure;
 
 use crate::source::tag_of;
 
@@ -302,4 +303,168 @@ pub fn node_splits_way(tags: &[(String, String)]) -> bool {
 #[must_use]
 pub fn node_is_signalised(tags: &[(String, String)]) -> bool {
     tag_of(tags, "highway") == Some("traffic_signals")
+}
+
+/// What a way offers a bike (S193), in each direction it may be ridden.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct BikeWay {
+    /// The way's road class (`bridleway` is read as a footway).
+    pub class: RoadClass,
+    /// The infrastructure in the way's own node order, if bikes may go that way.
+    pub forward: Option<BikeInfrastructure>,
+    /// The infrastructure against the way's node order, if bikes may go that way.
+    pub backward: Option<BikeInfrastructure>,
+    /// The bike must be walked here (`bicycle=dismount`, steps).
+    pub dismount: bool,
+}
+
+/// Whether an access value lets the mode through.
+fn permits(value: Option<&str>) -> bool {
+    matches!(value, Some("yes" | "designated" | "permissive"))
+}
+
+/// The class a way has for the bike and walk layers: the road class, and a
+/// bridleway read as a footway.
+fn layer_class(highway: &str) -> Option<RoadClass> {
+    if highway == "bridleway" {
+        return Some(RoadClass::Footway);
+    }
+    RoadClass::from_osm_highway(highway)
+}
+
+/// The dedicated infrastructure a `cycleway…` value names, if any.
+fn infrastructure_of(value: Option<&str>) -> Option<BikeInfrastructure> {
+    match value {
+        Some("track" | "opposite_track") => Some(BikeInfrastructure::Separated),
+        Some("lane" | "opposite_lane") => Some(BikeInfrastructure::Lane),
+        _ => None,
+    }
+}
+
+/// Decide whether a way is a bike link, and what it offers in each direction
+/// (the minimal bike layer of S193, S195).
+///
+/// - **Never:** motorways, `motorroad=yes`, `bicycle=no`, `bicycle=use_sidepath`
+///   (a parallel cycleway is mapped and used instead), areas, and ways with
+///   `access=no|private` unless `bicycle=yes|designated|permissive` lets bikes
+///   through (a bike-only road).
+/// - **Every other car road, trunk included**, in mixed traffic, unless a
+///   `cycleway`, `cycleway:both|right|left` tag names a lane or a track, or the
+///   street is a cycle street (`cyclestreet=yes`, `bicycle_road=yes`).
+/// - **`highway=cycleway`**, and a footway, path or bridleway with
+///   `bicycle=designated`: separated.
+/// - **Footways, paths, tracks, steps and pedestrian streets** only with
+///   `bicycle=yes|permissive|designated|dismount`; shared with pedestrians
+///   (mixed) unless designated.
+/// - **Walking the bike:** `bicycle=dismount` and steps.
+///
+/// **Direction:** the car rules ([`direction`]), except that `oneway:bicycle`
+/// overrides them and `cycleway=opposite*` opens the contraflow. **Sides:** on a
+/// two-way street, the right side serves the way's own direction and the left
+/// the reverse — right-hand traffic is assumed, a known simplification for
+/// left-hand-traffic countries; on a one-way street a lane or track on either
+/// side serves the one direction, and the contraflow is mixed unless
+/// `cycleway=opposite_lane|opposite_track` says otherwise.
+#[must_use]
+pub fn bike_way(tags: &[(String, String)], node_count: usize) -> Option<BikeWay> {
+    let highway = tag_of(tags, "highway")?;
+    if node_count < 2 || tag_of(tags, "area") == Some("yes") {
+        return None;
+    }
+    let bicycle = tag_of(tags, "bicycle");
+    if matches!(bicycle, Some("no" | "use_sidepath")) || tag_of(tags, "motorroad") == Some("yes") {
+        return None;
+    }
+    if matches!(tag_of(tags, "access"), Some("no" | "private")) && !permits(bicycle) {
+        return None;
+    }
+    let class = layer_class(highway)?;
+    let dismount = bicycle == Some("dismount") || highway == "steps";
+
+    let road_direction = direction(tags, class);
+    let cycleway = tag_of(tags, "cycleway");
+    let contraflow = cycleway.is_some_and(|v| v.starts_with("opposite"));
+    let bike_direction = match tag_of(tags, "oneway:bicycle") {
+        Some("no" | "false" | "0") => Direction::Both,
+        Some("yes" | "true" | "1") if road_direction == Direction::Backward => Direction::Backward,
+        Some("yes" | "true" | "1") => Direction::Forward,
+        Some("-1" | "reverse") => Direction::Backward,
+        _ if contraflow => Direction::Both,
+        _ => road_direction,
+    };
+
+    let (forward, backward) = match class {
+        RoadClass::Motorway | RoadClass::MotorwayLink => return None,
+        RoadClass::Cycleway => (BikeInfrastructure::Separated, BikeInfrastructure::Separated),
+        RoadClass::Footway | RoadClass::Pedestrian => {
+            let level = match bicycle {
+                Some("designated") => BikeInfrastructure::Separated,
+                Some("yes" | "permissive" | "dismount") => BikeInfrastructure::Mixed,
+                _ => return None,
+            };
+            (level, level)
+        }
+        _ => {
+            let base = if tag_of(tags, "cyclestreet") == Some("yes")
+                || tag_of(tags, "bicycle_road") == Some("yes")
+            {
+                BikeInfrastructure::Lane
+            } else {
+                BikeInfrastructure::Mixed
+            };
+            let both = infrastructure_of(tag_of(tags, "cycleway:both"))
+                .or_else(|| infrastructure_of(cycleway.filter(|_| !contraflow)));
+            let right = infrastructure_of(tag_of(tags, "cycleway:right")).or(both);
+            let left = infrastructure_of(tag_of(tags, "cycleway:left")).or(both);
+            let opposite = infrastructure_of(cycleway.filter(|_| contraflow));
+            let (f, b) = if road_direction == Direction::Both {
+                (right, left)
+            } else {
+                // One way for cars: a lane on either side serves it; the
+                // contraflow is what `opposite_*` says.
+                let with = right.or(left);
+                if road_direction == Direction::Backward {
+                    (opposite, with)
+                } else {
+                    (with, opposite)
+                }
+            };
+            (base.max(f.unwrap_or(base)), base.max(b.unwrap_or(base)))
+        }
+    };
+    Some(BikeWay {
+        class,
+        forward: bike_direction.has_forward().then_some(forward),
+        backward: bike_direction.has_backward().then_some(backward),
+        dismount,
+    })
+}
+
+/// Decide whether a way is a walk link (S193), and its class. Every walk link
+/// is walked in both directions.
+///
+/// - **Never:** motorways, `motorroad=yes`, `foot=no`, `foot=use_sidepath`,
+///   areas, and ways with `access=no|private` unless
+///   `foot=yes|designated|permissive`.
+/// - **Cycleways** only with `foot=yes|designated|permissive`.
+/// - **Everything else**, steps included.
+#[must_use]
+pub fn walk_way(tags: &[(String, String)], node_count: usize) -> Option<RoadClass> {
+    let highway = tag_of(tags, "highway")?;
+    if node_count < 2 || tag_of(tags, "area") == Some("yes") {
+        return None;
+    }
+    let foot = tag_of(tags, "foot");
+    if matches!(foot, Some("no" | "use_sidepath")) || tag_of(tags, "motorroad") == Some("yes") {
+        return None;
+    }
+    if matches!(tag_of(tags, "access"), Some("no" | "private")) && !permits(foot) {
+        return None;
+    }
+    let class = layer_class(highway)?;
+    match class {
+        RoadClass::Motorway | RoadClass::MotorwayLink => None,
+        RoadClass::Cycleway => permits(foot).then_some(class),
+        _ => Some(class),
+    }
 }

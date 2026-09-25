@@ -29,7 +29,11 @@ use std::collections::{HashMap, HashSet};
 
 use openmobisim_core_graph::connectivity::strong_components;
 use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
-use openmobisim_core_graph::geometry::{LonLat, polyline_length_metres};
+use openmobisim_core_graph::geometry::{LonLat, Projection, polyline_length_metres};
+use openmobisim_core_graph::layers::{
+    BikeInfrastructure, StaticLayer, StaticLayerDefaults, StaticLink, StaticNetwork,
+    StaticNetworkBuilder,
+};
 use openmobisim_core_graph::link_geometry::LinkGeometry;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_types::diagnostics::{Category, DiagCode, DiagKey, Diagnostics, Severity};
@@ -119,6 +123,33 @@ pub struct ImportOptions {
     /// [`Connectivity::Keep`] by default: a default import behaves as it always
     /// has.
     pub connectivity: Connectivity,
+    /// Which static layers to build besides the road network (S195). None by
+    /// default in Rust; the Python reader builds both.
+    pub layers: LayerOptions,
+}
+
+/// Which bike and walk layers an import builds, and with which defaults
+/// (S193, S195).
+///
+/// Each layer is its own graph, read from the same ways in the same pass: its
+/// own junctions, its own strong-connectivity trim (under
+/// [`Connectivity::Strong`]) and its own contraction (under
+/// [`ImportOptions::contract`]), projected in the road network's projection.
+/// **The road network is the same with or without them.**
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct LayerOptions {
+    /// Build the bike layer ([`crate::tags::bike_way`]).
+    pub bike: bool,
+    /// Build the walk layer ([`crate::tags::walk_way`]).
+    pub walk: bool,
+    /// The speeds the layers' links get.
+    pub defaults: StaticLayerDefaults,
+}
+
+impl LayerOptions {
+    /// Both layers, with the shipped defaults.
+    pub const BOTH: LayerOptions =
+        LayerOptions { bike: true, walk: true, defaults: StaticLayerDefaults::SHIPPED };
 }
 
 impl Default for ImportOptions {
@@ -129,6 +160,7 @@ impl Default for ImportOptions {
             multipliers: GlobalMultipliers::default(),
             signals: SignalDefaults::SHIPPED,
             connectivity: Connectivity::Keep,
+            layers: LayerOptions::default(),
         }
     }
 }
@@ -213,6 +245,11 @@ struct ProtoLink {
     maxspeed_km_h: Option<f64>,
     /// Part of a roundabout's circulating carriageway (`junction=roundabout`).
     roundabout: bool,
+    /// The bike infrastructure, on the bike layer ([`BikeInfrastructure::Mixed`]
+    /// on the road network and the walk layer).
+    infrastructure: BikeInfrastructure,
+    /// The bike must be walked here, on the bike layer.
+    dismount: bool,
     length_m: f64,
     /// This link's own polyline, `from` to `to` (S125). Carried alongside
     /// `length_m` — computed from the same points, at the same place, and
@@ -232,6 +269,8 @@ impl ProtoLink {
         self.class == next.class
             && self.lanes == next.lanes
             && self.roundabout == next.roundabout
+            && self.infrastructure == next.infrastructure
+            && self.dismount == next.dismount
             && match (self.maxspeed_km_h, next.maxspeed_km_h) {
                 (Some(a), Some(b)) => (a - b).abs() < 1e-9,
                 (None, None) => true,
@@ -274,6 +313,44 @@ pub struct ImportOutput {
     /// Roads left out because of what they were (a loop) or where they were (cut
     /// off from the rest), one entry per directed link, in a fixed order.
     pub dropped: Vec<DroppedLink>,
+    /// The bike layer, if [`LayerOptions::bike`] asked for it.
+    pub bike: Option<LayerImport>,
+    /// The walk layer, if [`LayerOptions::walk`] asked for it.
+    pub walk: Option<LayerImport>,
+}
+
+/// One static layer an import built (S195).
+#[derive(Debug)]
+pub struct LayerImport {
+    /// The layer's graph and speeds.
+    pub network: StaticNetwork,
+    /// Its links' shapes.
+    pub geometry: LinkGeometry,
+    /// Its counts.
+    pub report: LayerReport,
+    /// Its links left out, as for the road network.
+    pub dropped: Vec<DroppedLink>,
+}
+
+/// What an import made of one static layer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct LayerReport {
+    /// Ways that became links of this layer.
+    pub ways_kept: u64,
+    /// Directed links before contraction (after the connectivity trim).
+    pub links_before_contraction: u64,
+    /// Directed links after contraction.
+    pub links_after_contraction: u64,
+    /// Strongly connected components before the trim (0 if there was none).
+    pub components_before: u64,
+    /// Directed links the trim removed.
+    pub links_disconnected: u64,
+    /// Total directed length, in whole metres.
+    pub length_m: u64,
+    /// Directed length on dedicated bike infrastructure, in whole metres.
+    pub dedicated_length_m: u64,
+    /// Links given the minimum length because they had none.
+    pub degenerate_links: u64,
 }
 
 /// Import a road network from an OSM source.
@@ -311,19 +388,40 @@ pub fn import_detailed(
     let mut report = ImportReport::default();
 
     // --- 1. Ways ------------------------------------------------------------
+    // The road network's ways and node counts are exactly what they are without
+    // layers; the layers count their own (S195).
+    let layers = options.layers;
     let mut kept_ways: Vec<OsmWay> = Vec::new();
+    let mut layer_only_ways: Vec<OsmWay> = Vec::new();
     let mut reference_count: HashMap<i64, u32> = HashMap::new();
+    let mut bike_references: HashMap<i64, u32> = HashMap::new();
+    let mut walk_references: HashMap<i64, u32> = HashMap::new();
 
     source.for_each_way(&mut |way| {
         report.ways_seen += 1;
-        match tags::classify(&way.tags, way.node_ids.len()) {
+        let n = way.node_ids.len();
+        let bike = layers.bike && tags::bike_way(&way.tags, n).is_some();
+        let walk = layers.walk && tags::walk_way(&way.tags, n).is_some();
+        for (on, counts) in [(bike, &mut bike_references), (walk, &mut walk_references)] {
+            if on {
+                for &node in &way.node_ids {
+                    *counts.entry(node).or_insert(0) += 1;
+                }
+            }
+        }
+        match tags::classify(&way.tags, n) {
             Ok(_) => {
                 for &n in &way.node_ids {
                     *reference_count.entry(n).or_insert(0) += 1;
                 }
                 kept_ways.push(way);
             }
-            Err(reason) => record_rejection(diagnostics, reason),
+            Err(reason) => {
+                record_rejection(diagnostics, reason);
+                if bike || walk {
+                    layer_only_ways.push(way);
+                }
+            }
         }
     })?;
     report.ways_kept = kept_ways.len() as u64;
@@ -333,11 +431,17 @@ pub fn import_detailed(
     let mut signalised: HashSet<i64> = HashSet::new();
     let mut forced_splits: HashSet<i64> = HashSet::new();
 
+    let mut road_nodes_kept = 0u64;
     source.for_each_node(&mut |node: OsmNode| {
         report.nodes_seen += 1;
-        if !reference_count.contains_key(&node.id) {
+        let on_road = reference_count.contains_key(&node.id);
+        if !on_road
+            && !bike_references.contains_key(&node.id)
+            && !walk_references.contains_key(&node.id)
+        {
             return;
         }
+        road_nodes_kept += u64::from(on_road);
         positions.insert(node.id, LonLat::new(node.lon, node.lat));
         if tags::node_is_signalised(&node.tags) {
             signalised.insert(node.id);
@@ -346,7 +450,7 @@ pub fn import_detailed(
             forced_splits.insert(node.id);
         }
     })?;
-    report.nodes_kept = positions.len() as u64;
+    report.nodes_kept = road_nodes_kept;
 
     // --- 3. Split -----------------------------------------------------------
     let mut is_junction: HashSet<i64> = HashSet::new();
@@ -369,7 +473,8 @@ pub fn import_detailed(
     let mut links: Vec<ProtoLink> = Vec::new();
     let mut dropped: Vec<DroppedLink> = Vec::new();
     for way in &kept_ways {
-        split_way(way, &positions, &is_junction, diagnostics, &mut links, &mut dropped);
+        let Some(spec) = road_spec(way, diagnostics) else { continue };
+        split_way(way, &spec, &positions, &is_junction, diagnostics, &mut links, &mut dropped);
     }
     report.closed_loops_dropped = dropped.len() as u64;
 
@@ -379,7 +484,8 @@ pub fn import_detailed(
     // dropping leaves.
     if options.connectivity == Connectivity::Strong {
         let nodes_before = used_nodes(&links).len();
-        let (kept, out, components) = keep_largest_strong_component(links);
+        let (kept, out, components) =
+            keep_largest_strong_component(links, |l| l.class.carries_motor_traffic());
         links = kept;
         report.components_before = components;
         report.links_disconnected = out.len() as u64;
@@ -455,7 +561,180 @@ pub fn import_detailed(
 
     let geometry = LinkGeometry::build(&network, &geometry_by_external_id);
 
-    Ok(ImportOutput { network, report, geometry, dropped })
+    // --- 6. The static layers (S195) ----------------------------------------
+    let context = LayerContext {
+        ways: &kept_ways,
+        more_ways: &layer_only_ways,
+        positions: &positions,
+        signalised: &signalised,
+        forced_splits: &forced_splits,
+        options,
+        projection: network.projection(),
+    };
+    let bike = if layers.bike {
+        Some(build_layer(StaticLayer::Bike, &bike_references, &context)?)
+    } else {
+        None
+    };
+    let walk = if layers.walk {
+        Some(build_layer(StaticLayer::Walk, &walk_references, &context)?)
+    } else {
+        None
+    };
+
+    Ok(ImportOutput { network, report, geometry, dropped, bike, walk })
+}
+
+/// What every static layer is built from.
+struct LayerContext<'a> {
+    ways: &'a [OsmWay],
+    more_ways: &'a [OsmWay],
+    positions: &'a HashMap<i64, LonLat>,
+    signalised: &'a HashSet<i64>,
+    forced_splits: &'a HashSet<i64>,
+    options: ImportOptions,
+    projection: Projection,
+}
+
+/// The links a way makes on `layer`, if it is part of it.
+fn layer_spec(layer: StaticLayer, way: &OsmWay) -> Option<WaySpec> {
+    let n = way.node_ids.len();
+    match layer {
+        StaticLayer::Bike => {
+            let bike = tags::bike_way(&way.tags, n)?;
+            let attrs =
+                |infrastructure| LinkAttrs { lanes: None, infrastructure, dismount: bike.dismount };
+            Some(WaySpec {
+                class: bike.class,
+                maxspeed_km_h: tags::maxspeed(&way.tags).value_km_h(),
+                roundabout: false,
+                forward: bike.forward.map(attrs),
+                backward: bike.backward.map(attrs),
+            })
+        }
+        StaticLayer::Walk => {
+            let class = tags::walk_way(&way.tags, n)?;
+            let attrs = LinkAttrs {
+                lanes: None,
+                infrastructure: BikeInfrastructure::Mixed,
+                dismount: false,
+            };
+            Some(WaySpec {
+                class,
+                maxspeed_km_h: None,
+                roundabout: false,
+                forward: Some(attrs),
+                backward: Some(attrs),
+            })
+        }
+    }
+}
+
+/// Build one static layer: its junctions, links, connectivity trim, contraction
+/// and graph, from the ways its rules admit.
+///
+/// Data-quality conditions the road import already recorded for the same ways
+/// (missing nodes, loops) are not recorded twice; the layer's own counts are in
+/// its [`LayerReport`].
+fn build_layer(
+    layer: StaticLayer,
+    references: &HashMap<i64, u32>,
+    cx: &LayerContext<'_>,
+) -> Result<LayerImport, OsmError> {
+    let mut scratch = Diagnostics::new();
+    let mut report = LayerReport::default();
+    let specs: Vec<(&OsmWay, WaySpec)> = cx
+        .ways
+        .iter()
+        .chain(cx.more_ways)
+        .filter_map(|w| layer_spec(layer, w).map(|spec| (w, spec)))
+        .collect();
+    report.ways_kept = specs.len() as u64;
+
+    let mut is_junction: HashSet<i64> = references
+        .iter()
+        .filter(|&(node, &count)| count >= 2 || cx.forced_splits.contains(node))
+        .map(|(&node, _)| node)
+        .collect();
+    for (way, _) in &specs {
+        is_junction.extend(way.node_ids.first().copied());
+        is_junction.extend(way.node_ids.last().copied());
+    }
+
+    let mut links: Vec<ProtoLink> = Vec::new();
+    let mut dropped: Vec<DroppedLink> = Vec::new();
+    for (way, spec) in &specs {
+        split_way(way, spec, cx.positions, &is_junction, &mut scratch, &mut links, &mut dropped);
+    }
+    if cx.options.connectivity == Connectivity::Strong {
+        let (kept, out, components) = keep_largest_strong_component(links, |_| true);
+        links = kept;
+        report.components_before = components;
+        report.links_disconnected = out.len() as u64;
+        dropped.extend(out.into_iter().map(|l| DroppedLink {
+            way_id: l.way_id,
+            reason: DropReason::NotStronglyConnected,
+            class: l.class,
+            geometry: l.geometry,
+        }));
+    }
+    report.links_before_contraction = links.len() as u64;
+    if cx.options.contract {
+        links = contract(links, cx.signalised, cx.forced_splits, &HashSet::new());
+    }
+    report.links_after_contraction = links.len() as u64;
+
+    let defaults = cx.options.layers.defaults;
+    let mut builder = StaticNetworkBuilder::new(layer);
+    for node in used_nodes(&links) {
+        let Some(&p) = cx.positions.get(&node) else { continue };
+        builder.add_node(node.to_string(), p);
+    }
+    let mut geometry_by_external_id: HashMap<String, Vec<LonLat>> =
+        HashMap::with_capacity(links.len());
+    let (mut length, mut dedicated) = (0.0f64, 0.0f64);
+    for (i, link) in links.iter().enumerate() {
+        let external_id = format!("{}:{i:08}", link.way_id);
+        geometry_by_external_id.insert(external_id.clone(), link.geometry.clone());
+        let speed_km_h = match layer {
+            StaticLayer::Bike => {
+                defaults.bike_speed_km_h(link.infrastructure, link.dismount, link.maxspeed_km_h)
+            }
+            StaticLayer::Walk => defaults.walk_km_h,
+        };
+        length += link.length_m;
+        if link.infrastructure.is_dedicated() {
+            dedicated += link.length_m;
+        }
+        builder.add_link(
+            external_id,
+            link.from.to_string(),
+            link.to.to_string(),
+            StaticLink {
+                class: link.class,
+                speed_km_h,
+                infrastructure: link.infrastructure,
+                length_m: Some(link.length_m),
+            },
+        );
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a total length in whole metres is far below 2^63"
+    )]
+    {
+        report.length_m = length.round() as u64;
+        report.dedicated_length_m = dedicated.round() as u64;
+    }
+    let mut build_diagnostics = Diagnostics::new();
+    let network = builder
+        .build(cx.projection, &mut build_diagnostics)
+        .map_err(|e| OsmError::Format(e.to_string()))?;
+    report.degenerate_links =
+        build_diagnostics.count_of(openmobisim_core_graph::network::codes::DEGENERATE_LINK_LENGTH);
+    let geometry = LinkGeometry::build(network.network(), &geometry_by_external_id);
+    Ok(LayerImport { network, geometry, report, dropped })
 }
 
 /// Record a way rejection, except the overwhelmingly common "it is not a road".
@@ -472,23 +751,29 @@ fn record_rejection(diagnostics: &mut Diagnostics, reason: Rejection) {
     diagnostics.record(DiagKey::run_level(Category::DataQuality, code, Severity::Info));
 }
 
-/// Split one way into directed links between its junction nodes.
-///
-/// Nodes the extract does not contain — normal where a bounding box cuts a way,
-/// and what a [`crate::region::ClippedSource`] produces on purpose — break the
-/// way into **pieces**, each a run of consecutive nodes that are present. A
-/// piece is split at its junctions like any way; nothing is bridged across a
-/// gap, because a straight link through territory the extract does not hold is
-/// a street that does not exist (S172; before, such a way was joined up).
-fn split_way(
-    way: &OsmWay,
-    positions: &HashMap<i64, LonLat>,
-    is_junction: &HashSet<i64>,
-    diagnostics: &mut Diagnostics,
-    out: &mut Vec<ProtoLink>,
-    dropped: &mut Vec<DroppedLink>,
-) {
-    let Ok(class) = tags::classify(&way.tags, way.node_ids.len()) else { return };
+/// The links one way makes: its class and speed limit, and the attributes of
+/// the link in each direction it has one.
+#[derive(Clone, Copy, Debug)]
+struct WaySpec {
+    class: RoadClass,
+    maxspeed_km_h: Option<f64>,
+    roundabout: bool,
+    forward: Option<LinkAttrs>,
+    backward: Option<LinkAttrs>,
+}
+
+/// What differs between a way's two directions.
+#[derive(Clone, Copy, Debug)]
+struct LinkAttrs {
+    lanes: Option<u8>,
+    infrastructure: BikeInfrastructure,
+    dismount: bool,
+}
+
+/// The links a way makes on the road network, recording a speed limit that
+/// could not be read. `None` if the way is not a road.
+fn road_spec(way: &OsmWay, diagnostics: &mut Diagnostics) -> Option<WaySpec> {
+    let class = tags::classify(&way.tags, way.node_ids.len()).ok()?;
     let direction = tags::direction(&way.tags, class);
     let lane_counts = tags::lanes(&way.tags, direction);
 
@@ -500,10 +785,37 @@ fn split_way(
         };
         diagnostics.record(DiagKey::run_level(Category::DataQuality, code, Severity::Info));
     }
-    let maxspeed_km_h = speed.value_km_h();
-    // Only `roundabout`: OSM's `circular` does not imply that entering traffic
-    // gives way (S155).
-    let roundabout = crate::source::tag_of(&way.tags, "junction") == Some("roundabout");
+    let attrs =
+        |lanes| LinkAttrs { lanes, infrastructure: BikeInfrastructure::Mixed, dismount: false };
+    Some(WaySpec {
+        class,
+        maxspeed_km_h: speed.value_km_h(),
+        // Only `roundabout`: OSM's `circular` does not imply that entering
+        // traffic gives way (S155).
+        roundabout: crate::source::tag_of(&way.tags, "junction") == Some("roundabout"),
+        forward: direction.has_forward().then(|| attrs(lane_counts.forward)),
+        backward: direction.has_backward().then(|| attrs(lane_counts.backward)),
+    })
+}
+
+/// Split one way into directed links between its junction nodes.
+///
+/// Nodes the extract does not contain — normal where a bounding box cuts a way,
+/// and what a [`crate::region::ClippedSource`] produces on purpose — break the
+/// way into **pieces**, each a run of consecutive nodes that are present. A
+/// piece is split at its junctions like any way; nothing is bridged across a
+/// gap, because a straight link through territory the extract does not hold is
+/// a street that does not exist (S172; before, such a way was joined up).
+fn split_way(
+    way: &OsmWay,
+    spec: &WaySpec,
+    positions: &HashMap<i64, LonLat>,
+    is_junction: &HashSet<i64>,
+    diagnostics: &mut Diagnostics,
+    out: &mut Vec<ProtoLink>,
+    dropped: &mut Vec<DroppedLink>,
+) {
+    let WaySpec { class, maxspeed_km_h, roundabout, .. } = *spec;
 
     // Runs of consecutive nodes the extract contains; record the missing ones
     // once per way rather than once per node.
@@ -577,20 +889,22 @@ fn split_way(
                     geometry,
                 });
             } else {
-                if direction.has_forward() {
+                if let Some(attrs) = spec.forward {
                     out.push(ProtoLink {
                         way_id: way.id,
                         from,
                         to,
                         class,
-                        lanes: lane_counts.forward,
+                        lanes: attrs.lanes,
                         maxspeed_km_h,
                         roundabout,
+                        infrastructure: attrs.infrastructure,
+                        dismount: attrs.dismount,
                         length_m,
                         geometry: geometry.clone(),
                     });
                 }
-                if direction.has_backward() {
+                if let Some(attrs) = spec.backward {
                     let mut backward_geometry = geometry;
                     backward_geometry.reverse();
                     out.push(ProtoLink {
@@ -598,9 +912,11 @@ fn split_way(
                         from: to,
                         to: from,
                         class,
-                        lanes: lane_counts.backward,
+                        lanes: attrs.lanes,
                         maxspeed_km_h,
                         roundabout,
+                        infrastructure: attrs.infrastructure,
+                        dismount: attrs.dismount,
                         length_m,
                         geometry: backward_geometry,
                     });
@@ -636,6 +952,8 @@ fn record_coverage(links: &[ProtoLink], report: &mut ImportReport) {
 
 /// Keep only the drivable links inside the largest strongly connected component
 /// of the drivable node graph; links a car may not use are kept untouched.
+/// `drivable` says which links take part: the car's on the road network, all
+/// of them on a static layer.
 ///
 /// Returns the links kept (in their original order), the links removed (same
 /// order), and how many components the drivable graph had. A link is kept when
@@ -648,8 +966,10 @@ fn record_coverage(links: &[ProtoLink], report: &mut ImportReport) {
 /// deterministic.
 ///
 /// Cost: linear in links, and a few bytes per node and link while it runs.
-fn keep_largest_strong_component(links: Vec<ProtoLink>) -> (Vec<ProtoLink>, Vec<ProtoLink>, u64) {
-    let drivable = |l: &ProtoLink| l.class.carries_motor_traffic();
+fn keep_largest_strong_component(
+    links: Vec<ProtoLink>,
+    drivable: impl Fn(&ProtoLink) -> bool,
+) -> (Vec<ProtoLink>, Vec<ProtoLink>, u64) {
     let drivable_links: Vec<&ProtoLink> = links.iter().filter(|l| drivable(l)).collect();
 
     // Dense ids for the nodes drivable links touch.
@@ -813,6 +1133,8 @@ fn contract(
                     lanes: a.lanes,
                     maxspeed_km_h: a.maxspeed_km_h,
                     roundabout: a.roundabout,
+                    infrastructure: a.infrastructure,
+                    dismount: a.dismount,
                     length_m: a.length_m + b.length_m,
                     geometry,
                 });

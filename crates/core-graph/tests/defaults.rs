@@ -92,7 +92,7 @@ fn derived_wave_speeds_land_where_the_literature_says_they_should() {
 #[test]
 fn the_shipped_numbers_are_what_they_say_they_are() {
     // A change here is a modelling change. Bump DEFAULTS_VERSION with it.
-    assert_eq!(DEFAULTS_VERSION, 1);
+    assert_eq!(DEFAULTS_VERSION, 2);
 
     let motorway = default_row(RoadClass::Motorway);
     assert_eq!(motorway.free_flow_km_h, 110.0);

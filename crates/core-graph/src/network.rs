@@ -123,6 +123,9 @@ pub struct RoadNetworkBuilder {
     nodes: Vec<(String, LonLat)>,
     signalised: Vec<String>,
     links: Vec<(String, String, String, LinkSpec)>,
+    /// The projection to use instead of one chosen from the extent (S195: a
+    /// bike or walk layer shares the road network's).
+    projection: Option<Projection>,
 }
 
 impl RoadNetworkBuilder {
@@ -145,6 +148,14 @@ impl RoadNetworkBuilder {
     /// delay and every turn through it a green-time fraction (S90).
     pub fn mark_signalised(&mut self, external_id: impl Into<String>) {
         self.signalised.push(external_id.into());
+    }
+
+    /// Project in `projection` rather than in one chosen from the nodes'
+    /// extent, so that this network shares another's coordinate system (S195).
+    #[must_use]
+    pub fn with_projection(mut self, projection: Projection) -> Self {
+        self.projection = Some(projection);
+        self
     }
 
     /// Declare a directed link. A two-way street is two links.
@@ -183,8 +194,12 @@ impl RoadNetworkBuilder {
         let node_ids: ExternalIdTable = self.node_ids.build();
         let node_count = node_ids.count();
 
-        // One projection for the whole scenario, chosen from the extent.
-        let projection = Projection::for_extent(self.nodes.iter().map(|(_, p)| *p))?;
+        // One projection for the whole scenario, chosen from the extent unless
+        // it was given.
+        let projection = match self.projection {
+            Some(p) => p,
+            None => Projection::for_extent(self.nodes.iter().map(|(_, p)| *p))?,
+        };
 
         let mut node_x = vec![0.0f64; node_count as usize];
         let mut node_y = vec![0.0f64; node_count as usize];

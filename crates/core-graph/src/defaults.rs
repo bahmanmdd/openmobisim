@@ -58,7 +58,10 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// any number below changes**. A cached network built with different parameters
 /// is not the same network, and silently reusing it is the kind of error that
 /// takes a week to find.
-pub const DEFAULTS_VERSION: u32 = 1;
+///
+/// Version 2 (S195): the bike and walk layers' speeds and the dedicated-bike
+/// preference ([`crate::layers::StaticLayerDefaults`]) joined the table.
+pub const DEFAULTS_VERSION: u32 = 2;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///
