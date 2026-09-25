@@ -63,6 +63,7 @@ fn demand(node: impl Fn(u32, u32) -> LonLat) -> Vec<RawTrip> {
         departure_time: Second(dep),
         user_class: class.to_string(),
         weight,
+        mode: None,
     };
 
     let mut trips = Vec::new();
@@ -124,6 +125,7 @@ fn jammed_demand(node: impl Fn(u32, u32) -> LonLat) -> Vec<RawTrip> {
                 departure_time: Second(next(60)),
                 user_class: "commuter".to_string(),
                 weight: None,
+                mode: None,
             }
         })
         .collect()

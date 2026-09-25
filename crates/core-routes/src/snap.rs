@@ -49,6 +49,23 @@ impl NodeSnapper {
         if ids.is_empty() {
             ids = (0..network.node_count()).collect();
         }
+        Self::over(network, &ids)
+    }
+
+    /// Index every node of `network` that has a link: a bike or walk layer's
+    /// graph (S195), whose every link is usable by its mode.
+    #[must_use]
+    pub fn every_node(network: &RoadNetwork) -> Self {
+        let ids: Vec<u32> = (0..network.node_count())
+            .filter(|&n| {
+                let node = NodeId::new(n);
+                !network.out_links(node).is_empty() || !network.in_links(node).is_empty()
+            })
+            .collect();
+        Self::over(network, &ids)
+    }
+
+    fn over(network: &RoadNetwork, ids: &[u32]) -> Self {
         let xy: Vec<(f64, f64)> = ids
             .iter()
             .map(|&n| {

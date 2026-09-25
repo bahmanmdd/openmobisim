@@ -33,6 +33,7 @@
 pub mod equilibration;
 pub mod events;
 pub mod identity;
+pub mod layers;
 pub mod link_times;
 pub mod route_cache;
 pub mod route_choice;
@@ -42,8 +43,9 @@ pub mod run;
 pub use equilibration::{Equilibration, IterationReport, Msa, NoEquilibration};
 pub use events::{EventRow, EventType};
 pub use identity::RunDescription;
+pub use layers::{LayerSetup, StaticLayers};
 pub use link_times::{LinkTimes, relative_time_change};
 pub use route_cache::RouteSetCache;
 pub use route_choice::{NO_ROUTE, ROUTE_ATTRIBUTES, RouteChoices};
 pub use route_update::{BestResponse, NoRouteUpdate, RouteUpdate};
-pub use run::{FlowMotor, Run, RunError, RunResult, TripCompletionStats};
+pub use run::{FlowMotor, ModeTotals, Run, RunError, RunResult, TripCompletionStats};

@@ -76,7 +76,20 @@ impl Trajectory {
 /// with any other vehicle — level 0's whole mechanism.
 #[must_use]
 pub fn traverse_free_flow(vehicle: &Vehicle, network: &RoadNetwork) -> Trajectory {
-    traverse_exact(vehicle, network, |_, _, _| {})
+    traverse_exact(vehicle, network, free_flow_of(network), |_, _, _| {})
+}
+
+/// [`traverse_free_flow`] at the link times in `seconds` (one per link of
+/// `network`) instead of the network's free-flow times: a bike or walk trip on
+/// its layer, whose times are static (S195).
+#[must_use]
+pub fn traverse_timed(vehicle: &Vehicle, network: &RoadNetwork, seconds: &[f64]) -> Trajectory {
+    traverse_exact(vehicle, network, |l| seconds[l.index()], |_, _, _| {})
+}
+
+/// The network's own free-flow time of a link, in seconds.
+fn free_flow_of(network: &RoadNetwork) -> impl Fn(LinkId) -> f64 + '_ {
+    |link| free_flow_seconds(network.free_flow_time(link))
 }
 
 /// [`traverse_free_flow`], reporting each link's exact `(link, enter, exit)`
@@ -84,6 +97,7 @@ pub fn traverse_free_flow(vehicle: &Vehicle, network: &RoadNetwork) -> Trajector
 fn traverse_exact(
     vehicle: &Vehicle,
     network: &RoadNetwork,
+    seconds_of: impl Fn(LinkId) -> f64,
     mut on_link: impl FnMut(LinkId, f64, f64),
 ) -> Trajectory {
     let mut links = Vec::with_capacity(vehicle.route.len());
@@ -100,7 +114,7 @@ fn traverse_exact(
                 "route is discontinuous: {previous:?} does not lead to {link:?}"
             );
         }
-        let end = clock + free_flow_seconds(network.free_flow_time(link));
+        let end = clock + seconds_of(link);
         links.push(LinkTraversal { link, enter: floored(clock), exit: floored(end) });
         on_link(link, clock, end);
         clock = end;
@@ -136,12 +150,39 @@ pub fn load_level_0_binned<'a>(
     window: f64,
     bin_seconds: u32,
 ) -> (Vec<Trajectory>, LinkBins) {
+    binned(vehicles, network, free_flow_of(network), window, bin_seconds)
+}
+
+/// [`load_level_0_binned`] at the link times in `seconds` (S195): a bike or
+/// walk layer's per-link results. Each vehicle's `pcu` is what the bins sum,
+/// which on a static layer is its traveller weight.
+///
+/// # Panics
+///
+/// Panics if `bin_seconds` is zero.
+pub fn load_timed_binned<'a>(
+    vehicles: impl IntoIterator<Item = &'a Vehicle>,
+    network: &RoadNetwork,
+    seconds: &[f64],
+    window: f64,
+    bin_seconds: u32,
+) -> (Vec<Trajectory>, LinkBins) {
+    binned(vehicles, network, |l| seconds[l.index()], window, bin_seconds)
+}
+
+fn binned<'a>(
+    vehicles: impl IntoIterator<Item = &'a Vehicle>,
+    network: &RoadNetwork,
+    seconds_of: impl Fn(LinkId) -> f64,
+    window: f64,
+    bin_seconds: u32,
+) -> (Vec<Trajectory>, LinkBins) {
     let mut crossings: Vec<(f64, f64, u32, f64)> = Vec::new();
     let trajectories: Vec<Trajectory> = vehicles
         .into_iter()
         .map(|v| {
             let pcu = v.pcu.get();
-            traverse_exact(v, network, |link, enter, exit| {
+            traverse_exact(v, network, &seconds_of, |link, enter, exit| {
                 crossings.push((exit, enter, link.raw(), pcu));
             })
         })
@@ -177,7 +218,7 @@ pub fn load_level_0_recorded<'a>(
         .into_iter()
         .map(|v| {
             let pcu = v.pcu.get();
-            traverse_exact(v, network, |link, enter, exit| {
+            traverse_exact(v, network, free_flow_of(network), |link, enter, exit| {
                 crossings.push((exit, enter, link.raw(), pcu));
             })
         })

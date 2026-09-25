@@ -47,7 +47,7 @@ pub mod manifest;
 pub use diagnostics::write_diagnostics;
 pub use events::write_events;
 pub use kpis::write_kpis;
-pub use link_bins::write_link_bins;
+pub use link_bins::{write_layer_link_bins, write_link_bins};
 pub use manifest::{Manifest, write_manifest};
 
 /// Something that went wrong writing an output artifact.

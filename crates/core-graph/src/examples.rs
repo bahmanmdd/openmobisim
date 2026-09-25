@@ -214,3 +214,100 @@ pub fn toy_network() -> (RoadNetwork, Diagnostics) {
         .expect("the toy network is always projectable: coordinates are built, not read");
     (network, diagnostics)
 }
+
+/// The toy network's bike and walk layers (S195): the road part's own streets,
+/// plus what makes each layer's hand-derived cases.
+///
+/// **Bike layer.** Every road link, in the road's direction, in mixed traffic;
+/// **contraflow** on `s1` (`s1:c`, `S → N1`, 300 m: a trip no car can make);
+/// and a two-way **cycle track** beside `a3` through a node `T`
+/// (`t1` `M → T`, `t2` `T → X0`, 260 m each, and `t1:r`, `t2:r` back), 520 m
+/// against `a3`'s 400 m. At the shipped speeds `a3` takes 96 s and the track
+/// 104 s: **by time the street wins; under the `dedicated` cost (mixed traffic
+/// × 1.2, so `a3` costs 115.2 s) the track does.**
+///
+/// **Walk layer.** Every road link both ways, plus two walk-only paths: `w1`
+/// `W ↔ N1` (a diagonal, 300√2 m, against 600 m by the streets) and `w2`
+/// `N1 ↔ N2` (200 m, against 800 m).
+///
+/// Nodes carry the road part's names and positions (`T` at 700 m east,
+/// 166 m north: 260 m from `M` and from `X0`); both layers are projected in
+/// the road part's projection. The road part itself is untouched.
+///
+/// # Panics
+///
+/// Never in practice: coordinates are built, not read.
+#[must_use]
+pub fn toy_network_layers() -> (crate::layers::StaticNetwork, crate::layers::StaticNetwork) {
+    use crate::layers::{
+        BikeInfrastructure, StaticLayer, StaticLayerDefaults, StaticLink, StaticNetworkBuilder,
+    };
+    use openmobisim_core_types::ids::{EntityId, LinkId};
+
+    let (road, _) = toy_network();
+    let d = StaticLayerDefaults::SHIPPED;
+    let at = |east: f64, north: f64| {
+        LonLat::new(
+            4.8 + east / metres_per_degree_lon(),
+            REFERENCE_LATITUDE_DEG + north / METRES_PER_DEGREE_LAT,
+        )
+    };
+    let node_ids = road.node_external_ids();
+    let name = |n: openmobisim_core_types::ids::NodeId| node_ids.external(n.raw()).to_string();
+    let mixed = |class, speed_km_h, length_m| StaticLink {
+        class,
+        speed_km_h,
+        infrastructure: BikeInfrastructure::Mixed,
+        length_m: Some(length_m),
+    };
+
+    let mut bike = StaticNetworkBuilder::new(StaticLayer::Bike);
+    let mut walk = StaticNetworkBuilder::new(StaticLayer::Walk);
+    for raw in 0..road.node_count() {
+        let node = openmobisim_core_types::ids::NodeId::new(raw);
+        bike.add_node(name(node), road.node_lonlat(node));
+        walk.add_node(name(node), road.node_lonlat(node));
+    }
+    for raw in 0..road.link_count() {
+        let link = LinkId::new(raw);
+        let id = road.link_external_ids().external(raw);
+        let (from, to) = (name(road.link_from(link)), name(road.link_to(link)));
+        let (class, length) = (road.link_class(link), road.link_length(link).get());
+        bike.add_link(id, from.clone(), to.clone(), mixed(class, d.bike_mixed_km_h, length));
+        walk.add_link(id, from.clone(), to.clone(), mixed(class, d.walk_km_h, length));
+        walk.add_link(format!("{id}:r"), to, from, mixed(class, d.walk_km_h, length));
+    }
+    // Contraflow on s1.
+    bike.add_link("s1:c", "S", "N1", mixed(RoadClass::Residential, d.bike_mixed_km_h, 300.0));
+    // The cycle track beside a3.
+    let north = (260.0_f64 * 260.0 - 200.0 * 200.0).sqrt();
+    bike.add_node("T", at(700.0, north));
+    let track = StaticLink {
+        class: RoadClass::Cycleway,
+        speed_km_h: d.bike_dedicated_km_h,
+        infrastructure: BikeInfrastructure::Separated,
+        length_m: Some(260.0),
+    };
+    for (id, from, to) in
+        [("t1", "M", "T"), ("t2", "T", "X0"), ("t2:r", "X0", "T"), ("t1:r", "T", "M")]
+    {
+        bike.add_link(id, from, to, track);
+    }
+    // The walk-only paths.
+    let diagonal = 300.0 * 2.0_f64.sqrt();
+    for (id, from, to, length) in [
+        ("w1", "W", "N1", diagonal),
+        ("w1:r", "N1", "W", diagonal),
+        ("w2", "N1", "N2", 200.0),
+        ("w2:r", "N2", "N1", 200.0),
+    ] {
+        walk.add_link(id, from, to, mixed(RoadClass::Footway, d.walk_km_h, length));
+    }
+
+    let mut diagnostics = Diagnostics::new();
+    let projection = road.projection();
+    let bike = bike.build(projection, &mut diagnostics).expect("built coordinates project");
+    let walk = walk.build(projection, &mut diagnostics).expect("built coordinates project");
+    debug_assert!(diagnostics.is_empty(), "the toy layers build cleanly");
+    (bike, walk)
+}

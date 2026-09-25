@@ -45,6 +45,9 @@ pub enum EventType {
     /// A car was available, but `core-sim`'s placeholder router (S133)
     /// found no path.
     NoFeasiblePath,
+    /// The trip's mode cannot be simulated by this run: its layer is not
+    /// there, or the mode is not built yet (transit, S195).
+    ModeNotAvailable,
 }
 
 impl EventType {
@@ -56,6 +59,7 @@ impl EventType {
             EventType::TripTruncated => "trip_truncated",
             EventType::NoVehicleAvailable => "no_vehicle_available",
             EventType::NoFeasiblePath => "no_feasible_path",
+            EventType::ModeNotAvailable => "mode_not_available",
         }
     }
 }

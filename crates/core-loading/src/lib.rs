@@ -31,7 +31,7 @@ pub mod vehicle;
 pub use curves::LinkCurves;
 pub use level0::{
     LinkTraversal, Trajectory, load_level_0, load_level_0_binned, load_level_0_recorded,
-    traverse_free_flow,
+    load_timed_binned, traverse_free_flow, traverse_timed,
 };
 pub use link_bins::{EntryTables, LinkBinRecorder, LinkBins};
 pub use ltm::{FidelityLevel, LtmNetwork, run_ltm, run_ltm_binned, run_ltm_recorded};

@@ -5,6 +5,7 @@
 //! | Module | What it owns |
 //! |---|---|
 //! | [`trips`] | Reading `trips.parquet` into unsorted, unvalidated rows |
+//! | [`mode`] | A trip's mode, the optional `mode` column (S195) |
 //! | [`persons`] | Reading the optional `persons.parquet` |
 //! | [`travellers`] | [`travellers::Travellers`] and [`travellers::Trips`]: the dense, sorted, chain-validated structures everything downstream reads |
 //! | [`vehicles`] | [`vehicles::VehicleLocations`] — per-run mutable state (S98), seeded from S129's rule |
@@ -30,6 +31,7 @@
 //! attributes for choice models") are deferred for the same reason: nothing
 //! reads them until the choice layer exists to.
 
+pub mod mode;
 pub mod persons;
 pub mod travellers;
 pub mod trips;
@@ -37,6 +39,7 @@ pub mod vehicles;
 
 pub(crate) mod columns;
 
+pub use mode::Mode;
 pub use persons::{RawPerson, read_persons_parquet};
 pub use travellers::{ClassDefaults, Ownership, Travellers, Trips, build as build_travellers};
 pub use trips::{RawTrip, read_trips_parquet};

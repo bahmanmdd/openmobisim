@@ -17,7 +17,9 @@
 //! the window; the loading engine, its level and its step; the route method
 //! and its options; the choice model and its options; the equilibration
 //! strategy and its options; the choice-set detour limit (S178); the route update and its options, if there is one (S176);
-//! the bin length of the per-link results.
+//! the bin length of the per-link results; and, if any trip is not a car trip,
+//! every trip's mode and each static layer a trip uses (its graph, speeds and
+//! search costs, S195) — a car-only run hashes as it did before modes existed.
 //!
 //! **What is not.** The platform and the crate version (the manifest carries
 //! them next to the fingerprint: a fingerprint says *what was run*, the
@@ -30,13 +32,15 @@
 //! for 384 000 links, 152 000 nodes and 19 000 trips; 152 ms with a million
 //! trips; under 1% of an 8-second run.
 
-use openmobisim_core_demand::{Travellers, Trips};
+use openmobisim_core_demand::{Mode, Travellers, Trips};
+use openmobisim_core_graph::layers::StaticLayer;
 use openmobisim_core_graph::link_geometry::NetworkFingerprint;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_types::hash::{Fnv1a, fingerprint_hex};
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TravellerId, TripId};
 use openmobisim_core_types::time::Second;
 
+use crate::layers::{StaticLayers, static_layer_of};
 use crate::run::FlowMotor;
 
 /// What went into one run. See the [module docs](self).
@@ -123,6 +127,7 @@ pub(crate) struct Inputs<'a> {
     pub route_update_descriptor: &'a str,
     pub route_update_active: bool,
     pub choice_detour_limit: f64,
+    pub layers: &'a StaticLayers,
 }
 
 pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
@@ -157,6 +162,7 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         h.write_str(inputs.route_update);
         h.write_str(inputs.route_update_descriptor);
     }
+    hash_modes(&mut h, inputs.trips, inputs.layers);
 
     RunDescription {
         fingerprint: h.finish(),
@@ -213,6 +219,41 @@ pub(crate) fn hash_network(h: &mut Fnv1a, network: &RoadNetwork, ids: u64) {
         h.write_f64(p.jam_density.get());
         h.write_f64(p.wave_speed.get());
         h.write_f64(p.control_delay.get());
+    }
+}
+
+/// Every trip's mode and the static layers the trips use (S195); nothing at
+/// all if every trip is a car trip.
+fn hash_modes(h: &mut Fnv1a, trips: &Trips, layers: &StaticLayers) {
+    let mut used = [false; 2];
+    let mut any = false;
+    for raw in 0..trips.len() {
+        let mode = trips.mode(TripId::new(raw));
+        any |= mode != Mode::Car;
+        match static_layer_of(mode) {
+            Some(StaticLayer::Bike) => used[0] = true,
+            Some(StaticLayer::Walk) => used[1] = true,
+            None => {}
+        }
+    }
+    if !any {
+        return;
+    }
+    h.write_str("modes");
+    for raw in 0..trips.len() {
+        h.write_u8(trips.mode(TripId::new(raw)) as u8);
+    }
+    for (layer, used) in [StaticLayer::Bike, StaticLayer::Walk].into_iter().zip(used) {
+        let Some(setup) = layers.get(layer).filter(|_| used) else { continue };
+        let graph = setup.network().network();
+        h.write_str(layer.as_str());
+        hash_network(h, graph, NetworkFingerprint::of(graph).value());
+        for &s in setup.seconds() {
+            h.write_f64(s);
+        }
+        for &c in setup.costs() {
+            h.write_f64(c);
+        }
     }
 }
 

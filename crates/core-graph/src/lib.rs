@@ -38,7 +38,7 @@ pub use defaults::{
     DEFAULTS_VERSION, DefaultRow, GlobalMultipliers, LinkParameters, ParameterNote, RoadClass,
     SignalDefaults, default_row,
 };
-pub use examples::{manhattan_grid, toy_network};
+pub use examples::{manhattan_grid, toy_network, toy_network_layers};
 pub use geometry::{
     Hemisphere, LonLat, Projected, Projection, ProjectionError, UtmZone, ground_distance_metres,
     haversine_metres, polyline_length_metres, scale_factor,

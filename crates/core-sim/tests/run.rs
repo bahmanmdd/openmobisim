@@ -53,6 +53,7 @@ fn trip(
         departure_time: Second(departure),
         user_class: "commuter".to_string(),
         weight: None,
+        mode: None,
     }
 }
 

@@ -358,3 +358,71 @@ fn departure_time_round_trips() {
     let ivy = TravellerId::new(0);
     assert_eq!(trips.departure(travellers.first_trip(ivy)), Second(0));
 }
+
+/// `write_trips`'s file with a `mode` column appended.
+fn write_trips_with_modes(path: &std::path::Path, rows: &[TripRow], modes: &[Option<&str>]) {
+    write_trips(path, rows);
+    let file = File::open(path).expect("fixture");
+    let batch = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(file)
+        .expect("reader")
+        .build()
+        .expect("reader")
+        .next()
+        .expect("one batch")
+        .expect("batch");
+    let mut fields: Vec<Field> = batch.schema().fields().iter().map(|f| (**f).clone()).collect();
+    fields.push(Field::new("mode", DataType::Utf8, true));
+    let schema = Arc::new(Schema::new(fields));
+    let mut columns = batch.columns().to_vec();
+    columns.push(Arc::new(StringArray::from(modes.to_vec())));
+    let batch = RecordBatch::try_new(schema.clone(), columns).expect("valid batch");
+    let file = File::create(path).expect("create fixture");
+    let mut writer = ArrowWriter::try_new(file, schema, None).expect("writer");
+    writer.write(&batch).expect("write batch");
+    writer.close().expect("close writer");
+}
+
+#[test]
+fn a_trip_s_mode_is_read_and_a_missing_one_is_a_car_trip() {
+    use openmobisim_core_demand::Mode;
+    use openmobisim_core_types::ids::TripId;
+
+    let path = temp_path("modes.parquet");
+    let rows = [
+        trip("a", 1, (4.80, 45.70), (4.81, 45.70)),
+        trip("a", 2, (4.81, 45.70), (4.80, 45.70)),
+        trip("b", 1, (4.80, 45.70), (4.81, 45.70)),
+    ];
+    write_trips_with_modes(&path, &rows, &[Some("bike"), None, Some("walk")]);
+    let raw = read_trips_parquet(&path).expect("reads");
+    let (travellers, trips) =
+        build_travellers(raw, Vec::new(), &ClassDefaults::new(), 1, &mut Diagnostics::new())
+            .expect("builds");
+    let a = travellers.external_ids().id_of("a").unwrap();
+    let first = travellers.trips_of(TravellerId::new(a)).next().unwrap();
+    assert_eq!(trips.mode(first), Mode::Bike);
+    assert_eq!(trips.mode(TripId::new(first.raw() + 1)), Mode::Car, "no mode: a car trip");
+    let b = travellers.external_ids().id_of("b").unwrap();
+    assert_eq!(trips.mode(travellers.first_trip(TravellerId::new(b))), Mode::Walk);
+
+    // A file without the column is all car trips.
+    let plain = temp_path("no_modes.parquet");
+    write_trips(&plain, &rows);
+    let (_, trips) = build_travellers(
+        read_trips_parquet(&plain).expect("reads"),
+        Vec::new(),
+        &ClassDefaults::new(),
+        1,
+        &mut Diagnostics::new(),
+    )
+    .expect("builds");
+    assert!((0..trips.len()).all(|i| trips.mode(TripId::new(i)) == Mode::Car));
+}
+
+#[test]
+fn an_unknown_mode_is_refused_rather_than_guessed() {
+    let path = temp_path("bad_mode.parquet");
+    write_trips_with_modes(&path, &[trip("a", 1, (4.80, 45.70), (4.81, 45.70))], &[Some("cycle")]);
+    let err = read_trips_parquet(&path).expect_err("a typo is not a car trip").to_string();
+    assert!(err.contains("`cycle`") && err.contains("bike"), "{err}");
+}

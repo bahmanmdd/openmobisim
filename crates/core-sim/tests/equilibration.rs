@@ -72,6 +72,7 @@ fn trips(n: u32, spread_s: u32) -> Vec<RawTrip> {
             departure_time: Second(i * spread_s / n.max(1)),
             user_class: "commuter".to_string(),
             weight: None,
+            mode: None,
         })
         .collect()
 }

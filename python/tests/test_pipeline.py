@@ -39,6 +39,7 @@ def test_a_single_car_trip_completes() -> None:
         "truncated": 0,
         "no_vehicle_available": 0,
         "no_feasible_path": 0,
+        "mode_not_available": 0,
     }
     assert run.total_travel_time_s > 0.0
 
@@ -85,14 +86,20 @@ def test_kpis_table_round_trips_through_pandas() -> None:
     run = sc.run(run_id="pytest-kpis-pandas")
 
     df = run.kpis().to_pandas()
-    assert set(df["metric"]) == {
+    expected = {
+        "trips",
         "total_travel_time_s",
         "completed_trips",
         "truncated_trips",
         "no_vehicle_available_trips",
         "no_feasible_path_trips",
+        "mode_not_available_trips",
         "completion_rate",
     }
+    # The run's rows, and the same for its one mode (S195).
+    assert set(df[df["mode"] == "all"]["metric"]) == expected
+    assert set(df[df["mode"] == "car"]["metric"]) == expected
+    assert set(df["mode"]) == {"all", "car"}
     assert (df["run_id"] == "pytest-kpis-pandas").all()
 
 

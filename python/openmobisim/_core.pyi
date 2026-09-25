@@ -87,6 +87,8 @@ class Network:
 
     #: Where the network came from: ``"osm"`` or ``"synthetic"``.
     source: str
+    #: Which layer this is: ``"road"``, or ``"bike"``/``"walk"`` for a handle from :meth:`layer`.
+    layer_name: str
     #: How many nodes.
     node_count: int
     #: How many directed links.
@@ -119,7 +121,40 @@ class Network:
         """Every link's length in metres."""
 
     def link_free_flow_s(self) -> npt.NDArray[np.float64]:
-        """Every link's free-flow traversal time in seconds, control delay included."""
+        """Every link's free-flow traversal time in seconds, control delay included.
+
+        On a bike or walk layer, the layer's own travel time, which nothing else changes.
+        """
+
+    def link_speed_km_h(self) -> npt.NDArray[np.float64]:
+        """Every link's travel speed in km/h.
+
+        The free-flow speed on the road network; the bike's or walker's speed on a bike
+        or walk layer.
+        """
+
+    def link_infrastructure(self) -> npt.NDArray[np.uint8]:
+        """Every bike link's infrastructure, as a number.
+
+        0 is mixed traffic (or a path shared with pedestrians), 1 a painted lane or cycle
+        street, 2 a track or cycleway of its own. All 0 on the walk layer.
+
+        Raises:
+            ValueError: On the road network: ask ``network.layer("bike")``.
+        """
+
+    def layer(self, name: str) -> Network:
+        """The ``"bike"`` or ``"walk"`` layer of this road network, as a network of its own.
+
+        Its links are the layer's: a one-way street is ridden both ways where contraflow
+        cycling is allowed and walked both ways everywhere, with the layer's speeds.
+        Read from OSM with the network by :func:`network_read_osm`; derived from the road
+        network for any other network (bikes on every road but motorways, in the road's
+        direction; walkers both ways).
+
+        Raises:
+            ValueError: For any other name, or when asked of a layer.
+        """
 
     def link_class(self) -> npt.NDArray[np.uint8]:
         """Every link's road class as a number (0 = motorway)."""
@@ -130,11 +165,12 @@ class Network:
     def link_capacity_pcu_h(self) -> npt.NDArray[np.float64]:
         """Every link's capacity across all its lanes, in PCU per hour.
 
-        The most the link can discharge, before any signal takes its share.
+        The most the link can discharge, before any signal takes its share. NaN on a
+        bike or walk layer.
         """
 
     def link_storage_pcu(self) -> npt.NDArray[np.float64]:
-        """Every link's storage at jam density, in PCU."""
+        """Every link's storage at jam density, in PCU. NaN on a bike or walk layer."""
 
     def link_drivable(self) -> npt.NDArray[np.bool_]:
         """Whether each link may be used by a car.
@@ -195,7 +231,10 @@ class Network:
         ``drivable_maxspeed_length_m``, ``drivable_lanes_links``,
         ``drivable_lanes_length_m``), the options used (``connectivity``,
         ``region``) and ``diagnostics``: every data-quality diagnostic as
-        ``{code: {"severity": ..., "count": ...}}``.
+        ``{code: {"severity": ..., "count": ...}}``. ``layers`` holds the bike and walk
+        layers read with the network, each ``{"ways_kept", "links_before_contraction",
+        "links_after_contraction", "components_before", "links_disconnected",
+        "length_m", "dedicated_length_m", "degenerate_links"}``.
         """
 
     def report_dropped(
@@ -450,6 +489,7 @@ def network_read_osm(
     region: tuple[float, float, float, float] | list[tuple[float, float]] | None = None,
     connectivity: str = "strong",
     contract_drivable: bool = True,
+    layers: bool = True,
 ) -> Network:
     """Read a road network from an OpenStreetMap ``.osm.pbf`` extract.
 
@@ -480,6 +520,8 @@ def network_read_osm(
             no signal, stop or barrier, nothing a car could turn into), the node
             stays for the footway and the footway links are unchanged. Only
             acts with ``contract``.
+        layers: Also read the bike and walk layers from the same ways (the
+            default): ``network.layer("bike")``, ``network.layer("walk")``.
 
     Returns:
         A :class:`Network` with the defaults table's parameters and the street
@@ -543,6 +585,18 @@ class RunSummary:
     total_travel_time_s: float
     #: Per-link, per-time-bin results, if the run asked for them.
     link_bins: LinkBins | None
+    #: The bike layer's per-link results, if asked for and some bike trip ran.
+    bike_link_bins: LinkBins | None
+    #: The walk layer's, likewise.
+    walk_link_bins: LinkBins | None
+    #: The written ``link_bins_bike.parquet``, if any.
+    link_bins_bike_path: str | None
+    #: The written ``link_bins_walk.parquet``, if any.
+    link_bins_walk_path: str | None
+    #: Trips whose mode this run cannot simulate yet.
+    mode_not_available: int
+    #: The outcomes by mode, for each mode that has trips.
+    completion_by_mode: dict[str, dict[str, float]]
     #: The route sets the trips were routed from.
     route_sets: RouteSets
     #: Which route each trip took, out of how many.
@@ -573,6 +627,7 @@ def run_pipeline(
     route_update_options: dict[str, float] | None = None,
     choice_detour_limit: float | None = None,
     route_cache: bool = False,
+    bike_cost: str = "dedicated",
 ) -> RunSummary:
     """Run the whole pipeline and write all four output artifacts.
 
@@ -587,7 +642,8 @@ def run_pipeline(
         trips: An in-memory trips table — rows of
             ``(traveller_id, trip_seq, origin_lon, origin_lat,
             destination_lon, destination_lat, departure_time_s, user_class,
-            weight)``. Exactly one of `trips`/`trips_path` must be given.
+            weight, mode)``, ``mode`` ``None`` for a car trip. Exactly one of
+            `trips`/`trips_path` must be given.
         trips_path: A ``trips.parquet`` path, instead of `trips`.
         persons: An in-memory persons table — rows of
             ``(traveller_id, owns_car, owns_bike, has_transit_pass,
@@ -630,6 +686,8 @@ def run_pipeline(
             the same (same network, pairs, method and, for a method that reads it, demand).
         choice_detour_limit: Offer a traveller only the routes whose expected time is within this
             share of the best's (``0`` offers every route, ``None`` the library's default).
+        bike_cost: ``"dedicated"`` (the default) or ``"time"``: how bike trips
+            choose their route on the bike layer.
 
     Returns:
         A :class:`RunSummary`.

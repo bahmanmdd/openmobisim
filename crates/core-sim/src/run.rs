@@ -1,14 +1,16 @@
 //! The `Run` (S62): orchestration, trip completion statistics (S57), driven
 //! by an event queue in seconds (S88).
 //!
-//! One run, car trips only: `core-demand`'s travellers and trips, a route set
+//! One run: `core-demand`'s travellers and trips, a route set
 //! for every origin-destination pair (`core-routes`, S166), a route per trip
 //! from a choice model (`core-choice`, S169), a loading by the chosen
 //! [`FlowMotor`], and — under an [`Equilibration`] — choice and loading
 //! repeated, with the route sets grown between iterations by a
-//! [`RouteUpdate`] and a convergence report per iteration (S170, S176). No
-//! hubs and no other mode yet: those are `core-sim`'s later job (Foundations
-//! §10).
+//! [`RouteUpdate`] and a convergence report per iteration (S170, S176). That is
+//! for car trips; **bike and walk trips** travel on their own static layer
+//! ([`crate::layers`], S195), routed once and never part of the car's choice or
+//! gap. No hubs and no transit yet: those are `core-sim`'s later job
+//! (Foundations §10).
 //!
 //! The defaults here are the core's own and unconditional (`Level0`,
 //! `deterministic`, `none`); the Python `Scenario` layers its own on top
@@ -19,13 +21,14 @@ use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 
 use openmobisim_core_choice::{ChoiceError, ChoiceModel, Deterministic};
-use openmobisim_core_demand::{Travellers, Trips, VehicleKind, VehicleLocations};
+use openmobisim_core_demand::{Mode, Travellers, Trips, VehicleKind, VehicleLocations};
 use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    EntryTables, FidelityLevel, LinkBins, Vehicle, load_level_0_binned, load_level_0_recorded,
-    run_ltm_binned, run_ltm_recorded, traverse_free_flow,
+    EntryTables, FidelityLevel, LinkBins, Trajectory, Vehicle, load_level_0_binned,
+    load_level_0_recorded, load_timed_binned, run_ltm_binned, run_ltm_recorded, traverse_free_flow,
+    traverse_timed,
 };
 use openmobisim_core_routes::{
     Demand, NodeSnapper, RouteKey, RouteSetGenerator, RouteSets, TripDemand, default_generator,
@@ -41,6 +44,7 @@ use openmobisim_core_types::units::{Duration, Pcu};
 use crate::equilibration::{Equilibration, IterationReport, NoEquilibration};
 use crate::events::{EventRow, EventType};
 use crate::identity::{Inputs, RunDescription, describe};
+use crate::layers::{StaticLayers, StaticRoute, StaticRoutes, static_layer_of};
 use crate::link_times::{LinkTimes, relative_time_change};
 use crate::route_cache::{RouteSetCache, generation_key};
 use crate::route_choice::{self, NO_ROUTE, RouteChoices};
@@ -84,6 +88,10 @@ pub mod local_codes {
     /// mode-choice layer exists (Phase 2), unavailability becomes a choice
     /// among alternatives, not the absence of a trip.
     pub const NO_VEHICLE_AVAILABLE: DiagCode = DiagCode("no_vehicle_available");
+    /// The trip's mode cannot be simulated by this run: its layer is not
+    /// there, or the mode is not built yet (transit and the combinations with
+    /// it, S195).
+    pub const MODE_NOT_AVAILABLE: DiagCode = DiagCode("mode_not_available");
 }
 
 /// Trip-level outcomes across a run (S57).
@@ -104,6 +112,9 @@ pub struct TripCompletionStats {
     pub completed: u32,
     /// Still in progress when the window ended (S57).
     pub truncated: u32,
+    /// The trip's mode cannot be simulated by this run (S195): its layer is
+    /// missing, or the mode is not built yet.
+    pub mode_not_available: u32,
 }
 
 impl TripCompletionStats {
@@ -122,6 +133,17 @@ impl TripCompletionStats {
         let attempted = self.attempted();
         if attempted == 0 { 1.0 } else { f64::from(self.completed) / f64::from(attempted) }
     }
+}
+
+/// One mode's outcomes in a run (S195): its trips' completion counts and
+/// their total travel time, weighted by traveller weight as
+/// [`RunResult::total_travel_time`] is.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct ModeTotals {
+    /// The mode's trips' outcomes.
+    pub completion: TripCompletionStats,
+    /// Total travel time of its completed trips, weighted.
+    pub total_travel_time: Duration,
 }
 
 /// Why a run could not finish.
@@ -190,6 +212,15 @@ pub struct RunResult {
     /// Whether the strategy stopped before its most iterations because it had
     /// converged.
     pub converged: bool,
+    /// The outcomes by mode, in [`Mode::ALL`] order (S195); they add up to
+    /// [`Self::completion`] and [`Self::total_travel_time`].
+    pub by_mode: [ModeTotals; Mode::COUNT],
+    /// The bike layer's per-link, per-time-bin results, when per-link results
+    /// were asked for and some bike trip ran (S195); `pcu` there counts
+    /// travellers.
+    pub bike_link_bins: Option<LinkBins>,
+    /// The walk layer's, likewise.
+    pub walk_link_bins: Option<LinkBins>,
 }
 
 /// How one loading is made besides the routes it follows.
@@ -214,6 +245,22 @@ struct Loaded {
     /// Link times by the bin of entry and waits at origins by the bin of departure:
     /// what costs the next iteration's routes (only recorded when there is one).
     entry_bins: Option<EntryTables>,
+    /// The bike and walk layers' per-link results, if asked for.
+    layer_bins: [Option<LinkBins>; 2],
+}
+
+/// What happened to one bike or walk trip.
+enum StaticOutcome {
+    /// The mode cannot be simulated by this run.
+    NotAvailable,
+    /// The traveller's bike was not at the origin.
+    NoVehicle,
+    /// The layer has no route.
+    NoPath,
+    /// Origin and destination are one node.
+    Here,
+    /// The trip travelled on its layer (slot 0 bike, 1 walk).
+    Travelled { vehicle: Vehicle, trajectory: Trajectory, slot: usize },
 }
 
 /// One simulation run: immutable shared inputs plus the mutable state
@@ -246,6 +293,8 @@ pub struct Run {
     choice_detour_limit: f64,
     /// Generated route sets kept for the next run that asks for the same (S178): none, by default.
     route_cache: Option<Arc<RouteSetCache>>,
+    /// The bike and walk layers (S195): none, by default.
+    layers: Arc<StaticLayers>,
 }
 
 /// The share above the best route's expected time beyond which a route is not offered to a
@@ -283,7 +332,17 @@ impl Run {
             route_update: Arc::new(NoRouteUpdate),
             choice_detour_limit: DEFAULT_CHOICE_DETOUR_LIMIT,
             route_cache: None,
+            layers: Arc::new(StaticLayers::default()),
         }
+    }
+
+    /// The same run, with bike and walk layers for the trips whose mode is
+    /// [`Mode::Bike`] or [`Mode::Walk`] (S195). Without them such a trip is
+    /// counted as `mode_not_available`.
+    #[must_use]
+    pub fn with_layers(mut self, layers: Arc<StaticLayers>) -> Self {
+        self.layers = layers;
+        self
     }
 
     /// The same run, loaded by `flow_motor` instead of the default
@@ -402,6 +461,7 @@ impl Run {
             route_update_descriptor: &self.route_update.descriptor(),
             route_update_active: self.route_update.is_active(),
             choice_detour_limit: self.choice_detour_limit,
+            layers: &self.layers,
         })
     }
 
@@ -460,16 +520,27 @@ impl Run {
         // made once, in parallel, before any trip runs (S165): each trip's
         // endpoints are snapped to the nearest drivable node with a grid, not
         // a scan, and the pair's set is looked up, not searched for.
+        //
+        // A trip that is not a car trip gets a key from a node to itself, which no
+        // route set, choice or gap takes part in (S195): its own layer routes it.
         let snapper = NodeSnapper::new(&self.network);
         let trip_keys: Vec<RouteKey> = (0..total_trips)
             .map(|i| {
                 let trip = TripId::new(i);
-                RouteKey::new(
-                    snapper.nearest(&self.network, self.trips.origin(trip)),
-                    snapper.nearest(&self.network, self.trips.destination(trip)),
-                )
+                let origin = snapper.nearest(&self.network, self.trips.origin(trip));
+                if self.trips.mode(trip) == Mode::Car {
+                    RouteKey::new(
+                        origin,
+                        snapper.nearest(&self.network, self.trips.destination(trip)),
+                    )
+                } else {
+                    RouteKey::new(origin, origin)
+                }
             })
             .collect();
+        // Bike and walk trips' routes on their layers: once per run, since their
+        // costs are static.
+        let static_routes = StaticRoutes::build(&self.layers, &self.trips);
         let turns = match &self.flow_motor {
             FlowMotor::Ltm { turns, .. } => turns.clone(),
             FlowMotor::Level0 => Arc::new(TurnTable::build(&self.network, SignalDefaults::SHIPPED)),
@@ -478,6 +549,7 @@ impl Run {
         // first; one that does not costs nothing here.
         let demand_rows: Option<Vec<TripDemand>> = self.route_generator.reads_demand().then(|| {
             (0..total_trips)
+                .filter(|&i| self.trips.mode(TripId::new(i)) == Mode::Car)
                 .map(|i| {
                     let trip = TripId::new(i);
                     TripDemand {
@@ -564,6 +636,7 @@ impl Run {
                 &trip_keys,
                 &route_sets,
                 &route_choices,
+                &static_routes,
                 LoadPlan {
                     record_bins,
                     want_entry: max_iterations > 1,
@@ -690,6 +763,8 @@ impl Run {
             Arc::try_unwrap(route_sets).unwrap_or_else(|shared| RouteSets::clone(&shared));
         // The per-link table is the user's only if they asked for it.
         let link_bins = if self.link_bin_seconds.is_some() { loaded.link_bins } else { None };
+        let by_mode = mode_totals(&loaded.events, &self.trips, &self.travellers);
+        let [bike_link_bins, walk_link_bins] = loaded.layer_bins;
         Ok(RunResult {
             total_travel_time: loaded.total_travel_time,
             completion: loaded.completion,
@@ -699,6 +774,9 @@ impl Run {
             route_choices: Some(route_choices),
             iterations: reports,
             converged,
+            by_mode,
+            bike_link_bins,
+            walk_link_bins,
         })
     }
 
@@ -709,6 +787,7 @@ impl Run {
         trip_keys: &[RouteKey],
         route_sets: &RouteSets,
         route_choices: &RouteChoices,
+        static_routes: &StaticRoutes,
         plan: LoadPlan,
         diagnostics: &mut Diagnostics,
     ) -> Loaded {
@@ -746,6 +825,8 @@ impl Run {
         let mut level0_vehicles: Vec<Vehicle> = Vec::new();
         let mut link_bins: Option<LinkBins> = None;
         let mut entry_bins: Option<EntryTables> = None;
+        // Bike and walk vehicles, kept to be binned per layer when asked.
+        let mut layer_vehicles: [Vec<Vehicle>; 2] = [Vec::new(), Vec::new()];
 
         while let Some(Reverse(key)) = queue.pop() {
             let trip = TripId::new(key.entity);
@@ -761,7 +842,78 @@ impl Run {
             // never actually arrived where the file says the day continues
             // from. Stranding propagates by itself; nothing here needs to
             // decide to stop early.
-            if !self.vehicles.is_at_origin(&self.travellers, traveller, VehicleKind::Car, origin) {
+            let mode = self.trips.mode(trip);
+            if mode != Mode::Car {
+                match self.static_outcome(trip, mode, static_routes) {
+                    StaticOutcome::NotAvailable => {
+                        diagnostics.record(DiagKey::new(
+                            Category::Modelling,
+                            local_codes::MODE_NOT_AVAILABLE,
+                            Severity::Warning,
+                            ElementRef::of(trip),
+                        ));
+                        completion.mode_not_available += 1;
+                        events.push(EventRow::trip(departure, EventType::ModeNotAvailable, trip));
+                    }
+                    StaticOutcome::NoVehicle => {
+                        diagnostics.record(DiagKey::new(
+                            Category::Modelling,
+                            local_codes::NO_VEHICLE_AVAILABLE,
+                            Severity::Info,
+                            ElementRef::of(trip),
+                        ));
+                        completion.no_vehicle_available += 1;
+                        events.push(EventRow::trip(departure, EventType::NoVehicleAvailable, trip));
+                    }
+                    StaticOutcome::NoPath => {
+                        diagnostics.record(DiagKey::new(
+                            Category::Modelling,
+                            codes::NO_FEASIBLE_PATH,
+                            Severity::Warning,
+                            ElementRef::of(trip),
+                        ));
+                        completion.no_feasible_path += 1;
+                        events.push(EventRow::trip(departure, EventType::NoFeasiblePath, trip));
+                    }
+                    StaticOutcome::Here => {
+                        completion.completed += 1;
+                        events.push(EventRow::trip(departure, EventType::TripCompleted, trip));
+                    }
+                    StaticOutcome::Travelled { vehicle, trajectory, slot } => {
+                        let weight = self.travellers.weight(traveller);
+                        if trajectory.arrival() <= self.window {
+                            completion.completed += 1;
+                            total_travel_time += trajectory.total_travel_time() * f64::from(weight);
+                            events.push(EventRow::trip(
+                                trajectory.arrival(),
+                                EventType::TripCompleted,
+                                trip,
+                            ));
+                        } else {
+                            completion.truncated += 1;
+                            diagnostics.record(DiagKey::new(
+                                Category::Modelling,
+                                codes::TRIP_TRUNCATED,
+                                Severity::Info,
+                                ElementRef::of(trip),
+                            ));
+                            events.push(EventRow::trip(
+                                self.window,
+                                EventType::TripTruncated,
+                                trip,
+                            ));
+                        }
+                        if record_bins.is_some() {
+                            layer_vehicles[slot].push(vehicle);
+                        }
+                    }
+                }
+            } else if !self.vehicles.is_at_origin(
+                &self.travellers,
+                traveller,
+                VehicleKind::Car,
+                origin,
+            ) {
                 diagnostics.record(DiagKey::new(
                     Category::Modelling,
                     local_codes::NO_VEHICLE_AVAILABLE,
@@ -960,7 +1112,68 @@ impl Run {
             }
         }
 
-        Loaded { total_travel_time, completion, events, link_bins, entry_bins }
+        // The bike and walk layers' per-link results, from their own vehicles.
+        let mut layer_bins: [Option<LinkBins>; 2] = [None, None];
+        if let Some(bin_seconds) = record_bins {
+            let window = f64::from(self.window.get());
+            for (slot, vehicles) in layer_vehicles.iter().enumerate() {
+                let layer =
+                    if slot == 0 { self.layers.bike.as_ref() } else { self.layers.walk.as_ref() };
+                if let (Some(setup), false) = (layer, vehicles.is_empty()) {
+                    let graph = setup.network().network();
+                    layer_bins[slot] = Some(
+                        load_timed_binned(vehicles, graph, setup.seconds(), window, bin_seconds).1,
+                    );
+                }
+            }
+        }
+
+        Loaded { total_travel_time, completion, events, link_bins, entry_bins, layer_bins }
+    }
+
+    /// Decide and make one bike or walk trip: whether its mode can run, whether
+    /// the traveller's bike is at the origin, and its traversal of its route on
+    /// the layer. A bike that travels is left at the destination.
+    fn static_outcome(
+        &mut self,
+        trip: TripId,
+        mode: Mode,
+        static_routes: &StaticRoutes,
+    ) -> StaticOutcome {
+        let (Some(layer), Some(setup)) = (static_layer_of(mode), self.layers.for_mode(mode)) else {
+            return StaticOutcome::NotAvailable;
+        };
+        let traveller = self.trips.traveller(trip);
+        let (origin, destination) = (self.trips.origin(trip), self.trips.destination(trip));
+        if let Some(kind) = mode.vehicle() {
+            if !self.vehicles.is_at_origin(&self.travellers, traveller, kind, origin) {
+                return StaticOutcome::NoVehicle;
+            }
+        }
+        let index = match static_routes.of(trip) {
+            StaticRoute::None => return StaticOutcome::NotAvailable,
+            StaticRoute::Unreachable => return StaticOutcome::NoPath,
+            StaticRoute::Here => {
+                if let Some(kind) = mode.vehicle() {
+                    self.vehicles.relocate(traveller, kind, destination);
+                }
+                return StaticOutcome::Here;
+            }
+            StaticRoute::Route(index) => index,
+        };
+        if let Some(kind) = mode.vehicle() {
+            self.vehicles.relocate(traveller, kind, destination);
+        }
+        let weight = self.travellers.weight(traveller);
+        let vehicle = Vehicle::new(
+            VehicleId::new(trip.raw()),
+            static_routes.links(layer, index),
+            Pcu(f64::from(weight)),
+            self.trips.departure(trip),
+        );
+        let trajectory = traverse_timed(&vehicle, setup.network().network(), setup.seconds());
+        let slot = usize::from(layer == openmobisim_core_graph::layers::StaticLayer::Walk);
+        StaticOutcome::Travelled { vehicle, trajectory, slot }
     }
 
     fn enqueue(&self, queue: &mut BinaryHeap<Reverse<EventKey>>, trip: TripId) {
@@ -980,4 +1193,37 @@ impl Run {
         let last = self.travellers.trips_of(traveller).last()?;
         (current.raw() < last.raw()).then(|| TripId::new(current.raw() + 1))
     }
+}
+
+/// Each mode's outcomes, from the events of a loading (one per trip) and the
+/// trips' departures (S195): the same travel time a trip adds to the run's
+/// total, filed under its mode.
+fn mode_totals(
+    events: &[EventRow],
+    trips: &Trips,
+    travellers: &Travellers,
+) -> [ModeTotals; Mode::COUNT] {
+    let mut out = [ModeTotals::default(); Mode::COUNT];
+    for raw in 0..trips.len() {
+        out[trips.mode(TripId::new(raw)).index()].completion.total_trips += 1;
+    }
+    for e in events {
+        let trip = TripId::new(e.entity_id);
+        let totals = &mut out[trips.mode(trip).index()];
+        let c = &mut totals.completion;
+        match e.event_type {
+            EventType::TripCompleted => {
+                c.completed += 1;
+                let weight = travellers.weight(trips.traveller(trip));
+                totals.total_travel_time += (Duration::from_clock(e.second)
+                    - Duration::from_clock(trips.departure(trip)))
+                    * f64::from(weight);
+            }
+            EventType::TripTruncated => c.truncated += 1,
+            EventType::NoVehicleAvailable => c.no_vehicle_available += 1,
+            EventType::NoFeasiblePath => c.no_feasible_path += 1,
+            EventType::ModeNotAvailable => c.mode_not_available += 1,
+        }
+    }
+    out
 }

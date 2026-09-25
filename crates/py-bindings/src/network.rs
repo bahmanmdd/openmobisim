@@ -19,6 +19,7 @@ use openmobisim_core_graph::examples::{
     manhattan_grid as build_manhattan_grid, toy_network as build_toy_network,
 };
 use openmobisim_core_graph::geometry::LonLat;
+use openmobisim_core_graph::layers::{StaticLayer, StaticLayerDefaults, StaticNetwork};
 use openmobisim_core_graph::link_geometry::LinkGeometry;
 use openmobisim_core_graph::network::{
     self as network_mod, LinkSpec, RoadNetwork, RoadNetworkBuilder,
@@ -28,8 +29,8 @@ use openmobisim_core_routes::NodeSnapper;
 use openmobisim_core_types::diagnostics::{Category, Diagnostics, Severity};
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 use openmobisim_io_osm::{
-    ClippedSource, Connectivity, DropReason, DroppedLink, ImportOptions, ImportReport, PbfSource,
-    Region, import_detailed,
+    ClippedSource, Connectivity, DropReason, DroppedLink, ImportOptions, ImportReport, LayerImport,
+    LayerOptions, LayerReport, PbfSource, Region, import_detailed,
 };
 
 /// A link polyline array and its per-link offsets, as numpy arrays.
@@ -51,6 +52,40 @@ pub struct PyNetwork {
     pub(crate) snapper: OnceLock<NodeSnapper>,
     /// What the import did, for a network read from OSM.
     import: Option<Arc<ImportInfo>>,
+    /// Which layer this handle is: `"road"`, or `"bike"` / `"walk"` for a
+    /// handle from `Network.layer` (S195). Python reads it as `layer_name`.
+    #[pyo3(get, name = "layer_name")]
+    pub(crate) layer: String,
+    /// The layer's graph and speeds, on a bike or walk handle.
+    pub(crate) static_network: Option<Arc<StaticNetwork>>,
+    /// On the road handle: the bike and walk layers, read from OSM with the
+    /// network or derived from it the first time they are asked for.
+    layers: [OnceLock<LayerParts>; 2],
+}
+
+/// One static layer as the road handle keeps it.
+#[derive(Clone)]
+struct LayerParts {
+    network: Arc<StaticNetwork>,
+    geometry: Option<Arc<LinkGeometry>>,
+    report: Option<LayerReport>,
+}
+
+fn slot(layer: StaticLayer) -> usize {
+    match layer {
+        StaticLayer::Bike => 0,
+        StaticLayer::Walk => 1,
+    }
+}
+
+fn parse_layer(name: &str) -> PyResult<StaticLayer> {
+    match name {
+        "bike" => Ok(StaticLayer::Bike),
+        "walk" => Ok(StaticLayer::Walk),
+        other => Err(PyValueError::new_err(format!(
+            "layer must be \"road\", \"bike\" or \"walk\", not {other:?}"
+        ))),
+    }
 }
 
 /// What an OSM import did, kept beside the network so that it can be looked at.
@@ -71,12 +106,56 @@ impl PyNetwork {
         geometry: Option<Arc<LinkGeometry>>,
         source: &str,
     ) -> Self {
-        Self { inner, geometry, source: source.to_string(), snapper: OnceLock::new(), import: None }
+        Self {
+            inner,
+            geometry,
+            source: source.to_string(),
+            snapper: OnceLock::new(),
+            import: None,
+            layer: "road".to_string(),
+            static_network: None,
+            layers: [OnceLock::new(), OnceLock::new()],
+        }
     }
 
-    /// The snapper, built on first use.
+    /// The road handle's bike or walk layer: the one read with the network, or
+    /// one derived from the road network (design §21.4's fallback rung).
+    fn layer_parts(&self, layer: StaticLayer) -> PyResult<&LayerParts> {
+        if let Some(parts) = self.layers[slot(layer)].get() {
+            return Ok(parts);
+        }
+        let derived = StaticNetwork::derive(
+            &self.inner,
+            layer,
+            StaticLayerDefaults::SHIPPED,
+            &mut Diagnostics::new(),
+        )
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let parts = LayerParts { network: Arc::new(derived), geometry: None, report: None };
+        Ok(self.layers[slot(layer)].get_or_init(|| parts))
+    }
+
+    /// The bike or walk layer a run uses for its trips (S195).
+    pub(crate) fn static_layer(&self, layer: StaticLayer) -> PyResult<Arc<StaticNetwork>> {
+        if self.static_network.is_some() {
+            return Err(PyValueError::new_err(format!(
+                "this is the {} layer; run a scenario on the road network, which holds its layers",
+                self.layer
+            )));
+        }
+        Ok(self.layer_parts(layer)?.network.clone())
+    }
+
+    /// The snapper, built on first use: over the nodes a car can use on the
+    /// road network, over every node on a bike or walk layer.
     pub(crate) fn snapper(&self) -> &NodeSnapper {
-        self.snapper.get_or_init(|| NodeSnapper::new(&self.inner))
+        self.snapper.get_or_init(|| {
+            if self.static_network.is_some() {
+                NodeSnapper::every_node(&self.inner)
+            } else {
+                NodeSnapper::new(&self.inner)
+            }
+        })
     }
 }
 
@@ -168,9 +247,66 @@ impl PyNetwork {
     }
 
     /// Every link's free-flow traversal time, in seconds, control delay
-    /// included (float64).
+    /// included (float64). On a bike or walk layer: the layer's own travel
+    /// time, which nothing else changes (S195).
     fn link_free_flow_s<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        if let Some(layer) = &self.static_network {
+            return layer.link_seconds().into_pyarray(py);
+        }
         self.inner.free_flow_times().iter().map(|d| d.get()).collect::<Vec<_>>().into_pyarray(py)
+    }
+
+    /// Every link's travel speed, in km/h (float64): the free-flow speed on the
+    /// road network; the bike's or walker's speed on a bike or walk layer
+    /// (S195).
+    fn link_speed_km_h<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        (0..self.inner.link_count())
+            .map(|i| {
+                let link = LinkId::new(i);
+                match &self.static_network {
+                    Some(layer) => layer.speed(link) * 3.6,
+                    None => self.inner.link_parameters(link).free_flow_speed.as_km_per_hour(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .into_pyarray(py)
+    }
+
+    /// Every bike link's infrastructure (uint8): 0 = mixed traffic or a path
+    /// shared with pedestrians, 1 = a painted lane or cycle street, 2 = a track
+    /// or cycleway of its own (S193, S195). All 0 on the walk layer.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` on the road network, whose links have no bike
+    /// infrastructure of their own: ask `network.layer("bike")`.
+    fn link_infrastructure<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<u8>>> {
+        let Some(layer) = &self.static_network else {
+            return Err(PyValueError::new_err(
+                "bike infrastructure belongs to the bike layer: use network.layer(\"bike\")",
+            ));
+        };
+        Ok(layer.infrastructures().iter().map(|&i| i as u8).collect::<Vec<_>>().into_pyarray(py))
+    }
+
+    /// The bike or walk layer of this road network, as a network of its own
+    /// (S195): its links are the layer's (a one-way street is ridden both ways
+    /// where contraflow is allowed and walked both ways everywhere), with the
+    /// layer's speeds. Read from OSM with the network by `network_read_osm`;
+    /// derived from the road network for any other network (bikes on every
+    /// road but motorways, in the road's direction; walkers both ways).
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` for any other name, or when asked of a layer handle.
+    fn layer(&self, name: &str) -> PyResult<PyNetwork> {
+        let layer = parse_layer(name)?;
+        let static_network = self.static_layer(layer)?;
+        let parts = self.layer_parts(layer)?.clone();
+        let mut handle = PyNetwork::new(static_network.network_arc(), parts.geometry, &self.source);
+        handle.layer = layer.as_str().to_string();
+        handle.static_network = Some(static_network);
+        Ok(handle)
     }
 
     /// Every link's road class, as the class's number (uint8): the order of
@@ -191,16 +327,28 @@ impl PyNetwork {
     }
 
     /// Every link's capacity across all its lanes, in PCU per hour (float64):
-    /// the most it can discharge, before any signal takes its share.
+    /// the most it can discharge, before any signal takes its share. NaN on a
+    /// bike or walk layer, whose links have no capacity in this version.
     fn link_capacity_pcu_h<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        let motor = self.static_network.is_none();
         (0..self.inner.link_count())
-            .map(|i| self.inner.link_parameters(LinkId::new(i)).capacity.get() * 3600.0)
+            .map(|i| {
+                if motor {
+                    self.inner.link_parameters(LinkId::new(i)).capacity.get() * 3600.0
+                } else {
+                    f64::NAN
+                }
+            })
             .collect::<Vec<_>>()
             .into_pyarray(py)
     }
 
-    /// Every link's storage capacity at jam density, in PCU (float64).
+    /// Every link's storage capacity at jam density, in PCU (float64). NaN on
+    /// a bike or walk layer.
     fn link_storage_pcu<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        if self.static_network.is_some() {
+            return vec![f64::NAN; self.inner.link_count() as usize].into_pyarray(py);
+        }
         self.inner.storages().iter().map(|p| p.get()).collect::<Vec<_>>().into_pyarray(py)
     }
 
@@ -328,6 +476,22 @@ impl PyNetwork {
             diagnostics.set_item(code, row)?;
         }
         d.set_item("diagnostics", diagnostics)?;
+        // The bike and walk layers read with the network (S195).
+        let layers = PyDict::new(py);
+        for layer in [StaticLayer::Bike, StaticLayer::Walk] {
+            let Some(r) = self.layers[slot(layer)].get().and_then(|p| p.report) else { continue };
+            let row = PyDict::new(py);
+            row.set_item("ways_kept", r.ways_kept)?;
+            row.set_item("links_before_contraction", r.links_before_contraction)?;
+            row.set_item("links_after_contraction", r.links_after_contraction)?;
+            row.set_item("components_before", r.components_before)?;
+            row.set_item("links_disconnected", r.links_disconnected)?;
+            row.set_item("length_m", r.length_m)?;
+            row.set_item("dedicated_length_m", r.dedicated_length_m)?;
+            row.set_item("degenerate_links", r.degenerate_links)?;
+            layers.set_item(layer.as_str(), row)?;
+        }
+        d.set_item("layers", layers)?;
         Ok(Some(d))
     }
 
@@ -387,7 +551,8 @@ impl PyNetwork {
 
     fn __repr__(&self) -> String {
         format!(
-            "Network({} nodes, {} links{})",
+            "Network({}{} nodes, {} links{})",
+            if self.layer == "road" { String::new() } else { format!("{} layer: ", self.layer) },
             self.inner.node_count(),
             self.inner.link_count(),
             if self.geometry.is_some() { ", with street geometry" } else { "" }
@@ -413,12 +578,22 @@ pub fn manhattan_grid(n: u32, block_metres: f64, signals: bool) -> PyResult<PyNe
 }
 
 /// The toy network: sixteen nodes and links on which every loading number
-/// can be checked by hand.
+/// can be checked by hand, with its own bike layer (a cycle track beside `a3`,
+/// contraflow on `s1`) and walk layer (every street both ways, and two
+/// walk-only paths).
 #[pyfunction]
 pub fn toy_network() -> PyNetwork {
     let (network, diagnostics) = build_toy_network();
     debug_assert!(diagnostics.is_empty(), "the toy network builds cleanly");
-    PyNetwork::new(Arc::new(network), None, "synthetic")
+    let handle = PyNetwork::new(Arc::new(network), None, "synthetic");
+    // Its own bike and walk layers (S195): a cycle track, contraflow and two
+    // walk-only paths, each with hand-derived cases.
+    let (bike, walk) = openmobisim_core_graph::examples::toy_network_layers();
+    for (layer, graph) in [(StaticLayer::Bike, bike), (StaticLayer::Walk, walk)] {
+        let parts = LayerParts { network: Arc::new(graph), geometry: None, report: None };
+        let _ = handle.layers[slot(layer)].set(parts);
+    }
+    handle
 }
 
 /// Read a road network from an OpenStreetMap `.osm.pbf` extract, with the
@@ -431,14 +606,18 @@ pub fn toy_network() -> PyNetwork {
 /// (on by default) merges car links across nodes that only footways touch (the
 /// crossings and sidewalk joins of a city that maps its sidewalks), leaving the
 /// footways as they were. These two defaults are the Python layer's (S191);
-/// `ImportOptions::default()` in `io-osm` keeps both off.
+/// `ImportOptions::default()` in `io-osm` keeps both off. `layers` (on by
+/// default, S195) also reads the bike and walk layers from the same ways:
+/// `network.layer("bike")` and `network.layer("walk")`.
 ///
 /// # Errors
 ///
 /// `ValueError` if the file cannot be read, the region or `connectivity` is not
 /// valid, or the result holds no usable road network.
 #[pyfunction]
-#[pyo3(signature = (path, contract=true, region=None, connectivity="strong", contract_drivable=true))]
+#[pyo3(signature = (
+    path, contract=true, region=None, connectivity="strong", contract_drivable=true, layers=true,
+))]
 pub fn network_read_osm(
     py: Python<'_>,
     path: &str,
@@ -446,6 +625,7 @@ pub fn network_read_osm(
     region: Option<&Bound<'_, PyAny>>,
     connectivity: &str,
     contract_drivable: bool,
+    layers: bool,
 ) -> PyResult<PyNetwork> {
     let connectivity_mode = match connectivity {
         "keep" => Connectivity::Keep,
@@ -465,6 +645,7 @@ pub fn network_read_osm(
                 contract,
                 contract_drivable,
                 connectivity: connectivity_mode,
+                layers: if layers { LayerOptions::BOTH } else { LayerOptions::default() },
                 ..ImportOptions::default()
             };
             let mut diagnostics = Diagnostics::new();
@@ -485,6 +666,16 @@ pub fn network_read_osm(
         .map(|row| (row.key.code.0.to_string(), format!("{:?}", row.key.severity), row.count))
         .collect();
     let mut network = PyNetwork::new(Arc::new(out.network), Some(Arc::new(out.geometry)), "osm");
+    for (layer, read) in [(StaticLayer::Bike, out.bike), (StaticLayer::Walk, out.walk)] {
+        if let Some(LayerImport { network: graph, geometry, report, .. }) = read {
+            let parts = LayerParts {
+                network: Arc::new(graph),
+                geometry: Some(Arc::new(geometry)),
+                report: Some(report),
+            };
+            let _ = network.layers[slot(layer)].set(parts);
+        }
+    }
     network.import = Some(Arc::new(ImportInfo {
         report: out.report,
         diagnostics: rows,

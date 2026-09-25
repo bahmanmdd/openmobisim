@@ -85,11 +85,19 @@ def _minutes(seconds: float) -> str:
     return f"{seconds / 60:g}"
 
 
+_TITLES = {
+    "road": "Flow and delay by direction",
+    "bike": "Bike flow by direction",
+    "walk": "Walking flow by direction",
+}
+
+
 def map_link(
     run: Any,
     *,
     bins: int | tuple[int, int] | None = None,
-    colour: str = "delay",
+    layer: str = "road",
+    colour: str | None = None,
     ramp: str = "spectrum",
     theme: str | Theme = "paper",
     title: str | None = None,
@@ -118,9 +126,14 @@ def map_link(
         bins: Which time bins to show: ``None`` for every bin from the first to
             the last that saw traffic, an ``int`` for one bin, or
             ``(first, stop)`` for a range (``stop`` excluded).
-        colour: What the colour shows: ``"delay"`` (default; delay over free
-            flow), ``"volume"``, or ``"volume_capacity"`` (volume over the
-            link's capacity, so 1 is a link at capacity and beyond it is over).
+        layer: Which layer's traffic to draw: ``"road"`` (default: cars, on the
+            road network), ``"bike"`` or ``"walk"`` (each on its own layer's links,
+            ``network.layer(...)``; volume counts travellers, not PCU).
+        colour: What the colour shows: ``"delay"`` (delay over free flow; the
+            default on the road), ``"volume"`` (the default on the bike and walk
+            layers, where nothing is delayed), or ``"volume_capacity"`` (volume
+            over the link's capacity, so 1 is a link at capacity and beyond it is
+            over; the road only).
         ramp: For delay and volume-over-capacity, ``"spectrum"`` (default:
             blue-green for little, gold in the middle, deeper red for more) or
             ``"ember"`` (the single-hue ramp of the first version).
@@ -157,17 +170,34 @@ def map_link(
     load_matplotlib()
     from matplotlib.collections import LineCollection, PolyCollection
 
+    if layer not in ("road", "bike", "walk"):
+        raise ValueError(f"layer must be 'road', 'bike' or 'walk', got {layer!r}")
+    road = layer == "road"
+    if colour is None:
+        colour = "delay" if road else "volume"
     if colour not in ("delay", "volume", "volume_capacity"):
         raise ValueError(f"colour must be 'delay', 'volume' or 'volume_capacity', got {colour!r}")
+    if colour == "volume_capacity" and not road:
+        raise ValueError(
+            "colour='volume_capacity' is for the road: bike and walk links have no capacity"
+        )
     if ramp not in ("spectrum", "ember"):
         raise ValueError(f"ramp must be 'spectrum' or 'ember', got {ramp!r}")
-    link_bins = run.link_bins()
+    link_bins = run.link_bins(layer)
     network = run.network
     if link_bins is None or network is None:
         raise ValueError(
-            "this run has no per-link results: build the scenario with link_bin_s=..., "
-            "and use flow_level 2, 3 or 4 for congestion to show"
+            f"this run has no per-link results on the {layer} layer: build the scenario with "
+            "link_bin_s=..., and use flow_level 2, 3 or 4 for congestion to show"
+            + (
+                ""
+                if road
+                else f"; the {layer} layer has results only if some trip's mode is {layer}"
+            )
         )
+    if not road:
+        network = network.layer(layer)
+    unit = "PCU/h" if road else "travellers/h"
     th = get_theme(theme)
     n_links = network.link_count
 
@@ -242,7 +272,7 @@ def map_link(
         link_rgb = ramp_rgb(th.ramp_volume, t)
         severity = volume
         legend_stops, low, high = th.ramp_volume, "0", f"{vmax:g}+"
-        legend_label = "Volume per direction (PCU/h)"
+        legend_label = f"Volume per direction ({unit})"
     drawn = np.nonzero(active)[0]
     drawn = drawn[np.argsort(severity[drawn], kind="stable")]  # the worst on top
     lines = geo.polylines(ribbon_points, offsets, drawn)
@@ -319,11 +349,11 @@ def map_link(
     ]
     draw_furniture(
         page,
-        title=title or "Flow and delay by direction",
+        title=title or _TITLES[layer],
         subtitle=subtitle or default_subtitle,
         note=note,
         provenance=provenance,
-        width_legend=("Volume per direction", samples, "PCU/h"),
+        width_legend=("Volume per direction", samples, unit),
         colour_legend=(legend_label, legend_stops, low, high),
         credit=credit,
         logo=logo,

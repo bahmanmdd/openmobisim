@@ -268,7 +268,7 @@ class Run:
         """
         return self._summary.route_choices
 
-    def link_bins(self) -> _core.LinkBins | None:
+    def link_bins(self, layer: str = "road") -> _core.LinkBins | None:
         """Per-link, per-time-bin results, or ``None`` if the run did not ask.
 
         Ask with ``Scenario.run(...)`` on a scenario built with ``link_bin_s``.
@@ -277,11 +277,24 @@ class Run:
         inside the window counts, including those of trips still under way
         when it ended. The same table is written to ``link_bins.parquet``: read
         it with ``Run.link_bins_table()``.
-        """
-        return self._summary.link_bins
 
-    def link_bins_table(self) -> Table | None:
+        ``layer`` is ``"road"`` (the default), ``"bike"`` or ``"walk"``: the bike and
+        walk layers' results are indexed by their own links
+        (``run.network.layer("bike")``), and their ``pcu`` counts travellers.
+        They are ``None`` when no trip of that mode ran.
+        """
+        return {
+            "road": self._summary.link_bins,
+            "bike": self._summary.bike_link_bins,
+            "walk": self._summary.walk_link_bins,
+        }[_check_layer(layer)]
+
+    def link_bins_table(self, layer: str = "road") -> Table | None:
         """``link_bins.parquet``: the per-link results as a table, or ``None``.
+
+        ``layer="bike"`` or ``"walk"`` reads ``link_bins_bike.parquet`` or
+        ``link_bins_walk.parquet`` instead: the same columns, except that the
+        weighted count is ``travellers`` and its time ``traveller_seconds``.
 
         ``None`` unless the scenario was built with ``link_bin_s``. One row per
         (bin, link) that saw traffic, sorted by bin then link, with columns
@@ -297,11 +310,23 @@ class Run:
           traversal time is ``pcu_seconds / pcu`` and the flow in PCU per hour
           is ``pcu * 3600 / bin_seconds``.
         """
-        path = self._summary.link_bins_path
+        path = {
+            "road": self._summary.link_bins_path,
+            "bike": self._summary.link_bins_bike_path,
+            "walk": self._summary.link_bins_walk_path,
+        }[_check_layer(layer)]
         return None if path is None else Table(path)
 
     def kpis(self) -> Table:
-        """``kpis.parquet``: long format, one row per metric."""
+        """``kpis.parquet``: long format, one row per metric.
+
+        Columns ``run_id, design_id, replication, iteration, mode, metric, value``.
+        ``mode`` is ``"all"`` for the whole run; the trip metrics of the last loading
+        (``trips``, ``total_travel_time_s``, ``completed_trips``, ``truncated_trips``,
+        ``no_vehicle_available_trips``, ``no_feasible_path_trips``,
+        ``mode_not_available_trips``, ``completion_rate``) are also given for each mode
+        that has trips (``"car"``, ``"bike"``, ``"walk"``, …).
+        """
         return Table(self._summary.kpis_path)
 
     def diagnostics(self) -> Table:
@@ -323,7 +348,8 @@ class Run:
         """How many trips completed, and why the others did not, without reading any file.
 
         Keys: ``total_trips``, ``completed``, ``truncated``,
-        ``no_vehicle_available``, ``no_feasible_path``.
+        ``no_vehicle_available``, ``no_feasible_path``, ``mode_not_available``
+        (a trip whose mode this version cannot simulate yet: transit).
         """
         s = self._summary
         return {
@@ -332,7 +358,18 @@ class Run:
             "truncated": s.truncated,
             "no_vehicle_available": s.no_vehicle_available,
             "no_feasible_path": s.no_feasible_path,
+            "mode_not_available": s.mode_not_available,
         }
+
+    @property
+    def completion_by_mode(self) -> dict[str, dict[str, float]]:
+        """``completion`` for each mode that has trips, and its travel time.
+
+        ``{"car": {...}, "bike": {...}}``: the keys of ``completion`` and
+        ``total_travel_time_s``, the mode's completed trips' travel time weighted by
+        traveller weight. They add up to the run's.
+        """
+        return {mode: dict(row) for mode, row in self._summary.completion_by_mode.items()}
 
     @property
     def total_travel_time_s(self) -> float:
@@ -352,6 +389,29 @@ class Run:
             f"no_vehicle_available={c['no_vehicle_available']}, "
             f"no_feasible_path={c['no_feasible_path']})"
         )
+
+
+BIKE_COSTS = ("dedicated", "time")
+LAYERS = ("road", "bike", "walk")
+
+
+def _check_layer(layer: str) -> str:
+    if layer not in LAYERS:
+        raise ValueError(f"layer must be one of {LAYERS}, got {layer!r}")
+    return layer
+
+
+def _trip_row(row: tuple) -> tuple:
+    """A trips row with its mode: nine fields take none (a car trip), ten give it."""
+    if len(row) == 9:
+        return (*row, None)
+    if len(row) == 10:
+        return tuple(row)
+    raise ValueError(
+        "a trips row has 9 fields (traveller_id, trip_seq, origin_lon, origin_lat, "
+        "destination_lon, destination_lat, departure_time_s, user_class, weight) or 10 "
+        f"(and mode), not {len(row)}: {row!r}"
+    )
 
 
 class Scenario:
@@ -385,8 +445,13 @@ class Scenario:
         route_update_options: dict[str, float] | None = None,
         choice_detour_limit: float | None = None,
         route_cache: bool = False,
+        bike_cost: str = "dedicated",
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
+        if bike_cost not in BIKE_COSTS:
+            raise ValueError(f"bike_cost must be one of {BIKE_COSTS}, got {bike_cost!r}")
+        if trips is not None:
+            trips = [_trip_row(row) for row in trips]
         if flow_level not in FLOW_LEVELS:
             raise ValueError(f"flow_level must be one of {FLOW_LEVELS}, got {flow_level}")
         if flow_step_s <= 0:
@@ -431,6 +496,7 @@ class Scenario:
         self._route_update_options = route_update_options
         self._choice_detour_limit = choice_detour_limit
         self._route_cache = route_cache
+        self._bike_cost = bike_cost
 
     @classmethod
     def from_parts(
@@ -455,6 +521,7 @@ class Scenario:
         route_update_options: dict[str, float] | None = None,
         choice_detour_limit: float | None = None,
         route_cache: bool = False,
+        bike_cost: str = "dedicated",
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -463,7 +530,14 @@ class Scenario:
             demand: Either an in-memory trips table (rows in the schema
                 ``examples.fixed_car_trips`` returns, or hand-built the same
                 way) or a path to a ``trips.parquet`` file — the same
-                schema either way, never two different shapes.
+                schema either way, never two different shapes. A row may end with
+                a **mode** (the ``mode`` column of ``trips.parquet``): ``"car"``,
+                ``"bike"``, ``"walk"``, or the not-yet-built ``"transit"``,
+                ``"car_transit"``, ``"bike_transit"``. A trip without one is a car
+                trip. Bike and walk trips travel on the network's bike and walk
+                layers (``network.layer("bike")``), each by its shortest route
+                there; a bike trip needs the traveller's bike at its origin, as a
+                car trip needs their car.
             persons: The ``persons.parquet`` equivalent — an in-memory table,
                 a file path, or ``None`` if every traveller takes their
                 class's default ownership.
@@ -544,6 +618,12 @@ class Scenario:
                 still in the set and returns when times change. The gaps are still measured
                 against the whole set. The ``ln_path_size`` attribute is computed over the whole
                 set.
+            bike_cost: How bike trips choose their route on the bike layer: ``"dedicated"``
+                (the default) is the fastest route with every minute in mixed traffic
+                counting a little more (1.2 times), so cyclists go a little out of their way
+                for a cycle track or lane; ``"time"`` is the fastest route. Bikes ride at 15
+                km/h in mixed traffic and 18 km/h on dedicated infrastructure; these values
+                and the 1.2 are defaults, not a calibration.
             route_cache: Keep the generated route sets in memory for the next run **of this
                 process** that asks for the same: the same network, the same origin-destination
                 pairs, the same route method and options and, for a method that reads the demand
@@ -637,6 +717,7 @@ class Scenario:
             route_update_options=route_update_options,
             choice_detour_limit=choice_detour_limit,
             route_cache=route_cache,
+            bike_cost=bike_cost,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
@@ -679,6 +760,7 @@ class Scenario:
             route_update_options=self._route_update_options,
             choice_detour_limit=self._choice_detour_limit,
             route_cache=self._route_cache,
+            bike_cost=self._bike_cost,
         )
         return Run(
             summary,

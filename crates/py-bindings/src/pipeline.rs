@@ -12,7 +12,7 @@
 //!
 //! A trip row is the exact field order of `core_demand::RawTrip`:
 //! `(traveller_id, trip_seq, origin_lon, origin_lat, destination_lon,
-//! destination_lat, departure_time_s, user_class, weight)`. There is one
+//! destination_lat, departure_time_s, user_class, weight, mode)`. There is one
 //! shape here, not a "simple" one and a "general" one — a traveller whose
 //! only available mode is a car, at a fixed departure time, is what this
 //! same schema already expresses when `class_defaults` gives their class a
@@ -29,15 +29,17 @@ use pyo3::types::PyDict;
 use numpy::{IntoPyArray, PyArray1};
 
 use openmobisim_core_demand::{
-    ClassDefaults, Ownership, RawPerson, RawTrip, build_travellers, read_persons_parquet,
+    ClassDefaults, Mode, Ownership, RawPerson, RawTrip, build_travellers, read_persons_parquet,
     read_trips_parquet,
 };
 use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::geometry::LonLat;
+use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
-use openmobisim_core_sim::{FlowMotor, Run as CoreRun};
+use openmobisim_core_sim::{FlowMotor, LayerSetup, Run as CoreRun, StaticLayers};
 use openmobisim_core_types::diagnostics::Diagnostics;
+use openmobisim_core_types::ids::{EntityId, TripId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 
@@ -47,13 +49,15 @@ use crate::routes::{PyRouteSets, to_options};
 use openmobisim_core_routes::Registry;
 use openmobisim_io_parquet::manifest::Manifest;
 use openmobisim_io_parquet::{
-    write_diagnostics, write_events, write_kpis, write_link_bins, write_manifest,
+    write_diagnostics, write_events, write_kpis, write_layer_link_bins, write_link_bins,
+    write_manifest,
 };
 
-/// One `trips.parquet` row, as a plain tuple in `RawTrip`'s field order.
-type TripRow = (String, u32, f64, f64, f64, f64, u32, String, Option<u32>);
+/// One `trips.parquet` row, as a plain tuple in `RawTrip`'s field order; the
+/// last field is the optional `mode` (S195), by name.
+type TripRow = (String, u32, f64, f64, f64, f64, u32, String, Option<u32>, Option<String>);
 
-fn trip_from_row(row: TripRow) -> RawTrip {
+fn trip_from_row(row: TripRow) -> PyResult<RawTrip> {
     let (
         traveller_id,
         trip_seq,
@@ -64,8 +68,9 @@ fn trip_from_row(row: TripRow) -> RawTrip {
         departure_time_s,
         user_class,
         weight,
+        mode,
     ) = row;
-    RawTrip {
+    Ok(RawTrip {
         traveller_id,
         trip_seq,
         origin: LonLat::new(origin_lon, origin_lat),
@@ -73,7 +78,8 @@ fn trip_from_row(row: TripRow) -> RawTrip {
         departure_time: Second(departure_time_s),
         user_class,
         weight,
-    }
+        mode: mode.map(|m| Mode::from_name(&m)).transpose().map_err(to_value_error)?,
+    })
 }
 
 /// One `persons.parquet` row, as a plain tuple in `RawPerson`'s field order.
@@ -150,6 +156,26 @@ pub struct PyRunSummary {
     /// Per-link, per-time-bin results, if the run asked for them.
     #[pyo3(get)]
     pub link_bins: Option<Py<PyLinkBins>>,
+    /// The bike layer's per-link results (S195), if asked for and bikes ran;
+    /// `pcu` there counts travellers.
+    #[pyo3(get)]
+    pub bike_link_bins: Option<Py<PyLinkBins>>,
+    /// The walk layer's, likewise.
+    #[pyo3(get)]
+    pub walk_link_bins: Option<Py<PyLinkBins>>,
+    /// Path to `link_bins_bike.parquet`, if written.
+    #[pyo3(get)]
+    pub link_bins_bike_path: Option<String>,
+    /// Path to `link_bins_walk.parquet`, if written.
+    #[pyo3(get)]
+    pub link_bins_walk_path: Option<String>,
+    /// Trips whose mode this run cannot simulate (S195).
+    #[pyo3(get)]
+    pub mode_not_available: u32,
+    /// The outcomes by mode, for each mode that has trips: a dict of the
+    /// completion counts and `total_travel_time_s` (S195).
+    #[pyo3(get)]
+    pub completion_by_mode: Py<PyDict>,
     /// The route sets the trips were routed from.
     #[pyo3(get)]
     pub route_sets: Option<Py<PyRouteSets>>,
@@ -287,7 +313,7 @@ fn convergence_arrays(
     choice_model=None, choice_options=None,
     equilibration="none", equilibration_options=None,
     route_update="none", route_update_options=None,
-    choice_detour_limit=None, route_cache=false,
+    choice_detour_limit=None, route_cache=false, bike_cost="dedicated",
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -319,7 +345,13 @@ pub fn run_pipeline(
     route_update_options: Option<HashMap<String, f64>>,
     choice_detour_limit: Option<f64>,
     route_cache: bool,
+    bike_cost: &str,
 ) -> PyResult<PyRunSummary> {
+    let bike_cost = BikeCost::from_name(bike_cost).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "bike_cost must be \"dedicated\" or \"time\", not {bike_cost:?}"
+        ))
+    })?;
     if let Some(limit) = choice_detour_limit {
         if !(limit.is_finite() && limit >= 0.0) {
             return Err(PyValueError::new_err(format!(
@@ -341,7 +373,7 @@ pub fn run_pipeline(
         openmobisim_core_sim::route_update::update(route_update, &to_options(route_update_options))
             .map_err(to_value_error)?;
     let raw_trips = match (trips, trips_path) {
-        (Some(rows), None) => rows.into_iter().map(trip_from_row).collect(),
+        (Some(rows), None) => rows.into_iter().map(trip_from_row).collect::<PyResult<_>>()?,
         (None, Some(path)) => read_trips_parquet(path).map_err(to_value_error)?,
         _ => return Err(PyValueError::new_err("give exactly one of trips or trips_path")),
     };
@@ -373,6 +405,7 @@ pub fn run_pipeline(
     .map_err(to_value_error)?;
     let travellers = Arc::new(travellers);
     let trips_table = Arc::new(trips_table);
+    let trips_used = trips_table.clone();
 
     let mut run =
         CoreRun::new(network.inner.clone(), travellers.clone(), trips_table, Second(window_s));
@@ -416,6 +449,16 @@ pub fn run_pipeline(
     if route_cache {
         run = run.with_route_cache(route_cache_handle().clone());
     }
+    // The bike and walk layers, prepared only for a run whose trips use them.
+    let uses = |mode: Mode| (0..trips_used.len()).any(|i| trips_used.mode(TripId::new(i)) == mode);
+    let setup = |layer: StaticLayer| -> PyResult<LayerSetup> {
+        Ok(LayerSetup::new(network.static_layer(layer)?, bike_cost, StaticLayerDefaults::SHIPPED))
+    };
+    let layers = StaticLayers {
+        bike: if uses(Mode::Bike) { Some(setup(StaticLayer::Bike)?) } else { None },
+        walk: if uses(Mode::Walk) { Some(setup(StaticLayer::Walk)?) } else { None },
+    };
+    run = run.with_layers(Arc::new(layers));
     // What went in, taken before it runs (S168).
     let description = run.description();
     let mut run_diagnostics = Diagnostics::new();
@@ -452,6 +495,37 @@ pub fn run_pipeline(
         }
         None => None,
     };
+    let mut layer_paths: [Option<String>; 2] = [None, None];
+    for (i, (layer, bins)) in
+        [(StaticLayer::Bike, &result.bike_link_bins), (StaticLayer::Walk, &result.walk_link_bins)]
+            .into_iter()
+            .enumerate()
+    {
+        if let Some(bins) = bins {
+            let path = dir.join(format!("link_bins_{}.parquet", layer.as_str()));
+            let graph = network.static_layer(layer)?;
+            write_layer_link_bins(&path, run_id, layer, bins, graph.network(), &description)
+                .map_err(to_value_error)?;
+            layer_paths[i] = Some(path.to_string_lossy().into_owned());
+        }
+    }
+    let [link_bins_bike_path, link_bins_walk_path] = layer_paths;
+    let completion_by_mode = PyDict::new(py);
+    for mode in Mode::ALL {
+        let m = &result.by_mode[mode.index()];
+        if m.completion.total_trips == 0 {
+            continue;
+        }
+        let row = PyDict::new(py);
+        row.set_item("total_trips", m.completion.total_trips)?;
+        row.set_item("completed", m.completion.completed)?;
+        row.set_item("truncated", m.completion.truncated)?;
+        row.set_item("no_vehicle_available", m.completion.no_vehicle_available)?;
+        row.set_item("no_feasible_path", m.completion.no_feasible_path)?;
+        row.set_item("mode_not_available", m.completion.mode_not_available)?;
+        row.set_item("total_travel_time_s", m.total_travel_time.get())?;
+        completion_by_mode.set_item(mode.as_str(), row)?;
+    }
 
     Ok(PyRunSummary {
         kpis_path: kpis_path.to_string_lossy().into_owned(),
@@ -473,6 +547,18 @@ pub fn run_pipeline(
         no_feasible_path: result.completion.no_feasible_path,
         total_travel_time_s: result.total_travel_time.get(),
         link_bins: result.link_bins.map(|inner| Py::new(py, PyLinkBins { inner })).transpose()?,
+        bike_link_bins: result
+            .bike_link_bins
+            .map(|inner| Py::new(py, PyLinkBins { inner }))
+            .transpose()?,
+        walk_link_bins: result
+            .walk_link_bins
+            .map(|inner| Py::new(py, PyLinkBins { inner }))
+            .transpose()?,
+        link_bins_bike_path,
+        link_bins_walk_path,
+        mode_not_available: result.completion.mode_not_available,
+        completion_by_mode: completion_by_mode.unbind(),
         route_choices: match (&result.route_choices, &result.route_sets) {
             (Some(choices), Some(sets)) => Some(PyRouteChoices::new(py, choices, sets)?),
             _ => None,

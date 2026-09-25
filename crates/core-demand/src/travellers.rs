@@ -16,6 +16,7 @@ use openmobisim_core_types::ids::{
 use openmobisim_core_types::time::Second;
 
 use crate::DemandError;
+use crate::mode::Mode;
 use crate::persons::RawPerson;
 use crate::trips::RawTrip;
 
@@ -134,6 +135,7 @@ pub struct Trips {
     departure: Vec<Second>,
     origin: Vec<LonLat>,
     destination: Vec<LonLat>,
+    mode: Vec<Mode>,
 }
 
 impl Trips {
@@ -155,6 +157,12 @@ impl Trips {
     #[must_use]
     pub fn traveller(&self, trip: TripId) -> TravellerId {
         self.traveller[trip.index()]
+    }
+
+    /// The trip's mode (S195): [`Mode::Car`] where the file stated none.
+    #[must_use]
+    pub fn mode(&self, trip: TripId) -> Mode {
+        self.mode[trip.index()]
     }
 
     /// Departure time.
@@ -428,6 +436,7 @@ pub fn build(
             trips.departure.push(trip.departure_time);
             trips.origin.push(trip.origin);
             trips.destination.push(trip.destination);
+            trips.mode.push(trip.mode.unwrap_or_default());
             cursor += 1;
         }
     }

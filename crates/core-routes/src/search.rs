@@ -7,7 +7,8 @@
 //! without touching a generator.
 //!
 //! **Costs** are free-flow travel times (control delay included, S90) over
-//! links that carry motor traffic; other links cost infinity. A generator can
+//! links that carry motor traffic; other links cost infinity. A bike or walk
+//! layer searches its own costs instead ([`SearchContext::with_costs`], S195). A generator can
 //! multiply any link's cost with [`LinkFactors`] for the next search (the
 //! penalty method does), and asks [`Search::max_overlap`] how much of a route lies
 //! on routes it has [marked](Search::mark).
@@ -84,6 +85,19 @@ impl<'a> SearchContext<'a> {
                 }
             })
             .collect();
+        Self { network, turns, cost }
+    }
+
+    /// A search over `cost` instead of the car's free-flow times (S195): the
+    /// bike and walk layers' costs, one per link of `network`, infinite for a
+    /// link that must not be used.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cost` does not have one entry per link.
+    #[must_use]
+    pub fn with_costs(network: &'a RoadNetwork, turns: &'a TurnTable, cost: Vec<f64>) -> Self {
+        assert_eq!(cost.len(), network.link_count() as usize, "one cost per link");
         Self { network, turns, cost }
     }
 

@@ -17,7 +17,8 @@ use crate::columns;
 ///
 /// Matches the interface's schema table exactly:
 /// `traveller_id, trip_seq, origin_lon, origin_lat, destination_lon,
-/// destination_lat, departure_time_s, user_class, weight`. Columns beyond
+/// destination_lat, departure_time_s, user_class, weight`, and the optional
+/// `mode` (S195). Columns beyond
 /// these — "carried as attributes for choice models" — are not read here;
 /// see the crate docs for why.
 #[derive(Clone, Debug)]
@@ -45,6 +46,9 @@ pub struct RawTrip {
     /// ([`crate::travellers::codes::INCONSISTENT_TRAVELLER_WEIGHT`]), not a
     /// per-trip value — [`crate::travellers::build`] takes the first row's.
     pub weight: Option<u32>,
+    /// The trip's mode (S195), if the file states one: a trip without one is a
+    /// car trip until mode choice exists.
+    pub mode: Option<crate::Mode>,
 }
 
 /// Read every row of `trips.parquet`, in file order.
@@ -66,6 +70,14 @@ pub fn read_trips_parquet(path: impl AsRef<Path>) -> Result<Vec<RawTrip>, Demand
         let departure_time_s = columns::required_u32(batch, "departure_time_s")?;
         let user_class = columns::required_id(batch, "user_class")?;
         let weight = columns::optional_u32(batch, "weight")?;
+        let modes = columns::optional_string(batch, "mode")?
+            .map(|column| {
+                column
+                    .into_iter()
+                    .map(|value| value.map(|v| crate::Mode::from_name(&v)).transpose())
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
 
         for i in 0..batch.num_rows() {
             trips.push(RawTrip {
@@ -76,6 +88,7 @@ pub fn read_trips_parquet(path: impl AsRef<Path>) -> Result<Vec<RawTrip>, Demand
                 departure_time: Second(departure_time_s[i]),
                 user_class: user_class[i].clone(),
                 weight: weight.as_ref().and_then(|w| w[i]),
+                mode: modes.as_ref().and_then(|m| m[i]),
             });
         }
     }

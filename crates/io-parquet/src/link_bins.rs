@@ -31,6 +31,8 @@ use std::sync::Arc;
 
 use arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray, UInt32Array};
 use arrow_schema::{DataType, Field, Schema};
+use openmobisim_core_graph::layers::StaticLayer;
+use openmobisim_core_graph::link_geometry::NetworkFingerprint;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_loading::LinkBins;
 use openmobisim_core_sim::RunDescription;
@@ -52,6 +54,38 @@ pub fn write_link_bins(
     network: &RoadNetwork,
     description: &RunDescription,
 ) -> Result<(), WriteError> {
+    write(path.as_ref(), run_id, bins, network, description, None)
+}
+
+/// Write a bike or walk layer's per-link results (S195): `link_bins_bike.parquet`
+/// or `link_bins_walk.parquet`, with the road file's columns except that the
+/// weighted count is `travellers` and its time `traveller_seconds` — a bike
+/// is no passenger-car unit. The metadata's network fingerprint is the
+/// layer's, and `openmobisim.layer` names it.
+///
+/// # Errors
+///
+/// [`WriteError`] if the file cannot be created or the Parquet writer rejects
+/// the data.
+pub fn write_layer_link_bins(
+    path: impl AsRef<Path>,
+    run_id: &str,
+    layer: StaticLayer,
+    bins: &LinkBins,
+    graph: &RoadNetwork,
+    description: &RunDescription,
+) -> Result<(), WriteError> {
+    write(path.as_ref(), run_id, bins, graph, description, Some(layer))
+}
+
+fn write(
+    path: &Path,
+    run_id: &str,
+    bins: &LinkBins,
+    network: &RoadNetwork,
+    description: &RunDescription,
+    layer: Option<StaticLayer>,
+) -> Result<(), WriteError> {
     let n = bins.len();
     let ids = network.link_external_ids();
     let bin_seconds = bins.bin_seconds();
@@ -69,12 +103,23 @@ pub fn write_link_bins(
     let pcu_col: ArrayRef = Arc::new(Float64Array::from(bins.pcu().to_vec()));
     let pcu_seconds_col: ArrayRef = Arc::new(Float64Array::from(bins.pcu_seconds().to_vec()));
 
-    let metadata = vec![
+    let (network_fingerprint, count, seconds) = match layer {
+        None => (description.network_fingerprint_hex(), "pcu", "pcu_seconds"),
+        Some(_) => (
+            openmobisim_core_types::hash::fingerprint_hex(NetworkFingerprint::of(network).value()),
+            "travellers",
+            "traveller_seconds",
+        ),
+    };
+    let mut metadata = vec![
         ("openmobisim.bin_seconds".to_string(), bin_seconds.to_string()),
         ("openmobisim.run_fingerprint".to_string(), description.fingerprint_hex()),
-        ("openmobisim.network_fingerprint".to_string(), description.network_fingerprint_hex()),
+        ("openmobisim.network_fingerprint".to_string(), network_fingerprint),
         ("openmobisim.master_seed".to_string(), description.master_seed.to_string()),
     ];
+    if let Some(layer) = layer {
+        metadata.push(("openmobisim.layer".to_string(), layer.as_str().to_string()));
+    }
     let schema = Arc::new(
         Schema::new(vec![
             Field::new("run_id", DataType::Utf8, false),
@@ -83,8 +128,8 @@ pub fn write_link_bins(
             Field::new("link", DataType::Utf8, false),
             Field::new("link_index", DataType::UInt32, false),
             Field::new("crossings", DataType::UInt32, false),
-            Field::new("pcu", DataType::Float64, false),
-            Field::new("pcu_seconds", DataType::Float64, false),
+            Field::new(count, DataType::Float64, false),
+            Field::new(seconds, DataType::Float64, false),
         ])
         .with_metadata(metadata.iter().cloned().collect::<HashMap<_, _>>()),
     );
@@ -102,5 +147,5 @@ pub fn write_link_bins(
         ],
     )?;
 
-    write_single_batch_with(path.as_ref(), schema, &batch, &metadata, Compression::SNAPPY)
+    write_single_batch_with(path, schema, &batch, &metadata, Compression::SNAPPY)
 }

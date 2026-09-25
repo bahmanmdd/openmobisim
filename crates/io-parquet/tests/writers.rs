@@ -5,13 +5,14 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use arrow_array::{Array, Float64Array, StringArray, UInt32Array, UInt64Array};
-use openmobisim_core_demand::{ClassDefaults, Ownership, RawTrip, build_travellers};
+use openmobisim_core_demand::{ClassDefaults, Mode, Ownership, RawTrip, build_travellers};
 use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_loading::LinkBinRecorder;
 use openmobisim_core_sim::{
-    EventRow, EventType, IterationReport, RunDescription, RunResult, TripCompletionStats,
+    EventRow, EventType, IterationReport, ModeTotals, RunDescription, RunResult,
+    TripCompletionStats,
 };
 use openmobisim_core_types::diagnostics::{
     Category, DiagKey, Diagnostics, ElementRef, Severity, codes,
@@ -61,6 +62,7 @@ fn sample_result() -> RunResult {
             no_feasible_path: 0,
             completed: 3,
             truncated: 1,
+            mode_not_available: 0,
         },
         events: vec![
             EventRow::trip(Second(100), EventType::TripCompleted, TripId::new(0)),
@@ -73,6 +75,31 @@ fn sample_result() -> RunResult {
         route_choices: None,
         iterations: Vec::new(),
         converged: false,
+        by_mode: {
+            // Four car trips and one bike trip, adding up to the totals above.
+            let mut by_mode = [ModeTotals::default(); Mode::COUNT];
+            by_mode[Mode::Car.index()] = ModeTotals {
+                completion: TripCompletionStats {
+                    total_trips: 4,
+                    no_vehicle_available: 1,
+                    completed: 2,
+                    truncated: 1,
+                    ..TripCompletionStats::default()
+                },
+                total_travel_time: Duration(600.0),
+            };
+            by_mode[Mode::Bike.index()] = ModeTotals {
+                completion: TripCompletionStats {
+                    total_trips: 1,
+                    completed: 1,
+                    ..TripCompletionStats::default()
+                },
+                total_travel_time: Duration(125.0),
+            };
+            by_mode
+        },
+        bike_link_bins: None,
+        walk_link_bins: None,
     }
 }
 
@@ -83,26 +110,43 @@ fn kpis_round_trip_every_metric() {
     write_kpis(&path, "run-1", "design-a", 0, 0, &result).expect("write");
 
     let batch = read_first_batch(&path);
-    assert_eq!(batch.num_rows(), 6);
+    // Eight metrics for the run (`all`), and the same eight for each of the two
+    // modes that have trips (S195).
+    assert_eq!(batch.num_rows(), 24);
 
     let run_id = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
     for i in 0..batch.num_rows() {
         assert_eq!(run_id.value(i), "run-1");
     }
 
-    let metric = batch.column(4).as_any().downcast_ref::<StringArray>().unwrap();
-    let value = batch.column(5).as_any().downcast_ref::<Float64Array>().unwrap();
-    let row_of = |name: &str| (0..batch.num_rows()).find(|&i| metric.value(i) == name).unwrap();
+    let mode = batch.column(4).as_any().downcast_ref::<StringArray>().unwrap();
+    let metric = batch.column(5).as_any().downcast_ref::<StringArray>().unwrap();
+    let value = batch.column(6).as_any().downcast_ref::<Float64Array>().unwrap();
+    let get = |m: &str, name: &str| {
+        let row = (0..batch.num_rows())
+            .find(|&i| mode.value(i) == m && metric.value(i) == name)
+            .unwrap_or_else(|| panic!("no {m} {name}"));
+        value.value(row)
+    };
 
     #[allow(clippy::float_cmp, reason = "values are exact, written by this same test")]
     {
-        assert_eq!(value.value(row_of("total_travel_time_s")), 725.0);
-        assert_eq!(value.value(row_of("completed_trips")), 3.0);
-        assert_eq!(value.value(row_of("truncated_trips")), 1.0);
-        assert_eq!(value.value(row_of("no_vehicle_available_trips")), 1.0);
-        assert_eq!(value.value(row_of("no_feasible_path_trips")), 0.0);
-        assert_eq!(value.value(row_of("completion_rate")), 3.0 / 4.0);
+        assert_eq!(get("all", "trips"), 5.0);
+        assert_eq!(get("all", "total_travel_time_s"), 725.0);
+        assert_eq!(get("all", "completed_trips"), 3.0);
+        assert_eq!(get("all", "truncated_trips"), 1.0);
+        assert_eq!(get("all", "no_vehicle_available_trips"), 1.0);
+        assert_eq!(get("all", "no_feasible_path_trips"), 0.0);
+        assert_eq!(get("all", "mode_not_available_trips"), 0.0);
+        assert_eq!(get("all", "completion_rate"), 3.0 / 4.0);
+        assert_eq!(get("car", "trips"), 4.0);
+        assert_eq!(get("car", "total_travel_time_s"), 600.0);
+        assert_eq!(get("car", "completion_rate"), 2.0 / 3.0);
+        assert_eq!(get("bike", "trips"), 1.0);
+        assert_eq!(get("bike", "total_travel_time_s"), 125.0);
+        assert_eq!(get("bike", "completion_rate"), 1.0);
     }
+    assert!((0..batch.num_rows()).all(|i| mode.value(i) != "walk"), "no walk trips, no rows");
 }
 
 #[test]
@@ -177,6 +221,7 @@ fn manifest_reports_the_fields_phase_1_actually_has() {
             departure_time: Second(0),
             user_class: "commuter".to_string(),
             weight: None,
+            mode: None,
         },
         RawTrip {
             traveller_id: "bob".to_string(),
@@ -186,6 +231,7 @@ fn manifest_reports_the_fields_phase_1_actually_has() {
             departure_time: Second(0),
             user_class: "pedestrian".to_string(), // no declared default
             weight: None,
+            mode: None,
         },
     ];
     let class_defaults =
@@ -252,6 +298,7 @@ fn a_descriptor_containing_a_quote_or_a_backslash_still_writes_valid_json() {
         departure_time: Second(0),
         user_class: "commuter".to_string(),
         weight: None,
+        mode: None,
     }];
     let class_defaults =
         ClassDefaults::new().with_default("commuter", Ownership { car: true, ..Ownership::NONE });
@@ -382,6 +429,58 @@ fn link_bins_round_trip_with_external_ids_and_the_run_identity() {
 }
 
 #[test]
+fn a_layer_s_link_bins_count_travellers_and_name_their_layer() {
+    use openmobisim_core_graph::layers::StaticLayer;
+    let network = two_link_network();
+    let fwd = network.link_external_ids().typed_id_of::<LinkId>("way/9:fwd").expect("known");
+    let mut recorder = LinkBinRecorder::new(2, 300, 3600.0);
+    recorder.record(fwd, 10.0, 70.0, 3.0); // three travellers, 60 s each
+    let bins = recorder.finish();
+    let path = temp_path("link_bins_bike.parquet");
+    openmobisim_io_parquet::write_layer_link_bins(
+        &path,
+        "bikes",
+        StaticLayer::Bike,
+        &bins,
+        &network,
+        &sample_description(None, Some(300)),
+    )
+    .expect("write");
+    let batch = read_first_batch(&path);
+    let names: Vec<_> = batch.schema().fields().iter().map(|f| f.name().clone()).collect();
+    assert_eq!(
+        names,
+        [
+            "run_id",
+            "bin",
+            "start_s",
+            "link",
+            "link_index",
+            "crossings",
+            "travellers",
+            "traveller_seconds"
+        ]
+    );
+    let f64s = |i: usize| -> Vec<f64> {
+        batch.column(i).as_any().downcast_ref::<Float64Array>().expect("f64").values().to_vec()
+    };
+    assert_eq!(f64s(6), [3.0]);
+    assert_eq!(f64s(7), [180.0]);
+    let file = File::open(&path).expect("written");
+    let reader = ParquetRecordBatchReaderBuilder::try_new(file).expect("valid parquet");
+    let meta = reader.metadata().file_metadata().key_value_metadata().expect("metadata").clone();
+    let value = |key: &str| meta.iter().find(|kv| kv.key == key).and_then(|kv| kv.value.clone());
+    assert_eq!(value("openmobisim.layer").as_deref(), Some("bike"));
+    assert_eq!(
+        value("openmobisim.network_fingerprint"),
+        Some(openmobisim_core_types::hash::fingerprint_hex(
+            openmobisim_core_graph::link_geometry::NetworkFingerprint::of(&network).value()
+        )),
+        "the layer's own network"
+    );
+}
+
+#[test]
 fn link_bins_writer_handles_a_run_with_no_traffic() {
     let network = two_link_network();
     let bins = LinkBinRecorder::new(2, 300, 3600.0).finish();
@@ -421,11 +520,12 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
 
     let batch = read_first_batch(&path);
     let iteration = batch.column(3).as_any().downcast_ref::<UInt32Array>().unwrap();
-    let metric = batch.column(4).as_any().downcast_ref::<StringArray>().unwrap();
-    let value = batch.column(5).as_any().downcast_ref::<Float64Array>().unwrap();
+    let mode = batch.column(4).as_any().downcast_ref::<StringArray>().unwrap();
+    let metric = batch.column(5).as_any().downcast_ref::<StringArray>().unwrap();
+    let value = batch.column(6).as_any().downcast_ref::<Float64Array>().unwrap();
     let get = |i: u32, name: &str| {
         (0..batch.num_rows())
-            .find(|&r| iteration.value(r) == i && metric.value(r) == name)
+            .find(|&r| iteration.value(r) == i && mode.value(r) == "all" && metric.value(r) == name)
             .map(|r| value.value(r))
     };
     // The iteration comes from the report (the 99 given is for a run that did not iterate).
@@ -448,10 +548,18 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
     assert_eq!(get(0, "time_change"), None);
     assert_eq!(get(0, "reselected_share"), Some(1.0));
     // What cannot change between loadings is written once, for the last iteration.
-    let count = |name: &str| (0..batch.num_rows()).filter(|&r| metric.value(r) == name).count();
-    assert_eq!((count("completion_rate"), count("no_feasible_path_trips")), (1, 1));
+    let count = |m: &str, name: &str| {
+        (0..batch.num_rows()).filter(|&r| mode.value(r) == m && metric.value(r) == name).count()
+    };
+    assert_eq!((count("all", "completion_rate"), count("all", "no_feasible_path_trips")), (1, 1));
     assert_eq!(get(2, "completion_rate"), Some(3.0 / 4.0));
-    assert_eq!(count("total_travel_time_s"), 3);
+    assert_eq!(count("all", "total_travel_time_s"), 3);
+    // The modes' own rows are the last loading's, once each; the settling metrics are the run's.
+    assert_eq!((count("car", "total_travel_time_s"), count("bike", "completion_rate")), (1, 1));
+    assert_eq!(count("car", "gap"), 0);
+    assert!(
+        (0..batch.num_rows()).filter(|&r| mode.value(r) != "all").all(|r| iteration.value(r) == 2)
+    );
 }
 
 #[test]
@@ -472,6 +580,7 @@ fn the_manifest_says_how_many_loadings_were_made_and_whether_it_converged() {
         departure_time: Second(0),
         user_class: "commuter".to_string(),
         weight: None,
+        mode: None,
     }];
     let (travellers, _) = build_travellers(
         raw,

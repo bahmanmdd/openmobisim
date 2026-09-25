@@ -142,13 +142,28 @@ impl RouteSets {
         keys: &[RouteKey],
         generator: &dyn RouteSetGenerator,
     ) -> Self {
+        Self::generate_in(&SearchContext::new(network, turns), keys, generator)
+    }
+
+    /// [`Self::generate`] over the link costs `ctx` holds: a bike or walk
+    /// layer's (S195), made with [`SearchContext::with_costs`].
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::generate`].
+    #[must_use]
+    pub fn generate_in(
+        ctx: &SearchContext<'_>,
+        keys: &[RouteKey],
+        generator: &dyn RouteSetGenerator,
+    ) -> Self {
+        let network = ctx.network;
         let mut keys: Vec<RouteKey> =
             keys.iter().copied().filter(|k| k.origin != k.destination).collect();
         keys.sort_unstable();
         keys.dedup();
 
-        let ctx = SearchContext::new(network, turns);
-        let per_key: Vec<Vec<Route>> = search_map(&ctx, &keys, |search, k| {
+        let per_key: Vec<Vec<Route>> = search_map(ctx, &keys, |search, k| {
             generator.generate(search, NodeId::new(k.origin), NodeId::new(k.destination))
         });
 

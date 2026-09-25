@@ -87,8 +87,9 @@ def trips_random(
     min_m: float = 500.0,
     max_m: float = 5000.0,
     user_class: str = "commuter",
+    mode: str | None = None,
 ) -> list[tuple]:
-    """A seeded load fixture: `count` car trips between random places on `network`.
+    """A seeded load fixture: `count` trips between random places on `network`.
 
     **Not a forecast.** Origins and destinations are the start points of random
     links, a crow-flies distance of ``min_m``-``max_m`` apart, departing at
@@ -108,6 +109,8 @@ def trips_random(
         min_m: The nearest a destination may be to its origin, in metres.
         max_m: The farthest, in metres.
         user_class: The class every row is tagged with.
+        mode: Every trip's mode (``"car"``, ``"bike"``, ``"walk"``, …); ``None``
+            (the default) leaves it out, which is a car trip.
 
     Returns:
         Rows in the trips schema ``Scenario.from_parts`` takes.
@@ -173,5 +176,6 @@ def trips_random(
             user_class,
             None,
         )
+        + (() if mode is None else (mode,))
         for i in range(count)
     ]

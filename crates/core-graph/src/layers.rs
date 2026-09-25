@@ -32,6 +32,8 @@
 //! speed and an infrastructure level); the costs a search reads are a vector of
 //! 8 bytes per link, made when asked for.
 
+use std::sync::Arc;
+
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
@@ -282,7 +284,7 @@ impl StaticNetworkBuilder {
                 infrastructure[id as usize] = link.infrastructure;
             }
         }
-        Ok(StaticNetwork { layer: self.layer, network, speed, infrastructure })
+        Ok(StaticNetwork { layer: self.layer, network: Arc::new(network), speed, infrastructure })
     }
 }
 
@@ -291,7 +293,7 @@ impl StaticNetworkBuilder {
 #[derive(Debug)]
 pub struct StaticNetwork {
     layer: StaticLayer,
-    network: RoadNetwork,
+    network: Arc<RoadNetwork>,
     /// Metres per second, per link.
     speed: Vec<f64>,
     infrastructure: Vec<BikeInfrastructure>,
@@ -408,6 +410,12 @@ impl StaticNetwork {
     #[must_use]
     pub fn network(&self) -> &RoadNetwork {
         &self.network
+    }
+
+    /// The graph, shared: for a handle that outlives this borrow.
+    #[must_use]
+    pub fn network_arc(&self) -> Arc<RoadNetwork> {
+        Arc::clone(&self.network)
     }
 
     /// A link's travel speed, in metres per second.

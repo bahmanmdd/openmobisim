@@ -112,6 +112,7 @@ def test_the_kpis_file_has_a_row_set_per_iteration():
     run = go("eq-kpis", equilibration_options={"iterations": 4}, **MSA)
     df = run.kpis().to_pandas()
     assert sorted(df["iteration"].unique()) == [0, 1, 2, 3]
+    df = df[df["mode"] == "all"]  # the run's rows; each mode's are the last loading's (S195)
     total = df[df["metric"] == "total_travel_time_s"].sort_values("iteration")["value"].to_numpy()
     assert np.allclose(total, run.convergence()["total_travel_time_s"])
     # The disequilibrium and what goes with it are in the file (S178), from the iteration measured.
@@ -131,10 +132,12 @@ def test_the_kpis_file_has_a_row_set_per_iteration():
     plain = (
         go("eq-kpis-plain", choice_model="deterministic", equilibration="none").kpis().to_pandas()
     )
+    plain = plain[plain["mode"] == "all"]
     assert sorted(plain["metric"]) == sorted(
         [
-            "total_travel_time_s", "completed_trips", "truncated_trips",
-            "no_vehicle_available_trips", "no_feasible_path_trips", "completion_rate",
+            "trips", "total_travel_time_s", "completed_trips", "truncated_trips",
+            "no_vehicle_available_trips", "no_feasible_path_trips", "mode_not_available_trips",
+            "completion_rate",
         ]
     )  # fmt: skip
 
