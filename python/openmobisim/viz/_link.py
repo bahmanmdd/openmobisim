@@ -271,7 +271,7 @@ def map_link(
         t = np.sqrt(np.minimum(volume, vmax) / vmax)
         link_rgb = ramp_rgb(th.ramp_volume, t)
         severity = volume
-        legend_stops, low, high = th.ramp_volume, "0", f"{vmax:g}+"
+        legend_stops, low, high = th.ramp_volume, "0", f"{vmax:,.0f}+"
         legend_label = f"Volume per direction ({unit})"
     drawn = np.nonzero(active)[0]
     drawn = drawn[np.argsort(severity[drawn], kind="stable")]  # the worst on top
