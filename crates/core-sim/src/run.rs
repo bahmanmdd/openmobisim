@@ -9,8 +9,9 @@
 //! [`RouteUpdate`] and a convergence report per iteration (S170, S176). That is
 //! for car trips; **bike and walk trips** travel on their own static layer
 //! ([`crate::layers`], S195), routed once and never part of the car's choice or
-//! gap. No hubs and no transit yet: those are `core-sim`'s later job
-//! (Foundations §10).
+//! gap; **transit trips** walk, ride and walk ([`crate::transit`], S199), routed
+//! after each loading on the day's times, and never part of the car's choice or
+//! gap either.
 //!
 //! The defaults here are the core's own and unconditional (`Level0`,
 //! `deterministic`, `none`); the Python `Scenario` layers its own on top
@@ -49,6 +50,7 @@ use crate::link_times::{LinkTimes, relative_time_change};
 use crate::route_cache::{RouteSetCache, generation_key};
 use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext};
+use crate::transit::{TransitRequest, TransitResult, TransitSetup};
 
 /// Which loading engine a [`Run`] uses.
 ///
@@ -221,6 +223,9 @@ pub struct RunResult {
     pub bike_link_bins: Option<LinkBins>,
     /// The walk layer's, likewise.
     pub walk_link_bins: Option<LinkBins>,
+    /// What transit did (S199), if the run has a timetable: the times the runs
+    /// kept and who boarded and alighted where.
+    pub transit: Option<TransitResult>,
 }
 
 /// How one loading is made besides the routes it follows.
@@ -247,6 +252,8 @@ struct Loaded {
     entry_bins: Option<EntryTables>,
     /// The bike and walk layers' per-link results, if asked for.
     layer_bins: [Option<LinkBins>; 2],
+    /// What transit did, if the run has a timetable.
+    transit: Option<TransitResult>,
 }
 
 /// What happened to one bike or walk trip.
@@ -295,6 +302,8 @@ pub struct Run {
     route_cache: Option<Arc<RouteSetCache>>,
     /// The bike and walk layers (S195): none, by default.
     layers: Arc<StaticLayers>,
+    /// The timetable, linked to the walk and bike layers (S199): none, by default.
+    transit: Option<Arc<TransitSetup>>,
 }
 
 /// The share above the best route's expected time beyond which a route is not offered to a
@@ -333,7 +342,19 @@ impl Run {
             choice_detour_limit: DEFAULT_CHOICE_DETOUR_LIMIT,
             route_cache: None,
             layers: Arc::new(StaticLayers::default()),
+            transit: None,
         }
+    }
+
+    /// The same run, with a timetable for the trips whose mode is
+    /// [`Mode::Transit`] (S199): they walk to a stop, ride and walk on, by the
+    /// earliest journey. Without it such a trip is counted as
+    /// `mode_not_available`. Its walks are counted on the walk layer's per-link
+    /// results when that layer is the run's own ([`Self::with_layers`]).
+    #[must_use]
+    pub fn with_transit(mut self, transit: Arc<TransitSetup>) -> Self {
+        self.transit = Some(transit);
+        self
     }
 
     /// The same run, with bike and walk layers for the trips whose mode is
@@ -462,6 +483,7 @@ impl Run {
             route_update_active: self.route_update.is_active(),
             choice_detour_limit: self.choice_detour_limit,
             layers: &self.layers,
+            transit: self.transit.as_deref(),
         })
     }
 
@@ -765,6 +787,7 @@ impl Run {
         let link_bins = if self.link_bin_seconds.is_some() { loaded.link_bins } else { None };
         let by_mode = mode_totals(&loaded.events, &self.trips, &self.travellers);
         let [bike_link_bins, walk_link_bins] = loaded.layer_bins;
+        let transit = loaded.transit;
         Ok(RunResult {
             total_travel_time: loaded.total_travel_time,
             completion: loaded.completion,
@@ -777,6 +800,7 @@ impl Run {
             by_mode,
             bike_link_bins,
             walk_link_bins,
+            transit,
         })
     }
 
@@ -827,6 +851,8 @@ impl Run {
         let mut entry_bins: Option<EntryTables> = None;
         // Bike and walk vehicles, kept to be binned per layer when asked.
         let mut layer_vehicles: [Vec<Vehicle>; 2] = [Vec::new(), Vec::new()];
+        // Transit trips, routed once the loading has made the day's times.
+        let mut pending_transit: Vec<TripId> = Vec::new();
 
         while let Some(Reverse(key)) = queue.pop() {
             let trip = TripId::new(key.entity);
@@ -843,7 +869,9 @@ impl Run {
             // from. Stranding propagates by itself; nothing here needs to
             // decide to stop early.
             let mode = self.trips.mode(trip);
-            if mode != Mode::Car {
+            if mode == Mode::Transit && self.transit.is_some() {
+                pending_transit.push(trip);
+            } else if mode != Mode::Car {
                 match self.static_outcome(trip, mode, static_routes) {
                     StaticOutcome::NotAvailable => {
                         diagnostics.record(DiagKey::new(
@@ -1112,6 +1140,81 @@ impl Run {
             }
         }
 
+        // Transit trips, on the day's times.
+        let mut transit_result = None;
+        if let Some(transit) = self.transit.clone() {
+            let times = transit.timetable().scheduled().clone();
+            let data = transit.scheduled();
+            let requests: Vec<TransitRequest> = pending_transit
+                .iter()
+                .map(|&trip| TransitRequest {
+                    origin: transit.walk_node(self.trips.origin(trip)),
+                    destination: transit.walk_node(self.trips.destination(trip)),
+                    departure: self.trips.departure(trip).get(),
+                })
+                .collect();
+            // Walks are binned on the walk layer when it is the run's own.
+            let bin_walks = record_bins.is_some()
+                && self
+                    .layers
+                    .walk
+                    .as_ref()
+                    .is_some_and(|w| Arc::ptr_eq(w.network(), transit.walk()));
+            let travels = transit.route_all(data, &requests, bin_walks);
+            let mut result = TransitResult::empty(times);
+            for (&trip, travel) in pending_transit.iter().zip(travels) {
+                let departure = self.trips.departure(trip);
+                let Some(travel) = travel else {
+                    diagnostics.record(DiagKey::new(
+                        Category::Modelling,
+                        codes::NO_FEASIBLE_PATH,
+                        Severity::Warning,
+                        ElementRef::of(trip),
+                    ));
+                    completion.no_feasible_path += 1;
+                    events.push(EventRow::trip(departure, EventType::NoFeasiblePath, trip));
+                    continue;
+                };
+                let weight = f64::from(self.travellers.weight(self.trips.traveller(trip)));
+                let arrival = Second(travel.arrival);
+                if arrival <= self.window {
+                    completion.completed += 1;
+                    total_travel_time +=
+                        (Duration::from_clock(arrival) - Duration::from_clock(departure)) * weight;
+                    events.push(EventRow::trip(arrival, EventType::TripCompleted, trip));
+                } else {
+                    completion.truncated += 1;
+                    diagnostics.record(DiagKey::new(
+                        Category::Modelling,
+                        codes::TRIP_TRUNCATED,
+                        Severity::Info,
+                        ElementRef::of(trip),
+                    ));
+                    events.push(EventRow::trip(self.window, EventType::TripTruncated, trip));
+                }
+                for leg in &travel.journey.legs {
+                    if let openmobisim_core_transit::JourneyLeg::Ride {
+                        board_call,
+                        alight_call,
+                        ..
+                    } = *leg
+                    {
+                        result.boardings[board_call as usize] += weight;
+                        result.alightings[alight_call as usize] += weight;
+                    }
+                }
+                for walk in travel.walks {
+                    layer_vehicles[1].push(Vehicle::new(
+                        VehicleId::new(trip.raw()),
+                        walk.links,
+                        Pcu(weight),
+                        Second(walk.departure),
+                    ));
+                }
+            }
+            transit_result = Some(result);
+        }
+
         // The bike and walk layers' per-link results, from their own vehicles.
         let mut layer_bins: [Option<LinkBins>; 2] = [None, None];
         if let Some(bin_seconds) = record_bins {
@@ -1128,7 +1231,15 @@ impl Run {
             }
         }
 
-        Loaded { total_travel_time, completion, events, link_bins, entry_bins, layer_bins }
+        Loaded {
+            total_travel_time,
+            completion,
+            events,
+            link_bins,
+            entry_bins,
+            layer_bins,
+            transit: transit_result,
+        }
     }
 
     /// Decide and make one bike or walk trip: whether its mode can run, whether

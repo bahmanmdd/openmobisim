@@ -13,6 +13,12 @@ categories.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Route transit passengers in parallel. Results are identical either way: trips are
+# split into fixed chunks and the chunks joined in order.
+default = ["parallel"]
+parallel = ["dep:rayon"]
+
 [dependencies]
 openmobisim-core-types = { workspace = true }
 openmobisim-core-graph = { workspace = true }
@@ -20,6 +26,8 @@ openmobisim-core-demand = { workspace = true }
 openmobisim-core-loading = { workspace = true }
 openmobisim-core-routes = { workspace = true }
 openmobisim-core-choice = { workspace = true }
+openmobisim-core-transit = { workspace = true }
+rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

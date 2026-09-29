@@ -10,6 +10,7 @@
 //! | [`route_update`] | [`route_update::RouteUpdate`] — growing the route sets between iterations: `none` and `best_response` (S176) |
 //! | [`route_choice`] | [`route_choice::RouteChoices`] — which route each trip takes, from its pair's route set and a choice model (S169) |
 //! | [`identity`] | [`identity::RunDescription`] — a run's master seed and fingerprint, made before it executes (S168) |
+//! | [`transit`] | [`transit::TransitSetup`] — a timetable linked to the walk and bike layers: stop hubs, walks, RAPTOR (S199) |
 //!
 //! # What this crate is, and is not, yet
 //!
@@ -40,6 +41,7 @@ pub mod route_cache;
 pub mod route_choice;
 pub mod route_update;
 pub mod run;
+pub mod transit;
 
 pub use equilibration::{Equilibration, IterationReport, Msa, NoEquilibration};
 pub use events::{EventRow, EventType};
@@ -51,3 +53,4 @@ pub use route_cache::RouteSetCache;
 pub use route_choice::{NO_ROUTE, ROUTE_ATTRIBUTES, RouteChoices};
 pub use route_update::{BestResponse, NoRouteUpdate, RouteUpdate};
 pub use run::{FlowMotor, ModeTotals, Run, RunError, RunResult, TripCompletionStats};
+pub use transit::{TransitResult, TransitSetup};

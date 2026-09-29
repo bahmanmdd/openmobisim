@@ -42,6 +42,7 @@ use openmobisim_core_types::time::Second;
 
 use crate::layers::{StaticLayers, static_layer_of};
 use crate::run::FlowMotor;
+use crate::transit::TransitSetup;
 
 /// What went into one run. See the [module docs](self).
 #[derive(Clone, PartialEq, Debug)]
@@ -128,6 +129,7 @@ pub(crate) struct Inputs<'a> {
     pub route_update_active: bool,
     pub choice_detour_limit: f64,
     pub layers: &'a StaticLayers,
+    pub transit: Option<&'a TransitSetup>,
 }
 
 pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
@@ -163,6 +165,10 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         h.write_str(inputs.route_update_descriptor);
     }
     hash_modes(&mut h, inputs.trips, inputs.layers);
+    // Off means absent: a run without a timetable hashes as it did before transit.
+    if let Some(transit) = inputs.transit {
+        hash_transit(&mut h, transit);
+    }
 
     RunDescription {
         fingerprint: h.finish(),
@@ -235,6 +241,8 @@ fn hash_modes(h: &mut Fnv1a, trips: &Trips, layers: &StaticLayers) {
             Some(StaticLayer::Walk) => used[1] = true,
             None => {}
         }
+        // A transit trip walks to and from its stops (S199).
+        used[1] |= mode == Mode::Transit;
     }
     if !any {
         return;
@@ -255,6 +263,63 @@ fn hash_modes(h: &mut Fnv1a, trips: &Trips, layers: &StaticLayers) {
             h.write_f64(c);
         }
     }
+}
+
+/// The timetable, its defaults, and how its stops are linked to the walk and
+/// bike layers (S199).
+fn hash_transit(h: &mut Fnv1a, transit: &TransitSetup) {
+    let t = transit.timetable();
+    h.write_str("transit");
+    h.write_u64(u64::from(t.date().day_number().unsigned_abs()));
+    h.write_bool(t.date().day_number() < 0);
+    h.write_u32(t.stop_count());
+    for raw in 0..t.stop_count() {
+        let stop = NodeId::new(raw);
+        h.write_str(t.stop_ids().external(raw));
+        let at = t.stop_position(stop);
+        h.write_f64(at.lon);
+        h.write_f64(at.lat);
+        h.write_u32(transit.stop_walk_node(stop).map_or(u32::MAX, |n| n.raw()));
+        h.write_u32(transit.stop_bike_node(stop).map_or(u32::MAX, |n| n.raw()));
+    }
+    for raw in 0..t.route_count() {
+        h.write_str(t.route_ids().external(raw));
+        h.write_u32(u32::from(t.route_type(raw)));
+    }
+    h.write_u32(t.run_count());
+    for raw in 0..t.run_count() {
+        let run = openmobisim_core_types::ids::TransitRunId::new(raw);
+        h.write_str(t.run_ids().external(raw));
+        h.write_u32(t.run_route(run));
+        for c in t.run_calls(run) {
+            h.write_u32(t.call_stop(c).raw());
+            h.write_u8(t.call_flags(c));
+            h.write_u32(t.scheduled().arrival[c]);
+            h.write_u32(t.scheduled().departure[c]);
+        }
+    }
+    for tr in t.transfers() {
+        h.write_u32(tr.from.raw());
+        h.write_u32(tr.to.raw());
+        h.write_u32(tr.seconds);
+    }
+    let d = transit.defaults();
+    h.write_u32(d.board_slack_s);
+    h.write_u32(d.max_rides);
+    for v in [
+        d.access_walk_max_s,
+        d.transfer_walk_max_s,
+        d.stop_walk_snap_m,
+        d.stop_transfer_s,
+        d.bus_dwell_s,
+        d.bus_pcu,
+        d.bus_plausibility_ratio,
+        d.bus_stop_snap_m,
+    ] {
+        h.write_f64(v);
+    }
+    let walk = transit.walk().network();
+    hash_network(h, walk, NetworkFingerprint::of(walk).value());
 }
 
 fn hash_demand(h: &mut Fnv1a, travellers: &Travellers, trips: &Trips) {

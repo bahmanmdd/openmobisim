@@ -100,6 +100,7 @@ fn sample_result() -> RunResult {
         },
         bike_link_bins: None,
         walk_link_bins: None,
+        transit: None,
     }
 }
 

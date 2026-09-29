@@ -1,0 +1,31 @@
+[package]
+name = "openmobisim-io-gtfs"
+description = "GTFS import for openmobisim: one service day of a feed, clipped to a study area, as a timetable."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+openmobisim-core-types = { workspace = true }
+openmobisim-core-graph = { workspace = true }
+openmobisim-core-transit = { workspace = true }
+# Reading the zip a feed comes in. `default-features = false` plus the one
+# codec GTFS zips use: deflate through flate2's pure-Rust zlib-rs backend, the
+# same one `parquet` already brings in, so the tree stays free of C (S118's
+# test) and gains only `zip`'s own few small crates (S199).
+zip = { version = "7.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# The CSV state machine alone (no serde, no allocation): GTFS files are plain
+# RFC 4180 CSV, and `stop_times.txt` of a national feed is a gigabyte, so the
+# reader streams it through a fixed buffer.
+csv-core = "0.1"
+
+[dev-dependencies]
+proptest = { workspace = true }

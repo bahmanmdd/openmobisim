@@ -1,0 +1,21 @@
+[package]
+name = "openmobisim-core-transit"
+description = "Scheduled public transport for openmobisim: the timetable of one service day, its patterns, and RAPTOR."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+openmobisim-core-types = { workspace = true }
+openmobisim-core-graph = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
