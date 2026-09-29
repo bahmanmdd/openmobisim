@@ -173,3 +173,40 @@ def test_a_real_feed_reads() -> None:
     report = transit.read_report()
     assert report["runs_kept"] == transit.run_count
     assert not math.isnan(sum(transit.stops()["lat"]))
+
+
+# --- the transit file and figure -----------------------------------------------------------------
+
+
+def test_the_transit_calls_file_is_written() -> None:
+    net = ms.examples.toy_network()
+    run = toy_run([toy_trip(net, "a", "N1", "D2", 0, "transit")], "file", network=net)
+    table = run.transit_calls_table()
+    assert table is not None and Path(table.path).exists()
+    pq = pytest.importorskip("pyarrow.parquet")
+    rows = pq.read_table(table.path).to_pylist()
+    assert len(rows) == ms.examples.toy_network_transit().call_count
+    out = [r for r in rows if r["run"] == "T1:out:01"]
+    assert (out[0]["stop_id"], out[0]["boardings"], out[1]["alightings"]) == ("N1", 1.0, 1.0)
+    assert out[1]["arrival_s"] == 900
+
+
+def test_map_transit_draws_a_run_with_a_timetable(tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib")
+    from openmobisim import viz
+
+    net = ms.examples.toy_network()
+    run = toy_run([toy_trip(net, "a", "N1", "D2", 0, "transit")], "map", network=net)
+    assert run.transit is not None
+    out = tmp_path / "transit.png"
+    for theme in ("paper", "night"):
+        fig = viz.map_transit(run, theme=theme, path=str(out))
+        assert fig is not None and out.stat().st_size > 10_000
+    plain = ms.Scenario.from_parts(
+        network=net,
+        demand=[toy_trip(net, "a", "N1", "D2", 0, "walk")],
+        class_defaults={"everyone": (False, False, False)},
+        equilibration="none",
+    ).run(run_id="map-none")
+    with pytest.raises(ValueError, match="transit"):
+        viz.map_transit(plain)

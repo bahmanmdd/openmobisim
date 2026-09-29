@@ -563,7 +563,11 @@ impl StaticNetwork {
 fn carries_bikes_by_class(class: RoadClass) -> bool {
     !matches!(
         class,
-        RoadClass::Motorway | RoadClass::MotorwayLink | RoadClass::Footway | RoadClass::Pedestrian
+        RoadClass::Motorway
+            | RoadClass::MotorwayLink
+            | RoadClass::Footway
+            | RoadClass::Pedestrian
+            | RoadClass::Busway
     )
 }
 

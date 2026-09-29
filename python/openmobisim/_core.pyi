@@ -659,6 +659,8 @@ class RunSummary:
     transit_calls: dict[str, Any] | None
     #: How transit went, by name (see ``Run.transit_summary``).
     transit_summary: dict[str, float] | None
+    #: The written ``transit_calls.parquet``, if the run had a timetable.
+    transit_calls_path: str | None
 
 def run_pipeline(
     network: Network,

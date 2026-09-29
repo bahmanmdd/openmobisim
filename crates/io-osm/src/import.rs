@@ -201,6 +201,11 @@ pub struct ImportReport {
     pub nodes_disconnected: u64,
     /// Their total length, in whole metres.
     pub length_disconnected_m: u64,
+    /// Busway links removed for not being in the largest strongly connected part
+    /// of what buses may use (S199): pieces cut off by the study area's edge, so a
+    /// bus stop never snaps to a busway it cannot leave. Part of
+    /// [`Connectivity::Strong`].
+    pub busway_links_disconnected: u64,
     /// Links a car may use, in the network handed to the graph builder.
     pub drivable_links: u64,
     /// Their total length, in whole metres.
@@ -511,16 +516,30 @@ pub fn import_detailed(
             class: l.class,
             geometry: l.geometry,
         }));
+        // Then the busways (S199): the largest strongly connected part of what buses
+        // may use holds every car link kept, so only busways can leave here.
+        if links.iter().any(|l| l.class == RoadClass::Busway) {
+            let (kept, out, _) = keep_largest_strong_component(links, |l| l.class.carries_buses());
+            links = kept;
+            report.busway_links_disconnected = out.len() as u64;
+            dropped.extend(out.into_iter().map(|l| DroppedLink {
+                way_id: l.way_id,
+                reason: DropReason::NotStronglyConnected,
+                class: l.class,
+                geometry: l.geometry,
+            }));
+        }
     }
     report.links_before_contraction = links.len() as u64;
 
     // --- 4. Contract --------------------------------------------------------
     let nodes_before = used_nodes(&links).len();
     if options.contract && options.contract_drivable {
-        // Cars first, on their own; the rest keep every node a car link touches
-        // as a junction, so what a pedestrian sees is unchanged.
+        // Motor links first (cars' and buses': a busway meeting a street is a
+        // junction, S199), on their own; the rest keep every node a motor link
+        // touches as a junction, so what a pedestrian sees is unchanged.
         let (cars, rest): (Vec<ProtoLink>, Vec<ProtoLink>) =
-            links.into_iter().partition(|l| l.class.carries_motor_traffic());
+            links.into_iter().partition(|l| l.class.carries_buses());
         let car_nodes: HashSet<i64> = cars.iter().flat_map(|l| [l.from, l.to]).collect();
         links = contract(cars, &signalised, &forced_splits, &HashSet::new());
         links.extend(contract(rest, &signalised, &forced_splits, &car_nodes));

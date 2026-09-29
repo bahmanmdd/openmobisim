@@ -153,10 +153,24 @@ pub fn classify(tags: &[(String, String)], node_count: usize) -> Result<RoadClas
     if tag_of(tags, "area") == Some("yes") {
         return Err(Rejection::IsAnArea);
     }
+    let class = RoadClass::from_osm_highway(highway).ok_or(Rejection::UnknownHighwayClass);
+    // A road closed to other motor traffic but open to buses is a busway (S199).
+    let for_buses = |key: &str| matches!(tag_of(tags, key), Some("yes" | "designated"));
+    let bus_only_road = |class: &Result<RoadClass, Rejection>| {
+        (for_buses("bus") || for_buses("psv"))
+            && class.as_ref().is_ok_and(|c| c.carries_motor_traffic())
+    };
     if matches!(tag_of(tags, "access"), Some("no" | "private")) {
-        return Err(Rejection::AccessDenied);
+        return if bus_only_road(&class) {
+            Ok(RoadClass::Busway)
+        } else {
+            Err(Rejection::AccessDenied)
+        };
     }
-    RoadClass::from_osm_highway(highway).ok_or(Rejection::UnknownHighwayClass)
+    if tag_of(tags, "motor_vehicle") == Some("no") && bus_only_road(&class) {
+        return Ok(RoadClass::Busway);
+    }
+    class
 }
 
 /// Decide which directions a way carries traffic in.
@@ -394,6 +408,10 @@ pub fn bike_way(tags: &[(String, String)], node_count: usize) -> Option<BikeWay>
         return None;
     }
     let class = layer_class(highway)?;
+    // A busway (S199) carries bikes only where its tags say so.
+    if class == RoadClass::Busway && !permits(bicycle) {
+        return None;
+    }
     let dismount = bicycle == Some("dismount") || highway == "steps";
 
     let road_direction = direction(tags, class);
@@ -483,7 +501,7 @@ pub fn walk_way(tags: &[(String, String)], node_count: usize) -> Option<RoadClas
     let class = layer_class(highway)?;
     match class {
         RoadClass::Motorway | RoadClass::MotorwayLink => None,
-        RoadClass::Cycleway => permits(foot).then_some(class),
+        RoadClass::Cycleway | RoadClass::Busway => permits(foot).then_some(class),
         _ => Some(class),
     }
 }

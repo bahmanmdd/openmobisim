@@ -19,6 +19,7 @@ openmobisim-core-graph = { workspace = true }
 openmobisim-core-demand = { workspace = true }
 openmobisim-core-sim = { workspace = true }
 openmobisim-core-loading = { workspace = true }
+openmobisim-core-transit = { workspace = true }
 # Same codec choice as `core-demand` (S131): `default-features = false` plus
 # an explicit list excludes `zstd`, whose Rust bindings pull in `zstd-sys`
 # and compile the C zstd library. `snap`/`lz4_flex`/`brotli` are pure-Rust;

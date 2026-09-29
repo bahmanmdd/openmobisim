@@ -192,6 +192,9 @@ pub struct PyRunSummary {
     /// How transit went, as numbers by name (S199); `None` without a timetable.
     #[pyo3(get)]
     pub transit_summary: Option<Py<PyDict>>,
+    /// Path to the written `transit_calls.parquet`, if the run had a timetable.
+    #[pyo3(get)]
+    pub transit_calls_path: Option<String>,
 }
 
 /// Per-link, per-time-bin results, as numpy columns.
@@ -541,6 +544,22 @@ pub fn run_pipeline(
         }
     }
     let [link_bins_bike_path, link_bins_walk_path] = layer_paths;
+    // Every call of the timetable, with its times and passengers (S199, S200).
+    let transit_calls_path = match (&result.transit, &transit_setup) {
+        (Some(r), Some(t)) => {
+            let path = dir.join("transit_calls.parquet");
+            openmobisim_io_parquet::write_transit_calls(
+                &path,
+                run_id,
+                t.timetable(),
+                r,
+                &description,
+            )
+            .map_err(to_value_error)?;
+            Some(path.to_string_lossy().into_owned())
+        }
+        _ => None,
+    };
     let completion_by_mode = PyDict::new(py);
     for mode in Mode::ALL {
         let m = &result.by_mode[mode.index()];
@@ -566,6 +585,7 @@ pub fn run_pipeline(
         _ => (None, None),
     };
     Ok(PyRunSummary {
+        transit_calls_path,
         transit_calls: transit_calls_table,
         transit_summary: transit_summary_table,
         kpis_path: kpis_path.to_string_lossy().into_owned(),

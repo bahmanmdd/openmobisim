@@ -67,7 +67,7 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 ///
 /// Version 4 (S199): scheduled public transport joined the table (`core-transit`'s
 /// `TransitDefaults`): the boarding slack, walks to and between stops, bus dwell,
-/// PCU and the plausibility ratio.
+/// PCU and the plausibility ratio; and the busway class's row.
 pub const DEFAULTS_VERSION: u32 = 4;
 
 /// The range a derived backward wave speed is allowed to fall in.
@@ -126,11 +126,16 @@ pub enum RoadClass {
     /// `route=ferry` — a ferry crossing, on the bike and walk layers only
     /// (S197): not a `highway` value, so no road is ever of this class.
     Ferry = 17,
+    /// `highway=busway`, or a road closed to other motor traffic but open to
+    /// buses (`access=no`, or `motor_vehicle=no`, with `bus` or `psv`): **buses
+    /// only** (S199). Cars never use it; a bus rides it among the other buses,
+    /// which is design §18.2's "dedicated-lane links exempt".
+    Busway = 18,
 }
 
 impl RoadClass {
     /// Every class, in discriminant order.
-    pub const ALL: [RoadClass; 18] = [
+    pub const ALL: [RoadClass; 19] = [
         RoadClass::Motorway,
         RoadClass::MotorwayLink,
         RoadClass::Trunk,
@@ -149,6 +154,7 @@ impl RoadClass {
         RoadClass::Footway,
         RoadClass::Cycleway,
         RoadClass::Ferry,
+        RoadClass::Busway,
     ];
 
     /// The OSM `highway` value this class corresponds to.
@@ -173,6 +179,7 @@ impl RoadClass {
             RoadClass::Footway => "footway",
             RoadClass::Cycleway => "cycleway",
             RoadClass::Ferry => "ferry",
+            RoadClass::Busway => "busway",
         }
     }
 
@@ -202,18 +209,33 @@ impl RoadClass {
             "pedestrian" => RoadClass::Pedestrian,
             "footway" | "steps" | "path" | "track" | "corridor" => RoadClass::Footway,
             "cycleway" => RoadClass::Cycleway,
+            "busway" | "bus_guideway" => RoadClass::Busway,
             _ => return None,
         })
     }
 
-    /// Whether motor vehicles may use this class by default.
+    /// Whether cars and other general motor traffic may use this class by
+    /// default: what a car is routed on and what "drivable" means. A busway is
+    /// not: it is buses' only ([`Self::carries_buses`]).
     #[inline]
     #[must_use]
     pub const fn carries_motor_traffic(self) -> bool {
         !matches!(
             self,
-            RoadClass::Pedestrian | RoadClass::Footway | RoadClass::Cycleway | RoadClass::Ferry
+            RoadClass::Pedestrian
+                | RoadClass::Footway
+                | RoadClass::Cycleway
+                | RoadClass::Ferry
+                | RoadClass::Busway
         )
+    }
+
+    /// Whether buses may use this class: every class cars may, and busways
+    /// (S199).
+    #[inline]
+    #[must_use]
+    pub const fn carries_buses(self) -> bool {
+        self.carries_motor_traffic() || matches!(self, RoadClass::Busway)
     }
 
     /// Whether pedestrians may use this class by default.
@@ -223,7 +245,10 @@ impl RoadClass {
     #[inline]
     #[must_use]
     pub const fn carries_pedestrians(self) -> bool {
-        !matches!(self, RoadClass::Motorway | RoadClass::MotorwayLink | RoadClass::Cycleway)
+        !matches!(
+            self,
+            RoadClass::Motorway | RoadClass::MotorwayLink | RoadClass::Cycleway | RoadClass::Busway
+        )
     }
 
     /// Whether cyclists may use this class by default.
@@ -232,7 +257,11 @@ impl RoadClass {
     pub const fn carries_cyclists(self) -> bool {
         !matches!(
             self,
-            RoadClass::Motorway | RoadClass::MotorwayLink | RoadClass::Footway | RoadClass::Trunk
+            RoadClass::Motorway
+                | RoadClass::MotorwayLink
+                | RoadClass::Footway
+                | RoadClass::Trunk
+                | RoadClass::Busway
         )
     }
 }
@@ -352,6 +381,14 @@ pub const fn default_row(class: RoadClass) -> DefaultRow {
             lanes_per_direction: 1,
             saturation_flow_veh_h_lane: 800.0,
             jam_density_veh_km_lane: 150.0,
+        },
+        // A busway (S199): a secondary road's row, since buses there run at urban
+        // arterial speeds. *An assumption*; `maxspeed` overrides it where tagged.
+        RoadClass::Busway => DefaultRow {
+            free_flow_km_h: 50.0,
+            lanes_per_direction: 1,
+            saturation_flow_veh_h_lane: 1800.0,
+            jam_density_veh_km_lane: 130.0,
         },
         RoadClass::Pedestrian | RoadClass::Footway | RoadClass::Cycleway | RoadClass::Ferry => {
             DefaultRow {

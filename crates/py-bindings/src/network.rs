@@ -457,6 +457,7 @@ impl PyNetwork {
         d.set_item("closed_loops_dropped", r.closed_loops_dropped)?;
         d.set_item("components_before", r.components_before)?;
         d.set_item("links_disconnected", r.links_disconnected)?;
+        d.set_item("busway_links_disconnected", r.busway_links_disconnected)?;
         d.set_item("nodes_disconnected", r.nodes_disconnected)?;
         d.set_item("length_disconnected_m", r.length_disconnected_m)?;
         d.set_item("drivable_links", r.drivable_links)?;

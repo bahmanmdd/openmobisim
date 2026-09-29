@@ -10,6 +10,7 @@
 //! the grid); a query looks at a handful of cells, independent of network size.
 //! **Determinism:** ties in distance are broken by node id.
 
+use openmobisim_core_graph::defaults::RoadClass;
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
@@ -31,19 +32,22 @@ pub struct NodeSnapper {
     positions: Vec<(f64, f64)>,
 }
 
-fn drivable(network: &RoadNetwork, link: LinkId) -> bool {
-    network.link_class(link).carries_motor_traffic()
-}
-
 impl NodeSnapper {
-    /// Index `network`'s nodes.
+    /// Index `network`'s nodes a car can use.
     #[must_use]
     pub fn new(network: &RoadNetwork) -> Self {
+        Self::of_links(network, |class| class.carries_motor_traffic())
+    }
+
+    /// Index the nodes of `network`'s links whose class `keep` accepts (every node
+    /// if none): a bus stop snaps to the nodes of links buses use (S199).
+    #[must_use]
+    pub fn of_links(network: &RoadNetwork, keep: impl Fn(RoadClass) -> bool) -> Self {
+        let kept = |l: &LinkId| keep(network.link_class(*l));
         let mut ids: Vec<u32> = (0..network.node_count())
             .filter(|&n| {
                 let node = NodeId::new(n);
-                network.out_links(node).iter().any(|&l| drivable(network, l))
-                    || network.in_links(node).iter().any(|&l| drivable(network, l))
+                network.out_links(node).iter().any(kept) || network.in_links(node).iter().any(kept)
             })
             .collect();
         if ids.is_empty() {

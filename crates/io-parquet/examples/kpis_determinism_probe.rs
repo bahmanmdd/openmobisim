@@ -350,4 +350,104 @@ fn main() {
             .wrapping_add(u64::from(row.key.element.id().unwrap_or(u32::MAX)));
     }
     println!("diagnostics           {} rows, digest {diag_digest:016x}", diagnostics.rows().len());
+
+    transit_probe(&dir);
+}
+
+/// Transit (S199): the toy network with its tram and bus, the bus on the roads among
+/// cars, and enough transit trips that routing them is split across threads. Every
+/// realised time, boarding and trip outcome must be the same on every run and at any
+/// thread count, and so must the `transit_calls.parquet` written.
+fn transit_probe(dir: &std::path::Path) {
+    use openmobisim_core_demand::Mode;
+    use openmobisim_core_graph::layers::{BikeCost, StaticLayerDefaults};
+    use openmobisim_core_sim::{LayerSetup, StaticLayers, TransitSetup};
+
+    let (road, _) = openmobisim_core_graph::toy_network();
+    let road = Arc::new(road);
+    let (bike, walk) = openmobisim_core_graph::toy_network_layers();
+    let d = StaticLayerDefaults::SHIPPED;
+    let layers = Arc::new(StaticLayers {
+        bike: Some(LayerSetup::new(Arc::new(bike), BikeCost::Dedicated, d)),
+        walk: Some(LayerSetup::new(Arc::new(walk), BikeCost::Dedicated, d)),
+    });
+    let transit = Arc::new(
+        TransitSetup::new(
+            Arc::new(openmobisim_core_transit::examples::toy_transit()),
+            layers.walk.as_ref().expect("made above"),
+            layers.bike.as_ref(),
+            openmobisim_core_transit::TransitDefaults::SHIPPED,
+        )
+        .with_roads(road.clone()),
+    );
+    let names = ["W", "N1", "S", "N2", "M", "X0", "D1", "N3", "D2", "R2"];
+    let at = |name: &str| {
+        road.node_lonlat(road.node_external_ids().typed_id_of(name).expect("a toy node"))
+    };
+    let mut rows = Vec::new();
+    let mut state = 0x2545_F491_4F6C_DD1D_u64;
+    let mut next = |bound: usize| -> usize {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        usize::try_from(state % bound as u64).expect("small")
+    };
+    for i in 0..460u32 {
+        let (from, to) = (names[next(names.len())], names[next(names.len())]);
+        let car = i >= 400;
+        rows.push(RawTrip {
+            traveller_id: format!("t{i:03}"),
+            trip_seq: 0,
+            origin: at(if car { "W" } else { from }),
+            destination: at(if car { "M" } else { to }),
+            departure_time: Second(u32::try_from(next(7200)).expect("small")),
+            user_class: "commuter".to_string(),
+            weight: None,
+            mode: Some(if car { Mode::Car } else { Mode::Transit }),
+        });
+    }
+    let defaults =
+        ClassDefaults::new().with_default("commuter", Ownership { car: true, ..Ownership::NONE });
+    let (travellers, trips) =
+        build_travellers(rows, Vec::new(), &defaults, 1, &mut Diagnostics::new()).expect("valid");
+    let mut run = Run::new(road.clone(), Arc::new(travellers), Arc::new(trips), Second(86_400))
+        .with_flow_motor(FlowMotor::Ltm {
+            turns: Arc::new(TurnTable::build(&road, SignalDefaults::SHIPPED)),
+            step: Duration(300.0),
+            level: FidelityLevel::Full,
+        })
+        .with_layers(layers)
+        .with_transit(transit.clone());
+    let description = run.description();
+    let result = run.execute(&mut Diagnostics::new());
+    let t = result.transit.as_ref().expect("the run has a timetable");
+    let mut digest = 0u64;
+    let mut step = |v: u64| digest = digest.wrapping_mul(0x0100_0000_01b3).wrapping_add(v);
+    for (a, dep) in t.times.arrival.iter().zip(&t.times.departure) {
+        step(u64::from(*a));
+        step(u64::from(*dep));
+    }
+    for b in t.boardings.iter().chain(&t.alightings) {
+        step(b.to_bits());
+    }
+    for e in &result.events {
+        step(u64::from(e.second.get()));
+        step(u64::from(e.entity_id));
+    }
+    let transit_trips = result.by_mode[Mode::Transit.index()];
+    openmobisim_io_parquet::write_transit_calls(
+        dir.join("transit_calls.parquet"),
+        "toy-transit-probe",
+        transit.timetable(),
+        t,
+        &description,
+    )
+    .expect("write transit calls");
+    println!("transit_fingerprint   {}", description.fingerprint_hex());
+    println!(
+        "transit_trips         {} completed of {}",
+        transit_trips.completion.completed, transit_trips.completion.total_trips
+    );
+    println!("transit_time_s        {:016x}", transit_trips.total_travel_time.get().to_bits());
+    println!("transit_digest        {digest:016x}");
 }

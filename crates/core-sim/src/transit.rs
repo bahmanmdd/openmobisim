@@ -22,8 +22,9 @@
 //! with the fewest vehicles among the earliest. It takes at least one vehicle.
 //!
 //! **Buses ride the roads** ([`TransitSetup::with_roads`]): every bus pattern is
-//! routed stop to stop on the car graph at free flow (rung 2 of design §18.5),
-//! each stop at the road network's nearest node within
+//! routed stop to stop at free flow on the roads cars use and on **busways**, which
+//! only buses use (rung 2 of design §18.5), each stop at the nearest node of such a
+//! link within
 //! [`TransitDefaults::bus_stop_snap_m`]. A pattern with a stop off the roads, a
 //! stop the roads do not connect to the next, or a free-flow time more than
 //! [`TransitDefaults::bus_plausibility_ratio`] times its schedule's is **run by
@@ -312,9 +313,20 @@ impl TransitSetup {
         let d = self.defaults;
         let t = &self.timetable;
         let turns = TurnTable::build(&road, SignalDefaults::SHIPPED);
-        let ctx = SearchContext::new(&road, &turns);
+        // Buses may use busways as well as the roads cars use (S199).
+        let costs: Vec<f64> = (0..road.link_count())
+            .map(|i| {
+                let link = LinkId::new(i);
+                if road.link_class(link).carries_buses() {
+                    road.free_flow_time(link).get()
+                } else {
+                    f64::INFINITY
+                }
+            })
+            .collect();
+        let ctx = SearchContext::with_costs(&road, &turns, costs);
         let mut search = Search::new(&ctx);
-        let snapper = NodeSnapper::new(&road);
+        let snapper = NodeSnapper::of_links(&road, |class| class.carries_buses());
         let mut report = BusReport::default();
         let mut routes: HashMap<(u32, u32), Found> = HashMap::new();
         let mut hops = Vec::with_capacity(t.group_count() as usize);

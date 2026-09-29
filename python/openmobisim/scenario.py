@@ -84,10 +84,12 @@ class Run:
         flow_level: int = 0,
         flow_step_s: int = 300,
         window_s: int = 86_400,
+        transit: _core.Transit | None = None,
     ) -> None:
         """Wrap a `RunSummary` from `run_pipeline`, with what it was run on."""
         self._summary = summary
         self._network = network
+        self._transit = transit
         self.run_id = run_id
         self.flow_level = flow_level
         self.flow_step_s = flow_step_s
@@ -97,6 +99,11 @@ class Run:
     def network(self) -> _core.Network | None:
         """The network this run loaded."""
         return self._network
+
+    @property
+    def transit(self) -> _core.Transit | None:
+        """The timetable this run's transit trips rode, if it had one."""
+        return self._transit
 
     @property
     def fingerprint(self) -> str:
@@ -371,6 +378,16 @@ class Run:
         traveller weight. They add up to the run's.
         """
         return {mode: dict(row) for mode, row in self._summary.completion_by_mode.items()}
+
+    def transit_calls_table(self) -> Table | None:
+        """``transit_calls.parquet``: every call of the timetable, or ``None`` without one.
+
+        The columns of ``transit_calls()``, after ``run_id``; a time a bus had not
+        reached by the end of the window is null. The file's metadata carries the
+        run's fingerprint, its master seed and the service date.
+        """
+        path = self._summary.transit_calls_path
+        return None if path is None else Table(path)
 
     def transit_calls(self) -> dict[str, Any] | None:
         """Every call of the timetable in this run, as columns; ``None`` without one.
@@ -819,4 +836,5 @@ class Scenario:
             flow_level=self._flow_level,
             flow_step_s=self._flow_step_s,
             window_s=self._window_s,
+            transit=self._transit,
         )

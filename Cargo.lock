@@ -770,6 +770,7 @@ dependencies = [
  "openmobisim-core-graph",
  "openmobisim-core-loading",
  "openmobisim-core-sim",
+ "openmobisim-core-transit",
  "openmobisim-core-types",
  "parquet",
  "proptest",

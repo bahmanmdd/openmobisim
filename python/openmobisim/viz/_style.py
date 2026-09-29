@@ -17,6 +17,12 @@ more) so that congestion glowed, which read as backwards and was dropped.
 
 The paper theme's greys were darkened in S164 for contrast; the S162 values are
 noted beside each.
+
+**Kinds of transit service** (S199, V2) are the one categorical set: the data-viz
+method's default order, in the service kinds' order (rail, metro, tram, bus,
+ferry, other), validated on each surface (colour-blind separation and the
+normal-vision floor pass; on paper three fall below 3:1 against the surface, so
+the legend always names every kind).
 """
 
 from __future__ import annotations
@@ -78,6 +84,8 @@ class Theme:
     ramp_delay_ember: tuple[str, ...]
     #: Volume, low to high.
     ramp_volume: tuple[str, ...]
+    #: Kinds of transit service, in their order: rail, metro, tram, bus, ferry, other.
+    kinds: tuple[str, ...]
 
 
 THEMES: dict[str, Theme] = {
@@ -93,6 +101,7 @@ THEMES: dict[str, Theme] = {
         ramp_delay=(TEAL_PAPER, GOLD_PAPER, EMBER[500], EMBER[700]),
         ramp_delay_ember=(EMBER[300], EMBER[400], EMBER[500], EMBER[600], EMBER[700]),
         ramp_volume=(ION[400], ION[500], ION[600], ION[700]),  # S162: from ION[300]
+        kinds=("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"),
     ),
     "night": Theme(
         name="night",
@@ -106,6 +115,7 @@ THEMES: dict[str, Theme] = {
         ramp_delay=(TEAL_NIGHT, GOLD_NIGHT, EMBER[500], EMBER[600]),
         ramp_delay_ember=(EMBER[600], EMBER[500], EMBER[400], EMBER[300]),
         ramp_volume=(ION[600], ION[500], ION[400], ION[300], ION[200]),
+        kinds=("#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300"),
     ),
 }
 

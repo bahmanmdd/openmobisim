@@ -609,3 +609,47 @@ fn the_manifest_says_how_many_loadings_were_made_and_whether_it_converged() {
         json.contains("\"route_update_descriptor\": \"best_response;max_routes=10;searches=1\"")
     );
 }
+
+#[test]
+fn transit_calls_round_trip_with_an_unknown_time() {
+    use openmobisim_core_sim::TransitResult;
+    use openmobisim_core_transit::UNKNOWN_TIME;
+    let timetable = openmobisim_core_transit::examples::toy_bus();
+    let mut times = timetable.scheduled().clone();
+    times.arrival[2] = UNKNOWN_TIME;
+    times.departure[2] = UNKNOWN_TIME;
+    times.arrival[1] = 139;
+    let mut result = TransitResult::empty(times);
+    result.boardings[1] = 2.0;
+    result.alightings[2] = 2.0;
+    let path = temp_path("transit_calls.parquet");
+    openmobisim_io_parquet::write_transit_calls(
+        &path,
+        "r1",
+        &timetable,
+        &result,
+        &sample_description(None, None),
+    )
+    .unwrap();
+    let batch = read_first_batch(&path);
+    assert_eq!(batch.num_rows(), timetable.call_count());
+    let text = |name: &str| {
+        batch.column_by_name(name).unwrap().as_any().downcast_ref::<StringArray>().unwrap().clone()
+    };
+    let u32s = |name: &str| {
+        batch.column_by_name(name).unwrap().as_any().downcast_ref::<UInt32Array>().unwrap().clone()
+    };
+    assert_eq!((text("run").value(0), text("stop_id").value(1)), ("B1:00", "M"));
+    assert_eq!((text("line").value(0), text("kind").value(0)), ("B1", "bus"));
+    assert_eq!(u32s("sequence").value(2), 2);
+    assert_eq!((u32s("arrival_s").value(1), u32s("scheduled_arrival_s").value(1)), (139, 120));
+    assert!(u32s("arrival_s").is_null(2), "an unknown time is null");
+    let on_board =
+        batch.column_by_name("on_board").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
+    assert_eq!((on_board.value(1), on_board.value(2)), (2.0, 0.0));
+    let reader = ParquetRecordBatchReaderBuilder::try_new(File::open(&path).unwrap()).unwrap();
+    let kv = reader.metadata().file_metadata().key_value_metadata().expect("metadata");
+    let get = |k: &str| kv.iter().find(|e| e.key == k).and_then(|e| e.value.clone());
+    assert_eq!(get("openmobisim.service_date").as_deref(), Some("2026-10-09"));
+    assert_eq!(get("openmobisim.run_fingerprint").as_deref(), Some("00000000deadbeef"));
+}

@@ -458,3 +458,110 @@ fn roundabout_ways_mark_their_links_and_do_not_merge_with_others() {
     assert_eq!(net.link_count(), 2, "the roundabout link stays separate");
     assert_eq!(flagged, 1, "only the roundabout way is marked");
 }
+
+// --- Busways (S199) --------------------------------------------------------------------------
+
+fn way(id: i64, nodes: impl IntoIterator<Item = i64>, tags: &[(&str, &str)]) -> OsmWay {
+    OsmWay::new(id, nodes, tags.iter().copied())
+}
+
+#[test]
+fn bus_only_roads_are_busways_and_a_closed_road_is_still_dropped() {
+    use openmobisim_core_graph::defaults::RoadClass;
+    use openmobisim_io_osm::tags::{Rejection, bike_way, classify, walk_way};
+    let t = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        pairs.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect()
+    };
+    // (tags, what the classifier says)
+    type Case<'a> = (&'a [(&'a str, &'a str)], Result<RoadClass, Rejection>);
+    let cases: [Case<'_>; 7] = [
+        (&[("highway", "busway")], Ok(RoadClass::Busway)),
+        (&[("highway", "bus_guideway")], Ok(RoadClass::Busway)),
+        (&[("highway", "residential"), ("access", "no"), ("bus", "yes")], Ok(RoadClass::Busway)),
+        (
+            &[("highway", "tertiary"), ("access", "private"), ("psv", "designated")],
+            Ok(RoadClass::Busway),
+        ),
+        (
+            &[("highway", "residential"), ("motor_vehicle", "no"), ("psv", "yes")],
+            Ok(RoadClass::Busway),
+        ),
+        (&[("highway", "residential"), ("access", "no")], Err(Rejection::AccessDenied)),
+        (&[("highway", "footway"), ("access", "no"), ("bus", "yes")], Err(Rejection::AccessDenied)),
+    ];
+    for (tags, expected) in cases {
+        assert_eq!(classify(&t(tags), 2), expected, "{tags:?}");
+    }
+    assert!(!RoadClass::Busway.carries_motor_traffic(), "no car on a busway");
+    assert!(RoadClass::Busway.carries_buses() && RoadClass::Residential.carries_buses());
+    assert!(!RoadClass::Footway.carries_buses());
+    // Off the bike and walk layers unless the tags let bikes or walkers on.
+    assert!(bike_way(&t(&[("highway", "busway")]), 2).is_none());
+    assert!(walk_way(&t(&[("highway", "busway")]), 2).is_none());
+    assert!(bike_way(&t(&[("highway", "busway"), ("bicycle", "yes")]), 2).is_some());
+    assert!(walk_way(&t(&[("highway", "busway"), ("foot", "designated")]), 2).is_some());
+}
+
+/// An import with Python's defaults: the strong trim, and car links contracted
+/// across nodes only other links touch.
+fn run_as_python(
+    source: &MemorySource,
+) -> (openmobisim_core_graph::network::RoadNetwork, openmobisim_io_osm::ImportReport) {
+    let options = ImportOptions {
+        connectivity: openmobisim_io_osm::Connectivity::Strong,
+        contract_drivable: true,
+        ..ImportOptions::default()
+    };
+    let (net, report, _) = import(source, options, &mut Diagnostics::new()).expect("importable");
+    (net, report)
+}
+
+#[test]
+fn a_busway_joining_a_street_keeps_the_junction() {
+    // Street 1-2-3; a busway from 2 to 4. Without the busway the street is one
+    // link each way; with it, node 2 is a junction a bus can turn at.
+    let street = || residential(100, [1, 2, 3]);
+    let alone = MemorySource::new().nodes([node(1, 0.0), node(2, 1.0), node(3, 2.0)]).way(street());
+    let (net, _) = run_as_python(&alone);
+    assert_eq!(net.link_count(), 2);
+    let with = MemorySource::new()
+        .nodes([
+            node(1, 0.0),
+            node(2, 1.0),
+            node(3, 2.0),
+            OsmNode::new(4, 4.80 + STEP, 45.70 + STEP),
+        ])
+        .way(street())
+        .way(way(200, [2, 4], &[("highway", "busway")]));
+    let (net, _) = run_as_python(&with);
+    assert_eq!(net.link_count(), 4 + 2, "the street split at 2, and the busway both ways");
+    let busways = (0..net.link_count())
+        .filter(|&i| {
+            net.link_class(LinkId::new(i)) == openmobisim_core_graph::defaults::RoadClass::Busway
+        })
+        .count();
+    assert_eq!(busways, 2);
+    let n2 = net.node_external_ids().typed_id_of::<NodeId>("2").expect("node 2 kept");
+    assert_eq!(net.out_links(n2).len(), 3);
+}
+
+#[test]
+fn a_busway_cut_off_from_the_streets_is_dropped_and_counted() {
+    // Street 1-2-3 with a busway 2-4 (joined), and a busway 5-6 on its own.
+    let source = MemorySource::new()
+        .nodes([
+            node(1, 0.0),
+            node(2, 1.0),
+            node(3, 2.0),
+            OsmNode::new(4, 4.80 + STEP, 45.70 + STEP),
+            node(5, 5.0),
+            node(6, 6.0),
+        ])
+        .way(residential(100, [1, 2, 3]))
+        .way(way(200, [2, 4], &[("highway", "busway")]))
+        .way(way(300, [5, 6], &[("highway", "busway")]));
+    let (net, report) = run_as_python(&source);
+    assert_eq!(report.busway_links_disconnected, 2, "5-6, both ways");
+    assert_eq!(net.link_count(), 4 + 2);
+    assert!(net.node_external_ids().id_of("5").is_none());
+}
