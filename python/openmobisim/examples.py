@@ -16,7 +16,13 @@ import numpy as np
 
 from openmobisim import _core
 
-__all__ = ["fixed_car_trips", "manhattan_grid", "toy_network", "trips_random"]
+__all__ = [
+    "fixed_car_trips",
+    "manhattan_grid",
+    "toy_network",
+    "toy_network_transit",
+    "trips_random",
+]
 
 # A direct re-export, not a wrapper: PyO3 already carries the Rust doc
 # comment as this function's `__doc__` (and `_core.pyi` is the hand-kept
@@ -27,6 +33,10 @@ manhattan_grid = _core.manhattan_grid
 # The toy network's road part (I-m, S161): sixteen nodes and links, every number
 # checkable by hand. Node names are "W", "N1", "S", "M", … (see the Rust docs).
 toy_network = _core.toy_network
+
+# The toy network's timetable (S199): the tram T1 (stop "N1" to stop "H" at D2
+# and back) and the bus B1 ("W", "M", "D1" on the arterial), every 10 minutes.
+toy_network_transit = _core.toy_network_transit
 
 
 def fixed_car_trips(

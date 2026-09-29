@@ -94,6 +94,18 @@
 //! The wait is part of its travel time: a [`Trajectory`] keeps the scheduled
 //! departure.
 //!
+//! # Chained vehicles: a bus from stop to stop
+//!
+//! A vehicle may be **chained** to another (S199, [`LtmNetwork::depart_after`]):
+//! it departs when the one before it arrives, `wait` seconds later and not
+//! before `not_before` — a bus's next leg, leaving its stop after the dwell and
+//! not before its scheduled departure. Between the two it is outside the
+//! network, holding no room, so a bus dwelling at a stop does not block the
+//! traffic behind it (a bus bay); it then waits at its next link's origin like
+//! any departing vehicle. The release is exact in continuous time, within the
+//! step. **Off means absent:** a loading with no chained vehicle carries no
+//! chain state at all.
+//!
 //! # How: in time order
 //!
 //! Vehicle movements are processed **in time order** from one event queue. An
@@ -284,6 +296,53 @@ enum Place {
     Heard(usize),
 }
 
+/// A vehicle that departs when another arrives (S199; see the
+/// [module docs](self)): `wait` seconds after the vehicle at index `after` of
+/// the same list arrives, and not before `not_before` (seconds).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Chain {
+    /// The vehicle, by its index in the list loaded.
+    pub vehicle: usize,
+    /// The vehicle it follows, by index: earlier in the list.
+    pub after: usize,
+    /// Seconds after that one arrives.
+    pub wait: f64,
+    /// The earliest second it may leave.
+    pub not_before: f64,
+}
+
+/// Per slot: the slot released when it arrives, the release rule of a chained
+/// slot, and every slot's departure (a chained one's once released).
+#[derive(Debug, Default)]
+struct Chains {
+    next: Vec<u32>,
+    wait: Vec<f64>,
+    not_before: Vec<f64>,
+    start: Vec<f64>,
+}
+
+/// What a loading with chained vehicles records besides trajectories.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Recording {
+    /// Nothing more.
+    Trajectories,
+    /// Per-link results in bins of this many seconds.
+    Bins(u32),
+    /// Those, and the traversals filed by the bin they entered their link in.
+    BinsAndEntry(u32),
+}
+
+/// What [`run_ltm_chained`] returns.
+#[derive(Debug)]
+pub struct LtmOutput {
+    /// Every vehicle that arrived within the window.
+    pub trajectories: Vec<Trajectory>,
+    /// The per-link results, if recorded.
+    pub link_bins: Option<LinkBins>,
+    /// The traversals by entry bin, if recorded.
+    pub entry: Option<EntryTables>,
+}
+
 /// The running state of a loading.
 pub struct LtmNetwork<'a> {
     network: &'a RoadNetwork,
@@ -336,6 +395,8 @@ pub struct LtmNetwork<'a> {
     /// Slots not yet departed, latest departure first (so `pop` is next).
     pending: Vec<u32>,
     pending_sorted: bool,
+    /// Chained vehicles (S199), once one is added: absent otherwise.
+    chains: Option<Chains>,
 
     events: BinaryHeap<Reverse<Event>>,
 
@@ -404,6 +465,7 @@ impl<'a> LtmNetwork<'a> {
             parts: Vec::new(),
             pending: Vec::new(),
             pending_sorted: true,
+            chains: None,
             events: BinaryHeap::new(),
             recorder: None,
         };
@@ -644,13 +706,71 @@ impl<'a> LtmNetwork<'a> {
     /// Panics if the vehicle's route is empty (a [`Vehicle`] never has one),
     /// or if more than `u32::MAX` vehicles are scheduled.
     pub fn depart(&mut self, vehicle: &'a Vehicle) {
+        let slot = self.add(vehicle);
+        self.pending.push(slot);
+        self.pending_sorted = false;
+    }
+
+    /// Schedule a vehicle that departs when the vehicle in slot `after` arrives:
+    /// `wait` seconds later, and not before `not_before`. Slots are numbered in
+    /// the order vehicles are scheduled, from 0, by this and [`Self::depart`]
+    /// alike; this returns the new vehicle's. If the one it follows never arrives,
+    /// this one never departs. See the [module docs](self).
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::depart`]; also if `after` is not a slot, or already has a
+    /// vehicle chained to it.
+    pub fn depart_after(
+        &mut self,
+        vehicle: &'a Vehicle,
+        after: u32,
+        wait: f64,
+        not_before: f64,
+    ) -> u32 {
+        if self.chains.is_none() {
+            let n = self.vehicles.len();
+            self.chains = Some(Chains {
+                next: vec![NONE; n],
+                wait: vec![0.0; n],
+                not_before: vec![0.0; n],
+                start: self.vehicles.iter().map(|v| f64::from(v.departure.get())).collect(),
+            });
+        }
+        let slot = self.add(vehicle);
+        let chains = self.chains.as_mut().expect("made above");
+        let prev = &mut chains.next[after as usize];
+        assert_eq!(*prev, NONE, "one vehicle is chained to another at most");
+        *prev = slot;
+        chains.wait[slot as usize] = wait;
+        chains.not_before[slot as usize] = not_before;
+        chains.start[slot as usize] = f64::NAN;
+        slot
+    }
+
+    fn add(&mut self, vehicle: &'a Vehicle) -> u32 {
         assert!(!vehicle.route.is_empty(), "a vehicle always has a route");
         let slot = u32::try_from(self.vehicles.len()).expect("vehicle count fits u32");
         self.vehicles.push(vehicle);
         self.traversals.push(Vec::with_capacity(vehicle.route.len()));
         self.parts.push(VecDeque::new());
-        self.pending.push(slot);
-        self.pending_sorted = false;
+        if let Some(c) = self.chains.as_mut() {
+            c.next.push(NONE);
+            c.wait.push(0.0);
+            c.not_before.push(0.0);
+            c.start.push(f64::from(vehicle.departure.get()));
+        }
+        slot
+    }
+
+    /// When the vehicle in `slot` departs: its own departure, or a chained
+    /// vehicle's release.
+    #[inline]
+    fn departure_of(&self, slot: u32) -> f64 {
+        match &self.chains {
+            Some(c) => c.start[slot as usize],
+            None => f64::from(self.vehicles[slot as usize].departure.get()),
+        }
     }
 
     /// Advance the loading by `dt`, returning every trip that finished in it,
@@ -692,28 +812,32 @@ impl<'a> LtmNetwork<'a> {
         completed
     }
 
+    /// The order of pending departures: later first, so the next is last.
+    fn pending_order(&self, a: u32, b: u32) -> Ordering {
+        let (va, vb) = (self.vehicles[a as usize], self.vehicles[b as usize]);
+        self.departure_of(b)
+            .total_cmp(&self.departure_of(a))
+            .then((vb.id.raw(), b).cmp(&(va.id.raw(), a)))
+    }
+
     fn sort_pending(&mut self) {
         if !self.pending_sorted {
-            let vehicles = &self.vehicles;
-            self.pending.sort_unstable_by(|&a, &b| {
-                let (va, vb) = (vehicles[a as usize], vehicles[b as usize]);
-                (vb.departure, vb.id.raw(), b).cmp(&(va.departure, va.id.raw(), a))
-            });
+            let mut pending = std::mem::take(&mut self.pending);
+            pending.sort_unstable_by(|&a, &b| self.pending_order(a, b));
+            self.pending = pending;
             self.pending_sorted = true;
         }
     }
 
     fn next_departure_time(&self, t0: f64) -> Option<f64> {
-        self.pending
-            .last()
-            .map(|&slot| f64::from(self.vehicles[slot as usize].departure.get()).max(t0))
+        self.pending.last().map(|&slot| self.departure_of(slot).max(t0))
     }
 
     /// The next pending vehicle joins its first link's origin queue.
     fn depart_next(&mut self, t0: f64) {
         let slot = self.pending.pop().expect("a departure is pending");
         let vehicle = self.vehicles[slot as usize];
-        let at = f64::from(vehicle.departure.get()).max(t0);
+        let at = self.departure_of(slot).max(t0);
         let origin = self.links + vehicle.route[0].index();
         self.join(origin, Queued { slot, leg: 0, enter: at, ready: at }, t0);
     }
@@ -1077,7 +1201,7 @@ impl<'a> LtmNetwork<'a> {
         if leg == 0 {
             // Out of the origin queue and onto the first link: the wait is the cost of
             // setting out then (S170).
-            let departure = f64::from(vehicle.departure.get());
+            let departure = self.departure_of(slot);
             if let Some(recorder) = self.recorder.as_mut() {
                 recorder.record_origin_wait(LinkId::from_index(j), departure, t, pcu);
             }
@@ -1212,11 +1336,30 @@ impl<'a> LtmNetwork<'a> {
         self.release_all(slot, t, t0);
         let s = slot as usize;
         let vehicle = self.vehicles[s];
+        let departure = match &self.chains {
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a release within the run's u32 clock"
+            )]
+            Some(c) => Second(c.start[s].floor() as u32),
+            None => vehicle.departure,
+        };
         completed.push(Trajectory {
             vehicle: vehicle.id,
-            departure: vehicle.departure,
+            departure,
             links: std::mem::take(&mut self.traversals[s]),
         });
+        // A vehicle chained to this one is released now (S199).
+        let next = self.chains.as_ref().map_or(NONE, |c| c.next[s]);
+        if next != NONE {
+            let c = self.chains.as_mut().expect("chained");
+            let n = next as usize;
+            c.start[n] = (t + c.wait[n]).max(c.not_before[n]);
+            let at =
+                self.pending.partition_point(|&p| self.pending_order(p, next) == Ordering::Less);
+            self.pending.insert(at, next);
+        }
     }
 
     /// Hold a queue: retry at a known time, or park until `blocked.link`
@@ -1346,10 +1489,59 @@ pub fn run_ltm_recorded(
     (done, exit, tables.expect("entry bins were asked for"))
 }
 
+/// [`run_ltm`] with **chained vehicles** (S199; see the [module docs](self)):
+/// each [`Chain`] departs its vehicle when the one it follows arrives. A chained
+/// vehicle's own `departure` is not read; its trajectory's departure is its
+/// release, floored. `recording` says what else to keep.
+///
+/// # Panics
+///
+/// Panics if `step` or a bin length is not positive, or if a chain follows a
+/// vehicle that is not earlier in `vehicles`, or two chains follow the same one.
+#[must_use]
+#[allow(clippy::too_many_arguments, reason = "the loading's inputs, as run_ltm's plus two")]
+pub fn run_ltm_chained(
+    network: &RoadNetwork,
+    turns: &TurnTable,
+    vehicles: &[Vehicle],
+    chains: &[Chain],
+    window: Duration,
+    step: Duration,
+    level: FidelityLevel,
+    recording: Recording,
+) -> LtmOutput {
+    let recording = match recording {
+        Recording::Trajectories => None,
+        Recording::Bins(b) => Some((b, false)),
+        Recording::BinsAndEntry(b) => Some((b, true)),
+    };
+    let (trajectories, bins) =
+        run_ltm_inner_chained(network, turns, vehicles, chains, window, step, level, recording);
+    let (link_bins, entry) = match bins {
+        Some((b, e)) => (Some(b), e),
+        None => (None, None),
+    };
+    LtmOutput { trajectories, link_bins, entry }
+}
+
 fn run_ltm_inner(
     network: &RoadNetwork,
     turns: &TurnTable,
     vehicles: &[Vehicle],
+    window: Duration,
+    step: Duration,
+    level: FidelityLevel,
+    recording: Option<(u32, bool)>,
+) -> (Vec<Trajectory>, Option<(LinkBins, Option<EntryTables>)>) {
+    run_ltm_inner_chained(network, turns, vehicles, &[], window, step, level, recording)
+}
+
+#[allow(clippy::too_many_arguments, reason = "the loading's inputs")]
+fn run_ltm_inner_chained(
+    network: &RoadNetwork,
+    turns: &TurnTable,
+    vehicles: &[Vehicle],
+    chains: &[Chain],
     window: Duration,
     step: Duration,
     level: FidelityLevel,
@@ -1372,9 +1564,37 @@ fn run_ltm_inner(
             sim = sim.with_entry_bins();
         }
     }
-    for vehicle in vehicles {
-        if Duration::from_clock(vehicle.departure) < window {
-            sim.depart(vehicle);
+    if chains.is_empty() {
+        for vehicle in vehicles {
+            if Duration::from_clock(vehicle.departure) < window {
+                sim.depart(vehicle);
+            }
+        }
+    } else {
+        let mut follows: Vec<Option<&Chain>> = vec![None; vehicles.len()];
+        for c in chains {
+            assert!(c.after < c.vehicle, "a chain follows an earlier vehicle");
+            assert!(follows[c.vehicle].is_none(), "a vehicle follows one other at most");
+            follows[c.vehicle] = Some(c);
+        }
+        // Slots are given in scheduling order: count them.
+        let mut slot_of = vec![NONE; vehicles.len()];
+        let mut next_slot = 0u32;
+        for (i, vehicle) in vehicles.iter().enumerate() {
+            match follows[i] {
+                // A vehicle whose leader never entered the loading never departs.
+                Some(c) if slot_of[c.after] != NONE => {
+                    slot_of[i] = sim.depart_after(vehicle, slot_of[c.after], c.wait, c.not_before);
+                    next_slot += 1;
+                }
+                Some(_) => {}
+                None if Duration::from_clock(vehicle.departure) < window => {
+                    sim.depart(vehicle);
+                    slot_of[i] = next_slot;
+                    next_slot += 1;
+                }
+                None => {}
+            }
         }
     }
     let mut completed = Vec::new();

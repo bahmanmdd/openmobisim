@@ -1,6 +1,6 @@
 //! The defaults of scheduled public transport (S199): part of the defaults
-//! table, so a change is a modelling change and bumps
-//! [`openmobisim_core_graph::DEFAULTS_VERSION`].
+//! table (they joined it at version 4), so a change is a modelling change and
+//! bumps [`openmobisim_core_graph::DEFAULTS_VERSION`].
 
 /// Transit's defaults: boarding, walking to and between stops, and buses.
 #[derive(Clone, Copy, PartialEq, Debug)]

@@ -21,21 +21,43 @@
 //! schedule, or the loading's realised times for the runs that ride the roads —
 //! with the fewest vehicles among the earliest. It takes at least one vehicle.
 //!
-//! **Cost:** per stop, a hub (about 40 bytes) and its footpaths; per trip, two
-//! bounded walks and one RAPTOR query, in parallel over trips in fixed chunks, so
-//! the result does not depend on the thread count.
+//! **Buses ride the roads** ([`TransitSetup::with_roads`]): every bus pattern is
+//! routed stop to stop on the car graph at free flow (rung 2 of design §18.5),
+//! each stop at the road network's nearest node within
+//! [`TransitDefaults::bus_stop_snap_m`]. A pattern with a stop off the roads, a
+//! stop the roads do not connect to the next, or a free-flow time more than
+//! [`TransitDefaults::bus_plausibility_ratio`] times its schedule's is **run by
+//! the schedule** instead (rung 3; counted in [`BusReport`]). In a loading each
+//! bus run is a chain of stop-to-stop vehicles of [`TransitDefaults::bus_pcu`]:
+//! a leg leaves its stop [`TransitDefaults::bus_dwell_s`] after the leg before
+//! arrives, and not before its scheduled departure (`core-loading`'s chained
+//! vehicles), so a bus that falls behind stays behind and one that is early waits.
+//! The loading's times replace the schedule's for those runs, and passengers
+//! route on them.
+//!
+//! **Cost:** per stop, a hub (about 40 bytes) and its footpaths; per bus pattern,
+//! a shortest-path search per pair of stops (once); per trip, two bounded walks
+//! and one RAPTOR query, in parallel over trips in fixed chunks, so the result
+//! does not depend on the thread count.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::geometry::ground_distance_metres;
 use openmobisim_core_graph::hubs::{AccessPoint, HubKind, HubSet, HubSpec};
 use openmobisim_core_graph::layers::{Layer, StaticNetwork};
-use openmobisim_core_routes::{NodeSnapper, Reach};
+use openmobisim_core_graph::network::RoadNetwork;
+use openmobisim_core_graph::turns::TurnTable;
+use openmobisim_core_loading::{Trajectory, Vehicle};
+use openmobisim_core_routes::{NodeSnapper, Reach, Search, SearchContext};
 use openmobisim_core_transit::{
     CallTimes, Footpaths, Journey, JourneyLeg, Raptor, RaptorData, Timetable, TransitDefaults,
+    UNKNOWN_TIME,
 };
-use openmobisim_core_types::ids::{EntityId, LinkId, NULL_ID, NodeId};
+use openmobisim_core_types::ids::{EntityId, LinkId, NULL_ID, NodeId, TransitRunId, VehicleId};
+use openmobisim_core_types::time::Second;
+use openmobisim_core_types::units::Pcu;
 
 use crate::layers::LayerSetup;
 
@@ -91,6 +113,45 @@ pub struct TransitSetup {
     has_stop: Vec<bool>,
     footpaths: Footpaths,
     scheduled: RaptorData,
+    /// How the buses ride the roads, if they do.
+    buses: Option<BusPlan>,
+}
+
+/// How a timetable's buses ride a road network: see the [module docs](self).
+#[derive(Debug)]
+struct BusPlan {
+    road: Arc<RoadNetwork>,
+    /// Per pattern group: the road links between each call and the next, or
+    /// `None` if the group runs by the schedule.
+    hops: Vec<Option<Vec<Vec<LinkId>>>>,
+    report: BusReport,
+}
+
+/// How the bus patterns were put on the roads (S199).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BusReport {
+    /// Bus pattern groups that ride the roads.
+    pub groups_on_roads: u32,
+    /// Their runs.
+    pub runs_on_roads: u32,
+    /// Bus groups run by the schedule because a stop is too far from the roads.
+    pub by_schedule_off_road: u32,
+    /// Because the roads do not connect a stop to the next.
+    pub by_schedule_no_route: u32,
+    /// Because their free-flow time on the roads is implausible against the schedule.
+    pub by_schedule_implausible: u32,
+}
+
+/// A day's bus runs as vehicles for one loading (S199).
+#[derive(Debug)]
+pub(crate) struct BusLoad {
+    /// The vehicles, in chain order: a leg after the one it follows.
+    pub vehicles: Vec<Vehicle>,
+    /// `(vehicle, after, wait, not_before)` by index into `vehicles`.
+    pub chains: Vec<(usize, usize, f64, f64)>,
+    /// Per road-running run: the vehicle of each hop (call `k` to `k + 1`), or
+    /// `u32::MAX` for a hop with no road links.
+    legs: Vec<(TransitRunId, Vec<u32>)>,
 }
 
 fn floor_seconds(s: f64) -> u32 {
@@ -233,7 +294,230 @@ impl TransitSetup {
             has_stop,
             footpaths,
             scheduled,
+            buses: None,
         }
+    }
+
+    /// The same setup, with its buses riding `road` (see the [module docs](self)).
+    /// Only a run on this very network loads them; any other runs them by the
+    /// schedule.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: every run of a timetable has two calls or more.
+    #[must_use]
+    pub fn with_roads(mut self, road: Arc<RoadNetwork>) -> Self {
+        // Road routes between two nodes, found once: the links and their free-flow time.
+        type Found = Option<(Vec<LinkId>, f64)>;
+        let d = self.defaults;
+        let t = &self.timetable;
+        let turns = TurnTable::build(&road, SignalDefaults::SHIPPED);
+        let ctx = SearchContext::new(&road, &turns);
+        let mut search = Search::new(&ctx);
+        let snapper = NodeSnapper::new(&road);
+        let mut report = BusReport::default();
+        let mut routes: HashMap<(u32, u32), Found> = HashMap::new();
+        let mut hops = Vec::with_capacity(t.group_count() as usize);
+        for g in 0..t.group_count() {
+            let runs = t.group_runs(g);
+            let first = runs[0];
+            if !t.run_kind(first).rides_road() {
+                hops.push(None);
+                continue;
+            }
+            let calls: Vec<usize> = t.run_calls(first).collect();
+            let nodes: Option<Vec<NodeId>> = calls
+                .iter()
+                .map(|&c| {
+                    let at = t.stop_position(t.call_stop(c));
+                    let node = snapper.nearest(&road, at);
+                    (ground_distance_metres(at, road.node_lonlat(node)) <= d.bus_stop_snap_m)
+                        .then_some(node)
+                })
+                .collect();
+            let Some(nodes) = nodes else {
+                report.by_schedule_off_road += 1;
+                hops.push(None);
+                continue;
+            };
+            let mut legs = Vec::with_capacity(nodes.len() - 1);
+            let mut free_flow = 0.0;
+            for pair in nodes.windows(2) {
+                let found = routes.entry((pair[0].raw(), pair[1].raw())).or_insert_with(|| {
+                    search.shortest(pair[0], pair[1]).map(|r| (r.links, r.cost))
+                });
+                match found {
+                    Some((links, cost)) => {
+                        legs.push(links.clone());
+                        free_flow += *cost;
+                    }
+                    None => break,
+                }
+            }
+            if legs.len() + 1 < nodes.len() {
+                report.by_schedule_no_route += 1;
+                hops.push(None);
+                continue;
+            }
+            #[allow(clippy::cast_precision_loss, reason = "a handful of stops")]
+            let dwells = d.bus_dwell_s * (calls.len().saturating_sub(2)) as f64;
+            let scheduled = f64::from(
+                t.scheduled().arrival[*calls.last().expect("two calls")]
+                    .saturating_sub(t.scheduled().departure[calls[0]]),
+            );
+            if free_flow + dwells > d.bus_plausibility_ratio * scheduled.max(60.0) {
+                report.by_schedule_implausible += 1;
+                hops.push(None);
+                continue;
+            }
+            report.groups_on_roads += 1;
+            report.runs_on_roads += u32::try_from(runs.len()).expect("runs fit u32");
+            hops.push(Some(legs));
+        }
+        self.buses = Some(BusPlan { road, hops, report });
+        self
+    }
+
+    /// How the buses were put on the roads, if they ride them.
+    #[must_use]
+    pub fn bus_report(&self) -> Option<BusReport> {
+        self.buses.as_ref().map(|b| b.report)
+    }
+
+    /// Whether a run on `road` loads this timetable's buses.
+    #[must_use]
+    pub fn rides(&self, road: &Arc<RoadNetwork>) -> bool {
+        self.buses
+            .as_ref()
+            .is_some_and(|b| Arc::ptr_eq(&b.road, road) && b.report.runs_on_roads > 0)
+    }
+
+    /// The day's road-running runs as chained vehicles, their ids from `first_id` up.
+    pub(crate) fn bus_load(&self, first_id: u32) -> BusLoad {
+        let d = self.defaults;
+        let t = &self.timetable;
+        let plan = self.buses.as_ref().expect("only called when the buses ride");
+        let mut load = BusLoad { vehicles: Vec::new(), chains: Vec::new(), legs: Vec::new() };
+        for (g, hops) in plan.hops.iter().enumerate() {
+            let Some(hops) = hops else { continue };
+            for &run in t.group_runs(u32::try_from(g).expect("groups fit u32")) {
+                let calls: Vec<usize> = t.run_calls(run).collect();
+                let sched = t.scheduled();
+                // The departure rule for the next leg: max(leader's arrival + wait, not_before);
+                // with no leader yet, `not_before` alone.
+                let (mut wait, mut not_before) = (0.0, f64::from(sched.departure[calls[0]]));
+                let mut leader: Option<usize> = None;
+                let mut legs = Vec::with_capacity(hops.len());
+                for (k, links) in hops.iter().enumerate() {
+                    let last = k + 2 == calls.len();
+                    if links.is_empty() {
+                        legs.push(u32::MAX);
+                    } else {
+                        let index = load.vehicles.len();
+                        let id = first_id + u32::try_from(index).expect("vehicles fit u32");
+                        #[allow(
+                            clippy::cast_possible_truncation,
+                            clippy::cast_sign_loss,
+                            reason = "a scheduled second"
+                        )]
+                        let departure = Second(not_before.max(0.0) as u32);
+                        load.vehicles.push(Vehicle::new(
+                            VehicleId::new(id),
+                            links.clone(),
+                            Pcu(d.bus_pcu),
+                            departure,
+                        ));
+                        if let Some(a) = leader {
+                            load.chains.push((index, a, wait, not_before));
+                        }
+                        leader = Some(index);
+                        legs.push(u32::try_from(index).expect("vehicles fit u32"));
+                        (wait, not_before) = (0.0, f64::NEG_INFINITY);
+                    }
+                    // Then the call at the end of the hop: its dwell and its schedule.
+                    if !last {
+                        let at_next = f64::from(sched.departure[calls[k + 1]]);
+                        if leader.is_some() {
+                            (wait, not_before) =
+                                (wait + d.bus_dwell_s, (not_before + d.bus_dwell_s).max(at_next));
+                        } else {
+                            not_before = (not_before + d.bus_dwell_s).max(at_next);
+                        }
+                    }
+                }
+                load.legs.push((run, legs));
+            }
+        }
+        load
+    }
+
+    /// How the road-running runs of `load` kept to the schedule on `times`.
+    pub(crate) fn bus_summary(&self, load: &BusLoad, times: &CallTimes) -> BusSummary {
+        let t = &self.timetable;
+        let (mut arrived, mut delay) = (0u32, 0.0f64);
+        for (run, _) in &load.legs {
+            let last = t.run_calls(*run).end - 1;
+            if times.arrival[last] != UNKNOWN_TIME {
+                arrived += 1;
+                delay += f64::from(times.arrival[last]) - f64::from(t.scheduled().arrival[last]);
+            }
+        }
+        BusSummary {
+            runs_on_roads: u32::try_from(load.legs.len()).expect("runs fit u32"),
+            runs_arrived: arrived,
+            delay_mean_s: if arrived == 0 { f64::NAN } else { delay / f64::from(arrived) },
+        }
+    }
+
+    /// Every call's times after a loading: the schedule's, with the road-running
+    /// runs' from their legs' trajectories (`trajectory` by index into
+    /// `load.vehicles`; `None` for a leg that did not arrive in the window, whose
+    /// calls from there on are [`UNKNOWN_TIME`]).
+    pub(crate) fn realised<'t>(
+        &self,
+        load: &BusLoad,
+        trajectory: impl Fn(usize) -> Option<&'t Trajectory>,
+    ) -> CallTimes {
+        let d = self.defaults;
+        let t = &self.timetable;
+        let mut times = t.scheduled().clone();
+        for (run, legs) in &load.legs {
+            let calls: Vec<usize> = t.run_calls(*run).collect();
+            let sched = t.scheduled();
+            let mut known = true;
+            for (k, &leg) in legs.iter().enumerate() {
+                let (from, to) = (calls[k], calls[k + 1]);
+                if !known {
+                    times.departure[from] = UNKNOWN_TIME;
+                    times.arrival[to] = UNKNOWN_TIME;
+                    continue;
+                }
+                if leg == u32::MAX {
+                    if k > 0 {
+                        #[allow(
+                            clippy::cast_possible_truncation,
+                            clippy::cast_sign_loss,
+                            reason = "a second"
+                        )]
+                        let dep = (f64::from(times.arrival[from]) + d.bus_dwell_s)
+                            .max(f64::from(sched.departure[from]))
+                            as u32;
+                        times.departure[from] = dep;
+                    }
+                    times.arrival[to] = times.departure[from];
+                } else if let Some(tr) = trajectory(leg as usize) {
+                    times.departure[from] = tr.links[0].enter.get();
+                    times.arrival[to] = tr.arrival().get();
+                } else {
+                    known = false;
+                    times.departure[from] = UNKNOWN_TIME;
+                    times.arrival[to] = UNKNOWN_TIME;
+                }
+            }
+            let last = *calls.last().expect("two calls");
+            times.departure[last] = times.arrival[last];
+        }
+        times
     }
 
     /// The timetable.
@@ -423,6 +707,20 @@ pub struct TransitResult {
     pub boardings: Vec<f64>,
     /// Passengers alighting at each call, likewise.
     pub alightings: Vec<f64>,
+    /// How the buses kept to the schedule, if they rode the roads.
+    pub buses: Option<BusSummary>,
+}
+
+/// How the buses that rode the roads kept to their schedule in a run (S199).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BusSummary {
+    /// Runs loaded on the roads.
+    pub runs_on_roads: u32,
+    /// Of those, runs that reached their last stop within the window.
+    pub runs_arrived: u32,
+    /// Their mean delay at the last stop, realised minus scheduled, in seconds
+    /// (negative: early); NaN if none arrived.
+    pub delay_mean_s: f64,
 }
 
 impl TransitResult {
@@ -430,7 +728,7 @@ impl TransitResult {
     #[must_use]
     pub fn empty(times: CallTimes) -> Self {
         let n = times.arrival.len();
-        Self { times, boardings: vec![0.0; n], alightings: vec![0.0; n] }
+        Self { times, boardings: vec![0.0; n], alightings: vec![0.0; n], buses: None }
     }
 
     /// Passengers on board as each call's vehicle leaves it, per call: the

@@ -34,6 +34,9 @@ pub use level0::{
     load_timed_binned, traverse_free_flow, traverse_timed,
 };
 pub use link_bins::{EntryTables, LinkBinRecorder, LinkBins};
-pub use ltm::{FidelityLevel, LtmNetwork, run_ltm, run_ltm_binned, run_ltm_recorded};
+pub use ltm::{
+    Chain, FidelityLevel, LtmNetwork, LtmOutput, Recording, run_ltm, run_ltm_binned,
+    run_ltm_chained, run_ltm_recorded,
+};
 pub use node_model::{TurnDemand, solve_node};
 pub use vehicle::Vehicle;

@@ -27,9 +27,9 @@ use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    EntryTables, FidelityLevel, LinkBins, Trajectory, Vehicle, load_level_0_binned,
-    load_level_0_recorded, load_timed_binned, run_ltm_binned, run_ltm_recorded, traverse_free_flow,
-    traverse_timed,
+    Chain, EntryTables, FidelityLevel, LinkBins, Recording, Trajectory, Vehicle,
+    load_level_0_binned, load_level_0_recorded, load_timed_binned, run_ltm_binned, run_ltm_chained,
+    run_ltm_recorded, traverse_free_flow, traverse_timed,
 };
 use openmobisim_core_routes::{
     Demand, NodeSnapper, RouteKey, RouteSetGenerator, RouteSets, TripDemand, default_generator,
@@ -1053,53 +1053,132 @@ impl Run {
             }
         }
 
+        // The day's buses, if they ride this network's roads (S199): loaded with the cars,
+        // and their times read back for the passengers.
+        let transit = self.transit.clone();
+        let bus_load =
+            transit.as_ref().filter(|t| t.rides(&self.network)).map(|t| t.bus_load(total_trips));
+        let mut bus_times = None;
+        if let (FlowMotor::Level0, Some(load), Some(transit)) =
+            (&self.flow_motor, &bus_load, &transit)
+        {
+            // At free flow a leg follows its leader alone, in chain order.
+            let follows: HashMap<usize, (usize, f64, f64)> =
+                load.chains.iter().map(|&(v, a, w, nb)| (v, (a, w, nb))).collect();
+            let mut done: Vec<Option<Trajectory>> = vec![None; load.vehicles.len()];
+            let window = f64::from(self.window.get());
+            for (i, vehicle) in load.vehicles.iter().enumerate() {
+                let start = match follows.get(&i) {
+                    Some(&(a, w, nb)) => match &done[a] {
+                        Some(leader) => (f64::from(leader.arrival().get()) + w).max(nb),
+                        None => continue,
+                    },
+                    None => f64::from(vehicle.departure.get()),
+                };
+                if start >= window {
+                    continue;
+                }
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "a second of the day"
+                )]
+                let leg = Vehicle { departure: Second(start as u32), ..vehicle.clone() };
+                let trajectory = traverse_free_flow(&leg, &self.network);
+                if trajectory.arrival() <= self.window {
+                    done[i] = Some(trajectory);
+                }
+                if record_bins.is_some() {
+                    level0_vehicles.push(leg);
+                }
+            }
+            bus_times = Some(transit.realised(load, |i| done[i].as_ref()));
+        }
+
         if let FlowMotor::Ltm { turns, step, level } = &self.flow_motor {
             let level = &level_override.unwrap_or(*level);
-            let vehicles: Vec<Vehicle> =
+            let mut vehicles: Vec<Vehicle> =
                 pending_ltm.iter().map(|(_, vehicle, _)| vehicle.clone()).collect();
             let window = Duration::from_clock(self.window);
-            let (trajectories, bins, entry) = match record_bins {
-                Some(bin_seconds) if want_entry => {
-                    let (t, b, e) = run_ltm_recorded(
-                        &self.network,
-                        turns,
-                        &vehicles,
-                        window,
-                        *step,
-                        *level,
-                        bin_seconds,
-                    );
-                    (t, Some(b), Some(e))
-                }
-                Some(bin_seconds) => {
-                    let (t, b) = run_ltm_binned(
-                        &self.network,
-                        turns,
-                        &vehicles,
-                        window,
-                        *step,
-                        *level,
-                        bin_seconds,
-                    );
-                    (t, Some(b), None)
-                }
-                None => (
-                    openmobisim_core_loading::run_ltm(
-                        &self.network,
-                        turns,
-                        &vehicles,
-                        window,
-                        *step,
-                        *level,
+            let (trajectories, bins, entry) = if let Some(load) = &bus_load {
+                let cars = vehicles.len();
+                vehicles.extend(load.vehicles.iter().cloned());
+                let chains: Vec<Chain> = load
+                    .chains
+                    .iter()
+                    .map(|&(v, a, wait, not_before)| Chain {
+                        vehicle: cars + v,
+                        after: cars + a,
+                        wait,
+                        not_before,
+                    })
+                    .collect();
+                let recording = match record_bins {
+                    Some(b) if want_entry => Recording::BinsAndEntry(b),
+                    Some(b) => Recording::Bins(b),
+                    None => Recording::Trajectories,
+                };
+                let out = run_ltm_chained(
+                    &self.network,
+                    turns,
+                    &vehicles,
+                    &chains,
+                    window,
+                    *step,
+                    *level,
+                    recording,
+                );
+                (out.trajectories, out.link_bins, out.entry)
+            } else {
+                match record_bins {
+                    Some(bin_seconds) if want_entry => {
+                        let (t, b, e) = run_ltm_recorded(
+                            &self.network,
+                            turns,
+                            &vehicles,
+                            window,
+                            *step,
+                            *level,
+                            bin_seconds,
+                        );
+                        (t, Some(b), Some(e))
+                    }
+                    Some(bin_seconds) => {
+                        let (t, b) = run_ltm_binned(
+                            &self.network,
+                            turns,
+                            &vehicles,
+                            window,
+                            *step,
+                            *level,
+                            bin_seconds,
+                        );
+                        (t, Some(b), None)
+                    }
+                    None => (
+                        openmobisim_core_loading::run_ltm(
+                            &self.network,
+                            turns,
+                            &vehicles,
+                            window,
+                            *step,
+                            *level,
+                        ),
+                        None,
+                        None,
                     ),
-                    None,
-                    None,
-                ),
+                }
             };
             link_bins = bins;
             entry_bins = entry;
             let by_vehicle: HashMap<VehicleId, _> =
                 trajectories.into_iter().map(|t| (t.vehicle, t)).collect();
+            if let (Some(load), Some(transit)) = (&bus_load, &transit) {
+                let id = |i: usize| {
+                    VehicleId::new(total_trips + u32::try_from(i).expect("vehicles fit u32"))
+                };
+                bus_times = Some(transit.realised(load, |i| by_vehicle.get(&id(i))));
+            }
 
             for (trip, vehicle, weight) in pending_ltm {
                 match by_vehicle.get(&vehicle.id) {
@@ -1142,9 +1221,13 @@ impl Run {
 
         // Transit trips, on the day's times.
         let mut transit_result = None;
-        if let Some(transit) = self.transit.clone() {
-            let times = transit.timetable().scheduled().clone();
-            let data = transit.scheduled();
+        if let Some(transit) = transit {
+            // On the loading's times if the buses rode, else on the schedule.
+            let realised = bus_times.as_ref().map(|times| transit.on_times(times));
+            let data = realised.as_ref().unwrap_or_else(|| transit.scheduled());
+            let buses =
+                bus_load.as_ref().zip(bus_times.as_ref()).map(|(l, t)| transit.bus_summary(l, t));
+            let times = bus_times.unwrap_or_else(|| transit.timetable().scheduled().clone());
             let requests: Vec<TransitRequest> = pending_transit
                 .iter()
                 .map(|&trip| TransitRequest {
@@ -1162,6 +1245,7 @@ impl Run {
                     .is_some_and(|w| Arc::ptr_eq(w.network(), transit.walk()));
             let travels = transit.route_all(data, &requests, bin_walks);
             let mut result = TransitResult::empty(times);
+            result.buses = buses;
             for (&trip, travel) in pending_transit.iter().zip(travels) {
                 let departure = self.trips.departure(trip);
                 let Some(travel) = travel else {

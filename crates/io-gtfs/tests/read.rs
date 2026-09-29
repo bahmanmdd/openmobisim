@@ -210,6 +210,17 @@ fn a_given_date_and_a_date_without_service() {
 }
 
 #[test]
+fn an_area_no_run_calls_in_twice_is_an_error() {
+    let dir = folder("empty-area");
+    let err = read_gtfs(&dir, None, &|p: LonLat| p.lon > 5.0).unwrap_err();
+    assert!(
+        matches!(&err, GtfsError::NoService(m) if m.contains("1 of the feed's 5 stops")),
+        "{err:?}"
+    );
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
 fn a_missing_file_is_an_error() {
     let dir = folder("missing");
     std::fs::remove_file(dir.join("stop_times.txt")).unwrap();

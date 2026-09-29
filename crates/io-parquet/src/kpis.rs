@@ -9,6 +9,11 @@
 //! loading are also written once per mode that has trips (`car`, `bike`,
 //! `walk`, …), so a mode's numbers are a filter away. The metrics of how a run
 //! settled (the gaps, the shares, the time change) are the whole run's.
+//!
+//! **Transit** (S199), for a run with a timetable, under `mode` `transit`:
+//! `boardings` (weighted by traveller weight) and, if its buses rode the roads,
+//! `bus_runs_on_roads`, `bus_runs_arrived` and `bus_delay_mean_s` (the mean
+//! delay at the last stop, realised minus scheduled; negative is early).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -52,9 +57,21 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
             (iteration, mode, "completion_rate", c.completion_rate()),
         ]
     };
-    // The last loading's trip metrics, per mode that has trips (S195).
+    // The last loading's trip metrics, per mode that has trips (S195); and transit's
+    // boardings and how the buses kept time (S199).
     let by_mode = |iteration: u32| {
         let mut rows = Vec::new();
+        if let Some(transit) = &result.transit {
+            let t = "transit";
+            rows.push((iteration, t, "boardings", transit.boardings.iter().sum::<f64>()));
+            if let Some(b) = transit.buses {
+                rows.push((iteration, t, "bus_runs_on_roads", f64::from(b.runs_on_roads)));
+                rows.push((iteration, t, "bus_runs_arrived", f64::from(b.runs_arrived)));
+                if b.delay_mean_s.is_finite() {
+                    rows.push((iteration, t, "bus_delay_mean_s", b.delay_mean_s));
+                }
+            }
+        }
         for mode in Mode::ALL {
             let m = &result.by_mode[mode.index()];
             if m.completion.total_trips == 0 {

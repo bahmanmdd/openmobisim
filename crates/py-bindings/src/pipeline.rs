@@ -37,7 +37,10 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
-use openmobisim_core_sim::{FlowMotor, LayerSetup, Run as CoreRun, StaticLayers};
+use openmobisim_core_sim::{FlowMotor, LayerSetup, Run as CoreRun, StaticLayers, TransitSetup};
+use openmobisim_core_transit::TransitDefaults;
+
+use crate::transit::{PyTransit, transit_calls, transit_summary};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, TripId};
 use openmobisim_core_types::time::Second;
@@ -182,6 +185,13 @@ pub struct PyRunSummary {
     /// Which route each trip took, out of how many.
     #[pyo3(get)]
     pub route_choices: Option<Py<PyRouteChoices>>,
+    /// Every call of the run's timetable with its times and passengers, as
+    /// columns (S199); `None` without a timetable.
+    #[pyo3(get)]
+    pub transit_calls: Option<Py<PyDict>>,
+    /// How transit went, as numbers by name (S199); `None` without a timetable.
+    #[pyo3(get)]
+    pub transit_summary: Option<Py<PyDict>>,
 }
 
 /// Per-link, per-time-bin results, as numpy columns.
@@ -313,7 +323,7 @@ fn convergence_arrays(
     choice_model=None, choice_options=None,
     equilibration="none", equilibration_options=None,
     route_update="none", route_update_options=None,
-    choice_detour_limit=None, route_cache=false, bike_cost="dedicated",
+    choice_detour_limit=None, route_cache=false, bike_cost="dedicated", transit=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -346,6 +356,7 @@ pub fn run_pipeline(
     choice_detour_limit: Option<f64>,
     route_cache: bool,
     bike_cost: &str,
+    transit: Option<PyRef<'_, PyTransit>>,
 ) -> PyResult<PyRunSummary> {
     let bike_cost = BikeCost::from_name(bike_cost).ok_or_else(|| {
         PyValueError::new_err(format!(
@@ -454,11 +465,31 @@ pub fn run_pipeline(
     let setup = |layer: StaticLayer| -> PyResult<LayerSetup> {
         Ok(LayerSetup::new(network.static_layer(layer)?, bike_cost, StaticLayerDefaults::SHIPPED))
     };
+    // A timetable walks its passengers on the walk layer (S199), so the run needs it.
     let layers = StaticLayers {
         bike: if uses(Mode::Bike) { Some(setup(StaticLayer::Bike)?) } else { None },
-        walk: if uses(Mode::Walk) { Some(setup(StaticLayer::Walk)?) } else { None },
+        walk: if uses(Mode::Walk) || transit.is_some() {
+            Some(setup(StaticLayer::Walk)?)
+        } else {
+            None
+        },
+    };
+    // Stops with walk and bike access points, and buses on this network's roads.
+    let transit_setup = match &transit {
+        Some(t) => {
+            let walk = layers.walk.as_ref().expect("made above for a timetable");
+            let bike = setup(StaticLayer::Bike)?;
+            let built =
+                TransitSetup::new(t.timetable.clone(), walk, Some(&bike), TransitDefaults::SHIPPED)
+                    .with_roads(network.inner.clone());
+            Some(Arc::new(built))
+        }
+        None => None,
     };
     run = run.with_layers(Arc::new(layers));
+    if let Some(t) = &transit_setup {
+        run = run.with_transit(t.clone());
+    }
     // What went in, taken before it runs (S168).
     let description = run.description();
     let mut run_diagnostics = Diagnostics::new();
@@ -527,7 +558,16 @@ pub fn run_pipeline(
         completion_by_mode.set_item(mode.as_str(), row)?;
     }
 
+    let (transit_calls_table, transit_summary_table) = match (&result.transit, &transit_setup) {
+        (Some(r), Some(t)) => (
+            Some(transit_calls(py, t.timetable(), r)?.unbind()),
+            Some(transit_summary(py, r, t.bus_report())?.unbind()),
+        ),
+        _ => (None, None),
+    };
     Ok(PyRunSummary {
+        transit_calls: transit_calls_table,
+        transit_summary: transit_summary_table,
         kpis_path: kpis_path.to_string_lossy().into_owned(),
         diagnostics_path: diagnostics_path.to_string_lossy().into_owned(),
         events_path: events_path.to_string_lossy().into_owned(),

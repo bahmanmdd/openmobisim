@@ -64,7 +64,11 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 ///
 /// Version 3 (S197): ferry crossings on the bike and walk layers, their default
 /// speed and expected wait.
-pub const DEFAULTS_VERSION: u32 = 3;
+///
+/// Version 4 (S199): scheduled public transport joined the table (`core-transit`'s
+/// `TransitDefaults`): the boarding slack, walks to and between stops, bus dwell,
+/// PCU and the plausibility ratio.
+pub const DEFAULTS_VERSION: u32 = 4;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

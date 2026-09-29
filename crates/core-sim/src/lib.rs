@@ -53,4 +53,4 @@ pub use route_cache::RouteSetCache;
 pub use route_choice::{NO_ROUTE, ROUTE_ATTRIBUTES, RouteChoices};
 pub use route_update::{BestResponse, NoRouteUpdate, RouteUpdate};
 pub use run::{FlowMotor, ModeTotals, Run, RunError, RunResult, TripCompletionStats};
-pub use transit::{TransitResult, TransitSetup};
+pub use transit::{BusReport, BusSummary, TransitResult, TransitSetup};

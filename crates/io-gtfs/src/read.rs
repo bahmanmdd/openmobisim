@@ -91,7 +91,8 @@ pub struct GtfsReport {
 /// # Errors
 ///
 /// [`GtfsError`]: the feed cannot be opened or read, a required file or column
-/// is missing, or nothing runs on the day.
+/// is missing, or nothing runs on the day — in the area, if `keep` leaves out
+/// all but one stop of every run.
 ///
 /// # Panics
 ///
@@ -229,6 +230,12 @@ pub fn read_feed(
         report.calls_kept += calls.len() as u64;
     }
     report.stops_kept = u32::try_from(builder.stop_count()).expect("stops fit u32");
+    if report.runs_kept == 0 {
+        return Err(GtfsError::NoService(format!(
+            "no run on {date} calls at two or more stops in the area ({} of the feed's {} stops are in it)",
+            report.stops_in_area, report.stops_in_feed
+        )));
+    }
 
     read_transfers(source, &stops, &builder_stop, &mut builder, &mut report)?;
     if let Some(input) = source.file("frequencies.txt")? {

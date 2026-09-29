@@ -8,7 +8,7 @@
 //! | [`timetable`] | Stops, routes, runs and their calls; scheduled and realised call times |
 //! | [`raptor`] | Patterns, walking transfers and the RAPTOR earliest-arrival search |
 //! | [`defaults`] | Boarding slack, walking limits, bus dwell and PCU |
-//! | [`examples`] | The toy network's timetable: the tram `T1` |
+//! | [`examples`] | The toy network's timetables: the tram `T1` and the bus `B1` |
 //!
 //! Reading a feed is `io-gtfs`'s job, and linking stops to the walk, bike and
 //! road networks is the run's (`core-sim`): this crate knows stops by position

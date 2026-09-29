@@ -349,7 +349,8 @@ class Run:
 
         Keys: ``total_trips``, ``completed``, ``truncated``,
         ``no_vehicle_available``, ``no_feasible_path``, ``mode_not_available``
-        (a trip whose mode this version cannot simulate yet: transit).
+        (a trip whose mode this run cannot simulate: park-and-ride and
+        bike-and-ride, or transit without a timetable).
         """
         s = self._summary
         return {
@@ -370,6 +371,37 @@ class Run:
         traveller weight. They add up to the run's.
         """
         return {mode: dict(row) for mode, row in self._summary.completion_by_mode.items()}
+
+    def transit_calls(self) -> dict[str, Any] | None:
+        """Every call of the timetable in this run, as columns; ``None`` without one.
+
+        One row per call (a run at a stop, in order): ``run`` (the GTFS
+        ``trip_id``), ``line`` (its short name), ``kind`` (``"bus"``, ``"tram"``,
+        ``"metro"``, ``"rail"``, ``"ferry"``, ``"other"``), ``stop_id``, ``sequence``
+        (the call's place in its run, from 0), ``scheduled_arrival_s``,
+        ``scheduled_departure_s``, and ``arrival_s``, ``departure_s`` — the times in
+        the run: a bus that rode the roads keeps the loading's, the rest the
+        schedule's; ``NaN`` where a bus had not got there by the end of the window —
+        then ``boardings``, ``alightings`` and ``on_board`` (as the vehicle leaves),
+        weighted by traveller weight. Seconds count from the service day's midnight.
+        """
+        calls = self._summary.transit_calls
+        return None if calls is None else dict(calls)
+
+    @property
+    def transit_summary(self) -> dict[str, float] | None:
+        """How transit went, as numbers by name; ``None`` without a timetable.
+
+        ``boardings`` (weighted); and for the buses: ``bus_groups_on_roads`` (bus
+        patterns that rode the roads), ``bus_groups_by_schedule_off_road``,
+        ``bus_groups_by_schedule_no_route`` and ``bus_groups_by_schedule_implausible``
+        (those run by the schedule, and why), ``bus_runs_on_roads``,
+        ``bus_runs_arrived`` (reached their last stop within the window) and
+        ``bus_delay_mean_s`` (their mean delay there, realised minus scheduled;
+        negative is early).
+        """
+        summary = self._summary.transit_summary
+        return None if summary is None else dict(summary)
 
     @property
     def total_travel_time_s(self) -> float:
@@ -446,6 +478,7 @@ class Scenario:
         choice_detour_limit: float | None = None,
         route_cache: bool = False,
         bike_cost: str = "dedicated",
+        transit: _core.Transit | None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
         if bike_cost not in BIKE_COSTS:
@@ -497,6 +530,7 @@ class Scenario:
         self._choice_detour_limit = choice_detour_limit
         self._route_cache = route_cache
         self._bike_cost = bike_cost
+        self._transit = transit
 
     @classmethod
     def from_parts(
@@ -522,6 +556,7 @@ class Scenario:
         choice_detour_limit: float | None = None,
         route_cache: bool = False,
         bike_cost: str = "dedicated",
+        transit: _core.Transit | None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -532,12 +567,13 @@ class Scenario:
                 way) or a path to a ``trips.parquet`` file — the same
                 schema either way, never two different shapes. A row may end with
                 a **mode** (the ``mode`` column of ``trips.parquet``): ``"car"``,
-                ``"bike"``, ``"walk"``, or the not-yet-built ``"transit"``,
+                ``"bike"``, ``"walk"``, ``"transit"``, or the not-yet-built
                 ``"car_transit"``, ``"bike_transit"``. A trip without one is a car
                 trip. Bike and walk trips travel on the network's bike and walk
                 layers (``network.layer("bike")``), each by its shortest route
                 there; a bike trip needs the traveller's bike at its origin, as a
-                car trip needs their car.
+                car trip needs their car. A transit trip needs ``transit``: it
+                walks to a stop, rides and walks on (see ``transit``).
             persons: The ``persons.parquet`` equivalent — an in-memory table,
                 a file path, or ``None`` if every traveller takes their
                 class's default ownership.
@@ -686,6 +722,18 @@ class Scenario:
                 share of free flow, since nothing is faster than free flow and so at most that
                 much is left to gain).
                 Unknown names and out-of-range values are refused.
+            transit: The timetable of a service day (``openmobisim.transit_read_gtfs``),
+                for the ``"transit"`` trips. A transit trip walks (4.8 km/h, at most 15
+                minutes) to a stop, rides one or more vehicles and walks on, by the journey
+                that arrives first (the fewest vehicles among those), boarding only if at the
+                stop a minute before a vehicle leaves; walks between stops are at most 5
+                minutes. The run's clock starts at the service day's midnight. **Buses ride
+                the roads**, 2 PCU each, among the cars: routed stop to stop at free flow,
+                dwelling 20 s at a stop without blocking the traffic behind, never leaving a
+                stop before their scheduled time, so congestion makes them late and their
+                passengers with them. A bus line the roads cannot carry plausibly runs by
+                the schedule (``Run.transit_summary`` counts them). Rail, metro, trams and
+                ferries run by the schedule. These values are defaults, not a calibration.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -718,6 +766,7 @@ class Scenario:
             choice_detour_limit=choice_detour_limit,
             route_cache=route_cache,
             bike_cost=bike_cost,
+            transit=transit,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
@@ -761,6 +810,7 @@ class Scenario:
             choice_detour_limit=self._choice_detour_limit,
             route_cache=self._route_cache,
             bike_cost=self._bike_cost,
+            transit=self._transit,
         )
         return Run(
             summary,

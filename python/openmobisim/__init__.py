@@ -15,12 +15,15 @@ run, its output artifacts, route choice among each trip's alternatives
 (``openmobisim.choice`` says how to add your own choice model) and, by default
 since the car-ready checkpoint (2026-09-23), iteration towards an equilibrium
 (``equilibration="msa"``), during which the route sets may grow
-(``route_update="best_response"``). No hubs, no
-disruptions — those arrive with the mechanisms that give them meaning.
+(``route_update="best_response"``). Trips may also cycle, walk, or take scheduled
+public transport (``transit_read_gtfs``, ``Scenario(transit=...)``), whose buses
+ride the roads among the cars. No parking, no disruptions — those arrive with
+the mechanisms that give them meaning.
 """
 
 from openmobisim import _core, choice, examples
 from openmobisim._core import (
+    Transit,
     build_info,
     choice_draw,
     choice_models,
@@ -33,6 +36,7 @@ from openmobisim._core import (
     route_sets_build,
     route_update_methods,
     step_of,
+    transit_read_gtfs,
 )
 from openmobisim.network import network_read_table
 from openmobisim.scenario import Run, Scenario, Table
@@ -43,6 +47,7 @@ __all__ = [
     "Run",
     "Scenario",
     "Table",
+    "Transit",
     "__version__",
     "build_info",
     "choice",
@@ -59,4 +64,5 @@ __all__ = [
     "route_sets_build",
     "route_update_methods",
     "step_of",
+    "transit_read_gtfs",
 ]

@@ -5,6 +5,8 @@ Rust and Python, and writing them out is how that contract stays visible on
 the Python side.
 """
 
+from typing import Any
+
 import numpy as np
 import numpy.typing as npt
 
@@ -484,6 +486,57 @@ def toy_network() -> Network:
         ``"M"``, … (see :meth:`Network.node_lonlat`).
     """
 
+def toy_network_transit() -> Transit:
+    """The toy network's timetable: the tram ``T1`` and the bus ``B1``.
+
+    The tram runs from stop ``N1`` to stop ``H`` (at ``D2``) and back, every 10
+    minutes, 300 s each way; the bus calls at ``W``, ``M`` and ``D1`` on the
+    arterial, every 10 minutes, scheduled 120 s and 240 s after ``W``; both for
+    three hours from 0 s.
+    """
+
+class Transit:
+    """The timetable of one service day: stops, lines and every run that day.
+
+    Read one with :func:`transit_read_gtfs`; give it to a ``Scenario``
+    (``transit=``) for its ``"transit"`` trips.
+    """
+
+    #: The service day, ``YYYY-MM-DD``.
+    date: str
+    #: How many stops (only those a run calls at).
+    stop_count: int
+    #: How many lines (GTFS routes).
+    route_count: int
+    #: How many runs: one vehicle's trip on the day.
+    run_count: int
+    #: How many calls: a run at a stop.
+    call_count: int
+    def runs_by_kind(self) -> dict[str, int]:
+        """Runs by kind of service: ``"bus"``, ``"tram"``, ``"metro"``, ``"rail"``, and so on."""
+    def read_report(self) -> dict[str, int | bool] | None:
+        """What reading the feed found, kept and skipped (``None`` if not read from a feed)."""
+    def stops(self) -> dict[str, Any]:
+        """Every stop: ``stop_id`` and ``name`` (lists), ``lon`` and ``lat`` (arrays)."""
+
+def transit_read_gtfs(
+    path: str, network: Network | None = None, date: str | None = None
+) -> Transit:
+    """Read one service day of a GTFS feed.
+
+    Args:
+        path: The feed: a ``.zip``, or a folder of its ``.txt`` files.
+        network: If given, only the stops a pedestrian can reach on the network's
+            walk layer are kept (within 300 m of its nearest node), and every run
+            keeps its calls at them.
+        date: The service day, ``"YYYY-MM-DD"``; ``None`` reads the feed's busiest
+            weekday.
+
+    Raises:
+        ValueError: If the feed cannot be read, lacks a required file, or runs
+            nothing on the day.
+    """
+
 def network_read_osm(
     path: str,
     contract: bool = True,
@@ -602,6 +655,10 @@ class RunSummary:
     route_sets: RouteSets
     #: Which route each trip took, out of how many.
     route_choices: RouteChoices
+    #: Every call of the timetable with its times and passengers (see ``Run.transit_calls``).
+    transit_calls: dict[str, Any] | None
+    #: How transit went, by name (see ``Run.transit_summary``).
+    transit_summary: dict[str, float] | None
 
 def run_pipeline(
     network: Network,
@@ -629,6 +686,7 @@ def run_pipeline(
     choice_detour_limit: float | None = None,
     route_cache: bool = False,
     bike_cost: str = "dedicated",
+    transit: Transit | None = None,
 ) -> RunSummary:
     """Run the whole pipeline and write all four output artifacts.
 
@@ -689,6 +747,8 @@ def run_pipeline(
             share of the best's (``0`` offers every route, ``None`` the library's default).
         bike_cost: ``"dedicated"`` (the default) or ``"time"``: how bike trips
             choose their route on the bike layer.
+        transit: The timetable for the ``"transit"`` trips; its buses ride this
+            network's roads.
 
     Returns:
         A :class:`RunSummary`.

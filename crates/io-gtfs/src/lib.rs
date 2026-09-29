@@ -34,7 +34,8 @@ pub enum GtfsError {
         /// The column.
         column: &'static str,
     },
-    /// Nothing runs on the day asked for, or on any weekday.
+    /// Nothing runs on the day asked for, or on any weekday, or no run calls at
+    /// two stops in the area.
     NoService(String),
 }
 
