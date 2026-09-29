@@ -41,6 +41,59 @@ use crate::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
 use crate::geometry::ProjectionError;
 use crate::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 
+/// Every layer a traveller can be on (design §20; S198): where a hub's access
+/// point is, and which network a leg of a trip runs on.
+///
+/// The discriminant is the layer's id and part of what hubs store: append new
+/// layers, never renumber.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[repr(u8)]
+pub enum Layer {
+    /// Cars, on the road network.
+    Car = 0,
+    /// Personal bikes, on the bike layer.
+    Bike = 1,
+    /// Walking, on the walk layer: the universal access layer (design §21.2).
+    Walk = 2,
+    /// Scheduled public transport (M3): a stop's platform.
+    Transit = 3,
+}
+
+impl Layer {
+    /// Every layer, in id order.
+    pub const ALL: [Layer; 4] = [Layer::Car, Layer::Bike, Layer::Walk, Layer::Transit];
+
+    /// The stable snake_case name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Layer::Car => "car",
+            Layer::Bike => "bike",
+            Layer::Walk => "walk",
+            Layer::Transit => "transit",
+        }
+    }
+
+    /// The static layer this is, if it is one.
+    #[must_use]
+    pub const fn as_static(self) -> Option<StaticLayer> {
+        match self {
+            Layer::Bike => Some(StaticLayer::Bike),
+            Layer::Walk => Some(StaticLayer::Walk),
+            Layer::Car | Layer::Transit => None,
+        }
+    }
+}
+
+impl From<StaticLayer> for Layer {
+    fn from(layer: StaticLayer) -> Self {
+        match layer {
+            StaticLayer::Bike => Layer::Bike,
+            StaticLayer::Walk => Layer::Walk,
+        }
+    }
+}
+
 /// The layers whose costs are static (design §21.1).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum StaticLayer {

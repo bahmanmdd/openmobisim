@@ -311,3 +311,34 @@ pub fn toy_network_layers() -> (crate::layers::StaticNetwork, crate::layers::Sta
     debug_assert!(diagnostics.is_empty(), "the toy layers build cleanly");
     (bike, walk)
 }
+
+/// The toy network's hub `H` at `D2` (S198; planned as
+/// a park-and-ride): a car access point on the road node `D2`, a bike and a walk
+/// access point on the layers' `D2` ([`toy_network_layers`]), and a
+/// **60-second** transfer between any two. The tram access point joins with
+/// transit, the car and bike parking with the hub's resources.
+///
+/// # Panics
+///
+/// Never in practice: `D2` is a node of the road network and of both layers.
+#[must_use]
+pub fn toy_network_hubs() -> crate::hubs::HubSet {
+    use crate::hubs::{AccessPoint, HubKind, HubSet, HubSpec};
+    use crate::layers::Layer;
+
+    let (road, _) = toy_network();
+    let (bike, walk) = toy_network_layers();
+    let node = |network: &RoadNetwork| network.node_external_ids().typed_id_of("D2").expect("D2");
+    let d2 = node(&road);
+    HubSet::build(vec![HubSpec {
+        external_id: "H".to_string(),
+        kind: HubKind::Declared,
+        position: road.node_lonlat(d2),
+        access_points: vec![
+            AccessPoint { layer: Layer::Car, node: d2 },
+            AccessPoint { layer: Layer::Bike, node: node(bike.network()) },
+            AccessPoint { layer: Layer::Walk, node: node(walk.network()) },
+        ],
+        transfer_seconds: 60.0,
+    }])
+}

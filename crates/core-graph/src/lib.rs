@@ -11,6 +11,7 @@
 //! | [`turns`] | (incoming link, outgoing link) pairs — the node model's unit of work |
 //! | [`link_geometry`] | The shape of each street, kept outside `RoadNetwork` (S125) |
 //! | [`layers`] | The bike and walk layers: static-cost networks over the same geometry (S193, S195) |
+//! | [`hubs`] | Hubs: access points on layers and the transfers between them (S198) |
 //! | [`examples`] | `manhattan_grid` and `toy_network` — the shared synthetic-network fixtures (S105, S161) |
 //!
 //! # The one thing to know
@@ -28,6 +29,7 @@ pub mod csr;
 pub mod defaults;
 pub mod examples;
 pub mod geometry;
+pub mod hubs;
 pub mod layers;
 pub mod link_geometry;
 pub mod network;
@@ -38,14 +40,15 @@ pub use defaults::{
     DEFAULTS_VERSION, DefaultRow, GlobalMultipliers, LinkParameters, ParameterNote, RoadClass,
     SignalDefaults, default_row,
 };
-pub use examples::{manhattan_grid, toy_network, toy_network_layers};
+pub use examples::{manhattan_grid, toy_network, toy_network_hubs, toy_network_layers};
 pub use geometry::{
     Hemisphere, LonLat, Projected, Projection, ProjectionError, UtmZone, ground_distance_metres,
     haversine_metres, polyline_length_metres, scale_factor,
 };
+pub use hubs::{AccessPoint, HubKind, HubSet, HubSpec};
 pub use layers::{
-    BikeCost, BikeInfrastructure, StaticLayer, StaticLayerDefaults, StaticLink, StaticNetwork,
-    StaticNetworkBuilder,
+    BikeCost, BikeInfrastructure, Layer, StaticLayer, StaticLayerDefaults, StaticLink,
+    StaticNetwork, StaticNetworkBuilder,
 };
 pub use link_geometry::{LinkGeometry, NetworkFingerprint};
 pub use network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};

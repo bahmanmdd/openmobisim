@@ -67,6 +67,12 @@ impl LayerSetup {
     pub fn cost(&self) -> BikeCost {
         self.cost
     }
+
+    /// The layer's turns.
+    #[must_use]
+    pub fn turns(&self) -> &TurnTable {
+        &self.turns
+    }
 }
 
 /// The static layers a run has: neither by default.
