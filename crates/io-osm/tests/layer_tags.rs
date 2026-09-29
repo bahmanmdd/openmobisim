@@ -194,3 +194,34 @@ fn a_cycleway_or_closed_way_open_to_walkers_is_walked() {
             .is_some()
     );
 }
+
+// --- ferries (S197) ------------------------------------------------------------------
+
+#[test]
+fn a_ferry_carries_bikes_and_walkers_unless_told_not_to() {
+    let ferry = bike(&[("route", "ferry")]).expect("a ferry");
+    assert_eq!(ferry.class, RoadClass::Ferry);
+    assert_eq!((ferry.forward, ferry.backward), (Some(Mixed), Some(Mixed)));
+    assert_eq!(walk_way(&tags(&[("route", "ferry")]), 2), Some(RoadClass::Ferry));
+    assert_eq!(bike(&[("route", "ferry"), ("bicycle", "no")]), None);
+    assert_eq!(walk_way(&tags(&[("route", "ferry"), ("foot", "no")]), 2), None);
+    let one_way = bike(&[("route", "ferry"), ("oneway", "yes")]).unwrap();
+    assert_eq!((one_way.forward, one_way.backward), (Some(Mixed), None));
+    // Not a road: the road network never sees it.
+    assert!(openmobisim_io_osm::tags::classify(&tags(&[("route", "ferry")]), 2).is_err());
+}
+
+#[test]
+fn a_ferry_s_duration_is_read_in_every_usual_form() {
+    use openmobisim_io_osm::tags::duration_seconds;
+    let d = |v: &str| duration_seconds(&tags(&[("duration", v)]));
+    assert_eq!(d("00:05"), Some(300.0));
+    assert_eq!(d("0:04:30"), Some(270.0));
+    assert_eq!(d("7"), Some(420.0));
+    assert_eq!(d("PT5M"), Some(300.0));
+    assert_eq!(d("PT1H2M3S"), Some(3723.0));
+    for bad in ["", "soon", "PT", "PT5", "1:2:3:4", "-5", "0"] {
+        assert_eq!(d(bad), None, "{bad:?}");
+    }
+    assert_eq!(duration_seconds(&tags(&[("route", "ferry")])), None);
+}

@@ -357,6 +357,7 @@ fn infrastructure_of(value: Option<&str>) -> Option<BikeInfrastructure> {
 ///   `bicycle=yes|permissive|designated|dismount`; shared with pedestrians
 ///   (mixed) unless designated.
 /// - **Walking the bike:** `bicycle=dismount` and steps.
+/// - **Ferries** (`route=ferry`, S197): bikes ride on unless `bicycle=no`.
 ///
 /// **Direction:** the car rules ([`direction`]), except that `oneway:bicycle`
 /// overrides them and `cycleway=opposite*` opens the contraflow. **Sides:** on a
@@ -367,6 +368,20 @@ fn infrastructure_of(value: Option<&str>) -> Option<BikeInfrastructure> {
 /// `cycleway=opposite_lane|opposite_track` says otherwise.
 #[must_use]
 pub fn bike_way(tags: &[(String, String)], node_count: usize) -> Option<BikeWay> {
+    if is_ferry(tags) {
+        // A ferry crossing (S197): bikes ride on unless the tags say not.
+        if node_count < 2 || tag_of(tags, "bicycle") == Some("no") {
+            return None;
+        }
+        let direction = direction(tags, RoadClass::Ferry);
+        let level = Some(BikeInfrastructure::Mixed);
+        return Some(BikeWay {
+            class: RoadClass::Ferry,
+            forward: level.filter(|_| direction.has_forward()),
+            backward: level.filter(|_| direction.has_backward()),
+            dismount: false,
+        });
+    }
     let highway = tag_of(tags, "highway")?;
     if node_count < 2 || tag_of(tags, "area") == Some("yes") {
         return None;
@@ -447,9 +462,13 @@ pub fn bike_way(tags: &[(String, String)], node_count: usize) -> Option<BikeWay>
 ///   areas, and ways with `access=no|private` unless
 ///   `foot=yes|designated|permissive`.
 /// - **Cycleways** only with `foot=yes|designated|permissive`.
+/// - **Ferries** (`route=ferry`, S197) unless `foot=no`.
 /// - **Everything else**, steps included.
 #[must_use]
 pub fn walk_way(tags: &[(String, String)], node_count: usize) -> Option<RoadClass> {
+    if is_ferry(tags) {
+        return (node_count >= 2 && tag_of(tags, "foot") != Some("no")).then_some(RoadClass::Ferry);
+    }
     let highway = tag_of(tags, "highway")?;
     if node_count < 2 || tag_of(tags, "area") == Some("yes") {
         return None;
@@ -466,5 +485,63 @@ pub fn walk_way(tags: &[(String, String)], node_count: usize) -> Option<RoadClas
         RoadClass::Motorway | RoadClass::MotorwayLink => None,
         RoadClass::Cycleway => permits(foot).then_some(class),
         _ => Some(class),
+    }
+}
+
+/// Whether a way is a ferry crossing (`route=ferry` and no `highway`), which
+/// the bike and walk layers carry (S197) and the road network does not.
+#[must_use]
+pub fn is_ferry(tags: &[(String, String)]) -> bool {
+    tag_of(tags, "route") == Some("ferry") && tag_of(tags, "highway").is_none()
+}
+
+/// A ferry's crossing time from its `duration` tag, in seconds (S197).
+///
+/// Accepted forms: `HH:MM`, `HH:MM:SS`, a bare number of minutes, and ISO 8601
+/// `PT…H…M…S`. Anything else is `None`, and the default ferry speed applies.
+///
+/// # Examples
+///
+/// ```
+/// use openmobisim_io_osm::tags::duration_seconds;
+///
+/// let tag = |v: &str| vec![("duration".to_owned(), v.to_owned())];
+///
+/// assert_eq!(duration_seconds(&tag("00:05")), Some(300.0));
+/// assert_eq!(duration_seconds(&tag("1:02:30")), Some(3750.0));
+/// assert_eq!(duration_seconds(&tag("12")), Some(720.0));
+/// assert_eq!(duration_seconds(&tag("PT1H30M")), Some(5400.0));
+/// assert_eq!(duration_seconds(&tag("soon")), None);
+/// ```
+#[must_use]
+pub fn duration_seconds(tags: &[(String, String)]) -> Option<f64> {
+    let raw = tag_of(tags, "duration")?.trim();
+    let positive = |x: f64| (x.is_finite() && x > 0.0).then_some(x);
+    if let Some(iso) = raw.strip_prefix("PT") {
+        let (mut total, mut number) = (0.0, String::new());
+        for c in iso.chars() {
+            match c {
+                '0'..='9' | '.' => number.push(c),
+                'H' | 'M' | 'S' => {
+                    let n: f64 = number.parse().ok()?;
+                    total += n * match c {
+                        'H' => 3600.0,
+                        'M' => 60.0,
+                        _ => 1.0,
+                    };
+                    number.clear();
+                }
+                _ => return None,
+            }
+        }
+        return if number.is_empty() { positive(total) } else { None };
+    }
+    let parts: Vec<&str> = raw.split(':').collect();
+    let numbers: Option<Vec<f64>> = parts.iter().map(|p| p.trim().parse::<f64>().ok()).collect();
+    match numbers?.as_slice() {
+        [minutes] => positive(minutes * 60.0),
+        [hours, minutes] => positive(hours * 3600.0 + minutes * 60.0),
+        [hours, minutes, seconds] => positive(hours * 3600.0 + minutes * 60.0 + seconds),
+        _ => None,
     }
 }

@@ -92,7 +92,7 @@ fn derived_wave_speeds_land_where_the_literature_says_they_should() {
 #[test]
 fn the_shipped_numbers_are_what_they_say_they_are() {
     // A change here is a modelling change. Bump DEFAULTS_VERSION with it.
-    assert_eq!(DEFAULTS_VERSION, 2);
+    assert_eq!(DEFAULTS_VERSION, 3);
 
     let motorway = default_row(RoadClass::Motorway);
     assert_eq!(motorway.free_flow_km_h, 110.0);
@@ -253,8 +253,8 @@ fn osm_tags_classify_or_say_they_do_not() {
 
     // Round trip for everything that has a canonical tag.
     for class in RoadClass::ALL {
-        if matches!(class, RoadClass::Footway) {
-            continue; // several tags collapse into it
+        if matches!(class, RoadClass::Footway | RoadClass::Ferry) {
+            continue; // several tags collapse into the first; the second is no `highway` value
         }
         assert_eq!(
             RoadClass::from_osm_highway(class.as_str()),

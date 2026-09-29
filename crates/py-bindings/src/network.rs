@@ -489,6 +489,7 @@ impl PyNetwork {
             row.set_item("length_m", r.length_m)?;
             row.set_item("dedicated_length_m", r.dedicated_length_m)?;
             row.set_item("degenerate_links", r.degenerate_links)?;
+            row.set_item("ferry_ways", r.ferry_ways)?;
             layers.set_item(layer.as_str(), row)?;
         }
         d.set_item("layers", layers)?;

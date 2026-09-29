@@ -239,3 +239,38 @@ fn a_layer_is_contracted_but_not_across_a_change_of_infrastructure() {
     // The road network merges all three (the lane is not a car attribute).
     assert_eq!(out.network.link_count(), 2);
 }
+
+#[test]
+fn a_ferry_joins_two_banks_for_bikes_and_walkers_but_not_for_cars() {
+    // Two streets on either side of a river, joined only by a ferry with a
+    // five-minute crossing (S197).
+    let source = MemorySource::new()
+        .nodes([node(1, 0.0, 0.0), node(2, 1.0, 0.0), node(3, 1.0, 3.0), node(4, 2.0, 3.0)])
+        .way(OsmWay::new(1, [1, 2], [("highway", "residential")]))
+        .way(OsmWay::new(2, [3, 4], [("highway", "residential")]))
+        .way(OsmWay::new(3, [2, 3], [("route", "ferry"), ("duration", "00:05")]));
+    let (out, _) =
+        import(&source, ImportOptions { connectivity: Connectivity::Strong, ..uncontracted() });
+    let bike = out.bike.unwrap();
+    let walk = out.walk.unwrap();
+    for g in [bike.network.network(), walk.network.network()] {
+        assert!(has(g, "2", "3") && has(g, "3", "2"), "{:?}", pairs(g));
+        assert!(has(g, "1", "2") && has(g, "3", "4"), "both banks kept: {:?}", pairs(g));
+    }
+    assert!(!has(&out.network, "2", "3"), "no road across the river");
+    assert_eq!((bike.report.ferry_ways, walk.report.ferry_ways), (1, 1));
+
+    // The crossing takes the wait and the stated five minutes: 600 s.
+    let g = bike.network.network();
+    let ids = g.node_external_ids();
+    let ferry = LinkId::iter_space(g.link_count())
+        .find(|&l| {
+            ids.external(g.link_from(l).raw()) == "2" && ids.external(g.link_to(l).raw()) == "3"
+        })
+        .unwrap();
+    let seconds = g.link_length(ferry).get() / bike.network.speed(ferry);
+    assert!((seconds - 600.0).abs() < 1e-6, "{seconds}");
+    // And a ferry is no mixed traffic: `dedicated` does not charge it the premium.
+    let costs = bike.network.link_costs(openmobisim_core_graph::layers::BikeCost::Dedicated, 1.2);
+    assert!((costs[ferry.index()] - 600.0).abs() < 1e-6);
+}

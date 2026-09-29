@@ -168,6 +168,19 @@ pub struct StaticLayerDefaults {
     /// (Knoblauch, Pietrucha and Nitzburg, *Transportation Research Record*
     /// 1538, 1996).
     pub walk_km_h: f64,
+    /// A ferry's speed when its way does not say how long the crossing takes
+    /// (no `duration` tag), in km/h (S197).
+    ///
+    /// *An assumption: small urban passenger ferries cross at roughly this
+    /// speed, docking included.*
+    pub ferry_km_h: f64,
+    /// The expected wait for a ferry, in seconds, added to every crossing
+    /// (S197): the static stand-in for a timetable until transit (M3) has the
+    /// ferry's own.
+    ///
+    /// *An assumption: half of a 10-minute headway. The free IJ ferries in
+    /// Amsterdam run more often at peak; most others less often.*
+    pub ferry_wait_s: f64,
 }
 
 impl StaticLayerDefaults {
@@ -177,7 +190,23 @@ impl StaticLayerDefaults {
         bike_dedicated_km_h: 18.0,
         bike_mixed_cost_factor: 1.2,
         walk_km_h: 4.8,
+        ferry_km_h: 10.0,
+        ferry_wait_s: 300.0,
     };
+
+    /// The speed of a ferry link of a way `length_m` long, in km/h, such that
+    /// crossing the whole way takes the expected wait plus the crossing:
+    /// `duration_s` if the way states it, else the way at
+    /// [`Self::ferry_km_h`]. A static layer's links have a speed and nothing
+    /// else, so the wait is folded into it (S197).
+    #[must_use]
+    pub fn ferry_speed_km_h(self, length_m: f64, duration_s: Option<f64>) -> f64 {
+        let crossing = duration_s
+            .filter(|d| d.is_finite() && *d > 0.0)
+            .unwrap_or(length_m / (self.ferry_km_h / 3.6));
+        let seconds = (self.ferry_wait_s + crossing).max(1.0);
+        length_m.max(1.0) / seconds * 3.6
+    }
 
     /// A bike's speed on a link, in km/h: by its infrastructure, walking speed
     /// if it must be walked, and never above the link's speed limit.
@@ -451,13 +480,16 @@ impl StaticNetwork {
 
     /// Every link's cost for a route search, in link order: its travel time,
     /// times `mixed_factor` where [`BikeCost::Dedicated`] applies to a link
-    /// without dedicated infrastructure. On the walk layer the cost is the time.
+    /// without dedicated infrastructure (a ferry is not mixed traffic, S197).
+    /// On the walk layer the cost is the time.
     #[must_use]
     pub fn link_costs(&self, cost: BikeCost, mixed_factor: f64) -> Vec<f64> {
         let mut seconds = self.link_seconds();
         if self.layer == StaticLayer::Bike && cost == BikeCost::Dedicated {
-            for (s, infrastructure) in seconds.iter_mut().zip(&self.infrastructure) {
-                if !infrastructure.is_dedicated() {
+            for (i, (s, infrastructure)) in seconds.iter_mut().zip(&self.infrastructure).enumerate()
+            {
+                let ferry = self.network.link_class(LinkId::from_index(i)) == RoadClass::Ferry;
+                if !infrastructure.is_dedicated() && !ferry {
                     *s *= mixed_factor;
                 }
             }
@@ -507,6 +539,15 @@ mod tests {
         // A living street's walking-pace limit binds; a 50 km/h limit does not.
         assert_eq!(d.bike_speed_km_h(BikeInfrastructure::Mixed, false, Some(7.0)), 7.0);
         assert_eq!(d.bike_speed_km_h(BikeInfrastructure::Lane, false, Some(50.0)), 18.0);
+    }
+
+    #[test]
+    fn a_ferry_link_takes_its_wait_and_its_crossing() {
+        let d = StaticLayerDefaults::SHIPPED;
+        // 500 m at 10 km/h is 180 s; with the 300 s wait, 480 s: 3.75 km/h.
+        assert!((d.ferry_speed_km_h(500.0, None) - 3.75).abs() < 1e-12);
+        // A stated 4-minute crossing: 540 s for 500 m.
+        assert!((d.ferry_speed_km_h(500.0, Some(240.0)) - 500.0 / 540.0 * 3.6).abs() < 1e-12);
     }
 
     #[test]

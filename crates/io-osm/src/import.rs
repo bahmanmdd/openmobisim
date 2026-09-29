@@ -250,6 +250,9 @@ struct ProtoLink {
     infrastructure: BikeInfrastructure,
     /// The bike must be walked here, on the bike layer.
     dismount: bool,
+    /// A speed set by the way as a whole, in km/h: a ferry's, its wait folded in
+    /// (S197). `None` for everything else.
+    speed_km_h: Option<f64>,
     length_m: f64,
     /// This link's own polyline, `from` to `to` (S125). Carried alongside
     /// `length_m` — computed from the same points, at the same place, and
@@ -271,6 +274,7 @@ impl ProtoLink {
             && self.roundabout == next.roundabout
             && self.infrastructure == next.infrastructure
             && self.dismount == next.dismount
+            && self.speed_km_h.map(f64::to_bits) == next.speed_km_h.map(f64::to_bits)
             && match (self.maxspeed_km_h, next.maxspeed_km_h) {
                 (Some(a), Some(b)) => (a - b).abs() < 1e-9,
                 (None, None) => true,
@@ -351,6 +355,8 @@ pub struct LayerReport {
     pub dedicated_length_m: u64,
     /// Links given the minimum length because they had none.
     pub degenerate_links: u64,
+    /// Ferry crossings among the ways kept (S197).
+    pub ferry_ways: u64,
 }
 
 /// Import a road network from an OSM source.
@@ -597,20 +603,21 @@ struct LayerContext<'a> {
 }
 
 /// The links a way makes on `layer`, if it is part of it.
-fn layer_spec(layer: StaticLayer, way: &OsmWay) -> Option<WaySpec> {
+fn layer_spec(layer: StaticLayer, way: &OsmWay, cx: &LayerContext<'_>) -> Option<WaySpec> {
     let n = way.node_ids.len();
-    match layer {
+    let spec = match layer {
         StaticLayer::Bike => {
             let bike = tags::bike_way(&way.tags, n)?;
             let attrs =
                 |infrastructure| LinkAttrs { lanes: None, infrastructure, dismount: bike.dismount };
-            Some(WaySpec {
+            WaySpec {
                 class: bike.class,
                 maxspeed_km_h: tags::maxspeed(&way.tags).value_km_h(),
                 roundabout: false,
+                speed_km_h: None,
                 forward: bike.forward.map(attrs),
                 backward: bike.backward.map(attrs),
-            })
+            }
         }
         StaticLayer::Walk => {
             let class = tags::walk_way(&way.tags, n)?;
@@ -619,15 +626,33 @@ fn layer_spec(layer: StaticLayer, way: &OsmWay) -> Option<WaySpec> {
                 infrastructure: BikeInfrastructure::Mixed,
                 dismount: false,
             };
-            Some(WaySpec {
+            // Walkers go both ways on every street; a ferry keeps its own direction.
+            let direction = if class == RoadClass::Ferry {
+                tags::direction(&way.tags, class)
+            } else {
+                tags::Direction::Both
+            };
+            WaySpec {
                 class,
                 maxspeed_km_h: None,
                 roundabout: false,
-                forward: Some(attrs),
-                backward: Some(attrs),
-            })
+                speed_km_h: None,
+                forward: direction.has_forward().then_some(attrs),
+                backward: direction.has_backward().then_some(attrs),
+            }
         }
+    };
+    if spec.class != RoadClass::Ferry {
+        return Some(spec);
     }
+    // A ferry's speed is its whole way's: the expected wait and the crossing
+    // over the length of the way (S197).
+    let points: Vec<LonLat> =
+        way.node_ids.iter().filter_map(|id| cx.positions.get(id).copied()).collect();
+    let length = polyline_length_metres(&points);
+    let defaults = cx.options.layers.defaults;
+    let speed = defaults.ferry_speed_km_h(length, tags::duration_seconds(&way.tags));
+    Some(WaySpec { speed_km_h: Some(speed), ..spec })
 }
 
 /// Build one static layer: its junctions, links, connectivity trim, contraction
@@ -647,9 +672,11 @@ fn build_layer(
         .ways
         .iter()
         .chain(cx.more_ways)
-        .filter_map(|w| layer_spec(layer, w).map(|spec| (w, spec)))
+        .filter_map(|w| layer_spec(layer, w, cx).map(|spec| (w, spec)))
         .collect();
     report.ways_kept = specs.len() as u64;
+    report.ferry_ways =
+        specs.iter().filter(|(_, spec)| spec.class == RoadClass::Ferry).count() as u64;
 
     let mut is_junction: HashSet<i64> = references
         .iter()
@@ -696,11 +723,12 @@ fn build_layer(
     for (i, link) in links.iter().enumerate() {
         let external_id = format!("{}:{i:08}", link.way_id);
         geometry_by_external_id.insert(external_id.clone(), link.geometry.clone());
-        let speed_km_h = match layer {
-            StaticLayer::Bike => {
+        let speed_km_h = match (link.speed_km_h, layer) {
+            (Some(fixed), _) => fixed,
+            (None, StaticLayer::Bike) => {
                 defaults.bike_speed_km_h(link.infrastructure, link.dismount, link.maxspeed_km_h)
             }
-            StaticLayer::Walk => defaults.walk_km_h,
+            (None, StaticLayer::Walk) => defaults.walk_km_h,
         };
         length += link.length_m;
         if link.infrastructure.is_dedicated() {
@@ -758,6 +786,8 @@ struct WaySpec {
     class: RoadClass,
     maxspeed_km_h: Option<f64>,
     roundabout: bool,
+    /// A speed for the whole way, in km/h: a ferry's (S197).
+    speed_km_h: Option<f64>,
     forward: Option<LinkAttrs>,
     backward: Option<LinkAttrs>,
 }
@@ -793,6 +823,7 @@ fn road_spec(way: &OsmWay, diagnostics: &mut Diagnostics) -> Option<WaySpec> {
         // Only `roundabout`: OSM's `circular` does not imply that entering
         // traffic gives way (S155).
         roundabout: crate::source::tag_of(&way.tags, "junction") == Some("roundabout"),
+        speed_km_h: None,
         forward: direction.has_forward().then(|| attrs(lane_counts.forward)),
         backward: direction.has_backward().then(|| attrs(lane_counts.backward)),
     })
@@ -815,7 +846,7 @@ fn split_way(
     out: &mut Vec<ProtoLink>,
     dropped: &mut Vec<DroppedLink>,
 ) {
-    let WaySpec { class, maxspeed_km_h, roundabout, .. } = *spec;
+    let WaySpec { class, maxspeed_km_h, roundabout, speed_km_h, .. } = *spec;
 
     // Runs of consecutive nodes the extract contains; record the missing ones
     // once per way rather than once per node.
@@ -900,6 +931,7 @@ fn split_way(
                         roundabout,
                         infrastructure: attrs.infrastructure,
                         dismount: attrs.dismount,
+                        speed_km_h,
                         length_m,
                         geometry: geometry.clone(),
                     });
@@ -917,6 +949,7 @@ fn split_way(
                         roundabout,
                         infrastructure: attrs.infrastructure,
                         dismount: attrs.dismount,
+                        speed_km_h,
                         length_m,
                         geometry: backward_geometry,
                     });
@@ -1135,6 +1168,7 @@ fn contract(
                     roundabout: a.roundabout,
                     infrastructure: a.infrastructure,
                     dismount: a.dismount,
+                    speed_km_h: a.speed_km_h,
                     length_m: a.length_m + b.length_m,
                     geometry,
                 });

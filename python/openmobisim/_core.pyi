@@ -234,7 +234,8 @@ class Network:
         ``{code: {"severity": ..., "count": ...}}``. ``layers`` holds the bike and walk
         layers read with the network, each ``{"ways_kept", "links_before_contraction",
         "links_after_contraction", "components_before", "links_disconnected",
-        "length_m", "dedicated_length_m", "degenerate_links"}``.
+        "length_m", "dedicated_length_m", "degenerate_links", "ferry_ways"}``. Ferries
+        (``route=ferry``) are bike and walk links whose speed folds in the expected wait.
         """
 
     def report_dropped(

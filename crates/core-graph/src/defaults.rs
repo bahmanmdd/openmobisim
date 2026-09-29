@@ -61,7 +61,10 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 ///
 /// Version 2 (S195): the bike and walk layers' speeds and the dedicated-bike
 /// preference ([`crate::layers::StaticLayerDefaults`]) joined the table.
-pub const DEFAULTS_VERSION: u32 = 2;
+///
+/// Version 3 (S197): ferry crossings on the bike and walk layers, their default
+/// speed and expected wait.
+pub const DEFAULTS_VERSION: u32 = 3;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///
@@ -116,11 +119,14 @@ pub enum RoadClass {
     Footway = 15,
     /// `highway=cycleway`.
     Cycleway = 16,
+    /// `route=ferry` — a ferry crossing, on the bike and walk layers only
+    /// (S197): not a `highway` value, so no road is ever of this class.
+    Ferry = 17,
 }
 
 impl RoadClass {
     /// Every class, in discriminant order.
-    pub const ALL: [RoadClass; 17] = [
+    pub const ALL: [RoadClass; 18] = [
         RoadClass::Motorway,
         RoadClass::MotorwayLink,
         RoadClass::Trunk,
@@ -138,6 +144,7 @@ impl RoadClass {
         RoadClass::Pedestrian,
         RoadClass::Footway,
         RoadClass::Cycleway,
+        RoadClass::Ferry,
     ];
 
     /// The OSM `highway` value this class corresponds to.
@@ -161,6 +168,7 @@ impl RoadClass {
             RoadClass::Pedestrian => "pedestrian",
             RoadClass::Footway => "footway",
             RoadClass::Cycleway => "cycleway",
+            RoadClass::Ferry => "ferry",
         }
     }
 
@@ -198,7 +206,10 @@ impl RoadClass {
     #[inline]
     #[must_use]
     pub const fn carries_motor_traffic(self) -> bool {
-        !matches!(self, RoadClass::Pedestrian | RoadClass::Footway | RoadClass::Cycleway)
+        !matches!(
+            self,
+            RoadClass::Pedestrian | RoadClass::Footway | RoadClass::Cycleway | RoadClass::Ferry
+        )
     }
 
     /// Whether pedestrians may use this class by default.
@@ -338,12 +349,14 @@ pub const fn default_row(class: RoadClass) -> DefaultRow {
             saturation_flow_veh_h_lane: 800.0,
             jam_density_veh_km_lane: 150.0,
         },
-        RoadClass::Pedestrian | RoadClass::Footway | RoadClass::Cycleway => DefaultRow {
-            free_flow_km_h: 30.0,
-            lanes_per_direction: 1,
-            saturation_flow_veh_h_lane: 1400.0,
-            jam_density_veh_km_lane: 140.0,
-        },
+        RoadClass::Pedestrian | RoadClass::Footway | RoadClass::Cycleway | RoadClass::Ferry => {
+            DefaultRow {
+                free_flow_km_h: 30.0,
+                lanes_per_direction: 1,
+                saturation_flow_veh_h_lane: 1400.0,
+                jam_density_veh_km_lane: 140.0,
+            }
+        }
     }
 }
 
