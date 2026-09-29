@@ -105,19 +105,27 @@ def test_the_layers_per_link_results_are_their_own() -> None:
     assert int(bins.crossings().sum()) == 3 * 8, "three riders, eight blocks each"
     assert bins.pcu().sum() == pytest.approx(3 * 8), "travellers, not PCU"
     assert r.link_bins().crossings().sum() == 0, "no car moved"
-    table = r.link_bins_table("bike").to_polars()
-    assert {"travellers", "traveller_seconds"} <= set(table.columns)
     assert r.link_bins_table("walk") is None
     with pytest.raises(ValueError, match="layer"):
         r.link_bins("cycle")
 
 
+def test_the_layer_s_link_bins_file_counts_travellers() -> None:
+    pq = pytest.importorskip("pyarrow.parquet")
+    net = grid()
+    rows = [trip(net, f"b{i}", (0, 0), (4, 4), "bike") for i in range(3)]
+    table = pq.read_table(run(net, rows, "layers-bins-file").link_bins_table("bike").path)
+    assert {"travellers", "traveller_seconds"} <= set(table.column_names)
+    assert sum(table.column("travellers").to_pylist()) == pytest.approx(3 * 8)
+
+
 def test_the_kpis_file_has_rows_per_mode() -> None:
+    pq = pytest.importorskip("pyarrow.parquet")
     net = grid()
     rows = [trip(net, "c", (0, 0), (4, 4), "car"), trip(net, "b", (0, 0), (4, 4), "bike")]
-    k = run(net, rows, "layers-kpis").kpis().to_polars()
-    assert set(k["mode"].unique()) == {"all", "car", "bike"}
-    trips = {m: v for m, v in k.filter(k["metric"] == "trips").select(["mode", "value"]).rows()}
+    k = pq.read_table(run(net, rows, "layers-kpis").kpis().path).to_pylist()
+    assert {row["mode"] for row in k} == {"all", "car", "bike"}
+    trips = {row["mode"]: row["value"] for row in k if row["metric"] == "trips"}
     assert trips == {"all": 2.0, "car": 1.0, "bike": 1.0}
 
 
