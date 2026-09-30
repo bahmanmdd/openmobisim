@@ -36,9 +36,12 @@ What the ``batch`` holds (all NumPy arrays; ``a`` indexes alternatives, ``s``
 situations, one situation being one traveller's one trip):
 
 * ``batch.offsets`` — situation ``s`` owns alternatives ``offsets[s]:offsets[s+1]``.
-* ``batch.attributes`` — a dict of float arrays, one value per alternative; for
-  routes ``time_min``, ``length_km``, ``detour``, ``overlap``, ``ln_path_size``
-  and ``n_links`` (see ``ROUTE_ATTRIBUTES``).
+* ``batch.attributes`` — a dict of float arrays, one value per alternative:
+  ``time_min``, ``length_km``, ``detour``, ``overlap``, ``ln_path_size``,
+  ``n_links``, ``car_min``, ``bike_min``, ``walk_min``, ``wait_min``,
+  ``ride_min``, ``transfers`` and ``parking_min`` (see ``ROUTE_ATTRIBUTES``).
+  Routes and the itineraries of transit, park-and-ride and bike-and-ride trips
+  carry the same names, so one model serves both.
 * ``batch.gumbel`` — each alternative's standard Gumbel error, keyed on
   (traveller, trip, iteration, alternative identity), so a model that adds it
   to a utility gets exactly the common random numbers the built-in models use.
@@ -75,12 +78,18 @@ __all__ = [
     "segment_softmax",
 ]
 
-#: The attributes every route carries, and what they mean:
-#: ``time_min`` free-flow travel time in minutes when the route set was made;
-#: ``length_km``; ``detour`` (time over the best route's time, minus one);
-#: ``overlap`` (the largest share of its cost shared with an earlier route);
-#: ``ln_path_size`` (log of the path-size factor: 0 for a route that shares
-#: nothing, negative as it shares more); ``n_links``.
+#: The attributes every alternative carries — a route, or the itinerary of a
+#: transit, park-and-ride or bike-and-ride trip — and what they mean:
+#: ``time_min`` expected travel time in minutes (door to door for an itinerary);
+#: ``length_km`` (a route's; an itinerary's car or bike leg's); ``detour`` (time
+#: over the best alternative's, minus one); ``overlap`` (a route's largest share
+#: of its cost shared with an earlier route; 0 for an itinerary);
+#: ``ln_path_size`` (log of the path-size factor: 0 for an alternative that
+#: shares nothing, negative as it shares more); ``n_links`` (a route's; an
+#: itinerary's car or bike leg's); ``car_min``, ``bike_min``, ``walk_min``,
+#: ``wait_min`` (at stops), ``ride_min`` (in transit vehicles), ``transfers``
+#: and ``parking_min`` (parking or fetching the car or bike): the parts of the
+#: time, 0 where an alternative has none (a car route is all ``car_min``).
 ROUTE_ATTRIBUTES: tuple[str, ...] = (
     "time_min",
     "length_km",
@@ -88,6 +97,13 @@ ROUTE_ATTRIBUTES: tuple[str, ...] = (
     "overlap",
     "ln_path_size",
     "n_links",
+    "car_min",
+    "bike_min",
+    "walk_min",
+    "wait_min",
+    "ride_min",
+    "transfers",
+    "parking_min",
 )
 
 

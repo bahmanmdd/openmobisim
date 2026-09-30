@@ -315,15 +315,16 @@ pub fn toy_network_layers() -> (crate::layers::StaticNetwork, crate::layers::Sta
 /// The toy network's hub `H` at `D2` (S198; planned as
 /// a park-and-ride): a car access point on the road node `D2`, a bike and a walk
 /// access point on the layers' `D2` ([`toy_network_layers`]), and a
-/// **60-second** transfer between any two. The tram access point joins with
-/// transit, the car and bike parking with the hub's resources.
+/// **60-second** transfer between any two, and its parking (M4, S201): **6 car
+/// and 3 bike spaces**, empty at the start of the day. The tram stop at `D2` is a
+/// hub of its own, reached on foot (a walk of 0 m).
 ///
 /// # Panics
 ///
 /// Never in practice: `D2` is a node of the road network and of both layers.
 #[must_use]
 pub fn toy_network_hubs() -> crate::hubs::HubSet {
-    use crate::hubs::{AccessPoint, HubKind, HubSet, HubSpec};
+    use crate::hubs::{AccessPoint, HubKind, HubSet, HubSpec, Parking, ParkingKind};
     use crate::layers::Layer;
 
     let (road, _) = toy_network();
@@ -340,5 +341,51 @@ pub fn toy_network_hubs() -> crate::hubs::HubSet {
             AccessPoint { layer: Layer::Walk, node: node(walk.network()) },
         ],
         transfer_seconds: 60.0,
+        parkings: vec![
+            Parking {
+                external_id: "H-car".to_string(),
+                kind: ParkingKind::Car,
+                capacity: 6,
+                initial_occupancy: 0,
+            },
+            Parking {
+                external_id: "H-bike".to_string(),
+                kind: ParkingKind::Bike,
+                capacity: 3,
+                initial_occupancy: 0,
+            },
+        ],
     }])
+}
+
+/// The toy network's parkings as a parking table (M4, S201;
+/// the toy's multimodal extension): `H`'s **6 car and 3 bike spaces** at `D2`, where
+/// the tram stop is, and a second car park **`P2` at `R2`** with 20 spaces, 300 m
+/// on foot from the tram stop (`e2` walked), so a park-and-ride trip has two
+/// parkings to choose between.
+///
+/// # Panics
+///
+/// Never in practice: `D2` and `R2` are nodes of the road network.
+#[must_use]
+pub fn toy_network_parkings() -> Vec<crate::hubs::ParkingRow> {
+    use crate::hubs::{ParkingKind, ParkingRow};
+    let (road, _) = toy_network();
+    let at = |name: &str| {
+        road.node_lonlat(road.node_external_ids().typed_id_of(name).expect("a toy node"))
+    };
+    let row = |id: &str, hub: &str, node: &str, kind: ParkingKind, capacity: u32| ParkingRow {
+        parking_id: id.to_string(),
+        name: None,
+        hub_id: Some(hub.to_string()),
+        position: at(node),
+        kind,
+        capacity,
+        initial_occupancy: 0,
+    };
+    vec![
+        row("H-car", "H", "D2", ParkingKind::Car, 6),
+        row("H-bike", "H", "D2", ParkingKind::Bike, 3),
+        row("P2", "P2", "R2", ParkingKind::Car, 20),
+    ]
 }

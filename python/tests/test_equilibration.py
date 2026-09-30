@@ -18,7 +18,8 @@ FIELDS = [
     "iteration", "reselected_share", "changed_share", "total_travel_time_s", "completed",
     "truncated", "time_change", "gap", "gap_network", "gap_flow", "gap_flow_floor",
     "gap_flow_excess", "routes_added", "route_searches", "gap_expected", "gap_excess",
-    "gap_network_excess", "incomplete_share",
+    "gap_network_excess", "incomplete_share", "gap_transit", "gap_car_transit",
+    "gap_bike_transit", "hub_mismatch_s",
 ]  # fmt: skip
 
 

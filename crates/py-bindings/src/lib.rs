@@ -35,6 +35,7 @@ use openmobisim_core_types::{
 
 mod choice;
 mod network;
+mod parking;
 mod pipeline;
 mod routes;
 mod transit;
@@ -42,6 +43,7 @@ use network::{
     PyNetwork, grid_node_lonlat, manhattan_grid, network_from_columns, network_read_osm,
     toy_network,
 };
+use parking::{PyParkings, parking_from_rows, parking_read_osm, toy_network_parkings};
 use pipeline::{PyLinkBins, PyRunSummary, run_pipeline};
 use routes::{PyRouteSets, route_methods, route_sets_build};
 use transit::{PyTransit, toy_network_transit, transit_read_gtfs};
@@ -156,7 +158,11 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLinkBins>()?;
     m.add_class::<PyRouteSets>()?;
     m.add_class::<PyTransit>()?;
+    m.add_class::<PyParkings>()?;
     m.add_function(wrap_pyfunction!(transit_read_gtfs, m)?)?;
+    m.add_function(wrap_pyfunction!(parking_read_osm, m)?)?;
+    m.add_function(wrap_pyfunction!(parking_from_rows, m)?)?;
+    m.add_function(wrap_pyfunction!(toy_network_parkings, m)?)?;
     m.add_function(wrap_pyfunction!(toy_network_transit, m)?)?;
     m.add_class::<choice::PyChoiceBatch>()?;
     m.add_class::<choice::PyRouteChoices>()?;

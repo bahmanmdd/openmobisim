@@ -98,8 +98,18 @@ impl ChoiceModel for Deterministic {
 ///
 /// | option | default | attribute (per route) |
 /// |---|---|---|
-/// | `beta_time_min` | −0.2 | travel time, minutes |
+/// | `beta_time_min` | −0.2 | travel time, minutes (door to door for an itinerary) |
 /// | `beta_ln_path_size` | 1 | ln of the path-size factor: routes that share links with the others in the set split their share (Ben-Akiva and Bierlaire, 1999), which repairs the logit's blindness to overlap |
+/// | `beta_walk_min` | −0.13 | minutes walking, **on top of** `time_min`: walking weighs about 1.65 times riding (M4, A9) |
+/// | `beta_wait_min` | −0.09 | minutes waiting at stops, on top: about 1.47 times riding (M4, A9) |
+/// | `beta_transfers` | −1 | each change of vehicle: about five minutes (M4, A9) |
+///
+/// The last three are 0 for a car route, so they change nothing there; for an
+/// itinerary (transit, park-and-ride, bike-and-ride) they are the standard
+/// weights of walking, waiting and changing — the averages of Wardman's
+/// meta-analysis of public transport values of time (2004) and the low end of
+/// the transfer penalties Garcia-Martinez et al. (2018) review. CITATION OWED
+/// (the references to check); uncalibrated, like the rest.
 ///
 /// Any other attribute on offer takes a coefficient the same way — for routes
 /// `beta_length_km`, `beta_detour`, `beta_overlap`, `beta_n_links` — and one not on
@@ -117,7 +127,15 @@ pub struct Logit {
 
 impl Default for Logit {
     fn default() -> Self {
-        Self { betas: vec![("ln_path_size".to_string(), 1.0), ("time_min".to_string(), -0.2)] }
+        Self {
+            betas: vec![
+                ("ln_path_size".to_string(), 1.0),
+                ("time_min".to_string(), -0.2),
+                ("transfers".to_string(), -1.0),
+                ("wait_min".to_string(), -0.09),
+                ("walk_min".to_string(), -0.13),
+            ],
+        }
     }
 }
 

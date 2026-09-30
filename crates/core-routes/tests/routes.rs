@@ -20,7 +20,7 @@ use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder}
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::{
     DEFAULT_METHOD, NodeSnapper, Options, Penalty, Registry, RouteError, RouteKey, RouteSets,
-    Shortest, generator,
+    Search, SearchContext, Shortest, generator,
 };
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
@@ -911,4 +911,58 @@ fn a_search_over_many_items_returns_its_results_in_the_order_of_the_items() {
         );
     }
     assert!(openmobisim_core_routes::search_map(&ctx, &Vec::<RouteKey>::new(), work).is_empty());
+}
+
+/// One search to many targets (M4) finds, for each, what a search to it alone
+/// finds: the same earliest arrival and the same route, nearest first; a target
+/// beyond the bound is not found; the origin, if a target, is found with no links.
+#[test]
+fn one_search_to_many_targets_equals_one_search_to_each() {
+    let (net, _) = manhattan_grid(7, 200.0, true);
+    let turns = turns_of(&net);
+    let ctx = SearchContext::new(&net, &turns);
+    let mut search = Search::new(&ctx);
+    // Time-dependent costs: every link 10% slower after 100 s, and a wait at the origin.
+    let seconds = |l: u32, at: f64| {
+        let base = net.free_flow_time(LinkId::new(l)).get();
+        if at > 100.0 { base * 1.1 } else { base }
+    };
+    let wait = |_l: u32, _t: f64| 3.0;
+    let origin = node(&net, &node_name(0, 0));
+    let names =
+        [node_name(0, 0), node_name(3, 4), node_name(6, 6), node_name(2, 1), node_name(5, 0)];
+    let mut targets = vec![false; net.node_count() as usize];
+    for n in &names {
+        targets[node(&net, n).index()] = true;
+    }
+    let found = search.fastest_routes_to(origin, &targets, names.len(), 0.0, 1e9, &wait, &seconds);
+    assert_eq!(found.len(), names.len());
+    assert_eq!((found[0].0, found[0].1, found[0].2.len()), (origin, 0.0, 0));
+    for w in found.windows(2) {
+        assert!(w[0].1 <= w[1].1, "nearest first");
+    }
+    for (target, time, links) in &found[1..] {
+        let (t, l) =
+            search.fastest_route(origin, *target, 0.0, 1e9, &wait, &seconds).expect("reachable");
+        assert!((t - time).abs() < 1e-9, "{t} vs {time}");
+        assert_eq!(&l, links);
+    }
+    // A bound below the farthest target's time leaves it out.
+    let farthest = found.last().expect("found").1;
+    let near = search.fastest_routes_to(
+        origin,
+        &targets,
+        names.len(),
+        0.0,
+        farthest - 1.0,
+        &wait,
+        &seconds,
+    );
+    assert_eq!(near.len(), names.len() - 1);
+    // Asking for fewer stops early: the nearest two.
+    let two = search.fastest_routes_to(origin, &targets, 2, 0.0, 1e9, &wait, &seconds);
+    assert_eq!(
+        two.iter().map(|f| f.0).collect::<Vec<_>>(),
+        found[..2].iter().map(|f| f.0).collect::<Vec<_>>()
+    );
 }

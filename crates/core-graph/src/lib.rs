@@ -40,12 +40,14 @@ pub use defaults::{
     DEFAULTS_VERSION, DefaultRow, GlobalMultipliers, LinkParameters, ParameterNote, RoadClass,
     SignalDefaults, default_row,
 };
-pub use examples::{manhattan_grid, toy_network, toy_network_hubs, toy_network_layers};
+pub use examples::{
+    manhattan_grid, toy_network, toy_network_hubs, toy_network_layers, toy_network_parkings,
+};
 pub use geometry::{
     Hemisphere, LonLat, Projected, Projection, ProjectionError, UtmZone, ground_distance_metres,
     haversine_metres, polyline_length_metres, scale_factor,
 };
-pub use hubs::{AccessPoint, HubKind, HubSet, HubSpec};
+pub use hubs::{AccessPoint, HubKind, HubSet, HubSpec, Parking, ParkingKind, ParkingRow};
 pub use layers::{
     BikeCost, BikeInfrastructure, Layer, StaticLayer, StaticLayerDefaults, StaticLink,
     StaticNetwork, StaticNetworkBuilder,

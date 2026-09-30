@@ -537,6 +537,59 @@ def transit_read_gtfs(
             nothing on the day.
     """
 
+class Parkings:
+    """A scenario's parkings: park-and-ride car parks and bike parkings.
+
+    Read them with :func:`parking_read_osm` or ``openmobisim.parking_read_table``;
+    give them to a ``Scenario`` (``parkings=``) for its ``"car_transit"`` and
+    ``"bike_transit"`` trips.
+    """
+
+    #: How many parkings.
+    count: int
+    def by_vehicle(self) -> dict[str, tuple[int, int]]:
+        """Parkings and spaces by vehicle: ``{"car": (parkings, spaces), "bike": ...}``."""
+    def rows(self) -> dict[str, Any]:
+        """Every parking, as columns.
+
+        ``parking_id``, ``name``, ``hub_id``, ``lon``, ``lat``, ``vehicle``, ``capacity``,
+        ``initial_occupancy``.
+        """
+    def read_report(self) -> dict[str, int] | None:
+        """What reading OpenStreetMap found, kept and merged (``None`` if not read from it)."""
+
+def parking_read_osm(
+    path: str,
+    region: tuple[float, float, float, float] | list[tuple[float, float]] | None = None,
+    merge_m: float = 100.0,
+    capacity_car: int = 100,
+    capacity_bike: int = 10,
+    area_per_car_m2: float = 25.0,
+    area_per_bike_m2: float = 1.5,
+) -> Parkings:
+    """Park-and-ride car parks and bike parkings from an OpenStreetMap extract.
+
+    A car park is kept if it is a park-and-ride (``park_ride`` other than ``no``,
+    or a name that says so); every bike parking is kept; private ones are not. A
+    capacity comes from the ``capacity`` tag, else from the area (``area_per_*``),
+    else the default for a point (``capacity_*``). Parkings of one vehicle closer
+    than ``merge_m`` are merged into one site. These values are defaults, not a
+    calibration.
+
+    Raises:
+        ValueError: If the file cannot be read or the region is not valid.
+    """
+
+def _parking_from_rows(
+    rows: list[tuple[str, float, float, str, int, str | None, str | None, int]],
+) -> Parkings: ...
+def toy_network_parkings() -> Parkings:
+    """The toy network's parkings: hub ``H`` and car park ``P2``.
+
+    ``H`` at ``D2`` has 6 car and 3 bike spaces, where the tram stop is; ``P2`` at ``R2``
+    has 20 spaces, 300 m on foot from that stop.
+    """
+
 def network_read_osm(
     path: str,
     contract: bool = True,
@@ -661,6 +714,20 @@ class RunSummary:
     transit_summary: dict[str, float] | None
     #: The written ``transit_calls.parquet``, if the run had a timetable.
     transit_calls_path: str | None
+    #: How full each parking was, bin by bin (see ``Run.parking_bins``).
+    parking_bins: dict[str, Any] | None
+    #: Each parking the run kept (see ``Run.parking_places``).
+    parking_places: dict[str, Any] | None
+    #: What the parkings did, by name (see ``Run.parking_summary``).
+    parking_summary: dict[str, float] | None
+    #: The written ``parking_bins.parquet``, if the run had parkings.
+    parking_bins_path: str | None
+    #: Each itinerary trip's choice (see ``Run.itinerary_choices``).
+    itinerary_choices: dict[str, Any] | None
+    #: Itinerary trips whose chosen line could not be followed.
+    itinerary_replanned: int
+    #: Trips back: mean |expected − realised| arrival at the parking, in seconds.
+    return_mismatch_s: float
 
 def run_pipeline(
     network: Network,
@@ -689,6 +756,9 @@ def run_pipeline(
     route_cache: bool = False,
     bike_cost: str = "dedicated",
     transit: Transit | None = None,
+    parkings: Parkings | None = None,
+    parking_options: dict[str, float] | None = None,
+    transit_options: dict[str, float] | None = None,
 ) -> RunSummary:
     """Run the whole pipeline and write all four output artifacts.
 
@@ -751,6 +821,10 @@ def run_pipeline(
             choose their route on the bike layer.
         transit: The timetable for the ``"transit"`` trips; its buses ride this
             network's roads.
+        parkings: The parkings for the ``"car_transit"`` and ``"bike_transit"`` trips;
+            needs ``transit``.
+        parking_options: Parking's parameters by name (see ``Scenario.from_parts``).
+        transit_options: Transit's parameters by name (see ``Scenario.from_parts``).
 
     Returns:
         A :class:`RunSummary`.

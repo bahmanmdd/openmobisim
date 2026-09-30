@@ -24,7 +24,15 @@
 //! **What a query returns:** the earliest arrival at the destination, given the
 //! times the passenger can be at each access stop and the walk from each egress
 //! stop; among journeys arriving then, the one with fewest vehicles. At least one
-//! vehicle: walking all the way is another mode.
+//! vehicle: walking all the way is another mode. [`Raptor::pareto`] returns
+//! every journey of the trade-off instead (M4, S201): for each number of
+//! vehicles, the earliest arrival, where it beats every journey with fewer —
+//! round `k` finds exactly that, so the set costs nothing more than the query.
+//!
+//! **Riding a chosen line again** ([`RaptorData::ride_line`], M4): a traveller who
+//! chose a journey on expected times boards, on the realised ones, the first run
+//! of the same line (a GTFS route) they can catch at the same stop, to the same
+//! stop.
 //!
 //! **Boarding slack:** a passenger boards a run only if they are at the stop
 //! [`RaptorData::board_slack`] seconds before it leaves, at every boarding.
@@ -115,6 +123,8 @@ pub struct RaptorData {
     pattern_stops: Vec<NodeId>,
     pattern_flags: Vec<u8>,
     pattern_runs: Vec<TransitRunId>,
+    /// The line (the timetable's route) of each pattern.
+    pattern_route: Vec<u32>,
     /// The first call index of each of `pattern_runs`.
     pattern_run_call: Vec<u32>,
     arrival: Vec<u32>,
@@ -147,6 +157,7 @@ impl RaptorData {
             pattern_stops: Vec::new(),
             pattern_flags: Vec::new(),
             pattern_runs: Vec::new(),
+            pattern_route: Vec::new(),
             pattern_run_call: Vec::new(),
             arrival: Vec::new(),
             departure: Vec::new(),
@@ -207,6 +218,7 @@ impl RaptorData {
                 self.departure.push(times.departure[c]);
             }
         }
+        self.pattern_route.push(timetable.run_route(runs[0]));
         self.patterns.push(pattern);
     }
 
@@ -260,6 +272,69 @@ impl RaptorData {
     fn time_index(&self, p: usize, rank: u32, pos: u32) -> usize {
         let pattern = self.patterns[p];
         (pattern.times_start + rank * pattern.len + pos) as usize
+    }
+
+    /// Ride line `route` from stop `board` to stop `alight`, being at `board` at
+    /// `at`: on the run of that line, boarding at least [`Self::board_slack`]
+    /// seconds after `at`, that reaches `alight` first (the lower pattern on a
+    /// tie). A run whose times at either stop are unknown (a bus that did not
+    /// arrive) is passed over. `None` if no run of the line does it.
+    #[must_use]
+    pub fn ride_line(
+        &self,
+        route: u32,
+        board: NodeId,
+        alight: NodeId,
+        at: u32,
+    ) -> Option<JourneyLeg> {
+        let ready = at.saturating_add(self.board_slack);
+        let b = board.index();
+        let (lo, hi) =
+            (self.stop_patterns_start[b] as usize, self.stop_patterns_start[b + 1] as usize);
+        let mut best: Option<(u32, usize, u32, u32, u32)> = None; // (arrival, pattern, rank, board, alight)
+        for &(p, pos) in &self.stop_patterns[lo..hi] {
+            let p = p as usize;
+            if self.pattern_route[p] != route {
+                continue;
+            }
+            let pattern = self.patterns[p];
+            if self.pattern_flags[(pattern.stops_start + pos) as usize] & BOARD == 0 {
+                continue;
+            }
+            let Some(to) = (pos + 1..pattern.len).find(|&q| {
+                let at = (pattern.stops_start + q) as usize;
+                self.pattern_stops[at] == alight && self.pattern_flags[at] & ALIGHT != 0
+            }) else {
+                continue;
+            };
+            let Some(first) = self.earliest_run(p, pos, ready) else { continue };
+            for rank in first..pattern.runs {
+                let dep = self.departure[self.time_index(p, rank, pos)];
+                let arr = self.arrival[self.time_index(p, rank, to)];
+                if dep == UNKNOWN_TIME {
+                    break;
+                }
+                if arr != UNKNOWN_TIME {
+                    if best.is_none_or(|(a, bp, ..)| arr < a || (arr == a && p < bp)) {
+                        best = Some((arr, p, rank, pos, to));
+                    }
+                    break;
+                }
+            }
+        }
+        let (arrival, p, rank, pos, to) = best?;
+        let pattern = self.patterns[p];
+        let slot = (pattern.runs_start + rank) as usize;
+        let first_call = self.pattern_run_call[slot];
+        Some(JourneyLeg::Ride {
+            run: self.pattern_runs[slot],
+            board_call: first_call + pos,
+            alight_call: first_call + to,
+            board_stop: board,
+            alight_stop: alight,
+            departure: self.departure[self.time_index(p, rank, pos)],
+            arrival,
+        })
     }
 
     /// The earliest run of pattern `p` leaving position `pos` at `t` or later.
@@ -463,6 +538,38 @@ impl<'a> Raptor<'a> {
         access: &[(NodeId, u32)],
         egress: &[(NodeId, u32)],
     ) -> Option<Journey> {
+        let found = self.search(access, egress);
+        let journey = found.last().map(|&(k, e, at)| self.reconstruct(k, e, at));
+        self.finish(egress);
+        journey
+    }
+
+    /// Every journey of the arrival-against-vehicles trade-off, fewest vehicles
+    /// first: for each number of vehicles, the earliest arrival, where it is
+    /// earlier than with any fewer. The last is [`Self::earliest`]'s journey.
+    /// Empty if there is none.
+    #[must_use]
+    pub fn pareto(&mut self, access: &[(NodeId, u32)], egress: &[(NodeId, u32)]) -> Vec<Journey> {
+        let found = self.search(access, egress);
+        let journeys = found.iter().map(|&(k, e, at)| self.reconstruct(k, e, at)).collect();
+        self.finish(egress);
+        journeys
+    }
+
+    fn finish(&mut self, egress: &[(NodeId, u32)]) {
+        for &(s, _) in egress {
+            self.egress[s.index()] = INF;
+        }
+        self.reset();
+    }
+
+    /// The rounds, and per round that improved the arrival at the destination,
+    /// `(round, egress stop, arrival)`. Leaves the labels for reconstruction.
+    fn search(
+        &mut self,
+        access: &[(NodeId, u32)],
+        egress: &[(NodeId, u32)],
+    ) -> Vec<(usize, usize, u32)> {
         let data = self.data;
         for &(s, w) in egress {
             let e = &mut self.egress[s.index()];
@@ -479,7 +586,7 @@ impl<'a> Raptor<'a> {
             }
         }
         let mut bound = INF;
-        let mut found: Option<(usize, usize)> = None;
+        let mut found: Vec<(usize, usize, u32)> = Vec::new();
 
         for k in 1..self.rounds {
             if self.marked_list.is_empty() {
@@ -533,30 +640,28 @@ impl<'a> Raptor<'a> {
             self.ride_improved.clear();
 
             // The destination, from the stops improved this round.
+            let mut round_best: Option<(usize, u32)> = None;
             for &(e, _) in egress {
                 let i = e.index();
                 let t = self.arr[k][i];
                 if t != INF {
                     let at = t.saturating_add(self.egress[i]);
                     // A tie within the round goes to the lower stop id, whatever the order given.
-                    let tie = at == bound && found.is_some_and(|(fk, fe)| fk == k && i < fe);
+                    let tie = at == bound && round_best.is_some_and(|(fe, _)| i < fe);
                     if at < bound || tie {
                         bound = at;
-                        found = Some((k, i));
+                        round_best = Some((i, at));
                     }
                 }
+            }
+            if let Some((i, at)) = round_best {
+                found.push((k, i, at));
             }
             for &s in &self.marked_list {
                 self.prev[s as usize] = self.best[s as usize];
             }
         }
-
-        let journey = found.map(|(k, e)| self.reconstruct(k, e, bound));
-        for &(s, _) in egress {
-            self.egress[s.index()] = INF;
-        }
-        self.reset();
-        journey
+        found
     }
 
     fn scan(&mut self, k: usize, p: usize, pos0: u32, bound: u32) {

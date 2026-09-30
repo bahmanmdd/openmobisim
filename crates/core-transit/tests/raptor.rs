@@ -180,6 +180,90 @@ fn unknown_realised_times_cannot_be_boarded_or_alighted() {
     assert!(raptor.earliest(&[(stop(0), 0)], &[(stop(1), 0)]).is_some());
 }
 
+#[test]
+fn the_pareto_set_trades_vehicles_for_arrival() {
+    // Direct s0 → s2 arriving 600; or s0 → s1 → s2 arriving 400: one vehicle, then two.
+    let t = timetable(
+        3,
+        &[
+            (0, vec![(0, 100, BOTH), (2, 600, BOTH)]),
+            (1, vec![(0, 100, BOTH), (1, 200, BOTH)]),
+            (2, vec![(1, 300, BOTH), (2, 400, BOTH)]),
+        ],
+    );
+    let data = RaptorData::new(&t, t.scheduled(), Footpaths::none(3), 0);
+    let mut raptor = Raptor::new(&data, 8);
+    let set = raptor.pareto(&[(stop(0), 0)], &[(stop(2), 0)]);
+    let summary: Vec<(u32, usize)> = set.iter().map(|j| (j.arrival, j.rides())).collect();
+    assert_eq!(summary, [(600, 1), (400, 2)]);
+    assert_eq!(raptor.earliest(&[(stop(0), 0)], &[(stop(2), 0)]).as_ref(), set.last());
+    // With a later second leg, two vehicles no longer beat one: one journey.
+    let t = timetable(
+        3,
+        &[
+            (0, vec![(0, 100, BOTH), (2, 600, BOTH)]),
+            (1, vec![(0, 100, BOTH), (1, 200, BOTH)]),
+            (2, vec![(1, 300, BOTH), (2, 700, BOTH)]),
+        ],
+    );
+    let data = RaptorData::new(&t, t.scheduled(), Footpaths::none(3), 0);
+    let mut raptor = Raptor::new(&data, 8);
+    let set = raptor.pareto(&[(stop(0), 0)], &[(stop(2), 0)]);
+    assert_eq!(set.iter().map(|j| (j.arrival, j.rides())).collect::<Vec<_>>(), [(600, 1)]);
+}
+
+#[test]
+fn riding_a_line_again_takes_its_first_catchable_run_to_the_same_stop() {
+    // Line 0 runs s0 → s1 → s2 at 100 and 400; line 1 runs s0 → s2 at 150, faster.
+    let t = timetable(
+        3,
+        &[
+            (0, vec![(0, 100, BOTH), (1, 150, BOTH), (2, 200, BOTH)]),
+            (0, vec![(0, 400, BOTH), (1, 450, BOTH), (2, 500, BOTH)]),
+            (1, vec![(0, 150, BOTH), (2, 160, BOTH)]),
+        ],
+    );
+    let data = RaptorData::new(&t, t.scheduled(), Footpaths::none(3), 30);
+    let arrival = |leg: Option<JourneyLeg>| match leg {
+        Some(JourneyLeg::Ride { departure, arrival, .. }) => Some((departure, arrival)),
+        _ => None,
+    };
+    // At s0 at 60: 60 + 30 ≤ 100, the first run of line 0; line 1 is not the line chosen.
+    assert_eq!(arrival(data.ride_line(0, stop(0), stop(2), 60)), Some((100, 200)));
+    // At 80: 80 + 30 > 100, the 400 run.
+    assert_eq!(arrival(data.ride_line(0, stop(0), stop(2), 80)), Some((400, 500)));
+    assert_eq!(arrival(data.ride_line(1, stop(0), stop(2), 80)), Some((150, 160)));
+    // Line 1 does not call at s1; nothing runs after the last run.
+    assert_eq!(data.ride_line(1, stop(0), stop(1), 0), None);
+    assert_eq!(data.ride_line(0, stop(0), stop(2), 500), None);
+    // A run whose arrival is unknown is passed over for the next.
+    let mut times = t.scheduled().clone();
+    times.arrival[2] = UNKNOWN_TIME;
+    let data = RaptorData::new(&t, &times, Footpaths::none(3), 30);
+    assert_eq!(arrival(data.ride_line(0, stop(0), stop(2), 60)), Some((400, 500)));
+}
+
+/// Every improvement of the earliest arrival as vehicles are added, `(arrival,
+/// vehicles)`, by the same exhaustive search as [`brute_force`].
+fn brute_force_pareto(
+    t: &Timetable,
+    walks: &[(u32, u32, u32)],
+    slack: u32,
+    max_rides: usize,
+    access: &[(u32, u32)],
+    egress: &[(u32, u32)],
+) -> Vec<(u32, usize)> {
+    (1..=max_rides).filter_map(|k| brute_force(t, walks, slack, k, access, egress)).fold(
+        Vec::new(),
+        |mut set, (at, k)| {
+            if set.last().is_none_or(|&(b, _)| at < b) {
+                set.push((at, k));
+            }
+            set
+        },
+    )
+}
+
 /// The earliest arrival and its fewest vehicles by exhaustive dynamic programming
 /// over every run, boarding and alighting: no patterns, no FIFO, no pruning.
 fn brute_force(
@@ -289,6 +373,11 @@ proptest! {
         let expected = brute_force(&t, &kept, slack, 4, &access, &egress);
         let got = raptor.earliest(&[(stop(from), depart)], &[(stop(to), 7)]);
         prop_assert_eq!(got.as_ref().map(|j| (j.arrival, j.rides())), expected);
+        // The trade-off: every improvement as vehicles are added, the last the earliest.
+        let set = raptor.pareto(&[(stop(from), depart)], &[(stop(to), 7)]);
+        let summary: Vec<(u32, usize)> = set.iter().map(|j| (j.arrival, j.rides())).collect();
+        prop_assert_eq!(summary, brute_force_pareto(&t, &kept, slack, 4, &access, &egress));
+        prop_assert_eq!(set.last(), got.as_ref());
         if let Some(j) = got {
             // The legs chain: each starts no earlier than the one before ends.
             let mut clock = 0u32;

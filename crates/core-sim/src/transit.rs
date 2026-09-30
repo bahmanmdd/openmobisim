@@ -53,8 +53,7 @@ use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{Trajectory, Vehicle};
 use openmobisim_core_routes::{NodeSnapper, Reach, Search, SearchContext};
 use openmobisim_core_transit::{
-    CallTimes, Footpaths, Journey, JourneyLeg, Raptor, RaptorData, Timetable, TransitDefaults,
-    UNKNOWN_TIME,
+    CallTimes, Footpaths, RaptorData, Timetable, TransitDefaults, UNKNOWN_TIME,
 };
 use openmobisim_core_types::ids::{EntityId, LinkId, NULL_ID, NodeId, TransitRunId, VehicleId};
 use openmobisim_core_types::time::Second;
@@ -65,14 +64,11 @@ use crate::layers::LayerSetup;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-/// Items per unit of parallel work: fixed, so the split never depends on the
-/// thread count.
-const CHUNK: usize = 16;
-
-/// Run `work` on every item, each thread with its own scratch from `init`, and
-/// return the results in the order of the items: the same for any number of
-/// threads, provided `work` depends only on its item.
-pub(crate) fn par_map<T, R, S, I, F>(items: &[T], init: I, work: F) -> Vec<R>
+/// Run `work` on every item, in chunks of `chunk` items, each thread with its own
+/// scratch from `init` (made at least once per chunk it takes: a large scratch wants
+/// large chunks), and return the results in the order of the items: the same for any
+/// number of threads and any `chunk`, provided `work` depends only on its item.
+pub(crate) fn par_map<T, R, S, I, F>(items: &[T], chunk: usize, init: I, work: F) -> Vec<R>
 where
     T: Sync,
     R: Send,
@@ -82,13 +78,14 @@ where
     #[cfg(feature = "parallel")]
     {
         let chunks: Vec<Vec<R>> = items
-            .par_chunks(CHUNK)
+            .par_chunks(chunk.max(1))
             .map_init(&init, |scratch, chunk| chunk.iter().map(|i| work(scratch, i)).collect())
             .collect();
         chunks.into_iter().flatten().collect()
     }
     #[cfg(not(feature = "parallel"))]
     {
+        let _ = chunk;
         let mut scratch = init();
         items.iter().map(|i| work(&mut scratch, i)).collect()
     }
@@ -222,6 +219,7 @@ impl TransitSetup {
                         position: timetable.stop_position(stop),
                         access_points,
                         transfer_seconds: defaults.stop_transfer_s,
+                        parkings: Vec::new(),
                     }
                 })
                 .collect(),
@@ -602,76 +600,90 @@ impl TransitSetup {
         &self.node_stops[a..b]
     }
 
-    /// Route every request (see [`TransitRequest`]) on `data`, in order.
-    pub(crate) fn route_all(
-        &self,
-        data: &RaptorData,
-        requests: &[TransitRequest],
-        want_walks: bool,
-    ) -> Vec<Option<TransitTravel>> {
-        let graph = self.walk.network();
-        let seconds = &self.walk_seconds;
-        let rides = self.defaults.max_rides as usize;
-        par_map(
-            requests,
-            || (Reach::new(graph, seconds), Reach::new(graph, seconds), Raptor::new(data, rides)),
-            |(out, into, raptor), request| self.route(out, into, raptor, request, want_walks),
-        )
+    /// The stops within `bound` seconds' walk of the walk layer node `from`, and
+    /// the walk to each in whole seconds (M4: the stops around a parking).
+    #[must_use]
+    pub fn stops_within(&self, from: NodeId, bound: f64) -> Vec<(NodeId, u32)> {
+        let mut reach = Reach::new(self.walk.network(), &self.walk_seconds);
+        self.stops_from(&mut reach, from, bound)
     }
 
-    fn route(
+    /// [`Self::stops_within`] with the caller's search scratch.
+    pub(crate) fn stops_from(
         &self,
-        out: &mut Reach<'_>,
-        into: &mut Reach<'_>,
-        raptor: &mut Raptor<'_>,
-        request: &TransitRequest,
-        want_walks: bool,
-    ) -> Option<TransitTravel> {
-        let d = &self.defaults;
-        let transfer = floor_seconds(d.stop_transfer_s);
-        let mut access = Vec::new();
-        for (node, secs) in out.forward(request.origin, d.access_walk_max_s, &self.has_stop) {
-            let at = request.departure.saturating_add(floor_seconds(secs)).saturating_add(transfer);
-            access.extend(self.stops_at(node).iter().map(|&s| (s, at)));
+        reach: &mut Reach<'_>,
+        from: NodeId,
+        bound: f64,
+    ) -> Vec<(NodeId, u32)> {
+        let mut out = Vec::new();
+        for (node, secs) in reach.forward(from, bound, &self.has_stop) {
+            let s = floor_seconds(secs);
+            out.extend(self.stops_at(node).iter().map(|&stop| (stop, s)));
         }
-        let mut egress = Vec::new();
-        for (node, secs) in into.backward(request.destination, d.access_walk_max_s, &self.has_stop)
+        out
+    }
+
+    /// The stops a passenger leaving walk node `origin` at `departure` can walk to,
+    /// each with the second they are there (the walk, then the stop's transfer).
+    pub(crate) fn access(
+        &self,
+        reach: &mut Reach<'_>,
+        origin: NodeId,
+        departure: u32,
+    ) -> Vec<(NodeId, u32)> {
+        let transfer = self.transfer_s();
+        self.stops_from(reach, origin, self.defaults.access_walk_max_s)
+            .into_iter()
+            .map(|(stop, w)| (stop, departure.saturating_add(w).saturating_add(transfer)))
+            .collect()
+    }
+
+    /// The stops a passenger can walk from to walk node `destination`, each with the
+    /// walk (and the stop's transfer) in seconds.
+    pub(crate) fn egress(&self, reach: &mut Reach<'_>, destination: NodeId) -> Vec<(NodeId, u32)> {
+        let transfer = self.transfer_s();
+        let mut out = Vec::new();
+        for (node, secs) in
+            reach.backward(destination, self.defaults.access_walk_max_s, &self.has_stop)
         {
             let w = floor_seconds(secs).saturating_add(transfer);
-            egress.extend(self.stops_at(node).iter().map(|&s| (s, w)));
+            out.extend(self.stops_at(node).iter().map(|&stop| (stop, w)));
         }
-        if access.is_empty() || egress.is_empty() {
-            return None;
+        out
+    }
+
+    /// The links of the shortest walk from walk node `from` to walk node `to`, if it
+    /// takes at most `bound` seconds (none if they are one node). `wanted` is the
+    /// caller's scratch, one `false` per walk node, left as it was found.
+    pub(crate) fn walk_path(
+        reach: &mut Reach<'_>,
+        wanted: &mut [bool],
+        from: NodeId,
+        to: NodeId,
+        bound: f64,
+    ) -> Option<Vec<LinkId>> {
+        if from == to {
+            return Some(Vec::new());
         }
-        let journey = raptor.earliest(&access, &egress)?;
-        let mut walks = Vec::new();
-        if want_walks {
-            let mut clock = request.departure;
-            for leg in &journey.legs {
-                match *leg {
-                    JourneyLeg::Access { stop, .. } => {
-                        let links = out.path(self.stop_walk[stop.index()]);
-                        walks.push(Walk { departure: request.departure, links });
-                    }
-                    JourneyLeg::Ride { arrival, .. } => clock = arrival,
-                    JourneyLeg::Transfer { from, to, .. } => {
-                        let (a, b) = (self.stop_walk[from.index()], self.stop_walk[to.index()]);
-                        // The walk between the two stops, found again (a footpath keeps its
-                        // time only); none if the feed's transfer time stood in for it.
-                        let found = out.forward(a, d.transfer_walk_max_s + 1.0, &self.has_stop);
-                        if found.iter().any(|f| f.0 == b) {
-                            walks.push(Walk { departure: clock, links: out.path(b) });
-                        }
-                    }
-                    JourneyLeg::Egress { stop, .. } => {
-                        let links = into.path(self.stop_walk[stop.index()]);
-                        walks.push(Walk { departure: clock, links });
-                    }
-                }
-            }
-            walks.retain(|w| !w.links.is_empty());
-        }
-        Some(TransitTravel { arrival: journey.arrival, journey, walks })
+        wanted[to.index()] = true;
+        let found = !reach.forward(from, bound, wanted).is_empty();
+        wanted[to.index()] = false;
+        found.then(|| reach.path(to))
+    }
+
+    /// The walk layer's seconds per link.
+    pub(crate) fn walk_link_seconds(&self) -> &[f64] {
+        &self.walk_seconds
+    }
+
+    /// How many nodes the walk layer has.
+    pub(crate) fn walk_node_count(&self) -> usize {
+        self.has_stop.len()
+    }
+
+    /// The time a transfer at a stop takes, in whole seconds.
+    pub(crate) fn transfer_s(&self) -> u32 {
+        floor_seconds(self.defaults.stop_transfer_s)
     }
 
     /// Bytes held, besides the timetable.
@@ -684,29 +696,6 @@ impl TransitSetup {
             + self.footpaths.len() * 8
             + self.walk_seconds.len() * 8
     }
-}
-
-/// One transit trip to route: from and to walk layer nodes, leaving at a second.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct TransitRequest {
-    pub origin: NodeId,
-    pub destination: NodeId,
-    pub departure: u32,
-}
-
-/// A walk of a transit trip, on the walk layer.
-#[derive(Clone, Debug)]
-pub(crate) struct Walk {
-    pub departure: u32,
-    pub links: Vec<LinkId>,
-}
-
-/// How a transit trip went.
-#[derive(Clone, Debug)]
-pub(crate) struct TransitTravel {
-    pub arrival: u32,
-    pub journey: Journey,
-    pub walks: Vec<Walk>,
 }
 
 /// What transit did in a run: the times it ran on and who boarded where.

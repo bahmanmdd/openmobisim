@@ -41,6 +41,7 @@ use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TravellerId, TripId}
 use openmobisim_core_types::time::Second;
 
 use crate::layers::{StaticLayers, static_layer_of};
+use crate::parking::ParkingSetup;
 use crate::run::FlowMotor;
 use crate::transit::TransitSetup;
 
@@ -130,6 +131,7 @@ pub(crate) struct Inputs<'a> {
     pub choice_detour_limit: f64,
     pub layers: &'a StaticLayers,
     pub transit: Option<&'a TransitSetup>,
+    pub parking: Option<&'a ParkingSetup>,
 }
 
 pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
@@ -168,6 +170,10 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     // Off means absent: a run without a timetable hashes as it did before transit.
     if let Some(transit) = inputs.transit {
         hash_transit(&mut h, transit);
+    }
+    // Likewise without parkings (M4).
+    if let Some(parking) = inputs.parking {
+        hash_parking(&mut h, parking);
     }
 
     RunDescription {
@@ -320,6 +326,45 @@ fn hash_transit(h: &mut Fnv1a, transit: &TransitSetup) {
     }
     let walk = transit.walk().network();
     hash_network(h, walk, NetworkFingerprint::of(walk).value());
+}
+
+/// The parkings, where they are linked to the layers, and parking's defaults (M4).
+fn hash_parking(h: &mut Fnv1a, parking: &ParkingSetup) {
+    h.write_str("parking");
+    let n = u32::try_from(parking.count()).expect("parkings fit u32");
+    h.write_u32(n);
+    for p in 0..n {
+        h.write_str(parking.external_id(p));
+        h.write_str(parking.hub_external_id(p));
+        h.write_u8(parking.kind(p) as u8);
+        h.write_u32(parking.capacity(p));
+        h.write_u32(parking.initial_occupancy(p));
+        let at = parking.position(p);
+        h.write_f64(at.lon);
+        h.write_f64(at.lat);
+        h.write_u32(parking.node(p).raw());
+        h.write_u32(parking.walk_node(p).raw());
+        for &(stop, walk) in parking.stops(p) {
+            h.write_u32(stop.raw());
+            h.write_u32(walk);
+        }
+    }
+    let d = parking.defaults();
+    for v in [
+        d.walk_max_s,
+        d.reach_car_s,
+        d.reach_bike_s,
+        d.candidates,
+        d.rank_speed_km_h,
+        d.floor_car_s,
+        d.slope_car_s,
+        d.floor_bike_s,
+        d.slope_bike_s,
+        d.snap_m,
+        d.bin_s,
+    ] {
+        h.write_f64(v);
+    }
 }
 
 fn hash_demand(h: &mut Fnv1a, travellers: &Travellers, trips: &Trips) {

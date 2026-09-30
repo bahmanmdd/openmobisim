@@ -352,6 +352,7 @@ fn main() {
     println!("diagnostics           {} rows, digest {diag_digest:016x}", diagnostics.rows().len());
 
     transit_probe(&dir);
+    parking_probe(&dir);
 }
 
 /// Transit (S199): the toy network with its tram and bus, the bus on the roads among
@@ -450,4 +451,126 @@ fn transit_probe(dir: &std::path::Path) {
     );
     println!("transit_time_s        {:016x}", transit_trips.total_travel_time.get().to_bits());
     println!("transit_digest        {digest:016x}");
+}
+
+/// Park-and-ride and bike-and-ride (M4): the toy network with its tram and bus and its
+/// parkings, round trips out and back, a logit choosing the parkings and journeys under
+/// `msa`, cars in the loading. Every choice, probability, parking tally and trip outcome
+/// must be the same on every run and at any thread count, and so must the
+/// `parking_bins.parquet` written.
+fn parking_probe(dir: &std::path::Path) {
+    use openmobisim_core_demand::Mode;
+    use openmobisim_core_graph::layers::{BikeCost, StaticLayerDefaults};
+    use openmobisim_core_sim::{
+        LayerSetup, ParkingDefaults, ParkingSetup, StaticLayers, TransitSetup,
+    };
+
+    let (road, _) = openmobisim_core_graph::toy_network();
+    let road = Arc::new(road);
+    let (bike, walk) = openmobisim_core_graph::toy_network_layers();
+    let d = StaticLayerDefaults::SHIPPED;
+    let layers = Arc::new(StaticLayers {
+        bike: Some(LayerSetup::new(Arc::new(bike), BikeCost::Dedicated, d)),
+        walk: Some(LayerSetup::new(Arc::new(walk), BikeCost::Dedicated, d)),
+    });
+    let transit = Arc::new(
+        TransitSetup::new(
+            Arc::new(openmobisim_core_transit::examples::toy_transit()),
+            layers.walk.as_ref().expect("made above"),
+            layers.bike.as_ref(),
+            openmobisim_core_transit::TransitDefaults::SHIPPED,
+        )
+        .with_roads(road.clone()),
+    );
+    let parking = Arc::new(
+        ParkingSetup::new(
+            &openmobisim_core_graph::toy_network_parkings(),
+            road.clone(),
+            layers.bike.as_ref(),
+            &transit,
+            ParkingDefaults::SHIPPED,
+        )
+        .expect("the toy's parkings"),
+    );
+    let at = |name: &str| {
+        road.node_lonlat(road.node_external_ids().typed_id_of(name).expect("a toy node"))
+    };
+    let trip = |who: String, seq: u32, from: &str, to: &str, t: u32, mode: Mode| RawTrip {
+        traveller_id: who,
+        trip_seq: seq,
+        origin: at(from),
+        destination: at(to),
+        departure_time: Second(t),
+        user_class: "commuter".to_string(),
+        weight: None,
+        mode: Some(mode),
+    };
+    let mut rows = Vec::new();
+    for i in 0..40u32 {
+        // Out by car and back, spread over an hour; out by bike; transit alone.
+        rows.push(trip(format!("p{i:03}"), 0, "W", "N1", 60 * i, Mode::CarTransit));
+        rows.push(trip(format!("p{i:03}"), 1, "N1", "D2", 3600 + 60 * i, Mode::CarTransit));
+        rows.push(trip(format!("b{i:03}"), 0, "S", "N1", 45 * i, Mode::BikeTransit));
+        rows.push(trip(format!("t{i:03}"), 0, "N1", "D2", 30 * i, Mode::Transit));
+    }
+    let defaults = ClassDefaults::new()
+        .with_default("commuter", Ownership { car: true, bike: true, ..Ownership::NONE });
+    let (travellers, trips) =
+        build_travellers(rows, Vec::new(), &defaults, 1, &mut Diagnostics::new()).expect("valid");
+    let logit =
+        Arc::from(openmobisim_core_choice::model("logit", &Default::default()).expect("built in"));
+    let msa = Arc::from(
+        openmobisim_core_sim::equilibration::strategy(
+            "msa",
+            &[("iterations".to_string(), 3.0)].into_iter().collect(),
+        )
+        .expect("built in"),
+    );
+    let mut run = Run::new(road.clone(), Arc::new(travellers), Arc::new(trips), Second(86_400))
+        .with_flow_motor(FlowMotor::Ltm {
+            turns: Arc::new(TurnTable::build(&road, SignalDefaults::SHIPPED)),
+            step: Duration(300.0),
+            level: FidelityLevel::Full,
+        })
+        .with_master_seed(20_260_930)
+        .with_choice_model(logit)
+        .with_equilibration(msa)
+        .with_layers(layers)
+        .with_transit(transit)
+        .with_parking(parking.clone());
+    let description = run.description();
+    let result = run.execute(&mut Diagnostics::new());
+    let it = result.itineraries.as_ref().expect("itinerary trips");
+    let p = result.parking.as_ref().expect("parkings");
+    let mut digest = 0u64;
+    let mut step = |v: u64| digest = digest.wrapping_mul(0x0100_0000_01b3).wrapping_add(v);
+    for i in 0..it.trip.len() {
+        step(u64::from(it.parking[i]));
+        step(it.probability[i].to_bits());
+        step(u64::from(it.rides[i]));
+    }
+    for v in p.bins.arrivals.iter().chain(&p.bins.occupancy_mean).chain(&p.bins.full_s) {
+        step(v.to_bits());
+    }
+    for e in &result.events {
+        step(u64::from(e.second.get()));
+        step(u64::from(e.entity_id));
+    }
+    for r in &result.iterations {
+        for g in r.itinerary_gap {
+            step(g.to_bits());
+        }
+        step(r.hub_mismatch_s.to_bits());
+    }
+    openmobisim_io_parquet::write_parking_bins(
+        dir.join("parking_bins.parquet"),
+        "toy-parking-probe",
+        &parking,
+        p,
+        &description,
+    )
+    .expect("write parking bins");
+    println!("parking_fingerprint   {}", description.fingerprint_hex());
+    println!("parking_arrivals      {} car, {} bike", p.by_kind[0].arrivals, p.by_kind[1].arrivals);
+    println!("parking_digest        {digest:016x}");
 }

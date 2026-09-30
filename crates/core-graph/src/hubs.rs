@@ -3,8 +3,14 @@
 //! A hub is a place with **access points** — a layer and a node of that layer's
 //! graph — and **transfers** between them. A pavement-to-bus-stop transfer is a
 //! hub with a walk and a transit access point; a park-and-ride is one with a car,
-//! a walk and a transit access point; resources (parking, docks) join in M4. The
-//! object is the same, with more fields filled in.
+//! a walk and a transit access point; its **parking** is a resource (M4, S201).
+//! The object is the same, with more fields filled in.
+//!
+//! **Parking** is typed by vehicle, car or bike, from the start (S193): a
+//! station's bike parking and a park-and-ride garage are the same resource, with
+//! a capacity and an occupancy at the start of the day. How full a parking is
+//! over the day, and what that costs a traveller, is the run's business
+//! (`core-sim::parking`); the hub only says what is there.
 //!
 //! **Transfers.** Every ordered pair of a hub's access points is a transfer,
 //! all taking the hub's one transfer time. Explicit per-pair times (GTFS
@@ -14,10 +20,11 @@
 //! access points dense ids in hub order, so a rebuilt set has the same ids.
 //!
 //! **Cost:** about 20 bytes per hub plus 8 per access point, in flat arrays: a
-//! city's thousands of automatic stop hubs (M3) are a few hundred kilobytes.
+//! city's thousands of automatic stop hubs (M3) are a few hundred kilobytes. A
+//! parking adds about 16 bytes and its external id.
 
 use openmobisim_core_types::ids::{
-    AccessPointId, EntityId, ExternalIdTable, ExternalIdTableBuilder, HubId, NodeId,
+    AccessPointId, EntityId, ExternalIdTable, ExternalIdTableBuilder, HubId, NodeId, ResourceId,
 };
 
 use crate::geometry::LonLat;
@@ -48,6 +55,86 @@ impl HubKind {
     }
 }
 
+/// Which vehicle a parking holds (S193: typed from the start).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[repr(u8)]
+pub enum ParkingKind {
+    /// Cars: a park-and-ride garage or lot.
+    Car = 0,
+    /// Bikes: a station's bike parking, a rack by a stop.
+    Bike = 1,
+}
+
+impl ParkingKind {
+    /// Both kinds, in discriminant order.
+    pub const ALL: [ParkingKind; 2] = [ParkingKind::Car, ParkingKind::Bike];
+
+    /// The stable snake_case name, as a parking table writes it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ParkingKind::Car => "car",
+            ParkingKind::Bike => "bike",
+        }
+    }
+
+    /// The kind a name names, if any.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == name)
+    }
+
+    /// The layer the vehicle arrives on.
+    #[must_use]
+    pub const fn layer(self) -> Layer {
+        match self {
+            ParkingKind::Car => Layer::Car,
+            ParkingKind::Bike => Layer::Bike,
+        }
+    }
+
+    /// The position of this kind in [`Self::ALL`], for per-kind tables.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// A parking: a hub's resource (design §3.2; M4).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Parking {
+    /// Its external id (a parking table's `parking_id`, an OSM element).
+    pub external_id: String,
+    /// The vehicle it holds.
+    pub kind: ParkingKind,
+    /// How many vehicles it holds.
+    pub capacity: u32,
+    /// How many are parked at the start of the day.
+    pub initial_occupancy: u32,
+}
+
+/// One row of a parking table (M4, D11): a parking a user declares, or one the
+/// OSM reader found. A run snaps it to its vehicle's layer and the walk layer
+/// and makes it a hub (rows sharing a `hub_id` join one hub).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParkingRow {
+    /// Its id, unique in the table.
+    pub parking_id: String,
+    /// Its name, if it has one.
+    pub name: Option<String>,
+    /// The hub it belongs to, if it shares one with other rows (a station's car
+    /// and bike parking); else the parking is its own hub.
+    pub hub_id: Option<String>,
+    /// Where it is.
+    pub position: LonLat,
+    /// The vehicle it holds.
+    pub kind: ParkingKind,
+    /// How many vehicles it holds.
+    pub capacity: u32,
+    /// How many are parked at the start of the day.
+    pub initial_occupancy: u32,
+}
+
 /// Where a hub touches a layer: a node of that layer's graph.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct AccessPoint {
@@ -70,6 +157,8 @@ pub struct HubSpec {
     pub access_points: Vec<AccessPoint>,
     /// The time any transfer between two of its access points takes, in seconds.
     pub transfer_seconds: f64,
+    /// Its parkings, if any.
+    pub parkings: Vec<Parking>,
 }
 
 /// Every hub of a scenario, with ids (see the [module docs](self)).
@@ -83,6 +172,13 @@ pub struct HubSet {
     access_start: Vec<u32>,
     access_layer: Vec<Layer>,
     access_node: Vec<NodeId>,
+    /// `hub_count + 1` offsets into the parking arrays; parking ids follow hub order.
+    parking_start: Vec<u32>,
+    parking_hub: Vec<HubId>,
+    parking_external: Vec<String>,
+    parking_kind: Vec<ParkingKind>,
+    parking_capacity: Vec<u32>,
+    parking_initial: Vec<u32>,
 }
 
 impl HubSet {
@@ -117,8 +213,15 @@ impl HubSet {
             access_start: vec![0],
             access_layer: Vec::new(),
             access_node: Vec::new(),
+            parking_start: vec![0],
+            parking_hub: Vec::new(),
+            parking_external: Vec::new(),
+            parking_kind: Vec::new(),
+            parking_capacity: Vec::new(),
+            parking_initial: Vec::new(),
         };
-        for spec in slot.into_iter().map(|s| s.expect("every id came from a spec")) {
+        for (h, spec) in slot.into_iter().map(|s| s.expect("every id came from a spec")).enumerate()
+        {
             set.kind.push(spec.kind);
             set.position.push(spec.position);
             set.transfer_seconds.push(spec.transfer_seconds.max(0.0));
@@ -135,6 +238,14 @@ impl HubSet {
             }
             set.access_start
                 .push(u32::try_from(set.access_layer.len()).expect("access points fit u32"));
+            for parking in spec.parkings {
+                set.parking_hub.push(HubId::from_index(h));
+                set.parking_external.push(parking.external_id);
+                set.parking_kind.push(parking.kind);
+                set.parking_capacity.push(parking.capacity);
+                set.parking_initial.push(parking.initial_occupancy);
+            }
+            set.parking_start.push(u32::try_from(set.parking_hub.len()).expect("parkings fit u32"));
         }
         set
     }
@@ -202,6 +313,52 @@ impl HubSet {
         self.access_points(hub).find(|&p| self.access_layer[p.index()] == layer)
     }
 
+    /// How many parkings, over every hub.
+    ///
+    /// # Panics
+    ///
+    /// Never: [`Self::build`] already refused more than `u32::MAX`.
+    #[must_use]
+    pub fn parking_count(&self) -> u32 {
+        u32::try_from(self.parking_hub.len()).expect("parkings fit u32")
+    }
+
+    /// The hub's parkings.
+    pub fn parkings(&self, hub: HubId) -> impl Iterator<Item = ResourceId> + '_ {
+        let (start, end) = (self.parking_start[hub.index()], self.parking_start[hub.index() + 1]);
+        (start..end).map(ResourceId::new)
+    }
+
+    /// The hub a parking belongs to.
+    #[must_use]
+    pub fn parking_hub(&self, parking: ResourceId) -> HubId {
+        self.parking_hub[parking.index()]
+    }
+
+    /// A parking's external id.
+    #[must_use]
+    pub fn parking_external_id(&self, parking: ResourceId) -> &str {
+        &self.parking_external[parking.index()]
+    }
+
+    /// The vehicle a parking holds.
+    #[must_use]
+    pub fn parking_kind(&self, parking: ResourceId) -> ParkingKind {
+        self.parking_kind[parking.index()]
+    }
+
+    /// How many vehicles a parking holds.
+    #[must_use]
+    pub fn parking_capacity(&self, parking: ResourceId) -> u32 {
+        self.parking_capacity[parking.index()]
+    }
+
+    /// How many are parked there at the start of the day.
+    #[must_use]
+    pub fn parking_initial_occupancy(&self, parking: ResourceId) -> u32 {
+        self.parking_initial[parking.index()]
+    }
+
     /// Bytes held.
     #[must_use]
     pub fn bytes(&self) -> usize {
@@ -212,6 +369,9 @@ impl HubSet {
             + self.access_start.len() * 4
             + self.access_layer.len()
             + self.access_node.len() * 4
+            + self.parking_start.len() * 4
+            + self.parking_hub.len() * 13
+            + self.parking_external.iter().map(|e| e.len() + 24).sum::<usize>()
     }
 }
 
@@ -229,6 +389,7 @@ mod tests {
                 .map(|&(layer, node)| AccessPoint { layer, node: NodeId::new(node) })
                 .collect(),
             transfer_seconds: transfer,
+            parkings: Vec::new(),
         }
     }
 
@@ -256,6 +417,38 @@ mod tests {
         );
         assert_eq!(set.access_point_on(b, Layer::Bike), None);
         assert!((set.transfer_seconds(b) - 60.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn parkings_follow_their_hub_and_keep_their_kind_and_capacity() {
+        let mut a = spec("a", &[(Layer::Car, 1), (Layer::Walk, 2)], 60.0);
+        a.parkings = vec![
+            Parking {
+                external_id: "a-car".into(),
+                kind: ParkingKind::Car,
+                capacity: 6,
+                initial_occupancy: 1,
+            },
+            Parking {
+                external_id: "a-bike".into(),
+                kind: ParkingKind::Bike,
+                capacity: 3,
+                initial_occupancy: 0,
+            },
+        ];
+        let set = HubSet::build(vec![spec("b", &[(Layer::Walk, 7)], 0.0), a]);
+        assert_eq!(set.parking_count(), 2);
+        let (a, b) = (set.id_of("a").unwrap(), set.id_of("b").unwrap());
+        assert_eq!(set.parkings(b).count(), 0);
+        let ps: Vec<ResourceId> = set.parkings(a).collect();
+        assert_eq!(ps.len(), 2);
+        assert_eq!(set.parking_hub(ps[0]), a);
+        assert_eq!(set.parking_external_id(ps[0]), "a-car");
+        assert_eq!(set.parking_kind(ps[1]), ParkingKind::Bike);
+        assert_eq!((set.parking_capacity(ps[0]), set.parking_initial_occupancy(ps[0])), (6, 1));
+        assert_eq!(ParkingKind::from_name("bike"), Some(ParkingKind::Bike));
+        assert_eq!(ParkingKind::from_name("Bike"), None);
+        assert_eq!(ParkingKind::Car.layer(), Layer::Car);
     }
 
     #[test]

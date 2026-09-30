@@ -68,7 +68,13 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// Version 4 (S199): scheduled public transport joined the table (`core-transit`'s
 /// `TransitDefaults`): the boarding slack, walks to and between stops, bus dwell,
 /// PCU and the plausibility ratio; and the busway class's row.
-pub const DEFAULTS_VERSION: u32 = 4;
+///
+/// Version 5 (M4, S201): parking joined the table (`core-sim`'s
+/// `ParkingDefaults`: walks from parkings, the reach of park-and-ride and
+/// bike-and-ride, the candidates, the parking times and their occupancy
+/// response), and the itineraries' choice coefficients joined the built-in
+/// logit's defaults (walking, waiting, transfers); car routes are unchanged.
+pub const DEFAULTS_VERSION: u32 = 5;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

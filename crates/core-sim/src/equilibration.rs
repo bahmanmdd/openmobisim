@@ -29,6 +29,8 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use openmobisim_core_demand::Mode;
+
 use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
 /// The strategy used unless another is asked for.
@@ -115,6 +117,16 @@ pub struct IterationReport {
     pub routes_added: u32,
     /// How many searches the route update made to find them.
     pub route_searches: u32,
+    /// **The itinerary trips' gap** (M4), by mode ([`Mode::index`]; `NaN` for a mode
+    /// without itinerary trips): the same relative gap as [`Self::gap`] for the
+    /// transit, park-and-ride and bike-and-ride trips, each alternative kept against
+    /// the least door-to-door time in its choice set, at the costs this loading
+    /// produced.
+    pub itinerary_gap: [f64; Mode::COUNT],
+    /// **The hub expectation mismatch** (design §11.2; M4): per traveller who parked,
+    /// the mean absolute difference between the parking time expected at the choice
+    /// and the one paid, in seconds; `NaN` without parkings.
+    pub hub_mismatch_s: f64,
 }
 
 /// A disequilibrium below this is good (the user, S171: "perfect"; S178: 5% on the disequilibrium).
@@ -178,6 +190,7 @@ impl PartialEq for IterationReport {
                 r.gap_flow,
                 r.gap_flow_floor,
                 r.gap_flow_excess,
+                r.hub_mismatch_s,
             ]
             .map(f64::to_bits)
         };
@@ -187,6 +200,7 @@ impl PartialEq for IterationReport {
             && self.routes_added == other.routes_added
             && self.route_searches == other.route_searches
             && floats(self) == floats(other)
+            && self.itinerary_gap.map(f64::to_bits) == other.itinerary_gap.map(f64::to_bits)
     }
 }
 
@@ -220,6 +234,8 @@ impl IterationReport {
             gap_flow_excess: f64::NAN,
             routes_added: 0,
             route_searches: 0,
+            itinerary_gap: [f64::NAN; Mode::COUNT],
+            hub_mismatch_s: f64::NAN,
         }
     }
 }

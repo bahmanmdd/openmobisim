@@ -4,8 +4,9 @@ A network, demand (an in-memory table or a ``trips.parquet`` path — the same
 schema either way), a loading with queues and spillback (``flow_level=4``),
 route choice among each trip's alternatives (a path-size ``"logit"``) and
 iteration towards an equilibrium (``"msa"``), during which the route sets may
-grow (``route_update="best_response"``) — all by default. Car trips only: no
-walking, cycling, transit or hubs, and no disruptions yet.
+grow (``route_update="best_response"``) — all by default. Trips drive, cycle,
+walk, take transit (``transit=``) or drive or cycle to a parking and go on by
+transit (``parkings=``). No disruptions yet.
 """
 
 from __future__ import annotations
@@ -85,11 +86,13 @@ class Run:
         flow_step_s: int = 300,
         window_s: int = 86_400,
         transit: _core.Transit | None = None,
+        parkings: _core.Parkings | None = None,
     ) -> None:
         """Wrap a `RunSummary` from `run_pipeline`, with what it was run on."""
         self._summary = summary
         self._network = network
         self._transit = transit
+        self._parkings = parkings
         self.run_id = run_id
         self.flow_level = flow_level
         self.flow_step_s = flow_step_s
@@ -104,6 +107,11 @@ class Run:
     def transit(self) -> _core.Transit | None:
         """The timetable this run's transit trips rode, if it had one."""
         return self._transit
+
+    @property
+    def parkings(self) -> _core.Parkings | None:
+        """The parkings this run's park-and-ride and bike-and-ride trips used, if any."""
+        return self._parkings
 
     @property
     def fingerprint(self) -> str:
@@ -247,8 +255,18 @@ class Run:
           follows. **``gap`` is measured against the sets as grown**: the routes the
           travellers may choose from next.
 
+        * ``gap_transit``, ``gap_car_transit``, ``gap_bike_transit`` — the same relative gap
+          for the itineraries of transit, park-and-ride and bike-and-ride trips: each
+          itinerary kept against the least door-to-door time of its choice set at the costs
+          this loading produced; ``nan`` for a mode without such trips. ``gap`` above is the
+          car routes'.
+        * ``hub_mismatch_s`` — the hub expectation mismatch: per traveller who parked, the
+          mean difference between the parking time expected when they chose and the one
+          they paid, in seconds; ``nan`` without parkings.
+
         The numbers up to ``gap_flow_excess`` are also in ``kpis.parquet``, a row per metric
-        per iteration.
+        per iteration, and so are the itinerary gaps (under their modes, as ``gap``) and
+        ``hub_mismatch_s``.
         """
         return dict(self._summary.convergence)
 
@@ -332,7 +350,12 @@ class Run:
         (``trips``, ``total_travel_time_s``, ``completed_trips``, ``truncated_trips``,
         ``no_vehicle_available_trips``, ``no_feasible_path_trips``,
         ``mode_not_available_trips``, ``completion_rate``) are also given for each mode
-        that has trips (``"car"``, ``"bike"``, ``"walk"``, …).
+        that has trips (``"car"``, ``"bike"``, ``"walk"``, …). Transit adds
+        ``boardings`` and the buses' numbers under ``"transit"``; the parkings add
+        ``parking_arrivals``, ``parking_overflow_arrivals``, ``parking_full_share``,
+        ``hub_mismatch_s`` and ``vehicles_left_at_parkings`` — car parkings under
+        ``"car_transit"``, bike parkings under ``"bike_transit"`` — and the itineraries
+        ``itinerary_replanned_trips`` and ``return_mismatch_s`` under ``"all"``.
         """
         return Table(self._summary.kpis_path)
 
@@ -356,8 +379,8 @@ class Run:
 
         Keys: ``total_trips``, ``completed``, ``truncated``,
         ``no_vehicle_available``, ``no_feasible_path``, ``mode_not_available``
-        (a trip whose mode this run cannot simulate: park-and-ride and
-        bike-and-ride, or transit without a timetable).
+        (a trip whose mode this run cannot simulate: transit without a timetable,
+        park-and-ride and bike-and-ride without parkings).
         """
         s = self._summary
         return {
@@ -419,6 +442,68 @@ class Run:
         """
         summary = self._summary.transit_summary
         return None if summary is None else dict(summary)
+
+    def parking_bins(self) -> dict[str, Any] | None:
+        """How full each parking was over the day, bin by bin; ``None`` without parkings.
+
+        Columns, one row per parking and bin: ``bin``, ``start_s``, ``parking`` (its
+        index in the run), ``parking_id``, ``hub_id``, ``vehicle`` (``"car"`` or
+        ``"bike"``), ``capacity``, ``arrivals`` and ``departures`` (vehicles parked and
+        fetched in the bin, weighted by traveller weight), ``occupancy_mean``,
+        ``occupancy_max``, ``full_s`` (seconds of the bin the parking was full) and
+        ``overflow_max`` (the most vehicles above capacity at once: a full parking
+        refuses nobody; it costs more, and the overflow is counted). The same table is
+        written to ``parking_bins.parquet``: read it with ``parking_bins_table()``.
+        """
+        bins = self._summary.parking_bins
+        return None if bins is None else dict(bins)
+
+    def parking_bins_table(self) -> Table | None:
+        """``parking_bins.parquet``: ``parking_bins()`` after ``run_id``; ``None`` without parkings.
+
+        The file's metadata carries the run's fingerprint and its master seed.
+        """
+        path = self._summary.parking_bins_path
+        return None if path is None else Table(path)
+
+    def parking_places(self) -> dict[str, Any] | None:
+        """Each parking the run kept, as columns; ``None`` without parkings.
+
+        ``parking_id``, ``hub_id``, ``vehicle``, ``capacity``, ``lon``, ``lat`` and
+        ``name``. ``parking`` in ``parking_bins()`` indexes these.
+        """
+        places = self._summary.parking_places
+        return None if places is None else dict(places)
+
+    @property
+    def parking_summary(self) -> dict[str, float] | None:
+        """What the parkings did, as numbers by name; ``None`` without parkings.
+
+        ``parkings_given``, ``parkings_car`` and ``parkings_bike`` (kept),
+        ``parkings_off_layer`` and ``parkings_no_stop`` (left out: too far from their
+        layers, or no stop within walking distance); and for ``car`` and ``bike``:
+        ``*_arrivals`` (vehicles parked), ``*_overflow_arrivals`` (of those, the ones
+        that found the parking full), ``*_mismatch_s`` (the hub expectation mismatch)
+        and ``*_left_at_end`` (still parked when the window ended).
+        """
+        summary = self._summary.parking_summary
+        return None if summary is None else dict(summary)
+
+    def itinerary_choices(self) -> dict[str, Any] | None:
+        """Each transit, park-and-ride and bike-and-ride trip's choice; ``None`` without any.
+
+        Columns, one row per such trip, by traveller and then by the order of their day:
+        ``trip`` (its index in the run, where trips are grouped by traveller),
+        ``traveller_id`` and ``trip_seq`` (its place in that traveller's day, from 0),
+        ``mode``, ``parking_id`` (the parking used; ``None`` for plain transit or a trip
+        that did not travel), ``direction`` (``"out"``: vehicle first; ``"back"``: transit
+        first, to where the vehicle is; ``""`` otherwise), ``alternatives`` (how many it
+        chose among; 0: it did not travel), ``probability`` (what the model gave its
+        choice), ``expected_s`` (the chosen itinerary's door-to-door time expected at the
+        choice) and ``rides`` (vehicles boarded).
+        """
+        choices = self._summary.itinerary_choices
+        return None if choices is None else dict(choices)
 
     @property
     def total_travel_time_s(self) -> float:
@@ -496,6 +581,9 @@ class Scenario:
         route_cache: bool = False,
         bike_cost: str = "dedicated",
         transit: _core.Transit | None = None,
+        transit_options: dict[str, float] | None = None,
+        parkings: _core.Parkings | None = None,
+        parking_options: dict[str, float] | None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
         if bike_cost not in BIKE_COSTS:
@@ -548,6 +636,9 @@ class Scenario:
         self._route_cache = route_cache
         self._bike_cost = bike_cost
         self._transit = transit
+        self._transit_options = transit_options
+        self._parkings = parkings
+        self._parking_options = parking_options
 
     @classmethod
     def from_parts(
@@ -574,6 +665,9 @@ class Scenario:
         route_cache: bool = False,
         bike_cost: str = "dedicated",
         transit: _core.Transit | None = None,
+        transit_options: dict[str, float] | None = None,
+        parkings: _core.Parkings | None = None,
+        parking_options: dict[str, float] | None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -741,16 +835,50 @@ class Scenario:
                 Unknown names and out-of-range values are refused.
             transit: The timetable of a service day (``openmobisim.transit_read_gtfs``),
                 for the ``"transit"`` trips. A transit trip walks (4.8 km/h, at most 15
-                minutes) to a stop, rides one or more vehicles and walks on, by the journey
-                that arrives first (the fewest vehicles among those), boarding only if at the
-                stop a minute before a vehicle leaves; walks between stops are at most 5
-                minutes. The run's clock starts at the service day's midnight. **Buses ride
-                the roads**, 2 PCU each, among the cars: routed stop to stop at free flow,
-                dwelling 20 s at a stop without blocking the traffic behind, never leaving a
-                stop before their scheduled time, so congestion makes them late and their
-                passengers with them. A bus line the roads cannot carry plausibly runs by
-                the schedule (``Run.transit_summary`` counts them). Rail, metro, trams and
-                ferries run by the schedule. These values are defaults, not a calibration.
+                minutes) to a stop, rides one or more vehicles and walks on, boarding only if
+                at the stop a minute before a vehicle leaves; walks between stops are at most
+                5 minutes. **Its journey is chosen by** ``choice_model`` among the
+                competitive ones: for each number of vehicles, the earliest arrival that beats
+                every journey with fewer (the attributes ``walk_min``, ``wait_min``,
+                ``ride_min`` and ``transfers`` say what it costs). It is chosen on the times
+                expected — the schedule at first, the last iteration's after — and ridden on
+                the times the run makes: the traveller boards the first vehicle of each line
+                chosen they can catch. The run's clock starts at the service day's midnight.
+                **Buses ride the roads**, 2 PCU each, among the cars: routed stop to stop at
+                free flow, dwelling 20 s at a stop without blocking the traffic behind, never
+                leaving a stop before their scheduled time, so congestion makes them late
+                and their passengers with them. A bus line the roads cannot carry plausibly
+                runs by the schedule (``Run.transit_summary`` counts them). Rail, metro, trams
+                and ferries run by the schedule. These values are defaults, not a calibration:
+                ``transit_options`` overrides them.
+            transit_options: Transit's parameters by name, each replacing its default:
+                ``board_slack_s`` (60), ``max_rides`` (8), ``access_walk_max_s`` (900),
+                ``transfer_walk_max_s`` (300), ``stop_walk_snap_m`` (300),
+                ``stop_transfer_s`` (0), ``bus_dwell_s`` (20), ``bus_pcu`` (2),
+                ``bus_plausibility_ratio`` (1.6), ``bus_stop_snap_m`` (300). Unknown names
+                and out-of-range values are refused.
+            parkings: Park-and-ride car parks and bike parkings
+                (``openmobisim.parking_read_osm``, ``openmobisim.parking_read_table``), for
+                the ``"car_transit"`` and ``"bike_transit"`` trips; needs ``transit``. **The
+                parking is chosen by** ``choice_model``: a trip whose car (or bike) is at its
+                origin drives (rides) to one of the parkings within reach, parks, walks to a
+                stop and rides on; the alternatives are the parking × the route to it × the
+                journey from it, and ``parking_min`` says what parking costs. A trip whose
+                vehicle is parked goes back by transit to where it is, fetches it and drives
+                (rides) on. **Soft capacity:** a full parking refuses nobody; parking there
+                takes longer (``parking_options``), the overflow is counted
+                (``Run.parking_bins()``), and the choice sees how full each parking was in
+                the iterations so far.
+            parking_options: Parking's parameters by name, each replacing its default:
+                ``walk_max_s`` (300: the longest walk from a parking to a stop),
+                ``reach_car_s`` (1800) and ``reach_bike_s`` (1200: the longest drive or ride
+                to a parking), ``candidates`` (5: the most parkings a trip chooses among),
+                ``rank_speed_km_h`` (30: ranks candidates before they are tried),
+                ``floor_car_s`` (120) and ``floor_bike_s`` (30: the time to park when there
+                is room, and to fetch), ``slope_car_s`` (600) and ``slope_bike_s`` (180: what
+                a parking full for a whole time bin adds), ``snap_m`` (300) and ``bin_s``
+                (900). Uncalibrated defaults. Unknown names and out-of-range values are
+                refused.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -784,6 +912,9 @@ class Scenario:
             route_cache=route_cache,
             bike_cost=bike_cost,
             transit=transit,
+            transit_options=transit_options,
+            parkings=parkings,
+            parking_options=parking_options,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
@@ -828,6 +959,9 @@ class Scenario:
             route_cache=self._route_cache,
             bike_cost=self._bike_cost,
             transit=self._transit,
+            parkings=self._parkings,
+            parking_options=self._parking_options,
+            transit_options=self._transit_options,
         )
         return Run(
             summary,
@@ -837,4 +971,5 @@ class Scenario:
             flow_step_s=self._flow_step_s,
             window_s=self._window_s,
             transit=self._transit,
+            parkings=self._parkings,
         )

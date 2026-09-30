@@ -9,9 +9,11 @@
 //! [`RouteUpdate`] and a convergence report per iteration (S170, S176). That is
 //! for car trips; **bike and walk trips** travel on their own static layer
 //! ([`crate::layers`], S195), routed once and never part of the car's choice or
-//! gap; **transit trips** walk, ride and walk ([`crate::transit`], S199), routed
-//! after each loading on the day's times, and never part of the car's choice or
-//! gap either.
+//! gap; **transit, park-and-ride and bike-and-ride trips** choose an itinerary
+//! ([`crate::itinerary_choice`], M4) on expected costs before each loading and
+//! execute it on the loading's times after it: the car of a park-and-ride trip is
+//! in the loading with every other car, and parks at the hub it chose
+//! ([`crate::parking`]); none of them is part of the car routes' choice or gap.
 //!
 //! The defaults here are the core's own and unconditional (`Level0`,
 //! `deterministic`, `none`); the Python `Scenario` layers its own on top
@@ -45,12 +47,22 @@ use openmobisim_core_types::units::{Duration, Pcu};
 use crate::equilibration::{Equilibration, IterationReport, NoEquilibration};
 use crate::events::{EventRow, EventType};
 use crate::identity::{Inputs, RunDescription, describe};
+use crate::itinerary_choice::{
+    self, ChooseInputs, Chosen, Followed, Itineraries, ItineraryResult, Planner, Shape, WalkEnd,
+    parking_kind_of,
+};
 use crate::layers::{StaticLayers, StaticRoute, StaticRoutes, static_layer_of};
 use crate::link_times::{LinkTimes, relative_time_change};
+use crate::parking::{
+    self as parking_mod, ExpectedAvailability, ParkingEvent, ParkingResult, ParkingSetup,
+};
 use crate::route_cache::{RouteSetCache, generation_key};
 use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext};
-use crate::transit::{TransitRequest, TransitResult, TransitSetup};
+use crate::transit::{TransitResult, TransitSetup, par_map};
+use openmobisim_core_graph::hubs::ParkingKind;
+use openmobisim_core_routes::{Reach, SearchContext};
+use openmobisim_core_transit::{JourneyLeg, Raptor};
 
 /// Which loading engine a [`Run`] uses.
 ///
@@ -226,6 +238,10 @@ pub struct RunResult {
     /// What transit did (S199), if the run has a timetable: the times the runs
     /// kept and who boarded and alighted where.
     pub transit: Option<TransitResult>,
+    /// What the parkings did (M4), if the run has parkings.
+    pub parking: Option<ParkingResult>,
+    /// Each itinerary trip's choice and how it went (M4), if the run has any.
+    pub itineraries: Option<ItineraryResult>,
 }
 
 /// How one loading is made besides the routes it follows.
@@ -254,6 +270,68 @@ struct Loaded {
     layer_bins: [Option<LinkBins>; 2],
     /// What transit did, if the run has a timetable.
     transit: Option<TransitResult>,
+    /// What the parkings did, and their realised availability per parking and bin.
+    parking: Option<ParkingResult>,
+    availability: Option<Vec<f64>>,
+    /// How the itineraries went.
+    itinerary: ItineraryTally,
+}
+
+/// How the itinerary trips of a loading went.
+#[derive(Clone, Debug, Default)]
+struct ItineraryTally {
+    /// Per itinerary trip (by position): vehicles boarded.
+    rides: Vec<u32>,
+    /// Trips whose chosen line could not be followed.
+    replanned: u32,
+    /// Σ |realised − expected| arrival at the parking of trips back, and how many.
+    mismatch_sum: f64,
+    mismatch_count: u32,
+}
+
+/// An itinerary trip waiting for the loading.
+struct PendingItin {
+    trip: TripId,
+    position: usize,
+    /// When its vehicle reached the parking (out) or the destination (back), if
+    /// it did; unused for plain transit.
+    vehicle_arrival: Option<f64>,
+}
+
+/// How an itinerary trip's transit part went.
+enum ItinOutcome {
+    Arrived(u32),
+    Truncated,
+    NoPath,
+}
+
+/// What executing one itinerary trip produced.
+struct Executed {
+    outcome: ItinOutcome,
+    followed: Option<Followed>,
+    /// Back: |realised − expected| arrival at the parking.
+    mismatch: Option<f64>,
+    /// Walk legs to bin: links and the second they start.
+    walks: Vec<(Vec<LinkId>, u32)>,
+}
+
+/// Where [`Run::start_itinerary`] puts what it starts.
+struct ItinStart<'a> {
+    pending: &'a mut Vec<PendingItin>,
+    cars: &'a mut Vec<(usize, Vehicle)>,
+    parking_events: &'a mut Vec<ParkingEvent>,
+    level0_vehicles: &'a mut Vec<Vehicle>,
+    bike_vehicles: &'a mut Vec<Vehicle>,
+    completion: &'a mut TripCompletionStats,
+    events: &'a mut Vec<EventRow>,
+}
+
+/// The vehicle kind of a parking kind.
+fn vehicle_kind(kind: ParkingKind) -> VehicleKind {
+    match kind {
+        ParkingKind::Car => VehicleKind::Car,
+        ParkingKind::Bike => VehicleKind::Bike,
+    }
 }
 
 /// What happened to one bike or walk trip.
@@ -304,6 +382,8 @@ pub struct Run {
     layers: Arc<StaticLayers>,
     /// The timetable, linked to the walk and bike layers (S199): none, by default.
     transit: Option<Arc<TransitSetup>>,
+    /// The parkings, linked to the layers and stops (M4): none, by default.
+    parking: Option<Arc<ParkingSetup>>,
 }
 
 /// The share above the best route's expected time beyond which a route is not offered to a
@@ -343,17 +423,29 @@ impl Run {
             route_cache: None,
             layers: Arc::new(StaticLayers::default()),
             transit: None,
+            parking: None,
         }
     }
 
     /// The same run, with a timetable for the trips whose mode is
     /// [`Mode::Transit`] (S199): they walk to a stop, ride and walk on, by the
-    /// earliest journey. Without it such a trip is counted as
+    /// journey the choice model picks among the competitive ones (M4). Without it such a trip is counted as
     /// `mode_not_available`. Its walks are counted on the walk layer's per-link
     /// results when that layer is the run's own ([`Self::with_layers`]).
     #[must_use]
     pub fn with_transit(mut self, transit: Arc<TransitSetup>) -> Self {
         self.transit = Some(transit);
+        self
+    }
+
+    /// Parkings (M4), for trips whose mode is [`Mode::CarTransit`] or
+    /// [`Mode::BikeTransit`]: they drive or ride to a parking the choice model
+    /// picks, park and go on by transit, or come back by transit to where their
+    /// vehicle is. They need the timetable too ([`Self::with_transit`]), and
+    /// bike-and-ride the bike layer.
+    #[must_use]
+    pub fn with_parking(mut self, parking: Arc<ParkingSetup>) -> Self {
+        self.parking = Some(parking);
         self
     }
 
@@ -484,6 +576,7 @@ impl Run {
             choice_detour_limit: self.choice_detour_limit,
             layers: &self.layers,
             transit: self.transit.as_deref(),
+            parking: self.parking.as_deref(),
         })
     }
 
@@ -633,6 +726,59 @@ impl Run {
         let mut route_choices = chooser.choose_all(&choice_rng, 0)?;
         let route_update = self.route_update.clone();
 
+        // Itinerary trips (M4, S201): transit, park-and-ride and bike-and-ride choose an
+        // itinerary on expected costs — free flow, the schedule and the parkings as the day
+        // starts at first, the last loading's after.
+        let (transit_arc, parking_arc, layers_arc) =
+            (self.transit.clone(), self.parking.clone(), self.layers.clone());
+        let itineraries: Option<Itineraries> = transit_arc
+            .as_deref()
+            .map(|t| {
+                Itineraries::new(
+                    &trips,
+                    &travellers,
+                    t,
+                    parking_arc.as_deref(),
+                    &network,
+                    layers_arc.bike.as_ref(),
+                )
+            })
+            .filter(|i| !i.is_empty());
+        let itinerary_wanted = match &itineraries {
+            Some(_) => itinerary_choice::wanted(model.as_ref())?,
+            None => Vec::new(),
+        };
+        let car_ctx = SearchContext::new(&network, &turns);
+        let bike_ctx = layers_arc.bike.as_ref().map(|b| {
+            SearchContext::with_costs(b.network().network(), b.turns(), b.costs().to_vec())
+        });
+        let bike_planner = layers_arc.bike.as_ref().zip(bike_ctx.as_ref());
+        let window_s = f64::from(self.window.get());
+        let mut availability =
+            parking_arc.as_deref().map(|p| ExpectedAvailability::initial(p, window_s));
+        let choose_inputs = ChooseInputs {
+            trips: &trips,
+            travellers: &travellers,
+            model: model.as_ref(),
+            rng: &choice_rng,
+            wanted: &itinerary_wanted,
+        };
+        let mut chosen: Option<Chosen> = None;
+        if let (Some(itin), Some(transit)) = (&itineraries, transit_arc.as_deref()) {
+            let free = LinkTimes::free_flow(&network);
+            let planner = Planner {
+                transit,
+                parking: parking_arc.as_deref(),
+                car: &car_ctx,
+                bike: bike_planner,
+                raptor: transit.scheduled(),
+                times: &free,
+                availability: availability.as_ref(),
+                detour_limit: self.choice_detour_limit,
+            };
+            chosen = Some(itin.choose(&planner, &choose_inputs, None, 0, None)?.0);
+        }
+
         let strategy = self.equilibration.clone();
         let max_iterations = strategy.max_iterations().max(1);
         // Link times are recorded whenever there is a next iteration to cost, at the
@@ -664,6 +810,7 @@ impl Run {
                     want_entry: max_iterations > 1,
                     level_override: (iteration < warmup).then_some(FidelityLevel::PointQueue),
                 },
+                itineraries.as_ref().zip(chosen.as_ref()),
                 &mut iteration_diagnostics,
             );
             let mut report = IterationReport::unmeasured(iteration);
@@ -672,6 +819,8 @@ impl Run {
             report.total_travel_time_s = loaded.total_travel_time.get();
             report.completed = loaded.completion.completed;
             report.truncated = loaded.completion.truncated;
+            report.hub_mismatch_s = loaded.parking.as_ref().map_or(f64::NAN, |p| p.mismatch_s);
+            let mut pending_chosen: Option<Chosen> = None;
             if let (Some(before), Some(now)) = (&previous_bins, &loaded.entry_bins) {
                 report.time_change = relative_time_change(&self.network, before, now);
             }
@@ -738,6 +887,38 @@ impl Run {
                     report.gap_flow_floor = update.assessment.gap_flow_floor;
                     report.gap_flow_excess =
                         update.assessment.gap_flow - update.assessment.gap_flow_floor;
+                    // The itineraries, on the costs this loading produced (M4).
+                    if let (Some(itin), Some(current), Some(transit)) =
+                        (&itineraries, &chosen, transit_arc.as_deref())
+                    {
+                        if let (Some(av), Some(real)) =
+                            (availability.as_mut(), &loaded.availability)
+                        {
+                            av.absorb(real);
+                        }
+                        let realised = loaded.transit.as_ref().map(|t| transit.on_times(&t.times));
+                        let planner = Planner {
+                            transit,
+                            parking: parking_arc.as_deref(),
+                            car: &car_ctx,
+                            bike: bike_planner,
+                            raptor: realised.as_ref().unwrap_or_else(|| transit.scheduled()),
+                            times: &times,
+                            availability: availability.as_ref(),
+                            detour_limit: self.choice_detour_limit,
+                        };
+                        let (next_chosen, found) = itin.choose(
+                            &planner,
+                            &choose_inputs,
+                            Some(current),
+                            next,
+                            strategy_for_next,
+                        )?;
+                        for mode in [Mode::Transit, Mode::CarTransit, Mode::BikeTransit] {
+                            report.itinerary_gap[mode.index()] = found.gap(mode);
+                        }
+                        pending_chosen = Some(next_chosen);
+                    }
                     times_now = Some(times);
                     arrived_by =
                         (update.assessment.reselected_share, update.assessment.changed_share);
@@ -775,6 +956,9 @@ impl Run {
                 route_choices.route[c.trip] = c.route;
                 route_choices.probability[c.trip] = c.probability;
             }
+            if pending_chosen.is_some() {
+                chosen = pending_chosen;
+            }
         }
 
         let (loaded, iteration_diagnostics) = last.expect("at least one iteration ran");
@@ -788,6 +972,20 @@ impl Run {
         let by_mode = mode_totals(&loaded.events, &self.trips, &self.travellers);
         let [bike_link_bins, walk_link_bins] = loaded.layer_bins;
         let transit = loaded.transit;
+        let itinerary_result = match (&itineraries, &chosen) {
+            (Some(itin), Some(c)) => Some(ItineraryResult::of(
+                itin,
+                c,
+                &loaded.itinerary.rides,
+                loaded.itinerary.replanned,
+                if loaded.itinerary.mismatch_count > 0 {
+                    loaded.itinerary.mismatch_sum / f64::from(loaded.itinerary.mismatch_count)
+                } else {
+                    f64::NAN
+                },
+            )),
+            _ => None,
+        };
         Ok(RunResult {
             total_travel_time: loaded.total_travel_time,
             completion: loaded.completion,
@@ -801,11 +999,14 @@ impl Run {
             bike_link_bins,
             walk_link_bins,
             transit,
+            parking: loaded.parking,
+            itineraries: itinerary_result,
         })
     }
 
     /// Load the whole demand once, each trip on the route `route_choices` gives it,
     /// recording per-link results in bins of `record_bins` seconds if asked.
+    #[allow(clippy::too_many_arguments, reason = "the loading's inputs")]
     fn load_once(
         &mut self,
         trip_keys: &[RouteKey],
@@ -813,6 +1014,7 @@ impl Run {
         route_choices: &RouteChoices,
         static_routes: &StaticRoutes,
         plan: LoadPlan,
+        itin: Option<(&Itineraries, &Chosen)>,
         diagnostics: &mut Diagnostics,
     ) -> Loaded {
         let LoadPlan { record_bins, want_entry, level_override } = plan;
@@ -851,8 +1053,11 @@ impl Run {
         let mut entry_bins: Option<EntryTables> = None;
         // Bike and walk vehicles, kept to be binned per layer when asked.
         let mut layer_vehicles: [Vec<Vehicle>; 2] = [Vec::new(), Vec::new()];
-        // Transit trips, routed once the loading has made the day's times.
-        let mut pending_transit: Vec<TripId> = Vec::new();
+        // Itinerary trips (M4), executed once the loading has made the day's times; the
+        // cars of those that drive, loaded with the others; vehicles fetched from parkings.
+        let mut pending_itin: Vec<PendingItin> = Vec::new();
+        let mut itin_cars: Vec<(usize, Vehicle)> = Vec::new();
+        let mut parking_events: Vec<ParkingEvent> = Vec::new();
 
         while let Some(Reverse(key)) = queue.pop() {
             let trip = TripId::new(key.entity);
@@ -869,9 +1074,31 @@ impl Run {
             // from. Stranding propagates by itself; nothing here needs to
             // decide to stop early.
             let mode = self.trips.mode(trip);
-            if mode == Mode::Transit && self.transit.is_some() {
-                pending_transit.push(trip);
-            } else if mode != Mode::Car {
+            if let Some((itineraries, chosen)) = itin {
+                if let Some(position) = itineraries.position(trip) {
+                    self.start_itinerary(
+                        trip,
+                        position,
+                        chosen,
+                        record_bins.is_some(),
+                        &mut ItinStart {
+                            pending: &mut pending_itin,
+                            cars: &mut itin_cars,
+                            parking_events: &mut parking_events,
+                            level0_vehicles: &mut level0_vehicles,
+                            bike_vehicles: &mut layer_vehicles[0],
+                            completion: &mut completion,
+                            events: &mut events,
+                        },
+                        diagnostics,
+                    );
+                    if let Some(next) = self.next_trip_of(traveller, trip) {
+                        self.enqueue(&mut queue, next);
+                    }
+                    continue;
+                }
+            }
+            if mode != Mode::Car {
                 match self.static_outcome(trip, mode, static_routes) {
                     StaticOutcome::NotAvailable => {
                         diagnostics.record(DiagKey::new(
@@ -1099,6 +1326,7 @@ impl Run {
             let level = &level_override.unwrap_or(*level);
             let mut vehicles: Vec<Vehicle> =
                 pending_ltm.iter().map(|(_, vehicle, _)| vehicle.clone()).collect();
+            vehicles.extend(itin_cars.iter().map(|(_, v)| v.clone()));
             let window = Duration::from_clock(self.window);
             let (trajectories, bins, entry) = if let Some(load) = &bus_load {
                 let cars = vehicles.len();
@@ -1173,6 +1401,10 @@ impl Run {
             entry_bins = entry;
             let by_vehicle: HashMap<VehicleId, _> =
                 trajectories.into_iter().map(|t| (t.vehicle, t)).collect();
+            for (i, vehicle) in &itin_cars {
+                pending_itin[*i].vehicle_arrival =
+                    by_vehicle.get(&vehicle.id).map(|t| f64::from(t.arrival().get()));
+            }
             if let (Some(load), Some(transit)) = (&bus_load, &transit) {
                 let id = |i: usize| {
                     VehicleId::new(total_trips + u32::try_from(i).expect("vehicles fit u32"))
@@ -1219,8 +1451,11 @@ impl Run {
             }
         }
 
-        // Transit trips, on the day's times.
+        // Transit, park-and-ride and bike-and-ride trips, on the day's times (M4).
         let mut transit_result = None;
+        let mut parking_result = None;
+        let mut availability_real = None;
+        let mut itinerary = ItineraryTally::default();
         if let Some(transit) = transit {
             // On the loading's times if the buses rode, else on the schedule.
             let realised = bus_times.as_ref().map(|times| transit.on_times(times));
@@ -1228,73 +1463,91 @@ impl Run {
             let buses =
                 bus_load.as_ref().zip(bus_times.as_ref()).map(|(l, t)| transit.bus_summary(l, t));
             let times = bus_times.unwrap_or_else(|| transit.timetable().scheduled().clone());
-            let requests: Vec<TransitRequest> = pending_transit
-                .iter()
-                .map(|&trip| TransitRequest {
-                    origin: transit.walk_node(self.trips.origin(trip)),
-                    destination: transit.walk_node(self.trips.destination(trip)),
-                    departure: self.trips.departure(trip).get(),
-                })
-                .collect();
-            // Walks are binned on the walk layer when it is the run's own.
-            let bin_walks = record_bins.is_some()
-                && self
-                    .layers
-                    .walk
-                    .as_ref()
-                    .is_some_and(|w| Arc::ptr_eq(w.network(), transit.walk()));
-            let travels = transit.route_all(data, &requests, bin_walks);
             let mut result = TransitResult::empty(times);
             result.buses = buses;
-            for (&trip, travel) in pending_transit.iter().zip(travels) {
-                let departure = self.trips.departure(trip);
-                let Some(travel) = travel else {
-                    diagnostics.record(DiagKey::new(
-                        Category::Modelling,
-                        codes::NO_FEASIBLE_PATH,
-                        Severity::Warning,
-                        ElementRef::of(trip),
-                    ));
-                    completion.no_feasible_path += 1;
-                    events.push(EventRow::trip(departure, EventType::NoFeasiblePath, trip));
-                    continue;
-                };
-                let weight = f64::from(self.travellers.weight(self.trips.traveller(trip)));
-                let arrival = Second(travel.arrival);
-                if arrival <= self.window {
-                    completion.completed += 1;
-                    total_travel_time +=
-                        (Duration::from_clock(arrival) - Duration::from_clock(departure)) * weight;
-                    events.push(EventRow::trip(arrival, EventType::TripCompleted, trip));
-                } else {
-                    completion.truncated += 1;
-                    diagnostics.record(DiagKey::new(
-                        Category::Modelling,
-                        codes::TRIP_TRUNCATED,
-                        Severity::Info,
-                        ElementRef::of(trip),
-                    ));
-                    events.push(EventRow::trip(self.window, EventType::TripTruncated, trip));
-                }
-                for leg in &travel.journey.legs {
-                    if let openmobisim_core_transit::JourneyLeg::Ride {
-                        board_call,
-                        alight_call,
-                        ..
-                    } = *leg
-                    {
-                        result.boardings[board_call as usize] += weight;
-                        result.alightings[alight_call as usize] += weight;
+            if let Some((itineraries, chosen)) = itin {
+                // Walks are binned on the walk layer when it is the run's own.
+                let bin_walks = record_bins.is_some()
+                    && self
+                        .layers
+                        .walk
+                        .as_ref()
+                        .is_some_and(|w| Arc::ptr_eq(w.network(), transit.walk()));
+                let (parking, avail) =
+                    self.park_arrivals(&pending_itin, chosen, &mut parking_events);
+                parking_result = parking;
+                let executed = self.execute_itineraries(
+                    &transit,
+                    data,
+                    itineraries,
+                    chosen,
+                    &pending_itin,
+                    avail.as_deref(),
+                    bin_walks,
+                );
+                itinerary.rides = vec![0; itineraries.trips.len()];
+                for (pend, done) in pending_itin.iter().zip(executed) {
+                    let trip = pend.trip;
+                    let departure = self.trips.departure(trip);
+                    let weight = f64::from(self.travellers.weight(self.trips.traveller(trip)));
+                    if let Some(f) = &done.followed {
+                        itinerary.replanned += u32::from(f.replanned);
+                        for leg in &f.rides {
+                            if let JourneyLeg::Ride { board_call, alight_call, .. } = *leg {
+                                result.boardings[board_call as usize] += weight;
+                                result.alightings[alight_call as usize] += weight;
+                            }
+                        }
+                        itinerary.rides[pend.position] =
+                            u32::try_from(f.rides.len()).expect("few rides");
+                    }
+                    if let Some(m) = done.mismatch {
+                        itinerary.mismatch_sum += m;
+                        itinerary.mismatch_count += 1;
+                    }
+                    for (links, start) in done.walks {
+                        layer_vehicles[1].push(Vehicle::new(
+                            VehicleId::new(trip.raw()),
+                            links,
+                            Pcu(weight),
+                            Second(start),
+                        ));
+                    }
+                    match done.outcome {
+                        ItinOutcome::Arrived(at) if Second(at) <= self.window => {
+                            completion.completed += 1;
+                            total_travel_time += (Duration::from_clock(Second(at))
+                                - Duration::from_clock(departure))
+                                * weight;
+                            events.push(EventRow::trip(Second(at), EventType::TripCompleted, trip));
+                        }
+                        ItinOutcome::Arrived(_) | ItinOutcome::Truncated => {
+                            completion.truncated += 1;
+                            diagnostics.record(DiagKey::new(
+                                Category::Modelling,
+                                codes::TRIP_TRUNCATED,
+                                Severity::Info,
+                                ElementRef::of(trip),
+                            ));
+                            events.push(EventRow::trip(
+                                self.window,
+                                EventType::TripTruncated,
+                                trip,
+                            ));
+                        }
+                        ItinOutcome::NoPath => {
+                            diagnostics.record(DiagKey::new(
+                                Category::Modelling,
+                                codes::NO_FEASIBLE_PATH,
+                                Severity::Warning,
+                                ElementRef::of(trip),
+                            ));
+                            completion.no_feasible_path += 1;
+                            events.push(EventRow::trip(departure, EventType::NoFeasiblePath, trip));
+                        }
                     }
                 }
-                for walk in travel.walks {
-                    layer_vehicles[1].push(Vehicle::new(
-                        VehicleId::new(trip.raw()),
-                        walk.links,
-                        Pcu(weight),
-                        Second(walk.departure),
-                    ));
-                }
+                availability_real = avail;
             }
             transit_result = Some(result);
         }
@@ -1323,12 +1576,363 @@ impl Run {
             entry_bins,
             layer_bins,
             transit: transit_result,
+            parking: parking_result,
+            availability: availability_real,
+            itinerary,
         }
     }
 
     /// Decide and make one bike or walk trip: whether its mode can run, whether
     /// the traveller's bike is at the origin, and its traversal of its route on
     /// the layer. A bike that travels is left at the destination.
+    /// Start an itinerary trip at its departure (M4): check its vehicle is where
+    /// its choice needs it, move the vehicle (parked out, fetched back), put the
+    /// vehicle leg on its layer — a car into the loading — and leave the rest for
+    /// after the loading.
+    #[allow(clippy::too_many_lines, reason = "one match over the itinerary's shapes")]
+    fn start_itinerary(
+        &mut self,
+        trip: TripId,
+        position: usize,
+        chosen: &Chosen,
+        want_bins: bool,
+        out: &mut ItinStart<'_>,
+        diagnostics: &mut Diagnostics,
+    ) {
+        let traveller = self.trips.traveller(trip);
+        let departure = self.trips.departure(trip);
+        let (origin, destination) = (self.trips.origin(trip), self.trips.destination(trip));
+        let weight = self.travellers.weight(traveller);
+        let kind = parking_kind_of(self.trips.mode(trip));
+        let no_vehicle = |out: &mut ItinStart<'_>, diagnostics: &mut Diagnostics| {
+            diagnostics.record(DiagKey::new(
+                Category::Modelling,
+                local_codes::NO_VEHICLE_AVAILABLE,
+                Severity::Info,
+                ElementRef::of(trip),
+            ));
+            out.completion.no_vehicle_available += 1;
+            out.events.push(EventRow::trip(departure, EventType::NoVehicleAvailable, trip));
+        };
+        let Some(alt) = chosen.alt[position].as_ref() else {
+            // No alternative: the vehicle was not where it could be used, or no journey.
+            let usable = kind.map(vehicle_kind).is_none_or(|vk| {
+                self.vehicles.is_at_origin(&self.travellers, traveller, vk, origin)
+                    || self.vehicles.parking(&self.travellers, traveller, vk).is_some()
+            });
+            if usable {
+                diagnostics.record(DiagKey::new(
+                    Category::Modelling,
+                    codes::NO_FEASIBLE_PATH,
+                    Severity::Warning,
+                    ElementRef::of(trip),
+                ));
+                out.completion.no_feasible_path += 1;
+                out.events.push(EventRow::trip(departure, EventType::NoFeasiblePath, trip));
+            } else {
+                no_vehicle(out, diagnostics);
+            }
+            return;
+        };
+        let index = out.pending.len();
+        let vehicle_arrival = match (alt.shape, kind) {
+            (Shape::Transit, _) | (_, None) => None,
+            (Shape::Out, Some(k)) => {
+                let vk = vehicle_kind(k);
+                let parking = self.parking.clone().expect("an out itinerary has parkings");
+                if !self.vehicles.is_at_origin(&self.travellers, traveller, vk, origin) {
+                    no_vehicle(out, diagnostics);
+                    return;
+                }
+                self.vehicles.park(traveller, vk, alt.parking, parking.position(alt.parking));
+                self.drive(trip, alt, k, f64::from(departure.get()), weight, index, want_bins, out)
+            }
+            (Shape::Back(p), Some(k)) => {
+                let vk = vehicle_kind(k);
+                if self.vehicles.parking(&self.travellers, traveller, vk) != Some(p) {
+                    no_vehicle(out, diagnostics);
+                    return;
+                }
+                self.vehicles.relocate(traveller, vk, destination);
+                out.parking_events.push((alt.vehicle_departure, p, -f64::from(weight)));
+                self.drive(trip, alt, k, alt.vehicle_departure, weight, index, want_bins, out)
+            }
+        };
+        out.pending.push(PendingItin { trip, position, vehicle_arrival });
+    }
+
+    /// The vehicle leg of an itinerary, leaving at `start`: a car at free flow now
+    /// (level 0) or into the loading (its arrival then comes after it), a bike on
+    /// its layer now. Its arrival, if known now.
+    #[allow(clippy::too_many_arguments, reason = "the leg, and where its pieces go")]
+    fn drive(
+        &self,
+        trip: TripId,
+        alt: &itinerary_choice::Alternative,
+        kind: ParkingKind,
+        start: f64,
+        weight: u32,
+        index: usize,
+        want_bins: bool,
+        out: &mut ItinStart<'_>,
+    ) -> Option<f64> {
+        if alt.vehicle_links.is_empty() {
+            return Some(start);
+        }
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a second of the day"
+        )]
+        let at = Second(start.max(0.0).floor() as u32);
+        let vehicle = Vehicle::new(
+            VehicleId::new(trip.raw()),
+            alt.vehicle_links.clone(),
+            Pcu(f64::from(weight)),
+            at,
+        );
+        match kind {
+            ParkingKind::Car => match &self.flow_motor {
+                FlowMotor::Level0 => {
+                    let trajectory = traverse_free_flow(&vehicle, &self.network);
+                    if want_bins {
+                        out.level0_vehicles.push(vehicle);
+                    }
+                    Some(f64::from(trajectory.arrival().get()))
+                }
+                FlowMotor::Ltm { .. } => {
+                    out.cars.push((index, vehicle));
+                    None
+                }
+            },
+            ParkingKind::Bike => {
+                let layer = self.layers.bike.as_ref()?;
+                let trajectory =
+                    traverse_timed(&vehicle, layer.network().network(), layer.seconds());
+                if want_bins {
+                    out.bike_vehicles.push(vehicle);
+                }
+                Some(f64::from(trajectory.arrival().get()))
+            }
+        }
+    }
+
+    /// Park the vehicles of the out itineraries that reached their parking, tally
+    /// the parkings over the day, and say what that cost: the parking result and
+    /// the realised availability per parking and bin (none without parkings).
+    fn park_arrivals(
+        &self,
+        pending: &[PendingItin],
+        chosen: &Chosen,
+        events: &mut Vec<ParkingEvent>,
+    ) -> (Option<ParkingResult>, Option<Vec<f64>>) {
+        let Some(parking) = self.parking.as_deref() else { return (None, None) };
+        let mut arrivals: Vec<(usize, usize)> = Vec::new();
+        for (i, pend) in pending.iter().enumerate() {
+            let alt = chosen.alt[pend.position].as_ref().expect("a pending trip has its choice");
+            if let (Shape::Out, Some(t)) = (alt.shape, pend.vehicle_arrival) {
+                let w = f64::from(self.travellers.weight(self.trips.traveller(pend.trip)));
+                arrivals.push((i, events.len()));
+                events.push((t, alt.parking, w));
+            }
+        }
+        let window = f64::from(self.window.get());
+        let (bins, full) = parking_mod::tally(parking, events, window);
+        let avail = parking_mod::availability(&bins);
+        let (mut total, mut overflow, mut mismatch) = (0.0, 0.0, 0.0);
+        let mut by_kind = [parking_mod::ParkingTotals::default(); 2];
+        let mut kind_mismatch = [0.0; 2];
+        for &(i, e) in &arrivals {
+            let alt = chosen.alt[pending[i].position].as_ref().expect("chosen");
+            let (t, p, w) = events[e];
+            let k = parking.kind(p).index();
+            total += w;
+            by_kind[k].arrivals += w;
+            if full[e] {
+                overflow += w;
+                by_kind[k].overflow_arrivals += w;
+            }
+            let paid = parking.defaults().parking_seconds(
+                parking.kind(p),
+                parking_mod::availability_at(&avail, &bins, p, t),
+            );
+            mismatch += w * (paid - alt.parking_s).abs();
+            kind_mismatch[k] += w * (paid - alt.parking_s).abs();
+        }
+        // What is still parked when the window ends.
+        let mut stock: Vec<f64> = (0..parking.count())
+            .map(|p| f64::from(parking.initial_occupancy(u32::try_from(p).expect("fits u32"))))
+            .collect();
+        for &(_, p, change) in events.iter() {
+            stock[p as usize] += change;
+        }
+        for (p, &left) in stock.iter().enumerate() {
+            let p = u32::try_from(p).expect("parkings fit u32");
+            let k = parking.kind(p).index();
+            by_kind[k].left_at_end += (left - f64::from(parking.initial_occupancy(p))).max(0.0);
+        }
+        for k in 0..2 {
+            by_kind[k].mismatch_s = if by_kind[k].arrivals > 0.0 {
+                kind_mismatch[k] / by_kind[k].arrivals
+            } else {
+                f64::NAN
+            };
+        }
+        let result = ParkingResult {
+            bins,
+            by_kind,
+            arrivals: total,
+            overflow_arrivals: overflow,
+            mismatch_s: if total > 0.0 { mismatch / total } else { f64::NAN },
+        };
+        (Some(result), Some(avail))
+    }
+
+    /// Execute every pending itinerary's transit part on `data` (M4): see
+    /// [`itinerary_choice::follow`]. In parallel, in fixed chunks.
+    #[allow(clippy::too_many_arguments, reason = "the loading's pieces")]
+    fn execute_itineraries(
+        &self,
+        transit: &TransitSetup,
+        data: &openmobisim_core_transit::RaptorData,
+        itineraries: &Itineraries,
+        chosen: &Chosen,
+        pending: &[PendingItin],
+        avail: Option<&[f64]>,
+        bin_walks: bool,
+    ) -> Vec<Executed> {
+        let parking = self.parking.as_deref();
+        let trips = &*self.trips;
+        let walk = transit.walk().network();
+        let seconds = transit.walk_link_seconds();
+        let d = transit.defaults();
+        let transfer = transit.transfer_s();
+        let walk_bound = d
+            .access_walk_max_s
+            .max(d.transfer_walk_max_s)
+            .max(parking.map_or(0.0, |p| p.defaults().walk_max_s))
+            + 1.0;
+        let bins = parking
+            .zip(avail)
+            .map(|(p, _)| parking_mod::tally(p, &[], f64::from(self.window.get())).0);
+        par_map(
+            pending,
+            itinerary_choice::SCRATCH_CHUNK,
+            || {
+                (
+                    Reach::new(walk, seconds),
+                    Raptor::new(data, d.max_rides as usize),
+                    vec![false; transit.walk_node_count()],
+                )
+            },
+            |(reach, raptor, wanted), pend| {
+                let alt =
+                    chosen.alt[pend.position].as_ref().expect("a pending trip has its choice");
+                let nodes = itineraries.nodes(pend.position);
+                let departure = trips.departure(pend.trip).get();
+                let truncated = || Executed {
+                    outcome: ItinOutcome::Truncated,
+                    followed: None,
+                    mismatch: None,
+                    walks: Vec::new(),
+                };
+                let (at_first, start, end) = match alt.shape {
+                    Shape::Transit => {
+                        (departure.saturating_add(alt.access_walk_s), nodes.walk_o, nodes.walk_d)
+                    }
+                    Shape::Out => {
+                        let (Some(t), Some(p)) = (pend.vehicle_arrival, parking) else {
+                            return truncated();
+                        };
+                        let a = match (avail, &bins) {
+                            (Some(v), Some(b)) => {
+                                parking_mod::availability_at(v, b, alt.parking, t)
+                            }
+                            _ => 1.0,
+                        };
+                        let paid = p.defaults().parking_seconds(p.kind(alt.parking), a);
+                        #[allow(
+                            clippy::cast_possible_truncation,
+                            clippy::cast_sign_loss,
+                            reason = "a second"
+                        )]
+                        let parked = (t + paid).floor() as u32;
+                        (
+                            parked.saturating_add(alt.access_walk_s),
+                            p.walk_node(alt.parking),
+                            nodes.walk_d,
+                        )
+                    }
+                    Shape::Back(pk) => {
+                        let p = parking.expect("a back itinerary has parkings");
+                        (departure.saturating_add(alt.access_walk_s), nodes.walk_o, p.walk_node(pk))
+                    }
+                };
+                let followed = {
+                    let reach = &mut *reach;
+                    itinerary_choice::follow(data, raptor, alt, at_first, || match alt.shape {
+                        Shape::Back(pk) => parking
+                            .map(|p| {
+                                p.stops(pk)
+                                    .iter()
+                                    .map(|&(s, w)| (s, w.saturating_add(transfer)))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        _ => transit.egress(reach, nodes.walk_d),
+                    })
+                };
+                let mut walks = Vec::new();
+                if let (true, Some(f)) = (bin_walks, &followed) {
+                    let resolve = |e: WalkEnd| match e {
+                        WalkEnd::Start => Some(start),
+                        WalkEnd::End => Some(end),
+                        WalkEnd::Stop(s) => transit.stop_walk_node(s),
+                    };
+                    for seg in &f.walks {
+                        let (Some(a), Some(b)) = (resolve(seg.from), resolve(seg.to)) else {
+                            continue;
+                        };
+                        if a.is_null() || b.is_null() {
+                            continue;
+                        }
+                        if let Some(links) =
+                            TransitSetup::walk_path(reach, wanted, a, b, walk_bound)
+                        {
+                            if !links.is_empty() {
+                                walks.push((links, seg.departure));
+                            }
+                        }
+                    }
+                }
+                let (outcome, mismatch) = match alt.shape {
+                    Shape::Back(_) => {
+                        let fetch = alt.parking_s;
+                        let mismatch = followed
+                            .as_ref()
+                            .map(|f| (f64::from(f.end) - (alt.vehicle_departure - fetch)).abs());
+                        #[allow(
+                            clippy::cast_possible_truncation,
+                            clippy::cast_sign_loss,
+                            reason = "a second"
+                        )]
+                        let outcome = pend.vehicle_arrival.map_or(ItinOutcome::Truncated, |t| {
+                            ItinOutcome::Arrived(t.max(0.0).floor() as u32)
+                        });
+                        (outcome, mismatch)
+                    }
+                    _ => (
+                        followed
+                            .as_ref()
+                            .map_or(ItinOutcome::NoPath, |f| ItinOutcome::Arrived(f.end)),
+                        None,
+                    ),
+                };
+                Executed { outcome, followed, mismatch, walks }
+            },
+        )
+    }
+
     fn static_outcome(
         &mut self,
         trip: TripId,

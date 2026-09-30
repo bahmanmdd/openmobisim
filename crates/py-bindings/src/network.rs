@@ -810,7 +810,7 @@ pub fn network_from_columns(
 }
 
 /// A rectangle `(west, south, east, north)` or a list of `(lon, lat)` vertices.
-fn parse_region(value: &Bound<'_, PyAny>) -> PyResult<Region> {
+pub(crate) fn parse_region(value: &Bound<'_, PyAny>) -> PyResult<Region> {
     let made = if let Ok((w, s, e, n)) = value.extract::<(f64, f64, f64, f64)>() {
         Region::bbox(w, s, e, n)
     } else if let Ok(vertices) = value.extract::<Vec<(f64, f64)>>() {

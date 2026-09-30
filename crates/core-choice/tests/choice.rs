@@ -13,7 +13,10 @@ use openmobisim_core_choice::{
 };
 use openmobisim_core_types::rng::{RngKey, Stream, StreamRng};
 
-const ATTRIBUTES: [&str; 3] = ["time_min", "ln_path_size", "length_km"];
+/// The attributes the tests' alternatives carry: a route's, and the three the default logit
+/// weighs for itineraries (M4), which are 0 for a route.
+const ATTRIBUTES: [&str; 6] =
+    ["time_min", "ln_path_size", "length_km", "walk_min", "wait_min", "transfers"];
 
 fn rng(seed: u64) -> StreamRng {
     StreamRng::new(RngKey::from_seed(seed), Stream::Choice)
@@ -27,7 +30,7 @@ fn batch_of(iteration: u32, situations: &[(u32, u32, Vec<Alt>)]) -> ChoiceBatch 
     for (traveller, trip, alts) in situations {
         b.begin_situation(*traveller, *trip);
         for (id, time, ps, length) in alts {
-            b.push_alternative(*id, &[*time, ps.ln(), *length]);
+            b.push_alternative(*id, &[*time, ps.ln(), *length, 0.0, 0.0, 0.0]);
         }
     }
     b
@@ -218,7 +221,10 @@ fn the_seed_and_the_iteration_change_the_draws() {
 
 #[test]
 fn the_descriptor_names_every_coefficient_and_changes_with_any() {
-    assert_eq!(logit().descriptor(), "logit;beta_ln_path_size=1;beta_time_min=-0.2");
+    assert_eq!(
+        logit().descriptor(),
+        "logit;beta_ln_path_size=1;beta_time_min=-0.2;beta_transfers=-1;beta_wait_min=-0.09;beta_walk_min=-0.13"
+    );
     let custom = Logit::from_options(&Options::from([
         ("beta_time_min".into(), -0.5),
         ("beta_length_km".into(), -0.1),
@@ -226,7 +232,7 @@ fn the_descriptor_names_every_coefficient_and_changes_with_any() {
     .expect("options");
     assert_eq!(
         custom.descriptor(),
-        "logit;beta_length_km=-0.1;beta_ln_path_size=1;beta_time_min=-0.5"
+        "logit;beta_length_km=-0.1;beta_ln_path_size=1;beta_time_min=-0.5;beta_transfers=-1;beta_wait_min=-0.09;beta_walk_min=-0.13"
     );
     assert_ne!(custom.descriptor(), logit().descriptor());
     assert!(logit().is_sampled() && !Deterministic.is_sampled());
@@ -261,7 +267,10 @@ fn a_coefficient_on_an_attribute_that_is_not_offered_says_what_is() {
     // A coefficient of zero drops the term, so its attribute is not needed.
     let m0 = Logit::from_options(&Options::from([("beta_comfort".into(), 0.0)])).expect("made");
     m0.choose(&b, &rng(1)).expect("no term, no need");
-    assert_eq!(m0.required_attributes().unwrap(), ["ln_path_size", "time_min"]);
+    assert_eq!(
+        m0.required_attributes().unwrap(),
+        ["ln_path_size", "time_min", "transfers", "wait_min", "walk_min"]
+    );
 }
 
 #[test]
@@ -276,7 +285,7 @@ fn a_malformed_batch_or_answer_is_refused() {
     assert!(duplicate.validate().unwrap_err().to_string().contains("identity 5"));
     let mut nan = ChoiceBatch::new(0, &ATTRIBUTES);
     nan.begin_situation(1, 1);
-    nan.push_alternative(1, &[f64::NAN, 0.0, 0.0]);
+    nan.push_alternative(1, &[f64::NAN, 0.0, 0.0, 0.0, 0.0, 0.0]);
     assert!(nan.validate().unwrap_err().to_string().contains("time_min"));
     let ok = batch_of(0, &[(1, 1, three_routes())]);
     ok.validate().expect("fine");

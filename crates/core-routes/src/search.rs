@@ -410,6 +410,94 @@ impl<'a> Search<'a> {
         route
     }
 
+    /// Every node marked in `targets` that can be reached from `origin` leaving at
+    /// `departure` within `bound` seconds: its earliest arrival, in seconds after
+    /// `departure`, and the route that takes it, in the order they are reached (M4:
+    /// the parkings around a park-and-ride trip's origin, in one search). `origin`
+    /// itself, if marked, comes first with no links. The search stops once
+    /// `wanted` targets are found or nothing within the bound is left.
+    ///
+    /// Same costs, turns and exactness as [`Self::fastest_route`]; one search
+    /// instead of one per target.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `targets` has fewer entries than the network has nodes.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the time-dependent search's own arguments, plus the targets"
+    )]
+    pub fn fastest_routes_to(
+        &mut self,
+        origin: NodeId,
+        targets: &[bool],
+        wanted: usize,
+        departure: f64,
+        bound: f64,
+        wait: &dyn Fn(u32, f64) -> f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Vec<(NodeId, f64, Vec<LinkId>)> {
+        let ctx = self.ctx;
+        let mut found: Vec<(NodeId, f64, u32)> = Vec::new();
+        let mut seen: Vec<u32> = Vec::new();
+        if targets[origin.index()] {
+            found.push((origin, 0.0, NONE));
+            seen.push(origin.raw());
+        }
+        let limit = departure + bound;
+        if found.len() < wanted {
+            for &l in ctx.network.out_links(origin) {
+                if !ctx.link_cost(l).is_finite() {
+                    continue;
+                }
+                let entered = departure + wait(l.raw(), departure);
+                let arrive = entered + seconds(l.raw(), entered);
+                if arrive <= limit && arrive < self.dist[l.index()] {
+                    self.set(l.index(), arrive, 0.0, NONE);
+                    self.heap.push(Entry { cost: arrive, link: l.raw() });
+                }
+            }
+        }
+        while found.len() < wanted {
+            let Some(Entry { cost, link }) = self.heap.pop() else { break };
+            let l = LinkId::new(link);
+            if cost > self.dist[l.index()] {
+                continue;
+            }
+            let to = ctx.network.link_to(l);
+            if targets[to.index()] && !seen.contains(&to.raw()) {
+                seen.push(to.raw());
+                found.push((to, cost - departure, link));
+            }
+            for &t in ctx.turns.turns_from(l) {
+                let m = ctx.turns.outgoing(t);
+                if !ctx.link_cost(m).is_finite() {
+                    continue;
+                }
+                let arrive = cost + seconds(m.raw(), cost);
+                if arrive <= limit && arrive < self.dist[m.index()] {
+                    self.set(m.index(), arrive, 0.0, link);
+                    self.heap.push(Entry { cost: arrive, link: m.raw() });
+                }
+            }
+        }
+        let out = found
+            .into_iter()
+            .map(|(node, time, last)| {
+                let mut links = Vec::new();
+                let mut at = last;
+                while at != NONE {
+                    links.push(LinkId::new(at));
+                    at = self.pred[at as usize];
+                }
+                links.reverse();
+                (node, time, links)
+            })
+            .collect();
+        self.clean();
+        out
+    }
+
     /// The earliest-arrival search behind [`Self::fastest_time`] and
     /// [`Self::fastest_route`]: the travel time and the last link of the route found.
     /// **Leaves its labels in place** so the caller can read the predecessors, and must

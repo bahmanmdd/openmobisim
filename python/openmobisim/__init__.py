@@ -15,14 +15,16 @@ run, its output artifacts, route choice among each trip's alternatives
 (``openmobisim.choice`` says how to add your own choice model) and, by default
 since the car-ready checkpoint (2026-09-23), iteration towards an equilibrium
 (``equilibration="msa"``), during which the route sets may grow
-(``route_update="best_response"``). Trips may also cycle, walk, or take scheduled
+(``route_update="best_response"``). Trips may also cycle, walk, take scheduled
 public transport (``transit_read_gtfs``, ``Scenario(transit=...)``), whose buses
-ride the roads among the cars. No parking, no disruptions — those arrive with
-the mechanisms that give them meaning.
+ride the roads among the cars, or drive or cycle to a parking and go on by
+transit (``parking_read_osm``, ``parking_read_table``, ``Scenario(parkings=...)``),
+the station chosen by the choice model. No disruptions yet.
 """
 
 from openmobisim import _core, choice, examples
 from openmobisim._core import (
+    Parkings,
     Transit,
     build_info,
     choice_draw,
@@ -30,6 +32,7 @@ from openmobisim._core import (
     equilibration_strategies,
     fixed_order_sum_f64,
     network_read_osm,
+    parking_read_osm,
     route_cache_clear,
     route_cache_info,
     route_methods,
@@ -39,11 +42,13 @@ from openmobisim._core import (
     transit_read_gtfs,
 )
 from openmobisim.network import network_read_table
+from openmobisim.parking import parking_read_table
 from openmobisim.scenario import Run, Scenario, Table
 
 __version__: str = _core.__version__
 
 __all__ = [
+    "Parkings",
     "Run",
     "Scenario",
     "Table",
@@ -58,6 +63,8 @@ __all__ = [
     "fixed_order_sum_f64",
     "network_read_osm",
     "network_read_table",
+    "parking_read_osm",
+    "parking_read_table",
     "route_methods",
     "route_cache_clear",
     "route_cache_info",

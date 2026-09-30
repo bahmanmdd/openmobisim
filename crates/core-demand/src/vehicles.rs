@@ -29,11 +29,21 @@ pub enum VehicleKind {
 /// [`Travellers::ownership`] is always the authority on whether a slot means
 /// anything; a non-owner's slot is never read by [`location`](Self::location)
 /// or [`is_at_origin`](Self::is_at_origin).
+///
+/// **A vehicle can be parked at a hub** (M4, S201): its location is then the
+/// parking's position, and [`Self::parking`] says which parking, so the trip
+/// back finds it there (design §23.2).
 #[derive(Clone, Debug, Default)]
 pub struct VehicleLocations {
     car: Vec<LonLat>,
     bike: Vec<LonLat>,
+    /// Per traveller, the parking each vehicle is in, or [`NOT_PARKED`].
+    car_parking: Vec<u32>,
+    bike_parking: Vec<u32>,
 }
+
+/// A vehicle not in a parking.
+pub const NOT_PARKED: u32 = u32::MAX;
 
 impl VehicleLocations {
     /// Seed every owned vehicle at its traveller's base (S129).
@@ -56,7 +66,7 @@ impl VehicleLocations {
                 bike[traveller.index()] = base;
             }
         }
-        Self { car, bike }
+        Self { car, bike, car_parking: vec![NOT_PARKED; n], bike_parking: vec![NOT_PARKED; n] }
     }
 
     /// `traveller`'s vehicle of `kind`, or `None` if they do not own one
@@ -84,9 +94,48 @@ impl VehicleLocations {
     /// internal call in the core trusts.
     pub fn relocate(&mut self, traveller: TravellerId, kind: VehicleKind, location: LonLat) {
         match kind {
-            VehicleKind::Car => self.car[traveller.index()] = location,
-            VehicleKind::Bike => self.bike[traveller.index()] = location,
+            VehicleKind::Car => {
+                self.car[traveller.index()] = location;
+                self.car_parking[traveller.index()] = NOT_PARKED;
+            }
+            VehicleKind::Bike => {
+                self.bike[traveller.index()] = location;
+                self.bike_parking[traveller.index()] = NOT_PARKED;
+            }
         }
+    }
+
+    /// Park `traveller`'s vehicle of `kind` in `parking`, which is at `location`
+    /// (M4). The same trust as [`Self::relocate`].
+    pub fn park(
+        &mut self,
+        traveller: TravellerId,
+        kind: VehicleKind,
+        parking: u32,
+        location: LonLat,
+    ) {
+        self.relocate(traveller, kind, location);
+        match kind {
+            VehicleKind::Car => self.car_parking[traveller.index()] = parking,
+            VehicleKind::Bike => self.bike_parking[traveller.index()] = parking,
+        }
+    }
+
+    /// The parking `traveller`'s vehicle of `kind` is in, if it is in one (and
+    /// they own it).
+    #[must_use]
+    pub fn parking(
+        &self,
+        travellers: &Travellers,
+        traveller: TravellerId,
+        kind: VehicleKind,
+    ) -> Option<u32> {
+        self.location(travellers, traveller, kind)?;
+        let p = match kind {
+            VehicleKind::Car => self.car_parking[traveller.index()],
+            VehicleKind::Bike => self.bike_parking[traveller.index()],
+        };
+        (p != NOT_PARKED).then_some(p)
     }
 
     /// Whether `traveller`'s vehicle of `kind` is exactly at `origin` — the

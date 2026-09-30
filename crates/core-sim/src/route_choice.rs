@@ -17,6 +17,13 @@
 //! | `overlap` | the largest share of its cost shared with a route found before it (0 to 1) |
 //! | `ln_path_size` | the natural log of the route's path size (Ben-Akiva and Bierlaire): 0 for a route that shares nothing, negative as it shares more |
 //! | `n_links` | how many links |
+//! | `car_min` | the same as `time_min`: a route is driven all the way |
+//! | `bike_min`, `walk_min`, `wait_min`, `ride_min`, `transfers`, `parking_min` | 0: a route has none |
+//!
+//! The last seven are the itineraries' vocabulary (M4, A8;
+//! [`crate::itinerary_choice`]): routes carry them too, so one set of
+//! coefficients describes every choice in a run, and a coefficient on walking
+//! or waiting changes nothing for a car route.
 //!
 //! **Alternative identity** is a hash of the route's links, so it does not
 //! change when other routes are added to or removed from the set, and the
@@ -36,9 +43,9 @@ use crate::equilibration::Equilibration;
 use crate::link_times::LinkTimes;
 use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
-/// The attributes a route carries, in the order a batch holds them.
-pub const ROUTE_ATTRIBUTES: [&str; 6] =
-    ["time_min", "length_km", "detour", "overlap", "ln_path_size", "n_links"];
+/// The attributes a route carries, in the order a batch holds them: the same
+/// names as every itinerary's ([`crate::itinerary_choice::ATTRIBUTES`], A8).
+pub const ROUTE_ATTRIBUTES: [&str; 13] = crate::itinerary_choice::ATTRIBUTES;
 
 /// "No route": a trip with no set, or whose origin and destination are one node.
 pub const NO_ROUTE: u32 = u32::MAX;
@@ -332,7 +339,9 @@ impl<'a> Chooser<'a> {
                         "ln_path_size" => {
                             self.attributes.as_ref().map_or(1.0, |x| x.path_size[r]).ln()
                         }
-                        _ => f64::from(u32::try_from(view.links.len()).unwrap_or(u32::MAX)),
+                        "n_links" => f64::from(u32::try_from(view.links.len()).unwrap_or(u32::MAX)),
+                        "car_min" => seconds[a] / 60.0,
+                        _ => 0.0,
                     };
                 }
                 batch.push_alternative(self.identity[r], &row);

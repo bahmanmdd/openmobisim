@@ -37,9 +37,15 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
-use openmobisim_core_sim::{FlowMotor, LayerSetup, Run as CoreRun, StaticLayers, TransitSetup};
+use openmobisim_core_sim::{
+    FlowMotor, LayerSetup, ParkingDefaults, ParkingSetup, Run as CoreRun, StaticLayers,
+    TransitSetup,
+};
 use openmobisim_core_transit::TransitDefaults;
 
+use crate::parking::{
+    PyParkings, itinerary_choices, parking_bins, parking_places, parking_summary,
+};
 use crate::transit::{PyTransit, transit_calls, transit_summary};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, TripId};
@@ -195,6 +201,30 @@ pub struct PyRunSummary {
     /// Path to the written `transit_calls.parquet`, if the run had a timetable.
     #[pyo3(get)]
     pub transit_calls_path: Option<String>,
+    /// How full each parking was, bin by bin, as columns (M4); `None` without parkings.
+    #[pyo3(get)]
+    pub parking_bins: Option<Py<PyDict>>,
+    /// Where each parking is and what it holds (M4); `None` without parkings.
+    #[pyo3(get)]
+    pub parking_places: Option<Py<PyDict>>,
+    /// What the parkings did, as numbers by name (M4); `None` without parkings.
+    #[pyo3(get)]
+    pub parking_summary: Option<Py<PyDict>>,
+    /// Path to the written `parking_bins.parquet`, if the run had parkings.
+    #[pyo3(get)]
+    pub parking_bins_path: Option<String>,
+    /// Each transit, park-and-ride and bike-and-ride trip's choice, as columns (M4);
+    /// `None` without such trips.
+    #[pyo3(get)]
+    pub itinerary_choices: Option<Py<PyDict>>,
+    /// Itinerary trips whose chosen line could not be followed, and the mean
+    /// difference between expected and realised arrival at the parking of the trips
+    /// back, in seconds (M4).
+    #[pyo3(get)]
+    pub itinerary_replanned: u32,
+    /// See [`Self::itinerary_replanned`].
+    #[pyo3(get)]
+    pub return_mismatch_s: f64,
 }
 
 /// Per-link, per-time-bin results, as numpy columns.
@@ -289,6 +319,14 @@ fn convergence_arrays(
     dict.set_item("gap_flow", floats(|r| r.gap_flow).into_pyarray(py))?;
     dict.set_item("gap_flow_floor", floats(|r| r.gap_flow_floor).into_pyarray(py))?;
     dict.set_item("gap_flow_excess", floats(|r| r.gap_flow_excess).into_pyarray(py))?;
+    for mode in [Mode::Transit, Mode::CarTransit, Mode::BikeTransit] {
+        let i = mode.index();
+        dict.set_item(
+            format!("gap_{}", mode.as_str()),
+            reports.iter().map(|r| r.itinerary_gap[i]).collect::<Vec<_>>().into_pyarray(py),
+        )?;
+    }
+    dict.set_item("hub_mismatch_s", floats(|r| r.hub_mismatch_s).into_pyarray(py))?;
     dict.set_item(
         "routes_added",
         reports.iter().map(|r| r.routes_added).collect::<Vec<_>>().into_pyarray(py),
@@ -327,6 +365,7 @@ fn convergence_arrays(
     equilibration="none", equilibration_options=None,
     route_update="none", route_update_options=None,
     choice_detour_limit=None, route_cache=false, bike_cost="dedicated", transit=None,
+    parkings=None, parking_options=None, transit_options=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -360,6 +399,9 @@ pub fn run_pipeline(
     route_cache: bool,
     bike_cost: &str,
     transit: Option<PyRef<'_, PyTransit>>,
+    parkings: Option<PyRef<'_, PyParkings>>,
+    parking_options: Option<HashMap<String, f64>>,
+    transit_options: Option<HashMap<String, f64>>,
 ) -> PyResult<PyRunSummary> {
     let bike_cost = BikeCost::from_name(bike_cost).ok_or_else(|| {
         PyValueError::new_err(format!(
@@ -375,6 +417,15 @@ pub fn run_pipeline(
     }
     // Refuse a bad method, model or option before doing any work.
     let choice = make_choice_model(choice_model, choice_options)?;
+    let transit_defaults =
+        TransitDefaults::from_options(&to_options(transit_options)).map_err(to_value_error)?;
+    let parking_defaults =
+        ParkingDefaults::from_options(&to_options(parking_options)).map_err(to_value_error)?;
+    if parkings.is_some() && transit.is_none() {
+        return Err(PyValueError::new_err(
+            "parkings serve park-and-ride and bike-and-ride, which need a timetable: give transit= too",
+        ));
+    }
     let strategy = openmobisim_core_sim::equilibration::strategy(
         equilibration,
         &to_options(equilibration_options),
@@ -470,7 +521,11 @@ pub fn run_pipeline(
     };
     // A timetable walks its passengers on the walk layer (S199), so the run needs it.
     let layers = StaticLayers {
-        bike: if uses(Mode::Bike) { Some(setup(StaticLayer::Bike)?) } else { None },
+        bike: if uses(Mode::Bike) || uses(Mode::BikeTransit) {
+            Some(setup(StaticLayer::Bike)?)
+        } else {
+            None
+        },
         walk: if uses(Mode::Walk) || transit.is_some() {
             Some(setup(StaticLayer::Walk)?)
         } else {
@@ -482,16 +537,29 @@ pub fn run_pipeline(
         Some(t) => {
             let walk = layers.walk.as_ref().expect("made above for a timetable");
             let bike = setup(StaticLayer::Bike)?;
-            let built =
-                TransitSetup::new(t.timetable.clone(), walk, Some(&bike), TransitDefaults::SHIPPED)
-                    .with_roads(network.inner.clone());
+            let built = TransitSetup::new(t.timetable.clone(), walk, Some(&bike), transit_defaults)
+                .with_roads(network.inner.clone());
             Some(Arc::new(built))
         }
         None => None,
     };
+    // Parkings as hubs on the layers, with the stops around them (M4).
+    let parking_setup = match (&parkings, &transit_setup) {
+        (Some(p), Some(t)) => {
+            let bike = setup(StaticLayer::Bike)?;
+            let built =
+                ParkingSetup::new(&p.rows, network.inner.clone(), Some(&bike), t, parking_defaults)
+                    .map_err(to_value_error)?;
+            Some(Arc::new(built))
+        }
+        _ => None,
+    };
     run = run.with_layers(Arc::new(layers));
     if let Some(t) = &transit_setup {
         run = run.with_transit(t.clone());
+    }
+    if let Some(p) = &parking_setup {
+        run = run.with_parking(p.clone());
     }
     // What went in, taken before it runs (S168).
     let description = run.description();
@@ -560,6 +628,35 @@ pub fn run_pipeline(
         }
         _ => None,
     };
+    // How full every parking was, bin by bin (M4, D12).
+    let parking_bins_path = match (&result.parking, &parking_setup) {
+        (Some(r), Some(p)) => {
+            let path = dir.join("parking_bins.parquet");
+            openmobisim_io_parquet::write_parking_bins(&path, run_id, p, r, &description)
+                .map_err(to_value_error)?;
+            Some(path.to_string_lossy().into_owned())
+        }
+        _ => None,
+    };
+    let (parking_bins_table, parking_places_table, parking_summary_table) =
+        match (&result.parking, &parking_setup) {
+            (Some(r), Some(p)) => (
+                Some(parking_bins(py, p, r)?.unbind()),
+                Some(parking_places(py, p)?.unbind()),
+                Some(parking_summary(py, p, r)?.unbind()),
+            ),
+            _ => (None, None, None),
+        };
+    let itinerary_table = match &result.itineraries {
+        Some(it) => Some(
+            itinerary_choices(py, parking_setup.as_deref(), it, &trips_used, &travellers)?.unbind(),
+        ),
+        None => None,
+    };
+    let (itinerary_replanned, return_mismatch_s) = result
+        .itineraries
+        .as_ref()
+        .map_or((0, f64::NAN), |it| (it.replanned, it.return_mismatch_s));
     let completion_by_mode = PyDict::new(py);
     for mode in Mode::ALL {
         let m = &result.by_mode[mode.index()];
@@ -585,6 +682,13 @@ pub fn run_pipeline(
         _ => (None, None),
     };
     Ok(PyRunSummary {
+        parking_bins: parking_bins_table,
+        parking_places: parking_places_table,
+        parking_summary: parking_summary_table,
+        parking_bins_path,
+        itinerary_choices: itinerary_table,
+        itinerary_replanned,
+        return_mismatch_s,
         transit_calls_path,
         transit_calls: transit_calls_table,
         transit_summary: transit_summary_table,

@@ -7,6 +7,7 @@
 //! | [`tags`] | Interpreting OSM tags: class, direction, lanes, speed limits |
 //! | [`mod@import`] | Classifying, splitting, contracting, and handing the result to the graph builder |
 //! | [`pbf`] | The `.osm.pbf` adapter — thin, and the only part that knows about a file format |
+//! | [`parkings`] | Park-and-ride car parks and bike parkings, as a parking table (M4) |
 //!
 //! # The shape of an import
 //!
@@ -28,6 +29,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod import;
+pub mod parkings;
 #[cfg(feature = "pbf")]
 #[cfg_attr(docsrs, doc(cfg(feature = "pbf")))]
 pub mod pbf;
@@ -39,6 +41,7 @@ pub use import::{
     Connectivity, DropReason, DroppedLink, ImportOptions, ImportOutput, ImportReport, LayerImport,
     LayerOptions, LayerReport, import, import_detailed,
 };
+pub use parkings::{ParkingReadOptions, ParkingReadReport, read_parkings};
 #[cfg(feature = "pbf")]
 pub use pbf::PbfSource;
 pub use region::{ClippedSource, Region, RegionError};

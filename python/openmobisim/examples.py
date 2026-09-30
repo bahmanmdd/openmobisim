@@ -20,6 +20,7 @@ __all__ = [
     "fixed_car_trips",
     "manhattan_grid",
     "toy_network",
+    "toy_network_parkings",
     "toy_network_transit",
     "trips_random",
 ]
@@ -37,6 +38,10 @@ toy_network = _core.toy_network
 # The toy network's timetable (S199): the tram T1 (stop "N1" to stop "H" at D2
 # and back) and the bus B1 ("W", "M", "D1" on the arterial), every 10 minutes.
 toy_network_transit = _core.toy_network_transit
+
+# The toy network's parkings: hub "H" at D2 with 6 car and 3 bike spaces, where
+# the tram stop is, and car park "P2" at R2 with 20 spaces, 300 m on foot from it.
+toy_network_parkings = _core.toy_network_parkings
 
 
 def fixed_car_trips(

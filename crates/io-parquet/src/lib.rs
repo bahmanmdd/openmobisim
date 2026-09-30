@@ -8,6 +8,7 @@
 //! | [`events`] | Sampled per-trip event rows, from [`openmobisim_core_sim::RunResult::events`] |
 //! | [`link_bins`] | Per-link, per-time-bin results (S168), from [`openmobisim_core_sim::RunResult::link_bins`] |
 //! | [`transit_calls`] | Every call of the timetable with its times and passengers (S199), from [`openmobisim_core_sim::RunResult::transit`] |
+//! | [`parking_bins`] | Every parking's occupancy bin by bin (M4), from [`openmobisim_core_sim::RunResult::parking`] |
 //! | [`manifest`] | [`manifest::Manifest`] — the file that makes a run reproducible |
 //!
 //! # What Foundations §6 asks for that this does not write yet
@@ -44,6 +45,7 @@ mod io;
 pub mod kpis;
 pub mod link_bins;
 pub mod manifest;
+pub mod parking_bins;
 pub mod transit_calls;
 
 pub use diagnostics::write_diagnostics;
@@ -51,6 +53,7 @@ pub use events::write_events;
 pub use kpis::write_kpis;
 pub use link_bins::{write_layer_link_bins, write_link_bins};
 pub use manifest::{Manifest, write_manifest};
+pub use parking_bins::write_parking_bins;
 pub use transit_calls::write_transit_calls;
 
 /// Something that went wrong writing an output artifact.

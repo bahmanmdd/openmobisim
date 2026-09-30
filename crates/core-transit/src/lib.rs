@@ -29,7 +29,7 @@ pub mod raptor;
 pub mod timetable;
 
 pub use date::{ServiceDate, Weekday};
-pub use defaults::TransitDefaults;
+pub use defaults::{TransitDefaults, TransitOptionError};
 pub use kind::ServiceKind;
 pub use raptor::{Footpaths, Journey, JourneyLeg, Raptor, RaptorData};
 pub use timetable::{

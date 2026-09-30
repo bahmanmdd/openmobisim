@@ -101,6 +101,8 @@ fn sample_result() -> RunResult {
         bike_link_bins: None,
         walk_link_bins: None,
         transit: None,
+        parking: None,
+        itineraries: None,
     }
 }
 
@@ -514,6 +516,8 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
         gap_excess: if iteration == 0 { f64::NAN } else { gap / 2.0 - gap / 4.0 },
         incomplete_share: if iteration == 0 { f64::NAN } else { 0.0 },
         gap_network_excess: if iteration == 2 { 0.03 } else { f64::NAN },
+        itinerary_gap: [f64::NAN; openmobisim_core_demand::Mode::COUNT],
+        hub_mismatch_s: f64::NAN,
     };
     result.iterations = vec![report(0, 0.3), report(1, 0.1), report(2, 0.05)];
     let path = temp_path("kpis_iterated.parquet");

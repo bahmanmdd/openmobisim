@@ -72,6 +72,38 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
                 }
             }
         }
+        // Parking (M4): car parkings under park-and-ride, bike parkings under
+        // bike-and-ride; and how the itineraries went.
+        if let Some(p) = &result.parking {
+            for (mode, totals) in
+                [(Mode::CarTransit, &p.by_kind[0]), (Mode::BikeTransit, &p.by_kind[1])]
+            {
+                if result.by_mode[mode.index()].completion.total_trips == 0 {
+                    continue;
+                }
+                let name = mode.as_str();
+                rows.push((iteration, name, "parking_arrivals", totals.arrivals));
+                rows.push((iteration, name, "parking_overflow_arrivals", totals.overflow_arrivals));
+                if totals.arrivals > 0.0 {
+                    rows.push((
+                        iteration,
+                        name,
+                        "parking_full_share",
+                        totals.overflow_arrivals / totals.arrivals,
+                    ));
+                }
+                if totals.mismatch_s.is_finite() {
+                    rows.push((iteration, name, "hub_mismatch_s", totals.mismatch_s));
+                }
+                rows.push((iteration, name, "vehicles_left_at_parkings", totals.left_at_end));
+            }
+        }
+        if let Some(it) = &result.itineraries {
+            rows.push((iteration, "all", "itinerary_replanned_trips", f64::from(it.replanned)));
+            if it.return_mismatch_s.is_finite() {
+                rows.push((iteration, "all", "return_mismatch_s", it.return_mismatch_s));
+            }
+        }
         for mode in Mode::ALL {
             let m = &result.by_mode[mode.index()];
             if m.completion.total_trips == 0 {
@@ -122,6 +154,17 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
             if value.is_finite() {
                 rows.push((i, all, name, value));
             }
+        }
+        // The itinerary trips' gap, under their modes (M4); the car gap above is the car
+        // routes'. And the hub expectation mismatch of the loading.
+        for mode in [Mode::Transit, Mode::CarTransit, Mode::BikeTransit] {
+            let g = r.itinerary_gap[mode.index()];
+            if g.is_finite() {
+                rows.push((i, mode.as_str(), "gap", g));
+            }
+        }
+        if r.hub_mismatch_s.is_finite() {
+            rows.push((i, all, "hub_mismatch_s", r.hub_mismatch_s));
         }
         if i == last {
             rows.push((i, all, "trips", f64::from(c.total_trips)));

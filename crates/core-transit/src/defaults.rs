@@ -76,8 +76,123 @@ impl TransitDefaults {
     };
 }
 
+/// An option [`TransitDefaults::from_options`] refused.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TransitOptionError {
+    /// The option.
+    pub option: String,
+    /// What is wrong with it.
+    pub reason: String,
+}
+
+impl std::fmt::Display for TransitOptionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "transit option {:?}: {}", self.option, self.reason)
+    }
+}
+
+impl std::error::Error for TransitOptionError {}
+
+impl TransitDefaults {
+    /// The names of the options, as [`Self::from_options`] takes them: the fields'.
+    pub const NAMES: [&'static str; 10] = [
+        "board_slack_s",
+        "max_rides",
+        "access_walk_max_s",
+        "transfer_walk_max_s",
+        "stop_walk_snap_m",
+        "stop_transfer_s",
+        "bus_dwell_s",
+        "bus_pcu",
+        "bus_plausibility_ratio",
+        "bus_stop_snap_m",
+    ];
+
+    /// The shipped values with `options` in place of their namesakes (S202: every
+    /// parameter overridable by name, for calibration).
+    ///
+    /// # Errors
+    ///
+    /// [`TransitOptionError`] for a name that is not one of [`Self::NAMES`], or a
+    /// value that is not a finite non-negative number (`max_rides` a whole number
+    /// of at least 1, `board_slack_s` a whole number).
+    pub fn from_options(
+        options: &std::collections::BTreeMap<String, f64>,
+    ) -> Result<Self, TransitOptionError> {
+        let mut d = Self::SHIPPED;
+        for (name, &v) in options {
+            let bad = |reason: &str| TransitOptionError {
+                option: name.clone(),
+                reason: reason.to_string(),
+            };
+            if !(v.is_finite() && v >= 0.0) {
+                return Err(bad(&format!("must be a finite number of at least 0, got {v}")));
+            }
+            let whole = || {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "checked"
+                )]
+                let n = v as u32;
+                #[allow(clippy::float_cmp, reason = "a whole number is exactly itself")]
+                let exact = f64::from(n) == v;
+                exact.then_some(n)
+            };
+            match name.as_str() {
+                "board_slack_s" => {
+                    d.board_slack_s =
+                        whole().ok_or_else(|| bad("must be a whole number of seconds"))?
+                }
+                "max_rides" => {
+                    d.max_rides = whole()
+                        .filter(|&n| n >= 1)
+                        .ok_or_else(|| bad("must be a whole number of at least 1"))?;
+                }
+                "access_walk_max_s" => d.access_walk_max_s = v,
+                "transfer_walk_max_s" => d.transfer_walk_max_s = v,
+                "stop_walk_snap_m" => d.stop_walk_snap_m = v,
+                "stop_transfer_s" => d.stop_transfer_s = v,
+                "bus_dwell_s" => d.bus_dwell_s = v,
+                "bus_pcu" => d.bus_pcu = v,
+                "bus_plausibility_ratio" => d.bus_plausibility_ratio = v,
+                "bus_stop_snap_m" => d.bus_stop_snap_m = v,
+                _ => {
+                    return Err(bad(&format!(
+                        "no such option; the options are: {}",
+                        Self::NAMES.join(", ")
+                    )));
+                }
+            }
+        }
+        Ok(d)
+    }
+}
+
 impl Default for TransitDefaults {
     fn default() -> Self {
         Self::SHIPPED
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn options_replace_their_namesakes_and_a_wrong_name_or_value_is_refused() {
+        let o = |pairs: &[(&str, f64)]| {
+            pairs.iter().map(|&(k, v)| (k.to_string(), v)).collect::<BTreeMap<_, _>>()
+        };
+        let d = TransitDefaults::from_options(&o(&[("bus_dwell_s", 30.0), ("max_rides", 3.0)]))
+            .unwrap();
+        assert_eq!((d.bus_dwell_s, d.max_rides), (30.0, 3));
+        assert_eq!(d.board_slack_s, TransitDefaults::SHIPPED.board_slack_s);
+        let e = TransitDefaults::from_options(&o(&[("dwell", 30.0)])).unwrap_err().to_string();
+        assert!(e.contains("dwell") && e.contains("bus_dwell_s"), "{e}");
+        assert!(TransitDefaults::from_options(&o(&[("max_rides", 0.0)])).is_err());
+        assert!(TransitDefaults::from_options(&o(&[("board_slack_s", 1.5)])).is_err());
+        assert!(TransitDefaults::from_options(&o(&[("bus_pcu", -1.0)])).is_err());
     }
 }

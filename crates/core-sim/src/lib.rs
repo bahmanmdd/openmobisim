@@ -11,6 +11,8 @@
 //! | [`route_choice`] | [`route_choice::RouteChoices`] — which route each trip takes, from its pair's route set and a choice model (S169) |
 //! | [`identity`] | [`identity::RunDescription`] — a run's master seed and fingerprint, made before it executes (S168) |
 //! | [`transit`] | [`transit::TransitSetup`] — a timetable linked to the walk and bike layers: stop hubs, walks, RAPTOR (S199) |
+//! | [`parking`] | [`parking::ParkingSetup`] — parkings as hubs on the layers, and how full they are over the day (M4) |
+//! | [`itinerary_choice`] | Itinerary choice: the competitive itineraries of transit, park-and-ride and bike-and-ride trips, chosen by the choice model and executed on the loading's times (M4) |
 //!
 //! # What this crate is, and is not, yet
 //!
@@ -35,8 +37,10 @@ pub mod equilibration;
 pub mod events;
 pub mod identity;
 pub mod itinerary;
+pub mod itinerary_choice;
 pub mod layers;
 pub mod link_times;
+pub mod parking;
 pub mod route_cache;
 pub mod route_choice;
 pub mod route_update;
@@ -47,8 +51,12 @@ pub use equilibration::{Equilibration, IterationReport, Msa, NoEquilibration};
 pub use events::{EventRow, EventType};
 pub use identity::RunDescription;
 pub use itinerary::{Itinerary, LegRoute, Networks};
+pub use itinerary_choice::{ATTRIBUTES, ItineraryResult, NO_PARKING};
 pub use layers::{LayerSetup, StaticLayers};
 pub use link_times::{LinkTimes, relative_time_change};
+pub use parking::{
+    ParkingBins, ParkingDefaults, ParkingError, ParkingResult, ParkingSetup, ParkingSetupReport,
+};
 pub use route_cache::RouteSetCache;
 pub use route_choice::{NO_ROUTE, ROUTE_ATTRIBUTES, RouteChoices};
 pub use route_update::{BestResponse, NoRouteUpdate, RouteUpdate};
