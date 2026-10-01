@@ -121,12 +121,17 @@ pub struct IterationReport {
     /// without itinerary trips): the same relative gap as [`Self::gap`] for the
     /// transit, park-and-ride and bike-and-ride trips, each alternative kept against
     /// the least door-to-door time in its choice set, at the costs this loading
-    /// produced.
+    /// produced. With mode choice (M5) also the car, bike and walk trips that chose
+    /// their mode, each against the best of the mode it took.
     pub itinerary_gap: [f64; Mode::COUNT],
     /// **The hub expectation mismatch** (design §11.2; M4): per traveller who parked,
     /// the mean absolute difference between the parking time expected at the choice
     /// and the one paid, in seconds; `NaN` without parkings.
     pub hub_mismatch_s: f64,
+    /// **Mode choice** (M5): of the trips choosing their mode that had chosen before, the
+    /// share (by traveller weight) whose mode changed on the way to this iteration's
+    /// loading; `NaN` at the first, or without mode choice.
+    pub mode_changed_share: f64,
 }
 
 /// A disequilibrium below this is good (the user, S171: "perfect"; S178: 5% on the disequilibrium).
@@ -191,6 +196,7 @@ impl PartialEq for IterationReport {
                 r.gap_flow_floor,
                 r.gap_flow_excess,
                 r.hub_mismatch_s,
+                r.mode_changed_share,
             ]
             .map(f64::to_bits)
         };
@@ -236,6 +242,7 @@ impl IterationReport {
             route_searches: 0,
             itinerary_gap: [f64::NAN; Mode::COUNT],
             hub_mismatch_s: f64::NAN,
+            mode_changed_share: f64::NAN,
         }
     }
 }

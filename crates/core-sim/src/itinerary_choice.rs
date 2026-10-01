@@ -29,7 +29,9 @@
 //! vehicle), `ln_path_size` (over the itinerary by time share: the vehicle leg
 //! and each ride are the elements alternatives can share), and, as for routes,
 //! `length_km` (the vehicle leg's), `detour`, `overlap` (0) and `n_links` (the
-//! vehicle leg's).
+//! vehicle leg's); and for mode choice (M5) `nest` (the mode's index) and the 0/1
+//! `mode_walk`, `mode_bike`, `mode_car`, `mode_transit`, `mode_car_transit` and
+//! `mode_bike_transit`.
 //!
 //! **Identity** is a hash of the parking, the vehicle leg's links and the rides
 //! as (line, boarding stop, alighting stop), **not the runs**, so a bus a
@@ -55,22 +57,25 @@ use openmobisim_core_choice::{ChoiceBatch, ChoiceError, ChoiceModel};
 use openmobisim_core_demand::{Mode, Travellers, Trips};
 use openmobisim_core_graph::geometry::{LonLat, ground_distance_metres};
 use openmobisim_core_graph::hubs::ParkingKind;
+use openmobisim_core_graph::layers::StaticLayer;
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_routes::{NodeSnapper, Reach, Search, SearchContext};
+use openmobisim_core_routes::{
+    NodeSnapper, Reach, RouteAttributes, RouteKey, RouteSets, Search, SearchContext,
+};
 use openmobisim_core_transit::{Journey, JourneyLeg, Raptor, RaptorData};
 use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, LinkId, NULL_ID, NodeId, TripId};
 use openmobisim_core_types::rng::StreamRng;
 
 use crate::equilibration::Equilibration;
-use crate::layers::LayerSetup;
+use crate::layers::{LayerSetup, StaticLayers, StaticRoutes};
 use crate::link_times::LinkTimes;
 use crate::parking::{ExpectedAvailability, ParkingSetup};
 use crate::transit::{TransitSetup, par_map};
 
 /// The attributes every alternative carries, routes and itineraries alike, in
 /// the order a batch holds them (A8).
-pub const ATTRIBUTES: [&str; 13] = [
+pub const ATTRIBUTES: [&str; 20] = [
     "time_min",
     "length_km",
     "detour",
@@ -84,7 +89,26 @@ pub const ATTRIBUTES: [&str; 13] = [
     "ride_min",
     "transfers",
     "parking_min",
+    "nest",
+    "mode_walk",
+    "mode_bike",
+    "mode_car",
+    "mode_transit",
+    "mode_car_transit",
+    "mode_bike_transit",
 ];
+
+/// The value of a mode attribute for an alternative of `mode`: `nest` is the mode's index
+/// ([`Mode::index`], the nest of a nested logit), `mode_<name>` is 1 for that mode's
+/// alternatives and 0 for the rest (so `beta_mode_bike` is the bike's constant, M5).
+pub(crate) fn mode_attribute(name: &str, mode: Mode) -> Option<f64> {
+    if name == "nest" {
+        #[allow(clippy::cast_precision_loss, reason = "a small index")]
+        return Some(mode.index() as f64);
+    }
+    let rest = name.strip_prefix("mode_")?;
+    Some(if rest == mode.as_str() { 1.0 } else { 0.0 })
+}
 
 /// No parking: a plain transit alternative.
 pub const NO_PARKING: u32 = u32::MAX;
@@ -109,6 +133,9 @@ pub enum Shape {
     Out,
     /// Transit first, then the vehicle parked at this parking.
     Back(u32),
+    /// One leg on one layer (M5, mode choice): a car route, a bike route or a walk; the
+    /// alternative's [`Alternative::mode`] says which.
+    Direct,
 }
 
 /// A ride of a chosen journey: the line and the stops.
@@ -127,6 +154,12 @@ pub struct PlanRide {
 pub struct Alternative {
     /// Its shape.
     pub shape: Shape,
+    /// The mode it is: [`Mode::Transit`], [`Mode::CarTransit`] or [`Mode::BikeTransit`]
+    /// for an itinerary, [`Mode::Car`], [`Mode::Bike`] or [`Mode::Walk`] for a direct leg.
+    pub mode: Mode,
+    /// The path size's log fixed from elsewhere (a car route's, from its route set), or
+    /// `None` to work it out over the alternatives.
+    pub fixed_ln_path_size: Option<f64>,
     /// The parking used ([`NO_PARKING`] for plain transit).
     pub parking: u32,
     /// The vehicle leg's links (empty for plain transit): to the parking out, from
@@ -183,6 +216,7 @@ impl Alternative {
             Shape::Transit => h.write_u32(0),
             Shape::Out => h.write_u32(1),
             Shape::Back(_) => h.write_u32(2),
+            Shape::Direct => h.write_u32(3 + u32::try_from(self.mode.index()).unwrap_or(0)),
         }
         h.write_u32(self.parking);
         for l in &self.vehicle_links {
@@ -211,27 +245,91 @@ pub(crate) struct TripNodes {
     pub bike_d: NodeId,
 }
 
+/// What a trip may choose from (M5): each mode offered to it where it is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Offer {
+    /// Whether the trip chooses its mode (its mode was not stated).
+    pub choosing: bool,
+    pub walk: bool,
+    pub bike: bool,
+    pub car: bool,
+    pub transit: bool,
+    /// Park-and-ride out, or back to the car parked there.
+    pub car_transit: Option<Shape>,
+    /// Bike-and-ride, likewise.
+    pub bike_transit: Option<Shape>,
+}
+
+impl Offer {
+    fn is_empty(&self) -> bool {
+        Self { choosing: false, ..*self } == Self::default()
+    }
+
+    /// Whether a vehicle waits at a parking to be fetched.
+    fn fetches(&self) -> bool {
+        matches!(self.car_transit, Some(Shape::Back(_)))
+            || matches!(self.bike_transit, Some(Shape::Back(_)))
+    }
+
+    /// This offer with only `mode` left in it.
+    fn only(&self, mode: Mode) -> Self {
+        let mut out = Self { choosing: self.choosing, ..Self::default() };
+        match mode {
+            Mode::Walk => out.walk = self.walk,
+            Mode::Bike => out.bike = self.bike,
+            Mode::Car => out.car = self.car,
+            Mode::Transit => out.transit = self.transit,
+            Mode::CarTransit => out.car_transit = self.car_transit,
+            Mode::BikeTransit => out.bike_transit = self.bike_transit,
+        }
+        out
+    }
+}
+
+/// A trip's route on a static layer (bike or walk), for mode choice.
+#[derive(Clone, Debug)]
+pub(crate) struct StaticLeg {
+    pub links: Vec<LinkId>,
+    pub seconds: f64,
+    pub metres: f64,
+}
+
+/// The car's route sets, for the car alternatives of mode choice.
+pub(crate) struct CarRoutes<'a> {
+    pub sets: &'a RouteSets,
+    pub attributes: &'a RouteAttributes,
+}
+
 /// What an itinerary choice set is made on: see the [module docs](self).
 pub(crate) struct Planner<'a> {
-    pub transit: &'a TransitSetup,
+    /// The timetable and the RAPTOR data to plan on; `None` in a run without a timetable
+    /// (mode choice among walk, bike and car).
+    pub transit: Option<(&'a TransitSetup, &'a RaptorData)>,
     pub parking: Option<&'a ParkingSetup>,
     pub car: &'a SearchContext<'a>,
     pub bike: Option<(&'a LayerSetup, &'a SearchContext<'a>)>,
-    pub raptor: &'a RaptorData,
     pub times: &'a LinkTimes,
     pub availability: Option<&'a ExpectedAvailability>,
     pub detour_limit: f64,
+    /// The car's route sets, when the run offers mode choice.
+    pub car_routes: Option<CarRoutes<'a>>,
 }
 
 /// One thread's scratch for planning.
 pub(crate) struct Scratch<'a> {
-    out: Reach<'a>,
-    into: Reach<'a>,
-    raptor: Raptor<'a>,
+    /// Walks to and from stops, and RAPTOR; `None` without a timetable.
+    transit: Option<TransitScratch<'a>>,
     /// The car and bike searches, made on first use: a plain transit trip needs
     /// neither, and each holds a few bytes per link of its whole network.
     car: Option<Search<'a>>,
     bike: Option<Search<'a>>,
+}
+
+/// The transit part of a [`Scratch`].
+struct TransitScratch<'a> {
+    out: Reach<'a>,
+    into: Reach<'a>,
+    raptor: Raptor<'a>,
 }
 
 impl<'a> Scratch<'a> {
@@ -246,51 +344,117 @@ impl<'a> Scratch<'a> {
 
 impl<'a> Planner<'a> {
     pub(crate) fn scratch(&self) -> Scratch<'a> {
-        let walk = self.transit.walk().network();
-        let seconds = self.transit.walk_link_seconds();
         Scratch {
-            out: Reach::new(walk, seconds),
-            into: Reach::new(walk, seconds),
-            raptor: Raptor::new(self.raptor, self.transit.defaults().max_rides as usize),
+            transit: self.transit.map(|(transit, data)| {
+                let walk = transit.walk().network();
+                let seconds = transit.walk_link_seconds();
+                TransitScratch {
+                    out: Reach::new(walk, seconds),
+                    into: Reach::new(walk, seconds),
+                    raptor: Raptor::new(data, transit.defaults().max_rides as usize),
+                }
+            }),
             car: None,
             bike: None,
         }
     }
 
-    /// Every alternative of a trip of `shape` (for `kind`'s vehicle), finalised:
-    /// deduplicated, within the choice-set limit, path sizes set.
+    /// Every alternative `offer` holds for a trip, finalised: deduplicated, within the
+    /// choice-set limit, at most `K` parkings, path sizes set. `legs` are its bike and walk
+    /// routes and `car_key` its car pair, for mode choice.
+    ///
+    /// **A vehicle parked at a parking is fetched** when that can be done: the trip is then
+    /// offered only the ways back to it (M4's rule, kept for mode choice: nothing yet weighs
+    /// leaving a car at a car park overnight, design §23.4). Only if there is none are the
+    /// other modes planned.
+    #[allow(clippy::too_many_arguments, reason = "a trip's facts and what it is offered")]
     pub(crate) fn plan(
         &self,
         s: &mut Scratch<'a>,
         n: &TripNodes,
         departure: u32,
+        origin: LonLat,
         destination: LonLat,
-        shape: Shape,
-        kind: ParkingKind,
+        offer: Offer,
+        legs: (Option<&StaticLeg>, Option<&StaticLeg>),
+        car_key: Option<RouteKey>,
     ) -> Vec<Alternative> {
-        let (alts, cap) = match shape {
-            Shape::Transit => (self.plan_transit(s, n, departure), usize::MAX),
-            Shape::Out => {
-                let k = self.parking.map_or(1, |p| p.defaults().candidate_count());
-                (self.plan_out(s, n, departure, destination, kind), k)
+        let k = self.parking.map_or(1, |p| p.defaults().candidate_count());
+        let vehicles =
+            [(offer.car_transit, ParkingKind::Car), (offer.bike_transit, ParkingKind::Bike)];
+        let mut alts = Vec::new();
+        for (shape, kind) in vehicles {
+            if let Some(Shape::Back(p)) = shape {
+                alts.extend(self.plan_back(s, n, departure, p, kind));
             }
-            Shape::Back(p) => (self.plan_back(s, n, departure, p, kind), usize::MAX),
-        };
-        finalise(alts, self.detour_limit, cap)
+        }
+        if !alts.is_empty() {
+            return finalise(alts, self.detour_limit, k);
+        }
+        let (bike_leg, walk_leg) = legs;
+        if let (true, Some(leg)) = (offer.walk, walk_leg) {
+            alts.push(direct(Mode::Walk, leg));
+        }
+        if let (true, Some(leg)) = (offer.bike, bike_leg) {
+            alts.push(direct(Mode::Bike, leg));
+        }
+        if let (true, Some(key), Some(routes)) = (offer.car, car_key, &self.car_routes) {
+            alts.extend(self.plan_car(routes, key, departure));
+        }
+        if offer.transit {
+            alts.extend(self.plan_transit(s, n, departure));
+        }
+        // Out only for a trip long enough when choosing (A18): nobody drives to a car park for
+        // a 1 km trip. A trip given the mode is offered it at any length.
+        let far_enough = !offer.choosing
+            || self.parking.is_none_or(|p| {
+                ground_distance_metres(origin, destination) >= p.defaults().pr_min_km * 1000.0
+            });
+        for (shape, kind) in vehicles {
+            if let (Some(Shape::Out), true) = (shape, far_enough) {
+                alts.extend(self.plan_out(s, n, departure, destination, kind));
+            }
+        }
+        finalise(alts, self.detour_limit, k)
+    }
+
+    /// The car alternatives of a mode-choice trip: its pair's routes, costed on the
+    /// expected times, with their route set's path sizes.
+    fn plan_car(&self, routes: &CarRoutes<'_>, key: RouteKey, departure: u32) -> Vec<Alternative> {
+        let Some(k) = routes.sets.key_index(key) else { return Vec::new() };
+        routes
+            .sets
+            .route_range(k)
+            .map(|r| {
+                let view = routes.sets.route(r);
+                let seconds = self.times.route_seconds(view.links, f64::from(departure));
+                let mut a = blank(Mode::Car, Shape::Direct);
+                a.vehicle_links = view.links.iter().map(|&l| LinkId::new(l)).collect();
+                a.vehicle_s = seconds;
+                a.vehicle_m = routes.attributes.length_m[r];
+                a.total_s = seconds;
+                a.fixed_ln_path_size = Some(routes.attributes.path_size[r].max(1e-9).ln());
+                a
+            })
+            .collect()
     }
 
     fn plan_transit(&self, s: &mut Scratch<'a>, n: &TripNodes, departure: u32) -> Vec<Alternative> {
+        let (Some((transit, _)), Some(ts)) = (self.transit, s.transit.as_mut()) else {
+            return Vec::new();
+        };
         if n.walk_o.is_null() || n.walk_d.is_null() {
             return Vec::new();
         }
-        let access = self.transit.access(&mut s.out, n.walk_o, departure);
-        let egress = self.transit.egress(&mut s.into, n.walk_d);
+        let access = transit.access(&mut ts.out, n.walk_o, departure);
+        let egress = transit.egress(&mut ts.into, n.walk_d);
         if access.is_empty() || egress.is_empty() {
             return Vec::new();
         }
-        s.raptor
+        ts.raptor
             .pareto(&access, &egress)
             .iter()
+            .filter(|j| !is_loop(j))
             .map(|j| {
                 let mut a = self.transit_part(j, departure);
                 a.shape = Shape::Transit;
@@ -409,14 +573,17 @@ impl<'a> Planner<'a> {
                 tried.push(c);
             }
         }
+        let (Some((transit, _)), Some(ts)) = (self.transit, s.transit.as_mut()) else {
+            return Vec::new();
+        };
         if tried.is_empty() || n.walk_d.is_null() {
             return Vec::new();
         }
-        let egress = self.transit.egress(&mut s.into, n.walk_d);
+        let egress = transit.egress(&mut ts.into, n.walk_d);
         if egress.is_empty() {
             return Vec::new();
         }
-        let transfer = self.transit.transfer_s();
+        let transfer = transit.transfer_s();
         let mut alts = Vec::new();
         for c in tried {
             let c = &cands[c];
@@ -431,9 +598,10 @@ impl<'a> Planner<'a> {
                 .iter()
                 .map(|&(stop, w)| (stop, parked.saturating_add(w).saturating_add(transfer)))
                 .collect();
-            for j in s.raptor.pareto(&access, &egress) {
+            for j in ts.raptor.pareto(&access, &egress).into_iter().filter(|j| !is_loop(j)) {
                 let mut a = self.transit_part(&j, parked);
                 a.shape = Shape::Out;
+                a.mode = transit_mode(kind);
                 a.parking = c.parking;
                 a.vehicle_links.clone_from(&c.links);
                 a.vehicle_s = c.vehicle_s;
@@ -456,11 +624,14 @@ impl<'a> Planner<'a> {
         kind: ParkingKind,
     ) -> Vec<Alternative> {
         let Some(parking) = self.parking else { return Vec::new() };
+        let (Some((transit, _)), Some(ts)) = (self.transit, s.transit.as_mut()) else {
+            return Vec::new();
+        };
         if n.walk_o.is_null() {
             return Vec::new();
         }
-        let access = self.transit.access(&mut s.out, n.walk_o, departure);
-        let transfer = self.transit.transfer_s();
+        let access = transit.access(&mut ts.out, n.walk_o, departure);
+        let transfer = transit.transfer_s();
         let egress: Vec<(NodeId, u32)> =
             parking.stops(p).iter().map(|&(stop, w)| (stop, w.saturating_add(transfer))).collect();
         if access.is_empty() || egress.is_empty() {
@@ -469,8 +640,10 @@ impl<'a> Planner<'a> {
         let fetch = parking.defaults().fetch_seconds(kind);
         let dep = f64::from(departure);
         let from = parking.node(p);
+        let journeys: Vec<Journey> =
+            ts.raptor.pareto(&access, &egress).into_iter().filter(|j| !is_loop(j)).collect();
         let mut alts = Vec::new();
-        for j in s.raptor.pareto(&access, &egress) {
+        for j in journeys {
             let leave = f64::from(j.arrival) + fetch;
             let leg = match kind {
                 ParkingKind::Car => {
@@ -503,6 +676,7 @@ impl<'a> Planner<'a> {
             let Some((t, links, metres)) = leg else { continue };
             let mut a = self.transit_part(&j, departure);
             a.shape = Shape::Back(p);
+            a.mode = transit_mode(kind);
             a.parking = p;
             a.vehicle_links = links;
             a.vehicle_s = t;
@@ -518,29 +692,9 @@ impl<'a> Planner<'a> {
     /// The transit part of an alternative from a RAPTOR journey the traveller
     /// starts walking into at `start`.
     fn transit_part(&self, j: &Journey, start: u32) -> Alternative {
-        let tt = self.transit.timetable();
-        let mut a = Alternative {
-            shape: Shape::Transit,
-            parking: NO_PARKING,
-            vehicle_links: Vec::new(),
-            vehicle_s: 0.0,
-            parking_s: 0.0,
-            first_stop: NodeId::from_raw(NULL_ID),
-            access_walk_s: 0,
-            rides: Vec::new(),
-            ride_seconds: Vec::new(),
-            transfer_walks: Vec::new(),
-            last_stop: NodeId::from_raw(NULL_ID),
-            egress_walk_s: 0,
-            walk_s: 0.0,
-            wait_s: 0.0,
-            ride_s: 0.0,
-            total_s: 0.0,
-            vehicle_departure: 0.0,
-            vehicle_m: 0.0,
-            identity: 0,
-            ln_path_size: 0.0,
-        };
+        let (transit, _) = self.transit.expect("a journey comes from a timetable");
+        let tt = transit.timetable();
+        let mut a = blank(Mode::Transit, Shape::Transit);
         let mut clock = start;
         let mut walk_before = 0u32;
         for leg in &j.legs {
@@ -584,9 +738,77 @@ impl<'a> Planner<'a> {
     }
 }
 
+/// Whether a journey comes back to the stop it first boarded at: RAPTOR has no journey
+/// without a ride, so where the start and the end share a stop it can offer a ride out and
+/// back, which nobody takes (M5, found on the toy: `W → N1`, where the trip ends at a stop).
+fn is_loop(j: &Journey) -> bool {
+    let mut rides = j.legs.iter().filter_map(|l| match *l {
+        JourneyLeg::Ride { board_stop, alight_stop, .. } => Some((board_stop, alight_stop)),
+        _ => None,
+    });
+    let first = rides.next();
+    let last = rides.next_back().or(first);
+    matches!((first, last), (Some((board, _)), Some((_, alight))) if board == alight)
+}
+
+/// An alternative of `mode` and `shape` with nothing in it yet.
+fn blank(mode: Mode, shape: Shape) -> Alternative {
+    Alternative {
+        shape,
+        mode,
+        fixed_ln_path_size: None,
+        parking: NO_PARKING,
+        vehicle_links: Vec::new(),
+        vehicle_s: 0.0,
+        parking_s: 0.0,
+        first_stop: NodeId::from_raw(NULL_ID),
+        access_walk_s: 0,
+        rides: Vec::new(),
+        ride_seconds: Vec::new(),
+        transfer_walks: Vec::new(),
+        last_stop: NodeId::from_raw(NULL_ID),
+        egress_walk_s: 0,
+        walk_s: 0.0,
+        wait_s: 0.0,
+        ride_s: 0.0,
+        total_s: 0.0,
+        vehicle_departure: 0.0,
+        vehicle_m: 0.0,
+        identity: 0,
+        ln_path_size: 0.0,
+    }
+}
+
+/// A bike route or a walk as an alternative (M5).
+fn direct(mode: Mode, leg: &StaticLeg) -> Alternative {
+    let mut a = blank(mode, Shape::Direct);
+    a.vehicle_links.clone_from(&leg.links);
+    a.vehicle_m = leg.metres;
+    a.total_s = leg.seconds;
+    if mode == Mode::Walk {
+        a.walk_s = leg.seconds;
+    } else {
+        a.vehicle_s = leg.seconds;
+    }
+    a
+}
+
+/// The itinerary mode of a vehicle kind.
+fn transit_mode(kind: ParkingKind) -> Mode {
+    match kind {
+        ParkingKind::Car => Mode::CarTransit,
+        ParkingKind::Bike => Mode::BikeTransit,
+    }
+}
+
 /// Deduplicate by identity (the fastest first, fewest vehicles on a tie), keep
-/// what is within `detour_limit` of the best (0: all), keep the alternatives of
-/// at most `parkings` parkings, and set the identities and path sizes.
+/// what is within `detour_limit` of the best **of its mode** (0: all), keep the
+/// alternatives of at most `parkings` parkings per mode, and set the identities and
+/// path sizes.
+///
+/// The limits are per mode (M5) because the modes' times are not alike: a walk is always
+/// slower than a drive, and whether it is a real alternative is for the model to weigh
+/// (with its mode constants), not for a time limit.
 fn finalise(mut alts: Vec<Alternative>, detour_limit: f64, parkings: usize) -> Vec<Alternative> {
     for a in &mut alts {
         a.identity = a.identity_hash();
@@ -607,27 +829,26 @@ fn finalise(mut alts: Vec<Alternative>, detour_limit: f64, parkings: usize) -> V
             true
         }
     });
-    if let Some(best) = alts.first().map(|a| a.total_s) {
-        if detour_limit > 0.0 {
-            let reach = best * (1.0 + detour_limit);
-            alts.retain(|a| a.total_s <= reach);
+    if detour_limit > 0.0 {
+        let best = best_by_mode(&alts);
+        alts.retain(|a| a.total_s <= best[a.mode.index()] * (1.0 + detour_limit));
+    }
+    // At most `parkings` parkings per mode; alternatives without one (transit, a direct leg)
+    // are not counted against it.
+    let mut kept: Vec<(Mode, u32)> = Vec::new();
+    alts.retain(|a| {
+        if a.parking == NO_PARKING || kept.contains(&(a.mode, a.parking)) {
+            true
+        } else if kept.iter().filter(|k| k.0 == a.mode).count() < parkings {
+            kept.push((a.mode, a.parking));
+            true
+        } else {
+            false
         }
-    }
-    if parkings < usize::MAX {
-        let mut kept: Vec<u32> = Vec::new();
-        alts.retain(|a| {
-            if kept.contains(&a.parking) {
-                true
-            } else if kept.len() < parkings {
-                kept.push(a.parking);
-                true
-            } else {
-                false
-            }
-        });
-    }
+    });
     // Path size by time share: the vehicle leg and each ride are elements
-    // alternatives can share; walking, waiting and parking are each its own.
+    // alternatives can share; walking, waiting and parking are each its own. A vehicle
+    // leg is keyed by its mode too: the layers number their links each on their own.
     type Element = (u8, u32, u32, u32);
     let elements = |a: &Alternative| -> Vec<(Element, f64)> {
         let mut e = Vec::new();
@@ -638,7 +859,8 @@ fn finalise(mut alts: Vec<Alternative>, detour_limit: f64, parkings: usize) -> V
             }
             #[allow(clippy::cast_possible_truncation, reason = "a hash")]
             let hash = h.finish() as u32;
-            e.push(((0, a.parking, hash, 0), a.vehicle_s));
+            #[allow(clippy::cast_possible_truncation, reason = "six modes")]
+            e.push(((0, a.parking, hash, a.mode.index() as u32), a.vehicle_s));
         }
         for (r, &secs) in a.rides.iter().zip(&a.ride_seconds) {
             e.push(((1, r.route, r.board.raw(), r.alight.raw()), f64::from(secs)));
@@ -647,6 +869,10 @@ fn finalise(mut alts: Vec<Alternative>, detour_limit: f64, parkings: usize) -> V
     };
     let all: Vec<Vec<(Element, f64)>> = alts.iter().map(elements).collect();
     for (i, a) in alts.iter_mut().enumerate() {
+        if let Some(fixed) = a.fixed_ln_path_size {
+            a.ln_path_size = fixed;
+            continue;
+        }
         let total = a.total_s.max(1.0);
         let mut shared = 0.0;
         let mut size = 0.0;
@@ -669,8 +895,28 @@ fn finalise(mut alts: Vec<Alternative>, detour_limit: f64, parkings: usize) -> V
     alts
 }
 
-/// The value of attribute `name` for `a`, the best total in its set being `best`.
-fn attribute(name: &str, a: &Alternative, best: f64, kind: Option<ParkingKind>) -> f64 {
+/// The least expected door-to-door time of each mode's alternatives (infinite for a mode
+/// with none).
+fn best_by_mode(alts: &[Alternative]) -> [f64; Mode::COUNT] {
+    let mut best = [f64::INFINITY; Mode::COUNT];
+    for a in alts {
+        let b = &mut best[a.mode.index()];
+        *b = b.min(a.total_s);
+    }
+    best
+}
+
+/// The value of attribute `name` for `a`, the best total of its mode in its set being
+/// `best`.
+fn attribute(name: &str, a: &Alternative, best: f64) -> f64 {
+    if let Some(v) = mode_attribute(name, a.mode) {
+        return v;
+    }
+    let kind = match a.mode {
+        Mode::Car | Mode::CarTransit => Some(ParkingKind::Car),
+        Mode::Bike | Mode::BikeTransit => Some(ParkingKind::Bike),
+        Mode::Walk | Mode::Transit => None,
+    };
     let vehicle_min = a.vehicle_s / 60.0;
     match name {
         "time_min" => a.total_s / 60.0,
@@ -728,7 +974,8 @@ pub struct Chosen {
     pub alt: Vec<Option<Alternative>>,
     /// The probability the model gave it (`NaN` if none).
     pub probability: Vec<f64>,
-    /// How many alternatives the trip had.
+    /// How many alternatives the trip had when it last chose (a trip that keeps its
+    /// alternative is not asked again).
     pub alternatives: Vec<u32>,
 }
 
@@ -745,6 +992,10 @@ pub(crate) struct Assessment {
     pub w_reselected: f64,
     pub w_changed: f64,
     pub w_forced: f64,
+    /// Mode choice (M5): the weight of the trips choosing their mode that had a choice
+    /// before, and of those whose mode changed.
+    pub w_choosing: f64,
+    pub w_mode_changed: f64,
 }
 
 impl Assessment {
@@ -753,10 +1004,16 @@ impl Assessment {
         let (paid, least) = (self.paid[mode.index()], self.least[mode.index()]);
         if least > 0.0 { (paid - least) / least } else { f64::NAN }
     }
+
+    /// The share of the trips choosing their mode whose mode changed, NaN if none chose
+    /// before.
+    pub(crate) fn mode_changed_share(&self) -> f64 {
+        if self.w_choosing > 0.0 { self.w_mode_changed / self.w_choosing } else { f64::NAN }
+    }
 }
 
 /// The itinerary trips of a run: which they are, their nodes, and the rounds
-/// they are chosen in.
+/// they are chosen in. With mode choice (M5), also every trip that chooses its mode.
 pub(crate) struct Itineraries {
     /// The itinerary trips, in trip order.
     pub trips: Vec<TripId>,
@@ -765,6 +1022,16 @@ pub(crate) struct Itineraries {
     nodes: Vec<TripNodes>,
     /// Positions by round.
     rounds: Vec<Vec<usize>>,
+    /// Per position: whether the trip chooses its mode.
+    choosing: Vec<bool>,
+    /// The modes a choosing trip may be offered, by [`Mode::index`]: those the run asked for
+    /// and can simulate.
+    offered: [bool; Mode::COUNT],
+    /// Per position, a choosing trip's bike and walk routes.
+    legs: Vec<[Option<StaticLeg>; 2]>,
+    /// Per position, a choosing trip's car pair (`None`: origin and destination on one node,
+    /// or not choosing).
+    car_keys: Vec<Option<RouteKey>>,
 }
 
 /// Where a vehicle is expected to be, following a traveller's choices.
@@ -784,6 +1051,15 @@ pub(crate) fn parking_kind_of(mode: Mode) -> Option<ParkingKind> {
     }
 }
 
+/// The vehicle kind a mode moves, directly or through a parking.
+fn vehicle_of(mode: Mode) -> Option<ParkingKind> {
+    match mode {
+        Mode::Car | Mode::CarTransit => Some(ParkingKind::Car),
+        Mode::Bike | Mode::BikeTransit => Some(ParkingKind::Bike),
+        Mode::Walk | Mode::Transit => None,
+    }
+}
+
 /// What choosing needs besides the planner.
 pub(crate) struct ChooseInputs<'a> {
     pub trips: &'a Trips,
@@ -793,25 +1069,39 @@ pub(crate) struct ChooseInputs<'a> {
     pub wanted: &'a [&'static str],
 }
 
+/// What a run can simulate, for [`Itineraries::new`].
+pub(crate) struct Simulated<'a> {
+    pub transit: Option<&'a TransitSetup>,
+    pub parking: Option<&'a ParkingSetup>,
+    pub road: &'a RoadNetwork,
+    pub layers: &'a StaticLayers,
+    /// The modes offered to a trip whose mode was not stated; `None` without mode choice.
+    pub choice: Option<&'a [Mode]>,
+    /// Every trip's bike and walk routes, a choosing trip's included.
+    pub static_routes: &'a StaticRoutes,
+}
+
 impl Itineraries {
     /// The run's trips that are itinerary trips, given what it can simulate:
     /// transit trips if it has a timetable; park-and-ride and bike-and-ride if it
-    /// also has parkings (and, for bikes, the bike layer).
-    pub(crate) fn new(
-        trips: &Trips,
-        travellers: &Travellers,
-        transit: &TransitSetup,
-        parking: Option<&ParkingSetup>,
-        road: &RoadNetwork,
-        bike: Option<&LayerSetup>,
-    ) -> Self {
+    /// also has parkings (and, for bikes, the bike layer); and, with mode choice, every
+    /// trip whose mode was not stated.
+    pub(crate) fn new(trips: &Trips, sim: &Simulated<'_>) -> Self {
         let total = trips.len() as usize;
+        let (transit, parking, road) = (sim.transit, sim.parking, sim.road);
+        let bike = sim.layers.bike.as_ref();
         let simulated = |mode: Mode| match mode {
-            Mode::Transit => true,
-            Mode::CarTransit => parking.is_some(),
-            Mode::BikeTransit => parking.is_some() && bike.is_some(),
-            _ => false,
+            Mode::Transit => transit.is_some(),
+            Mode::CarTransit => transit.is_some() && parking.is_some(),
+            Mode::BikeTransit => transit.is_some() && parking.is_some() && bike.is_some(),
+            Mode::Bike => bike.is_some(),
+            Mode::Walk => sim.layers.walk.is_some(),
+            Mode::Car => true,
         };
+        let mut offered = [false; Mode::COUNT];
+        for &m in sim.choice.unwrap_or(&[]) {
+            offered[m.index()] = simulated(m);
+        }
         let road_snapper = NodeSnapper::new(road);
         let bike_snapper = bike.map(|b| NodeSnapper::every_node(b.network().network()));
         let null = NodeId::from_raw(NULL_ID);
@@ -820,47 +1110,61 @@ impl Itineraries {
             pos: vec![u32::MAX; total],
             nodes: Vec::new(),
             rounds: Vec::new(),
+            choosing: Vec::new(),
+            offered,
+            legs: Vec::new(),
+            car_keys: Vec::new(),
         };
         for i in 0..total {
             let trip = TripId::from_index(i);
             let mode = trips.mode(trip);
-            if !simulated(mode) {
+            let choosing = sim.choice.is_some() && !trips.mode_given(trip);
+            let itinerary = matches!(mode, Mode::Transit | Mode::CarTransit | Mode::BikeTransit);
+            if !(choosing || itinerary && simulated(mode)) {
                 continue;
             }
             let (o, d) = (trips.origin(trip), trips.destination(trip));
             let mut nodes = TripNodes {
-                walk_o: transit.walk_node(o),
-                walk_d: transit.walk_node(d),
+                walk_o: transit.map_or(null, |t| t.walk_node(o)),
+                walk_d: transit.map_or(null, |t| t.walk_node(d)),
                 road_o: null,
                 road_d: null,
                 bike_o: null,
                 bike_d: null,
             };
-            match mode {
-                Mode::CarTransit => {
-                    nodes.road_o = road_snapper.nearest(road, o);
-                    nodes.road_d = road_snapper.nearest(road, d);
-                }
-                Mode::BikeTransit => {
-                    if let (Some(b), Some(snapper)) = (bike, &bike_snapper) {
-                        let graph = b.network().network();
-                        nodes.bike_o = snapper.nearest(graph, o);
-                        nodes.bike_d = snapper.nearest(graph, d);
-                    }
-                }
-                _ => {}
+            if choosing || mode == Mode::CarTransit {
+                nodes.road_o = road_snapper.nearest(road, o);
+                nodes.road_d = road_snapper.nearest(road, d);
             }
+            if choosing || mode == Mode::BikeTransit {
+                if let (Some(b), Some(snapper)) = (bike, &bike_snapper) {
+                    let graph = b.network().network();
+                    nodes.bike_o = snapper.nearest(graph, o);
+                    nodes.bike_d = snapper.nearest(graph, d);
+                }
+            }
+            let (legs, car_key) = if choosing {
+                let leg = |layer| sim.static_routes.leg(sim.layers, trip, layer);
+                let key = (offered[Mode::Car.index()] && nodes.road_o != nodes.road_d)
+                    .then(|| RouteKey::new(nodes.road_o, nodes.road_d));
+                ([leg(StaticLayer::Bike), leg(StaticLayer::Walk)], key)
+            } else {
+                ([None, None], None)
+            };
             out.pos[i] = u32::try_from(out.trips.len()).expect("trips fit u32");
             out.trips.push(trip);
             out.nodes.push(nodes);
+            out.choosing.push(choosing);
+            out.legs.push(legs);
+            out.car_keys.push(car_key);
         }
-        // Rounds: plain transit trips first; each traveller's vehicle itinerary trips
-        // one round each, in order.
+        // Rounds: plain transit trips first; each traveller's other itinerary trips one
+        // round each, in order, since each may move a vehicle the next one needs.
         let mut rounds: Vec<Vec<usize>> = vec![Vec::new()];
         let mut per_traveller: std::collections::HashMap<u32, usize> =
             std::collections::HashMap::new();
         for (p, &trip) in out.trips.iter().enumerate() {
-            if trips.mode(trip) == Mode::Transit {
+            if !out.choosing[p] && trips.mode(trip) == Mode::Transit {
                 rounds[0].push(p);
             } else {
                 let r = per_traveller.entry(trips.traveller(trip).raw()).or_insert(0);
@@ -871,7 +1175,6 @@ impl Itineraries {
                 *r += 1;
             }
         }
-        let _ = travellers;
         out.rounds = rounds;
         out
     }
@@ -892,18 +1195,22 @@ impl Itineraries {
         &self.nodes[position]
     }
 
-    /// The shape of the trip at `position`, following the traveller's choices so
-    /// far (`chosen`): `None` if its vehicle is not where it can be used.
-    fn shape_of(
+    /// The car pair of the trip at `position` if it chooses its mode and may drive, for
+    /// its route set.
+    pub(crate) fn car_key(&self, position: usize) -> Option<RouteKey> {
+        self.car_keys[position]
+    }
+
+    /// Where the traveller's vehicle of `kind` is expected as `trip` starts, following
+    /// their stated modes and their choices so far (`chosen`).
+    fn vehicle_at(
         &self,
         trips: &Trips,
         travellers: &Travellers,
-        position: usize,
+        trip: TripId,
+        kind: ParkingKind,
         chosen: &[Option<Alternative>],
-    ) -> Option<Shape> {
-        let trip = self.trips[position];
-        let mode = trips.mode(trip);
-        let Some(kind) = parking_kind_of(mode) else { return Some(Shape::Transit) };
+    ) -> Loc {
         let traveller = trips.traveller(trip);
         let own = travellers.ownership(traveller);
         let owns = match kind {
@@ -911,51 +1218,86 @@ impl Itineraries {
             ParkingKind::Bike => own.bike,
         };
         if !owns {
-            return None;
+            return Loc::Nowhere;
         }
-        let mut first = true;
         let mut loc = Loc::Nowhere;
-        for t in travellers.trips_of(traveller) {
-            if first {
+        for (i, t) in travellers.trips_of(traveller).enumerate() {
+            if i == 0 {
                 loc = Loc::At(trips.origin(t));
-                first = false;
             }
             if t == trip {
                 break;
             }
-            let m = trips.mode(t);
-            let uses = match kind {
-                ParkingKind::Car => matches!(m, Mode::Car | Mode::CarTransit),
-                ParkingKind::Bike => matches!(m, Mode::Bike | Mode::BikeTransit),
+            // What trip `t` did: its choice, or its stated car or bike trip.
+            let (mode, shape, parking) = match self.position(t) {
+                Some(p) => match &chosen[p] {
+                    Some(a) => (a.mode, a.shape, a.parking),
+                    None => continue,
+                },
+                None => match trips.mode(t) {
+                    m @ (Mode::Car | Mode::Bike) => (m, Shape::Direct, NO_PARKING),
+                    _ => continue,
+                },
             };
-            if !uses {
+            if vehicle_of(mode) != Some(kind) {
                 continue;
             }
             let at_origin = loc == Loc::At(trips.origin(t));
-            match m {
-                Mode::Car | Mode::Bike => {
-                    if at_origin {
-                        loc = Loc::At(trips.destination(t));
-                    }
-                }
-                _ => {
-                    let alt = self.position(t).and_then(|p| chosen[p].as_ref());
-                    match alt.map(|a| a.shape) {
-                        Some(Shape::Out) if at_origin => {
-                            loc = Loc::Parked(alt.expect("some").parking)
-                        }
-                        Some(Shape::Back(p)) if loc == Loc::Parked(p) => {
-                            loc = Loc::At(trips.destination(t));
-                        }
-                        _ => {}
-                    }
-                }
+            match shape {
+                Shape::Direct | Shape::Transit if at_origin => loc = Loc::At(trips.destination(t)),
+                Shape::Out if at_origin => loc = Loc::Parked(parking),
+                Shape::Back(p) if loc == Loc::Parked(p) => loc = Loc::At(trips.destination(t)),
+                _ => {}
             }
         }
-        match loc {
+        loc
+    }
+
+    /// What the trip at `position` is offered, following the traveller's choices so far
+    /// (`chosen`): its stated mode where its vehicle is, or, choosing, every mode it can use
+    /// there.
+    fn offer_of(
+        &self,
+        trips: &Trips,
+        travellers: &Travellers,
+        position: usize,
+        chosen: &[Option<Alternative>],
+    ) -> Offer {
+        let trip = self.trips[position];
+        let origin = trips.origin(trip);
+        let shape = |kind| match self.vehicle_at(trips, travellers, trip, kind, chosen) {
             Loc::Parked(p) => Some(Shape::Back(p)),
-            Loc::At(o) if o == trips.origin(trip) => Some(Shape::Out),
+            Loc::At(o) if o == origin => Some(Shape::Out),
             _ => None,
+        };
+        if !self.choosing[position] {
+            return match trips.mode(trip) {
+                Mode::CarTransit => {
+                    Offer { car_transit: shape(ParkingKind::Car), ..Offer::default() }
+                }
+                Mode::BikeTransit => {
+                    Offer { bike_transit: shape(ParkingKind::Bike), ..Offer::default() }
+                }
+                _ => Offer { transit: true, ..Offer::default() },
+            };
+        }
+        let on = |m: Mode| self.offered[m.index()];
+        let (car, bike) = (shape(ParkingKind::Car), shape(ParkingKind::Bike));
+        // A vehicle parked at a parking is offered back whatever the modes asked for.
+        let via = |at: Option<Shape>, m: Mode| match at {
+            Some(Shape::Back(p)) => Some(Shape::Back(p)),
+            Some(Shape::Out) if on(m) => Some(Shape::Out),
+            _ => None,
+        };
+        let [bike_leg, walk_leg] = &self.legs[position];
+        Offer {
+            choosing: true,
+            walk: on(Mode::Walk) && walk_leg.is_some(),
+            bike: on(Mode::Bike) && bike == Some(Shape::Out) && bike_leg.is_some(),
+            car: on(Mode::Car) && car == Some(Shape::Out) && self.car_keys[position].is_some(),
+            transit: on(Mode::Transit),
+            car_transit: via(car, Mode::CarTransit),
+            bike_transit: via(bike, Mode::BikeTransit),
         }
     }
 
@@ -967,9 +1309,10 @@ impl Itineraries {
     /// # Errors
     ///
     /// [`ChoiceError`] if the model fails or answers wrongly.
-    pub(crate) fn choose(
+    #[allow(clippy::too_many_lines, reason = "one pass: plan, keep or choose, assess")]
+    pub(crate) fn choose<'a>(
         &self,
-        planner: &Planner<'_>,
+        planner: &Planner<'a>,
         inputs: &ChooseInputs<'_>,
         current: Option<&Chosen>,
         iteration: u32,
@@ -983,30 +1326,62 @@ impl Itineraries {
         };
         let mut assessment = Assessment::default();
         let (trips, travellers) = (inputs.trips, inputs.travellers);
+        let reselects = |p: usize| {
+            let traveller = trips.traveller(self.trips[p]).raw();
+            strategy.is_some_and(|(strategy, msa)| strategy.reselects(msa, traveller, iteration))
+        };
+        let plan = |s: &mut Scratch<'a>, p: usize, offer: Offer| {
+            if offer.is_empty() {
+                return Vec::new();
+            }
+            let trip = self.trips[p];
+            let [bike, walk] = &self.legs[p];
+            planner.plan(
+                s,
+                &self.nodes[p],
+                trips.departure(trip).get(),
+                trips.origin(trip),
+                trips.destination(trip),
+                offer,
+                (bike.as_ref(), walk.as_ref()),
+                self.car_keys[p],
+            )
+        };
         for round in &self.rounds {
-            // The shape of each trip, from the choices before it.
-            let work: Vec<(usize, Option<Shape>)> = round
+            // What each trip is offered, from the choices before it. A trip that keeps its
+            // alternative plans only the mode it took (M5, for compute: enough to find it
+            // again and to measure it against the best of its mode); one that chooses, or
+            // must fetch a vehicle, plans all.
+            let work: Vec<(usize, Offer)> = round
                 .iter()
-                .map(|&p| (p, self.shape_of(trips, travellers, p, &next.alt)))
+                .map(|&p| (p, self.offer_of(trips, travellers, p, &next.alt)))
                 .collect();
-            let sets: Vec<Vec<Alternative>> = par_map(
-                &work,
-                SCRATCH_CHUNK,
-                || planner.scratch(),
-                |s, &(p, shape)| {
-                    let Some(shape) = shape else { return Vec::new() };
-                    let trip = self.trips[p];
-                    let kind = parking_kind_of(trips.mode(trip)).unwrap_or(ParkingKind::Car);
-                    planner.plan(
-                        s,
-                        &self.nodes[p],
-                        trips.departure(trip).get(),
-                        trips.destination(trip),
-                        shape,
-                        kind,
-                    )
-                },
-            );
+            let first: Vec<Offer> = work
+                .iter()
+                .map(|&(p, offer)| match current.and_then(|c| c.alt[p].as_ref()) {
+                    Some(old) if !reselects(p) && !offer.fetches() => offer.only(old.mode),
+                    _ => offer,
+                })
+                .collect();
+            let jobs: Vec<(usize, Offer)> =
+                work.iter().zip(&first).map(|(&(p, _), &offer)| (p, offer)).collect();
+            let mut sets: Vec<Vec<Alternative>> =
+                par_map(&jobs, SCRATCH_CHUNK, || planner.scratch(), |s, &(p, o)| plan(s, p, o));
+            // Those whose alternative is gone must choose again: among all they are offered.
+            let again: Vec<usize> = (0..work.len())
+                .filter(|&w| {
+                    first[w] != work[w].1
+                        && current
+                            .and_then(|c| c.alt[work[w].0].as_ref())
+                            .is_some_and(|old| !sets[w].iter().any(|a| a.identity == old.identity))
+                })
+                .collect();
+            let redo: Vec<(usize, Offer)> = again.iter().map(|&w| work[w]).collect();
+            let replanned =
+                par_map(&redo, SCRATCH_CHUNK, || planner.scratch(), |s, &(p, o)| plan(s, p, o));
+            for (w, set) in again.into_iter().zip(replanned) {
+                sets[w] = set;
+            }
             for chunk in (0..work.len()).collect::<Vec<_>>().chunks(CHUNK) {
                 let mut batch = ChoiceBatch::new(iteration, inputs.wanted);
                 let mut situation_of: Vec<usize> = Vec::new();
@@ -1016,29 +1391,32 @@ impl Itineraries {
                     let (p, _) = work[w];
                     let set = &sets[w];
                     let trip = self.trips[p];
+                    let traveller = trips.traveller(trip);
+                    let weight = f64::from(travellers.weight(traveller));
+                    let old = current.and_then(|c| c.alt[p].as_ref());
+                    if self.choosing[p] && old.is_some() {
+                        assessment.w_choosing += weight;
+                    }
                     if set.is_empty() {
+                        if self.choosing[p] && old.is_some() {
+                            assessment.w_mode_changed += weight;
+                        }
                         next.alt[p] = None;
                         next.alternatives[p] = 0;
                         continue;
                     }
-                    let traveller = trips.traveller(trip);
-                    let kind = parking_kind_of(trips.mode(trip));
-                    let best = set[0].total_s;
+                    let best = best_by_mode(set);
                     batch.begin_situation(traveller.raw(), trip.raw());
                     for a in set {
                         for (slot, name) in row.iter_mut().zip(inputs.wanted) {
-                            *slot = attribute(name, a, best, kind);
+                            *slot = attribute(name, a, best[a.mode.index()]);
                         }
                         batch.push_alternative(a.identity, &row);
                     }
                     let s = situation_of.len();
                     situation_of.push(w);
-                    next.alternatives[p] = u32::try_from(set.len()).expect("few alternatives");
-                    let weight = f64::from(travellers.weight(traveller));
                     // Keep, or choose again.
-                    let kept = current
-                        .and_then(|c| c.alt[p].as_ref())
-                        .and_then(|old| set.iter().find(|a| a.identity == old.identity));
+                    let kept = old.and_then(|old| set.iter().find(|a| a.identity == old.identity));
                     let Some(kept) = kept else {
                         if current.is_some() {
                             assessment.w_forced += weight;
@@ -1046,9 +1424,11 @@ impl Itineraries {
                         movers.push(s);
                         continue;
                     };
-                    let m = trips.mode(trip).index();
+                    // Against the best of its own mode: with mode constants, the fastest mode
+                    // need not be the best (M5), so this is each mode's route gap.
+                    let m = kept.mode.index();
                     assessment.paid[m] += weight * kept.total_s;
-                    assessment.least[m] += weight * best;
+                    assessment.least[m] += weight * best[m];
                     assessment.w_all += weight;
                     let reselect = strategy.is_some_and(|(strategy, msa)| {
                         strategy.reselects(msa, traveller.raw(), iteration)
@@ -1071,13 +1451,15 @@ impl Itineraries {
                     let w = situation_of[s];
                     let (p, _) = work[w];
                     let alt = sets[w][choices.chosen[m] as usize].clone();
-                    let changed = current
-                        .and_then(|c| c.alt[p].as_ref())
-                        .is_some_and(|old| old.identity != alt.identity);
-                    if changed {
-                        let trip = self.trips[p];
-                        assessment.w_changed += f64::from(travellers.weight(trips.traveller(trip)));
+                    let old = current.and_then(|c| c.alt[p].as_ref());
+                    let weight = f64::from(travellers.weight(trips.traveller(self.trips[p])));
+                    if old.is_some_and(|old| old.identity != alt.identity) {
+                        assessment.w_changed += weight;
                     }
+                    if self.choosing[p] && old.is_some_and(|old| old.mode != alt.mode) {
+                        assessment.w_mode_changed += weight;
+                    }
+                    next.alternatives[p] = u32::try_from(sets[w].len()).expect("few alternatives");
                     next.alt[p] = Some(alt);
                     next.probability[p] = choices.probability[m];
                 }
@@ -1096,7 +1478,7 @@ pub struct ItineraryResult {
     pub parking: Vec<u32>,
     /// Whether it went out (vehicle first), back (transit first) or neither: 1, 2, 0.
     pub direction: Vec<u8>,
-    /// How many alternatives it had (0: none; it did not travel).
+    /// How many alternatives it had when it last chose (0: none; it did not travel).
     pub alternatives: Vec<u32>,
     /// The probability the model gave its choice (`NaN` if none).
     pub probability: Vec<f64>,
@@ -1109,7 +1491,14 @@ pub struct ItineraryResult {
     /// Trips back: the mean absolute difference between the expected and the
     /// realised arrival at the parking, in seconds (A15; `NaN` if none).
     pub return_mismatch_s: f64,
+    /// The mode of the alternative taken ([`Mode::index`]; [`NO_MODE`] if none).
+    pub mode: Vec<u8>,
+    /// Whether the trip chose its mode (M5), or was given it.
+    pub choosing: Vec<bool>,
 }
+
+/// No mode: a trip that had no alternative.
+pub const NO_MODE: u8 = u8::MAX;
 
 impl ItineraryResult {
     pub(crate) fn of(
@@ -1130,8 +1519,12 @@ impl ItineraryResult {
             rides: if rides.len() == n { rides.to_vec() } else { vec![0; n] },
             replanned,
             return_mismatch_s,
+            mode: Vec::with_capacity(n),
+            choosing: itineraries.choosing.clone(),
         };
         for alt in &chosen.alt {
+            #[allow(clippy::cast_possible_truncation, reason = "six modes")]
+            out.mode.push(alt.as_ref().map_or(NO_MODE, |a| a.mode.index() as u8));
             out.parking.push(alt.as_ref().map_or(NO_PARKING, |a| a.parking));
             out.direction.push(match alt.as_ref().map(|a| a.shape) {
                 Some(Shape::Out) => 1,

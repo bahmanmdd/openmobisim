@@ -319,7 +319,7 @@ fn convergence_arrays(
     dict.set_item("gap_flow", floats(|r| r.gap_flow).into_pyarray(py))?;
     dict.set_item("gap_flow_floor", floats(|r| r.gap_flow_floor).into_pyarray(py))?;
     dict.set_item("gap_flow_excess", floats(|r| r.gap_flow_excess).into_pyarray(py))?;
-    for mode in [Mode::Transit, Mode::CarTransit, Mode::BikeTransit] {
+    for mode in Mode::ALL {
         let i = mode.index();
         dict.set_item(
             format!("gap_{}", mode.as_str()),
@@ -327,6 +327,7 @@ fn convergence_arrays(
         )?;
     }
     dict.set_item("hub_mismatch_s", floats(|r| r.hub_mismatch_s).into_pyarray(py))?;
+    dict.set_item("mode_changed_share", floats(|r| r.mode_changed_share).into_pyarray(py))?;
     dict.set_item(
         "routes_added",
         reports.iter().map(|r| r.routes_added).collect::<Vec<_>>().into_pyarray(py),
@@ -365,7 +366,7 @@ fn convergence_arrays(
     equilibration="none", equilibration_options=None,
     route_update="none", route_update_options=None,
     choice_detour_limit=None, route_cache=false, bike_cost="dedicated", transit=None,
-    parkings=None, parking_options=None, transit_options=None,
+    parkings=None, parking_options=None, transit_options=None, modes=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -402,6 +403,7 @@ pub fn run_pipeline(
     parkings: Option<PyRef<'_, PyParkings>>,
     parking_options: Option<HashMap<String, f64>>,
     transit_options: Option<HashMap<String, f64>>,
+    modes: Option<Vec<String>>,
 ) -> PyResult<PyRunSummary> {
     let bike_cost = BikeCost::from_name(bike_cost).ok_or_else(|| {
         PyValueError::new_err(format!(
@@ -421,6 +423,13 @@ pub fn run_pipeline(
         TransitDefaults::from_options(&to_options(transit_options)).map_err(to_value_error)?;
     let parking_defaults =
         ParkingDefaults::from_options(&to_options(parking_options)).map_err(to_value_error)?;
+    // The modes a trip without a stated mode chooses among (M5); none: no choice.
+    let modes: Vec<Mode> = modes
+        .unwrap_or_default()
+        .iter()
+        .map(|name| Mode::from_name(name))
+        .collect::<Result<_, _>>()
+        .map_err(to_value_error)?;
     if parkings.is_some() && transit.is_none() {
         return Err(PyValueError::new_err(
             "parkings serve park-and-ride and bike-and-ride, which need a timetable: give transit= too",
@@ -514,8 +523,13 @@ pub fn run_pipeline(
     if route_cache {
         run = run.with_route_cache(route_cache_handle().clone());
     }
-    // The bike and walk layers, prepared only for a run whose trips use them.
-    let uses = |mode: Mode| (0..trips_used.len()).any(|i| trips_used.mode(TripId::new(i)) == mode);
+    // The bike and walk layers, prepared only for a run whose trips use them, or may choose
+    // them.
+    let unstated = (0..trips_used.len()).any(|i| !trips_used.mode_given(TripId::new(i)));
+    let uses = |mode: Mode| {
+        (0..trips_used.len()).any(|i| trips_used.mode(TripId::new(i)) == mode)
+            || unstated && modes.contains(&mode)
+    };
     let setup = |layer: StaticLayer| -> PyResult<LayerSetup> {
         Ok(LayerSetup::new(network.static_layer(layer)?, bike_cost, StaticLayerDefaults::SHIPPED))
     };
@@ -561,6 +575,7 @@ pub fn run_pipeline(
     if let Some(p) = &parking_setup {
         run = run.with_parking(p.clone());
     }
+    run = run.with_mode_choice(&modes);
     // What went in, taken before it runs (S168).
     let description = run.description();
     let mut run_diagnostics = Diagnostics::new();

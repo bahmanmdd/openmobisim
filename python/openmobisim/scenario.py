@@ -259,14 +259,21 @@ class Run:
           for the itineraries of transit, park-and-ride and bike-and-ride trips: each
           itinerary kept against the least door-to-door time of its choice set at the costs
           this loading produced; ``nan`` for a mode without such trips. ``gap`` above is the
-          car routes'.
+          car routes'. With mode choice (``modes``), a trip's itinerary is measured against
+          the best of its own mode (with mode constants, the fastest mode need not be the
+          best), and ``gap_car``, ``gap_bike`` and ``gap_walk`` are the same for the trips
+          that chose those modes (``gap`` above covers the car trips given their mode).
         * ``hub_mismatch_s`` — the hub expectation mismatch: per traveller who parked, the
           mean difference between the parking time expected when they chose and the one
           they paid, in seconds; ``nan`` without parkings.
+        * ``mode_changed_share`` — with ``modes``: of the trips choosing their mode that
+          had chosen before, the share (by traveller weight) whose mode changed on the way
+          to this loading; ``nan`` at the first iteration and without ``modes``. How the
+          mode split is settling.
 
         The numbers up to ``gap_flow_excess`` are also in ``kpis.parquet``, a row per metric
-        per iteration, and so are the itinerary gaps (under their modes, as ``gap``) and
-        ``hub_mismatch_s``.
+        per iteration, and so are the itinerary gaps (under their modes, as ``gap``),
+        ``hub_mismatch_s`` and ``mode_changed_share``.
         """
         return dict(self._summary.convergence)
 
@@ -355,7 +362,10 @@ class Run:
         ``parking_arrivals``, ``parking_overflow_arrivals``, ``parking_full_share``,
         ``hub_mismatch_s`` and ``vehicles_left_at_parkings`` — car parkings under
         ``"car_transit"``, bike parkings under ``"bike_transit"`` — and the itineraries
-        ``itinerary_replanned_trips`` and ``return_mismatch_s`` under ``"all"``.
+        ``itinerary_replanned_trips`` and ``return_mismatch_s`` under ``"all"``. With mode
+        choice (``modes``) each trip counts under the mode it took, each mode adds its
+        ``mode_share`` (of the trips, weighted by the travellers), and every iteration adds
+        ``mode_changed_share`` under ``"all"``.
         """
         return Table(self._summary.kpis_path)
 
@@ -490,15 +500,18 @@ class Run:
         return None if summary is None else dict(summary)
 
     def itinerary_choices(self) -> dict[str, Any] | None:
-        """Each transit, park-and-ride and bike-and-ride trip's choice; ``None`` without any.
+        """Each itinerary trip's choice, and each choice of mode; ``None`` without any.
 
-        Columns, one row per such trip, by traveller and then by the order of their day:
+        One row per transit, park-and-ride and bike-and-ride trip, and per trip choosing its
+        mode (``modes``), by traveller and then by the order of their day. Columns:
         ``trip`` (its index in the run, where trips are grouped by traveller),
         ``traveller_id`` and ``trip_seq`` (its place in that traveller's day, from 0),
-        ``mode``, ``parking_id`` (the parking used; ``None`` for plain transit or a trip
-        that did not travel), ``direction`` (``"out"``: vehicle first; ``"back"``: transit
-        first, to where the vehicle is; ``""`` otherwise), ``alternatives`` (how many it
-        chose among; 0: it did not travel), ``probability`` (what the model gave its
+        ``mode`` (the mode taken; ``None`` for a trip choosing its mode that had nothing to
+        choose from), ``mode_choice`` (whether the trip chose its mode), ``parking_id`` (the
+        parking used; ``None`` for plain transit or a trip that did not travel),
+        ``direction`` (``"out"``: vehicle first; ``"back"``: transit first, to where the
+        vehicle is; ``""`` otherwise), ``alternatives`` (how many it chose among when it last
+        chose; 0: it did not travel), ``probability`` (what the model gave its
         choice), ``expected_s`` (the chosen itinerary's door-to-door time expected at the
         choice) and ``rides`` (vehicles boarded).
         """
@@ -527,6 +540,8 @@ class Run:
 
 BIKE_COSTS = ("dedicated", "time")
 LAYERS = ("road", "bike", "walk")
+#: The modes a trip may have or choose (the ``mode`` column of ``trips.parquet``).
+MODES = ("car", "bike", "walk", "transit", "car_transit", "bike_transit")
 
 
 def _check_layer(layer: str) -> str:
@@ -584,6 +599,7 @@ class Scenario:
         transit_options: dict[str, float] | None = None,
         parkings: _core.Parkings | None = None,
         parking_options: dict[str, float] | None = None,
+        modes: tuple[str, ...] | list[str] | None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
         if bike_cost not in BIKE_COSTS:
@@ -639,6 +655,12 @@ class Scenario:
         self._transit_options = transit_options
         self._parkings = parkings
         self._parking_options = parking_options
+        if modes is not None:
+            modes = list(modes)
+            unknown = [m for m in modes if m not in MODES]
+            if unknown:
+                raise ValueError(f"modes must be among {MODES}, got {unknown}")
+        self._modes = modes
 
     @classmethod
     def from_parts(
@@ -668,6 +690,7 @@ class Scenario:
         transit_options: dict[str, float] | None = None,
         parkings: _core.Parkings | None = None,
         parking_options: dict[str, float] | None = None,
+        modes: tuple[str, ...] | list[str] | None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -678,10 +701,11 @@ class Scenario:
                 way) or a path to a ``trips.parquet`` file — the same
                 schema either way, never two different shapes. A row may end with
                 a **mode** (the ``mode`` column of ``trips.parquet``): ``"car"``,
-                ``"bike"``, ``"walk"``, ``"transit"``, or the not-yet-built
-                ``"car_transit"``, ``"bike_transit"``. A trip without one is a car
-                trip. Bike and walk trips travel on the network's bike and walk
-                layers (``network.layer("bike")``), each by its shortest route
+                ``"bike"``, ``"walk"``, ``"transit"``, ``"car_transit"`` (park-and-ride)
+                or ``"bike_transit"`` (bike-and-ride; see ``parkings``). A trip without
+                one is a car trip, or, with ``modes``, chooses one. Bike and walk trips
+                travel on the network's bike and walk layers (``network.layer("bike")``),
+                each by its shortest route
                 there; a bike trip needs the traveller's bike at its origin, as a
                 car trip needs their car. A transit trip needs ``transit``: it
                 walks to a stop, rides and walks on (see ``transit``).
@@ -745,15 +769,21 @@ class Scenario:
                 ``choose(batch)`` method (see ``openmobisim.choice`` for how to
                 write one). ``"logit"`` (the default since the car-ready
                 checkpoint, 2026-09-23) is the standard path-size logit, sampled per
-                traveller; ``"deterministic"`` sends everyone down the best
-                route, with probability 1 — useful for debugging or an upper
-                bound, not for a result to report.
+                traveller; ``"nested_logit"`` is the logit with the alternatives of each
+                mode in a nest of their own, for mode choice (``modes``): a mode's many
+                routes do not outweigh another mode's one; ``"deterministic"`` sends
+                everyone down the best route, with probability 1 — useful for debugging or
+                an upper bound, not for a result to report.
             choice_options: A built-in model's options, numbers by name: for
-                ``"logit"`` a coefficient per attribute, ``beta_time_min`` (default
-                -0.2), ``beta_ln_path_size`` (1), ``beta_length_km``,
-                ``beta_detour``, ``beta_overlap``, ``beta_n_links`` (0). Unknown
-                names and non-numbers are refused. The defaults are an
-                assumption, not a calibration.
+                ``"logit"`` and ``"nested_logit"`` a coefficient per attribute,
+                ``beta_time_min`` (default -0.2), ``beta_ln_path_size`` (1),
+                ``beta_walk_min`` (-0.13) and ``beta_wait_min`` (-0.09, on top of the
+                time), ``beta_transfers`` (-1), and 0 for the rest, such as
+                ``beta_length_km``, ``beta_parking_min`` or the mode constants
+                ``beta_mode_bike`` … (``openmobisim.choice.ROUTE_ATTRIBUTES`` lists them);
+                for ``"nested_logit"`` also ``mu`` (0.5), the nests' scale, from above 0
+                to 1 (1 is the logit). Unknown names and non-numbers are refused. The
+                defaults are an assumption, not a calibration.
             choice_detour_limit: A **time-dependent choice set**: a traveller is offered only the
                 routes of the pair's set whose expected time, at the times of the last loading
                 (free flow for the first choice), is within this share of the best route's:
@@ -761,10 +791,11 @@ class Scenario:
                 A route far slower than the best is no realistic alternative, and in a logit it
                 only takes probability that belongs to routes that compete (the gap grows with the
                 size of the set). ``0`` offers every route of the set; ``None`` (the default) is the
-                library's default, **0.5**. The best route is always offered; a route left out is
-                still in the set and returns when times change. The gaps are still measured
-                against the whole set. The ``ln_path_size`` attribute is computed over the whole
-                set.
+                library's default, **0.5**. With mode choice it applies within each mode: a walk
+                slower than a drive is still offered. The best route is always offered; a route
+                left out is still in the set and returns when times change. The gaps are still
+                measured against the whole set. The ``ln_path_size`` attribute is computed over
+                the whole set.
             bike_cost: How bike trips choose their route on the bike layer: ``"dedicated"``
                 (the default) is the fastest route with every minute in mixed traffic
                 counting a little more (1.2 times), so cyclists go a little out of their way
@@ -876,9 +907,24 @@ class Scenario:
                 ``rank_speed_km_h`` (30: ranks candidates before they are tried),
                 ``floor_car_s`` (120) and ``floor_bike_s`` (30: the time to park when there
                 is room, and to fetch), ``slope_car_s`` (600) and ``slope_bike_s`` (180: what
-                a parking full for a whole time bin adds), ``snap_m`` (300) and ``bin_s``
-                (900). Uncalibrated defaults. Unknown names and out-of-range values are
-                refused.
+                a parking full for a whole time bin adds), ``snap_m`` (300), ``bin_s``
+                (900) and ``pr_min_km`` (3: the shortest trip, as the crow flies, that mode
+                choice offers park-and-ride and bike-and-ride to). Uncalibrated defaults.
+                Unknown names and out-of-range values are refused.
+            modes: **Mode choice.** The modes a trip without a stated mode chooses among,
+                with its route, by ``choice_model``: any of ``"walk"``, ``"bike"``,
+                ``"car"``, ``"transit"``, ``"car_transit"`` and ``"bike_transit"``. Each is
+                offered where the traveller can use it: their car or bike where the trip
+                starts (a car left at a car park is fetched on the way back), the walk and
+                bike layers, the timetable (``transit``) and the parkings (``parkings``);
+                park-and-ride and bike-and-ride only for trips longer than
+                ``parking_options["pr_min_km"]``. A traveller's trips choose in order, since
+                each may move a vehicle the next needs; a trip with a stated mode keeps it.
+                With ``choice_model="nested_logit"`` the alternatives of a mode share a nest
+                (``choice_options["mu"]``), and ``beta_mode_<mode>`` is a mode's constant (0
+                by default: time decides). One mode is no choice: such trips take it
+                (``("car",)`` is the run without ``modes``, exactly). ``None`` (the default):
+                such trips are car trips.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -915,6 +961,7 @@ class Scenario:
             transit_options=transit_options,
             parkings=parkings,
             parking_options=parking_options,
+            modes=modes,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
@@ -962,6 +1009,7 @@ class Scenario:
             parkings=self._parkings,
             parking_options=self._parking_options,
             transit_options=self._transit_options,
+            modes=self._modes,
         )
         return Run(
             summary,

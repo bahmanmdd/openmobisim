@@ -6,10 +6,10 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use openmobisim_core_demand::{Travellers, Trips};
+use openmobisim_core_demand::{Mode, Travellers, Trips};
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::hubs::{ParkingKind, ParkingRow};
-use openmobisim_core_sim::{ItineraryResult, NO_PARKING, ParkingResult, ParkingSetup};
+use openmobisim_core_sim::{ItineraryResult, NO_MODE, NO_PARKING, ParkingResult, ParkingSetup};
 use openmobisim_core_types::ids::{EntityId, TripId};
 use openmobisim_io_osm::{ParkingReadOptions, ParkingReadReport, PbfSource, read_parkings};
 
@@ -315,11 +315,20 @@ pub(crate) fn itinerary_choices<'py>(
         who.push(travellers.external_ids().external(traveller.raw()).to_string());
         let first = travellers.trips_of(traveller).next().map_or(t, |f| f.raw());
         seq.push(t - first);
-        mode.push(trips.mode(trip).as_str());
+    }
+    // The mode taken: the chosen alternative's (M5), else the stated one; none for a trip
+    // that chose and had nothing to choose from.
+    for (i, &t) in result.trip.iter().enumerate() {
+        mode.push(match (result.mode[i], result.choosing[i]) {
+            (NO_MODE, true) => None,
+            (NO_MODE, false) => Some(trips.mode(TripId::new(t)).as_str()),
+            (m, _) => Some(Mode::ALL[m as usize].as_str()),
+        });
     }
     d.set_item("traveller_id", who)?;
     d.set_item("trip_seq", seq.into_pyarray(py))?;
     d.set_item("mode", mode)?;
+    d.set_item("mode_choice", result.choosing.clone())?;
     let parking_id: Vec<Option<String>> = result
         .parking
         .iter()

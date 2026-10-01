@@ -119,12 +119,14 @@ pub(crate) enum StaticRoute {
     Route(u32),
 }
 
-/// Every bike and walk trip's route, made once per run.
+/// Every bike and walk trip's route, made once per run; and, for a trip choosing its
+/// mode (M5), its route on each of the two layers.
 #[derive(Debug, Default)]
 pub(crate) struct StaticRoutes {
     /// The bike layer's route sets, then the walk layer's.
     sets: [Option<RouteSets>; 2],
-    route: Vec<StaticRoute>,
+    /// Per layer, per trip.
+    route: [Vec<StaticRoute>; 2],
 }
 
 fn slot(layer: StaticLayer) -> usize {
@@ -143,16 +145,24 @@ fn layer_of(mode: Mode) -> Option<StaticLayer> {
 }
 
 impl StaticRoutes {
-    /// Route every trip whose mode has a static layer the run has: snap its
-    /// ends to the layer's nodes and take the shortest route between them.
-    pub(crate) fn build(layers: &StaticLayers, trips: &Trips) -> Self {
+    /// Route every trip whose mode has a static layer the run has, and every trip
+    /// `also` names for a layer: snap its ends to the layer's nodes and take the shortest
+    /// route between them.
+    pub(crate) fn build(
+        layers: &StaticLayers,
+        trips: &Trips,
+        also: &dyn Fn(TripId, StaticLayer) -> bool,
+    ) -> Self {
         let total = trips.len() as usize;
-        let mut route = vec![StaticRoute::None; total];
+        let mut route = [vec![StaticRoute::None; total], vec![StaticRoute::None; total]];
         let mut sets: [Option<RouteSets>; 2] = [None, None];
         for layer in [StaticLayer::Bike, StaticLayer::Walk] {
             let Some(setup) = layers.get(layer) else { continue };
             let wanted: Vec<usize> = (0..total)
-                .filter(|&i| layer_of(trips.mode(TripId::from_index(i))) == Some(layer))
+                .filter(|&i| {
+                    let trip = TripId::from_index(i);
+                    layer_of(trips.mode(trip)) == Some(layer) || also(trip, layer)
+                })
                 .collect();
             if wanted.is_empty() {
                 continue;
@@ -172,7 +182,7 @@ impl StaticRoutes {
             let ctx = SearchContext::with_costs(graph, &setup.turns, setup.costs.clone());
             let layer_sets = RouteSets::generate_in(&ctx, &keys, &Shortest);
             for (&i, key) in wanted.iter().zip(&keys) {
-                route[i] = if key.origin == key.destination {
+                route[slot(layer)][i] = if key.origin == key.destination {
                     StaticRoute::Here
                 } else {
                     match layer_sets.key_index(*key).map(|k| layer_sets.route_range(k)) {
@@ -188,9 +198,37 @@ impl StaticRoutes {
         Self { sets, route }
     }
 
-    /// The trip's route on its layer.
-    pub(crate) fn of(&self, trip: TripId) -> StaticRoute {
-        self.route.get(trip.index()).copied().unwrap_or(StaticRoute::None)
+    /// The trip's route on `layer`.
+    pub(crate) fn of(&self, trip: TripId, layer: StaticLayer) -> StaticRoute {
+        self.route[slot(layer)].get(trip.index()).copied().unwrap_or(StaticRoute::None)
+    }
+
+    /// The trip's route on `layer` as a leg to choose (M5): its links, seconds and metres.
+    /// `None` if it has none there.
+    pub(crate) fn leg(
+        &self,
+        layers: &StaticLayers,
+        trip: TripId,
+        layer: StaticLayer,
+    ) -> Option<crate::itinerary_choice::StaticLeg> {
+        let setup = layers.get(layer)?;
+        match self.of(trip, layer) {
+            StaticRoute::None | StaticRoute::Unreachable => None,
+            StaticRoute::Here => Some(crate::itinerary_choice::StaticLeg {
+                links: Vec::new(),
+                seconds: 0.0,
+                metres: 0.0,
+            }),
+            StaticRoute::Route(index) => {
+                let links = self.links(layer, index);
+                let graph = setup.network.network();
+                Some(crate::itinerary_choice::StaticLeg {
+                    seconds: links.iter().map(|l| setup.seconds[l.index()]).sum(),
+                    metres: links.iter().map(|&l| graph.link_length(l).get()).sum(),
+                    links,
+                })
+            }
+        }
     }
 
     /// The links of route `index` on `layer`.

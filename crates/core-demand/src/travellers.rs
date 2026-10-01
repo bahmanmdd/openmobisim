@@ -136,6 +136,8 @@ pub struct Trips {
     origin: Vec<LonLat>,
     destination: Vec<LonLat>,
     mode: Vec<Mode>,
+    /// Whether the file stated the mode (M5: a trip without one may choose).
+    mode_given: Vec<bool>,
 }
 
 impl Trips {
@@ -165,6 +167,13 @@ impl Trips {
         self.mode[trip.index()]
     }
 
+    /// Whether the trip's mode was stated (M5): a trip without one chooses its mode
+    /// when the run offers mode choice, and is a car trip otherwise.
+    #[must_use]
+    pub fn mode_given(&self, trip: TripId) -> bool {
+        self.mode_given[trip.index()]
+    }
+
     /// Departure time.
     #[must_use]
     pub fn departure(&self, trip: TripId) -> Second {
@@ -181,6 +190,19 @@ impl Trips {
     #[must_use]
     pub fn destination(&self, trip: TripId) -> LonLat {
         self.destination[trip.index()]
+    }
+
+    /// These trips with `mode` for every trip whose mode was not stated (M5: a run
+    /// offering one mode). Stated modes are kept, and [`Self::mode_given`] is unchanged.
+    #[must_use]
+    pub fn with_unstated_mode(&self, mode: Mode) -> Self {
+        let mut out = self.clone();
+        for (m, &given) in out.mode.iter_mut().zip(&out.mode_given) {
+            if !given {
+                *m = mode;
+            }
+        }
+        out
     }
 }
 
@@ -437,6 +459,7 @@ pub fn build(
             trips.origin.push(trip.origin);
             trips.destination.push(trip.destination);
             trips.mode.push(trip.mode.unwrap_or_default());
+            trips.mode_given.push(trip.mode.is_some());
             cursor += 1;
         }
     }

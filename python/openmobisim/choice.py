@@ -89,7 +89,11 @@ __all__ = [
 #: itinerary's car or bike leg's); ``car_min``, ``bike_min``, ``walk_min``,
 #: ``wait_min`` (at stops), ``ride_min`` (in transit vehicles), ``transfers``
 #: and ``parking_min`` (parking or fetching the car or bike): the parts of the
-#: time, 0 where an alternative has none (a car route is all ``car_min``).
+#: time, 0 where an alternative has none (a car route is all ``car_min``);
+#: ``nest`` (the alternative's mode as a number: the nest of ``"nested_logit"``)
+#: and ``mode_walk``, ``mode_bike``, ``mode_car``, ``mode_transit``,
+#: ``mode_car_transit``, ``mode_bike_transit`` (1 for the alternative's mode, 0 for
+#: the rest: a coefficient on one is that mode's constant).
 ROUTE_ATTRIBUTES: tuple[str, ...] = (
     "time_min",
     "length_km",
@@ -104,6 +108,13 @@ ROUTE_ATTRIBUTES: tuple[str, ...] = (
     "ride_min",
     "transfers",
     "parking_min",
+    "nest",
+    "mode_walk",
+    "mode_bike",
+    "mode_car",
+    "mode_transit",
+    "mode_car_transit",
+    "mode_bike_transit",
 )
 
 

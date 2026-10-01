@@ -48,8 +48,8 @@ use crate::equilibration::{Equilibration, IterationReport, NoEquilibration};
 use crate::events::{EventRow, EventType};
 use crate::identity::{Inputs, RunDescription, describe};
 use crate::itinerary_choice::{
-    self, ChooseInputs, Chosen, Followed, Itineraries, ItineraryResult, Planner, Shape, WalkEnd,
-    parking_kind_of,
+    self, CarRoutes, ChooseInputs, Chosen, Followed, Itineraries, ItineraryResult, Planner, Shape,
+    Simulated, WalkEnd, parking_kind_of,
 };
 use crate::layers::{StaticLayers, StaticRoute, StaticRoutes, static_layer_of};
 use crate::link_times::{LinkTimes, relative_time_change};
@@ -61,6 +61,7 @@ use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext};
 use crate::transit::{TransitResult, TransitSetup, par_map};
 use openmobisim_core_graph::hubs::ParkingKind;
+use openmobisim_core_graph::layers::StaticLayer;
 use openmobisim_core_routes::{Reach, SearchContext};
 use openmobisim_core_transit::{JourneyLeg, Raptor};
 
@@ -158,6 +159,9 @@ pub struct ModeTotals {
     pub completion: TripCompletionStats,
     /// Total travel time of its completed trips, weighted.
     pub total_travel_time: Duration,
+    /// Its trips weighted by their travellers' weights: the trips they stand for (M5, for
+    /// the mode share).
+    pub weighted_trips: f64,
 }
 
 /// Why a run could not finish.
@@ -384,6 +388,8 @@ pub struct Run {
     transit: Option<Arc<TransitSetup>>,
     /// The parkings, linked to the layers and stops (M4): none, by default.
     parking: Option<Arc<ParkingSetup>>,
+    /// The modes a trip without a stated mode chooses among (M5): no choice, by default.
+    mode_choice: Option<Vec<Mode>>,
 }
 
 /// The share above the best route's expected time beyond which a route is not offered to a
@@ -424,6 +430,7 @@ impl Run {
             layers: Arc::new(StaticLayers::default()),
             transit: None,
             parking: None,
+            mode_choice: None,
         }
     }
 
@@ -446,6 +453,34 @@ impl Run {
     #[must_use]
     pub fn with_parking(mut self, parking: Arc<ParkingSetup>) -> Self {
         self.parking = Some(parking);
+        self
+    }
+
+    /// The same run, in which **a trip whose mode was not stated chooses one** among
+    /// `modes` (M5), with its route, by the run's choice model: the walk, the bike route,
+    /// the car's routes, transit journeys, park-and-ride and bike-and-ride, each offered
+    /// where the traveller can use it (their car or bike where the trip starts; the layer,
+    /// timetable or parkings in the run; park-and-ride and bike-and-ride only beyond
+    /// [`crate::parking::ParkingDefaults::pr_min_km`]). A traveller's trips choose in order,
+    /// since each may move a vehicle the next needs. A trip with a stated mode keeps it.
+    ///
+    /// With one mode there is nothing to choose: such trips simply take it (so `[Mode::Car]`
+    /// is the run without this call, exactly). With none, the call changes nothing.
+    #[must_use]
+    pub fn with_mode_choice(mut self, modes: &[Mode]) -> Self {
+        let mut modes = modes.to_vec();
+        modes.sort_unstable();
+        modes.dedup();
+        match modes.as_slice() {
+            [] => {}
+            [one] => {
+                self.trips = Arc::new(self.trips.with_unstated_mode(*one));
+                self.vehicles =
+                    VehicleLocations::at_first_trip_origin(&self.travellers, &self.trips);
+                self.mode_choice = None;
+            }
+            _ => self.mode_choice = Some(modes),
+        }
         self
     }
 
@@ -577,6 +612,7 @@ impl Run {
             layers: &self.layers,
             transit: self.transit.as_deref(),
             parking: self.parking.as_deref(),
+            mode_choice: self.mode_choice.as_deref(),
         })
     }
 
@@ -637,13 +673,18 @@ impl Run {
         // a scan, and the pair's set is looked up, not searched for.
         //
         // A trip that is not a car trip gets a key from a node to itself, which no
-        // route set, choice or gap takes part in (S195): its own layer routes it.
+        // route set, choice or gap takes part in (S195): its own layer routes it. So does a
+        // trip choosing its mode (M5): its car routes are among its alternatives, not the
+        // route choice's.
+        let mode_choice = self.mode_choice.clone();
+        let choosing = |trip: TripId| mode_choice.is_some() && !self.trips.mode_given(trip);
+        let offers = |mode: Mode| mode_choice.as_ref().is_some_and(|m| m.contains(&mode));
         let snapper = NodeSnapper::new(&self.network);
         let trip_keys: Vec<RouteKey> = (0..total_trips)
             .map(|i| {
                 let trip = TripId::new(i);
                 let origin = snapper.nearest(&self.network, self.trips.origin(trip));
-                if self.trips.mode(trip) == Mode::Car {
+                if self.trips.mode(trip) == Mode::Car && !choosing(trip) {
                     RouteKey::new(
                         origin,
                         snapper.nearest(&self.network, self.trips.destination(trip)),
@@ -654,8 +695,52 @@ impl Run {
             })
             .collect();
         // Bike and walk trips' routes on their layers: once per run, since their
-        // costs are static.
-        let static_routes = StaticRoutes::build(&self.layers, &self.trips);
+        // costs are static. A trip choosing its mode gets its route on each layer offered.
+        let static_routes = StaticRoutes::build(&self.layers, &self.trips, &|trip, layer| {
+            choosing(trip)
+                && offers(match layer {
+                    StaticLayer::Bike => Mode::Bike,
+                    StaticLayer::Walk => Mode::Walk,
+                })
+        });
+        // Shared handles, so the loading (which moves vehicles about in `self`) and the
+        // chooser (which only reads the inputs) do not borrow each other.
+        let (network, travellers, trips) =
+            (self.network.clone(), self.travellers.clone(), self.trips.clone());
+        // Itinerary trips (M4, S201): transit, park-and-ride and bike-and-ride choose an
+        // itinerary on expected costs — free flow, the schedule and the parkings as the day
+        // starts at first, the last loading's after; and, with mode choice (M5), every trip
+        // whose mode was not stated.
+        let (transit_arc, parking_arc, layers_arc) =
+            (self.transit.clone(), self.parking.clone(), self.layers.clone());
+        let itineraries: Option<Itineraries> = (transit_arc.is_some() || mode_choice.is_some())
+            .then(|| {
+                Itineraries::new(
+                    &trips,
+                    &Simulated {
+                        transit: transit_arc.as_deref(),
+                        parking: parking_arc.as_deref(),
+                        road: &network,
+                        layers: &layers_arc,
+                        choice: mode_choice.as_deref(),
+                        static_routes: &static_routes,
+                    },
+                )
+            })
+            .filter(|i| !i.is_empty());
+        // The pairs route sets are made for: the car trips', and the car pairs of the trips
+        // choosing their mode (M5), which the route update grows too.
+        let car_keys: Vec<RouteKey> = match &itineraries {
+            Some(itin) if mode_choice.is_some() => (0..total_trips)
+                .map(|i| {
+                    let trip = TripId::new(i);
+                    itin.position(trip)
+                        .and_then(|p| itin.car_key(p))
+                        .unwrap_or(trip_keys[i as usize])
+                })
+                .collect(),
+            _ => trip_keys.clone(),
+        };
         let turns = match &self.flow_motor {
             FlowMotor::Ltm { turns, .. } => turns.clone(),
             FlowMotor::Level0 => Arc::new(TurnTable::build(&self.network, SignalDefaults::SHIPPED)),
@@ -664,7 +749,10 @@ impl Run {
         // first; one that does not costs nothing here.
         let demand_rows: Option<Vec<TripDemand>> = self.route_generator.reads_demand().then(|| {
             (0..total_trips)
-                .filter(|&i| self.trips.mode(TripId::new(i)) == Mode::Car)
+                .filter(|&i| {
+                    let trip = TripId::new(i);
+                    self.trips.mode(trip) == Mode::Car && !choosing(trip)
+                })
                 .map(|i| {
                     let trip = TripId::new(i);
                     TripDemand {
@@ -685,7 +773,7 @@ impl Run {
                 }
                 None => self.route_generator.clone(),
             };
-            RouteSets::generate(&self.network, &turns, &trip_keys, generator.as_ref())
+            RouteSets::generate(&self.network, &turns, &car_keys, generator.as_ref())
         };
         // Sets already generated for these inputs are handed back, if the run has a cache (S178).
         let mut route_sets = match &self.route_cache {
@@ -693,7 +781,7 @@ impl Run {
                 let key = generation_key(
                     &self.network,
                     self.route_generator.as_ref(),
-                    &trip_keys,
+                    &car_keys,
                     demand_rows.as_deref(),
                 );
                 cache.get_or_generate(key, generate)
@@ -708,10 +796,6 @@ impl Run {
         let choice_rng = StreamRng::new(RngKey::from_seed(self.master_seed), Stream::Choice);
         let reselect_rng =
             StreamRng::new(RngKey::from_seed(self.master_seed), Stream::MsaReselection);
-        // Shared handles, so the loading (which moves vehicles about in `self`) and the
-        // chooser (which only reads the inputs) do not borrow each other.
-        let (network, travellers, trips) =
-            (self.network.clone(), self.travellers.clone(), self.trips.clone());
         let model = self.choice_model.clone();
         let inputs = route_choice::Inputs {
             network: &network,
@@ -726,24 +810,6 @@ impl Run {
         let mut route_choices = chooser.choose_all(&choice_rng, 0)?;
         let route_update = self.route_update.clone();
 
-        // Itinerary trips (M4, S201): transit, park-and-ride and bike-and-ride choose an
-        // itinerary on expected costs — free flow, the schedule and the parkings as the day
-        // starts at first, the last loading's after.
-        let (transit_arc, parking_arc, layers_arc) =
-            (self.transit.clone(), self.parking.clone(), self.layers.clone());
-        let itineraries: Option<Itineraries> = transit_arc
-            .as_deref()
-            .map(|t| {
-                Itineraries::new(
-                    &trips,
-                    &travellers,
-                    t,
-                    parking_arc.as_deref(),
-                    &network,
-                    layers_arc.bike.as_ref(),
-                )
-            })
-            .filter(|i| !i.is_empty());
         let itinerary_wanted = match &itineraries {
             Some(_) => itinerary_choice::wanted(model.as_ref())?,
             None => Vec::new(),
@@ -764,17 +830,20 @@ impl Run {
             wanted: &itinerary_wanted,
         };
         let mut chosen: Option<Chosen> = None;
-        if let (Some(itin), Some(transit)) = (&itineraries, transit_arc.as_deref()) {
+        if let Some(itin) = &itineraries {
             let free = LinkTimes::free_flow(&network);
+            let attributes = mode_choice.as_ref().map(|_| route_sets.attributes(&network));
             let planner = Planner {
-                transit,
+                transit: transit_arc.as_deref().map(|t| (t, t.scheduled())),
                 parking: parking_arc.as_deref(),
                 car: &car_ctx,
                 bike: bike_planner,
-                raptor: transit.scheduled(),
                 times: &free,
                 availability: availability.as_ref(),
                 detour_limit: self.choice_detour_limit,
+                car_routes: attributes
+                    .as_ref()
+                    .map(|attributes| CarRoutes { sets: &route_sets, attributes }),
             };
             chosen = Some(itin.choose(&planner, &choose_inputs, None, 0, None)?.0);
         }
@@ -792,6 +861,8 @@ impl Run {
         let mut previous_bins: Option<EntryTables> = None;
         // Who moved on the way to this iteration: (share that chose again, share that changed).
         let mut arrived_by = (1.0, f64::NAN);
+        // Of the trips choosing their mode, the share whose mode changed on the way (M5).
+        let mut mode_changed_by = f64::NAN;
         let mut converged = false;
         let mut last: Option<(Loaded, Diagnostics)> = None;
 
@@ -816,6 +887,7 @@ impl Run {
             let mut report = IterationReport::unmeasured(iteration);
             report.reselected_share = arrived_by.0;
             report.changed_share = arrived_by.1;
+            report.mode_changed_share = mode_changed_by;
             report.total_travel_time_s = loaded.total_travel_time.get();
             report.completed = loaded.completion.completed;
             report.truncated = loaded.completion.truncated;
@@ -842,7 +914,7 @@ impl Run {
                             network: &network,
                             turns: &turns,
                             trips: &trips,
-                            trip_keys: &trip_keys,
+                            trip_keys: &car_keys,
                             route_sets: &route_sets,
                             times: &times,
                             iteration: next,
@@ -888,24 +960,30 @@ impl Run {
                     report.gap_flow_excess =
                         update.assessment.gap_flow - update.assessment.gap_flow_floor;
                     // The itineraries, on the costs this loading produced (M4).
-                    if let (Some(itin), Some(current), Some(transit)) =
-                        (&itineraries, &chosen, transit_arc.as_deref())
-                    {
+                    if let (Some(itin), Some(current)) = (&itineraries, &chosen) {
                         if let (Some(av), Some(real)) =
                             (availability.as_mut(), &loaded.availability)
                         {
                             av.absorb(real);
                         }
-                        let realised = loaded.transit.as_ref().map(|t| transit.on_times(&t.times));
+                        let transit = transit_arc.as_deref();
+                        let realised = transit
+                            .zip(loaded.transit.as_ref())
+                            .map(|(transit, t)| transit.on_times(&t.times));
+                        let attributes =
+                            mode_choice.as_ref().map(|_| route_sets.attributes(&network));
                         let planner = Planner {
-                            transit,
+                            transit: transit
+                                .map(|t| (t, realised.as_ref().unwrap_or_else(|| t.scheduled()))),
                             parking: parking_arc.as_deref(),
                             car: &car_ctx,
                             bike: bike_planner,
-                            raptor: realised.as_ref().unwrap_or_else(|| transit.scheduled()),
                             times: &times,
                             availability: availability.as_ref(),
                             detour_limit: self.choice_detour_limit,
+                            car_routes: attributes
+                                .as_ref()
+                                .map(|attributes| CarRoutes { sets: &route_sets, attributes }),
                         };
                         let (next_chosen, found) = itin.choose(
                             &planner,
@@ -914,9 +992,12 @@ impl Run {
                             next,
                             strategy_for_next,
                         )?;
-                        for mode in [Mode::Transit, Mode::CarTransit, Mode::BikeTransit] {
+                        // Every mode's: a trip choosing its mode is measured against the best
+                        // of the mode it took (M5).
+                        for mode in Mode::ALL {
                             report.itinerary_gap[mode.index()] = found.gap(mode);
                         }
+                        mode_changed_by = found.mode_changed_share();
                         pending_chosen = Some(next_chosen);
                     }
                     times_now = Some(times);
@@ -969,7 +1050,18 @@ impl Run {
             Arc::try_unwrap(route_sets).unwrap_or_else(|shared| RouteSets::clone(&shared));
         // The per-link table is the user's only if they asked for it.
         let link_bins = if self.link_bin_seconds.is_some() { loaded.link_bins } else { None };
-        let by_mode = mode_totals(&loaded.events, &self.trips, &self.travellers);
+        // Each trip under the mode it took: its choice (M5), else its stated mode.
+        let taken: Vec<Mode> = (0..total_trips)
+            .map(|i| {
+                let trip = TripId::new(i);
+                itineraries
+                    .as_ref()
+                    .zip(chosen.as_ref())
+                    .and_then(|(it, c)| it.position(trip).and_then(|p| c.alt[p].as_ref()))
+                    .map_or_else(|| self.trips.mode(trip), |a| a.mode)
+            })
+            .collect();
+        let by_mode = mode_totals(&loaded.events, &self.trips, &self.travellers, &taken);
         let [bike_link_bins, walk_link_bins] = loaded.layer_bins;
         let transit = loaded.transit;
         let itinerary_result = match (&itineraries, &chosen) {
@@ -1073,8 +1165,21 @@ impl Run {
             // never actually arrived where the file says the day continues
             // from. Stranding propagates by itself; nothing here needs to
             // decide to stop early.
-            let mode = self.trips.mode(trip);
+            let mut mode = self.trips.mode(trip);
+            // A trip that chose a direct leg (M5) runs as a trip of that mode, on the car
+            // route it chose (a bike or walk route is its layer's one).
+            let mut chosen_route: Option<Vec<LinkId>> = None;
             if let Some((itineraries, chosen)) = itin {
+                if let Some(position) = itineraries.position(trip) {
+                    if let Some(alt) =
+                        chosen.alt[position].as_ref().filter(|a| a.shape == Shape::Direct)
+                    {
+                        mode = alt.mode;
+                        chosen_route = Some(alt.vehicle_links.clone());
+                    }
+                }
+            }
+            if let (Some((itineraries, chosen)), None) = (itin, &chosen_route) {
                 if let Some(position) = itineraries.position(trip) {
                     self.start_itinerary(
                         trip,
@@ -1179,7 +1284,9 @@ impl Run {
                 events.push(EventRow::trip(departure, EventType::NoVehicleAvailable, trip));
             } else {
                 let route_key = trip_keys[trip.index()];
-                let route = if route_key.origin == route_key.destination {
+                let route = if let Some(links) = chosen_route {
+                    Some(links)
+                } else if route_key.origin == route_key.destination {
                     Some(Vec::new())
                 } else {
                     let chosen = route_choices.route[trip.index()];
@@ -1603,7 +1710,7 @@ impl Run {
         let departure = self.trips.departure(trip);
         let (origin, destination) = (self.trips.origin(trip), self.trips.destination(trip));
         let weight = self.travellers.weight(traveller);
-        let kind = parking_kind_of(self.trips.mode(trip));
+        let stated = parking_kind_of(self.trips.mode(trip));
         let no_vehicle = |out: &mut ItinStart<'_>, diagnostics: &mut Diagnostics| {
             diagnostics.record(DiagKey::new(
                 Category::Modelling,
@@ -1616,7 +1723,7 @@ impl Run {
         };
         let Some(alt) = chosen.alt[position].as_ref() else {
             // No alternative: the vehicle was not where it could be used, or no journey.
-            let usable = kind.map(vehicle_kind).is_none_or(|vk| {
+            let usable = stated.map(vehicle_kind).is_none_or(|vk| {
                 self.vehicles.is_at_origin(&self.travellers, traveller, vk, origin)
                     || self.vehicles.parking(&self.travellers, traveller, vk).is_some()
             });
@@ -1635,8 +1742,9 @@ impl Run {
             return;
         };
         let index = out.pending.len();
-        let vehicle_arrival = match (alt.shape, kind) {
-            (Shape::Transit, _) | (_, None) => None,
+        // (A direct leg never comes here: the loop runs it as a trip of its mode.)
+        let vehicle_arrival = match (alt.shape, parking_kind_of(alt.mode)) {
+            (Shape::Transit | Shape::Direct, _) | (_, None) => None,
             (Shape::Out, Some(k)) => {
                 let vk = vehicle_kind(k);
                 let parking = self.parking.clone().expect("an out itinerary has parkings");
@@ -1837,7 +1945,8 @@ impl Run {
                     walks: Vec::new(),
                 };
                 let (at_first, start, end) = match alt.shape {
-                    Shape::Transit => {
+                    // (A direct leg is never pending: the loop runs it as a trip of its mode.)
+                    Shape::Transit | Shape::Direct => {
                         (departure.saturating_add(alt.access_walk_s), nodes.walk_o, nodes.walk_d)
                     }
                     Shape::Out => {
@@ -1949,7 +2058,7 @@ impl Run {
                 return StaticOutcome::NoVehicle;
             }
         }
-        let index = match static_routes.of(trip) {
+        let index = match static_routes.of(trip, layer) {
             StaticRoute::None => return StaticOutcome::NotAvailable,
             StaticRoute::Unreachable => return StaticOutcome::NoPath,
             StaticRoute::Here => {
@@ -2001,14 +2110,18 @@ fn mode_totals(
     events: &[EventRow],
     trips: &Trips,
     travellers: &Travellers,
+    taken: &[Mode],
 ) -> [ModeTotals; Mode::COUNT] {
     let mut out = [ModeTotals::default(); Mode::COUNT];
     for raw in 0..trips.len() {
-        out[trips.mode(TripId::new(raw)).index()].completion.total_trips += 1;
+        let trip = TripId::new(raw);
+        let totals = &mut out[taken[trip.index()].index()];
+        totals.completion.total_trips += 1;
+        totals.weighted_trips += f64::from(travellers.weight(trips.traveller(trip)));
     }
     for e in events {
         let trip = TripId::new(e.entity_id);
-        let totals = &mut out[trips.mode(trip).index()];
+        let totals = &mut out[taken[trip.index()].index()];
         let c = &mut totals.completion;
         match e.event_type {
             EventType::TripCompleted => {

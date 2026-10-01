@@ -19,6 +19,7 @@
 //! | `n_links` | how many links |
 //! | `car_min` | the same as `time_min`: a route is driven all the way |
 //! | `bike_min`, `walk_min`, `wait_min`, `ride_min`, `transfers`, `parking_min` | 0: a route has none |
+//! | `nest`, `mode_car` and the other `mode_*` | the car's nest (its mode index) and 1 for `mode_car`, 0 for the others (M5) |
 //!
 //! The last seven are the itineraries' vocabulary (M4, A8;
 //! [`crate::itinerary_choice`]): routes carry them too, so one set of
@@ -32,7 +33,7 @@
 use std::sync::Arc;
 
 use openmobisim_core_choice::{ChoiceBatch, ChoiceError, ChoiceModel};
-use openmobisim_core_demand::{Travellers, Trips};
+use openmobisim_core_demand::{Mode, Travellers, Trips};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::{RouteAttributes, RouteKey, RouteSets, Search, SearchContext};
@@ -45,7 +46,7 @@ use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
 /// The attributes a route carries, in the order a batch holds them: the same
 /// names as every itinerary's ([`crate::itinerary_choice::ATTRIBUTES`], A8).
-pub const ROUTE_ATTRIBUTES: [&str; 13] = crate::itinerary_choice::ATTRIBUTES;
+pub const ROUTE_ATTRIBUTES: [&str; 20] = crate::itinerary_choice::ATTRIBUTES;
 
 /// "No route": a trip with no set, or whose origin and destination are one node.
 pub const NO_ROUTE: u32 = u32::MAX;
@@ -341,7 +342,9 @@ impl<'a> Chooser<'a> {
                         }
                         "n_links" => f64::from(u32::try_from(view.links.len()).unwrap_or(u32::MAX)),
                         "car_min" => seconds[a] / 60.0,
-                        _ => 0.0,
+                        other => {
+                            crate::itinerary_choice::mode_attribute(other, Mode::Car).unwrap_or(0.0)
+                        }
                     };
                 }
                 batch.push_alternative(self.identity[r], &row);

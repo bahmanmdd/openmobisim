@@ -291,3 +291,33 @@ fn without_parkings_a_park_and_ride_trip_is_not_available_and_plain_transit_is_u
     let it = r.itineraries.as_ref().expect("the transit trip");
     assert_eq!(it.parking, [NO_PARKING]);
 }
+
+#[test]
+fn pr3_the_nested_logit_chooses_within_the_park_and_ride_nest() {
+    // Both parkings are park-and-ride itineraries: one nest, so the nested logit is the logit
+    // of the utilities over mu: P(H) = 1 / (1 + e^(-dU / mu)), dU = 0.204 as by hand.
+    let t = toy();
+    let defaults = ClassDefaults::new()
+        .with_default("everyone", Ownership { car: true, bike: true, transit_pass: false });
+    let (travellers, trips) = build_travellers(
+        vec![t.trip("a", 0, "W", "N1", 0, Mode::CarTransit)],
+        Vec::new(),
+        &defaults,
+        1,
+        &mut Diagnostics::new(),
+    )
+    .unwrap();
+    let model = openmobisim_core_choice::NestedLogit::from_options(&Options::new()).unwrap();
+    let r = Run::new(t.road.clone(), Arc::new(travellers), Arc::new(trips), Second(20_000))
+        .with_layers(t.layers.clone())
+        .with_transit(t.transit.clone())
+        .with_parking(t.parking(&toy_network_parkings()))
+        .with_choice_model(Arc::new(model))
+        .execute(&mut Diagnostics::new());
+    let it = r.itineraries.as_ref().expect("itineraries");
+    let du: f64 = -0.09 * (600.0 - 411.0) / 60.0 + 0.13 * 225.0 / 60.0;
+    let p_h = 1.0 / (1.0 + (-du / 0.5).exp());
+    let p = t.parking(&toy_network_parkings());
+    let expected = if p.external_id(it.parking[0]) == "H-car" { p_h } else { 1.0 - p_h };
+    assert!((it.probability[0] - expected).abs() < 1e-9, "{} vs {expected}", it.probability[0]);
+}

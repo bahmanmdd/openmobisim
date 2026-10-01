@@ -68,6 +68,8 @@ def test_embedded_geometry_is_the_networks_to_five_centimetres(tmp_path):
     coords, offsets = net.link_geometry()
     expect = geo.project_lonlat(coords, float(coords[:, 0].mean()), float(coords[:, 1].mean()))
     assert meta["n_links"] == net.link_count and meta["n_verts"] == len(coords)
+    # One name per road class, busways (the last, S200) included.
+    assert len(meta["class_names"]) == 19 and meta["class_names"][18] == "busway"
     assert (a["vs"] == offsets).all()
     x, y = np.cumsum(a["dx"].astype(np.int64)) * 0.1, np.cumsum(a["dy"].astype(np.int64)) * 0.1
     assert np.abs(x - expect[:, 0]).max() < 0.06 and np.abs(y - expect[:, 1]).max() < 0.06

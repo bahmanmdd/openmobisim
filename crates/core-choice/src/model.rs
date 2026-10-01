@@ -288,12 +288,13 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// The built-in models: `deterministic` and `logit`.
+    /// The built-in models: `deterministic`, `logit` and `nested_logit`.
     #[must_use]
     pub fn builtin() -> Self {
         let mut r = Self { models: Vec::new() };
         r.register("deterministic", |o| Ok(Box::new(crate::Deterministic::from_options(o)?)));
         r.register("logit", |o| Ok(Box::new(crate::Logit::from_options(o)?)));
+        r.register("nested_logit", |o| Ok(Box::new(crate::NestedLogit::from_options(o)?)));
         r
     }
 

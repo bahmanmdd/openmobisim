@@ -132,6 +132,8 @@ pub(crate) struct Inputs<'a> {
     pub layers: &'a StaticLayers,
     pub transit: Option<&'a TransitSetup>,
     pub parking: Option<&'a ParkingSetup>,
+    /// The modes a trip without a stated mode chooses among (M5), if the run offers a choice.
+    pub mode_choice: Option<&'a [Mode]>,
 }
 
 pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
@@ -167,6 +169,10 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         h.write_str(inputs.route_update_descriptor);
     }
     hash_modes(&mut h, inputs.trips, inputs.layers);
+    // Off means absent (M5): a run without mode choice hashes as it did before it.
+    if let Some(modes) = inputs.mode_choice {
+        hash_mode_choice(&mut h, inputs.trips, inputs.layers, modes);
+    }
     // Off means absent: a run without a timetable hashes as it did before transit.
     if let Some(transit) = inputs.transit {
         hash_transit(&mut h, transit);
@@ -239,6 +245,7 @@ pub(crate) fn hash_network(h: &mut Fnv1a, network: &RoadNetwork, ids: u64) {
 fn hash_modes(h: &mut Fnv1a, trips: &Trips, layers: &StaticLayers) {
     let mut used = [false; 2];
     let mut any = false;
+    // (Mode choice hashes the layers it offers itself: `hash_mode_choice`.)
     for raw in 0..trips.len() {
         let mode = trips.mode(TripId::new(raw));
         any |= mode != Mode::Car;
@@ -258,16 +265,38 @@ fn hash_modes(h: &mut Fnv1a, trips: &Trips, layers: &StaticLayers) {
         h.write_u8(trips.mode(TripId::new(raw)) as u8);
     }
     for (layer, used) in [StaticLayer::Bike, StaticLayer::Walk].into_iter().zip(used) {
-        let Some(setup) = layers.get(layer).filter(|_| used) else { continue };
-        let graph = setup.network().network();
-        h.write_str(layer.as_str());
-        hash_network(h, graph, NetworkFingerprint::of(graph).value());
-        for &s in setup.seconds() {
-            h.write_f64(s);
+        if used {
+            hash_layer(h, layers, layer);
         }
-        for &c in setup.costs() {
-            h.write_f64(c);
-        }
+    }
+}
+
+/// A static layer the run has: its network, seconds and costs.
+fn hash_layer(h: &mut Fnv1a, layers: &StaticLayers, layer: StaticLayer) {
+    let Some(setup) = layers.get(layer) else { return };
+    let graph = setup.network().network();
+    h.write_str(layer.as_str());
+    hash_network(h, graph, NetworkFingerprint::of(graph).value());
+    for &s in setup.seconds() {
+        h.write_f64(s);
+    }
+    for &c in setup.costs() {
+        h.write_f64(c);
+    }
+}
+
+/// Mode choice (M5): the modes offered, which trips choose, and the layers they may use.
+fn hash_mode_choice(h: &mut Fnv1a, trips: &Trips, layers: &StaticLayers, modes: &[Mode]) {
+    h.write_str("mode-choice");
+    h.write_u32(u32::try_from(modes.len()).expect("few modes"));
+    for &m in modes {
+        h.write_u8(m as u8);
+    }
+    for raw in 0..trips.len() {
+        h.write_bool(trips.mode_given(TripId::new(raw)));
+    }
+    for layer in [StaticLayer::Bike, StaticLayer::Walk] {
+        hash_layer(h, layers, layer);
     }
 }
 
@@ -362,6 +391,7 @@ fn hash_parking(h: &mut Fnv1a, parking: &ParkingSetup) {
         d.slope_bike_s,
         d.snap_m,
         d.bin_s,
+        d.pr_min_km,
     ] {
         h.write_f64(v);
     }

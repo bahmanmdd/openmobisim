@@ -43,11 +43,12 @@ from openmobisim._core import (
 )
 from openmobisim.network import network_read_table
 from openmobisim.parking import parking_read_table
-from openmobisim.scenario import Run, Scenario, Table
+from openmobisim.scenario import MODES, Run, Scenario, Table
 
 __version__: str = _core.__version__
 
 __all__ = [
+    "MODES",
     "Parkings",
     "Run",
     "Scenario",

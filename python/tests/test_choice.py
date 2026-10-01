@@ -43,7 +43,7 @@ def go(name, **kwargs):
 
 
 def test_the_models_are_listed_with_the_default_first():
-    assert ms.choice_models() == ["deterministic", "logit"]
+    assert ms.choice_models() == ["deterministic", "logit", "nested_logit"]
 
 
 def test_the_deterministic_model_sends_everyone_down_the_best_route():

@@ -74,7 +74,11 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// bike-and-ride, the candidates, the parking times and their occupancy
 /// response), and the itineraries' choice coefficients joined the built-in
 /// logit's defaults (walking, waiting, transfers); car routes are unchanged.
-pub const DEFAULTS_VERSION: u32 = 5;
+///
+/// Version 6 (M5, S205): mode choice. The nested logit's nest scale (`mu`, 0.5) and
+/// park-and-ride's shortest trip in mode choice (`ParkingDefaults::pr_min_km`, 3 km); the
+/// mode constants are 0. A run without mode choice is unchanged.
+pub const DEFAULTS_VERSION: u32 = 6;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

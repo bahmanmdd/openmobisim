@@ -33,6 +33,7 @@ _CLASS_NAMES = [
     "motorway", "motorway link", "trunk", "trunk link", "primary", "primary link",
     "secondary", "secondary link", "tertiary", "tertiary link", "unclassified",
     "residential", "living street", "service", "pedestrian", "footway", "cycleway", "ferry",
+    "busway",
 ]  # fmt: skip
 _LEVEL_NAMES = {0: "free flow", 2: "point queue", 3: "spatial queue", 4: "full"}
 #: Coordinates are stored in tenths of a metre as 32-bit integers: good to ~214 km.

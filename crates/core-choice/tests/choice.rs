@@ -328,7 +328,7 @@ impl ChoiceModel for AverseToSharing {
 #[test]
 fn the_registry_lists_the_built_ins_and_says_what_exists_when_a_name_is_wrong() {
     let registry = Registry::builtin();
-    assert_eq!(registry.names(), ["deterministic", "logit"]);
+    assert_eq!(registry.names(), ["deterministic", "logit", "nested_logit"]);
     assert_eq!(DEFAULT_MODEL, "deterministic");
     let message = registry.create("mnl", &Options::new()).err().expect("unknown").to_string();
     assert!(message.contains("deterministic") && message.contains("logit"), "{message}");

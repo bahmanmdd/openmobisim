@@ -42,7 +42,7 @@ use crate::transit::TransitSetup;
 pub type Options = std::collections::BTreeMap<String, f64>;
 
 /// Parking's defaults: every one an uncalibrated assumption, overridable by
-/// name (S202), part of the defaults table (`DEFAULTS_VERSION` 5).
+/// name (S202), part of the defaults table (`DEFAULTS_VERSION` 5; `pr_min_km` 6).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ParkingDefaults {
     /// The longest walk from a parking to a stop, in seconds (300 s is 400 m).
@@ -96,6 +96,12 @@ pub struct ParkingDefaults {
     pub snap_m: f64,
     /// The length of the time bins availability is measured in, in seconds.
     pub bin_s: f64,
+    /// The shortest trip, in km as the crow flies, that mode choice offers park-and-ride
+    /// and bike-and-ride to (M5; a trip given one of those modes takes it at any length).
+    ///
+    /// *For compute (A18, roadmap I-ag), and an assumption: nobody drives to a car park
+    /// for a 1 km trip. Uncalibrated.*
+    pub pr_min_km: f64,
 }
 
 impl ParkingDefaults {
@@ -112,10 +118,11 @@ impl ParkingDefaults {
         slope_bike_s: 180.0,
         snap_m: 300.0,
         bin_s: 900.0,
+        pr_min_km: 3.0,
     };
 
     /// The names of the options, in the order [`Self::from_options`] reads them.
-    pub const NAMES: [&'static str; 11] = [
+    pub const NAMES: [&'static str; 12] = [
         "walk_max_s",
         "reach_car_s",
         "reach_bike_s",
@@ -127,6 +134,7 @@ impl ParkingDefaults {
         "slope_bike_s",
         "snap_m",
         "bin_s",
+        "pr_min_km",
     ];
 
     fn slot(&mut self, name: &str) -> Option<&mut f64> {
@@ -142,6 +150,7 @@ impl ParkingDefaults {
             "slope_bike_s" => &mut self.slope_bike_s,
             "snap_m" => &mut self.snap_m,
             "bin_s" => &mut self.bin_s,
+            "pr_min_km" => &mut self.pr_min_km,
             _ => return None,
         })
     }

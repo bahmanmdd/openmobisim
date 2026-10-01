@@ -28,7 +28,7 @@ pub mod builtin;
 pub mod model;
 
 pub use batch::{ChoiceBatch, Choices};
-pub use builtin::{Deterministic, Logit};
+pub use builtin::{Deterministic, Logit, NestedLogit};
 pub use model::{
     ChoiceError, ChoiceModel, DEFAULT_MODEL, Factory, Options, Registry, default_model,
     first_argmax, gumbel, gumbel_noise, logit_probabilities, model, sample_random_utility,

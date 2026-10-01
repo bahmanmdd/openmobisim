@@ -87,6 +87,7 @@ fn sample_result() -> RunResult {
                     ..TripCompletionStats::default()
                 },
                 total_travel_time: Duration(600.0),
+                weighted_trips: 4.0,
             };
             by_mode[Mode::Bike.index()] = ModeTotals {
                 completion: TripCompletionStats {
@@ -95,6 +96,7 @@ fn sample_result() -> RunResult {
                     ..TripCompletionStats::default()
                 },
                 total_travel_time: Duration(125.0),
+                weighted_trips: 1.0,
             };
             by_mode
         },
@@ -518,6 +520,7 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
         gap_network_excess: if iteration == 2 { 0.03 } else { f64::NAN },
         itinerary_gap: [f64::NAN; openmobisim_core_demand::Mode::COUNT],
         hub_mismatch_s: f64::NAN,
+        mode_changed_share: f64::NAN,
     };
     result.iterations = vec![report(0, 0.3), report(1, 0.1), report(2, 0.05)];
     let path = temp_path("kpis_iterated.parquet");

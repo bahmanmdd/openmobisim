@@ -104,12 +104,18 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
                 rows.push((iteration, "all", "return_mismatch_s", it.return_mismatch_s));
             }
         }
+        // The mode shares, by the trips the travellers stand for, when trips chose (M5).
+        let choosing = result.itineraries.as_ref().is_some_and(|it| it.choosing.contains(&true));
+        let weighted: f64 = result.by_mode.iter().map(|m| m.weighted_trips).sum();
         for mode in Mode::ALL {
             let m = &result.by_mode[mode.index()];
             if m.completion.total_trips == 0 {
                 continue;
             }
             let name = mode.as_str();
+            if choosing && weighted > 0.0 {
+                rows.push((iteration, name, "mode_share", m.weighted_trips / weighted));
+            }
             rows.push((iteration, name, "trips", f64::from(m.completion.total_trips)));
             rows.push((iteration, name, "total_travel_time_s", m.total_travel_time.get()));
             rows.push((iteration, name, "completed_trips", f64::from(m.completion.completed)));
@@ -157,7 +163,7 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
         }
         // The itinerary trips' gap, under their modes (M4); the car gap above is the car
         // routes'. And the hub expectation mismatch of the loading.
-        for mode in [Mode::Transit, Mode::CarTransit, Mode::BikeTransit] {
+        for mode in Mode::ALL {
             let g = r.itinerary_gap[mode.index()];
             if g.is_finite() {
                 rows.push((i, mode.as_str(), "gap", g));
@@ -165,6 +171,9 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
         }
         if r.hub_mismatch_s.is_finite() {
             rows.push((i, all, "hub_mismatch_s", r.hub_mismatch_s));
+        }
+        if r.mode_changed_share.is_finite() {
+            rows.push((i, all, "mode_changed_share", r.mode_changed_share));
         }
         if i == last {
             rows.push((i, all, "trips", f64::from(c.total_trips)));

@@ -125,12 +125,15 @@ def draw_furniture(
     logo: bool = True,
     compass: bool = True,
     route_legend: list[tuple[np.ndarray, str]] | None = None,
+    marker_legend: list[tuple[str, bool, str]] | None = None,
 ) -> None:
     """Title with the signal glyph, legends, the provenance strip and the logo.
 
     `width_legend` is ``(label, [(value, width_pt), ...], unit)``; `colour_legend`
     is ``(label, ramp_stops, low_label, high_label)``; `route_legend` is a list of
-    ``(rgb, text)`` rows, one per route, in place of both. `credit` is the user's own
+    ``(rgb, text)`` rows, one per route, in place of both; `marker_legend` is a list
+    of ``(marker, filled, text)`` rows, one per kind of symbol on the map, in the place
+    of the width legend. `credit` is the user's own
     line (a name, an institution, their copyright) placed before the logo; the
     logo is a signature, not a claim over the figure or its data.
     """
@@ -187,6 +190,23 @@ def draw_furniture(
                 fontsize=8.5 * k,
                 fontfamily=mono,
             )
+    if marker_legend:
+        for i, (marker, filled, text) in enumerate(marker_legend[:4]):
+            y0 = 0.950 - i * 0.021
+            fig.add_artist(
+                Line2D(
+                    [lx + 0.008],
+                    [y0 + 0.004],
+                    transform=fig.transFigure,
+                    linestyle="none",
+                    marker=marker,
+                    markersize=(7.0 if filled else 4.0) * k,
+                    markerfacecolor=t.ink2 if filled else t.surface,
+                    markeredgecolor=t.ink2 if filled else t.muted,
+                    markeredgewidth=0.6 * k,
+                )
+            )
+            fig.text(lx + 0.022, y0, text, color=t.ink2, fontsize=9 * k, fontfamily=font_mono())
     if route_legend:
         for i, (colour, text) in enumerate(route_legend[:8]):
             col, row = divmod(i, 4)
