@@ -354,3 +354,54 @@ pub(crate) fn itinerary_choices<'py>(
     d.set_item("rides", result.rides.clone().into_pyarray(py))?;
     Ok(d)
 }
+
+/// Every trip's departure and the mode it took: what `Run.trip_modes` returns (D17).
+///
+/// `unstated` is the one mode a run with a single mode gives the trips without one (A24).
+pub(crate) fn trip_modes<'py>(
+    py: Python<'py>,
+    result: Option<&ItineraryResult>,
+    trips: &Trips,
+    travellers: &Travellers,
+    unstated: Option<Mode>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let n = trips.len();
+    // The stated mode (a car without one, or the run's one mode), then the itinerary
+    // trips' mode taken, as `itinerary_choices` gives it.
+    let stated = |trip: TripId| match unstated {
+        Some(one) if !trips.mode_given(trip) => one,
+        _ => trips.mode(trip),
+    };
+    let mut mode: Vec<Option<&str>> =
+        (0..n).map(|t| Some(stated(TripId::new(t)).as_str())).collect();
+    let mut choosing = vec![false; mode.len()];
+    if let Some(result) = result {
+        for (i, &t) in result.trip.iter().enumerate() {
+            let t = t as usize;
+            choosing[t] = result.choosing[i];
+            match (result.mode[i], result.choosing[i]) {
+                (NO_MODE, true) => mode[t] = None,
+                (NO_MODE, false) => {}
+                (m, _) => mode[t] = Some(Mode::ALL[m as usize].as_str()),
+            }
+        }
+    }
+    let (mut who, mut seq, mut departure, mut weight) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for t in 0..n {
+        let trip = TripId::new(t);
+        let traveller = trips.traveller(trip);
+        who.push(travellers.external_ids().external(traveller.raw()).to_string());
+        seq.push(t - travellers.first_trip(traveller).raw());
+        departure.push(trips.departure(trip).get());
+        weight.push(travellers.weight(traveller));
+    }
+    let d = PyDict::new(py);
+    d.set_item("traveller_id", who)?;
+    d.set_item("trip_seq", seq.into_pyarray(py))?;
+    d.set_item("departure_s", departure.into_pyarray(py))?;
+    d.set_item("mode", mode)?;
+    d.set_item("mode_choice", choosing)?;
+    d.set_item("weight", weight.into_pyarray(py))?;
+    Ok(d)
+}

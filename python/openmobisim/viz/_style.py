@@ -23,6 +23,10 @@ method's default order, in the service kinds' order (rail, metro, tram, bus,
 ferry, other), validated on each surface (colour-blind separation and the
 normal-vision floor pass; on paper three fall below 3:1 against the surface, so
 the legend always names every kind).
+
+**Modes** (D17, S206) take few hues, in families: car ember and park-and-ride a
+lighter ember; bike the delay spectrum's blue-green and bike-and-ride a lighter
+one; walk its gold; transit ion.
 """
 
 from __future__ import annotations
@@ -86,6 +90,9 @@ class Theme:
     ramp_volume: tuple[str, ...]
     #: Kinds of transit service, in their order: rail, metro, tram, bus, ferry, other.
     kinds: tuple[str, ...]
+    #: Modes, in ``openmobisim.MODES``' order: car, bike, walk, transit,
+    #: park-and-ride (``car_transit``), bike-and-ride (``bike_transit``).
+    modes: tuple[str, ...]
 
 
 THEMES: dict[str, Theme] = {
@@ -102,6 +109,7 @@ THEMES: dict[str, Theme] = {
         ramp_delay_ember=(EMBER[300], EMBER[400], EMBER[500], EMBER[600], EMBER[700]),
         ramp_volume=(ION[400], ION[500], ION[600], ION[700]),  # S162: from ION[300]
         kinds=("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"),
+        modes=(EMBER[500], TEAL_PAPER, GOLD_PAPER, ION[500], EMBER[300], "#7cc8c4"),
     ),
     "night": Theme(
         name="night",
@@ -116,6 +124,7 @@ THEMES: dict[str, Theme] = {
         ramp_delay_ember=(EMBER[600], EMBER[500], EMBER[400], EMBER[300]),
         ramp_volume=(ION[600], ION[500], ION[400], ION[300], ION[200]),
         kinds=("#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300"),
+        modes=(EMBER[500], TEAL_NIGHT, GOLD_NIGHT, ION[400], EMBER[300], "#9be3de"),
     ),
 }
 

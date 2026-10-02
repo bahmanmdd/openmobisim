@@ -724,6 +724,8 @@ class RunSummary:
     parking_bins_path: str | None
     #: Each itinerary trip's choice (see ``Run.itinerary_choices``).
     itinerary_choices: dict[str, Any] | None
+    #: Every trip's departure and the mode it took (see ``Run.trip_modes``).
+    trip_modes: dict[str, Any]
     #: Itinerary trips whose chosen line could not be followed.
     itinerary_replanned: int
     #: Trips back: mean |expected − realised| arrival at the parking, in seconds.

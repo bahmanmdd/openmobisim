@@ -44,7 +44,7 @@ use openmobisim_core_sim::{
 use openmobisim_core_transit::TransitDefaults;
 
 use crate::parking::{
-    PyParkings, itinerary_choices, parking_bins, parking_places, parking_summary,
+    PyParkings, itinerary_choices, parking_bins, parking_places, parking_summary, trip_modes,
 };
 use crate::transit::{PyTransit, transit_calls, transit_summary};
 use openmobisim_core_types::diagnostics::Diagnostics;
@@ -217,6 +217,9 @@ pub struct PyRunSummary {
     /// `None` without such trips.
     #[pyo3(get)]
     pub itinerary_choices: Option<Py<PyDict>>,
+    /// Every trip's departure and the mode it took, as columns (D17).
+    #[pyo3(get)]
+    pub trip_modes: Py<PyDict>,
     /// Itinerary trips whose chosen line could not be followed, and the mean
     /// difference between expected and realised arrival at the parking of the trips
     /// back, in seconds (M4).
@@ -668,6 +671,12 @@ pub fn run_pipeline(
         ),
         None => None,
     };
+    let mut distinct = modes.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    let one_mode = if let [one] = distinct.as_slice() { Some(*one) } else { None };
+    let trip_modes_table =
+        trip_modes(py, result.itineraries.as_ref(), &trips_used, &travellers, one_mode)?.unbind();
     let (itinerary_replanned, return_mismatch_s) = result
         .itineraries
         .as_ref()
@@ -702,6 +711,7 @@ pub fn run_pipeline(
         parking_summary: parking_summary_table,
         parking_bins_path,
         itinerary_choices: itinerary_table,
+        trip_modes: trip_modes_table,
         itinerary_replanned,
         return_mismatch_s,
         transit_calls_path,

@@ -518,6 +518,18 @@ class Run:
         choices = self._summary.itinerary_choices
         return None if choices is None else dict(choices)
 
+    def trip_modes(self) -> dict[str, Any]:
+        """Every trip's departure and the mode it took, as columns.
+
+        One row per trip, by traveller and then by the order of their day: ``traveller_id``,
+        ``trip_seq`` (its place in that traveller's day, from 0), ``departure_s``, ``mode``
+        (the stated mode, a trip without one counting as a car trip; with ``modes``, the
+        mode taken, ``None`` for a trip that had nothing to choose from), ``mode_choice``
+        (whether the trip chose its mode) and ``weight`` (the people its traveller stands
+        for). A trip that could not travel keeps its mode. ``viz.chart_mode_share`` draws it.
+        """
+        return dict(self._summary.trip_modes)
+
     @property
     def total_travel_time_s(self) -> float:
         """Total travel time of the completed trips, in seconds, scaled by traveller weight.

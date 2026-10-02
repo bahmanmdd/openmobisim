@@ -90,3 +90,43 @@ def test_unknown_modes_are_refused() -> None:
         ms.Scenario.from_parts(
             network=ms.examples.toy_network(), demand=[], modes=("car", "scooter")
         )
+
+
+def test_trip_modes_gives_every_trip_its_departure_and_the_mode_it_took() -> None:
+    net = ms.examples.toy_network()
+    rows = [
+        toy_trip(net, "a", "W", "N1", 0, None),
+        toy_trip(net, "b", "W", "M", 60, None),
+        toy_trip(net, "c", "W", "M", 120, "bike"),
+    ]
+    run = toy_run(rows, "trip-modes", modes=ms.MODES)
+    t = run.trip_modes()
+    assert list(t["traveller_id"]) == ["a", "b", "c"] and list(t["trip_seq"]) == [0, 0, 0]
+    assert list(t["departure_s"]) == [0, 60, 120]
+    assert list(t["mode"]) == ["bike", "car", "bike"]
+    assert list(t["mode_choice"]) == [True, True, False]
+    assert list(t["weight"]) == [1, 1, 1]
+    # Without modes a trip without one is a car trip; with one mode it takes that mode.
+    assert list(toy_run(rows, "trip-modes-none").trip_modes()["mode"]) == ["car", "car", "bike"]
+    one = toy_run(rows, "trip-modes-walk", modes=("walk",)).trip_modes()
+    assert list(one["mode"]) == ["walk", "walk", "bike"] and not any(one["mode_choice"])
+
+
+def test_chart_mode_share_draws_the_modes_taken(tmp_path) -> None:
+    pytest.importorskip("matplotlib")
+    from openmobisim import viz
+
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, f"a{i}", "W", "N1", 7 * 3600 + 60 * i, None) for i in range(20)]
+    rows += [toy_trip(net, f"b{i}", "W", "M", 8 * 3600 + 60 * i, None) for i in range(20)]
+    run = toy_run(rows, "mode-share-chart", modes=ms.MODES)
+    for theme in ("paper", "night"):
+        out = tmp_path / f"modes_{theme}.png"
+        fig = viz.chart_mode_share(run, theme=theme, path=str(out))
+        assert out.exists() and out.stat().st_size > 10_000
+        texts = [t.get_text() for t in fig.texts]
+        assert any(t.startswith("bike") and t.endswith(" 50.0%") for t in texts)
+        assert any(t.startswith("car") and t.endswith(" 50.0%") for t in texts)
+        assert any("40 trips, each choosing its mode" in t for t in texts)
+    with pytest.raises(ValueError, match="bin_s"):
+        viz.chart_mode_share(run, bin_s=0)
