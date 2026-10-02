@@ -22,6 +22,7 @@
 //! this crate's (S133).
 
 pub mod curves;
+mod events;
 pub mod level0;
 pub mod link_bins;
 pub mod ltm;

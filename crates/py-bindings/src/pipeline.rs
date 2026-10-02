@@ -329,6 +329,10 @@ fn convergence_arrays(
             reports.iter().map(|r| r.itinerary_gap[i]).collect::<Vec<_>>().into_pyarray(py),
         )?;
     }
+    dict.set_item(
+        "itinerary_recosted",
+        reports.iter().map(|r| r.itinerary_recosted).collect::<Vec<_>>().into_pyarray(py),
+    )?;
     dict.set_item("hub_mismatch_s", floats(|r| r.hub_mismatch_s).into_pyarray(py))?;
     dict.set_item("mode_changed_share", floats(|r| r.mode_changed_share).into_pyarray(py))?;
     dict.set_item(

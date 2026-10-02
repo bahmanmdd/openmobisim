@@ -135,6 +135,29 @@ impl PyNetwork {
         Ok(self.layers[slot(layer)].get_or_init(|| parts))
     }
 
+    /// The same road network with `layer` replaced by `network` (S209: a layer read from
+    /// its own table); the other layer is kept as it is.
+    fn with_layer(&self, layer: StaticLayer, network: StaticNetwork) -> PyNetwork {
+        let layers = [OnceLock::new(), OnceLock::new()];
+        for (i, cell) in layers.iter().enumerate() {
+            if let Some(parts) = self.layers[i].get() {
+                let _ = cell.set(parts.clone());
+            }
+        }
+        let parts = LayerParts { network: Arc::new(network), geometry: None, report: None };
+        let _ = layers[slot(layer)].set(parts);
+        PyNetwork {
+            inner: self.inner.clone(),
+            geometry: self.geometry.clone(),
+            source: self.source.clone(),
+            snapper: OnceLock::new(),
+            import: self.import.clone(),
+            layer: "road".to_string(),
+            static_network: None,
+            layers,
+        }
+    }
+
     /// The bike or walk layer a run uses for its trips (S195).
     pub(crate) fn static_layer(&self, layer: StaticLayer) -> PyResult<Arc<StaticNetwork>> {
         if self.static_network.is_some() {
@@ -807,6 +830,111 @@ pub fn network_from_columns(
         .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut diagnostics)
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
     Ok(PyNetwork::new(Arc::new(network), None, "table"))
+}
+
+/// The road network `network` with its bike or walk layer (`layer`) made from columns of
+/// a link table and a node table (S209: a layer read from a file, as
+/// `openmobisim.network_read_gmns` reads one) instead of derived from the road network.
+///
+/// `link_class` is a road-class name (`"cycleway"`, `"residential"`, `"ferry"`, …);
+/// `link_speed_km_h` the layer's travel speed on the link, final; `link_infrastructure`
+/// `"mixed"`, `"lane"` or `"separated"` (empty: mixed); `link_length_m` `None` measures the
+/// straight line between the link's nodes. The layer is projected as the road network is,
+/// so the two share coordinates.
+///
+/// # Errors
+///
+/// `ValueError` for an unknown layer, class or infrastructure name, a column whose length
+/// differs from `link_ids` or `node_ids`, a speed that is not positive, or a layer that
+/// cannot be built (a link naming a node the table does not have).
+#[pyfunction]
+#[allow(clippy::too_many_arguments, reason = "one array per column of a link and a node table")]
+#[pyo3(signature = (
+    network, layer, node_ids, node_lon, node_lat,
+    link_ids, link_from, link_to, link_class, link_speed_km_h, link_infrastructure, link_length_m,
+))]
+pub fn network_with_layer(
+    network: PyRef<'_, PyNetwork>,
+    layer: &str,
+    node_ids: Vec<String>,
+    node_lon: Vec<f64>,
+    node_lat: Vec<f64>,
+    link_ids: Vec<String>,
+    link_from: Vec<String>,
+    link_to: Vec<String>,
+    link_class: Vec<String>,
+    link_speed_km_h: Vec<f64>,
+    link_infrastructure: Vec<String>,
+    link_length_m: Vec<Option<f64>>,
+) -> PyResult<PyNetwork> {
+    use openmobisim_core_graph::layers::{BikeInfrastructure, StaticLink, StaticNetworkBuilder};
+    if network.layer != "road" {
+        return Err(PyValueError::new_err("attach a layer to the road network's handle"));
+    }
+    let which = parse_layer(layer)?;
+    let (nodes, links) = (node_ids.len(), link_ids.len());
+    if node_lon.len() != nodes || node_lat.len() != nodes {
+        return Err(PyValueError::new_err("node_lon and node_lat need one entry per node_ids"));
+    }
+    for (name, len) in [
+        ("link_from", link_from.len()),
+        ("link_to", link_to.len()),
+        ("link_class", link_class.len()),
+        ("link_speed_km_h", link_speed_km_h.len()),
+        ("link_infrastructure", link_infrastructure.len()),
+        ("link_length_m", link_length_m.len()),
+    ] {
+        if len != links {
+            return Err(PyValueError::new_err(format!(
+                "{name} has {len} entries, link_ids has {links}"
+            )));
+        }
+    }
+    let mut builder = StaticNetworkBuilder::new(which);
+    for i in 0..nodes {
+        builder.add_node(node_ids[i].clone(), LonLat::new(node_lon[i], node_lat[i]));
+    }
+    for i in 0..links {
+        let class =
+            RoadClass::ALL.iter().copied().find(|c| c.as_str() == link_class[i]).ok_or_else(
+                || {
+                    PyValueError::new_err(format!(
+                        "link {:?}: unknown class {:?}; the classes are: {}",
+                        link_ids[i],
+                        link_class[i],
+                        RoadClass::ALL.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", ")
+                    ))
+                },
+            )?;
+        let infrastructure = match link_infrastructure[i].as_str() {
+            "" | "mixed" | "none" => BikeInfrastructure::Mixed,
+            "lane" => BikeInfrastructure::Lane,
+            "separated" | "track" => BikeInfrastructure::Separated,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "link {:?}: unknown infrastructure {other:?}; use mixed, lane or separated",
+                    link_ids[i]
+                )));
+            }
+        };
+        let speed = link_speed_km_h[i];
+        if !(speed.is_finite() && speed > 0.0) {
+            return Err(PyValueError::new_err(format!(
+                "link {:?}: speed must be a positive number, got {speed}",
+                link_ids[i]
+            )));
+        }
+        builder.add_link(
+            link_ids[i].clone(),
+            link_from[i].clone(),
+            link_to[i].clone(),
+            StaticLink { class, speed_km_h: speed, infrastructure, length_m: link_length_m[i] },
+        );
+    }
+    let built = builder
+        .build(network.inner.projection(), &mut Diagnostics::new())
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(network.with_layer(which, built))
 }
 
 /// A rectangle `(west, south, east, north)` or a list of `(lon, lat)` vertices.

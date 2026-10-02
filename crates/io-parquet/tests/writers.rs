@@ -519,6 +519,7 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
         incomplete_share: if iteration == 0 { f64::NAN } else { 0.0 },
         gap_network_excess: if iteration == 2 { 0.03 } else { f64::NAN },
         itinerary_gap: [f64::NAN; openmobisim_core_demand::Mode::COUNT],
+        itinerary_recosted: 0,
         hub_mismatch_s: f64::NAN,
         mode_changed_share: f64::NAN,
     };

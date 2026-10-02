@@ -42,6 +42,10 @@ pub type Options = BTreeMap<String, f64>;
 /// The most iterations a strategy may ask for.
 pub const MAX_ITERATIONS: u32 = 1000;
 
+/// The largest itinerary gap sample [`Msa`] accepts (more than any run's itinerary trips: every
+/// trip planned in full).
+pub const MAX_ITINERARY_GAP_SAMPLE: u32 = 100_000_000;
+
 /// What one iteration showed. `NaN` marks a number that was not measured (the
 /// first iteration has nothing before it to have moved from, and a model with no
 /// probabilities has no gap).
@@ -124,6 +128,11 @@ pub struct IterationReport {
     /// produced. With mode choice (M5) also the car, bike and walk trips that chose
     /// their mode, each against the best of the mode it took.
     pub itinerary_gap: [f64; Mode::COUNT],
+    /// How many itinerary trips that kept their itinerary out through a parking were
+    /// **re-costed** there rather than re-planned (S210: outside the gap's sample, see
+    /// [`Equilibration::itinerary_gap_sample`]); 0 at the last iteration, which plans every
+    /// trip in full.
+    pub itinerary_recosted: u32,
     /// **The hub expectation mismatch** (design §11.2; M4): per traveller who parked,
     /// the mean absolute difference between the parking time expected at the choice
     /// and the one paid, in seconds; `NaN` without parkings.
@@ -207,6 +216,7 @@ impl PartialEq for IterationReport {
             && self.route_searches == other.route_searches
             && floats(self) == floats(other)
             && self.itinerary_gap.map(f64::to_bits) == other.itinerary_gap.map(f64::to_bits)
+            && self.itinerary_recosted == other.itinerary_recosted
     }
 }
 
@@ -241,6 +251,7 @@ impl IterationReport {
             routes_added: 0,
             route_searches: 0,
             itinerary_gap: [f64::NAN; Mode::COUNT],
+            itinerary_recosted: 0,
             hub_mismatch_s: f64::NAN,
             mode_changed_share: f64::NAN,
         }
@@ -333,6 +344,14 @@ pub trait Equilibration: Send + Sync {
         0
     }
 
+    /// How many itinerary trips, besides those choosing again, plan their whole choice set after
+    /// a loading to measure the itinerary gap (S210); the others that keep an itinerary out
+    /// through a parking are re-costed at that parking instead of re-planned. A number at least the run's count of itinerary trips plans every
+    /// trip in full, as before S210 (the default here: a strategy that does not say).
+    fn itinerary_gap_sample(&self) -> u32 {
+        u32::MAX
+    }
+
     /// How many of the first loadings the run makes with the **point-queue model** (level 2),
     /// which cannot gridlock, in place of the full one (S178). The first loading of a narrow
     /// route set is often in permanent gridlock (S177: 3 215 of 9 619 trips never finish) and every
@@ -401,6 +420,16 @@ pub struct Msa {
     /// (0 to 100 000; 0 means none): the sample that
     /// [`IterationReport::gap_network`] is measured on.
     pub gap_sample: u32,
+    /// How many itinerary trips, besides those choosing again, plan their whole choice set in an
+    /// iteration to measure the itinerary gap (0 to [`MAX_ITINERARY_GAP_SAMPLE`]; see
+    /// [`Equilibration::itinerary_gap_sample`]): a keyed sample of travellers, drawn again each
+    /// iteration. The last assessment plans every trip in full, so the run's last itinerary gap is
+    /// exact; an iteration's before it is an estimate. **By default every trip**
+    /// ([`MAX_ITINERARY_GAP_SAMPLE`]): measured on Amsterdam (S210), a sample of 2 000 saved 6%
+    /// of a run with 10 000 park-and-ride and bike-and-ride trips, and its gaps before the last
+    /// iteration read low (2.7–3.9% against 4.3–4.6%: a kept itinerary that has gone stale is
+    /// set aside as having to choose again, rather than counted).
+    pub itinerary_gap_sample: u32,
     /// The length in seconds of the time bins link times are recorded in (at
     /// least 1). Shorter follows a queue more closely and costs more memory.
     pub cost_bin_s: u32,
@@ -411,13 +440,26 @@ pub struct Msa {
 
 impl Default for Msa {
     fn default() -> Self {
-        Self { iterations: 10, gap_tolerance: 0.0, gap_sample: 300, cost_bin_s: 300, warmup: 0 }
+        Self {
+            iterations: 10,
+            gap_tolerance: 0.0,
+            gap_sample: 300,
+            itinerary_gap_sample: MAX_ITINERARY_GAP_SAMPLE,
+            cost_bin_s: 300,
+            warmup: 0,
+        }
     }
 }
 
 impl Msa {
-    const OPTIONS: [&'static str; 5] =
-        ["cost_bin_s", "gap_sample", "gap_tolerance", "iterations", "warmup"];
+    const OPTIONS: [&'static str; 6] = [
+        "cost_bin_s",
+        "gap_sample",
+        "gap_tolerance",
+        "itinerary_gap_sample",
+        "iterations",
+        "warmup",
+    ];
 
     /// Make the strategy from its options, defaults for those not given.
     ///
@@ -451,6 +493,9 @@ impl Msa {
                 "iterations" => m.iterations = whole(option, v, 1, MAX_ITERATIONS)?,
                 "cost_bin_s" => m.cost_bin_s = whole(option, v, 1, 86_400)?,
                 "gap_sample" => m.gap_sample = whole(option, v, 0, 100_000)?,
+                "itinerary_gap_sample" => {
+                    m.itinerary_gap_sample = whole(option, v, 0, MAX_ITINERARY_GAP_SAMPLE)?;
+                }
                 "warmup" => m.warmup = whole(option, v, 0, MAX_ITERATIONS)?,
                 _ => {
                     if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
@@ -470,8 +515,14 @@ impl Equilibration for Msa {
     }
     fn descriptor(&self) -> String {
         format!(
-            "msa;cost_bin_s={};gap_sample={};gap_tolerance={};iterations={};warmup={}",
-            self.cost_bin_s, self.gap_sample, self.gap_tolerance, self.iterations, self.warmup
+            "msa;cost_bin_s={};gap_sample={};gap_tolerance={};itinerary_gap_sample={};\
+             iterations={};warmup={}",
+            self.cost_bin_s,
+            self.gap_sample,
+            self.gap_tolerance,
+            self.itinerary_gap_sample,
+            self.iterations,
+            self.warmup
         )
     }
     fn max_iterations(&self) -> u32 {
@@ -485,6 +536,9 @@ impl Equilibration for Msa {
     }
     fn network_gap_sample(&self) -> u32 {
         self.gap_sample
+    }
+    fn itinerary_gap_sample(&self) -> u32 {
+        self.itinerary_gap_sample
     }
     fn warmup_iterations(&self) -> u32 {
         self.warmup

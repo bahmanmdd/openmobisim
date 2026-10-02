@@ -82,7 +82,12 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// Version 7 (S209): mode choice offers a walk or a ride only up to 30 minutes
 /// (`core-sim`'s `ModeDefaults`: `walk_max_s`, `bike_max_s`, design §21.1). A run without
 /// mode choice is unchanged.
-pub const DEFAULTS_VERSION: u32 = 7;
+///
+/// Version 8 (S210): `msa`'s itinerary gap sample (`core-sim`'s `Msa::itinerary_gap_sample`):
+/// how many itinerary trips plan their whole choice set to measure the gap, the others that
+/// keep an itinerary out through a parking re-costed there. Its default is every trip, as
+/// before: no run changes.
+pub const DEFAULTS_VERSION: u32 = 8;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

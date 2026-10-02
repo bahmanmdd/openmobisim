@@ -21,6 +21,11 @@ ride the roads among the cars, or drive or cycle to a parking and go on by
 transit (``parking_read_osm``, ``parking_read_table``, ``Scenario(parkings=...)``),
 the station chosen by the choice model. ``demand_sample`` simulates one traveller for
 every few people, for faster screening runs. No disruptions yet.
+
+Networks and demand may come from files in standard formats: GMNS networks
+(``network_read_gmns``, ``network_write_gmns``), checked before a run by ``network_check``;
+zones, OD matrices and trips as CSV (``demand_read_zones``, ``demand_read_od``,
+``demand_read_trips``, ``demand_write_trips``), an OD matrix made trips by ``demand_from_od``.
 """
 
 from openmobisim import _core, choice, examples
@@ -42,7 +47,16 @@ from openmobisim._core import (
     step_of,
     transit_read_gtfs,
 )
-from openmobisim.demand import demand_sample
+from openmobisim.audit import network_check
+from openmobisim.demand import (
+    demand_from_od,
+    demand_read_od,
+    demand_read_trips,
+    demand_read_zones,
+    demand_sample,
+    demand_write_trips,
+)
+from openmobisim.gmns import network_read_gmns, network_write_gmns
 from openmobisim.network import network_read_table
 from openmobisim.parking import parking_read_table
 from openmobisim.scenario import MODES, Run, Scenario, Table
@@ -61,12 +75,20 @@ __all__ = [
     "choice",
     "choice_draw",
     "choice_models",
+    "demand_from_od",
+    "demand_read_od",
+    "demand_read_trips",
+    "demand_read_zones",
     "demand_sample",
+    "demand_write_trips",
     "equilibration_strategies",
     "examples",
     "fixed_order_sum_f64",
+    "network_check",
+    "network_read_gmns",
     "network_read_osm",
     "network_read_table",
+    "network_write_gmns",
     "parking_read_osm",
     "parking_read_table",
     "route_methods",

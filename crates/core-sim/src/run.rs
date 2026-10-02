@@ -1015,6 +1015,7 @@ impl Run {
                         for mode in Mode::ALL {
                             report.itinerary_gap[mode.index()] = found.gap(mode);
                         }
+                        report.itinerary_recosted = found.recosted;
                         mode_changed_by = found.mode_changed_share();
                         pending_chosen = Some(next_chosen);
                     }

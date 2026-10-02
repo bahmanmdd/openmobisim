@@ -590,6 +590,29 @@ def toy_network_parkings() -> Parkings:
     has 20 spaces, 300 m on foot from that stop.
     """
 
+def network_with_layer(
+    network: Network,
+    layer: str,
+    node_ids: list[str],
+    node_lon: list[float],
+    node_lat: list[float],
+    link_ids: list[str],
+    link_from: list[str],
+    link_to: list[str],
+    link_class: list[str],
+    link_speed_km_h: list[float],
+    link_infrastructure: list[str],
+    link_length_m: list[float | None],
+) -> Network:
+    """The road network with its ``"bike"`` or ``"walk"`` layer made from a link and a node table.
+
+    Prefer ``openmobisim.network_read_gmns``, which reads such tables from files.
+
+    Raises:
+        ValueError: For an unknown layer, class or infrastructure name, a column of the wrong
+            length, a speed that is not positive, or a layer that cannot be built.
+    """
+
 def network_read_osm(
     path: str,
     contract: bool = True,

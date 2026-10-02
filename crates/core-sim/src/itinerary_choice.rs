@@ -73,7 +73,7 @@ use openmobisim_core_routes::{
 use openmobisim_core_transit::{Journey, JourneyLeg, Raptor, RaptorData};
 use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, LinkId, NULL_ID, NodeId, TripId};
-use openmobisim_core_types::rng::StreamRng;
+use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
 use crate::equilibration::Equilibration;
 use crate::layers::{LayerSetup, StaticLayers, StaticRoutes};
@@ -131,6 +131,10 @@ pub(crate) const SCRATCH_CHUNK: usize = 64;
 
 /// The longest drive or ride home from a parking a search looks for, in seconds.
 const BACK_BOUND_S: f64 = 6.0 * 3600.0;
+
+/// Set in the iteration half of the gap sample's draw address, so its draws are apart from the
+/// reselection's (`(traveller, iteration)`, iterations below 2³¹).
+const GAP_SAMPLE_SALT: u32 = 1 << 31;
 
 /// The shape of an itinerary trip, given where its vehicle is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -266,11 +270,18 @@ pub(crate) struct Offer {
     pub car_transit: Option<Shape>,
     /// Bike-and-ride, likewise.
     pub bike_transit: Option<Shape>,
+    /// Out through this parking only: a kept itinerary re-costed, not re-planned (S210).
+    pub parking: Option<u32>,
 }
 
 impl Offer {
     fn is_empty(&self) -> bool {
-        Self { choosing: false, ..*self } == Self::default()
+        Self { choosing: false, parking: None, ..*self } == Self::default()
+    }
+
+    /// This offer, out through `parking` only.
+    fn at_parking(self, parking: u32) -> Self {
+        Self { parking: Some(parking), ..self }
     }
 
     /// Whether a vehicle waits at a parking to be fetched.
@@ -438,7 +449,15 @@ impl<'a> Planner<'a> {
             });
         for (shape, kind) in vehicles {
             if let (Some(Shape::Out), true) = (shape, far_enough) {
-                alts.extend(self.plan_out(s, n, departure, destination, kind, bike_reach));
+                alts.extend(self.plan_out(
+                    s,
+                    n,
+                    departure,
+                    destination,
+                    kind,
+                    bike_reach,
+                    offer.parking,
+                ));
             }
         }
         finalise(alts, self.detour_limit, k)
@@ -490,6 +509,10 @@ impl<'a> Planner<'a> {
             .collect()
     }
 
+    /// The out itineraries through the candidate parkings, or through `only` alone (a kept
+    /// itinerary re-costed, S210: the same search and query as for that parking among the
+    /// candidates, so the same numbers).
+    #[allow(clippy::too_many_arguments, reason = "a trip's facts and what it is offered")]
     fn plan_out(
         &self,
         s: &mut Scratch<'a>,
@@ -498,6 +521,7 @@ impl<'a> Planner<'a> {
         destination: LonLat,
         kind: ParkingKind,
         bike_reach: Option<&BikeReach>,
+        only: Option<u32>,
     ) -> Vec<Alternative> {
         let Some(parking) = self.parking else { return Vec::new() };
         let d = parking.defaults();
@@ -512,7 +536,10 @@ impl<'a> Planner<'a> {
                 // The candidates are picked on free-flow times to every car park, searched once
                 // per run (S209); only their routes are searched on the expected times,
                 // by one search that stops once it has reached them all.
-                let picked = self.car_candidates(parking, n.road_o, dep, destination);
+                let picked = match only {
+                    Some(p) => vec![parking.node(p)],
+                    None => self.car_candidates(parking, n.road_o, dep, destination),
+                };
                 if picked.is_empty() {
                     return Vec::new();
                 }
@@ -647,6 +674,9 @@ impl<'a> Planner<'a> {
             if !tried.contains(&c) {
                 tried.push(c);
             }
+        }
+        if let Some(p) = only {
+            tried = (0..cands.len()).filter(|&c| cands[c].parking == p).collect();
         }
         let (Some((transit, _)), Some(ts)) = (self.transit, s.transit.as_mut()) else {
             return Vec::new();
@@ -1161,6 +1191,8 @@ pub(crate) struct Assessment {
     /// before, and of those whose mode changed.
     pub w_choosing: f64,
     pub w_mode_changed: f64,
+    /// Kept itineraries re-costed at their parking, not re-planned (S210).
+    pub recosted: u32,
 }
 
 impl Assessment {
@@ -1481,6 +1513,7 @@ impl Itineraries {
             transit: on(Mode::Transit),
             car_transit: via(car, Mode::CarTransit),
             bike_transit: via(bike, Mode::BikeTransit),
+            parking: None,
         }
     }
 
@@ -1488,6 +1521,14 @@ impl Itineraries {
     /// the travellers `strategy` picks to choose again and those whose
     /// alternative is no longer on offer, the rest keeping theirs at the new
     /// costs. Returns the choices and what the pass found.
+    ///
+    /// **The gap is sampled** (S210, design §11.2): with a `strategy`, the travellers it picks to
+    /// choose again plan their whole choice set, and so does a keyed sample of the others
+    /// ([`Equilibration::itinerary_gap_sample`] trips, drawn again each iteration); both are
+    /// random samples, and the gap is measured on them. A trip outside both that keeps an
+    /// itinerary out through a parking is **re-costed** at that parking (its search and query
+    /// only), and is asked to choose again only if its itinerary is gone there. Without a
+    /// `strategy` (the run's last assessment) every trip plans in full: the last gap is exact.
     ///
     /// # Errors
     ///
@@ -1516,6 +1557,19 @@ impl Itineraries {
         let reselects = |p: usize| {
             let traveller = trips.traveller(self.trips[p]).raw();
             strategy.is_some_and(|(strategy, msa)| strategy.reselects(msa, traveller, iteration))
+        };
+        // Who plans in full to measure the gap: everyone without a strategy, else a keyed
+        // sample of travellers (its own draw address, apart from the reselection's).
+        #[allow(clippy::cast_precision_loss, reason = "a share")]
+        let share = strategy.map_or(1.0, |(strategy, _)| {
+            f64::from(strategy.itinerary_gap_sample()) / n.max(1) as f64
+        });
+        let in_sample = |p: usize| {
+            share >= 1.0
+                || strategy.is_some_and(|(_, rng)| {
+                    let traveller = trips.traveller(self.trips[p]).raw();
+                    rng.unit(DrawAddress::from_pair(traveller, iteration | GAP_SAMPLE_SALT)) < share
+                })
         };
         let plan = |s: &mut Scratch<'a>, p: usize, offer: Offer| {
             if offer.is_empty() {
@@ -1547,7 +1601,14 @@ impl Itineraries {
             let first: Vec<Offer> = work
                 .iter()
                 .map(|&(p, offer)| match current.and_then(|c| c.alt[p].as_ref()) {
-                    Some(old) if !reselects(p) && !offer.fetches() => offer.only(old.mode),
+                    Some(old) if !reselects(p) && !offer.fetches() => {
+                        let only = offer.only(old.mode);
+                        if old.shape == Shape::Out && !in_sample(p) {
+                            only.at_parking(old.parking)
+                        } else {
+                            only
+                        }
+                    }
                     _ => offer,
                 })
                 .collect();
@@ -1613,10 +1674,15 @@ impl Itineraries {
                         continue;
                     };
                     // Against the best of its own mode: with mode constants, the fastest mode
-                    // need not be the best (M5), so this is each mode's route gap.
+                    // need not be the best (M5), so this is each mode's route gap. A trip
+                    // re-costed at its parking saw no other: not in the gap's sample.
                     let m = kept.mode.index();
-                    assessment.paid[m] += weight * kept.total_s;
-                    assessment.least[m] += weight * best[m];
+                    if first[w].parking.is_none() {
+                        assessment.paid[m] += weight * kept.total_s;
+                        assessment.least[m] += weight * best[m];
+                    } else {
+                        assessment.recosted += 1;
+                    }
                     assessment.w_all += weight;
                     let reselect = strategy.is_some_and(|(strategy, msa)| {
                         strategy.reselects(msa, traveller.raw(), iteration)

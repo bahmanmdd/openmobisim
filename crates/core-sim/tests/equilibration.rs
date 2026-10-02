@@ -644,7 +644,8 @@ fn the_description_names_the_strategy_and_the_streams_it_draws_from() {
     assert_eq!(msa.live_streams, ["msa_reselection"]);
     assert_eq!(
         msa.equilibration_descriptor,
-        "msa;cost_bin_s=300;gap_sample=300;gap_tolerance=0;iterations=10;warmup=0"
+        "msa;cost_bin_s=300;gap_sample=300;gap_tolerance=0;itinerary_gap_sample=100000000;\
+         iterations=10;warmup=0"
     );
     assert_eq!(run(("msa", vec![]), "logit").live_streams, ["choice", "msa_reselection"]);
     // One iteration has nobody to re-select.
@@ -677,7 +678,8 @@ fn strategies_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
     assert!(err("replanning", &[]).contains("none, msa"));
     assert!(err("none", &[("iterations", 3.0)]).contains("no options"));
     assert!(
-        err("msa", &[("steps", 3.0)]).contains("cost_bin_s, gap_sample, gap_tolerance, iterations")
+        err("msa", &[("steps", 3.0)])
+            .contains("cost_bin_s, gap_sample, gap_tolerance, itinerary_gap_sample, iterations")
     );
     for bad in [0.0, 1001.0, 2.5, f64::NAN] {
         assert!(

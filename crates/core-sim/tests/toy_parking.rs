@@ -35,8 +35,8 @@ use openmobisim_core_graph::layers::{BikeCost, StaticLayerDefaults};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::{LonLat, toy_network, toy_network_layers};
 use openmobisim_core_sim::{
-    EventType, LayerSetup, NO_PARKING, ParkingDefaults, ParkingSetup, Run, RunResult, StaticLayers,
-    TransitSetup,
+    EventType, LayerSetup, Msa, NO_PARKING, ParkingDefaults, ParkingSetup, Run, RunResult,
+    StaticLayers, TransitSetup,
 };
 use openmobisim_core_transit::TransitDefaults;
 use openmobisim_core_transit::examples::toy_tram;
@@ -121,6 +121,21 @@ impl Toy {
 
     fn run(&self, rows: Vec<RawTrip>) -> RunResult {
         self.run_with(rows, &toy_network_parkings(), false)
+    }
+
+    /// Iterated by `msa` with `options`, both parkings, the deterministic model.
+    fn iterate(&self, rows: Vec<RawTrip>, options: &[(&str, f64)]) -> RunResult {
+        let defaults = ClassDefaults::new()
+            .with_default("everyone", Ownership { car: true, bike: true, transit_pass: false });
+        let (travellers, trips) =
+            build_travellers(rows, Vec::new(), &defaults, 1, &mut Diagnostics::new()).unwrap();
+        let options = options.iter().map(|&(k, v)| (k.to_string(), v)).collect();
+        Run::new(self.road.clone(), Arc::new(travellers), Arc::new(trips), Second(20_000))
+            .with_layers(self.layers.clone())
+            .with_transit(self.transit.clone())
+            .with_parking(self.parking(&toy_network_parkings()))
+            .with_equilibration(Arc::new(Msa::from_options(&options).unwrap()))
+            .execute(&mut Diagnostics::new())
     }
 }
 
@@ -320,4 +335,42 @@ fn pr3_the_nested_logit_chooses_within_the_park_and_ride_nest() {
     let p = t.parking(&toy_network_parkings());
     let expected = if p.external_id(it.parking[0]) == "H-car" { p_h } else { 1.0 - p_h };
     assert!((it.probability[0] - expected).abs() < 1e-9, "{} vs {expected}", it.probability[0]);
+}
+
+#[test]
+fn pr6_a_kept_itinerary_is_recosted_at_its_parking_and_the_last_gap_is_exact() {
+    // PR2's seven cars with both car parks, iterated. With a gap sample of 0, a trip that keeps
+    // its itinerary is re-costed at its parking, not re-planned; the last assessment plans every
+    // trip in full. A sample at least the number of trips plans every trip in full each
+    // iteration, as before (S210).
+    let t = toy();
+    let rows = || -> Vec<RawTrip> {
+        (0..7).map(|i| t.trip(&format!("c{i}"), 0, "W", "N1", 0, Mode::CarTransit)).collect()
+    };
+    let gaps = |r: &RunResult| -> Vec<f64> {
+        r.iterations.iter().map(|i| i.itinerary_gap[Mode::CarTransit.index()]).collect()
+    };
+    let full = t.iterate(rows(), &[("iterations", 4.0), ("itinerary_gap_sample", 7.0)]);
+    let all = t.iterate(rows(), &[("iterations", 4.0)]);
+    assert_eq!(outcomes(&full), outcomes(&all), "the default plans every trip in full");
+    assert_eq!(
+        gaps(&full).iter().map(|g| g.to_bits()).collect::<Vec<_>>(),
+        gaps(&all).iter().map(|g| g.to_bits()).collect::<Vec<_>>()
+    );
+    assert!(gaps(&full).iter().skip(1).all(|g| g.is_finite()), "{:?}", gaps(&full));
+    let recosted =
+        |r: &RunResult| -> Vec<u32> { r.iterations.iter().map(|i| i.itinerary_recosted).collect() };
+    assert_eq!(recosted(&full), [0, 0, 0, 0]);
+    let sampled = t.iterate(rows(), &[("iterations", 4.0), ("itinerary_gap_sample", 0.0)]);
+    let n = recosted(&sampled);
+    // After a loading, the travellers msa does not pick to choose again keep theirs and, outside
+    // the sample, are re-costed; the last assessment plans everyone.
+    assert!(n[..3].iter().all(|&k| k > 0 && k < 7), "{n:?}");
+    assert_eq!(n[3], 0);
+    // The travellers msa picks plan in full: a random sample of their own, so the gap is still
+    // measured. On the toy every itinerary re-costed is the one a full plan finds (both car
+    // parks give 1200), so the runs agree.
+    assert_eq!(outcomes(&sampled), outcomes(&full));
+    assert!(gaps(&sampled).iter().all(|g| g.is_finite()), "{:?}", gaps(&sampled));
+    assert!(outcomes(&sampled).iter().all(|o| o.0 == EventType::TripCompleted));
 }

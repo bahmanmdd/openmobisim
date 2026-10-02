@@ -376,12 +376,14 @@ def network_read_table(
     # Python for this source). Catch the common case — a `link_type` column
     # of numbers, as the standard TNTP files carry, none of which is a road
     # class name — with one aggregate warning rather than none at all.
-    given_empty = sum(1 for c in link_class if not c)
+    # A link whose class is empty or says `unclassified` (a real OSM class) is unclassified on
+    # purpose; only the rest of the unclassified links fell back.
+    given_unclassified = sum(1 for c in link_class if c.lower() in ("", "unclassified", "road"))
     fell_back = int((network.link_class() == _UNCLASSIFIED_INDEX).sum())
-    if fell_back > given_empty:
+    if fell_back > given_unclassified:
         warnings.warn(
-            f"{fell_back - given_empty} link(s) had a `class` value not recognised as a road "
-            "class and were treated as unclassified (the design's fallback rule for an "
+            f"{fell_back - given_unclassified} link(s) had a `class` value not recognised as a "
+            "road class and were treated as unclassified (the design's fallback rule for an "
             'unfamiliar tag) — pass recognised names ("primary", "residential", …) if that '
             "was not intended; TNTP's numeric `link_type` is not one of them.",
             stacklevel=2,

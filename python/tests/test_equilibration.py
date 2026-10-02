@@ -20,6 +20,7 @@ FIELDS = [
     "gap_flow_excess", "routes_added", "route_searches", "gap_expected", "gap_excess",
     "gap_network_excess", "incomplete_share", "gap_transit", "gap_car_transit",
     "gap_bike_transit", "hub_mismatch_s", "gap_car", "gap_bike", "gap_walk", "mode_changed_share",
+    "itinerary_recosted",
 ]  # fmt: skip
 
 
@@ -154,7 +155,9 @@ def test_bad_settings_are_refused_before_any_work():
         ValueError, match='no equilibration strategy called "replanning".*none, msa'
     ):
         build(equilibration="replanning")
-    with pytest.raises(ValueError, match="cost_bin_s, gap_sample, gap_tolerance, iterations"):
+    with pytest.raises(
+        ValueError, match="cost_bin_s, gap_sample, gap_tolerance, itinerary_gap_sample, iterations"
+    ):
         build(equilibration="msa", equilibration_options={"steps": 3})
     for bad in (0, 1001, 2.5):
         with pytest.raises(ValueError, match="whole number from 1 to 1000"):

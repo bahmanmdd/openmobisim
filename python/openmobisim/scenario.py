@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from openmobisim import _core
+from openmobisim.demand import demand_read_trips
 
 __all__ = ["Run", "Scenario", "Table"]
 
@@ -263,6 +264,12 @@ class Run:
           the best of its own mode (with mode constants, the fastest mode need not be the
           best), and ``gap_car``, ``gap_bike`` and ``gap_walk`` are the same for the trips
           that chose those modes (``gap`` above covers the car trips given their mode).
+          With ``itinerary_gap_sample`` set below the number of such trips, it is **measured
+          on a sample** before the last iteration: the trips choosing again and that many
+          others plan their whole choice set; the rest that keep an itinerary out through a
+          parking are re-costed there. The last iteration's is always exact.
+        * ``itinerary_recosted`` — how many trips were re-costed that way rather than
+          re-planned; 0 at the last iteration.
         * ``hub_mismatch_s`` — the hub expectation mismatch: per traveller who parked, the
           mean difference between the parking time expected when they chose and the one
           they paid, in seconds; ``nan`` without parkings.
@@ -680,7 +687,7 @@ class Scenario:
     def from_parts(
         cls,
         network: _core.Network,
-        demand: list[tuple] | str,
+        demand: list[tuple] | str | Path,
         persons: list[tuple] | str | None = None,
         class_defaults: dict[str, tuple[bool, bool, bool]] | None = None,
         default_weight: int = 1,
@@ -713,8 +720,9 @@ class Scenario:
             network: Built by, for example, ``examples.manhattan_grid``.
             demand: Either an in-memory trips table (rows in the schema
                 ``examples.fixed_car_trips`` returns, or hand-built the same
-                way) or a path to a ``trips.parquet`` file — the same
-                schema either way, never two different shapes. A row may end with
+                way) or a path to a ``trips.parquet`` file or a ``trips.csv``
+                (read by ``demand_read_trips``) — the same schema either way,
+                never two different shapes. A row may end with
                 a **mode** (the ``mode`` column of ``trips.parquet``): ``"car"``,
                 ``"bike"``, ``"walk"``, ``"transit"``, ``"car_transit"`` (park-and-ride)
                 or ``"bike_transit"`` (bike-and-ride; see ``parkings``). A trip without
@@ -849,7 +857,13 @@ class Scenario:
                 (0: never stop early; otherwise stop once the gap, averaged over the
                 last three iterations, is below this: 0.05 is good, 0.15 acceptable),
                 ``gap_sample`` (300; how many trips are tested against the whole
-                network at the last iteration, 0 for none) and ``cost_bin_s`` (300: the
+                network at the last iteration, 0 for none), ``itinerary_gap_sample``
+                (100 000 000, that is every trip: how many transit, park-and-ride and
+                bike-and-ride trips, besides those choosing again, plan their whole choice set
+                after each loading to measure their gap; with fewer, the others that keep an
+                itinerary out through a parking are re-costed at that parking, which is faster
+                but makes the gap before the last iteration read low; the last iteration always
+                plans every trip) and ``cost_bin_s`` (300: the
                 length of the time bins the link times are read in) and ``warmup`` (1 for a run
                 that iterates, else 0: how many of
                 the first loadings use the point-queue model, which cannot gridlock; the last
@@ -950,6 +964,10 @@ class Scenario:
         Returns:
             A ``Scenario``, ready to ``.run()``.
         """
+        if isinstance(demand, Path):
+            demand = str(demand)
+        if isinstance(demand, str) and demand.lower().endswith(".csv"):
+            demand = demand_read_trips(demand)
         trips = demand if not isinstance(demand, str) else None
         trips_path = demand if isinstance(demand, str) else None
         persons_rows = persons if not isinstance(persons, str) else None

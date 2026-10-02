@@ -400,7 +400,7 @@ fn updates_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
 
 #[test]
 fn a_tolerance_is_not_met_while_routes_are_still_being_added() {
-    let msa = Msa { iterations: 10, gap_tolerance: 0.1, gap_sample: 0, cost_bin_s: 300, warmup: 0 };
+    let msa = Msa { iterations: 10, gap_tolerance: 0.1, gap_sample: 0, ..Msa::default() };
     let report = |i: u32, added: u32| IterationReport {
         gap: 0.01,
         routes_added: added,

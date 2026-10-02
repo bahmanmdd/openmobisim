@@ -160,8 +160,8 @@
 //!   stores, beyond its own storage, the vehicles that passed its stop line in
 //!   the last control delay (at most `capacity × g/C × delay`).
 
-use std::cmp::{Ordering, Reverse};
-use std::collections::{BinaryHeap, VecDeque};
+use std::cmp::Ordering;
+use std::collections::VecDeque;
 
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
@@ -170,6 +170,7 @@ use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::{Duration, Pcu};
 
 use crate::curves::{LinkCurves, ROOM_EPSILON, room_at};
+use crate::events::{Event, EventQueue};
 use crate::level0::{LinkTraversal, Trajectory};
 use crate::link_bins::{EntryTables, LinkBinRecorder, LinkBins};
 use crate::vehicle::Vehicle;
@@ -239,42 +240,6 @@ struct Queued {
     enter: f64,
     /// The earliest time it can be served at the front of this queue.
     ready: f64,
-}
-
-/// "The vehicle at the front of queue `queue` is due at `time`."
-///
-/// Superseded events are skipped rather than removed: each schedule bumps the
-/// queue's generation.
-#[derive(Clone, Copy, Debug)]
-struct Event {
-    time: f64,
-    tag: f64,
-    queue: u32,
-    generation: u32,
-}
-
-impl PartialEq for Event {
-    fn eq(&self, other: &Self) -> bool {
-        self.cmp(other) == Ordering::Equal
-    }
-}
-
-impl Eq for Event {}
-
-impl PartialOrd for Event {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Event {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.time
-            .total_cmp(&other.time)
-            .then(self.tag.total_cmp(&other.tag))
-            .then(self.queue.cmp(&other.queue))
-            .then(self.generation.cmp(&other.generation))
-    }
 }
 
 /// What a vehicle waits for when it cannot move.
@@ -381,7 +346,6 @@ pub struct LtmNetwork<'a> {
     queues: Vec<VecDeque<Queued>>,
     /// Each link queue's service tag: the tag of the vehicle it released last.
     service_tag: Vec<f64>,
-    generation: Vec<u32>,
     next_parked: Vec<u32>,
     parked_on: Vec<u32>,
 
@@ -398,7 +362,8 @@ pub struct LtmNetwork<'a> {
     /// Chained vehicles (S199), once one is added: absent otherwise.
     chains: Option<Chains>,
 
-    events: BinaryHeap<Reverse<Event>>,
+    /// At most one event per queue (S210).
+    events: EventQueue,
 
     /// Per-link, per-bin results, when asked for (S163).
     recorder: Option<LinkBinRecorder>,
@@ -457,7 +422,6 @@ impl<'a> LtmNetwork<'a> {
             virtual_time: vec![0.0; n],
             queues: (0..queues).map(|_| VecDeque::new()).collect(),
             service_tag: vec![f64::NEG_INFINITY; queues],
-            generation: vec![0; queues + n],
             next_parked: vec![NONE; queues],
             parked_on: vec![NONE; queues],
             vehicles: Vec::new(),
@@ -466,7 +430,7 @@ impl<'a> LtmNetwork<'a> {
             pending: Vec::new(),
             pending_sorted: true,
             chains: None,
-            events: BinaryHeap::new(),
+            events: EventQueue::new(queues + n),
             recorder: None,
         };
         sim.apply_level();
@@ -787,7 +751,7 @@ impl<'a> LtmNetwork<'a> {
         self.clock = self.clock.max(t0);
 
         loop {
-            let next_event = self.events.peek().map(|Reverse(e)| e.time);
+            let next_event = self.events.peek().map(|e| e.time);
             let next_departure = self.next_departure_time(t0);
             match (next_event, next_departure) {
                 (_, Some(d)) if d < t1 && next_event.is_none_or(|e| d <= e) => {
@@ -795,7 +759,7 @@ impl<'a> LtmNetwork<'a> {
                     self.depart_next(t0);
                 }
                 (Some(e), _) if e < t1 => {
-                    let Reverse(event) = self.events.pop().expect("just peeked");
+                    let event = self.events.pop().expect("just peeked");
                     self.clock = self.clock.max(event.time);
                     self.process(event, t0, &mut completed);
                 }
@@ -893,13 +857,11 @@ impl<'a> LtmNetwork<'a> {
     /// Schedule a queue's front vehicle, no earlier than `not_before`.
     fn schedule_front(&mut self, queue: usize, t0: f64, not_before: f64) {
         if let Some((ready, tag)) = self.front_due(queue, t0) {
-            self.generation[queue] = self.generation[queue].wrapping_add(1);
-            self.events.push(Reverse(Event {
+            self.events.schedule(Event {
                 time: ready.max(not_before).max(self.clock),
                 tag,
                 queue: queue_u32(queue),
-                generation: self.generation[queue],
-            }));
+            });
         }
     }
 
@@ -913,20 +875,11 @@ impl<'a> LtmNetwork<'a> {
         }
         self.heard_due[l] = at;
         let queue = 3 * self.links + l;
-        self.generation[queue] = self.generation[queue].wrapping_add(1);
-        self.events.push(Reverse(Event {
-            time: at,
-            tag: at,
-            queue: queue_u32(queue),
-            generation: self.generation[queue],
-        }));
+        self.events.schedule(Event { time: at, tag: at, queue: queue_u32(queue) });
     }
 
     fn process(&mut self, event: Event, t0: f64, completed: &mut Vec<Trajectory>) {
         let queue = event.queue as usize;
-        if event.generation != self.generation[queue] {
-            return;
-        }
         if let Place::Heard(l) = self.place(queue) {
             self.heard_due[l] = f64::INFINITY;
             // The straddling vehicle is entitled to the room first.
