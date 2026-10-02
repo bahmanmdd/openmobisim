@@ -13,14 +13,18 @@
 //! | `car_transit` or `bike_transit`, vehicle at the origin (**out**) | drive or ride to a parking, park, walk to a stop, ride(s), walk: parking × route to it × journey from it |
 //! | the same, vehicle at a parking (**back**) | walk, ride(s) to that parking's stops, walk, fetch the vehicle, drive or ride home: journey × route from it. **The hub is fixed: it is where the vehicle is** (design §23.2) |
 //!
-//! **Candidates** (out): the parkings of the vehicle's kind within reach, found
-//! by one search from the origin ([`crate::parking::ParkingDefaults::reach_car_s`],
+//! **Candidates** (out): the parkings of the vehicle's kind within reach
+//! ([`crate::parking::ParkingDefaults::reach_car_s`],
 //! [`crate::parking::ParkingDefaults::reach_bike_s`]); the `K` nearest and the `K` best by a rough
 //! estimate of the whole trip are tried (`K` =
 //! [`crate::parking::ParkingDefaults::candidates`]), each with one RAPTOR query; the
-//! alternatives of at most `K` parkings are kept. **The choice-set limit** (the
-//! run's `choice_detour_limit`) then drops the alternatives much slower than the
-//! best, as it does for car routes.
+//! alternatives of at most `K` parkings are kept. **Car parks** are picked on the
+//! free-flow drive to each (one backward search per car park, once per run), and only
+//! the picked ones' routes are then searched on the expected times (S209). **Bike
+//! parkings** are found by one search from the origin on the bike layer, whose costs
+//! are static, so each trip's are found once per run and kept, pruned to those that can
+//! ever be tried (S209). **The choice-set limit** (the run's `choice_detour_limit`) then
+//! drops the alternatives much slower than the best, as it does for car routes.
 //!
 //! **The attributes** — one vocabulary for every alternative, routes included
 //! ([`ATTRIBUTES`]): `time_min` (door to door), `car_min`, `bike_min`,
@@ -49,9 +53,13 @@
 //! it left the vehicle, so each traveller's vehicle itinerary trips are chosen in
 //! order, one round each (A13); plain transit trips in the first round.
 //!
-//! **Cost:** per transit trip one RAPTOR query; per out trip one bounded search
-//! and up to `2K` queries; per back trip one query and a search per journey.
-//! Parallel in fixed chunks, so results never depend on the thread count.
+//! **Cost:** per transit trip one RAPTOR query (its walks to and from stops are searched
+//! once per run, [`crate::transit::TransitSetup`]); per out trip one search, stopped at the
+//! picked car parks or, by bike, once per run, and up to `2K` queries; per back trip one
+//! query and a search per journey. Parallel in fixed chunks, so results never depend on
+//! the thread count.
+
+use std::sync::OnceLock;
 
 use openmobisim_core_choice::{ChoiceBatch, ChoiceError, ChoiceModel};
 use openmobisim_core_demand::{Mode, Travellers, Trips};
@@ -323,6 +331,9 @@ pub(crate) struct Scratch<'a> {
     /// neither, and each holds a few bytes per link of its whole network.
     car: Option<Search<'a>>,
     bike: Option<Search<'a>>,
+    /// One flag per road node: the car parks a park-and-ride search looks for (S209). Made on
+    /// first use, and left all false between uses.
+    car_mask: Vec<bool>,
 }
 
 /// The transit part of a [`Scratch`].
@@ -342,6 +353,19 @@ impl<'a> Scratch<'a> {
     }
 }
 
+/// A bike parking within a bike-and-ride trip's reach: its node, the ride's seconds and
+/// metres, and the route (S209).
+#[derive(Clone, Debug)]
+pub(crate) struct ReachCand {
+    node: NodeId,
+    seconds: f64,
+    links: Box<[LinkId]>,
+    metres: f64,
+}
+
+/// One trip's bike parkings in reach, kept once found: see [`Itineraries::bike_reach`].
+pub(crate) type BikeReach = OnceLock<Box<[ReachCand]>>;
+
 impl<'a> Planner<'a> {
     pub(crate) fn scratch(&self) -> Scratch<'a> {
         Scratch {
@@ -356,6 +380,7 @@ impl<'a> Planner<'a> {
             }),
             car: None,
             bike: None,
+            car_mask: Vec::new(),
         }
     }
 
@@ -378,6 +403,7 @@ impl<'a> Planner<'a> {
         offer: Offer,
         legs: (Option<&StaticLeg>, Option<&StaticLeg>),
         car_key: Option<RouteKey>,
+        bike_reach: Option<&BikeReach>,
     ) -> Vec<Alternative> {
         let k = self.parking.map_or(1, |p| p.defaults().candidate_count());
         let vehicles =
@@ -412,7 +438,7 @@ impl<'a> Planner<'a> {
             });
         for (shape, kind) in vehicles {
             if let (Some(Shape::Out), true) = (shape, far_enough) {
-                alts.extend(self.plan_out(s, n, departure, destination, kind));
+                alts.extend(self.plan_out(s, n, departure, destination, kind, bike_reach));
             }
         }
         finalise(alts, self.detour_limit, k)
@@ -471,6 +497,7 @@ impl<'a> Planner<'a> {
         departure: u32,
         destination: LonLat,
         kind: ParkingKind,
+        bike_reach: Option<&BikeReach>,
     ) -> Vec<Alternative> {
         let Some(parking) = self.parking else { return Vec::new() };
         let d = parking.defaults();
@@ -482,46 +509,94 @@ impl<'a> Planner<'a> {
                 if n.road_o.is_null() {
                     return Vec::new();
                 }
+                // The candidates are picked on free-flow times to every car park, searched once
+                // per run (S209); only their routes are searched on the expected times,
+                // by one search that stops once it has reached them all.
+                let picked = self.car_candidates(parking, n.road_o, dep, destination);
+                if picked.is_empty() {
+                    return Vec::new();
+                }
+                let road = self.car.network;
+                let mut mask = std::mem::take(&mut s.car_mask);
+                mask.resize(road.node_count() as usize, false);
+                for node in &picked {
+                    mask[node.index()] = true;
+                }
                 let times = self.times;
                 let wait = |l: u32, t: f64| times.origin_wait_seconds(l, t);
                 let secs = |l: u32, t: f64| times.link_seconds(l, t);
-                let road = self.car.network;
-                s.car(self.car)
-                    .fastest_routes_to(n.road_o, targets, count, dep, d.reach_car_s, &wait, &secs)
+                let found = s
+                    .car(self.car)
+                    .fastest_routes_to(
+                        n.road_o,
+                        &mask,
+                        picked.len(),
+                        dep,
+                        d.reach_car_s,
+                        &wait,
+                        &secs,
+                    )
                     .into_iter()
                     .map(|(node, t, links)| {
                         let m = links.iter().map(|&l| road.link_length(l).get()).sum();
                         (node, t, links, m)
                     })
-                    .collect()
+                    .collect();
+                for node in &picked {
+                    mask[node.index()] = false;
+                }
+                s.car_mask = mask;
+                found
             }
             ParkingKind::Bike => {
                 let Some((layer, ctx)) = self.bike else {
                     return Vec::new();
                 };
-                let search = s.bike(ctx);
                 if n.bike_o.is_null() {
                     return Vec::new();
                 }
-                let cost = |l: u32, _t: f64| ctx.link_cost(LinkId::new(l));
-                let graph = layer.network().network();
-                search
-                    .fastest_routes_to(
-                        n.bike_o,
-                        targets,
-                        count,
-                        0.0,
-                        d.reach_bike_s,
-                        &|_, _| 0.0,
-                        &cost,
-                    )
-                    .into_iter()
-                    .map(|(node, _, links)| {
-                        let t = links.iter().map(|l| layer.seconds()[l.index()]).sum();
-                        let m = links.iter().map(|&l| graph.link_length(l).get()).sum();
-                        (node, t, links, m)
-                    })
-                    .collect()
+                let mut search_all = || -> Vec<(NodeId, f64, Vec<LinkId>, f64)> {
+                    let cost = |l: u32, _t: f64| ctx.link_cost(LinkId::new(l));
+                    let graph = layer.network().network();
+                    s.bike(ctx)
+                        .fastest_routes_to(
+                            n.bike_o,
+                            targets,
+                            count,
+                            0.0,
+                            d.reach_bike_s,
+                            &|_, _| 0.0,
+                            &cost,
+                        )
+                        .into_iter()
+                        .map(|(node, _, links)| {
+                            let t = links.iter().map(|l| layer.seconds()[l.index()]).sum();
+                            let m = links.iter().map(|&l| graph.link_length(l).get()).sum();
+                            (node, t, links, m)
+                        })
+                        .collect()
+                };
+                // The bike layer's costs are static, so the search's answer is the trip's for
+                // the whole run: found once and kept (S209), pruned to the parkings that can
+                // ever be tried, whatever the parkings' availability.
+                match bike_reach {
+                    Some(cell) => cell
+                        .get_or_init(|| {
+                            prune_reach(search_all(), parking, kind, destination)
+                                .into_iter()
+                                .map(|(node, seconds, links, metres)| ReachCand {
+                                    node,
+                                    seconds,
+                                    links: links.into_boxed_slice(),
+                                    metres,
+                                })
+                                .collect()
+                        })
+                        .iter()
+                        .map(|c| (c.node, c.seconds, c.links.to_vec(), c.metres))
+                        .collect(),
+                    None => search_all(),
+                }
             }
         };
         struct Cand {
@@ -613,6 +688,51 @@ impl<'a> Planner<'a> {
             }
         }
         alts
+    }
+
+    /// The car parks a park-and-ride trip leaving road node `origin` at `dep` tries: the `K`
+    /// nearest and the `K` best by a rough estimate of the whole trip (as [`Self::plan_out`]
+    /// ranks them), both on the **free-flow** drive to each car park within reach
+    /// ([`ParkingSetup::car_free_flow`]), the time to park at the expected availability, the
+    /// walk to the nearest stop and the rest of the way at the ranking speed. Their nodes,
+    /// ascending.
+    fn car_candidates(
+        &self,
+        parking: &ParkingSetup,
+        origin: NodeId,
+        dep: f64,
+        destination: LonLat,
+    ) -> Vec<NodeId> {
+        let d = parking.defaults();
+        let k = d.candidate_count();
+        let speed = (d.rank_speed_km_h / 3.6).max(0.1);
+        let ff = parking.car_free_flow();
+        // (free-flow seconds, estimate, parking, node)
+        let mut each: Vec<(f64, f64, u32, NodeId)> = Vec::new();
+        for (i, &node) in ff.nodes.iter().enumerate() {
+            let t = ff.seconds(i, origin);
+            if t.is_nan() || t > d.reach_car_s {
+                continue;
+            }
+            for &p in parking.at(ParkingKind::Car, node) {
+                let availability = self.availability.map_or(1.0, |a| a.at(p, dep + t));
+                let walk = parking.stops(p).iter().map(|x| x.1).min().unwrap_or(0);
+                let est = t
+                    + d.parking_seconds(ParkingKind::Car, availability)
+                    + f64::from(walk)
+                    + ground_distance_metres(parking.position(p), destination) / speed;
+                each.push((t, est, p, node));
+            }
+        }
+        let mut near: Vec<usize> = (0..each.len()).collect();
+        near.sort_by(|&a, &b| each[a].0.total_cmp(&each[b].0).then(each[a].2.cmp(&each[b].2)));
+        let mut best: Vec<usize> = (0..each.len()).collect();
+        best.sort_by(|&a, &b| each[a].1.total_cmp(&each[b].1).then(each[a].2.cmp(&each[b].2)));
+        let mut nodes: Vec<NodeId> =
+            near.iter().take(k).chain(best.iter().take(k)).map(|&i| each[i].3).collect();
+        nodes.sort_unstable();
+        nodes.dedup();
+        nodes
     }
 
     fn plan_back(
@@ -736,6 +856,51 @@ impl<'a> Planner<'a> {
         }
         a
     }
+}
+
+/// The parkings of `found` (`(node, seconds, links, metres)`, as the bike-and-ride search
+/// returns them) that can ever be among the ones [`Planner::plan_out`] tries: the `K`
+/// nearest by riding time, or one of the `K` best by its estimate of the whole trip,
+/// whatever the parkings' availability (S209). Availability moves an estimate only through
+/// the time to park, between its floor (all room) and floor plus slope (full), so a
+/// parking whose best estimate is above the `K`-th smallest worst estimate is never among
+/// the `K` best, and one more than `K` others are nearer than is never among the nearest.
+/// Exact: the kept list gives the same tried set as the whole list, at any availability.
+fn prune_reach(
+    found: Vec<(NodeId, f64, Vec<LinkId>, f64)>,
+    parking: &ParkingSetup,
+    kind: ParkingKind,
+    destination: LonLat,
+) -> Vec<(NodeId, f64, Vec<LinkId>, f64)> {
+    let d = parking.defaults();
+    let k = d.candidate_count();
+    let speed = (d.rank_speed_km_h / 3.6).max(0.1);
+    let (all_room, full) = (d.parking_seconds(kind, 1.0), d.parking_seconds(kind, 0.0));
+    // Per parking: (its node's index in `found`, riding seconds, best estimate, worst estimate).
+    let mut each: Vec<(usize, f64, f64, f64)> = Vec::new();
+    for (i, (node, t, _, _)) in found.iter().enumerate() {
+        for &p in parking.at(kind, *node) {
+            let walk = f64::from(parking.stops(p).iter().map(|x| x.1).min().unwrap_or(0));
+            let rest = walk + ground_distance_metres(parking.position(p), destination) / speed;
+            each.push((i, *t, t + all_room + rest, t + full + rest));
+        }
+    }
+    if each.len() <= k {
+        return found;
+    }
+    let kth = |mut v: Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        v[k - 1]
+    };
+    let near_k = kth(each.iter().map(|e| e.1).collect());
+    let worst_k = kth(each.iter().map(|e| e.3).collect());
+    let mut keep = vec![false; found.len()];
+    for &(i, t, best, _) in &each {
+        if t <= near_k || best <= worst_k {
+            keep[i] = true;
+        }
+    }
+    found.into_iter().zip(keep).filter_map(|(f, k)| k.then_some(f)).collect()
 }
 
 /// Whether a journey comes back to the stop it first boarded at: RAPTOR has no journey
@@ -1032,6 +1197,12 @@ pub(crate) struct Itineraries {
     /// Per position, a choosing trip's car pair (`None`: origin and destination on one node,
     /// or not choosing).
     car_keys: Vec<Option<RouteKey>>,
+    /// Per position, its bike parkings in reach, found by the first plan that needs them and
+    /// kept for the run: the bike layer's costs are static (S209).
+    bike_reach: Vec<BikeReach>,
+    /// Whether any trip may drive to a car park (stated park-and-ride, or offered it in mode
+    /// choice): the car parks' free-flow table is then searched before planning (S209).
+    parks_cars: bool,
 }
 
 /// Where a vehicle is expected to be, following a traveller's choices.
@@ -1079,6 +1250,8 @@ pub(crate) struct Simulated<'a> {
     pub choice: Option<&'a [Mode]>,
     /// Every trip's bike and walk routes, a choosing trip's included.
     pub static_routes: &'a StaticRoutes,
+    /// How long a walk or ride mode choice offers (S209).
+    pub modes: &'a crate::layers::ModeDefaults,
 }
 
 impl Itineraries {
@@ -1114,6 +1287,8 @@ impl Itineraries {
             offered,
             legs: Vec::new(),
             car_keys: Vec::new(),
+            bike_reach: Vec::new(),
+            parks_cars: false,
         };
         for i in 0..total {
             let trip = TripId::from_index(i);
@@ -1144,7 +1319,9 @@ impl Itineraries {
                 }
             }
             let (legs, car_key) = if choosing {
-                let leg = |layer| sim.static_routes.leg(sim.layers, trip, layer);
+                let leg = |layer| {
+                    sim.static_routes.leg(sim.layers, trip, layer, sim.modes.max_seconds(layer))
+                };
                 let key = (offered[Mode::Car.index()] && nodes.road_o != nodes.road_d)
                     .then(|| RouteKey::new(nodes.road_o, nodes.road_d));
                 ([leg(StaticLayer::Bike), leg(StaticLayer::Walk)], key)
@@ -1176,6 +1353,12 @@ impl Itineraries {
             }
         }
         out.rounds = rounds;
+        out.bike_reach = (0..out.trips.len()).map(|_| OnceLock::new()).collect();
+        out.parks_cars = parking.is_some()
+            && out.trips.iter().zip(&out.choosing).any(|(&trip, &choosing)| {
+                trips.mode(trip) == Mode::CarTransit
+                    || (choosing && offered[Mode::CarTransit.index()])
+            });
         out
     }
 
@@ -1326,6 +1509,10 @@ impl Itineraries {
         };
         let mut assessment = Assessment::default();
         let (trips, travellers) = (inputs.trips, inputs.travellers);
+        // The car parks' free-flow table, searched here, outside the parallel planning (S209).
+        if let (true, Some(parking)) = (self.parks_cars, planner.parking) {
+            parking.prepare_car_free_flow();
+        }
         let reselects = |p: usize| {
             let traveller = trips.traveller(self.trips[p]).raw();
             strategy.is_some_and(|(strategy, msa)| strategy.reselects(msa, traveller, iteration))
@@ -1345,6 +1532,7 @@ impl Itineraries {
                 offer,
                 (bike.as_ref(), walk.as_ref()),
                 self.car_keys[p],
+                self.bike_reach.get(p),
             )
         };
         for round in &self.rounds {

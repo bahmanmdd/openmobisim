@@ -26,6 +26,7 @@
 //! | MC4 | `modes = [car]` | the run without mode choice, bit for bit (and `[bike]` makes every such trip a bike trip) |
 //! | MC5 | park-and-ride out `W → N1`, then `N1 → D2` choosing | the car is parked: the trip back is offered only the ways back to it (`D2` is where the car goes, from either car park, as PR4) |
 //! | MC6 | no timetable | walk, bike and car are still chosen among: `W → M` by car, **80 s** |
+//! | MC7 | mode choice's cut-offs (S209) | `W → N1`'s walk (**318.198 s**) is offered under the 1800-s default and not under a 300-s one; its ride (**144 s**) not under a 100-s one; a trip given the mode walks or rides at any length |
 
 #![allow(clippy::float_cmp, reason = "hand-derived values")]
 
@@ -42,8 +43,8 @@ use openmobisim_core_graph::{LonLat, toy_network, toy_network_layers};
 use openmobisim_core_loading::FidelityLevel;
 use openmobisim_core_sim::equilibration::strategy;
 use openmobisim_core_sim::{
-    EventType, FlowMotor, LayerSetup, NO_MODE, ParkingDefaults, ParkingSetup, Run, RunResult,
-    StaticLayers, TransitSetup,
+    EventType, FlowMotor, LayerSetup, ModeDefaults, NO_MODE, ParkingDefaults, ParkingSetup, Run,
+    RunResult, StaticLayers, TransitSetup,
 };
 use openmobisim_core_transit::TransitDefaults;
 use openmobisim_core_transit::examples::toy_tram;
@@ -418,4 +419,32 @@ fn mc6_without_a_timetable_walk_bike_and_car_are_chosen_among() {
     assert_eq!(it.alternatives, [3], "car, bike, walk");
     assert_eq!(chosen(&t, &r, 0).0, Mode::Car);
     assert_eq!(r.by_mode[Mode::Car.index()].completion.completed, 1);
+}
+
+#[test]
+fn mc7_mode_choice_offers_a_walk_or_a_ride_only_up_to_its_cut_offs() {
+    let t = toy();
+    let one = || vec![t.trip("a", 0, ("W", "N1"), 0, None)];
+    let run = |defaults: ModeDefaults| {
+        t.build(one(), &Setup::default())
+            .with_mode_defaults(defaults)
+            .execute(&mut Diagnostics::new())
+    };
+    let count = |r: &RunResult| r.itineraries.as_ref().unwrap().alternatives[0];
+    // The default 30 minutes offers both: bike 144 s, walk 318.198 s.
+    assert_eq!(count(&run(ModeDefaults::SHIPPED)), 5);
+    // A 300-s walk limit drops the walk only; the bike still wins.
+    let r = run(ModeDefaults { walk_max_s: 300.0, ..ModeDefaults::SHIPPED });
+    assert_eq!(count(&r), 4, "bike, two park-and-ride, one bike-and-ride");
+    assert_eq!(chosen(&t, &r, 0).0, Mode::Bike);
+    // A 100-s ride limit drops the bike too; bike-and-ride's own ride is not a bike trip.
+    let r = run(ModeDefaults { walk_max_s: 300.0, bike_max_s: 100.0 });
+    assert_eq!(count(&r), 3, "two park-and-ride, one bike-and-ride");
+    assert!(!matches!(chosen(&t, &r, 0).0, Mode::Bike | Mode::Walk));
+    // A trip given the mode is not cut off: it walks its 318.198 s.
+    let stated = t
+        .build(vec![t.trip("b", 0, ("W", "N1"), 0, Some(Mode::Walk))], &Setup::default())
+        .with_mode_defaults(ModeDefaults { walk_max_s: 300.0, ..ModeDefaults::SHIPPED })
+        .execute(&mut Diagnostics::new());
+    assert_eq!(outcomes(&stated), [(EventType::TripCompleted, 318)]);
 }

@@ -44,6 +44,10 @@ use crate::equilibration::Equilibration;
 use crate::link_times::LinkTimes;
 use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
+/// Sampled trips per search scratch in the whole-network gap: a scratch holds a few bytes
+/// per link of the network, so a thread makes one per chunk it takes. Results do not depend on it.
+const GAP_CHUNK: usize = 16;
+
 /// The attributes a route carries, in the order a batch holds them: the same
 /// names as every itinerary's ([`crate::itinerary_choice::ATTRIBUTES`], A8).
 pub const ROUTE_ATTRIBUTES: [&str; 20] = crate::itinerary_choice::ATTRIBUTES;
@@ -401,33 +405,46 @@ impl<'a> Chooser<'a> {
         chosen.sort_unstable();
 
         let ctx = SearchContext::new(network, turns);
-        let mut search = Search::new(&ctx);
-        let wait = |link: u32, departure: f64| times.origin_wait_seconds(link, departure);
-        let seconds = |link: u32, at: f64| times.link_seconds(link, at);
-        let (mut paid, mut fastest, mut excess) = (0.0, 0.0, 0.0);
-        for t in chosen {
-            let key = trip_keys[t];
-            let departure = f64::from(trips.departure(TripId::from_index(t)).get());
-            let k = route_sets.key_index(key).expect("a routed trip has a set");
-            let mut in_set = f64::INFINITY;
-            let mut taken = 0.0;
-            for r in route_sets.route_range(k) {
-                let time = times.route_seconds(route_sets.route(r).links, departure);
-                in_set = in_set.min(time);
-                if r == current.route[t] as usize {
-                    taken = time;
+        // One bounded search per sampled trip, in parallel (S209: the serial loop was 8% of a
+        // car run); the sums below run in the sample's order, so the result is the same for
+        // any thread count.
+        let per_trip: Vec<(f64, f64, f64, f64)> = crate::transit::par_map(
+            &chosen,
+            GAP_CHUNK,
+            || Search::new(&ctx),
+            |search, &t| {
+                let wait = |link: u32, departure: f64| times.origin_wait_seconds(link, departure);
+                let seconds = |link: u32, at: f64| times.link_seconds(link, at);
+                let key = trip_keys[t];
+                let departure = f64::from(trips.departure(TripId::from_index(t)).get());
+                let k = route_sets.key_index(key).expect("a routed trip has a set");
+                let mut in_set = f64::INFINITY;
+                let mut taken = 0.0;
+                for r in route_sets.route_range(k) {
+                    let time = times.route_seconds(route_sets.route(r).links, departure);
+                    in_set = in_set.min(time);
+                    if r == current.route[t] as usize {
+                        taken = time;
+                    }
                 }
-            }
-            let found = search.fastest_time(
-                NodeId::new(key.origin),
-                NodeId::new(key.destination),
-                departure,
-                in_set,
-                &wait,
-                &seconds,
-            );
-            let w = f64::from(current.weight[t]);
-            let best = found.map_or(in_set, |f| f.min(in_set));
+                let found = search.fastest_time(
+                    NodeId::new(key.origin),
+                    NodeId::new(key.destination),
+                    departure,
+                    in_set,
+                    &wait,
+                    &seconds,
+                );
+                (
+                    f64::from(current.weight[t]),
+                    taken,
+                    in_set,
+                    found.map_or(in_set, |f| f.min(in_set)),
+                )
+            },
+        );
+        let (mut paid, mut fastest, mut excess) = (0.0, 0.0, 0.0);
+        for (&t, &(w, taken, in_set, best)) in chosen.iter().zip(&per_trip) {
             paid += w * taken;
             fastest += w * best;
             excess += w * (taken - expected_seconds[t] + in_set - best);

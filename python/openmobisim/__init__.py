@@ -19,7 +19,8 @@ since the car-ready checkpoint (2026-09-23), iteration towards an equilibrium
 public transport (``transit_read_gtfs``, ``Scenario(transit=...)``), whose buses
 ride the roads among the cars, or drive or cycle to a parking and go on by
 transit (``parking_read_osm``, ``parking_read_table``, ``Scenario(parkings=...)``),
-the station chosen by the choice model. No disruptions yet.
+the station chosen by the choice model. ``demand_sample`` simulates one traveller for
+every few people, for faster screening runs. No disruptions yet.
 """
 
 from openmobisim import _core, choice, examples
@@ -41,6 +42,7 @@ from openmobisim._core import (
     step_of,
     transit_read_gtfs,
 )
+from openmobisim.demand import demand_sample
 from openmobisim.network import network_read_table
 from openmobisim.parking import parking_read_table
 from openmobisim.scenario import MODES, Run, Scenario, Table
@@ -59,6 +61,7 @@ __all__ = [
     "choice",
     "choice_draw",
     "choice_models",
+    "demand_sample",
     "equilibration_strategies",
     "examples",
     "fixed_order_sum_f64",

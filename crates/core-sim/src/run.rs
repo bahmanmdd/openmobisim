@@ -51,7 +51,7 @@ use crate::itinerary_choice::{
     self, CarRoutes, ChooseInputs, Chosen, Followed, Itineraries, ItineraryResult, Planner, Shape,
     Simulated, WalkEnd, parking_kind_of,
 };
-use crate::layers::{StaticLayers, StaticRoute, StaticRoutes, static_layer_of};
+use crate::layers::{ModeDefaults, StaticLayers, StaticRoute, StaticRoutes, static_layer_of};
 use crate::link_times::{LinkTimes, relative_time_change};
 use crate::parking::{
     self as parking_mod, ExpectedAvailability, ParkingEvent, ParkingResult, ParkingSetup,
@@ -390,6 +390,8 @@ pub struct Run {
     parking: Option<Arc<ParkingSetup>>,
     /// The modes a trip without a stated mode chooses among (M5): no choice, by default.
     mode_choice: Option<Vec<Mode>>,
+    /// How long a walk or ride mode choice offers (S209): the shipped values, by default.
+    mode_defaults: ModeDefaults,
 }
 
 /// The share above the best route's expected time beyond which a route is not offered to a
@@ -431,6 +433,7 @@ impl Run {
             transit: None,
             parking: None,
             mode_choice: None,
+            mode_defaults: ModeDefaults::SHIPPED,
         }
     }
 
@@ -481,6 +484,14 @@ impl Run {
             }
             _ => self.mode_choice = Some(modes),
         }
+        self
+    }
+
+    /// The same run, offering mode choice's walk and bike alternatives only up to the
+    /// times of `defaults` (S209); a trip given the mode takes it at any length.
+    #[must_use]
+    pub fn with_mode_defaults(mut self, defaults: ModeDefaults) -> Self {
+        self.mode_defaults = defaults;
         self
     }
 
@@ -613,6 +624,7 @@ impl Run {
             transit: self.transit.as_deref(),
             parking: self.parking.as_deref(),
             mode_choice: self.mode_choice.as_deref(),
+            mode_defaults: &self.mode_defaults,
         })
     }
 
@@ -696,13 +708,18 @@ impl Run {
             .collect();
         // Bike and walk trips' routes on their layers: once per run, since their
         // costs are static. A trip choosing its mode gets its route on each layer offered.
-        let static_routes = StaticRoutes::build(&self.layers, &self.trips, &|trip, layer| {
-            choosing(trip)
-                && offers(match layer {
-                    StaticLayer::Bike => Mode::Bike,
-                    StaticLayer::Walk => Mode::Walk,
-                })
-        });
+        let static_routes = StaticRoutes::build(
+            &self.layers,
+            &self.trips,
+            &|trip, layer| {
+                choosing(trip)
+                    && offers(match layer {
+                        StaticLayer::Bike => Mode::Bike,
+                        StaticLayer::Walk => Mode::Walk,
+                    })
+            },
+            &self.mode_defaults,
+        );
         // Shared handles, so the loading (which moves vehicles about in `self`) and the
         // chooser (which only reads the inputs) do not borrow each other.
         let (network, travellers, trips) =
@@ -724,6 +741,7 @@ impl Run {
                         layers: &layers_arc,
                         choice: mode_choice.as_deref(),
                         static_routes: &static_routes,
+                        modes: &self.mode_defaults,
                     },
                 )
             })

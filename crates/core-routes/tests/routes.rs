@@ -966,3 +966,179 @@ fn one_search_to_many_targets_equals_one_search_to_each() {
         found[..2].iter().map(|f| f.0).collect::<Vec<_>>()
     );
 }
+
+/// An irregular network: nodes jittered off a grid, links curved (longer than the
+/// straight line between their ends, as real streets are) and of mixed classes, so
+/// free-flow speeds differ by a factor of four across the network.
+fn irregular(n: u32, seed: u64) -> RoadNetwork {
+    let mut state = seed;
+    let mut unit = || -> f64 {
+        state =
+            state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        (state >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let mut b = RoadNetworkBuilder::new();
+    let mut pos = Vec::new();
+    for i in 0..n {
+        for j in 0..n {
+            let (x, y) =
+                (f64::from(i) * 150.0 + unit() * 90.0, f64::from(j) * 150.0 + unit() * 90.0);
+            pos.push((x, y));
+            b.add_node(format!("n{i}_{j}"), LonLat::new(4.8 + x / 77_800.0, 45.7 + y / 110_574.0));
+        }
+    }
+    let classes =
+        [RoadClass::Residential, RoadClass::Secondary, RoadClass::Primary, RoadClass::Motorway];
+    let mut k = 0;
+    for i in 0..n {
+        for j in 0..n {
+            for (di, dj) in [(1, 0), (0, 1)] {
+                let (i2, j2) = (i + di, j + dj);
+                if i2 >= n || j2 >= n {
+                    continue;
+                }
+                let (a, c) = (pos[(i * n + j) as usize], pos[(i2 * n + j2) as usize]);
+                let chord = ((a.0 - c.0).powi(2) + (a.1 - c.1).powi(2)).sqrt();
+                let class = classes[(unit() * 4.0) as usize % 4];
+                let len = chord * (1.0 + unit() * 0.5);
+                for (from, to) in [
+                    (format!("n{i}_{j}"), format!("n{i2}_{j2}")),
+                    (format!("n{i2}_{j2}"), format!("n{i}_{j}")),
+                ] {
+                    let mut spec = LinkSpec::new(class);
+                    spec.length_m = Some(len);
+                    b.add_link(format!("l{k}"), &from, &to, spec);
+                    k += 1;
+                }
+            }
+        }
+    }
+    b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable")
+}
+
+/// **The goal-directed search is exact** (S209): on an irregular network with mixed
+/// speeds and curved links, every route `Search::shortest` returns costs exactly what an
+/// independent Dijkstra finds, and a pair with no route has none either way. The lower
+/// bound is positive there, so A* is really in play.
+#[test]
+fn the_goal_directed_search_finds_a_least_cost_route_on_an_irregular_network() {
+    let net = irregular(12, 7);
+    let turns = turns_of(&net);
+    let ctx = SearchContext::new(&net, &turns);
+    assert!(ctx.lower_bound_per_metre() > 0.0, "a bound that does nothing would test nothing");
+    let mut search = Search::new(&ctx);
+    let count = net.node_count();
+    let mut state = 99u64;
+    let mut next = || {
+        state =
+            state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        ((state >> 33) % u64::from(count)) as u32
+    };
+    for _ in 0..300 {
+        let (o, d) = (NodeId::new(next()), NodeId::new(next()));
+        if o == d {
+            continue;
+        }
+        let found = search.shortest(o, d).map(|r| r.cost);
+        let reference = reference_cost(&net, o, d);
+        match (found, reference) {
+            (Some(a), Some(b)) => assert!((a - b).abs() <= 1e-9 * b.max(1.0), "{a} against {b}"),
+            (None, None) => {}
+            other => panic!("one search found a route, the other did not: {other:?}"),
+        }
+    }
+}
+
+/// An independent, node-based earliest-arrival search with no lower bound (time-dependent
+/// Dijkstra), for reference: link times from `seconds`, no origin wait.
+fn reference_fastest(
+    net: &RoadNetwork,
+    from: NodeId,
+    to: NodeId,
+    departure: f64,
+    seconds: &dyn Fn(u32, f64) -> f64,
+) -> Option<f64> {
+    let mut best = vec![f64::INFINITY; net.node_count() as usize];
+    let mut heap = BinaryHeap::new();
+    best[from.index()] = departure;
+    heap.push(core::cmp::Reverse((departure.to_bits(), from.raw())));
+    while let Some(core::cmp::Reverse((bits, n))) = heap.pop() {
+        let (t, n) = (f64::from_bits(bits), NodeId::new(n));
+        if t > best[n.index()] {
+            continue;
+        }
+        if n == to {
+            return Some(t - departure);
+        }
+        for &l in net.out_links(n) {
+            if !net.link_class(l).carries_motor_traffic() {
+                continue;
+            }
+            let (m, nt) = (net.link_to(l), t + seconds(l.raw(), t));
+            if nt < best[m.index()] {
+                best[m.index()] = nt;
+                heap.push(core::cmp::Reverse((nt.to_bits(), m.raw())));
+            }
+        }
+    }
+    None
+}
+
+/// **The goal-directed time-dependent search is exact** (S209): with link times that
+/// change through the hour, are never below free flow (as a loading's are) and keep FIFO,
+/// the fastest time found agrees with an independent time-dependent Dijkstra, unbounded and
+/// bounded.
+#[test]
+fn the_goal_directed_fastest_time_agrees_with_a_plain_time_dependent_search() {
+    let net = irregular(12, 3);
+    let turns = turns_of(&net);
+    let ctx = SearchContext::new(&net, &turns);
+    let mut search = Search::new(&ctx);
+    // Congestion that comes and goes: each link slower by up to 3 times free flow, by a
+    // pattern of knots every five minutes, interpolated in between, the same function of
+    // (link, time) each call. It changes slowly enough that a later entry never means an
+    // earlier exit (FIFO), the condition under which any earliest-arrival search is exact.
+    let knot = |l: u32, k: u64| {
+        let mut x = (u64::from(l) << 20) ^ k;
+        x = x.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        1.0 + 2.0 * ((x >> 11) as f64 / (1u64 << 53) as f64)
+    };
+    let seconds = |l: u32, t: f64| {
+        let k = (t / 300.0).floor();
+        let f = t / 300.0 - k;
+        let slow = knot(l, k as u64) * (1.0 - f) + knot(l, k as u64 + 1) * f;
+        net.free_flow_time(LinkId::new(l)).get() * slow
+    };
+    let none = |_: u32, _: f64| 0.0;
+    let count = net.node_count();
+    let mut state = 5u64;
+    let mut next = || {
+        state =
+            state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        ((state >> 33) % u64::from(count)) as u32
+    };
+    for i in 0..200 {
+        let (o, d) = (NodeId::new(next()), NodeId::new(next()));
+        if o == d {
+            continue;
+        }
+        let departure = 7.0 * 3600.0 + f64::from(i) * 37.0;
+        let reference = reference_fastest(&net, o, d, departure, &seconds);
+        let found = search.fastest_time(o, d, departure, f64::INFINITY, &none, &seconds);
+        match (found, reference) {
+            (Some(a), Some(b)) => assert!((a - b).abs() <= 1e-9 * b.max(1.0), "{a} against {b}"),
+            (None, None) => {}
+            other => panic!("one search found a route, the other did not: {other:?}"),
+        }
+        // Bounded at the reference time: still found; just under it: not.
+        if let Some(b) = reference {
+            assert!(
+                search.fastest_time(o, d, departure, b * (1.0 + 1e-9), &none, &seconds).is_some()
+            );
+            assert!(
+                search.fastest_time(o, d, departure, b * (1.0 - 1e-6), &none, &seconds).is_none()
+            );
+        }
+    }
+}

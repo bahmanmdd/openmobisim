@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use openmobisim_core_graph::geometry::{LonLat, ground_distance_metres};
 use openmobisim_core_graph::hubs::{
@@ -286,6 +286,30 @@ pub struct ParkingSetup {
     target_nodes: [usize; 2],
     at_node: [HashMap<u32, Vec<u32>>; 2],
     report: ParkingSetupReport,
+    /// The free-flow drive to every car park, made on first use (S209): see
+    /// [`Self::car_free_flow`].
+    car_free_flow: OnceLock<CarFreeFlow>,
+}
+
+/// The free-flow time to drive from every road node to each node with a car park, within
+/// the car's reach (S209): what park-and-ride candidates are
+/// picked by, before their routes are found on the congested times. One backward search
+/// per car-park node, once per run; 4 bytes per road node per car-park node (8 MB for
+/// Amsterdam's 16). The search is node-based, without the turn table's U-turn ban, so a
+/// time may be a little under the turn-aware one: a ranking, not a cost.
+#[derive(Debug)]
+pub(crate) struct CarFreeFlow {
+    /// The car-park nodes, ascending.
+    pub nodes: Vec<NodeId>,
+    /// Per car-park node, the seconds from every road node (infinite beyond the reach).
+    seconds: Vec<Vec<f32>>,
+}
+
+impl CarFreeFlow {
+    /// The free-flow seconds from road node `from` to car-park node number `i`.
+    pub(crate) fn seconds(&self, i: usize, from: NodeId) -> f64 {
+        f64::from(self.seconds[i][from.index()])
+    }
 }
 
 impl ParkingSetup {
@@ -424,6 +448,7 @@ impl ParkingSetup {
             at_node: [HashMap::new(), HashMap::new()],
             report,
             hubs,
+            car_free_flow: OnceLock::new(),
         };
         let layer_nodes = [
             setup.road.node_count() as usize,
@@ -553,6 +578,74 @@ impl ParkingSetup {
     /// The parkings of `kind` at `node`.
     pub(crate) fn at(&self, kind: ParkingKind, node: NodeId) -> &[u32] {
         self.at_node[kind.index()].get(&node.raw()).map_or(&[], Vec::as_slice)
+    }
+
+    /// The free-flow drive from every road node to every car-park node (see
+    /// [`CarFreeFlow`]). Searched in parallel by [`Self::prepare_car_free_flow`] before the
+    /// planning that needs it; if nobody prepared it, searched here on first use, one car park
+    /// after another (no parallel work inside a `OnceLock`'s initialisation: a worker waiting
+    /// on its own parallel work may pick up a job that asks for the same cell, and deadlock).
+    pub(crate) fn car_free_flow(&self) -> &CarFreeFlow {
+        self.car_free_flow.get_or_init(|| {
+            let (road, costs, nodes) = self.car_free_flow_inputs();
+            let mut reach = openmobisim_core_routes::Reach::new(road, &costs);
+            let seconds = nodes.iter().map(|&n| self.car_free_flow_to(&mut reach, n)).collect();
+            CarFreeFlow { nodes, seconds }
+        })
+    }
+
+    /// Search [`Self::car_free_flow`] now, in parallel, if it is not yet: called from outside
+    /// any parallel work (the run's own thread), before the planning that reads it.
+    pub(crate) fn prepare_car_free_flow(&self) {
+        if self.car_free_flow.get().is_some() {
+            return;
+        }
+        let (road, costs, nodes) = self.car_free_flow_inputs();
+        let seconds = crate::transit::par_map(
+            &nodes,
+            1,
+            || openmobisim_core_routes::Reach::new(road, &costs),
+            |reach, &node| self.car_free_flow_to(reach, node),
+        );
+        // Only this thread fills it here; another may have filled it meanwhile with the same.
+        let _ = self.car_free_flow.set(CarFreeFlow { nodes, seconds });
+    }
+
+    /// The road network, its free-flow costs (infinite where cars may not drive) and the
+    /// car-park nodes, ascending.
+    fn car_free_flow_inputs(&self) -> (&RoadNetwork, Vec<f64>, Vec<NodeId>) {
+        let road = &*self.road;
+        let costs: Vec<f64> = (0..road.link_count())
+            .map(|i| {
+                let link = openmobisim_core_types::ids::LinkId::new(i);
+                if road.link_class(link).carries_motor_traffic() {
+                    road.free_flow_time(link).get()
+                } else {
+                    f64::INFINITY
+                }
+            })
+            .collect();
+        let mut nodes: Vec<NodeId> =
+            self.at_node[ParkingKind::Car.index()].keys().map(|&n| NodeId::new(n)).collect();
+        nodes.sort_unstable();
+        (road, costs, nodes)
+    }
+
+    /// The free-flow seconds from every road node to car-park node `node`, within the reach.
+    fn car_free_flow_to(
+        &self,
+        reach: &mut openmobisim_core_routes::Reach<'_>,
+        node: NodeId,
+    ) -> Vec<f32> {
+        let n = self.road.node_count() as usize;
+        let every = vec![true; n];
+        let mut to = vec![f32::INFINITY; n];
+        for (from, secs) in reach.backward(node, self.defaults.reach_car_s, &every) {
+            #[allow(clippy::cast_possible_truncation, reason = "seconds as f32")]
+            let s = secs as f32;
+            to[from.index()] = s;
+        }
+        to
     }
 
     /// Bytes held.

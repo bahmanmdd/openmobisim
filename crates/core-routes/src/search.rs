@@ -28,6 +28,19 @@
 //! carry, no array to fill — so a search is the same for any thread and order. The Monte
 //! Carlo method uses it (S176).
 //!
+//! **Goal-directed (A\*, S209):** a search towards one destination
+//! ([`Search::shortest_within`]) expands labels in order of their cost plus a
+//! lower bound on the rest of the way: the straight-line distance to the
+//! destination times the least cost per metre of straight line any link of the
+//! context has ([`SearchContext::lower_bound_per_metre`]). The bound never
+//! exceeds the true remaining cost and is consistent, so the route found is a
+//! least-cost one, as Dijkstra's is (Hart, Nilsson & Raphael 1968); the search
+//! only explores less (bike and walk routes ≈ 2.4× fewer seconds on Amsterdam,
+//! car routes ≈ 1.7×, S207). Where several routes have the same least cost, the
+//! one returned can differ from plain Dijkstra's: the same cost, another of the
+//! equal routes. It holds because every cost factor is at least 1
+//! ([`LinkFactors::multiply`], the noise of [`Search::set_noise`]).
+//!
 //! **Cost of a search:** one label per touched link; the scratch is reset by
 //! visiting only what was touched, so a search costs what it explores, not the
 //! size of the network. **Scratch per thread:** 20 bytes per link plus the
@@ -68,6 +81,31 @@ pub struct SearchContext<'a> {
     /// The turns a search may take.
     pub turns: &'a TurnTable,
     cost: Vec<f64>,
+    /// The least cost per metre of straight line over every usable link (A\*'s bound).
+    per_metre: f64,
+}
+
+/// The least cost per metre of straight-line distance between a link's ends, over
+/// every link with a finite cost and ends apart; 0 (no bound: plain Dijkstra) if
+/// there is none or a cost is 0. A path's cost is at least this times the straight
+/// line from its start to its end, by the triangle inequality in the projected
+/// plane, so the bound needs nothing but the costs and the node positions. Shrunk by
+/// one part in a million against rounding.
+fn lower_bound_per_metre(network: &RoadNetwork, cost: &[f64]) -> f64 {
+    let mut least = f64::INFINITY;
+    for (i, &c) in cost.iter().enumerate() {
+        if !c.is_finite() {
+            continue;
+        }
+        let link = LinkId::new(u32::try_from(i).expect("link ids are u32"));
+        let a = network.node_position(network.link_from(link));
+        let b = network.node_position(network.link_to(link));
+        let chord = (a.x - b.x).hypot(a.y - b.y);
+        if chord > 0.0 {
+            least = least.min(c / chord);
+        }
+    }
+    if least.is_finite() && least > 0.0 { least * (1.0 - 1e-6) } else { 0.0 }
 }
 
 impl<'a> SearchContext<'a> {
@@ -84,8 +122,9 @@ impl<'a> SearchContext<'a> {
                     f64::INFINITY
                 }
             })
-            .collect();
-        Self { network, turns, cost }
+            .collect::<Vec<f64>>();
+        let per_metre = lower_bound_per_metre(network, &cost);
+        Self { network, turns, cost, per_metre }
     }
 
     /// A search over `cost` instead of the car's free-flow times (S195): the
@@ -98,7 +137,16 @@ impl<'a> SearchContext<'a> {
     #[must_use]
     pub fn with_costs(network: &'a RoadNetwork, turns: &'a TurnTable, cost: Vec<f64>) -> Self {
         assert_eq!(cost.len(), network.link_count() as usize, "one cost per link");
-        Self { network, turns, cost }
+        let per_metre = lower_bound_per_metre(network, &cost);
+        Self { network, turns, cost, per_metre }
+    }
+
+    /// The least cost per metre of straight-line distance over every usable link:
+    /// the factor A\* turns a straight-line distance into a lower bound on cost
+    /// (see the [module docs](self)). 0 where no bound holds.
+    #[must_use]
+    pub fn lower_bound_per_metre(&self) -> f64 {
+        self.per_metre
     }
 
     /// A link's cost in seconds, infinite if a car cannot use it.
@@ -127,8 +175,14 @@ impl LinkFactors {
         Self { factor: vec![1.0; links], touched: Vec::new() }
     }
 
-    /// Multiply `link`'s cost by `by` from now on.
+    /// Multiply `link`'s cost by `by` from now on. `by` is at least 1: a factor
+    /// below 1 would let a search's lower bound overestimate (see the module docs).
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, if `by` is below 1.
     pub fn multiply(&mut self, link: LinkId, by: f64) {
+        debug_assert!(by >= 1.0, "a cost factor must be at least 1, got {by}");
         let f = &mut self.factor[link.index()];
         #[allow(clippy::float_cmp, reason = "1.0 is the exact value of an untouched link")]
         if *f == 1.0 {
@@ -303,18 +357,32 @@ impl<'a> Search<'a> {
             return Some(Route { links: Vec::new(), cost: 0.0, overlap: 0.0 });
         }
         let ctx = self.ctx;
+        // A*: the heap holds cost so far plus a lower bound on the rest (S209); with no
+        // bound (0) it is Dijkstra exactly.
+        let target = ctx.network.node_position(destination);
+        let k = ctx.per_metre;
+        let rest = |l: LinkId| {
+            if k > 0.0 {
+                let p = ctx.network.node_position(ctx.network.link_to(l));
+                (p.x - target.x).hypot(p.y - target.y) * k
+            } else {
+                0.0
+            }
+        };
         for &l in ctx.network.out_links(origin) {
             let raw = ctx.link_cost(l);
             let c = raw * self.factor(l);
-            if c.is_finite() && raw <= max_true_cost && c < self.dist[l.index()] {
+            let h = rest(l);
+            if c.is_finite() && raw + h <= max_true_cost && c < self.dist[l.index()] {
                 self.set(l.index(), c, raw, NONE);
-                self.heap.push(Entry { cost: c, link: l.raw() });
+                self.heap.push(Entry { cost: c + h, link: l.raw() });
             }
         }
         let mut found = None;
-        while let Some(Entry { cost, link }) = self.heap.pop() {
+        while let Some(Entry { cost: priority, link }) = self.heap.pop() {
             let l = LinkId::new(link);
-            if cost > self.dist[l.index()] {
+            let cost = self.dist[l.index()];
+            if priority > cost + rest(l) {
                 continue; // stale: a cheaper way to this link was found later
             }
             if ctx.network.link_to(l) == destination {
@@ -325,13 +393,19 @@ impl<'a> Search<'a> {
             for &t in ctx.turns.turns_from(l) {
                 let m = ctx.turns.outgoing(t);
                 let raw = ctx.link_cost(m);
-                if !raw.is_finite() || true_cost + raw > max_true_cost {
+                if !raw.is_finite() {
+                    continue;
+                }
+                // The bound counts the rest of the way too: no route through `m` can come
+                // back under it, since the lower bound never exceeds the true cost left.
+                let h = rest(m);
+                if true_cost + raw + h > max_true_cost {
                     continue;
                 }
                 let nd = cost + raw * self.factor(m);
                 if nd < self.dist[m.index()] {
                     self.set(m.index(), nd, true_cost + raw, link);
-                    self.heap.push(Entry { cost: nd, link: m.raw() });
+                    self.heap.push(Entry { cost: nd + h, link: m.raw() });
                 }
             }
         }
@@ -365,6 +439,12 @@ impl<'a> Search<'a> {
     /// The earliest-arrival search is exact when a later entry never means an earlier
     /// exit (FIFO). Times read from time bins can step down at a bin's edge, so it can
     /// miss a route that exploits the step; the error is bounded by that step.
+    ///
+    /// **`seconds(link, t)` must never be below the context's cost of `link`** (its
+    /// free-flow time, for a car context): the search is goal-directed with a lower
+    /// bound built from those costs (A\*, the [module docs](self)), and a faster time
+    /// would let it miss the fastest route. A loading's link times meet this, since no
+    /// vehicle crosses a link faster than free flow.
     pub fn fastest_time(
         &mut self,
         origin: NodeId,
@@ -516,21 +596,37 @@ impl<'a> Search<'a> {
         }
         let ctx = self.ctx;
         let limit = departure + bound;
+        // A* (S209): a link's time is never below its free-flow time (the loading lets no
+        // vehicle cross faster), so the context's free-flow bound per metre of straight line
+        // is a lower bound on the rest of the way here too. A label that cannot reach the
+        // destination within the bound even at that rate is dropped.
+        let target = ctx.network.node_position(destination);
+        let k = ctx.per_metre;
+        let rest = |l: LinkId| {
+            if k > 0.0 {
+                let p = ctx.network.node_position(ctx.network.link_to(l));
+                (p.x - target.x).hypot(p.y - target.y) * k
+            } else {
+                0.0
+            }
+        };
         for &l in ctx.network.out_links(origin) {
             if !ctx.link_cost(l).is_finite() {
                 continue;
             }
             let entered = departure + wait(l.raw(), departure);
             let arrive = entered + seconds(l.raw(), entered);
-            if arrive <= limit && arrive < self.dist[l.index()] {
+            let h = rest(l);
+            if arrive + h <= limit && arrive < self.dist[l.index()] {
                 self.set(l.index(), arrive, 0.0, NONE);
-                self.heap.push(Entry { cost: arrive, link: l.raw() });
+                self.heap.push(Entry { cost: arrive + h, link: l.raw() });
             }
         }
         let mut found = None;
-        while let Some(Entry { cost, link }) = self.heap.pop() {
+        while let Some(Entry { cost: priority, link }) = self.heap.pop() {
             let l = LinkId::new(link);
-            if cost > self.dist[l.index()] {
+            let cost = self.dist[l.index()];
+            if priority > cost + rest(l) {
                 continue;
             }
             if ctx.network.link_to(l) == destination {
@@ -543,9 +639,10 @@ impl<'a> Search<'a> {
                     continue;
                 }
                 let arrive = cost + seconds(m.raw(), cost);
-                if arrive <= limit && arrive < self.dist[m.index()] {
+                let h = rest(m);
+                if arrive + h <= limit && arrive < self.dist[m.index()] {
                     self.set(m.index(), arrive, 0.0, link);
-                    self.heap.push(Entry { cost: arrive, link: m.raw() });
+                    self.heap.push(Entry { cost: arrive + h, link: m.raw() });
                 }
             }
         }

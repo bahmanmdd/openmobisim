@@ -38,8 +38,8 @@ use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults}
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
 use openmobisim_core_sim::{
-    FlowMotor, LayerSetup, ParkingDefaults, ParkingSetup, Run as CoreRun, StaticLayers,
-    TransitSetup,
+    FlowMotor, LayerSetup, ModeDefaults, ParkingDefaults, ParkingSetup, Run as CoreRun,
+    StaticLayers, TransitSetup,
 };
 use openmobisim_core_transit::TransitDefaults;
 
@@ -369,7 +369,7 @@ fn convergence_arrays(
     equilibration="none", equilibration_options=None,
     route_update="none", route_update_options=None,
     choice_detour_limit=None, route_cache=false, bike_cost="dedicated", transit=None,
-    parkings=None, parking_options=None, transit_options=None, modes=None,
+    parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -407,6 +407,7 @@ pub fn run_pipeline(
     parking_options: Option<HashMap<String, f64>>,
     transit_options: Option<HashMap<String, f64>>,
     modes: Option<Vec<String>>,
+    mode_options: Option<HashMap<String, f64>>,
 ) -> PyResult<PyRunSummary> {
     let bike_cost = BikeCost::from_name(bike_cost).ok_or_else(|| {
         PyValueError::new_err(format!(
@@ -426,6 +427,8 @@ pub fn run_pipeline(
         TransitDefaults::from_options(&to_options(transit_options)).map_err(to_value_error)?;
     let parking_defaults =
         ParkingDefaults::from_options(&to_options(parking_options)).map_err(to_value_error)?;
+    let mode_defaults =
+        ModeDefaults::from_options(&to_options(mode_options)).map_err(PyValueError::new_err)?;
     // The modes a trip without a stated mode chooses among (M5); none: no choice.
     let modes: Vec<Mode> = modes
         .unwrap_or_default()
@@ -578,7 +581,7 @@ pub fn run_pipeline(
     if let Some(p) = &parking_setup {
         run = run.with_parking(p.clone());
     }
-    run = run.with_mode_choice(&modes);
+    run = run.with_mode_choice(&modes).with_mode_defaults(mode_defaults);
     // What went in, taken before it runs (S168).
     let description = run.description();
     let mut run_diagnostics = Diagnostics::new();

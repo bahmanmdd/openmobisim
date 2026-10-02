@@ -78,7 +78,11 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// Version 6 (M5, S205): mode choice. The nested logit's nest scale (`mu`, 0.5) and
 /// park-and-ride's shortest trip in mode choice (`ParkingDefaults::pr_min_km`, 3 km); the
 /// mode constants are 0. A run without mode choice is unchanged.
-pub const DEFAULTS_VERSION: u32 = 6;
+///
+/// Version 7 (S209): mode choice offers a walk or a ride only up to 30 minutes
+/// (`core-sim`'s `ModeDefaults`: `walk_max_s`, `bike_max_s`, design §21.1). A run without
+/// mode choice is unchanged.
+pub const DEFAULTS_VERSION: u32 = 7;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

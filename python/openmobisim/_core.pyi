@@ -761,6 +761,8 @@ def run_pipeline(
     parkings: Parkings | None = None,
     parking_options: dict[str, float] | None = None,
     transit_options: dict[str, float] | None = None,
+    modes: list[str] | None = None,
+    mode_options: dict[str, float] | None = None,
 ) -> RunSummary:
     """Run the whole pipeline and write all four output artifacts.
 
@@ -827,6 +829,9 @@ def run_pipeline(
             needs ``transit``.
         parking_options: Parking's parameters by name (see ``Scenario.from_parts``).
         transit_options: Transit's parameters by name (see ``Scenario.from_parts``).
+        modes: The modes a trip without a stated mode chooses among (see
+            ``Scenario.from_parts``); ``None`` for no mode choice.
+        mode_options: Mode choice's parameters by name (see ``Scenario.from_parts``).
 
     Returns:
         A :class:`RunSummary`.

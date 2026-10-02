@@ -612,6 +612,7 @@ class Scenario:
         parkings: _core.Parkings | None = None,
         parking_options: dict[str, float] | None = None,
         modes: tuple[str, ...] | list[str] | None = None,
+        mode_options: dict[str, float] | None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
         if bike_cost not in BIKE_COSTS:
@@ -673,6 +674,7 @@ class Scenario:
             if unknown:
                 raise ValueError(f"modes must be among {MODES}, got {unknown}")
         self._modes = modes
+        self._mode_options = mode_options
 
     @classmethod
     def from_parts(
@@ -703,6 +705,7 @@ class Scenario:
         parkings: _core.Parkings | None = None,
         parking_options: dict[str, float] | None = None,
         modes: tuple[str, ...] | list[str] | None = None,
+        mode_options: dict[str, float] | None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -936,7 +939,13 @@ class Scenario:
                 (``choice_options["mu"]``), and ``beta_mode_<mode>`` is a mode's constant (0
                 by default: time decides). One mode is no choice: such trips take it
                 (``("car",)`` is the run without ``modes``, exactly). ``None`` (the default):
-                such trips are car trips.
+                such trips are car trips. A walk or a ride is offered only up to
+                ``mode_options``' times (30 minutes each).
+            mode_options: Mode choice's parameters by name, each replacing its default:
+                ``walk_max_s`` (1800) and ``bike_max_s`` (1800), the longest walk and ride
+                offered to a trip choosing its mode (a trip given the mode takes it at any
+                length); ``float("inf")`` offers every walk or ride. Uncalibrated defaults.
+                Unknown names and values that are not above 0 are refused.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -974,6 +983,7 @@ class Scenario:
             parkings=parkings,
             parking_options=parking_options,
             modes=modes,
+            mode_options=mode_options,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
@@ -1022,6 +1032,7 @@ class Scenario:
             parking_options=self._parking_options,
             transit_options=self._transit_options,
             modes=self._modes,
+            mode_options=self._mode_options,
         )
         return Run(
             summary,

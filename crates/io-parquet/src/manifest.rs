@@ -1,6 +1,6 @@
 //! `manifest.json` — the file that makes a run reproducible (Foundations
-//! §6), Phase 1's subset of it. See the crate docs for exactly which
-//! Foundations §6 fields are not here yet, and why.
+//! §6), a subset of it. See the crate docs for exactly which Foundations §6
+//! fields are not here yet, and why.
 
 use std::fs;
 use std::path::Path;
@@ -12,8 +12,7 @@ use openmobisim_core_types::time::Second;
 
 use crate::WriteError;
 
-/// What Phase 1 knows about a run, in the shape that becomes
-/// `manifest.json`.
+/// What is recorded about a run, in the shape that becomes `manifest.json`.
 #[derive(Clone, Debug)]
 pub struct Manifest {
     /// The `openmobisim` crate version (`CARGO_PKG_VERSION`).
@@ -34,8 +33,8 @@ pub struct Manifest {
     pub default_weight: u32,
     /// How many travellers this run's demand named.
     pub simulated_travellers: u32,
-    /// How many of them own a car — Phase 1's only mode, so this is also
-    /// the most a run could ever simulate.
+    /// How many of them own a car (the most car trips' travellers a run can
+    /// simulate; walk, bike and transit need no car).
     pub car_owning_travellers: u32,
     /// Every trip in the demand, mirroring
     /// [`TripCompletionStats::total_trips`](openmobisim_core_sim::TripCompletionStats::total_trips).
@@ -50,7 +49,8 @@ pub struct Manifest {
     pub kpi_weighting: String,
     /// The scenario's master seed (S168): the one number that starts every
     /// random stream. Under a sampled choice model it decides who takes which
-    /// route; under the all-or-nothing default it changes only `run_fingerprint`.
+    /// route; under the all-or-nothing model (`deterministic`) it changes only
+    /// `run_fingerprint`.
     pub master_seed: u64,
     /// A hash of every input that decides the results (16 hex digits): the
     /// network, the demand, each setting, the route method, the seed, the code

@@ -130,3 +130,32 @@ def test_chart_mode_share_draws_the_modes_taken(tmp_path) -> None:
         assert any("40 trips, each choosing its mode" in t for t in texts)
     with pytest.raises(ValueError, match="bin_s"):
         viz.chart_mode_share(run, bin_s=0)
+
+
+def test_mode_options_cut_off_a_long_walk_or_ride_and_refuse_unknown_names() -> None:
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, "a", "W", "N1", 0, None)]
+    any_length = {"pr_min_km": 0}  # as the Rust case (MC7): P+R and B+R offered too
+    full = toy_run(rows, "modes-cut-default", modes=ms.MODES, parking_options=any_length)
+    short = toy_run(
+        rows,
+        "modes-cut-walk",
+        modes=ms.MODES,
+        parking_options=any_length,
+        mode_options={"walk_max_s": 300},
+    )
+    both = toy_run(
+        rows,
+        "modes-cut-both",
+        modes=ms.MODES,
+        parking_options=any_length,
+        mode_options={"walk_max_s": 300, "bike_max_s": 100},
+    )
+    # W → N1 walks in 318.198 s and rides in 144 s: offered under the 1800-s defaults; the walk
+    # not under 300 s; the ride not under 100 s either. Nothing else changes.
+    n = int(full.itinerary_choices()["alternatives"][0])
+    assert int(short.itinerary_choices()["alternatives"][0]) == n - 1
+    assert int(both.itinerary_choices()["alternatives"][0]) == n - 2
+    assert full.fingerprint != short.fingerprint
+    with pytest.raises(ValueError, match="walk_max_s, bike_max_s"):
+        toy_run(rows, "modes-cut-bad", modes=ms.MODES, mode_options={"walk_max": 300})

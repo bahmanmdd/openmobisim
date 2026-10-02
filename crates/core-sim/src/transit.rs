@@ -43,6 +43,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::geometry::ground_distance_metres;
@@ -113,7 +114,17 @@ pub struct TransitSetup {
     scheduled: RaptorData,
     /// How the buses ride the roads, if they do.
     buses: Option<BusPlan>,
+    /// Per walk node, filled on first use: the stops a passenger reaches walking from it
+    /// (access) and the stops they walk to it from (egress), each with the walk plus the
+    /// stop's transfer. The walk layer is static, so a node's lists never change in a run
+    /// and are searched once, not once per trip and iteration (S209). Whichever thread
+    /// fills an entry, it fills the same list.
+    access_memo: Vec<StopWalks>,
+    egress_memo: Vec<StopWalks>,
 }
+
+/// A walk node's stops and the walk to each, filled once (see [`TransitSetup`]'s memos).
+type StopWalks = OnceLock<Box<[(NodeId, u32)]>>;
 
 /// How a timetable's buses ride a road network: see the [module docs](self).
 #[derive(Debug)]
@@ -294,6 +305,8 @@ impl TransitSetup {
             footpaths,
             scheduled,
             buses: None,
+            access_memo: (0..nodes).map(|_| OnceLock::new()).collect(),
+            egress_memo: (0..nodes).map(|_| OnceLock::new()).collect(),
         }
     }
 
@@ -631,25 +644,32 @@ impl TransitSetup {
         origin: NodeId,
         departure: u32,
     ) -> Vec<(NodeId, u32)> {
-        let transfer = self.transfer_s();
-        self.stops_from(reach, origin, self.defaults.access_walk_max_s)
-            .into_iter()
-            .map(|(stop, w)| (stop, departure.saturating_add(w).saturating_add(transfer)))
-            .collect()
+        let walks = self.access_memo[origin.index()].get_or_init(|| {
+            let transfer = self.transfer_s();
+            self.stops_from(reach, origin, self.defaults.access_walk_max_s)
+                .into_iter()
+                .map(|(stop, w)| (stop, w.saturating_add(transfer)))
+                .collect()
+        });
+        walks.iter().map(|&(stop, w)| (stop, departure.saturating_add(w))).collect()
     }
 
     /// The stops a passenger can walk from to walk node `destination`, each with the
     /// walk (and the stop's transfer) in seconds.
     pub(crate) fn egress(&self, reach: &mut Reach<'_>, destination: NodeId) -> Vec<(NodeId, u32)> {
-        let transfer = self.transfer_s();
-        let mut out = Vec::new();
-        for (node, secs) in
-            reach.backward(destination, self.defaults.access_walk_max_s, &self.has_stop)
-        {
-            let w = floor_seconds(secs).saturating_add(transfer);
-            out.extend(self.stops_at(node).iter().map(|&stop| (stop, w)));
-        }
-        out
+        self.egress_memo[destination.index()]
+            .get_or_init(|| {
+                let transfer = self.transfer_s();
+                let mut out = Vec::new();
+                for (node, secs) in
+                    reach.backward(destination, self.defaults.access_walk_max_s, &self.has_stop)
+                {
+                    let w = floor_seconds(secs).saturating_add(transfer);
+                    out.extend(self.stops_at(node).iter().map(|&stop| (stop, w)));
+                }
+                out.into_boxed_slice()
+            })
+            .to_vec()
     }
 
     /// The links of the shortest walk from walk node `from` to walk node `to`, if it

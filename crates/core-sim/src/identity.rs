@@ -134,6 +134,8 @@ pub(crate) struct Inputs<'a> {
     pub parking: Option<&'a ParkingSetup>,
     /// The modes a trip without a stated mode chooses among (M5), if the run offers a choice.
     pub mode_choice: Option<&'a [Mode]>,
+    /// How long a walk or ride mode choice offers (S209); hashed only with mode choice.
+    pub mode_defaults: &'a crate::layers::ModeDefaults,
 }
 
 pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
@@ -172,6 +174,8 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     // Off means absent (M5): a run without mode choice hashes as it did before it.
     if let Some(modes) = inputs.mode_choice {
         hash_mode_choice(&mut h, inputs.trips, inputs.layers, modes);
+        h.write_f64(inputs.mode_defaults.walk_max_s);
+        h.write_f64(inputs.mode_defaults.bike_max_s);
     }
     // Off means absent: a run without a timetable hashes as it did before transit.
     if let Some(transit) = inputs.transit {
