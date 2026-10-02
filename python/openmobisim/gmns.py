@@ -166,8 +166,8 @@ def _write_layer(network: _core.Network, folder: Path, layer: str, geometry: boo
             f"{frm[i]:0{nw}d}",
             f"{to[i]:0{nw}d}",
             "true",
-            f"{length[i]:.3f}",
-            f"{speed[i]:.4f}",
+            f"{length[i]:.6f}",
+            f"{speed[i]:.10g}",
             name,
         ]
         if layer == "road":
@@ -177,7 +177,7 @@ def _write_layer(network: _core.Network, folder: Path, layer: str, geometry: boo
                 if drivable[i]
                 else ("bus" if name == "busway" else _NOT_DRIVEN.get(name, "walk"))
             )
-            row += [n, f"{cap[i] / n:.3f}", uses, "true" if roundabout[i] else ""]
+            row += [n, f"{cap[i] / n:.10g}", uses, "true" if roundabout[i] else ""]
         elif layer == "bike":
             row += [
                 _INFRASTRUCTURE[infra[i]] if infra[i] < len(_INFRASTRUCTURE) else "mixed",

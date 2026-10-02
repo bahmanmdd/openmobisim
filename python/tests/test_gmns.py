@@ -32,7 +32,7 @@ def same(a: object, b: object, names: tuple[str, ...]) -> list[str]:
     differ = []
     for name in names:
         x, y = np.asarray(getattr(a, name)(), float), np.asarray(getattr(b, name)(), float)
-        if x.shape != y.shape or not np.allclose(x, y, rtol=1e-6, atol=2e-3):
+        if x.shape != y.shape or not np.allclose(x, y, rtol=1e-8, atol=1e-5):
             differ.append(name)
     return differ
 
@@ -111,3 +111,24 @@ def test_what_is_not_read_is_refused(tmp_path: Path) -> None:
         ms.network_read_gmns(str(tmp_path))
     with pytest.raises(ValueError, match="road network"):
         ms.network_write_gmns(ms.examples.toy_network().layer("bike"), str(tmp_path / "x"))
+
+
+def test_a_short_slow_link_such_as_a_ferry_keeps_its_time(tmp_path: Path) -> None:
+    # A ferry's speed folds in its expected wait: 16 m in 6 minutes. Rounded lengths or speeds
+    # move such a link's time by milliseconds (they did on Amsterdam's ferries); written in full,
+    # it comes back within a tenth of a millisecond.
+    node = "node_id,x_coord,y_coord\na,4.9000,52.3700\nb,4.9002,52.3701\n"
+    km_h = 16.204408120996227 * 3.6 / 360.0
+    for layer, uses in (("road", "auto"), ("bike", "bike"), ("walk", "walk")):
+        write(tmp_path / "in" / layer, "node.csv", node)
+        write(tmp_path / "in" / layer, "link.csv",
+              "link_id,from_node_id,to_node_id,directed,length,free_speed,facility_type,allowed_uses\n"
+              f"1,a,b,false,16.204408120996227,{km_h if layer != 'road' else 30},"
+              f"{'ferry' if layer != 'road' else 'residential'},{uses}\n")  # fmt: skip
+    first = ms.network_read_gmns(str(tmp_path / "in"))
+    assert np.allclose(first.layer("bike").link_free_flow_s(), 360.0, rtol=1e-12)
+    ms.network_write_gmns(first, str(tmp_path / "out"))
+    back = ms.network_read_gmns(str(tmp_path / "out"))
+    for layer in ("bike", "walk"):
+        x = np.asarray(back.layer(layer).link_free_flow_s())
+        assert np.abs(x - 360.0).max() < 1e-4, (layer, x)
