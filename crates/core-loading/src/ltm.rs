@@ -1806,7 +1806,7 @@ impl<'a> LtmNetwork<'a> {
                 || self.priority_major.get(i).copied().unwrap_or(false))
         {
             // Entries giving way to this link's front may go now.
-            self.wake(i, t, t0);
+            self.wake_giving_way(i, t, t0);
         }
         self.curves[i].set_last_exit(Duration(t));
         self.discharged[i] += vehicle.pcu.get();
@@ -2172,6 +2172,58 @@ impl<'a> LtmNetwork<'a> {
                 self.unpark(i);
             }
             self.schedule_front(i, t0, t);
+        }
+    }
+
+    /// The node where a queue's front vehicle waits: a link's downstream end, an origin at its
+    /// link's upstream end, a stop line at its approach's downstream end.
+    fn queue_node(&self, queue: usize) -> usize {
+        let n = self.links;
+        let net = self.network;
+        match self.place(queue) {
+            Place::Link(i) | Place::StopLine(i) => net.link_to(LinkId::from_index(i)).index(),
+            Place::Origin => net.link_from(LinkId::from_index(queue - n)).index(),
+            Place::Heard(_) | Place::RerouteDue(_) => usize::MAX,
+        }
+    }
+
+    /// Link `l`'s front has moved on: reschedule, no earlier than `at`, the queues parked on `l`
+    /// that give way to it — those waiting at its downstream node — and leave parked those
+    /// waiting for room on `l`, at its upstream node, whose room is heard later (S218: waking
+    /// them too cost every unsignalised merge a look at each of them per vehicle, under priority).
+    fn wake_giving_way(&mut self, l: usize, at: f64, t0: f64) {
+        let node = self.network.link_to(LinkId::from_index(l)).index();
+        let mut parked = std::mem::replace(&mut self.first_parked[l], NONE);
+        while parked != NONE {
+            let q = parked as usize;
+            parked = std::mem::replace(&mut self.next_parked[q], NONE);
+            if self.queue_node(q) == node {
+                self.parked_on[q] = NONE;
+                self.schedule_front(q, t0, at);
+            } else {
+                self.next_parked[q] = self.first_parked[l];
+                self.first_parked[l] = queue_u32(q);
+            }
+        }
+        // The same for movements waiting behind a front; those kept are relinked at the end.
+        let net = self.network;
+        let mut kept = NONE;
+        while let Some(p) = self.pockets.as_mut() {
+            let m = p.first_parked[l];
+            if m == NONE {
+                p.first_parked[l] = kept;
+                break;
+            }
+            let k = m as usize;
+            p.first_parked[l] = std::mem::replace(&mut p.next_parked[k], NONE);
+            let owner = p.owner[k] as usize;
+            if net.link_to(LinkId::from_index(owner)).index() == node {
+                p.parked_on[k] = NONE;
+                self.schedule_front(owner, t0, at);
+            } else {
+                p.next_parked[k] = kept;
+                kept = m;
+            }
         }
     }
 
