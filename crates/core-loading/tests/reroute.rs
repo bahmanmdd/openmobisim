@@ -103,7 +103,7 @@ fn load(
         Duration(60.0),
         FidelityLevel::Full,
         Recording::Trajectories,
-        Rules { priority: false, reroute: rule },
+        Rules { reroute: rule, ..Rules::default() },
         rr.map(|r| r as &mut dyn Reroute),
     );
     let n = out.trajectories.len();

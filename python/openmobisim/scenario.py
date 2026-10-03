@@ -1009,7 +1009,10 @@ class Scenario:
                 approach; ``reroute`` (0 or 1, **on** by default) — a vehicle blocked at the
                 front of its link for ``reroute_after_s`` (300) re-routes from where it is, at
                 most ``reroute_max`` (3) times, if the new route is at least
-                ``reroute_min_gain`` (0.1) faster.
+                ``reroute_min_gain`` (0.1) faster; ``pocket_length_m`` (50, 0 turns it off) —
+                on an approach of two lanes or more, a vehicle passes those ahead of it that
+                wait for another movement while they fit in their turn pockets, this many metres
+                per lane, split among the approach's movements.
                 Uncalibrated defaults; unknown names and values out of range are refused.
 
         Returns:

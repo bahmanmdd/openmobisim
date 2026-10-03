@@ -94,7 +94,12 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 ///
 /// Version 10 (S215): **en-route rerouting on by default** (300 s, at most 3, 10% faster),
 /// priority off. Runs where vehicles stand still for five minutes change; others do not.
-pub const DEFAULTS_VERSION: u32 = 10;
+///
+/// Version 11 (S217): **turn pockets** on approaches of two lanes or more (`core-sim`'s
+/// `LoadingOptions::pocket_length_m`, 50 m per lane): a vehicle waiting to turn into a full
+/// street no longer holds up those behind it turning elsewhere, while the waiting ones fit in
+/// their pockets. Runs where a multi-lane approach's front waits change; others do not.
+pub const DEFAULTS_VERSION: u32 = 11;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

@@ -1522,6 +1522,7 @@ impl Run {
                     after_s: o.reroute_after_s,
                     max: u8::try_from(o.reroute_max).unwrap_or(u8::MAX),
                 }),
+                pocket_length_m: o.pocket_length_m,
             };
             let mut rerouter = o.reroute.then(|| Rerouter::new(car_ctx, expected, &o, total_trips));
             let out = run_ltm_chained(

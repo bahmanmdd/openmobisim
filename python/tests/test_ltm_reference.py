@@ -119,7 +119,9 @@ def build(node_xy: dict[str, tuple[float, float]], rows: list[tuple]) -> object:
     return ms.network_read_table(links, nodes)
 
 
-def simulated(net: object, trips: list[tuple]) -> np.ndarray:
+def simulated(
+    net: object, trips: list[tuple], loading_options: dict[str, float] | None = None
+) -> np.ndarray:
     """Every link's cumulative outflow, second by second, by the vehicle LTM (level 4)."""
     run = ms.Scenario.from_parts(
         net,
@@ -129,6 +131,7 @@ def simulated(net: object, trips: list[tuple]) -> np.ndarray:
         choice_model="deterministic",
         link_bin_s=1,
         window_hours=HORIZON / 3600,
+        loading_options=loading_options,
     ).run("ltm-reference")
     bins = run.link_bins()
     out = np.zeros((net.link_count, HORIZON + 1))
@@ -188,14 +191,16 @@ def test_a_saturated_merge_shares_room_in_proportion_to_capacity_as_the_referenc
 
 def test_a_blocked_branch_holds_back_the_other_first_in_first_out_as_the_reference_has_it() -> None:
     # Half the traffic turns towards a 600 PCU/h bottleneck; its queue fills the branch and the
-    # vehicles waiting for it at the diverge hold back those bound for the free branch.
+    # vehicles waiting for it at the diverge hold back those bound for the free branch. The
+    # reference's diverge is first in, first out: turn pockets (S217) off.
     node_xy = {"A": (0, 0), "B": (1000, 0), "C": (2000, 500), "D": (2000, -500), "E": (3000, -500)}
     rows = [("1", "A", "B", 2, 3600), ("2", "B", "C", 2, 3600), ("3", "B", "D", 1, 1800),
             ("4", "D", "E", 1, 600)]  # fmt: skip
     net = build(node_xy, rows)
     deps = departures(400, 1.5)
     o, c, e = lonlat(0), lonlat(2000, 500), lonlat(3000, -500)
-    sim = simulated(net, [trip(f"v{i}", o, c if i % 2 == 0 else e, t) for i, t in enumerate(deps)])
+    trips = [trip(f"v{i}", o, c if i % 2 == 0 else e, t) for i, t in enumerate(deps)]
+    sim = simulated(net, trips, {"pocket_length_m": 0})
     nodes = [("origin", (), (0,), None), ("diverge", (0,), (1, 2), 0.5), ("sink", (1,), (), None),
              ("series", (2,), (3,), None), ("sink", (3,), (), None)]  # fmt: skip
     ref = reference(net, nodes, {0: counts(deps)})

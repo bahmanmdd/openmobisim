@@ -68,6 +68,14 @@ impl EventQueue {
         }
     }
 
+    /// [`Self::schedule`], unless `event.queue` already has an event that comes no later.
+    pub(crate) fn schedule_earlier(&mut self, event: Event) {
+        let i = self.at[event.queue as usize];
+        if i == ABSENT || event.before(&self.heap[i as usize]) {
+            self.schedule(event);
+        }
+    }
+
     /// Remove and return the earliest event.
     pub(crate) fn pop(&mut self) -> Option<Event> {
         let last = self.heap.pop()?;

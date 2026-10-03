@@ -1,10 +1,11 @@
 //! What the link transmission model does at junctions and for vehicles that are stuck (S213),
-//! by name: priority by road hierarchy at merges, and en-route rerouting.
+//! by name: priority by road hierarchy at merges, en-route rerouting, and turn pockets.
 //!
-//! Both are remedies for gridlock: a merge that shares room in a fixed ratio lets traffic on a
-//! closed loop destroy itself, and vehicles that never leave their route cannot get out of it
+//! All three are remedies for gridlock: a merge that shares room in a fixed ratio lets traffic on
+//! a closed loop destroy itself, and vehicles that never leave their route cannot get out of it
 //! (Daganzo 1996, *The nature of freeway gridlock and how to prevent it*); priority to the major
-//! stream prevents the first, drivers who change course escape the second.
+//! stream prevents the first, drivers who change course escape the second. Turn pockets (S217)
+//! keep a vehicle waiting to turn into a full street from holding up those turning elsewhere.
 
 use std::collections::BTreeMap;
 
@@ -38,6 +39,15 @@ pub struct LoadingOptions {
     ///
     /// *Uncalibrated: 0.1. CITATION OWED (diversion thresholds in route-guidance studies).*
     pub reroute_min_gain: f64,
+    /// Turn pockets on approaches of two lanes or more
+    /// ([`openmobisim_core_loading::LtmNetwork::with_pockets`]), in metres per lane: a vehicle at
+    /// the end of such a link passes those ahead of it waiting for another movement, as long as
+    /// they fit in their pockets. 0 turns them off: every link one first-in-first-out queue.
+    ///
+    /// *Uncalibrated: 50 m, a typical turn bay, split among a link's movements by lane share.
+    /// CITATION OWED (turn-bay lengths in design guides). Lanes per movement from OpenStreetMap's
+    /// `turn:lanes`, where mapped, are for later (S217).*
+    pub pocket_length_m: f64,
 }
 
 impl LoadingOptions {
@@ -48,11 +58,18 @@ impl LoadingOptions {
         reroute_after_s: 300.0,
         reroute_max: 3,
         reroute_min_gain: 0.1,
+        pocket_length_m: 50.0,
     };
 
     /// The names of the options.
-    pub const NAMES: [&'static str; 5] =
-        ["priority", "reroute", "reroute_after_s", "reroute_max", "reroute_min_gain"];
+    pub const NAMES: [&'static str; 6] = [
+        "priority",
+        "reroute",
+        "reroute_after_s",
+        "reroute_max",
+        "reroute_min_gain",
+        "pocket_length_m",
+    ];
 
     /// The shipped values with `options` in place of their namesakes. `priority` and `reroute`
     /// are 0 or 1.
@@ -108,6 +125,15 @@ impl LoadingOptions {
                     }
                     d.reroute_min_gain = v;
                 }
+                "pocket_length_m" => {
+                    if v.is_nan() || v < 0.0 || v.is_infinite() {
+                        return Err(format!(
+                            "loading_options \"pocket_length_m\" must be a finite number of \
+                             metres, at least 0, got {v}"
+                        ));
+                    }
+                    d.pocket_length_m = v;
+                }
                 _ => {
                     return Err(format!(
                         "loading_options has no {name:?}; the options are: {}",
@@ -122,7 +148,7 @@ impl LoadingOptions {
     /// Whether any rule is on: a run with every rule off hashes as runs did before the rules.
     #[must_use]
     pub fn any(&self) -> bool {
-        self.priority || self.reroute
+        self.priority || self.reroute || self.pocket_length_m > 0.0
     }
 }
 

@@ -184,6 +184,11 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             h.write_u32(o.reroute_max);
             h.write_f64(o.reroute_min_gain);
         }
+        // Off means absent (S217): without pockets, rules hash as they did before them.
+        if o.pocket_length_m > 0.0 {
+            h.write_str("pockets");
+            h.write_f64(o.pocket_length_m);
+        }
     }
     hash_modes(&mut h, inputs.trips, inputs.layers);
     // Off means absent (M5): a run without mode choice hashes as it did before it.

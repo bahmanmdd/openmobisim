@@ -47,7 +47,9 @@ def test_the_gridlock_report_finds_what_stands_and_checks_the_guarantee() -> Non
     assert level0.report_gridlock() is None
 
 
-def test_rerouting_is_on_priority_off_by_default_and_changes_enter_the_fingerprint() -> None:
+def test_rerouting_and_pockets_on_priority_off_by_default_and_changes_enter_the_fingerprint() -> (
+    None
+):
     plain, empty = jammed(), jammed(loading_options={})
     assert plain.fingerprint == empty.fingerprint
     assert plain.route_changes()["trip"].size > 0, "rerouting is on by default (S215)"
@@ -58,12 +60,16 @@ def test_rerouting_is_on_priority_off_by_default_and_changes_enter_the_fingerpri
     assert with_priority.fingerprint not in (plain.fingerprint, off.fingerprint)
     sooner = jammed(loading_options={"reroute_after_s": 60})
     assert sooner.fingerprint not in (plain.fingerprint, off.fingerprint, with_priority.fingerprint)
+    # Turn pockets are on by default (S217); off, they leave the fingerprint.
+    no_pockets = jammed(loading_options={"pocket_length_m": 0})
+    assert no_pockets.fingerprint != plain.fingerprint
     for bad, match in (
         ({"prority": 1}, "the options are: priority, reroute"),
         ({"priority": 2}, "must be 0 or 1"),
         ({"reroute_min_gain": 1.0}, "below 1"),
         ({"reroute_max": 2.5}, "whole number"),
         ({"reroute_after_s": -1}, "at least 0"),
+        ({"pocket_length_m": float("nan")}, "metres, at least 0"),
     ):
         with pytest.raises(ValueError, match=match):
             jammed(loading_options=bad)
