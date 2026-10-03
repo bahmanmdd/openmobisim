@@ -24,7 +24,7 @@ def jammed(**kwargs: object) -> ms.Run:
 
 
 def test_the_gridlock_report_finds_what_stands_and_checks_the_guarantee() -> None:
-    run = jammed()
+    run = jammed(loading_options={"reroute": 0})
     g = run.report_gridlock()
     assert g is not None
     assert set(g) >= {"vehicles_on_network", "vehicles_outside", "links_waiting", "loops",
@@ -47,14 +47,17 @@ def test_the_gridlock_report_finds_what_stands_and_checks_the_guarantee() -> Non
     assert level0.report_gridlock() is None
 
 
-def test_rules_are_off_unless_asked_and_then_in_the_fingerprint() -> None:
+def test_rerouting_is_on_priority_off_by_default_and_changes_enter_the_fingerprint() -> None:
     plain, empty = jammed(), jammed(loading_options={})
     assert plain.fingerprint == empty.fingerprint
-    assert plain.route_changes()["trip"].size == 0
+    assert plain.route_changes()["trip"].size > 0, "rerouting is on by default (S215)"
+    assert set(plain.route_changes()["reason"]) == {"stuck"}
+    off = jammed(loading_options={"reroute": 0})
+    assert off.route_changes()["trip"].size == 0 and off.fingerprint != plain.fingerprint
     with_priority = jammed(loading_options={"priority": 1})
-    assert with_priority.fingerprint != plain.fingerprint
-    rerouting = jammed(loading_options={"reroute": 1, "reroute_after_s": 60})
-    assert rerouting.fingerprint not in (plain.fingerprint, with_priority.fingerprint)
+    assert with_priority.fingerprint not in (plain.fingerprint, off.fingerprint)
+    sooner = jammed(loading_options={"reroute_after_s": 60})
+    assert sooner.fingerprint not in (plain.fingerprint, off.fingerprint, with_priority.fingerprint)
     for bad, match in (
         ({"prority": 1}, "the options are: priority, reroute"),
         ({"priority": 2}, "must be 0 or 1"),
@@ -92,10 +95,6 @@ def test_reroutes_are_recorded_and_realised_routes_turn_where_recorded() -> None
 
 
 def test_priority_and_rerouting_keep_the_guarantee() -> None:
-    for opts in (
-        {"priority": 1},
-        {"reroute": 1, "reroute_after_s": 60},
-        {"priority": 1, "reroute": 1},
-    ):
+    for opts in ({"reroute": 0}, {"priority": 1}, {"reroute_after_s": 60}, {"priority": 0}):
         g = jammed(loading_options=opts).report_gridlock()
         assert g["room_waits_with_room"] == 0, opts

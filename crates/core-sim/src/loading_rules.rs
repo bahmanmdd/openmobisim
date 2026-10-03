@@ -14,10 +14,13 @@ pub struct LoadingOptions {
     /// Priority by road hierarchy at unsignalised merges
     /// ([`openmobisim_core_loading::LtmNetwork::with_priority`]): a vehicle gives way to a
     /// higher-priority approach's front vehicle bound for the same link, and departures to every
-    /// approach. *Off while it is measured (S213).*
+    /// approach. *Off (S215): with one first-in-first-out queue per link a vehicle giving way
+    /// holds up everything behind it, so priority made locks worse on Amsterdam (S214); it waits
+    /// for per-turn queues.*
     pub priority: bool,
     /// En-route rerouting: a vehicle stuck at the front of its link re-routes from where it is.
-    /// *Off while it is measured (S213).*
+    /// *On (S215): it removed the locks of Amsterdam's morning at 1× and 1.25× and leaves
+    /// uncongested results as they were (S214).*
     pub reroute: bool,
     /// How long a vehicle waits at the front of its link, blocked, before it re-routes, in
     /// seconds.
@@ -41,7 +44,7 @@ impl LoadingOptions {
     /// The shipped values.
     pub const SHIPPED: LoadingOptions = LoadingOptions {
         priority: false,
-        reroute: false,
+        reroute: true,
         reroute_after_s: 300.0,
         reroute_max: 3,
         reroute_min_gain: 0.1,
@@ -116,7 +119,7 @@ impl LoadingOptions {
         Ok(d)
     }
 
-    /// Whether any rule is on: off means absent from the run's fingerprint.
+    /// Whether any rule is on: a run with every rule off hashes as runs did before the rules.
     #[must_use]
     pub fn any(&self) -> bool {
         self.priority || self.reroute

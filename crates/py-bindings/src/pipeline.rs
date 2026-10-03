@@ -752,6 +752,7 @@ pub fn run_pipeline(
     let route_changes = {
         let (mut trip, mut who, mut seq, mut second, mut link, mut planned, mut taken) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut reason: Vec<&str> = Vec::new();
         for r in &result.reroutes {
             let t = TripId::new(r.vehicle.raw());
             let traveller = trips_used.traveller(t);
@@ -762,6 +763,7 @@ pub fn run_pipeline(
             link.push(r.link.raw());
             planned.push(r.planned_next.raw());
             taken.push(r.new_next.raw());
+            reason.push(r.reason.as_str());
         }
         let d = PyDict::new(py);
         d.set_item("trip", trip.into_pyarray(py))?;
@@ -771,6 +773,7 @@ pub fn run_pipeline(
         d.set_item("link", link.into_pyarray(py))?;
         d.set_item("next_planned", planned.into_pyarray(py))?;
         d.set_item("next_taken", taken.into_pyarray(py))?;
+        d.set_item("reason", reason)?;
         d.unbind()
     };
     let route_realised = {

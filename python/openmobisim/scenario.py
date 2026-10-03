@@ -546,8 +546,10 @@ class Run:
         A vehicle blocked at the front of its link for ``reroute_after_s`` re-routes from where
         it is (``loading_options``). One row per reroute, in the order they happened: ``trip``
         (its index in the run), ``traveller_id``, ``trip_seq``, ``second``, ``link`` (the link
-        at whose end it re-routed), ``next_planned`` (the next link of its route until then)
-        and ``next_taken`` (of its new route). Its planned route is its route choice
+        at whose end it re-routed), ``next_planned`` (the next link of its route until then),
+        ``next_taken`` (of its new route) and ``reason`` (``"stuck"``: blocked for
+        ``reroute_after_s``; other reasons, such as alerts and disruptions, are to come). Its
+        planned route is its route choice
         (``route_choices``); what it actually took is in ``route_realised``.
         """
         return dict(self._summary.route_changes)
@@ -999,13 +1001,15 @@ class Scenario:
                 length); ``float("inf")`` offers every walk or ride. Uncalibrated defaults.
                 Unknown names and values that are not above 0 are refused.
             loading_options: The loading's rules by name, for ``flow_level`` 2–4 (gridlock
-                remedies, S213; both off while they are measured): ``priority`` (0 or 1) —
+                remedies): ``priority`` (0 or 1, off by default: without per-turn queues a
+                vehicle giving way holds up everything behind it, which made locks worse) —
                 at an unsignalised merge a vehicle gives way to an approach of higher road
                 class, or of the same class and at least 1.5 times the capacity, whose front
                 vehicle is bound for the same link, and a departing vehicle gives way to every
-                approach; ``reroute`` (0 or 1) — a vehicle blocked at the front of its link for
-                ``reroute_after_s`` (300) re-routes from where it is, at most ``reroute_max``
-                (3) times, if the new route is at least ``reroute_min_gain`` (0.1) faster.
+                approach; ``reroute`` (0 or 1, **on** by default) — a vehicle blocked at the
+                front of its link for ``reroute_after_s`` (300) re-routes from where it is, at
+                most ``reroute_max`` (3) times, if the new route is at least
+                ``reroute_min_gain`` (0.1) faster.
                 Uncalibrated defaults; unknown names and values out of range are refused.
 
         Returns:

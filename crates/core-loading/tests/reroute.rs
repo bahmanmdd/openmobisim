@@ -10,8 +10,8 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    FidelityLevel, LiveTimes, Recording, Reroute, RerouteRule, Rules, Trajectory, Vehicle,
-    run_ltm_chained,
+    FidelityLevel, LiveTimes, Recording, Reroute, RerouteReason, RerouteRule, Rules, Trajectory,
+    Vehicle, run_ltm_chained,
 };
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
@@ -74,7 +74,9 @@ impl Reroute for ByE {
         planned: &[LinkId],
         _now: f64,
         live: &dyn LiveTimes,
+        reason: RerouteReason,
     ) -> Option<Vec<LinkId>> {
+        assert_eq!(reason, RerouteReason::Stuck);
         self.calls += 1;
         // The live estimate of a blocked link includes how long its front has waited.
         assert!(live.live_seconds(current) > 0.0);
@@ -125,6 +127,7 @@ fn a_vehicle_stuck_long_enough_takes_the_way_round_and_the_day_ends_sooner() {
     assert!(!records.is_empty() && rr.calls >= records.len());
     for r in &records {
         assert_eq!((r.link, r.planned_next, r.new_next), (d.ab, d.bc, d.be));
+        assert_eq!(r.reason.as_str(), "stuck");
     }
     // The realised routes: those that re-routed went by `e`, the others by `c`, all whole.
     let by_e: Vec<&Trajectory> =

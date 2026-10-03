@@ -17,7 +17,7 @@
 //! [`LoadingOptions::reroute_after_s`], at most [`LoadingOptions::reroute_max`] taken per trip.
 
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_loading::{LiveTimes, Reroute};
+use openmobisim_core_loading::{LiveTimes, Reroute, RerouteReason};
 use openmobisim_core_routes::{Search, SearchContext};
 use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
 
@@ -64,7 +64,10 @@ impl Reroute for Rerouter<'_> {
         planned: &[LinkId],
         now: f64,
         live: &dyn LiveTimes,
+        _reason: RerouteReason,
     ) -> Option<Vec<LinkId>> {
+        // Every driver re-routes the same way when stuck, whatever the reason (only "stuck"
+        // exists yet). An informed share, alerts and disruptions (S215) decide here.
         if vehicle.raw() >= self.cars_below {
             return None;
         }

@@ -350,13 +350,38 @@ pub trait LiveTimes {
     fn live_seconds(&self, link: LinkId) -> f64;
 }
 
+/// Why a vehicle is offered a new route (S213, S215).
+///
+/// Only [`Self::Stuck`] exists yet. The others planned in S215 join here,
+/// so records and rerouters already carry the reason: an **alert** to an informed driver about
+/// congestion or a disruption ahead (navigation apps), a **disruption** on the route (a closure
+/// or a capacity drop), a **new destination** (a taxi dispatched, an electric vehicle sent to
+/// charge).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RerouteReason {
+    /// Blocked at the front of its link for the rule's time ([`RerouteRule::after_s`]).
+    Stuck,
+}
+
+impl RerouteReason {
+    /// The reason as written in results: `"stuck"`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Stuck => "stuck",
+        }
+    }
+}
+
 /// Who decides a new route for a vehicle stuck at the front of its link (S213). The loading
 /// never routes (design §10.4); it asks.
 pub trait Reroute {
     /// The rest of a new route for `vehicle`, at the end of `current` at second `now` and
     /// planned to go on along `planned` (not empty): links beginning with a legal turn out of
     /// `current` and ending where `planned` ends — or `None` to keep to the plan. `live` is the
-    /// loading's own estimate of each link's time now.
+    /// loading's own estimate of each link's time now; `reason` says why it is asked, so a
+    /// rerouter can treat drivers and triggers differently (an informed share, say).
     fn reroute(
         &mut self,
         vehicle: VehicleId,
@@ -364,6 +389,7 @@ pub trait Reroute {
         planned: &[LinkId],
         now: f64,
         live: &dyn LiveTimes,
+        reason: RerouteReason,
     ) -> Option<Vec<LinkId>>;
 }
 
@@ -380,6 +406,8 @@ pub struct RerouteRecord {
     pub planned_next: LinkId,
     /// The next link of its new route.
     pub new_next: LinkId,
+    /// Why it was offered one.
+    pub reason: RerouteReason,
 }
 
 /// En-route rerouting's state: per vehicle, nothing until it re-routes.
@@ -1721,7 +1749,8 @@ impl<'a> LtmNetwork<'a> {
                 continue;
             }
             let vehicle = self.vehicles[slot].id;
-            let answer = rr.reroute(vehicle, LinkId::from_index(i), &planned, t, &*self);
+            let reason = RerouteReason::Stuck;
+            let answer = rr.reroute(vehicle, LinkId::from_index(i), &planned, t, &*self, reason);
             let net = self.network;
             let end = net.link_to(*planned.last().expect("not empty"));
             let accepted = answer.filter(|rest| {
@@ -1755,6 +1784,7 @@ impl<'a> LtmNetwork<'a> {
                 link: LinkId::from_index(i),
                 planned_next: planned[0],
                 new_next: rest[0],
+                reason,
             });
             if self.parked_on[i] != NONE {
                 self.unpark(i);

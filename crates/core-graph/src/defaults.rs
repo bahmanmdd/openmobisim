@@ -91,7 +91,10 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// Version 9 (S213): the loading's rules (`core-sim`'s `LoadingOptions`): priority at merges
 /// and en-route rerouting (`reroute_after_s` 300, `reroute_max` 3, `reroute_min_gain` 0.1),
 /// both off while they are measured: no run changes.
-pub const DEFAULTS_VERSION: u32 = 9;
+///
+/// Version 10 (S215): **en-route rerouting on by default** (300 s, at most 3, 10% faster),
+/// priority off. Runs where vehicles stand still for five minutes change; others do not.
+pub const DEFAULTS_VERSION: u32 = 10;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///
