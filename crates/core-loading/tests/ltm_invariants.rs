@@ -906,10 +906,12 @@ fn departures_wait_at_the_origin_and_the_wait_counts() {
 /// A one-way ring of pieces with the given lengths (metres), each ring node
 /// with a 100-m entry and a 100-m exit: `ring[i]` runs from node `i` to node
 /// `i + 1`, `entries[i]` ends at node `i`, `exits[i]` starts there. With
-/// `tagged`, the ring is marked as a roundabout, so entries give way (S155).
+/// `tagged`, the ring is marked as a roundabout, so entries give way (S155). The ring is of
+/// class `ring_class`, entries and exits residential.
 fn roundabout(
     pieces: &[f64],
     tagged: bool,
+    ring_class: RoadClass,
 ) -> (RoadNetwork, Vec<LinkId>, Vec<LinkId>, Vec<LinkId>) {
     let k = pieces.len();
     let angle = |r: f64| pieces.iter().map(|l| 2.0 * (l / (2.0 * r)).min(1.0).asin()).sum::<f64>();
@@ -935,7 +937,7 @@ fn roundabout(
             format!("ring{i}"),
             format!("r{i}"),
             format!("r{}", (i + 1) % k),
-            LinkSpec { roundabout: tagged, ..LinkSpec::new(RoadClass::Residential) },
+            LinkSpec { roundabout: tagged, ..LinkSpec::new(ring_class) },
         );
         b.add_link(
             format!("in{i}"),
@@ -973,7 +975,7 @@ fn roundabout(
 #[test]
 fn an_overloaded_roundabout_stops_only_at_jam_density() {
     let pieces = [3.0, 4.5, 6.0, 7.5, 8.5, 10.0, 11.5, 13.0, 15.5, 18.0, 22.0, 30.0];
-    let (net, ring, entries, exits) = roundabout(&pieces, false);
+    let (net, ring, entries, exits) = roundabout(&pieces, false, RoadClass::Residential);
     let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
     let k = pieces.len();
     for (i, &l) in ring.iter().enumerate() {
@@ -1026,6 +1028,13 @@ fn an_overloaded_roundabout_stops_only_at_jam_density() {
             done.len(),
             vehicles.len()
         );
+        // The end-of-loading report (S213) sees the same: loops that stand, every vehicle in
+        // them still counted, and not one front waiting for room that is there.
+        let lock = sim.lock_report();
+        assert!(stops == 0 || !lock.loops.is_empty(), "{label}: {lock:?}");
+        assert_eq!(lock.room_waits_with_room, 0, "{label}: {lock:?}");
+        assert!(lock.on_network as usize + done.len() + lock.outside as usize >= vehicles.len());
+        assert!(lock.waiting_links as usize >= lock.loops.iter().map(Vec::len).sum::<usize>());
     }
 }
 
@@ -1036,7 +1045,7 @@ fn an_overloaded_roundabout_stops_only_at_jam_density() {
 #[test]
 fn a_tagged_roundabout_gives_way_and_keeps_moving() {
     let pieces = [3.0, 4.5, 6.0, 7.5, 8.5, 10.0, 11.5, 13.0, 15.5, 18.0, 22.0, 30.0];
-    let (net, ring, entries, exits) = roundabout(&pieces, true);
+    let (net, ring, entries, exits) = roundabout(&pieces, true, RoadClass::Residential);
     assert!(ring.iter().all(|&l| net.is_roundabout(l)) && !net.is_roundabout(entries[0]));
     let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
     let k = pieces.len();
@@ -1065,4 +1074,110 @@ fn a_tagged_roundabout_gives_way_and_keeps_moving() {
         assert!(sim.waiting_cycles().is_empty(), "{label}: a loop is left standing");
         assert_eq!(done.len(), vehicles.len(), "{label}: every trip completes");
     }
+}
+
+/// The tagged roundabout test's demand on `ring`: from every entry, a vehicle every 5 s for half
+/// an hour, each going one to all-but-one pieces round.
+fn ring_demand(ring: &[LinkId], entries: &[LinkId], exits: &[LinkId]) -> Vec<Vehicle> {
+    let k = ring.len();
+    let mut vehicles = Vec::new();
+    for i in 0..k {
+        for n in 0..360u32 {
+            let hops = 1 + ((n as usize + 3 * i) % (k - 1));
+            let mut route = vec![entries[i]];
+            route.extend((0..hops).map(|h| ring[(i + h) % k]));
+            route.push(exits[(i + hops) % k]);
+            let id = VehicleId::new(vehicles.len() as u32);
+            vehicles.push(Vehicle::new(id, route, Pcu(1.0), Second(n * 5)));
+        }
+    }
+    vehicles
+}
+
+/// **Property (S213, priority at merges):** the overloaded ring, **untagged**, a primary road
+/// with residential entries. Sharing each merge by capacity, entries fill the ring until it
+/// locks (Daganzo 1996: a merge in a fixed ratio lets a loop destroy itself). Under priority by
+/// road hierarchy, entries give way to the ring's own traffic: it keeps moving, nothing ever
+/// exceeds its storage, and every trip completes once demand ends — the theory's prevention,
+/// with no roundabout tag.
+#[test]
+fn priority_to_the_major_road_keeps_an_untagged_ring_moving() {
+    let pieces = [3.0, 4.5, 6.0, 7.5, 8.5, 10.0, 11.5, 13.0, 15.5, 18.0, 22.0, 30.0];
+    let (net, ring, entries, exits) = roundabout(&pieces, false, RoadClass::Primary);
+    assert!(!net.is_roundabout(ring[0]));
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    let vehicles = ring_demand(&ring, &entries, &exits);
+    let load = |priority: bool| {
+        let mut sim = LtmNetwork::new(&net, &turns);
+        if priority {
+            sim = sim.with_priority();
+        }
+        vehicles.iter().for_each(|v| sim.depart(v));
+        let done = run_checked(&mut sim, 300.0, 6.0 * 3600.0, |s| {
+            for l in 0..net.link_count() {
+                let l = LinkId::from_index(l as usize);
+                assert!(s.counted_pcu(l).get() <= net.storage(l).get() + 1e-6, "overfull");
+            }
+        });
+        (done.len(), sim.lock_report())
+    };
+    let (shared, lock) = load(false);
+    assert!(shared < vehicles.len() && !lock.loops.is_empty(), "{shared}: {lock:?}");
+    let (prioritised, lock) = load(true);
+    assert_eq!(prioritised, vehicles.len(), "every trip completes: {lock:?}");
+    assert!(lock.loops.is_empty() && lock.room_waits_with_room == 0);
+}
+
+/// **Property (S213):** two approaches merging into one link, the major one (primary) fed above
+/// the link's capacity, the minor one (residential) fed too. Under priority, while the major
+/// stream queues the minor one passes almost nothing; once the major queue has gone, it passes.
+/// By capacity, both pass all along.
+#[test]
+fn under_priority_the_minor_stream_takes_what_the_major_leaves() {
+    let mut b = RoadNetworkBuilder::new();
+    let at = |x: f64, y: f64| LonLat::new(4.8 + x / M_PER_DEG_LON, 45.7 + y / 111_320.0);
+    b.add_node("a", at(0.0, 0.0));
+    b.add_node("m", at(0.0, 400.0));
+    b.add_node("v", at(400.0, 0.0));
+    b.add_node("z", at(800.0, 0.0));
+    b.add_link("major", "a", "v", LinkSpec::new(RoadClass::Primary));
+    b.add_link("minor", "m", "v", LinkSpec::new(RoadClass::Residential));
+    b.add_link("out", "v", "z", LinkSpec::new(RoadClass::Residential));
+    let net = b
+        .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable");
+    let id = |name: &str| net.link_external_ids().typed_id_of::<LinkId>(name).expect("link");
+    let (major, minor, out) = (id("major"), id("minor"), id("out"));
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    // One major vehicle a second for half an hour: more than the outgoing link takes, so the
+    // major approach queues and its front is always ready.
+    assert!(net.link_parameters(out).capacity.get() < 3600.0);
+    let mut vehicles = Vec::new();
+    for n in 0..1800u32 {
+        let id = VehicleId::new(vehicles.len() as u32);
+        vehicles.push(Vehicle::new(id, vec![major, out], Pcu(1.0), Second(n)));
+    }
+    let minors = vehicles.len();
+    for n in 0..100u32 {
+        let id = VehicleId::new(vehicles.len() as u32);
+        vehicles.push(Vehicle::new(id, vec![minor, out], Pcu(1.0), Second(n * 10)));
+    }
+    let load = |priority: bool| {
+        let mut sim = LtmNetwork::new(&net, &turns);
+        if priority {
+            sim = sim.with_priority();
+        }
+        vehicles.iter().for_each(|v| sim.depart(v));
+        let done = run_checked(&mut sim, 60.0, 6.0 * 3600.0, |_| {});
+        let minor_by_half_hour = done
+            .iter()
+            .filter(|t| t.vehicle.raw() as usize >= minors && t.arrival().get() <= 1800)
+            .count();
+        (done.len(), minor_by_half_hour)
+    };
+    let (all_shared, minor_shared) = load(false);
+    let (all_prioritised, minor_prioritised) = load(true);
+    assert_eq!((all_shared, all_prioritised), (vehicles.len(), vehicles.len()));
+    assert!(minor_shared > 30, "by capacity the minor stream passes: {minor_shared}");
+    assert!(minor_prioritised < minor_shared / 3, "{minor_prioritised} vs {minor_shared}");
 }

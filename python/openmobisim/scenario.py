@@ -525,6 +525,41 @@ class Run:
         choices = self._summary.itinerary_choices
         return None if choices is None else dict(choices)
 
+    def report_gridlock(self) -> dict[str, Any] | None:
+        """What stood still when the last loading's window ended; ``None`` at level 0.
+
+        ``vehicles_on_network`` (still on a link), ``vehicles_outside`` (still waiting to
+        enter, at an origin or a stop line), ``links_waiting`` (links whose front vehicle was
+        waiting), ``loops`` (closed loops of links whose front vehicles wait on one another —
+        gridlock — each a list of link indices in waiting order), ``loop_count``,
+        ``loop_links``, and ``room_waits_with_room``: front vehicles waiting for room on their
+        next link while it had room. The loading lets traffic stop only at jam density, so
+        that is always 0; anything else is a defect to report. A run that ends with loops
+        also records a ``gridlock`` diagnostic per loop.
+        """
+        report = self._summary.gridlock
+        return None if report is None else dict(report)
+
+    def route_changes(self) -> dict[str, Any]:
+        """Every reroute of the last loading, as columns (empty without rerouting).
+
+        A vehicle blocked at the front of its link for ``reroute_after_s`` re-routes from where
+        it is (``loading_options``). One row per reroute, in the order they happened: ``trip``
+        (its index in the run), ``traveller_id``, ``trip_seq``, ``second``, ``link`` (the link
+        at whose end it re-routed), ``next_planned`` (the next link of its route until then)
+        and ``next_taken`` (of its new route). Its planned route is its route choice
+        (``route_choices``); what it actually took is in ``route_realised``.
+        """
+        return dict(self._summary.route_changes)
+
+    def route_realised(self) -> dict[str, Any]:
+        """The realised routes of the trips that re-routed in the last loading and arrived.
+
+        ``trip`` (their indices) and ``links`` (for each, the link indices it took, in order).
+        Every other trip followed its planned route, which nothing stores twice.
+        """
+        return dict(self._summary.route_realised)
+
     def trip_modes(self) -> dict[str, Any]:
         """Every trip's departure and the mode it took, as columns.
 
@@ -620,6 +655,7 @@ class Scenario:
         parking_options: dict[str, float] | None = None,
         modes: tuple[str, ...] | list[str] | None = None,
         mode_options: dict[str, float] | None = None,
+        loading_options: dict[str, float] | None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
         if bike_cost not in BIKE_COSTS:
@@ -682,6 +718,7 @@ class Scenario:
                 raise ValueError(f"modes must be among {MODES}, got {unknown}")
         self._modes = modes
         self._mode_options = mode_options
+        self._loading_options = loading_options
 
     @classmethod
     def from_parts(
@@ -713,6 +750,7 @@ class Scenario:
         parking_options: dict[str, float] | None = None,
         modes: tuple[str, ...] | list[str] | None = None,
         mode_options: dict[str, float] | None = None,
+        loading_options: dict[str, float] | None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -960,6 +998,15 @@ class Scenario:
                 offered to a trip choosing its mode (a trip given the mode takes it at any
                 length); ``float("inf")`` offers every walk or ride. Uncalibrated defaults.
                 Unknown names and values that are not above 0 are refused.
+            loading_options: The loading's rules by name, for ``flow_level`` 2–4 (gridlock
+                remedies, S213; both off while they are measured): ``priority`` (0 or 1) —
+                at an unsignalised merge a vehicle gives way to an approach of higher road
+                class, or of the same class and at least 1.5 times the capacity, whose front
+                vehicle is bound for the same link, and a departing vehicle gives way to every
+                approach; ``reroute`` (0 or 1) — a vehicle blocked at the front of its link for
+                ``reroute_after_s`` (300) re-routes from where it is, at most ``reroute_max``
+                (3) times, if the new route is at least ``reroute_min_gain`` (0.1) faster.
+                Uncalibrated defaults; unknown names and values out of range are refused.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -1002,6 +1049,7 @@ class Scenario:
             parking_options=parking_options,
             modes=modes,
             mode_options=mode_options,
+            loading_options=loading_options,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
@@ -1051,6 +1099,7 @@ class Scenario:
             transit_options=self._transit_options,
             modes=self._modes,
             mode_options=self._mode_options,
+            loading_options=self._loading_options,
         )
         return Run(
             summary,

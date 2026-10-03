@@ -749,6 +749,9 @@ class RunSummary:
     itinerary_choices: dict[str, Any] | None
     #: Every trip's departure and the mode it took (see ``Run.trip_modes``).
     trip_modes: dict[str, Any]
+    gridlock: dict[str, Any] | None
+    route_changes: dict[str, Any]
+    route_realised: dict[str, Any]
     #: Itinerary trips whose chosen line could not be followed.
     itinerary_replanned: int
     #: Trips back: mean |expected − realised| arrival at the parking, in seconds.
@@ -786,6 +789,7 @@ def run_pipeline(
     transit_options: dict[str, float] | None = None,
     modes: list[str] | None = None,
     mode_options: dict[str, float] | None = None,
+    loading_options: dict[str, float] | None = None,
 ) -> RunSummary:
     """Run the whole pipeline and write all four output artifacts.
 
@@ -855,6 +859,7 @@ def run_pipeline(
         modes: The modes a trip without a stated mode chooses among (see
             ``Scenario.from_parts``); ``None`` for no mode choice.
         mode_options: Mode choice's parameters by name (see ``Scenario.from_parts``).
+        loading_options: The loading's rules by name (see ``Scenario.from_parts``).
 
     Returns:
         A :class:`RunSummary`.

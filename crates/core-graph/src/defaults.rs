@@ -87,7 +87,11 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// how many itinerary trips plan their whole choice set to measure the gap, the others that
 /// keep an itinerary out through a parking re-costed there. Its default is every trip, as
 /// before: no run changes.
-pub const DEFAULTS_VERSION: u32 = 8;
+///
+/// Version 9 (S213): the loading's rules (`core-sim`'s `LoadingOptions`): priority at merges
+/// and en-route rerouting (`reroute_after_s` 300, `reroute_max` 3, `reroute_min_gain` 0.1),
+/// both off while they are measured: no run changes.
+pub const DEFAULTS_VERSION: u32 = 9;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

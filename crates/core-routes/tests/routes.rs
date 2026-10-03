@@ -1142,3 +1142,39 @@ fn the_goal_directed_fastest_time_agrees_with_a_plain_time_dependent_search() {
         }
     }
 }
+
+/// **The search after a link (S213, en-route rerouting):** from the end of a link, through its
+/// legal turns only. On a grid, a vehicle on `(1,1)→(1,2)` heading back to `(1,1)` may not
+/// U-turn (the turn table allows that only at a dead end), so it goes round a block: four
+/// links, against the one-link reverse a search from the node would find. Elsewhere it agrees
+/// with the search from the link's end wherever that one's first link is a legal turn.
+#[test]
+fn the_search_after_a_link_turns_only_where_the_link_allows() {
+    let (net, _) = manhattan_grid(5, 200.0, false);
+    let turns = turns_of(&net);
+    let ctx = SearchContext::new(&net, &turns);
+    let mut search = Search::new(&ctx);
+    let link = |a: (u32, u32), b: (u32, u32)| {
+        let (from, to) = (node(&net, &node_name(a.0, a.1)), node(&net, &node_name(b.0, b.1)));
+        *net.out_links(from).iter().find(|&&l| net.link_to(l) == to).expect("grid link")
+    };
+    let free = |l: u32, _t: f64| ctx.link_cost(LinkId::new(l));
+    let east = link((1, 1), (1, 2));
+    let home = node(&net, &node_name(1, 1));
+    let (time, route) =
+        search.fastest_route_after(east, home, 0.0, f64::INFINITY, &free).expect("a way back");
+    assert_eq!(route.len(), 3, "round the block, not back the way it came: {route:?}");
+    assert!(time > ctx.link_cost(east) * 2.5);
+    assert_ne!(route[0], link((1, 2), (1, 1)), "no U-turn");
+    // Away from the U-turn, it agrees with the search from the link's end.
+    let far = node(&net, &node_name(4, 4));
+    let (t_after, r_after) =
+        search.fastest_route_after(east, far, 0.0, f64::INFINITY, &free).unwrap();
+    let from = net.link_to(east);
+    let (t_node, _) =
+        search.fastest_route(from, far, 0.0, f64::INFINITY, &|_, _| 0.0, &free).unwrap();
+    assert!((t_after - t_node).abs() < 1e-9, "{t_after} vs {t_node}");
+    assert_eq!(net.link_from(r_after[0]), from);
+    // Bounded: nothing within half the time.
+    assert!(search.fastest_route_after(east, far, 0.0, t_node / 2.0, &free).is_none());
+}

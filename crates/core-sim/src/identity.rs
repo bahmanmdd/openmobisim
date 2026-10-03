@@ -136,6 +136,9 @@ pub(crate) struct Inputs<'a> {
     pub mode_choice: Option<&'a [Mode]>,
     /// How long a walk or ride mode choice offers (S209); hashed only with mode choice.
     pub mode_defaults: &'a crate::layers::ModeDefaults,
+    /// The loading's rules (S213); hashed only when one is on and the run has junctions to
+    /// apply them at (the link transmission model).
+    pub loading: &'a crate::loading_rules::LoadingOptions,
 }
 
 pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
@@ -169,6 +172,18 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         h.write_str("route-update");
         h.write_str(inputs.route_update);
         h.write_str(inputs.route_update_descriptor);
+    }
+    // Off means absent (S213): a run without a loading rule hashes as it did before them.
+    if inputs.loading.any() && matches!(inputs.flow_motor, FlowMotor::Ltm { .. }) {
+        let o = inputs.loading;
+        h.write_str("loading-rules");
+        h.write_bool(o.priority);
+        h.write_bool(o.reroute);
+        if o.reroute {
+            h.write_f64(o.reroute_after_s);
+            h.write_u32(o.reroute_max);
+            h.write_f64(o.reroute_min_gain);
+        }
     }
     hash_modes(&mut h, inputs.trips, inputs.layers);
     // Off means absent (M5): a run without mode choice hashes as it did before it.

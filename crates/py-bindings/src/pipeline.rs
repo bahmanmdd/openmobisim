@@ -38,8 +38,8 @@ use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults}
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
 use openmobisim_core_sim::{
-    FlowMotor, LayerSetup, ModeDefaults, ParkingDefaults, ParkingSetup, Run as CoreRun,
-    StaticLayers, TransitSetup,
+    FlowMotor, LayerSetup, LoadingOptions, ModeDefaults, ParkingDefaults, ParkingSetup,
+    Run as CoreRun, StaticLayers, TransitSetup,
 };
 use openmobisim_core_transit::TransitDefaults;
 
@@ -220,6 +220,16 @@ pub struct PyRunSummary {
     /// Every trip's departure and the mode it took, as columns (D17).
     #[pyo3(get)]
     pub trip_modes: Py<PyDict>,
+    /// What stood still when the last loading's window ended (S213), as numbers by name and
+    /// the loops as lists of link indices; `None` at level 0.
+    #[pyo3(get)]
+    pub gridlock: Option<Py<PyDict>>,
+    /// Every reroute of the last loading (S213), as columns.
+    #[pyo3(get)]
+    pub route_changes: Py<PyDict>,
+    /// The realised routes of the trips that re-routed and arrived (S213): `trip` and `links`.
+    #[pyo3(get)]
+    pub route_realised: Py<PyDict>,
     /// Itinerary trips whose chosen line could not be followed, and the mean
     /// difference between expected and realised arrival at the parking of the trips
     /// back, in seconds (M4).
@@ -343,6 +353,10 @@ fn convergence_arrays(
         "route_searches",
         reports.iter().map(|r| r.route_searches).collect::<Vec<_>>().into_pyarray(py),
     )?;
+    dict.set_item(
+        "reroutes",
+        reports.iter().map(|r| r.reroutes).collect::<Vec<_>>().into_pyarray(py),
+    )?;
     Ok(dict.unbind())
 }
 
@@ -374,6 +388,7 @@ fn convergence_arrays(
     route_update="none", route_update_options=None,
     choice_detour_limit=None, route_cache=false, bike_cost="dedicated", transit=None,
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
+    loading_options=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -412,6 +427,7 @@ pub fn run_pipeline(
     transit_options: Option<HashMap<String, f64>>,
     modes: Option<Vec<String>>,
     mode_options: Option<HashMap<String, f64>>,
+    loading_options: Option<HashMap<String, f64>>,
 ) -> PyResult<PyRunSummary> {
     let bike_cost = BikeCost::from_name(bike_cost).ok_or_else(|| {
         PyValueError::new_err(format!(
@@ -433,6 +449,8 @@ pub fn run_pipeline(
         ParkingDefaults::from_options(&to_options(parking_options)).map_err(to_value_error)?;
     let mode_defaults =
         ModeDefaults::from_options(&to_options(mode_options)).map_err(PyValueError::new_err)?;
+    let loading = LoadingOptions::from_options(&to_options(loading_options))
+        .map_err(PyValueError::new_err)?;
     // The modes a trip without a stated mode chooses among (M5); none: no choice.
     let modes: Vec<Mode> = modes
         .unwrap_or_default()
@@ -585,7 +603,10 @@ pub fn run_pipeline(
     if let Some(p) = &parking_setup {
         run = run.with_parking(p.clone());
     }
-    run = run.with_mode_choice(&modes).with_mode_defaults(mode_defaults);
+    run = run
+        .with_mode_choice(&modes)
+        .with_mode_defaults(mode_defaults)
+        .with_loading_options(loading);
     // What went in, taken before it runs (S168).
     let description = run.description();
     let mut run_diagnostics = Diagnostics::new();
@@ -712,7 +733,62 @@ pub fn run_pipeline(
         ),
         _ => (None, None),
     };
+    let gridlock = match &result.gridlock {
+        Some(lock) => {
+            let d = PyDict::new(py);
+            d.set_item("vehicles_on_network", lock.on_network)?;
+            d.set_item("vehicles_outside", lock.outside)?;
+            d.set_item("links_waiting", lock.waiting_links)?;
+            let loops: Vec<Vec<u32>> =
+                lock.loops.iter().map(|c| c.iter().map(|l| l.raw()).collect()).collect();
+            d.set_item("loop_count", loops.len())?;
+            d.set_item("loop_links", loops.iter().map(Vec::len).sum::<usize>())?;
+            d.set_item("loops", loops)?;
+            d.set_item("room_waits_with_room", lock.room_waits_with_room)?;
+            Some(d.unbind())
+        }
+        None => None,
+    };
+    let route_changes = {
+        let (mut trip, mut who, mut seq, mut second, mut link, mut planned, mut taken) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for r in &result.reroutes {
+            let t = TripId::new(r.vehicle.raw());
+            let traveller = trips_used.traveller(t);
+            trip.push(t.raw());
+            who.push(travellers.external_ids().external(traveller.raw()).to_string());
+            seq.push(t.raw() - travellers.first_trip(traveller).raw());
+            second.push(r.second);
+            link.push(r.link.raw());
+            planned.push(r.planned_next.raw());
+            taken.push(r.new_next.raw());
+        }
+        let d = PyDict::new(py);
+        d.set_item("trip", trip.into_pyarray(py))?;
+        d.set_item("traveller_id", who)?;
+        d.set_item("trip_seq", seq.into_pyarray(py))?;
+        d.set_item("second", second.into_pyarray(py))?;
+        d.set_item("link", link.into_pyarray(py))?;
+        d.set_item("next_planned", planned.into_pyarray(py))?;
+        d.set_item("next_taken", taken.into_pyarray(py))?;
+        d.unbind()
+    };
+    let route_realised = {
+        let d = PyDict::new(py);
+        let trips: Vec<u32> = result.routes_realised.iter().map(|(t, _)| t.raw()).collect();
+        let links: Vec<Bound<'_, PyArray1<u32>>> = result
+            .routes_realised
+            .iter()
+            .map(|(_, l)| l.iter().map(|x| x.raw()).collect::<Vec<u32>>().into_pyarray(py))
+            .collect();
+        d.set_item("trip", trips.into_pyarray(py))?;
+        d.set_item("links", links)?;
+        d.unbind()
+    };
     Ok(PyRunSummary {
+        gridlock,
+        route_changes,
+        route_realised,
         parking_bins: parking_bins_table,
         parking_places: parking_places_table,
         parking_summary: parking_summary_table,

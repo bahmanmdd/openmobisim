@@ -262,6 +262,13 @@ impl Ord for Entry {
 
 const NONE: u32 = u32::MAX;
 
+/// Where an earliest-arrival search starts: every link out of a node, or the turns out of a link.
+#[derive(Clone, Copy)]
+enum Start {
+    Node(NodeId),
+    AfterLink(LinkId),
+}
+
 /// One thread's search state. Cheap to keep and reuse: every method leaves it clean.
 #[derive(Debug)]
 pub struct Search<'a> {
@@ -591,10 +598,68 @@ impl<'a> Search<'a> {
         wait: &dyn Fn(u32, f64) -> f64,
         seconds: &dyn Fn(u32, f64) -> f64,
     ) -> Option<(f64, u32)> {
-        if origin == destination {
+        self.earliest_arrival_from(
+            Start::Node(origin),
+            destination,
+            departure,
+            bound,
+            wait,
+            seconds,
+        )
+    }
+
+    /// The route after `link` — beginning with one of its legal turns, at second `departure` —
+    /// that reaches `destination` earliest, and that time, in seconds after `departure`: where
+    /// a vehicle at the end of `link` can go from there (S213, en-route rerouting). Same costs,
+    /// bound, A\* and exactness as [`Self::fastest_route`]. `Some` with no links if `link`
+    /// already ends at `destination`.
+    pub fn fastest_route_after(
+        &mut self,
+        link: LinkId,
+        destination: NodeId,
+        departure: f64,
+        bound: f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Option<(f64, Vec<LinkId>)> {
+        let found = self.earliest_arrival_from(
+            Start::AfterLink(link),
+            destination,
+            departure,
+            bound,
+            &|_, _| 0.0,
+            seconds,
+        );
+        let route = found.map(|(time, last)| {
+            let mut links = Vec::new();
+            let mut at = last;
+            while at != NONE {
+                links.push(LinkId::new(at));
+                at = self.pred[at as usize];
+            }
+            links.reverse();
+            (time, links)
+        });
+        self.clean();
+        route
+    }
+
+    fn earliest_arrival_from(
+        &mut self,
+        start: Start,
+        destination: NodeId,
+        departure: f64,
+        bound: f64,
+        wait: &dyn Fn(u32, f64) -> f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Option<(f64, u32)> {
+        let ctx = self.ctx;
+        let start_node = match start {
+            Start::Node(n) => n,
+            Start::AfterLink(l) => ctx.network.link_to(l),
+        };
+        if start_node == destination {
             return Some((0.0, NONE));
         }
-        let ctx = self.ctx;
         let limit = departure + bound;
         // A* (S209): a link's time is never below its free-flow time (the loading lets no
         // vehicle cross faster), so the context's free-flow bound per metre of straight line
@@ -610,7 +675,13 @@ impl<'a> Search<'a> {
                 0.0
             }
         };
-        for &l in ctx.network.out_links(origin) {
+        let seeds: Vec<LinkId> = match start {
+            Start::Node(n) => ctx.network.out_links(n).to_vec(),
+            Start::AfterLink(from) => {
+                ctx.turns.turns_from(from).iter().map(|&t| ctx.turns.outgoing(t)).collect()
+            }
+        };
+        for l in seeds {
             if !ctx.link_cost(l).is_finite() {
                 continue;
             }

@@ -75,6 +75,24 @@
 //! straddle-closing and front-crossing paths threaded together iteratively —
 //! real design, attempted and set aside rather than shipped half-working.
 //!
+//! # Priority at merges (S213, when asked for)
+//!
+//! [`LtmNetwork::with_priority`]: at an unsignalised merge a vehicle gives way while the front
+//! vehicle of an approach of higher priority — a higher road class, or the same class and
+//! [`PRIORITY_CAPACITY_RATIO`] times the capacity — is bound for the same link and ready, and a
+//! departure gives way to every approach: Daganzo's priority merge in vehicle form, the
+//! prevention his 1996 analysis of gridlock on loops names. Without it, merges share room by
+//! capacity, as described above.
+//!
+//! # En-route rerouting (S213, when asked for)
+//!
+//! [`LtmNetwork::with_rerouting`]: a vehicle that has waited at the front of its link, blocked,
+//! for a set time is offered a new route by a [`Reroute`] the caller supplies (the loading never
+//! routes, design §10.4), with the loading's live estimate of each link's time
+//! ([`LiveTimes`]); it may take a few. Its trajectory records the links it actually took (its
+//! realised route), and every reroute is recorded ([`RerouteRecord`]). A vehicle that re-routes
+//! still waits for room like any other: rerouting changes where it goes, never the physics.
+//!
 //! # When traffic stops
 //!
 //! A vehicle waits for exactly two things: room on the link ahead, or the rear
@@ -165,7 +183,7 @@ use std::collections::VecDeque;
 
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
-use openmobisim_core_types::ids::{EntityId, LinkId};
+use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::{Duration, Pcu};
 
@@ -190,6 +208,11 @@ const TIME_EPSILON: f64 = 1e-9;
 /// alone rather than walked further — a bounded, defendable cost per check,
 /// not a claim that no longer chain could ever matter.
 const MAX_LOOP_WALK: usize = 64;
+
+/// Under priority ([`LtmNetwork::with_priority`]), how many times another approach's capacity
+/// one of the same road class must have to take priority over it. 1.5, uncalibrated: a
+/// clearly bigger road, not one a little wider.
+pub const PRIORITY_CAPACITY_RATIO: f64 = 1.5;
 
 /// No queue, link or vehicle: the end of an intrusive list, or "outside the
 /// network" in a vehicle's parts.
@@ -259,6 +282,8 @@ enum Place {
     StopLine(usize),
     /// Room released on this link reaches its upstream end.
     Heard(usize),
+    /// The front vehicle of this link may have waited long enough to re-route (S213).
+    RerouteDue(usize),
 }
 
 /// A vehicle that departs when another arrives (S199; see the
@@ -297,6 +322,83 @@ pub enum Recording {
     BinsAndEntry(u32),
 }
 
+/// Rules a loading applies beyond the link transmission model itself (S213).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Rules {
+    /// Priority by road hierarchy at unsignalised merges ([`LtmNetwork::with_priority`]).
+    pub priority: bool,
+    /// En-route rerouting ([`LtmNetwork::with_rerouting`]), if on: who decides is the
+    /// [`Reroute`] given to [`run_ltm_chained`].
+    pub reroute: Option<RerouteRule>,
+}
+
+/// When a vehicle is offered a new route (S213, [`LtmNetwork::with_rerouting`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RerouteRule {
+    /// Seconds a vehicle waits at the front of its link, blocked, before it is offered one;
+    /// another offer comes after as long again.
+    pub after_s: f64,
+    /// The most times one vehicle takes one.
+    pub max: u8,
+}
+
+/// The loading's estimate of how long a link takes now (S213): what a vehicle that re-routes
+/// sees of the traffic around it.
+pub trait LiveTimes {
+    /// Seconds to cross `link` if entered now: its free-flow time, the time its queue takes to
+    /// discharge at capacity, and how long its front vehicle has been blocked, if it is.
+    fn live_seconds(&self, link: LinkId) -> f64;
+}
+
+/// Who decides a new route for a vehicle stuck at the front of its link (S213). The loading
+/// never routes (design §10.4); it asks.
+pub trait Reroute {
+    /// The rest of a new route for `vehicle`, at the end of `current` at second `now` and
+    /// planned to go on along `planned` (not empty): links beginning with a legal turn out of
+    /// `current` and ending where `planned` ends — or `None` to keep to the plan. `live` is the
+    /// loading's own estimate of each link's time now.
+    fn reroute(
+        &mut self,
+        vehicle: VehicleId,
+        current: LinkId,
+        planned: &[LinkId],
+        now: f64,
+        live: &dyn LiveTimes,
+    ) -> Option<Vec<LinkId>>;
+}
+
+/// One reroute (S213): who, when, where, and the next link planned and taken instead.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RerouteRecord {
+    /// The vehicle.
+    pub vehicle: VehicleId,
+    /// When, in seconds.
+    pub second: f64,
+    /// The link at whose end it re-routed.
+    pub link: LinkId,
+    /// The next link of its route until then.
+    pub planned_next: LinkId,
+    /// The next link of its new route.
+    pub new_next: LinkId,
+}
+
+/// En-route rerouting's state: per vehicle, nothing until it re-routes.
+#[derive(Debug)]
+struct Rerouting {
+    rule: RerouteRule,
+    /// Per slot: which of `routes` replaces its route (`NONE`: its own).
+    route_of: Vec<u32>,
+    /// Per slot: how many times it re-routed.
+    count: Vec<u8>,
+    /// Per slot: when it was last offered a route (−∞: never).
+    last_offer: Vec<f64>,
+    /// The routes of vehicles that re-routed, whole (the links already taken, then the new rest).
+    routes: Vec<Box<[LinkId]>>,
+    /// Links whose front is due an offer, in the order they became due.
+    pending: Vec<u32>,
+    records: Vec<RerouteRecord>,
+}
+
 /// What [`run_ltm_chained`] returns.
 #[derive(Debug)]
 pub struct LtmOutput {
@@ -306,6 +408,35 @@ pub struct LtmOutput {
     pub link_bins: Option<LinkBins>,
     /// The traversals by entry bin, if recorded.
     pub entry: Option<EntryTables>,
+    /// What stood still when the window ended.
+    pub lock: LockReport,
+    /// Every reroute, in the order they happened (empty without rerouting).
+    pub reroutes: Vec<RerouteRecord>,
+}
+
+/// What stands still when a loading ends (S213): where the vehicles that did not finish are,
+/// and the closed loops of links whose front vehicles wait on one another.
+///
+/// **The check on the loading's own guarantee** — traffic stops only at jam density — is
+/// [`Self::room_waits_with_room`]: a front vehicle waiting for room on its next link while
+/// that link has at least [`MIN_PART`] of room heard would be a stop the model cannot explain.
+/// It must be 0. (A front can also wait without the link it waits on being full: while it
+/// gives way at a roundabout, or behind a vehicle still straddling the link's end; those
+/// waits are not counted.)
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LockReport {
+    /// Vehicles counted on a link when the loading ended.
+    pub on_network: u32,
+    /// Vehicles waiting outside the network: at an origin or at a stop line.
+    pub outside: u32,
+    /// Links whose front vehicle was waiting when the loading ended.
+    pub waiting_links: u32,
+    /// Closed loops of links whose front vehicles wait on one another, each in waiting order
+    /// ([`LtmNetwork::waiting_cycles`]).
+    pub loops: Vec<Vec<LinkId>>,
+    /// Of the waiting fronts, how many wait for room on their next link while it has room:
+    /// 0 unless something is wrong.
+    pub room_waits_with_room: u32,
 }
 
 /// The running state of a loading.
@@ -362,8 +493,17 @@ pub struct LtmNetwork<'a> {
     /// Chained vehicles (S199), once one is added: absent otherwise.
     chains: Option<Chains>,
 
-    /// At most one event per queue (S210).
+    /// Priority by road hierarchy at unsignalised merges (S213), when asked for: per link,
+    /// whether a vehicle may be giving way to its front — every motor link into an
+    /// unsignalised node, since departures give way to any approach — so its front moving on
+    /// wakes them. Empty when priority is off.
+    priority_major: Vec<bool>,
+
+    /// At most one event per queue (S210); `4n..5n` are the links' reroute timers (S213).
     events: EventQueue,
+
+    /// En-route rerouting (S213), when asked for.
+    rerouting: Option<Rerouting>,
 
     /// Per-link, per-bin results, when asked for (S163).
     recorder: Option<LinkBinRecorder>,
@@ -430,7 +570,9 @@ impl<'a> LtmNetwork<'a> {
             pending: Vec::new(),
             pending_sorted: true,
             chains: None,
-            events: EventQueue::new(queues + n),
+            priority_major: Vec::new(),
+            events: EventQueue::new(queues + 2 * n),
+            rerouting: None,
             recorder: None,
         };
         sim.apply_level();
@@ -494,6 +636,118 @@ impl<'a> LtmNetwork<'a> {
     #[must_use]
     pub fn take_link_bins(&mut self) -> Option<LinkBins> {
         self.recorder.take().map(LinkBinRecorder::finish)
+    }
+
+    /// Offer a vehicle a new route when it has waited `rule.after_s` at the front of its link,
+    /// blocked — for room on its next link, or giving way (S213). The new route comes from the
+    /// [`Reroute`] given to [`Self::step_rerouting`]; a vehicle takes at most `rule.max`, and is
+    /// offered again only after waiting as long again. Must be set before vehicles are added.
+    ///
+    /// Cost: per vehicle, 13 bytes (which route, how many, when last offered); per reroute, the
+    /// new route and a 32-byte record; one timer per waiting link front.
+    ///
+    /// # Panics
+    ///
+    /// Panics if vehicles were already added.
+    #[must_use]
+    pub fn with_rerouting(mut self, rule: RerouteRule) -> Self {
+        assert!(self.vehicles.is_empty(), "rerouting is set before vehicles are added");
+        self.rerouting = Some(Rerouting {
+            rule,
+            route_of: Vec::new(),
+            count: Vec::new(),
+            last_offer: Vec::new(),
+            routes: Vec::new(),
+            pending: Vec::new(),
+            records: Vec::new(),
+        });
+        self
+    }
+
+    /// Every reroute so far, in the order they happened.
+    #[must_use]
+    pub fn reroutes(&self) -> &[RerouteRecord] {
+        self.rerouting.as_ref().map_or(&[], |r| r.records.as_slice())
+    }
+
+    /// The route a vehicle follows: its own, or the one it re-routed to.
+    #[inline]
+    fn route(&self, slot: u32) -> &[LinkId] {
+        if let Some(r) = &self.rerouting {
+            let i = r.route_of[slot as usize];
+            if i != NONE {
+                return &r.routes[i as usize];
+            }
+        }
+        &self.vehicles[slot as usize].route
+    }
+
+    /// Give priority by road hierarchy at unsignalised merges (S213): a vehicle entering a
+    /// link gives way while the front vehicle of an approach of **higher priority** to the same
+    /// node is bound for that link and ready to go — Daganzo's (1995) priority merge in vehicle
+    /// form: the minor stream takes what the major one leaves, and a departure (an origin)
+    /// enters the stream only when no approach's front wants the link. An approach has priority
+    /// over another if its road class is higher, or, in one class, if its capacity is at least
+    /// [`PRIORITY_CAPACITY_RATIO`] times the other's; otherwise neither (the capacity-
+    /// proportional merge, as without priority). Not at signalised nodes, where the signal
+    /// separates the streams, nor into roundabout links, which keep their own rule.
+    ///
+    /// Why: a merge that shares room in a fixed ratio lets traffic on a closed loop destroy
+    /// itself (Daganzo 1996, *The nature of freeway gridlock and how to prevent it*); priority
+    /// to the major stream is the remedy that theory names. Cost: one flag per link, and per
+    /// entry into a merge a look at the front of each other approach of the node.
+    #[must_use]
+    pub fn with_priority(mut self) -> Self {
+        let net = self.network;
+        self.priority_major = (0..self.links)
+            .map(|b| {
+                let lb = LinkId::from_index(b);
+                net.link_class(lb).carries_motor_traffic() && !net.is_signalised(net.link_to(lb))
+            })
+            .collect();
+        self
+    }
+
+    /// Whether approach `b` has priority over approach `a` (`None`: a departure from an origin).
+    fn outranks(&self, b: usize, a: Option<usize>) -> bool {
+        let net = self.network;
+        let lb = LinkId::from_index(b);
+        if !net.link_class(lb).carries_motor_traffic() {
+            return false;
+        }
+        let Some(a) = a else { return true };
+        let (cb, ca) = (net.link_class(lb) as u8, net.link_class(LinkId::from_index(a)) as u8);
+        cb < ca
+            || (cb == ca && self.inflow_rate[b] >= PRIORITY_CAPACITY_RATIO * self.inflow_rate[a])
+    }
+
+    /// The approach a vehicle entering `j` from `from` gives way to under priority, if any: one
+    /// of higher priority whose front vehicle is bound for `j` and ready by `t`.
+    fn priority_give_way(&self, j: usize, from: Option<usize>, t: f64) -> Option<usize> {
+        if self.priority_major.is_empty() {
+            return None;
+        }
+        let net = self.network;
+        let lj = LinkId::from_index(j);
+        if net.is_roundabout(lj) {
+            return None;
+        }
+        let node = net.link_from(lj);
+        if net.is_signalised(node) {
+            return None;
+        }
+        net.in_links(node).iter().map(|l| l.index()).find(|&b| {
+            Some(b) != from
+                && self.priority_major[b]
+                && self.outranks(b, from)
+                && self.queues[b].front().is_some_and(|q| {
+                    q.ready <= t + TIME_EPSILON
+                        && self
+                            .route(q.slot)
+                            .get(q.leg as usize + 1)
+                            .is_some_and(|l| l.index() == j)
+                })
+        })
     }
 
     /// The same network, run at `level` (S76's nesting: nothing else changes).
@@ -661,6 +915,42 @@ impl<'a> LtmNetwork<'a> {
         cycles
     }
 
+    /// What stands still now: see [`LockReport`]. Walks every link and vehicle once.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: counts of links and vehicles fit `u32` (Foundations §1).
+    #[must_use]
+    pub fn lock_report(&self) -> LockReport {
+        let now = self.now;
+        let on_network = self.parts.iter().filter(|p| !p.is_empty()).count();
+        let outside: usize = (self.links..3 * self.links).map(|q| self.queues[q].len()).sum();
+        let mut waiting_links = 0;
+        let mut room_waits_with_room = 0;
+        for i in 0..self.links {
+            let Some(on) = self.front_waits_on(i) else { continue };
+            waiting_links += 1;
+            let Some(front) = self.queues[i].front() else { continue };
+            let next = self.route(front.slot).get(front.leg as usize + 1);
+            let waits_for_room =
+                self.straddling_out[i] == NONE && next.is_some_and(|l| l.index() == on);
+            if waits_for_room && self.storage[on].is_finite() {
+                let need = MIN_PART.min(self.storage[on]);
+                if self.heard_room(on, now).0 >= need + ROOM_EPSILON {
+                    room_waits_with_room += 1;
+                }
+            }
+        }
+        let count = |n: usize| u32::try_from(n).expect("counts fit u32");
+        LockReport {
+            on_network: count(on_network),
+            outside: count(outside),
+            waiting_links: count(waiting_links),
+            loops: self.waiting_cycles(),
+            room_waits_with_room: count(room_waits_with_room),
+        }
+    }
+
     /// Schedule a vehicle. It departs at its own departure second, waiting at
     /// its first link's origin until the link can take it; a departure earlier
     /// than [`Self::now`] departs at the start of the next step.
@@ -716,6 +1006,11 @@ impl<'a> LtmNetwork<'a> {
         assert!(!vehicle.route.is_empty(), "a vehicle always has a route");
         let slot = u32::try_from(self.vehicles.len()).expect("vehicle count fits u32");
         self.vehicles.push(vehicle);
+        if let Some(r) = self.rerouting.as_mut() {
+            r.route_of.push(NONE);
+            r.count.push(0);
+            r.last_offer.push(f64::NEG_INFINITY);
+        }
         self.traversals.push(Vec::with_capacity(vehicle.route.len()));
         self.parts.push(VecDeque::new());
         if let Some(c) = self.chains.as_mut() {
@@ -744,6 +1039,20 @@ impl<'a> LtmNetwork<'a> {
     ///
     /// Panics if `dt` is not positive and finite.
     pub fn step(&mut self, dt: Duration) -> Vec<Trajectory> {
+        self.step_inner(dt, None)
+    }
+
+    /// [`Self::step`], asking `rr` for a new route for every vehicle due one under
+    /// [`Self::with_rerouting`] (S213).
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::step`].
+    pub fn step_rerouting(&mut self, dt: Duration, rr: &mut dyn Reroute) -> Vec<Trajectory> {
+        self.step_inner(dt, Some(rr))
+    }
+
+    fn step_inner(&mut self, dt: Duration, mut rr: Option<&mut dyn Reroute>) -> Vec<Trajectory> {
         assert!(dt.get() > 0.0 && dt.is_finite(), "a loading step must be positive, got {dt:?}");
         let (t0, t1) = (self.now, self.now + dt.get());
         let mut completed = Vec::new();
@@ -764,6 +1073,11 @@ impl<'a> LtmNetwork<'a> {
                     self.process(event, t0, &mut completed);
                 }
                 _ => break,
+            }
+            if let (Some(rr), Some(r)) = (rr.as_deref_mut(), self.rerouting.as_ref()) {
+                if !r.pending.is_empty() {
+                    self.serve_reroutes(t0, rr);
+                }
             }
         }
 
@@ -814,8 +1128,10 @@ impl<'a> LtmNetwork<'a> {
             Place::Origin
         } else if queue < 3 * n {
             Place::StopLine(queue - 2 * n)
-        } else {
+        } else if queue < 4 * n {
             Place::Heard(queue - 3 * n)
+        } else {
+            Place::RerouteDue(queue - 4 * n)
         }
     }
 
@@ -839,12 +1155,12 @@ impl<'a> LtmNetwork<'a> {
                 let ready = front.ready.max(self.curves[i].last_exit().get() + headway).max(t0);
                 // Who goes first among approaches ready for the same room: a
                 // virtual time, in its own units, never mixed with `ready`.
-                let onto = vehicle.route.get(front.leg as usize + 1);
+                let onto = self.route(front.slot).get(front.leg as usize + 1);
                 let virtual_now = onto.map_or(0.0, |l| self.virtual_time[l.index()]);
                 let tag = virtual_now.max(self.service_tag[queue] + headway);
                 Some((ready, tag))
             }
-            Place::Origin | Place::StopLine(_) | Place::Heard(_) => {
+            Place::Origin | Place::StopLine(_) | Place::Heard(_) | Place::RerouteDue(_) => {
                 // The tag is the real arrival time, *not* clamped to the step's
                 // start: clamping gave every queue that had waited across a step
                 // boundary the same tag, so ties fell to queue id instead of
@@ -886,6 +1202,9 @@ impl<'a> LtmNetwork<'a> {
             self.close_straddle(l, event.time, t0);
             return self.wake(l, event.time, t0);
         }
+        if let Place::RerouteDue(i) = self.place(queue) {
+            return self.offer_reroute(i, event.time);
+        }
         let Some((ready, tag)) = self.front_due(queue, t0) else {
             return;
         };
@@ -898,13 +1217,17 @@ impl<'a> LtmNetwork<'a> {
         let vehicle = self.vehicles[front.slot as usize];
         let pcu = vehicle.pcu.get();
         let next_leg = front.leg as usize + 1;
-        let next = vehicle.route.get(next_leg).map(|l| l.index());
+        let next = self.route(front.slot).get(next_leg).map(|l| l.index());
 
         match self.place(queue) {
             Place::Link(i) => {
                 if self.straddling_out[i] != NONE {
                     // The vehicle ahead is still in the way; its rear clearing
-                    // the link end reschedules this queue.
+                    // the link end reschedules this queue. Waiting behind it counts
+                    // towards a reroute (S213).
+                    if self.rerouting.is_some() {
+                        self.offer_reroute(i, t);
+                    }
                     return;
                 }
                 let room = match next {
@@ -953,7 +1276,9 @@ impl<'a> LtmNetwork<'a> {
                     self.complete(front.slot, t, t0, completed);
                 }
             }
-            Place::Heard(_) => unreachable!("room-heard events are handled first"),
+            Place::Heard(_) | Place::RerouteDue(_) => {
+                unreachable!("room-heard and reroute events are handled first")
+            }
         }
     }
 
@@ -969,6 +1294,9 @@ impl<'a> LtmNetwork<'a> {
         }
         if let Some(r) = self.must_give_way(j, from) {
             return Err(Blocked { link: r, retry_at: None });
+        }
+        if let Some(b) = self.priority_give_way(j, from, t) {
+            return Err(Blocked { link: b, retry_at: None });
         }
         let storage = self.storage[j];
         if storage.is_infinite() {
@@ -1030,10 +1358,7 @@ impl<'a> LtmNetwork<'a> {
             Some(r) != from
                 && ring(r)
                 && self.queues[r].iter().any(|q| {
-                    self.vehicles[q.slot as usize]
-                        .route
-                        .get(q.leg as usize + 1)
-                        .is_some_and(|l| l.index() == j)
+                    self.route(q.slot).get(q.leg as usize + 1).is_some_and(|l| l.index() == j)
                 })
         })
     }
@@ -1080,7 +1405,10 @@ impl<'a> LtmNetwork<'a> {
         let front = self.queues[i].pop_front().expect("advancing a front vehicle");
         let slot = front.slot;
         let vehicle = self.vehicles[slot as usize];
-        if self.first_parked[i] != NONE && self.network.is_roundabout(LinkId::from_index(i)) {
+        if self.first_parked[i] != NONE
+            && (self.network.is_roundabout(LinkId::from_index(i))
+                || self.priority_major.get(i).copied().unwrap_or(false))
+        {
             // Entries giving way to this link's front may go now.
             self.wake(i, t, t0);
         }
@@ -1088,8 +1416,9 @@ impl<'a> LtmNetwork<'a> {
         self.discharged[i] += vehicle.pcu.get();
         self.service_tag[i] = tag;
         let next_leg = front.leg as usize + 1;
-        if let Some(onto) = vehicle.route.get(next_leg) {
-            let v = &mut self.virtual_time[onto.index()];
+        let route_len = self.route(slot).len();
+        if let Some(onto) = self.route(slot).get(next_leg).map(|l| l.index()) {
+            let v = &mut self.virtual_time[onto];
             *v = v.max(tag);
         }
         self.schedule_front(i, t0, t);
@@ -1100,7 +1429,7 @@ impl<'a> LtmNetwork<'a> {
         } else {
             self.record_link_bins(i, slot, front.enter, t);
             self.traversals[slot as usize].push(traversal(i, front.enter, t));
-            if next_leg < vehicle.route.len() {
+            if next_leg < route_len {
                 self.enter_from_link(slot, next_leg, t, room, t0);
             } else {
                 self.complete(slot, t, t0, completed);
@@ -1118,7 +1447,7 @@ impl<'a> LtmNetwork<'a> {
     fn enter_from_link(&mut self, slot: u32, leg: usize, t: f64, room: f64, t0: f64) {
         let s = slot as usize;
         let vehicle = self.vehicles[s];
-        let j = vehicle.route[leg].index();
+        let j = self.route(slot)[leg].index();
         let take = Self::part_taken(room, vehicle.pcu.get());
         let from = self.parts[s].front().expect("a vehicle on a link has parts").0 as usize;
         self.curves[j].record_in(Pcu(take));
@@ -1148,9 +1477,8 @@ impl<'a> LtmNetwork<'a> {
         t0: f64,
     ) {
         let s = slot as usize;
-        let vehicle = self.vehicles[s];
-        let pcu = vehicle.pcu.get();
-        let j = vehicle.route[leg].index();
+        let pcu = self.vehicles[s].pcu.get();
+        let j = self.route(slot)[leg].index();
         if leg == 0 {
             // Out of the origin queue and onto the first link: the wait is the cost of
             // setting out then (S170).
@@ -1318,15 +1646,121 @@ impl<'a> LtmNetwork<'a> {
     /// Hold a queue: retry at a known time, or park until `blocked.link`
     /// releases room or its upstream end.
     fn block(&mut self, queue: usize, blocked: Blocked, t: f64, t0: f64) {
+        if queue < self.links && self.rerouting.is_some() {
+            self.offer_reroute(queue, t);
+        }
         if let Some(at) = blocked.retry_at {
             if at > t + TIME_EPSILON {
                 return self.schedule_front(queue, t0, at);
             }
         }
+        if self.parked_on[queue] != NONE {
+            self.unpark(queue);
+        }
         let l = blocked.link;
         self.next_parked[queue] = self.first_parked[l];
         self.first_parked[l] = queue_u32(queue);
         self.parked_on[queue] = link_u32(l);
+    }
+
+    /// Take a parked queue off the list it is parked on.
+    fn unpark(&mut self, queue: usize) {
+        let l = self.parked_on[queue] as usize;
+        let q = queue_u32(queue);
+        if self.first_parked[l] == q {
+            self.first_parked[l] = self.next_parked[queue];
+        } else {
+            let mut at = self.first_parked[l];
+            while at != NONE {
+                let next = self.next_parked[at as usize];
+                if next == q {
+                    self.next_parked[at as usize] = self.next_parked[queue];
+                    break;
+                }
+                at = next;
+            }
+        }
+        self.next_parked[queue] = NONE;
+        self.parked_on[queue] = NONE;
+    }
+
+    /// Link `i`'s front vehicle, blocked (for room, or giving way; parked or waiting for room
+    /// already released to be heard): if it has waited long enough since it reached the end of
+    /// the link, and may still re-route, it is due an offer, served right after the event being
+    /// processed; if not yet, its timer is set for when it will have. A timer that fires finds
+    /// the front again: the same vehicle still waiting, or another to time afresh.
+    fn offer_reroute(&mut self, i: usize, t: f64) {
+        let Some(front) = self.queues[i].front().copied() else { return };
+        let n = self.links;
+        let Some(r) = self.rerouting.as_mut() else { return };
+        let slot = front.slot as usize;
+        if r.count[slot] >= r.rule.max {
+            return;
+        }
+        let due = front.ready.max(r.last_offer[slot]) + r.rule.after_s;
+        if due <= t + TIME_EPSILON {
+            r.pending.push(queue_u32(i));
+        } else {
+            self.events.schedule(Event { time: due, tag: due, queue: queue_u32(4 * n + i) });
+        }
+    }
+
+    /// Offer every link front due one a new route, in the order they became due (S213).
+    fn serve_reroutes(&mut self, t0: f64, rr: &mut dyn Reroute) {
+        let Some(pending) = self.rerouting.as_mut().map(|r| std::mem::take(&mut r.pending)) else {
+            return;
+        };
+        let t = self.clock;
+        for i in pending {
+            let i = i as usize;
+            let Some(front) = self.queues[i].front().copied() else { continue };
+            let slot = front.slot as usize;
+            let leg = front.leg as usize;
+            let planned: Vec<LinkId> = self.route(front.slot)[leg + 1..].to_vec();
+            if planned.is_empty() {
+                continue;
+            }
+            let vehicle = self.vehicles[slot].id;
+            let answer = rr.reroute(vehicle, LinkId::from_index(i), &planned, t, &*self);
+            let net = self.network;
+            let end = net.link_to(*planned.last().expect("not empty"));
+            let accepted = answer.filter(|rest| {
+                rest.first().is_some_and(|&f| f != planned[0])
+                    && rest.last().is_some_and(|&l| net.link_to(l) == end)
+            });
+            let r = self.rerouting.as_mut().expect("rerouting is on");
+            r.last_offer[slot] = t;
+            let Some(rest) = accepted else {
+                let due = t + r.rule.after_s;
+                let n = self.links;
+                self.events.schedule(Event { time: due, tag: due, queue: queue_u32(4 * n + i) });
+                continue;
+            };
+            let mut whole: Vec<LinkId> = Vec::with_capacity(leg + 1 + rest.len());
+            whole.extend_from_slice(&self.route(front.slot)[..=leg]);
+            whole.extend_from_slice(&rest);
+            let r = self.rerouting.as_mut().expect("rerouting is on");
+            match r.route_of[slot] {
+                NONE => {
+                    r.route_of[slot] =
+                        u32::try_from(r.routes.len()).expect("fewer reroutes than u32");
+                    r.routes.push(whole.into_boxed_slice());
+                }
+                k => r.routes[k as usize] = whole.into_boxed_slice(),
+            }
+            r.count[slot] += 1;
+            r.records.push(RerouteRecord {
+                vehicle,
+                second: t,
+                link: LinkId::from_index(i),
+                planned_next: planned[0],
+                new_next: rest[0],
+            });
+            if self.parked_on[i] != NONE {
+                self.unpark(i);
+            }
+            self.schedule_front(i, t0, t);
+        }
     }
 
     /// Room has been heard on link `l`, or its upstream end has cleared:
@@ -1339,6 +1773,23 @@ impl<'a> LtmNetwork<'a> {
             self.parked_on[q] = NONE;
             self.schedule_front(q, t0, at);
         }
+    }
+}
+
+impl LiveTimes for LtmNetwork<'_> {
+    fn live_seconds(&self, link: LinkId) -> f64 {
+        let i = link.index();
+        let free = self.travel[i] + self.stop_delay[i];
+        let rate = self.discharge_rate[i];
+        let on = (self.curves[i].cumulative_in() - self.curves[i].cumulative_out()).get();
+        // What is on the link beyond what moves freely at capacity is queued; it clears at the
+        // discharge rate.
+        let queued = ((on - rate * self.travel[i]).max(0.0) / rate).max(0.0);
+        let blocked = match (self.front_waits_on(i), self.queues[i].front()) {
+            (Some(_), Some(front)) => (self.clock - front.ready).max(0.0),
+            _ => 0.0,
+        };
+        free + queued + blocked
     }
 }
 
@@ -1462,19 +1913,22 @@ pub fn run_ltm_chained(
     step: Duration,
     level: FidelityLevel,
     recording: Recording,
+    rules: Rules,
+    rerouter: Option<&mut dyn Reroute>,
 ) -> LtmOutput {
     let recording = match recording {
         Recording::Trajectories => None,
         Recording::Bins(b) => Some((b, false)),
         Recording::BinsAndEntry(b) => Some((b, true)),
     };
-    let (trajectories, bins) =
-        run_ltm_inner_chained(network, turns, vehicles, chains, window, step, level, recording);
+    let (trajectories, bins, lock, reroutes) = run_ltm_inner_chained(
+        network, turns, vehicles, chains, window, step, level, recording, rules, rerouter,
+    );
     let (link_bins, entry) = match bins {
         Some((b, e)) => (Some(b), e),
         None => (None, None),
     };
-    LtmOutput { trajectories, link_bins, entry }
+    LtmOutput { trajectories, link_bins, entry, lock, reroutes }
 }
 
 fn run_ltm_inner(
@@ -1486,8 +1940,24 @@ fn run_ltm_inner(
     level: FidelityLevel,
     recording: Option<(u32, bool)>,
 ) -> (Vec<Trajectory>, Option<(LinkBins, Option<EntryTables>)>) {
-    run_ltm_inner_chained(network, turns, vehicles, &[], window, step, level, recording)
+    let (done, bins, _, _) = run_ltm_inner_chained(
+        network,
+        turns,
+        vehicles,
+        &[],
+        window,
+        step,
+        level,
+        recording,
+        Rules::default(),
+        None,
+    );
+    (done, bins)
 }
+
+/// What a loading leaves: the trajectories, the per-link results, the lock report, the reroutes.
+type Inner =
+    (Vec<Trajectory>, Option<(LinkBins, Option<EntryTables>)>, LockReport, Vec<RerouteRecord>);
 
 #[allow(clippy::too_many_arguments, reason = "the loading's inputs")]
 fn run_ltm_inner_chained(
@@ -1499,7 +1969,9 @@ fn run_ltm_inner_chained(
     step: Duration,
     level: FidelityLevel,
     recording: Option<(u32, bool)>,
-) -> (Vec<Trajectory>, Option<(LinkBins, Option<EntryTables>)>) {
+    rules: Rules,
+    mut rerouter: Option<&mut dyn Reroute>,
+) -> Inner {
     assert!(step.get() > 0.0, "the loading step must be positive, got {step:?}");
     #[allow(
         clippy::cast_possible_truncation,
@@ -1509,6 +1981,12 @@ fn run_ltm_inner_chained(
     let n_steps = (window.get() / step.get()).ceil().max(0.0) as usize;
 
     let mut sim = LtmNetwork::new(network, turns).with_level(level);
+    if rules.priority {
+        sim = sim.with_priority();
+    }
+    if let (Some(rule), true) = (rules.reroute, rerouter.is_some()) {
+        sim = sim.with_rerouting(rule);
+    }
     // `recording`: the bin length, and whether to also file by entry time (S170).
     let entry_bins = recording.is_some_and(|(_, entry)| entry);
     if let Some((bin_seconds, entry)) = recording {
@@ -1552,13 +2030,18 @@ fn run_ltm_inner_chained(
     }
     let mut completed = Vec::new();
     for _ in 0..n_steps {
-        completed.extend(sim.step(step));
+        completed.extend(match rerouter.as_deref_mut() {
+            Some(rr) => sim.step_rerouting(step, rr),
+            None => sim.step(step),
+        });
     }
     completed.retain(|t| Duration::from_clock(t.arrival()) <= window);
     if entry_bins {
         sim.record_unfinished(window.get());
     }
-    (completed, sim.take_link_bins_with_entry())
+    let lock = sim.lock_report();
+    let reroutes = sim.reroutes().to_vec();
+    (completed, sim.take_link_bins_with_entry(), lock, reroutes)
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@
 //! | [`route_cache`] | [`route_cache::RouteSetCache`] — generated route sets kept for the next run that asks for the same (S178) |
 //! | [`route_update`] | [`route_update::RouteUpdate`] — growing the route sets between iterations: `none` and `best_response` (S176) |
 //! | [`route_choice`] | [`route_choice::RouteChoices`] — which route each trip takes, from its pair's route set and a choice model (S169) |
+//! | [`loading_rules`] | [`loading_rules::LoadingOptions`] — the loading's rules by name: priority at merges, en-route rerouting (S213) |
 //! | [`identity`] | [`identity::RunDescription`] — a run's master seed and fingerprint, made before it executes (S168) |
 //! | [`transit`] | [`transit::TransitSetup`] — a timetable linked to the walk and bike layers: stop hubs, walks, RAPTOR (S199) |
 //! | [`parking`] | [`parking::ParkingSetup`] — parkings as hubs on the layers, and how full they are over the day (M4) |
@@ -40,7 +41,9 @@ pub mod itinerary;
 pub mod itinerary_choice;
 pub mod layers;
 pub mod link_times;
+pub mod loading_rules;
 pub mod parking;
+mod reroute;
 pub mod route_cache;
 pub mod route_choice;
 pub mod route_update;
@@ -54,6 +57,7 @@ pub use itinerary::{Itinerary, LegRoute, Networks};
 pub use itinerary_choice::{ATTRIBUTES, ItineraryResult, NO_MODE, NO_PARKING};
 pub use layers::{LayerSetup, ModeDefaults, StaticLayers};
 pub use link_times::{LinkTimes, relative_time_change};
+pub use loading_rules::LoadingOptions;
 pub use parking::{
     ParkingBins, ParkingDefaults, ParkingError, ParkingResult, ParkingSetup, ParkingSetupReport,
 };

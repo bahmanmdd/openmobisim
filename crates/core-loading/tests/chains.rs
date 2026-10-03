@@ -19,7 +19,7 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    Chain, FidelityLevel, Recording, Trajectory, Vehicle, run_ltm_chained,
+    Chain, FidelityLevel, Recording, Rules, Trajectory, Vehicle, run_ltm_chained,
 };
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
@@ -56,6 +56,8 @@ fn load(net: &RoadNetwork, vehicles: &[Vehicle], chains: &[Chain], window: f64) 
         Duration(300.0),
         FidelityLevel::Full,
         Recording::Trajectories,
+        Rules::default(),
+        None,
     )
     .trajectories
 }

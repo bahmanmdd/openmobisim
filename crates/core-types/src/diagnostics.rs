@@ -152,6 +152,9 @@ pub mod codes {
     pub const NO_FEASIBLE_PATH: DiagCode = DiagCode("no_feasible_path");
     /// Per-element diagnostic detail was capped; see [`super::MAX_ELEMENTS_PER_CODE`].
     pub const DIAGNOSTIC_DETAIL_TRUNCATED: DiagCode = DiagCode("diagnostic_detail_truncated");
+    /// Vehicles stood in a closed loop of links waiting on one another when the loading ended
+    /// (gridlock, S213): one per loop, about the loop's first link.
+    pub const GRIDLOCK: DiagCode = DiagCode("gridlock");
 }
 
 /// Which element a diagnostic is about, or none.

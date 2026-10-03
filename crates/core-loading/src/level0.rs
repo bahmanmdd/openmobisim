@@ -40,9 +40,9 @@ pub struct Trajectory {
     /// When the vehicle was scheduled to depart. Its first link's entry can be
     /// later, if it waited at the origin for room (levels 2–4).
     pub departure: Second,
-    /// One entry per link of the vehicle's route, in route order. Never
-    /// empty: [`Vehicle::route`] is never empty, and this has one entry per
-    /// route link.
+    /// One entry per link of the route the vehicle followed, in order: its route, or, if it
+    /// re-routed on the way (S213), the links it actually took — its **realised route**. Never
+    /// empty: [`Vehicle::route`] is never empty.
     pub links: Vec<LinkTraversal>,
 }
 

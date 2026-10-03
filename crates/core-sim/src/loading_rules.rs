@@ -1,0 +1,130 @@
+//! What the link transmission model does at junctions and for vehicles that are stuck (S213),
+//! by name: priority by road hierarchy at merges, and en-route rerouting.
+//!
+//! Both are remedies for gridlock: a merge that shares room in a fixed ratio lets traffic on a
+//! closed loop destroy itself, and vehicles that never leave their route cannot get out of it
+//! (Daganzo 1996, *The nature of freeway gridlock and how to prevent it*); priority to the major
+//! stream prevents the first, drivers who change course escape the second.
+
+use std::collections::BTreeMap;
+
+/// The loading's rules, each with an uncalibrated default (S202).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LoadingOptions {
+    /// Priority by road hierarchy at unsignalised merges
+    /// ([`openmobisim_core_loading::LtmNetwork::with_priority`]): a vehicle gives way to a
+    /// higher-priority approach's front vehicle bound for the same link, and departures to every
+    /// approach. *Off while it is measured (S213).*
+    pub priority: bool,
+    /// En-route rerouting: a vehicle stuck at the front of its link re-routes from where it is.
+    /// *Off while it is measured (S213).*
+    pub reroute: bool,
+    /// How long a vehicle waits at the front of its link, blocked, before it re-routes, in
+    /// seconds.
+    ///
+    /// *Uncalibrated: 300 s. MATSim's stuck time, the nearest device, ranges from 10 s (its
+    /// default) to 3 600 s in its own examples; Olmos et al. (2018) re-route after 120 s.
+    /// CITATION OWED (observed diversion under congestion).*
+    pub reroute_after_s: f64,
+    /// The most times one trip re-routes.
+    ///
+    /// *Uncalibrated: 3, to keep a vehicle from wandering.*
+    pub reroute_max: u32,
+    /// How much faster the new route must be, by the costs the vehicle sees, than the rest of
+    /// its current one, as a share.
+    ///
+    /// *Uncalibrated: 0.1. CITATION OWED (diversion thresholds in route-guidance studies).*
+    pub reroute_min_gain: f64,
+}
+
+impl LoadingOptions {
+    /// The shipped values.
+    pub const SHIPPED: LoadingOptions = LoadingOptions {
+        priority: false,
+        reroute: false,
+        reroute_after_s: 300.0,
+        reroute_max: 3,
+        reroute_min_gain: 0.1,
+    };
+
+    /// The names of the options.
+    pub const NAMES: [&'static str; 5] =
+        ["priority", "reroute", "reroute_after_s", "reroute_max", "reroute_min_gain"];
+
+    /// The shipped values with `options` in place of their namesakes. `priority` and `reroute`
+    /// are 0 or 1.
+    ///
+    /// # Errors
+    ///
+    /// The name and the list of known names for an unknown option; the reason for a value out
+    /// of range.
+    pub fn from_options(options: &BTreeMap<String, f64>) -> Result<Self, String> {
+        let mut d = Self::SHIPPED;
+        #[allow(clippy::float_cmp, reason = "a flag given as exactly 0 or 1")]
+        let flag = |name: &str, v: f64| -> Result<bool, String> {
+            if v == 0.0 || v == 1.0 {
+                Ok(v == 1.0)
+            } else {
+                Err(format!("loading_options {name:?} must be 0 or 1, got {v}"))
+            }
+        };
+        for (name, &v) in options {
+            match name.as_str() {
+                "priority" => d.priority = flag(name, v)?,
+                "reroute" => d.reroute = flag(name, v)?,
+                "reroute_after_s" => {
+                    if v.is_nan() || v < 0.0 || v.is_infinite() {
+                        return Err(format!(
+                            "loading_options \"reroute_after_s\" must be a finite number of \
+                             seconds, at least 0, got {v}"
+                        ));
+                    }
+                    d.reroute_after_s = v;
+                }
+                "reroute_max" => {
+                    if !(v.fract() == 0.0 && (0.0..=255.0).contains(&v)) {
+                        return Err(format!(
+                            "loading_options \"reroute_max\" must be a whole number from 0 to \
+                             255, got {v}"
+                        ));
+                    }
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        reason = "checked to be a small whole number"
+                    )]
+                    let n = v as u32;
+                    d.reroute_max = n;
+                }
+                "reroute_min_gain" => {
+                    if !(0.0..1.0).contains(&v) {
+                        return Err(format!(
+                            "loading_options \"reroute_min_gain\" must be from 0 to below 1, \
+                             got {v}"
+                        ));
+                    }
+                    d.reroute_min_gain = v;
+                }
+                _ => {
+                    return Err(format!(
+                        "loading_options has no {name:?}; the options are: {}",
+                        Self::NAMES.join(", ")
+                    ));
+                }
+            }
+        }
+        Ok(d)
+    }
+
+    /// Whether any rule is on: off means absent from the run's fingerprint.
+    #[must_use]
+    pub fn any(&self) -> bool {
+        self.priority || self.reroute
+    }
+}
+
+impl Default for LoadingOptions {
+    fn default() -> Self {
+        Self::SHIPPED
+    }
+}

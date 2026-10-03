@@ -133,6 +133,8 @@ pub struct IterationReport {
     /// [`Equilibration::itinerary_gap_sample`]); 0 at the last iteration, which plans every
     /// trip in full.
     pub itinerary_recosted: u32,
+    /// How many times vehicles re-routed en route in this loading (S213); 0 without rerouting.
+    pub reroutes: u32,
     /// **The hub expectation mismatch** (design §11.2; M4): per traveller who parked,
     /// the mean absolute difference between the parking time expected at the choice
     /// and the one paid, in seconds; `NaN` without parkings.
@@ -217,6 +219,7 @@ impl PartialEq for IterationReport {
             && floats(self) == floats(other)
             && self.itinerary_gap.map(f64::to_bits) == other.itinerary_gap.map(f64::to_bits)
             && self.itinerary_recosted == other.itinerary_recosted
+            && self.reroutes == other.reroutes
     }
 }
 
@@ -252,6 +255,7 @@ impl IterationReport {
             route_searches: 0,
             itinerary_gap: [f64::NAN; Mode::COUNT],
             itinerary_recosted: 0,
+            reroutes: 0,
             hub_mismatch_s: f64::NAN,
             mode_changed_share: f64::NAN,
         }

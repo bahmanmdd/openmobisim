@@ -29,9 +29,9 @@ use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    Chain, EntryTables, FidelityLevel, LinkBins, Recording, Trajectory, Vehicle,
-    load_level_0_binned, load_level_0_recorded, load_timed_binned, run_ltm_binned, run_ltm_chained,
-    run_ltm_recorded, traverse_free_flow, traverse_timed,
+    Chain, EntryTables, FidelityLevel, LinkBins, LockReport, Recording, Reroute, RerouteRecord,
+    RerouteRule, Rules, Trajectory, Vehicle, load_level_0_binned, load_level_0_recorded,
+    load_timed_binned, run_ltm_chained, traverse_free_flow, traverse_timed,
 };
 use openmobisim_core_routes::{
     Demand, NodeSnapper, RouteKey, RouteSetGenerator, RouteSets, TripDemand, default_generator,
@@ -53,9 +53,11 @@ use crate::itinerary_choice::{
 };
 use crate::layers::{ModeDefaults, StaticLayers, StaticRoute, StaticRoutes, static_layer_of};
 use crate::link_times::{LinkTimes, relative_time_change};
+use crate::loading_rules::LoadingOptions;
 use crate::parking::{
     self as parking_mod, ExpectedAvailability, ParkingEvent, ParkingResult, ParkingSetup,
 };
+use crate::reroute::Rerouter;
 use crate::route_cache::{RouteSetCache, generation_key};
 use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext};
@@ -246,6 +248,18 @@ pub struct RunResult {
     pub parking: Option<ParkingResult>,
     /// Each itinerary trip's choice and how it went (M4), if the run has any.
     pub itineraries: Option<ItineraryResult>,
+    /// What stood still when the last loading's window ended (S213): the vehicles that did not
+    /// finish, where they are, and the closed loops of links waiting on one another, with the
+    /// check on the loading's guarantee ([`LockReport::room_waits_with_room`], always 0).
+    /// `None` at level 0, where nothing waits.
+    pub gridlock: Option<LockReport>,
+    /// Every reroute of the last loading (S213), in the order they happened; a car's vehicle id
+    /// is its trip's index. Empty without rerouting.
+    pub reroutes: Vec<RerouteRecord>,
+    /// The **realised route** of each trip that re-routed in the last loading and arrived, by
+    /// trip: the links it took. Every other trip followed its planned route (its route choice);
+    /// nothing is kept for those.
+    pub routes_realised: Vec<(TripId, Vec<LinkId>)>,
 }
 
 /// How one loading is made besides the routes it follows.
@@ -279,6 +293,11 @@ struct Loaded {
     availability: Option<Vec<f64>>,
     /// How the itineraries went.
     itinerary: ItineraryTally,
+    /// What stood still when the window ended (the link transmission model only).
+    gridlock: Option<LockReport>,
+    /// Every reroute (S213), and the realised routes of the trips that re-routed and arrived.
+    reroutes: Vec<RerouteRecord>,
+    routes_realised: Vec<(TripId, Vec<LinkId>)>,
 }
 
 /// How the itinerary trips of a loading went.
@@ -392,6 +411,7 @@ pub struct Run {
     mode_choice: Option<Vec<Mode>>,
     /// How long a walk or ride mode choice offers (S209): the shipped values, by default.
     mode_defaults: ModeDefaults,
+    loading: LoadingOptions,
 }
 
 /// The share above the best route's expected time beyond which a route is not offered to a
@@ -434,6 +454,7 @@ impl Run {
             parking: None,
             mode_choice: None,
             mode_defaults: ModeDefaults::SHIPPED,
+            loading: LoadingOptions::SHIPPED,
         }
     }
 
@@ -484,6 +505,15 @@ impl Run {
             }
             _ => self.mode_choice = Some(modes),
         }
+        self
+    }
+
+    /// The same run, its loading applying `options` (S213): priority at merges, en-route
+    /// rerouting. Only the link transmission model has junctions and queues; level 0 ignores
+    /// them.
+    #[must_use]
+    pub fn with_loading_options(mut self, options: LoadingOptions) -> Self {
+        self.loading = options;
         self
     }
 
@@ -625,6 +655,7 @@ impl Run {
             parking: self.parking.as_deref(),
             mode_choice: self.mode_choice.as_deref(),
             mode_defaults: &self.mode_defaults,
+            loading: &self.loading,
         })
     }
 
@@ -887,6 +918,8 @@ impl Run {
         // The first loadings may be made with the point-queue model, which cannot gridlock (S178);
         // the last, the run's result, never is.
         let warmup = strategy.warmup_iterations().min(max_iterations - 1);
+        // The link times the last loading produced: what a vehicle that re-routes knows (S213).
+        let mut expected_times: Option<LinkTimes> = None;
         for iteration in 0..max_iterations {
             let mut iteration_diagnostics = Diagnostics::new();
             let loaded = self.load_once(
@@ -900,6 +933,7 @@ impl Run {
                     level_override: (iteration < warmup).then_some(FidelityLevel::PointQueue),
                 },
                 itineraries.as_ref().zip(chosen.as_ref()),
+                (&car_ctx, expected_times.as_ref()),
                 &mut iteration_diagnostics,
             );
             let mut report = IterationReport::unmeasured(iteration);
@@ -909,6 +943,7 @@ impl Run {
             report.total_travel_time_s = loaded.total_travel_time.get();
             report.completed = loaded.completion.completed;
             report.truncated = loaded.completion.truncated;
+            report.reroutes = u32::try_from(loaded.reroutes.len()).unwrap_or(u32::MAX);
             report.hub_mismatch_s = loaded.parking.as_ref().map_or(f64::NAN, |p| p.mismatch_s);
             let mut pending_chosen: Option<Chosen> = None;
             if let (Some(before), Some(now)) = (&previous_bins, &loaded.entry_bins) {
@@ -1059,6 +1094,7 @@ impl Run {
             if pending_chosen.is_some() {
                 chosen = pending_chosen;
             }
+            expected_times = times_now;
         }
 
         let (loaded, iteration_diagnostics) = last.expect("at least one iteration ran");
@@ -1112,6 +1148,9 @@ impl Run {
             transit,
             parking: loaded.parking,
             itineraries: itinerary_result,
+            gridlock: loaded.gridlock,
+            reroutes: loaded.reroutes,
+            routes_realised: loaded.routes_realised,
         })
     }
 
@@ -1126,6 +1165,7 @@ impl Run {
         static_routes: &StaticRoutes,
         plan: LoadPlan,
         itin: Option<(&Itineraries, &Chosen)>,
+        (car_ctx, expected): (&SearchContext<'_>, Option<&LinkTimes>),
         diagnostics: &mut Diagnostics,
     ) -> Loaded {
         let LoadPlan { record_bins, want_entry, level_override } = plan;
@@ -1162,6 +1202,9 @@ impl Run {
         let mut level0_vehicles: Vec<Vehicle> = Vec::new();
         let mut link_bins: Option<LinkBins> = None;
         let mut entry_bins: Option<EntryTables> = None;
+        let mut gridlock: Option<LockReport> = None;
+        let mut reroutes: Vec<RerouteRecord> = Vec::new();
+        let mut routes_realised: Vec<(TripId, Vec<LinkId>)> = Vec::new();
         // Bike and walk vehicles, kept to be binned per layer when asked.
         let mut layer_vehicles: [Vec<Vehicle>; 2] = [Vec::new(), Vec::new()];
         // Itinerary trips (M4), executed once the loading has made the day's times; the
@@ -1454,79 +1497,71 @@ impl Run {
                 pending_ltm.iter().map(|(_, vehicle, _)| vehicle.clone()).collect();
             vehicles.extend(itin_cars.iter().map(|(_, v)| v.clone()));
             let window = Duration::from_clock(self.window);
-            let (trajectories, bins, entry) = if let Some(load) = &bus_load {
-                let cars = vehicles.len();
+            // Buses (S199) ride chained from stop to stop; cars alone have no chains. One loading
+            // either way (the same loading as `run_ltm_recorded` and its kin when there are none).
+            let cars = vehicles.len();
+            let mut chains: Vec<Chain> = Vec::new();
+            if let Some(load) = &bus_load {
                 vehicles.extend(load.vehicles.iter().cloned());
-                let chains: Vec<Chain> = load
-                    .chains
-                    .iter()
-                    .map(|&(v, a, wait, not_before)| Chain {
-                        vehicle: cars + v,
-                        after: cars + a,
-                        wait,
-                        not_before,
-                    })
-                    .collect();
-                let recording = match record_bins {
-                    Some(b) if want_entry => Recording::BinsAndEntry(b),
-                    Some(b) => Recording::Bins(b),
-                    None => Recording::Trajectories,
-                };
-                let out = run_ltm_chained(
-                    &self.network,
-                    turns,
-                    &vehicles,
-                    &chains,
-                    window,
-                    *step,
-                    *level,
-                    recording,
-                );
-                (out.trajectories, out.link_bins, out.entry)
-            } else {
-                match record_bins {
-                    Some(bin_seconds) if want_entry => {
-                        let (t, b, e) = run_ltm_recorded(
-                            &self.network,
-                            turns,
-                            &vehicles,
-                            window,
-                            *step,
-                            *level,
-                            bin_seconds,
-                        );
-                        (t, Some(b), Some(e))
-                    }
-                    Some(bin_seconds) => {
-                        let (t, b) = run_ltm_binned(
-                            &self.network,
-                            turns,
-                            &vehicles,
-                            window,
-                            *step,
-                            *level,
-                            bin_seconds,
-                        );
-                        (t, Some(b), None)
-                    }
-                    None => (
-                        openmobisim_core_loading::run_ltm(
-                            &self.network,
-                            turns,
-                            &vehicles,
-                            window,
-                            *step,
-                            *level,
-                        ),
-                        None,
-                        None,
-                    ),
-                }
+                chains.extend(load.chains.iter().map(|&(v, a, wait, not_before)| Chain {
+                    vehicle: cars + v,
+                    after: cars + a,
+                    wait,
+                    not_before,
+                }));
+            }
+            let recording = match record_bins {
+                Some(b) if want_entry => Recording::BinsAndEntry(b),
+                Some(b) => Recording::Bins(b),
+                None => Recording::Trajectories,
             };
+            let o = self.loading;
+            let rules = Rules {
+                priority: o.priority,
+                reroute: o.reroute.then(|| RerouteRule {
+                    after_s: o.reroute_after_s,
+                    max: u8::try_from(o.reroute_max).unwrap_or(u8::MAX),
+                }),
+            };
+            let mut rerouter = o.reroute.then(|| Rerouter::new(car_ctx, expected, &o, total_trips));
+            let out = run_ltm_chained(
+                &self.network,
+                turns,
+                &vehicles,
+                &chains,
+                window,
+                *step,
+                *level,
+                recording,
+                rules,
+                rerouter.as_mut().map(|r| r as &mut dyn Reroute),
+            );
+            reroutes = out.reroutes;
+            let (trajectories, bins, entry) = (out.trajectories, out.link_bins, out.entry);
+            for cycle in &out.lock.loops {
+                diagnostics.record(DiagKey::new(
+                    Category::Modelling,
+                    codes::GRIDLOCK,
+                    Severity::Warning,
+                    ElementRef::of(cycle[0]),
+                ));
+            }
+            gridlock = Some(out.lock);
             link_bins = bins;
             entry_bins = entry;
             let by_vehicle: HashMap<VehicleId, _> =
                 trajectories.into_iter().map(|t| (t.vehicle, t)).collect();
+            // The realised route of each trip that re-routed and arrived: its trajectory's links
+            // (a car's vehicle id is its trip's index). The others followed their plan (S213).
+            let mut seen: Vec<VehicleId> = reroutes.iter().map(|r| r.vehicle).collect();
+            seen.sort_unstable();
+            seen.dedup();
+            for v in seen {
+                if let Some(t) = by_vehicle.get(&v) {
+                    let links = t.links.iter().map(|x| x.link).collect();
+                    routes_realised.push((TripId::new(v.raw()), links));
+                }
+            }
             for (i, vehicle) in &itin_cars {
                 pending_itin[*i].vehicle_arrival =
                     by_vehicle.get(&vehicle.id).map(|t| f64::from(t.arrival().get()));
@@ -1705,6 +1740,9 @@ impl Run {
             parking: parking_result,
             availability: availability_real,
             itinerary,
+            gridlock,
+            reroutes,
+            routes_realised,
         }
     }
 
