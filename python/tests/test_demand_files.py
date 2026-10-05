@@ -143,7 +143,7 @@ def test_od_files_run_on_the_toy_network(tmp_path: Path) -> None:
         network=net,
         demand=tmp_path / "trips.csv",
         class_defaults={"default": (True, False, False)},
-        equilibration="none",
+        equilibration="free_flow",
         flow_level=0,
     ).run(run_id="od-toy")
     assert run.completion["completed"] == 10

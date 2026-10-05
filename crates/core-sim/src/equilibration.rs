@@ -1,8 +1,8 @@
 //! Equilibration: repeating choice and loading until the pattern settles (design
 //! §5, §11; S170).
 //!
-//! A run without it chooses every trip's route once, on free-flow costs, and loads
-//! the network once. With it the run **iterates**: load, read the link times the
+//! A run without it (`free_flow`) makes only the free-flow loading (below). With it the run
+//! **iterates** from there: load, read the link times the
 //! loading produced, let some travellers choose again on those times, load again.
 //! An [`Equilibration`] says how many times, who chooses again, and when to stop.
 //!
@@ -10,11 +10,11 @@
 //!
 //! | name | what it does |
 //! |---|---|
-//! | `none` (the default, [`DEFAULT_STRATEGY`]) | One choice, one loading: a run is what it was before iteration existed |
+//! | `free_flow` (the default, [`DEFAULT_STRATEGY`]) | The free-flow loading alone (below): one choice, built up in groups if asked, and one loading of everyone |
 //! | `msa` | The method of successive averages **in traveller form** (S86): at iteration `i` (from 1; iteration 0 is everyone's first choice) each traveller chooses again with probability `1/(i + 1)`, decided by a draw keyed on `(traveller, iteration)` from its own stream, so who moves does not depend on thread count or order; the others keep their route. In expectation the route flows are the average of the flows of every iteration so far, which is classical MSA with step `1/(i + 1)` |
 //!
-//! **The free-flow loading** (iteration 0, S223) is where every run starts, and all a run
-//! without equilibration does. Two options shape it, for either strategy:
+//! **The free-flow loading** (iteration 0, S223) is where every run starts, and all
+//! `free_flow` does. Two options shape it, for either strategy:
 //! - `increments` ([`Equilibration::increments`]): the travellers are split, by a keyed draw,
 //!   into this many groups of about equal size; the first group chooses on free-flow costs,
 //!   then the network is loaded with the groups so far and the next group chooses on the times
@@ -47,7 +47,7 @@ use openmobisim_core_demand::Mode;
 use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
 /// The strategy used unless another is asked for.
-pub const DEFAULT_STRATEGY: &str = "none";
+pub const DEFAULT_STRATEGY: &str = "free_flow";
 
 /// A strategy's options: numbers by name. Unknown names are an error.
 pub type Options = BTreeMap<String, f64>;
@@ -412,7 +412,7 @@ pub trait Equilibration: Send + Sync {
 /// One free-flow loading: everyone chooses once, in `increments` groups (S223), and the network
 /// is loaded once with everyone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NoEquilibration {
+pub struct FreeFlow {
     /// In how many groups the loading is built up (1 to [`MAX_INCREMENTS`]; see
     /// [`Equilibration::increments`]). 1 by default: everyone chooses at once on free flow.
     pub increments: u32,
@@ -421,21 +421,21 @@ pub struct NoEquilibration {
     pub warmup: u32,
 }
 
-impl Default for NoEquilibration {
+impl Default for FreeFlow {
     fn default() -> Self {
         Self { increments: 1, warmup: 0 }
     }
 }
 
-impl Equilibration for NoEquilibration {
+impl Equilibration for FreeFlow {
     fn name(&self) -> &str {
-        "none"
+        "free_flow"
     }
     fn descriptor(&self) -> String {
         if *self == Self::default() {
-            "none".to_string()
+            "free_flow".to_string()
         } else {
-            format!("none;increments={};warmup={}", self.increments, self.warmup)
+            format!("free_flow;increments={};warmup={}", self.increments, self.warmup)
         }
     }
     fn max_iterations(&self) -> u32 {
@@ -458,7 +458,7 @@ impl Equilibration for NoEquilibration {
     }
 }
 
-impl NoEquilibration {
+impl FreeFlow {
     const OPTIONS: [&'static str; 2] = ["increments", "warmup"];
 
     /// Make the strategy from its options, defaults for those not given.
@@ -468,12 +468,12 @@ impl NoEquilibration {
     /// [`EquilibrationError::UnknownOption`] for a name it does not have,
     /// [`EquilibrationError::BadOption`] for a value out of range.
     pub fn from_options(options: &Options) -> Result<Self, EquilibrationError> {
-        check_known("none", options, &Self::OPTIONS)?;
+        check_known("free_flow", options, &Self::OPTIONS)?;
         let mut m = Self::default();
         for (option, &v) in options {
             match option.as_str() {
-                "increments" => m.increments = whole("none", option, v, 1, MAX_INCREMENTS)?,
-                _ => m.warmup = whole("none", option, v, 0, MAX_ITERATIONS)?,
+                "increments" => m.increments = whole("free_flow", option, v, 1, MAX_INCREMENTS)?,
+                _ => m.warmup = whole("free_flow", option, v, 0, MAX_ITERATIONS)?,
             }
         }
         Ok(m)
@@ -689,11 +689,11 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// The built-in strategies: `none` and `msa`.
+    /// The built-in strategies: `free_flow` and `msa`.
     #[must_use]
     pub fn builtin() -> Self {
         let mut r = Self { strategies: Vec::new() };
-        r.register("none", |o| Ok(Box::new(NoEquilibration::from_options(o)?)));
+        r.register("free_flow", |o| Ok(Box::new(FreeFlow::from_options(o)?)));
         r.register("msa", |o| Ok(Box::new(Msa::from_options(o)?)));
         r
     }

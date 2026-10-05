@@ -31,7 +31,7 @@ type Row = (u32, &'static str, &'static str, f64);
 
 /// Every metric of a run, as `(iteration, mode, name, value)`.
 ///
-/// A run without equilibration has one iteration (given by the caller, as
+/// A `free_flow` run has one iteration (given by the caller, as
 /// before): the totals. A run that iterated (S170) has a row set per
 /// iteration: the total travel time and the completed and truncated trips of that
 /// loading, and what the iteration showed of the pattern settling

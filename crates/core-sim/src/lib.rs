@@ -52,7 +52,7 @@ pub mod run;
 pub mod timings;
 pub mod transit;
 
-pub use equilibration::{Equilibration, IterationReport, Msa, NoEquilibration};
+pub use equilibration::{Equilibration, FreeFlow, IterationReport, Msa};
 pub use events::{EventRow, EventType};
 pub use identity::RunDescription;
 pub use itinerary::{Itinerary, LegRoute, Networks};

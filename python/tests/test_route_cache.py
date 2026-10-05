@@ -24,7 +24,7 @@ def scenario(trips=200, **kwargs):
         "class_defaults": CAR,
         "window_hours": 1,
         "master_seed": 3,
-        "equilibration": "none",
+        "equilibration": "free_flow",
         "equilibration_options": {"increments": 1, "warmup": 0},
     }
     settings.update(kwargs)

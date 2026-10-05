@@ -425,7 +425,10 @@ class RouteChoices:
     def __len__(self) -> int: ...
 
 def equilibration_strategies() -> list[str]:
-    """The equilibration strategies that can be selected by name, the default (``"none"``) first."""
+    """The equilibration strategies that can be selected by name, the default first.
+
+    The default is ``"free_flow"``.
+    """
 
 def route_cache_clear() -> None:
     """Forget every route set the cache holds (the counters of :func:`route_cache_info` stay)."""
@@ -785,7 +788,7 @@ def run_pipeline(
     master_seed: int = 0,
     choice_model: str | object | None = None,
     choice_options: dict[str, float] | None = None,
-    equilibration: str = "none",
+    equilibration: str = "free_flow",
     equilibration_options: dict[str, float] | None = None,
     route_update: str = "none",
     route_update_options: dict[str, float] | None = None,
@@ -843,11 +846,11 @@ def run_pipeline(
         choice_options: A built-in model's options, numbers by name (for
             ``"logit"``, ``beta_<attribute>`` coefficients).
         equilibration: How choice and loading are repeated: a name from
-            :func:`equilibration_strategies` (``"none"``, the default, is one choice
-            and one loading; ``"msa"`` iterates).
-        equilibration_options: The strategy's options, numbers by name (for
-            ``"msa"``: ``iterations``, ``gap_tolerance``, ``gap_sample``, ``cost_bin_s``,
-            ``warmup``).
+            :func:`equilibration_strategies` (``"free_flow"``, the default, is the
+            free-flow loading alone; ``"msa"`` iterates from it).
+        equilibration_options: The strategy's options, numbers by name (for both:
+            ``increments``, ``warmup``; for ``"msa"`` also ``iterations``, ``gap_tolerance``,
+            ``gap_sample``, ``itinerary_gap_sample``, ``cost_bin_s``).
         route_update: How the route sets grow between iterations: a name from
             :func:`route_update_methods` (``"none"``, the default, leaves them as the method made
             them; ``"best_response"`` adds each pair's fastest route at the congested times).

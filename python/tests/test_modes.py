@@ -23,7 +23,7 @@ def toy_run(rows: list[tuple], run_id: str, **kwargs: object) -> ms.Run:
         transit=kwargs.pop("transit", ms.examples.toy_network_transit()),
         parkings=kwargs.pop("parkings", ms.examples.toy_network_parkings()),
         choice_model=kwargs.pop("choice_model", "deterministic"),
-        equilibration=kwargs.pop("equilibration", "none"),
+        equilibration=kwargs.pop("equilibration", "free_flow"),
         flow_level=kwargs.pop("flow_level", 0),
         **kwargs,
     ).run(run_id=run_id)

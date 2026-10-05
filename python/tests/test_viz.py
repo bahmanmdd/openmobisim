@@ -121,7 +121,7 @@ def pixels(fig):
 @pytest.mark.parametrize("theme", ["paper", "night"])
 def test_map_link_draws_a_figure_that_is_not_blank(theme):
     run, _ = toy_run()
-    fig = viz.map_link(run, theme=theme, size=(8, 4.5), dpi=80)
+    fig = viz.map_link(run, theme=theme, size_cm=(20.32, 11.43), dpi=80)
     image = pixels(fig)
     assert image.shape == (360, 640, 4)
     assert len(np.unique(image.reshape(-1, 4), axis=0)) > 20, "a real picture has many colours"
@@ -129,8 +129,8 @@ def test_map_link_draws_a_figure_that_is_not_blank(theme):
 
 def test_the_same_run_draws_the_same_picture():
     run, _ = toy_run()
-    a = png_bytes(viz.map_link(run, size=(8, 4.5), dpi=80))
-    b = png_bytes(viz.map_link(run, size=(8, 4.5), dpi=80))
+    a = png_bytes(viz.map_link(run, size_cm=(20.32, 11.43), dpi=80))
+    b = png_bytes(viz.map_link(run, size_cm=(20.32, 11.43), dpi=80))
     assert a == b
 
 
@@ -142,12 +142,14 @@ def test_map_link_takes_bins_views_and_a_path(tmp_path):
         bins=(0, 4),
         colour="volume",
         view=((4.79, 45.69), (4.82, 45.71)),
-        size=(6, 3.5),
+        size_cm=(15.24, 8.89),
         dpi=60,
         path=str(out),
     )
     assert out.stat().st_size > 1000
-    viz.map_link(run, bins=2, size=(6, 3.5), dpi=60, chevrons=False, scale=1.0, note="a note")
+    viz.map_link(
+        run, bins=2, size_cm=(15.24, 8.89), dpi=60, chevrons=False, scale=1.0, note="a note"
+    )
 
 
 def test_map_link_says_what_is_missing_and_what_is_unknown():
@@ -180,10 +182,10 @@ def test_congestion_shows_only_where_vehicles_interact():
 
 def test_demand_figures_are_drawn(tmp_path):
     _, rows = toy_run()
-    fig = viz.map_demand(rows, cell_m=100.0, size=(8, 4.5), dpi=60)
+    fig = viz.map_demand(rows, cell_m=100.0, size_cm=(20.32, 11.43), dpi=60)
     assert len(np.unique(pixels(fig).reshape(-1, 4), axis=0)) > 20
     fig = viz.chart_demand_matrix(
-        rows, cell_m=100.0, top=6, size=(8, 4.5), dpi=60, path=str(tmp_path / "matrix.png")
+        rows, cell_m=100.0, top=6, size_cm=(20.32, 11.43), dpi=60, path=str(tmp_path / "matrix.png")
     )
     assert (tmp_path / "matrix.png").stat().st_size > 1000
     with pytest.raises(ValueError, match="no trips"):
@@ -254,7 +256,7 @@ def test_a_link_with_almost_no_traffic_is_still_drawn():
     run = ms.Scenario.from_parts(
         net, rows, class_defaults=CAR, window_hours=2, flow_level=4, link_bin_s=3600
     ).run("one-car")
-    kwargs = {"size": (6, 3.4), "dpi": 60, "chevrons": False}
+    kwargs = {"size_cm": (15.24, 8.64), "dpi": 60, "chevrons": False}
     shown = pixels(viz.map_link(run, **kwargs))
     hidden = pixels(viz.map_link(run, min_volume=1e9, **kwargs))
     assert (shown != hidden).any(), "one car an hour must still show as a line"
@@ -262,7 +264,7 @@ def test_a_link_with_almost_no_traffic_is_still_drawn():
 
 def test_volume_over_capacity_and_the_first_ramp_are_available():
     run, _ = toy_run()
-    kwargs = {"size": (6, 3.4), "dpi": 60}
+    kwargs = {"size_cm": (15.24, 8.64), "dpi": 60}
     vc = pixels(viz.map_link(run, colour="volume_capacity", **kwargs))
     delay = pixels(viz.map_link(run, colour="delay", **kwargs))
     ember = pixels(viz.map_link(run, ramp="ember", **kwargs))
@@ -273,7 +275,7 @@ def test_volume_over_capacity_and_the_first_ramp_are_available():
 
 def test_the_logo_and_the_credit_are_optional_and_never_a_copyright_claim():
     run, _ = toy_run()
-    kwargs = {"size": (8, 4.5), "dpi": 60}
+    kwargs = {"size_cm": (20.32, 11.43), "dpi": 60}
     plain = viz.map_link(run, **kwargs)
     no_logo = viz.map_link(run, logo=False, **kwargs)
     credited = viz.map_link(run, credit="Ada Lovelace, Analytical Engines", **kwargs)
@@ -286,7 +288,7 @@ def test_the_logo_and_the_credit_are_optional_and_never_a_copyright_claim():
 
 def test_a_small_page_keeps_its_proportions():
     run, _ = toy_run()
-    small = viz.map_link(run, size=(4.0, 2.4), dpi=100)
+    small = viz.map_link(run, size_cm=(10.16, 6.1), dpi=100)
     image = pixels(small)
     assert image.shape == (240, 400, 4)
     assert len(np.unique(image.reshape(-1, 4), axis=0)) > 20
@@ -298,7 +300,7 @@ def test_maps_carry_a_north_arrow_and_a_distance_scale_that_is_true():
     import re
 
     run, _ = toy_run()
-    fig = viz.map_link(run, size=(8, 4.5), dpi=60)
+    fig = viz.map_link(run, size_cm=(20.32, 11.43), dpi=60)
     words = [t.get_text() for t in fig.texts]
     scale = [w for w in words if re.fullmatch(r"\d+(\.\d+)? (m|km)", w)]
     assert "N" in words and len(scale) == 1
@@ -307,17 +309,19 @@ def test_maps_carry_a_north_arrow_and_a_distance_scale_that_is_true():
     width_m = fig.axes[0].get_xlim()[1] - fig.axes[0].get_xlim()[0]
     assert 0.05 * width_m <= metres <= 0.25 * width_m
     # And the matrix, which is not a map, has neither.
-    matrix = viz.chart_demand_matrix(toy_run()[1], cell_m=100.0, top=6, size=(8, 4.5), dpi=60)
+    matrix = viz.chart_demand_matrix(
+        toy_run()[1], cell_m=100.0, top=6, size_cm=(20.32, 11.43), dpi=60
+    )
     assert "N" not in {t.get_text() for t in matrix.texts}
 
 
 def test_the_footer_names_the_runs_seed_and_fingerprint():
     # At the library's defaults ("logit", "msa": the longest footer a default run writes) and
-    # down to the smallest size `map_link` documents, 8 inches wide (S191). Narrower figures
+    # down to the smallest size `map_link` documents, 20 cm wide (S191). Narrower figures
     # are a known limitation of 0.1, not tested here.
     run, _ = toy_run()
-    for size in ((16, 9), (8, 4.5)):
-        fig = viz.map_link(run, size=size, dpi=60)
+    for size_cm in ((40.64, 22.86), (20.32, 11.43)):
+        fig = viz.map_link(run, size_cm=size_cm, dpi=60)
         footer = [t for t in fig.texts if "run viz-test" in t.get_text()]
         assert len(footer) == 1, "one footer"
         assert (
@@ -329,5 +333,5 @@ def test_the_footer_names_the_runs_seed_and_fingerprint():
         width = fig.canvas.get_renderer()
         box = footer[0].get_window_extent(width)
         assert box.x1 < fig.bbox.width * 0.86, (
-            f"footer overruns at {size}: {box.x1} of {fig.bbox.width}"
+            f"footer overruns at {size_cm}: {box.x1} of {fig.bbox.width}"
         )

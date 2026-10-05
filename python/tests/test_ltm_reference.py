@@ -128,7 +128,7 @@ def simulated(
         trips,
         class_defaults={"x": (True, False, False)},
         # The plain single loading: everyone at once on free flow, the full model (S223).
-        equilibration="none",
+        equilibration="free_flow",
         equilibration_options={"increments": 1, "warmup": 0},
         choice_model="deterministic",
         link_bin_s=1,

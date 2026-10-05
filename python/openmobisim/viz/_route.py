@@ -14,7 +14,7 @@ import numpy as np
 
 from openmobisim import __version__
 from openmobisim.viz import _geometry as geo
-from openmobisim.viz._figure import Page, draw_furniture, load_matplotlib, rgb
+from openmobisim.viz._figure import SIZE_CM, Page, draw_furniture, load_matplotlib, rgb
 from openmobisim.viz._style import Theme, get_theme
 
 __all__ = ["map_route"]
@@ -54,7 +54,7 @@ def map_route(
     title: str | None = None,
     subtitle: str | None = None,
     note: str | None = None,
-    size: tuple[float, float] = (16.0, 9.0),
+    size_cm: tuple[float, float] = SIZE_CM,
     dpi: int = 120,
     credit: str | None = None,
     logo: bool = True,
@@ -79,8 +79,8 @@ def map_route(
         title: Figure title.
         subtitle: A line under the title; defaults to the counts.
         note: A third, italic line.
-        size: Figure size in inches.
-        dpi: Dots per inch.
+        size_cm: Figure size, width and height in centimetres.
+        dpi: Resolution in dots per inch (25.4 mm), the image-file convention.
         credit: A line of your own before the logo (a name, an institution).
         logo: Draw the openmobisim logo at the bottom right.
         path: If given, also save the figure there.
@@ -121,7 +121,7 @@ def map_route(
     )
     lo, hi = span_pts.min(axis=0), span_pts.max(axis=0)
     pad = np.maximum((hi - lo) * 0.18, 150.0)
-    page = Page.new(th, size, dpi, lo - pad, hi + pad)
+    page = Page.new(th, size_cm, dpi, lo - pad, hi + pad)
     mpp = page.metres_per_point
     k = page.k
 

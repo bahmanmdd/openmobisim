@@ -259,7 +259,7 @@ fn the_change_between_two_loadings_is_a_traffic_weighted_relative_difference() {
 #[test]
 fn the_first_iteration_of_msa_is_the_run_without_it() {
     let with = Setup::bottleneck(300);
-    let without = Setup { equilibration: ("none", vec![]), ..Setup::bottleneck(300) };
+    let without = Setup { equilibration: ("free_flow", vec![]), ..Setup::bottleneck(300) };
     let (m, n) = (with.go(), without.go());
     assert_eq!(n.iterations.len(), 1);
     let first = m.iterations[0];
@@ -636,8 +636,8 @@ fn the_description_names_the_strategy_and_the_streams_it_draws_from() {
             .run()
             .description()
     };
-    let none = run(("none", vec![]), "deterministic");
-    assert_eq!(none.equilibration, "none");
+    let none = run(("free_flow", vec![]), "deterministic");
+    assert_eq!(none.equilibration, "free_flow");
     assert_eq!((none.max_iterations, none.live_streams.len()), (1, 0));
     let msa = run(("msa", vec![]), "deterministic");
     assert_eq!((msa.equilibration.as_str(), msa.max_iterations), ("msa", 10));
@@ -651,9 +651,9 @@ fn the_description_names_the_strategy_and_the_streams_it_draws_from() {
     // One iteration has nobody to re-select.
     assert!(run(("msa", vec![("iterations", 1.0)]), "deterministic").live_streams.is_empty());
     // The free-flow loading's groups are drawn from the re-selection stream (S223).
-    let grouped = run(("none", vec![("increments", 5.0), ("warmup", 1.0)]), "deterministic");
+    let grouped = run(("free_flow", vec![("increments", 5.0), ("warmup", 1.0)]), "deterministic");
     assert_eq!(grouped.live_streams, ["msa_reselection"]);
-    assert_eq!(grouped.equilibration_descriptor, "none;increments=5;warmup=1");
+    assert_eq!(grouped.equilibration_descriptor, "free_flow;increments=5;warmup=1");
     assert_ne!(grouped.fingerprint, none.fingerprint);
     // Every setting is an input.
     let fingerprint = |o: Vec<(&'static str, f64)>| run(("msa", o), "logit").fingerprint;
@@ -674,16 +674,16 @@ fn the_description_names_the_strategy_and_the_streams_it_draws_from() {
 
 #[test]
 fn strategies_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
-    assert_eq!(Registry::builtin().names(), ["none", "msa"]);
+    assert_eq!(Registry::builtin().names(), ["free_flow", "msa"]);
     let opts = |pairs: &[(&str, f64)]| -> Options {
         pairs.iter().map(|&(k, v)| (k.to_string(), v)).collect()
     };
     let err = |name: &str, o: &[(&str, f64)]| {
         strategy(name, &opts(o)).err().expect("refused").to_string()
     };
-    assert!(err("replanning", &[]).contains("none, msa"));
-    assert!(err("none", &[("iterations", 3.0)]).contains("increments, warmup"));
-    assert!(err("none", &[("increments", 0.0)]).contains("whole number from 1 to 20"));
+    assert!(err("replanning", &[]).contains("free_flow, msa"));
+    assert!(err("free_flow", &[("iterations", 3.0)]).contains("increments, warmup"));
+    assert!(err("free_flow", &[("increments", 0.0)]).contains("whole number from 1 to 20"));
     assert!(err("msa", &[("increments", 21.0)]).contains("whole number from 1 to 20"));
     assert!(err("msa", &[("steps", 3.0)]).contains(
         "cost_bin_s, gap_sample, gap_tolerance, increments, itinerary_gap_sample, iterations"
@@ -745,7 +745,7 @@ fn a_strategy_from_outside_the_crate_drives_the_run() {
 #[test]
 fn a_run_without_the_strategy_reports_one_iteration_and_no_table_it_was_not_asked_for() {
     let mut setup = Setup::bottleneck(200);
-    setup.equilibration = ("none", vec![]);
+    setup.equilibration = ("free_flow", vec![]);
     let result = setup.go();
     assert_eq!(result.iterations.len(), 1);
     let only: &IterationReport = &result.iterations[0];

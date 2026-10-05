@@ -28,7 +28,7 @@ def grid_run(trips=400, seed=5, **kwargs):
         "flow_level": 4,
         "link_bin_s": 300,
         "choice_model": "deterministic",
-        "equilibration": "none",
+        "equilibration": "free_flow",
         # Everyone chooses at once on free flow, loaded once with the full model: the plain single
         # loading, not the free-flow loading built up in groups (S223).
         "equilibration_options": {"increments": 1, "warmup": 0},

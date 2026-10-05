@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from openmobisim import MODES, __version__
-from openmobisim.viz._figure import Page, draw_furniture, font_mono_name, load_matplotlib
+from openmobisim.viz._figure import SIZE_CM, Page, draw_furniture, font_mono_name, load_matplotlib
 from openmobisim.viz._provenance import run_identity
 from openmobisim.viz._style import Theme, get_theme
 
@@ -42,7 +42,7 @@ def chart_mode_share(
     title: str | None = None,
     subtitle: str | None = None,
     note: str | None = None,
-    size: tuple[float, float] = (16.0, 9.0),
+    size_cm: tuple[float, float] = SIZE_CM,
     dpi: int = 120,
     credit: str | None = None,
     logo: bool = True,
@@ -65,8 +65,8 @@ def chart_mode_share(
         subtitle: A line under the title; defaults to the trips and how many chose
             their mode.
         note: A third, italic line.
-        size: Figure size in inches.
-        dpi: Dots per inch.
+        size_cm: Figure size, width and height in centimetres.
+        dpi: Resolution in dots per inch (25.4 mm), the image-file convention.
         credit: A line of your own before the logo (a name, an institution).
         logo: Draw the openmobisim logo at the bottom right.
         path: If given, also save the figure there.
@@ -101,7 +101,7 @@ def chart_mode_share(
     x = bins[shown] * bin_s / 3600.0
     width = bin_s / 3600.0
 
-    page = Page.new(th, size, dpi, np.array([0.0, 0.0]), np.array([1.0, 1.0]))
+    page = Page.new(th, size_cm, dpi, np.array([0.0, 0.0]), np.array([1.0, 1.0]))
     page.fig.delaxes(page.ax)
     ax = page.fig.add_axes((0.07, 0.12, 0.74, 0.70), facecolor=th.surface)
     bottom = np.zeros(len(x))

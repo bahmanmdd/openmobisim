@@ -188,7 +188,7 @@ def test_the_page_starts_in_the_asked_theme_and_names_its_source(tmp_path):
     # and provenance text, not about the choice model or equilibration (the library's own
     # defaults since 2026-09-23 are "logit"/"msa" — `test_the_footer_says_the_run_iterated`
     # in test_equilibration.py covers what the footer says once a run has iterated).
-    _, run = grid_run(choice_model="deterministic", equilibration="none")
+    _, run = grid_run(choice_model="deterministic", equilibration="free_flow")
     _, meta, _ = decode(viz.map_interactive(run, tmp_path / "n.html", theme="night", logo=False))
     assert meta["theme"] == "night" and meta["logo"] is False
     assert set(meta["tokens"]) >= {"paper", "night", "route"}
@@ -228,7 +228,7 @@ def test_the_page_carries_how_many_travellers_took_each_route(tmp_path):
         # logit nothing to spread over on this small a fixture.
         _, run = grid_run(
             choice_model=model,
-            equilibration="none",
+            equilibration="free_flow",
             equilibration_options={"increments": 1, "warmup": 0},
             master_seed=3,
         )

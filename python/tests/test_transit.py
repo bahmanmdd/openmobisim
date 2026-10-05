@@ -45,7 +45,7 @@ def toy_run(rows: list[tuple], run_id: str, **kwargs: object) -> ms.Run:
         demand=rows,
         class_defaults={"everyone": (True, True, False)},
         transit=ms.examples.toy_network_transit(),
-        equilibration="none",
+        equilibration="free_flow",
         link_bin_s=300,
         **kwargs,
     ).run(run_id=run_id)
@@ -141,7 +141,7 @@ def test_without_a_timetable_transit_is_not_available() -> None:
         network=net,
         demand=[row],
         class_defaults={"everyone": (False, False, False)},
-        equilibration="none",
+        equilibration="free_flow",
     ).run(run_id="no-transit")
     assert run.completion["mode_not_available"] == 1
     assert run.transit_calls() is None and run.transit_summary is None
@@ -158,7 +158,7 @@ def test_a_timetable_changes_the_fingerprint_and_runs_are_reproducible() -> None
         network=net,
         demand=[toy_trip(net, "a", "N1", "D2", 0, "walk")],
         class_defaults={"everyone": (False, False, False)},
-        equilibration="none",
+        equilibration="free_flow",
     ).run(run_id="fp-c")
     assert plain.fingerprint != a.fingerprint
 
@@ -206,7 +206,7 @@ def test_map_transit_draws_a_run_with_a_timetable(tmp_path: Path) -> None:
         network=net,
         demand=[toy_trip(net, "a", "N1", "D2", 0, "walk")],
         class_defaults={"everyone": (False, False, False)},
-        equilibration="none",
+        equilibration="free_flow",
     ).run(run_id="map-none")
     with pytest.raises(ValueError, match="transit"):
         viz.map_transit(plain)

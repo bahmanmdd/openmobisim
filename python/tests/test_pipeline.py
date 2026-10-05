@@ -81,7 +81,7 @@ def test_kpis_table_round_trips_through_pandas() -> None:
         demand=trips,
         class_defaults=car_owning_commuters(),
         choice_model="deterministic",
-        equilibration="none",
+        equilibration="free_flow",
     )
     run = sc.run(run_id="pytest-kpis-pandas")
 

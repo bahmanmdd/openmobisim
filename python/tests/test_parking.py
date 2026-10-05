@@ -31,7 +31,7 @@ def toy_run(rows: list[tuple], run_id: str, parkings: object = None, **kwargs: o
         transit=ms.examples.toy_network_transit(),
         parkings=ms.examples.toy_network_parkings() if parkings is None else parkings,
         choice_model=kwargs.pop("choice_model", "deterministic"),
-        equilibration=kwargs.pop("equilibration", "none"),
+        equilibration=kwargs.pop("equilibration", "free_flow"),
         flow_level=kwargs.pop("flow_level", 0),
         link_bin_s=300,
         **kwargs,
@@ -268,7 +268,7 @@ def test_map_parking_draws_a_run_with_parkings(tmp_path) -> None:
         demand=[toy_trip(net, "c", "N1", "D2", 0, "transit")],
         class_defaults={"everyone": (True, True, False)},
         transit=ms.examples.toy_network_transit(),
-        equilibration="none",
+        equilibration="free_flow",
     ).run(run_id="no-parkings")
     with pytest.raises(ValueError, match="parkings"):
         viz.map_parking(plain)

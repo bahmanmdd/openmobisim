@@ -397,7 +397,7 @@ fn convergence_arrays(
     flow_level=0, flow_step_s=300, link_bin_s=None,
     route_method="penalty", route_options=None, master_seed=0,
     choice_model=None, choice_options=None,
-    equilibration="none", equilibration_options=None,
+    equilibration="free_flow", equilibration_options=None,
     route_update="none", route_update_options=None,
     choice_detour_limit=None, route_cache=false, bike_cost="dedicated", transit=None,
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,

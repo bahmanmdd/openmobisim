@@ -15,6 +15,7 @@ import numpy as np
 from openmobisim import __version__
 from openmobisim.viz import _geometry as geo
 from openmobisim.viz._figure import (
+    SIZE_CM,
     Page,
     draw_furniture,
     load_matplotlib,
@@ -35,7 +36,7 @@ _COLOUR_WORDS = {
 _LEVEL_NAMES = {0: "free flow", 2: "point queue", 3: "spatial queue", 4: "full"}
 #: Ribbon width in points at zero and at maximum volume, before the view scale.
 _WIDTH_MIN_PT, _WIDTH_SPAN_PT = 0.5, 5.2
-#: No ribbon is thinner than this many points (at 16 inches wide), whatever the
+#: No ribbon is thinner than this many points (on a full-screen page), whatever the
 #: view scale: a link with any traffic must stay visible.
 _WIDTH_FLOOR_PT = 0.9
 #: A delay of this share of the free-flow time is the top of the colour ramp.
@@ -104,7 +105,7 @@ def map_link(
     subtitle: str | None = None,
     note: str | None = None,
     view: tuple[tuple[float, float], tuple[float, float]] | None = None,
-    size: tuple[float, float] = (16.0, 9.0),
+    size_cm: tuple[float, float] = SIZE_CM,
     dpi: int = 120,
     scale: float | None = None,
     chevrons: bool | None = None,
@@ -143,11 +144,12 @@ def map_link(
         note: A third, italic line, for example to say the demand is a fixture.
         view: ``((lon_min, lat_min), (lon_max, lat_max))`` to zoom to; the whole
             network by default.
-        size: Figure size in inches. 16 x 9 is a full-screen frame. The text is
-            laid out for figures **8 inches wide or more**; narrower, the footer
+        size_cm: Figure size, width and height in centimetres. 40.64 x 22.86 (16:9) is a
+            full-screen frame. The text is laid out for figures **20 cm wide or more**; narrower,
+            the footer
             runs into the logo and the legends crowd (a layout for a journal
             column is planned).
-        dpi: Dots per inch.
+        dpi: Resolution in dots per inch (25.4 mm), the image-file convention.
         scale: Ribbon width multiplier; by default it follows the view, thin
             for a whole region and bolder when zoomed to a town.
         chevrons: Draw a small direction triangle on each ribbon; by default
@@ -224,7 +226,7 @@ def map_link(
     zs = scale if scale is not None else float(np.clip(1.15 * np.sqrt(2600.0 / width_m), 0.2, 2.2))
     if chevrons is None:
         chevrons = width_m < 6000.0
-    page = Page.new(th, size, dpi, lo, hi)
+    page = Page.new(th, size_cm, dpi, lo, hi)
     mpp = page.metres_per_point
 
     # Width: square root of volume up to the 99th percentile of active links.

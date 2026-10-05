@@ -19,7 +19,10 @@ def jammed(**kwargs: object) -> ms.Run:
     net = ms.examples.manhattan_grid(n=6, block_metres=150.0, signals=False)
     rows = ms.examples.trips_random(net, 4000, seed=3, min_m=300.0, max_m=900.0, spread_s=600)
     # The plain single loading: everyone at once on free flow, the full model (S223).
-    settings = {"equilibration": "none", "equilibration_options": {"increments": 1, "warmup": 0}}
+    settings = {
+        "equilibration": "free_flow",
+        "equilibration_options": {"increments": 1, "warmup": 0},
+    }
     return ms.Scenario.from_parts(
         net, rows, class_defaults=CAR, window_hours=3, **{**settings, **kwargs}
     ).run("rules")
@@ -44,7 +47,7 @@ def test_the_gridlock_report_finds_what_stands_and_checks_the_guarantee() -> Non
                 assert to[a] == frm[b]
     level0 = ms.Scenario.from_parts(
         run.network, ms.examples.trips_random(run.network, 50, seed=1), class_defaults=CAR,
-        flow_level=0, equilibration="none",
+        flow_level=0, equilibration="free_flow",
     ).run("level0")  # fmt: skip
     assert level0.report_gridlock() is None
 

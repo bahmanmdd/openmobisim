@@ -137,7 +137,7 @@ def test_a_run_routes_from_its_sets_and_the_method_does_not_change_the_run():
         "flow_level": 4,
         "link_bin_s": 300,
         "choice_model": "deterministic",
-        "equilibration": "none",
+        "equilibration": "free_flow",
         # The plain single loading: everyone at once on free flow, the full model (S223).
         "equilibration_options": {"increments": 1, "warmup": 0},
     }
@@ -169,13 +169,13 @@ def test_map_route_draws_the_alternatives_of_a_pair(theme, tmp_path):
     pairs = corner_pairs(net)
     rs = ms.route_sets_build(net, pairs)
     out = tmp_path / "route.png"
-    fig = viz.map_route(rs, net, 0, theme=theme, size=(8, 4.5), dpi=60, path=str(out))
+    fig = viz.map_route(rs, net, 0, theme=theme, size_cm=(20.32, 11.43), dpi=60, path=str(out))
     assert out.stat().st_size > 1000
     words = " ".join(t.get_text() for t in fig.texts)
     assert "Route alternatives" in words and "penalty" in words
     # By points as well as by position.
     a, b = pairs[0][:2], pairs[0][2:]
-    viz.map_route(rs, net, (a, b), size=(6, 3.4), dpi=60)
+    viz.map_route(rs, net, (a, b), size_cm=(15.24, 8.64), dpi=60)
 
 
 def test_map_route_says_what_is_wrong():
@@ -186,9 +186,9 @@ def test_map_route_says_what_is_wrong():
     have = [k for k in range(rs.key_count) if len(rs.routes(k))]
     lack = [k for k in range(rs.key_count) if not len(rs.routes(k))]
     assert len(have) == 1 and len(lack) == 1
-    viz.map_route(rs, net, have[0], size=(6, 3.4), dpi=60)
+    viz.map_route(rs, net, have[0], size_cm=(15.24, 8.64), dpi=60)
     with pytest.raises(ValueError, match="no route"):
-        viz.map_route(rs, net, lack[0], size=(6, 3.4), dpi=60)
+        viz.map_route(rs, net, lack[0], size_cm=(15.24, 8.64), dpi=60)
     with pytest.raises(ValueError, match="out of range"):
         viz.map_route(rs, net, 99)
 

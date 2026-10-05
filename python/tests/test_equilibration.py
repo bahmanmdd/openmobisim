@@ -50,19 +50,19 @@ MSA = {
 
 
 def test_the_strategies_are_listed_with_the_default_first():
-    assert ms.equilibration_strategies() == ["none", "msa"]
+    assert ms.equilibration_strategies() == ["free_flow", "msa"]
 
 
 def test_without_equilibration_there_is_one_iteration_and_no_gap():
-    run = go("eq-none", choice_model="deterministic", equilibration="none")
+    run = go("eq-none", choice_model="deterministic", equilibration="free_flow")
     c = run.convergence()
     assert set(c) == set(FIELDS) and all(len(v) == 1 for v in c.values())
     assert c["iteration"].tolist() == [0] and c["reselected_share"][0] == 1.0
     assert np.isnan(c["gap_flow"][0]) and np.isnan(c["time_change"][0])
     assert c["total_travel_time_s"][0] == run.total_travel_time_s
-    assert (run.equilibration, run.converged) == ("none", False)
+    assert (run.equilibration, run.converged) == ("free_flow", False)
     manifest = run.manifest()
-    assert manifest["equilibration"] == "none" and manifest["iterations_run"] == 1
+    assert manifest["equilibration"] == "free_flow" and manifest["iterations_run"] == 1
     # The free-flow loading's groups are drawn from the re-selection stream (S223).
     assert manifest["converged"] is False and manifest["live_streams"] == ["msa_reselection"]
 
@@ -95,7 +95,7 @@ def test_one_iteration_of_msa_is_the_run_without_it():
     base = go(
         "eq-one-none",
         choice_model="logit",
-        equilibration="none",
+        equilibration="free_flow",
         master_seed=3,
         route_method="penalty",
         route_update="none",
@@ -142,7 +142,9 @@ def test_the_kpis_file_has_a_row_set_per_iteration():
     # defaults (S187 flipped the library's bare default to "logit"/"msa"): this assertion is
     # about the plain, single-loading file shape, not the library's own default.
     plain = (
-        go("eq-kpis-plain", choice_model="deterministic", equilibration="none").kpis().to_pandas()
+        go("eq-kpis-plain", choice_model="deterministic", equilibration="free_flow")
+        .kpis()
+        .to_pandas()
     )
     plain = plain[plain["mode"] == "all"]
     assert sorted(plain["metric"]) == sorted(
@@ -162,7 +164,7 @@ def test_bad_settings_are_refused_before_any_work():
         return ms.Scenario.from_parts(net, rows, class_defaults=CAR, **kwargs).run("eq-bad")
 
     with pytest.raises(
-        ValueError, match='no equilibration strategy called "replanning".*none, msa'
+        ValueError, match='no equilibration strategy called "replanning".*free_flow, msa'
     ):
         build(equilibration="replanning")
     with pytest.raises(
@@ -171,8 +173,8 @@ def test_bad_settings_are_refused_before_any_work():
     ):
         build(equilibration="msa", equilibration_options={"steps": 3})
     with pytest.raises(ValueError, match="increments, warmup"):
-        build(equilibration="none", equilibration_options={"iterations": 3})
-    for strategy in ("none", "msa"):
+        build(equilibration="free_flow", equilibration_options={"iterations": 3})
+    for strategy in ("free_flow", "msa"):
         for bad in (0, 21, 2.5):
             with pytest.raises(ValueError, match="whole number from 1 to 20"):
                 build(equilibration=strategy, equilibration_options={"increments": bad})
@@ -253,7 +255,7 @@ def test_the_gap_has_a_verdict_and_the_network_is_tested_at_the_last_iteration()
     )
     # Free flow, a strong preference for the faster route: a small gap. Without equilibration, none.
     assert run.convergence_verdict in {"good", "acceptable"}
-    none = go("eq-gap-none", choice_model="deterministic", equilibration="none")
+    none = go("eq-gap-none", choice_model="deterministic", equilibration="free_flow")
     assert np.isnan(none.convergence_gap) and none.convergence_verdict is None
     off = go(
         "eq-gap-off", flow_level=0, choice_model="logit", equilibration="msa",
@@ -267,7 +269,7 @@ def test_the_footer_says_the_run_iterated():
     from openmobisim import viz
 
     run = go("eq-footer", equilibration_options={"iterations": 3}, **MSA)
-    fig = viz.map_link(run, size=(12, 6.75), dpi=50)
+    fig = viz.map_link(run, size_cm=(30.48, 17.14), dpi=50)
     text = " ".join(t.get_text() for t in fig.texts)
     assert "choice logit · msa 3 it, gap " in text and "% · seed 3" in text
 
@@ -365,19 +367,21 @@ def test_a_run_that_loads_more_than_once_defaults_to_one_route_per_pair_an_updat
 
     # The free-flow loading alone (S223): built up in five groups, so it loads more than once: one
     # route per pair to start, the update to search each group's pairs, the point queue.
-    once = run("eq-default-once", equilibration="none")
+    once = run("eq-default-once", equilibration="free_flow")
     assert once.route_sets().method == "shortest" and once.route_update == "best_response"
-    assert once.manifest()["equilibration_descriptor"] == "none;increments=5;warmup=1"
+    assert once.manifest()["equilibration_descriptor"] == "free_flow;increments=5;warmup=1"
     # One iteration of msa is the same free-flow loading.
     one = run("eq-default-one", equilibration="msa", equilibration_options={"iterations": 1})
     assert one.route_sets().method == "shortest" and one.route_update == "best_response"
     # Everyone choosing at once, on free flow: one loading, the penalty method's alternatives.
-    single = run("eq-default-single", equilibration="none", equilibration_options={"increments": 1})
+    single = run(
+        "eq-default-single", equilibration="free_flow", equilibration_options={"increments": 1}
+    )
     assert single.route_sets().method == "penalty" and single.route_update == "none"
     # At free flow nothing congests: no groups, and so one loading.
-    free = run("eq-default-free", equilibration="none", flow_level=0)
+    free = run("eq-default-free", equilibration="free_flow", flow_level=0)
     assert free.route_sets().method == "penalty" and free.route_update == "none"
-    assert free.manifest()["equilibration_descriptor"] == "none"
+    assert free.manifest()["equilibration_descriptor"] == "free_flow"
     # Iterating: one route per pair to start, the update to find the rest, a warm-up of one loading.
     many = run("eq-default-many", equilibration="msa", equilibration_options={"iterations": 3})
     assert many.route_sets().method == "shortest" and many.route_update == "best_response"
@@ -409,7 +413,7 @@ def test_the_free_flow_loading_is_iteration_0_of_an_iterated_run_and_cannot_lock
     # loading, with the point queue, so every trip finishes in a long window; and an iterated run's
     # time includes it.
     heavy = {"trips": 3_500, "window_hours": 6, "choice_model": "logit", "master_seed": 3}
-    alone = scenario(equilibration="none", **heavy).run("eq-ff-alone", quiet=True)
+    alone = scenario(equilibration="free_flow", **heavy).run("eq-ff-alone", quiet=True)
     first = scenario(equilibration_options={"iterations": 2}, **heavy).run("eq-ff-msa", quiet=True)
     a, b = alone.convergence(), first.convergence()
     # (What the route update adds after it is for the next iteration, which only one run has.)
@@ -418,9 +422,9 @@ def test_the_free_flow_loading_is_iteration_0_of_an_iterated_run_and_cannot_lock
     assert alone.completion["truncated"] == 0, "the point queue cannot lock"
     # The old single loading (everyone on free-flow choices, the full model) is still there.
     old = scenario(
-        equilibration="none", equilibration_options={"increments": 1, "warmup": 0}, **heavy
+        equilibration="free_flow", equilibration_options={"increments": 1, "warmup": 0}, **heavy
     ).run("eq-ff-old", quiet=True)
-    assert old.manifest()["equilibration_descriptor"] == "none", "the plain single loading"
+    assert old.manifest()["equilibration_descriptor"] == "free_flow", "the plain single loading"
     assert old.total_travel_time_s != alone.total_travel_time_s
 
 

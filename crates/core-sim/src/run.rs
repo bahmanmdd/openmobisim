@@ -45,7 +45,7 @@ use openmobisim_core_types::rng::{DrawAddress, RngKey, Stream, StreamRng};
 use openmobisim_core_types::time::{EventKey, Second};
 use openmobisim_core_types::units::{Duration, Pcu};
 
-use crate::equilibration::{Equilibration, IterationReport, NoEquilibration};
+use crate::equilibration::{Equilibration, FreeFlow, IterationReport};
 use crate::events::{EventRow, EventType};
 use crate::identity::{Inputs, RunDescription, describe};
 use crate::itinerary_choice::{
@@ -474,7 +474,7 @@ impl Run {
             route_generator: Arc::from(default_generator()),
             master_seed: 0,
             choice_model: Arc::new(Deterministic),
-            equilibration: Arc::new(NoEquilibration::default()),
+            equilibration: Arc::new(FreeFlow::default()),
             route_update: Arc::new(NoRouteUpdate),
             choice_detour_limit: DEFAULT_CHOICE_DETOUR_LIMIT,
             route_cache: None,

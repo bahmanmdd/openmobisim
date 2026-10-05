@@ -173,7 +173,7 @@ def toy_run(**kwargs):
         "flow_level": 4,
         "link_bin_s": 300,
         "choice_model": "deterministic",
-        "equilibration": "none",
+        "equilibration": "free_flow",
         # The plain single loading: everyone at once on free flow, the full model (S223).
         "equilibration_options": {"increments": 1, "warmup": 0},
     }

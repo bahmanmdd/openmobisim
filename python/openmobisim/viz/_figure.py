@@ -71,6 +71,16 @@ def nice_number(x: float) -> float:
     return float(power)
 
 
+#: Centimetres per inch: matplotlib sizes figures in inches.
+CM_PER_INCH = 2.54
+
+#: A full-screen page's width (16:9, the figures' default ``size_cm``: 40.64 x 22.86 cm).
+FULL_WIDTH_CM = 40.64
+
+#: The default figure size, width and height in centimetres: a full-screen 16:9 frame.
+SIZE_CM = (40.64, 22.86)
+
+
 @dataclass
 class Page:
     """A figure being drawn: the figure, its map axes and the map's scale."""
@@ -78,10 +88,12 @@ class Page:
     fig: Any
     ax: Any
     theme: Theme
+    #: The figure's size as matplotlib holds it (it works in inches, 2.54 cm each); users give
+    #: centimetres (``size_cm``), converted once in :meth:`new`.
     size: tuple[float, float]
     #: Metres on the map per typographic point on the page.
     metres_per_point: float
-    #: Furniture and ribbons scale with the page: 1 at 16 inches wide, less
+    #: Furniture and ribbons scale with the page: 1 at a full-screen page (40.64 cm wide), less
     #: below, so a journal-column figure keeps the same proportions.
     k: float = 1.0
 
@@ -89,15 +101,19 @@ class Page:
     def new(
         cls,
         theme: Theme,
-        size: tuple[float, float],
+        size_cm: tuple[float, float],
         dpi: int,
         lo: np.ndarray,
         hi: np.ndarray,
     ) -> Page:
-        """A blank page whose map area shows the rectangle ``lo``..``hi`` (metres)."""
+        """A blank page whose map area shows the rectangle ``lo``..``hi`` (metres).
+
+        ``size_cm`` is the page's width and height in centimetres.
+        """
         load_matplotlib()
         from matplotlib.figure import Figure
 
+        size = (size_cm[0] / CM_PER_INCH, size_cm[1] / CM_PER_INCH)
         fig = Figure(figsize=size, dpi=dpi, facecolor=theme.surface)
         left, bottom, width, height = MAP_RECT
         ax = fig.add_axes((left, bottom, width, height), facecolor=theme.surface)
@@ -108,7 +124,7 @@ class Page:
         mpp = float(max(span[0] / box_pt[0], span[1] / box_pt[1]))
         ax.set_xlim(centre[0] - mpp * box_pt[0] / 2, centre[0] + mpp * box_pt[0] / 2)
         ax.set_ylim(centre[1] - mpp * box_pt[1] / 2, centre[1] + mpp * box_pt[1] / 2)
-        k = float(np.clip(size[0] / 16.0, 0.4, 1.5))
+        k = float(np.clip(size_cm[0] / FULL_WIDTH_CM, 0.4, 1.5))
         return cls(fig=fig, ax=ax, theme=theme, size=size, metres_per_point=mpp, k=k)
 
 

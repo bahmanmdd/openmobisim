@@ -17,7 +17,7 @@ _SHOWN = 8
 def run_identity(run: Any) -> str:
     """``choice logit · msa 6 it, gap 4.2% · seed 0 · fingerprint 29ff0a1c``, for a footer."""
     parts = [f"choice {run.choice_model}"]
-    if run.equilibration != "none":
+    if run.equilibration != "free_flow":
         text = f"{run.equilibration} {len(run.convergence()['iteration'])} it"
         gap = run.convergence_gap
         if gap == gap:  # not nan

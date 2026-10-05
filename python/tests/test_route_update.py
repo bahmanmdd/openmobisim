@@ -169,7 +169,7 @@ def test_an_update_needs_a_later_loading_to_do_anything():
     run = go(
         "ru-once",
         route_update="best_response",
-        equilibration="none",
+        equilibration="free_flow",
         equilibration_options={"increments": 1},
     )
     assert (run.convergence()["routes_added"] == 0).all()
@@ -180,7 +180,7 @@ def test_an_update_needs_a_later_loading_to_do_anything():
     grouped = go(
         "ru-groups",
         route_update="best_response",
-        equilibration="none",
+        equilibration="free_flow",
         equilibration_options={"increments": 5},
     )
     c, sets = grouped.convergence(), grouped.route_sets()

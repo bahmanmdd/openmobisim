@@ -165,7 +165,7 @@ class Run:
 
     @property
     def equilibration(self) -> str:
-        """The name of the equilibration strategy: ``"none"`` or ``"msa"``."""
+        """The name of the equilibration strategy: ``"free_flow"`` or ``"msa"``."""
         return self._summary.equilibration
 
     @property
@@ -193,7 +193,7 @@ class Run:
         a slower route by design, so its gap is never 0); where the model gives no
         probabilities the plain gaps are used instead.
 
-        ``nan`` if no gap was measured (a run without equilibration). See
+        ``nan`` if no gap was measured (a ``"free_flow"`` run). See
         ``convergence_verdict``.
         """
         c = self._summary.convergence
@@ -208,7 +208,7 @@ class Run:
     def convergence_verdict(self) -> str | None:
         """``"good"`` (disequilibrium below 5%), ``"acceptable"`` (below 15%) or ``"poor"``.
 
-        ``None`` if no gap was measured (no equilibration). Judged on
+        ``None`` if no gap was measured (a ``"free_flow"`` run). Judged on
         ``convergence_gap``, the disequilibrium: what the choice model does not explain.
         """
         gap = self.convergence_gap
@@ -219,7 +219,7 @@ class Run:
     def convergence(self) -> dict[str, Any]:
         """What each iteration showed: how far the run is from an equilibrium.
 
-        NumPy arrays, one entry per loading (a run without equilibration has one).
+        NumPy arrays, one entry per iteration (a ``"free_flow"`` run has one).
         ``nan`` marks a number that was not measured. The result of the run
         (``completion``, ``total_travel_time_s``, ``link_bins()``, ``route_choices()``)
         is that of the **last** iteration.
@@ -782,8 +782,8 @@ class Scenario:
         self._flow_step_s = flow_step_s
         self._link_bin_s = link_bin_s
         options = dict(equilibration_options or {})
-        iterates = equilibration != "none" and int(options.get("iterations", 10)) > 1
-        if equilibration in ("none", "msa"):
+        iterates = equilibration != "free_flow" and int(options.get("iterations", 10)) > 1
+        if equilibration in ("free_flow", "msa"):
             # The free-flow loading (S223): built up in groups, each choosing on the congestion
             # of those before it, with the point-queue model, which cannot gridlock. At free
             # flow nothing congests, so there are no groups.
@@ -985,8 +985,8 @@ class Scenario:
                 averages in traveller form: load the network, read the link
                 times it produced, let a share ``1/(i + 1)`` of travellers
                 choose again on those times at iteration ``i``, load again.
-                ``"none"`` makes only the free-flow loading: a quick estimate
-                of the day without iterating.
+                ``"free_flow"`` makes only the free-flow loading: a quick
+                estimate of the day without iterating.
                 **The free-flow loading** is how every run starts (iteration 0,
                 S223). The travellers are split into groups of about equal size
                 (``increments``, 5 by default); the first group chooses on
@@ -1022,14 +1022,14 @@ class Scenario:
                 but makes the gap before the last iteration read low; the last iteration always
                 plans every trip) and ``cost_bin_s`` (300: the
                 length of the time bins the link times are read in). For both ``"msa"`` and
-                ``"none"``: ``increments`` (5 at ``flow_level`` 2 to 4, else 1: in how many groups
-                the free-flow loading is built up; 1 lets everyone choose at once on free-flow
-                costs) and ``warmup`` (1 at ``flow_level`` 2 to 4 or for a run that iterates,
-                else 0: how many of the first loadings, the free-flow loading's groups included,
-                use the point-queue model, which cannot gridlock; the last loading of a run that
-                iterates, its result, always uses ``flow_level``, while a run of one loading
-                is its free-flow loading. ``"none"`` with ``increments`` 1 and ``warmup`` 0 is
-                a single loading at ``flow_level`` on free-flow choices).
+                ``"free_flow"``: ``increments`` (5 at ``flow_level`` 2 to 4, else 1: in how many
+                groups the free-flow loading is built up; 1 lets everyone choose at once on
+                free-flow costs) and ``warmup`` (1 at ``flow_level`` 2 to 4 or for a run that
+                iterates, else 0: how many of the first loadings, the free-flow loading's groups
+                included, use the point-queue model, which cannot gridlock; the last loading of a
+                run that iterates, its result, always uses ``flow_level``, while a run of one
+                loading is its free-flow loading. ``"free_flow"`` with ``increments`` 1 and
+                ``warmup`` 0 is a single loading at ``flow_level`` on free-flow choices).
             route_update: How the route sets grow between iterations (see
                 ``openmobisim.route_update_methods()``). **The default depends on the run:**
                 ``"best_response"`` when the run loads more than once (it iterates, or builds
