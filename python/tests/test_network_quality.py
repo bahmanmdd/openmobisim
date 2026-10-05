@@ -186,14 +186,20 @@ def test_a_region_is_a_subset_and_a_polygon_equal_to_the_box_gives_the_same_netw
     coords, _ = whole.link_geometry()
     (w, s), (e, n) = coords.min(axis=0), coords.max(axis=0)
     box = (w + (e - w) * 0.25, s + (n - s) * 0.25, w + (e - w) * 0.75, s + (n - s) * 0.75)
-    part = ms.network_read_osm(path, region=box)
+    # The plain clip (no stubs, no main-road buffer) keeps only what lies inside.
+    plain = {"region_stubs": False, "region_buffer_m": 0.0}
+    part = ms.network_read_osm(path, region=box, **plain)
     assert 0 < part.link_count < whole.link_count
     pc, _ = part.link_geometry()
     assert (pc[:, 0] >= box[0] - 1e-9).all() and (pc[:, 0] <= box[2] + 1e-9).all()
     assert (pc[:, 1] >= box[1] - 1e-9).all() and (pc[:, 1] <= box[3] + 1e-9).all()
-    # A polygon that is the box gives the same network as the box.
+    # The default (S230) keeps the crossing segments and main roads near the box besides.
+    kept = ms.network_read_osm(path, region=box)
+    assert part.link_count <= kept.link_count < whole.link_count
+    # A polygon that is the box gives the same network as the box, either way.
     poly = [(box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])]
-    assert ms.network_read_osm(path, region=poly).link_count == part.link_count
+    assert ms.network_read_osm(path, region=poly, **plain).link_count == part.link_count
+    assert ms.network_read_osm(path, region=poly).link_count == kept.link_count
     assert "region" in part.report_import()
 
 

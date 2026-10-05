@@ -19,7 +19,7 @@ use openmobisim_core_types::ids::{EntityId, LinkId};
 use openmobisim_io_osm::import::{
     Connectivity, DropReason, ImportOptions, ImportOutput, codes, import_detailed,
 };
-use openmobisim_io_osm::region::{ClippedSource, Region};
+use openmobisim_io_osm::region::{ClipOptions, ClippedSource, Region};
 use openmobisim_io_osm::source::{MemorySource, OsmNode, OsmSource, OsmWay};
 
 /// About 100 m.
@@ -578,4 +578,69 @@ fn contracting_the_car_layer_leaves_a_network_without_footways_as_it_was() {
         LinkId::iter_space(n.link_count()).map(|l| n.link_length(l).get()).sum::<f64>()
     };
     assert!((total(&a.network) - total(&b.network)).abs() < 1e-9);
+}
+
+// --- keeping what can be kept (S230, roadmap I-ac) ----------------------------------------------
+
+#[test]
+fn a_region_measures_how_far_a_point_is_from_it() {
+    let r = Region::bbox(4.80, 45.70, 4.81, 45.71).unwrap();
+    assert!(r.distance_m(4.805, 45.705).abs() < f64::EPSILON, "inside");
+    // One thousandth of a degree north of the box: about 111 m.
+    let north = r.distance_m(4.805, 45.711);
+    assert!((north - 111.32).abs() < 0.5, "{north}");
+    // A thousandth east, at this latitude: about 111.32 * cos(45.705°) m.
+    let east = r.distance_m(4.811, 45.705);
+    assert!((east - 111.32 * 45.705_f64.to_radians().cos()).abs() < 0.5, "{east}");
+    let square =
+        Region::polygon(vec![(4.80, 45.70), (4.81, 45.70), (4.81, 45.71), (4.80, 45.71)]).unwrap();
+    assert!(
+        (square.distance_m(4.805, 45.711) - north).abs() < 1e-6,
+        "the same square as a polygon"
+    );
+}
+
+#[test]
+fn stubs_keep_the_segment_that_crosses_the_edge() {
+    // The street of nodes 1..=6; a box over steps 1.5..4.5 holds 3, 4, 5. With stubs, the first
+    // node outside at either end, 2 and 6, stays: the crossing segments 2-3 and 5-6.
+    let src = street();
+    let region = Region::bbox(4.80 + 1.5 * STEP, 45.69, 4.80 + 4.5 * STEP, 45.71).unwrap();
+    let options = ClipOptions { stubs: true, main_road_buffer_m: 0.0 };
+    let clipped = ClippedSource::with_options(&src, &region, options);
+    let mut ways = Vec::new();
+    clipped.for_each_way(&mut |w| ways.push(w)).unwrap();
+    assert_eq!(ways.len(), 1);
+    assert_eq!(ways[0].node_ids, vec![2, 3, 4, 5, 6]);
+    let mut nodes = Vec::new();
+    clipped.for_each_node(&mut |n| nodes.push(n.id)).unwrap();
+    nodes.sort_unstable();
+    assert_eq!(nodes, vec![2, 3, 4, 5, 6]);
+}
+
+#[test]
+fn a_buffer_keeps_main_roads_near_the_region_and_nothing_else() {
+    // A box over steps 0..2, 0..2. Outside it, three roads parallel to its north edge: a
+    // motorway 3 steps north (about 330 m), a residential street 3 steps north, a motorway 30
+    // steps north (about 3.3 km). A 2 km buffer keeps the near motorway only.
+    let mut src = MemorySource::new();
+    for (i, (x, y)) in [(0.5, 0.5), (1.5, 0.5)].into_iter().enumerate() {
+        src = src.node(at(1 + i as i64, x, y));
+    }
+    src = src.way(road(10, [1, 2]));
+    let near = |id: i64, y: f64| (0..3_u8).map(move |k| at(id + i64::from(k), f64::from(k), y));
+    src = src.nodes(near(20, 3.0)).way(OsmWay::new(30, [20, 21, 22], [("highway", "motorway")]));
+    src = src.nodes(near(40, 3.0)).way(OsmWay::new(50, [40, 41, 42], [("highway", "residential")]));
+    src = src.nodes(near(60, 30.0)).way(OsmWay::new(70, [60, 61, 62], [("highway", "motorway")]));
+    let region = Region::bbox(4.80, 45.70, 4.80 + 2.0 * STEP, 45.70 + 2.0 * STEP).unwrap();
+    let ids = |options: ClipOptions| {
+        let clipped = ClippedSource::with_options(&src, &region, options);
+        let mut ways = Vec::new();
+        clipped.for_each_way(&mut |w| ways.push(w.id)).unwrap();
+        ways.sort_unstable();
+        ways
+    };
+    assert_eq!(ids(ClipOptions::default()), vec![10], "the plain clip");
+    assert_eq!(ids(ClipOptions { stubs: false, main_road_buffer_m: 2000.0 }), vec![10, 30]);
+    assert_eq!(ids(ClipOptions { stubs: false, main_road_buffer_m: 100.0 }), vec![10], "too far");
 }

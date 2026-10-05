@@ -44,6 +44,6 @@ pub use import::{
 pub use parkings::{ParkingReadOptions, ParkingReadReport, read_parkings};
 #[cfg(feature = "pbf")]
 pub use pbf::PbfSource;
-pub use region::{ClippedSource, Region, RegionError};
+pub use region::{ClipOptions, ClippedSource, Region, RegionError};
 pub use source::{MemorySource, OsmError, OsmNode, OsmSource, OsmWay};
 pub use tags::{BikeWay, Direction, Lanes, Maxspeed, Rejection};

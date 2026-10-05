@@ -115,7 +115,12 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// layer; the full model, with spillback, pockets and rerouting, at 4); `msa` stops when
 /// converged (`gap_tolerance` 0.02, `route_growth_tolerance` 1, the most `iterations` 10);
 /// en-route rerouting off at level 2, where nothing waits for room. Every default run changes.
-pub const DEFAULTS_VERSION: u32 = 14;
+///
+/// Version 15 (S230): **a region clip keeps what can be kept** (`network_read_osm`'s
+/// `region_stubs` and `region_buffer_m`, `io-osm`'s `ClipOptions`): each road's first node past
+/// the edge, and motorways, trunk roads and their slip roads within 2 km, so a ring road just
+/// outside a study area stays. Every network read with a region changes.
+pub const DEFAULTS_VERSION: u32 = 15;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

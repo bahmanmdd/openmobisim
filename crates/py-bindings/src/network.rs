@@ -31,8 +31,8 @@ use openmobisim_core_routes::NodeSnapper;
 use openmobisim_core_types::diagnostics::{Category, Diagnostics, Severity};
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 use openmobisim_io_osm::{
-    ClippedSource, Connectivity, DropReason, DroppedLink, ImportOptions, ImportReport, LayerImport,
-    LayerOptions, LayerReport, PbfSource, Region, import_detailed,
+    ClipOptions, ClippedSource, Connectivity, DropReason, DroppedLink, ImportOptions, ImportReport,
+    LayerImport, LayerOptions, LayerReport, PbfSource, Region, import_detailed,
 };
 
 /// A link polyline array and its per-link offsets, as numpy arrays.
@@ -650,7 +650,7 @@ pub fn toy_network() -> PyNetwork {
 #[pyfunction]
 #[pyo3(signature = (
     path, contract=true, region=None, connectivity="strong", contract_drivable=true, layers=true,
-    network_options=None,
+    network_options=None, region_stubs=true, region_buffer_m=2000.0,
 ))]
 #[allow(clippy::too_many_arguments, reason = "one argument per import option")]
 pub fn network_read_osm(
@@ -662,8 +662,16 @@ pub fn network_read_osm(
     contract_drivable: bool,
     layers: bool,
     network_options: Option<HashMap<String, f64>>,
+    region_stubs: bool,
+    region_buffer_m: f64,
 ) -> PyResult<PyNetwork> {
     let defaults = network_defaults(network_options)?;
+    if !(region_buffer_m.is_finite() && region_buffer_m >= 0.0) {
+        return Err(PyValueError::new_err(format!(
+            "region_buffer_m must be 0 or more metres, got {region_buffer_m}"
+        )));
+    }
+    let clip = ClipOptions { stubs: region_stubs, main_road_buffer_m: region_buffer_m };
     let connectivity_mode = match connectivity {
         "keep" => Connectivity::Keep,
         "strong" => Connectivity::Strong,
@@ -692,9 +700,11 @@ pub fn network_read_osm(
             let mut diagnostics = Diagnostics::new();
             let source = PbfSource::new(&path);
             let out = match &region {
-                Some(r) => {
-                    import_detailed(&ClippedSource::new(&source, r), options, &mut diagnostics)
-                }
+                Some(r) => import_detailed(
+                    &ClippedSource::with_options(&source, r, clip),
+                    options,
+                    &mut diagnostics,
+                ),
                 None => import_detailed(&source, options, &mut diagnostics),
             }?;
             Ok::<_, openmobisim_io_osm::OsmError>((out, diagnostics))

@@ -629,6 +629,8 @@ def network_read_osm(
     contract_drivable: bool = True,
     layers: bool = True,
     network_options: dict[str, float] | None = None,
+    region_stubs: bool = True,
+    region_buffer_m: float = 2000.0,
 ) -> Network:
     """Read a road network from an OpenStreetMap ``.osm.pbf`` extract.
 
@@ -665,6 +667,12 @@ def network_read_osm(
             road-class table, the multipliers, the signal settings, the bike and walk layers'
             speeds; ``openmobisim.network_options()`` lists them). An unknown name is refused
             with the list.
+        region_stubs: With a ``region``: keep each road's first node outside, so the segment
+            that crosses the edge stays (S230). On by default.
+        region_buffer_m: With a ``region``: keep motorways, trunk roads and their slip roads
+            within this many metres of it, so a ring road just outside the area (Amsterdam's
+            A10, Paris' Périphérique) and the main approaches stay; nothing else outside is kept
+            (S230). 2 000 m by default (uncalibrated); 0 keeps none.
 
     Returns:
         A :class:`Network` with the defaults table's parameters and the street
