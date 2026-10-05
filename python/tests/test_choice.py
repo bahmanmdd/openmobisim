@@ -23,7 +23,7 @@ def grid_run(trips=400, seed=5, **kwargs):
     net = ms.examples.manhattan_grid(n=8, block_metres=200.0, signals=False)
     rows = ms.examples.trips_random(net, trips, seed=seed, min_m=300.0, max_m=1200.0)
     settings = {
-        "class_defaults": CAR,
+        "classes": CAR,
         "window_hours": 1,
         "flow_level": 4,
         "link_bin_s": 300,
@@ -128,7 +128,7 @@ def test_bad_choices_are_refused_before_any_work_and_say_what_is_wrong():
     net, rows, _ = grid_run(trips=5)
 
     def build(**kwargs):
-        return ms.Scenario.from_parts(net, rows, class_defaults=CAR, **kwargs).run("choice-bad")
+        return ms.Scenario.from_parts(net, rows, classes=CAR, **kwargs).run("choice-bad")
 
     with pytest.raises(ValueError, match='no choice model called "mnl".*deterministic, logit'):
         build(choice_model="mnl")
@@ -233,7 +233,7 @@ def test_a_python_model_is_told_when_it_fails_or_answers_wrongly():
     net, rows, _ = grid_run(trips=20)
 
     def build(model):
-        scenario = ms.Scenario.from_parts(net, rows, class_defaults=CAR, choice_model=model)
+        scenario = ms.Scenario.from_parts(net, rows, classes=CAR, choice_model=model)
         return scenario.run("choice-fail")
 
     with pytest.raises(ValueError, match="RuntimeError: no gradient today"):
@@ -248,7 +248,7 @@ def test_a_python_model_is_told_when_it_fails_or_answers_wrongly():
         build(NotArrays())
     with pytest.raises(ValueError, match="own its settings|choice_options"):
         ms.Scenario.from_parts(
-            net, rows, class_defaults=CAR, choice_model=MyLogit(), choice_options={"beta": 1.0}
+            net, rows, classes=CAR, choice_model=MyLogit(), choice_options={"beta": 1.0}
         ).run("choice-opts")
 
 
@@ -261,7 +261,7 @@ def test_a_model_that_wants_an_attribute_that_does_not_exist_is_told_what_does()
 
     net, rows, _ = grid_run(trips=5)
     with pytest.raises(ValueError, match="comfort.*time_min.*ln_path_size"):
-        ms.Scenario.from_parts(net, rows, class_defaults=CAR, choice_model=Wants()).run("c-w")
+        ms.Scenario.from_parts(net, rows, classes=CAR, choice_model=Wants()).run("c-w")
 
 
 def test_the_batch_a_model_sees_is_what_the_docs_say():

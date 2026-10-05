@@ -1271,6 +1271,8 @@ pub(crate) struct Itineraries {
     /// Whether any trip may drive to a car park (stated park-and-ride, or offered it in mode
     /// choice): the car parks' free-flow table is then searched before planning (S209).
     parks_cars: bool,
+    /// The modes each traveller class may use, by class index (S231); empty: every class all.
+    class_modes: Vec<[bool; Mode::COUNT]>,
 }
 
 /// Where a vehicle is expected to be, following a traveller's choices.
@@ -1320,6 +1322,8 @@ pub(crate) struct Simulated<'a> {
     pub static_routes: &'a StaticRoutes,
     /// How long a walk or ride mode choice offers (S209).
     pub modes: &'a crate::layers::ModeDefaults,
+    /// The modes each traveller class may use, by class index (S231); empty: every class all.
+    pub class_modes: &'a [[bool; Mode::COUNT]],
 }
 
 impl Itineraries {
@@ -1357,6 +1361,7 @@ impl Itineraries {
             car_keys: Vec::new(),
             bike_reach: Vec::new(),
             parks_cars: false,
+            class_modes: sim.class_modes.to_vec(),
         };
         for i in 0..total {
             let trip = TripId::from_index(i);
@@ -1532,7 +1537,11 @@ impl Itineraries {
                 _ => Offer { transit: true, ..Offer::default() },
             };
         }
-        let on = |m: Mode| self.offered[m.index()];
+        // A mode the run offers and the traveller's class may use (S231).
+        let class = travellers.user_class(trips.traveller(trip)).index();
+        let on = |m: Mode| {
+            self.offered[m.index()] && self.class_modes.get(class).is_none_or(|c| c[m.index()])
+        };
         let (car, bike) = (shape(ParkingKind::Car), shape(ParkingKind::Bike));
         // A vehicle parked at a parking is offered back whatever the modes asked for.
         let via = |at: Option<Shape>, m: Mode| match at {
@@ -1706,7 +1715,8 @@ impl Itineraries {
                         continue;
                     }
                     let best = best_by_mode(set);
-                    batch.begin_situation(traveller.raw(), trip.raw());
+                    let class = travellers.user_class(traveller).raw();
+                    batch.begin_situation_in(traveller.raw(), trip.raw(), class);
                     for a in set {
                         for (slot, name) in row.iter_mut().zip(inputs.wanted) {
                             *slot = attribute(name, a, best[a.mode.index()]);

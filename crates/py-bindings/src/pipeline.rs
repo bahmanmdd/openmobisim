@@ -52,7 +52,7 @@ use openmobisim_core_types::ids::{EntityId, LinkId, TripId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 
-use crate::choice::{PyRouteChoices, make_choice_model};
+use crate::choice::{PyRouteChoices, make_choice_model_with_classes};
 use crate::network::PyNetwork;
 use crate::routes::{PyRouteSets, to_options};
 use openmobisim_core_routes::Registry;
@@ -400,7 +400,7 @@ fn convergence_arrays(
     network, run_id, output_dir,
     trips=None, trips_path=None,
     persons=None, persons_path=None,
-    class_defaults=None, default_weight=1, window_s=86_400,
+    class_defaults=None, class_modes=None, class_options=None, default_weight=1, window_s=86_400,
     flow_level=0, flow_step_s=300, link_bin_s=None,
     route_method="penalty", route_options=None, master_seed=0,
     choice_model=None, choice_options=None,
@@ -424,6 +424,8 @@ pub fn run_pipeline(
     persons: Option<Vec<PersonRow>>,
     persons_path: Option<&str>,
     class_defaults: Option<HashMap<String, (bool, bool, bool)>>,
+    class_modes: Option<HashMap<String, Vec<String>>>,
+    class_options: Option<HashMap<String, HashMap<String, f64>>>,
     default_weight: u32,
     window_s: u32,
     flow_level: u32,
@@ -465,7 +467,25 @@ pub fn run_pipeline(
         }
     }
     // Refuse a bad method, model or option before doing any work.
-    let choice = make_choice_model(choice_model, choice_options)?;
+    let class_options: BTreeMap<String, BTreeMap<String, f64>> = class_options
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(class, o)| (class, o.into_iter().collect()))
+        .collect();
+    let by_name: Vec<(String, BTreeMap<String, f64>)> =
+        class_options.iter().map(|(c, o)| (c.clone(), o.clone())).collect();
+    make_choice_model_with_classes(choice_model, choice_options.clone(), &by_name)?;
+    let class_modes: HashMap<String, [bool; Mode::COUNT]> = class_modes
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(class, names)| {
+            let mut allowed = [false; Mode::COUNT];
+            for name in &names {
+                allowed[Mode::from_name(name).map_err(to_value_error)?.index()] = true;
+            }
+            Ok((class, allowed))
+        })
+        .collect::<PyResult<_>>()?;
     let transit_defaults =
         TransitDefaults::from_options(&to_options(transit_options)).map_err(to_value_error)?;
     let parking_defaults =
@@ -528,6 +548,21 @@ pub fn run_pipeline(
         &mut build_diagnostics,
     )
     .map_err(to_value_error)?;
+    // Traveller classes (S231), by their index in the demand: the modes each may use (a class
+    // not given any: all the run offers) and its own coefficients (none: the model's).
+    let class_names: Vec<String> = {
+        let ids = travellers.class_external_ids();
+        (0..ids.count()).map(|c| ids.external(c).to_string()).collect()
+    };
+    let class_allowed: Vec<[bool; Mode::COUNT]> = class_names
+        .iter()
+        .map(|c| class_modes.get(c).copied().unwrap_or([true; Mode::COUNT]))
+        .collect();
+    let by_index: Vec<(String, BTreeMap<String, f64>)> = class_names
+        .iter()
+        .map(|c| (c.clone(), class_options.get(c).cloned().unwrap_or_default()))
+        .collect();
+    let choice = make_choice_model_with_classes(choice_model, choice_options, &by_index)?;
     clock = timings.lap("demand_read", None, clock);
     let travellers = Arc::new(travellers);
     let trips_table = Arc::new(trips_table);
@@ -633,6 +668,7 @@ pub fn run_pipeline(
     }
     run = run
         .with_mode_choice(&modes)
+        .with_class_modes(class_allowed)
         .with_mode_defaults(mode_defaults)
         .with_loading_options(loading);
     // What went in, taken before it runs (S168).

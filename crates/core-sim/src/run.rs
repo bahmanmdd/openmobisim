@@ -425,6 +425,8 @@ pub struct Run {
     loading: LoadingOptions,
     /// Wall-clock time by stage of the last execution (S223).
     timings: Timings,
+    /// The modes each traveller class may use, by class index (S231); empty: every class all.
+    class_modes: Vec<[bool; Mode::COUNT]>,
 }
 
 /// The key of the draw that puts a traveller in a group of the free-flow loading's increments
@@ -489,7 +491,17 @@ impl Run {
             mode_defaults: ModeDefaults::SHIPPED,
             loading: LoadingOptions::SHIPPED,
             timings: Timings::new(),
+            class_modes: Vec::new(),
         }
+    }
+
+    /// The same run with the modes each traveller class may use (S231), by class index (the
+    /// travellers' [`openmobisim_core_demand::Travellers::user_class`]): a trip choosing its
+    /// mode is offered only those its class may use. A class past the end may use all.
+    #[must_use]
+    pub fn with_class_modes(mut self, class_modes: Vec<[bool; Mode::COUNT]>) -> Self {
+        self.class_modes = class_modes;
+        self
     }
 
     /// Wall-clock time by stage of the last [`Self::execute`] or [`Self::try_execute`] (S223),
@@ -697,6 +709,7 @@ impl Run {
             parking: self.parking.as_deref(),
             mode_choice: self.mode_choice.as_deref(),
             mode_defaults: &self.mode_defaults,
+            class_modes: &self.class_modes,
             loading: &self.loading,
         })
     }
@@ -818,6 +831,7 @@ impl Run {
                         choice: mode_choice.as_deref(),
                         static_routes: &static_routes,
                         modes: &self.mode_defaults,
+                        class_modes: &self.class_modes,
                     },
                 )
             })

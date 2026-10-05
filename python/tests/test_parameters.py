@@ -34,9 +34,7 @@ def test_every_row_is_accepted_by_its_argument():
     trip = [("t0", 0, *net.node_lonlat("W"), *net.node_lonlat("D1"), 0, "commuter", None)]
 
     def run(**kwargs):
-        return ms.Scenario.from_parts(net, trip, class_defaults=CAR, **kwargs).run(
-            "par", quiet=True
-        )
+        return ms.Scenario.from_parts(net, trip, classes=CAR, **kwargs).run("par", quiet=True)
 
     def options(group):
         return {r["name"]: r["value"] for r in rows if r["group"] == group}

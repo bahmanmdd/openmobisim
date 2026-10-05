@@ -29,7 +29,7 @@ def test_a_single_car_trip_completes() -> None:
     g = small_grid()
     trips = ms.examples.fixed_car_trips(g, [("alice", (0, 0), (2, 2), 8.0, None)])
     sc = ms.Scenario.from_parts(
-        network=g, demand=trips, class_defaults=car_owning_commuters(), window_hours=24.0
+        network=g, demand=trips, classes=car_owning_commuters(), window_hours=24.0
     )
     run = sc.run(run_id="pytest-single-trip")
 
@@ -50,7 +50,7 @@ def test_a_traveller_without_a_car_is_not_simulated() -> None:
         g, [("bob", (0, 0), (2, 2), 8.0, None)], user_class="pedestrian"
     )
     # No class default declares ownership for "pedestrian".
-    sc = ms.Scenario.from_parts(network=g, demand=trips, class_defaults=car_owning_commuters())
+    sc = ms.Scenario.from_parts(network=g, demand=trips, classes=car_owning_commuters())
     run = sc.run(run_id="pytest-no-car")
 
     assert run.completion["no_vehicle_available"] == 1
@@ -62,7 +62,7 @@ def test_a_short_window_truncates_rather_than_completing() -> None:
     g = small_grid()
     trips = ms.examples.fixed_car_trips(g, [("carol", (0, 0), (2, 2), 8.0, None)])
     sc = ms.Scenario.from_parts(
-        network=g, demand=trips, class_defaults=car_owning_commuters(), window_hours=8.0001
+        network=g, demand=trips, classes=car_owning_commuters(), window_hours=8.0001
     )
     run = sc.run(run_id="pytest-truncated")
 
@@ -79,7 +79,7 @@ def test_kpis_table_round_trips_through_pandas() -> None:
     sc = ms.Scenario.from_parts(
         network=g,
         demand=trips,
-        class_defaults=car_owning_commuters(),
+        classes=car_owning_commuters(),
         choice_model="deterministic",
         equilibration="free_flow",
     )
@@ -106,7 +106,7 @@ def test_kpis_table_round_trips_through_pandas() -> None:
 def test_manifest_reports_the_kpi_weighting() -> None:
     g = small_grid()
     trips = ms.examples.fixed_car_trips(g, [("erin", (0, 0), (2, 2), 8.0, None)])
-    sc = ms.Scenario.from_parts(network=g, demand=trips, class_defaults=car_owning_commuters())
+    sc = ms.Scenario.from_parts(network=g, demand=trips, classes=car_owning_commuters())
     run = sc.run(run_id="pytest-manifest")
 
     manifest = run.manifest()
@@ -122,7 +122,7 @@ def test_a_run_is_deterministic() -> None:
             g,
             [("alice", (0, 0), (2, 2), 8.0, None), ("bob", (0, 2), (2, 0), 8.5, 2)],
         )
-        sc = ms.Scenario.from_parts(network=g, demand=trips, class_defaults=car_owning_commuters())
+        sc = ms.Scenario.from_parts(network=g, demand=trips, classes=car_owning_commuters())
         run = sc.run(run_id="pytest-determinism")
         return {"completion": run.completion, "total_travel_time_s": run.total_travel_time_s}
 

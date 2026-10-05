@@ -29,7 +29,7 @@ DTYPES = {"u8": "<u1", "u32": "<u4", "i32": "<i4", "f32": "<f4"}
 def grid_run(n=8, trips=120, seed=5, **kwargs):
     net = ms.examples.manhattan_grid(n=n, block_metres=200.0, signals=False)
     rows = ms.examples.trips_random(net, trips, seed=seed, min_m=300.0, max_m=1200.0)
-    settings = {"class_defaults": CAR, "window_hours": 1, "flow_level": 4, "link_bin_s": 300}
+    settings = {"classes": CAR, "window_hours": 1, "flow_level": 4, "link_bin_s": 300}
     settings.update(kwargs)
     return net, ms.Scenario.from_parts(net, rows, **settings).run("interactive-test")
 

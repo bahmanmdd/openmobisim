@@ -22,6 +22,8 @@ pub struct ChoiceBatch {
     names: Vec<String>,
     traveller: Vec<u32>,
     trip: Vec<u32>,
+    /// Each situation's traveller class (S231; 0 unless given).
+    class: Vec<u32>,
     /// `situations() + 1` entries: situation `s` owns alternatives
     /// `offsets[s]..offsets[s + 1]`.
     offsets: Vec<u32>,
@@ -40,6 +42,7 @@ impl ChoiceBatch {
             names: attribute_names.iter().map(|n| (*n).to_string()).collect(),
             traveller: Vec::new(),
             trip: Vec::new(),
+            class: Vec::new(),
             offsets: vec![0],
             identity: Vec::new(),
             columns: vec![Vec::new(); attribute_names.len()],
@@ -50,6 +53,7 @@ impl ChoiceBatch {
     pub fn clear(&mut self) {
         self.traveller.clear();
         self.trip.clear();
+        self.class.clear();
         self.offsets.truncate(1);
         self.identity.clear();
         self.columns.iter_mut().for_each(Vec::clear);
@@ -57,8 +61,15 @@ impl ChoiceBatch {
 
     /// Start a new situation: `traveller`'s `trip`. Alternatives pushed next belong to it.
     pub fn begin_situation(&mut self, traveller: u32, trip: u32) {
+        self.begin_situation_in(traveller, trip, 0);
+    }
+
+    /// Start a new situation of a traveller of `class` (S231: a model may weigh classes
+    /// differently).
+    pub fn begin_situation_in(&mut self, traveller: u32, trip: u32, class: u32) {
         self.traveller.push(traveller);
         self.trip.push(trip);
+        self.class.push(class);
         // The offset that closes this situation is written as its alternatives arrive.
         self.offsets.push(*self.offsets.last().unwrap_or(&0));
     }
@@ -92,6 +103,7 @@ impl ChoiceBatch {
             names: self.names.clone(),
             traveller: Vec::with_capacity(which.len()),
             trip: Vec::with_capacity(which.len()),
+            class: Vec::with_capacity(which.len()),
             offsets: vec![0],
             identity: Vec::new(),
             columns: vec![Vec::new(); self.columns.len()],
@@ -100,6 +112,7 @@ impl ChoiceBatch {
             let range = self.range(s);
             out.traveller.push(self.traveller[s]);
             out.trip.push(self.trip[s]);
+            out.class.push(self.class[s]);
             out.identity.extend_from_slice(&self.identity[range.clone()]);
             for (dst, src) in out.columns.iter_mut().zip(&self.columns) {
                 dst.extend_from_slice(&src[range.clone()]);
@@ -148,6 +161,12 @@ impl ChoiceBatch {
     #[must_use]
     pub fn travellers(&self) -> &[u32] {
         &self.traveller
+    }
+
+    /// Each situation's traveller class (S231): an index into the run's classes.
+    #[must_use]
+    pub fn classes(&self) -> &[u32] {
+        &self.class
     }
 
     /// Each situation's trip id.

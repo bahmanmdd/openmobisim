@@ -9,7 +9,7 @@
 
 use openmobisim_core_choice::{
     ChoiceBatch, ChoiceError, ChoiceModel, Choices, DEFAULT_MODEL, Deterministic, Logit, Options,
-    Registry, gumbel, model, sample_random_utility,
+    Registry, gumbel, model, model_with_classes, sample_random_utility,
 };
 use openmobisim_core_types::rng::{RngKey, Stream, StreamRng};
 
@@ -236,6 +236,40 @@ fn the_descriptor_names_every_coefficient_and_changes_with_any() {
     );
     assert_ne!(custom.descriptor(), logit().descriptor());
     assert!(logit().is_sampled() && !Deterministic.is_sampled());
+}
+
+#[test]
+fn each_class_weighs_by_its_own_coefficients_and_says_so_in_the_descriptor() {
+    // S231: class 1 values time at -0.5 a minute, class 0 at the model's -0.2; a class past
+    // the end of the list weighs by the model's own.
+    let classes = vec![
+        ("plain".to_string(), Options::new()),
+        ("hurried".to_string(), Options::from([("beta_time_min".into(), -0.5)])),
+    ];
+    let m = logit().with_classes(&classes).expect("classes");
+    let routes: Vec<Alt> = vec![(1, 10.0, 1.0, 5.0), (2, 13.0, 1.0, 5.0)];
+    let mut b = ChoiceBatch::new(0, &ATTRIBUTES);
+    for class in [0, 1, 7] {
+        b.begin_situation_in(class, class, class);
+        for (id, time, ps, length) in &routes {
+            b.push_alternative(*id, &[*time, ps.ln(), *length, 0.0, 0.0, 0.0]);
+        }
+    }
+    let p = m.probabilities_by_situation(&b).expect("probabilities");
+    let fast = |beta: f64| 1.0 / (1.0 + (3.0 * beta).exp());
+    assert!((p[0][0] - fast(-0.2)).abs() < 1e-12, "{p:?}");
+    assert!((p[1][0] - fast(-0.5)).abs() < 1e-12, "{p:?}");
+    assert!((p[2][0] - fast(-0.2)).abs() < 1e-12, "{p:?}");
+    assert_eq!(
+        m.descriptor(),
+        format!("{};class:hurried.beta_time_min=-0.5", logit().descriptor())
+    );
+    // No coefficient per class: the model as it was, descriptor and all.
+    let same = model_with_classes("logit", &Options::new(), &classes[..1]).expect("model");
+    assert_eq!(same.descriptor(), logit().descriptor());
+    let typo = vec![("x".to_string(), Options::from([("tme".into(), 1.0)]))];
+    assert!(logit().with_classes(&typo).unwrap_err().to_string().contains("class x"));
+    assert!(model_with_classes("deterministic", &Options::new(), &classes).is_err());
 }
 
 #[test]

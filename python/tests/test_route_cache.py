@@ -21,7 +21,7 @@ def scenario(trips=200, **kwargs):
     # One loading of everyone at once (S223: the free-flow loading's groups would also make
     # "shortest" the default).
     settings = {
-        "class_defaults": CAR,
+        "classes": CAR,
         "window_hours": 1,
         "master_seed": 3,
         "equilibration": "free_flow",

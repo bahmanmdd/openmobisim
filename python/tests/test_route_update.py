@@ -22,7 +22,7 @@ def scenario(trips=1_800, **kwargs):
     net = ms.examples.manhattan_grid(n=8, block_metres=200.0, signals=False)
     rows = ms.examples.trips_random(net, trips, seed=5, min_m=300.0, max_m=1400.0, spread_s=300)
     settings = {
-        "class_defaults": CAR,
+        "classes": CAR,
         "window_hours": 2,
         "flow_level": 4,
         "choice_model": "logit",
@@ -117,7 +117,7 @@ def test_when_nothing_beats_the_set_nothing_is_added_and_nothing_changes():
     net = ms.examples.toy_network()
     rows = [("t0", 0, *net.node_lonlat("W"), *net.node_lonlat("D1"), 0, "commuter", None)]
     settings = {
-        "class_defaults": CAR,
+        "classes": CAR,
         "flow_level": 4,
         "choice_model": "logit",
         "equilibration": "msa",
@@ -201,7 +201,7 @@ def test_bad_settings_are_refused_before_any_work():
     rows = [("t0", 0, *net.node_lonlat("W"), *net.node_lonlat("D1"), 0, "commuter", None)]
 
     def build(**kwargs):
-        return ms.Scenario.from_parts(net, rows, class_defaults=CAR, **kwargs).run("ru-bad")
+        return ms.Scenario.from_parts(net, rows, classes=CAR, **kwargs).run("ru-bad")
 
     with pytest.raises(ValueError, match='no route update called "nope".*none, best_response'):
         build(route_update="nope")

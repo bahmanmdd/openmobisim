@@ -342,6 +342,38 @@ pub fn model(name: &str, options: &Options) -> Result<Box<dyn ChoiceModel>, Choi
     Registry::builtin().create(name, options)
 }
 
+/// A built-in model by name, with coefficients per traveller class (S231): `classes[c]` is class
+/// `c`'s name and its `beta_<attribute>` overrides (empty: the model's own). Only the random-utility
+/// models weigh classes: the logit and the nested logit.
+///
+/// # Errors
+///
+/// As [`model`]; [`ChoiceError::BadOption`] if a class sets a coefficient for a model that has
+/// none to set.
+pub fn model_with_classes(
+    name: &str,
+    options: &Options,
+    classes: &[(String, Options)],
+) -> Result<Box<dyn ChoiceModel>, ChoiceError> {
+    if classes.iter().all(|(_, o)| o.is_empty()) {
+        return model(name, options);
+    }
+    match name {
+        "logit" => Ok(Box::new(crate::Logit::from_options(options)?.with_classes(classes)?)),
+        "nested_logit" => {
+            let mut m = crate::NestedLogit::from_options(options)?;
+            m.logit = m.logit.with_classes(classes)?;
+            Ok(Box::new(m))
+        }
+        other => Err(ChoiceError::BadOption {
+            model: other.to_string(),
+            option: "classes".to_string(),
+            reason: "coefficients per traveller class need the logit or the nested logit"
+                .to_string(),
+        }),
+    }
+}
+
 /// The default model with its default options.
 #[must_use]
 pub fn default_model() -> Box<dyn ChoiceModel> {

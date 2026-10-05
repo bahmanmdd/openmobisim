@@ -27,7 +27,7 @@ def toy_run(rows: list[tuple], run_id: str, parkings: object = None, **kwargs: o
     return ms.Scenario.from_parts(
         network=ms.examples.toy_network(),
         demand=rows,
-        class_defaults={"everyone": (True, True, False)},
+        classes={"everyone": (True, True, False)},
         transit=ms.examples.toy_network_transit(),
         parkings=ms.examples.toy_network_parkings() if parkings is None else parkings,
         choice_model=kwargs.pop("choice_model", "deterministic"),
@@ -192,7 +192,7 @@ def test_parkings_need_a_timetable() -> None:
         ms.Scenario.from_parts(
             network=net,
             demand=[toy_trip(net, "a", "W", "N1", 0, "car_transit")],
-            class_defaults={"everyone": (True, True, False)},
+            classes={"everyone": (True, True, False)},
             parkings=ms.examples.toy_network_parkings(),
         ).run(run_id="no-timetable")
 
@@ -266,7 +266,7 @@ def test_map_parking_draws_a_run_with_parkings(tmp_path) -> None:
     plain = ms.Scenario.from_parts(
         network=net,
         demand=[toy_trip(net, "c", "N1", "D2", 0, "transit")],
-        class_defaults={"everyone": (True, True, False)},
+        classes={"everyone": (True, True, False)},
         transit=ms.examples.toy_network_transit(),
         equilibration="free_flow",
     ).run(run_id="no-parkings")

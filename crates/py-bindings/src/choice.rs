@@ -309,6 +309,36 @@ pub fn make_choice_model(
     }
 }
 
+/// [`make_choice_model`] with coefficients per traveller class (S231): `classes[c]` is class
+/// `c`'s name and its `beta_*` overrides of the model's own (empty: the model's).
+///
+/// # Errors
+///
+/// As [`make_choice_model`]; `ValueError` if a class sets a coefficient for a model of the
+/// user's own (it gives its classes their settings itself) or for a built-in model that weighs
+/// none (only the logit and the nested logit do).
+pub fn make_choice_model_with_classes(
+    spec: Option<&Bound<'_, PyAny>>,
+    options: Option<HashMap<String, f64>>,
+    classes: &[(String, BTreeMap<String, f64>)],
+) -> PyResult<Arc<dyn ChoiceModel>> {
+    if classes.iter().all(|(_, o)| o.is_empty()) {
+        return make_choice_model(spec, options);
+    }
+    let name = match spec {
+        None => DEFAULT_MODEL.to_string(),
+        Some(s) => s.extract::<String>().map_err(|_| {
+            PyValueError::new_err(
+                "coefficients per traveller class apply to the built-in models; give a model of your own its settings in its constructor",
+            )
+        })?,
+    };
+    let opts: BTreeMap<String, f64> = options.unwrap_or_default().into_iter().collect();
+    openmobisim_core_choice::model_with_classes(&name, &opts, classes)
+        .map(Arc::from)
+        .map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
 /// What every trip chose, as numpy arrays (one entry per trip).
 ///
 /// ``route`` is the route taken as an index into the run's route sets and

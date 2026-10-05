@@ -25,7 +25,7 @@ def jammed(**kwargs: object) -> ms.Run:
         "equilibration_options": {"increments": 1, "warmup": 0},
     }
     return ms.Scenario.from_parts(
-        net, rows, class_defaults=CAR, window_hours=3, **{**settings, **kwargs}
+        net, rows, classes=CAR, window_hours=3, **{**settings, **kwargs}
     ).run("rules")
 
 
@@ -47,7 +47,7 @@ def test_the_gridlock_report_finds_what_stands_and_checks_the_guarantee() -> Non
             for a, b in zip(loop, loop[1:] + loop[:1], strict=True):
                 assert to[a] == frm[b]
     level0 = ms.Scenario.from_parts(
-        run.network, ms.examples.trips_random(run.network, 50, seed=1), class_defaults=CAR,
+        run.network, ms.examples.trips_random(run.network, 50, seed=1), classes=CAR,
         flow_level=0, equilibration="free_flow",
     ).run("level0")  # fmt: skip
     assert level0.report_gridlock() is None

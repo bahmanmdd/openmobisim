@@ -132,7 +132,7 @@ def test_a_run_routes_from_its_sets_and_the_method_does_not_change_the_run():
     # which would defeat the whole point of comparing "penalty" (the non-iterating default)
     # against an explicit "shortest".
     kwargs = {
-        "class_defaults": CAR,
+        "classes": CAR,
         "window_hours": 1,
         "flow_level": 4,
         "link_bin_s": 300,
@@ -204,7 +204,7 @@ def test_montecarlo_is_biased_by_the_demand_it_is_generated_for():
         run = ms.Scenario.from_parts(
             net,
             rows,
-            class_defaults={"commuter": (True, False, False)},
+            classes={"commuter": (True, False, False)},
             window_hours=2,
             flow_level=4,
             default_weight=weight,

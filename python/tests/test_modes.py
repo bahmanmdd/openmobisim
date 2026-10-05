@@ -19,7 +19,7 @@ def toy_run(rows: list[tuple], run_id: str, **kwargs: object) -> ms.Run:
     return ms.Scenario.from_parts(
         network=ms.examples.toy_network(),
         demand=rows,
-        class_defaults={"everyone": (True, True, False)},
+        classes={"everyone": (True, True, False)},
         transit=kwargs.pop("transit", ms.examples.toy_network_transit()),
         parkings=kwargs.pop("parkings", ms.examples.toy_network_parkings()),
         choice_model=kwargs.pop("choice_model", "deterministic"),

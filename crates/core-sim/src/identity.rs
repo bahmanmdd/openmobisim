@@ -136,6 +136,8 @@ pub(crate) struct Inputs<'a> {
     pub mode_choice: Option<&'a [Mode]>,
     /// How long a walk or ride mode choice offers (S209); hashed only with mode choice.
     pub mode_defaults: &'a crate::layers::ModeDefaults,
+    /// The modes each traveller class may use (S231); empty: every class all.
+    pub class_modes: &'a [[bool; Mode::COUNT]],
     /// The loading's rules (S213); hashed only when one is on and the run has junctions to
     /// apply them at (the link transmission model).
     pub loading: &'a crate::loading_rules::LoadingOptions,
@@ -196,6 +198,16 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         hash_mode_choice(&mut h, inputs.trips, inputs.layers, modes);
         h.write_f64(inputs.mode_defaults.walk_max_s);
         h.write_f64(inputs.mode_defaults.bike_max_s);
+        // The classes' modes (S231): nothing when every class may use all, so such a run's
+        // fingerprint is what it was.
+        if inputs.class_modes.iter().any(|modes| modes.contains(&false)) {
+            for (class, modes) in inputs.class_modes.iter().enumerate() {
+                h.write_u32(u32::try_from(class).expect("few classes"));
+                for &allowed in modes {
+                    h.write_bool(allowed);
+                }
+            }
+        }
     }
     // Off means absent: a run without a timetable hashes as it did before transit.
     if let Some(transit) = inputs.transit {

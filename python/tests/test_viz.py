@@ -95,7 +95,7 @@ def toy_run(level=4, hours=1, **kwargs):
     scenario = ms.Scenario.from_parts(
         net,
         rows,
-        class_defaults=CAR,
+        classes=CAR,
         window_hours=hours,
         flow_level=level,
         link_bin_s=300,
@@ -156,7 +156,7 @@ def test_map_link_says_what_is_missing_and_what_is_unknown():
     net = ms.examples.toy_network()
     (olon, olat), (dlon, dlat) = net.node_lonlat("W"), net.node_lonlat("D1")
     rows = [("a", 0, olon, olat, dlon, dlat, 0, "commuter", None)]
-    bare = ms.Scenario.from_parts(net, rows, class_defaults=CAR).run("bare")
+    bare = ms.Scenario.from_parts(net, rows, classes=CAR).run("bare")
     with pytest.raises(ValueError, match="link_bin_s"):
         viz.map_link(bare)
     run, _ = toy_run()
@@ -254,7 +254,7 @@ def test_a_link_with_almost_no_traffic_is_still_drawn():
     (olon, olat), (dlon, dlat) = net.node_lonlat("W"), net.node_lonlat("D1")
     rows = [("only", 0, olon, olat, dlon, dlat, 0, "commuter", None)]
     run = ms.Scenario.from_parts(
-        net, rows, class_defaults=CAR, window_hours=2, flow_level=4, link_bin_s=3600
+        net, rows, classes=CAR, window_hours=2, flow_level=4, link_bin_s=3600
     ).run("one-car")
     kwargs = {"size_cm": (15.24, 8.64), "dpi": 60, "chevrons": False}
     shown = pixels(viz.map_link(run, **kwargs))

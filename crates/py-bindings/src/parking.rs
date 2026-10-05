@@ -309,10 +309,13 @@ pub(crate) fn itinerary_choices<'py>(
     let d = PyDict::new(py);
     d.set_item("trip", result.trip.clone().into_pyarray(py))?;
     let (mut who, mut seq, mut mode) = (Vec::new(), Vec::new(), Vec::new());
+    let mut class = Vec::new();
     for &t in &result.trip {
         let trip = TripId::new(t);
         let traveller = trips.traveller(trip);
         who.push(travellers.external_ids().external(traveller.raw()).to_string());
+        let c = travellers.user_class(traveller).raw();
+        class.push(travellers.class_external_ids().external(c).to_string());
         let first = travellers.trips_of(traveller).next().map_or(t, |f| f.raw());
         seq.push(t - first);
     }
@@ -327,6 +330,7 @@ pub(crate) fn itinerary_choices<'py>(
     }
     d.set_item("traveller_id", who)?;
     d.set_item("trip_seq", seq.into_pyarray(py))?;
+    d.set_item("user_class", class)?;
     d.set_item("mode", mode)?;
     d.set_item("mode_choice", result.choosing.clone())?;
     let parking_id: Vec<Option<String>> = result

@@ -55,7 +55,7 @@ def test_a_run_reports_per_link_bins_that_match_its_demand():
     net = ms.examples.toy_network()
     rows = toy_rows(net, [("W", "D1", 30, 10)])
     scenario = ms.Scenario.from_parts(
-        net, rows, class_defaults=CAR, window_hours=1, flow_level=4, link_bin_s=300
+        net, rows, classes=CAR, window_hours=1, flow_level=4, link_bin_s=300
     )
     run = scenario.run("bins-test")
     bins = run.link_bins()
@@ -74,7 +74,7 @@ def test_a_run_reports_per_link_bins_that_match_its_demand():
 
 def test_per_link_bins_are_off_unless_asked_for():
     net = ms.examples.toy_network()
-    scenario = ms.Scenario.from_parts(net, toy_rows(net, [("W", "D1", 3, 10)]), class_defaults=CAR)
+    scenario = ms.Scenario.from_parts(net, toy_rows(net, [("W", "D1", 3, 10)]), classes=CAR)
     assert scenario.run("no-bins").link_bins() is None
 
 
@@ -82,7 +82,7 @@ def test_free_flow_bins_carry_free_flow_times():
     net = ms.examples.toy_network()
     rows = toy_rows(net, [("W", "D1", 5, 60)])
     run = ms.Scenario.from_parts(
-        net, rows, class_defaults=CAR, window_hours=1, flow_level=0, link_bin_s=600
+        net, rows, classes=CAR, window_hours=1, flow_level=0, link_bin_s=600
     ).run("free")
     bins = run.link_bins()
     mean = bins.pcu_seconds() / bins.pcu()
@@ -97,7 +97,7 @@ def test_the_table_does_not_depend_on_the_loading_step():
         run = ms.Scenario.from_parts(
             net,
             rows,
-            class_defaults=CAR,
+            classes=CAR,
             window_hours=2,
             flow_level=4,
             flow_step_s=step,
@@ -140,7 +140,7 @@ def test_a_real_extract_runs_and_reports_link_bins():
     assert (np.diff(offsets) >= 2).all() and offsets[-1] == len(coords)
     rows = ms.examples.trips_random(net, 500, seed=1)
     run = ms.Scenario.from_parts(
-        net, rows, class_defaults=CAR, window_hours=1, flow_level=4, link_bin_s=300
+        net, rows, classes=CAR, window_hours=1, flow_level=4, link_bin_s=300
     ).run("osm-test")
     bins = run.link_bins()
     assert len(bins) > 0 and run.completion["completed"] > 0
@@ -168,7 +168,7 @@ def toy_run(**kwargs):
     # the library's, "logit"/"msa" since 2026-09-23): this file is about link-bin output and
     # fingerprint/manifest identity, not the choice model or equilibration.
     settings = {
-        "class_defaults": CAR,
+        "classes": CAR,
         "window_hours": 1,
         "flow_level": 4,
         "link_bin_s": 300,
@@ -255,7 +255,7 @@ def test_the_fingerprint_follows_the_inputs_and_only_the_inputs():
     shifted = [(*r[:6], r[6] + 1, *r[7:]) for r in rows]
     variants.append(
         ms.Scenario.from_parts(
-            net, shifted, class_defaults=CAR, window_hours=1, flow_level=4, link_bin_s=300
+            net, shifted, classes=CAR, window_hours=1, flow_level=4, link_bin_s=300
         ).run("identity-test")
     )
     prints = {v.fingerprint for v in variants} | {base.fingerprint}
@@ -271,4 +271,4 @@ def test_a_seed_must_be_a_whole_number_in_range():
     for bad in (-1, 2**64):
         with pytest.raises(ValueError, match="master_seed"):
             ms.Scenario.from_parts(net, rows, master_seed=bad)
-    ms.Scenario.from_parts(net, rows, class_defaults=CAR, master_seed=2**64 - 1).run("max-seed")
+    ms.Scenario.from_parts(net, rows, classes=CAR, master_seed=2**64 - 1).run("max-seed")

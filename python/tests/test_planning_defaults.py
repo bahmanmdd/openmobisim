@@ -18,7 +18,7 @@ CAR = {"commuter": (True, False, False)}
 def jam(name, **kwargs):
     net = ms.examples.manhattan_grid(n=6, block_metres=150.0, signals=False)
     rows = ms.examples.trips_random(net, 4000, seed=3, min_m=300.0, max_m=900.0, spread_s=600)
-    settings = {"class_defaults": CAR, "window_hours": 3}
+    settings = {"classes": CAR, "window_hours": 3}
     settings.update(kwargs)
     return ms.Scenario.from_parts(net, rows, **settings).run(name, quiet=True)
 

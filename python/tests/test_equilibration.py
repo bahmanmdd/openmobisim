@@ -30,7 +30,7 @@ FIELDS = [
 def scenario(trips=600, **kwargs):
     net = ms.examples.manhattan_grid(n=8, block_metres=200.0, signals=False)
     rows = ms.examples.trips_random(net, trips, seed=5, min_m=300.0, max_m=1400.0, spread_s=600)
-    settings = {"class_defaults": CAR, "window_hours": 2, "flow_level": 4, "link_bin_s": 300}
+    settings = {"classes": CAR, "window_hours": 2, "flow_level": 4, "link_bin_s": 300}
     settings.update(kwargs)
     return ms.Scenario.from_parts(net, rows, **settings)
 
@@ -163,7 +163,7 @@ def test_bad_settings_are_refused_before_any_work():
     rows = [("t0", 0, *net.node_lonlat("W"), *net.node_lonlat("D1"), 0, "commuter", None)]
 
     def build(**kwargs):
-        return ms.Scenario.from_parts(net, rows, class_defaults=CAR, **kwargs).run("eq-bad")
+        return ms.Scenario.from_parts(net, rows, classes=CAR, **kwargs).run("eq-bad")
 
     with pytest.raises(
         ValueError, match='no equilibration strategy called "replanning".*free_flow, msa'
@@ -307,7 +307,7 @@ def test_the_choice_detour_limit_is_offered_routes_within_it_of_the_best():
         run = ms.Scenario.from_parts(
             net,
             rows,
-            class_defaults=CAR,
+            classes=CAR,
             choice_model="logit",
             choice_options={"beta_time_min": -0.05},
             choice_detour_limit=limit,
@@ -363,7 +363,7 @@ def test_a_run_that_loads_more_than_once_defaults_to_one_route_per_pair_an_updat
     rows = ms.examples.trips_random(net, 300, seed=5, min_m=300.0, max_m=1000.0, spread_s=300)
 
     def run(name, **kwargs):
-        settings = {"class_defaults": CAR, "flow_level": 4, "choice_model": "logit"}
+        settings = {"classes": CAR, "flow_level": 4, "choice_model": "logit"}
         settings.update(kwargs)
         return ms.Scenario.from_parts(net, rows, **settings).run(name, quiet=True)
 
@@ -453,7 +453,7 @@ def test_a_run_where_trips_choose_their_mode_gets_a_verdict():
     # reported beside the share that changed.
     run = scenario(
         trips=500,
-        class_defaults={"commuter": (True, True, False)},
+        classes={"commuter": (True, True, False)},
         modes=("car", "bike", "walk"),
         equilibration_options={"iterations": 4},
         choice_model="logit",

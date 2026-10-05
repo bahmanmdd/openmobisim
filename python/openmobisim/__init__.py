@@ -25,7 +25,9 @@ every few people, for faster screening runs. No disruptions yet.
 Networks and demand may come from files in standard formats: GMNS networks
 (``network_read_gmns``, ``network_write_gmns``), checked before a run by ``network_check``;
 zones, OD matrices and trips as CSV (``demand_read_zones``, ``demand_read_od``,
-``demand_read_trips``, ``demand_write_trips``), an OD matrix made trips by ``demand_from_od``.
+``demand_read_trips``, ``demand_write_trips``), an OD matrix made trips by ``demand_from_od``;
+traveller classes, each with its own modes and coefficients, from a class table
+(``demand_read_classes``), drawn for each traveller by ``demand_assign_classes``.
 """
 
 from openmobisim import _core, choice, examples
@@ -49,7 +51,9 @@ from openmobisim._core import (
 )
 from openmobisim.audit import network_check
 from openmobisim.demand import (
+    demand_assign_classes,
     demand_from_od,
+    demand_read_classes,
     demand_read_od,
     demand_read_trips,
     demand_read_zones,
@@ -76,7 +80,9 @@ __all__ = [
     "choice",
     "choice_draw",
     "choice_models",
+    "demand_assign_classes",
     "demand_from_od",
+    "demand_read_classes",
     "demand_read_od",
     "demand_read_trips",
     "demand_read_zones",

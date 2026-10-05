@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from openmobisim import _core
-from openmobisim.demand import demand_read_trips
+from openmobisim.demand import _class_table, demand_read_trips
 
 __all__ = ["Run", "Scenario", "Table"]
 
@@ -626,18 +626,17 @@ class Run:
     def itinerary_choices(self) -> dict[str, Any] | None:
         """Each itinerary trip's choice, and each choice of mode; ``None`` without any.
 
-        One row per transit, park-and-ride and bike-and-ride trip, and per trip choosing its
-        mode (``modes``), by traveller and then by the order of their day. Columns:
-        ``trip`` (its index in the run, where trips are grouped by traveller),
-        ``traveller_id`` and ``trip_seq`` (its place in that traveller's day, from 0),
-        ``mode`` (the mode taken; ``None`` for a trip choosing its mode that had nothing to
-        choose from), ``mode_choice`` (whether the trip chose its mode), ``parking_id`` (the
-        parking used; ``None`` for plain transit or a trip that did not travel),
-        ``direction`` (``"out"``: vehicle first; ``"back"``: transit first, to where the
-        vehicle is; ``""`` otherwise), ``alternatives`` (how many it chose among when it last
-        chose; 0: it did not travel), ``probability`` (what the model gave its
-        choice), ``expected_s`` (the chosen itinerary's door-to-door time expected at the
-        choice) and ``rides`` (vehicles boarded).
+        One row per transit, park-and-ride and bike-and-ride trip, and per trip choosing its mode
+        (``modes``), by traveller and then by the order of their day. Columns: ``trip`` (its index
+        in the run, where trips are grouped by traveller), ``traveller_id`` and ``trip_seq`` (its
+        place in that traveller's day, from 0), ``user_class`` (the traveller's class, S231),
+        ``mode`` (the mode taken; ``None`` for a trip choosing its mode that had nothing to choose
+        from), ``mode_choice`` (whether the trip chose its mode), ``parking_id`` (the parking used;
+        ``None`` for plain transit or a trip that did not travel), ``direction`` (``"out"``: vehicle
+        first; ``"back"``: transit first, to where the vehicle is; ``""`` otherwise),
+        ``alternatives`` (how many it chose among when it last chose; 0: it did not travel),
+        ``probability`` (what the model gave its choice), ``expected_s`` (the chosen itinerary's
+        door-to-door time expected at the choice) and ``rides`` (vehicles boarded).
         """
         choices = self._summary.itinerary_choices
         return None if choices is None else dict(choices)
@@ -775,7 +774,7 @@ class Scenario:
         trips_path: str | None = None,
         persons: list[tuple] | None = None,
         persons_path: str | None = None,
-        class_defaults: dict[str, tuple[bool, bool, bool]] | None = None,
+        classes: dict[str, Any] | None = None,
         default_weight: int = 1,
         window_hours: float = 24.0,
         flow_level: int = 2,
@@ -800,6 +799,7 @@ class Scenario:
         modes: tuple[str, ...] | list[str] | None = None,
         mode_options: dict[str, float] | None = None,
         loading_options: dict[str, float] | None = None,
+        class_defaults: None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
         if bike_cost not in BIKE_COSTS:
@@ -821,7 +821,25 @@ class Scenario:
         self._trips_path = trips_path
         self._persons = persons
         self._persons_path = persons_path
-        self._class_defaults = class_defaults
+        if class_defaults is not None:
+            raise ValueError(
+                "class_defaults is now classes (S231): the same {class: (owns_car, owns_bike, "
+                "has_transit_pass)} works there, and a class may also say its modes and its "
+                "coefficients"
+            )
+        # Traveller classes (S231): what each owns, the modes it may use, its coefficients.
+        table = _class_table(classes) if classes is not None else {}
+        self._class_defaults = {
+            name: (c["owns_car"], c["owns_bike"], c["has_transit_pass"])
+            for name, c in table.items()
+        } or None
+        self._class_modes = {
+            name: c["modes"] for name, c in table.items() if c["modes"] is not None
+        } or None
+        self._class_options = {name: c["betas"] for name, c in table.items() if c["betas"]} or None
+        if modes is None and self._class_modes:
+            # The classes say which modes their travellers may use: the run offers them all.
+            modes = [m for m in MODES if any(m in ms for ms in self._class_modes.values())]
         self._default_weight = default_weight
         self._window_s = round(window_hours * 3600)
         self._flow_level = flow_level
@@ -887,7 +905,7 @@ class Scenario:
         network: _core.Network,
         demand: list[tuple] | str | Path,
         persons: list[tuple] | str | None = None,
-        class_defaults: dict[str, tuple[bool, bool, bool]] | None = None,
+        classes: dict[str, Any] | None = None,
         default_weight: int = 1,
         window_hours: float = 24.0,
         flow_level: int = 2,
@@ -912,6 +930,7 @@ class Scenario:
         modes: tuple[str, ...] | list[str] | None = None,
         mode_options: dict[str, float] | None = None,
         loading_options: dict[str, float] | None = None,
+        class_defaults: None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -934,9 +953,24 @@ class Scenario:
             persons: The ``persons.parquet`` equivalent — an in-memory table,
                 a file path, or ``None`` if every traveller takes their
                 class's default ownership.
-            class_defaults: ``{class_name: (owns_car, owns_bike,
-                has_transit_pass)}`` — what each class owns by default. A class not
-                listed here owns nothing unless a `persons` row overrides it.
+            classes: The traveller classes (S231), ``{class_name: columns}``, a trip's class
+                being its ``user_class``: ``demand_read_classes`` reads them from a CSV file, or
+                give a dict of the same columns. A class may say ``modes`` (the modes its
+                travellers may use: ``["car", "transit", "car_transit"]``; unsaid: every mode
+                the run offers), ``owns_car``, ``owns_bike``, ``has_transit_pass`` (what each
+                of them owns, unless a ``persons`` row says otherwise; unsaid: as its modes
+                imply, a car for a class that may drive or park and ride, a bike for one that
+                may cycle) and any ``beta_*`` coefficient of the choice model (its own mode
+                constants, ``beta_mode_bike`` …, or its own value of time, ``beta_time_min``;
+                unsaid: ``choice_options``'), for ``"logit"`` and ``"nested_logit"``; its
+                ``share`` is read only by ``demand_assign_classes``. The tuple
+                ``(owns_car, owns_bike, has_transit_pass)`` is a class that says only what it
+                owns. **When the classes say their modes and ``modes`` is not given, the run
+                offers every mode a class names**, and a trip without a stated mode chooses
+                among those its class may use. A class not listed may use every mode, with
+                the model's coefficients, and owns nothing unless a ``persons`` row says so.
+                A class with none of the run's modes leaves its choosing trips without an
+                itinerary. Every value is the user's, not a calibration.
             default_weight: How many people a simulated traveller stands for,
                 for a trip whose row gives no weight. 1 simulates everyone; a
                 larger number is faster and coarser.
@@ -1203,6 +1237,8 @@ class Scenario:
                 wait for another movement while they fit in their turn pockets, this many metres
                 per lane, split among the approach's movements.
                 Uncalibrated defaults; unknown names and values out of range are refused.
+            class_defaults: Replaced by ``classes`` (S231), which takes the same tuples;
+                refused, with a pointer to it.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -1221,7 +1257,7 @@ class Scenario:
             trips_path=trips_path,
             persons=persons_rows,
             persons_path=persons_path,
-            class_defaults=class_defaults,
+            classes=classes,
             default_weight=default_weight,
             window_hours=window_hours,
             flow_level=flow_level,
@@ -1246,6 +1282,7 @@ class Scenario:
             modes=modes,
             mode_options=mode_options,
             loading_options=loading_options,
+            class_defaults=class_defaults,
         )
 
     def run(self, run_id: str = "run", output_dir: str | None = None, quiet: bool = False) -> Run:
@@ -1274,6 +1311,8 @@ class Scenario:
             persons=self._persons,
             persons_path=self._persons_path,
             class_defaults=self._class_defaults,
+            class_modes=self._class_modes,
+            class_options=self._class_options,
             default_weight=self._default_weight,
             window_s=self._window_s,
             flow_level=self._flow_level,

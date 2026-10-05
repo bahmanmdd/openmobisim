@@ -793,6 +793,8 @@ def run_pipeline(
     persons: list[tuple] | None = None,
     persons_path: str | None = None,
     class_defaults: dict[str, tuple[bool, bool, bool]] | None = None,
+    class_modes: dict[str, list[str]] | None = None,
+    class_options: dict[str, dict[str, float]] | None = None,
     default_weight: int = 1,
     window_s: int = 86_400,
     flow_level: int = 0,
@@ -841,6 +843,10 @@ def run_pipeline(
         persons_path: A ``persons.parquet`` path, instead of `persons`.
         class_defaults: ``{class_name: (owns_car, owns_bike,
             has_transit_pass)}`` — what each class owns by default.
+        class_modes: ``{class_name: [mode, ...]}`` — the modes each class's travellers
+            may use (S231); a class not listed may use every mode the run offers.
+        class_options: ``{class_name: {beta_name: value}}`` — each class's own
+            coefficients of the choice model (S231), over ``choice_options``.
         default_weight: How many people a simulated traveller stands for, for
             a trip whose row gives none.
         window_s: Trips still in progress after this second are truncated.

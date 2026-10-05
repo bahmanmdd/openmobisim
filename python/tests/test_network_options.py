@@ -67,7 +67,7 @@ def test_unknown_names_and_bad_values_are_refused():
 def test_a_runs_fingerprint_follows_the_network_parameters():
     def run(net, name):
         rows = [("t0", 0, 4.900, 52.370, 4.915, 52.370, 0, "commuter", None)]
-        return ms.Scenario.from_parts(net, rows, class_defaults=CAR).run(name, quiet=True)
+        return ms.Scenario.from_parts(net, rows, classes=CAR).run(name, quiet=True)
 
     plain, same, other = (
         run(read(), "no-1"),

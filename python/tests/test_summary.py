@@ -19,7 +19,7 @@ CAR = {"commuter": (True, True, False)}
 def run(name, **kwargs):
     net = ms.examples.manhattan_grid(n=6, block_metres=200.0, signals=False)
     rows = ms.examples.trips_random(net, 400, seed=5, min_m=300.0, max_m=1000.0, spread_s=600)
-    settings = {"class_defaults": CAR, "equilibration_options": {"iterations": 3}}
+    settings = {"classes": CAR, "equilibration_options": {"iterations": 3}}
     settings.update(kwargs)
     return ms.Scenario.from_parts(net, rows, **settings).run(name, quiet=True)
 

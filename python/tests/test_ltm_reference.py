@@ -126,7 +126,7 @@ def simulated(
     run = ms.Scenario.from_parts(
         net,
         trips,
-        class_defaults={"x": (True, False, False)},
+        classes={"x": (True, False, False)},
         # The plain single loading: everyone at once on free flow, the full model (S223).
         equilibration="free_flow",
         equilibration_options={"increments": 1, "warmup": 0},

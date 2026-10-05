@@ -29,7 +29,7 @@ def run(net: object, rows: list[tuple], run_id: str, **kwargs: object) -> ms.Run
     return ms.Scenario.from_parts(
         network=net,
         demand=rows,
-        class_defaults=kwargs.pop("class_defaults", everyone_owns()),
+        classes=kwargs.pop("classes", everyone_owns()),
         link_bin_s=300,
         **kwargs,
     ).run(run_id=run_id)
@@ -135,7 +135,7 @@ def test_a_bike_trip_needs_the_traveller_s_bike() -> None:
         net,
         [trip(net, "b", (0, 0), (4, 4), "bike")],
         "layers-no-bike",
-        class_defaults=everyone_owns(car=True, bike=False),
+        classes=everyone_owns(car=True, bike=False),
     )
     assert r.completion_by_mode["bike"]["no_vehicle_available"] == 1
 
@@ -203,7 +203,7 @@ def test_a_real_extract_reads_its_bike_and_walk_layers() -> None:
     assert report["layers"]["bike"]["dedicated_length_m"] <= report["layers"]["bike"]["length_m"]
     rows = ms.examples.trips_random(net, 20, seed=3, min_m=500, max_m=3000, mode="bike")
     r = ms.Scenario.from_parts(
-        network=net, demand=rows, class_defaults={"commuter": (False, True, False)}
+        network=net, demand=rows, classes={"commuter": (False, True, False)}
     ).run(run_id="layers-osm")
     assert r.completion_by_mode["bike"]["total_trips"] == 20
     assert r.completion_by_mode["bike"]["completed"] >= 18

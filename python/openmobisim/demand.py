@@ -7,6 +7,11 @@
 ``demand_read_trips`` read them; ``demand_from_od`` turns an OD matrix into the trips a
 ``Scenario`` runs.
 
+**Traveller classes** (S231): a class says which modes its travellers may use, what they own
+and its own coefficients in the choice model (``beta_*``, its mode constants among them).
+``demand_read_classes`` reads a class table (``classes.csv``); ``demand_assign_classes`` gives
+every traveller a class, drawn by the classes' shares; ``Scenario(classes=...)`` runs them.
+
 ``demand_sample`` is the traveller-weight dial (S209): simulate one traveller for every
 ``weight`` people, the rest of the table unchanged. Fewer travellers cost proportionally
 less to choose for, route and load, at the price of sampling noise, which replications
@@ -26,7 +31,9 @@ from typing import Any
 import numpy as np
 
 __all__ = [
+    "demand_assign_classes",
     "demand_from_od",
+    "demand_read_classes",
     "demand_read_od",
     "demand_read_trips",
     "demand_read_zones",
@@ -208,6 +215,182 @@ def demand_write_trips(trips: Iterable[tuple], path: str | Path) -> int:
             w.writerow(["" if v is None else v for v in row])
             n += 1
     return n
+
+
+# --- traveller classes ------------------------------------------------------------------------
+
+#: What a class may say besides its ``beta_*`` coefficients (S231).
+CLASS_KEYS = ("share", "modes", "owns_car", "owns_bike", "has_transit_pass")
+_OWNERSHIP = ("owns_car", "owns_bike", "has_transit_pass")
+_TRUE, _FALSE = ("1", "true", "yes", "y", "t"), ("0", "false", "no", "n", "f")
+
+
+def _flag(value: object, what: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in _TRUE or text in _FALSE:
+        return text in _TRUE
+    raise ValueError(f"{what} must be true or false (1 or 0), got {value!r}")
+
+
+def _class_entry(name: str, spec: object) -> dict[str, Any]:
+    """One class, in the one shape a run reads (see ``Scenario.from_parts``' ``classes``)."""
+    from openmobisim.scenario import MODES
+
+    if isinstance(spec, (tuple, list)):
+        # The ownership tuple of the old class_defaults (S127): what the class owns, every mode.
+        if len(spec) != 3:
+            raise ValueError(
+                f"class {name!r}: a tuple is (owns_car, owns_bike, has_transit_pass), got {spec!r}"
+            )
+        spec = dict(zip(_OWNERSHIP, spec, strict=True))
+    if not isinstance(spec, Mapping):
+        raise ValueError(f"class {name!r}: give a dict of its columns, got {spec!r}")
+    given = {k: v for k, v in spec.items() if v is not None and v != ""}
+    # A class as ``demand_read_classes`` returns it: its coefficients under ``betas``.
+    if isinstance(given.get("betas"), Mapping):
+        given = {**{k: v for k, v in given.items() if k != "betas"}, **given["betas"]}
+    unknown = [k for k in given if k not in CLASS_KEYS and not str(k).startswith("beta_")]
+    if unknown:
+        raise ValueError(
+            f"class {name!r}: no such column {unknown}; the columns are "
+            f"{', '.join(CLASS_KEYS)} and the choice model's beta_* coefficients"
+        )
+    modes = given.get("modes")
+    if modes is not None:
+        modes = [m.strip() for m in modes.split(";")] if isinstance(modes, str) else list(modes)
+        modes = [m for m in modes if m]
+        bad = [m for m in modes if m not in MODES]
+        if bad:
+            raise ValueError(f"class {name!r}: modes must be among {MODES}, got {bad}")
+        modes = [m for m in MODES if m in modes]
+    share = given.get("share")
+    if share is not None:
+        share = float(share)
+        if not (math.isfinite(share) and share >= 0):
+            raise ValueError(f"class {name!r}: share must be a number of at least 0, got {share}")
+    # Unsaid ownership follows the modes: a class that may drive owns a car (S231).
+    implied = {
+        "owns_car": bool(modes) and any(m in ("car", "car_transit") for m in modes),
+        "owns_bike": bool(modes) and any(m in ("bike", "bike_transit") for m in modes),
+        "has_transit_pass": bool(modes) and any("transit" in m for m in modes),
+    }
+    entry: dict[str, Any] = {"share": share, "modes": modes}
+    for key in _OWNERSHIP:
+        entry[key] = _flag(given[key], f"class {name!r}: {key}") if key in given else implied[key]
+    betas = {}
+    for key, value in given.items():
+        if str(key).startswith("beta_"):
+            v = float(value)
+            if not math.isfinite(v):
+                raise ValueError(f"class {name!r}: {key} must be a finite number, got {value!r}")
+            betas[str(key)] = v
+    entry["betas"] = betas
+    return entry
+
+
+def _class_table(classes: Mapping[str, object]) -> dict[str, dict[str, Any]]:
+    """Every class in the one shape a run reads, in the order given."""
+    if not isinstance(classes, Mapping):
+        raise ValueError(f"classes must be a dict of classes by name, got {type(classes).__name__}")
+    return {str(name): _class_entry(str(name), spec) for name, spec in classes.items()}
+
+
+def demand_read_classes(path: str | Path) -> dict[str, dict[str, Any]]:
+    """Read a class table (``classes.csv``): one row per traveller class (S231).
+
+    Columns: ``class`` (its name, as the trips' ``user_class``); optionally ``share`` (the share
+    of the people in the class, for ``demand_assign_classes``), ``modes`` (the modes its
+    travellers may use, separated by ``;``: ``car;bike;walk``; empty: every mode the run
+    offers), ``owns_car``, ``owns_bike`` and ``has_transit_pass`` (``1`` or ``0``; empty: as the
+    modes imply, a car for a class that may drive or park and ride, a bike for one that may
+    cycle, a pass for one that may take transit) and any ``beta_*`` coefficient of the choice
+    model (``beta_mode_bike``, ``beta_time_min`` …; empty: the model's own). Every value is
+    what the user gives, not a calibration.
+
+    Returns:
+        ``{class: {"share", "modes", "owns_car", "owns_bike", "has_transit_pass", "betas"}}`` in
+        the file's order, the shape ``Scenario(classes=...)`` and ``demand_assign_classes`` take.
+
+    Raises:
+        ValueError: If a row has no class, a class repeats, or a column or value is not one of
+            those above.
+    """
+    out: dict[str, Any] = {}
+    for i, row in enumerate(_rows(path)):
+        name = _first(row, "class", "user_class", "name")
+        if not name:
+            raise ValueError(f"{path}: row {i + 1} has no class")
+        if name in out:
+            raise ValueError(f"{path}: class {name!r} is listed twice")
+        spec = {k: v for k, v in row.items() if k not in ("class", "user_class", "name")}
+        try:
+            out[name] = _class_entry(name, spec)
+        except ValueError as e:
+            raise ValueError(f"{path}: row {i + 1}: {e}") from None
+    return out
+
+
+def demand_assign_classes(
+    trips: list[tuple], classes: Mapping[str, object], seed: int = 0
+) -> list[tuple]:
+    """Give every traveller a class, drawn by the classes' shares (S231).
+
+    The shares are of people (a trip's weight, ``None`` taken as 1), scaled to sum to one, and
+    are met to within one traveller: the travellers are put in a random order fixed by
+    ``seed`` and their id, and the classes take consecutive runs of that order, each as many
+    people as its share. Who falls in which class is random; how many is not. A traveller's
+    trips all get the same class, which replaces the ``user_class`` they had.
+
+    The same table, classes and ``seed`` always give the same classes, on any machine; another
+    ``seed`` is another draw, for replications.
+
+    Args:
+        trips: Rows in the schema of ``Scenario.from_parts``' ``demand``.
+        classes: The classes, as ``demand_read_classes`` returns them (or a dict of the same
+            columns), each with a ``share``.
+        seed: Which draw.
+
+    Returns:
+        The rows, in their original order, with their ``user_class`` replaced.
+
+    Raises:
+        ValueError: If a class has no share, or the shares sum to 0.
+    """
+    table = _class_table(classes)
+    missing = [name for name, c in table.items() if c["share"] is None]
+    if missing:
+        raise ValueError(f"every class needs a share to be drawn by; {missing} have none")
+    total_share = sum(c["share"] for c in table.values())
+    if total_share <= 0:
+        raise ValueError("the classes' shares sum to 0")
+    weight: dict[object, float] = {}
+    for row in trips:
+        weight.setdefault(row[_TRAVELLER], float(row[_WEIGHT] or 1))
+    order = sorted(weight, key=lambda t: (_draw(seed, t), str(t)))
+    people = sum(weight.values())
+    bounds, cumulative = [], 0.0
+    for name, c in table.items():
+        cumulative += c["share"] / total_share
+        bounds.append((cumulative, name))
+    names = [name for _, name in bounds]
+    assigned: dict[object, str] = {}
+    seen, k = 0.0, 0
+    for traveller in order:
+        middle = (seen + weight[traveller] / 2) / people
+        while k < len(bounds) - 1 and middle >= bounds[k][0]:
+            k += 1
+        assigned[traveller] = names[k]
+        seen += weight[traveller]
+    out = []
+    for row in trips:
+        row = list(row)
+        row[_CLASS] = assigned[row[_TRAVELLER]]
+        out.append(tuple(row))
+    return out
 
 
 # --- OD to trips -------------------------------------------------------------------------------

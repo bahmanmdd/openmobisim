@@ -317,7 +317,9 @@ impl<'a> Chooser<'a> {
             if set.is_empty() {
                 continue;
             }
-            batch.begin_situation(trips.traveller(trip).raw(), trip.raw());
+            let traveller = trips.traveller(trip);
+            let class = self.inputs.travellers.user_class(traveller).raw();
+            batch.begin_situation_in(traveller.raw(), trip.raw(), class);
             let departure = f64::from(trips.departure(trip).get());
             // Each route's expected time: at free flow the store's, later the link
             // times of the last loading walked from this trip's departure.

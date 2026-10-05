@@ -124,6 +124,9 @@ impl ChoiceModel for Deterministic {
 pub struct Logit {
     /// `(attribute, coefficient)`, sorted by attribute.
     pub betas: Vec<(String, f64)>,
+    /// Per traveller class (S231), by class index: its name and its coefficients (the model's,
+    /// with the class's overrides), sorted by attribute. Empty: every class weighs alike.
+    pub classes: Vec<(String, Vec<(String, f64)>)>,
 }
 
 impl Default for Logit {
@@ -136,6 +139,7 @@ impl Default for Logit {
                 ("wait_min".to_string(), -0.09),
                 ("walk_min".to_string(), -0.13),
             ],
+            classes: Vec::new(),
         }
     }
 }
@@ -174,6 +178,60 @@ impl Logit {
         Ok(m)
     }
 
+    /// The same model with coefficients per traveller class (S231): `classes[c]` is class `c`'s
+    /// name and its `beta_<attribute>` overrides of this model's coefficients.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::from_options`], for a class's options.
+    pub fn with_classes(mut self, classes: &[(String, Options)]) -> Result<Self, ChoiceError> {
+        self.classes = Vec::with_capacity(classes.len());
+        for (name, options) in classes {
+            // Checked as the model's own options are; only the names given override.
+            Self::from_options(options).map_err(|e| match e {
+                ChoiceError::UnknownOption { option, known, .. } => ChoiceError::UnknownOption {
+                    model: format!("logit (class {name})"),
+                    option,
+                    known,
+                },
+                ChoiceError::BadOption { option, reason, .. } => ChoiceError::BadOption {
+                    model: format!("logit (class {name})"),
+                    option,
+                    reason,
+                },
+                other => other,
+            })?;
+            let mut merged = self.betas.clone();
+            for (option, value) in options {
+                let attribute = option.strip_prefix("beta_").unwrap_or(option);
+                match merged.iter_mut().find(|(a, _)| a == attribute) {
+                    Some(entry) => entry.1 = *value,
+                    None => merged.push((attribute.to_string(), *value)),
+                }
+            }
+            merged.sort_by(|a, b| a.0.cmp(&b.0));
+            self.classes.push((name.clone(), merged));
+        }
+        Ok(self)
+    }
+
+    /// The classes' coefficients that differ from the model's, as `;class:<name>.beta_<a>=<v>`
+    /// terms in class-name order: what a descriptor adds for them (S231).
+    fn class_terms(&self) -> String {
+        let mut by_name: Vec<&(String, Vec<(String, f64)>)> = self.classes.iter().collect();
+        by_name.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut out = String::new();
+        for (name, betas) in by_name {
+            for (attribute, beta) in betas {
+                let own = self.betas.iter().find(|(a, _)| a == attribute).map_or(0.0, |(_, b)| *b);
+                if beta.to_bits() != own.to_bits() {
+                    out.push_str(&format!(";class:{name}.beta_{attribute}={beta}"));
+                }
+            }
+        }
+        out
+    }
+
     /// The utility of every alternative in `batch`.
     ///
     /// # Errors
@@ -181,6 +239,9 @@ impl Logit {
     /// [`ChoiceError::MissingAttribute`] if a coefficient names an attribute the
     /// batch does not carry.
     pub fn utilities(&self, batch: &ChoiceBatch) -> Result<Vec<f64>, ChoiceError> {
+        if !self.classes.is_empty() {
+            return self.utilities_by_class(batch);
+        }
         let mut utility = vec![0.0; batch.alternatives()];
         for (attribute, beta) in &self.betas {
             if *beta == 0.0 {
@@ -193,6 +254,43 @@ impl Logit {
                 })?;
             for (u, v) in utility.iter_mut().zip(column) {
                 *u += beta * v;
+            }
+        }
+        Ok(utility)
+    }
+
+    /// [`Self::utilities`] with each situation weighed by its class's coefficients (S231); a
+    /// class index past the classes given takes the model's own.
+    fn utilities_by_class(&self, batch: &ChoiceBatch) -> Result<Vec<f64>, ChoiceError> {
+        // Per class, a coefficient per batch attribute (0 for one it does not weigh).
+        let names = batch.attribute_names();
+        let dense = |betas: &[(String, f64)]| -> Result<Vec<f64>, ChoiceError> {
+            let mut out = vec![0.0; names.len()];
+            for (attribute, beta) in betas {
+                if *beta == 0.0 {
+                    continue;
+                }
+                let k = names.iter().position(|n| n == attribute).ok_or_else(|| {
+                    ChoiceError::MissingAttribute {
+                        name: attribute.clone(),
+                        offered: names.to_vec(),
+                    }
+                })?;
+                out[k] = *beta;
+            }
+            Ok(out)
+        };
+        let own = dense(&self.betas)?;
+        let by_class: Vec<Vec<f64>> =
+            self.classes.iter().map(|(_, b)| dense(b)).collect::<Result<_, _>>()?;
+        let columns: Vec<&[f64]> = (0..names.len())
+            .map(|k| batch.attribute(&names[k]).expect("the batch's own attribute"))
+            .collect();
+        let mut utility = vec![0.0; batch.alternatives()];
+        for (s, &class) in batch.classes().iter().enumerate() {
+            let betas = by_class.get(class as usize).unwrap_or(&own);
+            for a in batch.range(s) {
+                utility[a] = betas.iter().zip(&columns).map(|(b, c)| b * c[a]).sum();
             }
         }
         Ok(utility)
@@ -220,7 +318,7 @@ impl ChoiceModel for Logit {
 
     fn descriptor(&self) -> String {
         let terms: Vec<String> = self.betas.iter().map(|(a, b)| format!("beta_{a}={b}")).collect();
-        format!("logit;{}", terms.join(";"))
+        format!("logit;{}{}", terms.join(";"), self.class_terms())
     }
 
     fn is_sampled(&self) -> bool {
@@ -228,7 +326,17 @@ impl ChoiceModel for Logit {
     }
 
     fn required_attributes(&self) -> Option<Vec<String>> {
-        Some(self.betas.iter().filter(|(_, b)| *b != 0.0).map(|(a, _)| a.clone()).collect())
+        // Every attribute some class weighs (S231), the model's own among them.
+        let mut names: Vec<String> = self
+            .betas
+            .iter()
+            .chain(self.classes.iter().flat_map(|(_, b)| b.iter()))
+            .filter(|(_, b)| *b != 0.0)
+            .map(|(a, _)| a.clone())
+            .collect();
+        names.sort();
+        names.dedup();
+        Some(names)
     }
 
     fn choose(&self, batch: &ChoiceBatch, rng: &StreamRng) -> Result<Choices, ChoiceError> {
@@ -353,7 +461,7 @@ impl ChoiceModel for NestedLogit {
     fn descriptor(&self) -> String {
         let terms: Vec<String> =
             self.logit.betas.iter().map(|(a, b)| format!("beta_{a}={b}")).collect();
-        format!("nested_logit;mu={};{}", self.mu, terms.join(";"))
+        format!("nested_logit;mu={};{}{}", self.mu, terms.join(";"), self.logit.class_terms())
     }
 
     fn is_sampled(&self) -> bool {
