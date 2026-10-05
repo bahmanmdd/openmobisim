@@ -174,6 +174,8 @@ def toy_run(**kwargs):
         "link_bin_s": 300,
         "choice_model": "deterministic",
         "equilibration": "none",
+        # The plain single loading: everyone at once on free flow, the full model (S223).
+        "equilibration_options": {"increments": 1, "warmup": 0},
     }
     settings.update(kwargs)
     return net, rows, ms.Scenario.from_parts(net, rows, **settings).run("identity-test")

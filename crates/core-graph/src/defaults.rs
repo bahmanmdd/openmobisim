@@ -99,7 +99,12 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// `LoadingOptions::pocket_length_m`, 50 m per lane): a vehicle waiting to turn into a full
 /// street no longer holds up those behind it turning elsewhere, while the waiting ones fit in
 /// their pockets. Runs where a multi-lane approach's front waits change; others do not.
-pub const DEFAULTS_VERSION: u32 = 11;
+///
+/// Version 12 (S223): **the free-flow loading** (iteration 0) is built up in groups and loaded
+/// with the point queue: `core-sim`'s `Equilibration::increments` (the Python layer's default
+/// 5, uncalibrated: the user's suggestion) and `warmup` 1 for a run of one loading as for one
+/// that iterates, at flow levels 2 to 4. Every such run changes; level-0 runs do not.
+pub const DEFAULTS_VERSION: u32 = 12;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

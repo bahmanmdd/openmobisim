@@ -12,6 +12,7 @@ does not state.
 from __future__ import annotations
 
 import math
+import time
 import warnings
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -256,6 +257,7 @@ def network_read_table(
                 coordinates="xy",
             )
     """
+    started = time.perf_counter()
     if length_unit not in _LENGTH_TO_M:
         raise ValueError(f"length_unit must be one of {sorted(_LENGTH_TO_M)}, got {length_unit!r}")
     if speed_unit not in _SPEED_TO_KM_H:
@@ -418,4 +420,5 @@ def network_read_table(
             "table recognises, if you know the real one.",
             stacklevel=2,
         )
+    network.read_s = time.perf_counter() - started
     return network

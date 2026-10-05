@@ -9,6 +9,8 @@ jammed road, that the gap is measured against chance) are proved in Rust on a
 hand-made bottleneck, where the answer can be worked out.
 """
 
+from pathlib import Path
+
 import numpy as np
 import openmobisim as ms
 import pytest
@@ -20,7 +22,7 @@ FIELDS = [
     "gap_flow_excess", "routes_added", "route_searches", "gap_expected", "gap_excess",
     "gap_network_excess", "incomplete_share", "gap_transit", "gap_car_transit",
     "gap_bike_transit", "hub_mismatch_s", "gap_car", "gap_bike", "gap_walk", "mode_changed_share",
-    "itinerary_recosted", "reroutes",
+    "itinerary_recosted", "reroutes", "reroute_searches",
 ]  # fmt: skip
 
 
@@ -61,7 +63,8 @@ def test_without_equilibration_there_is_one_iteration_and_no_gap():
     assert (run.equilibration, run.converged) == ("none", False)
     manifest = run.manifest()
     assert manifest["equilibration"] == "none" and manifest["iterations_run"] == 1
-    assert manifest["converged"] is False and manifest["live_streams"] == []
+    # The free-flow loading's groups are drawn from the re-selection stream (S223).
+    assert manifest["converged"] is False and manifest["live_streams"] == ["msa_reselection"]
 
 
 def test_msa_reports_every_iteration_and_the_run_is_the_last_one():
@@ -89,7 +92,14 @@ def test_msa_reports_every_iteration_and_the_run_is_the_last_one():
 
 
 def test_one_iteration_of_msa_is_the_run_without_it():
-    base = go("eq-one-none", choice_model="logit", equilibration="none", master_seed=3)
+    base = go(
+        "eq-one-none",
+        choice_model="logit",
+        equilibration="none",
+        master_seed=3,
+        route_method="penalty",
+        route_update="none",
+    )
     one = go("eq-one-msa", equilibration_options={"iterations": 1}, **MSA)
     assert one.total_travel_time_s == base.total_travel_time_s
     assert (one.route_choices().route == base.route_choices().route).all()
@@ -156,16 +166,21 @@ def test_bad_settings_are_refused_before_any_work():
     ):
         build(equilibration="replanning")
     with pytest.raises(
-        ValueError, match="cost_bin_s, gap_sample, gap_tolerance, itinerary_gap_sample, iterations"
+        ValueError,
+        match="cost_bin_s, gap_sample, gap_tolerance, increments, itinerary_gap_sample, iterations",
     ):
         build(equilibration="msa", equilibration_options={"steps": 3})
+    with pytest.raises(ValueError, match="increments, warmup"):
+        build(equilibration="none", equilibration_options={"iterations": 3})
+    for strategy in ("none", "msa"):
+        for bad in (0, 21, 2.5):
+            with pytest.raises(ValueError, match="whole number from 1 to 20"):
+                build(equilibration=strategy, equilibration_options={"increments": bad})
     for bad in (0, 1001, 2.5):
         with pytest.raises(ValueError, match="whole number from 1 to 1000"):
             build(equilibration="msa", equilibration_options={"iterations": bad})
     with pytest.raises(ValueError, match="from 0 to 1"):
         build(equilibration="msa", equilibration_options={"gap_tolerance": 1.5})
-    with pytest.raises(ValueError, match="no options"):
-        build(equilibration="none", equilibration_options={"iterations": 3})
 
 
 def test_a_tolerance_stops_a_run_that_has_nothing_left_to_equilibrate():
@@ -339,25 +354,35 @@ def test_a_warmup_needs_a_whole_number_and_leaves_the_last_loading_at_full_fidel
             go("eq-warm-bad", equilibration_options={"iterations": 3, "warmup": bad}, **MSA)
 
 
-def test_an_iterating_run_defaults_to_one_route_per_pair_an_update_and_a_warmup():
+def test_a_run_that_loads_more_than_once_defaults_to_one_route_per_pair_an_update_and_a_warmup():
     net = ms.examples.manhattan_grid(n=6, block_metres=200.0, signals=False)
     rows = ms.examples.trips_random(net, 300, seed=5, min_m=300.0, max_m=1000.0, spread_s=300)
 
     def run(name, **kwargs):
         settings = {"class_defaults": CAR, "flow_level": 4, "choice_model": "logit"}
         settings.update(kwargs)
-        return ms.Scenario.from_parts(net, rows, **settings).run(name)
+        return ms.Scenario.from_parts(net, rows, **settings).run(name, quiet=True)
 
-    # One loading: the penalty method's alternatives, no update (nothing to iterate over).
+    # The free-flow loading alone (S223): built up in five groups, so it loads more than once: one
+    # route per pair to start, the update to search each group's pairs, the point queue.
     once = run("eq-default-once", equilibration="none")
-    assert once.route_sets().method == "penalty" and once.route_update == "none"
-    # One iteration of msa is one loading too.
+    assert once.route_sets().method == "shortest" and once.route_update == "best_response"
+    assert once.manifest()["equilibration_descriptor"] == "none;increments=5;warmup=1"
+    # One iteration of msa is the same free-flow loading.
     one = run("eq-default-one", equilibration="msa", equilibration_options={"iterations": 1})
-    assert one.route_sets().method == "penalty" and one.route_update == "none"
+    assert one.route_sets().method == "shortest" and one.route_update == "best_response"
+    # Everyone choosing at once, on free flow: one loading, the penalty method's alternatives.
+    single = run("eq-default-single", equilibration="none", equilibration_options={"increments": 1})
+    assert single.route_sets().method == "penalty" and single.route_update == "none"
+    # At free flow nothing congests: no groups, and so one loading.
+    free = run("eq-default-free", equilibration="none", flow_level=0)
+    assert free.route_sets().method == "penalty" and free.route_update == "none"
+    assert free.manifest()["equilibration_descriptor"] == "none"
     # Iterating: one route per pair to start, the update to find the rest, a warm-up of one loading.
     many = run("eq-default-many", equilibration="msa", equilibration_options={"iterations": 3})
     assert many.route_sets().method == "shortest" and many.route_update == "best_response"
     assert "warmup=1" in many.manifest()["equilibration_descriptor"]
+    assert "increments=5" in many.manifest()["equilibration_descriptor"]
     assert many.manifest()["route_method"] == "shortest"
     # Every default can be overridden, and options alone mean the method they belong to.
     named = run(
@@ -377,3 +402,40 @@ def test_an_iterating_run_defaults_to_one_route_per_pair_an_update_and_a_warmup(
     )
     assert opts.route_sets().method == "penalty" and opts.route_update == "best_response"
     assert "max_paths=2" in opts.route_sets().descriptor, "the options reached the method"
+
+
+def test_the_free_flow_loading_is_iteration_0_of_an_iterated_run_and_cannot_lock():
+    # A jammed grid (S223): the free-flow loading, alone or as an iterated run's first, is the same
+    # loading, with the point queue, so every trip finishes in a long window; and an iterated run's
+    # time includes it.
+    heavy = {"trips": 3_500, "window_hours": 6, "choice_model": "logit", "master_seed": 3}
+    alone = scenario(equilibration="none", **heavy).run("eq-ff-alone", quiet=True)
+    first = scenario(equilibration_options={"iterations": 2}, **heavy).run("eq-ff-msa", quiet=True)
+    a, b = alone.convergence(), first.convergence()
+    # (What the route update adds after it is for the next iteration, which only one run has.)
+    for name in ("total_travel_time_s", "completed", "truncated", "reroutes"):
+        assert a[name][0] == b[name][0], name
+    assert alone.completion["truncated"] == 0, "the point queue cannot lock"
+    # The old single loading (everyone on free-flow choices, the full model) is still there.
+    old = scenario(
+        equilibration="none", equilibration_options={"increments": 1, "warmup": 0}, **heavy
+    ).run("eq-ff-old", quiet=True)
+    assert old.manifest()["equilibration_descriptor"] == "none", "the plain single loading"
+    assert old.total_travel_time_s != alone.total_travel_time_s
+
+
+def test_a_run_reports_its_wall_clock_time_by_stage():
+    run = scenario(equilibration_options={"iterations": 2}).run("eq-timings", quiet=True)
+    t = run.timings()
+    assert set(t) == {"stage", "iteration", "seconds"}
+    assert len(t["stage"]) == len(t["iteration"]) == len(t["seconds"])
+    assert t["stage"][-1] == "total" and all(s >= 0 for s in t["seconds"])
+    # Four partial loadings build the free-flow loading up in five groups; then one loading each.
+    stages = list(zip(t["stage"], t["iteration"], strict=True))
+    assert stages.count(("partial_loading", 0)) == 4
+    assert stages.count(("loading", 0)) == stages.count(("loading", 1)) == 1
+    inside = sum(s for s, (n, _) in zip(t["seconds"], stages, strict=True) if n != "total")
+    assert t["seconds"][-1] >= inside - 1e-3, "the total holds every stage"
+    lines = Path(run.timings_path).read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "stage,iteration,seconds" and len(lines) == len(t["stage"]) + 1
+    assert "wall-clock seconds by stage" in run._timings_text()

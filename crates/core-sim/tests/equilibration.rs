@@ -644,12 +644,17 @@ fn the_description_names_the_strategy_and_the_streams_it_draws_from() {
     assert_eq!(msa.live_streams, ["msa_reselection"]);
     assert_eq!(
         msa.equilibration_descriptor,
-        "msa;cost_bin_s=300;gap_sample=300;gap_tolerance=0;itinerary_gap_sample=100000000;\
-         iterations=10;warmup=0"
+        "msa;cost_bin_s=300;gap_sample=300;gap_tolerance=0;increments=1;\
+         itinerary_gap_sample=100000000;iterations=10;warmup=0"
     );
     assert_eq!(run(("msa", vec![]), "logit").live_streams, ["choice", "msa_reselection"]);
     // One iteration has nobody to re-select.
     assert!(run(("msa", vec![("iterations", 1.0)]), "deterministic").live_streams.is_empty());
+    // The free-flow loading's groups are drawn from the re-selection stream (S223).
+    let grouped = run(("none", vec![("increments", 5.0), ("warmup", 1.0)]), "deterministic");
+    assert_eq!(grouped.live_streams, ["msa_reselection"]);
+    assert_eq!(grouped.equilibration_descriptor, "none;increments=5;warmup=1");
+    assert_ne!(grouped.fingerprint, none.fingerprint);
     // Every setting is an input.
     let fingerprint = |o: Vec<(&'static str, f64)>| run(("msa", o), "logit").fingerprint;
     let all = [
@@ -657,6 +662,7 @@ fn the_description_names_the_strategy_and_the_streams_it_draws_from() {
         fingerprint(vec![("iterations", 5.0)]),
         fingerprint(vec![("gap_tolerance", 0.1)]),
         fingerprint(vec![("cost_bin_s", 60.0)]),
+        fingerprint(vec![("increments", 5.0)]),
     ];
     for (i, a) in all.iter().enumerate() {
         for b in &all[i + 1..] {
@@ -676,11 +682,12 @@ fn strategies_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
         strategy(name, &opts(o)).err().expect("refused").to_string()
     };
     assert!(err("replanning", &[]).contains("none, msa"));
-    assert!(err("none", &[("iterations", 3.0)]).contains("no options"));
-    assert!(
-        err("msa", &[("steps", 3.0)])
-            .contains("cost_bin_s, gap_sample, gap_tolerance, itinerary_gap_sample, iterations")
-    );
+    assert!(err("none", &[("iterations", 3.0)]).contains("increments, warmup"));
+    assert!(err("none", &[("increments", 0.0)]).contains("whole number from 1 to 20"));
+    assert!(err("msa", &[("increments", 21.0)]).contains("whole number from 1 to 20"));
+    assert!(err("msa", &[("steps", 3.0)]).contains(
+        "cost_bin_s, gap_sample, gap_tolerance, increments, itinerary_gap_sample, iterations"
+    ));
     for bad in [0.0, 1001.0, 2.5, f64::NAN] {
         assert!(
             err("msa", &[("iterations", bad)]).contains("whole number from 1 to 1000"),

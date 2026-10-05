@@ -13,6 +13,7 @@
 //! | [`identity`] | [`identity::RunDescription`] — a run's master seed and fingerprint, made before it executes (S168) |
 //! | [`transit`] | [`transit::TransitSetup`] — a timetable linked to the walk and bike layers: stop hubs, walks, RAPTOR (S199) |
 //! | [`parking`] | [`parking::ParkingSetup`] — parkings as hubs on the layers, and how full they are over the day (M4) |
+//! | [`timings`] | [`timings::Timings`] — wall-clock time by stage, kept apart from the results (S223) |
 //! | [`itinerary_choice`] | Itinerary choice: the competitive itineraries of transit, park-and-ride and bike-and-ride trips, and, with mode choice, every mode a trip without one can use, chosen by the choice model and executed on the loading's times (M4, M5) |
 //!
 //! # What this crate is, and is not, yet
@@ -48,6 +49,7 @@ pub mod route_cache;
 pub mod route_choice;
 pub mod route_update;
 pub mod run;
+pub mod timings;
 pub mod transit;
 
 pub use equilibration::{Equilibration, IterationReport, Msa, NoEquilibration};
@@ -65,4 +67,5 @@ pub use route_cache::RouteSetCache;
 pub use route_choice::{NO_ROUTE, ROUTE_ATTRIBUTES, RouteChoices};
 pub use route_update::{BestResponse, NoRouteUpdate, RouteUpdate};
 pub use run::{FlowMotor, ModeTotals, Run, RunError, RunResult, TripCompletionStats};
+pub use timings::{Stage, Timings};
 pub use transit::{BusReport, BusSummary, TransitResult, TransitSetup};

@@ -663,6 +663,7 @@ fn a_pair_within_the_slack_of_free_flow_is_not_searched_and_one_beyond_it_is() {
             route_sets: &sets,
             times: &times,
             iteration: 1,
+            active: None,
         });
         (found.searches, found.route_count())
     };

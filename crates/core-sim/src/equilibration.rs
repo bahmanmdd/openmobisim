@@ -13,6 +13,19 @@
 //! | `none` (the default, [`DEFAULT_STRATEGY`]) | One choice, one loading: a run is what it was before iteration existed |
 //! | `msa` | The method of successive averages **in traveller form** (S86): at iteration `i` (from 1; iteration 0 is everyone's first choice) each traveller chooses again with probability `1/(i + 1)`, decided by a draw keyed on `(traveller, iteration)` from its own stream, so who moves does not depend on thread count or order; the others keep their route. In expectation the route flows are the average of the flows of every iteration so far, which is classical MSA with step `1/(i + 1)` |
 //!
+//! **The free-flow loading** (iteration 0, S223) is where every run starts, and all a run
+//! without equilibration does. Two options shape it, for either strategy:
+//! - `increments` ([`Equilibration::increments`]): the travellers are split, by a keyed draw,
+//!   into this many groups of about equal size; the first group chooses on free-flow costs,
+//!   then the network is loaded with the groups so far and the next group chooses on the times
+//!   that loading produced, until every group has chosen and the whole demand is loaded
+//!   (incremental assignment: Sheffi 1985, *Urban Transportation Networks*, §5.2). Each group
+//!   sees the congestion of those before it, so routes spread before the first full loading.
+//!   1 (the default here) lets everyone choose at once on free-flow costs.
+//! - `warmup` ([`Equilibration::warmup_iterations`]): with 1 or more, the free-flow loading,
+//!   its increments included, uses the point-queue model (S178): queues delay but take no
+//!   space, so nothing spills back and nothing locks.
+//!
 //! **Every iteration is reported** ([`IterationReport`]): the stability of the
 //! pattern (who changed, how much the link times moved) and **the gap**: how much
 //! more the chosen routes cost than the shortest congested route, the usual measure
@@ -41,6 +54,9 @@ pub type Options = BTreeMap<String, f64>;
 
 /// The most iterations a strategy may ask for.
 pub const MAX_ITERATIONS: u32 = 1000;
+
+/// The most groups the free-flow loading may be built up in ([`Equilibration::increments`]).
+pub const MAX_INCREMENTS: u32 = 20;
 
 /// The largest itinerary gap sample [`Msa`] accepts (more than any run's itinerary trips: every
 /// trip planned in full).
@@ -117,7 +133,9 @@ pub struct IterationReport {
     /// How many routes the route update (S176) added to the sets **after this loading**,
     /// for the next iteration to choose among; 0 without an update, at the last
     /// iteration (no choice follows it) and when no route beat the set. **`gap` is measured
-    /// against the sets as grown**, the routes the travellers may now choose from.
+    /// against the sets as grown**, the routes the travellers may now choose from. Iteration
+    /// 0's also counts the routes added while the free-flow loading was built up (S223): every
+    /// route found on the times of iteration `i`'s loadings is stamped `i + 1`.
     pub routes_added: u32,
     /// How many searches the route update made to find them.
     pub route_searches: u32,
@@ -135,6 +153,10 @@ pub struct IterationReport {
     pub itinerary_recosted: u32,
     /// How many times vehicles re-routed en route in this loading (S213); 0 without rerouting.
     pub reroutes: u32,
+    /// How many reroute offers this iteration's loadings made (S223): each is one search for a
+    /// faster route from where a stuck vehicle is, whether or not it re-routed. Iteration 0's
+    /// counts the free-flow loading's groups' loadings too. 0 without rerouting.
+    pub reroute_searches: u32,
     /// **The hub expectation mismatch** (design §11.2; M4): per traveller who parked,
     /// the mean absolute difference between the parking time expected at the choice
     /// and the one paid, in seconds; `NaN` without parkings.
@@ -256,6 +278,7 @@ impl IterationReport {
             itinerary_gap: [f64::NAN; Mode::COUNT],
             itinerary_recosted: 0,
             reroutes: 0,
+            reroute_searches: 0,
             hub_mismatch_s: f64::NAN,
             mode_changed_share: f64::NAN,
         }
@@ -359,11 +382,25 @@ pub trait Equilibration: Send + Sync {
     /// How many of the first loadings the run makes with the **point-queue model** (level 2),
     /// which cannot gridlock, in place of the full one (S178). The first loading of a narrow
     /// route set is often in permanent gridlock (S177: 3 215 of 9 619 trips never finish) and every
-    /// later iteration inherits its times. At most `max_iterations − 1` are used, so the last
-    /// loading, the run's result, is always at the full level; no effect under a loading model that
-    /// is not the link transmission model or is already at level 2.
+    /// later iteration inherits its times. At most `max_iterations − 1` are used when the run
+    /// iterates, so its last loading, the result, is always at the full level; a run of one
+    /// loading is its free-flow loading, which uses the point queue if this is 1 or more (S223).
+    /// The free-flow loading's increments use it too. No effect under a loading model that is not
+    /// the link transmission model or is already at level 2.
     fn warmup_iterations(&self) -> u32 {
         0
+    }
+
+    /// In how many groups the free-flow loading (iteration 0) is built up (S223; 1 to
+    /// [`MAX_INCREMENTS`]). Each traveller is put in one group by a draw keyed on the traveller
+    /// alone, from the re-selection stream; group 0 chooses on free-flow costs, and each group
+    /// after it on the link times of a loading of the groups before it, after the route update
+    /// (if any) has searched its pairs on those times. The last loading, of everyone, is
+    /// iteration 0's. **Cost:** `increments − 1` loadings of part of the demand (`1/k, 2/k, …`
+    /// of it), a route update and a choice for one group after each. 1, the default: no groups.
+    /// No effect at free flow (level 0), where loading changes no time.
+    fn increments(&self) -> u32 {
+        1
     }
 
     /// Whether to stop before `max_iterations`, given every report so far.
@@ -372,16 +409,34 @@ pub trait Equilibration: Send + Sync {
     }
 }
 
-/// One choice, one loading.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct NoEquilibration;
+/// One free-flow loading: everyone chooses once, in `increments` groups (S223), and the network
+/// is loaded once with everyone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NoEquilibration {
+    /// In how many groups the loading is built up (1 to [`MAX_INCREMENTS`]; see
+    /// [`Equilibration::increments`]). 1 by default: everyone chooses at once on free flow.
+    pub increments: u32,
+    /// 1 (or more) loads with the point-queue model, 0 at the run's own level (see
+    /// [`Equilibration::warmup_iterations`]). 0 by default.
+    pub warmup: u32,
+}
+
+impl Default for NoEquilibration {
+    fn default() -> Self {
+        Self { increments: 1, warmup: 0 }
+    }
+}
 
 impl Equilibration for NoEquilibration {
     fn name(&self) -> &str {
         "none"
     }
     fn descriptor(&self) -> String {
-        "none".to_string()
+        if *self == Self::default() {
+            "none".to_string()
+        } else {
+            format!("none;increments={};warmup={}", self.increments, self.warmup)
+        }
     }
     fn max_iterations(&self) -> u32 {
         1
@@ -390,22 +445,63 @@ impl Equilibration for NoEquilibration {
         300
     }
     fn draws_reselection(&self) -> bool {
-        false
+        self.increments > 1
     }
     fn reselects(&self, _rng: &StreamRng, _traveller: u32, _iteration: u32) -> bool {
         false
     }
+    fn warmup_iterations(&self) -> u32 {
+        self.warmup
+    }
+    fn increments(&self) -> u32 {
+        self.increments
+    }
 }
 
 impl NoEquilibration {
-    /// Make the strategy from its options (it has none).
+    const OPTIONS: [&'static str; 2] = ["increments", "warmup"];
+
+    /// Make the strategy from its options, defaults for those not given.
     ///
     /// # Errors
     ///
-    /// [`EquilibrationError::UnknownOption`] for any option.
+    /// [`EquilibrationError::UnknownOption`] for a name it does not have,
+    /// [`EquilibrationError::BadOption`] for a value out of range.
     pub fn from_options(options: &Options) -> Result<Self, EquilibrationError> {
-        check_known("none", options, &[])?;
-        Ok(Self)
+        check_known("none", options, &Self::OPTIONS)?;
+        let mut m = Self::default();
+        for (option, &v) in options {
+            match option.as_str() {
+                "increments" => m.increments = whole("none", option, v, 1, MAX_INCREMENTS)?,
+                _ => m.warmup = whole("none", option, v, 0, MAX_ITERATIONS)?,
+            }
+        }
+        Ok(m)
+    }
+}
+
+/// `v` as a whole number from `lo` to `hi`, or the error that says it is not.
+fn whole(
+    strategy: &str,
+    option: &str,
+    v: f64,
+    lo: u32,
+    hi: u32,
+) -> Result<u32, EquilibrationError> {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "checked to be a whole number within a small range"
+    )]
+    let n = v as u32;
+    if v.is_finite() && v.fract() == 0.0 && v >= f64::from(lo) && v <= f64::from(hi) {
+        Ok(n)
+    } else {
+        Err(EquilibrationError::BadOption {
+            strategy: strategy.to_string(),
+            option: option.to_string(),
+            reason: format!("must be a whole number from {lo} to {hi}, got {v}"),
+        })
     }
 }
 
@@ -440,6 +536,9 @@ pub struct Msa {
     /// How many of the first loadings use the point-queue model (0 to [`MAX_ITERATIONS`]; see
     /// [`Equilibration::warmup_iterations`]). 0 by default.
     pub warmup: u32,
+    /// In how many groups the free-flow loading is built up (1 to [`MAX_INCREMENTS`]; see
+    /// [`Equilibration::increments`]). 1 by default.
+    pub increments: u32,
 }
 
 impl Default for Msa {
@@ -451,15 +550,17 @@ impl Default for Msa {
             itinerary_gap_sample: MAX_ITINERARY_GAP_SAMPLE,
             cost_bin_s: 300,
             warmup: 0,
+            increments: 1,
         }
     }
 }
 
 impl Msa {
-    const OPTIONS: [&'static str; 6] = [
+    const OPTIONS: [&'static str; 7] = [
         "cost_bin_s",
         "gap_sample",
         "gap_tolerance",
+        "increments",
         "itinerary_gap_sample",
         "iterations",
         "warmup",
@@ -479,19 +580,7 @@ impl Msa {
             option: option.to_string(),
             reason: reason.to_string(),
         };
-        let whole = |option: &str, v: f64, lo: u32, hi: u32| -> Result<u32, EquilibrationError> {
-            #[allow(
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss,
-                reason = "checked to be a whole number within a small range"
-            )]
-            let n = v as u32;
-            if v.is_finite() && v.fract() == 0.0 && v >= f64::from(lo) && v <= f64::from(hi) {
-                Ok(n)
-            } else {
-                Err(bad(option, &format!("must be a whole number from {lo} to {hi}, got {v}")))
-            }
-        };
+        let whole = |option: &str, v: f64, lo: u32, hi: u32| whole("msa", option, v, lo, hi);
         for (option, &v) in options {
             match option.as_str() {
                 "iterations" => m.iterations = whole(option, v, 1, MAX_ITERATIONS)?,
@@ -501,6 +590,7 @@ impl Msa {
                     m.itinerary_gap_sample = whole(option, v, 0, MAX_ITINERARY_GAP_SAMPLE)?;
                 }
                 "warmup" => m.warmup = whole(option, v, 0, MAX_ITERATIONS)?,
+                "increments" => m.increments = whole(option, v, 1, MAX_INCREMENTS)?,
                 _ => {
                     if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
                         return Err(bad(option, &format!("must be from 0 to 1, got {v}")));
@@ -519,11 +609,12 @@ impl Equilibration for Msa {
     }
     fn descriptor(&self) -> String {
         format!(
-            "msa;cost_bin_s={};gap_sample={};gap_tolerance={};itinerary_gap_sample={};\
-             iterations={};warmup={}",
+            "msa;cost_bin_s={};gap_sample={};gap_tolerance={};increments={};\
+             itinerary_gap_sample={};iterations={};warmup={}",
             self.cost_bin_s,
             self.gap_sample,
             self.gap_tolerance,
+            self.increments,
             self.itinerary_gap_sample,
             self.iterations,
             self.warmup
@@ -536,7 +627,7 @@ impl Equilibration for Msa {
         self.cost_bin_s
     }
     fn draws_reselection(&self) -> bool {
-        self.iterations > 1
+        self.iterations > 1 || self.increments > 1
     }
     fn network_gap_sample(&self) -> u32 {
         self.gap_sample
@@ -546,6 +637,9 @@ impl Equilibration for Msa {
     }
     fn warmup_iterations(&self) -> u32 {
         self.warmup
+    }
+    fn increments(&self) -> u32 {
+        self.increments
     }
     fn reselects(&self, rng: &StreamRng, traveller: u32, iteration: u32) -> bool {
         rng.unit(DrawAddress::from_pair(traveller, iteration)) < 1.0 / (f64::from(iteration) + 1.0)

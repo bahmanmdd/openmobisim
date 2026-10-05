@@ -95,6 +95,10 @@ class Network:
     node_count: int
     #: How many directed links.
     link_count: int
+    #: How long reading the network took, in wall-clock seconds, if its reader recorded it
+    #: (``network_read_osm``, ``network_read_table``, ``network_read_gmns``); printed with a run's
+    #: times. Settable.
+    read_s: float | None
 
     def node_nearest(self, lon: float, lat: float) -> int:
         """The index of the drivable node nearest to ``(lon, lat)``.
@@ -306,10 +310,11 @@ class RouteSets:
         """Every route's free-flow cost in seconds."""
 
     def stamps(self) -> npt.NDArray[np.uint32]:
-        """Every route's stamp: 0 if the method made it, else the iteration it was added for.
+        """Every route's stamp: 0 if the method made it, else ``i + 1`` if found on iteration ``i``.
 
-        A route update adds routes between iterations; the stamp is the iteration whose
-        choice they were added for.
+        A route update adds routes between iterations, and while the free-flow loading
+        (iteration 0) is built up in groups; a route found on the times of iteration ``i``'s
+        loadings is stamped ``i + 1``, which is also the first iteration that loads it.
         """
 
     def overlaps(self) -> npt.NDArray[np.float32]:
@@ -756,6 +761,10 @@ class RunSummary:
     itinerary_replanned: int
     #: Trips back: mean |expected − realised| arrival at the parking, in seconds.
     return_mismatch_s: float
+    #: Wall-clock time by stage: ``(stage, iteration or None, seconds)``; see ``Run.timings()``.
+    timings: list[tuple[str, int | None, float]]
+    #: The written ``timings.csv``.
+    timings_path: str
 
 def run_pipeline(
     network: Network,

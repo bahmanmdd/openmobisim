@@ -117,8 +117,9 @@ impl PyRouteSets {
         self.inner.costs().to_vec().into_pyarray(py)
     }
 
-    /// Every route's stamp (uint32): 0 for a route the method made, otherwise the
-    /// iteration whose choice it was added for (see ``update``).
+    /// Every route's stamp (uint32): 0 for a route the method made, otherwise ``i + 1`` for
+    /// a route found on the times of iteration ``i``'s loadings (see ``update``): after its
+    /// last loading, or while the free-flow loading (iteration 0) was built up in groups.
     fn stamps<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
         self.inner.stamps().to_vec().into_pyarray(py)
     }

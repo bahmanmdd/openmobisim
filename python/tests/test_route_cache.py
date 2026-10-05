@@ -18,7 +18,15 @@ def scenario(trips=200, **kwargs):
     # (route_method defaults to "shortest" once a run iterates, S179, which would otherwise
     # collide with an explicit route_method="shortest" case below) — the one test that wants
     # an iterating run sets `equilibration` itself.
-    settings = {"class_defaults": CAR, "window_hours": 1, "master_seed": 3, "equilibration": "none"}
+    # One loading of everyone at once (S223: the free-flow loading's groups would also make
+    # "shortest" the default).
+    settings = {
+        "class_defaults": CAR,
+        "window_hours": 1,
+        "master_seed": 3,
+        "equilibration": "none",
+        "equilibration_options": {"increments": 1, "warmup": 0},
+    }
     settings.update(kwargs)
     return ms.Scenario.from_parts(net, rows, **settings)
 

@@ -231,7 +231,7 @@ fn a_traveller_offered_only_some_routes_is_mapped_to_the_right_one() {
 // --- a warm-up ---------------------------------------------------------------------------------------
 
 #[test]
-fn a_warmup_loads_the_first_iterations_with_the_point_queue_model_and_never_the_last() {
+fn a_warmup_loads_the_first_iterations_with_the_point_queue_model_and_never_the_last_of_many() {
     let time = |r: &RunResult, i: usize| r.iterations[i].total_travel_time_s;
     let plain = Setup { iterations: 3.0, ..Setup::jam(1_500) }.go();
     let warm = Setup { iterations: 3.0, warmup: 1.0, ..Setup::jam(1_500) }.go();
@@ -240,12 +240,12 @@ fn a_warmup_loads_the_first_iterations_with_the_point_queue_model_and_never_the_
     // The first loading of the warm-up run is the point-queue model's, on the same choices: the same total time.
     assert_ne!(time(&warm, 0).to_bits(), time(&plain, 0).to_bits(), "the level matters on a jam");
     assert_eq!(time(&warm, 0).to_bits(), time(&point_queue, 0).to_bits());
-    // The last loading, the run's result, is the full model's: a warm-up as long as the run is cut to
-    // leave it, so one iteration is the run without one, and a longer one is cut to `iterations - 1`.
+    // A run of one loading is its free-flow loading (S223), which the warm-up makes the point
+    // queue's. A run that iterates keeps its last loading, the result, at the full level: a warm-up
+    // as long as the run is cut to `iterations - 1`.
     let one = Setup { iterations: 1.0, warmup: 5.0, ..Setup::jam(1_500) }.go();
-    let none = Setup { iterations: 1.0, ..Setup::jam(1_500) }.go();
-    assert_eq!(one.total_travel_time, none.total_travel_time);
-    assert_eq!(one.events, none.events);
+    assert_eq!(one.total_travel_time, point_queue.total_travel_time);
+    assert_eq!(one.events, point_queue.events);
     let cut = Setup { iterations: 3.0, warmup: 9.0, ..Setup::jam(1_500) }.go();
     let two = Setup { iterations: 3.0, warmup: 2.0, ..Setup::jam(1_500) }.go();
     assert_eq!(cut.iterations, two.iterations, "9 is cut to 2 of 3");

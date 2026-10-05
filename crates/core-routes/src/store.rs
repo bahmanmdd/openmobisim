@@ -201,8 +201,8 @@ impl RouteSets {
     ///
     /// `additions` are `(key index, routes)` in **strictly ascending key order**, one entry
     /// per key; a key's new routes go **after its existing ones**, in the order given, each
-    /// stamped `stamp` (the iteration that adds them: not 0, which marks a route as the
-    /// generator made it). `update` is the descriptor of whatever found them, kept apart
+    /// stamped `stamp` (not 0, which marks a route as the generator made it: `core-sim` stamps
+    /// a route found on the times of iteration `i`'s loadings `i + 1`). `update` is the descriptor of whatever found them, kept apart
     /// from the generator's and part of the new store's [identity](Self::identity).
     ///
     /// Returns the new store and, per key, how many routes were added to the keys **before**
@@ -421,8 +421,8 @@ impl RouteSets {
         &self.overlap
     }
 
-    /// Every route's stamp: 0 for a route the generator made, otherwise the iteration
-    /// that added it ([`Self::extended`]).
+    /// Every route's stamp: 0 for a route the generator made, otherwise what the adder stamped
+    /// it ([`Self::extended`]).
     #[must_use]
     pub fn stamps(&self) -> &[u32] {
         &self.stamp

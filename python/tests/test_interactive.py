@@ -222,10 +222,16 @@ def test_the_script_is_valid_javascript(tmp_path):
 
 def test_the_page_carries_how_many_travellers_took_each_route(tmp_path):
     for model in ("deterministic", "logit"):
-        # equilibration="none" keeps the route sets at the "penalty" default's several
-        # alternatives per pair — an iterating run instead starts from one route per pair
-        # (S179), which would leave the logit nothing to spread over on this small a fixture.
-        _, run = grid_run(choice_model=model, equilibration="none", master_seed=3)
+        # One loading of everyone at once keeps the route sets at the "penalty" default's several
+        # alternatives per pair — a run that loads more than once (iterations, or the free-flow
+        # loading's groups, S223) starts from one route per pair (S179), which would leave the
+        # logit nothing to spread over on this small a fixture.
+        _, run = grid_run(
+            choice_model=model,
+            equilibration="none",
+            equilibration_options={"increments": 1, "warmup": 0},
+            master_seed=3,
+        )
         _, meta, a = decode(
             viz.map_interactive(run, tmp_path / f"{model}.html", max_route_pairs=10_000)
         )

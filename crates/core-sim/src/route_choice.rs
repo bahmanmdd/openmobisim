@@ -286,15 +286,17 @@ impl<'a> Chooser<'a> {
     }
 
     /// Put trips `from..to` that have a set into `batch`, with `times` as their cost (free flow
-    /// if `None`). Each situation offers the routes of its pair's set **whose expected time is
-    /// within [`Inputs::detour_limit`] of the best's** (all of them if the limit is 0: the best
-    /// route is always offered). What is left besides the batch is in `filled`.
+    /// if `None`), only those of the travellers `who` marks if it is given. Each situation offers
+    /// the routes of its pair's set **whose expected time is within [`Inputs::detour_limit`] of
+    /// the best's** (all of them if the limit is 0: the best route is always offered). What is
+    /// left besides the batch is in `filled`.
     fn fill(
         &self,
         batch: &mut ChoiceBatch,
         filled: &mut Filled,
         range: core::ops::Range<usize>,
         times: Option<&LinkTimes>,
+        who: Option<&[bool]>,
     ) {
         let Inputs { trips, trip_keys, detour_limit, .. } = *self.inputs;
         let route_sets = &*self.route_sets;
@@ -306,12 +308,15 @@ impl<'a> Chooser<'a> {
             if key.origin == key.destination {
                 continue;
             }
+            let trip = TripId::from_index(i);
+            if who.is_some_and(|w| !w[trips.traveller(trip).index()]) {
+                continue;
+            }
             let Some(k) = route_sets.key_index(key) else { continue };
             let set = route_sets.route_range(k);
             if set.is_empty() {
                 continue;
             }
-            let trip = TripId::from_index(i);
             batch.begin_situation(trips.traveller(trip).raw(), trip.raw());
             let departure = f64::from(trips.departure(trip).get());
             // Each route's expected time: at free flow the store's, later the link
@@ -484,7 +489,7 @@ impl<'a> Chooser<'a> {
         let mut i = 0;
         while i < total {
             let end = (i + CHUNK).min(total);
-            self.fill(&mut batch, &mut filled, i..end, None);
+            self.fill(&mut batch, &mut filled, i..end, None, None);
             i = end;
             if filled.trip_of.is_empty() {
                 continue;
@@ -500,6 +505,47 @@ impl<'a> Chooser<'a> {
             }
         }
         Ok(out)
+    }
+
+    /// The travellers `who` marks (by traveller) choose again on the link `times`, drawing as
+    /// [`Self::choose_all`] does at `iteration`; the others are not asked (S223: one group of
+    /// the free-flow loading's increments). Returns what they chose, to apply as
+    /// [`Update::changes`] are. Nothing is assessed.
+    ///
+    /// # Errors
+    ///
+    /// [`ChoiceError`] as for [`Self::choose_all`].
+    pub(crate) fn choose_some(
+        &self,
+        times: &LinkTimes,
+        iteration: u32,
+        who: &[bool],
+        rng: &StreamRng,
+    ) -> Result<Vec<Change>, ChoiceError> {
+        let total = self.inputs.trips.len() as usize;
+        let mut batch = ChoiceBatch::new(iteration, &self.wanted);
+        let mut filled = Filled::default();
+        let mut changes: Vec<Change> = Vec::new();
+        let mut i = 0;
+        while i < total {
+            let end = (i + CHUNK).min(total);
+            self.fill(&mut batch, &mut filled, i..end, Some(times), Some(who));
+            i = end;
+            if filled.trip_of.is_empty() {
+                continue;
+            }
+            batch.validate()?;
+            let choices = self.inputs.model.choose(&batch, rng)?;
+            choices.validate(&batch)?;
+            for (s, &t) in filled.trip_of.iter().enumerate() {
+                changes.push(Change {
+                    trip: t,
+                    route: filled.alt_route[batch.range(s).start + choices.chosen[s] as usize],
+                    probability: choices.probability[s],
+                });
+            }
+        }
+        Ok(changes)
     }
 
     /// Assess the assignment `current` against the link `times` its loading
@@ -539,7 +585,7 @@ impl<'a> Chooser<'a> {
         let mut i = 0;
         while i < total {
             let end = (i + CHUNK).min(total);
-            self.fill(&mut batch, &mut filled, i..end, Some(times));
+            self.fill(&mut batch, &mut filled, i..end, Some(times), None);
             i = end;
             if filled.trip_of.is_empty() {
                 continue;

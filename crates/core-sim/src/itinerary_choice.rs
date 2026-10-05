@@ -1530,6 +1530,10 @@ impl Itineraries {
     /// only), and is asked to choose again only if its itinerary is gone there. Without a
     /// `strategy` (the run's last assessment) every trip plans in full: the last gap is exact.
     ///
+    /// **With `only`** (by traveller; S223, a group of the free-flow loading's increments) the
+    /// marked travellers choose again and the others are neither planned nor assessed: they
+    /// keep their alternatives as they are.
+    ///
     /// # Errors
     ///
     /// [`ChoiceError`] if the model fails or answers wrongly.
@@ -1541,6 +1545,7 @@ impl Itineraries {
         current: Option<&Chosen>,
         iteration: u32,
         strategy: Option<(&dyn Equilibration, &StreamRng)>,
+        only: Option<&[bool]>,
     ) -> Result<(Chosen, Assessment), ChoiceError> {
         let n = self.trips.len();
         let mut next = Chosen {
@@ -1554,9 +1559,14 @@ impl Itineraries {
         if let (true, Some(parking)) = (self.parks_cars, planner.parking) {
             parking.prepare_car_free_flow();
         }
+        // With `only` (S223: one group of the free-flow loading's increments), its travellers
+        // choose again and no one else is planned or assessed.
+        let marked = |p: usize| only.is_none_or(|o| o[trips.traveller(self.trips[p]).index()]);
         let reselects = |p: usize| {
             let traveller = trips.traveller(self.trips[p]).raw();
-            strategy.is_some_and(|(strategy, msa)| strategy.reselects(msa, traveller, iteration))
+            only.is_some_and(|_| marked(p))
+                || strategy
+                    .is_some_and(|(strategy, msa)| strategy.reselects(msa, traveller, iteration))
         };
         // Who plans in full to measure the gap: everyone without a strategy, else a keyed
         // sample of travellers (its own draw address, apart from the reselection's).
@@ -1596,6 +1606,7 @@ impl Itineraries {
             // must fetch a vehicle, plans all.
             let work: Vec<(usize, Offer)> = round
                 .iter()
+                .filter(|&&p| marked(p))
                 .map(|&p| (p, self.offer_of(trips, travellers, p, &next.alt)))
                 .collect();
             let first: Vec<Offer> = work

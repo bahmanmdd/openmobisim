@@ -237,7 +237,9 @@ fn main() {
     // And adapting (S176): the link transmission model on a jammed grid, four loadings, the
     // route sets growing between them by best responses to the congested times. The searches
     // run in parallel over pairs and are merged in key order: the routes added, and so every
-    // number after them, must be the same on every run and at any thread count.
+    // number after them, must be the same on every run and at any thread count. The free-flow
+    // loading is built up in four groups with the point queue (S223), so the groups (a keyed
+    // draw per traveller) and the searches between them are checked too.
     let jam = jammed_demand(node);
     let (jam_travellers, jam_trips) = build_travellers(
         jam,
@@ -262,7 +264,13 @@ fn main() {
             .with_equilibration(Arc::from(
                 openmobisim_core_sim::equilibration::strategy(
                     "msa",
-                    &[("iterations".to_string(), 4.0)].into_iter().collect(),
+                    &[
+                        ("iterations".to_string(), 4.0),
+                        ("increments".to_string(), 4.0),
+                        ("warmup".to_string(), 1.0),
+                    ]
+                    .into_iter()
+                    .collect(),
                 )
                 .expect("built in"),
             ))
@@ -280,6 +288,7 @@ fn main() {
         }
         adapting_digest = step(adapting_digest, u64::from(report.routes_added));
         adapting_digest = step(adapting_digest, u64::from(report.route_searches));
+        adapting_digest = step(adapting_digest, u64::from(report.reroute_searches));
     }
     let grown = adapting_result.route_sets.as_ref().expect("recorded");
     let mut sets_digest = 0u64;

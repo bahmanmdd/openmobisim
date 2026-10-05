@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import csv
 import math
+import time
 from pathlib import Path
 from typing import Any
 
@@ -359,6 +360,7 @@ def network_read_gmns(folder: str) -> _core.Network:
         ValueError: If the folder holds no GMNS network, a ``config.csv`` names units or a
             coordinate system that is not read, or a table is malformed.
     """
+    started = time.perf_counter()
     root = Path(folder)
     road_folder = root / "road" if (root / "road" / "link.csv").exists() else root
     if not (road_folder / "link.csv").exists() or not (road_folder / "node.csv").exists():
@@ -371,4 +373,5 @@ def network_read_gmns(folder: str) -> _core.Network:
         for layer in ("bike", "walk"):
             if (root / layer / "link.csv").exists():
                 network = _attach_layer(network, root / layer, layer)
+    network.read_s = time.perf_counter() - started
     return network

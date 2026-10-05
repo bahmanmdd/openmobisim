@@ -138,6 +138,8 @@ def test_a_run_routes_from_its_sets_and_the_method_does_not_change_the_run():
         "link_bin_s": 300,
         "choice_model": "deterministic",
         "equilibration": "none",
+        # The plain single loading: everyone at once on free flow, the full model (S223).
+        "equilibration_options": {"increments": 1, "warmup": 0},
     }
     penalty = ms.Scenario.from_parts(net, rows, **kwargs).run("penalty-run")
     shortest = ms.Scenario.from_parts(net, rows, route_method="shortest", **kwargs).run("short-run")
@@ -207,6 +209,9 @@ def test_montecarlo_is_biased_by_the_demand_it_is_generated_for():
             flow_level=4,
             default_weight=weight,
             route_method=method,
+            # The sets as generated: nothing added by an update (the free-flow loading's groups
+            # would search, S223).
+            route_update="none",
         ).run(f"mc-{method}-{weight}")
         return run.route_sets(), run
 

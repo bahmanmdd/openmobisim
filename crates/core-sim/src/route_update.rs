@@ -81,8 +81,12 @@ pub struct UpdateContext<'a> {
     pub route_sets: &'a RouteSets,
     /// The times the last loading produced.
     pub times: &'a LinkTimes,
-    /// The iteration the routes are for (1 or more): the one that will choose among them.
+    /// The iteration the routes are for: the one that will choose among them (0 while the
+    /// free-flow loading is built up, S223).
     pub iteration: u32,
+    /// The trips whose pairs are searched, by trip (S223: one group of the free-flow loading's
+    /// increments); every trip's if `None`.
+    pub active: Option<&'a [bool]>,
 }
 
 /// The routes an update found.
@@ -327,6 +331,7 @@ impl BestResponse {
         let max_routes = self.max_routes as usize;
         // (key, departure) packed so that one sort orders by key, then departure.
         let mut pairs: Vec<u64> = (0..cx.trips.len())
+            .filter(|&i| cx.active.is_none_or(|a| a[i as usize]))
             .filter_map(|i| {
                 let k = sets.key_index(cx.trip_keys[i as usize])?;
                 let room =

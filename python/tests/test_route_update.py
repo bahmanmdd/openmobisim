@@ -27,7 +27,8 @@ def scenario(trips=1_800, **kwargs):
         "flow_level": 4,
         "choice_model": "logit",
         "equilibration": "msa",
-        "equilibration_options": {"iterations": 6, "gap_sample": 300, "warmup": 0},
+        # Everyone's first choice at once, on free flow (S223's groups are defended below).
+        "equilibration_options": {"iterations": 6, "gap_sample": 300, "warmup": 0, "increments": 1},
         "master_seed": 3,
         # The method's own sets unless a test asks for the update (S179 made an update and one
         # route per pair the default of an iterating run).
@@ -113,7 +114,8 @@ def test_when_nothing_beats_the_set_nothing_is_added_and_nothing_changes():
         "flow_level": 4,
         "choice_model": "logit",
         "equilibration": "msa",
-        "equilibration_options": {"iterations": 3, "gap_sample": 10},
+        # One group: the searches between iterations alone (S223's groups search too).
+        "equilibration_options": {"iterations": 3, "gap_sample": 10, "increments": 1},
         "master_seed": 3,
         "route_update": "none",
     }
@@ -161,13 +163,30 @@ def test_the_options_change_what_it_does():
     assert three.convergence()["route_searches"][0] > one.convergence()["route_searches"][0]
 
 
-def test_an_update_needs_iterations_to_do_anything():
-    # One loading, no next iteration to choose among new routes: the sets stay as made.
+def test_an_update_needs_a_later_loading_to_do_anything():
+    # One loading of everyone at once: no later loading to choose among new routes, so the sets
+    # stay as made.
     run = go(
-        "ru-once", route_update="best_response", equilibration="none", equilibration_options=None
+        "ru-once",
+        route_update="best_response",
+        equilibration="none",
+        equilibration_options={"increments": 1},
     )
     assert (run.convergence()["routes_added"] == 0).all()
     assert run.route_sets().update == ""
+    # The free-flow loading built up in groups (S223) loads more than once: each group's pairs
+    # are searched on the times of the groups before it, and what is found is stamped 1 and
+    # counted in iteration 0.
+    grouped = go(
+        "ru-groups",
+        route_update="best_response",
+        equilibration="none",
+        equilibration_options={"increments": 5},
+    )
+    c, sets = grouped.convergence(), grouped.route_sets()
+    assert c["routes_added"][0] > 0 and c["route_searches"][0] > 0
+    assert (sets.stamps() == 1).sum() == c["routes_added"][0]
+    assert sets.update == UPDATE
 
 
 def test_bad_settings_are_refused_before_any_work():

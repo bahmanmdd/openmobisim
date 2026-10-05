@@ -524,6 +524,7 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
         itinerary_gap: [f64::NAN; openmobisim_core_demand::Mode::COUNT],
         itinerary_recosted: 0,
         reroutes: 0,
+        reroute_searches: 0,
         hub_mismatch_s: f64::NAN,
         mode_changed_share: f64::NAN,
     };

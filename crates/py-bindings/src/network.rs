@@ -61,6 +61,10 @@ pub struct PyNetwork {
     /// On the road handle: the bike and walk layers, read from OSM with the
     /// network or derived from it the first time they are asked for.
     layers: [OnceLock<LayerParts>; 2],
+    /// How long reading the network took, in wall-clock seconds, if a reader recorded it
+    /// (S223): printed with a run's times. Python reads and sets it as `read_s`.
+    #[pyo3(get, set)]
+    pub(crate) read_s: Option<f64>,
 }
 
 /// One static layer as the road handle keeps it.
@@ -115,6 +119,7 @@ impl PyNetwork {
             layer: "road".to_string(),
             static_network: None,
             layers: [OnceLock::new(), OnceLock::new()],
+            read_s: None,
         }
     }
 
@@ -155,6 +160,7 @@ impl PyNetwork {
             layer: "road".to_string(),
             static_network: None,
             layers,
+            read_s: self.read_s,
         }
     }
 
@@ -661,6 +667,7 @@ pub fn network_read_osm(
             )));
         }
     };
+    let started = std::time::Instant::now();
     let region = region.map(parse_region).transpose()?;
     let region_text = region.as_ref().map(|r| format!("{r:?}"));
     let path = path.to_owned();
@@ -712,6 +719,7 @@ pub fn network_read_osm(
         contract_drivable,
         region: region_text,
     }));
+    network.read_s = Some(started.elapsed().as_secs_f64());
     Ok(network)
 }
 

@@ -29,6 +29,9 @@ def grid_run(trips=400, seed=5, **kwargs):
         "link_bin_s": 300,
         "choice_model": "deterministic",
         "equilibration": "none",
+        # Everyone chooses at once on free flow, loaded once with the full model: the plain single
+        # loading, not the free-flow loading built up in groups (S223).
+        "equilibration_options": {"increments": 1, "warmup": 0},
     }
     settings.update(kwargs)
     scenario = ms.Scenario.from_parts(net, rows, **settings)

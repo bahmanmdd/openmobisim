@@ -26,6 +26,23 @@ __all__ = ["Run", "Scenario", "Table"]
 #: model as a point queue, a spatial queue and the full triangular diagram.
 FLOW_LEVELS = (0, 2, 3, 4)
 
+#: In how many groups the free-flow loading is built up unless ``equilibration_options`` says
+#: (S223; uncalibrated, the user's suggestion: groups of a fifth of the travellers).
+FREE_FLOW_INCREMENTS = 5
+
+#: What ``Run.timings()`` calls each stage, as the printout shows it (S223).
+_STAGE_LABELS = {
+    "network_read": "network read (before the run)",
+    "demand_read": "demand read",
+    "setup": "setup (layers, transit, parkings)",
+    "static_routes": "bike and walk routes",
+    "itineraries_setup": "itineraries prepared",
+    "route_sets": "route sets",
+    "results_assembled": "results assembled",
+    "results_written": "results written",
+    "total": "run total (without the network read)",
+}
+
 
 class Table:
     """A results table backed by a Parquet file.
@@ -207,7 +224,8 @@ class Run:
         (``completion``, ``total_travel_time_s``, ``link_bins()``, ``route_choices()``)
         is that of the **last** iteration.
 
-        * ``iteration`` — 0 is everyone's first choice, on free-flow costs.
+        * ``iteration`` — 0 is the free-flow loading: everyone's first choice, in groups each
+          on the congestion of those before it (``increments``), loaded with the point queue.
         * ``reselected_share``, ``changed_share`` — the share of trips (by weight) that
           chose again on the way to this iteration, and the share whose route changed.
         * ``total_travel_time_s``, ``completed``, ``truncated`` — this loading's.
@@ -254,7 +272,12 @@ class Run:
           **after** this loading, for the next iteration to choose among, and how many
           searches that took; 0 without one, and at the last iteration, which no choice
           follows. **``gap`` is measured against the sets as grown**: the routes the
-          travellers may choose from next.
+          travellers may choose from next. Iteration 0's also counts what the update found
+          while the free-flow loading was built up in groups.
+        * ``reroutes``, ``reroute_searches`` — en-route rerouting in this loading: how many
+          times a vehicle took a new route, and how many searches for one were made (one per
+          offer to a vehicle stuck at the end of its link, taken or not). Iteration 0's
+          searches include those of the free-flow loading's groups.
 
         * ``gap_transit``, ``gap_car_transit``, ``gap_bike_transit`` — the same relative gap
           for the itineraries of transit, park-and-ride and bike-and-ride trips: each
@@ -389,6 +412,79 @@ class Run:
         with Path(self._summary.manifest_path).open(encoding="utf-8") as f:
             data: dict[str, Any] = json.load(f)
         return data
+
+    def timings(self) -> dict[str, list[Any]]:
+        """Wall-clock time by stage, measured on this machine's clock (S223).
+
+        Columns by name, one row per stage in the order the stages ended: ``stage``,
+        ``iteration`` (``None`` for a stage outside the iterations) and ``seconds``. Before the
+        iterations: ``network_read`` (if the network recorded how long its reading took; it was
+        read before the run, and is not in the total), ``demand_read``, ``setup`` (the bike and
+        walk layers, the timetable and the parkings prepared, the fingerprint),
+        ``static_routes``, ``itineraries_setup``, ``route_sets``. Per iteration:
+        ``route_choice`` and ``itinerary_choice``, ``partial_loading`` and ``route_update``
+        (iteration 0's: the free-flow loading's groups, one row each), ``loading``, then after a
+        loading what prepares the next (``route_update``, ``route_choice``,
+        ``itinerary_choice``) and ``network_gap`` after the last. After them:
+        ``results_assembled``, ``results_written`` and ``total`` (the run alone). Also in
+        ``timings.csv`` next to the other files. Times differ between runs, so they are in no
+        result and not in the fingerprint.
+        """
+        rows = self._summary.timings
+        return {
+            "stage": [r[0] for r in rows],
+            "iteration": [r[1] for r in rows],
+            "seconds": [r[2] for r in rows],
+        }
+
+    @property
+    def timings_path(self) -> str:
+        """Path to ``timings.csv``: ``Run.timings()`` as a file."""
+        return self._summary.timings_path
+
+    def _timings_text(self) -> str:
+        """``Run.timings()`` as the run prints it.
+
+        The stages outside the iterations, then a table of the iterations with one column per
+        kind of stage.
+        """
+        columns = [
+            ("partial_loading", "partial loadings"),
+            ("loading", "loading"),
+            ("route_update", "route update"),
+            ("route_choice", "route choice"),
+            ("itinerary_choice", "itinerary choice"),
+            ("network_gap", "network gap"),
+        ]
+        rows = self._summary.timings
+        per: dict[int, dict[str, float]] = {}
+        outside: list[tuple[str, float]] = []
+        for stage, iteration, seconds in rows:
+            if iteration is None:
+                outside.append((stage, seconds))
+            else:
+                cell = per.setdefault(iteration, {})
+                cell[stage] = cell.get(stage, 0.0) + seconds
+        lines = [f"Run {self.run_id!r}: wall-clock seconds by stage"]
+        width = max(len(label) for label in _STAGE_LABELS.values())
+        iterations_total = sum(sum(c.values()) for c in per.values())
+        for stage, seconds in outside:
+            if stage == "results_assembled" and per:
+                lines.append(f"  {'iterations (below)':<{width}}  {iterations_total:9.2f}")
+            lines.append(f"  {_STAGE_LABELS.get(stage, stage):<{width}}  {seconds:9.2f}")
+        used = [(key, label) for key, label in columns if any(key in c for c in per.values())]
+        if per:
+            header = ["iteration"] + [label for _, label in used] + ["total"]
+            lines.append("")
+            lines.append("  " + "  ".join(f"{h:>{max(len(h), 9)}}" for h in header))
+            for iteration in sorted(per):
+                cell = per[iteration]
+                values = [cell.get(key, 0.0) for key, _ in used] + [sum(cell.values())]
+                parts = [f"{iteration:>9}"] + [
+                    f"{v:>{max(len(h), 9)}.2f}" for h, v in zip(header[1:], values, strict=True)
+                ]
+                lines.append("  " + "  ".join(parts))
+        return "\n".join(lines)
 
     @property
     def completion(self) -> dict[str, int]:
@@ -685,18 +781,26 @@ class Scenario:
         self._flow_level = flow_level
         self._flow_step_s = flow_step_s
         self._link_bin_s = link_bin_s
-        iterates = (
-            equilibration != "none" and int((equilibration_options or {}).get("iterations", 10)) > 1
-        )
+        options = dict(equilibration_options or {})
+        iterates = equilibration != "none" and int(options.get("iterations", 10)) > 1
+        if equilibration in ("none", "msa"):
+            # The free-flow loading (S223): built up in groups, each choosing on the congestion
+            # of those before it, with the point-queue model, which cannot gridlock. At free
+            # flow nothing congests, so there are no groups.
+            if flow_level >= 2:
+                options.setdefault("increments", FREE_FLOW_INCREMENTS)
+            if flow_level >= 2 or iterates:
+                options.setdefault("warmup", 1)
+        # A run that loads more than once: iterations, or the free-flow loading's groups.
+        reloads = iterates or (flow_level >= 2 and int(options.get("increments", 1)) > 1)
         if route_method is None:
-            # An iterating run starts from one route per pair and lets the route update find the
-            # rest (S179); a run that loads once has no next iteration to choose among new
+            # Such a run starts from one route per pair and lets the route update find the
+            # rest (S179, S223); a run that loads once has no later loading to choose among new
             # routes. Options given for a method mean the default method of a single loading.
-            route_method = "shortest" if iterates and route_options is None else "penalty"
+            route_method = "shortest" if reloads and route_options is None else "penalty"
         if route_update is None:
-            route_update = "best_response" if iterates or route_update_options else "none"
-        if iterates and equilibration == "msa" and "warmup" not in (equilibration_options or {}):
-            equilibration_options = {**(equilibration_options or {}), "warmup": 1}
+            route_update = "best_response" if reloads or route_update_options else "none"
+        equilibration_options = options or None
         self._route_method = route_method
         self._route_options = route_options
         self._master_seed = master_seed
@@ -798,8 +902,9 @@ class Scenario:
                 with ``openmobisim.viz.map_link``.
             route_method: How route sets are generated, by name (see
                 ``openmobisim.route_methods()``). **The default depends on the run:** a run
-                that loads once uses ``"penalty"``; a run that **iterates** (an
-                ``equilibration`` with more than one iteration) starts from ``"shortest"``, one
+                that loads once uses ``"penalty"``; a run that **loads more than once** (an
+                ``equilibration`` with more than one iteration, or a free-flow loading built up
+                in groups, the default at ``flow_level`` 2 to 4) starts from ``"shortest"``, one
                 route per pair, and lets the route update find the rest (measured: as good
                 as the alternatives of the other methods at about half the time). Naming a
                 method, or giving ``route_options``, overrides this (options alone mean
@@ -880,9 +985,21 @@ class Scenario:
                 averages in traveller form: load the network, read the link
                 times it produced, let a share ``1/(i + 1)`` of travellers
                 choose again on those times at iteration ``i``, load again.
-                ``"none"`` chooses every trip's route once, on free-flow
-                costs, and loads the network once — still the right choice
-                for a one-shot, day-of or disruption study.
+                ``"none"`` makes only the free-flow loading: a quick estimate
+                of the day without iterating.
+                **The free-flow loading** is how every run starts (iteration 0,
+                S223). The travellers are split into groups of about equal size
+                (``increments``, 5 by default); the first group chooses on
+                free-flow costs, then the network is loaded with the groups so
+                far and the next group chooses on the times that produced (its
+                pairs searched for routes on those times first), until everyone
+                has chosen and the whole demand is loaded. Each group sees the
+                congestion of those before it, so routes spread before the
+                first full loading (incremental assignment). It uses the
+                point-queue model (``warmup``): queues delay traffic but take
+                no space, so nothing spills back and nothing locks; the
+                iterations that follow use ``flow_level``. At ``flow_level=0``
+                there are no groups, since nothing congests.
                 Either way, equilibration only changes anything when vehicles
                 interact (``flow_level`` 2 to 4, the default 4) and a choice
                 model gives travellers something to choose between
@@ -904,17 +1021,22 @@ class Scenario:
                 itinerary out through a parking are re-costed at that parking, which is faster
                 but makes the gap before the last iteration read low; the last iteration always
                 plans every trip) and ``cost_bin_s`` (300: the
-                length of the time bins the link times are read in) and ``warmup`` (1 for a run
-                that iterates, else 0: how many of
-                the first loadings use the point-queue model, which cannot gridlock; the last
-                loading, the run's result, always uses ``flow_level``. A narrow route set is often
-                in gridlock in its first loading, and every later iteration inherits its times).
+                length of the time bins the link times are read in). For both ``"msa"`` and
+                ``"none"``: ``increments`` (5 at ``flow_level`` 2 to 4, else 1: in how many groups
+                the free-flow loading is built up; 1 lets everyone choose at once on free-flow
+                costs) and ``warmup`` (1 at ``flow_level`` 2 to 4 or for a run that iterates,
+                else 0: how many of the first loadings, the free-flow loading's groups included,
+                use the point-queue model, which cannot gridlock; the last loading of a run that
+                iterates, its result, always uses ``flow_level``, while a run of one loading
+                is its free-flow loading. ``"none"`` with ``increments`` 1 and ``warmup`` 0 is
+                a single loading at ``flow_level`` on free-flow choices).
             route_update: How the route sets grow between iterations (see
                 ``openmobisim.route_update_methods()``). **The default depends on the run:**
-                ``"best_response"`` when the run iterates (or ``route_update_options`` is
-                given), ``"none"`` when it loads once. ``"none"`` leaves
+                ``"best_response"`` when the run loads more than once (it iterates, or builds
+                its free-flow loading in groups; or ``route_update_options`` is given),
+                ``"none"`` when it loads once. ``"none"`` leaves
                 the sets as the route method made them, at free-flow costs. ``"best_response"``
-                is for a run that iterates: after each loading it searches, for every
+                is for a run that loads more than once: after each loading it searches, for every
                 origin-destination pair, the fastest route at the congested times the
                 loading produced, and adds it to the pair's set if it is new and at least as
                 fast as the best route already there, before travellers choose again. It
@@ -1059,7 +1181,7 @@ class Scenario:
             loading_options=loading_options,
         )
 
-    def run(self, run_id: str = "run", output_dir: str | None = None) -> Run:
+    def run(self, run_id: str = "run", output_dir: str | None = None, quiet: bool = False) -> Run:
         """Run the scenario and write its output artifacts.
 
         Args:
@@ -1068,6 +1190,8 @@ class Scenario:
             output_dir: Where ``kpis.parquet`` etc. are written. Defaults to
                 a directory under the system temp directory, named after
                 ``run_id``.
+            quiet: If true, do not print the run's wall-clock time by stage when it ends
+                (``Run.timings()`` and ``timings.csv`` have it either way).
 
         Returns:
             A ``Run`` with the four artifacts and the completion statistics.
@@ -1108,7 +1232,7 @@ class Scenario:
             mode_options=self._mode_options,
             loading_options=self._loading_options,
         )
-        return Run(
+        run = Run(
             summary,
             network=self._network,
             run_id=run_id,
@@ -1118,3 +1242,6 @@ class Scenario:
             transit=self._transit,
             parkings=self._parkings,
         )
+        if not quiet:
+            print(run._timings_text())
+        return run

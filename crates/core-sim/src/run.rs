@@ -22,6 +22,7 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
+use std::time::Instant;
 
 use openmobisim_core_choice::{ChoiceError, ChoiceModel, Deterministic};
 use openmobisim_core_demand::{Mode, Travellers, Trips, VehicleKind, VehicleLocations};
@@ -40,7 +41,7 @@ use openmobisim_core_types::diagnostics::{
     Category, DiagKey, Diagnostics, ElementRef, Severity, codes,
 };
 use openmobisim_core_types::ids::{EntityId, EntityKind, LinkId, TravellerId, TripId, VehicleId};
-use openmobisim_core_types::rng::{RngKey, Stream, StreamRng};
+use openmobisim_core_types::rng::{DrawAddress, RngKey, Stream, StreamRng};
 use openmobisim_core_types::time::{EventKey, Second};
 use openmobisim_core_types::units::{Duration, Pcu};
 
@@ -61,6 +62,7 @@ use crate::reroute::Rerouter;
 use crate::route_cache::{RouteSetCache, generation_key};
 use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext};
+use crate::timings::{Stage, Timings};
 use crate::transit::{TransitResult, TransitSetup, par_map};
 use openmobisim_core_graph::hubs::ParkingKind;
 use openmobisim_core_graph::layers::StaticLayer;
@@ -264,7 +266,7 @@ pub struct RunResult {
 
 /// How one loading is made besides the routes it follows.
 #[derive(Clone, Copy)]
-struct LoadPlan {
+struct LoadPlan<'a> {
     /// Record per-link results in bins of this many seconds, if asked.
     record_bins: Option<u32>,
     /// Also record the entry-time tables the next iteration's costs are read from.
@@ -272,6 +274,9 @@ struct LoadPlan {
     /// Load with this level of the link transmission model instead of the run's (S178: the
     /// warm-up's point-queue model).
     level_override: Option<FidelityLevel>,
+    /// Load only the travellers marked here, by traveller (S223: the free-flow loading's
+    /// increments); everyone if `None`.
+    active: Option<&'a [bool]>,
 }
 
 /// One loading of the demand.
@@ -298,6 +303,8 @@ struct Loaded {
     /// Every reroute (S213), and the realised routes of the trips that re-routed and arrived.
     reroutes: Vec<RerouteRecord>,
     routes_realised: Vec<(TripId, Vec<LinkId>)>,
+    /// How many reroute offers (searches) the loading made (S223).
+    reroute_searches: u32,
 }
 
 /// How the itinerary trips of a loading went.
@@ -412,6 +419,28 @@ pub struct Run {
     /// How long a walk or ride mode choice offers (S209): the shipped values, by default.
     mode_defaults: ModeDefaults,
     loading: LoadingOptions,
+    /// Wall-clock time by stage of the last execution (S223).
+    timings: Timings,
+}
+
+/// The key of the draw that puts a traveller in a group of the free-flow loading's increments
+/// (S223), apart from every other draw on the re-selection stream: who chooses again at
+/// iteration `i` (keys 1 to `MAX_ITERATIONS`), the itinerary gap's sample (from `1 << 31`) and
+/// the network gap's (`u32::MAX`, keyed on trips).
+const INCREMENT_KEY: u32 = u32::MAX - 1;
+
+/// The group (0 to `increments − 1`) of the free-flow loading `traveller` is in (S223): a draw
+/// keyed on the traveller alone, so groups are the same for any thread count and order, and
+/// about equal in size.
+fn increment_of(rng: &StreamRng, traveller: u32, increments: u32) -> u32 {
+    let u = rng.unit(DrawAddress::from_pair(traveller, INCREMENT_KEY));
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a draw in [0, 1) times a small count"
+    )]
+    let group = (u * f64::from(increments)) as u32;
+    group.min(increments - 1)
 }
 
 /// The share above the best route's expected time beyond which a route is not offered to a
@@ -445,7 +474,7 @@ impl Run {
             route_generator: Arc::from(default_generator()),
             master_seed: 0,
             choice_model: Arc::new(Deterministic),
-            equilibration: Arc::new(NoEquilibration),
+            equilibration: Arc::new(NoEquilibration::default()),
             route_update: Arc::new(NoRouteUpdate),
             choice_detour_limit: DEFAULT_CHOICE_DETOUR_LIMIT,
             route_cache: None,
@@ -455,7 +484,16 @@ impl Run {
             mode_choice: None,
             mode_defaults: ModeDefaults::SHIPPED,
             loading: LoadingOptions::SHIPPED,
+            timings: Timings::new(),
         }
+    }
+
+    /// Wall-clock time by stage of the last [`Self::execute`] or [`Self::try_execute`] (S223),
+    /// in the order the stages ended; empty before. Kept apart from [`RunResult`], since it
+    /// differs from run to run. The names: [`Timings::lap`].
+    #[must_use]
+    pub fn timings(&self) -> &[Stage] {
+        self.timings.stages()
     }
 
     /// The same run, with a timetable for the trips whose mode is
@@ -709,6 +747,8 @@ impl Run {
     /// iteration always runs.
     pub fn try_execute(&mut self, diagnostics: &mut Diagnostics) -> Result<RunResult, RunError> {
         let total_trips = self.trips.len();
+        let mut timings = Timings::new();
+        let mut clock = Instant::now();
 
         // Route sets for every origin-destination pair the demand asks for,
         // made once, in parallel, before any trip runs (S165): each trip's
@@ -751,6 +791,7 @@ impl Run {
             },
             &self.mode_defaults,
         );
+        clock = timings.lap("static_routes", None, clock);
         // Shared handles, so the loading (which moves vehicles about in `self`) and the
         // chooser (which only reads the inputs) do not borrow each other.
         let (network, travellers, trips) =
@@ -777,6 +818,7 @@ impl Run {
                 )
             })
             .filter(|i| !i.is_empty());
+        clock = timings.lap("itineraries_setup", None, clock);
         // The pairs route sets are made for: the car trips', and the car pairs of the trips
         // choosing their mode (M5), which the route update grows too.
         let car_keys: Vec<RouteKey> = match &itineraries {
@@ -837,6 +879,7 @@ impl Run {
             }
             None => Arc::new(generate()),
         };
+        clock = timings.lap("route_sets", None, clock);
 
         // Choice and equilibration (S169, S170): every trip chooses a route on
         // free-flow costs; then, under an equilibration strategy, the network is
@@ -857,6 +900,7 @@ impl Run {
         };
         let mut chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
         let mut route_choices = chooser.choose_all(&choice_rng, 0)?;
+        clock = timings.lap("route_choice", Some(0), clock);
         let route_update = self.route_update.clone();
 
         let itinerary_wanted = match &itineraries {
@@ -894,7 +938,8 @@ impl Run {
                     .as_ref()
                     .map(|attributes| CarRoutes { sets: &route_sets, attributes }),
             };
-            chosen = Some(itin.choose(&planner, &choose_inputs, None, 0, None)?.0);
+            chosen = Some(itin.choose(&planner, &choose_inputs, None, 0, None, None)?.0);
+            clock = timings.lap("itinerary_choice", Some(0), clock);
         }
 
         let strategy = self.equilibration.clone();
@@ -916,10 +961,116 @@ impl Run {
         let mut last: Option<(Loaded, Diagnostics)> = None;
 
         // The first loadings may be made with the point-queue model, which cannot gridlock (S178);
-        // the last, the run's result, never is.
-        let warmup = strategy.warmup_iterations().min(max_iterations - 1);
+        // the last of an iterating run, its result, never is. A run of one loading is its
+        // free-flow loading, which may (S223).
+        let warmup = strategy.warmup_iterations().min((max_iterations - 1).max(1));
         // The link times the last loading produced: what a vehicle that re-routes knows (S213).
         let mut expected_times: Option<LinkTimes> = None;
+
+        // The free-flow loading's increments (S223): travellers in groups, each choosing on the
+        // times of a loading of the groups before it, so the first loading of everyone (iteration
+        // 0's, below) is on routes that already spread around congestion. Not at free flow, where
+        // loading changes no time.
+        let increments = match self.flow_motor {
+            FlowMotor::Ltm { .. } => strategy.increments().max(1),
+            FlowMotor::Level0 => 1,
+        };
+        // What the route update found while it was built up: iteration 0's report counts it.
+        let (mut increment_searches, mut increment_added) = (0_u32, 0_u32);
+        let mut increment_reroute_searches = 0_u32;
+        if increments > 1 {
+            let group: Vec<u32> =
+                (0..travellers.len()).map(|t| increment_of(&reselect_rng, t, increments)).collect();
+            for k in 1..increments {
+                let loading: Vec<bool> = group.iter().map(|&g| g < k).collect();
+                // Its diagnostics are not the run's: the run's are iteration 0's, of everyone.
+                let mut partial_diagnostics = Diagnostics::new();
+                let loaded = self.load_once(
+                    &trip_keys,
+                    &route_sets,
+                    &route_choices,
+                    &static_routes,
+                    LoadPlan {
+                        record_bins: Some(strategy.cost_bin_seconds()),
+                        want_entry: true,
+                        level_override: (warmup > 0).then_some(FidelityLevel::PointQueue),
+                        active: Some(&loading),
+                    },
+                    itineraries.as_ref().zip(chosen.as_ref()),
+                    (&car_ctx, expected_times.as_ref()),
+                    &mut partial_diagnostics,
+                );
+                clock = timings.lap("partial_loading", Some(0), clock);
+                increment_reroute_searches += loaded.reroute_searches;
+                let Some(bins) = &loaded.entry_bins else { break };
+                let times = LinkTimes::from_tables(&self.network, bins);
+                let choosing: Vec<bool> = group.iter().map(|&g| g == k).collect();
+                // The group's pairs searched on these times: routes that avoid the congestion of
+                // the groups before it, for it to choose among.
+                if route_update.is_active() {
+                    let trip_choosing: Vec<bool> = (0..total_trips)
+                        .map(|i| choosing[trips.traveller(TripId::new(i)).index()])
+                        .collect();
+                    let found = route_update.update(&UpdateContext {
+                        network: &network,
+                        turns: &turns,
+                        trips: &trips,
+                        trip_keys: &car_keys,
+                        route_sets: &route_sets,
+                        times: &times,
+                        iteration: 0,
+                        active: Some(&trip_choosing),
+                    });
+                    increment_searches += found.searches;
+                    increment_added +=
+                        u32::try_from(found.route_count()).expect("few routes are added");
+                    if !found.routes.is_empty() {
+                        let (grown, shift) =
+                            route_sets.extended(&found.routes, 1, &route_update.descriptor());
+                        route_choices.grown(&route_sets, &shift, &grown, &trip_keys);
+                        route_sets = Arc::new(grown);
+                        chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
+                    }
+                    clock = timings.lap("route_update", Some(0), clock);
+                }
+                for c in chooser.choose_some(&times, 0, &choosing, &choice_rng)? {
+                    route_choices.route[c.trip] = c.route;
+                    route_choices.probability[c.trip] = c.probability;
+                }
+                clock = timings.lap("route_choice", Some(0), clock);
+                if let (Some(itin), Some(current)) = (&itineraries, &chosen) {
+                    let transit = transit_arc.as_deref();
+                    let realised = transit
+                        .zip(loaded.transit.as_ref())
+                        .map(|(transit, t)| transit.on_times(&t.times));
+                    let attributes = mode_choice.as_ref().map(|_| route_sets.attributes(&network));
+                    let planner = Planner {
+                        transit: transit
+                            .map(|t| (t, realised.as_ref().unwrap_or_else(|| t.scheduled()))),
+                        parking: parking_arc.as_deref(),
+                        car: &car_ctx,
+                        bike: bike_planner,
+                        times: &times,
+                        availability: availability.as_ref(),
+                        detour_limit: self.choice_detour_limit,
+                        car_routes: attributes
+                            .as_ref()
+                            .map(|attributes| CarRoutes { sets: &route_sets, attributes }),
+                    };
+                    let (next_chosen, _) = itin.choose(
+                        &planner,
+                        &choose_inputs,
+                        Some(current),
+                        0,
+                        None,
+                        Some(&choosing),
+                    )?;
+                    chosen = Some(next_chosen);
+                    clock = timings.lap("itinerary_choice", Some(0), clock);
+                }
+                expected_times = Some(times);
+            }
+        }
         for iteration in 0..max_iterations {
             let mut iteration_diagnostics = Diagnostics::new();
             let loaded = self.load_once(
@@ -931,11 +1082,13 @@ impl Run {
                     record_bins,
                     want_entry: max_iterations > 1,
                     level_override: (iteration < warmup).then_some(FidelityLevel::PointQueue),
+                    active: None,
                 },
                 itineraries.as_ref().zip(chosen.as_ref()),
                 (&car_ctx, expected_times.as_ref()),
                 &mut iteration_diagnostics,
             );
+            clock = timings.lap("loading", Some(iteration), clock);
             let mut report = IterationReport::unmeasured(iteration);
             report.reselected_share = arrived_by.0;
             report.changed_share = arrived_by.1;
@@ -944,6 +1097,7 @@ impl Run {
             report.completed = loaded.completion.completed;
             report.truncated = loaded.completion.truncated;
             report.reroutes = u32::try_from(loaded.reroutes.len()).unwrap_or(u32::MAX);
+            report.reroute_searches = loaded.reroute_searches;
             report.hub_mismatch_s = loaded.parking.as_ref().map_or(f64::NAN, |p| p.mismatch_s);
             let mut pending_chosen: Option<Chosen> = None;
             if let (Some(before), Some(now)) = (&previous_bins, &loaded.entry_bins) {
@@ -971,6 +1125,7 @@ impl Run {
                             route_sets: &route_sets,
                             times: &times,
                             iteration: next,
+                            active: None,
                         });
                         report.route_searches = found.searches;
                         report.routes_added =
@@ -985,6 +1140,7 @@ impl Run {
                             route_sets = Arc::new(grown);
                             chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
                         }
+                        clock = timings.lap("route_update", Some(iteration), clock);
                     }
                     let strategy_for_next =
                         (next < max_iterations).then_some((strategy.as_ref(), &reselect_rng));
@@ -1004,6 +1160,7 @@ impl Run {
                         &choice_rng,
                         &unfinished,
                     )?;
+                    clock = timings.lap("route_choice", Some(iteration), clock);
                     report.gap = update.assessment.gap;
                     report.gap_expected = update.assessment.gap_expected;
                     report.gap_excess = update.assessment.gap_excess;
@@ -1044,7 +1201,9 @@ impl Run {
                             Some(current),
                             next,
                             strategy_for_next,
+                            None,
                         )?;
+                        clock = timings.lap("itinerary_choice", Some(iteration), clock);
                         // Every mode's: a trip choosing its mode is measured against the best
                         // of the mode it took (M5).
                         for mode in Mode::ALL {
@@ -1060,6 +1219,11 @@ impl Run {
                     changes = update.changes;
                     assessed = Some((unfinished, update.expected_seconds));
                 }
+            }
+            if iteration == 0 {
+                report.route_searches += increment_searches;
+                report.routes_added += increment_added;
+                report.reroute_searches += increment_reroute_searches;
             }
             reports.push(report);
             previous_bins = loaded.entry_bins.clone();
@@ -1083,6 +1247,7 @@ impl Run {
                         last_report.gap_network = gap;
                         last_report.gap_network_excess = excess;
                     }
+                    clock = timings.lap("network_gap", Some(iteration), clock);
                 }
                 converged = iteration + 1 < max_iterations;
                 break;
@@ -1133,6 +1298,8 @@ impl Run {
             )),
             _ => None,
         };
+        timings.lap("results_assembled", None, clock);
+        self.timings = timings;
         Ok(RunResult {
             total_travel_time: loaded.total_travel_time,
             completion: loaded.completion,
@@ -1163,12 +1330,12 @@ impl Run {
         route_sets: &RouteSets,
         route_choices: &RouteChoices,
         static_routes: &StaticRoutes,
-        plan: LoadPlan,
+        plan: LoadPlan<'_>,
         itin: Option<(&Itineraries, &Chosen)>,
         (car_ctx, expected): (&SearchContext<'_>, Option<&LinkTimes>),
         diagnostics: &mut Diagnostics,
     ) -> Loaded {
-        let LoadPlan { record_bins, want_entry, level_override } = plan;
+        let LoadPlan { record_bins, want_entry, level_override, active } = plan;
         let total_trips = self.trips.len();
         let mut queue: BinaryHeap<Reverse<EventKey>> = BinaryHeap::new();
         // Every iteration starts from where the day starts.
@@ -1182,6 +1349,9 @@ impl Run {
         // traveller who owns no car entirely uncounted rather than counted
         // as `no_vehicle_available`.
         for raw in 0..self.travellers.len() {
+            if active.is_some_and(|a| !a[raw as usize]) {
+                continue;
+            }
             let traveller = TravellerId::new(raw);
             self.enqueue(&mut queue, self.travellers.first_trip(traveller));
         }
@@ -1204,6 +1374,7 @@ impl Run {
         let mut entry_bins: Option<EntryTables> = None;
         let mut gridlock: Option<LockReport> = None;
         let mut reroutes: Vec<RerouteRecord> = Vec::new();
+        let mut reroute_searches = 0_u32;
         let mut routes_realised: Vec<(TripId, Vec<LinkId>)> = Vec::new();
         // Bike and walk vehicles, kept to be binned per layer when asked.
         let mut layer_vehicles: [Vec<Vehicle>; 2] = [Vec::new(), Vec::new()];
@@ -1538,6 +1709,7 @@ impl Run {
                 rerouter.as_mut().map(|r| r as &mut dyn Reroute),
             );
             reroutes = out.reroutes;
+            reroute_searches = rerouter.as_ref().map_or(0, |r| r.offers);
             let (trajectories, bins, entry) = (out.trajectories, out.link_bins, out.entry);
             for cycle in &out.lock.loops {
                 diagnostics.record(DiagKey::new(
@@ -1744,6 +1916,7 @@ impl Run {
             gridlock,
             reroutes,
             routes_realised,
+            reroute_searches,
         }
     }
 

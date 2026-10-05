@@ -18,8 +18,10 @@ CAR = {"commuter": (True, False, False)}
 def jammed(**kwargs: object) -> ms.Run:
     net = ms.examples.manhattan_grid(n=6, block_metres=150.0, signals=False)
     rows = ms.examples.trips_random(net, 4000, seed=3, min_m=300.0, max_m=900.0, spread_s=600)
+    # The plain single loading: everyone at once on free flow, the full model (S223).
+    settings = {"equilibration": "none", "equilibration_options": {"increments": 1, "warmup": 0}}
     return ms.Scenario.from_parts(
-        net, rows, class_defaults=CAR, window_hours=3, equilibration="none", **kwargs
+        net, rows, class_defaults=CAR, window_hours=3, **{**settings, **kwargs}
     ).run("rules")
 
 

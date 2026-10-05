@@ -21,6 +21,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -39,7 +40,7 @@ use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
 use openmobisim_core_sim::{
     FlowMotor, LayerSetup, LoadingOptions, ModeDefaults, ParkingDefaults, ParkingSetup,
-    Run as CoreRun, StaticLayers, TransitSetup,
+    Run as CoreRun, StaticLayers, Timings, TransitSetup,
 };
 use openmobisim_core_transit::TransitDefaults;
 
@@ -238,6 +239,14 @@ pub struct PyRunSummary {
     /// See [`Self::itinerary_replanned`].
     #[pyo3(get)]
     pub return_mismatch_s: f64,
+    /// Wall-clock time by stage (S223): `(stage, iteration or None, seconds)`, in the order the
+    /// stages ended; `network_read` first if the network recorded it, `total` last (the run
+    /// alone, without the network's reading). Not part of any result: it differs between runs.
+    #[pyo3(get)]
+    pub timings: Vec<(String, Option<u32>, f64)>,
+    /// Path to the written `timings.csv`: the same rows.
+    #[pyo3(get)]
+    pub timings_path: String,
 }
 
 /// Per-link, per-time-bin results, as numpy columns.
@@ -357,6 +366,10 @@ fn convergence_arrays(
         "reroutes",
         reports.iter().map(|r| r.reroutes).collect::<Vec<_>>().into_pyarray(py),
     )?;
+    dict.set_item(
+        "reroute_searches",
+        reports.iter().map(|r| r.reroute_searches).collect::<Vec<_>>().into_pyarray(py),
+    )?;
     Ok(dict.unbind())
 }
 
@@ -429,6 +442,9 @@ pub fn run_pipeline(
     mode_options: Option<HashMap<String, f64>>,
     loading_options: Option<HashMap<String, f64>>,
 ) -> PyResult<PyRunSummary> {
+    let started = Instant::now();
+    let mut clock = started;
+    let mut timings = Timings::new();
     let bike_cost = BikeCost::from_name(bike_cost).ok_or_else(|| {
         PyValueError::new_err(format!(
             "bike_cost must be \"dedicated\" or \"time\", not {bike_cost:?}"
@@ -505,6 +521,7 @@ pub fn run_pipeline(
         &mut build_diagnostics,
     )
     .map_err(to_value_error)?;
+    clock = timings.lap("demand_read", None, clock);
     let travellers = Arc::new(travellers);
     let trips_table = Arc::new(trips_table);
     let trips_used = trips_table.clone();
@@ -609,8 +626,11 @@ pub fn run_pipeline(
         .with_loading_options(loading);
     // What went in, taken before it runs (S168).
     let description = run.description();
+    timings.lap("setup", None, clock);
     let mut run_diagnostics = Diagnostics::new();
     let result = run.try_execute(&mut run_diagnostics).map_err(to_value_error)?;
+    let core_stages = run.timings().to_vec();
+    let clock = Instant::now();
 
     let mut diagnostics = build_diagnostics;
     diagnostics.merge(&run_diagnostics);
@@ -705,6 +725,10 @@ pub fn run_pipeline(
     let one_mode = if let [one] = distinct.as_slice() { Some(*one) } else { None };
     let trip_modes_table =
         trip_modes(py, result.itineraries.as_ref(), &trips_used, &travellers, one_mode)?.unbind();
+    let route_choices_py = match (&result.route_choices, &result.route_sets) {
+        (Some(choices), Some(sets)) => Some(PyRouteChoices::new(py, choices, sets)?),
+        _ => None,
+    };
     let (itinerary_replanned, return_mismatch_s) = result
         .itineraries
         .as_ref()
@@ -788,7 +812,24 @@ pub fn run_pipeline(
         d.set_item("links", links)?;
         d.unbind()
     };
+    // Wall-clock time by stage (S223): the network's reading if it was recorded, this
+    // function's own stages around the core's, and the whole of it.
+    timings.lap("results_written", None, clock);
+    let mut timing_rows: Vec<(String, Option<u32>, f64)> = Vec::new();
+    if let Some(read) = network.read_s {
+        timing_rows.push(("network_read".to_string(), None, read));
+    }
+    let (before, after) = timings.stages().split_at(2);
+    for stage in before.iter().chain(&core_stages).chain(after) {
+        timing_rows.push((stage.name.to_string(), stage.iteration, stage.seconds));
+    }
+    timing_rows.push(("total".to_string(), None, started.elapsed().as_secs_f64()));
+    let timings_path = dir.join("timings.csv");
+    write_timings(&timings_path, &timing_rows).map_err(to_value_error)?;
+
     Ok(PyRunSummary {
+        timings: timing_rows,
+        timings_path: timings_path.to_string_lossy().into_owned(),
         gridlock,
         route_changes,
         route_realised,
@@ -834,15 +875,24 @@ pub fn run_pipeline(
         link_bins_walk_path,
         mode_not_available: result.completion.mode_not_available,
         completion_by_mode: completion_by_mode.unbind(),
-        route_choices: match (&result.route_choices, &result.route_sets) {
-            (Some(choices), Some(sets)) => Some(PyRouteChoices::new(py, choices, sets)?),
-            _ => None,
-        },
+        route_choices: route_choices_py,
         route_sets: result
             .route_sets
             .map(|sets| Py::new(py, PyRouteSets::new(Arc::new(sets), network.inner.link_count())))
             .transpose()?,
     })
+}
+
+/// Write the run's time by stage as `stage,iteration,seconds` (S223); an empty iteration is a
+/// stage outside the iterations.
+fn write_timings(path: &Path, rows: &[(String, Option<u32>, f64)]) -> std::io::Result<()> {
+    use std::fmt::Write as _;
+    let mut text = String::from("stage,iteration,seconds\n");
+    for (stage, iteration, seconds) in rows {
+        let iteration = iteration.map_or_else(String::new, |i| i.to_string());
+        let _ = writeln!(text, "{stage},{iteration},{seconds:.6}");
+    }
+    std::fs::write(path, text)
 }
 
 /// The route sets kept between runs of this process, when a run asks for the cache.
