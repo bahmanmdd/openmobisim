@@ -136,6 +136,12 @@ impl ModeDefaults {
     /// The names of the options.
     pub const NAMES: [&'static str; 2] = ["walk_max_s", "bike_max_s"];
 
+    /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing).
+    #[must_use]
+    pub fn values(&self) -> Vec<(&'static str, f64)> {
+        vec![("walk_max_s", self.walk_max_s), ("bike_max_s", self.bike_max_s)]
+    }
+
     /// The shipped values with `options` in place of their namesakes.
     ///
     /// # Errors

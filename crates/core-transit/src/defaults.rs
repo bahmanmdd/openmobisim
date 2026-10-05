@@ -94,6 +94,23 @@ impl std::fmt::Display for TransitOptionError {
 impl std::error::Error for TransitOptionError {}
 
 impl TransitDefaults {
+    /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing).
+    #[must_use]
+    pub fn values(&self) -> Vec<(&'static str, f64)> {
+        vec![
+            ("board_slack_s", f64::from(self.board_slack_s)),
+            ("max_rides", f64::from(self.max_rides)),
+            ("access_walk_max_s", self.access_walk_max_s),
+            ("transfer_walk_max_s", self.transfer_walk_max_s),
+            ("stop_walk_snap_m", self.stop_walk_snap_m),
+            ("stop_transfer_s", self.stop_transfer_s),
+            ("bus_dwell_s", self.bus_dwell_s),
+            ("bus_pcu", self.bus_pcu),
+            ("bus_plausibility_ratio", self.bus_plausibility_ratio),
+            ("bus_stop_snap_m", self.bus_stop_snap_m),
+        ]
+    }
+
     /// The names of the options, as [`Self::from_options`] takes them: the fields'.
     pub const NAMES: [&'static str; 10] = [
         "board_slack_s",

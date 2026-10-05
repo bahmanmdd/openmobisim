@@ -137,6 +137,13 @@ impl ParkingDefaults {
         "pr_min_km",
     ];
 
+    /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing).
+    #[must_use]
+    pub fn values(&self) -> Vec<(&'static str, f64)> {
+        let mut copy = *self;
+        Self::NAMES.iter().filter_map(|&n| copy.slot(n).map(|v| (n, *v))).collect()
+    }
+
     fn slot(&mut self, name: &str) -> Option<&mut f64> {
         Some(match name {
             "walk_max_s" => &mut self.walk_max_s,

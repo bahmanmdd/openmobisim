@@ -58,6 +58,7 @@ from openmobisim.demand import (
 )
 from openmobisim.gmns import network_read_gmns, network_write_gmns
 from openmobisim.network import network_options, network_read_table
+from openmobisim.parameters import parameters
 from openmobisim.parking import parking_read_table
 from openmobisim.scenario import MODES, Run, Scenario, Table
 
@@ -87,6 +88,7 @@ __all__ = [
     "network_check",
     "network_read_gmns",
     "network_options",
+    "parameters",
     "network_read_osm",
     "network_read_table",
     "network_write_gmns",

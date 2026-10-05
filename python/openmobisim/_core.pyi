@@ -894,3 +894,9 @@ def network_options(network: Network | None = None) -> list[tuple[str, float]]:
 
     See ``openmobisim.network_options``.
     """
+
+def parameter_rows() -> list[tuple[str, str, str, float]]:
+    """Every parameter at the core's default: ``(group, argument, name, value)``.
+
+    See ``openmobisim.parameters``.
+    """

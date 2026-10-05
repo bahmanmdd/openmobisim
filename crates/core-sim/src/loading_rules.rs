@@ -61,6 +61,21 @@ impl LoadingOptions {
         pocket_length_m: 50.0,
     };
 
+    /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing);
+    /// `priority` and `reroute` as 0 or 1.
+    #[must_use]
+    pub fn values(&self) -> Vec<(&'static str, f64)> {
+        let flag = |b: bool| if b { 1.0 } else { 0.0 };
+        vec![
+            ("priority", flag(self.priority)),
+            ("reroute", flag(self.reroute)),
+            ("reroute_after_s", self.reroute_after_s),
+            ("reroute_max", f64::from(self.reroute_max)),
+            ("reroute_min_gain", self.reroute_min_gain),
+            ("pocket_length_m", self.pocket_length_m),
+        ]
+    }
+
     /// The names of the options.
     pub const NAMES: [&'static str; 6] = [
         "priority",

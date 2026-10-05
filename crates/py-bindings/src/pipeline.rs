@@ -18,7 +18,7 @@
 //! same schema already expresses when `class_defaults` gives their class a
 //! car and nothing else (S127); it is not a different input format.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -975,4 +975,79 @@ pub fn equilibration_strategies() -> Vec<String> {
         .collect();
     names.sort_by_key(|n| (n != openmobisim_core_sim::equilibration::DEFAULT_STRATEGY, n.clone()));
     names
+}
+
+/// Every parameter of every group at its shipped value (S230, roadmap I-ae): `(group, argument,
+/// name, value)`, where `argument` is the `Scenario` (or reader) argument that overrides it by
+/// name. The registries' groups (equilibration strategies, route methods, route updates, choice
+/// models) come from each built-in's canonical descriptor with every option at its default.
+#[pyfunction]
+pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
+    let mut rows: Vec<(String, String, String, f64)> = Vec::new();
+    let mut push = |group: &str, argument: &str, values: Vec<(String, f64)>| {
+        for (name, value) in values {
+            rows.push((group.to_string(), argument.to_string(), name, value));
+        }
+    };
+    let owned =
+        |v: Vec<(&'static str, f64)>| v.into_iter().map(|(n, x)| (n.to_string(), x)).collect();
+    push(
+        "network",
+        "network_options",
+        openmobisim_core_graph::network_options::NetworkDefaults::shipped().values(),
+    );
+    push("loading", "loading_options", owned(LoadingOptions::SHIPPED.values()));
+    push("modes", "mode_options", owned(ModeDefaults::SHIPPED.values()));
+    push("transit", "transit_options", owned(TransitDefaults::SHIPPED.values()));
+    push("parking", "parking_options", owned(ParkingDefaults::SHIPPED.values()));
+    let none = BTreeMap::new();
+    for name in equilibration_strategies() {
+        let s =
+            openmobisim_core_sim::equilibration::strategy(&name, &none).map_err(to_value_error)?;
+        // `free_flow` writes its bare name at its defaults (S225): its two options by hand.
+        let values = if name == "free_flow" {
+            let d = openmobisim_core_sim::FreeFlow::default();
+            vec![
+                ("increments".to_string(), f64::from(d.increments)),
+                ("warmup".to_string(), f64::from(d.warmup)),
+            ]
+        } else {
+            descriptor_values(&s.descriptor())
+        };
+        push(&format!("equilibration.{name}"), "equilibration_options", values);
+    }
+    for name in crate::routes::route_methods() {
+        let g = Registry::builtin().create(&name, &none).map_err(to_value_error)?;
+        push(&format!("route_method.{name}"), "route_options", descriptor_values(&g.descriptor()));
+    }
+    for name in route_update_methods() {
+        let u = openmobisim_core_sim::route_update::update(&name, &none).map_err(to_value_error)?;
+        push(
+            &format!("route_update.{name}"),
+            "route_update_options",
+            descriptor_values(&u.descriptor()),
+        );
+    }
+    for name in crate::choice::choice_models() {
+        let m = openmobisim_core_choice::model(&name, &none).map_err(to_value_error)?;
+        push(&format!("choice_model.{name}"), "choice_options", descriptor_values(&m.descriptor()));
+    }
+    Ok(rows)
+}
+
+/// The numeric `key=value` pairs of a canonical descriptor (`name;key=value;…`). The Monte Carlo
+/// method writes its demand bias as `bias=demand|none`; its option is `biased` (1 or 0).
+fn descriptor_values(descriptor: &str) -> Vec<(String, f64)> {
+    descriptor
+        .split(';')
+        .skip(1)
+        .filter_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            match (key, value) {
+                ("bias", "demand") => Some(("biased".to_string(), 1.0)),
+                ("bias", "none") => Some(("biased".to_string(), 0.0)),
+                _ => Some((key.to_string(), value.parse().ok()?)),
+            }
+        })
+        .collect()
 }
