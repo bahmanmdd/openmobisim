@@ -11,6 +11,8 @@ ribbon's width in points and its offset in metres always agree.
 
 from __future__ import annotations
 
+import io
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,7 +40,38 @@ def load_matplotlib() -> Any:
         import matplotlib
     except ImportError as e:
         raise ImportError("figures need matplotlib: pip install 'openmobisim[viz]'") from e
+    _show_in_notebooks()
     return matplotlib
+
+
+_NOTEBOOK_DISPLAY = False
+
+
+def _figure_png(fig: Any) -> bytes:
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", facecolor=fig.get_facecolor())
+    return buffer.getvalue()
+
+
+def _show_in_notebooks() -> None:
+    """Let a notebook show a figure that ends a cell (S232).
+
+    The figures are made without pyplot (no global state), so IPython has no rule to display them
+    until a matplotlib backend is loaded. This gives it one, once, when IPython is running: a PNG
+    of the page as designed, not cropped. IPython is never imported here.
+    """
+    global _NOTEBOOK_DISPLAY
+    if _NOTEBOOK_DISPLAY:
+        return
+    _NOTEBOOK_DISPLAY = True
+    ipython = sys.modules.get("IPython")
+    shell = ipython.get_ipython() if ipython is not None else None
+    formatters = getattr(getattr(shell, "display_formatter", None), "formatters", None)
+    if not formatters or "image/png" not in formatters:
+        return
+    from matplotlib.figure import Figure
+
+    formatters["image/png"].for_type(Figure, _figure_png)
 
 
 def font_mono_name() -> str:

@@ -127,6 +127,36 @@ def test_map_link_draws_a_figure_that_is_not_blank(theme):
     assert len(np.unique(image.reshape(-1, 4), axis=0)) > 20, "a real picture has many colours"
 
 
+def test_a_notebook_shows_a_figure_that_ends_a_cell(monkeypatch):
+    # The figures are made without pyplot, so IPython needs a display rule for them; a
+    # stand-in shell records what the package registers (IPython itself need not be installed).
+    import sys
+    import types
+
+    from openmobisim.viz import _figure
+
+    class Formatter:
+        rules: dict = {}
+
+        def for_type(self, cls, rule):
+            self.rules[cls] = rule
+
+    png = Formatter()
+    shell = types.SimpleNamespace(
+        display_formatter=types.SimpleNamespace(formatters={"image/png": png})
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "IPython",
+        types.SimpleNamespace(get_ipython=lambda: shell, version_info=(9, 0)),
+    )
+    monkeypatch.setattr(_figure, "_NOTEBOOK_DISPLAY", False)
+    run, _ = toy_run()
+    fig = viz.map_link(run, size_cm=(20.32, 11.43), dpi=80)
+    ((cls, rule),) = png.rules.items()
+    assert isinstance(fig, cls) and rule(fig) == png_bytes(fig), "the page as drawn, uncropped"
+
+
 def test_the_same_run_draws_the_same_picture():
     run, _ = toy_run()
     a = png_bytes(viz.map_link(run, size_cm=(20.32, 11.43), dpi=80))
