@@ -272,3 +272,19 @@ def test_a_seed_must_be_a_whole_number_in_range():
         with pytest.raises(ValueError, match="master_seed"):
             ms.Scenario.from_parts(net, rows, master_seed=bad)
     ms.Scenario.from_parts(net, rows, classes=CAR, master_seed=2**64 - 1).run("max-seed")
+
+
+def test_recording_a_flow_map_changes_no_result():
+    # S232: the bins of the flow map are not the bins the iterations choose on (`cost_bin_s`),
+    # so asking for figures leaves the run's outcome as it was, congested and iterated.
+    net = ms.examples.manhattan_grid(n=6, block_metres=200.0, signals=True)
+    trips = ms.examples.trips_random(net, 8000, seed=3, spread_s=1800, min_m=400, max_m=1500)
+
+    def run(**kwargs):
+        return ms.Scenario.from_parts(net, trips, classes=CAR, **kwargs).run("map", quiet=True)
+
+    plain, mapped = run(), run(link_bin_s=900)
+    assert plain.convergence()["gap"][-1] > 0, "a congested run, with choices to settle"
+    assert mapped.total_travel_time_s == plain.total_travel_time_s
+    assert list(mapped.convergence()["gap"]) == list(plain.convergence()["gap"])
+    assert mapped.link_bins() is not None and plain.link_bins() is None

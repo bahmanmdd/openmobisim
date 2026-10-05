@@ -318,10 +318,25 @@ fn vehicles_still_waiting_when_the_window_ends_are_counted_with_the_wait_so_far(
 }
 
 #[test]
+fn the_entry_times_do_not_depend_on_the_bins_of_the_flow_map() {
+    // S232: what the next choice reads is binned at its own length; asking for a flow map in
+    // other bins changes neither it nor anything else.
+    let toy = Toy::new();
+    let demand = mixed_demand(&toy);
+    let (_, exit_fine, entry_coarse) = load_level_0_recorded(&demand, &toy.net, 3600.0, 60, 900);
+    let (_, _, entry_same) = load_level_0_recorded(&demand, &toy.net, 3600.0, 900, 900);
+    let (_, exit_same, _) = load_level_0_recorded(&demand, &toy.net, 3600.0, 60, 60);
+    assert_eq!(entry_coarse, entry_same);
+    assert_eq!(entry_coarse.entry.bin_seconds(), 900);
+    assert_eq!(exit_fine, exit_same);
+    assert_eq!(exit_fine.bin_seconds(), 60);
+}
+
+#[test]
 fn level_zero_has_no_origin_wait_and_the_same_entry_times_as_its_exit_times() {
     let toy = Toy::new();
     let demand = mixed_demand(&toy);
-    let (_, exit, tables) = load_level_0_recorded(&demand, &toy.net, 3600.0, 60);
+    let (_, exit, tables) = load_level_0_recorded(&demand, &toy.net, 3600.0, 60, 60);
     assert!(tables.origin_wait.is_empty());
     for l in 0..toy.net.link_count() {
         assert!(

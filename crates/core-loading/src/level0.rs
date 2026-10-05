@@ -200,7 +200,7 @@ fn binned<'a>(
 }
 
 /// [`load_level_0_binned`], also returning the traversals filed by the bin they
-/// **entered** their link in (S170).
+/// **entered** their link in (S170), in bins of `entry_bin_seconds` (S232).
 ///
 /// # Panics
 ///
@@ -212,6 +212,7 @@ pub fn load_level_0_recorded<'a>(
     network: &RoadNetwork,
     window: f64,
     bin_seconds: u32,
+    entry_bin_seconds: u32,
 ) -> (Vec<Trajectory>, LinkBins, EntryTables) {
     let mut crossings: Vec<(f64, f64, u32, f64)> = Vec::new();
     let trajectories: Vec<Trajectory> = vehicles
@@ -226,8 +227,8 @@ pub fn load_level_0_recorded<'a>(
     crossings.sort_by(|a, b| {
         a.0.total_cmp(&b.0).then(a.2.cmp(&b.2)).then(a.1.total_cmp(&b.1)).then(a.3.total_cmp(&b.3))
     });
-    let mut recorder =
-        LinkBinRecorder::new(network.link_count() as usize, bin_seconds, window).with_entry_bins();
+    let mut recorder = LinkBinRecorder::new(network.link_count() as usize, bin_seconds, window)
+        .with_entry_bins_of(entry_bin_seconds);
     for (exit, enter, link, pcu) in crossings {
         recorder.record(LinkId::from_index(link as usize), enter, exit, pcu);
     }

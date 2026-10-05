@@ -962,8 +962,9 @@ impl Run {
 
         let strategy = self.equilibration.clone();
         let max_iterations = strategy.max_iterations().max(1);
-        // Link times are recorded whenever there is a next iteration to cost, at the
-        // user's bin length if they asked for one, else the strategy's.
+        // Link times are recorded whenever there is a next iteration to cost: the flow map at
+        // the user's bin length if they asked for one, the times the next choice reads at the
+        // strategy's (S232).
         let record_bins = if max_iterations > 1 {
             Some(self.link_bin_seconds.unwrap_or_else(|| strategy.cost_bin_seconds()))
         } else {
@@ -1360,6 +1361,9 @@ impl Run {
         diagnostics: &mut Diagnostics,
     ) -> Loaded {
         let LoadPlan { record_bins, want_entry, level_override, active } = plan;
+        // The times the next choice reads are binned at the strategy's length, whatever bins
+        // the flow map is recorded in (S232).
+        let entry_bin_seconds = self.equilibration.cost_bin_seconds();
         let total_trips = self.trips.len();
         let mut queue: BinaryHeap<Reverse<EventKey>> = BinaryHeap::new();
         // Every iteration starts from where the day starts.
@@ -1707,7 +1711,7 @@ impl Run {
                 }));
             }
             let recording = match record_bins {
-                Some(b) if want_entry => Recording::BinsAndEntry(b),
+                Some(b) if want_entry => Recording::BinsAndEntry(b, entry_bin_seconds),
                 Some(b) => Recording::Bins(b),
                 None => Recording::Trajectories,
             };
@@ -1800,8 +1804,13 @@ impl Run {
         if let (FlowMotor::Level0, Some(bin_seconds)) = (&self.flow_motor, record_bins) {
             let window = f64::from(self.window.get());
             if want_entry {
-                let (_, exit, entry) =
-                    load_level_0_recorded(&level0_vehicles, &self.network, window, bin_seconds);
+                let (_, exit, entry) = load_level_0_recorded(
+                    &level0_vehicles,
+                    &self.network,
+                    window,
+                    bin_seconds,
+                    entry_bin_seconds,
+                );
                 link_bins = Some(exit);
                 entry_bins = Some(entry);
             } else {

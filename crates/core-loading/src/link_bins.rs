@@ -124,6 +124,8 @@ pub struct EntryTables {
 #[derive(Debug)]
 pub struct LinkBinRecorder {
     bin_seconds: f64,
+    /// The entry-time tables' bin length: `bin_seconds` unless set apart (S232).
+    entry_bin_seconds: f64,
     end: f64,
     current: u32,
     // Dense scratch for the current bin.
@@ -161,6 +163,7 @@ impl LinkBinRecorder {
         assert!(bin_seconds > 0, "a time bin must be at least one second long");
         Self {
             bin_seconds: f64::from(bin_seconds),
+            entry_bin_seconds: f64::from(bin_seconds),
             end,
             current: 0,
             crossings: vec![0; link_count],
@@ -189,6 +192,20 @@ impl LinkBinRecorder {
         self
     }
 
+    /// [`Self::with_entry_bins`], with entry-time bins of their own length (S232): the
+    /// times a traveller chooses on are read at `entry_bin_seconds` whatever bins the
+    /// flow map is recorded in.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `entry_bin_seconds` is zero.
+    #[must_use]
+    pub fn with_entry_bins_of(mut self, entry_bin_seconds: u32) -> Self {
+        assert!(entry_bin_seconds > 0, "a time bin must be at least one second long");
+        self.entry_bin_seconds = f64::from(entry_bin_seconds);
+        self.with_entry_bins()
+    }
+
     /// Record that a vehicle of `pcu` PCU that set out at `departure` onto `link` has
     /// waited outside the network until `until`: the second it got onto the link, or
     /// the window's end if it never did (then a lower bound). Only the entry-time
@@ -200,7 +217,7 @@ impl LinkBinRecorder {
                 clippy::cast_sign_loss,
                 reason = "a non-negative time in seconds over a bin length; within the u32 clock"
             )]
-            let bin = (departure.max(0.0) / self.bin_seconds) as u32;
+            let bin = (departure.max(0.0) / self.entry_bin_seconds) as u32;
             let cell = waits.entry((u64::from(bin) << 32) | u64::from(link.raw())).or_default();
             cell.crossings += 1;
             cell.pcu += pcu;
@@ -222,7 +239,7 @@ impl LinkBinRecorder {
                 clippy::cast_sign_loss,
                 reason = "a non-negative time in seconds over a bin length; within the u32 clock"
             )]
-            let entry_bin = (enter.max(0.0) / self.bin_seconds) as u32;
+            let entry_bin = (enter.max(0.0) / self.entry_bin_seconds) as u32;
             let cell =
                 entry.entry((u64::from(entry_bin) << 32) | u64::from(link.raw())).or_default();
             cell.crossings += 1;
@@ -261,7 +278,7 @@ impl LinkBinRecorder {
                 clippy::cast_sign_loss,
                 reason = "a non-negative time in seconds over a bin length; within the u32 clock"
             )]
-            let entry_bin = (enter.max(0.0) / self.bin_seconds) as u32;
+            let entry_bin = (enter.max(0.0) / self.entry_bin_seconds) as u32;
             let cell =
                 entry.entry((u64::from(entry_bin) << 32) | u64::from(link.raw())).or_default();
             cell.crossings += 1;
@@ -297,7 +314,12 @@ impl LinkBinRecorder {
     #[must_use]
     pub fn finish_with_entry(mut self) -> (LinkBins, Option<EntryTables>) {
         self.flush();
-        let bin_seconds = self.out.bin_seconds;
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "set from a u32"
+        )]
+        let bin_seconds = self.entry_bin_seconds as u32;
         let table = |cells: HashMap<u64, EntryCell>| {
             let mut keys: Vec<u64> = cells.keys().copied().collect();
             keys.sort_unstable();

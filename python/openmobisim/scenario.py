@@ -995,7 +995,8 @@ class Scenario:
                 bookkeeping boundary: results do not depend on it.
             link_bin_s: If given, also record per-link results in time bins of
                 this many seconds, read with ``Run.link_bins()`` and drawn
-                with ``openmobisim.viz.map_link``.
+                with ``openmobisim.viz.map_link``. It changes no result: the link times
+                travellers choose on are binned at the equilibration's ``cost_bin_s``.
             route_method: How route sets are generated, by name (see
                 ``openmobisim.route_methods()``). **The default depends on the run:** a run
                 that loads once uses ``"penalty"``; a run that **loads more than once** (an

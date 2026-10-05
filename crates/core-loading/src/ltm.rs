@@ -336,8 +336,9 @@ pub enum Recording {
     Trajectories,
     /// Per-link results in bins of this many seconds.
     Bins(u32),
-    /// Those, and the traversals filed by the bin they entered their link in.
-    BinsAndEntry(u32),
+    /// Those, and the traversals filed by the bin they entered their link in, in bins of
+    /// the second length (S232: what the next choice reads, apart from the flow map's).
+    BinsAndEntry(u32, u32),
 }
 
 /// Rules a loading applies beyond the link transmission model itself (S213).
@@ -709,6 +710,14 @@ impl<'a> LtmNetwork<'a> {
     #[must_use]
     pub fn with_entry_bins(mut self) -> Self {
         self.recorder = self.recorder.map(LinkBinRecorder::with_entry_bins);
+        self
+    }
+
+    /// [`Self::with_entry_bins`], in entry-time bins of `entry_bin_seconds` (S232; see
+    /// [`LinkBinRecorder::with_entry_bins_of`]).
+    #[must_use]
+    pub fn with_entry_bins_of(mut self, entry_bin_seconds: u32) -> Self {
+        self.recorder = self.recorder.map(|r| r.with_entry_bins_of(entry_bin_seconds));
         self
     }
 
@@ -2345,7 +2354,7 @@ pub fn run_ltm_binned(
     bin_seconds: u32,
 ) -> (Vec<Trajectory>, LinkBins) {
     let (done, bins) =
-        run_ltm_inner(network, turns, vehicles, window, step, level, Some((bin_seconds, false)));
+        run_ltm_inner(network, turns, vehicles, window, step, level, Some((bin_seconds, None)));
     (done, bins.expect("bins were asked for").0)
 }
 
@@ -2366,8 +2375,15 @@ pub fn run_ltm_recorded(
     level: FidelityLevel,
     bin_seconds: u32,
 ) -> (Vec<Trajectory>, LinkBins, EntryTables) {
-    let (done, bins) =
-        run_ltm_inner(network, turns, vehicles, window, step, level, Some((bin_seconds, true)));
+    let (done, bins) = run_ltm_inner(
+        network,
+        turns,
+        vehicles,
+        window,
+        step,
+        level,
+        Some((bin_seconds, Some(bin_seconds))),
+    );
     let (exit, tables) = bins.expect("bins were asked for");
     (done, exit, tables.expect("entry bins were asked for"))
 }
@@ -2397,8 +2413,8 @@ pub fn run_ltm_chained(
 ) -> LtmOutput {
     let recording = match recording {
         Recording::Trajectories => None,
-        Recording::Bins(b) => Some((b, false)),
-        Recording::BinsAndEntry(b) => Some((b, true)),
+        Recording::Bins(b) => Some((b, None)),
+        Recording::BinsAndEntry(b, e) => Some((b, Some(e))),
     };
     let (trajectories, bins, lock, reroutes, peak_occupancy) = run_ltm_inner_chained(
         network, turns, vehicles, chains, window, step, level, recording, rules, rerouter,
@@ -2417,7 +2433,7 @@ fn run_ltm_inner(
     window: Duration,
     step: Duration,
     level: FidelityLevel,
-    recording: Option<(u32, bool)>,
+    recording: Option<(u32, Option<u32>)>,
 ) -> (Vec<Trajectory>, Option<(LinkBins, Option<EntryTables>)>) {
     let (done, bins, _, _, _) = run_ltm_inner_chained(
         network,
@@ -2453,7 +2469,7 @@ fn run_ltm_inner_chained(
     window: Duration,
     step: Duration,
     level: FidelityLevel,
-    recording: Option<(u32, bool)>,
+    recording: Option<(u32, Option<u32>)>,
     rules: Rules,
     mut rerouter: Option<&mut dyn Reroute>,
 ) -> Inner {
@@ -2475,12 +2491,12 @@ fn run_ltm_inner_chained(
     if rules.pocket_length_m > 0.0 {
         sim = sim.with_pockets(turns, rules.pocket_length_m);
     }
-    // `recording`: the bin length, and whether to also file by entry time (S170).
-    let entry_bins = recording.is_some_and(|(_, entry)| entry);
+    // `recording`: the bin length, and the entry-time bins' if those are filed too (S170, S232).
+    let entry_bins = recording.is_some_and(|(_, entry)| entry.is_some());
     if let Some((bin_seconds, entry)) = recording {
         sim = sim.with_link_bins(bin_seconds, window.get());
-        if entry {
-            sim = sim.with_entry_bins();
+        if let Some(entry_seconds) = entry {
+            sim = sim.with_entry_bins_of(entry_seconds);
         }
     }
     if chains.is_empty() {
