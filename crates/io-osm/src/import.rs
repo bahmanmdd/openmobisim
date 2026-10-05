@@ -36,6 +36,7 @@ use openmobisim_core_graph::layers::{
 };
 use openmobisim_core_graph::link_geometry::LinkGeometry;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
+use openmobisim_core_graph::network_options::{ClassTable, NetworkDefaults};
 use openmobisim_core_types::diagnostics::{Category, DiagCode, DiagKey, Diagnostics, Severity};
 
 use crate::source::{OsmError, OsmNode, OsmSource, OsmWay};
@@ -119,6 +120,9 @@ pub struct ImportOptions {
     pub multipliers: GlobalMultipliers,
     /// The signal defaults handed to the defaults table.
     pub signals: SignalDefaults,
+    /// The road-class table: each class's defaults where the data gives none (S225). The shipped
+    /// one by default.
+    pub classes: ClassTable,
     /// What to do about roads outside the main strongly connected component.
     /// [`Connectivity::Keep`] by default: a default import behaves as it always
     /// has.
@@ -159,6 +163,7 @@ impl Default for ImportOptions {
             contract_drivable: false,
             multipliers: GlobalMultipliers::default(),
             signals: SignalDefaults::SHIPPED,
+            classes: ClassTable::shipped(),
             connectivity: Connectivity::Keep,
             layers: LayerOptions::default(),
         }
@@ -580,9 +585,14 @@ pub fn import_detailed(
         );
     }
 
-    let network = builder
-        .build(options.multipliers, options.signals, diagnostics)
-        .map_err(|e| OsmError::Format(e.to_string()))?;
+    let defaults = NetworkDefaults {
+        classes: options.classes,
+        multipliers: options.multipliers,
+        signals: options.signals,
+        layers: options.layers.defaults,
+    };
+    let network =
+        builder.build_with(&defaults, diagnostics).map_err(|e| OsmError::Format(e.to_string()))?;
 
     let geometry = LinkGeometry::build(&network, &geometry_by_external_id);
 

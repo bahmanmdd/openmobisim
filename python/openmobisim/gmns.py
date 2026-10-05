@@ -35,6 +35,7 @@ from __future__ import annotations
 import csv
 import math
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -341,7 +342,9 @@ def _attach_layer(road: _core.Network, folder: Path, layer: str) -> _core.Networ
     )
 
 
-def network_read_gmns(folder: str) -> _core.Network:
+def network_read_gmns(
+    folder: str, network_options: Mapping[str, float] | None = None
+) -> _core.Network:
     """Read a network from GMNS files.
 
     ``folder`` is either one GMNS network (``node.csv``, ``link.csv``, optionally
@@ -352,6 +355,7 @@ def network_read_gmns(folder: str) -> _core.Network:
 
     Args:
         folder: The folder.
+        network_options: Network parameters by name, as ``network_read_table`` takes them.
 
     Returns:
         A ``Network``, as ``network_read_osm`` returns one.
@@ -368,7 +372,9 @@ def network_read_gmns(folder: str) -> _core.Network:
             f"{folder} holds no GMNS network (node.csv and link.csv, or road/ with them)"
         )
     links, nodes = _road_rows(road_folder)
-    network = network_read_table(links, nodes, length_unit="m", speed_unit="km_h")
+    network = network_read_table(
+        links, nodes, length_unit="m", speed_unit="km_h", network_options=network_options
+    )
     if road_folder != root:
         for layer in ("bike", "walk"):
             if (root / layer / "link.csv").exists():

@@ -33,9 +33,8 @@ use openmobisim_core_demand::{
     ClassDefaults, Mode, Ownership, RawPerson, RawTrip, build_travellers, read_persons_parquet,
     read_trips_parquet,
 };
-use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::geometry::LonLat;
-use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults};
+use openmobisim_core_graph::layers::{BikeCost, StaticLayer};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
 use openmobisim_core_sim::{
@@ -543,7 +542,7 @@ pub fn run_pipeline(
         if flow_step_s == 0 {
             return Err(PyValueError::new_err("flow_step_s must be positive"));
         }
-        let turns = Arc::new(TurnTable::build(&network.inner, SignalDefaults::SHIPPED));
+        let turns = Arc::new(TurnTable::build(&network.inner, network.inner.signals()));
         run = run.with_flow_motor(FlowMotor::Ltm {
             turns,
             step: Duration(f64::from(flow_step_s)),
@@ -576,7 +575,11 @@ pub fn run_pipeline(
             || unstated && modes.contains(&mode)
     };
     let setup = |layer: StaticLayer| -> PyResult<LayerSetup> {
-        Ok(LayerSetup::new(network.static_layer(layer)?, bike_cost, StaticLayerDefaults::SHIPPED))
+        Ok(LayerSetup::new(
+            network.static_layer(layer)?,
+            bike_cost,
+            network.inner.defaults().layers,
+        ))
     };
     // A timetable walks its passengers on the walk layer (S199), so the run needs it.
     let layers = StaticLayers {

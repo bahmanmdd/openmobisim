@@ -29,9 +29,9 @@ use openmobisim_core_types::units::{Duration, Metres, Pcu};
 use crate::csr::Csr;
 use crate::defaults::{
     DefaultRow, GlobalMultipliers, LinkParameters, ParameterNote, RoadClass, SignalDefaults,
-    default_row,
 };
 use crate::geometry::{LonLat, Projected, Projection, ProjectionError};
+use crate::network_options::{ClassTable, NetworkDefaults};
 
 /// Diagnostic codes this module can record.
 pub mod codes {
@@ -191,6 +191,33 @@ impl RoadNetworkBuilder {
         signals: SignalDefaults,
         diagnostics: &mut Diagnostics,
     ) -> Result<RoadNetwork, ProjectionError> {
+        let defaults = NetworkDefaults {
+            classes: ClassTable::shipped(),
+            multipliers,
+            signals,
+            ..NetworkDefaults::shipped()
+        };
+        self.build_with(&defaults, diagnostics)
+    }
+
+    /// [`Self::build`] with every network parameter given by name (S225): the road-class table,
+    /// the multipliers, the signal settings and the layers' speeds ([`NetworkDefaults`]). The
+    /// network keeps them ([`RoadNetwork::defaults`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::build`].
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::build`].
+    pub fn build_with(
+        self,
+        defaults: &NetworkDefaults,
+        diagnostics: &mut Diagnostics,
+    ) -> Result<RoadNetwork, ProjectionError> {
+        let multipliers = defaults.multipliers;
+        let signals = defaults.effective_signals();
         let node_ids: ExternalIdTable = self.node_ids.build();
         let node_count = node_ids.count();
 
@@ -264,7 +291,7 @@ impl RoadNetworkBuilder {
                 length = MIN_LINK_LENGTH_M;
             }
 
-            let row: DefaultRow = default_row(spec.class);
+            let row: DefaultRow = defaults.classes.row(spec.class);
             let lanes = spec.lanes.unwrap_or(row.lanes_per_direction);
             let (params, note) = LinkParameters::from_defaults(
                 row,
@@ -347,6 +374,7 @@ impl RoadNetworkBuilder {
             link_storage,
             out_links,
             in_links,
+            defaults: *defaults,
         })
     }
 }
@@ -375,9 +403,26 @@ pub struct RoadNetwork {
 
     out_links: Csr<NodeId, LinkId>,
     in_links: Csr<NodeId, LinkId>,
+
+    /// What it was built with besides its data (S225).
+    defaults: NetworkDefaults,
 }
 
 impl RoadNetwork {
+    /// The parameters the network was built with besides its data (S225): the road-class table,
+    /// the multipliers, the signal settings and the bike and walk layers' speeds.
+    #[must_use]
+    pub fn defaults(&self) -> &NetworkDefaults {
+        &self.defaults
+    }
+
+    /// The signal settings the network was built with, the green-fraction multiplier applied:
+    /// what its turn table's signal capacities are to use ([`crate::TurnTable::build`]).
+    #[must_use]
+    pub fn signals(&self) -> SignalDefaults {
+        self.defaults.effective_signals()
+    }
+
     /// How many nodes.
     #[inline]
     #[must_use]

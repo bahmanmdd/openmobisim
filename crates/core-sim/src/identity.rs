@@ -238,6 +238,9 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
 
 pub(crate) fn hash_network(h: &mut Fnv1a, network: &RoadNetwork, ids: u64) {
     h.write_u64(ids);
+    // The parameters it was built with that differ from the shipped ones (S225): nothing at the
+    // shipped values, so such a network's fingerprint is what it was.
+    h.write_bytes(network.defaults().descriptor().as_bytes());
     for raw in 0..network.node_count() {
         let node = NodeId::new(raw);
         let at = network.node_lonlat(node);

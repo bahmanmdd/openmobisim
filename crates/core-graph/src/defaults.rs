@@ -104,7 +104,13 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// with the point queue: `core-sim`'s `Equilibration::increments` (the Python layer's default
 /// 5, uncalibrated: the user's suggestion) and `warmup` 1 for a run of one loading as for one
 /// that iterates, at flow levels 2 to 4. Every such run changes; level-0 runs do not.
-pub const DEFAULTS_VERSION: u32 = 12;
+///
+/// Version 13 (S225): **every network parameter by name** (`network_options`, the
+/// [`crate::network_options`] module: the road-class table, the multipliers, the signal settings,
+/// the bike and walk layers' speeds), kept by the network and used by its turn table and bike
+/// costs; the green-fraction multiplier, which nothing read, now scales the green time. No run at
+/// the shipped values changes.
+pub const DEFAULTS_VERSION: u32 = 13;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

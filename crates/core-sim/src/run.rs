@@ -26,7 +26,6 @@ use std::time::Instant;
 
 use openmobisim_core_choice::{ChoiceError, ChoiceModel, Deterministic};
 use openmobisim_core_demand::{Mode, Travellers, Trips, VehicleKind, VehicleLocations};
-use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
@@ -834,7 +833,7 @@ impl Run {
         };
         let turns = match &self.flow_motor {
             FlowMotor::Ltm { turns, .. } => turns.clone(),
-            FlowMotor::Level0 => Arc::new(TurnTable::build(&self.network, SignalDefaults::SHIPPED)),
+            FlowMotor::Level0 => Arc::new(TurnTable::build(&self.network, self.network.signals())),
         };
         // A method that reads the demand (the Monte Carlo method's bias, S176) is told it
         // first; one that does not costs nothing here.

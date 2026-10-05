@@ -172,6 +172,7 @@ def network_read_table(
     coordinates: str = "lonlat",
     coordinate_scale_m: float = 1.0,
     layout_spacing_m: float = 200.0,
+    network_options: Mapping[str, float] | None = None,
 ) -> _core.Network:
     """Read a road network from a plain table of links.
 
@@ -233,6 +234,11 @@ def network_read_table(
             it for anything but a schematic plot.
         layout_spacing_m: Grid spacing for the coordinate-free fallback layout
             (`nodes` is ``None`` and `links` carries no coordinates).
+        network_options: Network parameters by name, overriding their shipped values: the
+            road-class table (``"residential.free_flow_km_h"``, ``".lanes"``,
+            ``".saturation_flow_veh_h_lane"``, ``".jam_density_veh_km_lane"``), the multipliers,
+            the signal settings and the bike and walk layers' speeds. ``network_options()`` lists
+            every name and value; an unknown name is refused with the list.
 
     Returns:
         A ``Network``, exactly as ``network_read_osm`` or
@@ -371,6 +377,7 @@ def network_read_table(
         link_free_flow_km_h=link_free_flow_km_h,
         link_signalised=[False] * len(link_ids),
         link_roundabout=link_roundabout,
+        network_options=dict(network_options) if network_options else None,
     )
     # A table-read network has no `report_import`-style diagnostics yet (the
     # Rust side records an unrecognised `class` value the same way an
@@ -422,3 +429,17 @@ def network_read_table(
         )
     network.read_s = time.perf_counter() - started
     return network
+
+
+def network_options(network: _core.Network | None = None) -> dict[str, float]:
+    """Every network parameter by name, at its shipped value, or at `network`'s (S225).
+
+    The road-class table (``"<class>.free_flow_km_h"``, ``"<class>.lanes"``,
+    ``"<class>.saturation_flow_veh_h_lane"``, ``"<class>.jam_density_veh_km_lane"`` for every
+    class: ``motorway``, ``primary``, ``residential``, …), the global multipliers
+    (``capacity_factor``, …), the signal settings (``signal_cycle_s``, ``signal_green_fraction``,
+    ``signal_degree_of_saturation``) and the bike and walk layers (``bike_mixed_km_h``,
+    ``walk_km_h``, …). Each is an uncalibrated default; the readers' ``network_options``
+    override them by name.
+    """
+    return dict(_core.network_options(network))

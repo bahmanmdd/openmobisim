@@ -33,6 +33,7 @@ pub mod hubs;
 pub mod layers;
 pub mod link_geometry;
 pub mod network;
+pub mod network_options;
 pub mod turns;
 
 pub use csr::Csr;
@@ -54,4 +55,5 @@ pub use layers::{
 };
 pub use link_geometry::{LinkGeometry, NetworkFingerprint};
 pub use network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
+pub use network_options::{ClassTable, NetworkDefaults};
 pub use turns::TurnTable;

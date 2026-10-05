@@ -45,7 +45,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::geometry::ground_distance_metres;
 use openmobisim_core_graph::hubs::{AccessPoint, HubKind, HubSet, HubSpec};
 use openmobisim_core_graph::layers::{Layer, StaticNetwork};
@@ -323,7 +322,7 @@ impl TransitSetup {
         type Found = Option<(Vec<LinkId>, f64)>;
         let d = self.defaults;
         let t = &self.timetable;
-        let turns = TurnTable::build(&road, SignalDefaults::SHIPPED);
+        let turns = TurnTable::build(&road, road.signals());
         // Buses may use busways as well as the roads cars use (S199).
         let costs: Vec<f64> = (0..road.link_count())
             .map(|i| {

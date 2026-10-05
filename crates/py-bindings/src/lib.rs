@@ -40,8 +40,8 @@ mod pipeline;
 mod routes;
 mod transit;
 use network::{
-    PyNetwork, grid_node_lonlat, manhattan_grid, network_from_columns, network_read_osm,
-    network_with_layer, toy_network,
+    PyNetwork, grid_node_lonlat, manhattan_grid, network_from_columns, network_options,
+    network_read_osm, network_with_layer, toy_network,
 };
 use parking::{PyParkings, parking_from_rows, parking_read_osm, toy_network_parkings};
 use pipeline::{PyLinkBins, PyRunSummary, run_pipeline};
@@ -172,6 +172,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(manhattan_grid, m)?)?;
     m.add_function(wrap_pyfunction!(toy_network, m)?)?;
     m.add_function(wrap_pyfunction!(network_read_osm, m)?)?;
+    m.add_function(wrap_pyfunction!(network_options, m)?)?;
     m.add_function(wrap_pyfunction!(network_from_columns, m)?)?;
     m.add_function(wrap_pyfunction!(network_with_layer, m)?)?;
     m.add_function(wrap_pyfunction!(grid_node_lonlat, m)?)?;

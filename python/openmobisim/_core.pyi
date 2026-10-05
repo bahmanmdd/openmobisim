@@ -628,6 +628,7 @@ def network_read_osm(
     connectivity: str = "strong",
     contract_drivable: bool = True,
     layers: bool = True,
+    network_options: dict[str, float] | None = None,
 ) -> Network:
     """Read a road network from an OpenStreetMap ``.osm.pbf`` extract.
 
@@ -660,6 +661,10 @@ def network_read_osm(
             acts with ``contract``.
         layers: Also read the bike and walk layers from the same ways (the
             default): ``network.layer("bike")``, ``network.layer("walk")``.
+        network_options: Network parameters by name, overriding their shipped values (the
+            road-class table, the multipliers, the signal settings, the bike and walk layers'
+            speeds; ``openmobisim.network_options()`` lists them). An unknown name is refused
+            with the list.
 
     Returns:
         A :class:`Network` with the defaults table's parameters and the street
@@ -880,4 +885,10 @@ def run_pipeline(
         ValueError: If the trips/persons arguments are not exactly one form
             each, a given file cannot be read, the demand is empty, or
             writing an output artifact fails.
+    """
+
+def network_options(network: Network | None = None) -> list[tuple[str, float]]:
+    """Every network parameter by name and value, shipped or ``network``'s.
+
+    See ``openmobisim.network_options``.
     """

@@ -6,6 +6,7 @@
 //! figures and any array-shaped analysis need (S163). Every array is indexed
 //! by the link's internal id, the same index the per-link results use.
 
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods};
@@ -14,16 +15,17 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use openmobisim_core_graph::connectivity::{analyse, analyse_by};
-use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
+use openmobisim_core_graph::defaults::{RoadClass, SignalDefaults};
 use openmobisim_core_graph::examples::{
     manhattan_grid as build_manhattan_grid, toy_network as build_toy_network,
 };
 use openmobisim_core_graph::geometry::LonLat;
-use openmobisim_core_graph::layers::{StaticLayer, StaticLayerDefaults, StaticNetwork};
+use openmobisim_core_graph::layers::{StaticLayer, StaticNetwork};
 use openmobisim_core_graph::link_geometry::LinkGeometry;
 use openmobisim_core_graph::network::{
     self as network_mod, LinkSpec, RoadNetwork, RoadNetworkBuilder,
 };
+use openmobisim_core_graph::network_options::NetworkDefaults;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::NodeSnapper;
 use openmobisim_core_types::diagnostics::{Category, Diagnostics, Severity};
@@ -132,7 +134,7 @@ impl PyNetwork {
         let derived = StaticNetwork::derive(
             &self.inner,
             layer,
-            StaticLayerDefaults::SHIPPED,
+            self.inner.defaults().layers,
             &mut Diagnostics::new(),
         )
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -648,7 +650,9 @@ pub fn toy_network() -> PyNetwork {
 #[pyfunction]
 #[pyo3(signature = (
     path, contract=true, region=None, connectivity="strong", contract_drivable=true, layers=true,
+    network_options=None,
 ))]
+#[allow(clippy::too_many_arguments, reason = "one argument per import option")]
 pub fn network_read_osm(
     py: Python<'_>,
     path: &str,
@@ -657,7 +661,9 @@ pub fn network_read_osm(
     connectivity: &str,
     contract_drivable: bool,
     layers: bool,
+    network_options: Option<HashMap<String, f64>>,
 ) -> PyResult<PyNetwork> {
+    let defaults = network_defaults(network_options)?;
     let connectivity_mode = match connectivity {
         "keep" => Connectivity::Keep,
         "strong" => Connectivity::Strong,
@@ -673,12 +679,15 @@ pub fn network_read_osm(
     let path = path.to_owned();
     let out = py
         .detach(move || {
+            let base = if layers { LayerOptions::BOTH } else { LayerOptions::default() };
             let options = ImportOptions {
                 contract,
                 contract_drivable,
                 connectivity: connectivity_mode,
-                layers: if layers { LayerOptions::BOTH } else { LayerOptions::default() },
-                ..ImportOptions::default()
+                layers: LayerOptions { defaults: defaults.layers, ..base },
+                multipliers: defaults.multipliers,
+                signals: defaults.signals,
+                classes: defaults.classes,
             };
             let mut diagnostics = Diagnostics::new();
             let source = PbfSource::new(&path);
@@ -752,6 +761,7 @@ pub fn network_read_osm(
     node_ids, node_lon, node_lat, node_signalised,
     link_ids, link_from, link_to, link_class, link_lanes,
     link_length_m, link_capacity_veh_h, link_free_flow_km_h, link_signalised, link_roundabout,
+    network_options=None,
 ))]
 pub fn network_from_columns(
     node_ids: Vec<String>,
@@ -768,7 +778,9 @@ pub fn network_from_columns(
     link_free_flow_km_h: Vec<Option<f64>>,
     link_signalised: Vec<bool>,
     link_roundabout: Vec<bool>,
+    network_options: Option<HashMap<String, f64>>,
 ) -> PyResult<PyNetwork> {
+    let defaults = network_defaults(network_options)?;
     let nodes = node_ids.len();
     for (name, len) in [
         ("node_lon", node_lon.len()),
@@ -835,7 +847,7 @@ pub fn network_from_columns(
     }
 
     let network = builder
-        .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut diagnostics)
+        .build_with(&defaults, &mut diagnostics)
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
     Ok(PyNetwork::new(Arc::new(network), None, "table"))
 }
@@ -978,4 +990,25 @@ pub fn grid_node_lonlat(network: PyRef<'_, PyNetwork>, row: u32, col: u32) -> Py
         .ok_or_else(|| PyValueError::new_err(format!("no such grid node: ({row}, {col})")))?;
     let point = network.inner.node_lonlat(id);
     Ok((point.lon, point.lat))
+}
+
+/// The network parameters from a Python dict of names to numbers (S225), refused with the list of
+/// names if one is not known.
+fn network_defaults(options: Option<HashMap<String, f64>>) -> PyResult<NetworkDefaults> {
+    let map: std::collections::BTreeMap<String, f64> =
+        options.unwrap_or_default().into_iter().collect();
+    NetworkDefaults::from_options(&map).map_err(PyValueError::new_err)
+}
+
+/// Every network parameter by name (S225): the road-class table (`<class>.free_flow_km_h`,
+/// `.lanes`, `.saturation_flow_veh_h_lane`, `.jam_density_veh_km_lane`), the multipliers, the
+/// signal settings and the bike and walk layers' speeds, at their shipped values (or `network`'s,
+/// if given). What `network_options` of a reader overrides by name.
+#[pyfunction]
+#[pyo3(signature = (network=None))]
+pub fn network_options(network: Option<PyRef<'_, PyNetwork>>) -> Vec<(String, f64)> {
+    match network {
+        Some(n) => n.inner.defaults().values(),
+        None => NetworkDefaults::shipped().values(),
+    }
 }
