@@ -17,6 +17,8 @@ so related ones sort and complete together: ``map_*`` draws on a map,
 * :func:`chart_demand_matrix` — the origin-destination matrix as a heat-map.
 * :func:`chart_mode_share` — the share of the trips each mode took, by departure
   time.
+* :func:`summary` — a run's summary as one self-contained HTML page: headline
+  numbers, the flow map, modes, convergence, where the time went, settings.
 
 matplotlib is imported when a figure is drawn, not when this package is, so
 ``import openmobisim.viz`` works without it.
@@ -28,6 +30,7 @@ from openmobisim.viz._link import map_link
 from openmobisim.viz._modes import chart_mode_share
 from openmobisim.viz._parking import map_parking
 from openmobisim.viz._route import map_route
+from openmobisim.viz._summary import summary
 from openmobisim.viz._transit import map_transit
 
 __all__ = [
@@ -39,4 +42,5 @@ __all__ = [
     "map_parking",
     "map_route",
     "map_transit",
+    "summary",
 ]

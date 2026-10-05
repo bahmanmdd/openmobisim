@@ -185,13 +185,15 @@ class Run:
     def convergence_gap(self) -> float:
         """How far the run ended from equilibrium.
 
-        **The worse of** the last iteration's disequilibrium against the choice set
-        (``convergence()["gap_excess"][-1]``) and against the whole network
+        **The worst of** the last iteration's disequilibrium against the choice set
+        (``convergence()["gap_excess"][-1]``), against the whole network
         (``convergence()["gap_network_excess"][-1]``, a sample), so a route the choice set
-        was missing cannot hide behind a small in-set number. The disequilibrium is the gap
-        **less what the choice model itself expects** (a logit sends some travellers down
-        a slower route by design, so its gap is never 0); where the model gives no
-        probabilities the plain gaps are used instead.
+        was missing cannot hide behind a small in-set number, and of the itineraries
+        (``convergence()["itinerary_gap_excess"][-1]``: transit, park-and-ride, bike-and-ride
+        and trips choosing their mode, each against the best of the mode it kept; S227). The
+        disequilibrium is the gap **less what the choice model itself expects** (a logit sends
+        some travellers down a slower route by design, so its gap is never 0); where the model
+        gives no probabilities the plain gaps are used instead.
 
         ``nan`` if no gap was measured (a ``"free_flow"`` run). See
         ``convergence_verdict``.
@@ -201,6 +203,7 @@ class Run:
         for excess, plain in (("gap_excess", "gap"), ("gap_network_excess", "gap_network")):
             value = float(c[excess][-1])
             values.append(value if value == value else float(c[plain][-1]))
+        values.append(float(c["itinerary_gap_excess"][-1]))
         finite = [v for v in values if v == v]  # not nan
         return max(finite) if finite else float("nan")
 
@@ -300,6 +303,13 @@ class Run:
           had chosen before, the share (by traveller weight) whose mode changed on the way
           to this loading; ``nan`` at the first iteration and without ``modes``. How the
           mode split is settling.
+        * ``mode_changed_floor`` — what that share would be from the choice model's own
+          randomness alone (among the trips that chose again, the probability of a mode other
+          than the one they had); the settling is done when the share is near its floor.
+        * ``itinerary_gap_excess`` — **the itineraries' disequilibrium**: over the transit,
+          park-and-ride, bike-and-ride and mode-choosing trips, the gap to the best alternative
+          of the mode each kept, less what the choice model itself expects. Part of
+          ``convergence_gap`` and of what ``gap_tolerance`` stops on (S227).
 
         The numbers up to ``gap_flow_excess`` are also in ``kpis.parquet``, a row per metric
         per iteration, and so are the itinerary gaps (under their modes, as ``gap``),

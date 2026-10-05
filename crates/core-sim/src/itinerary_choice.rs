@@ -1193,9 +1193,45 @@ pub(crate) struct Assessment {
     pub w_mode_changed: f64,
     /// Kept itineraries re-costed at their parking, not re-planned (S210).
     pub recosted: u32,
+    /// Per mode: Σ w · the time the choice model expects of the trip within the mode it kept
+    /// (its probabilities over that mode's alternatives), for the trips in `paid` (I-al, S227).
+    pub expected_paid: [f64; Mode::COUNT],
+    /// Whether the model gave probabilities for every batch (else `expected_paid` is not
+    /// measured).
+    pub expected_measured: bool,
+    /// Σ w · (1 − the probability the model gives the mode kept) over the trips choosing their
+    /// mode that chose again: the mode changes chance alone would make (I-al's floor, S227).
+    pub w_mode_floor: f64,
 }
 
 impl Assessment {
+    /// The itinerary disequilibrium over every mode (I-al, S227): the gap less what the choice
+    /// model itself expects, `Σ_m (paid_m − expected_m) / Σ_m least_m`, each trip against the best
+    /// of the mode it kept. The plain pooled gap if the model gave no probabilities; NaN if
+    /// nothing was assessed.
+    pub(crate) fn gap_excess_pooled(&self) -> f64 {
+        let least: f64 = self.least.iter().sum();
+        if least <= 0.0 {
+            return f64::NAN;
+        }
+        let paid: f64 = self.paid.iter().sum();
+        if self.expected_measured {
+            (paid - self.expected_paid.iter().sum::<f64>()) / least
+        } else {
+            (paid - least) / least
+        }
+    }
+
+    /// The floor of [`Self::mode_changed_share`] (I-al, S227): the share whose mode chance alone
+    /// would change among those who chose again; NaN if none chose before.
+    pub(crate) fn mode_changed_floor(&self) -> f64 {
+        if self.w_choosing > 0.0 && self.expected_measured {
+            self.w_mode_floor / self.w_choosing
+        } else {
+            f64::NAN
+        }
+    }
+
     /// The relative gap of `mode`'s itinerary trips, NaN if none was assessed.
     pub(crate) fn gap(&self, mode: Mode) -> f64 {
         let (paid, least) = (self.paid[mode.index()], self.least[mode.index()]);
@@ -1553,7 +1589,7 @@ impl Itineraries {
             probability: current.map_or_else(|| vec![f64::NAN; n], |c| c.probability.clone()),
             alternatives: current.map_or_else(|| vec![0; n], |c| c.alternatives.clone()),
         };
-        let mut assessment = Assessment::default();
+        let mut assessment = Assessment { expected_measured: true, ..Assessment::default() };
         let (trips, travellers) = (inputs.trips, inputs.travellers);
         // The car parks' free-flow table, searched here, outside the parallel planning (S209).
         if let (true, Some(parking)) = (self.parks_cars, planner.parking) {
@@ -1647,6 +1683,10 @@ impl Itineraries {
                 let mut situation_of: Vec<usize> = Vec::new();
                 let mut row = vec![0.0; inputs.wanted.len()];
                 let mut movers: Vec<usize> = Vec::new();
+                // (situation, mode index, weight): trips in the gap, and the choosing ones that
+                // choose again, whose expectation and floor need the model's probabilities.
+                let mut in_gap: Vec<(usize, usize, f64)> = Vec::new();
+                let mut floor: Vec<(usize, usize, f64)> = Vec::new();
                 for &w in chunk {
                     let (p, _) = work[w];
                     let set = &sets[w];
@@ -1691,6 +1731,7 @@ impl Itineraries {
                     if first[w].parking.is_none() {
                         assessment.paid[m] += weight * kept.total_s;
                         assessment.least[m] += weight * best[m];
+                        in_gap.push((s, m, weight));
                     } else {
                         assessment.recosted += 1;
                     }
@@ -1701,8 +1742,40 @@ impl Itineraries {
                     if reselect {
                         assessment.w_reselected += weight;
                         movers.push(s);
+                        if self.choosing[p] {
+                            floor.push((s, m, weight));
+                        }
                     } else {
                         next.alt[p] = Some(kept.clone());
+                    }
+                }
+                if !(in_gap.is_empty() && floor.is_empty()) {
+                    batch.validate()?;
+                    match inputs.model.probabilities(&batch)? {
+                        Some(prob) => {
+                            // A situation's alternatives are its set's, in order.
+                            let within = |s: usize, m: usize| {
+                                let start = batch.range(s).start;
+                                let (mut p_m, mut t_m) = (0.0, 0.0);
+                                for (i, a) in sets[situation_of[s]].iter().enumerate() {
+                                    if a.mode.index() == m {
+                                        p_m += prob[start + i];
+                                        t_m += prob[start + i] * a.total_s;
+                                    }
+                                }
+                                (p_m, t_m)
+                            };
+                            for &(s, m, weight) in &in_gap {
+                                let (p_m, t_m) = within(s, m);
+                                if p_m > 0.0 {
+                                    assessment.expected_paid[m] += weight * t_m / p_m;
+                                }
+                            }
+                            for &(s, m, weight) in &floor {
+                                assessment.w_mode_floor += weight * (1.0 - within(s, m).0);
+                            }
+                        }
+                        None => assessment.expected_measured = false,
                     }
                 }
                 if movers.is_empty() {

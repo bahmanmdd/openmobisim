@@ -153,6 +153,16 @@ pub struct IterationReport {
     pub itinerary_recosted: u32,
     /// How many times vehicles re-routed en route in this loading (S213); 0 without rerouting.
     pub reroutes: u32,
+    /// The itinerary disequilibrium (I-al, S227): over every transit, park-and-ride,
+    /// bike-and-ride and mode-choosing trip, the gap to the best alternative of the mode it kept
+    /// less what the choice model itself expects (`Σ_m (paid − expected) / Σ_m least`); the plain
+    /// gap if the model gives no probabilities; NaN without such trips. Part of
+    /// [`Self::disequilibrium`].
+    pub itinerary_gap_excess: f64,
+    /// The floor of [`Self::mode_changed_share`] (I-al, S227): the share whose mode would change
+    /// by chance alone among those who chose again, from the model's probabilities; NaN where
+    /// that share is.
+    pub mode_changed_floor: f64,
     /// How many reroute offers this iteration's loadings made (S223): each is one search for a
     /// faster route from where a stuck vehicle is, whether or not it re-routed. Iteration 0's
     /// counts the free-flow loading's groups' loadings too. 0 without rerouting.
@@ -250,7 +260,13 @@ impl IterationReport {
     /// plain [`Self::gap`] where the model gives no probabilities and the two cannot be told apart.
     #[must_use]
     pub fn disequilibrium(&self) -> f64 {
-        if self.gap_excess.is_nan() { self.gap } else { self.gap_excess }
+        let routes = if self.gap_excess.is_nan() { self.gap } else { self.gap_excess };
+        // The worse of the routes' and the itineraries' (I-al, S227): one meaning of converged.
+        match (routes.is_nan(), self.itinerary_gap_excess.is_nan()) {
+            (false, false) => routes.max(self.itinerary_gap_excess),
+            (true, false) => self.itinerary_gap_excess,
+            _ => routes,
+        }
     }
 
     /// A report with the run's numbers and nothing else measured.
@@ -279,6 +295,8 @@ impl IterationReport {
             itinerary_recosted: 0,
             reroutes: 0,
             reroute_searches: 0,
+            itinerary_gap_excess: f64::NAN,
+            mode_changed_floor: f64::NAN,
             hub_mismatch_s: f64::NAN,
             mode_changed_share: f64::NAN,
         }

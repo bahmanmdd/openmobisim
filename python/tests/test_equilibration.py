@@ -22,7 +22,8 @@ FIELDS = [
     "gap_flow_excess", "routes_added", "route_searches", "gap_expected", "gap_excess",
     "gap_network_excess", "incomplete_share", "gap_transit", "gap_car_transit",
     "gap_bike_transit", "hub_mismatch_s", "gap_car", "gap_bike", "gap_walk", "mode_changed_share",
-    "itinerary_recosted", "reroutes", "reroute_searches",
+    "itinerary_recosted", "reroutes", "reroute_searches", "mode_changed_floor",
+    "itinerary_gap_excess",
 ]  # fmt: skip
 
 
@@ -443,3 +444,25 @@ def test_a_run_reports_its_wall_clock_time_by_stage():
     lines = Path(run.timings_path).read_text(encoding="utf-8").splitlines()
     assert lines[0] == "stage,iteration,seconds" and len(lines) == len(t["stage"]) + 1
     assert "wall-clock seconds by stage" in run._timings_text()
+
+
+def test_a_run_where_trips_choose_their_mode_gets_a_verdict():
+    # I-al (S227): the itineraries' disequilibrium (each trip against the best of the mode it
+    # kept, less what the model expects) is measured, judged, and the mode-change floor is
+    # reported beside the share that changed.
+    run = scenario(
+        trips=500,
+        class_defaults={"commuter": (True, True, False)},
+        modes=("car", "bike", "walk"),
+        equilibration_options={"iterations": 4},
+        choice_model="logit",
+        master_seed=3,
+    ).run("eq-modes", quiet=True)
+    c = run.convergence()
+    assert np.isnan(c["gap_excess"]).all(), "no trip is given the car"
+    assert np.isfinite(c["itinerary_gap_excess"][1:]).all()
+    assert run.convergence_verdict in ("good", "acceptable", "poor")
+    assert run.convergence_gap == pytest.approx(float(c["itinerary_gap_excess"][-1]))
+    floor, share = c["mode_changed_floor"][1:], c["mode_changed_share"][1:]
+    assert np.isfinite(floor).all() and ((floor >= 0) & (floor <= 1)).all()
+    assert np.isfinite(share).all()

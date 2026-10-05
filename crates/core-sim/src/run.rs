@@ -954,8 +954,10 @@ impl Run {
         let mut previous_bins: Option<EntryTables> = None;
         // Who moved on the way to this iteration: (share that chose again, share that changed).
         let mut arrived_by = (1.0, f64::NAN);
-        // Of the trips choosing their mode, the share whose mode changed on the way (M5).
+        // Of the trips choosing their mode, the share whose mode changed on the way (M5), and
+        // what chance alone would change (I-al).
         let mut mode_changed_by = f64::NAN;
+        let mut mode_floor_by = f64::NAN;
         let mut converged = false;
         let mut last: Option<(Loaded, Diagnostics)> = None;
 
@@ -1092,6 +1094,7 @@ impl Run {
             report.reselected_share = arrived_by.0;
             report.changed_share = arrived_by.1;
             report.mode_changed_share = mode_changed_by;
+            report.mode_changed_floor = mode_floor_by;
             report.total_travel_time_s = loaded.total_travel_time.get();
             report.completed = loaded.completion.completed;
             report.truncated = loaded.completion.truncated;
@@ -1209,7 +1212,9 @@ impl Run {
                             report.itinerary_gap[mode.index()] = found.gap(mode);
                         }
                         report.itinerary_recosted = found.recosted;
+                        report.itinerary_gap_excess = found.gap_excess_pooled();
                         mode_changed_by = found.mode_changed_share();
+                        mode_floor_by = found.mode_changed_floor();
                         pending_chosen = Some(next_chosen);
                     }
                     times_now = Some(times);

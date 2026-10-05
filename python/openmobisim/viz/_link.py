@@ -82,8 +82,13 @@ def _bin_range(bins_arg: int | tuple[int, int] | None) -> tuple[int | None, int 
     return int(first), int(stop)
 
 
-def _minutes(seconds: float) -> str:
-    return f"{seconds / 60:g}"
+def _clock(seconds: float) -> str:
+    """A second of the day as clock time, ``07:00`` (S227).
+
+    Past midnight it reads ``24:30``, so a window that runs on past it still reads in order.
+    """
+    minutes = round(seconds / 60)
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
 _TITLES = {
@@ -322,7 +327,7 @@ def map_link(
     window = (first if first is not None else int(link_bins.bins().min())) * step
     end = (stop if stop is not None else int(link_bins.bins().max()) + 1) * step
     default_subtitle = (
-        f"{_minutes(window)}–{_minutes(end)} min · one ribbon per direction · "
+        f"{_clock(window)}–{_clock(end)} · one ribbon per direction · "
         f"width = volume, colour = {_COLOUR_WORDS[colour]}"
     )
     level = _LEVEL_NAMES.get(run.flow_level, str(run.flow_level))

@@ -353,6 +353,8 @@ fn convergence_arrays(
     )?;
     dict.set_item("hub_mismatch_s", floats(|r| r.hub_mismatch_s).into_pyarray(py))?;
     dict.set_item("mode_changed_share", floats(|r| r.mode_changed_share).into_pyarray(py))?;
+    dict.set_item("mode_changed_floor", floats(|r| r.mode_changed_floor).into_pyarray(py))?;
+    dict.set_item("itinerary_gap_excess", floats(|r| r.itinerary_gap_excess).into_pyarray(py))?;
     dict.set_item(
         "routes_added",
         reports.iter().map(|r| r.routes_added).collect::<Vec<_>>().into_pyarray(py),
