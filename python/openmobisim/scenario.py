@@ -1,7 +1,7 @@
 """``Scenario`` and what ``.run()`` returns.
 
 A network, demand (an in-memory table or a ``trips.parquet`` path — the same
-schema either way), a loading with queues and spillback (``flow_level=4``),
+schema either way), a loading with queues at capacity (the point queue, ``flow_level=2``),
 route choice among each trip's alternatives (a path-size ``"logit"``) and
 iteration towards an equilibrium (``"msa"``), during which the route sets may
 grow (``route_update="best_response"``) — all by default. Trips drive, cycle,
@@ -29,6 +29,17 @@ FLOW_LEVELS = (0, 2, 3, 4)
 #: In how many groups the free-flow loading is built up unless ``equilibration_options`` says
 #: (S223; uncalibrated, the user's suggestion: groups of a fifth of the travellers).
 FREE_FLOW_INCREMENTS = 5
+
+#: ``"msa"`` stops once the disequilibrium, averaged over the last three iterations, is below this
+#: (S229; uncalibrated: a tight "good", which is below 0.05), unless ``equilibration_options``
+#: says otherwise; ``iterations`` stays the most it makes.
+GAP_TOLERANCE = 0.02
+
+#: ... and while the last route update added routes for at most this share of the pairs it
+#: searched (S229). 1 by default: the gap alone decides, since it is measured against the sets as
+#: grown (a route found faster than the set's best raises it; an equally fast one, which grids
+#: keep yielding, does not). Lower it to also wait for the sets to settle.
+ROUTE_GROWTH_TOLERANCE = 1.0
 
 #: What ``Run.timings()`` calls each stage, as the printout shows it (S223).
 _STAGE_LABELS = {
@@ -631,6 +642,19 @@ class Run:
         choices = self._summary.itinerary_choices
         return None if choices is None else dict(choices)
 
+    def report_spillback(self) -> dict[str, Any] | None:
+        """The links where a queue outgrew the road in the last loading (S229).
+
+        Under the point queue (``flow_level=2``, the default) a queue takes no road space; a link
+        whose peak occupancy (the most PCU on it at once) exceeded its storage (jam density x
+        length x lanes) is where the real queue would have backed up into the links upstream,
+        so the run's delays around it are optimistic. NumPy arrays, worst first (by peak over
+        storage): ``link`` (internal link id), ``peak_pcu`` and ``storage_pcu``. Empty at levels
+        3 and 4, which model spillback; ``None`` at level 0. ``viz.map_interactive`` can show
+        them.
+        """
+        return self._summary.spillback
+
     def report_gridlock(self) -> dict[str, Any] | None:
         """What stood still when the last loading's window ended; ``None`` at level 0.
 
@@ -742,7 +766,7 @@ class Scenario:
         class_defaults: dict[str, tuple[bool, bool, bool]] | None = None,
         default_weight: int = 1,
         window_hours: float = 24.0,
-        flow_level: int = 4,
+        flow_level: int = 2,
         flow_step_s: int = 300,
         link_bin_s: int | None = None,
         route_method: str | None = None,
@@ -793,6 +817,10 @@ class Scenario:
         self._link_bin_s = link_bin_s
         options = dict(equilibration_options or {})
         iterates = equilibration != "free_flow" and int(options.get("iterations", 10)) > 1
+        if equilibration == "msa":
+            # Stop when converged (S229), not always after `iterations`.
+            options.setdefault("gap_tolerance", GAP_TOLERANCE)
+            options.setdefault("route_growth_tolerance", ROUTE_GROWTH_TOLERANCE)
         if equilibration in ("free_flow", "msa"):
             # The free-flow loading (S223): built up in groups, each choosing on the congestion
             # of those before it, with the point-queue model, which cannot gridlock. At free
@@ -834,7 +862,12 @@ class Scenario:
                 raise ValueError(f"modes must be among {MODES}, got {unknown}")
         self._modes = modes
         self._mode_options = mode_options
-        self._loading_options = loading_options
+        loading = dict(loading_options or {})
+        if flow_level <= 2:
+            # In a point queue nothing waits for room, so nothing is stuck to re-route (S229);
+            # rerouting stays a feature of the levels with spillback.
+            loading.setdefault("reroute", 0)
+        self._loading_options = loading or None
 
     @classmethod
     def from_parts(
@@ -845,7 +878,7 @@ class Scenario:
         class_defaults: dict[str, tuple[bool, bool, bool]] | None = None,
         default_weight: int = 1,
         window_hours: float = 24.0,
-        flow_level: int = 4,
+        flow_level: int = 2,
         flow_step_s: int = 300,
         link_bin_s: int | None = None,
         route_method: str | None = None,
@@ -897,14 +930,21 @@ class Scenario:
                 larger number is faster and coarser.
             window_hours: Trips still in progress after this many hours are
                 truncated.
-            flow_level: How vehicles load the network. ``4`` (the default) is
-                the link transmission model with the full triangular
-                fundamental diagram: queues that take up road space and spill
-                back to the links upstream. ``3`` is a spatial queue and ``2`` a
-                point queue (queues without spillback, so no gridlock). ``0`` is
-                free flow: no vehicle affects another, so there is no
-                congestion, and a run that iterates has nothing to settle — for
-                debugging, or as a lower bound.
+            flow_level: How vehicles load the network. ``2`` (the default, S229) is the
+                **point queue**: the link transmission model with capacities at every link
+                and junction, where a queue forms behind capacity and delays everyone in it,
+                but takes no road space, so it never blocks the links upstream and nothing
+                gridlocks. Equilibrium iterations converge steadily with it, and it is the
+                cheapest loading with congestion: the right model for planning studies
+                (Vickrey's bottleneck queue with a first-order node model, as in quasi-dynamic
+                assignment). ``Run.report_spillback()`` lists the links whose queue would not
+                have fitted on the road. ``4`` is the full triangular fundamental diagram:
+                queues take road space and **spill back** to the links upstream, with turn
+                pockets and en-route rerouting against gridlock — for studies where spillback
+                itself matters (traffic control, incidents, evacuation); under heavy congestion
+                its iterations can drift (S227). ``3`` is a spatial queue. ``0`` is free flow:
+                no vehicle affects another, so there is no congestion, and a run that iterates
+                has nothing to settle — for debugging, or as a lower bound.
             flow_step_s: The loading step in seconds, for levels 2-4. It is a
                 bookkeeping boundary: results do not depend on it.
             link_bin_s: If given, also record per-link results in time bins of
@@ -1011,7 +1051,7 @@ class Scenario:
                 iterations that follow use ``flow_level``. At ``flow_level=0``
                 there are no groups, since nothing congests.
                 Either way, equilibration only changes anything when vehicles
-                interact (``flow_level`` 2 to 4, the default 4) and a choice
+                interact (``flow_level`` 2 to 4, the default 2) and a choice
                 model gives travellers something to choose between
                 (``"logit"``): at ``flow_level=0`` (free flow, no interaction),
                 ``"msa"`` still runs but has nothing to disagree with itself
@@ -1021,8 +1061,11 @@ class Scenario:
                 the disequilibrium the last iteration ended at.
             equilibration_options: The strategy's options, numbers by name: for
                 ``"msa"``, ``iterations`` (10; the most loadings), ``gap_tolerance``
-                (0: never stop early; otherwise stop once the gap, averaged over the
-                last three iterations, is below this: 0.05 is good, 0.15 acceptable),
+                (0.02, S229: stop once the disequilibrium, averaged over the last three
+                iterations, is below this; 0.05 is good, 0.15 acceptable; 0 never stops
+                early), ``route_growth_tolerance`` (1: and only while the last route update
+                added routes for at most this share of the pairs it searched; 1 lets the gap
+                alone decide, since it is measured against the sets as grown),
                 ``gap_sample`` (300; how many trips are tested against the whole
                 network at the last iteration, 0 for none), ``itinerary_gap_sample``
                 (100 000 000, that is every trip: how many transit, park-and-ride and
@@ -1133,13 +1176,15 @@ class Scenario:
                 length); ``float("inf")`` offers every walk or ride. Uncalibrated defaults.
                 Unknown names and values that are not above 0 are refused.
             loading_options: The loading's rules by name, for ``flow_level`` 2–4 (gridlock
-                remedies): ``priority`` (0 or 1, off by default: without per-turn queues a
+                remedies; at ``flow_level`` 2, where nothing waits for room, ``reroute`` is off
+                unless asked for): ``priority`` (0 or 1, off by default: without per-turn queues a
                 vehicle giving way holds up everything behind it, which made locks worse) —
                 at an unsignalised merge a vehicle gives way to an approach of higher road
                 class, or of the same class and at least 1.5 times the capacity, whose front
                 vehicle is bound for the same link, and a departing vehicle gives way to every
-                approach; ``reroute`` (0 or 1, **on** by default) — a vehicle blocked at the
-                front of its link for ``reroute_after_s`` (300) re-routes from where it is, at
+                approach; ``reroute`` (0 or 1, **on** by default at levels 3 and 4) — a vehicle
+                blocked at the front of its link for ``reroute_after_s`` (300) re-routes from
+                where it is, at
                 most ``reroute_max`` (3) times, if the new route is at least
                 ``reroute_min_gain`` (0.1) faster; ``pocket_length_m`` (50, 0 turns it off) —
                 on an approach of two lanes or more, a vehicle passes those ahead of it that

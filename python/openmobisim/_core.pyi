@@ -773,6 +773,8 @@ class RunSummary:
     timings: list[tuple[str, int | None, float]]
     #: The written ``timings.csv``.
     timings_path: str
+    #: Links whose peak occupancy exceeded their storage; see ``Run.report_spillback()``.
+    spillback: dict[str, Any] | None
 
 def run_pipeline(
     network: Network,

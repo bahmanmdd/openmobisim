@@ -110,7 +110,12 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// the bike and walk layers' speeds), kept by the network and used by its turn table and bike
 /// costs; the green-fraction multiplier, which nothing read, now scales the green time. No run at
 /// the shipped values changes.
-pub const DEFAULTS_VERSION: u32 = 13;
+///
+/// Version 14 (S229): **the point queue is the default loading** (`flow_level` 2 in the Python
+/// layer; the full model, with spillback, pockets and rerouting, at 4); `msa` stops when
+/// converged (`gap_tolerance` 0.02, `route_growth_tolerance` 1, the most `iterations` 10);
+/// en-route rerouting off at level 2, where nothing waits for room. Every default run changes.
+pub const DEFAULTS_VERSION: u32 = 14;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

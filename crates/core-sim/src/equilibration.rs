@@ -531,8 +531,9 @@ pub struct Msa {
     /// Stop once the **disequilibrium** ([`IterationReport::disequilibrium`]: the gap less what
     /// the choice model itself expects, S178), averaged over the last three iterations, is below
     /// this share; 0 means never stop early. 0.05 is good, 0.15 acceptable
-    /// ([`GAP_GOOD`], [`GAP_ACCEPTABLE`]). Never while a
-    /// route update is still adding routes (S176): the last update must have added none.
+    /// ([`GAP_GOOD`], [`GAP_ACCEPTABLE`]). Never while a route update is still adding routes
+    /// (S176): the last update must have added routes for at most
+    /// [`Self::route_growth_tolerance`] of the pairs it searched.
     pub gap_tolerance: f64,
     /// How many trips are tested against the whole network at the last iteration
     /// (0 to 100 000; 0 means none): the sample that
@@ -557,6 +558,10 @@ pub struct Msa {
     /// In how many groups the free-flow loading is built up (1 to [`MAX_INCREMENTS`]; see
     /// [`Equilibration::increments`]). 1 by default.
     pub increments: u32,
+    /// A run may stop at its [`Self::gap_tolerance`] only while the last route update added
+    /// routes for at most this share of the pairs it searched (0 to 1; S229). 0 by default: not
+    /// while it adds any (S176). A few routes found late barely move the gap.
+    pub route_growth_tolerance: f64,
 }
 
 impl Default for Msa {
@@ -569,18 +574,20 @@ impl Default for Msa {
             cost_bin_s: 300,
             warmup: 0,
             increments: 1,
+            route_growth_tolerance: 0.0,
         }
     }
 }
 
 impl Msa {
-    const OPTIONS: [&'static str; 7] = [
+    const OPTIONS: [&'static str; 8] = [
         "cost_bin_s",
         "gap_sample",
         "gap_tolerance",
         "increments",
         "itinerary_gap_sample",
         "iterations",
+        "route_growth_tolerance",
         "warmup",
     ];
 
@@ -609,6 +616,12 @@ impl Msa {
                 }
                 "warmup" => m.warmup = whole(option, v, 0, MAX_ITERATIONS)?,
                 "increments" => m.increments = whole(option, v, 1, MAX_INCREMENTS)?,
+                "route_growth_tolerance" => {
+                    if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
+                        return Err(bad(option, &format!("must be from 0 to 1, got {v}")));
+                    }
+                    m.route_growth_tolerance = v;
+                }
                 _ => {
                     if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
                         return Err(bad(option, &format!("must be from 0 to 1, got {v}")));
@@ -628,13 +641,14 @@ impl Equilibration for Msa {
     fn descriptor(&self) -> String {
         format!(
             "msa;cost_bin_s={};gap_sample={};gap_tolerance={};increments={};\
-             itinerary_gap_sample={};iterations={};warmup={}",
+             itinerary_gap_sample={};iterations={};route_growth_tolerance={};warmup={}",
             self.cost_bin_s,
             self.gap_sample,
             self.gap_tolerance,
             self.increments,
             self.itinerary_gap_sample,
             self.iterations,
+            self.route_growth_tolerance,
             self.warmup
         )
     }
@@ -672,7 +686,9 @@ impl Equilibration for Msa {
         }
         // While the sets are still growing (S176) the pattern has not settled: the gap is
         // measured against the sets as grown, and a route just added has not been chosen yet.
-        if reports.last().is_some_and(|r| r.routes_added > 0) {
+        if reports.last().is_some_and(|r| {
+            f64::from(r.routes_added) > self.route_growth_tolerance * f64::from(r.route_searches)
+        }) {
             return false;
         }
         let last = &reports[reports.len() - 3..];

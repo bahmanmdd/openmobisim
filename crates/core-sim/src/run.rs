@@ -261,6 +261,9 @@ pub struct RunResult {
     /// trip: the links it took. Every other trip followed its planned route (its route choice);
     /// nothing is kept for those.
     pub routes_realised: Vec<(TripId, Vec<LinkId>)>,
+    /// Per link, the most PCU it held at once in the last loading (S229); `None` at level 0.
+    /// Above the link's storage under the point queue: where the queue would have spilled back.
+    pub link_peak_pcu: Option<Vec<f64>>,
 }
 
 /// How one loading is made besides the routes it follows.
@@ -304,6 +307,8 @@ struct Loaded {
     routes_realised: Vec<(TripId, Vec<LinkId>)>,
     /// How many reroute offers (searches) the loading made (S223).
     reroute_searches: u32,
+    /// Per link, the most PCU it held at once (S229); `None` at level 0.
+    peak_pcu: Option<Vec<f64>>,
 }
 
 /// How the itinerary trips of a loading went.
@@ -1322,6 +1327,7 @@ impl Run {
             gridlock: loaded.gridlock,
             reroutes: loaded.reroutes,
             routes_realised: loaded.routes_realised,
+            link_peak_pcu: loaded.peak_pcu,
         })
     }
 
@@ -1379,6 +1385,7 @@ impl Run {
         let mut gridlock: Option<LockReport> = None;
         let mut reroutes: Vec<RerouteRecord> = Vec::new();
         let mut reroute_searches = 0_u32;
+        let mut peak_pcu: Option<Vec<f64>> = None;
         let mut routes_realised: Vec<(TripId, Vec<LinkId>)> = Vec::new();
         // Bike and walk vehicles, kept to be binned per layer when asked.
         let mut layer_vehicles: [Vec<Vehicle>; 2] = [Vec::new(), Vec::new()];
@@ -1714,6 +1721,7 @@ impl Run {
             );
             reroutes = out.reroutes;
             reroute_searches = rerouter.as_ref().map_or(0, |r| r.offers);
+            peak_pcu = Some(out.peak_occupancy);
             let (trajectories, bins, entry) = (out.trajectories, out.link_bins, out.entry);
             for cycle in &out.lock.loops {
                 diagnostics.record(DiagKey::new(
@@ -1921,6 +1929,7 @@ impl Run {
             reroutes,
             routes_realised,
             reroute_searches,
+            peak_pcu,
         }
     }
 

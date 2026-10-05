@@ -35,6 +35,8 @@ pub struct LinkCurves {
     exits: VecDeque<(f64, f64)>,
     last_entry: f64,
     last_exit: f64,
+    /// The most PCU on the link at once so far (S229): `N_up − N_dn` at its peak.
+    peak: f64,
 }
 
 impl LinkCurves {
@@ -48,7 +50,16 @@ impl LinkCurves {
             exits: VecDeque::new(),
             last_entry: f64::NEG_INFINITY,
             last_exit: f64::NEG_INFINITY,
+            peak: 0.0,
         }
+    }
+
+    /// The most PCU the link held at once so far (S229): with infinite storage (the point
+    /// queue), more than the link's physical storage means the queue would have spilled back.
+    #[inline]
+    #[must_use]
+    pub fn peak_occupancy(&self) -> Pcu {
+        Pcu(self.peak)
     }
 
     /// `N_up` now.
@@ -100,6 +111,7 @@ impl LinkCurves {
     /// `pcu` moved onto the link.
     pub fn record_in(&mut self, pcu: Pcu) {
         self.cumulative_in += pcu.get();
+        self.peak = self.peak.max(self.cumulative_in - self.cumulative_out);
     }
 
     /// `pcu` left the link at `t`. Exits are recorded in time order.

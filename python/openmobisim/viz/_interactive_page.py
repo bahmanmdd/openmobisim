@@ -33,6 +33,7 @@ __CSS__
     <div class="row"><label>Colour by <select id="colour"><option value="delay">Delay</option><option value="volume">Volume</option><option value="vc">Volume ÷ capacity</option></select></label><button id="theme">Night</button></div>
     <div class="row"><input id="bin" type="range" min="0" max="0" value="0" step="1"></div>
     <div class="row"><label><input id="allbins" type="checkbox" checked> All bins</label><button id="play">Play</button></div>
+    <div class="row" id="spillrow" hidden><label title="Links whose queue would not have fitted on the road: where it would spill back (point queue)"><input id="spill" type="checkbox"> Spillback links <span id="spillcount"></span></label></div>
     <div class="legend"><h2 id="legendlabel">Delay over free flow</h2><div class="bar" id="colourbar"></div><div class="ends"><span id="legendlow">0%</span><span id="legendhigh">70%+</span></div></div>
   </div>
   <div id="routegroup">
@@ -135,6 +136,7 @@ for (const a of META.arrays) A[a.n] = new CTOR[a.t](raw.buffer, a.o, a.c);
 
 const NL = META.n_links, NV = META.n_verts, NB = META.n_bins;
 const VS = A.vs, CLS = A.cls, LEN = A.len, FF = A.ff, CAP = A.cap;
+const SB = A.sb || null;
 const X = new Float64Array(NV), Y = new Float64Array(NV);
 { let cx = 0, cy = 0; for (let i = 0; i < NV; i++) { cx += A.dx[i]; cy += A.dy[i]; X[i] = cx * 0.1; Y[i] = cy * 0.1; } }
 
@@ -218,7 +220,7 @@ function rampTable(stops, n) {
   return out;
 }
 const NCOL = 24;
-const S = { theme: META.theme, colour: "delay", bin: -1, bins: [0, NB], playing: false, pair: -1, link: -1, hover: -1, hoverRoute: -1, routes: true, dim: true, cx: 0, cy: 0, mpp: 1 };
+const S = { theme: META.theme, colour: "delay", bin: -1, bins: [0, NB], playing: false, pair: -1, link: -1, hover: -1, hoverRoute: -1, routes: true, dim: true, spill: false, cx: 0, cy: 0, mpp: 1 };
 let TH = TOK[S.theme], TABLES = {};
 function setTheme(name) {
   S.theme = name; TH = TOK[name]; document.documentElement.dataset.theme = name;
@@ -353,6 +355,7 @@ function draw() {
   ctx.globalAlpha = 1;
   if (!MOVING && S.mpp < 3) drawChevrons(cand, lim);
   if (S.pair >= 0 && S.routes && HAS_ROUTES) drawRoutes();
+  if (S.spill && SB) drawSpill(cand);
   highlight(S.link, TH.ink, 3); if (S.hover !== S.link) highlight(S.hover, TH.ink2, 2);
   drawScale();
   document.body.dataset.drawms = (performance.now() - t0).toFixed(1); document.body.dataset.drawn = DRAWN; document.body.dataset.level = LEVELS[currentLevel()];
@@ -368,6 +371,13 @@ function drawChevrons(cand, lim) {
     ctx.beginPath(); ctx.moveTo(cx + tx * s, cy + ty * s); ctx.lineTo(cx - tx * s * 0.6 - ty * s * 0.75, cy - ty * s * 0.6 + tx * s * 0.75); ctx.lineTo(cx - tx * s * 0.6 + ty * s * 0.75, cy - ty * s * 0.6 - tx * s * 0.75); ctx.closePath(); ctx.fill();
   }
   ctx.globalAlpha = 1;
+}
+function drawSpill(cand) {
+  const p = new Path2D(); let any = false;
+  for (const l of cand) if (SB[l] && addLine(p, l, 0, 0.5)) any = true;
+  if (!any) return;
+  ctx.setLineDash([5, 4]); ctx.strokeStyle = TH.surface; ctx.lineWidth = 5; ctx.stroke(p);
+  ctx.strokeStyle = TH.ink; ctx.lineWidth = 2.5; ctx.stroke(p); ctx.setLineDash([]);
 }
 function highlight(l, colour, w) {
   if (l < 0) return;
@@ -553,6 +563,7 @@ function wire() {
     $("showroutes").addEventListener("change", (e) => { S.routes = e.target.checked; redraw(false); });
     $("dim").addEventListener("change", (e) => { S.dim = e.target.checked; redraw(false); });
   }
+  if (SB) $("spill").addEventListener("change", (e) => { S.spill = e.target.checked; redraw(false); });
   window.addEventListener("resize", () => { resize(); redraw(false); });
   window.addEventListener("keydown", (e) => { if (e.key === "Escape") { selectLink(-1); if (S.pair >= 0) selectPair(-1, false); } });
 }
@@ -564,6 +575,7 @@ function start() {
   $("logo").hidden = !META.logo; $("budget").textContent = META.size_note;
   document.title = META.title + " · openmobisim";
   $("trafficgroup").hidden = !HAS_TRAFFIC; $("routegroup").hidden = !HAS_ROUTES;
+  $("spillrow").hidden = !SB; if (SB) $("spillcount").textContent = "(" + fmt(META.n_spillback) + ")";
   if (HAS_TRAFFIC) { $("bin").max = NB - 1; $("bin").disabled = true; }
   const p = readHash(); setTheme(S.theme); $("colour").value = S.colour; resize();
   if (HAS_TRAFFIC) { const all = S.bins[1] - S.bins[0] === NB; $("allbins").checked = all; $("bin").disabled = all; $("bin").value = all ? 0 : S.bins[0]; }

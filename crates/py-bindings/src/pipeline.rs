@@ -48,7 +48,7 @@ use crate::parking::{
 };
 use crate::transit::{PyTransit, transit_calls, transit_summary};
 use openmobisim_core_types::diagnostics::Diagnostics;
-use openmobisim_core_types::ids::{EntityId, TripId};
+use openmobisim_core_types::ids::{EntityId, LinkId, TripId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 
@@ -246,6 +246,11 @@ pub struct PyRunSummary {
     /// Path to the written `timings.csv`: the same rows.
     #[pyo3(get)]
     pub timings_path: String,
+    /// The links whose peak occupancy in the last loading exceeded their storage (S229): where a
+    /// point queue would have spilled back. `link`, `peak_pcu`, `storage_pcu`, worst first; `None`
+    /// at level 0.
+    #[pyo3(get)]
+    pub spillback: Option<Py<PyDict>>,
 }
 
 /// Per-link, per-time-bin results, as numpy columns.
@@ -832,7 +837,33 @@ pub fn run_pipeline(
     let timings_path = dir.join("timings.csv");
     write_timings(&timings_path, &timing_rows).map_err(to_value_error)?;
 
+    // Where a queue outgrew its link (S229): peak occupancy against storage, worst first.
+    let spillback = match &result.link_peak_pcu {
+        Some(peaks) => {
+            let mut over: Vec<(u32, f64, f64)> = peaks
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &peak)| {
+                    let link = LinkId::from_index(i);
+                    let storage = network.inner.storage(link).get();
+                    (peak > storage).then(|| (link.raw(), peak, storage))
+                })
+                .collect();
+            over.sort_by(|a, b| (b.1 / b.2).total_cmp(&(a.1 / a.2)).then(a.0.cmp(&b.0)));
+            let d = PyDict::new(py);
+            d.set_item("link", over.iter().map(|o| o.0).collect::<Vec<_>>().into_pyarray(py))?;
+            d.set_item("peak_pcu", over.iter().map(|o| o.1).collect::<Vec<_>>().into_pyarray(py))?;
+            d.set_item(
+                "storage_pcu",
+                over.iter().map(|o| o.2).collect::<Vec<_>>().into_pyarray(py),
+            )?;
+            Some(d.unbind())
+        }
+        None => None,
+    };
+
     Ok(PyRunSummary {
+        spillback,
         timings: timing_rows,
         timings_path: timings_path.to_string_lossy().into_owned(),
         gridlock,

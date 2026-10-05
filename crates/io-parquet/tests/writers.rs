@@ -108,6 +108,7 @@ fn sample_result() -> RunResult {
         gridlock: None,
         reroutes: Vec::new(),
         routes_realised: Vec::new(),
+        link_peak_pcu: None,
     }
 }
 

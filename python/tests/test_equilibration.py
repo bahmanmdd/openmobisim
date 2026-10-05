@@ -69,7 +69,8 @@ def test_without_equilibration_there_is_one_iteration_and_no_gap():
 
 
 def test_msa_reports_every_iteration_and_the_run_is_the_last_one():
-    run = go("eq-msa", equilibration_options={"iterations": 5}, **MSA)
+    # Every one of the five, not stopping when converged (S229).
+    run = go("eq-msa", equilibration_options={"iterations": 5, "gap_tolerance": 0}, **MSA)
     c = run.convergence()
     assert c["iteration"].tolist() == [0, 1, 2, 3, 4]
     assert all(len(v) == 5 for v in c.values())

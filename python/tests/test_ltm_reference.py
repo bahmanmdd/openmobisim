@@ -130,6 +130,7 @@ def simulated(
         # The plain single loading: everyone at once on free flow, the full model (S223).
         equilibration="free_flow",
         equilibration_options={"increments": 1, "warmup": 0},
+        flow_level=4,
         choice_model="deterministic",
         link_bin_s=1,
         window_hours=HORIZON / 3600,

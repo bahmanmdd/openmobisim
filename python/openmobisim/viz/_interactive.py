@@ -190,6 +190,16 @@ def map_interactive(
         blob.add("rp", bins.pcu()[rows], "f32")
         blob.add("rs", bins.pcu_seconds()[rows], "f32")
 
+    # The links where a queue outgrew the road (S229): one optional layer.
+    n_spill = 0
+    spill = run.report_spillback() if hasattr(run, "report_spillback") else None
+    if spill is not None and len(spill["link"]):
+        flag = np.zeros(n_all, dtype=np.uint8)
+        flag[np.asarray(spill["link"], dtype=np.int64)] = 1
+        n_spill = int(flag[keep].sum())
+        if n_spill:
+            blob.add("sb", flag[keep], "u8")
+
     route_sets = run.route_sets() if routes is True else (routes or None)
     n_pairs = n_routes = 0
     if route_sets is not None and route_sets.key_count:
@@ -217,7 +227,7 @@ def map_interactive(
         "n_pairs": n_pairs, "n_routes": n_routes, "class_names": _CLASS_NAMES,
         "title": title or _default_title(bins is not None and n_bins > 0, has_routes),
         "note": note, "credit": credit, "logo": bool(logo),
-        "provenance": provenance, "source": source,
+        "provenance": provenance, "source": source, "n_spillback": n_spill,
         "arrays": blob.table, "tokens": _tokens(),
     }  # fmt: skip
     body = len(payload) + len(PAGE_JS) + len(PAGE_CSS) + len(PAGE_HTML)

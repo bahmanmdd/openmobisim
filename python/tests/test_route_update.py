@@ -27,8 +27,15 @@ def scenario(trips=1_800, **kwargs):
         "flow_level": 4,
         "choice_model": "logit",
         "equilibration": "msa",
-        # Everyone's first choice at once, on free flow (S223's groups are defended below).
-        "equilibration_options": {"iterations": 6, "gap_sample": 300, "warmup": 0, "increments": 1},
+        # Everyone's first choice at once, on free flow (S223's groups are defended below), and
+        # every one of the six iterations (no stop when converged, S229).
+        "equilibration_options": {
+            "iterations": 6,
+            "gap_sample": 300,
+            "warmup": 0,
+            "increments": 1,
+            "gap_tolerance": 0,
+        },
         "master_seed": 3,
         # The method's own sets unless a test asks for the update (S179 made an update and one
         # route per pair the default of an iterating run).

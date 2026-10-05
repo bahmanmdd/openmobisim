@@ -318,15 +318,16 @@ def test_maps_carry_a_north_arrow_and_a_distance_scale_that_is_true():
 def test_the_footer_names_the_runs_seed_and_fingerprint():
     # At the library's defaults ("logit", "msa": the longest footer a default run writes) and
     # down to the smallest size `map_link` documents, 20 cm wide (S191). Narrower figures
-    # are a known limitation of 0.1, not tested here.
+    # are a known limitation of 0.1, not tested here. The run stops when converged (S229).
     run, _ = toy_run()
+    loadings = len(run.convergence()["iteration"])
     for size_cm in ((40.64, 22.86), (20.32, 11.43)):
         fig = viz.map_link(run, size_cm=size_cm, dpi=60)
         footer = [t for t in fig.texts if "run viz-test" in t.get_text()]
         assert len(footer) == 1, "one footer"
         assert (
-            f"choice logit · msa 10 it, gap 0.0% · seed 0 · fingerprint {run.fingerprint[:8]}"
-            in footer[0].get_text()
+            f"choice logit · msa {loadings} it, gap 0.0% · seed 0 · "
+            f"fingerprint {run.fingerprint[:8]}" in footer[0].get_text()
         )
         # It fits: the footer ends before the logo lockup begins.
         fig.canvas.draw()

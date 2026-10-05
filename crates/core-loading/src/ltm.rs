@@ -511,6 +511,9 @@ pub struct LtmOutput {
     pub lock: LockReport,
     /// Every reroute, in the order they happened (empty without rerouting).
     pub reroutes: Vec<RerouteRecord>,
+    /// Per link, the most PCU it held at once (S229): against the link's physical storage, where
+    /// a point queue would have spilled back.
+    pub peak_occupancy: Vec<f64>,
 }
 
 /// What stands still when a loading ends (S213): where the vehicles that did not finish are,
@@ -2397,14 +2400,14 @@ pub fn run_ltm_chained(
         Recording::Bins(b) => Some((b, false)),
         Recording::BinsAndEntry(b) => Some((b, true)),
     };
-    let (trajectories, bins, lock, reroutes) = run_ltm_inner_chained(
+    let (trajectories, bins, lock, reroutes, peak_occupancy) = run_ltm_inner_chained(
         network, turns, vehicles, chains, window, step, level, recording, rules, rerouter,
     );
     let (link_bins, entry) = match bins {
         Some((b, e)) => (Some(b), e),
         None => (None, None),
     };
-    LtmOutput { trajectories, link_bins, entry, lock, reroutes }
+    LtmOutput { trajectories, link_bins, entry, lock, reroutes, peak_occupancy }
 }
 
 fn run_ltm_inner(
@@ -2416,7 +2419,7 @@ fn run_ltm_inner(
     level: FidelityLevel,
     recording: Option<(u32, bool)>,
 ) -> (Vec<Trajectory>, Option<(LinkBins, Option<EntryTables>)>) {
-    let (done, bins, _, _) = run_ltm_inner_chained(
+    let (done, bins, _, _, _) = run_ltm_inner_chained(
         network,
         turns,
         vehicles,
@@ -2431,9 +2434,15 @@ fn run_ltm_inner(
     (done, bins)
 }
 
-/// What a loading leaves: the trajectories, the per-link results, the lock report, the reroutes.
-type Inner =
-    (Vec<Trajectory>, Option<(LinkBins, Option<EntryTables>)>, LockReport, Vec<RerouteRecord>);
+/// What a loading leaves: the trajectories, the per-link results, the lock report, the reroutes,
+/// and each link's peak occupancy.
+type Inner = (
+    Vec<Trajectory>,
+    Option<(LinkBins, Option<EntryTables>)>,
+    LockReport,
+    Vec<RerouteRecord>,
+    Vec<f64>,
+);
 
 #[allow(clippy::too_many_arguments, reason = "the loading's inputs")]
 fn run_ltm_inner_chained(
@@ -2520,7 +2529,8 @@ fn run_ltm_inner_chained(
     }
     let lock = sim.lock_report();
     let reroutes = sim.reroutes().to_vec();
-    (completed, sim.take_link_bins_with_entry(), lock, reroutes)
+    let peaks = sim.curves.iter().map(|c| c.peak_occupancy().get()).collect();
+    (completed, sim.take_link_bins_with_entry(), lock, reroutes, peaks)
 }
 
 #[cfg(test)]
