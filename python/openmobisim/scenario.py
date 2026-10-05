@@ -642,18 +642,30 @@ class Run:
         choices = self._summary.itinerary_choices
         return None if choices is None else dict(choices)
 
-    def report_spillback(self) -> dict[str, Any] | None:
+    def report_spillback(self, min_excess_pcu: float = 5.0) -> dict[str, Any] | None:
         """The links where a queue outgrew the road in the last loading (S229).
 
         Under the point queue (``flow_level=2``, the default) a queue takes no road space; a link
         whose peak occupancy (the most PCU on it at once) exceeded its storage (jam density x
-        length x lanes) is where the real queue would have backed up into the links upstream,
-        so the run's delays around it are optimistic. NumPy arrays, worst first (by peak over
-        storage): ``link`` (internal link id), ``peak_pcu`` and ``storage_pcu``. Empty at levels
-        3 and 4, which model spillback; ``None`` at level 0. ``viz.map_interactive`` can show
-        them.
+        length x lanes) by more than ``min_excess_pcu`` is where the real queue would have backed
+        up into the links upstream, so the run's delays around it are optimistic. The minimum
+        (uncalibrated: five cars) leaves out the very short links of an OpenStreetMap network,
+        where a queue of a few cars overflows a few metres of road without consequence.
+
+        Args:
+            min_excess_pcu: How many PCU past its storage a link's peak must be to be listed.
+
+        Returns:
+            NumPy arrays, worst first (by the PCU that did not fit): ``link`` (internal link id),
+            ``peak_pcu`` and ``storage_pcu``; ``None`` at level 0. The full model (level 4)
+            keeps queues within storage, so its list is about empty. ``viz.map_interactive``
+            can show them.
         """
-        return self._summary.spillback
+        s = self._summary.spillback
+        if s is None:
+            return None
+        keep = (s["peak_pcu"] - s["storage_pcu"]) > min_excess_pcu
+        return {name: values[keep] for name, values in s.items()}
 
     def report_gridlock(self) -> dict[str, Any] | None:
         """What stood still when the last loading's window ended; ``None`` at level 0.

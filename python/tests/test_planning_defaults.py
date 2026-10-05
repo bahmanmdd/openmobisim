@@ -40,9 +40,11 @@ def test_spillback_links_are_listed_and_none_at_free_flow():
     point = jam("pd-pq", equilibration="free_flow")
     s = point.report_spillback()
     assert s is not None and len(s["link"]) > 0, "a jammed grid's queues outgrow some links"
-    assert (s["peak_pcu"] > s["storage_pcu"]).all()
-    ratio = s["peak_pcu"] / s["storage_pcu"]
-    assert (np.diff(ratio) <= 1e-9).all(), "worst first"
+    excess = s["peak_pcu"] - s["storage_pcu"]
+    assert (excess > 5.0).all(), "at least five cars past the road, by default"
+    assert (np.diff(excess) <= 1e-9).all(), "worst first"
+    every = point.report_spillback(min_excess_pcu=0.0)
+    assert len(every["link"]) >= len(s["link"])
     assert jam("pd-free", equilibration="free_flow", flow_level=0).report_spillback() is None
 
 

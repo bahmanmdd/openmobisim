@@ -247,7 +247,8 @@ pub struct PyRunSummary {
     #[pyo3(get)]
     pub timings_path: String,
     /// The links whose peak occupancy in the last loading exceeded their storage (S229): where a
-    /// point queue would have spilled back. `link`, `peak_pcu`, `storage_pcu`, worst first; `None`
+    /// point queue would have spilled back. `link`, `peak_pcu`, `storage_pcu`, worst first (by the
+    /// PCU that did not fit); `None`
     /// at level 0.
     #[pyo3(get)]
     pub spillback: Option<Py<PyDict>>,
@@ -849,7 +850,9 @@ pub fn run_pipeline(
                     (peak > storage).then(|| (link.raw(), peak, storage))
                 })
                 .collect();
-            over.sort_by(|a, b| (b.1 / b.2).total_cmp(&(a.1 / a.2)).then(a.0.cmp(&b.0)));
+            // Worst first by the PCU that did not fit: a few cars over a 5-m link matter less than
+            // a queue a hundred cars past its road.
+            over.sort_by(|a, b| (b.1 - b.2).total_cmp(&(a.1 - a.2)).then(a.0.cmp(&b.0)));
             let d = PyDict::new(py);
             d.set_item("link", over.iter().map(|o| o.0).collect::<Vec<_>>().into_pyarray(py))?;
             d.set_item("peak_pcu", over.iter().map(|o| o.1).collect::<Vec<_>>().into_pyarray(py))?;
