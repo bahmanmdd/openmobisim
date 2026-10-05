@@ -165,6 +165,8 @@ pub struct ModeTotals {
     /// Its trips weighted by their travellers' weights: the trips they stand for (M5, for
     /// the mode share).
     pub weighted_trips: f64,
+    /// Its completed trips weighted the same way: the people who arrived (S232).
+    pub weighted_completed: f64,
 }
 
 /// Why a run could not finish.
@@ -1117,6 +1119,8 @@ impl Run {
             report.mode_changed_floor = mode_floor_by;
             report.total_travel_time_s = loaded.total_travel_time.get();
             report.completed = loaded.completion.completed;
+            report.completed_people =
+                completed_people(&loaded.events, &self.trips, &self.travellers);
             report.truncated = loaded.completion.truncated;
             report.reroutes = u32::try_from(loaded.reroutes.len()).unwrap_or(u32::MAX);
             report.reroute_searches = loaded.reroute_searches;
@@ -2370,6 +2374,16 @@ impl Run {
     }
 }
 
+/// The people the completed trips of a loading stand for: their travellers' weights, from its
+/// events (one per trip; S232).
+fn completed_people(events: &[EventRow], trips: &Trips, travellers: &Travellers) -> f64 {
+    events
+        .iter()
+        .filter(|e| e.event_type == EventType::TripCompleted)
+        .map(|e| f64::from(travellers.weight(trips.traveller(TripId::new(e.entity_id)))))
+        .sum()
+}
+
 /// Each mode's outcomes, from the events of a loading (one per trip) and the
 /// trips' departures (S195): the same travel time a trip adds to the run's
 /// total, filed under its mode.
@@ -2394,6 +2408,7 @@ fn mode_totals(
             EventType::TripCompleted => {
                 c.completed += 1;
                 let weight = travellers.weight(trips.traveller(trip));
+                totals.weighted_completed += f64::from(weight);
                 totals.total_travel_time += (Duration::from_clock(e.second)
                     - Duration::from_clock(trips.departure(trip)))
                     * f64::from(weight);

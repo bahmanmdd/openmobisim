@@ -242,7 +242,9 @@ class Run:
           on the congestion of those before it (``increments``), loaded with the point queue.
         * ``reselected_share``, ``changed_share`` — the share of trips (by weight) that
           chose again on the way to this iteration, and the share whose route changed.
-        * ``total_travel_time_s``, ``completed``, ``truncated`` — this loading's.
+        * ``total_travel_time_s``, ``completed``, ``truncated`` — this loading's;
+          ``completed_people``, the people its completed trips stand for (their travellers'
+          weights, summed), so its mean trip is ``total_travel_time_s / completed_people``.
         * ``time_change`` — how much the link times moved since the last loading, as a
           share of it, weighted by traffic. The stability of the pattern.
         * ``gap`` — the usual measure of how far an assignment is from equilibrium: how
@@ -532,7 +534,10 @@ class Run:
 
         ``{"car": {...}, "bike": {...}}``: the keys of ``completion`` and
         ``total_travel_time_s``, the mode's completed trips' travel time weighted by
-        traveller weight. They add up to the run's.
+        traveller weight, ``people`` (the people its trips stand for: their travellers'
+        weights, summed) and ``completed_people`` (the same for its completed trips). The
+        counts of ``completion`` are of simulated trips; a mode's mean trip is
+        ``total_travel_time_s / completed_people``. They add up to the run's.
         """
         return {mode: dict(row) for mode, row in self._summary.completion_by_mode.items()}
 
@@ -724,6 +729,18 @@ class Run:
         travellers.
         """
         return self._summary.total_travel_time_s
+
+    @property
+    def mean_travel_time_s(self) -> float:
+        """The mean travel time of the completed trips, in seconds, per person (S232).
+
+        ``total_travel_time_s`` over the people the completed trips stand for (their travellers'
+        weights). Dividing by ``completion["completed"]`` instead counts simulated trips, which
+        differs from people when travellers stand for more than one (``default_weight``,
+        ``demand_sample``). ``nan`` if no trip completed.
+        """
+        people = sum(row["completed_people"] for row in self.completion_by_mode.values())
+        return self.total_travel_time_s / people if people > 0 else float("nan")
 
     def __repr__(self) -> str:
         """The completion counts, as a one-line summary."""

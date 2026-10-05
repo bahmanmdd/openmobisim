@@ -77,6 +77,9 @@ pub struct IterationReport {
     pub total_travel_time_s: f64,
     /// Trips that arrived inside the window.
     pub completed: u32,
+    /// The people those trips stand for: their travellers' weights, summed (S232), so a
+    /// mean trip is [`Self::total_travel_time_s`] over it, not over [`Self::completed`].
+    pub completed_people: f64,
     /// Trips still under way when the window ended.
     pub truncated: u32,
     /// How much the link times moved since the last loading, as a share of the
@@ -228,6 +231,7 @@ impl PartialEq for IterationReport {
                 r.reselected_share,
                 r.changed_share,
                 r.total_travel_time_s,
+                r.completed_people,
                 r.time_change,
                 r.gap,
                 r.gap_expected,
@@ -278,6 +282,7 @@ impl IterationReport {
             changed_share: f64::NAN,
             total_travel_time_s: f64::NAN,
             completed: 0,
+            completed_people: f64::NAN,
             truncated: 0,
             time_change: f64::NAN,
             gap: f64::NAN,

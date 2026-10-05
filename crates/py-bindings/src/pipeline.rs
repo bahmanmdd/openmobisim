@@ -332,6 +332,7 @@ fn convergence_arrays(
         "completed",
         reports.iter().map(|r| r.completed).collect::<Vec<_>>().into_pyarray(py),
     )?;
+    dict.set_item("completed_people", floats(|r| r.completed_people).into_pyarray(py))?;
     dict.set_item(
         "truncated",
         reports.iter().map(|r| r.truncated).collect::<Vec<_>>().into_pyarray(py),
@@ -794,6 +795,8 @@ pub fn run_pipeline(
         row.set_item("no_feasible_path", m.completion.no_feasible_path)?;
         row.set_item("mode_not_available", m.completion.mode_not_available)?;
         row.set_item("total_travel_time_s", m.total_travel_time.get())?;
+        row.set_item("people", m.weighted_trips)?;
+        row.set_item("completed_people", m.weighted_completed)?;
         completion_by_mode.set_item(mode.as_str(), row)?;
     }
 

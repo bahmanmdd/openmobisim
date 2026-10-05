@@ -88,6 +88,7 @@ fn sample_result() -> RunResult {
                 },
                 total_travel_time: Duration(600.0),
                 weighted_trips: 4.0,
+                weighted_completed: 2.0,
             };
             by_mode[Mode::Bike.index()] = ModeTotals {
                 completion: TripCompletionStats {
@@ -97,6 +98,7 @@ fn sample_result() -> RunResult {
                 },
                 total_travel_time: Duration(125.0),
                 weighted_trips: 1.0,
+                weighted_completed: 1.0,
             };
             by_mode
         },
@@ -508,6 +510,7 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
         changed_share: if iteration == 0 { f64::NAN } else { 0.25 },
         total_travel_time_s: 1000.0 - 100.0 * f64::from(iteration),
         completed: 4,
+        completed_people: 4.0,
         truncated: 1,
         time_change: if iteration == 0 { f64::NAN } else { 0.1 },
         gap: gap / 2.0,

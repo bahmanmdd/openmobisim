@@ -58,3 +58,27 @@ def test_a_mode_choice_run_shows_the_share_whose_mode_changed(tmp_path):
     r = run("sum-3", modes=("car", "bike", "walk"))
     text = Path(viz.summary(r, str(tmp_path / "m.html"))).read_text(encoding="utf-8")
     assert "mode changed (%)" in text and "by chance (%)" in text and "Verdict on the last" in text
+
+
+def test_a_sampled_run_reports_its_mean_trip_per_person(tmp_path):
+    # S232: a traveller standing for three people adds three times its travel time to the
+    # total (and its car counts as 3 PCU); the mean trip is per person, on the run and the page.
+    plain, tripled = run("sum-w1"), run("sum-w3", default_weight=3)
+    assert plain.mean_travel_time_s == pytest.approx(
+        plain.total_travel_time_s / plain.completion["completed"]
+    )
+    assert tripled.mean_travel_time_s == pytest.approx(
+        tripled.total_travel_time_s / (3 * tripled.completion["completed"])
+    )
+    car = tripled.completion_by_mode["car"]
+    assert (car["people"], car["completed_people"]) == (
+        3 * car["total_trips"],
+        3 * car["completed"],
+    )
+    c = tripled.convergence()
+    assert list(c["completed_people"]) == [3.0 * x for x in c["completed"]]
+    page = Path(viz.summary(tripled, str(tmp_path / "w3.html"))).read_text(encoding="utf-8")
+    assert f"{tripled.mean_travel_time_s / 60:.1f}" in page
+    from openmobisim.viz._summary import _fmt
+
+    assert f">{_fmt(3 * tripled.completion['total_trips'], 0)}<" in page, "trips counted as people"

@@ -23,7 +23,7 @@ FIELDS = [
     "gap_network_excess", "incomplete_share", "gap_transit", "gap_car_transit",
     "gap_bike_transit", "hub_mismatch_s", "gap_car", "gap_bike", "gap_walk", "mode_changed_share",
     "itinerary_recosted", "reroutes", "reroute_searches", "mode_changed_floor",
-    "itinerary_gap_excess",
+    "itinerary_gap_excess", "completed_people",
 ]  # fmt: skip
 
 

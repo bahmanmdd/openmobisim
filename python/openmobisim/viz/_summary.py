@@ -156,12 +156,14 @@ def summary(run: Any, path: str | None = None, *, title: str | None = None, note
     """
     paper, night = THEMES["paper"], THEMES["night"]
     c = run.completion
-    total = c["total_trips"]
-    done = c["completed"]
     conv = run.convergence()
     manifest = run.manifest()
-    mean_trip_min = run.total_travel_time_s / 60 / max(done, 1)
     by_mode = run.completion_by_mode
+    # People, not simulated trips (S232): a traveller stands for its weight in people.
+    total = sum(r["people"] for r in by_mode.values())
+    done = sum(r["completed_people"] for r in by_mode.values())
+    mean_trip_min = run.mean_travel_time_s / 60 if done > 0 else 0.0
+    per_person = total / max(c["total_trips"], 1)
 
     # Tiles: the headline numbers.
     tiles = "".join(
@@ -170,9 +172,9 @@ def summary(run: Any, path: str | None = None, *, title: str | None = None, note
             _tile("completed", _fmt(100 * done / max(total, 1)), "%", f"{_fmt(done, 0)} trips"),
             _tile(
                 "never finished",
-                _fmt(100 * c["truncated"] / max(total, 1), 2),
+                _fmt(100 * c["truncated"] / max(c["total_trips"], 1), 2),
                 "%",
-                f"{_fmt(c['truncated'], 0)} still under way at the end",
+                f"{_fmt(c['truncated'] * per_person, 0)} still under way at the end",
             ),
             _tile("mean trip", _fmt(mean_trip_min), "min", "of the trips that finished"),
             _tile(
@@ -191,15 +193,15 @@ def summary(run: Any, path: str | None = None, *, title: str | None = None, note
         if m not in by_mode:
             continue
         r = by_mode[m]
-        share = 100 * r["total_trips"] / max(total, 1)
-        mean_m = r["total_travel_time_s"] / 60 / max(r["completed"], 1)
+        share = 100 * r["people"] / max(total, 1)
+        mean_m = r["total_travel_time_s"] / 60 / max(r["completed_people"], 1)
         mode_rows.append(
             [
                 f'<span class="sw" style="--c:{paper.modes[i]};--cn:{night.modes[i]}"></span>'
                 f"{MODE_NAMES[m]}",
-                _fmt(r["total_trips"], 0),
+                _fmt(r["people"], 0),
                 _fmt(share),
-                _fmt(100 * r["completed"] / max(r["total_trips"], 1)),
+                _fmt(100 * r["completed_people"] / max(r["people"], 1)),
                 _fmt(mean_m),
             ]
         )
@@ -222,14 +224,14 @@ def summary(run: Any, path: str | None = None, *, title: str | None = None, note
         for r, i in zip(conv["gap_excess"], conv["itinerary_gap_excess"], strict=True)
     ]
     for k in range(len(it)):
-        mt = conv["total_travel_time_s"][k] / 60 / max(conv["completed"][k], 1)
+        mt = conv["total_travel_time_s"][k] / 60 / max(conv["completed_people"][k], 1)
         gx = measure[k]
         row = [str(it[k]), _fmt(mt, 2), "—" if gx != gx else f"{gx:.3f}"]
         if choosing:
             for x in (conv["mode_changed_share"][k], conv["mode_changed_floor"][k]):
                 row.append("—" if x != x else f"{100 * x:.2f}")
         row += [
-            _fmt(100 * conv["truncated"][k] / max(total, 1), 2),
+            _fmt(100 * conv["truncated"][k] / max(c["total_trips"], 1), 2),
             _fmt(conv["reroute_searches"][k], 0),
         ]
         conv_rows.append(row)
