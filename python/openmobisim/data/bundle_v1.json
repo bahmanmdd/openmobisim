@@ -19,11 +19,11 @@
   "lyon": {
    "archive": {
     "name": "lyon.zip",
-    "sha256": "07e39f3e9d853d4805357c2894426655d5131b3a7debf915ce85c639ece5dedd",
-    "bytes": 37221370
+    "sha256": "795f36fd69be46a0aa6dd4c64d285fd71965b1210064294214105158d16d5d1f",
+    "bytes": 37221412
    },
    "files": {
-    "case.json": "0b9f8817069899781e4d42d013d22070acce85ffae8c896f2028551e87b1eb2e",
+    "case.json": "1a35acbacea59fcdc124dda0c68689eecb772ea52cb1557a5dd437d3e894886f",
     "demand/classes.csv": "7588b718baa2424407a3f0a6e075f069e3f2dad361fb90ce8b2e97d0510d40cf",
     "demand/od.csv": "e62db36211e49483928d00799ebe64a1a5ed023ef1496adb42e25d3c6b1daffb",
     "demand/zones.csv": "2a4ddf1f10db6f42e0d952410e51704662e9bc07981dd6f64a0c9cd9f68e6afd",
@@ -34,11 +34,11 @@
   "nguyendupuis": {
    "archive": {
     "name": "nguyendupuis.zip",
-    "sha256": "0dedb7d6f9ce2fdc6f7c49b27fdc92a4932a0c870cbb94700d1e077a031d50ba",
-    "bytes": 1592
+    "sha256": "02380c93c536c52a9f88b32d3ce443618bb8add716202c32a2f73bce23e1f97c",
+    "bytes": 1595
    },
    "files": {
-    "case.json": "47900991d9e1c313c57901951afedcb268c4e2012e900abac5fbd5bc62f9bdc3",
+    "case.json": "5357d1c9a175ea379aaf8449d0ce313c9971c0b0915f657395f01a16762cf9ea",
     "demand/classes.csv": "732da9800415f29279d5b1973c2c06ea20e9078f195df993d0538d38e8b402c4",
     "demand/od.csv": "67cf5e21ad563d75c7176bd03b04a6f8a44604b88eab2960964ca1d599c8ca0f",
     "demand/zones.csv": "7582c12f615f80c795c3b95a82b9902cd140ff87c61b5401228bbf99eccfb49a",
@@ -64,11 +64,11 @@
   "siouxfalls": {
    "archive": {
     "name": "siouxfalls.zip",
-    "sha256": "9419dc4d75d4d574781ad58c8cedc14e459a63e703d40eb76031697b3e866f64",
-    "bytes": 3956
+    "sha256": "434351c17a39a5c42cb1af54c3e32189fa661e7bf623d7bf88966e50e2e5ce8f",
+    "bytes": 3959
    },
    "files": {
-    "case.json": "f4b960906a1cba1ce7cf75091c6c4682b9f1d457e80a14ebfc077abf55c0c632",
+    "case.json": "919d5b151575ecb9a22e692c69c0e64905ec87876a7d79e8270de88804852327",
     "demand/classes.csv": "732da9800415f29279d5b1973c2c06ea20e9078f195df993d0538d38e8b402c4",
     "demand/od.csv": "8254bec3e7f3eb3561855934964efa92fca84117e072448e611b304d3017cd0c",
     "demand/zones.csv": "09d51fa109d7cb1246b26a675a6ced7cff642229ca45aab5f200afce1775fe2f",
