@@ -185,6 +185,31 @@ pub trait ChoiceModel: Send + Sync {
     fn probabilities(&self, _batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
         Ok(None)
     }
+
+    /// The **logsum** of every situation in `batch`, one value per situation, or `None` if the
+    /// model has none to give (S238): the expected utility of the best alternative, up to a
+    /// constant — the log of the sum of the exponentials of the utilities for a logit. In the
+    /// units of the utility; divided by a time coefficient's size it reads in minutes. The
+    /// standard utility-based accessibility measure (Ben-Akiva and Lerman, 1985).
+    ///
+    /// Optional, like [`Self::probabilities`].
+    ///
+    /// # Errors
+    ///
+    /// [`ChoiceError`] if an attribute is missing or the model fails.
+    fn logsums(&self, _batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
+        Ok(None)
+    }
+}
+
+/// `ln Σ exp(v)` over `values`, computed stably; `−∞` for none.
+#[must_use]
+pub fn log_sum_exp(values: impl Iterator<Item = f64> + Clone) -> f64 {
+    let top = values.clone().fold(f64::NEG_INFINITY, f64::max);
+    if top == f64::NEG_INFINITY {
+        return top;
+    }
+    top + values.map(|v| (v - top).exp()).sum::<f64>().ln()
 }
 
 // --- helpers a new model builds on ------------------------------------------------

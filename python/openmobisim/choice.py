@@ -60,6 +60,9 @@ choice was. A model may also have a ``probabilities(batch)`` method returning th
 probability of **every** alternative (one number per alternative, summing to one
 within each situation): it lets an iterated run (``equilibration="msa"``) measure
 how far the pattern is from equilibrium; without it those measures are ``nan``.
+And it may have a ``logsum(batch)`` method returning one number per situation, the
+expected utility of its best alternative (S238): ``Run.itinerary_choices()["logsum"]``,
+for accessibility; without it that column is ``nan``.
  Optional attributes of the model: ``name``, ``descriptor`` (both in
 the manifest and part of the run's fingerprint: **change the descriptor when the
 model's behaviour changes**, or two different models look like one run),

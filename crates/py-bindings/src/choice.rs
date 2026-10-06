@@ -238,6 +238,41 @@ impl ChoiceModel for PythonChoice {
         })
     }
 
+    fn logsums(&self, batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
+        Python::attach(|py| {
+            let model = self.model.bind(py);
+            // Optional (S238): a ``logsum(batch)`` method returning one number per situation.
+            if !model.getattr("logsum").is_ok_and(|p| p.is_callable()) {
+                return Ok(None);
+            }
+            let rng = StreamRng::new(
+                openmobisim_core_types::rng::RngKey::from_seed(0),
+                openmobisim_core_types::rng::Stream::Choice,
+            );
+            let arg = build_batch(py, batch, &rng, &self.class_names).map_err(|e| failed(&e))?;
+            let answer = model.call_method1("logsum", (arg,)).map_err(|e| failed(&e))?;
+            if answer.is_none() {
+                return Ok(None);
+            }
+            let numpy = py.import("numpy").map_err(|e| failed(&e))?;
+            let array = as_array(&numpy, &answer, "float64")?;
+            let read: PyReadonlyArray1<'_, f64> = array.extract().map_err(|_| {
+                ChoiceError::BadAnswer(
+                    "logsum() must return a one-dimensional array of numbers".to_string(),
+                )
+            })?;
+            let v = read.as_slice().map_err(|e| failed(&e.into()))?.to_vec();
+            if v.len() != batch.situations() {
+                return Err(ChoiceError::BadAnswer(format!(
+                    "logsum() gave {} numbers for {} situations",
+                    v.len(),
+                    batch.situations()
+                )));
+            }
+            Ok(Some(v))
+        })
+    }
+
     fn name(&self) -> &str {
         &self.name
     }

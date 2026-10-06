@@ -641,7 +641,14 @@ class Run:
         first; ``"back"``: transit first, to where the vehicle is; ``""`` otherwise),
         ``alternatives`` (how many it chose among when it last chose; 0: it did not travel),
         ``probability`` (what the model gave its choice), ``expected_s`` (the chosen itinerary's
-        door-to-door time expected at the choice) and ``rides`` (vehicles boarded).
+        door-to-door time expected at the choice), ``rides`` (vehicles boarded) and ``logsum``
+        (S238: the **logsum** of the trip's choice set when it was last planned — the expected
+        utility of its best alternative, ``ln Σ exp(utility)`` for the logit and its nested form
+        for the nested logit; ``nan`` for a model that gives none; a model of one's own may give
+        one with a ``logsum(batch)`` method, one number per situation). In the utility's units:
+        divided by ``-beta_time_min`` it reads in minutes. It is the standard utility-based
+        accessibility measure: compare a trip's logsum between two scenarios, or average it by
+        class or by origin zone.
         """
         choices = self._summary.itinerary_choices
         return None if choices is None else dict(choices)

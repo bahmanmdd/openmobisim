@@ -346,6 +346,15 @@ impl ChoiceModel for Logit {
     fn probabilities(&self, batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
         Ok(Some(self.probabilities_by_situation(batch)?.into_iter().flatten().collect()))
     }
+
+    fn logsums(&self, batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
+        let utility = self.utilities(batch)?;
+        Ok(Some(
+            (0..batch.situations())
+                .map(|s| crate::model::log_sum_exp(utility[batch.range(s)].iter().copied()))
+                .collect(),
+        ))
+    }
 }
 
 /// The draw space of the nests: the iteration field of their draws carries this bit, so a
@@ -535,6 +544,24 @@ impl ChoiceModel for NestedLogit {
         for s in 0..batch.situations() {
             let range = batch.range(s);
             out.extend(self.situation_probabilities(&utility[range.clone()], &nest[range]));
+        }
+        Ok(Some(out))
+    }
+
+    /// `ln Σₙ exp(μ·Iₙ)`, `Iₙ = ln Σ_{j∈n} exp(Vⱼ/μ)`: the logsum of this nesting.
+    fn logsums(&self, batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
+        let utility = self.logit.utilities(batch)?;
+        let nest = Self::nest_column(batch)?;
+        let mut out = Vec::with_capacity(batch.situations());
+        for s in 0..batch.situations() {
+            let range = batch.range(s);
+            let (u, n) = (&utility[range.clone()], &nest[range]);
+            let (of, ids) = Self::nests(n);
+            let tops = (0..ids.len()).map(|k| {
+                let members = u.iter().zip(&of).filter(move |&(_, &m)| m == k);
+                self.mu * crate::model::log_sum_exp(members.map(|(v, _)| v / self.mu))
+            });
+            out.push(crate::model::log_sum_exp(tops));
         }
         Ok(Some(out))
     }

@@ -293,3 +293,31 @@ def test_a_layer_s_link_ids_tie_its_links_to_the_road_s() -> None:
     assert along and along <= set(road)
     grid = ms.examples.manhattan_grid(n=3, block_metres=100.0, signals=False)
     assert set(grid.layer("bike").link_ids()) <= set(grid.link_ids()), "derived: the road's"
+
+
+def test_each_trip_s_logsum_rises_with_a_better_alternative_and_a_model_may_give_its_own() -> None:
+    # S238: utility-based accessibility. W → N1 chooses among bike, walk and the parkings.
+    import numpy as np
+
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, "a", "W", "N1", 0, None)]
+    plain = toy_run(rows, "logsum-plain", modes=ms.MODES, choice_model="logit")
+    keen = toy_run(rows, "logsum-keen", modes=ms.MODES, choice_model="logit",
+                   choice_options={"beta_mode_bike": 1.0})  # fmt: skip
+    ls_plain, ls_keen = plain.itinerary_choices()["logsum"], keen.itinerary_choices()["logsum"]
+    assert np.isfinite(ls_plain).all() and ls_keen[0] > ls_plain[0], "a better bike, a higher sum"
+    assert np.isnan(toy_run(rows, "logsum-none", modes=ms.MODES).itinerary_choices()["logsum"][0])
+
+    class Own:
+        name = "own"
+
+        def choose(self, batch):
+            from openmobisim import choice
+
+            return choice.segment_argmax(-batch.attributes["time_min"], batch.offsets)
+
+        def logsum(self, batch):
+            return np.full(len(batch), 7.0)
+
+    own = toy_run(rows, "logsum-own", modes=ms.MODES, choice_model=Own())
+    assert list(own.itinerary_choices()["logsum"]) == [7.0]

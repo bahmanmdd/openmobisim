@@ -333,6 +333,7 @@ pub(crate) fn itinerary_choices<'py>(
     d.set_item("user_class", class)?;
     d.set_item("mode", mode)?;
     d.set_item("mode_choice", result.choosing.clone())?;
+    d.set_item("logsum", result.logsum.clone().into_pyarray(py))?;
     let parking_id: Vec<Option<String>> = result
         .parking
         .iter()

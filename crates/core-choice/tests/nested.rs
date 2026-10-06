@@ -105,3 +105,24 @@ fn options_are_checked_and_the_model_is_selected_by_name() {
     b.push_alternative(1, &[1.0]);
     assert!(nested(0.5).choose(&b, &rng(1)).is_err());
 }
+
+#[test]
+fn the_logsums_are_by_hand_and_the_nested_one_is_the_flat_one_at_mu_1() {
+    // S238: the expected utility of the best alternative, for accessibility.
+    let v = ALTS.map(|(_, t, _)| -0.2 * t);
+    let b = batch(2, &ALTS);
+    let flat = Logit::default().logsums(&b).unwrap().unwrap();
+    let by_hand_flat = v.iter().map(|x| x.exp()).sum::<f64>().ln();
+    assert_eq!(flat.len(), 2, "one per situation");
+    assert!((flat[0] - by_hand_flat).abs() < 1e-12);
+    for mu in [0.3, 0.5, 0.8] {
+        let car = ((v[0] / mu).exp() + (v[1] / mu).exp()).ln();
+        let by_hand = ((mu * car).exp() + v[2].exp()).ln();
+        let got = nested(mu).logsums(&b).unwrap().unwrap();
+        assert!((got[1] - by_hand).abs() < 1e-12, "mu {mu}: {} vs {by_hand}", got[1]);
+        assert!(got[0] > v[0], "above the best alternative's utility");
+    }
+    let one = nested(1.0).logsums(&b).unwrap().unwrap();
+    assert!((one[0] - flat[0]).abs() < 1e-12);
+    assert_eq!(openmobisim_core_choice::log_sum_exp(std::iter::empty()), f64::NEG_INFINITY);
+}

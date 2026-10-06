@@ -1263,6 +1263,9 @@ pub struct Chosen {
     /// How many alternatives the trip had when it last chose (a trip that keeps its
     /// alternative is not asked again).
     pub alternatives: Vec<u32>,
+    /// The logsum of its choice set when it was last planned (S238; `NaN` if the model gives
+    /// none): the expected utility of its best alternative, for utility-based accessibility.
+    pub logsum: Vec<f64>,
 }
 
 /// What one choice pass found, for the convergence report.
@@ -1702,6 +1705,7 @@ impl Itineraries {
             alt: current.map_or_else(|| vec![None; n], |c| c.alt.clone()),
             probability: current.map_or_else(|| vec![f64::NAN; n], |c| c.probability.clone()),
             alternatives: current.map_or_else(|| vec![0; n], |c| c.alternatives.clone()),
+            logsum: current.map_or_else(|| vec![f64::NAN; n], |c| c.logsum.clone()),
         };
         let mut assessment = Assessment { expected_measured: true, ..Assessment::default() };
         let (trips, travellers) = (inputs.trips, inputs.travellers);
@@ -1865,6 +1869,15 @@ impl Itineraries {
                         next.alt[p] = Some(kept.clone());
                     }
                 }
+                // Each planned trip's logsum, on this iteration's costs (S238).
+                if batch.situations() > 0 {
+                    batch.validate()?;
+                    if let Some(logsums) = inputs.model.logsums(&batch)? {
+                        for (s, &w) in situation_of.iter().enumerate() {
+                            next.logsum[work[w].0] = logsums[s];
+                        }
+                    }
+                }
                 if !(in_gap.is_empty() && floor.is_empty()) {
                     batch.validate()?;
                     match inputs.model.probabilities(&batch)? {
@@ -1949,6 +1962,8 @@ pub struct ItineraryResult {
     pub mode: Vec<u8>,
     /// Whether the trip chose its mode (M5), or was given it.
     pub choosing: Vec<bool>,
+    /// The logsum of its choice set (S238; `NaN` if the model gives none).
+    pub logsum: Vec<f64>,
 }
 
 /// No mode: a trip that had no alternative.
@@ -1975,6 +1990,7 @@ impl ItineraryResult {
             return_mismatch_s,
             mode: Vec::with_capacity(n),
             choosing: itineraries.choosing.clone(),
+            logsum: chosen.logsum.clone(),
         };
         for alt in &chosen.alt {
             #[allow(clippy::cast_possible_truncation, reason = "six modes")]
