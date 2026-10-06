@@ -16,12 +16,12 @@ import openmobisim as ms
 import pytest
 
 TABLE = """class,share,modes,owns_car,owns_bike,has_transit_pass,beta_mode_car,beta_mode_bike,beta_mode_walk,beta_mode_transit
-car_captive,0.15,car,1,0,0,0,,,
-bike_enthusiast,0.15,bike;walk;transit;bike_transit,0,1,1,,1.5,0,0
-transit_only,0.10,walk;transit,0,0,1,,,0,0.5
-open_to_all,0.45,car;bike;walk;transit;car_transit;bike_transit,1,1,1,0,0,0,0
+car_captive,0.05,car,1,0,0,0,,,
+bike_enthusiast,0.60,bike;walk;transit;bike_transit,0,1,1,,1.5,0,0
+transit_only,0.05,walk;transit,0,0,1,,,0,0.5
+open_to_all,0.20,car;bike;walk;transit;car_transit;bike_transit,1,1,1,0,0,0,0
 walker,0.05,walk;transit,0,0,1,,,1.0,0
-park_and_ride_commuter,0.10,car;transit;car_transit,1,0,1,0,,,0.3
+park_and_ride_commuter,0.05,car;transit;car_transit,1,0,1,0,,,0.3
 """  # noqa: E501
 
 

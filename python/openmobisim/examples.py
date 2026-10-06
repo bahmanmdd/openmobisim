@@ -204,17 +204,20 @@ def traveller_classes() -> dict[str, dict]:
     ===========================  =====  ==========================================  ==========
     Class                        Share  Modes                                       Constants
     ===========================  =====  ==========================================  ==========
-    ``car_captive``              0.15   car                                         car 0
-    ``bike_enthusiast``          0.15   bike, walk, transit, bike-and-ride          bike 1.5
-    ``transit_only``             0.10   walk, transit                               transit 0.5
-    ``open_to_all``              0.45   all six                                     all 0
+    ``car_captive``              0.05   car                                         car 0
+    ``bike_enthusiast``          0.60   bike, walk, transit, bike-and-ride          bike 1.5
+    ``transit_only``             0.05   walk, transit                               transit 0.5
+    ``open_to_all``              0.20   all six                                     all 0
     ``walker``                   0.05   walk, transit                               walk 1.0
-    ``park_and_ride_commuter``   0.10   car, transit, park-and-ride                 transit 0.3
+    ``park_and_ride_commuter``   0.05   car, transit, park-and-ride                 transit 0.3
     ===========================  =====  ==========================================  ==========
 
     Each class owns what its modes need (a car for one that may drive or park and ride, a bike
     for one that may cycle, a transit pass for one that may take transit); a constant not shown
-    is 0. **Illustrative, not calibrated**: a starting point to replace with a study's own.
+    is 0. **Illustrative, not calibrated**: a starting point to replace with a study's own. The
+    shares were chosen (S234) so that a synthetic morning commute in Amsterdam comes near the
+    city's split between cycling, public transport and driving (about 38 : 17 : 23); walking,
+    mostly short trips, needs a demand that has them.
     ``demand_assign_classes(trips, traveller_classes())`` draws them for a demand's travellers;
     ``Scenario.from_parts(..., classes=traveller_classes())`` runs them.
     """
@@ -222,17 +225,17 @@ def traveller_classes() -> dict[str, dict]:
 
     every = ["car", "bike", "walk", "transit", "car_transit", "bike_transit"]
     return _class_table({
-        "car_captive": {"share": 0.15, "modes": ["car"], "beta_mode_car": 0.0},
+        "car_captive": {"share": 0.05, "modes": ["car"], "beta_mode_car": 0.0},
         "bike_enthusiast": {
-            "share": 0.15, "modes": ["bike", "walk", "transit", "bike_transit"],
+            "share": 0.60, "modes": ["bike", "walk", "transit", "bike_transit"],
             "beta_mode_bike": 1.5, "beta_mode_walk": 0.0, "beta_mode_transit": 0.0,
         },
         "transit_only": {
-            "share": 0.10, "modes": ["walk", "transit"], "beta_mode_walk": 0.0,
+            "share": 0.05, "modes": ["walk", "transit"], "beta_mode_walk": 0.0,
             "beta_mode_transit": 0.5,
         },
         "open_to_all": {
-            "share": 0.45, "modes": every, "beta_mode_car": 0.0, "beta_mode_bike": 0.0,
+            "share": 0.20, "modes": every, "beta_mode_car": 0.0, "beta_mode_bike": 0.0,
             "beta_mode_walk": 0.0, "beta_mode_transit": 0.0,
         },
         "walker": {
@@ -240,7 +243,7 @@ def traveller_classes() -> dict[str, dict]:
             "beta_mode_transit": 0.0,
         },
         "park_and_ride_commuter": {
-            "share": 0.10, "modes": ["car", "transit", "car_transit"], "beta_mode_car": 0.0,
+            "share": 0.05, "modes": ["car", "transit", "car_transit"], "beta_mode_car": 0.0,
             "beta_mode_transit": 0.3,
         },
     })  # fmt: skip
