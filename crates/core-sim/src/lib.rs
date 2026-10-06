@@ -57,7 +57,7 @@ pub use events::{EventRow, EventType};
 pub use identity::RunDescription;
 pub use itinerary::{Itinerary, LegRoute, Networks};
 pub use itinerary_choice::{ATTRIBUTES, ItineraryResult, NO_MODE, NO_PARKING};
-pub use layers::{LayerSetup, ModeDefaults, StaticLayers};
+pub use layers::{ClassLimits, LayerSetup, ModeDefaults, StaticLayers};
 pub use link_times::{LinkTimes, relative_time_change};
 pub use loading_rules::LoadingOptions;
 pub use parking::{

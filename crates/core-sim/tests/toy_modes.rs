@@ -43,8 +43,8 @@ use openmobisim_core_graph::{LonLat, toy_network, toy_network_layers};
 use openmobisim_core_loading::FidelityLevel;
 use openmobisim_core_sim::equilibration::strategy;
 use openmobisim_core_sim::{
-    EventType, FlowMotor, LayerSetup, ModeDefaults, NO_MODE, ParkingDefaults, ParkingSetup, Run,
-    RunResult, StaticLayers, TransitSetup,
+    ClassLimits, EventType, FlowMotor, LayerSetup, ModeDefaults, NO_MODE, ParkingDefaults,
+    ParkingSetup, Run, RunResult, StaticLayers, TransitSetup,
 };
 use openmobisim_core_transit::TransitDefaults;
 use openmobisim_core_transit::examples::toy_tram;
@@ -67,12 +67,18 @@ fn toy() -> Toy {
         bike: Some(LayerSetup::new(Arc::new(bike), BikeCost::Dedicated, d)),
         walk: Some(LayerSetup::new(Arc::new(walk), BikeCost::Dedicated, d)),
     });
-    let transit = Arc::new(TransitSetup::new(
-        Arc::new(toy_tram()),
-        layers.walk.as_ref().unwrap(),
-        layers.bike.as_ref(),
-        TransitDefaults::SHIPPED,
-    ));
+    // The cases below were derived by hand with a 15-minute walk to and from a stop; the
+    // shipped 30 minutes (S235) also offers W → N1 a plain transit journey (mc7b). Searched
+    // to 30 minutes, so a class may walk that far.
+    let transit = Arc::new(
+        TransitSetup::new(
+            Arc::new(toy_tram()),
+            layers.walk.as_ref().unwrap(),
+            layers.bike.as_ref(),
+            TransitDefaults { access_walk_max_s: 900.0, ..TransitDefaults::SHIPPED },
+        )
+        .with_access_search_s(1800.0),
+    );
     Toy { road, layers, transit }
 }
 
@@ -422,6 +428,74 @@ fn mc6_without_a_timetable_walk_bike_and_car_are_chosen_among() {
 }
 
 #[test]
+fn mc7b_a_class_s_own_limits_replace_the_run_s() {
+    let t = toy();
+    let one = || vec![t.trip("a", 0, ("W", "N1"), 0, None)];
+    let run = |defaults: ModeDefaults, class: ClassLimits| {
+        t.build(one(), &Setup::default())
+            .with_mode_defaults(defaults)
+            .with_class_limits(vec![class])
+            .execute(&mut Diagnostics::new())
+    };
+    let count = |r: &RunResult| r.itineraries.as_ref().unwrap().alternatives[0];
+    let short = ModeDefaults { walk_max_s: 300.0, bike_max_s: 100.0 };
+    // A class giving nothing takes the run's: walk and bike dropped, as in mc7.
+    assert_eq!(count(&run(short, ClassLimits::default())), 3);
+    // Its own longer ride brings the bike back (144 s), the walk stays out (318.198 s).
+    let r = run(short, ClassLimits { bike_max_s: Some(200.0), ..ClassLimits::default() });
+    assert_eq!(count(&r), 4, "bike, two park-and-ride, one bike-and-ride");
+    assert_eq!(chosen(&t, &r, 0).0, Mode::Bike);
+    // Its own shorter limits drop them under the run's longer ones.
+    let r = run(
+        ModeDefaults::SHIPPED,
+        ClassLimits { walk_max_s: Some(300.0), bike_max_s: Some(100.0), ..ClassLimits::default() },
+    );
+    assert_eq!(count(&r), 3, "as the run's own short limits");
+    // A class walking 30 minutes to a stop, the shipped limit, is also offered the tram from
+    // W, beyond the toy's 15 minutes; one walking 15 minutes of its own is not.
+    let walking = |s: f64| ClassLimits { access_walk_max_s: Some(s), ..ClassLimits::default() };
+    assert_eq!(count(&run(ModeDefaults::SHIPPED, walking(1800.0))), 6, "and plain transit");
+    assert_eq!(count(&run(ModeDefaults::SHIPPED, walking(900.0))), 5);
+    // Another class's limits do not touch this one's trips.
+    let two = t
+        .build(one(), &Setup::default())
+        .with_mode_defaults(short)
+        .with_class_limits(vec![
+            ClassLimits::default(),
+            ClassLimits { bike_max_s: Some(200.0), ..ClassLimits::default() },
+        ])
+        .execute(&mut Diagnostics::new());
+    assert_eq!(count(&two), 3);
+}
+
+#[test]
+#[should_panic(expected = "beyond the 1800 s the timetable's setup searches")]
+fn mc7c_a_class_walking_further_than_the_setup_searches_is_refused() {
+    let t = toy();
+    let _ = t
+        .build(vec![t.trip("a", 0, ("W", "N1"), 0, None)], &Setup::default())
+        .with_class_limits(vec![ClassLimits {
+            access_walk_max_s: Some(3600.0),
+            ..ClassLimits::default()
+        }])
+        .execute(&mut Diagnostics::new());
+}
+
+#[test]
+fn mc7d_class_limits_are_read_by_name_and_refused_when_wrong() {
+    let read = |pairs: &[(&str, f64)]| ClassLimits::from_options(&options(pairs));
+    assert_eq!(
+        read(&[("bike_max_s", 5400.0)]),
+        Ok(ClassLimits { bike_max_s: Some(5400.0), ..ClassLimits::default() })
+    );
+    assert!(read(&[("walk_max_s", f64::INFINITY)]).is_ok(), "every walk offered");
+    assert!(read(&[("bike_max", 1.0)]).unwrap_err().contains("walk_max_s, bike_max_s"));
+    assert!(read(&[("bike_max_s", 0.0)]).is_err());
+    assert!(read(&[("access_walk_max_s", f64::INFINITY)]).is_err(), "searched: finite");
+    assert!(read(&[]).unwrap().is_empty());
+}
+
+#[test]
 fn mc7_mode_choice_offers_a_walk_or_a_ride_only_up_to_its_cut_offs() {
     let t = toy();
     let one = || vec![t.trip("a", 0, ("W", "N1"), 0, None)];
@@ -431,7 +505,7 @@ fn mc7_mode_choice_offers_a_walk_or_a_ride_only_up_to_its_cut_offs() {
             .execute(&mut Diagnostics::new())
     };
     let count = |r: &RunResult| r.itineraries.as_ref().unwrap().alternatives[0];
-    // The default 30 minutes offers both: bike 144 s, walk 318.198 s.
+    // The defaults (30 minutes' walk, 60 minutes' ride) offer both: bike 144 s, walk 318.198 s.
     assert_eq!(count(&run(ModeDefaults::SHIPPED)), 5);
     // A 300-s walk limit drops the walk only; the bike still wins.
     let r = run(ModeDefaults { walk_max_s: 300.0, ..ModeDefaults::SHIPPED });

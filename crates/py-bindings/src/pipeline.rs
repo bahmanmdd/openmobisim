@@ -38,8 +38,8 @@ use openmobisim_core_graph::layers::{BikeCost, StaticLayer};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
 use openmobisim_core_sim::{
-    FlowMotor, LayerSetup, LoadingOptions, ModeDefaults, ParkingDefaults, ParkingSetup,
-    Run as CoreRun, StaticLayers, Timings, TransitSetup,
+    ClassLimits, FlowMotor, LayerSetup, LoadingOptions, ModeDefaults, ParkingDefaults,
+    ParkingSetup, Run as CoreRun, StaticLayers, Timings, TransitSetup,
 };
 use openmobisim_core_transit::TransitDefaults;
 
@@ -401,7 +401,8 @@ fn convergence_arrays(
     network, run_id, output_dir,
     trips=None, trips_path=None,
     persons=None, persons_path=None,
-    class_defaults=None, class_modes=None, class_options=None, default_weight=1, window_s=86_400,
+    class_defaults=None, class_modes=None, class_options=None, class_limits=None,
+    default_weight=1, window_s=86_400,
     flow_level=0, flow_step_s=300, link_bin_s=None,
     route_method="penalty", route_options=None, master_seed=0,
     choice_model=None, choice_options=None,
@@ -427,6 +428,7 @@ pub fn run_pipeline(
     class_defaults: Option<HashMap<String, (bool, bool, bool)>>,
     class_modes: Option<HashMap<String, Vec<String>>>,
     class_options: Option<HashMap<String, HashMap<String, f64>>>,
+    class_limits: Option<HashMap<String, HashMap<String, f64>>>,
     default_weight: u32,
     window_s: u32,
     flow_level: u32,
@@ -485,6 +487,16 @@ pub fn run_pipeline(
                 allowed[Mode::from_name(name).map_err(to_value_error)?.index()] = true;
             }
             Ok((class, allowed))
+        })
+        .collect::<PyResult<_>>()?;
+    // Each class's own choice-set limits (S235), refused by name before any work.
+    let class_limits: HashMap<String, ClassLimits> = class_limits
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(class, options)| {
+            let limits = ClassLimits::from_options(&options.into_iter().collect())
+                .map_err(|e| PyValueError::new_err(format!("class {class:?}: {e}")))?;
+            Ok((class, limits))
         })
         .collect::<PyResult<_>>()?;
     let transit_defaults =
@@ -559,6 +571,11 @@ pub fn run_pipeline(
         .iter()
         .map(|c| class_modes.get(c).copied().unwrap_or([true; Mode::COUNT]))
         .collect();
+    let class_limits: Vec<ClassLimits> =
+        class_names.iter().map(|c| class_limits.get(c).copied().unwrap_or_default()).collect();
+    // The walk to a stop is searched as far as the longest any class in the demand takes.
+    let access_search_s =
+        class_limits.iter().filter_map(|l| l.access_walk_max_s).fold(0.0, f64::max);
     let by_index: Vec<(String, BTreeMap<String, f64>)> = class_names
         .iter()
         .map(|c| (c.clone(), class_options.get(c).cloned().unwrap_or_default()))
@@ -644,6 +661,7 @@ pub fn run_pipeline(
             let walk = layers.walk.as_ref().expect("made above for a timetable");
             let bike = setup(StaticLayer::Bike)?;
             let built = TransitSetup::new(t.timetable.clone(), walk, Some(&bike), transit_defaults)
+                .with_access_search_s(access_search_s)
                 .with_roads(network.inner.clone());
             Some(Arc::new(built))
         }
@@ -670,6 +688,7 @@ pub fn run_pipeline(
     run = run
         .with_mode_choice(&modes)
         .with_class_modes(class_allowed)
+        .with_class_limits(class_limits)
         .with_mode_defaults(mode_defaults)
         .with_loading_options(loading);
     // What went in, taken before it runs (S168).

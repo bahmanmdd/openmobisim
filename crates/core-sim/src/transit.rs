@@ -113,17 +113,28 @@ pub struct TransitSetup {
     scheduled: RaptorData,
     /// How the buses ride the roads, if they do.
     buses: Option<BusPlan>,
+    /// How far the access and egress walks are searched, in seconds: the longest any
+    /// traveller takes ([`Self::with_access_search_s`]; the defaults' unless a class walks
+    /// further, S235).
+    access_search_s: f64,
     /// Per walk node, filled on first use: the stops a passenger reaches walking from it
-    /// (access) and the stops they walk to it from (egress), each with the walk plus the
-    /// stop's transfer. The walk layer is static, so a node's lists never change in a run
-    /// and are searched once, not once per trip and iteration (S209). Whichever thread
-    /// fills an entry, it fills the same list.
+    /// (access) and the stops they walk to it from (egress), each with the walk in whole
+    /// seconds, as far as [`Self::access_search_s`]. The walk layer is static, so a node's
+    /// lists never change in a run and are searched once, not once per trip and iteration
+    /// (S209); each trip takes those within its own limit. Whichever thread fills an
+    /// entry, it fills the same list.
     access_memo: Vec<StopWalks>,
     egress_memo: Vec<StopWalks>,
 }
 
 /// A walk node's stops and the walk to each, filled once (see [`TransitSetup`]'s memos).
 type StopWalks = OnceLock<Box<[(NodeId, u32)]>>;
+
+/// Whether a walk of `walk` whole seconds is within `limit` seconds: a walk of `s` seconds
+/// is counted in whole seconds, so `limit` 900 takes walks under 901 s.
+fn within(walk: u32, limit: f64) -> bool {
+    f64::from(walk) <= limit
+}
 
 /// How a timetable's buses ride a road network: see the [module docs](self).
 #[derive(Debug)]
@@ -304,9 +315,27 @@ impl TransitSetup {
             footpaths,
             scheduled,
             buses: None,
+            access_search_s: defaults.access_walk_max_s,
             access_memo: (0..nodes).map(|_| OnceLock::new()).collect(),
             egress_memo: (0..nodes).map(|_| OnceLock::new()).collect(),
         }
+    }
+
+    /// The same setup, searching the walks to and from stops as far as `seconds` if that is
+    /// further than the defaults' `access_walk_max_s`: the longest a traveller class takes
+    /// (S235, `Run::with_class_limits`). A run whose classes walk further than its setup
+    /// searches is refused.
+    #[must_use]
+    pub fn with_access_search_s(mut self, seconds: f64) -> Self {
+        self.access_search_s = self.access_search_s.max(seconds);
+        self
+    }
+
+    /// How far the walks to and from stops are searched, in seconds: the longest walk to a
+    /// stop a trip may be given ([`Self::with_access_search_s`]).
+    #[must_use]
+    pub fn access_search_s(&self) -> f64 {
+        self.access_search_s
     }
 
     /// The same setup, with its buses riding `road` (see the [module docs](self)).
@@ -635,40 +664,58 @@ impl TransitSetup {
         out
     }
 
-    /// The stops a passenger leaving walk node `origin` at `departure` can walk to,
-    /// each with the second they are there (the walk, then the stop's transfer).
+    /// The stops a passenger leaving walk node `origin` at `departure` can walk to within
+    /// `limit` seconds (their class's access walk, or the defaults'), each with the second
+    /// they are there (the walk, then the stop's transfer).
     pub(crate) fn access(
         &self,
         reach: &mut Reach<'_>,
         origin: NodeId,
         departure: u32,
+        limit: f64,
     ) -> Vec<(NodeId, u32)> {
         let walks = self.access_memo[origin.index()].get_or_init(|| {
-            let transfer = self.transfer_s();
-            self.stops_from(reach, origin, self.defaults.access_walk_max_s)
+            // Searched one second further, so every walk counted in whole seconds up to the
+            // search limit is there, whichever limit a trip has.
+            self.stops_from(reach, origin, self.access_search_s + 1.0)
                 .into_iter()
-                .map(|(stop, w)| (stop, w.saturating_add(transfer)))
+                .filter(|&(_, w)| within(w, self.access_search_s))
                 .collect()
         });
-        walks.iter().map(|&(stop, w)| (stop, departure.saturating_add(w))).collect()
+        let transfer = self.transfer_s();
+        walks
+            .iter()
+            .filter(|&&(_, w)| within(w, limit))
+            .map(|&(stop, w)| (stop, departure.saturating_add(w).saturating_add(transfer)))
+            .collect()
     }
 
-    /// The stops a passenger can walk from to walk node `destination`, each with the
-    /// walk (and the stop's transfer) in seconds.
-    pub(crate) fn egress(&self, reach: &mut Reach<'_>, destination: NodeId) -> Vec<(NodeId, u32)> {
-        self.egress_memo[destination.index()]
-            .get_or_init(|| {
-                let transfer = self.transfer_s();
-                let mut out = Vec::new();
-                for (node, secs) in
-                    reach.backward(destination, self.defaults.access_walk_max_s, &self.has_stop)
-                {
-                    let w = floor_seconds(secs).saturating_add(transfer);
+    /// The stops a passenger can walk from to walk node `destination` within `limit`
+    /// seconds, each with the walk (and the stop's transfer) in seconds.
+    pub(crate) fn egress(
+        &self,
+        reach: &mut Reach<'_>,
+        destination: NodeId,
+        limit: f64,
+    ) -> Vec<(NodeId, u32)> {
+        let walks = self.egress_memo[destination.index()].get_or_init(|| {
+            let mut out = Vec::new();
+            for (node, secs) in
+                reach.backward(destination, self.access_search_s + 1.0, &self.has_stop)
+            {
+                let w = floor_seconds(secs);
+                if within(w, self.access_search_s) {
                     out.extend(self.stops_at(node).iter().map(|&stop| (stop, w)));
                 }
-                out.into_boxed_slice()
-            })
-            .to_vec()
+            }
+            out.into_boxed_slice()
+        });
+        let transfer = self.transfer_s();
+        walks
+            .iter()
+            .filter(|&&(_, w)| within(w, limit))
+            .map(|&(stop, w)| (stop, w.saturating_add(transfer)))
+            .collect()
     }
 
     /// The links of the shortest walk from walk node `from` to walk node `to`, if it

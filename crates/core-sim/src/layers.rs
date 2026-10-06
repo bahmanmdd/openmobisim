@@ -124,14 +124,15 @@ pub struct ModeDefaults {
     pub walk_max_s: f64,
     /// The longest ride mode choice offers as a bike alternative, in seconds.
     ///
-    /// *Uncalibrated: design §21.1's 30 minutes. CITATION OWED (bike trip-length
-    /// distributions; e-bikes ride further).*
+    /// *Uncalibrated: 60 minutes (S235; design §21.1's 30 until then, which left cyclists
+    /// without a ride home and pushed them into bike-and-ride, S233). CITATION OWED (bike
+    /// trip-length distributions; e-bikes ride further).*
     pub bike_max_s: f64,
 }
 
 impl ModeDefaults {
     /// The shipped values.
-    pub const SHIPPED: ModeDefaults = ModeDefaults { walk_max_s: 1800.0, bike_max_s: 1800.0 };
+    pub const SHIPPED: ModeDefaults = ModeDefaults { walk_max_s: 1800.0, bike_max_s: 3600.0 };
 
     /// The names of the options.
     pub const NAMES: [&'static str; 2] = ["walk_max_s", "bike_max_s"];
@@ -185,13 +186,100 @@ impl Default for ModeDefaults {
     }
 }
 
-/// Shortest routes, searched only as far as `max_cost` for the keys only mode-choice trips
-/// use (their walk or ride is offered only up to [`ModeDefaults`]' times), in full for the
-/// rest (a trip given the mode takes it at any length).
+/// A traveller class's own choice-set limits (S235, roadmap I-ax): the longest walk and ride
+/// mode choice offers its travellers, and the longest walk to or from a stop they take. Each
+/// `None` is the run's ([`ModeDefaults`], `TransitDefaults::access_walk_max_s`).
+///
+/// A limit bounds a choice set, not a preference: the minutes within it are weighed by the
+/// class's coefficients. Every value is the user's, uncalibrated; a run's fingerprint and
+/// manifest record those given.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct ClassLimits {
+    /// The longest walk offered as a walk alternative, in seconds.
+    pub walk_max_s: Option<f64>,
+    /// The longest ride offered as a bike alternative, in seconds.
+    pub bike_max_s: Option<f64>,
+    /// The longest walk from an origin to a stop, or from a stop to a destination, in seconds.
+    pub access_walk_max_s: Option<f64>,
+}
+
+impl ClassLimits {
+    /// The names of the limits, as [`Self::from_options`] takes them.
+    pub const NAMES: [&'static str; 3] = ["walk_max_s", "bike_max_s", "access_walk_max_s"];
+
+    /// The limits named in `options`, the others the run's.
+    ///
+    /// # Errors
+    ///
+    /// The name and the list of names for an unknown limit; the reason for a value that is
+    /// not above 0 (`inf` is allowed for a walk or a ride, as in [`ModeDefaults`], not for
+    /// the walk to a stop, which is searched).
+    pub fn from_options(options: &std::collections::BTreeMap<String, f64>) -> Result<Self, String> {
+        let mut out = Self::default();
+        for (name, &value) in options {
+            let (slot, finite) = match name.as_str() {
+                "walk_max_s" => (&mut out.walk_max_s, false),
+                "bike_max_s" => (&mut out.bike_max_s, false),
+                "access_walk_max_s" => (&mut out.access_walk_max_s, true),
+                _ => {
+                    return Err(format!(
+                        "a class has no limit {name:?}; the limits are: {}",
+                        Self::NAMES.join(", ")
+                    ));
+                }
+            };
+            if value.is_nan() || value <= 0.0 || (finite && value.is_infinite()) {
+                return Err(format!(
+                    "a class's {name:?} must be a {}number above 0, got {value}",
+                    if finite { "finite " } else { "" }
+                ));
+            }
+            *slot = Some(value);
+        }
+        Ok(out)
+    }
+
+    /// Whether the class says no limit of its own.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The limits given, by name, in [`Self::NAMES`]' order.
+    #[must_use]
+    pub fn values(&self) -> Vec<(&'static str, f64)> {
+        [
+            ("walk_max_s", self.walk_max_s),
+            ("bike_max_s", self.bike_max_s),
+            ("access_walk_max_s", self.access_walk_max_s),
+        ]
+        .into_iter()
+        .filter_map(|(n, v)| v.map(|v| (n, v)))
+        .collect()
+    }
+
+    /// The class's longest walk and ride, its own where given, `run`'s otherwise.
+    #[must_use]
+    pub fn modes(&self, run: &ModeDefaults) -> ModeDefaults {
+        ModeDefaults {
+            walk_max_s: self.walk_max_s.unwrap_or(run.walk_max_s),
+            bike_max_s: self.bike_max_s.unwrap_or(run.bike_max_s),
+        }
+    }
+}
+
+/// Class `class`'s limits in `classes` (by class index); none listed: the run's.
+pub(crate) fn class_limits(classes: &[ClassLimits], class: usize) -> ClassLimits {
+    classes.get(class).copied().unwrap_or_default()
+}
+
+/// Shortest routes, searched only as far as a bound for the keys only mode-choice trips use
+/// (their walk or ride is offered only up to [`ModeDefaults`]' times, or their class's), in
+/// full for the rest (a trip given the mode takes it at any length).
 struct ShortestFor {
-    /// Keys searched within the bound, sorted.
-    bounded: Vec<RouteKey>,
-    max_cost: f64,
+    /// Keys searched within a bound, sorted, each with its bound in cost: the longest any
+    /// of its trips is offered (S235: a class's own limit bounds only its pairs).
+    bounded: Vec<(RouteKey, f64)>,
 }
 
 impl RouteSetGenerator for ShortestFor {
@@ -205,8 +293,8 @@ impl RouteSetGenerator for ShortestFor {
 
     fn generate(&self, search: &mut Search<'_>, origin: NodeId, destination: NodeId) -> Vec<Route> {
         let key = RouteKey::new(origin, destination);
-        if self.bounded.binary_search(&key).is_ok() {
-            search.shortest_within(origin, destination, self.max_cost).into_iter().collect()
+        if let Ok(i) = self.bounded.binary_search_by_key(&key, |&(k, _)| k) {
+            search.shortest_within(origin, destination, self.bounded[i].1).into_iter().collect()
         } else {
             search.shortest(origin, destination).into_iter().collect()
         }
@@ -254,12 +342,13 @@ fn layer_of(mode: Mode) -> Option<StaticLayer> {
 impl StaticRoutes {
     /// Route every trip whose mode has a static layer the run has, and every trip
     /// `also` names for a layer: snap its ends to the layer's nodes and take the shortest
-    /// route between them.
+    /// route between them. `max_seconds` is the longest leg mode choice offers a trip on a
+    /// layer (its class's limit or the run's).
     pub(crate) fn build(
         layers: &StaticLayers,
         trips: &Trips,
         also: &dyn Fn(TripId, StaticLayer) -> bool,
-        modes: &ModeDefaults,
+        max_seconds: &dyn Fn(TripId, StaticLayer) -> f64,
     ) -> Self {
         let total = trips.len() as usize;
         let mut route = [vec![StaticRoute::None; total], vec![StaticRoute::None; total]];
@@ -289,8 +378,9 @@ impl StaticRoutes {
                 })
                 .collect();
             // Keys only mode-choice trips use are searched no further than the longest leg
-            // mode choice offers, in cost: a leg of that many seconds costs at most that
-            // times the layer's largest cost per second (the dedicated-bike multiplier).
+            // mode choice offers any of them, in cost: a leg of that many seconds costs at
+            // most that times the layer's largest cost per second (the dedicated-bike
+            // multiplier).
             let mut full: Vec<RouteKey> = wanted
                 .iter()
                 .zip(&keys)
@@ -298,20 +388,22 @@ impl StaticRoutes {
                 .map(|(_, &k)| k)
                 .collect();
             full.sort_unstable();
-            let mut bounded: Vec<RouteKey> =
-                keys.iter().copied().filter(|k| full.binary_search(k).is_err()).collect();
-            bounded.sort_unstable();
-            bounded.dedup();
             let per_second = setup
                 .costs
                 .iter()
                 .zip(&setup.seconds)
                 .filter(|&(c, t)| c.is_finite() && *t > 0.0)
                 .fold(1.0_f64, |m, (c, t)| m.max(c / t));
-            let max_cost = modes.max_seconds(layer) * per_second;
+            let mut bounded: Vec<(RouteKey, f64)> = wanted
+                .iter()
+                .zip(&keys)
+                .filter(|&(_, k)| full.binary_search(k).is_err())
+                .map(|(&i, &k)| (k, max_seconds(TripId::from_index(i), layer) * per_second))
+                .collect();
+            bounded.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)));
+            bounded.dedup_by_key(|&mut (k, _)| k);
             let ctx = SearchContext::with_costs(graph, &setup.turns, setup.costs.clone());
-            let layer_sets =
-                RouteSets::generate_in(&ctx, &keys, &ShortestFor { bounded, max_cost });
+            let layer_sets = RouteSets::generate_in(&ctx, &keys, &ShortestFor { bounded });
             for (&i, key) in wanted.iter().zip(&keys) {
                 route[slot(layer)][i] = if key.origin == key.destination {
                     StaticRoute::Here

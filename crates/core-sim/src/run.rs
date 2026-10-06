@@ -51,7 +51,10 @@ use crate::itinerary_choice::{
     self, CarRoutes, ChooseInputs, Chosen, Followed, Itineraries, ItineraryResult, Planner, Shape,
     Simulated, WalkEnd, parking_kind_of,
 };
-use crate::layers::{ModeDefaults, StaticLayers, StaticRoute, StaticRoutes, static_layer_of};
+use crate::layers::{
+    ClassLimits, ModeDefaults, StaticLayers, StaticRoute, StaticRoutes, class_limits,
+    static_layer_of,
+};
 use crate::link_times::{LinkTimes, relative_time_change};
 use crate::loading_rules::LoadingOptions;
 use crate::parking::{
@@ -429,6 +432,8 @@ pub struct Run {
     timings: Timings,
     /// The modes each traveller class may use, by class index (S231); empty: every class all.
     class_modes: Vec<[bool; Mode::COUNT]>,
+    /// Each traveller class's own choice-set limits, by class index (S235); empty: the run's.
+    class_limits: Vec<ClassLimits>,
 }
 
 /// The key of the draw that puts a traveller in a group of the free-flow loading's increments
@@ -494,6 +499,7 @@ impl Run {
             loading: LoadingOptions::SHIPPED,
             timings: Timings::new(),
             class_modes: Vec::new(),
+            class_limits: Vec::new(),
         }
     }
 
@@ -503,6 +509,18 @@ impl Run {
     #[must_use]
     pub fn with_class_modes(mut self, class_modes: Vec<[bool; Mode::COUNT]>) -> Self {
         self.class_modes = class_modes;
+        self
+    }
+
+    /// The same run with each traveller class's own choice-set limits (S235, roadmap I-ax), by
+    /// class index as [`Self::with_class_modes`]: the longest walk and ride a trip choosing its
+    /// mode is offered, and the longest walk to and from a stop of any of its transit
+    /// itineraries. A limit a class does not give, and a class past the end, take the run's.
+    /// A class walking to stops further than the timetable's defaults needs a
+    /// [`TransitSetup`] searching as far ([`TransitSetup::with_access_search_s`]).
+    #[must_use]
+    pub fn with_class_limits(mut self, class_limits: Vec<ClassLimits>) -> Self {
+        self.class_limits = class_limits;
         self
     }
 
@@ -712,6 +730,7 @@ impl Run {
             mode_choice: self.mode_choice.as_deref(),
             mode_defaults: &self.mode_defaults,
             class_modes: &self.class_modes,
+            class_limits: &self.class_limits,
             loading: &self.loading,
         })
     }
@@ -762,9 +781,20 @@ impl Run {
     ///
     /// # Panics
     ///
-    /// Never in practice: the panic guards the invariant that at least one
-    /// iteration always runs.
+    /// If a traveller class walks to stops further than the timetable's setup searches
+    /// ([`Self::with_class_limits`]). Otherwise never in practice: the panic guards the
+    /// invariant that at least one iteration always runs.
     pub fn try_execute(&mut self, diagnostics: &mut Diagnostics) -> Result<RunResult, RunError> {
+        if let Some(transit) = &self.transit {
+            let widest =
+                self.class_limits.iter().filter_map(|l| l.access_walk_max_s).fold(0.0, f64::max);
+            assert!(
+                widest <= transit.access_search_s(),
+                "a class walks {widest} s to a stop, beyond the {} s the timetable's setup \
+                 searches: build it with TransitSetup::with_access_search_s",
+                transit.access_search_s()
+            );
+        }
         let total_trips = self.trips.len();
         let mut timings = Timings::new();
         let mut clock = Instant::now();
@@ -808,7 +838,12 @@ impl Run {
                         StaticLayer::Walk => Mode::Walk,
                     })
             },
-            &self.mode_defaults,
+            &|trip, layer| {
+                let class = self.travellers.user_class(self.trips.traveller(trip)).index();
+                class_limits(&self.class_limits, class)
+                    .modes(&self.mode_defaults)
+                    .max_seconds(layer)
+            },
         );
         clock = timings.lap("static_routes", None, clock);
         // Shared handles, so the loading (which moves vehicles about in `self`) and the
@@ -834,6 +869,8 @@ impl Run {
                         static_routes: &static_routes,
                         modes: &self.mode_defaults,
                         class_modes: &self.class_modes,
+                        class_limits: &self.class_limits,
+                        travellers: &travellers,
                     },
                 )
             })
@@ -2186,8 +2223,8 @@ impl Run {
         let seconds = transit.walk_link_seconds();
         let d = transit.defaults();
         let transfer = transit.transfer_s();
-        let walk_bound = d
-            .access_walk_max_s
+        let walk_bound = transit
+            .access_search_s()
             .max(d.transfer_walk_max_s)
             .max(parking.map_or(0.0, |p| p.defaults().walk_max_s))
             + 1.0;
@@ -2259,7 +2296,7 @@ impl Run {
                                     .collect()
                             })
                             .unwrap_or_default(),
-                        _ => transit.egress(reach, nodes.walk_d),
+                        _ => transit.egress(reach, nodes.walk_d, nodes.access_walk_s),
                     })
                 };
                 let mut walks = Vec::new();

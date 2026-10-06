@@ -854,6 +854,7 @@ class Scenario:
             name: c["modes"] for name, c in table.items() if c["modes"] is not None
         } or None
         self._class_options = {name: c["betas"] for name, c in table.items() if c["betas"]} or None
+        self._class_limits = {name: c["limits"] for name, c in table.items() if c["limits"]} or None
         if modes is None and self._class_modes:
             # The classes say which modes their travellers may use: the run offers them all.
             modes = [m for m in MODES if any(m in ms for ms in self._class_modes.values())]
@@ -979,7 +980,12 @@ class Scenario:
                 imply, a car for a class that may drive or park and ride, a bike for one that
                 may cycle) and any ``beta_*`` coefficient of the choice model (its own mode
                 constants, ``beta_mode_bike`` …, or its own value of time, ``beta_time_min``;
-                unsaid: ``choice_options``'), for ``"logit"`` and ``"nested_logit"``; its
+                unsaid: ``choice_options``'), for ``"logit"`` and ``"nested_logit"``, and its
+                own choice-set limits in seconds (S235): ``walk_max_s`` and ``bike_max_s``,
+                the longest walk and ride offered to its trips choosing their mode, and
+                ``access_walk_max_s``, the longest walk to or from a stop (unsaid:
+                ``mode_options``' and ``transit_options``'; for example a class of keen
+                cyclists riding up to 90 minutes, ``{"bike_max_s": 5400}``); its
                 ``share`` is read only by ``demand_assign_classes``. The tuple
                 ``(owns_car, owns_bike, has_transit_pass)`` is a class that says only what it
                 owns. **When the classes say their modes and ``modes`` is not given, the run
@@ -1191,7 +1197,7 @@ class Scenario:
                 and ferries run by the schedule. These values are defaults, not a calibration:
                 ``transit_options`` overrides them.
             transit_options: Transit's parameters by name, each replacing its default:
-                ``board_slack_s`` (60), ``max_rides`` (8), ``access_walk_max_s`` (900),
+                ``board_slack_s`` (60), ``max_rides`` (8), ``access_walk_max_s`` (1800),
                 ``transfer_walk_max_s`` (300), ``stop_walk_snap_m`` (300),
                 ``stop_transfer_s`` (0), ``bus_dwell_s`` (20), ``bus_pcu`` (2),
                 ``bus_plausibility_ratio`` (1.6), ``bus_stop_snap_m`` (300). Unknown names
@@ -1233,11 +1239,13 @@ class Scenario:
                 by default: time decides). One mode is no choice: such trips take it
                 (``("car",)`` is the run without ``modes``, exactly). ``None`` (the default):
                 such trips are car trips. A walk or a ride is offered only up to
-                ``mode_options``' times (30 minutes each).
+                ``mode_options``' times (30 minutes' walk, 60 minutes' ride), or the
+                trip's class's (``classes``).
             mode_options: Mode choice's parameters by name, each replacing its default:
-                ``walk_max_s`` (1800) and ``bike_max_s`` (1800), the longest walk and ride
+                ``walk_max_s`` (1800) and ``bike_max_s`` (3600), the longest walk and ride
                 offered to a trip choosing its mode (a trip given the mode takes it at any
-                length); ``float("inf")`` offers every walk or ride. Uncalibrated defaults.
+                length; a class may give its own, ``classes``); ``float("inf")`` offers
+                every walk or ride. Uncalibrated defaults.
                 Unknown names and values that are not above 0 are refused.
             loading_options: The loading's rules by name, for ``flow_level`` 2–4 (gridlock
                 remedies; at ``flow_level`` 2, where nothing waits for room, ``reroute`` is off
@@ -1331,6 +1339,7 @@ class Scenario:
             class_defaults=self._class_defaults,
             class_modes=self._class_modes,
             class_options=self._class_options,
+            class_limits=self._class_limits,
             default_weight=self._default_weight,
             window_s=self._window_s,
             flow_level=self._flow_level,

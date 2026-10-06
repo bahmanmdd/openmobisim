@@ -18,10 +18,13 @@ pub struct TransitDefaults {
     /// journeys anyone makes in a city.*
     pub max_rides: u32,
     /// The longest walk from an origin to a stop, or from a stop to a
-    /// destination, in seconds (at walking speed, 900 s is 1.2 km).
+    /// destination, in seconds (at walking speed, 1 800 s is 2.4 km).
     ///
-    /// *An assumption. CITATION OWED: the catchment of urban stops in access
-    /// studies is 400–800 m for buses and up to 1.2 km for rail.*
+    /// *An assumption: a choice-set limit, not a preference (the walk's minutes are
+    /// weighed by the choice model). 30 minutes (S235; 15 until then, which left
+    /// travellers without a vehicle no way to their destination, S233). CITATION OWED:
+    /// the catchment of urban stops in access studies is 400–800 m for buses and up
+    /// to 1.2 km for rail; a few walk further.*
     pub access_walk_max_s: f64,
     /// The longest walk between two stops in a change, in seconds (300 s is
     /// 400 m).
@@ -65,7 +68,7 @@ impl TransitDefaults {
     pub const SHIPPED: TransitDefaults = TransitDefaults {
         board_slack_s: 60,
         max_rides: 8,
-        access_walk_max_s: 900.0,
+        access_walk_max_s: 1800.0,
         transfer_walk_max_s: 300.0,
         stop_walk_snap_m: 300.0,
         stop_transfer_s: 0.0,

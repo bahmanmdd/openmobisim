@@ -219,8 +219,11 @@ def demand_write_trips(trips: Iterable[tuple], path: str | Path) -> int:
 
 # --- traveller classes ------------------------------------------------------------------------
 
-#: What a class may say besides its ``beta_*`` coefficients (S231).
-CLASS_KEYS = ("share", "modes", "owns_car", "owns_bike", "has_transit_pass")
+#: A class's own choice-set limits, in seconds (S235): the longest walk and bike ride offered to
+#: its trips choosing their mode, and the longest walk to or from a stop.
+CLASS_LIMITS = ("walk_max_s", "bike_max_s", "access_walk_max_s")
+#: What a class may say besides its ``beta_*`` coefficients (S231; its limits S235).
+CLASS_KEYS = ("share", "modes", "owns_car", "owns_bike", "has_transit_pass", *CLASS_LIMITS)
 _OWNERSHIP = ("owns_car", "owns_bike", "has_transit_pass")
 _TRUE, _FALSE = ("1", "true", "yes", "y", "t"), ("0", "false", "no", "n", "f")
 
@@ -250,9 +253,11 @@ def _class_entry(name: str, spec: object) -> dict[str, Any]:
     if not isinstance(spec, Mapping):
         raise ValueError(f"class {name!r}: give a dict of its columns, got {spec!r}")
     given = {k: v for k, v in spec.items() if v is not None and v != ""}
-    # A class as ``demand_read_classes`` returns it: its coefficients under ``betas``.
-    if isinstance(given.get("betas"), Mapping):
-        given = {**{k: v for k, v in given.items() if k != "betas"}, **given["betas"]}
+    # A class as ``demand_read_classes`` returns it: its coefficients under ``betas``, its
+    # limits under ``limits``.
+    for nested in ("betas", "limits"):
+        if isinstance(given.get(nested), Mapping):
+            given = {**{k: v for k, v in given.items() if k != nested}, **given[nested]}
     unknown = [k for k in given if k not in CLASS_KEYS and not str(k).startswith("beta_")]
     if unknown:
         raise ValueError(
@@ -289,6 +294,18 @@ def _class_entry(name: str, spec: object) -> dict[str, Any]:
                 raise ValueError(f"class {name!r}: {key} must be a finite number, got {value!r}")
             betas[str(key)] = v
     entry["betas"] = betas
+    limits = {}
+    for key in CLASS_LIMITS:
+        if key in given:
+            v = float(given[key])
+            finite = key == "access_walk_max_s"
+            if not (v > 0 and (math.isfinite(v) or not finite)):
+                raise ValueError(
+                    f"class {name!r}: {key} must be a {'finite ' if finite else ''}number of "
+                    f"seconds above 0, got {given[key]!r}"
+                )
+            limits[key] = v
+    entry["limits"] = limits
     return entry
 
 
@@ -307,13 +324,16 @@ def demand_read_classes(path: str | Path) -> dict[str, dict[str, Any]]:
     travellers may use, separated by ``;``: ``car;bike;walk``; empty: every mode the run
     offers), ``owns_car``, ``owns_bike`` and ``has_transit_pass`` (``1`` or ``0``; empty: as the
     modes imply, a car for a class that may drive or park and ride, a bike for one that may
-    cycle, a pass for one that may take transit) and any ``beta_*`` coefficient of the choice
-    model (``beta_mode_bike``, ``beta_time_min`` …; empty: the model's own). Every value is
-    what the user gives, not a calibration.
+    cycle, a pass for one that may take transit), any ``beta_*`` coefficient of the choice
+    model (``beta_mode_bike``, ``beta_time_min`` …; empty: the model's own) and the class's own
+    choice-set limits in seconds, ``walk_max_s``, ``bike_max_s`` and ``access_walk_max_s``
+    (empty: the run's ``mode_options`` and ``transit_options``). Every value is what the user
+    gives, not a calibration.
 
     Returns:
-        ``{class: {"share", "modes", "owns_car", "owns_bike", "has_transit_pass", "betas"}}`` in
-        the file's order, the shape ``Scenario(classes=...)`` and ``demand_assign_classes`` take.
+        ``{class: {"share", "modes", "owns_car", "owns_bike", "has_transit_pass", "betas",
+        "limits"}}`` in the file's order, the shape ``Scenario(classes=...)`` and
+        ``demand_assign_classes`` take.
 
     Raises:
         ValueError: If a row has no class, a class repeats, or a column or value is not one of

@@ -97,7 +97,7 @@ def test_the_people_rows_of_kpis_and_the_mode_limits_in_the_manifest():
     assert got[("car", "completed_people")] == 3 * got[("car", "completed_trips")]
     assert tripled.manifest()["walk_max_s"] is None, "no mode choice, no limit to record"
     choosing = run("sum-modes", modes=["car", "walk"], mode_options={"walk_max_s": 600.0})
-    assert (choosing.manifest()["walk_max_s"], choosing.manifest()["bike_max_s"]) == (600, 1800)
+    assert (choosing.manifest()["walk_max_s"], choosing.manifest()["bike_max_s"]) == (600, 3600)
 
 
 def test_trips_with_no_alternative_are_counted_by_class_with_the_limits(tmp_path):
@@ -119,4 +119,4 @@ def test_trips_with_no_alternative_are_counted_by_class_with_the_limits(tmp_path
     from openmobisim.viz._summary import _fmt
 
     assert "Trips with no alternative" in page and f"<b>{_fmt(len(stuck), 0)}</b>" in page
-    assert "up to 10 and 30 min" in page and '<td class="">walker</td>' in page
+    assert "up to 10 min and 60 min" in page and '<td class="">walker</td>' in page

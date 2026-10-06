@@ -15,13 +15,13 @@ from __future__ import annotations
 import openmobisim as ms
 import pytest
 
-TABLE = """class,share,modes,owns_car,owns_bike,has_transit_pass,beta_mode_car,beta_mode_bike,beta_mode_walk,beta_mode_transit
-car_captive,0.05,car,1,0,0,0,,,
-bike_enthusiast,0.60,bike;walk;transit;bike_transit,0,1,1,,1.5,0,0
-transit_only,0.05,walk;transit,0,0,1,,,0,0.5
-open_to_all,0.20,car;bike;walk;transit;car_transit;bike_transit,1,1,1,0,0,0,0
-walker,0.05,walk;transit,0,0,1,,,1.0,0
-park_and_ride_commuter,0.05,car;transit;car_transit,1,0,1,0,,,0.3
+TABLE = """class,share,modes,owns_car,owns_bike,has_transit_pass,beta_mode_car,beta_mode_bike,beta_mode_walk,beta_mode_transit,walk_max_s,bike_max_s,access_walk_max_s
+car_captive,0.05,car,1,0,0,0,,,,,,
+bike_enthusiast,0.45,bike;walk;transit;bike_transit,0,1,1,,1.5,0,0,,5400,
+transit_only,0.15,walk;transit,0,0,1,,,0,0.5,,,
+open_to_all,0.25,car;bike;walk;transit;car_transit;bike_transit,1,1,1,0,0,0,0,,,
+walker,0.05,walk;transit,0,0,1,,,1.0,0,2700,,
+park_and_ride_commuter,0.05,car;transit;car_transit,1,0,1,0,,,0.3,,,
 """  # noqa: E501
 
 
@@ -70,6 +70,9 @@ def test_the_example_table_is_read_as_written(tmp_path) -> None:
     assert (bike["owns_car"], bike["owns_bike"], bike["has_transit_pass"]) == (False, True, True)
     assert bike["betas"] == {"beta_mode_bike": 1.5, "beta_mode_walk": 0.0, "beta_mode_transit": 0.0}
     assert classes["car_captive"]["betas"] == {"beta_mode_car": 0.0}, "an empty cell is unsaid"
+    assert bike["limits"] == {"bike_max_s": 5400.0}
+    assert classes["walker"]["limits"] == {"walk_max_s": 2700.0}
+    assert classes["car_captive"]["limits"] == {}, "the run's"
 
 
 def test_unsaid_ownership_follows_the_modes_and_a_tuple_says_only_what_is_owned() -> None:
@@ -99,6 +102,9 @@ def test_unsaid_ownership_follows_the_modes_and_a_tuple_says_only_what_is_owned(
         ("class,colour\na,red\n", "no such column"),
         ("class,share\na,-1\n", "share must be"),
         ("class,beta_mode_bike\na,nan\n", "finite"),
+        ("class,bike_max_s\na,0\n", "bike_max_s must be a number of seconds above 0"),
+        ("class,access_walk_max_s\na,inf\n", "access_walk_max_s must be a finite number"),
+        ("class,bike_max\na,60\n", "no such column"),
     ],
 )
 def test_a_wrong_table_is_refused_with_its_row(tmp_path, text: str, message: str) -> None:
@@ -229,3 +235,39 @@ def test_a_class_allowed_every_mode_leaves_the_fingerprint_as_it_was() -> None:
     every = {"modes": list(ms.MODES), "owns_car": 1, "owns_bike": 1, "has_transit_pass": 0}
     new = toy_run(rows, "classes-every", {"everyone": every})
     assert new.fingerprint == old.fingerprint
+
+
+# --- a class's own choice-set limits (S235) -------------------------------------------------------
+
+
+def test_a_class_s_own_ride_limit_replaces_the_run_s_for_its_trips_only() -> None:
+    # W → M: the bike takes 120 s, the car 80 s (the module's docstring). A run offering rides of
+    # up to 100 s offers none; a class riding up to 200 s is offered one, the others still not.
+    rows = toy_trips(10, "keen") + toy_trips(10, "plain")
+    both = {"modes": ["car", "bike"], "beta_mode_bike": 3.0}
+    short = {"bike_max_s": 100}
+    plain = toy_run(
+        rows, "limits-plain", {"keen": both, "plain": both},
+        choice_model="logit", mode_options=short,
+    )  # fmt: skip
+    keen = toy_run(
+        rows, "limits-keen", {"keen": {**both, "bike_max_s": 200}, "plain": both},
+        choice_model="logit", mode_options=short,
+    )  # fmt: skip
+    assert modes_of(plain) == {"keen": {"car"}, "plain": {"car"}}
+    took = modes_of(keen)
+    assert "bike" in took["keen"] and took["plain"] == {"car"}
+    assert keen.fingerprint != plain.fingerprint
+    assert keen.manifest()["class_limits"] == {"keen": {"bike_max_s": 200}}
+    assert plain.manifest()["class_limits"] is None, "no class gives one"
+    assert plain.manifest()["bike_max_s"] == 100
+
+
+def test_the_shipped_limits_and_an_infinite_one_are_recorded() -> None:
+    rows = toy_trips(2, "everyone")
+    run = toy_run(
+        rows, "limits-inf", {"everyone": {"modes": ["car", "bike", "walk"], "walk_max_s": "inf"}}
+    )
+    m = run.manifest()
+    assert (m["walk_max_s"], m["bike_max_s"]) == (1800, 3600), "S235: a ride up to an hour"
+    assert m["class_limits"] == {"everyone": {"walk_max_s": "inf"}}, "JSON has no infinity"

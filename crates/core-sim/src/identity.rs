@@ -95,6 +95,9 @@ pub struct RunDescription {
     /// trips choose their mode (S233: recorded, since a trip beyond both may have no
     /// alternative); `None` otherwise.
     pub walk_bike_max_s: Option<(f64, f64)>,
+    /// The traveller classes that give limits of their own (S235), by class name, in the
+    /// demand's class order; empty if none does.
+    pub class_limits: Vec<(String, crate::layers::ClassLimits)>,
 }
 
 impl RunDescription {
@@ -142,6 +145,8 @@ pub(crate) struct Inputs<'a> {
     pub mode_defaults: &'a crate::layers::ModeDefaults,
     /// The modes each traveller class may use (S231); empty: every class all.
     pub class_modes: &'a [[bool; Mode::COUNT]],
+    /// Each traveller class's own limits (S235); empty: the run's.
+    pub class_limits: &'a [crate::layers::ClassLimits],
     /// The loading's rules (S213); hashed only when one is on and the run has junctions to
     /// apply them at (the link transmission model).
     pub loading: &'a crate::loading_rules::LoadingOptions,
@@ -213,6 +218,18 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             }
         }
     }
+    // The classes' own limits (S235): nothing when no class gives one, so such a run's
+    // fingerprint is what it was.
+    if inputs.class_limits.iter().any(|l| !l.is_empty()) {
+        h.write_str("class-limits");
+        for (class, limits) in inputs.class_limits.iter().enumerate() {
+            h.write_u32(u32::try_from(class).expect("few classes"));
+            for v in [limits.walk_max_s, limits.bike_max_s, limits.access_walk_max_s] {
+                h.write_bool(v.is_some());
+                h.write_f64(v.unwrap_or(0.0));
+            }
+        }
+    }
     // Off means absent: a run without a timetable hashes as it did before transit.
     if let Some(transit) = inputs.transit {
         hash_transit(&mut h, transit);
@@ -252,6 +269,18 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         walk_bike_max_s: inputs
             .mode_choice
             .map(|_| (inputs.mode_defaults.walk_max_s, inputs.mode_defaults.bike_max_s)),
+        class_limits: {
+            let names = inputs.travellers.class_external_ids();
+            inputs
+                .class_limits
+                .iter()
+                .enumerate()
+                .filter_map(|(c, l)| {
+                    let c = u32::try_from(c).ok().filter(|&c| c < names.count())?;
+                    (!l.is_empty()).then(|| (names.external(c).to_string(), *l))
+                })
+                .collect()
+        },
     }
 }
 

@@ -120,7 +120,13 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// `region_stubs` and `region_buffer_m`, `io-osm`'s `ClipOptions`): each road's first node past
 /// the edge, and motorways, trunk roads and their slip roads within 2 km, so a ring road just
 /// outside a study area stays. Every network read with a region changes.
-pub const DEFAULTS_VERSION: u32 = 15;
+///
+/// Version 16 (S235): **longer choice-set limits**: mode choice offers a ride up to 60 minutes
+/// (`core-sim`'s `ModeDefaults::bike_max_s`, 30 before), and a walk to or from a stop is up to
+/// 30 minutes (`core-transit`'s `TransitDefaults::access_walk_max_s`, 15 before), counted in
+/// whole seconds; a traveller class may give its own (`core-sim`'s `ClassLimits`). Runs with
+/// mode choice or a timetable change; others do not.
+pub const DEFAULTS_VERSION: u32 = 16;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

@@ -92,6 +92,9 @@ pub struct Manifest {
     /// The longest walk and bike ride mode choice offers, in seconds, when trips choose
     /// their mode (S233); `None` otherwise.
     pub walk_bike_max_s: Option<(f64, f64)>,
+    /// The traveller classes' own limits (S235): per class that gives any, the limits it
+    /// gives, by name, in seconds; empty if none does.
+    pub class_limits: Vec<(String, Vec<(String, f64)>)>,
     /// How many loadings the run made.
     pub iterations_run: u32,
     /// Whether the strategy stopped before its most iterations because it had
@@ -153,6 +156,16 @@ impl Manifest {
             route_update_descriptor: description.route_update_descriptor.clone(),
             choice_detour_limit: description.choice_detour_limit,
             walk_bike_max_s: description.walk_bike_max_s,
+            class_limits: description
+                .class_limits
+                .iter()
+                .map(|(class, l)| {
+                    (
+                        class.clone(),
+                        l.values().into_iter().map(|(n, v)| (n.to_string(), v)).collect(),
+                    )
+                })
+                .collect(),
             iterations_run: u32::try_from(result.iterations.len().max(1)).unwrap_or(u32::MAX),
             converged: result.converged,
         }
@@ -170,7 +183,21 @@ impl Manifest {
     pub fn to_json(&self) -> String {
         let text = |v: &str| format!("\"{}\"", escape(v));
         let optional = |v: Option<String>| v.unwrap_or_else(|| "null".to_string());
-        let fields: [(&str, String); 31] = [
+        let class_limits = (!self.class_limits.is_empty()).then(|| {
+            let classes: Vec<String> = self
+                .class_limits
+                .iter()
+                .map(|(class, limits)| {
+                    let inner: Vec<String> = limits
+                        .iter()
+                        .map(|(n, v)| format!("{}: {}", text(n), number(*v)))
+                        .collect();
+                    format!("{}: {{{}}}", text(class), inner.join(", "))
+                })
+                .collect();
+            format!("{{{}}}", classes.join(", "))
+        });
+        let fields: [(&str, String); 32] = [
             ("openmobisim_version", text(&self.openmobisim_version)),
             ("code_version", self.code_version.to_string()),
             ("defaults_version", self.defaults_version.to_string()),
@@ -202,8 +229,9 @@ impl Manifest {
             ("route_update", text(&self.route_update)),
             ("route_update_descriptor", text(&self.route_update_descriptor)),
             ("choice_detour_limit", self.choice_detour_limit.to_string()),
-            ("walk_max_s", optional(self.walk_bike_max_s.map(|(w, _)| w.to_string()))),
-            ("bike_max_s", optional(self.walk_bike_max_s.map(|(_, b)| b.to_string()))),
+            ("walk_max_s", optional(self.walk_bike_max_s.map(|(w, _)| number(w)))),
+            ("bike_max_s", optional(self.walk_bike_max_s.map(|(_, b)| number(b)))),
+            ("class_limits", optional(class_limits)),
             ("iterations_run", self.iterations_run.to_string()),
             ("converged", self.converged.to_string()),
             ("link_bin_seconds", optional(self.link_bin_seconds.map(|s| s.to_string()))),
@@ -213,6 +241,12 @@ impl Manifest {
             fields.iter().map(|(key, value)| format!("  \"{key}\": {value}")).collect();
         format!("{{\n{}\n}}\n", body.join(",\n"))
     }
+}
+
+/// A limit as JSON can hold it: an infinite one (every walk or ride offered) as the string
+/// `"inf"`, since JSON has no infinity (S235: a bare `inf` made the file unreadable).
+fn number(v: f64) -> String {
+    if v.is_finite() { v.to_string() } else { "\"inf\"".to_string() }
 }
 
 /// Escape the two characters that would break a JSON string.

@@ -12,6 +12,7 @@ import base64
 import datetime as dt
 import html
 import io
+import math
 from pathlib import Path
 from typing import Any
 
@@ -114,12 +115,31 @@ def _no_alternative(run: Any, manifest: dict[str, Any]) -> str:
             stuck[cls] = stuck.get(cls, 0.0) + float(weight)
     total, none = sum(people.values()), sum(stuck.values())
     walk, bike = manifest.get("walk_max_s"), manifest.get("bike_max_s")
+
+    def minutes(seconds: object) -> str:
+        # A limit in seconds, or "inf" (every walk or ride offered), in minutes.
+        value = float(seconds)  # type: ignore[arg-type]
+        return "any length" if math.isinf(value) else f"{_fmt(value / 60, 0)} min"
+
     limits = (
-        f" Walks and bike rides are offered up to {_fmt(walk / 60, 0)} and {_fmt(bike / 60, 0)} min"
+        f" Walks and bike rides are offered up to {minutes(walk)} and {minutes(bike)}"
         " (<code>walk_max_s</code>, <code>bike_max_s</code>); transit within its access walk."
         if walk is not None and bike is not None
         else ""
     )
+    own = manifest.get("class_limits") or {}
+    if own:
+        names = {"walk_max_s": "walk", "bike_max_s": "ride", "access_walk_max_s": "walk to a stop"}
+        limits += (
+            " Classes with limits of their own: "
+            + "; ".join(
+                f"{html.escape(c)} ("
+                + ", ".join(f"{names.get(k, k)} {minutes(v)}" for k, v in lim.items())
+                + ")"
+                for c, lim in own.items()
+            )
+            + "."
+        )
     text = (
         f'<p class="note">Trips with no alternative: <b>{_fmt(none, 0)}</b> '
         f"({_fmt(100 * none / max(total, 1), 2)}% of the trips choosing their mode), counted, "

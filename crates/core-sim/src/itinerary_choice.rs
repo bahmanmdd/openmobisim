@@ -246,7 +246,8 @@ impl Alternative {
     }
 }
 
-/// An itinerary trip's nodes on the layers it may use (null where absent).
+/// An itinerary trip's nodes on the layers it may use (null where absent), and how far its
+/// traveller walks to and from a stop.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TripNodes {
     pub walk_o: NodeId,
@@ -255,6 +256,8 @@ pub(crate) struct TripNodes {
     pub road_d: NodeId,
     pub bike_o: NodeId,
     pub bike_d: NodeId,
+    /// The longest walk to or from a stop, in seconds: the class's (S235) or the run's.
+    pub access_walk_s: f64,
 }
 
 /// What a trip may choose from (M5): each mode offered to it where it is.
@@ -491,8 +494,8 @@ impl<'a> Planner<'a> {
         if n.walk_o.is_null() || n.walk_d.is_null() {
             return Vec::new();
         }
-        let access = transit.access(&mut ts.out, n.walk_o, departure);
-        let egress = transit.egress(&mut ts.into, n.walk_d);
+        let access = transit.access(&mut ts.out, n.walk_o, departure, n.access_walk_s);
+        let egress = transit.egress(&mut ts.into, n.walk_d, n.access_walk_s);
         if access.is_empty() || egress.is_empty() {
             return Vec::new();
         }
@@ -684,7 +687,7 @@ impl<'a> Planner<'a> {
         if tried.is_empty() || n.walk_d.is_null() {
             return Vec::new();
         }
-        let egress = transit.egress(&mut ts.into, n.walk_d);
+        let egress = transit.egress(&mut ts.into, n.walk_d, n.access_walk_s);
         if egress.is_empty() {
             return Vec::new();
         }
@@ -780,7 +783,7 @@ impl<'a> Planner<'a> {
         if n.walk_o.is_null() {
             return Vec::new();
         }
-        let access = transit.access(&mut ts.out, n.walk_o, departure);
+        let access = transit.access(&mut ts.out, n.walk_o, departure, n.access_walk_s);
         let transfer = transit.transfer_s();
         let egress: Vec<(NodeId, u32)> =
             parking.stops(p).iter().map(|&(stop, w)| (stop, w.saturating_add(transfer))).collect();
@@ -1324,6 +1327,10 @@ pub(crate) struct Simulated<'a> {
     pub modes: &'a crate::layers::ModeDefaults,
     /// The modes each traveller class may use, by class index (S231); empty: every class all.
     pub class_modes: &'a [[bool; Mode::COUNT]],
+    /// Each traveller class's own limits, by class index (S235); empty: the run's.
+    pub class_limits: &'a [crate::layers::ClassLimits],
+    /// The travellers, for each trip's class.
+    pub travellers: &'a Travellers,
 }
 
 impl Itineraries {
@@ -1372,6 +1379,11 @@ impl Itineraries {
                 continue;
             }
             let (o, d) = (trips.origin(trip), trips.destination(trip));
+            // The traveller's class's limits (S235), the run's where it gives none.
+            let limits = crate::layers::class_limits(
+                sim.class_limits,
+                sim.travellers.user_class(trips.traveller(trip)).index(),
+            );
             let mut nodes = TripNodes {
                 walk_o: transit.map_or(null, |t| t.walk_node(o)),
                 walk_d: transit.map_or(null, |t| t.walk_node(d)),
@@ -1379,6 +1391,9 @@ impl Itineraries {
                 road_d: null,
                 bike_o: null,
                 bike_d: null,
+                access_walk_s: limits
+                    .access_walk_max_s
+                    .unwrap_or_else(|| transit.map_or(0.0, |t| t.defaults().access_walk_max_s)),
             };
             if choosing || mode == Mode::CarTransit {
                 nodes.road_o = road_snapper.nearest(road, o);
@@ -1392,9 +1407,9 @@ impl Itineraries {
                 }
             }
             let (legs, car_key) = if choosing {
-                let leg = |layer| {
-                    sim.static_routes.leg(sim.layers, trip, layer, sim.modes.max_seconds(layer))
-                };
+                let max = limits.modes(sim.modes);
+                let leg =
+                    |layer| sim.static_routes.leg(sim.layers, trip, layer, max.max_seconds(layer));
                 let key = (offered[Mode::Car.index()] && nodes.road_o != nodes.road_d)
                     .then(|| RouteKey::new(nodes.road_o, nodes.road_d));
                 ([leg(StaticLayer::Bike), leg(StaticLayer::Walk)], key)
