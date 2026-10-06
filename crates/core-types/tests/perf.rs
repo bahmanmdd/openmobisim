@@ -36,12 +36,22 @@ fn budget(release_millis: u64) -> Duration {
     Duration::from_millis(release_millis)
 }
 
-/// Time `body`, print the rate, and — in a release build — fail if it took
-/// longer than `budget`.
-fn check(name: &str, iterations: u64, budget: Duration, body: impl FnOnce()) {
-    let start = Instant::now();
-    body();
-    let elapsed = start.elapsed();
+/// How many times `check` times its body, keeping the fastest: a busy runner only ever adds
+/// time, so the fastest of a few is the closest to the real cost (two CI flakes on
+/// `macos-latest`, the second in S240, each timed at about ten times the real cost).
+const REPEATS: u32 = 3;
+
+/// Time `body` (the fastest of [`REPEATS`]), print the rate, and — in a release build — fail
+/// if it took longer than `budget`.
+fn check(name: &str, iterations: u64, budget: Duration, mut body: impl FnMut()) {
+    let elapsed = (0..REPEATS)
+        .map(|_| {
+            let start = Instant::now();
+            body();
+            start.elapsed()
+        })
+        .min()
+        .expect("at least one repeat");
 
     #[allow(clippy::cast_precision_loss, reason = "iteration counts are far below 2^53")]
     let per_op_nanos = elapsed.as_secs_f64() * 1e9 / iterations as f64;
