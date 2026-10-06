@@ -178,7 +178,8 @@ def draw_furniture(
 ) -> None:
     """Title with the signal glyph, legends, the provenance strip and the logo.
 
-    `width_legend` is ``(label, [(value, width_pt), ...], unit)``; `colour_legend`
+    `width_legend` is ``(label, [(value, width_pt), ...], unit)``, the unit shown once, after
+    the label (empty: none); `colour_legend`
     is ``(label, ramp_stops, low_label, high_label)``; `route_legend` is a list of
     ``(rgb, text)`` rows, one per route, in place of both; `marker_legend` is a list
     of ``(marker, filled, text)`` rows, one per kind of symbol on the map, in the place
@@ -218,7 +219,9 @@ def draw_furniture(
     lx, ly = 0.585, 0.905
     if width_legend is not None:
         label, samples, unit = width_legend
-        fig.text(lx, ly + 0.030, label, color=t.ink2, fontsize=9.5 * k, fontfamily=sans)
+        # The unit once, in the title (S232): the chips stay short at any page width.
+        title_text = f"{label} ({unit})" if unit else label
+        fig.text(lx, ly + 0.030, title_text, color=t.ink2, fontsize=9.5 * k, fontfamily=sans)
         for i, (value, width_pt) in enumerate(samples):
             x0 = lx + i * 0.075
             fig.add_artist(
@@ -234,7 +237,7 @@ def draw_furniture(
             fig.text(
                 x0,
                 ly - 0.006,
-                f"{value:g} {unit}",
+                f"{value:g}",
                 color=t.muted,
                 fontsize=8.5 * k,
                 fontfamily=mono,

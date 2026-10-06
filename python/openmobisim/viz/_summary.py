@@ -85,6 +85,55 @@ def _table(head: list[str], rows: list[list[str]], numeric_from: int = 1) -> str
     return f"<table><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table>"
 
 
+def _no_alternative(run: Any, manifest: dict[str, Any]) -> str:
+    """The trips choosing their mode that had none to choose (S233), overall and by class.
+
+    Counted in people; the walk and bike limits mode choice applies are stated with them.
+    """
+    modes = run.trip_modes()
+    if not any(modes["mode_choice"]):
+        return ""
+    choices = run.itinerary_choices() or {"traveller_id": [], "trip_seq": [], "user_class": []}
+    class_of = {
+        (w, int(q)): c
+        for w, q, c in zip(
+            choices["traveller_id"], choices["trip_seq"], choices["user_class"], strict=True
+        )
+    }
+    people: dict[str, float] = {}
+    stuck: dict[str, float] = {}
+    for w, q, mode, choosing, weight in zip(
+        modes["traveller_id"], modes["trip_seq"], modes["mode"], modes["mode_choice"],
+        modes["weight"], strict=True,
+    ):  # fmt: skip
+        if not choosing:
+            continue
+        cls = class_of.get((w, int(q)), "")
+        people[cls] = people.get(cls, 0.0) + float(weight)
+        if mode is None:
+            stuck[cls] = stuck.get(cls, 0.0) + float(weight)
+    total, none = sum(people.values()), sum(stuck.values())
+    walk, bike = manifest.get("walk_max_s"), manifest.get("bike_max_s")
+    limits = (
+        f" Walks and bike rides are offered up to {_fmt(walk / 60, 0)} and {_fmt(bike / 60, 0)} min"
+        " (<code>walk_max_s</code>, <code>bike_max_s</code>); transit within its access walk."
+        if walk is not None and bike is not None
+        else ""
+    )
+    text = (
+        f'<p class="note">Trips with no alternative: <b>{_fmt(none, 0)}</b> '
+        f"({_fmt(100 * none / max(total, 1), 2)}% of the trips choosing their mode), counted, "
+        f"not simulated: none of the modes their class may use is within reach.{limits}</p>"
+    )
+    if len(people) > 1:
+        rows = [
+            [html.escape(c), _fmt(people[c], 0), _fmt(100 * stuck.get(c, 0.0) / people[c], 2)]
+            for c in sorted(people)
+        ]
+        text += _table(["class", "trips choosing", "no alternative (%)"], rows)
+    return text
+
+
 def _line(values: list[float], label: str, unit: str) -> str:
     """One series over the iterations, as inline SVG with a tooltip per point."""
     w, h, pl, pr, pt, pb = 520, 180, 46, 14, 12, 40
@@ -212,6 +261,7 @@ def summary(run: Any, path: str | None = None, *, title: str | None = None, note
     modes_html = f'<div class="stack">{"".join(share_cells)}</div>' + _table(
         ["mode", "trips", "share (%)", "completed (%)", "mean trip (min)"], mode_rows
     )
+    modes_html += _no_alternative(run, manifest)
 
     # Convergence.
     it = list(conv["iteration"])

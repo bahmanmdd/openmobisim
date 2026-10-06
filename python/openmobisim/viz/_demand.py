@@ -214,7 +214,7 @@ def map_demand(
         subtitle=subtitle or default_subtitle,
         note=note,
         provenance=provenance,
-        width_legend=("Trips per pair", samples_pt, "trips"),
+        width_legend=("Trips per pair", samples_pt, ""),
         colour_legend=("Trips per pair", th.ramp_volume, "few", f"{wmax:g}"),
         credit=credit,
         logo=logo,

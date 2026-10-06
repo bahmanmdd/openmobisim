@@ -91,6 +91,10 @@ pub struct RunDescription {
     pub route_update: String,
     /// The update with every option and default, canonical.
     pub route_update_descriptor: String,
+    /// The longest walk and the longest bike ride mode choice offers, in seconds (S209), when
+    /// trips choose their mode (S233: recorded, since a trip beyond both may have no
+    /// alternative); `None` otherwise.
+    pub walk_bike_max_s: Option<(f64, f64)>,
 }
 
 impl RunDescription {
@@ -245,6 +249,9 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         choice_detour_limit: inputs.choice_detour_limit,
         route_update: inputs.route_update.to_string(),
         route_update_descriptor: inputs.route_update_descriptor.to_string(),
+        walk_bike_max_s: inputs
+            .mode_choice
+            .map(|_| (inputs.mode_defaults.walk_max_s, inputs.mode_defaults.bike_max_s)),
     }
 }
 

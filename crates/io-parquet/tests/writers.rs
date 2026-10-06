@@ -121,9 +121,9 @@ fn kpis_round_trip_every_metric() {
     write_kpis(&path, "run-1", "design-a", 0, 0, &result).expect("write");
 
     let batch = read_first_batch(&path);
-    // Eight metrics for the run (`all`), and the same eight for each of the two
-    // modes that have trips (S195).
-    assert_eq!(batch.num_rows(), 24);
+    // Ten metrics for the run (`all`), and the same ten for each of the two
+    // modes that have trips (S195; `people` and `completed_people`, S232).
+    assert_eq!(batch.num_rows(), 30);
 
     let run_id = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
     for i in 0..batch.num_rows() {
@@ -156,6 +156,9 @@ fn kpis_round_trip_every_metric() {
         assert_eq!(get("bike", "trips"), 1.0);
         assert_eq!(get("bike", "total_travel_time_s"), 125.0);
         assert_eq!(get("bike", "completion_rate"), 1.0);
+        assert_eq!(get("all", "people"), 5.0);
+        assert_eq!(get("all", "completed_people"), 3.0);
+        assert_eq!(get("car", "completed_people"), 2.0);
     }
     assert!((0..batch.num_rows()).all(|i| mode.value(i) != "walk"), "no walk trips, no rows");
 }
@@ -370,6 +373,7 @@ fn sample_description(step: Option<f64>, bins: Option<u32>) -> RunDescription {
         route_update: "none".to_string(),
         route_update_descriptor: "none".to_string(),
         choice_detour_limit: 0.0,
+        walk_bike_max_s: None,
     }
 }
 

@@ -82,3 +82,41 @@ def test_a_sampled_run_reports_its_mean_trip_per_person(tmp_path):
     from openmobisim.viz._summary import _fmt
 
     assert f">{_fmt(3 * tripled.completion['total_trips'], 0)}<" in page, "trips counted as people"
+
+
+def test_the_people_rows_of_kpis_and_the_mode_limits_in_the_manifest():
+    # S232 (K-1): kpis.parquet counts people beside simulated trips. S233: a run where trips
+    # choose their mode records the walk and bike limits it offered them.
+    pq = pytest.importorskip("pyarrow.parquet")
+    tripled = run("sum-kpis", default_weight=3)
+    rows = pq.read_table(tripled.kpis().path).to_pylist()
+    last = max(r["iteration"] for r in rows)
+    got = {(r["mode"], r["metric"]): r["value"] for r in rows if r["iteration"] == last}
+    assert got[("all", "people")] == 3 * got[("all", "trips")]
+    assert got[("all", "completed_people")] == 3 * got[("all", "completed_trips")]
+    assert got[("car", "completed_people")] == 3 * got[("car", "completed_trips")]
+    assert tripled.manifest()["walk_max_s"] is None, "no mode choice, no limit to record"
+    choosing = run("sum-modes", modes=["car", "walk"], mode_options={"walk_max_s": 600.0})
+    assert (choosing.manifest()["walk_max_s"], choosing.manifest()["bike_max_s"]) == (600, 1800)
+
+
+def test_trips_with_no_alternative_are_counted_by_class_with_the_limits(tmp_path):
+    # S233: walkers whose trips are longer than the walk limit have nothing to choose; the
+    # page counts them, by class, and says what the limits were.
+    walker = {"modes": ["walk"]}
+    net = ms.examples.manhattan_grid(n=6, block_metres=200.0, signals=False)
+    rows = ms.examples.trips_random(net, 200, seed=5, min_m=300.0, max_m=1500.0, spread_s=600)
+    rows = ms.demand_assign_classes(rows, {"walker": {**walker, "share": 1}, "driver": {
+        "modes": ["car"], "share": 1}}, seed=1)  # fmt: skip
+    short = ms.Scenario.from_parts(
+        net, rows, classes={"walker": walker, "driver": {"modes": ["car"]}},
+        mode_options={"walk_max_s": 600.0}, equilibration="free_flow",
+    ).run("sum-none", quiet=True)  # fmt: skip
+    ch = short.itinerary_choices()
+    stuck = [c for c, m in zip(ch["user_class"], ch["mode"], strict=True) if m is None]
+    assert stuck and set(stuck) == {"walker"}, "only walkers beyond 10 minutes are stuck"
+    page = Path(viz.summary(short, str(tmp_path / "none.html"))).read_text(encoding="utf-8")
+    from openmobisim.viz._summary import _fmt
+
+    assert "Trips with no alternative" in page and f"<b>{_fmt(len(stuck), 0)}</b>" in page
+    assert "up to 10 and 30 min" in page and '<td class="">walker</td>' in page

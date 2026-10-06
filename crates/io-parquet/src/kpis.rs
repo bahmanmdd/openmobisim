@@ -43,6 +43,9 @@ type Row = (u32, &'static str, &'static str, f64);
 /// All of these are `mode` `all`; the last loading's trip metrics are also written
 /// per mode that has trips (S195).
 ///
+/// `people` and `completed_people` (S232) are the trips and the completed trips weighted by
+/// their travellers' weights: the people they stand for.
+///
 /// `total_travel_time_s` is traveller-weight-scaled (`Σ w · travel_time`) —
 /// see `core-sim`'s own docs for why, and for the standing note that an
 /// unweighted metric row joins this list, rather than replacing this one,
@@ -120,17 +123,25 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
             rows.push((iteration, name, "total_travel_time_s", m.total_travel_time.get()));
             rows.push((iteration, name, "completed_trips", f64::from(m.completion.completed)));
             rows.push((iteration, name, "truncated_trips", f64::from(m.completion.truncated)));
+            rows.push((iteration, name, "people", m.weighted_trips));
+            rows.push((iteration, name, "completed_people", m.weighted_completed));
             rows.extend(fixed(iteration, name, &m.completion));
         }
         rows
     };
     let c = &result.completion;
+    // The people the trips stand for (S232): `total_travel_time_s` counts people, the trip
+    // counts count simulated trips, so a mean trip is the former over `completed_people`.
+    let people: f64 = result.by_mode.iter().map(|m| m.weighted_trips).sum();
+    let completed_people: f64 = result.by_mode.iter().map(|m| m.weighted_completed).sum();
     if result.iterations.len() <= 1 {
         let mut rows = vec![
             (single_iteration, all, "trips", f64::from(c.total_trips)),
             (single_iteration, all, "total_travel_time_s", result.total_travel_time.get()),
             (single_iteration, all, "completed_trips", f64::from(c.completed)),
             (single_iteration, all, "truncated_trips", f64::from(c.truncated)),
+            (single_iteration, all, "people", people),
+            (single_iteration, all, "completed_people", completed_people),
         ];
         rows.extend(fixed(single_iteration, all, c));
         rows.extend(by_mode(single_iteration));
@@ -144,6 +155,7 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
         rows.push((i, all, "completed_trips", f64::from(r.completed)));
         rows.push((i, all, "truncated_trips", f64::from(r.truncated)));
         for (name, value) in [
+            ("completed_people", r.completed_people),
             ("reselected_share", r.reselected_share),
             ("changed_share", r.changed_share),
             ("time_change", r.time_change),
@@ -177,6 +189,7 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
         }
         if i == last {
             rows.push((i, all, "trips", f64::from(c.total_trips)));
+            rows.push((i, all, "people", people));
             rows.extend(fixed(i, all, c));
             rows.extend(by_mode(i));
         }
