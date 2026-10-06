@@ -486,6 +486,15 @@ class LinkBins:
     def pcu_seconds(self) -> npt.NDArray[np.float64]:
         """Each row's PCU-weighted traversal time, in PCU-seconds."""
 
+def network_edit(
+    network: Network,
+    closed: list[int] = ...,
+    lanes: list[tuple[int, int]] = ...,
+    capacity_factor: list[tuple[int, float]] = ...,
+    bike_facility: list[tuple[int, str]] = ...,
+) -> Network:
+    """A changed copy of `network`, links by index (S238); see ``openmobisim.network_edit``."""
+
 def manhattan_grid(n: int, block_metres: float, signals: bool) -> Network:
     """Build an n x n grid network, block_metres apart.
 

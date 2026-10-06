@@ -24,7 +24,7 @@ use openmobisim_core_types::diagnostics::{Category, DiagKey, Diagnostics, Elemen
 use openmobisim_core_types::ids::{
     EntityId, ExternalIdTable, ExternalIdTableBuilder, LinkId, NodeId,
 };
-use openmobisim_core_types::units::{Duration, Metres, Pcu};
+use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Pcu};
 
 use crate::csr::Csr;
 use crate::defaults::{
@@ -374,6 +374,7 @@ impl RoadNetworkBuilder {
             link_storage,
             out_links,
             in_links,
+            link_closed: Vec::new(),
             defaults: *defaults,
         })
     }
@@ -404,8 +405,37 @@ pub struct RoadNetwork {
     out_links: Csr<NodeId, LinkId>,
     in_links: Csr<NodeId, LinkId>,
 
+    /// Links closed to motor traffic by a scenario edit (S238, [`Self::with_changes`]):
+    /// empty when none is, else one flag per link. A closed link keeps its index and its
+    /// data but is in no node's out- or in-links, so no search, turn or snap ever uses it.
+    link_closed: Vec<bool>,
+
     /// What it was built with besides its data (S225).
     defaults: NetworkDefaults,
+}
+
+/// What a scenario changes in a road network (S238, roadmap I-az: scenario edits), by link
+/// index. See [`RoadNetwork::with_changes`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LinkChanges {
+    /// Links closed to motor traffic (cars and buses) for the whole run: a road closed for
+    /// works or by an accident lasting the day. Walkers and cyclists keep their own layers.
+    pub closed: Vec<LinkId>,
+    /// Links whose lanes per direction change, with the new count: capacity, jam density and
+    /// storage scale with the lanes (a lane closed, or one added).
+    pub lanes: Vec<(LinkId, u8)>,
+    /// Links whose capacity is multiplied by the factor, storage kept: a bottleneck (works
+    /// beside the road, a narrowed junction). The backward wave speed is derived again from
+    /// the triangle, with [`crate::defaults::LinkParameters::from_defaults`]' rule.
+    pub capacity_factor: Vec<(LinkId, f64)>,
+}
+
+impl LinkChanges {
+    /// Whether nothing changes.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.closed.is_empty() && self.lanes.is_empty() && self.capacity_factor.is_empty()
+    }
 }
 
 impl RoadNetwork {
@@ -484,6 +514,110 @@ impl RoadNetwork {
     #[must_use]
     pub fn link_class(&self, link: LinkId) -> RoadClass {
         self.link_class[link.index()]
+    }
+
+    /// Whether a link is closed to motor traffic by a scenario edit (S238).
+    #[inline]
+    #[must_use]
+    pub fn is_closed(&self, link: LinkId) -> bool {
+        self.link_closed.get(link.index()).copied().unwrap_or(false)
+    }
+
+    /// Whether a car can use a link: its class carries motor traffic and it is not closed.
+    #[inline]
+    #[must_use]
+    pub fn is_drivable(&self, link: LinkId) -> bool {
+        self.link_class(link).carries_motor_traffic() && !self.is_closed(link)
+    }
+
+    /// The same network with `changes` made (S238): closed links taken out of every node's
+    /// links (their index and data kept, so per-link results line up with the original's),
+    /// lanes and capacities changed. Changes add to those the network already has.
+    ///
+    /// # Errors
+    ///
+    /// A message for a link index out of range, a lane count of 0 (close the link instead) or
+    /// a capacity factor that is not a finite number above 0.
+    pub fn with_changes(&self, changes: &LinkChanges) -> Result<RoadNetwork, String> {
+        let n = self.link_count() as usize;
+        let check = |l: LinkId| {
+            if l.index() < n {
+                Ok(())
+            } else {
+                Err(format!("there is no link {} in a network of {n} links", l.index()))
+            }
+        };
+        let mut params = self.link_params.clone();
+        let mut lanes = self.link_lanes.clone();
+        for &(l, new) in &changes.lanes {
+            check(l)?;
+            if new == 0 {
+                return Err(format!("link {}: 0 lanes; close the link instead", l.index()));
+            }
+            let ratio = f64::from(new) / f64::from(lanes[l.index()].max(1));
+            let p = &mut params[l.index()];
+            p.capacity = Flow::from_veh_per_hour(p.capacity.as_veh_per_hour() * ratio);
+            p.jam_density = Density::from_veh_per_km(p.jam_density.as_veh_per_km() * ratio);
+            lanes[l.index()] = new;
+        }
+        for &(l, factor) in &changes.capacity_factor {
+            check(l)?;
+            if !(factor.is_finite() && factor > 0.0) {
+                return Err(format!(
+                    "link {}: a capacity factor is a finite number above 0, got {factor}; close the \
+                     link instead of 0",
+                    l.index()
+                ));
+            }
+            params[l.index()] = params[l.index()].with_capacity_times(factor);
+        }
+        let mut closed = if self.link_closed.is_empty() && !changes.closed.is_empty() {
+            vec![false; n]
+        } else {
+            self.link_closed.clone()
+        };
+        for &l in &changes.closed {
+            check(l)?;
+            closed[l.index()] = true;
+        }
+        let open = |i: u32| closed.get(i as usize).is_none_or(|c| !c);
+        let link_count = self.link_count();
+        let out_links = Csr::from_pairs(
+            self.node_count(),
+            (0..link_count)
+                .filter(|&i| open(i))
+                .map(|i| (self.link_from[i as usize], LinkId::new(i))),
+        );
+        let in_links = Csr::from_pairs(
+            self.node_count(),
+            (0..link_count)
+                .filter(|&i| open(i))
+                .map(|i| (self.link_to[i as usize], LinkId::new(i))),
+        );
+        let link_storage =
+            params.iter().zip(&self.link_length).map(|(p, &l)| p.storage(l)).collect();
+        Ok(RoadNetwork {
+            projection: self.projection,
+            node_ids: self.node_ids.clone(),
+            link_ids: self.link_ids.clone(),
+            node_x: self.node_x.clone(),
+            node_y: self.node_y.clone(),
+            node_lonlat: self.node_lonlat.clone(),
+            node_signalised: self.node_signalised.clone(),
+            link_from: self.link_from.clone(),
+            link_to: self.link_to.clone(),
+            link_class: self.link_class.clone(),
+            link_roundabout: self.link_roundabout.clone(),
+            link_lanes: lanes,
+            link_length: self.link_length.clone(),
+            link_free_flow_time: self.link_free_flow_time.clone(),
+            link_params: params,
+            link_storage,
+            out_links,
+            in_links,
+            link_closed: closed,
+            defaults: self.defaults,
+        })
     }
 
     /// Whether a link is part of a roundabout's circulating carriageway (S155).

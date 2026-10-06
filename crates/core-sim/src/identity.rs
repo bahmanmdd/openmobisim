@@ -335,6 +335,14 @@ pub(crate) fn hash_network(h: &mut Fnv1a, network: &RoadNetwork, ids: u64) {
         h.write_f64(p.wave_speed.get());
         h.write_f64(p.control_delay.get());
     }
+    // Links closed by a scenario edit (S238): nothing when none is, so such a network's
+    // fingerprint is what it was.
+    if (0..network.link_count()).any(|raw| network.is_closed(LinkId::new(raw))) {
+        h.write_str("closed");
+        for raw in 0..network.link_count() {
+            h.write_bool(network.is_closed(LinkId::new(raw)));
+        }
+    }
 }
 
 /// Every trip's mode and the static layers the trips use (S195); nothing at

@@ -664,6 +664,34 @@ impl LinkParameters {
         )
     }
 
+    /// The same link with its capacity multiplied by `factor`, jam density and free-flow speed
+    /// kept (S238: a bottleneck), the backward wave speed derived again from the triangle and,
+    /// outside [`WAVE_SPEED_BOUNDS_KM_H`], clamped with jam density re-derived, as
+    /// [`Self::from_defaults`] does; capacity is held below 95 % of what the jam density
+    /// allows at the free-flow speed, as there.
+    #[must_use]
+    pub fn with_capacity_times(&self, factor: f64) -> Self {
+        let v = self.free_flow_speed.as_km_per_hour();
+        let mut k_j = self.jam_density.as_veh_per_km();
+        let mut q = self.capacity.as_veh_per_hour() * factor;
+        if q / v >= k_j * 0.95 {
+            q = 0.95 * k_j * v * 0.5;
+        }
+        let k_c = q / v;
+        let mut w = q / (k_j - k_c);
+        let (w_min, w_max) = WAVE_SPEED_BOUNDS_KM_H;
+        if !(w_min..=w_max).contains(&w) {
+            w = w.clamp(w_min, w_max);
+            k_j = q / w + k_c;
+        }
+        Self {
+            capacity: Flow::from_veh_per_hour(q),
+            jam_density: Density::from_veh_per_km(k_j),
+            wave_speed: Speed::from_km_per_hour(w),
+            ..*self
+        }
+    }
+
     /// The free-flow traversal time of a link of this length, including the
     /// control delay (S90).
     #[inline]

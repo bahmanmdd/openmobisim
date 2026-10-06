@@ -61,7 +61,7 @@ from openmobisim.demand import (
     demand_write_trips,
 )
 from openmobisim.gmns import network_read_gmns, network_write_gmns
-from openmobisim.network import network_options, network_read_table
+from openmobisim.network import network_edit, network_options, network_read_table
 from openmobisim.parameters import parameters
 from openmobisim.parking import parking_read_table
 from openmobisim.scenario import MODES, Run, Scenario, Table
@@ -93,6 +93,7 @@ __all__ = [
     "fixed_order_sum_f64",
     "network_check",
     "network_read_gmns",
+    "network_edit",
     "network_options",
     "parameters",
     "network_read_osm",

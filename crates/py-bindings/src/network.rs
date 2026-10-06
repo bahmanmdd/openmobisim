@@ -398,7 +398,7 @@ impl PyNetwork {
     /// steps, paths, tracks, cycleways and pedestrian streets.
     fn link_drivable<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
         (0..self.inner.link_count())
-            .map(|i| self.inner.link_class(LinkId::new(i)).carries_motor_traffic())
+            .map(|i| self.inner.is_drivable(LinkId::new(i)))
             .collect::<Vec<_>>()
             .into_pyarray(py)
     }
@@ -1032,4 +1032,92 @@ pub fn network_options(network: Option<PyRef<'_, PyNetwork>>) -> Vec<(String, f6
         Some(n) => n.inner.defaults().values(),
         None => NetworkDefaults::shipped().values(),
     }
+}
+
+/// The same road network with a scenario's changes made (S238): links closed to motor
+/// traffic, lanes changed, capacities multiplied, and bike links given another bike
+/// infrastructure, every link named by its index. Link indices stay as they were, so the
+/// per-link results of the two networks line up. `openmobisim.network_edit` is the Python face.
+///
+/// # Errors
+///
+/// `ValueError` for a layer handle, a link index out of range, 0 lanes, a capacity factor
+/// that is not above 0, an unknown infrastructure name or a ferry link.
+#[pyfunction]
+#[pyo3(signature = (network, closed=Vec::new(), lanes=Vec::new(), capacity_factor=Vec::new(), bike_facility=Vec::new()))]
+pub fn network_edit(
+    network: PyRef<'_, PyNetwork>,
+    closed: Vec<u32>,
+    lanes: Vec<(u32, u8)>,
+    capacity_factor: Vec<(u32, f64)>,
+    bike_facility: Vec<(u32, String)>,
+) -> PyResult<PyNetwork> {
+    use openmobisim_core_graph::layers::BikeInfrastructure;
+    use openmobisim_core_graph::network::LinkChanges;
+    if network.static_network.is_some() {
+        return Err(PyValueError::new_err(
+            "edit the road network's handle; it holds its bike and walk layers",
+        ));
+    }
+    let changes = LinkChanges {
+        closed: closed.into_iter().map(LinkId::new).collect(),
+        lanes: lanes.into_iter().map(|(l, n)| (LinkId::new(l), n)).collect(),
+        capacity_factor: capacity_factor.into_iter().map(|(l, f)| (LinkId::new(l), f)).collect(),
+    };
+    let inner = if changes.is_empty() {
+        network.inner.clone()
+    } else {
+        Arc::new(network.inner.with_changes(&changes).map_err(PyValueError::new_err)?)
+    };
+    // The bike layer with its new infrastructure, if any is changed.
+    let edited_bike = if bike_facility.is_empty() {
+        None
+    } else {
+        let kinds = bike_facility
+            .into_iter()
+            .map(|(l, name)| {
+                let kind = match name.as_str() {
+                    "mixed" => BikeInfrastructure::Mixed,
+                    "lane" => BikeInfrastructure::Lane,
+                    "separated" => BikeInfrastructure::Separated,
+                    other => {
+                        return Err(PyValueError::new_err(format!(
+                            "a bike facility is \"separated\", \"lane\" or \"mixed\", not {other:?}"
+                        )));
+                    }
+                };
+                Ok((LinkId::new(l), kind))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let parts = network.layer_parts(StaticLayer::Bike)?;
+        let edited = parts
+            .network
+            .with_infrastructure(&kinds, network.inner.defaults().layers)
+            .map_err(PyValueError::new_err)?;
+        Some(LayerParts {
+            network: Arc::new(edited),
+            geometry: parts.geometry.clone(),
+            report: parts.report.clone(),
+        })
+    };
+    // The layers read with the network (or derived already) carry over; the bike layer as
+    // edited.
+    let layers = [OnceLock::new(), OnceLock::new()];
+    for (i, cell) in layers.iter().enumerate() {
+        let parts = if i == slot(StaticLayer::Bike) { edited_bike.as_ref() } else { None };
+        if let Some(parts) = parts.or_else(|| network.layers[i].get()) {
+            let _ = cell.set(parts.clone());
+        }
+    }
+    Ok(PyNetwork {
+        inner,
+        geometry: network.geometry.clone(),
+        source: network.source.clone(),
+        snapper: OnceLock::new(),
+        import: network.import.clone(),
+        layer: "road".to_string(),
+        static_network: None,
+        layers,
+        read_s: network.read_s,
+    })
 }

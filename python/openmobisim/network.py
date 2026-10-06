@@ -20,7 +20,7 @@ from typing import Any
 
 from openmobisim import _core
 
-__all__ = ["network_read_table"]
+__all__ = ["network_edit", "network_read_table"]
 
 #: `RoadClass::Unclassified`'s position in `RoadClass::ALL` (Rust,
 #: `core-graph/src/defaults.rs`) — the same order `openmobisim.viz`'s
@@ -443,3 +443,82 @@ def network_options(network: _core.Network | None = None) -> dict[str, float]:
     override them by name.
     """
     return dict(_core.network_options(network))
+
+
+def network_edit(
+    network: _core.Network,
+    *,
+    close: Sequence[str | int] | None = None,
+    lanes: Mapping[str | int, int] | None = None,
+    capacity_factor: Mapping[str | int, float] | None = None,
+    bike_facility: Mapping[str | int, str] | None = None,
+) -> _core.Network:
+    """The same network with a scenario's changes made, for a study to compare (S238).
+
+    A new network is returned; ``network`` is left as it was. Links keep their indices, so
+    the per-link results of a run on each (``Run.link_bins``) line up link by link, and a
+    run's fingerprint records the changes.
+
+    Args:
+        network: The road network (the handle a scenario runs on, not a layer's).
+        close: Road links closed to motor traffic, cars and buses, for the whole run (works,
+            an accident lasting the day): no route uses them; buses that rode them take
+            another way. Walking and cycling keep their own layers. Everyone knows of the
+            closure in advance (a planned closure, an informed equilibrium).
+        lanes: ``{road link: lanes per direction}``: capacity, jam density and storage scale
+            with the lanes (a lane closed, or one added). At least 1; close the link instead.
+        capacity_factor: ``{road link: factor}``: capacity multiplied, storage kept (a
+            bottleneck), the backward wave speed derived again. Above 0.
+        bike_facility: ``{bike link: "separated" | "lane" | "mixed"}``: the bike layer's
+            infrastructure (a cycle track or a painted lane added, or taken away). A changed
+            link rides at that infrastructure's speed (``network_options``'
+            ``bike_dedicated_km_h`` or ``bike_mixed_km_h``), its route cost follows
+            (``bike_lane_cost_factor``, ``bike_mixed_cost_factor``), and so do the attributes
+            choice models see (``bike_separated_km`` …).
+
+    A link is named by its id (``network.link_ids()``, ``network.layer("bike").link_ids()``
+    for a bike link) or by its index (an ``int``, as in the per-link arrays).
+
+    Returns:
+        The changed network.
+
+    Raises:
+        ValueError: For an unknown link, 0 lanes, a factor not above 0, an unknown facility
+            or a ferry crossing given a bike facility.
+    """
+
+    def indices(graph: _core.Network, links: Sequence[str | int] | Mapping, what: str) -> list:
+        ids: dict[str, int] | None = None
+        out = []
+        for link in links:
+            if isinstance(link, int):
+                if not 0 <= link < graph.link_count:
+                    raise ValueError(f"{what}: there is no link {link} ({graph.link_count} links)")
+                out.append(link)
+                continue
+            if ids is None:
+                ids = {name: i for i, name in enumerate(graph.link_ids())}
+            if str(link) not in ids:
+                raise ValueError(f"{what}: the {graph.layer_name} network has no link {link!r}")
+            out.append(ids[str(link)])
+        return out
+
+    if network.layer_name != "road":
+        raise ValueError("edit the road network, which holds its bike and walk layers")
+    lanes = dict(lanes or {})
+    factors = dict(capacity_factor or {})
+    facilities = dict(bike_facility or {})
+    bike = network.layer("bike") if facilities else None
+
+    def pairs(graph: _core.Network | None, given: dict, cast: Any, what: str) -> list:
+        if graph is None or not given:
+            return []
+        return list(zip(indices(graph, given, what), map(cast, given.values()), strict=True))
+
+    return _core.network_edit(
+        network,
+        closed=indices(network, list(close or []), "close"),
+        lanes=pairs(network, lanes, int, "lanes"),
+        capacity_factor=pairs(network, factors, float, "capacity_factor"),
+        bike_facility=pairs(bike, facilities, str, "bike_facility"),
+    )

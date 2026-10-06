@@ -492,6 +492,41 @@ impl StaticNetwork {
         builder.build(road.projection(), diagnostics)
     }
 
+    /// The same layer with `changes` made to its links' bike infrastructure (S238, scenario
+    /// edits): a street given a painted lane or a separated track, or one taken away. A changed
+    /// link rides at its new infrastructure's speed under `defaults` (`bike_dedicated_km_h` for
+    /// a lane or a track, `bike_mixed_km_h` in mixed traffic); its costs and the attributes a
+    /// choice model sees follow. The graph is shared, so link indices stay as they were.
+    ///
+    /// # Errors
+    ///
+    /// A message for a layer that is not the bike layer, a link index out of range, or a ferry
+    /// link (a crossing has no bike infrastructure).
+    pub fn with_infrastructure(
+        &self,
+        changes: &[(LinkId, BikeInfrastructure)],
+        defaults: StaticLayerDefaults,
+    ) -> Result<Self, String> {
+        if self.layer != StaticLayer::Bike {
+            return Err("bike infrastructure is changed on the bike layer".to_string());
+        }
+        let n = self.speed.len();
+        let mut speed = self.speed.clone();
+        let mut infrastructure = self.infrastructure.clone();
+        for &(link, kind) in changes {
+            let i = link.index();
+            if i >= n {
+                return Err(format!("there is no link {i} on a bike layer of {n} links"));
+            }
+            if self.network.link_class(link) == RoadClass::Ferry {
+                return Err(format!("bike link {i} is a ferry crossing; it has no infrastructure"));
+            }
+            infrastructure[i] = kind;
+            speed[i] = defaults.bike_speed_km_h(kind, false, None) / 3.6;
+        }
+        Ok(Self { layer: self.layer, network: Arc::clone(&self.network), speed, infrastructure })
+    }
+
     /// Which layer this is.
     #[must_use]
     pub fn layer(&self) -> StaticLayer {
