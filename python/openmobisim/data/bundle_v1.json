@@ -1,0 +1,80 @@
+{
+ "bundle": "v1",
+ "cases": {
+  "amsterdam": {
+   "archive": {
+    "name": "amsterdam.zip",
+    "sha256": "d7cb1c3e0278911cb8409127835f92cd62c70d94075ca3f935df8b63ce8c9e5f",
+    "bytes": 60735910
+   },
+   "files": {
+    "case.json": "f93f51a8f54c9f80d123dca3bc7fc2faeaba0cb096bbdf613a9e5d09687c2ff8",
+    "demand/classes.csv": "7588b718baa2424407a3f0a6e075f069e3f2dad361fb90ce8b2e97d0510d40cf",
+    "demand/od.csv": "d3ccdc3d47604303cdcd8b5957dad33b0eb128aeb6e661d72f1e920002e098c7",
+    "demand/zones.csv": "ef07625640e28ef2faf6b40b6df67afbd38dfeb3baddc72309f85da431c370dc",
+    "gtfs.zip": "08d8a401d765762f767dc3097e3d91af7e9b1cb839bb2cd78794e062aa5da3f2",
+    "network.osm.pbf": "c775d3f656a37abf433a2536906727e090866ba574bc16a923cbc6bce1d1f7e6"
+   }
+  },
+  "lyon": {
+   "archive": {
+    "name": "lyon.zip",
+    "sha256": "07e39f3e9d853d4805357c2894426655d5131b3a7debf915ce85c639ece5dedd",
+    "bytes": 37221370
+   },
+   "files": {
+    "case.json": "0b9f8817069899781e4d42d013d22070acce85ffae8c896f2028551e87b1eb2e",
+    "demand/classes.csv": "7588b718baa2424407a3f0a6e075f069e3f2dad361fb90ce8b2e97d0510d40cf",
+    "demand/od.csv": "e62db36211e49483928d00799ebe64a1a5ed023ef1496adb42e25d3c6b1daffb",
+    "demand/zones.csv": "2a4ddf1f10db6f42e0d952410e51704662e9bc07981dd6f64a0c9cd9f68e6afd",
+    "gtfs.zip": "2d440cd9fe94d475155bda7fecc2f1d97e3ca1e748887845307b20342a929a78",
+    "network.osm.pbf": "205e1d85b7ed26a060d2c7c475b724ca386f114647ed4d85b6bc944dabff2b7d"
+   }
+  },
+  "nguyendupuis": {
+   "archive": {
+    "name": "nguyendupuis.zip",
+    "sha256": "2e2cb00ca434891f9d6f77e277d457336ce18a1445b4a06e3a5ec90c27634bbf",
+    "bytes": 1599
+   },
+   "files": {
+    "case.json": "47900991d9e1c313c57901951afedcb268c4e2012e900abac5fbd5bc62f9bdc3",
+    "demand/classes.csv": "732da9800415f29279d5b1973c2c06ea20e9078f195df993d0538d38e8b402c4",
+    "demand/od.csv": "131fc72c9264a0e76e8a75305997743108ed304c9f6f63d8d27b7c6df478b402",
+    "demand/zones.csv": "7582c12f615f80c795c3b95a82b9902cd140ff87c61b5401228bbf99eccfb49a",
+    "network/links.csv": "6cdd1645b23170ba4ee34eb6daa47ba179972f5198d23e76e5b06689db21a62b",
+    "network/nodes.csv": "4e177b08388cd9f52a287dfad04d4654b1b3f5885ddef147b3915171678b0bf3"
+   }
+  },
+  "paris": {
+   "archive": {
+    "name": "paris.zip",
+    "sha256": "8981f72e9dbe0598fe36e80581710be65e1fb0c64199207b9ad8c386cc41fcd3",
+    "bytes": 92891954
+   },
+   "files": {
+    "case.json": "8fa82484af4ace6432dc013bd2e6f561c9325819573cec7e739da1a544763629",
+    "demand/classes.csv": "7588b718baa2424407a3f0a6e075f069e3f2dad361fb90ce8b2e97d0510d40cf",
+    "demand/od.csv": "50f25510c77ee4875bc5b6fff17930b1f6af64eb5fcfd21ca6e94551a6d89c31",
+    "demand/zones.csv": "5510001e0d68f8a8cd0a88e0f56f9bb11d4621d9010e35fec4cafe7b1f59a72e",
+    "gtfs.zip": "7a37bab4acb311508073bd0b397c944af807b49e247d0de23d1834298874bae5",
+    "network.osm.pbf": "08878670d4e276045f5de926562bccf9d9c781b97ca4bc8e63de79486be13753"
+   }
+  },
+  "siouxfalls": {
+   "archive": {
+    "name": "siouxfalls.zip",
+    "sha256": "9419dc4d75d4d574781ad58c8cedc14e459a63e703d40eb76031697b3e866f64",
+    "bytes": 3956
+   },
+   "files": {
+    "case.json": "f4b960906a1cba1ce7cf75091c6c4682b9f1d457e80a14ebfc077abf55c0c632",
+    "demand/classes.csv": "732da9800415f29279d5b1973c2c06ea20e9078f195df993d0538d38e8b402c4",
+    "demand/od.csv": "8254bec3e7f3eb3561855934964efa92fca84117e072448e611b304d3017cd0c",
+    "demand/zones.csv": "09d51fa109d7cb1246b26a675a6ced7cff642229ca45aab5f200afce1775fe2f",
+    "network/links.csv": "118d0be4c4ecf1dd95f8f40471e0ebed64da9e686deb0fd5ec7a6858a612ad19",
+    "network/nodes.csv": "68bf8f68d510eff356ab17dce0fe33e54960b6f830fc2d161652c981fc299cac"
+   }
+  }
+ }
+}

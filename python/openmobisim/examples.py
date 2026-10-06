@@ -8,7 +8,9 @@ is what the same trips schema already expresses when ``classes`` give its
 class a car and nothing else. This helper only saves writing out the
 eight-column table by hand; it does not introduce a second demand shape.
 ``traveller_classes`` is an example class table: six classes, each with the
-modes its travellers may use and its own mode constants.
+modes its travellers may use and its own mode constants. ``case`` gives a
+**starter case** (S240): Amsterdam, Paris, Lyon, Sioux Falls or Nguyen–Dupuis,
+its files fetched once and checked, read in one call each.
 """
 
 from __future__ import annotations
@@ -16,8 +18,12 @@ from __future__ import annotations
 import numpy as np
 
 from openmobisim import _core
+from openmobisim._cases import Case, case, case_names
 
 __all__ = [
+    "Case",
+    "case",
+    "case_names",
     "fixed_car_trips",
     "manhattan_grid",
     "toy_network",
