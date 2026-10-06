@@ -882,6 +882,59 @@ def _link_values(
     return out
 
 
+def _disruptions(
+    network: _core.Network, transit: _core.Transit | None, given: list[dict[str, Any]]
+) -> tuple[list[tuple], list[tuple]]:
+    """The disruptions (S238) as the core takes them: links and lines by index."""
+    from openmobisim.transit import _line_index
+
+    road: list[tuple] = []
+    lines_of: list[tuple] = []
+    ids: dict[str, int] | None = None
+    lines = transit.lines() if transit is not None else None
+    for k, d in enumerate(given):
+        if not isinstance(d, dict):
+            raise ValueError(f"disruption {k}: a dict, as Scenario's disruptions says")
+        known = {"links", "capacity_factor", "line", "delay_s", "cancel", "from_s", "to_s"}
+        unknown = set(d) - known
+        if unknown:
+            raise ValueError(
+                f"disruption {k}: no such key {sorted(unknown)}; the keys: {sorted(known)}"
+            )
+        if "from_s" not in d or "to_s" not in d:
+            raise ValueError(f"disruption {k}: from_s and to_s (seconds after midnight) are needed")
+        start, end = float(d["from_s"]), float(d["to_s"])
+        if "links" in d:
+            if "line" in d or "capacity_factor" not in d:
+                raise ValueError(f"disruption {k}: a road one has links and a capacity_factor")
+            out = []
+            for link in d["links"]:
+                if isinstance(link, int):
+                    out.append(link)
+                    continue
+                if ids is None:
+                    ids = {name: i for i, name in enumerate(network.link_ids())}
+                if str(link) not in ids:
+                    raise ValueError(f"disruption {k}: the network has no link {link!r}")
+                out.append(ids[str(link)])
+            road.append((out, float(d["capacity_factor"]), start, end))
+        elif "line" in d:
+            if lines is None:
+                raise ValueError(f"disruption {k}: a line's disruption needs transit=")
+            cancel = bool(d.get("cancel", False))
+            if cancel == ("delay_s" in d):
+                raise ValueError(f"disruption {k}: a line's is either delay_s or cancel=True")
+            delay = -1 if cancel else int(round(float(d["delay_s"])))
+            if not cancel and delay < 0:
+                raise ValueError(f"disruption {k}: delay_s is 0 or more")
+            if start < 0:
+                raise ValueError(f"disruption {k}: from_s is a second of the day")
+            lines_of.append((_line_index(lines, str(d["line"])), delay, round(start), round(end)))
+        else:
+            raise ValueError(f"disruption {k}: give links (a road) or line (transit)")
+    return road, lines_of
+
+
 class Scenario:
     """A network, demand, and the settings of a run.
 
@@ -922,6 +975,8 @@ class Scenario:
         mode_options: dict[str, float] | None = None,
         loading_options: dict[str, float] | None = None,
         link_values: dict[str, dict[str, Any]] | None = None,
+        disruptions: list[dict[str, Any]] | None = None,
+        disruptions_known: bool = False,
         class_defaults: None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
@@ -1023,6 +1078,10 @@ class Scenario:
             loading.setdefault("reroute", 0)
         self._loading_options = loading or None
         self._link_values = _link_values(network, link_values) if link_values else None
+        self._road_disruptions, self._transit_disruptions = _disruptions(
+            network, transit, disruptions or []
+        )
+        self._disruptions_known = bool(disruptions_known)
 
     @classmethod
     def from_parts(
@@ -1056,6 +1115,8 @@ class Scenario:
         mode_options: dict[str, float] | None = None,
         loading_options: dict[str, float] | None = None,
         link_values: dict[str, dict[str, Any]] | None = None,
+        disruptions: list[dict[str, Any]] | None = None,
+        disruptions_known: bool = False,
         class_defaults: None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
@@ -1389,6 +1450,25 @@ class Scenario:
                 previous run's ``link_bins`` (``link_ids()`` ties a bike link to its street's
                 road links).
                 Recorded in the fingerprint, and their names in the manifest.
+            disruptions: Things that happen at a time of day (S238), a list of dicts: on roads,
+                ``{"links": [...], "capacity_factor": 0.0, "from_s": 8 * 3600, "to_s": 9 * 3600}``
+                — the links (by id, ``network.link_ids()``, or index; each direction of a road
+                is a link) keep that share of their capacity from ``from_s`` to ``to_s``
+                (seconds after midnight): 0 closes them, nothing entering or leaving, 0.5
+                halves it; overlapping ones multiply; on lines, ``{"line": "T1", "delay_s": 600,
+                "from_s": ..., "to_s": ...}`` or ``{"line": "T1", "cancel": True, ...}`` — the
+                line's runs leaving their first stop in that window are late by ``delay_s`` at
+                every call (a bus on the roads leaves late and drives on among the cars) or do
+                not run. Road disruptions act through capacity, so not at ``flow_level`` 0.
+            disruptions_known: Whether travellers know of the disruptions in advance. ``False``
+                (the default: an accident, a breakdown): the run reaches its equilibrium without
+                them, then loads the day once more with them, every choice kept — only cars
+                stuck behind a closure re-route (at ``flow_level`` 3 and 4) and passengers whose
+                run never comes plan again at the stop; that last loading is the run's result
+                (the convergence report stays the undisrupted one's), so the impact is the
+                **zero-adaptation** one. ``True`` (works announced, a strike): every loading has
+                them and choices adapt over the iterations. Both are in the fingerprint and the
+                manifest (``disruptions``).
             class_defaults: Replaced by ``classes`` (S231), which takes the same tuples;
                 refused, with a pointer to it.
 
@@ -1435,6 +1515,8 @@ class Scenario:
             mode_options=mode_options,
             loading_options=loading_options,
             link_values=link_values,
+            disruptions=disruptions,
+            disruptions_known=disruptions_known,
             class_defaults=class_defaults,
         )
 
@@ -1492,6 +1574,9 @@ class Scenario:
             mode_options=self._mode_options,
             loading_options=self._loading_options,
             link_values=self._link_values,
+            road_disruptions=self._road_disruptions,
+            transit_disruptions=self._transit_disruptions,
+            disruptions_known=self._disruptions_known,
         )
         run = Run(
             summary,

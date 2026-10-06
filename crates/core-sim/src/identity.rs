@@ -101,6 +101,9 @@ pub struct RunDescription {
     /// The user's link values (S236): each column's layer and name, in the order given; empty
     /// if none.
     pub link_values: Vec<(String, String)>,
+    /// Disruptions at a time of day (S238): how many on roads, how many on lines, and whether
+    /// travellers knew of them; `None` if none.
+    pub disruptions: Option<(usize, usize, bool)>,
 }
 
 impl RunDescription {
@@ -152,6 +155,8 @@ pub(crate) struct Inputs<'a> {
     pub class_limits: &'a [crate::layers::ClassLimits],
     /// The user's link values (S236).
     pub link_values: &'a crate::link_values::LinkValues,
+    /// Disruptions at a time of day (S238).
+    pub disruptions: &'a crate::disruptions::Disruptions,
     /// The loading's rules (S213); hashed only when one is on and the run has junctions to
     /// apply them at (the link transmission model).
     pub loading: &'a crate::loading_rules::LoadingOptions,
@@ -247,6 +252,34 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             }
         }
     }
+    // Disruptions (S238): nothing when there is none.
+    let d = inputs.disruptions;
+    if !d.is_empty() {
+        h.write_str("disruptions");
+        h.write_bool(d.known);
+        for r in &d.road {
+            h.write_u64(r.links.len() as u64);
+            for l in &r.links {
+                h.write_u32(l.raw());
+            }
+            h.write_f64(r.factor);
+            h.write_f64(r.from_s);
+            h.write_f64(r.to_s);
+        }
+        h.write_str("transit");
+        for t in &d.transit {
+            h.write_u32(t.route);
+            match t.effect {
+                crate::disruptions::TransitEffect::Cancel => h.write_str("cancel"),
+                crate::disruptions::TransitEffect::Delay(s) => {
+                    h.write_str("delay");
+                    h.write_u32(s);
+                }
+            }
+            h.write_u32(t.from_s);
+            h.write_u32(t.to_s);
+        }
+    }
     // Off means absent: a run without a timetable hashes as it did before transit.
     if let Some(transit) = inputs.transit {
         hash_transit(&mut h, transit);
@@ -303,6 +336,7 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             .columns()
             .map(|(layer, name, _)| (layer.as_str().to_string(), name.to_string()))
             .collect(),
+        disruptions: (!d.is_empty()).then_some((d.road.len(), d.transit.len(), d.known)),
     }
 }
 

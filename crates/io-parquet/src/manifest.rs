@@ -97,6 +97,8 @@ pub struct Manifest {
     pub class_limits: Vec<(String, Vec<(String, f64)>)>,
     /// The user's link values (S236): each column's layer and name; empty if none.
     pub link_values: Vec<(String, String)>,
+    /// Disruptions (S238): on roads, on lines, and whether travellers knew; `None` if none.
+    pub disruptions: Option<(usize, usize, bool)>,
     /// How many loadings the run made.
     pub iterations_run: u32,
     /// Whether the strategy stopped before its most iterations because it had
@@ -169,6 +171,7 @@ impl Manifest {
                 })
                 .collect(),
             link_values: description.link_values.clone(),
+            disruptions: description.disruptions,
             iterations_run: u32::try_from(result.iterations.len().max(1)).unwrap_or(u32::MAX),
             converged: result.converged,
         }
@@ -214,7 +217,10 @@ impl Manifest {
                 .collect();
             format!("{{{}}}", parts.join(", "))
         });
-        let fields: [(&str, String); 33] = [
+        let disruptions = self.disruptions.map(|(road, transit, known)| {
+            format!("{{\"road\": {road}, \"transit\": {transit}, \"known\": {known}}}")
+        });
+        let fields: [(&str, String); 34] = [
             ("openmobisim_version", text(&self.openmobisim_version)),
             ("code_version", self.code_version.to_string()),
             ("defaults_version", self.defaults_version.to_string()),
@@ -250,6 +256,7 @@ impl Manifest {
             ("bike_max_s", optional(self.walk_bike_max_s.map(|(_, b)| number(b)))),
             ("class_limits", optional(class_limits)),
             ("link_values", optional(link_values)),
+            ("disruptions", optional(disruptions)),
             ("iterations_run", self.iterations_run.to_string()),
             ("converged", self.converged.to_string()),
             ("link_bin_seconds", optional(self.link_bin_seconds.map(|s| s.to_string()))),

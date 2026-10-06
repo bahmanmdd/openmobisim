@@ -38,9 +38,9 @@ use openmobisim_core_graph::layers::{BikeCost, StaticLayer};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
 use openmobisim_core_sim::{
-    ClassLimits, FlowMotor, LayerSetup, LinkValues, LoadingOptions, ModeDefaults, ParkingDefaults,
-    ParkingSetup, ROUTE_ATTRIBUTES, Run as CoreRun, Skimmer, StaticLayers, Timings, TransitSetup,
-    ValueLayer,
+    ClassLimits, Disruptions, FlowMotor, LayerSetup, LinkValues, LoadingOptions, ModeDefaults,
+    ParkingDefaults, ParkingSetup, ROUTE_ATTRIBUTES, RoadDisruption, Run as CoreRun, Skimmer,
+    StaticLayers, Timings, TransitDisruption, TransitEffect, TransitSetup, ValueLayer,
 };
 use openmobisim_core_transit::TransitDefaults;
 
@@ -470,7 +470,8 @@ fn convergence_arrays(
     trips=None, trips_path=None,
     persons=None, persons_path=None,
     class_defaults=None, class_modes=None, class_options=None, class_limits=None,
-    link_values=None, default_weight=1, window_s=86_400,
+    link_values=None, road_disruptions=None, transit_disruptions=None, disruptions_known=false,
+    default_weight=1, window_s=86_400,
     flow_level=0, flow_step_s=300, link_bin_s=None,
     route_method="penalty", route_options=None, master_seed=0,
     choice_model=None, choice_options=None,
@@ -498,6 +499,9 @@ pub fn run_pipeline(
     class_options: Option<HashMap<String, HashMap<String, f64>>>,
     class_limits: Option<HashMap<String, HashMap<String, f64>>>,
     link_values: Option<HashMap<String, HashMap<String, Vec<f64>>>>,
+    road_disruptions: Option<Vec<(Vec<u32>, f64, f64, f64)>>,
+    transit_disruptions: Option<Vec<(u32, i64, u32, u32)>>,
+    disruptions_known: bool,
     default_weight: u32,
     window_s: u32,
     flow_level: u32,
@@ -785,6 +789,31 @@ pub fn run_pipeline(
         .with_class_modes(class_allowed)
         .with_class_limits(class_limits)
         .with_link_values(link_values)
+        .with_disruptions(Disruptions {
+            road: road_disruptions
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(links, factor, from_s, to_s)| RoadDisruption {
+                    links: links.into_iter().map(LinkId::new).collect(),
+                    factor,
+                    from_s,
+                    to_s,
+                })
+                .collect(),
+            transit: transit_disruptions
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(route, delay, from_s, to_s)| TransitDisruption {
+                    route,
+                    // A negative delay cancels.
+                    effect: u32::try_from(delay)
+                        .map_or(TransitEffect::Cancel, TransitEffect::Delay),
+                    from_s,
+                    to_s,
+                })
+                .collect(),
+            known: disruptions_known,
+        })
         .with_mode_defaults(mode_defaults)
         .with_loading_options(loading);
     // What went in, taken before it runs (S168).

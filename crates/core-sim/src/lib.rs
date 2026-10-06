@@ -35,6 +35,7 @@
 //! second metric row lands when that happens — nothing here needs to change
 //! to add it.
 
+pub mod disruptions;
 pub mod equilibration;
 pub mod events;
 pub mod identity;
@@ -54,6 +55,7 @@ pub mod skims;
 pub mod timings;
 pub mod transit;
 
+pub use disruptions::{Disruptions, RoadDisruption, TransitDisruption, TransitEffect};
 pub use equilibration::{Equilibration, FreeFlow, IterationReport, Msa};
 pub use events::{EventRow, EventType};
 pub use identity::RunDescription;

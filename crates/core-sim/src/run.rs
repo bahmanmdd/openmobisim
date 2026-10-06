@@ -44,6 +44,7 @@ use openmobisim_core_types::rng::{DrawAddress, RngKey, Stream, StreamRng};
 use openmobisim_core_types::time::{EventKey, Second};
 use openmobisim_core_types::units::{Duration, Pcu};
 
+use crate::disruptions::Disruptions;
 use crate::equilibration::{Equilibration, FreeFlow, IterationReport};
 use crate::events::{EventRow, EventType};
 use crate::identity::{Inputs, RunDescription, describe};
@@ -290,6 +291,8 @@ struct LoadPlan<'a> {
     /// Load only the travellers marked here, by traveller (S223: the free-flow loading's
     /// increments); everyone if `None`.
     active: Option<&'a [bool]>,
+    /// Whether this loading has the run's disruptions (S238).
+    disrupted: bool,
 }
 
 /// One loading of the demand.
@@ -445,6 +448,8 @@ pub struct Run {
     /// The last loading's link times, kept after a run for skims (S238): `None` before one, or
     /// for a run of one loading, which records none.
     final_times: Option<Arc<LinkTimes>>,
+    /// Disruptions at a time of day (S238): none, by default.
+    disruptions: Disruptions,
 }
 
 /// The key of the draw that puts a traveller in a group of the free-flow loading's increments
@@ -513,7 +518,17 @@ impl Run {
             class_limits: Vec::new(),
             link_values: LinkValues::new(),
             final_times: None,
+            disruptions: Disruptions::default(),
         }
+    }
+
+    /// The same run with disruptions at a time of day (S238, [`crate::disruptions`]): roads
+    /// narrowed or closed for a while, a line's runs delayed or cancelled; known to travellers
+    /// or not. Checked when the run executes ([`RunError::Input`]).
+    #[must_use]
+    pub fn with_disruptions(mut self, disruptions: Disruptions) -> Self {
+        self.disruptions = disruptions;
+        self
     }
 
     /// The link times of the last loading of the last execution (S238): what a car took on
@@ -764,6 +779,7 @@ impl Run {
             class_modes: &self.class_modes,
             class_limits: &self.class_limits,
             link_values: &self.link_values,
+            disruptions: &self.disruptions,
             loading: &self.loading,
         })
     }
@@ -834,6 +850,12 @@ impl Run {
         let link_values =
             self.link_values.prepare(&self.network, &self.layers).map_err(RunError::Input)?;
         let link_value_names = self.link_values.attribute_names();
+        // Disruptions (S238): checked; in every loading if travellers know of them, else in one
+        // more loading after the run's equilibrium.
+        self.disruptions
+            .check(&self.network, self.transit.as_ref().map(|t| t.timetable().route_count()))
+            .map_err(RunError::Input)?;
+        let known_disruptions = self.disruptions.known && !self.disruptions.is_empty();
         let mut timings = Timings::new();
         let mut clock = Instant::now();
 
@@ -1100,6 +1122,7 @@ impl Run {
                         want_entry: true,
                         level_override: (warmup > 0).then_some(FidelityLevel::PointQueue),
                         active: Some(&loading),
+                        disrupted: known_disruptions,
                     },
                     itineraries.as_ref().zip(chosen.as_ref()),
                     (&car_ctx, expected_times.as_ref()),
@@ -1188,6 +1211,7 @@ impl Run {
                     want_entry: max_iterations > 1,
                     level_override: (iteration < warmup).then_some(FidelityLevel::PointQueue),
                     active: None,
+                    disrupted: known_disruptions,
                 },
                 itineraries.as_ref().zip(chosen.as_ref()),
                 (&car_ctx, expected_times.as_ref()),
@@ -1373,6 +1397,35 @@ impl Run {
             expected_times = times_now;
         }
 
+        // Disruptions travellers did not know of (S238): the day once more with them, every
+        // choice as the run left it; what happens within the day (rerouting, passengers whose
+        // run never comes) is all that reacts. This loading is the run's result.
+        if !self.disruptions.is_empty() && !self.disruptions.known {
+            let mut disrupted_diagnostics = Diagnostics::new();
+            let expected = self.final_times.clone().or(expected_times.map(Arc::new));
+            let loaded = self.load_once(
+                &trip_keys,
+                &route_sets,
+                &route_choices,
+                &static_routes,
+                LoadPlan {
+                    record_bins,
+                    want_entry: true,
+                    level_override: None,
+                    active: None,
+                    disrupted: true,
+                },
+                itineraries.as_ref().zip(chosen.as_ref()),
+                (&car_ctx, expected.as_deref()),
+                &mut disrupted_diagnostics,
+            );
+            clock = timings.lap("disrupted_loading", None, clock);
+            if let Some(bins) = &loaded.entry_bins {
+                self.final_times = Some(Arc::new(LinkTimes::from_tables(&self.network, bins)));
+            }
+            last = Some((loaded, disrupted_diagnostics));
+        }
+
         let (loaded, iteration_diagnostics) = last.expect("at least one iteration ran");
         diagnostics.merge(&iteration_diagnostics);
         // The chooser holds the other handle on the sets; without it they are ours.
@@ -1447,7 +1500,7 @@ impl Run {
         (car_ctx, expected): (&SearchContext<'_>, Option<&LinkTimes>),
         diagnostics: &mut Diagnostics,
     ) -> Loaded {
-        let LoadPlan { record_bins, want_entry, level_override, active } = plan;
+        let LoadPlan { record_bins, want_entry, level_override, active, disrupted } = plan;
         // The times the next choice reads are binned at the strategy's length, whatever bins
         // the flow map is recorded in (S232).
         let entry_bin_seconds = self.equilibration.cost_bin_seconds();
@@ -1739,8 +1792,13 @@ impl Run {
         // The day's buses, if they ride this network's roads (S199): loaded with the cars,
         // and their times read back for the passengers.
         let transit = self.transit.clone();
-        let bus_load =
-            transit.as_ref().filter(|t| t.rides(&self.network)).map(|t| t.bus_load(total_trips));
+        let disruptions = &self.disruptions;
+        let bus_load = transit.as_ref().filter(|t| t.rides(&self.network)).map(|t| {
+            let timetable = t.timetable();
+            t.bus_load(total_trips, &|run| {
+                if disrupted { disruptions.effect_on(timetable, run) } else { None }
+            })
+        });
         let mut bus_times = None;
         if let (FlowMotor::Level0, Some(load), Some(transit)) =
             (&self.flow_motor, &bus_load, &transit)
@@ -1810,6 +1868,11 @@ impl Run {
                     max: u8::try_from(o.reroute_max).unwrap_or(u8::MAX),
                 }),
                 pocket_length_m: o.pocket_length_m,
+                capacity_changes: if disrupted {
+                    self.disruptions.capacity_changes()
+                } else {
+                    Vec::new()
+                },
             };
             let mut rerouter = o.reroute.then(|| Rerouter::new(car_ctx, expected, &o, total_trips));
             let out = run_ltm_chained(
@@ -1913,6 +1976,19 @@ impl Run {
         let mut availability_real = None;
         let mut itinerary = ItineraryTally::default();
         if let Some(transit) = transit {
+            // The disruptions (S238): cancelled runs run for no one, delayed ones by the schedule
+            // late (a delayed bus on the roads carries its delay already).
+            if disrupted && !self.disruptions.transit.is_empty() {
+                let timetable = transit.timetable();
+                let on_roads: std::collections::HashSet<u32> = bus_load
+                    .as_ref()
+                    .map(|l| l.runs().map(|r| r.raw()).collect())
+                    .unwrap_or_default();
+                let mut times = bus_times.take().unwrap_or_else(|| timetable.scheduled().clone());
+                self.disruptions
+                    .apply_to_times(timetable, &mut times, &|r| on_roads.contains(&r.raw()));
+                bus_times = Some(times);
+            }
             // On the loading's times if the buses rode, else on the schedule.
             let realised = bus_times.as_ref().map(|times| transit.on_times(times));
             let data = realised.as_ref().unwrap_or_else(|| transit.scheduled());

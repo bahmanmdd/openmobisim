@@ -161,6 +161,13 @@ pub struct BusReport {
     pub by_schedule_implausible: u32,
 }
 
+impl BusLoad {
+    /// The runs loaded on the roads.
+    pub(crate) fn runs(&self) -> impl Iterator<Item = TransitRunId> + '_ {
+        self.legs.iter().map(|(r, _)| *r)
+    }
+}
+
 /// A day's bus runs as vehicles for one loading (S199).
 #[derive(Debug)]
 pub(crate) struct BusLoad {
@@ -443,8 +450,15 @@ impl TransitSetup {
             .is_some_and(|b| Arc::ptr_eq(&b.road, road) && b.report.runs_on_roads > 0)
     }
 
-    /// The day's road-running runs as chained vehicles, their ids from `first_id` up.
-    pub(crate) fn bus_load(&self, first_id: u32) -> BusLoad {
+    /// The day's road-running runs as chained vehicles, their ids from `first_id` up; `effect`
+    /// says which are disrupted (S238): a cancelled run's buses do not run, a delayed run's
+    /// first leaves its first stop that much later.
+    pub(crate) fn bus_load(
+        &self,
+        first_id: u32,
+        effect: &dyn Fn(TransitRunId) -> Option<crate::disruptions::TransitEffect>,
+    ) -> BusLoad {
+        use crate::disruptions::TransitEffect;
         let d = self.defaults;
         let t = &self.timetable;
         let plan = self.buses.as_ref().expect("only called when the buses ride");
@@ -452,11 +466,16 @@ impl TransitSetup {
         for (g, hops) in plan.hops.iter().enumerate() {
             let Some(hops) = hops else { continue };
             for &run in t.group_runs(u32::try_from(g).expect("groups fit u32")) {
+                let late = match effect(run) {
+                    Some(TransitEffect::Cancel) => continue,
+                    Some(TransitEffect::Delay(s)) => f64::from(s),
+                    None => 0.0,
+                };
                 let calls: Vec<usize> = t.run_calls(run).collect();
                 let sched = t.scheduled();
                 // The departure rule for the next leg: max(leader's arrival + wait, not_before);
                 // with no leader yet, `not_before` alone.
-                let (mut wait, mut not_before) = (0.0, f64::from(sched.departure[calls[0]]));
+                let (mut wait, mut not_before) = (0.0, f64::from(sched.departure[calls[0]]) + late);
                 let mut leader: Option<usize> = None;
                 let mut legs = Vec::with_capacity(hops.len());
                 for (k, links) in hops.iter().enumerate() {

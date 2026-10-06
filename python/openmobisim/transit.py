@@ -48,20 +48,9 @@ def transit_edit(
             ends before it starts.
     """
     lines = transit.lines()
-    ids, names = lines["route_id"], lines["name"]
 
     def index(line: str) -> int:
-        if line in ids:
-            return ids.index(line)
-        matches = [i for i, n in enumerate(names) if n == line]
-        if len(matches) == 1:
-            return matches[0]
-        if matches:
-            raise ValueError(
-                f"line {line!r} names {len(matches)} lines; give one of their route_ids: "
-                f"{[ids[i] for i in matches]}"
-            )
-        raise ValueError(f"no line {line!r}; transit.lines() lists the route_ids and names")
+        return _line_index(lines, line)
 
     changes = []
     for line, value in (headway or {}).items():
@@ -79,3 +68,19 @@ def transit_edit(
         transit, cancelled=[index(line) for line in cancel or []], headways=changes
     )
     return edited
+
+
+def _line_index(lines: dict, line: str) -> int:
+    """A line's index in ``transit.lines()``, by ``route_id`` or by a name only it has."""
+    ids, names = lines["route_id"], lines["name"]
+    if line in ids:
+        return ids.index(line)
+    matches = [i for i, n in enumerate(names) if n == line]
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        raise ValueError(
+            f"line {line!r} names {len(matches)} lines; give one of their route_ids: "
+            f"{[ids[i] for i in matches]}"
+        )
+    raise ValueError(f"no line {line!r}; transit.lines() lists the route_ids and names")
