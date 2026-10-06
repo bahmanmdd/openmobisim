@@ -1,6 +1,6 @@
 //! Reading a small hand-written feed, as a folder and as a zip: the busiest
 //! weekday, service exceptions, clipping to an area, interpolated times, the
-//! pick-up and drop-off rules, transfers, and what is counted as skipped.
+//! pick-up and drop-off rules, transfers, frequencies (S238), and what is counted as skipped.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -138,21 +138,27 @@ fn check(t: &Timetable, report: &GtfsReport) {
     assert_eq!(report.trips_in_feed, 7);
     assert_eq!(report.trips_on_date, 6, "T1, T3, T4, T5, T6, T7");
     assert_eq!(report.trips_untimed, 1, "T6 has no first time");
-    assert_eq!(report.runs_kept, 4);
+    assert_eq!(report.runs_kept, 3 + 18, "T3, T4, T5, and T1 every 10 min from 06:00 to 09:00");
     assert_eq!(report.times_interpolated, 1);
     assert_eq!(report.rows_skipped, 2, "the broken stop, the bad time");
     assert_eq!((report.transfers_kept, report.transfers_skipped), (1, 3));
-    assert_eq!(report.frequencies_ignored, 1);
+    assert_eq!((report.frequency_rows, report.runs_from_frequencies), (1, 18));
 
-    // T1 is clipped (D is outside) and sorted by sequence; A lets nobody off.
+    // T1 is clipped (D is outside) and sorted by sequence; A lets nobody off. It is a
+    // frequency-based trip (S238): its 08:00 run is its own times, and it runs every 600 s
+    // from 06:00 while before 09:00 — 18 runs, the last at 08:50.
     assert_eq!(
-        calls(t, "T1"),
+        calls(t, "T1@28800"),
         [
             ("A".into(), 8 * 3600, 8 * 3600, BOARD),
             ("B".into(), 8 * 3600 + 600, 8 * 3600 + 660, BOARD | ALIGHT),
             ("C".into(), 8 * 3600 + 1800, 8 * 3600 + 1800, BOARD | ALIGHT),
         ]
     );
+    assert!(run(t, "T1").is_none(), "the template is not a run of its own");
+    assert_eq!(calls(t, "T1@21600")[0].1, 6 * 3600);
+    assert_eq!(calls(t, "T1@31800")[2].1, 8 * 3600 + 3000 + 1800, "08:50, at C 30 min later");
+    assert!(run(t, "T1@32400").is_none(), "09:00 is the end, not a start");
     assert!(run(t, "T2").is_none(), "a weekend trip");
     assert!(run(t, "T6").is_none());
     // T5's B is interpolated by distance: A→B is a third of A→C.

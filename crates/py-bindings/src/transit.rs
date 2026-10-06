@@ -105,8 +105,40 @@ impl PyTransit {
         d.set_item("rows_skipped", r.rows_skipped)?;
         d.set_item("transfers_kept", r.transfers_kept)?;
         d.set_item("transfers_skipped", r.transfers_skipped)?;
-        d.set_item("frequencies_ignored", r.frequencies_ignored)?;
+        d.set_item("frequency_rows", r.frequency_rows)?;
+        d.set_item("runs_from_frequencies", r.runs_from_frequencies)?;
         Ok(Some(d))
+    }
+
+    /// Every line (GTFS route): ``{"route_id", "name", "kind", "runs", "first_s", "last_s"}``,
+    /// lists by line in id order (S238): the ids and names ``transit_edit`` takes, the kind of
+    /// service, how many runs it makes that day, and the first and last of their departures from
+    /// their first stops, in seconds after midnight (``None`` for a line with no run).
+    fn lines<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let t = &self.timetable;
+        let n = t.route_count();
+        let mut runs = vec![0u32; n as usize];
+        let mut first: Vec<Option<u32>> = vec![None; n as usize];
+        let mut last: Vec<Option<u32>> = vec![None; n as usize];
+        for r in 0..t.run_count() {
+            let run = TransitRunId::new(r);
+            let line = t.run_route(run) as usize;
+            let leaves = t.scheduled().departure[t.run_calls(run).start];
+            runs[line] += 1;
+            first[line] = Some(first[line].map_or(leaves, |f| f.min(leaves)));
+            last[line] = Some(last[line].map_or(leaves, |l| l.max(leaves)));
+        }
+        let d = PyDict::new(py);
+        d.set_item(
+            "route_id",
+            (0..n).map(|r| t.route_ids().external(r).to_string()).collect::<Vec<_>>(),
+        )?;
+        d.set_item("name", (0..n).map(|r| t.route_short_name(r).to_string()).collect::<Vec<_>>())?;
+        d.set_item("kind", (0..n).map(|r| t.route_kind(r).as_str()).collect::<Vec<_>>())?;
+        d.set_item("runs", runs)?;
+        d.set_item("first_s", first)?;
+        d.set_item("last_s", last)?;
+        Ok(d)
     }
 
     /// Every stop: ``{"stop_id", "name", "lon", "lat"}``, lists and arrays by stop.
@@ -267,4 +299,37 @@ pub(crate) fn transit_summary<'py>(
         d.set_item("bus_delay_mean_s", b.delay_mean_s)?;
     }
     Ok(d)
+}
+
+/// The same day with a scenario's changes made (S238): lines (by index) cancelled, and lines
+/// run at a new headway in a window, `(line, headway_s, from_s, to_s)`; with what was done.
+/// `openmobisim.transit_edit` is the Python face.
+///
+/// # Errors
+///
+/// `ValueError` for a line out of range, a headway of 0 or a window that ends before it
+/// starts.
+#[pyfunction]
+#[pyo3(signature = (transit, cancelled=Vec::new(), headways=Vec::new()))]
+pub fn transit_edit<'py>(
+    py: Python<'py>,
+    transit: PyRef<'_, PyTransit>,
+    cancelled: Vec<u32>,
+    headways: Vec<(u32, u32, u32, u32)>,
+) -> PyResult<(PyTransit, Bound<'py, PyDict>)> {
+    use openmobisim_core_transit::{Headway, ServiceChanges};
+    let changes = ServiceChanges {
+        cancelled,
+        headways: headways
+            .into_iter()
+            .map(|(route, headway_s, from_s, to_s)| Headway { route, headway_s, from_s, to_s })
+            .collect(),
+    };
+    let (timetable, report) =
+        transit.timetable.with_changes(&changes).map_err(PyValueError::new_err)?;
+    let d = PyDict::new(py);
+    d.set_item("runs_cancelled", report.runs_cancelled)?;
+    d.set_item("runs_replaced", report.runs_replaced)?;
+    d.set_item("runs_added", report.runs_added)?;
+    Ok((PyTransit::new(timetable, transit.report.clone()), d))
 }

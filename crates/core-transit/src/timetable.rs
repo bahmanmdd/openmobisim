@@ -575,6 +575,155 @@ impl Timetable {
     }
 }
 
+/// A line run at a new headway between two times (S238, scenario edits).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Headway {
+    /// The route (line), by index.
+    pub route: u32,
+    /// Seconds between runs.
+    pub headway_s: u32,
+    /// From this second after midnight …
+    pub from_s: u32,
+    /// … to this one (runs leave their first stop before it).
+    pub to_s: u32,
+}
+
+/// What a scenario changes in a timetable (S238). See [`Timetable::with_changes`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ServiceChanges {
+    /// Routes (lines) that do not run that day, by index.
+    pub cancelled: Vec<u32>,
+    /// Lines run at a new headway in a window.
+    pub headways: Vec<Headway>,
+}
+
+/// What [`Timetable::with_changes`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ServiceChangeReport {
+    /// Runs of cancelled lines taken out.
+    pub runs_cancelled: u32,
+    /// Runs replaced by a new headway.
+    pub runs_replaced: u32,
+    /// Runs made at the new headways.
+    pub runs_added: u32,
+}
+
+impl Timetable {
+    /// The same day with `changes` made (S238): the cancelled lines' runs taken out; and for
+    /// each new headway, within its window, each of the line's stop patterns (its runs with
+    /// the same stops) run every `headway_s` from its first run's departure in the window,
+    /// copying the times of its middle run there (the run halfway through the window's runs,
+    /// by departure). A pattern with no run in the window gets none. A new run is named
+    /// `<template run>@<seconds after midnight>`. Stops, lines and transfers are kept, so stop
+    /// and line ids stay as they were.
+    ///
+    /// # Errors
+    ///
+    /// A message for a route index out of range, a headway of 0, or a window that ends before
+    /// it starts.
+    pub fn with_changes(
+        &self,
+        changes: &ServiceChanges,
+    ) -> Result<(Timetable, ServiceChangeReport), String> {
+        let routes = self.route_count();
+        let check = |r: u32| {
+            if r < routes {
+                Ok(())
+            } else {
+                Err(format!("there is no line {r} in a timetable of {routes} lines"))
+            }
+        };
+        for &r in &changes.cancelled {
+            check(r)?;
+        }
+        for h in &changes.headways {
+            check(h.route)?;
+            if h.headway_s == 0 {
+                return Err(format!("line {}: a headway of 0 s", h.route));
+            }
+            if h.to_s <= h.from_s {
+                return Err(format!("line {}: the window ends before it starts", h.route));
+            }
+        }
+        let mut report = ServiceChangeReport::default();
+        let mut b = TimetableBuilder::new(self.date);
+        for s in 0..self.stop_count() {
+            let stop = NodeId::new(s);
+            b.add_stop(StopSpec {
+                external_id: self.stop_ids.external(s).to_string(),
+                name: self.stop_name(stop).to_string(),
+                position: self.stop_position(stop),
+                parent: self.stop_parent(stop).map(str::to_string),
+            });
+        }
+        for r in 0..routes {
+            b.add_route(RouteSpec {
+                external_id: self.route_ids.external(r).to_string(),
+                short_name: self.route_short_name(r).to_string(),
+                route_type: self.route_type(r),
+            });
+        }
+        for t in &self.transfers {
+            b.add_transfer(t.from.raw(), t.to.raw(), t.seconds);
+        }
+        let times = self.scheduled();
+        let calls_of = |run: TransitRunId, shift: i64| -> Vec<CallSpec> {
+            self.run_calls(run)
+                .map(|c| {
+                    let at = |t: u32| u32::try_from(i64::from(t) + shift).unwrap_or(t);
+                    CallSpec {
+                        stop: self.call_stop[c].raw(),
+                        arrival: at(times.arrival[c]),
+                        departure: at(times.departure[c]),
+                        flags: self.call_flags[c],
+                    }
+                })
+                .collect()
+        };
+        let first_departure = |run: TransitRunId| times.departure[self.run_calls(run).start];
+        // The window a run falls in, if its line's headway changes there.
+        let window = |run: TransitRunId| {
+            let route = self.run_route(run);
+            let leaves = first_departure(run);
+            changes
+                .headways
+                .iter()
+                .position(|h| h.route == route && (h.from_s..h.to_s).contains(&leaves))
+        };
+        // (window, group) → its runs there, by departure.
+        let mut replaced: std::collections::BTreeMap<(usize, u32), Vec<TransitRunId>> =
+            std::collections::BTreeMap::new();
+        for r in 0..self.run_count() {
+            let run = TransitRunId::new(r);
+            if changes.cancelled.contains(&self.run_route(run)) {
+                report.runs_cancelled += 1;
+                continue;
+            }
+            if let Some(w) = window(run) {
+                replaced.entry((w, self.run_group(run))).or_default().push(run);
+                report.runs_replaced += 1;
+                continue;
+            }
+            b.add_run(self.run_ids.external(r), self.run_route(run), &calls_of(run, 0));
+        }
+        for ((w, _), mut runs) in replaced {
+            let h = changes.headways[w];
+            runs.sort_by_key(|&run| (first_departure(run), run.raw()));
+            let template = runs[runs.len() / 2];
+            let base = i64::from(first_departure(template));
+            let mut t = first_departure(runs[0]);
+            while t < h.to_s {
+                let name = format!("{}@{t}", self.run_ids.external(template.raw()));
+                b.add_run(name, h.route, &calls_of(template, i64::from(t) - base));
+                report.runs_added += 1;
+                t = t.saturating_add(h.headway_s);
+            }
+        }
+        let (timetable, _) = b.build();
+        Ok((timetable, report))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

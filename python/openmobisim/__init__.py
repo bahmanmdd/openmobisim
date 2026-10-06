@@ -65,6 +65,7 @@ from openmobisim.network import network_edit, network_options, network_read_tabl
 from openmobisim.parameters import parameters
 from openmobisim.parking import parking_read_table
 from openmobisim.scenario import MODES, Run, Scenario, Table
+from openmobisim.transit import transit_edit
 
 __version__: str = _core.__version__
 
@@ -107,5 +108,6 @@ __all__ = [
     "route_sets_build",
     "route_update_methods",
     "step_of",
+    "transit_edit",
     "transit_read_gtfs",
 ]

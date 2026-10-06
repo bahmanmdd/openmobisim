@@ -548,8 +548,18 @@ class Transit:
         """Runs by kind of service: ``"bus"``, ``"tram"``, ``"metro"``, ``"rail"``, and so on."""
     def read_report(self) -> dict[str, int | bool] | None:
         """What reading the feed found, kept and skipped (``None`` if not read from a feed)."""
+    def lines(self) -> dict[str, Any]:
+        """Every line: ``{"route_id", "name", "kind", "runs", "first_s", "last_s"}`` (S238)."""
+
     def stops(self) -> dict[str, Any]:
         """Every stop: ``stop_id`` and ``name`` (lists), ``lon`` and ``lat`` (arrays)."""
+
+def transit_edit(
+    transit: Transit,
+    cancelled: list[int] = ...,
+    headways: list[tuple[int, int, int, int]] = ...,
+) -> tuple[Transit, dict[str, int]]:
+    """A changed copy of a timetable, lines by index (S238); see ``openmobisim.transit_edit``."""
 
 def transit_read_gtfs(
     path: str, network: Network | None = None, date: str | None = None

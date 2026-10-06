@@ -19,9 +19,15 @@
 //!    kept. Rows for particular routes or trips, rows between stations rather
 //!    than stops, and `transfer_type` 0 and 3 are skipped and counted.
 //!
+//! 5. **Frequencies** (`frequencies.txt`, S238): a trip listed there is a
+//!    template, its stop times read relative to its first departure; it runs
+//!    from each row's `start_time`, every `headway_secs`, while before its
+//!    `end_time` (`exact_times` 0 and 1 alike), one run each, named
+//!    `<trip_id>@<seconds after midnight>`.
+//!
 //! **Not read in this version** (counted, so the report says what is missing):
-//! `frequencies.txt` (headway-based trips are not expanded), trips of the
-//! previous service day that run past midnight into this one, shapes, fares.
+//! trips of the previous service day that run past midnight into this one,
+//! shapes, fares.
 //!
 //! **Cost:** the stops and every trip's route and service in memory, and the
 //! calls of the day's trips (about 24 bytes each: 55 MB for the whole
@@ -79,8 +85,10 @@ pub struct GtfsReport {
     pub transfers_kept: u32,
     /// Transfers skipped (see the [module docs](self)).
     pub transfers_skipped: u32,
-    /// Rows of `frequencies.txt`: headway-based trips, not expanded in this version.
-    pub frequencies_ignored: u32,
+    /// Rows of `frequencies.txt` read for the day's trips (S238).
+    pub frequency_rows: u32,
+    /// Runs made from them: each frequency-based trip once per headway.
+    pub runs_from_frequencies: u32,
     /// What building the timetable dropped or repaired.
     pub timetable: TimetableReport,
 }
@@ -184,6 +192,7 @@ pub fn read_feed(
         return Err(GtfsError::NoService(format!("nothing runs on {date}")));
     }
 
+    let frequencies = read_frequencies(source, &trip_index, &mut report)?;
     let rows = read_stop_times(source, &trip_index, &stops, &mut report)?;
 
     let mut builder = TimetableBuilder::new(date);
@@ -203,6 +212,8 @@ pub fn read_feed(
             report.trips_untimed += 1;
             continue;
         }
+        // A frequency-based trip's times count from its own first departure (S238).
+        let first_departure = run[0].departure;
         run.retain(|row| stops.rows[row.stop as usize].in_area);
         if run.len() < 2 {
             continue;
@@ -225,9 +236,31 @@ pub fn read_feed(
         if builder_route[r] == NONE {
             builder_route[r] = builder.add_route(routes.specs[r].clone());
         }
-        builder.add_run(trip_ids[trip as usize].clone(), builder_route[r], &calls);
-        report.runs_kept += 1;
-        report.calls_kept += calls.len() as u64;
+        let Some(periods) = frequencies.get(&trip) else {
+            builder.add_run(trip_ids[trip as usize].clone(), builder_route[r], &calls);
+            report.runs_kept += 1;
+            report.calls_kept += calls.len() as u64;
+            continue;
+        };
+        let mut shifted = calls.clone();
+        for &(start, end, headway) in periods {
+            let mut t = start;
+            while t < end {
+                for (out, call) in shifted.iter_mut().zip(&calls) {
+                    out.arrival = call.arrival - first_departure + t;
+                    out.departure = call.departure - first_departure + t;
+                }
+                builder.add_run(
+                    format!("{}@{t}", trip_ids[trip as usize]),
+                    builder_route[r],
+                    &shifted,
+                );
+                report.runs_kept += 1;
+                report.runs_from_frequencies += 1;
+                report.calls_kept += shifted.len() as u64;
+                t += headway;
+            }
+        }
     }
     report.stops_kept = u32::try_from(builder.stop_count()).expect("stops fit u32");
     if report.runs_kept == 0 {
@@ -238,16 +271,43 @@ pub fn read_feed(
     }
 
     read_transfers(source, &stops, &builder_stop, &mut builder, &mut report)?;
-    if let Some(input) = source.file("frequencies.txt")? {
-        let mut csv = Csv::new(input)?;
-        while csv.next()? {
-            report.frequencies_ignored += 1;
-        }
-    }
 
     let (timetable, built) = builder.build();
     report.timetable = built;
     Ok((timetable, report))
+}
+
+/// `frequencies.txt`'s rows for the day's trips, by trip: `(start, end, headway)` in seconds,
+/// in each trip's order of `start_time`. A row with a bad time, a headway that is not above 0
+/// or an end not after its start is skipped and counted.
+fn read_frequencies(
+    source: &mut FeedSource,
+    trip_index: &HashMap<String, u32>,
+    report: &mut GtfsReport,
+) -> Result<HashMap<u32, Vec<(u32, u32, u32)>>, GtfsError> {
+    let mut out: HashMap<u32, Vec<(u32, u32, u32)>> = HashMap::new();
+    let Some(input) = source.file("frequencies.txt")? else { return Ok(out) };
+    let mut csv = Csv::new(input)?;
+    let trip = required(&csv, "frequencies.txt", "trip_id")?;
+    let start = required(&csv, "frequencies.txt", "start_time")?;
+    let end = required(&csv, "frequencies.txt", "end_time")?;
+    let headway = required(&csv, "frequencies.txt", "headway_secs")?;
+    while csv.next()? {
+        let Some(&t) = trip_index.get(csv.field(trip)) else { continue };
+        let times = (parse_time(csv.field(start)), parse_time(csv.field(end)));
+        let h = csv.field(headway).trim().parse::<u32>().ok();
+        match (times, h) {
+            ((Some(a), Some(b)), Some(h)) if a != UNSET && b != UNSET && b > a && h > 0 => {
+                out.entry(t).or_default().push((a, b, h));
+                report.frequency_rows += 1;
+            }
+            _ => report.rows_skipped += 1,
+        }
+    }
+    for periods in out.values_mut() {
+        periods.sort_unstable();
+    }
+    Ok(out)
 }
 
 fn open<'a>(

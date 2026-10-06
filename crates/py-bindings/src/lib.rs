@@ -46,7 +46,7 @@ use network::{
 use parking::{PyParkings, parking_from_rows, parking_read_osm, toy_network_parkings};
 use pipeline::{PyLinkBins, PyRunSummary, run_pipeline};
 use routes::{PyRouteSets, route_methods, route_sets_build};
-use transit::{PyTransit, toy_network_transit, transit_read_gtfs};
+use transit::{PyTransit, toy_network_transit, transit_edit, transit_read_gtfs};
 
 /// Facts about the compiled core, as a dict.
 ///
@@ -160,6 +160,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTransit>()?;
     m.add_class::<PyParkings>()?;
     m.add_function(wrap_pyfunction!(transit_read_gtfs, m)?)?;
+    m.add_function(wrap_pyfunction!(transit_edit, m)?)?;
     m.add_function(wrap_pyfunction!(parking_read_osm, m)?)?;
     m.add_function(wrap_pyfunction!(parking_from_rows, m)?)?;
     m.add_function(wrap_pyfunction!(toy_network_parkings, m)?)?;

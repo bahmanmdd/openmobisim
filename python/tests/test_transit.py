@@ -210,3 +210,56 @@ def test_map_transit_draws_a_run_with_a_timetable(tmp_path: Path) -> None:
     ).run(run_id="map-none")
     with pytest.raises(ValueError, match="transit"):
         viz.map_transit(plain)
+
+
+# --- scenario edits of a timetable (S238) -----------------------------------------------------
+
+
+def _tram_trip(transit: ms._core.Transit, run_id: str) -> ms.Run:
+    # N1 → D2 by tram, leaving 100 s after a tram: it waits for the next.
+    net = ms.examples.toy_network()
+    o, d = net.node_lonlat("N1"), net.node_lonlat("D2")
+    rows = [("p", 0, o[0], o[1], d[0], d[1], 100, "x", None, "transit")]
+    return ms.Scenario.from_parts(
+        net, rows, classes={"x": (False, False, True)}, transit=transit,
+        equilibration="free_flow", flow_level=0,
+    ).run(run_id, quiet=True)  # fmt: skip
+
+
+def test_a_line_at_another_headway_changes_the_wait_and_a_cancelled_one_is_gone() -> None:
+    t = ms.examples.toy_network_transit()
+    lines = t.lines()
+    assert lines["route_id"] == ["B1", "T1"] and lines["kind"] == ["bus", "tram"]
+    assert lines["runs"] == [18, 36] and lines["first_s"] == [0, 0]
+    fast = ms.transit_edit(t, headway={"T1": 300})
+    # The tram every 10 min, each way: out 0 … 10 200 s, back 300 … 10 500 s. Every 5 min over
+    # the same day: 36 out, 35 back.
+    assert fast.lines()["runs"] == [18, 71] and fast.lines()["last_s"] == lines["last_s"]
+    assert t.lines()["runs"] == [18, 36], "the original is kept"
+    base, quicker = _tram_trip(t, "edit-tram-base"), _tram_trip(fast, "edit-tram-fast")
+    assert base.mean_travel_time_s == pytest.approx(800.0), "waits 500 s, rides 300 s"
+    assert quicker.mean_travel_time_s == pytest.approx(500.0), "waits 200 s"
+    assert quicker.fingerprint != base.fingerprint
+    gone = ms.transit_edit(t, cancel=["T1"])
+    assert gone.lines()["runs"] == [18, 0]
+    assert _tram_trip(gone, "edit-tram-gone").mean_travel_time_s > 800.0
+
+
+def test_a_headway_in_a_window_leaves_the_rest_of_the_day() -> None:
+    t = ms.examples.toy_network_transit()
+    # Every 20 min between 01:00 and 02:00 only: the tram's 12 runs there become 6.
+    edited = ms.transit_edit(t, headway={"T1": (1200, 3600, 7200)})
+    assert edited.lines()["runs"] == [18, 36 - 12 + 6]
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        ({"cancel": ["Z9"]}, "no line 'Z9'"),
+        ({"headway": {"T1": 0}}, "above 0"),
+        ({"headway": {"T1": (300, 7200, 3600)}}, "ends before"),
+    ],
+)
+def test_wrong_timetable_edits_are_refused(edit: dict, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        ms.transit_edit(ms.examples.toy_network_transit(), **edit)
