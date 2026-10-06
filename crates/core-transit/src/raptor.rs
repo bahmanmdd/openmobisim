@@ -448,6 +448,9 @@ pub struct Raptor<'a> {
     queue_pos: Vec<u32>,
     queue: Vec<u32>,
     ride_improved: Vec<u32>,
+    /// Whether every stop counts as a destination ([`Self::arrivals`], S238): an arrival must
+    /// then beat the best with a vehicle everywhere.
+    every_stop: bool,
 }
 
 impl<'a> Raptor<'a> {
@@ -474,6 +477,7 @@ impl<'a> Raptor<'a> {
             queue_pos: vec![INF; data.patterns.len()],
             queue: Vec::new(),
             ride_improved: Vec::new(),
+            every_stop: false,
         }
     }
 
@@ -509,7 +513,7 @@ impl<'a> Raptor<'a> {
     /// there from the origin does not count.
     #[inline]
     fn limit(&self, s: usize) -> u32 {
-        if self.egress[s] == INF { self.best[s] } else { self.best_ridden[s] }
+        if self.egress[s] == INF && !self.every_stop { self.best[s] } else { self.best_ridden[s] }
     }
 
     /// Record `t` as round `k`'s arrival at `s`, overall.
@@ -542,6 +546,22 @@ impl<'a> Raptor<'a> {
         let journey = found.last().map(|&(k, e, at)| self.reconstruct(k, e, at));
         self.finish(egress);
         journey
+    }
+
+    /// The earliest arrival at **every** stop from the `access` stops (each with the time the
+    /// passenger can be there), having taken at least one and at most `max_rides` vehicles, in
+    /// seconds after midnight; [`UNKNOWN_TIME`] where no such journey arrives (S238: one search
+    /// per origin for a matrix of travel times, a skim). Nothing is pruned towards a single
+    /// destination, so it costs a full search.
+    #[must_use]
+    pub fn arrivals(&mut self, access: &[(NodeId, u32)]) -> Vec<u32> {
+        self.every_stop = true;
+        let _ = self.search(access, &[]);
+        let out =
+            self.best_ridden.iter().map(|&t| if t == INF { UNKNOWN_TIME } else { t }).collect();
+        self.every_stop = false;
+        self.finish(&[]);
+        out
     }
 
     /// Every journey of the arrival-against-vehicles trade-off, fewest vehicles

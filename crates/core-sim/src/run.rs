@@ -442,6 +442,9 @@ pub struct Run {
     class_limits: Vec<ClassLimits>,
     /// The user's link values, offered to choice models as attributes (S236): none, by default.
     link_values: LinkValues,
+    /// The last loading's link times, kept after a run for skims (S238): `None` before one, or
+    /// for a run of one loading, which records none.
+    final_times: Option<Arc<LinkTimes>>,
 }
 
 /// The key of the draw that puts a traveller in a group of the free-flow loading's increments
@@ -509,7 +512,17 @@ impl Run {
             class_modes: Vec::new(),
             class_limits: Vec::new(),
             link_values: LinkValues::new(),
+            final_times: None,
         }
+    }
+
+    /// The link times of the last loading of the last execution (S238): what a car took on
+    /// each link, by time bin, for travel-time matrices after the run
+    /// ([`crate::skims::Skimmer`]). `None` before an execution, or after one of a single
+    /// loading, which records none (free-flow times stand in).
+    #[must_use]
+    pub fn final_link_times(&self) -> Option<Arc<LinkTimes>> {
+        self.final_times.clone()
     }
 
     /// The same run with the modes each traveller class may use (S231), by class index (the
@@ -1347,6 +1360,7 @@ impl Run {
                     clock = timings.lap("network_gap", Some(iteration), clock);
                 }
                 converged = iteration + 1 < max_iterations;
+                self.final_times = times_now.map(Arc::new);
                 break;
             }
             for c in changes {

@@ -50,6 +50,7 @@ pub mod route_cache;
 pub mod route_choice;
 pub mod route_update;
 pub mod run;
+pub mod skims;
 pub mod timings;
 pub mod transit;
 
@@ -69,5 +70,6 @@ pub use route_cache::RouteSetCache;
 pub use route_choice::{NO_ROUTE, ROUTE_ATTRIBUTES, RouteChoices};
 pub use route_update::{BestResponse, NoRouteUpdate, RouteUpdate};
 pub use run::{FlowMotor, ModeTotals, Run, RunError, RunResult, TripCompletionStats};
+pub use skims::Skimmer;
 pub use timings::{Stage, Timings};
 pub use transit::{BusReport, BusSummary, TransitResult, TransitSetup};

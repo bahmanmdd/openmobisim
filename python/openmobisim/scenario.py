@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -652,6 +653,59 @@ class Run:
         """
         choices = self._summary.itinerary_choices
         return None if choices is None else dict(choices)
+
+    def skim(
+        self,
+        mode: str,
+        origins: Any,
+        destinations: Any = None,
+        *,
+        departure_s: float = 8 * 3600,
+        max_s: float = 3 * 3600,
+    ) -> Any:
+        """A skim: seconds from each origin to each destination by ``mode``, after this run (S238).
+
+        The door-to-door time leaving at ``departure_s`` (seconds after midnight), by
+        ``"car"`` — the earliest arrival on the **last loading's link times**, congestion by
+        time bin included (free flow after a run of one loading), nearest drivable node to
+        nearest — ``"bike"`` or ``"walk"`` — the time of the least-cost route on the layer, as
+        the trips ride or walk — or ``"transit"`` — the earliest arrival with at least one
+        vehicle, on the times the runs kept, walking to and from stops within
+        ``transit_options``' ``access_walk_max_s``. Classes' own limits do not apply. The same
+        point (one node) takes 0; ``nan`` where nothing arrives within ``max_s``.
+
+        What accessibility measures are made of: the opportunities within 30 minutes by bike
+        from each zone (cumulative), or weighed by a decaying function of time (gravity), by
+        mode and by time of day.
+
+        Args:
+            mode: ``"car"``, ``"bike"``, ``"walk"`` or ``"transit"``.
+            origins: The points to leave from: ``(lon, lat)`` pairs, or a dict of them by name
+                (``demand_read_zones``' zones).
+            destinations: The points to arrive at, likewise; ``None``: the origins.
+            departure_s: When to leave.
+            max_s: The longest trip looked for.
+
+        Returns:
+            A ``(len(origins), len(destinations))`` float64 array of seconds.
+
+        Raises:
+            ValueError: For another mode, a transit skim of a run without a timetable, or a
+                departure or limit out of range.
+        """
+        import numpy as np
+
+        def points(given: Any) -> tuple[list[float], list[float]]:
+            values = list(given.values()) if isinstance(given, Mapping) else list(given)
+            return [float(p[0]) for p in values], [float(p[1]) for p in values]
+
+        (olon, olat) = points(origins)
+        (dlon, dlat) = points(origins if destinations is None else destinations)
+        return np.asarray(
+            self._summary.skim(
+                self._network, mode, olon, olat, dlon, dlat, float(departure_s), float(max_s)
+            )
+        )
 
     def report_spillback(self, min_excess_pcu: float = 5.0) -> dict[str, Any] | None:
         """The links where a queue outgrew the road in the last loading (S229).

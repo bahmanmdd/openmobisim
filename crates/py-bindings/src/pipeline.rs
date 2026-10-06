@@ -27,7 +27,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use numpy::{IntoPyArray, PyArray1};
+use numpy::{IntoPyArray, PyArray1, PyArrayMethods};
 
 use openmobisim_core_demand::{
     ClassDefaults, Mode, Ownership, RawPerson, RawTrip, build_travellers, read_persons_parquet,
@@ -39,7 +39,7 @@ use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
 use openmobisim_core_sim::{
     ClassLimits, FlowMotor, LayerSetup, LinkValues, LoadingOptions, ModeDefaults, ParkingDefaults,
-    ParkingSetup, ROUTE_ATTRIBUTES, Run as CoreRun, StaticLayers, Timings, TransitSetup,
+    ParkingSetup, ROUTE_ATTRIBUTES, Run as CoreRun, Skimmer, StaticLayers, Timings, TransitSetup,
     ValueLayer,
 };
 use openmobisim_core_transit::TransitDefaults;
@@ -105,6 +105,10 @@ fn person_from_row(row: PersonRow) -> RawPerson {
 /// `.manifest()` methods, each reading the corresponding path.
 #[pyclass(name = "RunSummary", module = "openmobisim._core")]
 pub struct PyRunSummary {
+    /// What a skim needs of the run (S238).
+    skimmer: Arc<Skimmer>,
+    /// The bike cost the run routed by, for a bike layer a skim prepares itself.
+    bike_cost: BikeCost,
     /// Path to the written `kpis.parquet`.
     #[pyo3(get)]
     pub kpis_path: String,
@@ -263,6 +267,69 @@ pub struct PyRunSummary {
 #[pyclass(name = "LinkBins", module = "openmobisim._core")]
 pub struct PyLinkBins {
     inner: LinkBins,
+}
+
+#[pymethods]
+impl PyRunSummary {
+    /// Seconds from each origin to each destination by `mode` (``"car"``, ``"bike"``,
+    /// ``"walk"`` or ``"transit"``), leaving at `departure_s`, as a ``(origins, destinations)``
+    /// float64 array: ``nan`` where nothing arrives within `max_s` (S238, a skim; see
+    /// ``Run.skim``). `network` is the run's, for a bike or walk layer the run did not prepare.
+    #[allow(clippy::too_many_arguments, reason = "the points as columns, and the skim's own")]
+    #[pyo3(signature = (network, mode, origin_lon, origin_lat, destination_lon, destination_lat, departure_s, max_s))]
+    fn skim<'py>(
+        &self,
+        py: Python<'py>,
+        network: PyRef<'_, PyNetwork>,
+        mode: &str,
+        origin_lon: Vec<f64>,
+        origin_lat: Vec<f64>,
+        destination_lon: Vec<f64>,
+        destination_lat: Vec<f64>,
+        departure_s: f64,
+        max_s: f64,
+    ) -> PyResult<Bound<'py, numpy::PyArray2<f64>>> {
+        if origin_lon.len() != origin_lat.len() || destination_lon.len() != destination_lat.len() {
+            return Err(PyValueError::new_err("a point is a longitude and a latitude"));
+        }
+        if !(departure_s.is_finite() && departure_s >= 0.0 && max_s > 0.0) {
+            return Err(PyValueError::new_err(
+                "departure_s is a second of the day (0 or more) and max_s above 0",
+            ));
+        }
+        let mode = Mode::from_name(mode).map_err(to_value_error)?;
+        let at = |lon: &[f64], lat: &[f64]| -> Vec<LonLat> {
+            lon.iter().zip(lat).map(|(&x, &y)| LonLat::new(x, y)).collect()
+        };
+        let (origins, destinations) =
+            (at(&origin_lon, &origin_lat), at(&destination_lon, &destination_lat));
+        // A bike or walk layer the run did not prepare: made here, as the run would have.
+        let own = match mode {
+            Mode::Bike | Mode::Walk => {
+                let layer = if mode == Mode::Bike { StaticLayer::Bike } else { StaticLayer::Walk };
+                if self.skimmer.layer(layer).is_none() {
+                    Some(LayerSetup::new(
+                        network.static_layer(layer)?,
+                        self.bike_cost,
+                        network.inner.defaults().layers,
+                    ))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        let skimmer = self.skimmer.clone();
+        let values = py
+            .detach(|| {
+                skimmer.skim(mode, &origins, &destinations, departure_s, max_s, own.as_ref())
+            })
+            .map_err(PyValueError::new_err)?;
+        let rows = origins.len();
+        numpy::PyArray1::from_vec(py, values)
+            .reshape([rows, destinations.len()])
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
 }
 
 #[pymethods]
@@ -624,11 +691,13 @@ pub fn run_pipeline(
             )));
         }
     };
+    let mut run_turns: Option<Arc<TurnTable>> = None;
     if let Some(level) = level {
         if flow_step_s == 0 {
             return Err(PyValueError::new_err("flow_step_s must be positive"));
         }
         let turns = Arc::new(TurnTable::build(&network.inner, network.inner.signals()));
+        run_turns = Some(turns.clone());
         run = run.with_flow_motor(FlowMotor::Ltm {
             turns,
             step: Duration(f64::from(flow_step_s)),
@@ -703,7 +772,8 @@ pub fn run_pipeline(
         }
         _ => None,
     };
-    run = run.with_layers(Arc::new(layers));
+    let layers = Arc::new(layers);
+    run = run.with_layers(layers.clone());
     if let Some(t) = &transit_setup {
         run = run.with_transit(t.clone());
     }
@@ -723,6 +793,14 @@ pub fn run_pipeline(
     let mut run_diagnostics = Diagnostics::new();
     let result = run.try_execute(&mut run_diagnostics).map_err(to_value_error)?;
     let core_stages = run.timings().to_vec();
+    // What a skim needs after the run (S238), kept with the summary.
+    let skimmer = Arc::new(Skimmer::new(
+        network.inner.clone(),
+        run_turns,
+        run.final_link_times(),
+        layers,
+        transit_setup.clone().map(|t| (t, result.transit.as_ref().map(|r| r.times.clone()))),
+    ));
     let clock = Instant::now();
 
     let mut diagnostics = build_diagnostics;
@@ -950,6 +1028,8 @@ pub fn run_pipeline(
     };
 
     Ok(PyRunSummary {
+        skimmer,
+        bike_cost,
         spillback,
         timings: timing_rows,
         timings_path: timings_path.to_string_lossy().into_owned(),

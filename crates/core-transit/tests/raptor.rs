@@ -413,4 +413,24 @@ proptest! {
             }
         }
     }
+
+    /// Every stop's earliest arrival with a vehicle, in one search (S238: skims), equals the
+    /// search to that stop alone, with no walk out.
+    #[test]
+    fn arrivals_at_every_stop_equal_one_search_each((n, runs, walks, from, _to) in arb_case(), slack in 0u32..90, depart in 0u32..700) {
+        let t = timetable(n, &runs);
+        let footpaths = Footpaths::new(
+            n,
+            walks.iter().map(|&(a, b, w)| (stop(a), stop(b), w)).collect(),
+        );
+        let data = RaptorData::new(&t, t.scheduled(), footpaths, slack);
+        let mut raptor = Raptor::new(&data, 4);
+        let access = [(stop(from), depart)];
+        let all = raptor.arrivals(&access);
+        prop_assert_eq!(all.len(), n as usize);
+        for s in 0..n {
+            let one = raptor.earliest(&access, &[(stop(s), 0)]).map_or(UNKNOWN_TIME, |j| j.arrival);
+            prop_assert_eq!(all[s as usize], one, "stop {}", s);
+        }
+    }
 }
