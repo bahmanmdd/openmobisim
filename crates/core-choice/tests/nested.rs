@@ -124,5 +124,6 @@ fn the_logsums_are_by_hand_and_the_nested_one_is_the_flat_one_at_mu_1() {
     }
     let one = nested(1.0).logsums(&b).unwrap().unwrap();
     assert!((one[0] - flat[0]).abs() < 1e-12);
-    assert_eq!(openmobisim_core_choice::log_sum_exp(std::iter::empty()), f64::NEG_INFINITY);
+    let none = openmobisim_core_choice::log_sum_exp(std::iter::empty());
+    assert!(none.is_infinite() && none < 0.0, "no alternative: −∞");
 }
