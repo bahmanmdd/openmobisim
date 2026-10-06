@@ -100,6 +100,9 @@ fn person_from_row(row: PersonRow) -> RawPerson {
     RawPerson { traveller_id, owns_car, owns_bike, has_transit_pass, user_class }
 }
 
+/// A road disruption as Python gives it (S238): link indices, capacity factor, from and to (s).
+type RoadDisruptionRow = (Vec<u32>, f64, f64, f64);
+
 /// What one run produced, as plain fields. `python/openmobisim`'s `Run` class
 /// wraps this into something with `.kpis()`/`.diagnostics()`/`.events()`/
 /// `.manifest()` methods, each reading the corresponding path.
@@ -499,7 +502,7 @@ pub fn run_pipeline(
     class_options: Option<HashMap<String, HashMap<String, f64>>>,
     class_limits: Option<HashMap<String, HashMap<String, f64>>>,
     link_values: Option<HashMap<String, HashMap<String, Vec<f64>>>>,
-    road_disruptions: Option<Vec<(Vec<u32>, f64, f64, f64)>>,
+    road_disruptions: Option<Vec<RoadDisruptionRow>>,
     transit_disruptions: Option<Vec<(u32, i64, u32, u32)>>,
     disruptions_known: bool,
     default_weight: u32,
