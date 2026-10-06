@@ -32,7 +32,7 @@ def read(**options):
 
 def test_every_parameter_is_listed_with_its_shipped_value():
     shipped = ms.network_options()
-    assert len(shipped) == 14 + 4 * 19
+    assert len(shipped) == 15 + 4 * 19
     assert shipped["residential.free_flow_km_h"] > 0 and shipped["capacity_factor"] == 1.0
     assert {"signal_cycle_s", "walk_km_h", "bike_mixed_km_h", "primary.lanes"} <= set(shipped)
     assert ms.network_options(read()) == shipped
