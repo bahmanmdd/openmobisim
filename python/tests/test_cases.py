@@ -51,7 +51,8 @@ def made_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         },
         "scenarios": {"base": {}, "double": {"multiple": 2.0}},
     }))  # fmt: skip
-    files = {str(p.relative_to(folder)): _sha(p) for p in sorted(folder.rglob("*")) if p.is_file()}
+    paths = sorted(p for p in folder.rglob("*") if p.is_file())
+    files = {p.relative_to(folder).as_posix(): _sha(p) for p in paths}  # "/" on every system
     manifest = tmp_path / "bundle_v1.json"
     manifest.write_text(json.dumps({"bundle": "v1", "cases": {"line": {
         "archive": {"name": "line.zip", "sha256": "0" * 64, "bytes": 0},
