@@ -277,6 +277,9 @@ pub fn read_feed(
     Ok((timetable, report))
 }
 
+/// Per trip, its frequency periods: `(start, end, headway)` in seconds.
+type Periods = HashMap<u32, Vec<(u32, u32, u32)>>;
+
 /// `frequencies.txt`'s rows for the day's trips, by trip: `(start, end, headway)` in seconds,
 /// in each trip's order of `start_time`. A row with a bad time, a headway that is not above 0
 /// or an end not after its start is skipped and counted.
@@ -284,8 +287,8 @@ fn read_frequencies(
     source: &mut FeedSource,
     trip_index: &HashMap<String, u32>,
     report: &mut GtfsReport,
-) -> Result<HashMap<u32, Vec<(u32, u32, u32)>>, GtfsError> {
-    let mut out: HashMap<u32, Vec<(u32, u32, u32)>> = HashMap::new();
+) -> Result<Periods, GtfsError> {
+    let mut out: Periods = HashMap::new();
     let Some(input) = source.file("frequencies.txt")? else { return Ok(out) };
     let mut csv = Csv::new(input)?;
     let trip = required(&csv, "frequencies.txt", "trip_id")?;

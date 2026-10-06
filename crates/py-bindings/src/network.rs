@@ -1097,7 +1097,7 @@ pub fn network_edit(
         Some(LayerParts {
             network: Arc::new(edited),
             geometry: parts.geometry.clone(),
-            report: parts.report.clone(),
+            report: parts.report,
         })
     };
     // The layers read with the network (or derived already) carry over; the bike layer as
