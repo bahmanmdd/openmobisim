@@ -1,4 +1,4 @@
-//! Disruptions at a time of day (S238, roadmap I-az: timed events; design §25): a road narrowed
+//! Disruptions at a time of day (S239, roadmap I-az: timed events; design §25): a road narrowed
 //! or closed for a while, a line's runs delayed or cancelled.
 //!
 //! **Known or not.** Travellers either **know** of the disruptions — every loading has them, so

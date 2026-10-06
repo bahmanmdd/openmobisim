@@ -451,7 +451,7 @@ impl TransitSetup {
     }
 
     /// The day's road-running runs as chained vehicles, their ids from `first_id` up; `effect`
-    /// says which are disrupted (S238): a cancelled run's buses do not run, a delayed run's
+    /// says which are disrupted (S239): a cancelled run's buses do not run, a delayed run's
     /// first leaves its first stop that much later.
     pub(crate) fn bus_load(
         &self,

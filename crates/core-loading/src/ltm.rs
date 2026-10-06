@@ -351,7 +351,7 @@ pub struct Rules {
     pub reroute: Option<RerouteRule>,
     /// Turn pockets this many metres long ([`LtmNetwork::with_pockets`]); 0: none.
     pub pocket_length_m: f64,
-    /// Timed capacity changes (S238, [`LtmNetwork::with_capacity_changes`]); empty: none.
+    /// Timed capacity changes (S239, [`LtmNetwork::with_capacity_changes`]); empty: none.
     pub capacity_changes: Vec<CapacityChange>,
 }
 
@@ -617,7 +617,7 @@ pub struct LtmNetwork<'a> {
     /// Per-link, per-bin results, when asked for (S163).
     recorder: Option<LinkBinRecorder>,
 
-    /// Timed capacity changes (S238, disruptions): sorted by time, then link; empty when none.
+    /// Timed capacity changes (S239, disruptions): sorted by time, then link; empty when none.
     changes: Vec<CapacityChange>,
     /// The next change not yet made.
     next_change: usize,
@@ -625,7 +625,7 @@ pub struct LtmNetwork<'a> {
     base_rates: Vec<(f64, f64)>,
 }
 
-/// A link's capacity from a second on, as a share of its own (S238, disruptions): `factor` 0
+/// A link's capacity from a second on, as a share of its own (S239, disruptions): `factor` 0
 /// closes it (nothing passes until a later change opens it), 1 restores it. Made by the loading
 /// when its clock reaches `time`; zero cost when there is none.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -716,7 +716,7 @@ impl<'a> LtmNetwork<'a> {
         sim
     }
 
-    /// The same network with timed capacity changes (S238, disruptions): a road narrowed or
+    /// The same network with timed capacity changes (S239, disruptions): a road narrowed or
     /// closed for a while by an accident or works. Each is made when the loading's clock
     /// reaches it — before any movement at that second — and the queues it touches (the link's
     /// own, those feeding it, the departures onto it) are looked at again, so a reopened link
@@ -1429,7 +1429,7 @@ impl<'a> LtmNetwork<'a> {
         loop {
             let next_event = self.events.peek().map(|e| e.time);
             let next_departure = self.next_departure_time(t0);
-            // A capacity change (S238) comes before any movement at its second.
+            // A capacity change (S239) comes before any movement at its second.
             if let Some(c) = self.next_change_time() {
                 if c < t1
                     && next_event.is_none_or(|e| c <= e)

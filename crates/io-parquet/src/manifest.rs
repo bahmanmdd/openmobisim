@@ -97,7 +97,7 @@ pub struct Manifest {
     pub class_limits: Vec<(String, Vec<(String, f64)>)>,
     /// The user's link values (S236): each column's layer and name; empty if none.
     pub link_values: Vec<(String, String)>,
-    /// Disruptions (S238): on roads, on lines, and whether travellers knew; `None` if none.
+    /// Disruptions (S239): on roads, on lines, and whether travellers knew; `None` if none.
     pub disruptions: Option<(usize, usize, bool)>,
     /// How many loadings the run made.
     pub iterations_run: u32,

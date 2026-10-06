@@ -34,16 +34,16 @@
   "nguyendupuis": {
    "archive": {
     "name": "nguyendupuis.zip",
-    "sha256": "2e2cb00ca434891f9d6f77e277d457336ce18a1445b4a06e3a5ec90c27634bbf",
-    "bytes": 1599
+    "sha256": "0dedb7d6f9ce2fdc6f7c49b27fdc92a4932a0c870cbb94700d1e077a031d50ba",
+    "bytes": 1592
    },
    "files": {
     "case.json": "47900991d9e1c313c57901951afedcb268c4e2012e900abac5fbd5bc62f9bdc3",
     "demand/classes.csv": "732da9800415f29279d5b1973c2c06ea20e9078f195df993d0538d38e8b402c4",
-    "demand/od.csv": "131fc72c9264a0e76e8a75305997743108ed304c9f6f63d8d27b7c6df478b402",
+    "demand/od.csv": "67cf5e21ad563d75c7176bd03b04a6f8a44604b88eab2960964ca1d599c8ca0f",
     "demand/zones.csv": "7582c12f615f80c795c3b95a82b9902cd140ff87c61b5401228bbf99eccfb49a",
-    "network/links.csv": "6cdd1645b23170ba4ee34eb6daa47ba179972f5198d23e76e5b06689db21a62b",
-    "network/nodes.csv": "4e177b08388cd9f52a287dfad04d4654b1b3f5885ddef147b3915171678b0bf3"
+    "network/links.csv": "4d5b13fe59087192488f8179bc40928842c9604a65c40bc9795139dab44f0a44",
+    "network/nodes.csv": "0a00e3b68d91177108cce66c5089b87ec275f3cc196f61da9ceb3f96b0e8f178"
    }
   },
   "paris": {

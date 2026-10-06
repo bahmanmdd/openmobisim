@@ -291,7 +291,7 @@ struct LoadPlan<'a> {
     /// Load only the travellers marked here, by traveller (S223: the free-flow loading's
     /// increments); everyone if `None`.
     active: Option<&'a [bool]>,
-    /// Whether this loading has the run's disruptions (S238).
+    /// Whether this loading has the run's disruptions (S239).
     disrupted: bool,
 }
 
@@ -448,7 +448,7 @@ pub struct Run {
     /// The last loading's link times, kept after a run for skims (S238): `None` before one, or
     /// for a run of one loading, which records none.
     final_times: Option<Arc<LinkTimes>>,
-    /// Disruptions at a time of day (S238): none, by default.
+    /// Disruptions at a time of day (S239): none, by default.
     disruptions: Disruptions,
 }
 
@@ -522,7 +522,7 @@ impl Run {
         }
     }
 
-    /// The same run with disruptions at a time of day (S238, [`crate::disruptions`]): roads
+    /// The same run with disruptions at a time of day (S239, [`crate::disruptions`]): roads
     /// narrowed or closed for a while, a line's runs delayed or cancelled; known to travellers
     /// or not. Checked when the run executes ([`RunError::Input`]).
     #[must_use]
@@ -850,7 +850,7 @@ impl Run {
         let link_values =
             self.link_values.prepare(&self.network, &self.layers).map_err(RunError::Input)?;
         let link_value_names = self.link_values.attribute_names();
-        // Disruptions (S238): checked; in every loading if travellers know of them, else in one
+        // Disruptions (S239): checked; in every loading if travellers know of them, else in one
         // more loading after the run's equilibrium.
         self.disruptions
             .check(&self.network, self.transit.as_ref().map(|t| t.timetable().route_count()))
@@ -1397,7 +1397,7 @@ impl Run {
             expected_times = times_now;
         }
 
-        // Disruptions travellers did not know of (S238): the day once more with them, every
+        // Disruptions travellers did not know of (S239): the day once more with them, every
         // choice as the run left it; what happens within the day (rerouting, passengers whose
         // run never comes) is all that reacts. This loading is the run's result.
         if !self.disruptions.is_empty() && !self.disruptions.known {
@@ -1976,7 +1976,7 @@ impl Run {
         let mut availability_real = None;
         let mut itinerary = ItineraryTally::default();
         if let Some(transit) = transit {
-            // The disruptions (S238): cancelled runs run for no one, delayed ones by the schedule
+            // The disruptions (S239): cancelled runs run for no one, delayed ones by the schedule
             // late (a delayed bus on the roads carries its delay already).
             if disrupted && !self.disruptions.transit.is_empty() {
                 let timetable = transit.timetable();

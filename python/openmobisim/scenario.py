@@ -6,7 +6,8 @@ route choice among each trip's alternatives (a path-size ``"logit"``) and
 iteration towards an equilibrium (``"msa"``), during which the route sets may
 grow (``route_update="best_response"``) — all by default. Trips drive, cycle,
 walk, take transit (``transit=``) or drive or cycle to a parking and go on by
-transit (``parkings=``). No disruptions yet.
+transit (``parkings=``). Roads and lines can be disrupted at a time of day
+(``disruptions=``).
 """
 
 from __future__ import annotations
@@ -885,7 +886,7 @@ def _link_values(
 def _disruptions(
     network: _core.Network, transit: _core.Transit | None, given: list[dict[str, Any]]
 ) -> tuple[list[tuple], list[tuple]]:
-    """The disruptions (S238) as the core takes them: links and lines by index."""
+    """The disruptions (S239) as the core takes them: links and lines by index."""
     from openmobisim.transit import _line_index
 
     road: list[tuple] = []
@@ -1450,7 +1451,7 @@ class Scenario:
                 previous run's ``link_bins`` (``link_ids()`` ties a bike link to its street's
                 road links).
                 Recorded in the fingerprint, and their names in the manifest.
-            disruptions: Things that happen at a time of day (S238), a list of dicts: on roads,
+            disruptions: Things that happen at a time of day (S239), a list of dicts: on roads,
                 ``{"links": [...], "capacity_factor": 0.0, "from_s": 8 * 3600, "to_s": 9 * 3600}``
                 — the links (by id, ``network.link_ids()``, or index; each direction of a road
                 is a link) keep that share of their capacity from ``from_s`` to ``to_s``

@@ -892,7 +892,7 @@ def run_pipeline(
         link_values: ``{layer: {name: values}}`` — the user's numbers per link of the
             ``"road"``, ``"bike"`` or ``"walk"`` layer, one per link in link order (S236),
             offered to choice models as ``<layer>_<name>_km`` and ``<layer>_<name>_sum``.
-        road_disruptions: ``(link indices, capacity factor, from_s, to_s)`` each (S238).
+        road_disruptions: ``(link indices, capacity factor, from_s, to_s)`` each (S239).
         transit_disruptions: ``(line index, delay_s or -1 to cancel, from_s, to_s)`` each.
         disruptions_known: Whether travellers know of the disruptions in advance.
         default_weight: How many people a simulated traveller stands for, for

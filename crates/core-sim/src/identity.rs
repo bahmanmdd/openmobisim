@@ -101,7 +101,7 @@ pub struct RunDescription {
     /// The user's link values (S236): each column's layer and name, in the order given; empty
     /// if none.
     pub link_values: Vec<(String, String)>,
-    /// Disruptions at a time of day (S238): how many on roads, how many on lines, and whether
+    /// Disruptions at a time of day (S239): how many on roads, how many on lines, and whether
     /// travellers knew of them; `None` if none.
     pub disruptions: Option<(usize, usize, bool)>,
 }
@@ -155,7 +155,7 @@ pub(crate) struct Inputs<'a> {
     pub class_limits: &'a [crate::layers::ClassLimits],
     /// The user's link values (S236).
     pub link_values: &'a crate::link_values::LinkValues,
-    /// Disruptions at a time of day (S238).
+    /// Disruptions at a time of day (S239).
     pub disruptions: &'a crate::disruptions::Disruptions,
     /// The loading's rules (S213); hashed only when one is on and the run has junctions to
     /// apply them at (the link transmission model).
@@ -252,7 +252,7 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             }
         }
     }
-    // Disruptions (S238): nothing when there is none.
+    // Disruptions (S239): nothing when there is none.
     let d = inputs.disruptions;
     if !d.is_empty() {
         h.write_str("disruptions");
