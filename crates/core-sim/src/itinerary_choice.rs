@@ -502,7 +502,7 @@ impl<'a> Planner<'a> {
     }
 
     /// Each bike leg's metres by facility (S236): what a model sees of the route's quality. A
-    /// ferry crossing is ridden on no facility, so it counts in none (S240; its time is in the
+    /// ferry crossing is ridden on no facility, so it counts in none (S241; its time is in the
     /// leg's).
     fn measure_bike_legs(&self, alts: &mut [Alternative]) {
         let Some((layer, _)) = self.bike else { return };

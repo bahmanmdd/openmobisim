@@ -162,7 +162,7 @@ def test_mode_options_cut_off_a_long_walk_or_ride_and_refuse_unknown_names() -> 
 
 
 def test_a_ferry_crossing_counts_in_no_bike_facility(tmp_path) -> None:
-    # S240: a ride across a ferry and then along a cycle track is on a track for the track's
+    # S241: a ride across a ferry and then along a cycle track is on a track for the track's
     # length only; the crossing is ridden on no facility (it read as mixed traffic before), and
     # ``link_class`` names it (``LINK_CLASSES``).
     import numpy as np

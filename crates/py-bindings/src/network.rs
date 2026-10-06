@@ -318,7 +318,7 @@ impl PyNetwork {
     /// shared with pedestrians, 1 = a painted lane or cycle street, 2 = a track
     /// or cycleway of its own (S193, S195). All 0 on the walk layer. A ferry
     /// crossing has no infrastructure and reads 0 too: `link_class` tells it
-    /// apart (S240).
+    /// apart (S241).
     ///
     /// # Errors
     ///
@@ -1024,7 +1024,7 @@ fn network_defaults(options: Option<HashMap<String, f64>>) -> PyResult<NetworkDe
 }
 
 /// The road classes' names, in the order of their numbers (`link_class`): `motorway` is 0
-/// (S240).
+/// (S241).
 #[pyfunction]
 pub fn link_classes() -> Vec<&'static str> {
     RoadClass::ALL.iter().map(|c| c.as_str()).collect()
