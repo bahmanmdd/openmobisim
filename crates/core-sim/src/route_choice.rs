@@ -42,6 +42,7 @@ use openmobisim_core_types::ids::{EntityId, NodeId, TripId};
 
 use crate::equilibration::Equilibration;
 use crate::link_times::LinkTimes;
+use crate::link_values::{PreparedLinkValues, ValueLayer};
 use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
 /// Sampled trips per search scratch in the whole-network gap: a scratch holds a few bytes
@@ -136,6 +137,10 @@ pub(crate) struct Inputs<'a> {
     /// An alternative is offered only if its expected time is within this share of the best's
     /// (0: all of them; S178).
     pub detour_limit: f64,
+    /// The user's link values (S236): a route's `road_<name>_km` and `road_<name>_sum`.
+    pub link_values: &'a PreparedLinkValues,
+    /// Their attributes' names.
+    pub link_value_names: &'a [String],
 }
 
 /// The identity of a route: a 32-bit hash of its links.
@@ -231,13 +236,18 @@ impl Filled {
 pub(crate) struct Chooser<'a> {
     inputs: &'a Inputs<'a>,
     route_sets: Arc<RouteSets>,
-    wanted: Vec<&'static str>,
+    wanted: Vec<String>,
     attributes: Option<RouteAttributes>,
     identity: Vec<u32>,
     weight: Vec<u32>,
 }
 
 impl<'a> Chooser<'a> {
+    /// The attributes filled, as a batch names them.
+    fn wanted_names(&self) -> Vec<&str> {
+        self.wanted.iter().map(String::as_str).collect()
+    }
+
     /// Prepare to choose.
     ///
     /// # Errors
@@ -250,21 +260,12 @@ impl<'a> Chooser<'a> {
     ) -> Result<Self, ChoiceError> {
         let (trips, travellers, network) = (inputs.trips, inputs.travellers, inputs.network);
         // The attributes to fill: what the model reads, or all of them.
-        let wanted: Vec<&'static str> = match inputs.model.required_attributes() {
-            None => ROUTE_ATTRIBUTES.to_vec(),
-            Some(names) => {
-                for name in &names {
-                    if !ROUTE_ATTRIBUTES.contains(&name.as_str()) {
-                        return Err(ChoiceError::MissingAttribute {
-                            name: name.clone(),
-                            offered: ROUTE_ATTRIBUTES.iter().map(|s| (*s).to_string()).collect(),
-                        });
-                    }
-                }
-                ROUTE_ATTRIBUTES.iter().copied().filter(|a| names.iter().any(|n| n == a)).collect()
-            }
-        };
-        let needs = |name: &str| wanted.contains(&name);
+        let wanted = crate::itinerary_choice::wanted(
+            inputs.model,
+            &ROUTE_ATTRIBUTES,
+            inputs.link_value_names,
+        )?;
+        let needs = |name: &str| wanted.iter().any(|w| w == name);
         let attributes =
             (needs("length_km") || needs("ln_path_size")).then(|| route_sets.attributes(network));
         let mut identity: Vec<u32> = (0..route_sets.route_count())
@@ -341,7 +342,19 @@ impl<'a> Chooser<'a> {
                 }
                 let view = route_sets.route(r);
                 for (slot, name) in row.iter_mut().zip(&self.wanted) {
-                    *slot = match *name {
+                    if let Some((column, aggregate)) = self.inputs.link_values.lookup(name) {
+                        *slot = if self.inputs.link_values.layer(column) == ValueLayer::Road {
+                            self.inputs.link_values.total(
+                                column,
+                                aggregate,
+                                view.links.iter().map(|&l| l as usize),
+                            )
+                        } else {
+                            0.0
+                        };
+                        continue;
+                    }
+                    *slot = match name.as_str() {
                         "time_min" => seconds[a] / 60.0,
                         "length_km" => {
                             self.attributes.as_ref().map_or(0.0, |x| x.length_m[r]) / 1000.0
@@ -486,7 +499,7 @@ impl<'a> Chooser<'a> {
     ) -> Result<RouteChoices, ChoiceError> {
         let total = self.inputs.trips.len() as usize;
         let mut out = self.empty_choices();
-        let mut batch = ChoiceBatch::new(iteration, &self.wanted);
+        let mut batch = ChoiceBatch::new(iteration, &self.wanted_names());
         let mut filled = Filled::default();
         let mut i = 0;
         while i < total {
@@ -525,7 +538,7 @@ impl<'a> Chooser<'a> {
         rng: &StreamRng,
     ) -> Result<Vec<Change>, ChoiceError> {
         let total = self.inputs.trips.len() as usize;
-        let mut batch = ChoiceBatch::new(iteration, &self.wanted);
+        let mut batch = ChoiceBatch::new(iteration, &self.wanted_names());
         let mut filled = Filled::default();
         let mut changes: Vec<Change> = Vec::new();
         let mut i = 0;
@@ -574,7 +587,7 @@ impl<'a> Chooser<'a> {
     ) -> Result<Update, ChoiceError> {
         let total = self.inputs.trips.len() as usize;
         let sets = &*self.route_sets;
-        let mut batch = ChoiceBatch::new(iteration, &self.wanted);
+        let mut batch = ChoiceBatch::new(iteration, &self.wanted_names());
         let mut filled = Filled::default();
         let routes = sets.route_count();
         let (mut observed, mut expected, mut sample) =

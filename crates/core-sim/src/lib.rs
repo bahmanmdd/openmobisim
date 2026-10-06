@@ -42,6 +42,7 @@ pub mod itinerary;
 pub mod itinerary_choice;
 pub mod layers;
 pub mod link_times;
+pub mod link_values;
 pub mod loading_rules;
 pub mod parking;
 mod reroute;
@@ -59,6 +60,7 @@ pub use itinerary::{Itinerary, LegRoute, Networks};
 pub use itinerary_choice::{ATTRIBUTES, ItineraryResult, NO_MODE, NO_PARKING};
 pub use layers::{ClassLimits, LayerSetup, ModeDefaults, StaticLayers};
 pub use link_times::{LinkTimes, relative_time_change};
+pub use link_values::{LinkValues, ValueLayer};
 pub use loading_rules::LoadingOptions;
 pub use parking::{
     ParkingBins, ParkingDefaults, ParkingError, ParkingResult, ParkingSetup, ParkingSetupReport,

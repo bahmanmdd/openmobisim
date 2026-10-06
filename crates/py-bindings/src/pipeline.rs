@@ -38,8 +38,9 @@ use openmobisim_core_graph::layers::{BikeCost, StaticLayer};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
 use openmobisim_core_sim::{
-    ClassLimits, FlowMotor, LayerSetup, LoadingOptions, ModeDefaults, ParkingDefaults,
-    ParkingSetup, Run as CoreRun, StaticLayers, Timings, TransitSetup,
+    ClassLimits, FlowMotor, LayerSetup, LinkValues, LoadingOptions, ModeDefaults, ParkingDefaults,
+    ParkingSetup, ROUTE_ATTRIBUTES, Run as CoreRun, StaticLayers, Timings, TransitSetup,
+    ValueLayer,
 };
 use openmobisim_core_transit::TransitDefaults;
 
@@ -402,7 +403,7 @@ fn convergence_arrays(
     trips=None, trips_path=None,
     persons=None, persons_path=None,
     class_defaults=None, class_modes=None, class_options=None, class_limits=None,
-    default_weight=1, window_s=86_400,
+    link_values=None, default_weight=1, window_s=86_400,
     flow_level=0, flow_step_s=300, link_bin_s=None,
     route_method="penalty", route_options=None, master_seed=0,
     choice_model=None, choice_options=None,
@@ -429,6 +430,7 @@ pub fn run_pipeline(
     class_modes: Option<HashMap<String, Vec<String>>>,
     class_options: Option<HashMap<String, HashMap<String, f64>>>,
     class_limits: Option<HashMap<String, HashMap<String, f64>>>,
+    link_values: Option<HashMap<String, HashMap<String, Vec<f64>>>>,
     default_weight: u32,
     window_s: u32,
     flow_level: u32,
@@ -499,6 +501,29 @@ pub fn run_pipeline(
             Ok((class, limits))
         })
         .collect::<PyResult<_>>()?;
+    // The user's link values (S236), by layer and name in sorted order, so the attributes and
+    // the fingerprint do not depend on a dict's order.
+    let link_values = {
+        let mut out = LinkValues::new();
+        let mut layers: Vec<(String, HashMap<String, Vec<f64>>)> =
+            link_values.unwrap_or_default().into_iter().collect();
+        layers.sort_by(|a, b| a.0.cmp(&b.0));
+        for (layer, columns) in layers {
+            let value_layer = ValueLayer::from_name(&layer).ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "link_values has no layer {layer:?}; the layers are road, bike and walk"
+                ))
+            })?;
+            let mut columns: Vec<(String, Vec<f64>)> = columns.into_iter().collect();
+            columns.sort_by(|a, b| a.0.cmp(&b.0));
+            for (name, values) in columns {
+                out = out
+                    .with_column(value_layer, &name, values, &ROUTE_ATTRIBUTES)
+                    .map_err(PyValueError::new_err)?;
+            }
+        }
+        out
+    };
     let transit_defaults =
         TransitDefaults::from_options(&to_options(transit_options)).map_err(to_value_error)?;
     let parking_defaults =
@@ -689,6 +714,7 @@ pub fn run_pipeline(
         .with_mode_choice(&modes)
         .with_class_modes(class_allowed)
         .with_class_limits(class_limits)
+        .with_link_values(link_values)
         .with_mode_defaults(mode_defaults)
         .with_loading_options(loading);
     // What went in, taken before it runs (S168).

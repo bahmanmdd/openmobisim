@@ -123,6 +123,17 @@ class Network:
         between its nodes.
         """
 
+    def link_ids(self) -> list[str]:
+        """Every link's id as its source gave it, in link order (S236).
+
+        What ties a link to one's own data (``Scenario(link_values=...)``), and a bike or walk
+        link to the road beside it. A network read from OpenStreetMap names a link
+        ``<way id>:<n>`` on every layer, so a street's road, bike and walk links share its way
+        id; a table's or GMNS file's links keep their ``link_id``; a layer derived from the
+        road network keeps each road link's id (a link added the other way ends in ``:r``, a
+        contraflow bike link in ``:c``).
+        """
+
     def link_length_m(self) -> npt.NDArray[np.float64]:
         """Every link's length in metres."""
 
@@ -800,6 +811,7 @@ def run_pipeline(
     class_modes: dict[str, list[str]] | None = None,
     class_options: dict[str, dict[str, float]] | None = None,
     class_limits: dict[str, dict[str, float]] | None = None,
+    link_values: dict[str, dict[str, list[float]]] | None = None,
     default_weight: int = 1,
     window_s: int = 86_400,
     flow_level: int = 0,
@@ -855,6 +867,9 @@ def run_pipeline(
         class_limits: ``{class_name: {limit: seconds}}`` — each class's own choice-set
             limits (S235): ``walk_max_s``, ``bike_max_s`` (over ``mode_options``') and
             ``access_walk_max_s`` (over ``transit_options``').
+        link_values: ``{layer: {name: values}}`` — the user's numbers per link of the
+            ``"road"``, ``"bike"`` or ``"walk"`` layer, one per link in link order (S236),
+            offered to choice models as ``<layer>_<name>_km`` and ``<layer>_<name>_sum``.
         default_weight: How many people a simulated traveller stands for, for
             a trip whose row gives none.
         window_s: Trips still in progress after this second are truncated.

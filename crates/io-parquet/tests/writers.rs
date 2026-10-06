@@ -375,6 +375,7 @@ fn sample_description(step: Option<f64>, bins: Option<u32>) -> RunDescription {
         choice_detour_limit: 0.0,
         walk_bike_max_s: None,
         class_limits: Vec::new(),
+        link_values: Vec::new(),
     }
 }
 

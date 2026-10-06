@@ -78,6 +78,7 @@ use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 use crate::equilibration::Equilibration;
 use crate::layers::{LayerSetup, StaticLayers, StaticRoutes};
 use crate::link_times::LinkTimes;
+use crate::link_values::{PreparedLinkValues, ValueLayer};
 use crate::parking::{ExpectedAvailability, ParkingSetup};
 use crate::transit::{TransitSetup, par_map};
 
@@ -1156,9 +1157,26 @@ fn best_by_mode(alts: &[Alternative]) -> [f64; Mode::COUNT] {
     best
 }
 
+/// The layer an alternative's vehicle or walking leg ([`Alternative::vehicle_links`]) runs on.
+fn leg_layer(mode: Mode) -> Option<ValueLayer> {
+    match mode {
+        Mode::Car | Mode::CarTransit => Some(ValueLayer::Road),
+        Mode::Bike | Mode::BikeTransit => Some(ValueLayer::Bike),
+        Mode::Walk => Some(ValueLayer::Walk),
+        Mode::Transit => None,
+    }
+}
+
 /// The value of attribute `name` for `a`, the best total of its mode in its set being
-/// `best`.
-fn attribute(name: &str, a: &Alternative, best: f64) -> f64 {
+/// `best`, the user's link values being `values` (S236).
+fn attribute(name: &str, a: &Alternative, best: f64, values: &PreparedLinkValues) -> f64 {
+    if let Some((column, aggregate)) = values.lookup(name) {
+        return if leg_layer(a.mode) == Some(values.layer(column)) {
+            values.total(column, aggregate, a.vehicle_links.iter().map(|l| l.index()))
+        } else {
+            0.0
+        };
+    }
     if let Some(v) = mode_attribute(name, a.mode) {
         return v;
     }
@@ -1207,24 +1225,30 @@ fn attribute(name: &str, a: &Alternative, best: f64) -> f64 {
     }
 }
 
-/// The attributes a model reads, checked against [`ATTRIBUTES`].
+/// The attributes a model reads, checked against [`ATTRIBUTES`] and the user's link values'
+/// (`extra`, S236), in that order.
 ///
 /// # Errors
 ///
 /// [`ChoiceError::MissingAttribute`] for a name that is not one of them.
-pub(crate) fn wanted(model: &dyn ChoiceModel) -> Result<Vec<&'static str>, ChoiceError> {
+pub(crate) fn wanted(
+    model: &dyn ChoiceModel,
+    builtin: &[&str],
+    extra: &[String],
+) -> Result<Vec<String>, ChoiceError> {
+    let offered = || builtin.iter().map(|s| (*s).to_string()).chain(extra.iter().cloned());
     match model.required_attributes() {
-        None => Ok(ATTRIBUTES.to_vec()),
+        None => Ok(offered().collect()),
         Some(names) => {
             for name in &names {
-                if !ATTRIBUTES.contains(&name.as_str()) {
+                if !offered().any(|o| &o == name) {
                     return Err(ChoiceError::MissingAttribute {
                         name: name.clone(),
-                        offered: ATTRIBUTES.iter().map(|s| (*s).to_string()).collect(),
+                        offered: offered().collect(),
                     });
                 }
             }
-            Ok(ATTRIBUTES.iter().copied().filter(|a| names.iter().any(|n| n == a)).collect())
+            Ok(offered().filter(|a| names.iter().any(|n| n == a)).collect())
         }
     }
 }
@@ -1374,7 +1398,9 @@ pub(crate) struct ChooseInputs<'a> {
     pub travellers: &'a Travellers,
     pub model: &'a dyn ChoiceModel,
     pub rng: &'a StreamRng,
-    pub wanted: &'a [&'static str],
+    pub wanted: &'a [String],
+    /// The user's link values (S236).
+    pub link_values: &'a PreparedLinkValues,
 }
 
 /// What a run can simulate, for [`Itineraries::new`].
@@ -1767,7 +1793,8 @@ impl Itineraries {
                 sets[w] = set;
             }
             for chunk in (0..work.len()).collect::<Vec<_>>().chunks(CHUNK) {
-                let mut batch = ChoiceBatch::new(iteration, inputs.wanted);
+                let names: Vec<&str> = inputs.wanted.iter().map(String::as_str).collect();
+                let mut batch = ChoiceBatch::new(iteration, &names);
                 let mut situation_of: Vec<usize> = Vec::new();
                 let mut row = vec![0.0; inputs.wanted.len()];
                 let mut movers: Vec<usize> = Vec::new();
@@ -1798,7 +1825,7 @@ impl Itineraries {
                     batch.begin_situation_in(traveller.raw(), trip.raw(), class);
                     for a in set {
                         for (slot, name) in row.iter_mut().zip(inputs.wanted) {
-                            *slot = attribute(name, a, best[a.mode.index()]);
+                            *slot = attribute(name, a, best[a.mode.index()], inputs.link_values);
                         }
                         batch.push_alternative(a.identity, &row);
                     }

@@ -199,3 +199,97 @@ def test_a_model_sees_the_bike_leg_by_facility_and_transit_s_parts(tmp_path) -> 
 
 def test_a_painted_lane_s_factor_is_a_network_option() -> None:
     assert ms.network_options()["bike_lane_cost_factor"] == 1.0, "S236: a lane counted as a track"
+
+
+# --- the user's link values (S236, roadmap I-bb U4) ----------------------------------------------
+
+
+def test_link_values_are_offered_along_each_leg_and_weighed_by_the_built_in_models() -> None:
+    import numpy as np
+    from openmobisim import choice
+
+    net = ms.examples.toy_network()
+    bike = net.layer("bike")
+    km = np.asarray(bike.link_length_m()) / 1000.0
+    green = {link: 1.0 for link in bike.link_ids()}  # every bike link: greenery 1
+    seen: list[dict[str, np.ndarray]] = []
+
+    class Recorder:
+        name = "recorder"
+        attributes = ["length_km", "mode_bike", "mode_car", "bike_green_km", "bike_green_sum"]
+
+        def choose(self, batch):
+            seen.append({k: np.array(v) for k, v in batch.attributes.items()})
+            return choice.segment_argmax(-batch.attributes["length_km"], batch.offsets)
+
+    rows = [toy_trip(net, "b", "W", "M", 0, None)]
+    plain = toy_run(rows, "values-none", modes=["car", "bike"], transit=None, parkings=None)
+    toy_run(rows, "values-seen", modes=["car", "bike"], transit=None, parkings=None,
+            choice_model=Recorder(), link_values={"bike": {"green": green}})  # fmt: skip
+    a = seen[0]
+    on_bike = a["mode_bike"] > 0
+    assert np.allclose(a["bike_green_km"][on_bike], a["length_km"][on_bike]), "value 1 × km"
+    assert np.all(a["bike_green_km"][~on_bike] == 0), "a car route runs on no bike link"
+    assert np.all(a["bike_green_sum"][on_bike] >= 1), "a count of links"
+    assert km.sum() > 0
+    # W → M is quicker by car (80 s against 120 s); a strong liking for green kilometres turns it.
+    greenery = {"bike": {"green": [1.0] * bike.link_count}}
+    keen = toy_run(rows, "values-keen", modes=["car", "bike"], transit=None, parkings=None,
+                   choice_model="logit", link_values=greenery,
+                   choice_options={"beta_bike_green_km": 50.0})  # fmt: skip
+    assert list(plain.itinerary_choices()["mode"]) == ["car"]
+    assert list(keen.itinerary_choices()["mode"]) == ["bike"]
+    assert keen.manifest()["link_values"] == {"bike": ["green"]}
+    assert plain.manifest()["link_values"] is None
+    assert keen.fingerprint != plain.fingerprint
+
+
+def test_road_link_values_reach_route_choice_too() -> None:
+    import numpy as np
+    from openmobisim import choice
+
+    net = ms.examples.toy_network()
+    seen: list[np.ndarray] = []
+
+    class Tolls:
+        name = "tolls"
+        attributes = ["time_min", "road_toll_eur_sum"]
+
+        def choose(self, batch):
+            seen.append(np.array(batch.attributes["road_toll_eur_sum"]))
+            return choice.segment_argmax(-batch.attributes["time_min"], batch.offsets)
+
+    rows = [toy_trip(net, "a", "W", "M", 0, None)]
+    toll = {"road": {"toll_eur": [2.0] * net.link_count}}
+    toy_run(rows, "values-routes", transit=None, parkings=None, choice_model=Tolls(),
+            link_values=toll)  # fmt: skip
+    assert seen and np.all(seen[0] > 0) and np.all(seen[0] % 2.0 == 0), "2 per link on the route"
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        ({"rail": {"x": [1.0]}}, "no layer 'rail'"),
+        ({"bike": {"green": [1.0]}}, "the bike layer has"),
+        ({"bike": {"green": {"no-such-link": 1.0}}}, "has no link 'no-such-link'"),
+        ({"bike": {"Green": {}}}, "lower-case"),
+        ({"bike": {"mixed": {}}}, "built-in attribute"),
+    ],
+)
+def test_wrong_link_values_are_refused(values: dict, message: str) -> None:
+    net = ms.examples.toy_network()
+    with pytest.raises(ValueError, match=message):
+        toy_run([toy_trip(net, "b", "W", "M", 0, None)], "values-bad", modes=["car", "bike"],
+                transit=None, parkings=None, link_values=values)  # fmt: skip
+
+
+def test_a_layer_s_link_ids_tie_its_links_to_the_road_s() -> None:
+    net = ms.examples.toy_network()
+    road, bike = net.link_ids(), net.layer("bike").link_ids()
+    assert len(road) == net.link_count and len(bike) == net.layer("bike").link_count
+    # The toy's bike layer: its streets' links keep the road's ids (a contraflow one adds
+    # ":c", a reverse one ":r"); its cycle track (t1, t2) is on no road.
+    along = {b.split(":")[0] for b in bike if not b.startswith("t")}
+    assert along and along <= set(road)
+    grid = ms.examples.manhattan_grid(n=3, block_metres=100.0, signals=False)
+    assert set(grid.layer("bike").link_ids()) <= set(grid.link_ids()), "derived: the road's"

@@ -56,6 +56,7 @@ use crate::layers::{
     static_layer_of,
 };
 use crate::link_times::{LinkTimes, relative_time_change};
+use crate::link_values::LinkValues;
 use crate::loading_rules::LoadingOptions;
 use crate::parking::{
     self as parking_mod, ExpectedAvailability, ParkingEvent, ParkingResult, ParkingSetup,
@@ -178,12 +179,16 @@ pub enum RunError {
     /// The choice model could not choose (S169): it needs an attribute routes do
     /// not carry, it failed, or its answer does not fit.
     Choice(ChoiceError),
+    /// An input does not fit the run (S236): a link value's column is not as long as its
+    /// layer.
+    Input(String),
 }
 
 impl core::fmt::Display for RunError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Choice(e) => write!(f, "{e}"),
+            Self::Input(e) => write!(f, "{e}"),
         }
     }
 }
@@ -192,6 +197,7 @@ impl std::error::Error for RunError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Choice(e) => Some(e),
+            Self::Input(_) => None,
         }
     }
 }
@@ -434,6 +440,8 @@ pub struct Run {
     class_modes: Vec<[bool; Mode::COUNT]>,
     /// Each traveller class's own choice-set limits, by class index (S235); empty: the run's.
     class_limits: Vec<ClassLimits>,
+    /// The user's link values, offered to choice models as attributes (S236): none, by default.
+    link_values: LinkValues,
 }
 
 /// The key of the draw that puts a traveller in a group of the free-flow loading's increments
@@ -500,6 +508,7 @@ impl Run {
             timings: Timings::new(),
             class_modes: Vec::new(),
             class_limits: Vec::new(),
+            link_values: LinkValues::new(),
         }
     }
 
@@ -521,6 +530,16 @@ impl Run {
     #[must_use]
     pub fn with_class_limits(mut self, class_limits: Vec<ClassLimits>) -> Self {
         self.class_limits = class_limits;
+        self
+    }
+
+    /// The same run with the user's link values (S236, roadmap I-bb U4): each column a value
+    /// per link of its layer, offered to choice models as `<layer>_<name>_km` and
+    /// `<layer>_<name>_sum` ([`crate::link_values`]). A column must have one value per link
+    /// of its layer ([`RunError::Input`] otherwise).
+    #[must_use]
+    pub fn with_link_values(mut self, link_values: LinkValues) -> Self {
+        self.link_values = link_values;
         self
     }
 
@@ -731,6 +750,7 @@ impl Run {
             mode_defaults: &self.mode_defaults,
             class_modes: &self.class_modes,
             class_limits: &self.class_limits,
+            link_values: &self.link_values,
             loading: &self.loading,
         })
     }
@@ -777,7 +797,8 @@ impl Run {
     /// # Errors
     ///
     /// [`RunError::Choice`] if the choice model needs an attribute routes do not
-    /// carry, fails, or gives an answer that does not fit its batch.
+    /// carry, fails, or gives an answer that does not fit its batch; [`RunError::Input`] if a
+    /// link value's column is not as long as its layer.
     ///
     /// # Panics
     ///
@@ -796,6 +817,10 @@ impl Run {
             );
         }
         let total_trips = self.trips.len();
+        // The user's link values, checked against their layers and weighted by length (S236).
+        let link_values =
+            self.link_values.prepare(&self.network, &self.layers).map_err(RunError::Input)?;
+        let link_value_names = self.link_values.attribute_names();
         let mut timings = Timings::new();
         let mut clock = Instant::now();
 
@@ -954,6 +979,8 @@ impl Run {
             model: model.as_ref(),
             turns: &turns,
             detour_limit: self.choice_detour_limit,
+            link_values: &link_values,
+            link_value_names: &link_value_names,
         };
         let mut chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
         let mut route_choices = chooser.choose_all(&choice_rng, 0)?;
@@ -961,7 +988,11 @@ impl Run {
         let route_update = self.route_update.clone();
 
         let itinerary_wanted = match &itineraries {
-            Some(_) => itinerary_choice::wanted(model.as_ref())?,
+            Some(_) => itinerary_choice::wanted(
+                model.as_ref(),
+                &itinerary_choice::ATTRIBUTES,
+                &link_value_names,
+            )?,
             None => Vec::new(),
         };
         let car_ctx = SearchContext::new(&network, &turns);
@@ -978,6 +1009,7 @@ impl Run {
             model: model.as_ref(),
             rng: &choice_rng,
             wanted: &itinerary_wanted,
+            link_values: &link_values,
         };
         let mut chosen: Option<Chosen> = None;
         if let Some(itin) = &itineraries {

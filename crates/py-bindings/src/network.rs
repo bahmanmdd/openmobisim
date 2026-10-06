@@ -269,6 +269,17 @@ impl PyNetwork {
         Ok((coordinates, offsets.into_pyarray(py)))
     }
 
+    /// Every link's id as its source gave it, in link order (S236): what ties a link to the
+    /// user's own data, and a bike or walk link to the road beside it. A network read from
+    /// OpenStreetMap names a link `<way id>:<n>` on every layer, so a street's road, bike and
+    /// walk links share its way id; a table's or GMNS file's links keep their `link_id`; a
+    /// layer derived from the road network keeps each road link's id (a link added the other
+    /// way ends in `:r`, a contraflow bike link in `:c`).
+    fn link_ids(&self) -> Vec<String> {
+        let ids = self.inner.link_external_ids();
+        (0..self.inner.link_count()).map(|i| ids.external(i).to_string()).collect()
+    }
+
     /// Every link's length, in metres (float64).
     fn link_length_m<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         (0..self.inner.link_count())

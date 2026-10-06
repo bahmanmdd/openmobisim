@@ -95,6 +95,8 @@ pub struct Manifest {
     /// The traveller classes' own limits (S235): per class that gives any, the limits it
     /// gives, by name, in seconds; empty if none does.
     pub class_limits: Vec<(String, Vec<(String, f64)>)>,
+    /// The user's link values (S236): each column's layer and name; empty if none.
+    pub link_values: Vec<(String, String)>,
     /// How many loadings the run made.
     pub iterations_run: u32,
     /// Whether the strategy stopped before its most iterations because it had
@@ -166,6 +168,7 @@ impl Manifest {
                     )
                 })
                 .collect(),
+            link_values: description.link_values.clone(),
             iterations_run: u32::try_from(result.iterations.len().max(1)).unwrap_or(u32::MAX),
             converged: result.converged,
         }
@@ -197,7 +200,21 @@ impl Manifest {
                 .collect();
             format!("{{{}}}", classes.join(", "))
         });
-        let fields: [(&str, String); 32] = [
+        let link_values = (!self.link_values.is_empty()).then(|| {
+            let mut layers: Vec<(&str, Vec<String>)> = Vec::new();
+            for (layer, name) in &self.link_values {
+                match layers.iter_mut().find(|(l, _)| l == layer) {
+                    Some((_, names)) => names.push(text(name)),
+                    None => layers.push((layer, vec![text(name)])),
+                }
+            }
+            let parts: Vec<String> = layers
+                .iter()
+                .map(|(l, names)| format!("{}: [{}]", text(l), names.join(", ")))
+                .collect();
+            format!("{{{}}}", parts.join(", "))
+        });
+        let fields: [(&str, String); 33] = [
             ("openmobisim_version", text(&self.openmobisim_version)),
             ("code_version", self.code_version.to_string()),
             ("defaults_version", self.defaults_version.to_string()),
@@ -232,6 +249,7 @@ impl Manifest {
             ("walk_max_s", optional(self.walk_bike_max_s.map(|(w, _)| number(w)))),
             ("bike_max_s", optional(self.walk_bike_max_s.map(|(_, b)| number(b)))),
             ("class_limits", optional(class_limits)),
+            ("link_values", optional(link_values)),
             ("iterations_run", self.iterations_run.to_string()),
             ("converged", self.converged.to_string()),
             ("link_bin_seconds", optional(self.link_bin_seconds.map(|s| s.to_string()))),

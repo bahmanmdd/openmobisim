@@ -98,6 +98,9 @@ pub struct RunDescription {
     /// The traveller classes that give limits of their own (S235), by class name, in the
     /// demand's class order; empty if none does.
     pub class_limits: Vec<(String, crate::layers::ClassLimits)>,
+    /// The user's link values (S236): each column's layer and name, in the order given; empty
+    /// if none.
+    pub link_values: Vec<(String, String)>,
 }
 
 impl RunDescription {
@@ -147,6 +150,8 @@ pub(crate) struct Inputs<'a> {
     pub class_modes: &'a [[bool; Mode::COUNT]],
     /// Each traveller class's own limits (S235); empty: the run's.
     pub class_limits: &'a [crate::layers::ClassLimits],
+    /// The user's link values (S236).
+    pub link_values: &'a crate::link_values::LinkValues,
     /// The loading's rules (S213); hashed only when one is on and the run has junctions to
     /// apply them at (the link transmission model).
     pub loading: &'a crate::loading_rules::LoadingOptions,
@@ -230,6 +235,18 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             }
         }
     }
+    // The user's link values (S236): nothing when none is given.
+    if !inputs.link_values.is_empty() {
+        h.write_str("link-values");
+        for (layer, name, values) in inputs.link_values.columns() {
+            h.write_str(layer.as_str());
+            h.write_str(name);
+            h.write_u64(values.len() as u64);
+            for &v in values {
+                h.write_f64(v);
+            }
+        }
+    }
     // Off means absent: a run without a timetable hashes as it did before transit.
     if let Some(transit) = inputs.transit {
         hash_transit(&mut h, transit);
@@ -281,6 +298,11 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
                 })
                 .collect()
         },
+        link_values: inputs
+            .link_values
+            .columns()
+            .map(|(layer, name, _)| (layer.as_str().to_string(), name.to_string()))
+            .collect(),
     }
 }
 

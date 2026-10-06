@@ -777,6 +777,50 @@ def _trip_row(row: tuple) -> tuple:
     )
 
 
+def _link_values(
+    network: _core.Network, given: dict[str, dict[str, Any]]
+) -> dict[str, dict[str, list[float]]]:
+    """The user's link values (S236) as the core takes them: per layer and name, a value per link.
+
+    Each column is an array in the layer's link order, or a dict from link id to value (a link
+    not in it taking 0). Its length, the layer and the ids are checked here; the names and the
+    values by the core.
+    """
+    if not isinstance(given, dict):
+        raise ValueError("link_values is {layer: {name: values}}")
+    out: dict[str, dict[str, list[float]]] = {}
+    for layer, columns in given.items():
+        if layer not in ("road", "bike", "walk"):
+            raise ValueError(
+                f"link_values has no layer {layer!r}; the layers are road, bike and walk"
+            )
+        graph = network if layer == "road" else network.layer(layer)
+        n = graph.link_count
+        ids: dict[str, int] | None = None
+        out[layer] = {}
+        for name, values in columns.items():
+            if isinstance(values, dict):
+                if ids is None:
+                    ids = {link: i for i, link in enumerate(graph.link_ids())}
+                column = [0.0] * n
+                for link, value in values.items():
+                    if str(link) not in ids:
+                        raise ValueError(
+                            f"link_values {layer!r} {name!r}: the {layer} layer has no link "
+                            f"{link!r} (see network.layer({layer!r}).link_ids())"
+                        )
+                    column[ids[str(link)]] = float(value)
+            else:
+                column = [float(v) for v in values]
+                if len(column) != n:
+                    raise ValueError(
+                        f"link_values {layer!r} {name!r} has {len(column)} values; the {layer} "
+                        f"layer has {n} links"
+                    )
+            out[layer][str(name)] = column
+    return out
+
+
 class Scenario:
     """A network, demand, and the settings of a run.
 
@@ -816,6 +860,7 @@ class Scenario:
         modes: tuple[str, ...] | list[str] | None = None,
         mode_options: dict[str, float] | None = None,
         loading_options: dict[str, float] | None = None,
+        link_values: dict[str, dict[str, Any]] | None = None,
         class_defaults: None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
@@ -916,6 +961,7 @@ class Scenario:
             # rerouting stays a feature of the levels with spillback.
             loading.setdefault("reroute", 0)
         self._loading_options = loading or None
+        self._link_values = _link_values(network, link_values) if link_values else None
 
     @classmethod
     def from_parts(
@@ -948,6 +994,7 @@ class Scenario:
         modes: tuple[str, ...] | list[str] | None = None,
         mode_options: dict[str, float] | None = None,
         loading_options: dict[str, float] | None = None,
+        link_values: dict[str, dict[str, Any]] | None = None,
         class_defaults: None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
@@ -1263,6 +1310,24 @@ class Scenario:
                 wait for another movement while they fit in their turn pockets, this many metres
                 per lane, split among the approach's movements.
                 Uncalibrated defaults; unknown names and values out of range are refused.
+            link_values: The user's own numbers per link, for choice models (S236):
+                ``{layer: {name: values}}``, the layer ``"road"``, ``"bike"`` or ``"walk"``,
+                the values either one per link of that layer in link order (an array as long as
+                ``network.layer("bike").link_count``, aligned with its other per-link arrays) or
+                a dict from link id (``network.layer("bike").link_ids()``) to value, a link not
+                in it taking 0. Names are lower-case letters, digits and ``_``. Each column
+                becomes two attributes of every alternative with a leg on that layer:
+                ``<layer>_<name>_km``, the sum of the value times each link's length in km
+                (greenery along a route, divided by ``length_km`` for its mean), and
+                ``<layer>_<name>_sum``, the plain sum (a toll, a count of crossings); 0 for an
+                alternative with no leg there (a transit itinerary's walks to and from stops
+                carry none). The built-in models weigh them through ``choice_options``
+                (``{"beta_bike_greenery_km": 0.2}``), a model of one's own reads them from the
+                batch. For example, the greenery around each bike link computed from
+                OpenStreetMap, or the car flow on the road beside each bike link taken from a
+                previous run's ``link_bins`` (``link_ids()`` ties a bike link to its street's
+                road links).
+                Recorded in the fingerprint, and their names in the manifest.
             class_defaults: Replaced by ``classes`` (S231), which takes the same tuples;
                 refused, with a pointer to it.
 
@@ -1308,6 +1373,7 @@ class Scenario:
             modes=modes,
             mode_options=mode_options,
             loading_options=loading_options,
+            link_values=link_values,
             class_defaults=class_defaults,
         )
 
@@ -1364,6 +1430,7 @@ class Scenario:
             modes=self._modes,
             mode_options=self._mode_options,
             loading_options=self._loading_options,
+            link_values=self._link_values,
         )
         run = Run(
             summary,
