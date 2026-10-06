@@ -20,7 +20,12 @@ from typing import Any
 
 from openmobisim import _core
 
-__all__ = ["network_edit", "network_read_table"]
+__all__ = ["LINK_CLASSES", "network_edit", "network_read_table"]
+
+#: The road classes' names, in the order of their numbers: ``LINK_CLASSES[c]`` names the class
+#: ``Network.link_class()`` gives as ``c`` (``"motorway"`` is 0, ``"ferry"`` 17). On the bike
+#: and walk layers, a ferry crossing is a link of class ``"ferry"`` (S240).
+LINK_CLASSES: tuple[str, ...] = tuple(_core.link_classes())
 
 #: `RoadClass::Unclassified`'s position in `RoadClass::ALL` (Rust,
 #: `core-graph/src/defaults.rs`) — the same order `openmobisim.viz`'s

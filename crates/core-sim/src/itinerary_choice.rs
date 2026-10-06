@@ -63,6 +63,7 @@ use std::sync::OnceLock;
 
 use openmobisim_core_choice::{ChoiceBatch, ChoiceError, ChoiceModel};
 use openmobisim_core_demand::{Mode, Travellers, Trips};
+use openmobisim_core_graph::defaults::RoadClass;
 use openmobisim_core_graph::geometry::{LonLat, ground_distance_metres};
 use openmobisim_core_graph::hubs::ParkingKind;
 use openmobisim_core_graph::layers::{BikeInfrastructure, StaticLayer};
@@ -237,7 +238,8 @@ pub struct Alternative {
     /// Its path size's natural log.
     pub ln_path_size: f64,
     /// Its bike leg's metres on separated tracks, painted lanes and in mixed traffic, in
-    /// [`BikeInfrastructure`]'s order (S236); zeros without a bike leg.
+    /// [`BikeInfrastructure`]'s order (S236); zeros without a bike leg. A ferry crossing counts
+    /// in none.
     pub bike_m: [f64; 3],
     /// The wait for the first vehicle, in seconds (part of [`Self::wait_s`]).
     pub wait_first_s: u32,
@@ -499,13 +501,17 @@ impl<'a> Planner<'a> {
         finalise(alts, self.detour_limit, k)
     }
 
-    /// Each bike leg's metres by facility (S236): what a model sees of the route's quality.
+    /// Each bike leg's metres by facility (S236): what a model sees of the route's quality. A
+    /// ferry crossing is ridden on no facility, so it counts in none (S240; its time is in the
+    /// leg's).
     fn measure_bike_legs(&self, alts: &mut [Alternative]) {
         let Some((layer, _)) = self.bike else { return };
         let net = layer.network();
         for a in alts.iter_mut().filter(|a| matches!(a.mode, Mode::Bike | Mode::BikeTransit)) {
             for &l in &a.vehicle_links {
-                a.bike_m[net.infrastructure(l) as usize] += net.network().link_length(l).get();
+                if net.network().link_class(l) != RoadClass::Ferry {
+                    a.bike_m[net.infrastructure(l) as usize] += net.network().link_length(l).get();
+                }
             }
         }
     }

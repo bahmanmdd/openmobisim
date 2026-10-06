@@ -161,6 +161,52 @@ def test_mode_options_cut_off_a_long_walk_or_ride_and_refuse_unknown_names() -> 
         toy_run(rows, "modes-cut-bad", modes=ms.MODES, mode_options={"walk_max": 300})
 
 
+def test_a_ferry_crossing_counts_in_no_bike_facility(tmp_path) -> None:
+    # S240: a ride across a ferry and then along a cycle track is on a track for the track's
+    # length only; the crossing is ridden on no facility (it read as mixed traffic before), and
+    # ``link_class`` names it (``LINK_CLASSES``).
+    import numpy as np
+    from openmobisim import choice
+
+    nodes = "node_id,x_coord,y_coord\na,4.9000,52.3700\nb,4.9100,52.3700\nc,4.9200,52.3700\n"
+    links = {
+        "road": "1,a,b,false,680,30,residential,auto\n2,b,c,false,680,30,residential,auto\n",
+        "bike": "1,a,b,false,680,6,ferry,bike,\n2,b,c,false,680,18,cycleway,bike,separated\n",
+        "walk": "1,a,b,false,680,6,ferry,walk\n2,b,c,false,680,5,footway,walk\n",
+    }
+    for layer, rows in links.items():
+        (tmp_path / layer).mkdir()
+        (tmp_path / layer / "node.csv").write_text(nodes)
+        header = "link_id,from_node_id,to_node_id,directed,length,free_speed,facility_type,"
+        header += "allowed_uses,bike_facility" if layer == "bike" else "allowed_uses"
+        (tmp_path / layer / "link.csv").write_text(f"{header}\n{rows}")
+    net = ms.network_read_gmns(str(tmp_path))
+    bike = net.layer("bike")
+    ferry = ms.LINK_CLASSES.index("ferry")
+    assert ms.LINK_CLASSES[0] == "motorway" and list(bike.link_class()).count(ferry) == 2
+    seen = []
+
+    class Recorder:
+        name = "recorder"
+
+        def choose(self, batch):
+            seen.append({k: np.array(v) for k, v in batch.attributes.items()})
+            return choice.segment_argmax(-batch.attributes["time_min"], batch.offsets)
+
+    a, c = net.node_lonlat("a"), net.node_lonlat("c")
+    rows = [("r", 0, a[0], a[1], c[0], c[1], 0, "rider", None, None)]
+    ms.Scenario.from_parts(
+        net, rows, classes={"rider": {"modes": ["bike", "walk"]}}, choice_model=Recorder(),
+        equilibration="free_flow", flow_level=0,
+    ).run("ferry-bike", output_dir=str(tmp_path / "run"), quiet=True)  # fmt: skip
+    ride = int(np.flatnonzero(seen[0]["mode_bike"] == 1)[0])  # a choice: bike or walk
+    names = ("bike_separated_km", "bike_mixed_km", "length_km")
+    got = {k: float(seen[0][k][ride]) for k in names}
+    assert got["length_km"] == pytest.approx(1.36, abs=0.01), got
+    assert got["bike_separated_km"] == pytest.approx(0.68, abs=0.01), got
+    assert got["bike_mixed_km"] == 0.0, got
+
+
 def test_a_model_sees_the_bike_leg_by_facility_and_transit_s_parts(tmp_path) -> None:
     # S236 (roadmap I-bb U2, U3): the parts add up to their totals, by kind of service.
     import numpy as np

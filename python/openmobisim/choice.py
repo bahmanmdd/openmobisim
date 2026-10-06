@@ -86,31 +86,30 @@ __all__ = [
     "segment_softmax",
 ]
 
-#: The attributes every alternative carries — a route, or the itinerary of a
-#: transit, park-and-ride or bike-and-ride trip — and what they mean:
-#: ``time_min`` expected travel time in minutes (door to door for an itinerary);
-#: ``length_km`` (a route's; an itinerary's car or bike leg's); ``detour`` (time
-#: over the best alternative's, minus one); ``overlap`` (a route's largest share
-#: of its cost shared with an earlier route; 0 for an itinerary);
-#: ``ln_path_size`` (log of the path-size factor: 0 for an alternative that
-#: shares nothing, negative as it shares more); ``n_links`` (a route's; an
-#: itinerary's car or bike leg's); ``car_min``, ``bike_min``, ``walk_min``,
-#: ``wait_min`` (at stops), ``ride_min`` (in transit vehicles), ``transfers``
-#: and ``parking_min`` (parking or fetching the car or bike): the parts of the
-#: time, 0 where an alternative has none (a car route is all ``car_min``);
+#: The attributes every alternative carries — a route, or the itinerary of a transit,
+#: park-and-ride or bike-and-ride trip — and what they mean: ``time_min`` expected
+#: travel time in minutes (door to door for an itinerary); ``length_km`` (a route's; an
+#: itinerary's car or bike leg's); ``detour`` (time over the best alternative's, minus
+#: one); ``overlap`` (a route's largest share of its cost shared with an earlier route;
+#: 0 for an itinerary); ``ln_path_size`` (log of the path-size factor: 0 for an
+#: alternative that shares nothing, negative as it shares more); ``n_links`` (a
+#: route's; an itinerary's car or bike leg's); ``car_min``, ``bike_min``, ``walk_min``,
+#: ``wait_min`` (at stops), ``ride_min`` (in transit vehicles), ``transfers`` and
+#: ``parking_min`` (parking or fetching the car or bike): the parts of the time, 0
+#: where an alternative has none (a car route is all ``car_min``);
 #: ``bike_separated_km``, ``bike_lane_km``, ``bike_mixed_km`` (the bike leg's
 #: kilometres on separated tracks, painted lanes and in mixed traffic: what a model
-#: sees of a ride's quality, S236); ``walk_access_min``, ``walk_egress_min``,
-#: ``walk_transfer_min`` (the walk to the first stop, from the last, and between
-#: stops: parts of ``walk_min``), ``wait_first_min``, ``wait_transfer_min`` (parts
-#: of ``wait_min``) and ``ride_rail_min``, ``ride_metro_min``, ``ride_tram_min``,
-#: ``ride_bus_min``, ``ride_ferry_min``, ``ride_other_min`` (minutes on board by
-#: kind of service: parts of ``ride_min``); a part is weighed on top of its total,
-#: or instead of it; ``nest`` (the alternative's mode as a number: the nest of
-#: ``"nested_logit"``)
-#: and ``mode_walk``, ``mode_bike``, ``mode_car``, ``mode_transit``,
-#: ``mode_car_transit``, ``mode_bike_transit`` (1 for the alternative's mode, 0 for
-#: the rest: a coefficient on one is that mode's constant).
+#: sees of a ride's quality, S236; a ferry crossing counts in none);
+#: ``walk_access_min``, ``walk_egress_min``, ``walk_transfer_min`` (the walk to the
+#: first stop, from the last, and between stops: parts of ``walk_min``),
+#: ``wait_first_min``, ``wait_transfer_min`` (parts of ``wait_min``) and
+#: ``ride_rail_min``, ``ride_metro_min``, ``ride_tram_min``, ``ride_bus_min``,
+#: ``ride_ferry_min``, ``ride_other_min`` (minutes on board by kind of service: parts
+#: of ``ride_min``); a part is weighed on top of its total, or instead of it; ``nest``
+#: (the alternative's mode as a number: the nest of ``"nested_logit"``) and
+#: ``mode_walk``, ``mode_bike``, ``mode_car``, ``mode_transit``, ``mode_car_transit``,
+#: ``mode_bike_transit`` (1 for the alternative's mode, 0 for the rest: a coefficient
+#: on one is that mode's constant).
 ROUTE_ATTRIBUTES: tuple[str, ...] = (
     "time_min",
     "length_km",

@@ -316,7 +316,9 @@ impl PyNetwork {
 
     /// Every bike link's infrastructure (uint8): 0 = mixed traffic or a path
     /// shared with pedestrians, 1 = a painted lane or cycle street, 2 = a track
-    /// or cycleway of its own (S193, S195). All 0 on the walk layer.
+    /// or cycleway of its own (S193, S195). All 0 on the walk layer. A ferry
+    /// crossing has no infrastructure and reads 0 too: `link_class` tells it
+    /// apart (S240).
     ///
     /// # Errors
     ///
@@ -351,8 +353,8 @@ impl PyNetwork {
         Ok(handle)
     }
 
-    /// Every link's road class, as the class's number (uint8): the order of
-    /// OSM's `highway` values in the defaults table, 0 = motorway.
+    /// Every link's road class, as the class's number (uint8): its index in
+    /// `link_classes()` (0 = motorway, 17 = ferry).
     fn link_class<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u8>> {
         (0..self.inner.link_count())
             .map(|i| self.inner.link_class(LinkId::new(i)) as u8)
@@ -1019,6 +1021,13 @@ fn network_defaults(options: Option<HashMap<String, f64>>) -> PyResult<NetworkDe
     let map: std::collections::BTreeMap<String, f64> =
         options.unwrap_or_default().into_iter().collect();
     NetworkDefaults::from_options(&map).map_err(PyValueError::new_err)
+}
+
+/// The road classes' names, in the order of their numbers (`link_class`): `motorway` is 0
+/// (S240).
+#[pyfunction]
+pub fn link_classes() -> Vec<&'static str> {
+    RoadClass::ALL.iter().map(|c| c.as_str()).collect()
 }
 
 /// Every network parameter by name (S225): the road-class table (`<class>.free_flow_km_h`,

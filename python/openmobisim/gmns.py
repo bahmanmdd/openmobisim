@@ -42,32 +42,10 @@ from typing import Any
 import numpy as np
 
 from openmobisim import _core
-from openmobisim.network import network_read_table
+from openmobisim.network import LINK_CLASSES, network_read_table
 
 __all__ = ["network_read_gmns", "network_write_gmns"]
 
-#: Road classes by index, as the core numbers them (`RoadClass::ALL`).
-_CLASSES = [
-    "motorway",
-    "motorway_link",
-    "trunk",
-    "trunk_link",
-    "primary",
-    "primary_link",
-    "secondary",
-    "secondary_link",
-    "tertiary",
-    "tertiary_link",
-    "unclassified",
-    "residential",
-    "living_street",
-    "service",
-    "pedestrian",
-    "footway",
-    "cycleway",
-    "ferry",
-    "busway",
-]
 _INFRASTRUCTURE = ["mixed", "lane", "separated"]
 _NOT_DRIVEN = {"pedestrian": "walk", "footway": "walk", "cycleway": "bike", "ferry": "walk"}
 _LONG_LENGTH_TO_M = {
@@ -162,7 +140,7 @@ def _write_layer(network: _core.Network, folder: Path, layer: str, geometry: boo
         header.append("geometry")
     rows = []
     for i in range(n_links):
-        name = _CLASSES[cls[i]] if cls[i] < len(_CLASSES) else "unclassified"
+        name = LINK_CLASSES[cls[i]] if cls[i] < len(LINK_CLASSES) else "unclassified"
         row: list[Any] = [
             f"{i:0{lw}d}",
             f"{frm[i]:0{nw}d}",
@@ -269,7 +247,7 @@ def _road_rows(folder: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]
         speed = row.get("free_speed", "")
         uses = {u.strip() for u in row.get("allowed_uses", "").split(",") if u.strip()}
         cls = row.get("facility_type", "")
-        if cls not in _CLASSES:
+        if cls not in LINK_CLASSES:
             cls = ""
         if uses and not uses & {"auto", "car", "all"} and not cls:
             cls = "busway" if "bus" in uses else ("cycleway" if uses == {"bike"} else "footway")

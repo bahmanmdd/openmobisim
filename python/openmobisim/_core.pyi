@@ -154,7 +154,8 @@ class Network:
         """Every bike link's infrastructure, as a number.
 
         0 is mixed traffic (or a path shared with pedestrians), 1 a painted lane or cycle
-        street, 2 a track or cycleway of its own. All 0 on the walk layer.
+        street, 2 a track or cycleway of its own. All 0 on the walk layer. A ferry crossing has
+        no infrastructure and reads 0 too: ``link_class`` tells it apart (``LINK_CLASSES``).
 
         Raises:
             ValueError: On the road network: ask ``network.layer("bike")``.
@@ -174,7 +175,7 @@ class Network:
         """
 
     def link_class(self) -> npt.NDArray[np.uint8]:
-        """Every link's road class as a number (0 = motorway)."""
+        """Every link's road class as a number: its index in ``LINK_CLASSES`` (0 = motorway)."""
 
     def link_lanes(self) -> npt.NDArray[np.uint8]:
         """Every link's lane count in its own direction."""
@@ -950,6 +951,9 @@ def run_pipeline(
             each, a given file cannot be read, the demand is empty, or
             writing an output artifact fails.
     """
+
+def link_classes() -> list[str]:
+    """The road classes' names, in the order of their numbers: see ``LINK_CLASSES``."""
 
 def network_options(network: Network | None = None) -> list[tuple[str, float]]:
     """Every network parameter by name and value, shipped or ``network``'s.

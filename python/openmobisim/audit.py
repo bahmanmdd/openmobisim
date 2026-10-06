@@ -12,16 +12,10 @@ from typing import Any
 import numpy as np
 
 from openmobisim import _core
+from openmobisim.network import LINK_CLASSES
 
 __all__ = ["network_check"]
 
-#: Road classes by index, as the core numbers them (`RoadClass::ALL`).
-_CLASSES = (
-    "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link",
-    "secondary", "secondary_link", "tertiary", "tertiary_link", "unclassified",
-    "residential", "living_street", "service", "pedestrian", "footway", "cycleway",
-    "ferry", "busway",
-)  # fmt: skip
 
 #: Plausible median free-flow speeds (km/h) by road class, on links that do not end at a
 #: signal (a signal's delay is part of a link's free-flow time). Judgement calls (S172).
@@ -124,7 +118,7 @@ def _road(checks: _Checks, net: _core.Network) -> dict[str, Any]:
                "under 1% of drivable links share both their nodes with another")  # fmt: skip
     odd = []
     for c in np.unique(cls[d]):
-        name = _CLASSES[int(c)] if int(c) < len(_CLASSES) else str(int(c))
+        name = LINK_CLASSES[int(c)] if int(c) < len(LINK_CLASSES) else str(int(c))
         m = d & (cls == c)
         free = m & ~signal[to]
         m = free if free.sum() >= 20 else m
@@ -174,7 +168,7 @@ def _layer(checks: _Checks, net: _core.Network, layer: str) -> dict[str, Any]:
         return out
     cls = np.asarray(net.link_class())
     speed = np.asarray(net.link_speed_km_h())
-    land = cls != _CLASSES.index("ferry")
+    land = cls != LINK_CLASSES.index("ferry")
     if land.any():
         median = float(np.median(speed[land]))
         lo, hi = _LAYER_SPEED[layer]
