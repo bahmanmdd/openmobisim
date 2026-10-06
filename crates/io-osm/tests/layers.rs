@@ -271,6 +271,7 @@ fn a_ferry_joins_two_banks_for_bikes_and_walkers_but_not_for_cars() {
     let seconds = g.link_length(ferry).get() / bike.network.speed(ferry);
     assert!((seconds - 600.0).abs() < 1e-6, "{seconds}");
     // And a ferry is no mixed traffic: `dedicated` does not charge it the premium.
-    let costs = bike.network.link_costs(openmobisim_core_graph::layers::BikeCost::Dedicated, 1.2);
+    let costs =
+        bike.network.link_costs(openmobisim_core_graph::layers::BikeCost::Dedicated, 1.0, 1.2);
     assert!((costs[ferry.index()] - 600.0).abs() < 1e-6);
 }

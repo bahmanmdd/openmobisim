@@ -50,7 +50,7 @@ const GAP_CHUNK: usize = 16;
 
 /// The attributes a route carries, in the order a batch holds them: the same
 /// names as every itinerary's ([`crate::itinerary_choice::ATTRIBUTES`], A8).
-pub const ROUTE_ATTRIBUTES: [&str; 20] = crate::itinerary_choice::ATTRIBUTES;
+pub const ROUTE_ATTRIBUTES: [&str; 34] = crate::itinerary_choice::ATTRIBUTES;
 
 /// "No route": a trip with no set, or whose origin and destination are one node.
 pub const NO_ROUTE: u32 = u32::MAX;

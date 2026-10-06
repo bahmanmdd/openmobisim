@@ -65,12 +65,12 @@ use openmobisim_core_choice::{ChoiceBatch, ChoiceError, ChoiceModel};
 use openmobisim_core_demand::{Mode, Travellers, Trips};
 use openmobisim_core_graph::geometry::{LonLat, ground_distance_metres};
 use openmobisim_core_graph::hubs::ParkingKind;
-use openmobisim_core_graph::layers::StaticLayer;
+use openmobisim_core_graph::layers::{BikeInfrastructure, StaticLayer};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_routes::{
     NodeSnapper, Reach, RouteAttributes, RouteKey, RouteSets, Search, SearchContext,
 };
-use openmobisim_core_transit::{Journey, JourneyLeg, Raptor, RaptorData};
+use openmobisim_core_transit::{Journey, JourneyLeg, Raptor, RaptorData, ServiceKind};
 use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, LinkId, NULL_ID, NodeId, TripId};
 use openmobisim_core_types::rng::{DrawAddress, StreamRng};
@@ -83,7 +83,15 @@ use crate::transit::{TransitSetup, par_map};
 
 /// The attributes every alternative carries, routes and itineraries alike, in
 /// the order a batch holds them (A8).
-pub const ATTRIBUTES: [&str; 20] = [
+///
+/// After `parking_min` (S236, roadmap I-bb): the bike leg's kilometres by facility
+/// (`bike_separated_km`, `bike_lane_km`, `bike_mixed_km`), and a transit itinerary's walks,
+/// waits and rides split — the walk to the first stop, from the last and between stops
+/// (`walk_access_min`, `walk_egress_min`, `walk_transfer_min`), the wait for the first
+/// vehicle and for the others (`wait_first_min`, `wait_transfer_min`), and the minutes on
+/// board by kind of service (`ride_rail_min` … `ride_other_min`). Each is a part of a total
+/// above it, so a model weighs the parts on top of the totals, or instead of them.
+pub const ATTRIBUTES: [&str; 34] = [
     "time_min",
     "length_km",
     "detour",
@@ -97,6 +105,20 @@ pub const ATTRIBUTES: [&str; 20] = [
     "ride_min",
     "transfers",
     "parking_min",
+    "bike_separated_km",
+    "bike_lane_km",
+    "bike_mixed_km",
+    "walk_access_min",
+    "walk_egress_min",
+    "walk_transfer_min",
+    "wait_first_min",
+    "wait_transfer_min",
+    "ride_rail_min",
+    "ride_metro_min",
+    "ride_tram_min",
+    "ride_bus_min",
+    "ride_ferry_min",
+    "ride_other_min",
     "nest",
     "mode_walk",
     "mode_bike",
@@ -213,6 +235,14 @@ pub struct Alternative {
     pub identity: u32,
     /// Its path size's natural log.
     pub ln_path_size: f64,
+    /// Its bike leg's metres on separated tracks, painted lanes and in mixed traffic, in
+    /// [`BikeInfrastructure`]'s order (S236); zeros without a bike leg.
+    pub bike_m: [f64; 3],
+    /// The wait for the first vehicle, in seconds (part of [`Self::wait_s`]).
+    pub wait_first_s: u32,
+    /// Seconds on board by kind of service, in [`ServiceKind`]'s order (part of
+    /// [`Self::ride_s`]).
+    pub ride_kind_s: [u32; 6],
 }
 
 impl Alternative {
@@ -429,6 +459,7 @@ impl<'a> Planner<'a> {
             }
         }
         if !alts.is_empty() {
+            self.measure_bike_legs(&mut alts);
             return finalise(alts, self.detour_limit, k);
         }
         let (bike_leg, walk_leg) = legs;
@@ -463,7 +494,19 @@ impl<'a> Planner<'a> {
                 ));
             }
         }
+        self.measure_bike_legs(&mut alts);
         finalise(alts, self.detour_limit, k)
+    }
+
+    /// Each bike leg's metres by facility (S236): what a model sees of the route's quality.
+    fn measure_bike_legs(&self, alts: &mut [Alternative]) {
+        let Some((layer, _)) = self.bike else { return };
+        let net = layer.network();
+        for a in alts.iter_mut().filter(|a| matches!(a.mode, Mode::Bike | Mode::BikeTransit)) {
+            for &l in &a.vehicle_links {
+                a.bike_m[net.infrastructure(l) as usize] += net.network().link_length(l).get();
+            }
+        }
     }
 
     /// The car alternatives of a mode-choice trip: its pair's routes, costed on the
@@ -859,9 +902,15 @@ impl<'a> Planner<'a> {
                     clock = arrival;
                 }
                 JourneyLeg::Ride { run, board_stop, alight_stop, departure, arrival, .. } => {
-                    a.wait_s += f64::from(departure.saturating_sub(clock));
+                    let wait = departure.saturating_sub(clock);
+                    a.wait_s += f64::from(wait);
+                    if a.rides.is_empty() {
+                        a.wait_first_s = wait;
+                    }
                     let ride = arrival.saturating_sub(departure);
                     a.ride_s += f64::from(ride);
+                    let kind = tt.route_kind(tt.run_route(run)) as usize;
+                    a.ride_kind_s[kind] = a.ride_kind_s[kind].saturating_add(ride);
                     if !a.rides.is_empty() {
                         a.transfer_walks.push(walk_before);
                     }
@@ -974,6 +1023,9 @@ fn blank(mode: Mode, shape: Shape) -> Alternative {
         vehicle_m: 0.0,
         identity: 0,
         ln_path_size: 0.0,
+        bike_m: [0.0; 3],
+        wait_first_s: 0,
+        ride_kind_s: [0; 6],
     }
 }
 
@@ -1139,7 +1191,19 @@ fn attribute(name: &str, a: &Alternative, best: f64) -> f64 {
         "ride_min" => a.ride_s / 60.0,
         "transfers" => f64::from(a.transfers()),
         "parking_min" => a.parking_s / 60.0,
-        _ => 0.0,
+        "bike_separated_km" => a.bike_m[BikeInfrastructure::Separated as usize] / 1000.0,
+        "bike_lane_km" => a.bike_m[BikeInfrastructure::Lane as usize] / 1000.0,
+        "bike_mixed_km" => a.bike_m[BikeInfrastructure::Mixed as usize] / 1000.0,
+        "walk_access_min" => f64::from(a.access_walk_s) / 60.0,
+        "walk_egress_min" => f64::from(a.egress_walk_s) / 60.0,
+        "walk_transfer_min" => f64::from(a.transfer_walks.iter().sum::<u32>()) / 60.0,
+        "wait_first_min" => f64::from(a.wait_first_s) / 60.0,
+        "wait_transfer_min" => (a.wait_s - f64::from(a.wait_first_s)) / 60.0,
+        other => other
+            .strip_prefix("ride_")
+            .and_then(|k| k.strip_suffix("_min"))
+            .and_then(|k| ServiceKind::ALL.iter().find(|s| s.as_str() == k))
+            .map_or(0.0, |&s| f64::from(a.ride_kind_s[s as usize]) / 60.0),
     }
 }
 

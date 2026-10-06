@@ -35,12 +35,16 @@ pub struct LayerSetup {
 
 impl LayerSetup {
     /// Prepare `network` for a run: routes by `cost` (bikes; walkers always by
-    /// time), with the mixed-traffic multiplier of `defaults`.
+    /// time), with the painted-lane and mixed-traffic multipliers of `defaults`.
     #[must_use]
     pub fn new(network: Arc<StaticNetwork>, cost: BikeCost, defaults: StaticLayerDefaults) -> Self {
         let turns = TurnTable::build(network.network(), SignalDefaults::SHIPPED);
         let seconds = network.link_seconds();
-        let costs = network.link_costs(cost, defaults.bike_mixed_cost_factor);
+        let costs = network.link_costs(
+            cost,
+            defaults.bike_lane_cost_factor,
+            defaults.bike_mixed_cost_factor,
+        );
         Self { network, turns, seconds, costs, cost }
     }
 

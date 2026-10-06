@@ -128,9 +128,9 @@ fn the_two_bike_costs_are_time_and_time_with_a_premium_on_mixed_traffic() {
     assert!((seconds[id("street")] - 240.0).abs() < 1e-9);
     assert!((seconds[id("t1")] - 115.0).abs() < 1e-9);
 
-    let time = g.link_costs(BikeCost::Time, 1.2);
+    let time = g.link_costs(BikeCost::Time, 1.0, 1.2);
     assert_eq!(time, seconds);
-    let dedicated = g.link_costs(BikeCost::Dedicated, 1.2);
+    let dedicated = g.link_costs(BikeCost::Dedicated, 1.0, 1.2);
     assert!((dedicated[id("street")] - 288.0).abs() < 1e-9, "mixed: 240 × 1.2");
     assert!((dedicated[id("t1")] - 115.0).abs() < 1e-9, "dedicated: unchanged");
     // The track takes 230 s against the street's 240: it is the faster route
@@ -138,8 +138,44 @@ fn the_two_bike_costs_are_time_and_time_with_a_premium_on_mixed_traffic() {
 }
 
 #[test]
+fn a_painted_lane_costs_its_own_factor_a_track_none_and_mixed_traffic_its_own() {
+    // S236 (roadmap I-bb U2): lane against track. The street given a painted lane.
+    let d = StaticLayerDefaults::SHIPPED;
+    let link = |class, infrastructure, km_h, length| StaticLink {
+        class,
+        speed_km_h: km_h,
+        infrastructure,
+        length_m: Some(length),
+    };
+    let mut b = StaticNetworkBuilder::new(StaticLayer::Bike);
+    b.add_node("A", LonLat::new(4.80, 52.0));
+    b.add_node("B", LonLat::new(4.8146, 52.0));
+    b.add_link(
+        "lane",
+        "A",
+        "B",
+        link(RoadClass::Residential, BikeInfrastructure::Lane, d.bike_dedicated_km_h, 1000.0),
+    );
+    b.add_link(
+        "mixed",
+        "B",
+        "A",
+        link(RoadClass::Residential, BikeInfrastructure::Mixed, d.bike_mixed_km_h, 1000.0),
+    );
+    let g = b.build(street_and_track().network().projection(), &mut Diagnostics::new()).unwrap();
+    let id = |name: &str| g.network().link_external_ids().id_of(name).unwrap() as usize;
+    let seconds = g.link_seconds();
+    let shipped = g.link_costs(BikeCost::Dedicated, d.bike_lane_cost_factor, 1.2);
+    assert_eq!(shipped[id("lane")].to_bits(), seconds[id("lane")].to_bits(), "1: as a track");
+    let dearer = g.link_costs(BikeCost::Dedicated, 1.1, 1.2);
+    assert!((dearer[id("lane")] - 1.1 * seconds[id("lane")]).abs() < 1e-9);
+    assert!((dearer[id("mixed")] - 1.2 * seconds[id("mixed")]).abs() < 1e-9);
+    assert_eq!(g.link_costs(BikeCost::Time, 1.1, 1.2), seconds, "time ignores both");
+}
+
+#[test]
 fn the_walk_layer_s_cost_is_its_time_whatever_the_bike_cost() {
     let (road, _) = toy_network();
     let walk = derive(&road, StaticLayer::Walk);
-    assert_eq!(walk.link_costs(BikeCost::Dedicated, 1.2), walk.link_seconds());
+    assert_eq!(walk.link_costs(BikeCost::Dedicated, 1.0, 1.2), walk.link_seconds());
 }

@@ -126,7 +126,11 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// 30 minutes (`core-transit`'s `TransitDefaults::access_walk_max_s`, 15 before), counted in
 /// whole seconds; a traveller class may give its own (`core-sim`'s `ClassLimits`). Runs with
 /// mode choice or a timetable change; others do not.
-pub const DEFAULTS_VERSION: u32 = 16;
+///
+/// Version 17 (S236): a painted lane's own multiplier in the bike layer's dedicated cost
+/// (`bike_lane_cost_factor`, 1: a lane counted as a track, as before), overridable by name in
+/// `network_options`. No run at the shipped values changes.
+pub const DEFAULTS_VERSION: u32 = 17;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

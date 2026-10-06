@@ -271,3 +271,30 @@ def test_the_shipped_limits_and_an_infinite_one_are_recorded() -> None:
     m = run.manifest()
     assert (m["walk_max_s"], m["bike_max_s"]) == (1800, 3600), "S235: a ride up to an hour"
     assert m["class_limits"] == {"everyone": {"walk_max_s": "inf"}}, "JSON has no infinity"
+
+
+# --- a model of one's own sees the classes (S236, roadmap I-bb U1) -------------------------------
+
+
+def test_a_model_of_one_s_own_sees_each_situation_s_class_by_name() -> None:
+    import numpy as np
+    from openmobisim import choice
+
+    class BikesForKeenOnes:
+        # The keen class always rides when it can; everyone else takes the quickest.
+        name = "bikes_for_keen_ones"
+        seen: set[str] = set()
+
+        def choose(self, batch):
+            keen = np.array([batch.class_names[c] == "keen" for c in batch.user_class])
+            BikesForKeenOnes.seen.update(batch.class_names[c] for c in batch.user_class)
+            bike = batch.attributes["mode_bike"] > 0
+            utility = -batch.attributes["time_min"] + 100.0 * (bike & keen[batch.situation_of])
+            return choice.segment_argmax(utility, batch.offsets)
+
+    rows = toy_trips(5, "keen") + toy_trips(5, "plain")
+    both = {"modes": ["car", "bike"], "owns_car": True, "owns_bike": True}
+    run = toy_run(rows, "classes-own-model", {"keen": both, "plain": both},
+                  choice_model=BikesForKeenOnes())  # fmt: skip
+    assert modes_of(run) == {"keen": {"bike"}, "plain": {"car"}}, "car 80 s, bike 120 s"
+    assert BikesForKeenOnes.seen == {"keen", "plain"}

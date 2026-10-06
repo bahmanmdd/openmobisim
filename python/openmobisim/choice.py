@@ -39,7 +39,9 @@ situations, one situation being one traveller's one trip):
 * ``batch.attributes`` — a dict of float arrays, one value per alternative:
   ``time_min``, ``length_km``, ``detour``, ``overlap``, ``ln_path_size``,
   ``n_links``, ``car_min``, ``bike_min``, ``walk_min``, ``wait_min``,
-  ``ride_min``, ``transfers`` and ``parking_min`` (see ``ROUTE_ATTRIBUTES``).
+  ``ride_min``, ``transfers``, ``parking_min``, the bike leg's kilometres by
+  facility and a transit itinerary's walks, waits and rides split (see
+  ``ROUTE_ATTRIBUTES``).
   Routes and the itineraries of transit, park-and-ride and bike-and-ride trips
   carry the same names, so one model serves both.
 * ``batch.gumbel`` — each alternative's standard Gumbel error, keyed on
@@ -48,6 +50,9 @@ situations, one situation being one traveller's one trip):
 * ``batch.traveller``, ``batch.trip`` (per situation), ``batch.identity``
   (per alternative; stable when other alternatives come and go),
   ``batch.situation_of`` (per alternative), ``batch.iteration``.
+* ``batch.user_class`` — each situation's traveller class, an index into
+  ``batch.class_names`` (the demand's ``user_class`` values), so a model may
+  weigh classes differently: ``batch.class_names[batch.user_class[s]]``.
 
 Return the chosen indices **within each situation** (an integer array, one per
 situation), or ``(indices, probabilities)`` when the model knows how likely each
@@ -90,7 +95,16 @@ __all__ = [
 #: ``wait_min`` (at stops), ``ride_min`` (in transit vehicles), ``transfers``
 #: and ``parking_min`` (parking or fetching the car or bike): the parts of the
 #: time, 0 where an alternative has none (a car route is all ``car_min``);
-#: ``nest`` (the alternative's mode as a number: the nest of ``"nested_logit"``)
+#: ``bike_separated_km``, ``bike_lane_km``, ``bike_mixed_km`` (the bike leg's
+#: kilometres on separated tracks, painted lanes and in mixed traffic: what a model
+#: sees of a ride's quality, S236); ``walk_access_min``, ``walk_egress_min``,
+#: ``walk_transfer_min`` (the walk to the first stop, from the last, and between
+#: stops: parts of ``walk_min``), ``wait_first_min``, ``wait_transfer_min`` (parts
+#: of ``wait_min``) and ``ride_rail_min``, ``ride_metro_min``, ``ride_tram_min``,
+#: ``ride_bus_min``, ``ride_ferry_min``, ``ride_other_min`` (minutes on board by
+#: kind of service: parts of ``ride_min``); a part is weighed on top of its total,
+#: or instead of it; ``nest`` (the alternative's mode as a number: the nest of
+#: ``"nested_logit"``)
 #: and ``mode_walk``, ``mode_bike``, ``mode_car``, ``mode_transit``,
 #: ``mode_car_transit``, ``mode_bike_transit`` (1 for the alternative's mode, 0 for
 #: the rest: a coefficient on one is that mode's constant).
@@ -108,6 +122,20 @@ ROUTE_ATTRIBUTES: tuple[str, ...] = (
     "ride_min",
     "transfers",
     "parking_min",
+    "bike_separated_km",
+    "bike_lane_km",
+    "bike_mixed_km",
+    "walk_access_min",
+    "walk_egress_min",
+    "walk_transfer_min",
+    "wait_first_min",
+    "wait_transfer_min",
+    "ride_rail_min",
+    "ride_metro_min",
+    "ride_tram_min",
+    "ride_bus_min",
+    "ride_ferry_min",
+    "ride_other_min",
     "nest",
     "mode_walk",
     "mode_bike",

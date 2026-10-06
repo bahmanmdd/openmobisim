@@ -62,6 +62,12 @@ pub struct PyChoiceBatch {
     /// Each situation's trip.
     #[pyo3(get)]
     trip: Py<PyArray1<u32>>,
+    /// Each situation's traveller class, as an index into ``class_names`` (S236).
+    #[pyo3(get)]
+    user_class: Py<PyArray1<u32>>,
+    /// The traveller classes' names, by index (the demand's ``user_class`` values).
+    #[pyo3(get)]
+    class_names: Vec<String>,
     /// Each alternative's identity: stable when other alternatives come and go.
     #[pyo3(get)]
     identity: Py<PyArray1<u32>>,
@@ -95,6 +101,7 @@ fn build_batch(
     py: Python<'_>,
     batch: &ChoiceBatch,
     rng: &StreamRng,
+    class_names: &[String],
 ) -> PyResult<Py<PyChoiceBatch>> {
     let attributes = PyDict::new(py);
     for (i, name) in batch.attribute_names().iter().enumerate() {
@@ -115,6 +122,8 @@ fn build_batch(
             offsets: batch.offsets().to_vec().into_pyarray(py).unbind(),
             traveller: batch.travellers().to_vec().into_pyarray(py).unbind(),
             trip: batch.trips().to_vec().into_pyarray(py).unbind(),
+            user_class: batch.classes().to_vec().into_pyarray(py).unbind(),
+            class_names: class_names.to_vec(),
             identity: batch.identities().to_vec().into_pyarray(py).unbind(),
             situation_of: situation_of.into_pyarray(py).unbind(),
             attributes: attributes.unbind(),
@@ -130,6 +139,8 @@ pub struct PythonChoice {
     descriptor: String,
     sampled: bool,
     attributes: Option<Vec<String>>,
+    /// The traveller classes' names, by class index, for the batch (S236).
+    class_names: Vec<String>,
 }
 
 impl PythonChoice {
@@ -163,7 +174,15 @@ impl PythonChoice {
             descriptor,
             sampled: sampled.unwrap_or(true),
             attributes,
+            class_names: Vec::new(),
         })
+    }
+
+    /// The same model, handing it the traveller classes' names by index (S236).
+    #[must_use]
+    pub fn with_class_names(mut self, names: Vec<String>) -> Self {
+        self.class_names = names;
+        self
     }
 }
 
@@ -195,7 +214,7 @@ impl ChoiceModel for PythonChoice {
                 openmobisim_core_types::rng::RngKey::from_seed(0),
                 openmobisim_core_types::rng::Stream::Choice,
             );
-            let arg = build_batch(py, batch, &rng).map_err(|e| failed(&e))?;
+            let arg = build_batch(py, batch, &rng, &self.class_names).map_err(|e| failed(&e))?;
             let answer = model.call_method1("probabilities", (arg,)).map_err(|e| failed(&e))?;
             if answer.is_none() {
                 return Ok(None);
@@ -237,7 +256,7 @@ impl ChoiceModel for PythonChoice {
 
     fn choose(&self, batch: &ChoiceBatch, rng: &StreamRng) -> Result<Choices, ChoiceError> {
         Python::attach(|py| {
-            let arg = build_batch(py, batch, rng).map_err(|e| failed(&e))?;
+            let arg = build_batch(py, batch, rng, &self.class_names).map_err(|e| failed(&e))?;
             let answer =
                 self.model.bind(py).call_method1("choose", (arg,)).map_err(|e| failed(&e))?;
             // Either the chosen indices, or (indices, probabilities).
@@ -323,6 +342,16 @@ pub fn make_choice_model_with_classes(
     classes: &[(String, BTreeMap<String, f64>)],
 ) -> PyResult<Arc<dyn ChoiceModel>> {
     if classes.iter().all(|(_, o)| o.is_empty()) {
+        // A model of the user's own is told the classes' names (S236).
+        if let Some(s) = spec.filter(|s| s.extract::<String>().is_err()) {
+            if options.is_some_and(|o| !o.is_empty()) {
+                return Err(PyValueError::new_err(
+                    "choice_options applies to the built-in models; give a model of your own its settings in its constructor",
+                ));
+            }
+            let names = classes.iter().map(|(n, _)| n.clone()).collect();
+            return Ok(Arc::new(PythonChoice::new(s)?.with_class_names(names)));
+        }
         return make_choice_model(spec, options);
     }
     let name = match spec {

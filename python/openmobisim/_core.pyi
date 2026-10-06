@@ -395,6 +395,10 @@ class ChoiceBatch:
     #: Each situation's traveller and trip.
     traveller: npt.NDArray[np.uint32]
     trip: npt.NDArray[np.uint32]
+    #: Each situation's traveller class, an index into ``class_names``.
+    user_class: npt.NDArray[np.uint32]
+    #: The traveller classes' names (the demand's ``user_class`` values), by index.
+    class_names: list[str]
     #: Each alternative's identity (stable when other alternatives come and go).
     identity: npt.NDArray[np.uint32]
     #: Which situation each alternative belongs to.

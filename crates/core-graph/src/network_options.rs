@@ -19,7 +19,7 @@
 //! | `<class>.jam_density_veh_km_lane` | veh/km per lane | storage per lane |
 //! | `free_flow_speed_factor`, `capacity_factor`, `jam_density_factor`, `control_delay_factor`, `green_fraction_factor` | — | the global multipliers ([`GlobalMultipliers`]) |
 //! | `signal_cycle_s`, `signal_green_fraction`, `signal_degree_of_saturation` | s, —, — | the signal settings ([`SignalDefaults`]) |
-//! | `bike_mixed_km_h`, `bike_dedicated_km_h`, `bike_mixed_cost_factor`, `walk_km_h`, `ferry_km_h`, `ferry_wait_s` | km/h, km/h, —, km/h, km/h, s | the bike and walk layers ([`StaticLayerDefaults`]) |
+//! | `bike_mixed_km_h`, `bike_dedicated_km_h`, `bike_mixed_cost_factor`, `bike_lane_cost_factor`, `walk_km_h`, `ferry_km_h`, `ferry_wait_s` | km/h, km/h, —, —, km/h, km/h, s | the bike and walk layers ([`StaticLayerDefaults`]) |
 //!
 //! `<class>` is a road class's name as OSM writes it (`motorway`, `primary_link`, `residential`,
 //! …; [`RoadClass::as_str`]).
@@ -72,7 +72,7 @@ impl Default for NetworkDefaults {
 /// The global and layer names, with how to read and write each.
 type Field = (&'static str, fn(&NetworkDefaults) -> f64, fn(&mut NetworkDefaults, f64));
 
-const FIELDS: [Field; 14] = [
+const FIELDS: [Field; 15] = [
     (
         "free_flow_speed_factor",
         |d| d.multipliers.free_flow_speed,
@@ -107,6 +107,11 @@ const FIELDS: [Field; 14] = [
         "bike_mixed_cost_factor",
         |d| d.layers.bike_mixed_cost_factor,
         |d, v| d.layers.bike_mixed_cost_factor = v,
+    ),
+    (
+        "bike_lane_cost_factor",
+        |d| d.layers.bike_lane_cost_factor,
+        |d, v| d.layers.bike_lane_cost_factor = v,
     ),
     ("walk_km_h", |d| d.layers.walk_km_h, |d, v| d.layers.walk_km_h = v),
     ("ferry_km_h", |d| d.layers.ferry_km_h, |d, v| d.layers.ferry_km_h = v),

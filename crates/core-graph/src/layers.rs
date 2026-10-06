@@ -214,6 +214,15 @@ pub struct StaticLayerDefaults {
     /// Duives and Hoogendoorn, *Transportation Research Record* 2662, 2017) —
     /// the value is a placeholder until one is taken from such a model.*
     pub bike_mixed_cost_factor: f64,
+    /// The multiplier [`BikeCost::Dedicated`] puts on the travel time of a link with a
+    /// painted lane (or a cycle street), against 1 on a separated track (S236, roadmap I-bb:
+    /// lane against track).
+    ///
+    /// *Uncalibrated: 1, a lane counted as a track, as before S236. CITATION OWED: route
+    /// choice models find cyclists prefer separated tracks to painted lanes (Broach, Dill and
+    /// Gliebe 2012, above); a value between 1 and [`Self::bike_mixed_cost_factor`] is to be
+    /// taken from such a model.*
+    pub bike_lane_cost_factor: f64,
     /// Walking speed, in km/h: also a bike's speed where the tags say to
     /// dismount.
     ///
@@ -242,6 +251,7 @@ impl StaticLayerDefaults {
         bike_mixed_km_h: 15.0,
         bike_dedicated_km_h: 18.0,
         bike_mixed_cost_factor: 1.2,
+        bike_lane_cost_factor: 1.0,
         walk_km_h: 4.8,
         ferry_km_h: 10.0,
         ferry_wait_s: 300.0,
@@ -533,17 +543,22 @@ impl StaticNetwork {
 
     /// Every link's cost for a route search, in link order: its travel time,
     /// times `mixed_factor` where [`BikeCost::Dedicated`] applies to a link
-    /// without dedicated infrastructure (a ferry is not mixed traffic, S197).
+    /// without dedicated infrastructure (a ferry is not mixed traffic, S197), and
+    /// times `lane_factor` on a painted lane (S236; 1 counts a lane as a track).
     /// On the walk layer the cost is the time.
     #[must_use]
-    pub fn link_costs(&self, cost: BikeCost, mixed_factor: f64) -> Vec<f64> {
+    pub fn link_costs(&self, cost: BikeCost, lane_factor: f64, mixed_factor: f64) -> Vec<f64> {
         let mut seconds = self.link_seconds();
         if self.layer == StaticLayer::Bike && cost == BikeCost::Dedicated {
             for (i, (s, infrastructure)) in seconds.iter_mut().zip(&self.infrastructure).enumerate()
             {
                 let ferry = self.network.link_class(LinkId::from_index(i)) == RoadClass::Ferry;
-                if !infrastructure.is_dedicated() && !ferry {
-                    *s *= mixed_factor;
+                match infrastructure {
+                    BikeInfrastructure::Mixed if !ferry => *s *= mixed_factor,
+                    // Off means absent: at 1 the cost is the time, bit for bit.
+                    #[allow(clippy::float_cmp, reason = "1 exactly leaves the time untouched")]
+                    BikeInfrastructure::Lane if lane_factor != 1.0 => *s *= lane_factor,
+                    _ => {}
                 }
             }
         }

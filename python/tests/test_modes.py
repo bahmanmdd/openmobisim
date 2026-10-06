@@ -159,3 +159,43 @@ def test_mode_options_cut_off_a_long_walk_or_ride_and_refuse_unknown_names() -> 
     assert full.fingerprint != short.fingerprint
     with pytest.raises(ValueError, match="walk_max_s, bike_max_s"):
         toy_run(rows, "modes-cut-bad", modes=ms.MODES, mode_options={"walk_max": 300})
+
+
+def test_a_model_sees_the_bike_leg_by_facility_and_transit_s_parts(tmp_path) -> None:
+    # S236 (roadmap I-bb U2, U3): the parts add up to their totals, by kind of service.
+    import numpy as np
+    from openmobisim import choice
+
+    seen: list[dict[str, np.ndarray]] = []
+
+    class Recorder:
+        name = "recorder"
+
+        def choose(self, batch):
+            seen.append({k: np.array(v) for k, v in batch.attributes.items()})
+            return choice.segment_argmax(-batch.attributes["time_min"], batch.offsets)
+
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, "a", "W", "N1", 0, None), toy_trip(net, "b", "W", "M", 0, None)]
+    toy_run(rows, "modes-parts", modes=ms.MODES, choice_model=Recorder(),
+            parking_options={"pr_min_km": 0})  # fmt: skip
+    a = {k: np.concatenate([s[k] for s in seen]) for k in seen[0]}
+    by_facility = a["bike_separated_km"] + a["bike_lane_km"] + a["bike_mixed_km"]
+    bike = (a["mode_bike"] + a["mode_bike_transit"]) > 0
+    assert bike.any() and np.allclose(by_facility[bike], a["length_km"][bike])
+    assert np.all(by_facility[~bike] == 0), "only bike legs have facilities"
+    transit = (a["mode_transit"] + a["mode_car_transit"] + a["mode_bike_transit"]) > 0
+    assert transit.any()
+    walks = a["walk_access_min"] + a["walk_egress_min"] + a["walk_transfer_min"]
+    assert np.allclose(walks[transit], a["walk_min"][transit])
+    waits = a["wait_first_min"] + a["wait_transfer_min"]
+    assert np.allclose(waits, a["wait_min"])
+    kinds = ["rail", "metro", "tram", "bus", "ferry", "other"]
+    rides = sum(a[f"ride_{k}_min"] for k in kinds)
+    assert np.allclose(rides, a["ride_min"])
+    assert a["ride_tram_min"].max() > 0 and a["ride_bus_min"].max() > 0, "the toy's tram and bus"
+    assert set(choice.ROUTE_ATTRIBUTES) == set(a), "Python's list is the core's"
+
+
+def test_a_painted_lane_s_factor_is_a_network_option() -> None:
+    assert ms.network_options()["bike_lane_cost_factor"] == 1.0, "S236: a lane counted as a track"
