@@ -106,28 +106,27 @@ pub enum FlowMotor {
 pub mod local_codes {
     use openmobisim_core_types::diagnostics::DiagCode;
 
-    /// A trip's traveller owns no car reachable from its origin, and Phase 1
-    /// has no other mode to offer it (car-only, S133/S134's scope). Once a
-    /// mode-choice layer exists (Phase 2), unavailability becomes a choice
-    /// among alternatives, not the absence of a trip.
+    /// A trip that states a mode needing a vehicle (a car or a bike) found its
+    /// traveller's vehicle not at its origin, or the traveller owns none. A trip
+    /// that chooses its mode is offered only the modes its traveller can use.
     pub const NO_VEHICLE_AVAILABLE: DiagCode = DiagCode("no_vehicle_available");
-    /// The trip's mode cannot be simulated by this run: its layer is not
-    /// there, or the mode is not built yet (transit and the combinations with
-    /// it, S195).
+    /// The trip's mode cannot be simulated by this run: what it needs is not
+    /// there (a bike or walk layer, a timetable for transit and its
+    /// combinations, parkings for park-and-ride and bike-and-ride; S195).
     pub const MODE_NOT_AVAILABLE: DiagCode = DiagCode("mode_not_available");
 }
 
 /// Trip-level outcomes across a run (S57).
 ///
-/// `total_trips` is every trip in the demand; `no_vehicle_available` and
-/// `no_feasible_path` are trips this Phase 1 cut never simulates at all
-/// (car-only, no route-set fallback); `completed` and `truncated` are S57's
-/// statistics proper, over trips that *did* enter the network.
+/// `total_trips` is every trip in the demand; `no_vehicle_available`,
+/// `no_feasible_path` and `mode_not_available` are trips that never travel;
+/// `completed` and `truncated` are S57's statistics proper, over trips that
+/// *did* set off.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct TripCompletionStats {
     /// Every trip in the demand.
     pub total_trips: u32,
-    /// No owned car was at the trip's origin (Phase 1 has no other mode).
+    /// The trip's stated mode needs a vehicle its traveller does not have at the origin.
     pub no_vehicle_available: u32,
     /// A car was available, but no path existed to the destination.
     pub no_feasible_path: u32,
@@ -135,8 +134,8 @@ pub struct TripCompletionStats {
     pub completed: u32,
     /// Still in progress when the window ended (S57).
     pub truncated: u32,
-    /// The trip's mode cannot be simulated by this run (S195): its layer is
-    /// missing, or the mode is not built yet.
+    /// The trip's mode cannot be simulated by this run (S195): what it needs
+    /// (a layer, a timetable, parkings) is missing.
     pub mode_not_available: u32,
 }
 

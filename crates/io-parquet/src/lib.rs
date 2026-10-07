@@ -1,5 +1,5 @@
-//! Output writers for openmobisim: `kpis.parquet`, `diagnostics.parquet`,
-//! `events.parquet`, `manifest.json` (Foundations §6). Phase 1 step 7.
+//! Output writers for openmobisim: `kpis.parquet`, `diagnostics.parquet`, `link_bins.parquet`,
+//! `transit_calls.parquet`, `parking_bins.parquet`, `events.parquet` and `manifest.json` (Foundations §6).
 //!
 //! | Module | What it writes |
 //! |---|---|
@@ -11,31 +11,26 @@
 //! | [`parking_bins`] | Every parking's occupancy bin by bin (M4), from [`openmobisim_core_sim::RunResult::parking`] |
 //! | [`manifest`] | [`manifest::Manifest`] — the file that makes a run reproducible |
 //!
-//! # What Foundations §6 asks for that this does not write yet
+//! # What Foundations §6 asks for that this does not write
 //!
-//! Foundations §6 describes the *eventual* schema, built out as the
-//! mechanisms it reports on land. This crate writes every field Phase 1
-//! actually has a true value for and no others — a placeholder value would
-//! violate "never present an unvalidated result" as much as a fabricated
-//! KPI would. Specifically not written, and why:
+//! Foundations §6 describes the *eventual* schema. This crate writes every field
+//! the run has a true value for and no others — a placeholder value would
+//! violate "never present an unvalidated result" as much as a fabricated KPI
+//! would. `kpis.parquet` carries the run's trip metrics (by mode), the
+//! convergence measures of every iteration, transit and parking; not written:
 //!
-//! - **`kpis.parquet`**: only `total_travel_time` and S57's completion
-//!   counts are metrics yet — no per-iteration convergence report (no
-//!   equilibration exists), no per-design comparison (no `DesignSpace` /
-//!   `run_batch` exists).
+//! - **`kpis.parquet`**: no per-design comparison (`DesignSpace` / `run_batch`
+//!   do not exist yet): `design_id` and `replication` are always 0.
 //! - **`diagnostics.parquet`**: no `detail` column — [`Diagnostics`](openmobisim_core_types::diagnostics::Diagnostics)
-//!   does not carry free-text detail yet (noted as a gap in S131's log).
-//! - **`events.parquet`**: no `payload` column — Phase 1 has no boardings,
-//!   hub or store events, or disruptions to put one on (S135's `EventRow`
-//!   already documents this).
-//! - **`manifest.json`**: no `design_vector`, `replication` count,
-//!   `scenario_hash` (S168's `run_fingerprint` is its Phase 1 form), per-artifact
-//!   fingerprints beyond the network's, live stochastic streams, warm-start
-//!   source, `adaptation` or `max_parallel_runs` — every one of these names a
-//!   mechanism (the artifact cache, disruption scheduling, `run_batch`) that
-//!   does not exist in the pipeline yet. Add the field when the mechanism
-//!   lands, not before. (`master_seed` is written since S168: the seed and
-//!   `RngKey` exist, though no stochastic step draws from them yet.)
+//!   does not carry free-text detail (S131).
+//! - **`events.parquet`**: no `payload` column; boardings, parking and
+//!   reroutes have files of their own (`transit_calls.parquet`,
+//!   `parking_bins.parquet`, `Run.route_changes()`).
+//! - **`manifest.json`**: no `design_vector`, `replication` count, per-artifact
+//!   fingerprints beyond the network's, warm-start source, `adaptation` or
+//!   `max_parallel_runs` — each names a mechanism (the artifact cache,
+//!   `run_batch`) that does not exist yet. Add the field when the mechanism
+//!   lands, not before.
 
 use core::fmt;
 

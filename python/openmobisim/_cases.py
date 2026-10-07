@@ -196,11 +196,11 @@ def case(name: str, root: str | Path | None = None, *, check: bool = True) -> Ca
 
     Args:
         name: The case.
-        root: A folder holding the bundle (``<root>/<name>/``); else the folder ``OPENMOBISIM_DATA``
-        names, else
-            the cache (``~/.cache/openmobisim/bundle/<version>``), where a case is downloaded once.
-        check: Check every file against the checksums this package carries (a changed or broken file
-        is refused).
+        root: A folder holding the bundle (``<root>/<name>/``); else the folder
+            ``OPENMOBISIM_DATA`` names, else the cache (``~/.cache/openmobisim/bundle/<version>``),
+            where a case is downloaded once.
+        check: Check every file against the checksums this package carries (a changed or broken
+            file is refused).
 
     Returns:
         The case: ``network()``, ``transit()``, ``parkings()``, ``zones()``, ``classes()``,

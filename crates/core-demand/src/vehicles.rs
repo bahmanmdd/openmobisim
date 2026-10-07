@@ -4,8 +4,8 @@
 //!
 //! Deliberately separate from [`crate::travellers::Travellers`]: the trips
 //! table is immutable shared input, vehicle location is not (Foundations
-//! §5). Nothing in this module decides which alternative a traveller takes —
-//! see the crate docs for what is and is not built yet.
+//! §5). Nothing in this module decides which alternative a traveller takes:
+//! that is the choice layer's (see the crate docs).
 
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_types::ids::{EntityId, TravellerId};

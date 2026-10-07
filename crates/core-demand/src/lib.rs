@@ -10,27 +10,22 @@
 //! | [`travellers`] | [`travellers::Travellers`] and [`travellers::Trips`]: the dense, sorted, chain-validated structures everything downstream reads |
 //! | [`vehicles`] | [`vehicles::VehicleLocations`] — per-run mutable state (S98), seeded from S129's rule |
 //!
-//! # What this crate is not, yet
+//! # What this crate does not do
 //!
-//! This is Phase 1 step 4: the reader, the traveller structure and the
-//! vehicle-location *storage*. It does not choose which alternative a
-//! traveller takes — that is the choice layer (Phase 2 item 7), which needs
-//! route sets (Phase 2 item 6) and the mode-sequence automaton (design §22)
-//! that do not exist yet. `Ownership` and [`vehicles::VehicleLocations`]
-//! exist so those layers have somewhere to read from and write to; nothing
-//! here decides who drives.
+//! It reads and validates the demand; it does not choose. Which route, mode or
+//! itinerary a trip takes is the choice layer's (`core-choice`, driven by
+//! `core-sim`); `Ownership` and [`vehicles::VehicleLocations`] are what those
+//! layers read and write.
 //!
 //! Per-traveller **class ownership defaults** ([`travellers::ClassDefaults`])
-//! are a build parameter, not something this crate invents: the `[user_classes]`
-//! table that would supply them is scenario schema, which brief §6a puts in
-//! the user's hands, not the assistant's. An empty [`travellers::ClassDefaults`]
-//! — every class defaults to owning nothing — is the crate's own placeholder;
-//! the scenario layer gives a class it was not told about a car, a bike and a
-//! pass instead (S243), as that class may use every mode.
+//! are a build parameter, not something this crate invents: the class table
+//! that supplies them is scenario schema (`classes=` in Python, S231). An empty
+//! [`travellers::ClassDefaults`] — every class owning nothing — is the crate's
+//! own default; the scenario layer gives a class it was not told about a car, a
+//! bike and a pass instead (S243), as that class may use every mode.
 //!
-//! Per-trip attribute columns beyond the ones S97 names ("carried as
-//! attributes for choice models") are deferred for the same reason: nothing
-//! reads them until the choice layer exists to.
+//! Per-trip attribute columns beyond the ones S97 names are not read: the
+//! choice models' traveller and trip attributes are a later step (I-bb U6).
 
 pub mod mode;
 pub mod persons;

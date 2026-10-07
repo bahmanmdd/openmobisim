@@ -4,12 +4,10 @@
 use openmobisim_core_types::ids::{EntityId, EntityKind, TripId};
 use openmobisim_core_types::time::Second;
 
-/// One row of what will become `events.parquet`.
+/// One row of `events.parquet`.
 ///
-/// Foundations §6 also names a `payload` column; Phase 1 has nothing
-/// meaningful to put there — no boardings, hubs or disruptions exist yet to
-/// produce one — so it is not included here, added when a real payload
-/// exists rather than shipped empty now.
+/// Foundations §6 also names a `payload` column; it is not included:
+/// boardings, parking and reroutes are recorded in files of their own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct EventRow {
     /// When the event fired.
@@ -40,13 +38,12 @@ pub enum EventType {
     /// A trip's trajectory was still in progress when the window ended
     /// (S57).
     TripTruncated,
-    /// A trip's traveller had no owned car at the trip's origin.
+    /// A trip's stated mode needed a vehicle its traveller did not have at the origin.
     NoVehicleAvailable,
-    /// A car was available, but `core-sim`'s placeholder router (S133)
-    /// found no path.
+    /// The trip had a vehicle, but no path existed to its destination.
     NoFeasiblePath,
-    /// The trip's mode cannot be simulated by this run: its layer is not
-    /// there, or the mode is not built yet (transit, S195).
+    /// The trip's mode cannot be simulated by this run: what it needs (a
+    /// layer, a timetable, parkings) is not there (S195).
     ModeNotAvailable,
 }
 

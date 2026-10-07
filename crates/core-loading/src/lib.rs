@@ -9,17 +9,20 @@
 //! | [`link_bins`] | [`link_bins::LinkBins`] — per-link, per-time-bin results recorded as the loading runs (S163) |
 //! | [`ltm`] | [`ltm::run_ltm`] — levels 2–4: the LTM with vehicles on the curves, processed in time order (S151) |
 //!
-//! # Where this crate is, and where it is going
+//! # The fidelity ladder
 //!
-//! Design §10's fidelity ladder is levels 0–4, **nested — the same code with
-//! parameters changed**. Phase 1 shipped level 0 only, to exercise the
-//! [`vehicle::Vehicle`]/[`level0::Trajectory`] plumbing that levels 2–4 reuse.
-//! [`ltm`] is levels 2–4 — see its module docs for the mechanism and its
-//! recorded biases. Level 1 (volume-delay) is not built. **The flow
-//! motor never computes a route** (design §10.4) — every [`vehicle::Vehicle`]
-//! arrives with one already assigned; where that route comes from before
-//! Phase 2 item 6's route-set system exists is `core-sim`'s question, not
-//! this crate's (S133).
+//! Design §10's levels, **nested — the same code with parameters changed**:
+//! level 0 is free flow ([`level0`]: no curves, no interaction); levels 2–4 are
+//! [`ltm`], the link transmission model with vehicles on the curves: **2, the
+//! point queue** (capacities at every link and junction, queues that take no
+//! road space; the default since S229), 3 (storage, without the backward
+//! wave's delay) and **4, the full model** (spillback with the backward wave,
+//! turn pockets, en-route rerouting). See [`ltm`]'s module docs for the
+//! mechanism and its recorded biases. Level 1 (volume-delay) is not built.
+//!
+//! **The flow motor never computes a route** (design §10.4): every
+//! [`vehicle::Vehicle`] arrives with one already assigned (a reroute's new
+//! route included, chosen by the rule the run hands in).
 
 pub mod curves;
 mod events;

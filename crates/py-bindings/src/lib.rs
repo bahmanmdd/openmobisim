@@ -9,13 +9,14 @@
 //! The compiled module is imported as `openmobisim._core`. It is private: the
 //! public Python surface is the `openmobisim` package, which re-exports from here.
 //!
-//! # Phase 1 scope
+//! # What crosses the boundary
 //!
-//! Deliberately thin. It exists so that the wheel-building machinery — abi3,
-//! three operating systems, CI — is proven end to end before there is
-//! anything interesting to carry across the boundary. The functions below are
-//! the ones the Python test suite needs in order to assert that the boundary
-//! works and that the core's determinism survives it.
+//! Handles to the immutable inputs (the network and its layers, a timetable,
+//! parkings, route sets), the run (`run_pipeline`, which takes the scenario's
+//! settings by name and returns the run's summary and the paths of its files),
+//! and the choice models written in Python, called once per batch. Arguments
+//! are checked here, so an error names the Python argument; the semantics live
+//! in the core crates, which never see Python.
 
 // PyO3 extracts arguments by value: a `#[pyfunction]` cannot take a borrowed
 // slice from Python, so the workspace's `needless_pass_by_value` lint does not

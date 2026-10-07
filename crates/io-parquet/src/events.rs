@@ -1,9 +1,9 @@
 //! `events.parquet` — sampled per-trip events (Foundations §6):
 //! `run_id, second, event_type, entity_kind, entity_id`.
 //!
-//! No `payload` column: [`EventRow`] does not carry one yet — Phase 1 has no
-//! boardings, hub or store events, or disruptions to put one on. Added when
-//! one of those exists to produce it.
+//! No `payload` column: [`EventRow`] does not carry one. Boardings, parking
+//! and reroutes are recorded in files of their own (`transit_calls.parquet`,
+//! `parking_bins.parquet`, the run's route changes).
 
 use std::path::Path;
 use std::sync::Arc;
