@@ -367,3 +367,34 @@ def test_each_trip_s_logsum_rises_with_a_better_alternative_and_a_model_may_give
 
     own = toy_run(rows, "logsum-own", modes=ms.MODES, choice_model=Own())
     assert list(own.itinerary_choices()["logsum"]) == [7.0]
+
+
+def test_the_logsums_by_pair_are_the_people_weighted_means_of_its_trips() -> None:
+    # S245: a pair's logsum is its trips' mean, by weight; a trip given its mode has none.
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, f"a{i}", "W", "N1", 0, None) for i in range(3)]
+    rows += [toy_trip(net, f"b{i}", "W", "M", 10 * i, None) for i in range(2)]
+    rows += [toy_trip(net, "c0", "W", "M", 0, "car")]
+    rows[0] = rows[0][:8] + (3,) + rows[0][9:]  # a0 stands for three people
+    rows = [r[:7] + ("keen" if r[0] in ("a1", "b1") else "plain",) + r[8:] for r in rows]
+    run = toy_run(rows, "logsum-od", modes=ms.MODES, choice_model="logit")
+    ch = run.itinerary_choices()
+    trip = {t: v for t, v in zip(ch["traveller_id"], ch["logsum"], strict=True)}
+    zones = {
+        name: net.node_lonlat(n) for name, n in (("west", "W"), ("north", "N1"), ("merge", "M"))
+    }
+    od = run.logsum_od(rows, zones)
+    assert (od["origin"], od["destination"]) == (["west", "west"], ["merge", "north"])
+    assert od["trips"] == [2, 3] and od["people"] == [2.0, 5.0], "c0's stated car has no logsum"
+    assert od["logsum"][1] == pytest.approx((3 * trip["a0"] + trip["a1"] + trip["a2"]) / 5)
+    nodes = run.logsum_od(rows)  # by the nodes the trips start and end at
+    assert (
+        sorted(nodes["trips"]) == [2, 3]
+        and nodes["origin"] == [net.node_nearest(*zones["west"])] * 2
+    )
+    by_class = run.logsum_od(rows, zones, by_class=True)
+    assert set(zip(by_class["destination"], by_class["user_class"], strict=True)) == {
+        ("merge", "keen"), ("merge", "plain"), ("north", "keen"), ("north", "plain"),
+    }  # fmt: skip
+    with pytest.raises(ValueError, match="not in trips"):
+        run.logsum_od(rows[1:], zones)

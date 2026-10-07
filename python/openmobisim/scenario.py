@@ -655,6 +655,106 @@ class Run:
         choices = self._summary.itinerary_choices
         return None if choices is None else dict(choices)
 
+    def logsum_od(
+        self,
+        trips: Any,
+        zones: Mapping[str, tuple[float, float]] | None = None,
+        *,
+        by_class: bool = False,
+    ) -> dict[str, list[Any]]:
+        """The trips' logsums by origin-destination pair (S245): utility-based accessibility.
+
+        The logsum of a trip's choice set (``itinerary_choices()["logsum"]``) averaged over the
+        trips of each pair, weighted by the people they stand for. Trips with a logsum are those
+        that chose their mode or an itinerary (transit, park-and-ride, bike-and-ride); a trip
+        given another mode has none and is left out. Compare a pair's logsum between two runs
+        (two designs): the change, divided by ``-beta_time_min`` (0.2 by default), is what the
+        change is worth in minutes per trip; the level alone means nothing (a logsum is defined
+        up to a constant).
+
+        Args:
+            trips: The trips the run was given: rows of ``Scenario.from_parts``' ``demand``, or a
+                ``trips.csv`` path.
+            zones: ``{zone: (lon, lat)}`` (``demand_read_zones``): each trip's origin and
+                destination go to the nearest zone point. ``None``: the pair of drivable nodes
+                nearest them (the nodes the trip starts and ends at).
+            by_class: Also by the traveller's class.
+
+        Returns:
+            Columns by name, one row per pair (and class) with at least one logsum, sorted:
+            ``origin``, ``destination`` (zone names, or node indices), ``user_class`` (with
+            ``by_class``), ``trips`` (simulated), ``people`` (their weights) and ``logsum`` (the
+            people-weighted mean, in the utility's units).
+
+        Raises:
+            ValueError: If the run made no itinerary choice, or a trip with a logsum is not in
+                ``trips``.
+        """
+        import numpy as np
+
+        choices = self.itinerary_choices()
+        if choices is None:
+            raise ValueError("this run made no itinerary or mode choice, so it has no logsums")
+        rows = demand_read_trips(trips) if isinstance(trips, (str, Path)) else trips
+        ends = {(str(r[0]), int(r[1])): (r[2], r[3], r[4], r[5]) for r in rows}
+        modes = self.trip_modes()
+        people = {
+            (str(t), int(s)): float(w)
+            for t, s, w in zip(
+                modes["traveller_id"], modes["trip_seq"], modes["weight"], strict=True
+            )
+        }
+        # A NaN logsum: no choice set (a trip that did not travel).
+        keep = [i for i, v in enumerate(choices["logsum"]) if not np.isnan(v)]
+        keys = [(str(choices["traveller_id"][i]), int(choices["trip_seq"][i])) for i in keep]
+        missing = [k for k in keys if k not in ends]
+        if missing:
+            raise ValueError(f"{len(missing)} trips of the run are not in trips, e.g. {missing[0]}")
+        points = np.array([ends[k] for k in keys], dtype=float).reshape(-1, 4)
+        if zones is not None:
+            names = list(zones)
+            z = np.array([zones[n] for n in names], dtype=float)
+            scale = np.cos(np.radians(float(np.mean(z[:, 1])) if len(z) else 0.0))
+
+            def nearest(lon: np.ndarray, lat: np.ndarray) -> list[str]:
+                out = []
+                for a in range(0, len(lon), 4096):  # chunks keep the distance matrix small
+                    dx = (lon[a : a + 4096, None] - z[None, :, 0]) * scale
+                    dy = lat[a : a + 4096, None] - z[None, :, 1]
+                    out.extend(names[j] for j in np.argmin(dx * dx + dy * dy, axis=1))
+                return out
+
+            origin = nearest(points[:, 0], points[:, 1])
+            destination = nearest(points[:, 2], points[:, 3])
+        else:
+            if self._network is None:
+                raise ValueError("give zones: this run does not know its network")
+            snap = self._network.node_nearest
+            origin = [snap(lon, lat) for lon, lat in points[:, :2]]
+            destination = [snap(lon, lat) for lon, lat in points[:, 2:]]
+        groups: dict[tuple, list[float]] = {}
+        for j, i in enumerate(keep):
+            key = (origin[j], destination[j]) + ((choices["user_class"][i],) if by_class else ())
+            w = people[keys[j]]
+            g = groups.setdefault(key, [0.0, 0.0, 0.0])
+            g[0] += 1
+            g[1] += w
+            g[2] += w * float(choices["logsum"][i])
+        out: dict[str, list[Any]] = {"origin": [], "destination": []}
+        if by_class:
+            out["user_class"] = []
+        out |= {"trips": [], "people": [], "logsum": []}
+        for key in sorted(groups):
+            n, w, s = groups[key]
+            out["origin"].append(key[0] if zones is not None else int(key[0]))
+            out["destination"].append(key[1] if zones is not None else int(key[1]))
+            if by_class:
+                out["user_class"].append(key[2])
+            out["trips"].append(int(n))
+            out["people"].append(w)
+            out["logsum"].append(s / w if w else float("nan"))
+        return out
+
     def skim(
         self,
         mode: str,
