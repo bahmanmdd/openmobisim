@@ -18,14 +18,19 @@ def table():
 def test_every_group_is_listed_with_units():
     rows = table()
     groups = {r["group"] for r in rows}
-    assert {"scenario", "network", "loading", "modes", "transit", "parking", "equilibration.msa",
-            "equilibration.free_flow", "route_method.penalty", "route_update.best_response",
-            "choice_model.logit"} <= groups  # fmt: skip
+    assert {"scenario", "network", "loading", "modes", "transit", "parking", "prices",
+            "equilibration.msa", "equilibration.free_flow", "route_method.penalty",
+            "route_update.best_response", "choice_model.logit"} <= groups  # fmt: skip
     units = {r["name"]: r["unit"] for r in rows if r["group"] == "network"}
     assert units["walk_km_h"] == "km/h" and units["signal_cycle_s"] == "s"
     assert units["primary.saturation_flow_veh_h_lane"] == "veh/h per lane"
     logit = {r["name"]: r for r in rows if r["group"] == "choice_model.logit"}
     assert logit["beta_mode_bike"]["value"] == 0.0 and logit["beta_time_min"]["unit"] == "per min"
+    # Money (S248): prices in euros, weighed by beta_cost_eur, 0 unless given.
+    assert logit["beta_cost_eur"]["value"] == 0.0 and logit["beta_cost_eur"]["unit"] == "per EUR"
+    prices = {r["name"]: r for r in rows if r["group"] == "prices"}
+    assert prices["car_eur_km"]["unit"] == "EUR/km" and prices["fare_base_eur"]["unit"] == "EUR"
+    assert all(r["argument"] == "price_options" for r in prices.values())
 
 
 def test_every_row_is_accepted_by_its_argument():
@@ -44,7 +49,8 @@ def test_every_row_is_accepted_by_its_argument():
         [{"node": "a", "lon": 4.9, "lat": 52.37}, {"node": "b", "lon": 4.901, "lat": 52.37}],
         network_options=options("network"),
     )
-    run(loading_options=options("loading"), mode_options=options("modes"))
+    run(loading_options=options("loading"), mode_options=options("modes"),
+        price_options=options("prices"))  # fmt: skip
     for strategy in ("msa", "free_flow"):
         run(equilibration=strategy, equilibration_options=options(f"equilibration.{strategy}"))
     for group in {r["group"] for r in rows if r["group"].startswith("route_method.")}:

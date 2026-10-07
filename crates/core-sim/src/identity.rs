@@ -104,6 +104,8 @@ pub struct RunDescription {
     /// Disruptions at a time of day (S239): how many on roads, how many on lines, and whether
     /// travellers knew of them; `None` if none.
     pub disruptions: Option<(usize, usize, bool)>,
+    /// The prices, by name (S248), when the choice model reads money; `None` otherwise.
+    pub prices: Option<Vec<(String, f64)>>,
 }
 
 impl RunDescription {
@@ -160,6 +162,8 @@ pub(crate) struct Inputs<'a> {
     /// The loading's rules (S213); hashed only when one is on and the run has junctions to
     /// apply them at (the link transmission model).
     pub loading: &'a crate::loading_rules::LoadingOptions,
+    /// The prices (S248), when the choice model reads money; `None` otherwise.
+    pub prices: Option<&'a crate::prices::Prices>,
 }
 
 pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
@@ -280,6 +284,14 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             h.write_u32(t.to_s);
         }
     }
+    // Money (S248): nothing unless the choice model reads it, so other runs hash as before.
+    if let Some(prices) = inputs.prices {
+        h.write_str("prices");
+        for (name, value) in prices.values() {
+            h.write_str(name);
+            h.write_f64(value);
+        }
+    }
     // Off means absent: a run without a timetable hashes as it did before transit.
     if let Some(transit) = inputs.transit {
         hash_transit(&mut h, transit);
@@ -337,6 +349,9 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             .map(|(layer, name, _)| (layer.as_str().to_string(), name.to_string()))
             .collect(),
         disruptions: (!d.is_empty()).then_some((d.road.len(), d.transit.len(), d.known)),
+        prices: inputs
+            .prices
+            .map(|p| p.values().into_iter().map(|(n, v)| (n.to_string(), v)).collect()),
     }
 }
 
@@ -515,6 +530,14 @@ fn hash_parking(h: &mut Fnv1a, parking: &ParkingSetup) {
         for &(stop, walk) in parking.stops(p) {
             h.write_u32(stop.raw());
             h.write_u32(walk);
+        }
+    }
+    // Fees per stay (S248): nothing when no row gives one, so such parkings hash as before.
+    if (0..n).any(|p| parking.fee_eur(p).is_some()) {
+        h.write_str("fees");
+        for p in 0..n {
+            h.write_bool(parking.fee_eur(p).is_some());
+            h.write_f64(parking.fee_eur(p).unwrap_or(0.0));
         }
     }
     let d = parking.defaults();

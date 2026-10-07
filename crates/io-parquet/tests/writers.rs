@@ -377,6 +377,7 @@ fn sample_description(step: Option<f64>, bins: Option<u32>) -> RunDescription {
         class_limits: Vec::new(),
         link_values: Vec::new(),
         disruptions: None,
+        prices: None,
     }
 }
 

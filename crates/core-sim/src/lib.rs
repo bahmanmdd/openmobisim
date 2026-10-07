@@ -14,6 +14,7 @@
 //! | [`route_cache`] | [`route_cache::RouteSetCache`] — generated route sets kept for the next run that asks for the same (S178) |
 //! | [`link_times`] | [`link_times::LinkTimes`] — link travel times by time of day from the last loading, and the change between two loadings (S170) |
 //! | [`link_values`] | [`link_values::LinkValues`] — values a user gives per link, summed along each alternative for the choice models (S237) |
+//! | [`prices`] | [`prices::Prices`] — what an alternative costs in euros (running cost, tolls, parking fees, fares), offered to the choice models (S248) |
 //! | [`loading_rules`] | [`loading_rules::LoadingOptions`] — the loading's rules by name: turn pockets, en-route rerouting, priority at merges (S213–S218) |
 //! | [`disruptions`] | [`disruptions::Disruptions`] — roads closed and transit stopped at a time of day, known or not in advance (S239) |
 //! | [`skims`] | [`skims::Skimmer`] — door-to-door times between points by mode, after a run (S238) |
@@ -45,6 +46,7 @@ pub mod link_times;
 pub mod link_values;
 pub mod loading_rules;
 pub mod parking;
+pub mod prices;
 mod reroute;
 pub mod route_cache;
 pub mod route_choice;
@@ -67,6 +69,7 @@ pub use loading_rules::LoadingOptions;
 pub use parking::{
     ParkingBins, ParkingDefaults, ParkingError, ParkingResult, ParkingSetup, ParkingSetupReport,
 };
+pub use prices::{COST_ATTRIBUTES, Prices, TOLL_COLUMN};
 pub use route_cache::RouteSetCache;
 pub use route_choice::{NO_ROUTE, ROUTE_ATTRIBUTES, RouteChoices};
 pub use route_update::{BestResponse, NoRouteUpdate, RouteUpdate};

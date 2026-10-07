@@ -39,8 +39,8 @@ use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
 use openmobisim_core_sim::{
     ClassLimits, Disruptions, FlowMotor, LayerSetup, LinkValues, LoadingOptions, ModeDefaults,
-    ParkingDefaults, ParkingSetup, ROUTE_ATTRIBUTES, RoadDisruption, Run as CoreRun, Skimmer,
-    StaticLayers, Timings, TransitDisruption, TransitEffect, TransitSetup, ValueLayer,
+    ParkingDefaults, ParkingSetup, Prices, ROUTE_ATTRIBUTES, RoadDisruption, Run as CoreRun,
+    Skimmer, StaticLayers, Timings, TransitDisruption, TransitEffect, TransitSetup, ValueLayer,
 };
 use openmobisim_core_transit::TransitDefaults;
 
@@ -482,7 +482,7 @@ fn convergence_arrays(
     route_update="none", route_update_options=None,
     choice_detour_limit=None, route_cache=false, bike_cost="dedicated", transit=None,
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
-    loading_options=None,
+    loading_options=None, price_options=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -529,6 +529,7 @@ pub fn run_pipeline(
     modes: Option<Vec<String>>,
     mode_options: Option<HashMap<String, f64>>,
     loading_options: Option<HashMap<String, f64>>,
+    price_options: Option<HashMap<String, f64>>,
 ) -> PyResult<PyRunSummary> {
     let started = Instant::now();
     let mut clock = started;
@@ -606,6 +607,7 @@ pub fn run_pipeline(
         ModeDefaults::from_options(&to_options(mode_options)).map_err(PyValueError::new_err)?;
     let loading = LoadingOptions::from_options(&to_options(loading_options))
         .map_err(PyValueError::new_err)?;
+    let prices = Prices::from_options(&to_options(price_options)).map_err(PyValueError::new_err)?;
     // The modes a trip without a stated mode chooses among (M5); none: no choice.
     let modes: Vec<Mode> = modes
         .unwrap_or_default()
@@ -819,7 +821,8 @@ pub fn run_pipeline(
             known: disruptions_known,
         })
         .with_mode_defaults(mode_defaults)
-        .with_loading_options(loading);
+        .with_loading_options(loading)
+        .with_prices(prices);
     // What went in, taken before it runs (S168).
     let description = run.description();
     timings.lap("setup", None, clock);
@@ -1197,6 +1200,7 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
     push("modes", "mode_options", owned(ModeDefaults::SHIPPED.values()));
     push("transit", "transit_options", owned(TransitDefaults::SHIPPED.values()));
     push("parking", "parking_options", owned(ParkingDefaults::SHIPPED.values()));
+    push("prices", "price_options", owned(Prices::SHIPPED.values()));
     let none = BTreeMap::new();
     for name in equilibration_strategies() {
         let s =

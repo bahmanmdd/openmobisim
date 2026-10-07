@@ -388,6 +388,7 @@ fn merge(mut found: Vec<Found>, merge_m: f64) -> Vec<ParkingRow> {
             kind: seed.kind,
             capacity,
             initial_occupancy: 0,
+            fee_eur: None,
         });
     }
     rows.sort_by(|a, b| a.parking_id.cmp(&b.parking_id));

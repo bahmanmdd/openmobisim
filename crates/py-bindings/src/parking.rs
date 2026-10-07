@@ -47,7 +47,8 @@ impl PyParkings {
     }
 
     /// Every parking: ``{"parking_id", "name", "hub_id", "lon", "lat", "vehicle",
-    /// "capacity", "initial_occupancy"}``, lists and arrays by parking.
+    /// "capacity", "initial_occupancy", "fee_eur"}``, lists and arrays by parking (``fee_eur``
+    /// ``None`` where the table gave none: the run's price for the kind applies, S248).
     fn rows<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let d = PyDict::new(py);
         d.set_item(
@@ -73,6 +74,7 @@ impl PyParkings {
             "initial_occupancy",
             self.rows.iter().map(|r| r.initial_occupancy).collect::<Vec<_>>().into_pyarray(py),
         )?;
+        d.set_item("fee_eur", self.rows.iter().map(|r| r.fee_eur).collect::<Vec<_>>())?;
         Ok(d)
     }
 
@@ -155,8 +157,8 @@ pub fn parking_read_osm(
 }
 
 /// One row of a parking table: ``(parking_id, lon, lat, vehicle, capacity, name,
-/// hub_id, initial_occupancy)``.
-type Row = (String, f64, f64, String, u32, Option<String>, Option<String>, u32);
+/// hub_id, initial_occupancy, fee_eur)``.
+type Row = (String, f64, f64, String, u32, Option<String>, Option<String>, u32, Option<f64>);
 
 /// Parkings from table rows (``openmobisim.parking_read_table`` parses the
 /// table; this checks and keeps it).
@@ -164,7 +166,8 @@ type Row = (String, f64, f64, String, u32, Option<String>, Option<String>, u32);
 pub fn parking_from_rows(rows: Vec<Row>) -> PyResult<PyParkings> {
     let mut out = Vec::with_capacity(rows.len());
     let mut seen = std::collections::HashSet::new();
-    for (parking_id, lon, lat, vehicle, capacity, name, hub_id, initial_occupancy) in rows {
+    for (parking_id, lon, lat, vehicle, capacity, name, hub_id, initial_occupancy, fee_eur) in rows
+    {
         let kind = ParkingKind::from_name(&vehicle).ok_or_else(|| {
             PyValueError::new_err(format!(
                 "parking {parking_id:?}: vehicle must be \"car\" or \"bike\", got {vehicle:?}"
@@ -177,6 +180,12 @@ pub fn parking_from_rows(rows: Vec<Row>) -> PyResult<PyParkings> {
         {
             return Err(PyValueError::new_err(format!(
                 "parking {parking_id:?}: not a place ({lon}, {lat})"
+            )));
+        }
+        if fee_eur.is_some_and(|f| !(f.is_finite() && f >= 0.0)) {
+            return Err(PyValueError::new_err(format!(
+                "parking {parking_id:?}: fee_eur must be 0 or more, got {}",
+                fee_eur.unwrap_or_default()
             )));
         }
         if !seen.insert(parking_id.clone()) {
@@ -192,6 +201,7 @@ pub fn parking_from_rows(rows: Vec<Row>) -> PyResult<PyParkings> {
             kind,
             capacity,
             initial_occupancy,
+            fee_eur,
         });
     }
     Ok(PyParkings { rows: out, report: None })

@@ -133,6 +133,9 @@ pub struct ParkingRow {
     pub capacity: u32,
     /// How many are parked at the start of the day.
     pub initial_occupancy: u32,
+    /// What parking there costs, in euros per stay (S248, roadmap I-bb U5), if the table says;
+    /// else the run's price for its kind (`core-sim`'s `Prices`).
+    pub fee_eur: Option<f64>,
 }
 
 /// Where a hub touches a layer: a node of that layer's graph.

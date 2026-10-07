@@ -99,6 +99,8 @@ pub struct Manifest {
     pub link_values: Vec<(String, String)>,
     /// Disruptions (S239): on roads, on lines, and whether travellers knew; `None` if none.
     pub disruptions: Option<(usize, usize, bool)>,
+    /// The prices by name (S248), when the choice model reads money; `None` otherwise.
+    pub prices: Option<Vec<(String, f64)>>,
     /// How many loadings the run made.
     pub iterations_run: u32,
     /// Whether the strategy stopped before its most iterations because it had
@@ -172,6 +174,7 @@ impl Manifest {
                 .collect(),
             link_values: description.link_values.clone(),
             disruptions: description.disruptions,
+            prices: description.prices.clone(),
             iterations_run: u32::try_from(result.iterations.len().max(1)).unwrap_or(u32::MAX),
             converged: result.converged,
         }
@@ -220,7 +223,12 @@ impl Manifest {
         let disruptions = self.disruptions.map(|(road, transit, known)| {
             format!("{{\"road\": {road}, \"transit\": {transit}, \"known\": {known}}}")
         });
-        let fields: [(&str, String); 34] = [
+        let prices = self.prices.as_ref().map(|prices| {
+            let inner: Vec<String> =
+                prices.iter().map(|(n, v)| format!("{}: {}", text(n), number(*v))).collect();
+            format!("{{{}}}", inner.join(", "))
+        });
+        let fields: [(&str, String); 35] = [
             ("openmobisim_version", text(&self.openmobisim_version)),
             ("code_version", self.code_version.to_string()),
             ("defaults_version", self.defaults_version.to_string()),
@@ -257,6 +265,7 @@ impl Manifest {
             ("class_limits", optional(class_limits)),
             ("link_values", optional(link_values)),
             ("disruptions", optional(disruptions)),
+            ("prices", optional(prices)),
             ("iterations_run", self.iterations_run.to_string()),
             ("converged", self.converged.to_string()),
             ("link_bin_seconds", optional(self.link_bin_seconds.map(|s| s.to_string()))),

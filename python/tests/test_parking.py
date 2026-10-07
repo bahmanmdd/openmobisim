@@ -81,12 +81,20 @@ def test_a_parking_table_is_read_from_rows_or_text() -> None:
     assert p.read_report() is None
     text = "parking_id,lon,lat,vehicle,capacity\nx,4.9,52.37,car,10\n"
     assert ms.parking_read_table(text).by_vehicle()["car"] == (1, 10)
+    # A fee per stay (S248), or none: the scenario's price for the kind.
+    assert rows["fee_eur"] == [None, None]
+    fees = (
+        "parking_id,lon,lat,vehicle,capacity,fee_eur\nx,4.9,52.37,car,10,3.5\ny,4.9,52.37,bike,5,\n"
+    )
+    assert ms.parking_read_table(fees).rows()["fee_eur"] == [3.5, None]
 
 
 def test_a_bad_parking_table_is_refused_with_what_is_wrong() -> None:
     row = {"parking_id": "a", "lon": 4.9, "lat": 52.37, "vehicle": "car", "capacity": 1}
     with pytest.raises(ValueError, match="vehicle"):
         ms.parking_read_table([{**row, "vehicle": "boat"}])
+    with pytest.raises(ValueError, match="fee_eur must be 0 or more"):
+        ms.parking_read_table([{**row, "fee_eur": -1}])
     with pytest.raises(ValueError, match="more than once"):
         ms.parking_read_table([row, row])
     with pytest.raises(ValueError, match="capacity"):

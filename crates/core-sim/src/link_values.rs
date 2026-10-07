@@ -231,6 +231,11 @@ impl PreparedLinkValues {
             .map(|i| (i, aggregate))
     }
 
+    /// The column named `name` on `layer`, if given (S248: the toll, [`crate::prices`]).
+    pub(crate) fn column(&self, layer: ValueLayer, name: &str) -> Option<usize> {
+        self.columns.iter().position(|c| c.layer == layer && c.name == name)
+    }
+
     /// The layer of column `column`.
     pub(crate) fn layer(&self, column: usize) -> ValueLayer {
         self.columns[column].layer

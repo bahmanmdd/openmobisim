@@ -341,6 +341,116 @@ def test_a_layer_s_link_ids_tie_its_links_to_the_road_s() -> None:
     assert set(grid.layer("bike").link_ids()) <= set(grid.link_ids()), "derived: the road's"
 
 
+# --- money (S248, roadmap I-bb U5) ---------------------------------------------------------------
+
+
+def test_a_model_sees_what_each_alternative_costs_by_part() -> None:
+    import numpy as np
+    from openmobisim import choice
+
+    seen: list[dict[str, np.ndarray]] = []
+
+    class Recorder:
+        name = "recorder"
+
+        def choose(self, batch):
+            seen.append({k: np.array(v) for k, v in batch.attributes.items()})
+            return choice.segment_argmax(-batch.attributes["time_min"], batch.offsets)
+
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, "a", "W", "N1", 0, None), toy_trip(net, "b", "W", "M", 0, None)]
+    prices = {
+        "car_eur_km": 0.2,
+        "bike_eur_km": 0.05,
+        "fare_base_eur": 1.16,
+        "fare_km_eur": 0.217,
+        "fare_transfer_eur": 0.5,
+        "parking_car_eur": 3.0,
+        "parking_bike_eur": 0.5,
+    }
+    toll = {"road": {"toll_eur": [0.1] * net.link_count}}
+    toy_run(rows, "money-parts", modes=ms.MODES, choice_model=Recorder(), price_options=prices,
+            link_values=toll, parking_options={"pr_min_km": 0})  # fmt: skip
+    a = {k: np.concatenate([s[k] for s in seen]) for k in seen[0]}
+    parts = ("cost_running_eur", "cost_toll_eur", "cost_parking_eur", "cost_fare_eur")
+    assert np.allclose(a["cost_eur"], sum(a[k] for k in parts)), "the total is its parts"
+    car = (a["mode_car"] + a["mode_car_transit"]) > 0
+    bike = (a["mode_bike"] + a["mode_bike_transit"]) > 0
+    assert car.any() and bike.any()
+    assert np.allclose(a["cost_running_eur"][car], 0.2 * a["length_km"][car])
+    assert np.allclose(a["cost_running_eur"][bike], 0.05 * a["length_km"][bike])
+    assert np.allclose(a["cost_toll_eur"][car], 0.1 * a["n_links"][car]), "0.1 per car link"
+    assert np.all(a["cost_toll_eur"][~car] == 0) and np.all(
+        a["cost_running_eur"][~(car | bike)] == 0
+    )
+    # A parking's fee on the trip that parks: the run's price for its kind (the toy's have none).
+    assert np.all(a["cost_parking_eur"][a["mode_car_transit"] > 0] == 3.0)
+    assert np.all(a["cost_parking_eur"][a["mode_bike_transit"] > 0] == 0.5)
+    assert np.all(a["cost_parking_eur"][(a["mode_car_transit"] + a["mode_bike_transit"]) == 0] == 0)
+    # A fare: the base once, 0.5 per transfer and something per km; nothing without a ride.
+    rides = a["ride_min"] > 0
+    assert rides.any() and np.all(a["cost_fare_eur"][~rides] == 0)
+    by_km = a["cost_fare_eur"][rides] - 1.16 - 0.5 * a["transfers"][rides]
+    assert np.all(by_km > 0), "every ride covers some distance"
+    assert np.all(a["cost_eur"][a["mode_walk"] > 0] == 0), "a walk costs nothing"
+    tolls = {"road_toll_eur_km", "road_toll_eur_sum"}  # the link value's own attributes
+    assert set(choice.ROUTE_ATTRIBUTES) == set(a) - tolls, "Python's list is the core's"
+
+
+def test_a_car_route_of_a_trip_given_the_car_costs_its_km_and_tolls_too() -> None:
+    import numpy as np
+    from openmobisim import choice
+
+    seen: list[dict[str, np.ndarray]] = []
+
+    class Recorder:
+        name = "recorder"
+        attributes = ["time_min", "length_km", "n_links", "cost_eur", "cost_running_eur",
+                      "cost_toll_eur", "cost_fare_eur"]  # fmt: skip
+
+        def choose(self, batch):
+            seen.append({k: np.array(v) for k, v in batch.attributes.items()})
+            return choice.segment_argmax(-batch.attributes["time_min"], batch.offsets)
+
+    net = ms.examples.toy_network()
+    toy_run([toy_trip(net, "a", "W", "M", 0, "car")], "money-routes", transit=None, parkings=None,
+            choice_model=Recorder(), price_options={"car_eur_km": 0.3},
+            link_values={"road": {"toll_eur": [0.25] * net.link_count}})  # fmt: skip
+    a = seen[0]
+    assert np.allclose(a["cost_running_eur"], 0.3 * a["length_km"])
+    assert np.allclose(a["cost_toll_eur"], 0.25 * a["n_links"])
+    assert np.allclose(a["cost_eur"], a["cost_running_eur"] + a["cost_toll_eur"])
+    assert np.all(a["cost_fare_eur"] == 0)
+
+
+def test_money_weighs_only_when_a_model_asks_for_it() -> None:
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, "b", "W", "M", 0, None)]
+    common = {"modes": ["car", "bike"], "transit": None, "parkings": None, "choice_model": "logit"}
+    time = {"beta_time_min": -50.0}  # time all but decides: the car, 80 s against the bike's 120 s
+    dear = {"car_eur_km": 1000.0}
+    plain = toy_run(rows, "money-plain", choice_options=time, **common)
+    priced = toy_run(rows, "money-unweighed", choice_options=time, price_options=dear, **common)
+    # Not weighed: the prices change nothing, not even the fingerprint.
+    assert list(plain.itinerary_choices()["mode"]) == ["car"]
+    assert list(priced.itinerary_choices()["mode"]) == ["car"]
+    assert priced.fingerprint == plain.fingerprint and plain.manifest()["prices"] is None
+    weighed = toy_run(rows, "money-weighed", price_options=dear,
+                      choice_options={**time, "beta_cost_eur": -1.0}, **common)  # fmt: skip
+    assert list(weighed.itinerary_choices()["mode"]) == ["bike"], "1000 € a km is too dear"
+    assert weighed.manifest()["prices"]["car_eur_km"] == 1000.0
+    assert weighed.fingerprint != plain.fingerprint
+
+
+def test_unknown_or_negative_prices_are_refused() -> None:
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, "b", "W", "M", 0, None)]
+    with pytest.raises(ValueError, match="fare_base_eur"):
+        toy_run(rows, "money-bad", transit=None, parkings=None, price_options={"fare": 2.0})
+    with pytest.raises(ValueError, match="0 or more"):
+        toy_run(rows, "money-neg", transit=None, parkings=None, price_options={"car_eur_km": -1})
+
+
 def test_each_trip_s_logsum_rises_with_a_better_alternative_and_a_model_may_give_its_own() -> None:
     # S238: utility-based accessibility. W → N1 chooses among bike, walk and the parkings.
     import numpy as np

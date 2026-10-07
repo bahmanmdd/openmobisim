@@ -40,8 +40,9 @@ situations, one situation being one traveller's one trip):
   ``time_min``, ``length_km``, ``detour``, ``overlap``, ``ln_path_size``,
   ``n_links``, ``car_min``, ``bike_min``, ``walk_min``, ``wait_min``,
   ``ride_min``, ``transfers``, ``parking_min``, the bike leg's kilometres by
-  facility and a transit itinerary's walks, waits and rides split (see
-  ``ROUTE_ATTRIBUTES``).
+  facility, a transit itinerary's walks, waits and rides split, and what the
+  alternative costs in euros, ``cost_eur`` and its parts (see ``ROUTE_ATTRIBUTES``
+  and ``Scenario.from_parts``' ``price_options``).
   Routes and the itineraries of transit, park-and-ride and bike-and-ride trips
   carry the same names, so one model serves both.
 * ``batch.gumbel`` — each alternative's standard Gumbel error, keyed on
@@ -105,7 +106,12 @@ __all__ = [
 #: ``wait_first_min``, ``wait_transfer_min`` (parts of ``wait_min``) and
 #: ``ride_rail_min``, ``ride_metro_min``, ``ride_tram_min``, ``ride_bus_min``,
 #: ``ride_ferry_min``, ``ride_other_min`` (minutes on board by kind of service: parts
-#: of ``ride_min``); a part is weighed on top of its total, or instead of it; ``nest``
+#: of ``ride_min``); a part is weighed on top of its total, or instead of it;
+#: ``cost_eur``, what the alternative costs in euros (S248), and its parts
+#: ``cost_running_eur`` (the car or bike leg's kilometres at the vehicle's price per km),
+#: ``cost_toll_eur`` (the car leg's tolls: a road link value named ``toll_eur``),
+#: ``cost_parking_eur`` (a park-and-ride or bike-and-ride parking's fee, on the trip that
+#: parks) and ``cost_fare_eur`` (a transit journey's fare); ``nest``
 #: (the alternative's mode as a number: the nest of ``"nested_logit"``) and
 #: ``mode_walk``, ``mode_bike``, ``mode_car``, ``mode_transit``, ``mode_car_transit``,
 #: ``mode_bike_transit`` (1 for the alternative's mode, 0 for the rest: a coefficient
@@ -138,6 +144,11 @@ ROUTE_ATTRIBUTES: tuple[str, ...] = (
     "ride_bus_min",
     "ride_ferry_min",
     "ride_other_min",
+    "cost_eur",
+    "cost_running_eur",
+    "cost_toll_eur",
+    "cost_parking_eur",
+    "cost_fare_eur",
     "nest",
     "mode_walk",
     "mode_bike",

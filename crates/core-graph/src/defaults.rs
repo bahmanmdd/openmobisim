@@ -130,7 +130,13 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// Version 17 (S236): a painted lane's own multiplier in the bike layer's dedicated cost
 /// (`bike_lane_cost_factor`, 1: a lane counted as a track, as before), overridable by name in
 /// `network_options`. No run at the shipped values changes.
-pub const DEFAULTS_VERSION: u32 = 17;
+///
+/// Version 18 (S248): **prices** (`core-sim`'s `Prices`, a scenario's `price_options`): a car's
+/// running cost per km (0.12 €), a bike's (0), a transit journey's flat fare (2.0 €, nothing per
+/// km or transfer) and a parking's fee where its table gives none (0); every alternative carries
+/// `cost_eur` and its parts. The built-in models weigh money only when given `beta_cost_eur`: no
+/// run at the shipped values changes.
+pub const DEFAULTS_VERSION: u32 = 18;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

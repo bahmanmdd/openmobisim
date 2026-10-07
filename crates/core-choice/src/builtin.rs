@@ -117,6 +117,11 @@ impl ChoiceModel for Deterministic {
 /// offer is refused when the run starts, with the list of those that are. Set a
 /// default to `0` to drop its term.
 ///
+/// **Money** (S248): `beta_cost_eur` weighs what an alternative costs in euros (0 unless
+/// given). A value of time of `V` euros per hour is `beta_cost_eur = beta_time_min · 60 / V`:
+/// −1.2 per euro at −0.2 per minute and 10 €/h; a traveller class's own coefficient is its own
+/// value of time.
+///
 /// **The defaults are an assumption, not a calibration**: a time coefficient of
 /// −0.2 per minute means a route four minutes slower is taken with about 45% of
 /// the weight of one that is not, other things equal. Estimate your own and pass them.

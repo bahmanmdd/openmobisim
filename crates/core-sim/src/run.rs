@@ -62,6 +62,7 @@ use crate::loading_rules::LoadingOptions;
 use crate::parking::{
     self as parking_mod, ExpectedAvailability, ParkingEvent, ParkingResult, ParkingSetup,
 };
+use crate::prices::{PreparedPrices, Prices};
 use crate::reroute::Rerouter;
 use crate::route_cache::{RouteSetCache, generation_key};
 use crate::route_choice::{self, NO_ROUTE, RouteChoices};
@@ -449,6 +450,8 @@ pub struct Run {
     final_times: Option<Arc<LinkTimes>>,
     /// Disruptions at a time of day (S239): none, by default.
     disruptions: Disruptions,
+    /// The prices alternatives are costed at (S248): the shipped values, by default.
+    prices: Prices,
 }
 
 /// The key of the draw that puts a traveller in a group of the free-flow loading's increments
@@ -518,6 +521,7 @@ impl Run {
             link_values: LinkValues::new(),
             final_times: None,
             disruptions: Disruptions::default(),
+            prices: Prices::SHIPPED,
         }
     }
 
@@ -567,6 +571,14 @@ impl Run {
     #[must_use]
     pub fn with_link_values(mut self, link_values: LinkValues) -> Self {
         self.link_values = link_values;
+        self
+    }
+
+    /// The same run with `prices` (S248, roadmap I-bb U5): what driving, riding, parking and
+    /// fares cost, offered to choice models as `cost_eur` and its parts ([`crate::prices`]).
+    #[must_use]
+    pub fn with_prices(mut self, prices: Prices) -> Self {
+        self.prices = prices;
         self
     }
 
@@ -745,6 +757,14 @@ impl Run {
         self
     }
 
+    /// Whether the run's choice model reads money (S248): a model that lists no attributes reads
+    /// them all. Only then do the prices shape the run, and its fingerprint records them.
+    fn reads_money(&self) -> bool {
+        self.choice_model.required_attributes().is_none_or(|names| {
+            names.iter().any(|n| crate::prices::COST_ATTRIBUTES.contains(&n.as_str()))
+        })
+    }
+
     /// What went into this run: its seed and its fingerprint (S168). Take it
     /// before [`Self::execute`]; it depends only on the inputs.
     #[must_use]
@@ -780,6 +800,7 @@ impl Run {
             link_values: &self.link_values,
             disruptions: &self.disruptions,
             loading: &self.loading,
+            prices: self.reads_money().then_some(&self.prices),
         })
     }
 
@@ -1005,6 +1026,8 @@ impl Run {
         let reselect_rng =
             StreamRng::new(RngKey::from_seed(self.master_seed), Stream::MsaReselection);
         let model = self.choice_model.clone();
+        // The prices (S248), each parking's fee resolved and the toll column found.
+        let prices = PreparedPrices::new(self.prices, parking_arc.as_deref(), &link_values);
         let inputs = route_choice::Inputs {
             network: &network,
             travellers: &travellers,
@@ -1015,6 +1038,7 @@ impl Run {
             detour_limit: self.choice_detour_limit,
             link_values: &link_values,
             link_value_names: &link_value_names,
+            prices: &prices,
         };
         let mut chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
         let mut route_choices = chooser.choose_all(&choice_rng, 0)?;
@@ -1044,6 +1068,7 @@ impl Run {
             rng: &choice_rng,
             wanted: &itinerary_wanted,
             link_values: &link_values,
+            prices: &prices,
         };
         let mut chosen: Option<Chosen> = None;
         if let Some(itin) = &itineraries {

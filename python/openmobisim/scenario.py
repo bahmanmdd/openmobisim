@@ -1075,6 +1075,7 @@ class Scenario:
         modes: tuple[str, ...] | list[str] | None = None,
         mode_options: dict[str, float] | None = None,
         loading_options: dict[str, float] | None = None,
+        price_options: dict[str, float] | None = None,
         link_values: dict[str, dict[str, Any]] | None = None,
         disruptions: list[dict[str, Any]] | None = None,
         disruptions_known: bool = False,
@@ -1178,6 +1179,7 @@ class Scenario:
             # rerouting stays a feature of the levels with spillback.
             loading.setdefault("reroute", 0)
         self._loading_options = loading or None
+        self._price_options = price_options
         self._link_values = _link_values(network, link_values) if link_values else None
         self._road_disruptions, self._transit_disruptions = _disruptions(
             network, transit, disruptions or []
@@ -1215,6 +1217,7 @@ class Scenario:
         modes: tuple[str, ...] | list[str] | None = None,
         mode_options: dict[str, float] | None = None,
         loading_options: dict[str, float] | None = None,
+        price_options: dict[str, float] | None = None,
         link_values: dict[str, dict[str, Any]] | None = None,
         disruptions: list[dict[str, Any]] | None = None,
         disruptions_known: bool = False,
@@ -1337,7 +1340,8 @@ class Scenario:
                 ``beta_time_min`` (default -0.2), ``beta_ln_path_size`` (1),
                 ``beta_walk_min`` (-0.13) and ``beta_wait_min`` (-0.09, on top of the
                 time), ``beta_transfers`` (-1), and 0 for the rest, such as
-                ``beta_length_km``, ``beta_parking_min`` or the mode constants
+                ``beta_length_km``, ``beta_parking_min``, ``beta_cost_eur`` (money, see
+                ``price_options``) or the mode constants
                 ``beta_mode_bike`` … (``openmobisim.choice.ROUTE_ATTRIBUTES`` lists them);
                 for ``"nested_logit"`` also ``mu`` (0.5), the nests' scale, from above 0
                 to 1 (1 is the logit). Unknown names and non-numbers are refused. The
@@ -1533,6 +1537,25 @@ class Scenario:
                 wait for another movement while they fit in their turn pockets, this many metres
                 per lane, split among the approach's movements.
                 Uncalibrated defaults; unknown names and values out of range are refused.
+            price_options: What travel costs, in euros, by name (S248): ``car_eur_km``
+                (0.12, the fuel a driver pays per km), ``bike_eur_km`` (0), a transit
+                journey's fare ``fare_base_eur`` (2.0, once) + ``fare_km_eur`` (0, per km from
+                each boarding stop to its alighting stop as the crow flies) +
+                ``fare_transfer_eur`` (0, per transfer), and the fee per stay of a car park or
+                bike parking whose table gives none (``parking_car_eur``,
+                ``parking_bike_eur``: 0; a parking table's ``fee_eur`` column gives each its
+                own). A toll is a road link value named ``toll_eur`` (``link_values``), paid at
+                each passage. Every alternative carries what it costs: ``cost_eur`` and its
+                parts ``cost_running_eur``, ``cost_toll_eur``, ``cost_parking_eur`` (park-and-ride
+                and bike-and-ride, on the trip that parks) and ``cost_fare_eur``. The built-in
+                models weigh money by ``beta_cost_eur`` (or a part's coefficient), **0 unless
+                given**, so no run changes until it is: a value of time of ``V`` euros per hour is
+                ``beta_cost_eur = beta_time_min * 60 / V`` (-1.2 at the default -0.2 and 10 €/h);
+                a class's own ``beta_cost_eur`` (``classes``) is its own value of time.
+                Uncalibrated defaults (a flat fare of the order of a single urban ticket: Lyon
+                2.10 €, Paris 2.55 €; Amsterdam charges 1.16 € plus 0.217 € per km); unknown
+                names and values below 0 are refused. Recorded in the fingerprint and the
+                manifest when the choice model reads money.
             link_values: The user's own numbers per link, for choice models (S236):
                 ``{layer: {name: values}}``, the layer ``"road"``, ``"bike"`` or ``"walk"``,
                 the values either one per link of that layer in link order (an array as long as
@@ -1615,6 +1638,7 @@ class Scenario:
             modes=modes,
             mode_options=mode_options,
             loading_options=loading_options,
+            price_options=price_options,
             link_values=link_values,
             disruptions=disruptions,
             disruptions_known=disruptions_known,
@@ -1674,6 +1698,7 @@ class Scenario:
             modes=self._modes,
             mode_options=self._mode_options,
             loading_options=self._loading_options,
+            price_options=self._price_options,
             link_values=self._link_values,
             road_disruptions=self._road_disruptions,
             transit_disruptions=self._transit_disruptions,

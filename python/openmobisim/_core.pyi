@@ -596,7 +596,8 @@ class Parkings:
         """Every parking, as columns.
 
         ``parking_id``, ``name``, ``hub_id``, ``lon``, ``lat``, ``vehicle``, ``capacity``,
-        ``initial_occupancy``.
+        ``initial_occupancy``, ``fee_eur`` (``None`` where the table gave none: the run's
+        price for the kind applies).
         """
     def read_report(self) -> dict[str, int] | None:
         """What reading OpenStreetMap found, kept and merged (``None`` if not read from it)."""
@@ -624,7 +625,7 @@ def parking_read_osm(
     """
 
 def _parking_from_rows(
-    rows: list[tuple[str, float, float, str, int, str | None, str | None, int]],
+    rows: list[tuple[str, float, float, str, int, str | None, str | None, int, float | None]],
 ) -> Parkings: ...
 def toy_network_parkings() -> Parkings:
     """The toy network's parkings: hub ``H`` and car park ``P2``.
@@ -859,6 +860,7 @@ def run_pipeline(
     modes: list[str] | None = None,
     mode_options: dict[str, float] | None = None,
     loading_options: dict[str, float] | None = None,
+    price_options: dict[str, float] | None = None,
 ) -> RunSummary:
     """Run the whole pipeline and write all four output artifacts.
 
@@ -943,6 +945,7 @@ def run_pipeline(
             ``Scenario.from_parts``); ``None`` for no mode choice.
         mode_options: Mode choice's parameters by name (see ``Scenario.from_parts``).
         loading_options: The loading's rules by name (see ``Scenario.from_parts``).
+        price_options: The prices by name, in euros (see ``Scenario.from_parts``; S248).
 
     Returns:
         A :class:`RunSummary`.

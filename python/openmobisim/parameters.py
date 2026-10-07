@@ -64,6 +64,8 @@ def _unit(name: str) -> str:
         ("_veh_h_lane", "veh/h per lane"),
         ("_veh_km_lane", "veh/km per lane"),
         ("_km_h", "km/h"),
+        ("_eur_km", "EUR/km"),
+        ("_eur", "EUR"),
         ("_min", "min"),
         ("_km", "km"),
         ("_pcu", "PCU"),
@@ -90,7 +92,7 @@ def parameters() -> dict[str, list[Any]]:
     """Every parameter openmobisim assumes, at the defaults a ``Scenario`` uses.
 
     Columns by name, one row per parameter: ``group`` (``network``, ``loading``, ``modes``,
-    ``transit``, ``parking``, ``scenario``, ``equilibration.<strategy>``,
+    ``transit``, ``parking``, ``prices``, ``scenario``, ``equilibration.<strategy>``,
     ``route_method.<method>``, ``route_update.<update>``, ``choice_model.<model>``), ``argument``
     (what overrides it by name: ``network_options`` of a network reader, ``loading_options``,
     ``equilibration_options`` … of ``Scenario.from_parts``, or the argument itself for the

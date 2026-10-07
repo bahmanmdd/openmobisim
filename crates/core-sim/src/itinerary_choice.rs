@@ -35,7 +35,7 @@
 //! `length_km` (the vehicle leg's), `detour`, `overlap` (0) and `n_links` (the
 //! vehicle leg's); and for mode choice (M5) `nest` (the mode's index) and the 0/1
 //! `mode_walk`, `mode_bike`, `mode_car`, `mode_transit`, `mode_car_transit` and
-//! `mode_bike_transit`.
+//! `mode_bike_transit`; and money (S248), `cost_eur` and its parts ([`crate::prices`]).
 //!
 //! **Identity** is a hash of the parking, the vehicle leg's links and the rides
 //! as (line, boarding stop, alighting stop), **not the runs**, so a bus a
@@ -81,6 +81,7 @@ use crate::layers::{LayerSetup, StaticLayers, StaticRoutes};
 use crate::link_times::LinkTimes;
 use crate::link_values::{PreparedLinkValues, ValueLayer};
 use crate::parking::{ExpectedAvailability, ParkingSetup};
+use crate::prices::{Cost, PreparedPrices};
 use crate::transit::{TransitSetup, par_map};
 
 /// The attributes every alternative carries, routes and itineraries alike, in
@@ -93,7 +94,10 @@ use crate::transit::{TransitSetup, par_map};
 /// vehicle and for the others (`wait_first_min`, `wait_transfer_min`), and the minutes on
 /// board by kind of service (`ride_rail_min` … `ride_other_min`). Each is a part of a total
 /// above it, so a model weighs the parts on top of the totals, or instead of them.
-pub const ATTRIBUTES: [&str; 34] = [
+///
+/// After those (S248, roadmap I-bb U5): money, in euros — `cost_eur` and its parts
+/// `cost_running_eur`, `cost_toll_eur`, `cost_parking_eur`, `cost_fare_eur` ([`crate::prices`]).
+pub const ATTRIBUTES: [&str; 39] = [
     "time_min",
     "length_km",
     "detour",
@@ -121,6 +125,11 @@ pub const ATTRIBUTES: [&str; 34] = [
     "ride_bus_min",
     "ride_ferry_min",
     "ride_other_min",
+    "cost_eur",
+    "cost_running_eur",
+    "cost_toll_eur",
+    "cost_parking_eur",
+    "cost_fare_eur",
     "nest",
     "mode_walk",
     "mode_bike",
@@ -246,6 +255,9 @@ pub struct Alternative {
     /// Seconds on board by kind of service, in [`ServiceKind`]'s order (part of
     /// [`Self::ride_s`]).
     pub ride_kind_s: [u32; 6],
+    /// The rides' metres from each boarding stop to its alighting stop as the crow flies: what a
+    /// distance fare charges (S248).
+    pub ride_m: f64,
 }
 
 impl Alternative {
@@ -928,6 +940,10 @@ impl<'a> Planner<'a> {
                         alight: alight_stop,
                     });
                     a.ride_seconds.push(ride);
+                    a.ride_m += ground_distance_metres(
+                        tt.stop_position(board_stop),
+                        tt.stop_position(alight_stop),
+                    );
                     a.last_stop = alight_stop;
                     clock = arrival;
                 }
@@ -1033,6 +1049,7 @@ fn blank(mode: Mode, shape: Shape) -> Alternative {
         bike_m: [0.0; 3],
         wait_first_s: 0,
         ride_kind_s: [0; 6],
+        ride_m: 0.0,
     }
 }
 
@@ -1173,9 +1190,41 @@ fn leg_layer(mode: Mode) -> Option<ValueLayer> {
     }
 }
 
+/// What `a` costs, by part (S248, [`crate::prices`]): its car or bike leg's running cost, its
+/// car leg's tolls, the fee of the parking it leaves its vehicle at (out; a trip back fetches a
+/// vehicle already paid for) and its rides' fare.
+fn cost(a: &Alternative, values: &PreparedLinkValues, prices: &PreparedPrices) -> Cost {
+    let vehicle = vehicle_of(a.mode);
+    Cost {
+        running: prices.running(vehicle, a.vehicle_m),
+        toll: if vehicle == Some(ParkingKind::Car) {
+            prices.toll(values, &a.vehicle_links)
+        } else {
+            0.0
+        },
+        parking: if a.shape == Shape::Out && a.parking != NO_PARKING {
+            prices.parking(a.parking)
+        } else {
+            0.0
+        },
+        fare: prices.fare(a.rides.len(), a.ride_m),
+    }
+}
+
 /// The value of attribute `name` for `a`, the best total of its mode in its set being
-/// `best`, the user's link values being `values` (S236).
-fn attribute(name: &str, a: &Alternative, best: f64, values: &PreparedLinkValues) -> f64 {
+/// `best`, the user's link values being `values` (S236) and the run's prices `prices` (S248).
+fn attribute(
+    name: &str,
+    a: &Alternative,
+    best: f64,
+    values: &PreparedLinkValues,
+    prices: &PreparedPrices,
+) -> f64 {
+    if name.starts_with("cost_") {
+        if let Some(v) = cost(a, values, prices).attribute(name) {
+            return v;
+        }
+    }
     if let Some((column, aggregate)) = values.lookup(name) {
         return if leg_layer(a.mode) == Some(values.layer(column)) {
             values.total(column, aggregate, a.vehicle_links.iter().map(|l| l.index()))
@@ -1410,6 +1459,8 @@ pub(crate) struct ChooseInputs<'a> {
     pub wanted: &'a [String],
     /// The user's link values (S236).
     pub link_values: &'a PreparedLinkValues,
+    /// The run's prices (S248).
+    pub prices: &'a PreparedPrices,
 }
 
 /// What a run can simulate, for [`Itineraries::new`].
@@ -1835,7 +1886,13 @@ impl Itineraries {
                     batch.begin_situation_in(traveller.raw(), trip.raw(), class);
                     for a in set {
                         for (slot, name) in row.iter_mut().zip(inputs.wanted) {
-                            *slot = attribute(name, a, best[a.mode.index()], inputs.link_values);
+                            *slot = attribute(
+                                name,
+                                a,
+                                best[a.mode.index()],
+                                inputs.link_values,
+                                inputs.prices,
+                            );
                         }
                         batch.push_alternative(a.identity, &row);
                     }

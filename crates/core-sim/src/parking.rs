@@ -284,6 +284,8 @@ pub struct ParkingSetup {
     walk_node: Vec<NodeId>,
     position: Vec<LonLat>,
     name: Vec<Option<String>>,
+    /// Per parking: its fee per stay in euros, if its row gave one (S248).
+    fee_eur: Vec<Option<f64>>,
     /// Per parking: the stops within walking distance and the walk in seconds, CSR.
     stops_start: Vec<u32>,
     stops: Vec<(NodeId, u32)>,
@@ -448,6 +450,7 @@ impl ParkingSetup {
             walk_node: Vec::with_capacity(n),
             position: Vec::with_capacity(n),
             name: Vec::with_capacity(n),
+            fee_eur: Vec::with_capacity(n),
             stops_start: vec![0],
             stops: Vec::new(),
             targets: [Vec::new(), Vec::new()],
@@ -470,6 +473,7 @@ impl ParkingSetup {
             setup.walk_node.push(k.walk);
             setup.position.push(k.row.position);
             setup.name.push(k.row.name.clone());
+            setup.fee_eur.push(k.row.fee_eur);
             setup.stops.extend_from_slice(&k.stops);
             setup.stops_start.push(u32::try_from(setup.stops.len()).expect("fits u32"));
             if !setup.targets[kind][k.node.index()] {
@@ -549,6 +553,13 @@ impl ParkingSetup {
     #[must_use]
     pub fn name(&self, parking: u32) -> Option<&str> {
         self.name[parking as usize].as_deref()
+    }
+
+    /// A parking's fee per stay in euros, if its row gave one (S248, roadmap I-bb U5); else the
+    /// run's price for its kind applies ([`crate::prices::Prices`]).
+    #[must_use]
+    pub fn fee_eur(&self, parking: u32) -> Option<f64> {
+        self.fee_eur[parking as usize]
     }
 
     /// A parking's node on its vehicle's layer.

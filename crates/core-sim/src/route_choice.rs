@@ -20,6 +20,7 @@
 //! | `car_min` | the same as `time_min`: a route is driven all the way |
 //! | `bike_min`, `walk_min`, `wait_min`, `ride_min`, `transfers`, `parking_min` | 0: a route has none |
 //! | `nest`, `mode_car` and the other `mode_*` | the car's nest (its mode index) and 1 for `mode_car`, 0 for the others (M5) |
+//! | `cost_eur`, `cost_running_eur`, `cost_toll_eur` | money (S248, [`crate::prices`]): the route's kilometres at the car's price per km, plus its tolls; `cost_parking_eur` and `cost_fare_eur` are 0 |
 //!
 //! The last seven are the itineraries' vocabulary (M4, A8;
 //! [`crate::itinerary_choice`]): routes carry them too, so one set of
@@ -43,6 +44,8 @@ use openmobisim_core_types::ids::{EntityId, NodeId, TripId};
 use crate::equilibration::Equilibration;
 use crate::link_times::LinkTimes;
 use crate::link_values::{PreparedLinkValues, ValueLayer};
+use crate::prices::PreparedPrices;
+use openmobisim_core_graph::hubs::ParkingKind;
 use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
 /// Sampled trips per search scratch in the whole-network gap: a scratch holds a few bytes
@@ -51,7 +54,7 @@ const GAP_CHUNK: usize = 16;
 
 /// The attributes a route carries, in the order a batch holds them: the same
 /// names as every itinerary's ([`crate::itinerary_choice::ATTRIBUTES`], A8).
-pub const ROUTE_ATTRIBUTES: [&str; 34] = crate::itinerary_choice::ATTRIBUTES;
+pub const ROUTE_ATTRIBUTES: [&str; 39] = crate::itinerary_choice::ATTRIBUTES;
 
 /// "No route": a trip with no set, or whose origin and destination are one node.
 pub const NO_ROUTE: u32 = u32::MAX;
@@ -141,6 +144,8 @@ pub(crate) struct Inputs<'a> {
     pub link_values: &'a PreparedLinkValues,
     /// Their attributes' names.
     pub link_value_names: &'a [String],
+    /// The run's prices (S248): a route's `cost_eur` and its parts.
+    pub prices: &'a PreparedPrices,
 }
 
 /// The identity of a route: a 32-bit hash of its links.
@@ -266,8 +271,12 @@ impl<'a> Chooser<'a> {
             inputs.link_value_names,
         )?;
         let needs = |name: &str| wanted.iter().any(|w| w == name);
-        let attributes =
-            (needs("length_km") || needs("ln_path_size")).then(|| route_sets.attributes(network));
+        // Lengths for `length_km`, path sizes, and a route's running cost (S248).
+        let attributes = (needs("length_km")
+            || needs("ln_path_size")
+            || needs("cost_eur")
+            || needs("cost_running_eur"))
+        .then(|| route_sets.attributes(network));
         let mut identity: Vec<u32> = (0..route_sets.route_count())
             .map(|r| route_identity(route_sets.route(r).links))
             .collect();
@@ -356,6 +365,17 @@ impl<'a> Chooser<'a> {
                     }
                     *slot = match name.as_str() {
                         "time_min" => seconds[a] / 60.0,
+                        "cost_eur" | "cost_running_eur" | "cost_toll_eur" => {
+                            let prices = self.inputs.prices;
+                            let length = self.attributes.as_ref().map_or(0.0, |x| x.length_m[r]);
+                            let running = prices.running(Some(ParkingKind::Car), length);
+                            let toll = || prices.toll_raw(self.inputs.link_values, view.links);
+                            match name.as_str() {
+                                "cost_running_eur" => running,
+                                "cost_toll_eur" => toll(),
+                                _ => running + toll(),
+                            }
+                        }
                         "length_km" => {
                             self.attributes.as_ref().map_or(0.0, |x| x.length_m[r]) / 1000.0
                         }

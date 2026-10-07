@@ -382,6 +382,7 @@ pub fn toy_network_parkings() -> Vec<crate::hubs::ParkingRow> {
         kind,
         capacity,
         initial_occupancy: 0,
+        fee_eur: None,
     };
     vec![
         row("H-car", "H", "D2", ParkingKind::Car, 6),
