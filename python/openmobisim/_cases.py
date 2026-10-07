@@ -11,6 +11,10 @@ not for studying the cities.
 case's archive once — checks every file against the checksums this package carries, and reads them:
 ``network()``, ``transit()``, ``parkings()``, ``demand()``, ``classes()``, or all at once,
 ``scenario()``. Each case says how it is read in its ``case.json``.
+
+``examples.case_check()`` runs the cases' default scenarios and compares them with the reference
+results this version carries (the acceptance test of an installation; ``python -m openmobisim
+check`` on the command line).
 """
 
 from __future__ import annotations
@@ -235,3 +239,113 @@ def case(name: str, root: str | Path | None = None, *, check: bool = True) -> Ca
                     f"case {name!r}: {relative} in {folder} is not the bundle's ({BUNDLE_VERSION})"
                 )
     return Case(name, folder)
+
+
+_REFERENCE = Path(__file__).with_name("data") / f"reference_{BUNDLE_VERSION}.json"
+
+#: How far a run on another platform may be from the reference and still match (S243): trips
+#: completed, in % of the reference's; the mean trip, in %; each mode's share of the people, in
+#: percentage points. Judgement calls: floating-point results are the same to the bit only on the
+#: platform that made the reference (Foundations §3.5).
+CHECK_TOLERANCE = {"completed_pct": 0.5, "mean_trip_pct": 1.0, "mode_share_points": 0.5}
+
+
+def case_summary(run: Any) -> dict[str, Any]:
+    """What a starter case's run is compared on: its fingerprint, trips, mean trip and modes.
+
+    The mode shares are of people (traveller weights), ``"none"`` for trips with nothing to
+    choose from; ``platform`` is the build's target, ``version`` the package's.
+    """
+    modes = run.trip_modes()
+    people: dict[str, float] = {}
+    for mode, weight in zip(modes["mode"], modes["weight"], strict=True):
+        people[mode or "none"] = people.get(mode or "none", 0.0) + float(weight)
+    total = sum(people.values()) or 1.0
+    info = _core.build_info()
+    return {
+        "fingerprint": run.fingerprint,
+        "trips": int(run.completion["total_trips"]),
+        "completed": int(run.completion["completed"]),
+        "mean_trip_s": float(run.mean_travel_time_s),
+        "mode_share_pct": {m: 100.0 * p / total for m, p in sorted(people.items())},
+        "loadings": len(run.convergence()["gap"]),
+        "platform": info["target"],
+        "version": info["version"],
+    }
+
+
+def _compare(got: dict[str, Any], ref: dict[str, Any]) -> tuple[str, list[str]]:
+    """``"same"``, ``"within tolerance"`` or ``"different"``, and what differed."""
+    notes = []
+    if got["fingerprint"] != ref["fingerprint"]:
+        notes.append(f"fingerprint {got['fingerprint']} against {ref['fingerprint']}: other inputs")
+    exact = got["platform"] == ref["platform"] and got["version"] == ref["version"]
+    shares = set(got["mode_share_pct"]) | set(ref["mode_share_pct"])
+    if exact and not notes:
+        same = (
+            got["completed"] == ref["completed"]
+            and got["mean_trip_s"] == ref["mean_trip_s"]
+            and all(got["mode_share_pct"].get(m) == ref["mode_share_pct"].get(m) for m in shares)
+        )
+        if same:
+            return "same", []
+        notes.append("not the same to the bit on the reference's platform")
+    tol = CHECK_TOLERANCE
+    off_completed = 100 * abs(got["completed"] - ref["completed"]) / max(ref["completed"], 1)
+    off_mean = 100 * abs(got["mean_trip_s"] - ref["mean_trip_s"]) / max(ref["mean_trip_s"], 1e-9)
+    got_s, ref_s = got["mode_share_pct"], ref["mode_share_pct"]
+    off_share = max((abs(got_s.get(m, 0.0) - ref_s.get(m, 0.0)) for m in shares), default=0.0)
+    if off_completed > tol["completed_pct"]:
+        notes.append(f"completed {got['completed']} against {ref['completed']}")
+    if off_mean > tol["mean_trip_pct"]:
+        notes.append(f"mean trip {got['mean_trip_s']:.1f} s against {ref['mean_trip_s']:.1f} s")
+    if off_share > tol["mode_share_points"]:
+        notes.append(f"a mode's share differs by {off_share:.2f} points")
+    within = not any(n for n in notes if not n.startswith("not the same to the bit"))
+    return ("within tolerance" if within else "different"), notes
+
+
+def case_check(
+    names: list[str] | None = None,
+    root: str | Path | None = None,
+    *,
+    quiet: bool = False,
+) -> list[dict[str, Any]]:
+    """Run starter cases' default scenarios and compare them with the reference results (S243).
+
+    The acceptance test of an installation: every scenario of each case (its ``case.json``) is run
+    with the package's defaults, and compared with the results this version of the package
+    carries. **Same**: the same fingerprint and, on the platform that made the reference, the same
+    results to the bit. **Within tolerance**: the same fingerprint, and on another platform results
+    within ``CHECK_TOLERANCE``. **Different**: anything else (another fingerprint means other
+    inputs or settings: another bundle or package version).
+
+    Args:
+        names: The cases (``case_names()``); ``None``: every case.
+        root: Where the bundle is, as for :func:`case`.
+        quiet: If false, print a line per scenario as it finishes.
+
+    Returns:
+        One row per scenario: ``case``, ``scenario``, ``status`` (``"same"``,
+        ``"within tolerance"``, ``"different"`` or ``"no reference"``), ``notes`` (what differed),
+        ``run_s`` (wall-clock seconds, reading included) and ``result`` (``case_summary``).
+    """
+    import time
+
+    reference = json.loads(_REFERENCE.read_text(encoding="utf-8")) if _REFERENCE.exists() else {}
+    rows = []
+    for name in names or case_names():
+        c = case(name, root)
+        for scenario in c.info.get("scenarios", {"base": {}}):
+            t = time.perf_counter()
+            run = c.scenario(scenario).run(f"check-{name}-{scenario}", quiet=True)
+            got = case_summary(run)
+            ref = reference.get("cases", {}).get(f"{name}/{scenario}")
+            status, notes = ("no reference", []) if ref is None else _compare(got, ref)
+            row = {"case": name, "scenario": scenario, "status": status, "notes": notes,
+                   "run_s": time.perf_counter() - t, "result": got}  # fmt: skip
+            rows.append(row)
+            if not quiet:
+                print(f"{name:14s} {scenario:10s} {status:17s} {row['run_s']:7.1f} s  "
+                      + "; ".join(notes), flush=True)  # fmt: skip
+    return rows

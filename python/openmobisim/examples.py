@@ -18,12 +18,15 @@ from __future__ import annotations
 import numpy as np
 
 from openmobisim import _core
-from openmobisim._cases import Case, case, case_names
+from openmobisim._cases import CHECK_TOLERANCE, Case, case, case_check, case_names, case_summary
 
 __all__ = [
+    "CHECK_TOLERANCE",
     "Case",
     "case",
+    "case_check",
     "case_names",
+    "case_summary",
     "fixed_car_trips",
     "manhattan_grid",
     "toy_network",

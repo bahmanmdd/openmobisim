@@ -27,6 +27,9 @@ dependencies = ["numpy>=1.24"]
 # Version comes from Cargo.toml, so there is one place to bump it.
 dynamic = ["version"]
 
+[project.scripts]
+openmobisim = "openmobisim.__main__:main"
+
 [project.urls]
 Repository = "https://github.com/bahmanmdd/openmobisim"
 

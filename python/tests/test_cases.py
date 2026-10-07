@@ -99,6 +99,37 @@ def test_an_unknown_or_missing_case_is_refused(made_up: Path, tmp_path: Path) ->
         ms.examples.case("line", root=tmp_path / "elsewhere")
 
 
+def test_a_check_compares_with_the_reference_and_the_command_line_runs_it(
+    made_up: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    from openmobisim.__main__ import main
+
+    monkeypatch.setattr(_cases, "_REFERENCE", tmp_path / "reference_v1.json")
+    rows = ms.examples.case_check(root=made_up, quiet=True)
+    assert [(r["scenario"], r["status"]) for r in rows] == [
+        ("base", "no reference"), ("double", "no reference"),
+    ]  # fmt: skip
+    got = rows[0]["result"]
+    assert got["completed"] == 100 and got["mode_share_pct"] == {"car": 100.0}
+    reference = {"cases": {f"line/{r['scenario']}": r["result"] for r in rows}}
+    (tmp_path / "reference_v1.json").write_text(json.dumps(reference))
+    assert {r["status"] for r in ms.examples.case_check(root=made_up, quiet=True)} == {"same"}
+    # Another platform's run: the same within the tolerance, or not; other inputs: never.
+    elsewhere = {**got, "platform": "elsewhere"}
+    assert _cases._compare(got, elsewhere)[0] == "within tolerance"
+    assert _cases._compare(got, {**elsewhere, "mean_trip_s": got["mean_trip_s"] * 1.05})[0] == (
+        "different"
+    )
+    assert _cases._compare(got, {**got, "fingerprint": "0" * 16})[0] == "different"
+    # The command line: a check passes, then fails against a changed reference; a run prints.
+    assert main(["check", "--root", str(made_up)]) == 0
+    reference["cases"]["line/base"]["completed"] = 90
+    (tmp_path / "reference_v1.json").write_text(json.dumps(reference))
+    assert main(["check", "line", "--root", str(made_up)]) == 1
+    assert main(["run", "line", "--root", str(made_up)]) == 0
+    assert f"fingerprint {got['fingerprint']}" in capsys.readouterr().out
+
+
 # --- the real bundle ------------------------------------------------------------------------------
 
 needs_bundle = pytest.mark.skipif(
