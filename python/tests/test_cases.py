@@ -137,6 +137,22 @@ needs_bundle = pytest.mark.skipif(
 )
 
 
+def test_the_package_s_references_are_of_its_cases() -> None:
+    reference = json.loads(_cases._REFERENCE.read_text(encoding="utf-8"))
+    assert reference["bundle"] == _cases.BUNDLE_VERSION
+    assert {key.split("/")[0] for key in reference["cases"]} <= set(ms.examples.case_names())
+    for summary in reference["cases"].values():
+        assert set(summary) == {"fingerprint", "trips", "completed", "mean_trip_s",
+                                "mode_share_pct", "loadings", "platform", "version"}  # fmt: skip
+
+
+@needs_bundle
+def test_the_benchmarks_match_the_package_s_references() -> None:
+    rows = ms.examples.case_check(["nguyendupuis", "siouxfalls"], root=BUNDLE, quiet=True)
+    assert len(rows) == 3
+    assert {r["status"] for r in rows} <= {"same", "within tolerance"}, rows
+
+
 @needs_bundle
 @pytest.mark.parametrize(
     ("scenario", "mean_min"), [("base", 11.72), ("congested", 20.86)]

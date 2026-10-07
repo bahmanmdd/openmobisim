@@ -1,0 +1,94 @@
+{
+ "openmobisim": "0.1.0",
+ "bundle": "v1",
+ "cases": {
+  "amsterdam/base": {
+   "fingerprint": "33706c93bd97f4af",
+   "trips": 100000,
+   "completed": 99262,
+   "mean_trip_s": 1473.941780338901,
+   "mode_share_pct": {
+    "bike": 47.95,
+    "bike_transit": 0.759,
+    "car": 30.861,
+    "car_transit": 0.187,
+    "none": 0.738,
+    "transit": 18.648,
+    "walk": 0.857
+   },
+   "loadings": 4,
+   "platform": "aarch64-apple-darwin",
+   "version": "0.1.0"
+  },
+  "lyon/base": {
+   "fingerprint": "39f4358bff99f941",
+   "trips": 65000,
+   "completed": 65000,
+   "mean_trip_s": 1378.9234153846153,
+   "mode_share_pct": {
+    "bike": 50.72769230769231,
+    "bike_transit": 0.3415384615384615,
+    "car": 28.063076923076924,
+    "car_transit": 0.5584615384615385,
+    "transit": 19.37076923076923,
+    "walk": 0.9384615384615385
+   },
+   "loadings": 4,
+   "platform": "aarch64-apple-darwin",
+   "version": "0.1.0"
+  },
+  "nguyendupuis/base": {
+   "fingerprint": "4e708563ab2f9ac3",
+   "trips": 2000,
+   "completed": 2000,
+   "mean_trip_s": 3205.5995,
+   "mode_share_pct": {
+    "car": 100.0
+   },
+   "loadings": 8,
+   "platform": "aarch64-apple-darwin",
+   "version": "0.1.0"
+  },
+  "paris/base": {
+   "fingerprint": "4f1264109be5135d",
+   "trips": 60000,
+   "completed": 60000,
+   "mean_trip_s": 1111.1133833333333,
+   "mode_share_pct": {
+    "bike": 56.395,
+    "bike_transit": 1.3483333333333334,
+    "car": 21.128333333333334,
+    "car_transit": 0.058333333333333334,
+    "transit": 20.19333333333333,
+    "walk": 0.8766666666666667
+   },
+   "loadings": 4,
+   "platform": "aarch64-apple-darwin",
+   "version": "0.1.0"
+  },
+  "siouxfalls/base": {
+   "fingerprint": "56302f871742cc8e",
+   "trips": 180300,
+   "completed": 180300,
+   "mean_trip_s": 703.3609816971714,
+   "mode_share_pct": {
+    "car": 100.0
+   },
+   "loadings": 6,
+   "platform": "aarch64-apple-darwin",
+   "version": "0.1.0"
+  },
+  "siouxfalls/congested": {
+   "fingerprint": "cafb513ba4d8b731",
+   "trips": 270450,
+   "completed": 270450,
+   "mean_trip_s": 1251.7205768164172,
+   "mode_share_pct": {
+    "car": 100.0
+   },
+   "loadings": 10,
+   "platform": "aarch64-apple-darwin",
+   "version": "0.1.0"
+  }
+ }
+}
