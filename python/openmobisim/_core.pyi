@@ -833,6 +833,9 @@ def run_pipeline(
     class_options: dict[str, dict[str, float]] | None = None,
     class_limits: dict[str, dict[str, float]] | None = None,
     link_values: dict[str, dict[str, list[float]]] | None = None,
+    person_values: dict[str, list[tuple[str, float]]] | None = None,
+    trip_values: dict[str, list[float]] | None = None,
+    trip_values_keyed: dict[str, list[tuple[str, int, float]]] | None = None,
     road_disruptions: list[tuple[list[int], float, float, float]] | None = None,
     transit_disruptions: list[tuple[int, int, int, int]] | None = None,
     disruptions_known: bool = False,
@@ -896,6 +899,11 @@ def run_pipeline(
         link_values: ``{layer: {name: values}}`` — the user's numbers per link of the
             ``"road"``, ``"bike"`` or ``"walk"`` layer, one per link in link order (S236),
             offered to choice models as ``<layer>_<name>_km`` and ``<layer>_<name>_sum``.
+        person_values: ``{name: [(traveller_id, value), ...]}`` — the user's numbers per
+            traveller (S249), offered as ``person_<name>``.
+        trip_values: ``{name: values}``, one per row of the demand in its order (S249),
+            offered as ``trip_<name>``.
+        trip_values_keyed: ``{name: [(traveller_id, trip_seq, value), ...]}``, the same keyed.
         road_disruptions: ``(link indices, capacity factor, from_s, to_s)`` each (S239).
         transit_disruptions: ``(line index, delay_s or -1 to cancel, from_s, to_s)`` each.
         disruptions_known: Whether travellers know of the disruptions in advance.

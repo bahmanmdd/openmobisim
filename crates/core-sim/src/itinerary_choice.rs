@@ -73,9 +73,10 @@ use openmobisim_core_routes::{
 };
 use openmobisim_core_transit::{Journey, JourneyLeg, Raptor, RaptorData, ServiceKind};
 use openmobisim_core_types::hash::Fnv1a;
-use openmobisim_core_types::ids::{EntityId, LinkId, NULL_ID, NodeId, TripId};
+use openmobisim_core_types::ids::{EntityId, LinkId, NULL_ID, NodeId, TravellerId, TripId};
 use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
+use crate::demand_values::DemandValues;
 use crate::equilibration::Equilibration;
 use crate::layers::{LayerSetup, StaticLayers, StaticRoutes};
 use crate::link_times::LinkTimes;
@@ -96,8 +97,10 @@ use crate::transit::{TransitSetup, par_map};
 /// above it, so a model weighs the parts on top of the totals, or instead of them.
 ///
 /// After those (S248, roadmap I-bb U5): money, in euros — `cost_eur` and its parts
-/// `cost_running_eur`, `cost_toll_eur`, `cost_parking_eur`, `cost_fare_eur` ([`crate::prices`]).
-pub const ATTRIBUTES: [&str; 39] = [
+/// `cost_running_eur`, `cost_toll_eur`, `cost_parking_eur`, `cost_fare_eur` ([`crate::prices`]);
+/// and the trip's departure in hours after midnight, `trip_departure_h` (S249, U6;
+/// [`crate::demand_values`]).
+pub const ATTRIBUTES: [&str; 40] = [
     "time_min",
     "length_km",
     "detour",
@@ -130,6 +133,7 @@ pub const ATTRIBUTES: [&str; 39] = [
     "cost_toll_eur",
     "cost_parking_eur",
     "cost_fare_eur",
+    "trip_departure_h",
     "nest",
     "mode_walk",
     "mode_bike",
@@ -1190,10 +1194,18 @@ fn leg_layer(mode: Mode) -> Option<ValueLayer> {
     }
 }
 
-/// What `a` costs, by part (S248, [`crate::prices`]): its car or bike leg's running cost, its
-/// car leg's tolls, the fee of the parking it leaves its vehicle at (out; a trip back fetches a
-/// vehicle already paid for) and its rides' fare.
-fn cost(a: &Alternative, values: &PreparedLinkValues, prices: &PreparedPrices) -> Cost {
+/// Whether `a` arrives at its trip's destination by car (a car route, or the drive home from a
+/// park-and-ride), so pays the parking there (S249).
+fn arrives_by_car(a: &Alternative) -> bool {
+    a.mode == Mode::Car || (a.mode == Mode::CarTransit && matches!(a.shape, Shape::Back(_)))
+}
+
+/// What `a`, an alternative of `trip`, costs, by part (S248, [`crate::prices`]): its car or bike
+/// leg's running cost, its car leg's tolls, the fee of the parking it leaves its vehicle at (out;
+/// a trip back fetches a vehicle already paid for) or, arriving by car, the parking fee at the
+/// trip's destination (S249), and its rides' fare.
+fn cost(a: &Alternative, inputs: &ChooseInputs<'_>, trip: TripId) -> Cost {
+    let (values, prices) = (inputs.link_values, inputs.prices);
     let vehicle = vehicle_of(a.mode);
     Cost {
         running: prices.running(vehicle, a.vehicle_m),
@@ -1204,6 +1216,8 @@ fn cost(a: &Alternative, values: &PreparedLinkValues, prices: &PreparedPrices) -
         },
         parking: if a.shape == Shape::Out && a.parking != NO_PARKING {
             prices.parking(a.parking)
+        } else if arrives_by_car(a) {
+            inputs.demand_values.destination_parking(trip)
         } else {
             0.0
         },
@@ -1211,19 +1225,25 @@ fn cost(a: &Alternative, values: &PreparedLinkValues, prices: &PreparedPrices) -
     }
 }
 
-/// The value of attribute `name` for `a`, the best total of its mode in its set being
-/// `best`, the user's link values being `values` (S236) and the run's prices `prices` (S248).
+/// The value of attribute `name` for `a`, an alternative of `traveller`'s `trip`, the best total
+/// of its mode in its set being `best`; the user's link values (S236), the run's prices (S248) and
+/// the user's traveller and trip values (S249) are `inputs`'.
 fn attribute(
     name: &str,
     a: &Alternative,
     best: f64,
-    values: &PreparedLinkValues,
-    prices: &PreparedPrices,
+    inputs: &ChooseInputs<'_>,
+    traveller: TravellerId,
+    trip: TripId,
 ) -> f64 {
+    let values = inputs.link_values;
     if name.starts_with("cost_") {
-        if let Some(v) = cost(a, values, prices).attribute(name) {
+        if let Some(v) = cost(a, inputs, trip).attribute(name) {
             return v;
         }
+    }
+    if let Some(source) = inputs.demand_values.lookup(name) {
+        return inputs.demand_values.value(source, inputs.trips, traveller, trip);
     }
     if let Some((column, aggregate)) = values.lookup(name) {
         return if leg_layer(a.mode) == Some(values.layer(column)) {
@@ -1280,8 +1300,8 @@ fn attribute(
     }
 }
 
-/// The attributes a model reads, checked against [`ATTRIBUTES`] and the user's link values'
-/// (`extra`, S236), in that order.
+/// The attributes a model reads, checked against [`ATTRIBUTES`] and those of the user's link,
+/// traveller and trip values (`extra`, S236, S249), in that order.
 ///
 /// # Errors
 ///
@@ -1461,6 +1481,8 @@ pub(crate) struct ChooseInputs<'a> {
     pub link_values: &'a PreparedLinkValues,
     /// The run's prices (S248).
     pub prices: &'a PreparedPrices,
+    /// The user's traveller and trip values (S249).
+    pub demand_values: &'a DemandValues,
 }
 
 /// What a run can simulate, for [`Itineraries::new`].
@@ -1886,13 +1908,8 @@ impl Itineraries {
                     batch.begin_situation_in(traveller.raw(), trip.raw(), class);
                     for a in set {
                         for (slot, name) in row.iter_mut().zip(inputs.wanted) {
-                            *slot = attribute(
-                                name,
-                                a,
-                                best[a.mode.index()],
-                                inputs.link_values,
-                                inputs.prices,
-                            );
+                            *slot =
+                                attribute(name, a, best[a.mode.index()], inputs, traveller, trip);
                         }
                         batch.push_alternative(a.identity, &row);
                     }

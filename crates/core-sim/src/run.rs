@@ -44,6 +44,7 @@ use openmobisim_core_types::rng::{DrawAddress, RngKey, Stream, StreamRng};
 use openmobisim_core_types::time::{EventKey, Second};
 use openmobisim_core_types::units::{Duration, Pcu};
 
+use crate::demand_values::DemandValues;
 use crate::disruptions::Disruptions;
 use crate::equilibration::{Equilibration, FreeFlow, IterationReport};
 use crate::events::{EventRow, EventType};
@@ -452,6 +453,8 @@ pub struct Run {
     disruptions: Disruptions,
     /// The prices alternatives are costed at (S248): the shipped values, by default.
     prices: Prices,
+    /// The user's traveller and trip values, offered to choice models (S249): none, by default.
+    demand_values: DemandValues,
 }
 
 /// The key of the draw that puts a traveller in a group of the free-flow loading's increments
@@ -522,6 +525,7 @@ impl Run {
             final_times: None,
             disruptions: Disruptions::default(),
             prices: Prices::SHIPPED,
+            demand_values: DemandValues::new(),
         }
     }
 
@@ -571,6 +575,16 @@ impl Run {
     #[must_use]
     pub fn with_link_values(mut self, link_values: LinkValues) -> Self {
         self.link_values = link_values;
+        self
+    }
+
+    /// The same run with the user's traveller and trip values (S249, roadmap I-bb U6), offered
+    /// to choice models as `person_<name>` and `trip_<name>` ([`crate::demand_values`]). A column
+    /// must have one value per traveller or trip of the run's demand ([`RunError::Input`]
+    /// otherwise).
+    #[must_use]
+    pub fn with_demand_values(mut self, values: DemandValues) -> Self {
+        self.demand_values = values;
         self
     }
 
@@ -801,6 +815,7 @@ impl Run {
             disruptions: &self.disruptions,
             loading: &self.loading,
             prices: self.reads_money().then_some(&self.prices),
+            demand_values: &self.demand_values,
         })
     }
 
@@ -869,7 +884,16 @@ impl Run {
         // The user's link values, checked against their layers and weighted by length (S236).
         let link_values =
             self.link_values.prepare(&self.network, &self.layers).map_err(RunError::Input)?;
-        let link_value_names = self.link_values.attribute_names();
+        // The user's traveller and trip values (S249), checked against the demand; their
+        // attributes are offered beside the link values'.
+        self.demand_values
+            .check_lengths(self.travellers.len() as usize, self.trips.len() as usize)
+            .map_err(RunError::Input)?;
+        // A copy for the choices, which borrow it while the run loads (one value per traveller or
+        // trip and column, once per run).
+        let demand_values = self.demand_values.clone();
+        let mut link_value_names = self.link_values.attribute_names();
+        link_value_names.extend(self.demand_values.attribute_names());
         // Disruptions (S239): checked; in every loading if travellers know of them, else in one
         // more loading after the run's equilibrium.
         self.disruptions
@@ -1039,6 +1063,7 @@ impl Run {
             link_values: &link_values,
             link_value_names: &link_value_names,
             prices: &prices,
+            demand_values: &demand_values,
         };
         let mut chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
         let mut route_choices = chooser.choose_all(&choice_rng, 0)?;
@@ -1069,6 +1094,7 @@ impl Run {
             wanted: &itinerary_wanted,
             link_values: &link_values,
             prices: &prices,
+            demand_values: &demand_values,
         };
         let mut chosen: Option<Chosen> = None;
         if let Some(itin) = &itineraries {

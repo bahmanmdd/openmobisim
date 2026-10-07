@@ -378,6 +378,8 @@ fn sample_description(step: Option<f64>, bins: Option<u32>) -> RunDescription {
         link_values: Vec::new(),
         disruptions: None,
         prices: None,
+        person_values: Vec::new(),
+        trip_values: Vec::new(),
     }
 }
 

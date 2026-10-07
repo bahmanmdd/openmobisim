@@ -273,6 +273,59 @@ fn each_class_weighs_by_its_own_coefficients_and_says_so_in_the_descriptor() {
 }
 
 #[test]
+fn a_product_of_two_attributes_takes_a_coefficient_in_either_order() {
+    // S249: `beta_<a>*<b>` weighs a·b, so a value the same for every alternative of a choice (a
+    // traveller's) can shift one alternative. Here `length_km` stands for an indicator (1 on the
+    // first route) and `walk_min` for the traveller's value (0, then 2).
+    let mut b = ChoiceBatch::new(0, &ATTRIBUTES);
+    for (s, value) in [(0u32, 0.0), (1, 2.0)] {
+        b.begin_situation(s, s);
+        b.push_alternative(1, &[10.0, 0.0, 1.0, value, 0.0, 0.0]);
+        b.push_alternative(2, &[10.0, 0.0, 0.0, value, 0.0, 0.0]);
+    }
+    let with = |name: &str| {
+        Logit::from_options(&Options::from([(name.into(), 1.5), ("beta_walk_min".into(), 0.0)]))
+            .expect("a product")
+    };
+    let (ab, ba) = (with("beta_length_km*walk_min"), with("beta_walk_min*length_km"));
+    assert_eq!(ab, ba, "kept with its names sorted");
+    assert!(ab.descriptor().contains("beta_length_km*walk_min=1.5"), "{}", ab.descriptor());
+    let p = ab.probabilities_by_situation(&b).expect("probabilities");
+    assert!((p[0][0] - 0.5).abs() < 1e-12, "a value of 0 shifts nothing: {p:?}");
+    assert!((p[1][0] - 1.0 / (1.0 + (-3.0_f64).exp())).abs() < 1e-12, "1.5 × 1 × 2: {p:?}");
+    let read = ab.required_attributes().expect("listed");
+    assert!(read.contains(&"length_km".to_string()) && read.contains(&"walk_min".to_string()));
+    // Per class (S231): a class's own product coefficient, the rest the model's.
+    let classes = vec![
+        ("plain".to_string(), Options::new()),
+        ("keen".to_string(), Options::from([("beta_walk_min*length_km".into(), 3.0)])),
+    ];
+    let m = ab.clone().with_classes(&classes).expect("classes");
+    let mut c = ChoiceBatch::new(0, &ATTRIBUTES);
+    for class in [0, 1] {
+        c.begin_situation_in(class, class, class);
+        c.push_alternative(1, &[10.0, 0.0, 1.0, 2.0, 0.0, 0.0]);
+        c.push_alternative(2, &[10.0, 0.0, 0.0, 2.0, 0.0, 0.0]);
+    }
+    let q = m.probabilities_by_situation(&c).expect("probabilities");
+    assert!((q[0][0] - 1.0 / (1.0 + (-3.0_f64).exp())).abs() < 1e-12, "{q:?}");
+    assert!((q[1][0] - 1.0 / (1.0 + (-6.0_f64).exp())).abs() < 1e-12, "{q:?}");
+    // Malformed products are refused when the model is made.
+    for bad in ["beta_*walk_min", "beta_length_km*", "beta_a*b*c"] {
+        assert!(
+            matches!(
+                Logit::from_options(&Options::from([(bad.into(), 1.0)])),
+                Err(ChoiceError::BadOption { .. })
+            ),
+            "{bad}"
+        );
+    }
+    // A product of an attribute not on offer says what is.
+    let missing = with("beta_length_km*income").choose(&b, &rng(1)).unwrap_err().to_string();
+    assert!(missing.contains("income") && missing.contains("time_min"), "{missing}");
+}
+
+#[test]
 fn options_are_checked_when_the_model_is_made() {
     let bad = |o: Options| Logit::from_options(&o).unwrap_err();
     assert!(matches!(

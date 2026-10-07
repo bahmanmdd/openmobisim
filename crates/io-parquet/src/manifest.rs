@@ -101,6 +101,10 @@ pub struct Manifest {
     pub disruptions: Option<(usize, usize, bool)>,
     /// The prices by name (S248), when the choice model reads money; `None` otherwise.
     pub prices: Option<Vec<(String, f64)>>,
+    /// The user's traveller and trip values' names (S249); empty if none.
+    pub person_values: Vec<String>,
+    /// See [`Self::person_values`].
+    pub trip_values: Vec<String>,
     /// How many loadings the run made.
     pub iterations_run: u32,
     /// Whether the strategy stopped before its most iterations because it had
@@ -175,6 +179,8 @@ impl Manifest {
             link_values: description.link_values.clone(),
             disruptions: description.disruptions,
             prices: description.prices.clone(),
+            person_values: description.person_values.clone(),
+            trip_values: description.trip_values.clone(),
             iterations_run: u32::try_from(result.iterations.len().max(1)).unwrap_or(u32::MAX),
             converged: result.converged,
         }
@@ -228,7 +234,12 @@ impl Manifest {
                 prices.iter().map(|(n, v)| format!("{}: {}", text(n), number(*v))).collect();
             format!("{{{}}}", inner.join(", "))
         });
-        let fields: [(&str, String); 35] = [
+        let names = |names: &[String]| {
+            (!names.is_empty()).then(|| {
+                format!("[{}]", names.iter().map(|n| text(n)).collect::<Vec<_>>().join(", "))
+            })
+        };
+        let fields: [(&str, String); 37] = [
             ("openmobisim_version", text(&self.openmobisim_version)),
             ("code_version", self.code_version.to_string()),
             ("defaults_version", self.defaults_version.to_string()),
@@ -266,6 +277,8 @@ impl Manifest {
             ("link_values", optional(link_values)),
             ("disruptions", optional(disruptions)),
             ("prices", optional(prices)),
+            ("person_values", optional(names(&self.person_values))),
+            ("trip_values", optional(names(&self.trip_values))),
             ("iterations_run", self.iterations_run.to_string()),
             ("converged", self.converged.to_string()),
             ("link_bin_seconds", optional(self.link_bin_seconds.map(|s| s.to_string()))),

@@ -451,6 +451,133 @@ def test_unknown_or_negative_prices_are_refused() -> None:
         toy_run(rows, "money-neg", transit=None, parkings=None, price_options={"car_eur_km": -1})
 
 
+# --- traveller and trip values (S249, roadmap I-bb U6) -------------------------------------------
+
+
+def test_a_model_sees_each_traveller_s_and_trip_s_values() -> None:
+    import numpy as np
+    from openmobisim import choice
+
+    seen: list[dict[str, np.ndarray]] = []
+
+    class Recorder:
+        name = "recorder"
+        attributes = ["time_min", "person_income_keur", "trip_work", "trip_departure_h"]
+
+        def choose(self, batch):
+            seen.append({k: np.array(v) for k, v in batch.attributes.items()})
+            return choice.segment_argmax(-batch.attributes["time_min"], batch.offsets)
+
+    net = ms.examples.toy_network()
+    rows = [
+        toy_trip(net, "a", "W", "M", 7 * 3600, None),
+        toy_trip(net, "b", "W", "M", 9 * 3600, None),
+    ]
+    toy_run(rows, "values-demand", modes=["car", "bike"], transit=None, parkings=None,
+            choice_model=Recorder(),
+            person_values={"income_keur": {"a": 30.0, "b": 55.0, "not-here": 1.0}},
+            trip_values={"work": [1.0, 0.0]})  # fmt: skip
+    a = {k: np.concatenate([s[k] for s in seen]) for k in seen[0]}
+    got = set(zip(a["trip_departure_h"], a["person_income_keur"], a["trip_work"], strict=True))
+    assert got == {(7.0, 30.0, 1.0), (9.0, 55.0, 0.0)}, got
+
+
+def test_trip_values_by_key_and_a_traveller_not_given_take_zero() -> None:
+    import numpy as np
+    from openmobisim import choice
+
+    seen: list[dict[str, np.ndarray]] = []
+
+    class Recorder:
+        name = "recorder"
+        attributes = ["trip_departure_h", "person_age", "trip_work"]
+
+        def choose(self, batch):
+            seen.append({k: np.array(v) for k, v in batch.attributes.items()})
+            return choice.segment_argmax(batch.attributes["trip_departure_h"], batch.offsets)
+
+    net = ms.examples.toy_network()
+    rows = [
+        toy_trip(net, "a", "W", "M", 7 * 3600, None),
+        toy_trip(net, "b", "W", "M", 9 * 3600, None),
+    ]
+    toy_run(rows, "values-keyed", modes=["car", "bike"], transit=None, parkings=None,
+            choice_model=Recorder(), person_values={"age": {"b": 40.0}},
+            trip_values={"work": {("a", 0): 1.0, ("zz", 3): 5.0}})  # fmt: skip
+    a = {k: np.concatenate([s[k] for s in seen]) for k in seen[0]}
+    got = set(zip(a["trip_departure_h"], a["person_age"], a["trip_work"], strict=True))
+    assert got == {(7.0, 0.0, 1.0), (9.0, 40.0, 0.0)}, got
+
+
+def test_a_built_in_model_weighs_a_traveller_s_value_through_a_product() -> None:
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, "a", "W", "M", 0, None), toy_trip(net, "b", "W", "M", 0, None)]
+    common = {"modes": ["car", "bike"], "transit": None, "parkings": None, "choice_model": "logit"}
+    # Time all but decides (the car, 80 s against 120 s); a bike constant for the young turns it.
+    options = {"beta_time_min": -50.0, "beta_person_young*mode_bike": 100.0}
+    run = toy_run(rows, "values-product", choice_options=options,
+                  person_values={"young": {"a": 1.0, "b": 0.0}}, **common)  # fmt: skip
+    chosen = run.itinerary_choices()
+    by_traveller = dict(zip(chosen["traveller_id"], chosen["mode"], strict=True))
+    assert by_traveller == {"a": "bike", "b": "car"}, by_traveller
+    assert run.manifest()["person_values"] == ["young"] and run.manifest()["trip_values"] is None
+    plain = toy_run(rows, "values-product-none", choice_options=options,
+                    person_values={"young": {"a": 0.0}}, **common)  # fmt: skip
+    assert list(plain.itinerary_choices()["mode"]) == ["car", "car"]
+    assert plain.fingerprint != run.fingerprint
+
+
+def test_a_parking_fee_at_the_destination_is_paid_by_who_arrives_by_car() -> None:
+    import numpy as np
+    from openmobisim import choice
+
+    seen: list[dict[str, np.ndarray]] = []
+
+    class Recorder:
+        name = "recorder"
+        attributes = ["time_min", "mode_car", "cost_parking_eur", "trip_parking_eur"]
+
+        def choose(self, batch):
+            seen.append({k: np.array(v) for k, v in batch.attributes.items()})
+            return choice.segment_argmax(-batch.attributes["time_min"], batch.offsets)
+
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, "a", "W", "M", 0, None), toy_trip(net, "b", "W", "M", 0, "car")]
+    toy_run(rows, "values-parking", modes=["car", "bike"], transit=None, parkings=None,
+            choice_model=Recorder(), trip_values={"parking_eur": [6.0, 4.0]})  # fmt: skip
+    a = {k: np.concatenate([s[k] for s in seen]) for k in seen[0]}
+    car = a["mode_car"] > 0
+    assert set(a["cost_parking_eur"][car]) == {6.0, 4.0}, "the car routes, chosen or given"
+    assert np.all(a["cost_parking_eur"][~car] == 0), "a bike pays no car park"
+    assert set(a["trip_parking_eur"]) == {6.0, 4.0}
+    # Weighed, a dear one turns the car away.
+    common = {"modes": ["car", "bike"], "transit": None, "parkings": None, "choice_model": "logit"}
+    options = {"beta_time_min": -50.0, "beta_cost_eur": -1.0}
+    dear = toy_run(rows[:1], "values-parking-dear", choice_options=options,
+                   trip_values={"parking_eur": [500.0]}, **common)  # fmt: skip
+    assert list(dear.itinerary_choices()["mode"]) == ["bike"]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"trip_values": {"work": [1.0]}}, "has 1 values; the demand has 2 rows"),
+        ({"trip_values": {"Work": [1.0, 0.0]}}, "lower-case"),
+        ({"trip_values": {"departure_h": [1.0, 0.0]}}, "built-in attribute"),
+        ({"trip_values": {"parking_eur": [-1.0, 0.0]}}, "below 0"),
+        ({"trip_values": {"work": {"a": 1.0}}}, "traveller_id, trip_seq"),
+        ({"person_values": {"age": [1.0, 2.0]}}, "mapping from traveller id"),
+        ({"person_values": {"age": {"a": float("nan")}}}, "finite"),
+    ],
+)
+def test_wrong_traveller_or_trip_values_are_refused(kwargs: dict, message: str) -> None:
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, "a", "W", "M", 0, None), toy_trip(net, "b", "W", "M", 0, None)]
+    with pytest.raises(ValueError, match=message):
+        toy_run(rows, "values-wrong", modes=["car", "bike"], transit=None, parkings=None,
+                **kwargs)  # fmt: skip
+
+
 def test_each_trip_s_logsum_rises_with_a_better_alternative_and_a_model_may_give_its_own() -> None:
     # S238: utility-based accessibility. W → N1 chooses among bike, walk and the parkings.
     import numpy as np

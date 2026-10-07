@@ -106,6 +106,10 @@ pub struct RunDescription {
     pub disruptions: Option<(usize, usize, bool)>,
     /// The prices, by name (S248), when the choice model reads money; `None` otherwise.
     pub prices: Option<Vec<(String, f64)>>,
+    /// The user's traveller values' names (S249), in the order given; empty if none.
+    pub person_values: Vec<String>,
+    /// The user's trip values' names (S249), in the order given; empty if none.
+    pub trip_values: Vec<String>,
 }
 
 impl RunDescription {
@@ -164,6 +168,8 @@ pub(crate) struct Inputs<'a> {
     pub loading: &'a crate::loading_rules::LoadingOptions,
     /// The prices (S248), when the choice model reads money; `None` otherwise.
     pub prices: Option<&'a crate::prices::Prices>,
+    /// The user's traveller and trip values (S249).
+    pub demand_values: &'a crate::demand_values::DemandValues,
 }
 
 pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
@@ -284,6 +290,23 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             h.write_u32(t.to_s);
         }
     }
+    // The user's traveller and trip values (S249): nothing when none is given.
+    if !inputs.demand_values.is_empty() {
+        h.write_str("demand-values");
+        for (kind, columns) in [
+            ("person", inputs.demand_values.persons().collect::<Vec<_>>()),
+            ("trip", inputs.demand_values.trips().collect::<Vec<_>>()),
+        ] {
+            for (name, values) in columns {
+                h.write_str(kind);
+                h.write_str(name);
+                h.write_u64(values.len() as u64);
+                for &v in values {
+                    h.write_f64(v);
+                }
+            }
+        }
+    }
     // Money (S248): nothing unless the choice model reads it, so other runs hash as before.
     if let Some(prices) = inputs.prices {
         h.write_str("prices");
@@ -352,6 +375,8 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         prices: inputs
             .prices
             .map(|p| p.values().into_iter().map(|(n, v)| (n.to_string(), v)).collect()),
+        person_values: inputs.demand_values.persons().map(|(n, _)| n.to_string()).collect(),
+        trip_values: inputs.demand_values.trips().map(|(n, _)| n.to_string()).collect(),
     }
 }
 

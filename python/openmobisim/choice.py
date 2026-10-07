@@ -51,6 +51,9 @@ situations, one situation being one traveller's one trip):
 * ``batch.traveller``, ``batch.trip`` (per situation), ``batch.identity``
   (per alternative; stable when other alternatives come and go),
   ``batch.situation_of`` (per alternative), ``batch.iteration``.
+* The user's traveller and trip values (``Scenario.from_parts``' ``person_values`` and
+  ``trip_values``, S249) are attributes too, ``person_<name>`` and ``trip_<name>``: the
+  same for every alternative of one situation.
 * ``batch.user_class`` — each situation's traveller class, an index into
   ``batch.class_names`` (the demand's ``user_class`` values), so a model may
   weigh classes differently: ``batch.class_names[batch.user_class[s]]``.
@@ -111,7 +114,9 @@ __all__ = [
 #: ``cost_running_eur`` (the car or bike leg's kilometres at the vehicle's price per km),
 #: ``cost_toll_eur`` (the car leg's tolls: a road link value named ``toll_eur``),
 #: ``cost_parking_eur`` (a park-and-ride or bike-and-ride parking's fee, on the trip that
-#: parks) and ``cost_fare_eur`` (a transit journey's fare); ``nest``
+#: parks, or the trip's destination's for one arriving by car) and ``cost_fare_eur`` (a
+#: transit journey's fare); ``trip_departure_h`` (the trip's departure in hours after
+#: midnight, the same for each alternative of a choice, S249); ``nest``
 #: (the alternative's mode as a number: the nest of ``"nested_logit"``) and
 #: ``mode_walk``, ``mode_bike``, ``mode_car``, ``mode_transit``, ``mode_car_transit``,
 #: ``mode_bike_transit`` (1 for the alternative's mode, 0 for the rest: a coefficient
@@ -149,6 +154,7 @@ ROUTE_ATTRIBUTES: tuple[str, ...] = (
     "cost_toll_eur",
     "cost_parking_eur",
     "cost_fare_eur",
+    "trip_departure_h",
     "nest",
     "mode_walk",
     "mode_bike",

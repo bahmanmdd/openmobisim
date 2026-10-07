@@ -38,9 +38,10 @@ use openmobisim_core_graph::layers::{BikeCost, StaticLayer};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
 use openmobisim_core_sim::{
-    ClassLimits, Disruptions, FlowMotor, LayerSetup, LinkValues, LoadingOptions, ModeDefaults,
-    ParkingDefaults, ParkingSetup, Prices, ROUTE_ATTRIBUTES, RoadDisruption, Run as CoreRun,
-    Skimmer, StaticLayers, Timings, TransitDisruption, TransitEffect, TransitSetup, ValueLayer,
+    ClassLimits, DemandValues, Disruptions, FlowMotor, LayerSetup, LinkValues, LoadingOptions,
+    ModeDefaults, ParkingDefaults, ParkingSetup, Prices, ROUTE_ATTRIBUTES, RoadDisruption,
+    Run as CoreRun, Skimmer, StaticLayers, Timings, TransitDisruption, TransitEffect, TransitSetup,
+    ValueLayer,
 };
 use openmobisim_core_transit::TransitDefaults;
 
@@ -49,7 +50,7 @@ use crate::parking::{
 };
 use crate::transit::{PyTransit, transit_calls, transit_summary};
 use openmobisim_core_types::diagnostics::Diagnostics;
-use openmobisim_core_types::ids::{EntityId, LinkId, TripId};
+use openmobisim_core_types::ids::{EntityId, LinkId, TravellerId, TripId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 
@@ -99,6 +100,91 @@ fn person_from_row(row: PersonRow) -> RawPerson {
     let (traveller_id, owns_car, owns_bike, has_transit_pass, user_class) = row;
     RawPerson { traveller_id, owns_car, owns_bike, has_transit_pass, user_class }
 }
+
+/// The user's traveller and trip values (S249) by traveller and trip index: traveller values by
+/// external id (an id not in the demand ignored, a traveller not given 0); trip values one per
+/// row of the demand as given (`row_keys`, each row's traveller and sequence number), or keyed by
+/// `(traveller id, trip sequence)` (a key not in the demand ignored, a trip not given 0). Names in
+/// sorted order, so the attributes and the fingerprint do not depend on a dict's order.
+fn demand_values(
+    travellers: &openmobisim_core_demand::Travellers,
+    trips: &openmobisim_core_demand::Trips,
+    row_keys: &[(String, u32)],
+    persons: HashMap<String, Vec<(String, f64)>>,
+    aligned: HashMap<String, Vec<f64>>,
+    keyed: KeyedTripValues,
+) -> PyResult<DemandValues> {
+    let ids = travellers.external_ids();
+    let mut out = DemandValues::new();
+    let mut persons: Vec<(String, Vec<(String, f64)>)> = persons.into_iter().collect();
+    persons.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, pairs) in persons {
+        let mut column = vec![0.0; ids.count() as usize];
+        for (id, value) in pairs {
+            if let Some(t) = ids.id_of(&id) {
+                column[t as usize] = value;
+            }
+        }
+        out = out.with_person(&name, column, &ROUTE_ATTRIBUTES).map_err(PyValueError::new_err)?;
+    }
+    // A trip's index from its traveller and sequence number: the demand keeps each traveller's
+    // trips in sequence order, one per number (S128).
+    let mut seqs: HashMap<&str, Vec<u32>> = HashMap::new();
+    for (id, seq) in row_keys {
+        seqs.entry(id.as_str()).or_default().push(*seq);
+    }
+    for list in seqs.values_mut() {
+        list.sort_unstable();
+        list.dedup();
+    }
+    let index_of = |id: &str, seq: u32| -> Option<usize> {
+        let t = ids.typed_id_of::<TravellerId>(id)?;
+        let k = seqs.get(id)?.binary_search(&seq).ok()?;
+        travellers.trips_of(t).nth(k).map(|trip| trip.index())
+    };
+    let n = trips.len() as usize;
+    let mut columns: Vec<(String, Vec<f64>)> = Vec::new();
+    for (name, values) in aligned {
+        if values.len() != row_keys.len() {
+            return Err(PyValueError::new_err(format!(
+                "trip value {name:?} has {} values; the demand has {} rows",
+                values.len(),
+                row_keys.len()
+            )));
+        }
+        let mut column = vec![0.0; n];
+        let mut set = vec![false; n];
+        for ((id, seq), value) in row_keys.iter().zip(values) {
+            // A repeated (traveller, sequence) row is dropped by the demand: its first counts.
+            if let Some(i) = index_of(id, *seq).filter(|&i| !set[i]) {
+                column[i] = value;
+                set[i] = true;
+            }
+        }
+        columns.push((name, column));
+    }
+    for (name, entries) in keyed {
+        if columns.iter().any(|(n, _)| *n == name) {
+            return Err(PyValueError::new_err(format!("trip value {name:?} is given twice")));
+        }
+        let mut column = vec![0.0; n];
+        for (id, seq, value) in entries {
+            if let Some(i) = index_of(&id, seq) {
+                column[i] = value;
+            }
+        }
+        columns.push((name, column));
+    }
+    columns.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, column) in columns {
+        out = out.with_trip(&name, column, &ROUTE_ATTRIBUTES).map_err(PyValueError::new_err)?;
+    }
+    Ok(out)
+}
+
+/// Trip values keyed by trip, as Python gives them (S249): per name, `(traveller id, trip sequence,
+/// value)` each.
+type KeyedTripValues = HashMap<String, Vec<(String, u32, f64)>>;
 
 /// A road disruption as Python gives it (S239): link indices, capacity factor, from and to (s).
 type RoadDisruptionRow = (Vec<u32>, f64, f64, f64);
@@ -473,7 +559,8 @@ fn convergence_arrays(
     trips=None, trips_path=None,
     persons=None, persons_path=None,
     class_defaults=None, class_modes=None, class_options=None, class_limits=None,
-    link_values=None, road_disruptions=None, transit_disruptions=None, disruptions_known=false,
+    link_values=None, person_values=None, trip_values=None, trip_values_keyed=None,
+    road_disruptions=None, transit_disruptions=None, disruptions_known=false,
     default_weight=1, window_s=86_400,
     flow_level=0, flow_step_s=300, link_bin_s=None,
     route_method="penalty", route_options=None, master_seed=0,
@@ -502,6 +589,9 @@ pub fn run_pipeline(
     class_options: Option<HashMap<String, HashMap<String, f64>>>,
     class_limits: Option<HashMap<String, HashMap<String, f64>>>,
     link_values: Option<HashMap<String, HashMap<String, Vec<f64>>>>,
+    person_values: Option<HashMap<String, Vec<(String, f64)>>>,
+    trip_values: Option<HashMap<String, Vec<f64>>>,
+    trip_values_keyed: Option<KeyedTripValues>,
     road_disruptions: Option<Vec<RoadDisruptionRow>>,
     transit_disruptions: Option<Vec<(u32, i64, u32, u32)>>,
     disruptions_known: bool,
@@ -654,6 +744,14 @@ pub fn run_pipeline(
         }
     }
 
+    // Each row's traveller and place in their day, for trip values given row by row (S249).
+    let row_keys: Vec<(String, u32)> = if trip_values.as_ref().is_some_and(|v| !v.is_empty())
+        || trip_values_keyed.as_ref().is_some_and(|v| !v.is_empty())
+    {
+        raw_trips.iter().map(|t| (t.traveller_id.clone(), t.trip_seq)).collect()
+    } else {
+        Vec::new()
+    };
     let mut build_diagnostics = Diagnostics::new();
     let (travellers, trips_table) = build_travellers(
         raw_trips,
@@ -683,6 +781,14 @@ pub fn run_pipeline(
         .map(|c| (c.clone(), class_options.get(c).cloned().unwrap_or_default()))
         .collect();
     let choice = make_choice_model_with_classes(choice_model, choice_options, &by_index)?;
+    let demand_values = demand_values(
+        &travellers,
+        &trips_table,
+        &row_keys,
+        person_values.unwrap_or_default(),
+        trip_values.unwrap_or_default(),
+        trip_values_keyed.unwrap_or_default(),
+    )?;
     clock = timings.lap("demand_read", None, clock);
     let travellers = Arc::new(travellers);
     let trips_table = Arc::new(trips_table);
@@ -795,6 +901,7 @@ pub fn run_pipeline(
         .with_class_modes(class_allowed)
         .with_class_limits(class_limits)
         .with_link_values(link_values)
+        .with_demand_values(demand_values)
         .with_disruptions(Disruptions {
             road: road_disruptions
                 .unwrap_or_default()

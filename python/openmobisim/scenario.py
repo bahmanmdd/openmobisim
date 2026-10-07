@@ -983,6 +983,57 @@ def _link_values(
     return out
 
 
+def _person_values(given: Mapping[str, Any]) -> dict[str, list[tuple[str, float]]]:
+    """The user's traveller values (S249) as the core takes them: per name, ``(id, value)`` pairs.
+
+    Each column maps a traveller id to a value: a dict, or anything with ``items()`` (a pandas
+    Series indexed by id). A traveller not in it takes 0; an id the demand does not have is
+    ignored (a sampled demand keeps a share of the people). The names and values are checked by
+    the core.
+    """
+    if not isinstance(given, Mapping):
+        raise ValueError("person_values is {name: {traveller_id: value}}")
+    out: dict[str, list[tuple[str, float]]] = {}
+    for name, values in given.items():
+        if not hasattr(values, "items"):
+            raise ValueError(
+                f"person_values {name!r}: a mapping from traveller id to value (a dict or a "
+                "Series indexed by id)"
+            )
+        out[str(name)] = [(str(k), float(v)) for k, v in values.items()]
+    return out
+
+
+def _trip_values(
+    given: Mapping[str, Any],
+) -> tuple[dict[str, list[float]], dict[str, list[tuple[str, int, float]]]]:
+    """The user's trip values (S249) as the core takes them: ``(aligned, keyed)``.
+
+    A column is either a sequence with one value per row of the demand, in its order (a list, an
+    array, a Series), or a dict from ``(traveller_id, trip_seq)`` to value, a trip not in it
+    taking 0 and a key the demand does not have ignored. The lengths are checked by the core,
+    which has the rows.
+    """
+    if not isinstance(given, Mapping):
+        raise ValueError("trip_values is {name: values}")
+    aligned: dict[str, list[float]] = {}
+    keyed: dict[str, list[tuple[str, int, float]]] = {}
+    for name, values in given.items():
+        if isinstance(values, dict):
+            column = []
+            for key, value in values.items():
+                if not (isinstance(key, tuple) and len(key) == 2):
+                    raise ValueError(
+                        f"trip_values {name!r}: a dict's keys are (traveller_id, trip_seq), "
+                        f"got {key!r}"
+                    )
+                column.append((str(key[0]), int(key[1]), float(value)))
+            keyed[str(name)] = column
+        else:
+            aligned[str(name)] = [float(v) for v in values]
+    return aligned, keyed
+
+
 def _disruptions(
     network: _core.Network, transit: _core.Transit | None, given: list[dict[str, Any]]
 ) -> tuple[list[tuple], list[tuple]]:
@@ -1077,6 +1128,8 @@ class Scenario:
         loading_options: dict[str, float] | None = None,
         price_options: dict[str, float] | None = None,
         link_values: dict[str, dict[str, Any]] | None = None,
+        person_values: dict[str, Any] | None = None,
+        trip_values: dict[str, Any] | None = None,
         disruptions: list[dict[str, Any]] | None = None,
         disruptions_known: bool = False,
         class_defaults: None = None,
@@ -1181,6 +1234,10 @@ class Scenario:
         self._loading_options = loading or None
         self._price_options = price_options
         self._link_values = _link_values(network, link_values) if link_values else None
+        self._person_values = _person_values(person_values) if person_values else None
+        self._trip_values, self._trip_values_keyed = (
+            _trip_values(trip_values) if trip_values else (None, None)
+        )
         self._road_disruptions, self._transit_disruptions = _disruptions(
             network, transit, disruptions or []
         )
@@ -1219,6 +1276,8 @@ class Scenario:
         loading_options: dict[str, float] | None = None,
         price_options: dict[str, float] | None = None,
         link_values: dict[str, dict[str, Any]] | None = None,
+        person_values: dict[str, Any] | None = None,
+        trip_values: dict[str, Any] | None = None,
         disruptions: list[dict[str, Any]] | None = None,
         disruptions_known: bool = False,
         class_defaults: None = None,
@@ -1342,7 +1401,8 @@ class Scenario:
                 time), ``beta_transfers`` (-1), and 0 for the rest, such as
                 ``beta_length_km``, ``beta_parking_min``, ``beta_cost_eur`` (money, see
                 ``price_options``) or the mode constants
-                ``beta_mode_bike`` … (``openmobisim.choice.ROUTE_ATTRIBUTES`` lists them);
+                ``beta_mode_bike`` … (``openmobisim.choice.ROUTE_ATTRIBUTES`` lists them), and
+                products of two attributes, ``beta_<a>*<b>`` (see ``trip_values``);
                 for ``"nested_logit"`` also ``mu`` (0.5), the nests' scale, from above 0
                 to 1 (1 is the logit). Unknown names and non-numbers are refused. The
                 defaults are an assumption, not a calibration.
@@ -1574,6 +1634,26 @@ class Scenario:
                 previous run's ``link_bins`` (``link_ids()`` ties a bike link to its street's
                 road links).
                 Recorded in the fingerprint, and their names in the manifest.
+            person_values: The user's own numbers per traveller, for choice models (S249):
+                ``{name: {traveller_id: value}}`` (a dict, or a pandas Series indexed by id); a
+                traveller not in it takes 0, and an id the demand does not have is ignored (a
+                sampled demand keeps a share of the people). Each becomes the attribute
+                ``person_<name>`` of every alternative of that traveller's choices: income, age,
+                a household's children.
+            trip_values: The same per trip (S249): ``{name: values}``, the values one per row of
+                ``demand`` in its order (a list, an array, a Series), or a dict from
+                ``(traveller_id, trip_seq)`` to value (a trip not in it taking 0); the attribute
+                ``trip_<name>``: a purpose, a time budget. **``parking_eur``** is what parking a car
+                at the trip's destination costs, in euros: it is added to ``cost_parking_eur`` of
+                every alternative that arrives by car (see ``price_options``). Beside them every
+                alternative carries ``trip_departure_h``, the trip's departure in hours after
+                midnight. Being the same for every alternative of a choice, such a value weighs in
+                the built-in models **in a product with another attribute**, a coefficient named
+                ``beta_<a>*<b>`` in ``choice_options`` or a class: ``beta_mode_car*person_age``, a
+                car constant growing with age; ``beta_cost_eur*person_income_inv``, money weighing
+                less as income grows (give ``income_inv`` as one over the income); a model of one's
+                own reads them from the batch. Names are lower-case letters, digits and ``_``.
+                Recorded in the fingerprint, and their names in the manifest.
             disruptions: Things that happen at a time of day (S239), a list of dicts: on roads,
                 ``{"links": [...], "capacity_factor": 0.0, "from_s": 8 * 3600, "to_s": 9 * 3600}``
                 — the links (by id, ``network.link_ids()``, or index; each direction of a road
@@ -1640,6 +1720,8 @@ class Scenario:
             loading_options=loading_options,
             price_options=price_options,
             link_values=link_values,
+            person_values=person_values,
+            trip_values=trip_values,
             disruptions=disruptions,
             disruptions_known=disruptions_known,
             class_defaults=class_defaults,
@@ -1700,6 +1782,9 @@ class Scenario:
             loading_options=self._loading_options,
             price_options=self._price_options,
             link_values=self._link_values,
+            person_values=self._person_values,
+            trip_values=self._trip_values or None,
+            trip_values_keyed=self._trip_values_keyed or None,
             road_disruptions=self._road_disruptions,
             transit_disruptions=self._transit_disruptions,
             disruptions_known=self._disruptions_known,

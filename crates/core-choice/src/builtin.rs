@@ -122,6 +122,12 @@ impl ChoiceModel for Deterministic {
 /// −1.2 per euro at −0.2 per minute and 10 €/h; a traveller class's own coefficient is its own
 /// value of time.
 ///
+/// **Products** (S249): `beta_<a>*<b>` weighs the product of two attributes, so a value that is
+/// the same for every alternative of a choice — the traveller's (`person_<name>`), the trip's
+/// (`trip_<name>`, `trip_departure_h`) — can shift one mode (`beta_mode_car*person_age`) or
+/// scale another attribute (`beta_cost_eur*person_income_inv`). The two names may come in
+/// either order; they are kept sorted.
+///
 /// **The defaults are an assumption, not a calibration**: a time coefficient of
 /// −0.2 per minute means a route four minutes slower is taken with about 45% of
 /// the weight of one that is not, other things equal. Estimate your own and pass them.
@@ -149,6 +155,62 @@ impl Default for Logit {
     }
 }
 
+/// The two attributes of a product term `a*b` (S249), if `term` is one.
+fn product(term: &str) -> Option<(&str, &str)> {
+    term.split_once('*')
+}
+
+/// `attribute` as a model keeps it: a product's two names sorted (S249), so `b*a` is `a*b`.
+fn canonical(attribute: &str) -> String {
+    match product(attribute) {
+        Some((a, b)) if b < a => format!("{b}*{a}"),
+        _ => attribute.to_string(),
+    }
+}
+
+/// One term of a utility on a batch's columns: a column, or the product of two (S249).
+#[derive(Clone, Copy, Debug)]
+enum Term {
+    One(usize),
+    Two(usize, usize),
+}
+
+impl Term {
+    fn value(self, columns: &[&[f64]], a: usize) -> f64 {
+        match self {
+            Term::One(k) => columns[k][a],
+            Term::Two(j, k) => columns[j][a] * columns[k][a],
+        }
+    }
+}
+
+/// A class's utility on a batch's columns: a coefficient per column (0 for one it does not
+/// weigh), and its product terms (S249).
+type Dense = (Vec<f64>, Vec<(Term, f64)>);
+
+/// The terms `betas` weigh, on `batch`'s columns, with their coefficients (zeros dropped).
+fn terms(betas: &[(String, f64)], batch: &ChoiceBatch) -> Result<Vec<(Term, f64)>, ChoiceError> {
+    let names = batch.attribute_names();
+    let column = |name: &str| {
+        names.iter().position(|n| n == name).ok_or_else(|| ChoiceError::MissingAttribute {
+            name: name.to_string(),
+            offered: names.to_vec(),
+        })
+    };
+    let mut out = Vec::with_capacity(betas.len());
+    for (attribute, beta) in betas {
+        if *beta == 0.0 {
+            continue;
+        }
+        let term = match product(attribute) {
+            Some((a, b)) => Term::Two(column(a)?, column(b)?),
+            None => Term::One(column(attribute)?),
+        };
+        out.push((term, *beta));
+    }
+    Ok(out)
+}
+
 impl Logit {
     /// Make the model from its options, defaults for those not given.
     ///
@@ -174,9 +236,19 @@ impl Logit {
                     reason: format!("must be a finite number, got {value}"),
                 });
             }
-            match m.betas.iter_mut().find(|(a, _)| a == attribute) {
+            if product(attribute)
+                .is_some_and(|(a, b)| a.is_empty() || b.is_empty() || b.contains('*'))
+            {
+                return Err(ChoiceError::BadOption {
+                    model: "logit".to_string(),
+                    option: option.clone(),
+                    reason: "a product is beta_<a>*<b>, two attributes".to_string(),
+                });
+            }
+            let attribute = canonical(attribute);
+            match m.betas.iter_mut().find(|(a, _)| *a == attribute) {
                 Some(entry) => entry.1 = *value,
-                None => m.betas.push((attribute.to_string(), *value)),
+                None => m.betas.push((attribute, *value)),
             }
         }
         m.betas.sort_by(|a, b| a.0.cmp(&b.0));
@@ -208,10 +280,10 @@ impl Logit {
             })?;
             let mut merged = self.betas.clone();
             for (option, value) in options {
-                let attribute = option.strip_prefix("beta_").unwrap_or(option);
-                match merged.iter_mut().find(|(a, _)| a == attribute) {
+                let attribute = canonical(option.strip_prefix("beta_").unwrap_or(option));
+                match merged.iter_mut().find(|(a, _)| *a == attribute) {
                     Some(entry) => entry.1 = *value,
-                    None => merged.push((attribute.to_string(), *value)),
+                    None => merged.push((attribute, *value)),
                 }
             }
             merged.sort_by(|a, b| a.0.cmp(&b.0));
@@ -244,58 +316,44 @@ impl Logit {
     /// [`ChoiceError::MissingAttribute`] if a coefficient names an attribute the
     /// batch does not carry.
     pub fn utilities(&self, batch: &ChoiceBatch) -> Result<Vec<f64>, ChoiceError> {
-        if !self.classes.is_empty() {
-            return self.utilities_by_class(batch);
-        }
+        let columns: Vec<&[f64]> =
+            (0..batch.attribute_names().len()).map(|k| batch.column(k)).collect();
+        let own = terms(&self.betas, batch)?;
         let mut utility = vec![0.0; batch.alternatives()];
-        for (attribute, beta) in &self.betas {
-            if *beta == 0.0 {
-                continue;
-            }
-            let column =
-                batch.attribute(attribute).ok_or_else(|| ChoiceError::MissingAttribute {
-                    name: attribute.clone(),
-                    offered: batch.attribute_names().to_vec(),
-                })?;
-            for (u, v) in utility.iter_mut().zip(column) {
-                *u += beta * v;
-            }
-        }
-        Ok(utility)
-    }
-
-    /// [`Self::utilities`] with each situation weighed by its class's coefficients (S231); a
-    /// class index past the classes given takes the model's own.
-    fn utilities_by_class(&self, batch: &ChoiceBatch) -> Result<Vec<f64>, ChoiceError> {
-        // Per class, a coefficient per batch attribute (0 for one it does not weigh).
-        let names = batch.attribute_names();
-        let dense = |betas: &[(String, f64)]| -> Result<Vec<f64>, ChoiceError> {
-            let mut out = vec![0.0; names.len()];
-            for (attribute, beta) in betas {
-                if *beta == 0.0 {
-                    continue;
+        if self.classes.is_empty() {
+            for (term, beta) in own {
+                for (a, u) in utility.iter_mut().enumerate() {
+                    *u += beta * term.value(&columns, a);
                 }
-                let k = names.iter().position(|n| n == attribute).ok_or_else(|| {
-                    ChoiceError::MissingAttribute {
-                        name: attribute.clone(),
-                        offered: names.to_vec(),
-                    }
-                })?;
-                out[k] = *beta;
             }
-            Ok(out)
+            return Ok(utility);
+        }
+        // Each situation weighed by its class's coefficients (S231); a class index past the
+        // classes given takes the model's own. Per class, a coefficient per batch attribute (0
+        // for one it does not weigh), summed in column order, then its products (S249).
+        let dense = |weighed: Vec<(Term, f64)>| {
+            let mut plain = vec![0.0; columns.len()];
+            let mut products = Vec::new();
+            for (term, beta) in weighed {
+                match term {
+                    Term::One(k) => plain[k] = beta,
+                    Term::Two(..) => products.push((term, beta)),
+                }
+            }
+            (plain, products)
         };
-        let own = dense(&self.betas)?;
-        let by_class: Vec<Vec<f64>> =
-            self.classes.iter().map(|(_, b)| dense(b)).collect::<Result<_, _>>()?;
-        let columns: Vec<&[f64]> = (0..names.len())
-            .map(|k| batch.attribute(&names[k]).expect("the batch's own attribute"))
-            .collect();
-        let mut utility = vec![0.0; batch.alternatives()];
+        let own = dense(own);
+        let by_class: Vec<Dense> = self
+            .classes
+            .iter()
+            .map(|(_, b)| terms(b, batch).map(dense))
+            .collect::<Result<_, _>>()?;
         for (s, &class) in batch.classes().iter().enumerate() {
-            let betas = by_class.get(class as usize).unwrap_or(&own);
+            let (plain, products) = by_class.get(class as usize).unwrap_or(&own);
             for a in batch.range(s) {
-                utility[a] = betas.iter().zip(&columns).map(|(b, c)| b * c[a]).sum();
+                let linear: f64 = plain.iter().zip(&columns).map(|(b, c)| b * c[a]).sum();
+                let more: f64 = products.iter().map(|(t, b)| b * t.value(&columns, a)).sum();
+                utility[a] = linear + more;
             }
         }
         Ok(utility)
@@ -332,12 +390,16 @@ impl ChoiceModel for Logit {
 
     fn required_attributes(&self) -> Option<Vec<String>> {
         // Every attribute some class weighs (S231), the model's own among them.
+        // A product reads both its attributes (S249).
         let mut names: Vec<String> = self
             .betas
             .iter()
             .chain(self.classes.iter().flat_map(|(_, b)| b.iter()))
             .filter(|(_, b)| *b != 0.0)
-            .map(|(a, _)| a.clone())
+            .flat_map(|(a, _)| match product(a) {
+                Some((x, y)) => vec![x.to_string(), y.to_string()],
+                None => vec![a.clone()],
+            })
             .collect();
         names.sort();
         names.dedup();

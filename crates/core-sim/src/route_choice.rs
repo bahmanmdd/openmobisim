@@ -20,7 +20,8 @@
 //! | `car_min` | the same as `time_min`: a route is driven all the way |
 //! | `bike_min`, `walk_min`, `wait_min`, `ride_min`, `transfers`, `parking_min` | 0: a route has none |
 //! | `nest`, `mode_car` and the other `mode_*` | the car's nest (its mode index) and 1 for `mode_car`, 0 for the others (M5) |
-//! | `cost_eur`, `cost_running_eur`, `cost_toll_eur` | money (S248, [`crate::prices`]): the route's kilometres at the car's price per km, plus its tolls; `cost_parking_eur` and `cost_fare_eur` are 0 |
+//! | `cost_eur`, `cost_running_eur`, `cost_toll_eur`, `cost_parking_eur` | money (S248, [`crate::prices`]): the route's kilometres at the car's price per km, its tolls, and the parking fee at the trip's destination if given (S249); `cost_fare_eur` is 0 |
+//! | `trip_departure_h`, `person_<name>`, `trip_<name>` | the trip's departure in hours, and the user's traveller and trip values (S249, [`crate::demand_values`]) |
 //!
 //! The last seven are the itineraries' vocabulary (M4, A8;
 //! [`crate::itinerary_choice`]): routes carry them too, so one set of
@@ -41,6 +42,7 @@ use openmobisim_core_routes::{RouteAttributes, RouteKey, RouteSets, Search, Sear
 use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, NodeId, TripId};
 
+use crate::demand_values::DemandValues;
 use crate::equilibration::Equilibration;
 use crate::link_times::LinkTimes;
 use crate::link_values::{PreparedLinkValues, ValueLayer};
@@ -54,7 +56,7 @@ const GAP_CHUNK: usize = 16;
 
 /// The attributes a route carries, in the order a batch holds them: the same
 /// names as every itinerary's ([`crate::itinerary_choice::ATTRIBUTES`], A8).
-pub const ROUTE_ATTRIBUTES: [&str; 39] = crate::itinerary_choice::ATTRIBUTES;
+pub const ROUTE_ATTRIBUTES: [&str; 40] = crate::itinerary_choice::ATTRIBUTES;
 
 /// "No route": a trip with no set, or whose origin and destination are one node.
 pub const NO_ROUTE: u32 = u32::MAX;
@@ -142,10 +144,12 @@ pub(crate) struct Inputs<'a> {
     pub detour_limit: f64,
     /// The user's link values (S236): a route's `road_<name>_km` and `road_<name>_sum`.
     pub link_values: &'a PreparedLinkValues,
-    /// Their attributes' names.
+    /// The attributes' names of the user's link, traveller and trip values.
     pub link_value_names: &'a [String],
     /// The run's prices (S248): a route's `cost_eur` and its parts.
     pub prices: &'a PreparedPrices,
+    /// The user's traveller and trip values (S249).
+    pub demand_values: &'a DemandValues,
 }
 
 /// The identity of a route: a 32-bit hash of its links.
@@ -351,6 +355,10 @@ impl<'a> Chooser<'a> {
                 }
                 let view = route_sets.route(r);
                 for (slot, name) in row.iter_mut().zip(&self.wanted) {
+                    if let Some(source) = self.inputs.demand_values.lookup(name) {
+                        *slot = self.inputs.demand_values.value(source, trips, traveller, trip);
+                        continue;
+                    }
                     if let Some((column, aggregate)) = self.inputs.link_values.lookup(name) {
                         *slot = if self.inputs.link_values.layer(column) == ValueLayer::Road {
                             self.inputs.link_values.total(
@@ -365,15 +373,18 @@ impl<'a> Chooser<'a> {
                     }
                     *slot = match name.as_str() {
                         "time_min" => seconds[a] / 60.0,
-                        "cost_eur" | "cost_running_eur" | "cost_toll_eur" => {
+                        "cost_eur" | "cost_running_eur" | "cost_toll_eur" | "cost_parking_eur" => {
                             let prices = self.inputs.prices;
                             let length = self.attributes.as_ref().map_or(0.0, |x| x.length_m[r]);
                             let running = prices.running(Some(ParkingKind::Car), length);
                             let toll = || prices.toll_raw(self.inputs.link_values, view.links);
+                            // The car arrives: the parking fee at the destination (S249).
+                            let parking = || self.inputs.demand_values.destination_parking(trip);
                             match name.as_str() {
                                 "cost_running_eur" => running,
                                 "cost_toll_eur" => toll(),
-                                _ => running + toll(),
+                                "cost_parking_eur" => parking(),
+                                _ => running + toll() + parking(),
                             }
                         }
                         "length_km" => {

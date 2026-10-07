@@ -16,6 +16,7 @@
 //! | [`link_values`] | [`link_values::LinkValues`] — values a user gives per link, summed along each alternative for the choice models (S237) |
 //! | [`prices`] | [`prices::Prices`] — what an alternative costs in euros (running cost, tolls, parking fees, fares), offered to the choice models (S248) |
 //! | [`loading_rules`] | [`loading_rules::LoadingOptions`] — the loading's rules by name: turn pockets, en-route rerouting, priority at merges (S213–S218) |
+//! | [`demand_values`] | [`demand_values::DemandValues`] — values a user gives per traveller and per trip, offered to the choice models (S249) |
 //! | [`disruptions`] | [`disruptions::Disruptions`] — roads closed and transit stopped at a time of day, known or not in advance (S239) |
 //! | [`skims`] | [`skims::Skimmer`] — door-to-door times between points by mode, after a run (S238) |
 //! | [`events`] | [`events::EventRow`] — one row per trip outcome, what `io-parquet`'s `events.parquet` writer reads from |
@@ -35,6 +36,7 @@
 //! people the completed trips stand for are counted beside it, so a mean per
 //! person is one division (S232).
 
+pub mod demand_values;
 pub mod disruptions;
 pub mod equilibration;
 pub mod events;
@@ -56,6 +58,7 @@ pub mod skims;
 pub mod timings;
 pub mod transit;
 
+pub use demand_values::{DEPARTURE_ATTRIBUTE, DESTINATION_PARKING, DemandValues};
 pub use disruptions::{Disruptions, RoadDisruption, TransitDisruption, TransitEffect};
 pub use equilibration::{Equilibration, FreeFlow, IterationReport, Msa};
 pub use events::{EventRow, EventType};
