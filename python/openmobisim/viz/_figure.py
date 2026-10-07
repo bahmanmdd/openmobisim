@@ -180,7 +180,8 @@ def draw_furniture(
 
     `width_legend` is ``(label, [(value, width_pt), ...], unit)``, the unit shown once, after
     the label (empty: none); `colour_legend`
-    is ``(label, ramp_stops, low_label, high_label)``; `route_legend` is a list of
+    is ``(label, ramp_stops, low_label, high_label)``, its label left out when it is the width
+    legend's title (both show one quantity: the title once); `route_legend` is a list of
     ``(rgb, text)`` rows, one per route, in place of both; `marker_legend` is a list
     of ``(marker, filled, text)`` rows, one per kind of symbol on the map, in the place
     of the width legend. `credit` is the user's own
@@ -217,6 +218,7 @@ def draw_furniture(
 
     # Legends, top right.
     lx, ly = 0.585, 0.905
+    title_text = None
     if width_legend is not None:
         label, samples, unit = width_legend
         # The unit once, in the title (S232): the chips stay short at any page width.
@@ -278,7 +280,9 @@ def draw_furniture(
     if colour_legend is not None:
         label, stops, low, high = colour_legend
         cx = 0.815
-        fig.text(cx, ly + 0.030, label, color=t.ink2, fontsize=9.5 * k, fontfamily=sans)
+        if label != title_text:
+            # Width and colour showing the same quantity share the width legend's title (S243).
+            fig.text(cx, ly + 0.030, label, color=t.ink2, fontsize=9.5 * k, fontfamily=sans)
         bar = fig.add_axes((cx, ly + 0.008, 0.16, 0.012), facecolor=t.surface)
         bar.set_axis_off()
         bar.imshow(ramp_rgb(stops, np.linspace(0, 1, 256))[None, :, :], aspect="auto")
