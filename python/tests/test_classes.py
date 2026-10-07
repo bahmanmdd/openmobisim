@@ -89,7 +89,10 @@ def test_unsaid_ownership_follows_the_modes_and_a_tuple_says_only_what_is_owned(
     )  # fmt: skip
     assert (t["cyclist"]["owns_car"], t["cyclist"]["owns_bike"]) == (False, True)
     assert t["old"]["modes"] is None and t["old"]["owns_car"] and t["old"]["has_transit_pass"]
-    assert t["nothing"]["modes"] is None and not t["nothing"]["owns_car"]
+    # Modes unsaid: every mode, so a car, a bike and a pass (S243).
+    assert t["nothing"]["modes"] is None
+    assert (t["nothing"]["owns_car"], t["nothing"]["owns_bike"]) == (True, True)
+    assert t["nothing"]["has_transit_pass"]
 
 
 @pytest.mark.parametrize(
@@ -164,6 +167,16 @@ def test_a_class_chooses_among_its_modes_only_and_an_unlisted_class_among_all() 
     assert took["drivers"] == {"car"}
     assert took["cyclists"] <= {"bike", "walk"} and "bike" in took["cyclists"]
     assert {"car", "bike"} <= took["others"], "a class that names no modes may use the run's"
+
+
+def test_a_class_not_listed_owns_what_every_mode_needs() -> None:
+    # S243 (F-1): without classes, trips with no mode (an OD matrix's) are car trips and move
+    # their cars; a class not listed beside listed ones drives and cycles too.
+    alone = toy_run(toy_trips(10, "od"), "classes-none", None)
+    assert alone.completion_by_mode["car"]["completed"] == 10
+    rows = toy_trips(20, "drivers") + toy_trips(20, "unlisted")
+    run = toy_run(rows, "classes-unlisted", {"drivers": {"modes": ["car"]}}, modes=["car", "bike"])
+    assert modes_of(run)["unlisted"] == {"car", "bike"}
 
 
 def test_without_modes_the_run_offers_every_mode_a_class_names() -> None:

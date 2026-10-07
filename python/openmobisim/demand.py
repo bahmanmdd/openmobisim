@@ -277,11 +277,12 @@ def _class_entry(name: str, spec: object) -> dict[str, Any]:
         share = float(share)
         if not (math.isfinite(share) and share >= 0):
             raise ValueError(f"class {name!r}: share must be a number of at least 0, got {share}")
-    # Unsaid ownership follows the modes: a class that may drive owns a car (S231).
+    # Unsaid ownership follows the modes: a class that may drive owns a car (S231); one whose
+    # modes are unsaid may use every mode, so it owns a car, a bike and a pass (S243).
     implied = {
-        "owns_car": bool(modes) and any(m in ("car", "car_transit") for m in modes),
-        "owns_bike": bool(modes) and any(m in ("bike", "bike_transit") for m in modes),
-        "has_transit_pass": bool(modes) and any("transit" in m for m in modes),
+        "owns_car": modes is None or any(m in ("car", "car_transit") for m in modes),
+        "owns_bike": modes is None or any(m in ("bike", "bike_transit") for m in modes),
+        "has_transit_pass": modes is None or any("transit" in m for m in modes),
     }
     entry: dict[str, Any] = {"share": share, "modes": modes}
     for key in _OWNERSHIP:
@@ -319,16 +320,16 @@ def _class_table(classes: Mapping[str, object]) -> dict[str, dict[str, Any]]:
 def demand_read_classes(path: str | Path) -> dict[str, dict[str, Any]]:
     """Read a class table (``classes.csv``): one row per traveller class (S231).
 
-    Columns: ``class`` (its name, as the trips' ``user_class``); optionally ``share`` (the share
-    of the people in the class, for ``demand_assign_classes``), ``modes`` (the modes its
-    travellers may use, separated by ``;``: ``car;bike;walk``; empty: every mode the run
-    offers), ``owns_car``, ``owns_bike`` and ``has_transit_pass`` (``1`` or ``0``; empty: as the
-    modes imply, a car for a class that may drive or park and ride, a bike for one that may
-    cycle, a pass for one that may take transit), any ``beta_*`` coefficient of the choice
+    Columns: ``class`` (its name, as the trips' ``user_class``); optionally ``share`` (the share of
+    the people in the class, for ``demand_assign_classes``), ``modes`` (the modes its travellers may
+    use, separated by ``;``: ``car;bike;walk``; empty: every mode the run offers), ``owns_car``,
+    ``owns_bike`` and ``has_transit_pass`` (``1`` or ``0``; empty: as the modes imply, a car for a
+    class that may drive or park and ride, a bike for one that may cycle, a pass for one that may
+    take transit, all three when the modes are empty), any ``beta_*`` coefficient of the choice
     model (``beta_mode_bike``, ``beta_time_min`` …; empty: the model's own) and the class's own
-    choice-set limits in seconds, ``walk_max_s``, ``bike_max_s`` and ``access_walk_max_s``
-    (empty: the run's ``mode_options`` and ``transit_options``). Every value is what the user
-    gives, not a calibration.
+    choice-set limits in seconds, ``walk_max_s``, ``bike_max_s`` and ``access_walk_max_s`` (empty:
+    the run's ``mode_options`` and ``transit_options``). Every value is what the user gives, not a
+    calibration.
 
     Returns:
         ``{class: {"share", "modes", "owns_car", "owns_bike", "has_transit_pass", "betas",

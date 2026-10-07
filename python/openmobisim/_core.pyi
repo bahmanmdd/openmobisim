@@ -882,7 +882,8 @@ def run_pipeline(
             one of `persons`/`persons_path` may be given.
         persons_path: A ``persons.parquet`` path, instead of `persons`.
         class_defaults: ``{class_name: (owns_car, owns_bike,
-            has_transit_pass)}`` — what each class owns by default.
+            has_transit_pass)}`` — what each class owns by default; a class not listed owns
+            a car, a bike and a pass (S243).
         class_modes: ``{class_name: [mode, ...]}`` — the modes each class's travellers
             may use (S231); a class not listed may use every mode the run offers.
         class_options: ``{class_name: {beta_name: value}}`` — each class's own

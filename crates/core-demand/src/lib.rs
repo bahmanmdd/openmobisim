@@ -24,8 +24,9 @@
 //! are a build parameter, not something this crate invents: the `[user_classes]`
 //! table that would supply them is scenario schema, which brief §6a puts in
 //! the user's hands, not the assistant's. An empty [`travellers::ClassDefaults`]
-//! — every class defaults to owning nothing — is a safe, fully-overridable
-//! placeholder until that table exists.
+//! — every class defaults to owning nothing — is the crate's own placeholder;
+//! the scenario layer gives a class it was not told about a car, a bike and a
+//! pass instead (S243), as that class may use every mode.
 //!
 //! Per-trip attribute columns beyond the ones S97 names ("carried as
 //! attributes for choice models") are deferred for the same reason: nothing

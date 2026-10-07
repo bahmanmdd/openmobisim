@@ -64,6 +64,9 @@ pub struct Ownership {
 impl Ownership {
     /// Owns nothing.
     pub const NONE: Ownership = Ownership { car: false, bike: false, transit_pass: false };
+    /// Owns a car and a bike and holds a transit pass: what a traveller who may use every mode
+    /// needs (S243).
+    pub const ALL: Ownership = Ownership { car: true, bike: true, transit_pass: true };
 
     /// Apply a `persons.parquet` row's overrides, field by field — each of
     /// `owns_car`, `owns_bike`, `has_transit_pass` overrides independently of
@@ -96,10 +99,15 @@ impl Ownership {
 /// something this crate invents. See the crate docs for why: the
 /// `[user_classes]` table that would populate this is scenario schema.
 ///
-/// A class with no declared default owns nothing — a safe, fully-overridable
-/// placeholder for as long as no scenario layer supplies real defaults.
+/// A class with no declared default takes the fallback: [`Ownership::NONE`]
+/// unless [`ClassDefaults::with_fallback`] says otherwise. The scenario layer
+/// gives every undeclared class [`Ownership::ALL`] (S243: a class not listed
+/// may use every mode, so it owns what they need).
 #[derive(Clone, Debug, Default)]
-pub struct ClassDefaults(HashMap<String, Ownership>);
+pub struct ClassDefaults {
+    declared: HashMap<String, Ownership>,
+    fallback: Ownership,
+}
 
 impl ClassDefaults {
     /// No class has a declared default; every traveller owns nothing unless
@@ -112,14 +120,21 @@ impl ClassDefaults {
     /// Declare `class`'s default ownership.
     #[must_use]
     pub fn with_default(mut self, class: impl Into<String>, ownership: Ownership) -> Self {
-        self.0.insert(class.into(), ownership);
+        self.declared.insert(class.into(), ownership);
         self
     }
 
-    /// `class`'s default, or [`Ownership::NONE`] if undeclared.
+    /// What a class with no declared default owns (unless set: [`Ownership::NONE`]).
+    #[must_use]
+    pub fn with_fallback(mut self, ownership: Ownership) -> Self {
+        self.fallback = ownership;
+        self
+    }
+
+    /// `class`'s default, or the fallback if undeclared.
     #[must_use]
     pub fn default_for(&self, class: &str) -> Ownership {
-        self.0.get(class).copied().unwrap_or(Ownership::NONE)
+        self.declared.get(class).copied().unwrap_or(self.fallback)
     }
 }
 

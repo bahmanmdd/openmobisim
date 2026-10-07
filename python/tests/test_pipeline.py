@@ -49,8 +49,9 @@ def test_a_traveller_without_a_car_is_not_simulated() -> None:
     trips = ms.examples.fixed_car_trips(
         g, [("bob", (0, 0), (2, 2), 8.0, None)], user_class="pedestrian"
     )
-    # No class default declares ownership for "pedestrian".
-    sc = ms.Scenario.from_parts(network=g, demand=trips, classes=car_owning_commuters())
+    # "pedestrian" owns nothing (a class not listed would own a car, S243).
+    classes = {**car_owning_commuters(), "pedestrian": (False, False, False)}
+    sc = ms.Scenario.from_parts(network=g, demand=trips, classes=classes)
     run = sc.run(run_id="pytest-no-car")
 
     assert run.completion["no_vehicle_available"] == 1

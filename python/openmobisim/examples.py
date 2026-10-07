@@ -70,10 +70,10 @@ def fixed_car_trips(
         trips: ``(traveller_id, (origin_row, origin_col),
             (destination_row, destination_col), departure_hour, weight)``
             tuples. ``weight=None`` takes the scenario's default weight.
-        user_class: The class every row is tagged with. Give this class a
-            car in ``classes`` — passed to ``Scenario.from_parts``,
-            not here — or every trip in this table reports
-            ``no_vehicle_available``.
+        user_class: The class every row is tagged with. A class that
+            ``classes`` (passed to ``Scenario.from_parts``, not here) does not
+            list owns a car (S243); one listed without a car reports every trip
+            in this table as ``no_vehicle_available``.
 
     Returns:
         Rows in the schema ``Scenario.from_parts``' ``demand`` argument (or
@@ -121,8 +121,8 @@ def trips_random(
     figures can be demonstrated and its cost measured. The same ``seed`` always
     gives the same trips.
 
-    Give the class a car in ``classes`` when building the scenario, or
-    every trip reports ``no_vehicle_available``.
+    A class that ``classes`` does not list owns a car (S243); one listed
+    without a car reports every trip as ``no_vehicle_available``.
 
     Args:
         network: Any network.

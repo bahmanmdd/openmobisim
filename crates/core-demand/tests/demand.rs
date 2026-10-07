@@ -232,6 +232,16 @@ fn ownership_is_the_class_default_unless_a_person_overrides_it() {
 }
 
 #[test]
+fn an_undeclared_class_takes_the_fallback() {
+    let declared =
+        ClassDefaults::new().with_default("commuter", Ownership { car: true, ..Ownership::NONE });
+    assert_eq!(declared.default_for("visitor"), Ownership::NONE, "unset: owns nothing");
+    let everything = declared.with_fallback(Ownership::ALL);
+    assert_eq!(everything.default_for("visitor"), Ownership::ALL);
+    assert!(!everything.default_for("commuter").bike, "a declared class keeps its own");
+}
+
+#[test]
 fn a_persons_row_for_an_unknown_traveller_is_recorded_and_ignored() {
     let path = temp_path("unknown_person.parquet");
     write_trips(&path, &[trip("erin", 0, (4.80, 45.70), (4.81, 45.70))]);

@@ -643,7 +643,8 @@ pub fn run_pipeline(
         }
     };
 
-    let mut class_defaults_built = ClassDefaults::new();
+    // A class the scenario does not list may use every mode, so it owns what they need (S243).
+    let mut class_defaults_built = ClassDefaults::new().with_fallback(Ownership::ALL);
     if let Some(map) = class_defaults {
         for (class, (car, bike, transit_pass)) in map {
             class_defaults_built =

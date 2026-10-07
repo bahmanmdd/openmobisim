@@ -1141,29 +1141,29 @@ class Scenario:
             persons: The ``persons.parquet`` equivalent — an in-memory table,
                 a file path, or ``None`` if every traveller takes their
                 class's default ownership.
-            classes: The traveller classes (S231), ``{class_name: columns}``, a trip's class
-                being its ``user_class``: ``demand_read_classes`` reads them from a CSV file, or
-                give a dict of the same columns. A class may say ``modes`` (the modes its
-                travellers may use: ``["car", "transit", "car_transit"]``; unsaid: every mode
-                the run offers), ``owns_car``, ``owns_bike``, ``has_transit_pass`` (what each
-                of them owns, unless a ``persons`` row says otherwise; unsaid: as its modes
-                imply, a car for a class that may drive or park and ride, a bike for one that
-                may cycle) and any ``beta_*`` coefficient of the choice model (its own mode
+            classes: The traveller classes (S231), ``{class_name: columns}``, a trip's class being
+                its ``user_class``: ``demand_read_classes`` reads them from a CSV file, or give a
+                dict of the same columns. A class may say ``modes`` (the modes its travellers may
+                use: ``["car", "transit", "car_transit"]``; unsaid: every mode the run offers),
+                ``owns_car``, ``owns_bike``, ``has_transit_pass`` (what each of them owns, unless a
+                ``persons`` row says otherwise; unsaid: as its modes imply, a car for a class that
+                may drive or park and ride, a bike for one that may cycle, all three for one whose
+                modes are unsaid) and any ``beta_*`` coefficient of the choice model (its own mode
                 constants, ``beta_mode_bike`` …, or its own value of time, ``beta_time_min``;
-                unsaid: ``choice_options``'), for ``"logit"`` and ``"nested_logit"``, and its
-                own choice-set limits in seconds (S235): ``walk_max_s`` and ``bike_max_s``,
-                the longest walk and ride offered to its trips choosing their mode, and
-                ``access_walk_max_s``, the longest walk to or from a stop (unsaid:
-                ``mode_options``' and ``transit_options``'; for example a class of keen
-                cyclists riding up to 90 minutes, ``{"bike_max_s": 5400}``); its
-                ``share`` is read only by ``demand_assign_classes``. The tuple
-                ``(owns_car, owns_bike, has_transit_pass)`` is a class that says only what it
-                owns. **When the classes say their modes and ``modes`` is not given, the run
-                offers every mode a class names**, and a trip without a stated mode chooses
-                among those its class may use. A class not listed may use every mode, with
-                the model's coefficients, and owns nothing unless a ``persons`` row says so.
-                A class with none of the run's modes leaves its choosing trips without an
-                itinerary. Every value is the user's, not a calibration.
+                unsaid: ``choice_options``'), for ``"logit"`` and ``"nested_logit"``, and its own
+                choice-set limits in seconds (S235): ``walk_max_s`` and ``bike_max_s``, the longest
+                walk and ride offered to its trips choosing their mode, and ``access_walk_max_s``,
+                the longest walk to or from a stop (unsaid: ``mode_options``' and
+                ``transit_options``'; for example a class of keen cyclists riding up to 90 minutes,
+                ``{"bike_max_s": 5400}``); its ``share`` is read only by ``demand_assign_classes``.
+                The tuple ``(owns_car, owns_bike, has_transit_pass)`` is a class that says only what
+                it owns. **When the classes say their modes and ``modes`` is not given, the run
+                offers every mode a class names**, and a trip without a stated mode chooses among
+                those its class may use. A class not listed (all of them, without ``classes``) may
+                use every mode, with the model's coefficients, and owns a car, a bike and a transit
+                pass unless a ``persons`` row says otherwise (S243). A class with none of the run's
+                modes leaves its choosing trips without an itinerary. Every value is the user's, not
+                a calibration.
             default_weight: How many people a simulated traveller stands for,
                 for a trip whose row gives no weight. 1 simulates everyone; a
                 larger number is faster and coarser.
