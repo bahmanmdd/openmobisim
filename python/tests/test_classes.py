@@ -15,13 +15,22 @@ from __future__ import annotations
 import openmobisim as ms
 import pytest
 
-TABLE = """class,share,modes,owns_car,owns_bike,has_transit_pass,beta_mode_car,beta_mode_bike,beta_mode_walk,beta_mode_transit,walk_max_s,bike_max_s,access_walk_max_s
+#: A table using every column and an empty cell (unsaid): the six classes of S231 (S234's shares).
+SIX = """class,share,modes,owns_car,owns_bike,has_transit_pass,beta_mode_car,beta_mode_bike,beta_mode_walk,beta_mode_transit,walk_max_s,bike_max_s,access_walk_max_s
 car_captive,0.05,car,1,0,0,0,,,,,,
 bike_enthusiast,0.45,bike;walk;transit;bike_transit,0,1,1,,1.5,0,0,,5400,
 transit_only,0.15,walk;transit,0,0,1,,,0,0.5,,,
 open_to_all,0.25,car;bike;walk;transit;car_transit;bike_transit,1,1,1,0,0,0,0,,,
 walker,0.05,walk;transit,0,0,1,,,1.0,0,2700,,
 park_and_ride_commuter,0.05,car;transit;car_transit,1,0,1,0,,,0.3,,,
+"""  # noqa: E501
+
+#: The example classes (``examples.traveller_classes()``): four by ownership (S244, fitted S250).
+TABLE = """class,share,modes,owns_car,owns_bike,has_transit_pass,beta_mode_bike,beta_bike_mixed_km
+car_and_bike,0.40,car;bike;walk;transit;car_transit;bike_transit,1,1,1,3.0,-0.16
+no_vehicle,0.30,walk;transit,0,0,1,3.0,-0.16
+bike_only,0.20,walk;bike;transit;bike_transit,0,1,1,3.0,-0.16
+car_only,0.10,walk;car;transit;car_transit,1,0,1,3.0,-0.16
 """  # noqa: E501
 
 
@@ -56,9 +65,9 @@ def modes_of(run: ms.Run) -> dict[str, set[str]]:
 # --- the class table ------------------------------------------------------------------------------
 
 
-def test_the_example_table_is_read_as_written(tmp_path) -> None:
+def test_a_class_table_is_read_as_written(tmp_path) -> None:
     path = tmp_path / "classes.csv"
-    path.write_text(TABLE)
+    path.write_text(SIX)
     classes = ms.demand_read_classes(path)
     assert list(classes) == [
         "car_captive", "bike_enthusiast", "transit_only", "open_to_all", "walker",

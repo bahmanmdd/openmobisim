@@ -7,8 +7,8 @@ here to there" is not a different demand format from the general one — it
 is what the same trips schema already expresses when ``classes`` give its
 class a car and nothing else. This helper only saves writing out the
 eight-column table by hand; it does not introduce a second demand shape.
-``traveller_classes`` is an example class table: six classes, each with the
-modes its travellers may use and its own mode constants. ``case`` gives a
+``traveller_classes`` is an example class table: four classes by what people
+own, each with the modes its vehicles allow, weighing alike. ``case`` gives a
 **starter case** (S240): Amsterdam, Paris, Lyon, Sioux Falls or Nguyen–Dupuis,
 its files fetched once and checked, read in one call each.
 """
@@ -208,55 +208,38 @@ def trips_random(
 
 
 def traveller_classes() -> dict[str, dict]:
-    """Six example traveller classes (S231), in the shape of ``demand_read_classes``.
+    """Four example traveller classes by what people own, as ``demand_read_classes`` gives them.
 
-    ==========================  =====  ==================================  ===========  ===========
-    Class                       Share  Modes                               Constants    Own limits
-    ==========================  =====  ==================================  ===========  ===========
-    ``car_captive``             0.05   car                                 car 0
-    ``bike_enthusiast``         0.45   bike, walk, transit, bike-and-ride  bike 1.5     ride 90 min
-    ``transit_only``            0.15   walk, transit                       transit 0.5
-    ``open_to_all``             0.25   all six                             all 0
-    ``walker``                  0.05   walk, transit                       walk 1.0     walk 45 min
-    ``park_and_ride_commuter``  0.05   car, transit, park-and-ride         transit 0.3
-    ==========================  =====  ==================================  ===========  ===========
+    The classes of S244, their constant fitted in S250:
+
+    ================  =====  ==================================
+    Class             Share  Modes
+    ================  =====  ==================================
+    ``car_and_bike``  0.40   all six
+    ``no_vehicle``    0.30   walk, transit
+    ``bike_only``     0.20   walk, bike, transit, bike-and-ride
+    ``car_only``      0.10   walk, car, transit, park-and-ride
+    ================  =====  ==================================
 
     Each class owns what its modes need (a car for one that may drive or park and ride, a bike
-    for one that may cycle, a transit pass for one that may take transit); a constant not shown
-    is 0. A class's own limits (S235) replace the run's for its trips choosing their mode
-    (``bike_max_s`` 5400, ``walk_max_s`` 2700); the others take the run's (30 minutes' walk,
-    60 minutes' ride, 30 minutes' walk to a stop). **Illustrative, not calibrated**: a starting
-    point to replace with a study's own. The shares were chosen (S234, refitted under these
-    limits in S235) so that a synthetic morning commute in Amsterdam comes near the city's split
-    between cycling, public transport and driving (about 38 : 17 : 23); walking, mostly short
-    trips, needs a demand that has them.
-    ``demand_assign_classes(trips, traveller_classes())`` draws them for a demand's travellers;
-    ``Scenario.from_parts(..., classes=traveller_classes())`` runs them.
+    for one that may cycle, every class a transit pass) and **all four weigh alike**: a bike
+    constant of 3.0 (every other mode's 0) and each kilometre of a ride in mixed traffic at
+    -0.16 on top of its time (``beta_bike_mixed_km``: a minute in mixed traffic counting 1.2, as
+    the bike route choice assumes). The constant was fitted (S250) so that a synthetic morning
+    commute in Amsterdam keeps the city's ratio of cycling to driving (about 38 : 23); public
+    transport's share then follows from who owns no vehicle, and walking, mostly short trips,
+    needs a demand that has them. The shares come from the utilities and what people own, which
+    is what a study changes. **Illustrative, not calibrated**: a starting point to replace with a
+    study's own. ``demand_assign_classes(trips, traveller_classes())`` draws them for a demand's
+    travellers; ``Scenario.from_parts(..., classes=traveller_classes())`` runs them.
     """
     from openmobisim.demand import _class_table
 
-    every = ["car", "bike", "walk", "transit", "car_transit", "bike_transit"]
+    betas = {"beta_mode_bike": 3.0, "beta_bike_mixed_km": -0.16}
+    every = ("car", "bike", "walk", "transit", "car_transit", "bike_transit")
     return _class_table({
-        "car_captive": {"share": 0.05, "modes": ["car"], "beta_mode_car": 0.0},
-        "bike_enthusiast": {
-            "share": 0.45, "modes": ["bike", "walk", "transit", "bike_transit"],
-            "beta_mode_bike": 1.5, "beta_mode_walk": 0.0, "beta_mode_transit": 0.0,
-            "bike_max_s": 5400,
-        },
-        "transit_only": {
-            "share": 0.15, "modes": ["walk", "transit"], "beta_mode_walk": 0.0,
-            "beta_mode_transit": 0.5,
-        },
-        "open_to_all": {
-            "share": 0.25, "modes": every, "beta_mode_car": 0.0, "beta_mode_bike": 0.0,
-            "beta_mode_walk": 0.0, "beta_mode_transit": 0.0,
-        },
-        "walker": {
-            "share": 0.05, "modes": ["walk", "transit"], "beta_mode_walk": 1.0,
-            "beta_mode_transit": 0.0, "walk_max_s": 2700,
-        },
-        "park_and_ride_commuter": {
-            "share": 0.05, "modes": ["car", "transit", "car_transit"], "beta_mode_car": 0.0,
-            "beta_mode_transit": 0.3,
-        },
+        "car_and_bike": {"share": 0.40, "modes": list(every), **betas},
+        "no_vehicle": {"share": 0.30, "modes": ["walk", "transit"], **betas},
+        "bike_only": {"share": 0.20, "modes": ["walk", "bike", "transit", "bike_transit"], **betas},
+        "car_only": {"share": 0.10, "modes": ["walk", "car", "transit", "car_transit"], **betas},
     })  # fmt: skip
