@@ -22,7 +22,7 @@ classifiers = [
 # The runtime dependency list is numpy and nothing else, on purpose: every
 # addition is something a user has to install to run a simulation, and the
 # promise is `pip install openmobisim` with no compiler and no conda-only path.
-dependencies = ["numpy>=1.24"]
+dependencies = ["numpy>=2.3"]
 
 # Version comes from Cargo.toml, so there is one place to bump it.
 dynamic = ["version"]
@@ -34,21 +34,26 @@ openmobisim = "openmobisim.__main__:main"
 Repository = "https://github.com/bahmanmdd/openmobisim"
 
 [project.optional-dependencies]
+# Minimum versions (S247): the Scientific Python ecosystem's dated support policy
+# (SPEC 0) for the release, 2026-Q4 — versions released in the last two years —
+# tested in CI by the `python-minimum` job. Python itself stays at 3.11: the wheel
+# is abi3 and the core Rust, so older interpreters cost nothing. The exact versions
+# the notebooks and reference results were made with: requirements/notebooks.txt.
 # The notebook stack is an extra, not a dependency: a user running openmobisim
 # inside an optimisation loop should not be made to install Jupyter.
 notebooks = [
-    "jupyterlab>=4.0",
-    "matplotlib>=3.8",
-    "pandas>=2.0",
-    "polars>=1.0",
-    "pyarrow>=15.0",
+    "jupyterlab>=4.3",
+    "matplotlib>=3.11",
+    "pandas>=2.3",
+    "polars>=1.20",
+    "pyarrow>=19.0",
 ]
 # Figures (`openmobisim.viz`). An extra, not a dependency: a run inside an
 # optimisation loop should not pull in a plotting library.
-viz = ["matplotlib>=3.8"]
+viz = ["matplotlib>=3.11"]
 dev = [
     "maturin>=1.9,<2.0",
-    "matplotlib>=3.8",
+    "matplotlib>=3.11",
     "pytest>=8.0",
     "pytest-xdist>=3.5",
     "ruff>=0.6",
