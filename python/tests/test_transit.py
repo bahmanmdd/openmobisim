@@ -205,6 +205,17 @@ def test_map_transit_draws_a_run_with_a_timetable(tmp_path: Path) -> None:
         # X-59: the footer names where the network came from; the toy's is not OpenStreetMap's.
         footer = " ".join(t.get_text() for t in fig.texts)
         assert f"{net.source} network" in footer and "OpenStreetMap" not in footer
+    # By line (T-8): one colour per line, in the legend by name; the stops named on a small network.
+    fig = viz.map_transit(run, colour="line")
+    texts = [t.get_text() for t in fig.texts] + [t.get_text() for t in fig.axes[0].texts]
+    for line in set(run.transit_calls()["line"]):
+        assert any(t.startswith(line) for t in texts), line
+    names = set(run.transit.stops()["name"])
+    assert names <= set(texts), "every stop named"
+    unnamed = viz.map_transit(run, stop_labels=False)
+    assert not names & {t.get_text() for t in unnamed.axes[0].texts}
+    with pytest.raises(ValueError, match="colour"):
+        viz.map_transit(run, colour="mode")
     plain = ms.Scenario.from_parts(
         network=net,
         demand=[toy_trip(net, "a", "N1", "D2", 0, "walk")],
