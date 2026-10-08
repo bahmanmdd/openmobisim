@@ -224,21 +224,26 @@ def traveller_classes() -> dict[str, dict]:
     Each class owns what its modes need (a car for one that may drive or park and ride, a bike
     for one that may cycle, every class a transit pass) and **all four weigh alike**: a bike
     constant of 3.0 (every other mode's 0) and each kilometre of a ride in mixed traffic at
-    -0.16 on top of its time (``beta_bike_mixed_km``: a minute in mixed traffic counting 1.2, as
-    the bike route choice assumes). The constant was fitted (S250) so that a synthetic morning
+    -0.16 on top of its time (``beta_bike_mixed_km``: at the default time weight and speed in
+    mixed traffic, a minute there counting 1.2, as the bike route choice assumes). The constant
+    was fitted (S250) so that a synthetic morning
     commute in Amsterdam keeps the city's ratio of cycling to driving (about 38 : 23); public
     transport's share then follows from who owns no vehicle, and walking, mostly short trips,
     needs a demand that has them. The shares come from the utilities and what people own, which
     is what a study changes. **Illustrative, not calibrated**: a starting point to replace with a
     study's own. ``demand_assign_classes(trips, traveller_classes())`` draws them for a demand's
-    travellers; ``Scenario.from_parts(..., classes=traveller_classes())`` runs them.
+    travellers; ``Scenario.from_parts(..., classes=traveller_classes())`` runs them. They assume
+    a timetable: ``no_vehicle`` may only walk or take transit, so in a run without one its trips
+    beyond the walk limit have no alternative. A class's coefficients replace the run's
+    (``choice_options``) by name, so with these classes a run-wide ``beta_mode_bike`` or
+    ``beta_bike_mixed_km`` changes nothing.
     """
     from openmobisim.demand import _class_table
+    from openmobisim.scenario import MODES
 
     betas = {"beta_mode_bike": 3.0, "beta_bike_mixed_km": -0.16}
-    every = ("car", "bike", "walk", "transit", "car_transit", "bike_transit")
     return _class_table({
-        "car_and_bike": {"share": 0.40, "modes": list(every), **betas},
+        "car_and_bike": {"share": 0.40, "modes": list(MODES), **betas},
         "no_vehicle": {"share": 0.30, "modes": ["walk", "transit"], **betas},
         "bike_only": {"share": 0.20, "modes": ["walk", "bike", "transit", "bike_transit"], **betas},
         "car_only": {"share": 0.10, "modes": ["walk", "car", "transit", "car_transit"], **betas},

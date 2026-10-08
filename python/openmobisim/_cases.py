@@ -219,10 +219,11 @@ def case(name: str, root: str | Path | None = None, *, check: bool = True) -> Ca
     if name not in cases:
         raise ValueError(f"no starter case {name!r}; the cases: {sorted(cases)}")
     entry = cases[name]
-    candidates = [Path(root)] if root is not None else []
-    if root is None and os.environ.get("OPENMOBISIM_DATA"):
-        candidates.append(Path(os.environ["OPENMOBISIM_DATA"]))
-    candidates.append(_cache())
+    if root is not None:  # a folder given is the only place looked in
+        candidates = [Path(root)]
+    else:
+        data = os.environ.get("OPENMOBISIM_DATA")
+        candidates = ([Path(data)] if data else []) + [_cache()]
     folder = next((c / name for c in candidates if (c / name / "case.json").exists()), None)
     if folder is None:
         if root is not None:
@@ -289,7 +290,9 @@ def _compare(got: dict[str, Any], ref: dict[str, Any]) -> tuple[str, list[str]]:
         )
         if same:
             return "same", []
-        notes.append("not the same to the bit on the reference's platform")
+        # The reference's own platform and version must repeat it to the bit: anything else is
+        # a fault, however close the numbers.
+        return "different", ["not the same to the bit on the reference's platform"]
     tol = CHECK_TOLERANCE
     off_completed = 100 * abs(got["completed"] - ref["completed"]) / max(ref["completed"], 1)
     off_mean = 100 * abs(got["mean_trip_s"] - ref["mean_trip_s"]) / max(ref["mean_trip_s"], 1e-9)
@@ -301,7 +304,7 @@ def _compare(got: dict[str, Any], ref: dict[str, Any]) -> tuple[str, list[str]]:
         notes.append(f"mean trip {got['mean_trip_s']:.1f} s against {ref['mean_trip_s']:.1f} s")
     if off_share > tol["mode_share_points"]:
         notes.append(f"a mode's share differs by {off_share:.2f} points")
-    within = not any(n for n in notes if not n.startswith("not the same to the bit"))
+    within = not notes
     return ("within tolerance" if within else "different"), notes
 
 

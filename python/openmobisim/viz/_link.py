@@ -324,12 +324,16 @@ def map_link(
 
     # Furniture.
     step = run.link_bins().bin_seconds
-    window = (first if first is not None else int(link_bins.bins().min())) * step
-    end = (stop if stop is not None else int(link_bins.bins().max()) + 1) * step
-    default_subtitle = (
-        f"{_clock(window)}–{_clock(end)} · one ribbon per direction · "
-        f"width = volume, colour = {_COLOUR_WORDS[colour]}"
-    )
+    seen = link_bins.bins()
+    if len(seen) or (first is not None and stop is not None):
+        window = (first if first is not None else int(seen.min())) * step
+        end = (stop if stop is not None else int(seen.max()) + 1) * step
+        default_subtitle = (
+            f"{_clock(window)}–{_clock(end)} · one ribbon per direction · "
+            f"width = volume, colour = {_COLOUR_WORDS[colour]}"
+        )
+    else:  # no vehicle crossed a link on this layer: nothing to time
+        default_subtitle = "no traffic on this layer · one ribbon per direction"
     level = _LEVEL_NAMES.get(run.flow_level, str(run.flow_level))
     stepping = f" · step {run.flow_step_s} s" if run.flow_level else ""
     source = (

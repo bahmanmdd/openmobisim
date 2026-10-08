@@ -12,6 +12,7 @@ does not state.
 from __future__ import annotations
 
 import math
+import numbers
 import time
 import warnings
 from collections.abc import Mapping, Sequence
@@ -411,16 +412,27 @@ def network_read_table(
     # hold, recorded as a diagnostic) rather than failing, but nothing in
     # `network_from_columns` surfaces that diagnostic to Python yet, so a
     # requested capacity silently becoming a different number needs its own
-    # check here: sort by id, the same rule `RoadNetworkBuilder::build` orders
-    # links by, so this lines up with `link_capacity_pcu_h()` regardless of
-    # what the caller's own ids look like.
-    order = sorted(range(len(link_ids)), key=lambda i: link_ids[i])
+    # check here. Links are matched by id, since the builder leaves out a link
+    # that names a node the node table lacks, and the stated capacity is
+    # compared after the network's global `capacity_factor`, which scales
+    # every capacity on purpose.
+    built = {link_id: index for index, link_id in enumerate(network.link_ids())}
+    dropped = [link_id for link_id in link_ids if link_id not in built]
+    if dropped:
+        warnings.warn(
+            f"{len(dropped)} link(s) name a node the node table does not have and were left "
+            f"out of the network: {', '.join(dropped[:5])}{' …' if len(dropped) > 5 else ''}.",
+            stacklevel=2,
+        )
+    # `_core` directly: the parameter `network_options` shadows the function of that name.
+    factor = dict(_core.network_options(network))["capacity_factor"]
     actual_capacity = network.link_capacity_pcu_h()
     reduced = sum(
         1
-        for rank, i in enumerate(order)
-        if link_capacity_veh_h[i] is not None
-        and abs(actual_capacity[rank] - link_capacity_veh_h[i]) > 1.0
+        for link_id, asked in zip(link_ids, link_capacity_veh_h, strict=True)
+        if asked is not None
+        and link_id in built
+        and abs(actual_capacity[built[link_id]] - asked * factor) > 1.0
     )
     if reduced:
         warnings.warn(
@@ -482,7 +494,7 @@ def network_edit(
             choice models see (``bike_separated_km`` …).
 
     A link is named by its id (``network.link_ids()``, ``network.layer("bike").link_ids()``
-    for a bike link) or by its index (an ``int``, as in the per-link arrays).
+    for a bike link) or by its index (an integer, Python's or NumPy's, as in the per-link arrays).
 
     Returns:
         The changed network.
@@ -496,10 +508,13 @@ def network_edit(
         ids: dict[str, int] | None = None
         out = []
         for link in links:
-            if isinstance(link, int):
-                if not 0 <= link < graph.link_count:
-                    raise ValueError(f"{what}: there is no link {link} ({graph.link_count} links)")
-                out.append(link)
+            # An index is any integer, NumPy's too (what the per-link arrays and
+            # `np.flatnonzero` give); a bool is not one.
+            if isinstance(link, numbers.Integral) and not isinstance(link, bool):
+                index = int(link)
+                if not 0 <= index < graph.link_count:
+                    raise ValueError(f"{what}: there is no link {index} ({graph.link_count} links)")
+                out.append(index)
                 continue
             if ids is None:
                 ids = {name: i for i, name in enumerate(graph.link_ids())}

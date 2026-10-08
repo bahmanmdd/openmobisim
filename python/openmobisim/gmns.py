@@ -42,7 +42,7 @@ from typing import Any
 import numpy as np
 
 from openmobisim import _core
-from openmobisim.network import LINK_CLASSES, network_read_table
+from openmobisim.network import LINK_CLASSES, network_edit, network_read_table
 
 __all__ = ["network_read_gmns", "network_write_gmns"]
 
@@ -236,9 +236,10 @@ def _directed(row: dict[str, str]) -> bool:
     return row.get("directed", "true").lower() not in ("false", "0", "no", "n")
 
 
-def _road_rows(folder: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _road_rows(folder: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     to_m, to_km_h = _units(folder)
     links: list[dict[str, Any]] = []
+    closed: list[str] = []  # a road class whose `allowed_uses` leave cars out: closed
     for row in _read(folder / "link.csv"):
         lanes = row.get("lanes", "")
         n = int(float(lanes)) if lanes else None
@@ -249,8 +250,15 @@ def _road_rows(folder: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]
         cls = row.get("facility_type", "")
         if cls not in LINK_CLASSES:
             cls = ""
-        if uses and not uses & {"auto", "car", "all"} and not cls:
+        no_cars = bool(uses) and not uses & {"auto", "car", "all"}
+        if no_cars and not cls:
             cls = "busway" if "bus" in uses else ("cycleway" if uses == {"bike"} else "footway")
+        elif no_cars and cls != "busway" and cls not in _NOT_DRIVEN:
+            # A road cars normally use, closed to them (as `network_write_gmns` writes a link
+            # `network_edit` closed): it stays that class and is closed again on reading.
+            closed.append(row["link_id"])
+            if not _directed(row):
+                closed.append(f"{row['link_id']}_r")
         base = {
             "from": row["from_node_id"],
             "to": row["to_node_id"],
@@ -276,7 +284,7 @@ def _road_rows(folder: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]
         }
         for r in _read(folder / "node.csv")
     ]
-    return links, nodes
+    return links, nodes, closed
 
 
 def _attach_layer(road: _core.Network, folder: Path, layer: str) -> _core.Network:
@@ -349,10 +357,12 @@ def network_read_gmns(
         raise ValueError(
             f"{folder} holds no GMNS network (node.csv and link.csv, or road/ with them)"
         )
-    links, nodes = _road_rows(road_folder)
+    links, nodes, closed = _road_rows(road_folder)
     network = network_read_table(
         links, nodes, length_unit="m", speed_unit="km_h", network_options=network_options
     )
+    if closed:
+        network = network_edit(network, close=closed)
     if road_folder != root:
         for layer in ("bike", "walk"):
             if (root / layer / "link.csv").exists():

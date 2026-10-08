@@ -8,12 +8,14 @@ OpenStreetMap extract instead.
 
 from __future__ import annotations
 
+import csv
+import io
 import math
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
 from openmobisim import _core
-from openmobisim.network import _load_rows
 
 __all__ = ["parking_read_table"]
 
@@ -70,6 +72,17 @@ def _fee(row: Mapping[str, Any], parking: str) -> float | None:
     return fee
 
 
+def _csv_rows(source: str) -> list[dict[str, str]]:
+    """A CSV or TSV table's rows, from its path or its text: quoted fields and blank cells kept."""
+    # The string is the table's text, not a path, if it has a line break or there is no such file.
+    is_path = "\n" not in source and Path(source).exists()
+    text = Path(source).read_text(encoding="utf-8-sig") if is_path else source
+    header = next((line for line in text.splitlines() if line.strip()), "")
+    delimiter = "\t" if "\t" in header else ","
+    reader = csv.DictReader(io.StringIO(text.strip("\n")), delimiter=delimiter)
+    return [{k.strip(): (v or "").strip() for k, v in row.items() if k} for row in reader]
+
+
 def parking_read_table(source: str | Iterable[Mapping[str, Any]]) -> _core.Parkings:
     """Parkings from a table: one row per parking.
 
@@ -96,7 +109,7 @@ def parking_read_table(source: str | Iterable[Mapping[str, Any]]) -> _core.Parki
         ValueError: If a required column is missing, a value is not valid, or a
             ``parking_id`` repeats.
     """
-    rows = _load_rows(source) if isinstance(source, str) else list(source)
+    rows = _csv_rows(source) if isinstance(source, str) else list(source)
     parsed = []
     for row in rows:
         lowered = {str(k).strip().lower(): v for k, v in row.items()}

@@ -586,7 +586,7 @@ function start() {
   if (p.get("p") !== null && HAS_ROUTES) selectPair(+p.get("p"), !p.get("z"));
   if (p.get("l") !== null) selectLink(+p.get("l"));
   levelButtons(); draw(); writeHash();
-  document.body.dataset.state = "ready"; document.body.dataset.links = NL; document.body.dataset.rows = RL.length;
+  document.body.dataset.state = "ready"; document.body.dataset.links = NL; document.body.dataset.rows = RL ? RL.length : 0;
 }
 start();
 })();
