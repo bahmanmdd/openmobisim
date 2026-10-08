@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from openmobisim import __version__
+from openmobisim.network import LINK_CLASSES
 from openmobisim.viz import _geometry as geo
 from openmobisim.viz._interactive_page import PAGE_CSS, PAGE_HTML, PAGE_JS
 from openmobisim.viz._provenance import network_source, run_identity
@@ -29,12 +30,8 @@ from openmobisim.viz._style import AMBER, EMBER, ION, THEMES, get_theme
 
 __all__ = ["map_interactive"]
 
-_CLASS_NAMES = [
-    "motorway", "motorway link", "trunk", "trunk link", "primary", "primary link",
-    "secondary", "secondary link", "tertiary", "tertiary link", "unclassified",
-    "residential", "living street", "service", "pedestrian", "footway", "cycleway", "ferry",
-    "busway",
-]  # fmt: skip
+#: The road classes' names as the page shows them, in the order of their numbers (X-23).
+_CLASS_NAMES = [name.replace("_", " ") for name in LINK_CLASSES]
 _LEVEL_NAMES = {0: "free flow", 2: "point queue", 3: "spatial queue", 4: "full"}
 #: Coordinates are stored in tenths of a metre as 32-bit integers: good to ~214 km.
 _UNIT_M = 0.1

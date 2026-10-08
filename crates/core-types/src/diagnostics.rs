@@ -303,8 +303,17 @@ impl Diagnostics {
         if n == 0 {
             return;
         }
-        let key = self.apply_cap(key);
-        *self.counts.entry(key).or_insert(0) += n;
+        let capped = self.apply_cap(key);
+        *self.counts.entry(capped).or_insert(0) += n;
+        if capped != key {
+            // Past the cap: say how many occurrences of this code lost their element (X-57).
+            let note = DiagKey::run_level(
+                key.category,
+                codes::DIAGNOSTIC_DETAIL_TRUNCATED,
+                Severity::Info,
+            );
+            *self.counts.entry(note).or_insert(0) += n;
+        }
     }
 
     /// Record one occurrence about a whole run rather than an element.
@@ -340,10 +349,16 @@ impl Diagnostics {
         self.counts.len()
     }
 
-    /// The total number of occurrences across every row.
+    /// The total number of occurrences across every row, less the
+    /// [`codes::DIAGNOSTIC_DETAIL_TRUNCATED`] rows, which count occurrences
+    /// already counted under their own code.
     #[must_use]
     pub fn total(&self) -> u64 {
-        self.counts.values().sum()
+        self.counts
+            .iter()
+            .filter(|(k, _)| k.code != codes::DIAGNOSTIC_DETAIL_TRUNCATED)
+            .map(|(_, &c)| c)
+            .sum()
     }
 
     /// The total recorded against one code, across every element and severity.

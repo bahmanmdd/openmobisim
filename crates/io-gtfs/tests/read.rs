@@ -273,3 +273,39 @@ fn a_frequency_run_whose_first_stop_has_a_dwell_keeps_its_times() {
     }
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// **Property (X-48):** a repeated `route_id` is skipped and counted, as a repeated stop or trip
+/// is; the first row of the route is the one kept.
+#[test]
+fn a_repeated_route_is_counted_as_a_skipped_row() {
+    let dir = std::env::temp_dir().join(format!("openmobisim-gtfs-route2-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let files = [
+        (
+            "stops.txt",
+            "stop_id,stop_name,stop_lat,stop_lon\nA,Alpha,52.37,4.90\nB,Bravo,52.37,4.91\n",
+        ),
+        (
+            "routes.txt",
+            "route_id,route_short_name,route_long_name,route_type\nR,1,One,3\nR,2,Two,0\n",
+        ),
+        ("trips.txt", "route_id,service_id,trip_id\nR,WK,F\n"),
+        (
+            "calendar.txt",
+            "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n\
+             WK,1,1,1,1,1,0,0,20261001,20261031\n",
+        ),
+        (
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             F,08:00:00,08:00:00,A,1\nF,08:10:00,08:10:00,B,2\n",
+        ),
+    ];
+    for (file, text) in files {
+        std::fs::write(dir.join(file), text).unwrap();
+    }
+    let (t, report) = read_gtfs(&dir, ServiceDate::parse("20261007"), &west_of_five).unwrap();
+    assert_eq!(report.rows_skipped, 1, "the second row of R");
+    assert_eq!(t.run_count(), 1);
+    std::fs::remove_dir_all(dir).ok();
+}

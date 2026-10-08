@@ -28,11 +28,8 @@ __all__ = ["LINK_CLASSES", "network_edit", "network_read_table"]
 #: and walk layers, a ferry crossing is a link of class ``"ferry"`` (S241).
 LINK_CLASSES: tuple[str, ...] = tuple(_core.link_classes())
 
-#: `RoadClass::Unclassified`'s position in `RoadClass::ALL` (Rust,
-#: `core-graph/src/defaults.rs`) — the same order `openmobisim.viz`'s
-#: `_interactive._CLASS_NAMES` mirrors, for the same reason: there is no
-#: Python-facing name for it to look up by.
-_UNCLASSIFIED_INDEX = 10
+#: The number ``Network.link_class()`` gives an unclassified road (X-23: looked up, not repeated).
+_UNCLASSIFIED_INDEX = LINK_CLASSES.index("unclassified")
 
 Row = Mapping[str, Any]
 Rows = Sequence[Row]

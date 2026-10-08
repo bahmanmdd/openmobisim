@@ -131,7 +131,7 @@ pub fn read_feed(
 ) -> Result<(Timetable, GtfsReport), GtfsError> {
     let mut report = GtfsReport::default();
     let stops = read_stops(source, keep, &mut report)?;
-    let routes = read_routes(source)?;
+    let routes = read_routes(source, &mut report)?;
 
     // The trips' services, counted, so the busiest weekday can be found.
     let mut services = Services::default();
@@ -401,7 +401,7 @@ struct Routes {
     specs: Vec<RouteSpec>,
 }
 
-fn read_routes(source: &mut FeedSource) -> Result<Routes, GtfsError> {
+fn read_routes(source: &mut FeedSource, report: &mut GtfsReport) -> Result<Routes, GtfsError> {
     let mut csv = open(source, "routes.txt")?;
     let id = required(&csv, "routes.txt", "route_id")?;
     let kind = required(&csv, "routes.txt", "route_type")?;
@@ -410,6 +410,7 @@ fn read_routes(source: &mut FeedSource) -> Result<Routes, GtfsError> {
     while csv.next()? {
         let external = csv.field(id).to_string();
         if routes.index.contains_key(&external) {
+            report.rows_skipped += 1; // a repeated route, counted as repeated stops and trips are (X-48)
             continue;
         }
         let short_name = match csv.get(short) {

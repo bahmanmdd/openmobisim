@@ -70,9 +70,11 @@ fn per_element_detail_is_capped_but_totals_stay_exact() {
     assert_eq!(diag.total(), u64::from(over), "the total must remain exact");
     assert_eq!(
         diag.len(),
-        MAX_ELEMENTS_PER_CODE + 1,
-        "capped elements plus the one run-level overflow row"
+        MAX_ELEMENTS_PER_CODE + 2,
+        "capped elements, the one run-level overflow row, and the row saying detail was cut"
     );
+    // X-57: how many occurrences lost their element is said under its own code.
+    assert_eq!(diag.count_of(codes::DIAGNOSTIC_DETAIL_TRUNCATED), 5_000);
 
     let overflow = DiagKey::new(
         Category::Modelling,
@@ -128,7 +130,11 @@ fn merging_past_the_cap_keeps_the_same_elements_whatever_a_map_s_order() {
         report.rows()
     };
     let once = merged();
-    assert_eq!(once.len(), MAX_ELEMENTS_PER_CODE + 1, "capped, plus the overflow row");
+    assert_eq!(
+        once.len(),
+        MAX_ELEMENTS_PER_CODE + 2,
+        "capped, the overflow row, the truncation row"
+    );
     for _ in 0..8 {
         assert_eq!(merged(), once, "fresh maps, fresh orders: the same report");
     }
