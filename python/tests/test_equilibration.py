@@ -151,9 +151,9 @@ def test_the_kpis_file_has_a_row_set_per_iteration():
     plain = plain[plain["mode"] == "all"]
     assert sorted(plain["metric"]) == sorted(
         [
-            "trips", "total_travel_time_s", "completed_trips", "truncated_trips",
-            "no_vehicle_available_trips", "no_feasible_path_trips", "mode_not_available_trips",
-            "completion_rate",
+            "trips", "people", "total_travel_time_s", "completed_trips", "completed_people",
+            "truncated_trips", "no_vehicle_available_trips", "no_feasible_path_trips",
+            "mode_not_available_trips", "completion_rate",
         ]
     )  # fmt: skip
 

@@ -89,8 +89,10 @@ def test_kpis_table_round_trips_through_pandas() -> None:
     df = run.kpis().to_pandas()
     expected = {
         "trips",
+        "people",
         "total_travel_time_s",
         "completed_trips",
+        "completed_people",
         "truncated_trips",
         "no_vehicle_available_trips",
         "no_feasible_path_trips",
