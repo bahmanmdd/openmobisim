@@ -433,8 +433,10 @@ fn hash_modes(h: &mut Fnv1a, trips: &Trips, layers: &StaticLayers) {
             Some(StaticLayer::Walk) => used[1] = true,
             None => {}
         }
-        // A transit trip walks to and from its stops (S199).
-        used[1] |= mode == Mode::Transit;
+        // A transit trip walks to and from its stops (S199), as park-and-ride and bike-and-ride
+        // do from their parking; bike-and-ride rides the bike layer to its station.
+        used[0] |= mode == Mode::BikeTransit;
+        used[1] |= matches!(mode, Mode::Transit | Mode::CarTransit | Mode::BikeTransit);
     }
     if !any {
         return;
