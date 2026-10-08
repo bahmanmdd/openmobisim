@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["run_identity"]
+__all__ = ["network_source", "run_identity"]
 
 #: How many hex digits of the fingerprint a footer shows; the whole 16 are in
 #: ``Run.fingerprint``, the manifest and every results file.
@@ -25,3 +25,14 @@ def run_identity(run: Any) -> str:
         parts.append(text)
     parts += [f"seed {run.master_seed}", f"fingerprint {run.fingerprint[:_SHOWN]}"]
     return " · ".join(parts)
+
+
+def network_source(network: Any) -> str:
+    """Where the drawn network came from, for a footer.
+
+    The OpenStreetMap credit its licence asks for, or ``table network``, ``synthetic network``
+    and so on for a network that is not OpenStreetMap's (X-59).
+    """
+    if network.source == "osm":
+        return "© OpenStreetMap contributors (ODbL)"
+    return f"{network.source} network"

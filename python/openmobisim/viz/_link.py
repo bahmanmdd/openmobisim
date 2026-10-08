@@ -23,7 +23,7 @@ from openmobisim.viz._figure import (
     ramp_rgb,
     rgb,
 )
-from openmobisim.viz._provenance import run_identity
+from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._style import Theme, get_theme
 
 __all__ = ["link_table", "map_link"]
@@ -336,11 +336,7 @@ def map_link(
         default_subtitle = "no traffic on this layer · one ribbon per direction"
     level = _LEVEL_NAMES.get(run.flow_level, str(run.flow_level))
     stepping = f" · step {run.flow_step_s} s" if run.flow_level else ""
-    source = (
-        "© OpenStreetMap contributors (ODbL)"
-        if network.source == "osm"
-        else f"{network.source} network"
-    )
+    source = network_source(network)
     provenance = (
         f"{__version__} · run {run.run_id} · level {run.flow_level} ({level})"
         f"{stepping} · bin {step} s · {run_identity(run)} · {source}"

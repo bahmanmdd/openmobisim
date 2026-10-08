@@ -269,6 +269,9 @@ def test_map_parking_draws_a_run_with_parkings(tmp_path) -> None:
         assert out.exists() and out.stat().st_size > 10_000
         texts = [t.get_text() for t in fig.texts]
         assert any("park-and-ride car park" in t for t in texts)
+        # X-59: the toy network is not OpenStreetMap's, and the footer says so.
+        assert any(f"{net.source} network" in t for t in texts)
+        assert not any("OpenStreetMap" in t for t in texts)
         assert any("bike parking" in t for t in texts)
         assert any("1 cars and 1 bikes parked" in t for t in texts)
     plain = ms.Scenario.from_parts(

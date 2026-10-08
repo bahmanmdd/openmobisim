@@ -17,7 +17,7 @@ import numpy as np
 from openmobisim import __version__
 from openmobisim.viz import _geometry as geo
 from openmobisim.viz._figure import SIZE_CM, Page, draw_furniture, load_matplotlib, ramp_rgb
-from openmobisim.viz._provenance import run_identity
+from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._style import Theme, get_theme
 
 __all__ = ["map_parking"]
@@ -149,7 +149,7 @@ def map_parking(
             f"{summary['car_arrivals']:,.0f} cars and {summary['bike_arrivals']:,.0f} bikes parked"
             f" · {overflow:,.0f} found their parking full"
         ),
-        provenance=f"{__version__} · {run_identity(run)} · © OpenStreetMap contributors",
+        provenance=f"{__version__} · {run_identity(run)} · {network_source(network)}",
         colour_legend=("peak occupancy", th.ramp_delay, "empty", "full"),
         marker_legend=legend,
         credit=credit,

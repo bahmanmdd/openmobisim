@@ -202,6 +202,9 @@ def test_map_transit_draws_a_run_with_a_timetable(tmp_path: Path) -> None:
     for theme in ("paper", "night"):
         fig = viz.map_transit(run, theme=theme, path=str(out))
         assert fig is not None and out.stat().st_size > 10_000
+        # X-59: the footer names where the network came from; the toy's is not OpenStreetMap's.
+        footer = " ".join(t.get_text() for t in fig.texts)
+        assert f"{net.source} network" in footer and "OpenStreetMap" not in footer
     plain = ms.Scenario.from_parts(
         network=net,
         demand=[toy_trip(net, "a", "N1", "D2", 0, "walk")],

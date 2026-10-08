@@ -16,7 +16,7 @@ import numpy as np
 from openmobisim import __version__
 from openmobisim.viz import _geometry as geo
 from openmobisim.viz._figure import SIZE_CM, Page, draw_furniture, load_matplotlib, rgb
-from openmobisim.viz._provenance import run_identity
+from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._style import Theme, get_theme
 
 __all__ = ["map_transit"]
@@ -155,7 +155,7 @@ def map_transit(
         ),
         note=note
         or f"{total:,.0f} boardings · stops sized by boardings · straight lines stop to stop",
-        provenance=f"{__version__} · {run_identity(run)} · GTFS and © OpenStreetMap contributors",
+        provenance=f"{__version__} · {run_identity(run)} · GTFS · {network_source(network)}",
         route_legend=legend,
         credit=credit,
         logo=logo,

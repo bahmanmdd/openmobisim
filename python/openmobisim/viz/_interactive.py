@@ -23,7 +23,7 @@ import numpy as np
 from openmobisim import __version__
 from openmobisim.viz import _geometry as geo
 from openmobisim.viz._interactive_page import PAGE_CSS, PAGE_HTML, PAGE_JS
-from openmobisim.viz._provenance import run_identity
+from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._route import _ROUTE_NIGHT, _ROUTE_PAPER
 from openmobisim.viz._style import AMBER, EMBER, ION, THEMES, get_theme
 
@@ -208,11 +208,7 @@ def map_interactive(
     has_routes = n_pairs > 0
 
     level = _LEVEL_NAMES.get(run.flow_level, str(run.flow_level))
-    source = (
-        "© OpenStreetMap contributors (ODbL)"
-        if network.source == "osm"
-        else f"{network.source} network"
-    )
+    source = network_source(network)
     provenance = (
         f"{__version__} · run {run.run_id} · level {run.flow_level} ({level})"
         + (f" · step {run.flow_step_s} s" if run.flow_level else "")

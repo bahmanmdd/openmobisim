@@ -15,6 +15,7 @@ import numpy as np
 from openmobisim import __version__
 from openmobisim.viz import _geometry as geo
 from openmobisim.viz._figure import SIZE_CM, Page, draw_furniture, load_matplotlib, rgb
+from openmobisim.viz._provenance import network_source
 from openmobisim.viz._style import Theme, get_theme
 
 __all__ = ["map_route"]
@@ -198,11 +199,7 @@ def map_route(
         )
 
     n = len(alternatives)
-    source = (
-        "© OpenStreetMap contributors (ODbL)"
-        if network.source == "osm"
-        else f"{network.source} network"
-    )
+    source = network_source(network)
     draw_furniture(
         page,
         title=title or "Route alternatives",
