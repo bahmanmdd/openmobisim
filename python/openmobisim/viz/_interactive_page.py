@@ -30,6 +30,10 @@ __CSS__
   <div id="levels"><button>Overview</button><button>Region</button><button>District</button><button>Street</button><button>Detail</button></div>
   <div class="row"><button id="zout" title="Zoom out">−</button><button id="zin" title="Zoom in">+</button><button id="fit">Fit</button><span id="levelname"></span></div>
   <div class="row"><span>Export the view</span><button id="exportpng" title="An image at twice the screen's resolution">PNG</button><button id="exportsvg" title="Vector graphics, for print and editing">SVG</button></div>
+  <div id="layergroup" hidden>
+    <h2>Layers</h2>
+    <div class="layers" id="layerrows"></div>
+  </div>
   <div id="trafficgroup">
     <h2>Traffic</h2>
     <div class="row"><label>Colour by <select id="colour"><option value="delay">Delay</option><option value="volume">Volume</option><option value="vc">Volume ÷ capacity</option></select></label><button id="theme">Night</button></div>
@@ -91,6 +95,7 @@ label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2);
 .route:hover { background: color-mix(in srgb, var(--base) 45%, transparent); }
 .route i { width: 22px; height: 4px; border-radius: 2px; display: inline-block; }
 .route span { color: var(--muted); }
+.layers { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; } .layers label { margin: 2px 0; }
 .route small { display: block; margin-top: 1px; font-size: 10.5px; color: var(--ink); font-weight: 600; }
 .route { align-items: flex-start; }
 .route i { margin-top: 6px; flex: none; }
@@ -138,6 +143,24 @@ for (const a of META.arrays) A[a.n] = new CTOR[a.t](raw.buffer, a.o, a.c);
 const NL = META.n_links, NV = META.n_verts, NB = META.n_bins;
 const VS = A.vs, CLS = A.cls, LEN = A.len, FF = A.ff, CAP = A.cap;
 const SB = A.sb || null;
+// The other layers (T-4), each drawn only when its box is ticked.
+const LY = META.layers || {};
+const LAYER_ROWS = [
+  ["road", "Road traffic", "ribbons: width = volume, colour as below"],
+  ["transit", "Transit lines", "width = passengers on board, colour = kind of service"],
+  ["parking", "Parkings", "■ car, ● bike; size = capacity, colour = busiest share in use"],
+  ["bike", "Cyclists", "on the bike network, the whole run"],
+  ["walk", "Walkers", "on the walk network, the whole run"],
+];
+const LAYER_KEY = { road: "r", transit: "t", parking: "p", bike: "b", walk: "w" };
+function flowLayer(prefix) {
+  const vs = A[prefix + "vs"], dx = A[prefix + "dx"], dy = A[prefix + "dy"], v = A[prefix + "v"];
+  const n = vs.length - 1, xs = new Float64Array(dx.length), ys = new Float64Array(dy.length);
+  let cx = 0, cy = 0; for (let i = 0; i < dx.length; i++) { cx += dx[i]; cy += dy[i]; xs[i] = cx * 0.1; ys[i] = cy * 0.1; }
+  let vmax = 0; for (let i = 0; i < n; i++) vmax = Math.max(vmax, v[i]);
+  return { n, vs, xs, ys, v, vmax: vmax || 1 };
+}
+const FLOWS = { bike: LY.bike ? flowLayer("b") : null, walk: LY.walk ? flowLayer("w") : null };
 const X = new Float64Array(NV), Y = new Float64Array(NV);
 { let cx = 0, cy = 0; for (let i = 0; i < NV; i++) { cx += A.dx[i]; cy += A.dy[i]; X[i] = cx * 0.1; Y[i] = cy * 0.1; } }
 
@@ -221,7 +244,7 @@ function rampTable(stops, n) {
   return out;
 }
 const NCOL = 24;
-const S = { theme: META.theme, colour: "delay", bin: -1, bins: [0, NB], playing: false, pair: -1, link: -1, hover: -1, hoverRoute: -1, routes: true, dim: true, spill: false, cx: 0, cy: 0, mpp: 1 };
+const S = { theme: META.theme, colour: "delay", bin: -1, bins: [0, NB], playing: false, pair: -1, link: -1, hover: -1, hoverRoute: -1, routes: true, dim: true, spill: false, cx: 0, cy: 0, mpp: 1, ly: { road: true, transit: false, parking: false, bike: false, walk: false } };
 let TH = TOK[S.theme], TABLES = {};
 function setTheme(name) {
   S.theme = name; TH = TOK[name]; document.documentElement.dataset.theme = name;
@@ -341,7 +364,7 @@ function draw() {
     if (CLS[l] > lim && !busy && !(showAll && S.mpp < 2.5)) continue;
     if (!drivable && S.mpp > 2.5) continue;
     addLine(base, l, 0, gap); DRAWN++;
-    if (HAS_TRAFFIC && vol[l] > 0 && CLS[l] <= Math.max(lim, 16) && (CLS[l] <= lim || busy)) {
+    if (S.ly.road && HAS_TRAFFIC && vol[l] > 0 && CLS[l] <= Math.max(lim, 16) && (CLS[l] <= lim || busy)) {
       const w = ribbonWidth(l), wi = Math.min(31, Math.round(w * 2)), key = colourIndex(l) * 32 + wi;
       let b = buckets.get(key); if (!b) { b = new Path2D(); buckets.set(key, b); }
       addLine(b, l, w / 2 + 0.25, gap);
@@ -355,12 +378,71 @@ function draw() {
   else if (!MOVING) { for (const k of keys) { ctx.strokeStyle = TH.surface; ctx.lineWidth = (k & 31) / 2 + 1.4; ctx.stroke(buckets.get(k)); } }
   for (const k of keys) { ctx.strokeStyle = tbl[k >> 5]; ctx.lineWidth = (k & 31) / 2; ctx.stroke(buckets.get(k)); }
   ctx.globalAlpha = 1;
-  if (!MOVING && S.mpp < 3) drawChevrons(cand, lim);
+  if (!MOVING && S.mpp < 3 && S.ly.road) drawChevrons(cand, lim);
+  if (S.ly.bike && FLOWS.bike) drawFlow(FLOWS.bike, TH.modes[1], [9, 5]);
+  if (S.ly.walk && FLOWS.walk) drawFlow(FLOWS.walk, TH.modes[2], [2, 4]);
+  if (S.ly.transit && LY.transit) drawTransit();
+  if (S.ly.parking && LY.parking) drawParking();
   if (S.pair >= 0 && S.routes && HAS_ROUTES) drawRoutes();
   if (S.spill && SB) drawSpill(cand);
   highlight(S.link, TH.ink, 3); if (S.hover !== S.link) highlight(S.hover, TH.ink2, 2);
   drawScale();
   document.body.dataset.drawms = (performance.now() - t0).toFixed(1); document.body.dataset.drawn = DRAWN; document.body.dataset.level = LEVELS[currentLevel()];
+}
+function drawFlow(f, colour, dash) {
+  const buckets = new Map();
+  for (let i = 0; i < f.n; i++) {
+    const w = Math.min(15.5, 1 + 7 * Math.sqrt(f.v[i] / f.vmax)), key = Math.round(w * 2);
+    let p = buckets.get(key); if (!p) { p = new Path2D(); buckets.set(key, p); }
+    p.moveTo(sx(f.xs[f.vs[i]]), sy(f.ys[f.vs[i]]));
+    for (let v = f.vs[i] + 1; v < f.vs[i + 1]; v++) p.lineTo(sx(f.xs[v]), sy(f.ys[v]));
+  }
+  const keys = [...buckets.keys()].sort((a, b) => a - b);
+  for (const k of keys) { ctx.strokeStyle = TH.surface; ctx.lineWidth = k / 2 + 1.4; ctx.stroke(buckets.get(k)); }
+  // Over road traffic, dashed (cyclists) or dotted (walkers): another mode, not another road colour.
+  ctx.setLineDash(S.ly.road && HAS_TRAFFIC ? dash : []);
+  for (const k of keys) { ctx.strokeStyle = colour; ctx.lineWidth = k / 2; ctx.stroke(buckets.get(k)); }
+  ctx.setLineDash([]);
+}
+function drawTransit() {
+  const sxs = A.tsx, sys = A.tsy, n = A.tl.length, show = LY.transit.shown;
+  let top = 0; for (let i = 0; i < n; i++) top = Math.max(top, A.tl[i]); top = top || 1;
+  for (let i = 0; i < n; i++) {  // busiest last, on top
+    const a = A.ta[i], b = A.tb[i], w = 1.2 + 6 * Math.sqrt(A.tl[i] / top);
+    const x0 = sx(sxs[a] * 0.1), y0 = sy(sys[a] * 0.1), x1 = sx(sxs[b] * 0.1), y1 = sy(sys[b] * 0.1);
+    const d = Math.hypot(x1 - x0, y1 - y0) || 1, ox = -(y1 - y0) / d * (w / 2 + 0.5), oy = (x1 - x0) / d * (w / 2 + 0.5);
+    const p = new Path2D(); p.moveTo(x0 + ox, y0 + oy); p.lineTo(x1 + ox, y1 + oy);
+    ctx.strokeStyle = TH.surface; ctx.lineWidth = w + 1.4; ctx.stroke(p);
+    ctx.strokeStyle = TH.kinds[A.tk[i]]; ctx.lineWidth = w; ctx.stroke(p);
+  }
+  let most = 0; for (let i = 0; i < A.tsb.length; i++) most = Math.max(most, A.tsb[i]); most = most || 1;
+  const names = LY.transit.stops, label = names.length <= 40 || S.mpp < 3;
+  ctx.font = "10.5px " + FONT; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  for (let i = 0; i < A.tsx.length; i++) {
+    if (show && !show[i]) continue;
+    const x = sx(sxs[i] * 0.1), y = sy(sys[i] * 0.1);
+    if (x < -20 || y < -20 || x > W + 20 || y > H + 20) continue;
+    const r = 2 + 4 * Math.sqrt(A.tsb[i] / most);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fillStyle = TH.surface; ctx.fill(); ctx.strokeStyle = TH.ink2; ctx.lineWidth = 1; ctx.stroke();
+    if (label) { ctx.lineWidth = 3; ctx.strokeStyle = TH.surface; ctx.strokeText(names[i], x + r + 3, y - r - 1); ctx.fillStyle = TH.ink2; ctx.fillText(names[i], x + r + 3, y - r - 1); }
+  }
+}
+function drawParking() {
+  let most = 0; for (let i = 0; i < A.pc.length; i++) most = Math.max(most, A.pc[i]); most = most || 1;
+  const tbl = TABLES.delay;
+  for (let i = 0; i < A.pc.length; i++) {
+    const x = sx(A.px[i] * 0.1), y = sy(A.py[i] * 0.1), r = 3 + 6 * Math.sqrt(A.pc[i] / most);
+    const fill = tbl[Math.min(tbl.length - 1, Math.floor(Math.min(1, A.po[i]) * tbl.length))];
+    ctx.beginPath(); if (A.pv[i]) ctx.arc(x + r * 0.9, y, r * 0.8, 0, 6.2832); else { ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y - r); ctx.lineTo(x + r, y + r); ctx.lineTo(x - r, y + r); ctx.closePath(); }
+    ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = TH.ink; ctx.lineWidth = 1; ctx.stroke();
+  }
+}
+function layerRows() {
+  const present = { road: HAS_TRAFFIC, transit: !!LY.transit, parking: !!LY.parking, bike: !!FLOWS.bike, walk: !!FLOWS.walk };
+  const rows = LAYER_ROWS.filter(([k]) => present[k]);
+  $("layergroup").hidden = rows.length < 2;  // one layer alone needs no switch
+  $("layerrows").innerHTML = rows.map(([k, name, hint]) => `<label title="${hint}"><input type="checkbox" data-layer="${k}"${S.ly[k] ? " checked" : ""}> ${name}</label>`).join("");
+  document.querySelectorAll("#layerrows input").forEach((box) => box.addEventListener("change", (e) => { S.ly[e.target.dataset.layer] = e.target.checked; redraw(false); writeHash(); }));
 }
 function drawChevrons(cand, lim) {
   ctx.fillStyle = TH.surface; ctx.globalAlpha = 0.9;
@@ -533,6 +615,7 @@ function writeHash() {
   const p = new URLSearchParams(); p.set("t", S.theme); p.set("c", S.colour);
   p.set("b", S.bins[1] - S.bins[0] === NB ? "all" : S.bins[0] + (S.bins[1] - S.bins[0] > 1 ? "-" + S.bins[1] : ""));
   if (S.pair >= 0) p.set("p", S.pair); if (S.link >= 0) p.set("l", S.link);
+  const on = Object.keys(LAYER_KEY).filter((k) => S.ly[k]).map((k) => LAYER_KEY[k]).join(""); if (on !== "r") p.set("ly", on || "-");
   p.set("z", [S.cx.toFixed(1), S.cy.toFixed(1), S.mpp.toFixed(3)].join(","));
   history.replaceState(null, "", "#" + p.toString()); document.body.dataset.view = p.toString();
 }
@@ -540,6 +623,7 @@ function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   if (p.get("t") && TOK[p.get("t")]) S.theme = p.get("t");
   if (["delay", "volume", "vc"].includes(p.get("c"))) S.colour = p.get("c");
+  if (p.get("ly") !== null) for (const k of Object.keys(LAYER_KEY)) S.ly[k] = p.get("ly").includes(LAYER_KEY[k]);
   const b = p.get("b"); if (b && b !== "all" && HAS_TRAFFIC) { const [x, y] = b.split("-").map(Number); S.bins = [Math.max(0, Math.min(NB - 1, x)), Math.min(NB, y || x + 1)]; }
   return p;
 }
@@ -694,7 +778,7 @@ function start() {
   if (HAS_TRAFFIC) { const all = S.bins[1] - S.bins[0] === NB; $("allbins").checked = all; $("bin").disabled = all; $("bin").value = all ? 0 : S.bins[0]; }
   fitTo(EX0, EY0, EX1, EY1, 0.06); FIT.mpp = S.mpp; MAX_MPP = FIT.mpp * 1.6; MIN_MPP = Math.max(0.25, Math.min(0.5, FIT.mpp / 200));
   if (HAS_TRAFFIC) aggregate(S.bins[0], S.bins[1]); subtitle();
-  wire();
+  layerRows(); wire();
   if (p.get("z")) { const [x, y, m] = p.get("z").split(",").map(Number); if (isFinite(m)) { S.cx = x; S.cy = y; S.mpp = Math.max(MIN_MPP, Math.min(MAX_MPP, m)); } }
   if (p.get("p") !== null && HAS_ROUTES) selectPair(+p.get("p"), !p.get("z"));
   if (p.get("l") !== null) selectLink(+p.get("l"));

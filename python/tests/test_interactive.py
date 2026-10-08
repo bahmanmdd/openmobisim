@@ -290,3 +290,51 @@ def test_the_exports_run_in_a_browser_and_carry_the_credit(tmp_path, bins):
     assert svg.startswith("<svg") and "<path" in svg and ">openmobisim</text>" in svg
     png = base64.b64decode(exported("png").split(",", 1)[1])
     assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 10_000
+
+
+def layered_run():
+    """The toy network with every kind of traveller: cars, transit, park-and-ride, bikes, walks."""
+    net = ms.examples.toy_network()
+
+    def trip(who, frm, to, depart, mode):
+        o, d = net.node_lonlat(frm), net.node_lonlat(to)
+        return (who, 0, o[0], o[1], d[0], d[1], depart, "everyone", None, mode)
+
+    rows = (
+        [trip(f"a{i}", "W", "N1", 20 * i, "car_transit") for i in range(10)]
+        + [trip(f"c{i}", "S", "D2", 10 * i, "bike") for i in range(20)]
+        + [trip(f"d{i}", "W", "M", 15 * i, "walk") for i in range(10)]
+        + [trip(f"e{i}", "W", "D1", 5 * i, "car") for i in range(50)]
+    )
+    return ms.Scenario.from_parts(
+        network=net,
+        demand=rows,
+        classes={"everyone": (True, True, False)},
+        transit=ms.examples.toy_network_transit(),
+        parkings=ms.examples.toy_network_parkings(),
+        choice_model="deterministic",
+        equilibration="free_flow",
+        link_bin_s=300,
+    ).run(run_id="layers", quiet=True)
+
+
+def test_the_page_carries_each_layer_the_run_has_and_shows_only_road_traffic_at_first(tmp_path):
+    """T-4: transit, parkings, cyclists and walkers, each a toggle, off at first."""
+    run = layered_run()
+    _, meta, a = decode(viz.map_interactive(run, tmp_path / "map.html"))
+    assert set(meta["layers"]) == {"transit", "parking", "bike", "walk"}
+    stops = run.transit.stops()
+    assert len(a["tsx"]) == len(stops["stop_id"]) and len(
+        meta["layers"]["transit"]["stops"]
+    ) == len(a["tsx"])
+    assert len(a["ta"]) == len(a["tb"]) == len(a["tk"]) == len(a["tl"]) > 0
+    assert len(a["pc"]) == len(run.parking_places()["parking_id"])
+    assert (a["po"] >= 0).all() and a["pv"].sum() == 1  # one bike parking in the toy's three
+    bike = run.link_bins("bike")
+    assert len(a["bv"]) == len(set(bike.links().tolist())) and a["bvs"][-1] == len(a["bdx"])
+    assert np.isclose(a["bv"].sum(), bike.pcu().sum())
+    text = (tmp_path / "map.html").read_text(encoding="utf-8")
+    assert "ly: { road: true, transit: false, parking: false, bike: false, walk: false }" in text
+    # A run with none of them carries none.
+    _, plain, _ = decode(viz.map_interactive(grid_run()[1], tmp_path / "plain.html"))
+    assert plain["layers"] == {}

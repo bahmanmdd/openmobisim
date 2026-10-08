@@ -64,12 +64,129 @@ def _tokens() -> dict[str, Any]:
     themes = {
         name: {
             "surface": t.surface, "ink": t.ink, "ink2": t.ink2, "muted": t.muted,
-            "base": t.base, "mark": t.mark, "glow": t.glow, "ramp_delay": list(t.ramp_delay),
+            "base": t.base, "mark": t.mark, "glow": t.glow,
+            "kinds": list(t.kinds), "modes": list(t.modes), "ramp_delay": list(t.ramp_delay),
             "ramp_volume": list(t.ramp_volume),
         }
         for name, t in THEMES.items()
     }  # fmt: skip
     return {**themes, "route": {"paper": list(_ROUTE_PAPER), "night": list(_ROUTE_NIGHT)}}
+
+
+def _quantise(points: np.ndarray) -> np.ndarray:
+    """Points in metres as the page stores them: tenths of a metre, 32-bit."""
+    q = np.round(points / _UNIT_M).astype(np.int64)
+    if len(q) and np.abs(q).max() > _LIMIT:
+        raise ValueError("the region is too large to store (over about 200 km); pass view=")
+    return q
+
+
+def _inside(points: np.ndarray, box: tuple[np.ndarray, np.ndarray] | None) -> np.ndarray:
+    if box is None:
+        return np.ones(len(points), dtype=bool)
+    return ((points >= box[0]) & (points <= box[1])).all(axis=1)
+
+
+def _add_layers(
+    blob: _Blob,
+    run: Any,
+    network: Any,
+    lon0: float,
+    lat0: float,
+    box: tuple[np.ndarray, np.ndarray] | None,
+) -> dict[str, Any]:
+    """Add the optional layers the run has data for; return what the page needs to know of them.
+
+    **Transit** (stop-to-stop hops, as wide as the passengers on board over the day, coloured by
+    the kind of service; stops sized by boardings), **parkings** (each a mark sized by capacity,
+    coloured by the busiest share of it in use), and the **cyclists'** and **walkers'** flows on
+    their own networks (only the links someone used: whole-run totals). Each is small beside the
+    road layer; the page shows none of them until asked (T-4: the main things on, the rest one
+    click away).
+    """
+    layers: dict[str, Any] = {}
+    calls = run.transit_calls() if hasattr(run, "transit_calls") else None
+    transit = getattr(run, "transit", None)
+    if calls is not None and transit is not None and len(calls["run"]):
+        stops = transit.stops()
+        index = {sid: i for i, sid in enumerate(stops["stop_id"])}
+        xy = geo.project_lonlat(np.column_stack([stops["lon"], stops["lat"]]), lon0, lat0)
+        kinds = ("rail", "metro", "tram", "bus", "ferry", "other")
+        runs, kind, stop_ids = calls["run"], calls["kind"], calls["stop_id"]
+        on_board = np.asarray(calls["on_board"], dtype=float)
+        loads: dict[tuple[int, int, int], float] = {}
+        for i in range(len(runs) - 1):
+            a, b = index[stop_ids[i]], index[stop_ids[i + 1]]
+            if runs[i] == runs[i + 1] and a != b:
+                key = (kinds.index(kind[i]) if kind[i] in kinds else 5, a, b)
+                loads[key] = loads.get(key, 0.0) + float(on_board[i])
+        keep = _inside(xy, box)
+        keys = [k for k in sorted(loads, key=lambda k: (loads[k], k)) if keep[k[1]] and keep[k[2]]]
+        if keys:
+            boardings = np.zeros(len(index))
+            np.add.at(boardings, [index[sid] for sid in stop_ids], np.asarray(calls["boardings"]))
+            q = _quantise(xy)
+            blob.add("tsx", q[:, 0], "i32")
+            blob.add("tsy", q[:, 1], "i32")
+            blob.add("tsb", boardings, "f32")
+            blob.add("ta", np.array([k[1] for k in keys]), "u32")
+            blob.add("tb", np.array([k[2] for k in keys]), "u32")
+            blob.add("tk", np.array([k[0] for k in keys]), "u8")
+            blob.add("tl", np.array([loads[k] for k in keys]), "f32")
+            names = stops.get("name") or stops["stop_id"]
+            layers["transit"] = {
+                "kinds": list(kinds),
+                "stops": [str(n or stops["stop_id"][i]) for i, n in enumerate(names)],
+                "shown": keep.tolist() if box is not None else None,
+            }
+    places = run.parking_places() if hasattr(run, "parking_places") else None
+    bins = run.parking_bins() if hasattr(run, "parking_bins") else None
+    if places is not None and len(places["parking_id"]):
+        xy = geo.project_lonlat(np.column_stack([places["lon"], places["lat"]]), lon0, lat0)
+        keep = _inside(xy, box)
+        if keep.any():
+            capacity = np.asarray(places["capacity"], dtype=float)
+            peak = np.zeros(len(capacity))
+            if bins is not None and len(bins["parking"]):
+                np.maximum.at(
+                    peak,
+                    np.asarray(bins["parking"], dtype=np.int64),
+                    np.asarray(bins["occupancy_max"]),
+                )
+            q = _quantise(xy[keep])
+            blob.add("px", q[:, 0], "i32")
+            blob.add("py", q[:, 1], "i32")
+            blob.add("pc", capacity[keep], "f32")
+            blob.add("po", (peak / np.maximum(capacity, 1.0))[keep], "f32")
+            blob.add("pv", (np.asarray(places["vehicle"]) == "bike")[keep], "u8")
+            ids = np.asarray(places["parking_id"])[keep]
+            layers["parking"] = {"ids": [str(i) for i in ids]}
+    for name in ("bike", "walk"):
+        lb = run.link_bins(name) if hasattr(run, "link_bins") else None
+        if lb is None or not len(lb):
+            continue
+        layer = network.layer(name)
+        total = np.zeros(int(layer.link_count))
+        np.add.at(total, lb.links().astype(np.int64), lb.pcu())
+        coords, offsets = layer.link_geometry()
+        pts = geo.project_lonlat(coords, lon0, lat0)
+        used = np.flatnonzero(total > 0)
+        if box is not None:
+            lo_box, hi_box = _link_boxes(pts, offsets)
+            used = used[((hi_box[used] >= box[0]) & (lo_box[used] <= box[1])).all(axis=1)]
+        if not len(used):
+            continue
+        parts = [pts[int(offsets[i]) : int(offsets[i + 1])] for i in used]
+        counts = np.array([len(x) for x in parts])
+        q = _quantise(np.concatenate(parts))
+        delta = np.diff(q, axis=0, prepend=np.zeros((1, 2), dtype=np.int64))
+        prefix = name[0]
+        blob.add(prefix + "vs", np.concatenate([[0], np.cumsum(counts)]), "u32")
+        blob.add(prefix + "dx", delta[:, 0], "i32")
+        blob.add(prefix + "dy", delta[:, 1], "i32")
+        blob.add(prefix + "v", total[used], "f32")
+        layers[name] = {"links": int(len(used))}
+    return layers
 
 
 def _link_boxes(points: np.ndarray, offsets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -104,6 +221,11 @@ def map_interactive(
     over capacity. **Hover** a link to read it; **click** it to see how many
     routes and pairs use it and jump to one of them. **Pick a pair** to see
     its alternatives side by side, with each route's time, detour and overlap.
+    **Layers**: besides road traffic, the run's transit lines and stops, its
+    parkings, and the cyclists' and walkers' flows on their own networks, each
+    with a switch and each off at first (the road traffic is the main view;
+    transit over busy roads reads only when asked for). Only the layers the run
+    has data for are offered.
     The page's whole state is in its URL after the ``#``, so a view can be
     shared and reproduced. The figure is drawn at the screen's own resolution:
     it stays sharp at any zoom.
@@ -199,6 +321,15 @@ def map_interactive(
         if n_spill:
             blob.add("sb", flag[keep], "u8")
 
+    # The other layers (T-4): each off at first, each a toggle; only what the run has.
+    box = None
+    if view is not None:
+        box = (
+            geo.project_lonlat(np.array([view[0]]), lon0, lat0)[0],
+            geo.project_lonlat(np.array([view[1]]), lon0, lat0)[0],
+        )
+    layers = _add_layers(blob, run, network, lon0, lat0, box)
+
     route_sets = run.route_sets() if routes is True else (routes or None)
     n_pairs = n_routes = 0
     if route_sets is not None and route_sets.key_count:
@@ -223,7 +354,7 @@ def map_interactive(
         "title": title or _default_title(bins is not None and n_bins > 0, has_routes),
         "note": note, "credit": credit, "logo": bool(logo),
         "provenance": provenance, "source": source, "n_spillback": n_spill,
-        "arrays": blob.table, "tokens": _tokens(),
+        "arrays": blob.table, "tokens": _tokens(), "layers": layers,
     }  # fmt: skip
     body = len(payload) + len(PAGE_JS) + len(PAGE_CSS) + len(PAGE_HTML)
     meta["size_note"] = f"{n_links:,} links · {body / 1e6:.1f} MB"
