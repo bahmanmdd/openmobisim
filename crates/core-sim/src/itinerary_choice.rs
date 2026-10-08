@@ -1126,7 +1126,8 @@ fn finalise(mut alts: Vec<Alternative>, detour_limit: f64, parkings: usize) -> V
     });
     // Path size by time share: the vehicle leg and each ride are elements
     // alternatives can share; walking, waiting and parking are each its own. A vehicle
-    // leg is keyed by its mode too: the layers number their links each on their own.
+    // leg is keyed by its links and its mode (the layers number their links each on their
+    // own), not by the parking it ends at: two parkings at one node share one drive.
     type Element = (u8, u32, u32, u32);
     let elements = |a: &Alternative| -> Vec<(Element, f64)> {
         let mut e = Vec::new();
@@ -1138,7 +1139,7 @@ fn finalise(mut alts: Vec<Alternative>, detour_limit: f64, parkings: usize) -> V
             #[allow(clippy::cast_possible_truncation, reason = "a hash")]
             let hash = h.finish() as u32;
             #[allow(clippy::cast_possible_truncation, reason = "six modes")]
-            e.push(((0, a.parking, hash, a.mode.index() as u32), a.vehicle_s));
+            e.push(((0, 0, hash, a.mode.index() as u32), a.vehicle_s));
         }
         for (r, &secs) in a.rides.iter().zip(&a.ride_seconds) {
             e.push(((1, r.route, r.board.raw(), r.alight.raw()), f64::from(secs)));
@@ -2202,4 +2203,56 @@ pub(crate) fn follow(
     });
     out.end = clock.saturating_add(alt.egress_walk_s);
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A park-and-ride alternative: `links` driven in 600 s to `parking`, 1 000 s in all.
+    fn park_and_ride(parking: u32, links: &[u32]) -> Alternative {
+        Alternative {
+            shape: Shape::Out,
+            mode: Mode::CarTransit,
+            fixed_ln_path_size: None,
+            parking,
+            vehicle_links: links.iter().map(|&l| LinkId::new(l)).collect(),
+            vehicle_s: 600.0,
+            parking_s: 0.0,
+            first_stop: NodeId::new(0),
+            access_walk_s: 0,
+            rides: Vec::new(),
+            ride_seconds: Vec::new(),
+            transfer_walks: Vec::new(),
+            last_stop: NodeId::new(0),
+            egress_walk_s: 0,
+            walk_s: 400.0,
+            wait_s: 0.0,
+            ride_s: 0.0,
+            total_s: 1000.0,
+            vehicle_departure: 0.0,
+            vehicle_m: 0.0,
+            identity: 0,
+            ln_path_size: 0.0,
+            bike_m: [0.0; 3],
+            wait_first_s: 0,
+            ride_kind_s: [0; 6],
+            ride_m: 0.0,
+        }
+    }
+
+    #[test]
+    fn two_parkings_at_one_node_share_their_drive_in_the_path_size() {
+        // The same 600 s drive to two parkings at one node: one element used by both, so each
+        // path size is (600 / 2 + 400) / 1 000; a drive on other links is its own.
+        let alts = finalise(
+            vec![park_and_ride(1, &[3, 4]), park_and_ride(2, &[3, 4]), park_and_ride(3, &[5, 6])],
+            0.0,
+            5,
+        );
+        let ln = |p: u32| alts.iter().find(|a| a.parking == p).map(|a| a.ln_path_size).unwrap();
+        assert!((ln(1) - 0.7_f64.ln()).abs() < 1e-12, "{}", ln(1));
+        assert!((ln(2) - 0.7_f64.ln()).abs() < 1e-12, "{}", ln(2));
+        assert!(ln(3).abs() < 1e-12, "a drive of its own: {}", ln(3));
+    }
 }
