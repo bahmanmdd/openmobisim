@@ -93,6 +93,8 @@ class Theme:
     #: Modes, in ``openmobisim.MODES``' order: car, bike, walk, transit,
     #: park-and-ride (``car_transit``), bike-and-ride (``bike_transit``).
     modes: tuple[str, ...]
+    #: The openmobisim mark's colour: the identity's teal, as it reads on this surface (T-2).
+    mark: str = TEAL_PAPER
 
 
 THEMES: dict[str, Theme] = {
@@ -125,6 +127,7 @@ THEMES: dict[str, Theme] = {
         ramp_volume=(ION[600], ION[500], ION[400], ION[300], ION[200]),
         kinds=("#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300"),
         modes=(EMBER[500], TEAL_NIGHT, GOLD_NIGHT, ION[400], EMBER[300], "#9be3de"),
+        mark=TEAL_NIGHT,
     ),
 }
 

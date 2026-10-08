@@ -22,6 +22,7 @@ from openmobisim.viz._figure import (
     load_matplotlib,
     nice_number,
     ramp_rgb,
+    save_figure,
 )
 from openmobisim.viz._style import Theme, get_theme
 
@@ -222,7 +223,7 @@ def map_demand(
     )
     del mpp
     if path is not None:
-        page.fig.savefig(path, facecolor=th.surface)
+        save_figure(page.fig, path, th.surface)
     return page.fig
 
 
@@ -346,5 +347,5 @@ def chart_demand_matrix(
         compass=False,
     )
     if path is not None:
-        page.fig.savefig(path, facecolor=th.surface)
+        save_figure(page.fig, path, th.surface)
     return page.fig

@@ -18,7 +18,8 @@ from typing import Any
 
 import numpy as np
 
-from openmobisim.viz._style import AMBER, EMBER, ION, Theme, font_mono, font_sans
+from openmobisim.viz._logo import logo_patches
+from openmobisim.viz._style import Theme, font_mono, font_sans
 
 __all__ = [
     "Page",
@@ -32,6 +33,20 @@ __all__ = [
 
 #: The map area, as figure fractions ``(left, bottom, width, height)``.
 MAP_RECT = (0.02, 0.085, 0.96, 0.78)
+
+
+#: Who made a file the package saves, in its metadata: the software and its creator (T-2), never on
+#: the picture itself.
+CREATOR = "openmobisim {version}, by Bahman Madadi"
+
+
+def save_figure(fig: Any, path: str, surface: str) -> None:
+    """Save ``fig`` at ``path`` (PNG, SVG or PDF by extension), the software in its metadata."""
+    from openmobisim import __version__
+
+    meta = {"Creator": CREATOR.format(version=__version__)}
+    kind = str(path).rsplit(".", 1)[-1].lower()
+    fig.savefig(path, facecolor=surface, metadata=meta if kind in ("png", "svg", "pdf") else None)
 
 
 def load_matplotlib() -> Any:
@@ -189,26 +204,22 @@ def draw_furniture(
     logo is a signature, not a claim over the figure or its data.
     """
     from matplotlib.lines import Line2D
-    from matplotlib.patches import Ellipse
 
     fig, t, k = page.fig, page.theme, page.k
     w, h = page.size
     sans, mono = font_sans(), font_mono()
 
-    # The signal: three lamps, the only decoration.
-    for i, colour in enumerate((EMBER[500], AMBER, ION[400])):
-        fig.add_artist(
-            Ellipse(
-                (0.0235 + i * 0.0105, 0.943),
-                0.0084 * k,
-                0.0084 * k * w / h,
-                transform=fig.transFigure,
-                facecolor=colour,
-                edgecolor="none",
-            )
-        )
+    # The mark, the only decoration (T-2: the cactus, in the identity's teal).
+    for patch in logo_patches(0.0215, 0.927, 0.042 * k, w / h, t.mark, fig.transFigure):
+        fig.add_artist(patch)
     fig.text(
-        0.0755, 0.9345, title, color=t.ink, fontsize=21 * k, fontweight="bold", fontfamily=sans
+        0.0235 + 0.042 * k * h / w + 0.008,
+        0.9345,
+        title,
+        color=t.ink,
+        fontsize=21 * k,
+        fontweight="bold",
+        fontfamily=sans,
     )
     fig.text(0.0235, 0.9075, subtitle, color=t.ink2, fontsize=11.5 * k, fontfamily=sans)
     if note:
@@ -391,13 +402,12 @@ def _draw_compass(page: Page) -> None:
 def _draw_logo(page: Page, credit: str | None, logo: bool) -> None:
     """The signature at the bottom right: an optional credit, then the mark.
 
-    The mark is the three-lamp signal and the wordmark, a lockup like a
+    The mark is the cactus and the wordmark, a lockup like a
     publisher's imprint. It is a logo, not a copyright notice: a figure and its
     data belong to whoever made the run, so the credit line is theirs to fill.
     """
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.lines import Line2D
-    from matplotlib.patches import Ellipse
 
     fig, t, k = page.fig, page.theme, page.k
     w, h = page.size
@@ -418,23 +428,11 @@ def _draw_logo(page: Page, credit: str | None, logo: bool) -> None:
             fontfamily=sans,
         )
         box = word.get_window_extent(renderer).transformed(inverse)
-        radius = 0.0034 * k
-        gap = 0.0075 * k
-        lamp_y = y + (box.y1 - box.y0) * 0.36
-        x = box.x0 - gap
-        for colour in (ION[400], AMBER, EMBER[500]):  # read left to right: ember, amber, ion
-            x -= radius
-            fig.add_artist(
-                Ellipse(
-                    (x, lamp_y),
-                    2 * radius,
-                    2 * radius * w / h,
-                    transform=fig.transFigure,
-                    facecolor=colour,
-                    edgecolor="none",
-                )
-            )
-            x -= radius + 0.0022 * k
+        tall = (box.y1 - box.y0) * 1.45
+        wide = tall * h / w
+        x = box.x0 - 0.004 * k - wide
+        for patch in logo_patches(x, box.y0 - tall * 0.12, tall, w / h, t.mark, fig.transFigure):
+            fig.add_artist(patch)
         right = x - 0.0035 * k
     if credit:
         if logo:

@@ -16,6 +16,8 @@ import math
 from pathlib import Path
 from typing import Any
 
+from openmobisim import __version__
+from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._link import map_link
 from openmobisim.viz._style import ION, THEMES
 
@@ -420,7 +422,8 @@ footer {{ color:var(--muted); font:12px "JetBrains Mono", Menlo, monospace; marg
   .sw, .seg {{ background: var(--cn) !important; }} img.day {{ display:none; }} img.dark {{ display:block; }} }}
 """
     page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="generator" content="{CREATOR.format(version=__version__)}"><title>{html.escape(title)}</title>
 <style>{css}</style></head><body><main>
 <h1>{html.escape(title)}</h1><p class="sub">{html.escape(note)}</p>
 <div class="meta">run {html.escape(run.run_id)} · fingerprint {run.fingerprint} · seed {run.master_seed} ·

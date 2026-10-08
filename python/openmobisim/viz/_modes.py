@@ -13,7 +13,14 @@ from typing import Any
 import numpy as np
 
 from openmobisim import MODES, __version__
-from openmobisim.viz._figure import SIZE_CM, Page, draw_furniture, font_mono_name, load_matplotlib
+from openmobisim.viz._figure import (
+    SIZE_CM,
+    Page,
+    draw_furniture,
+    font_mono_name,
+    load_matplotlib,
+    save_figure,
+)
 from openmobisim.viz._provenance import run_identity
 from openmobisim.viz._style import Theme, get_theme
 
@@ -180,5 +187,5 @@ def chart_mode_share(
         compass=False,
     )
     if path is not None:
-        page.fig.savefig(path, facecolor=th.surface)
+        save_figure(page.fig, path, th.surface)
     return page.fig

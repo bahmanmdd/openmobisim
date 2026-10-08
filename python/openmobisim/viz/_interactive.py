@@ -23,10 +23,12 @@ import numpy as np
 from openmobisim import __version__
 from openmobisim.network import LINK_CLASSES
 from openmobisim.viz import _geometry as geo
+from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._interactive_page import PAGE_CSS, PAGE_HTML, PAGE_JS
+from openmobisim.viz._logo import LOGO_PATH
 from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._route import _ROUTE_NIGHT, _ROUTE_PAPER
-from openmobisim.viz._style import AMBER, EMBER, ION, THEMES, get_theme
+from openmobisim.viz._style import THEMES, get_theme
 
 __all__ = ["map_interactive"]
 
@@ -62,7 +64,7 @@ def _tokens() -> dict[str, Any]:
     themes = {
         name: {
             "surface": t.surface, "ink": t.ink, "ink2": t.ink2, "muted": t.muted,
-            "base": t.base, "glow": t.glow, "ramp_delay": list(t.ramp_delay),
+            "base": t.base, "mark": t.mark, "glow": t.glow, "ramp_delay": list(t.ramp_delay),
             "ramp_volume": list(t.ramp_volume),
         }
         for name, t in THEMES.items()
@@ -233,12 +235,11 @@ def map_interactive(
     page = (
         PAGE_HTML.replace("__CSS__", PAGE_CSS)
         .replace("__TITLE__", _html_text(meta["title"]))
-        .replace("__EMBER__", EMBER[500])
-        .replace("__AMBER__", AMBER)
-        .replace("__ION__", ION[400])
+        .replace("__LOGO__", LOGO_PATH)
+        .replace("__GENERATOR__", CREATOR.format(version=__version__))
         .replace("__META__", escape(json.dumps(meta, separators=(",", ":"))))
         .replace("__BLOB__", payload)
-        .replace("__JS__", PAGE_JS)
+        .replace("__JS__", PAGE_JS.replace("__LOGO__", LOGO_PATH))
     )
     out = Path(path)
     # Bytes, not text: the same file on every platform (no newline translation).

@@ -22,6 +22,7 @@ from openmobisim.viz._figure import (
     nice_number,
     ramp_rgb,
     rgb,
+    save_figure,
 )
 from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._style import Theme, get_theme
@@ -367,5 +368,5 @@ def map_link(
         compass=True,
     )
     if path is not None:
-        page.fig.savefig(path, facecolor=th.surface)
+        save_figure(page.fig, path, th.surface)
     return page.fig

@@ -16,7 +16,14 @@ import numpy as np
 
 from openmobisim import __version__
 from openmobisim.viz import _geometry as geo
-from openmobisim.viz._figure import SIZE_CM, Page, draw_furniture, load_matplotlib, ramp_rgb
+from openmobisim.viz._figure import (
+    SIZE_CM,
+    Page,
+    draw_furniture,
+    load_matplotlib,
+    ramp_rgb,
+    save_figure,
+)
 from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._style import Theme, get_theme
 
@@ -157,5 +164,5 @@ def map_parking(
         compass=True,
     )
     if path is not None:
-        page.fig.savefig(path, facecolor=th.surface)
+        save_figure(page.fig, path, th.surface)
     return page.fig

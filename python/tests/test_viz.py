@@ -375,3 +375,33 @@ def test_the_footer_names_the_runs_seed_and_fingerprint():
         assert box.x1 < fig.bbox.width * 0.86, (
             f"footer overruns at {size_cm}: {box.x1} of {fig.bbox.width}"
         )
+
+
+def test_every_figure_carries_the_mark_and_a_saved_file_its_creator(tmp_path):
+    """T-2: the cactus in the identity's teal beside the title and the wordmark.
+
+    And the software and its creator in a saved file's metadata, not on the picture.
+    """
+    from openmobisim.viz._style import THEMES
+
+    run, _ = toy_run()
+    for theme in ("paper", "night"):
+        fig = viz.map_link(run, theme=theme)
+        mark = THEMES[theme].mark
+        drawn = {
+            "#" + "".join(f"{round(255 * c):02x}" for c in a.get_facecolor()[:3])
+            for a in fig.artists
+            if type(a).__name__ == "PathPatch"
+        }
+        assert mark in drawn, f"the mark in {theme}"
+    for kind in ("png", "svg", "pdf"):
+        out = tmp_path / f"map.{kind}"
+        viz.map_link(run, path=str(out))
+        assert b"Bahman Madadi" in out.read_bytes(), kind
+
+
+def test_the_interactive_page_carries_the_mark_and_its_generator(tmp_path):
+    page = viz.map_interactive(toy_run()[0], tmp_path / "map.html").read_text(encoding="utf-8")
+    assert '<meta name="generator" content="openmobisim' in page and "Bahman Madadi" in page
+    assert page.count('class="mark"') == 2, "beside the title and in the footer"
+    assert "lamps" not in page

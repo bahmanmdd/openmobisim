@@ -12,6 +12,7 @@ PAGE_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="__GENERATOR__">
 <title>__TITLE__</title>
 <style>
 __CSS__
@@ -21,7 +22,7 @@ __CSS__
 <canvas id="map"></canvas>
 <div id="error" hidden></div>
 <header class="head">
-  <span class="lamps"><i style="background:__EMBER__"></i><i style="background:__AMBER__"></i><i style="background:__ION__"></i></span><h1 id="title"></h1>
+  <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="__LOGO__"/></svg><h1 id="title"></h1>
   <p id="subtitle"></p><p id="note" hidden></p>
 </header>
 <aside id="panel">
@@ -48,7 +49,7 @@ __CSS__
   <div id="linkinfo" hidden></div>
 </aside>
 <div id="compass"><svg width="22" height="34" viewBox="0 0 22 34"><path d="M11 2 L17 20 L11 16 L5 20 Z" fill="currentColor"/><text x="11" y="32" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" font-family="sans-serif">N</text></svg><div id="scalelabel"></div><div id="scalebar"></div></div>
-<footer><span id="provenance"></span><span id="source"></span><span class="right"><span id="budget"></span><span id="credit" hidden></span><span id="logo"><i style="background:__EMBER__"></i><i style="background:__AMBER__"></i><i style="background:__ION__"></i><b>openmobisim</b></span></span></footer>
+<footer><span id="provenance"></span><span id="source"></span><span class="right"><span id="budget"></span><span id="credit" hidden></span><span id="logo"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="__LOGO__"/></svg><b>openmobisim</b></span></span></footer>
 <div id="tip" hidden></div>
 <script id="meta" type="application/json">__META__</script>
 <script id="blob" type="text/plain">__BLOB__</script>
@@ -59,15 +60,14 @@ __JS__
 </html>
 """
 
-PAGE_CSS = r""":root { --surface:#fbfcfd; --ink:#0a1626; --ink2:#3d4c5f; --muted:#55657a; --base:#c5cfda; --sans: Inter, "Helvetica Neue", "Segoe UI", system-ui, sans-serif; --mono: "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; }
+PAGE_CSS = r""":root { --surface:#fbfcfd; --ink:#0a1626; --ink2:#3d4c5f; --muted:#55657a; --base:#c5cfda; --mark:#04938e; --sans: Inter, "Helvetica Neue", "Segoe UI", system-ui, sans-serif; --mono: "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--surface); color: var(--ink); font-family: var(--sans); overflow: hidden; }
 canvas#map { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: grab; touch-action: none; }
 canvas#map:active { cursor: grabbing; }
 #error { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: #9d0221; color: #fff; padding: 10px 16px; border-radius: 8px; z-index: 20; font: 13px var(--mono); }
 .head { position: fixed; top: 8px; left: 10px; max-width: min(760px, calc(100vw - 350px)); padding: 8px 14px 9px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 84%, transparent); backdrop-filter: blur(3px); pointer-events: none; }
-.head .lamps { display: inline-flex; gap: 5px; vertical-align: middle; margin-right: 14px; }
-.head .lamps i, #logo i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.head .mark { width: 26px; height: 26px; vertical-align: middle; margin-right: 10px; fill: var(--mark); }
 .head h1 { display: inline; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; vertical-align: middle; }
 .head p { margin: 5px 0 0; font-size: 13px; color: var(--ink2); }
 .head p#note { font-style: italic; color: var(--muted); font-size: 12px; }
@@ -110,7 +110,7 @@ footer #provenance { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overfl
 footer #source { flex: none; white-space: nowrap; margin-right: 16px; }
 #credit { color: var(--ink2); font-size: 12px; padding-right: 10px; border-right: 1px solid var(--base); }
 #logo { display: inline-flex; align-items: center; gap: 4px; color: var(--ink); font-weight: 700; font-size: 13px; }
-#logo i { width: 8px; height: 8px; } #logo b { margin-left: 5px; }
+#logo .mark { width: 16px; height: 16px; fill: var(--mark); } #logo b { margin-left: 3px; }
 @media (max-width: 760px) { .head { max-width: calc(100vw - 20px); } aside#panel { top: auto; bottom: 40px; max-height: 42vh; width: calc(100vw - 28px); } #compass { display: none; } }
 """
 
@@ -122,7 +122,7 @@ window.addEventListener("error", (ev) => fail(ev.error || ev.message));
 window.addEventListener("unhandledrejection", (ev) => fail(ev.reason));
 
 const META = JSON.parse($("meta").textContent);
-const TOK = META.tokens;
+const TOK = META.tokens, LOGO = "__LOGO__";
 
 // ---------------------------------------------------------------- data ----
 async function inflate(b64) {
@@ -226,7 +226,7 @@ let TH = TOK[S.theme], TABLES = {};
 function setTheme(name) {
   S.theme = name; TH = TOK[name]; document.documentElement.dataset.theme = name;
   const r = document.documentElement.style;
-  r.setProperty("--surface", TH.surface); r.setProperty("--ink", TH.ink); r.setProperty("--ink2", TH.ink2); r.setProperty("--muted", TH.muted); r.setProperty("--base", TH.base);
+  r.setProperty("--surface", TH.surface); r.setProperty("--ink", TH.ink); r.setProperty("--ink2", TH.ink2); r.setProperty("--muted", TH.muted); r.setProperty("--base", TH.base); r.setProperty("--mark", TH.mark);
   TABLES = { delay: rampTable(TH.ramp_delay, NCOL), volume: rampTable(TH.ramp_volume, NCOL), vc: rampTable(TH.ramp_delay, NCOL) };
   $("colourbar").style.background = "linear-gradient(90deg," + TH.ramp_delay.join(",") + ")";
   if (S.colour === "volume") $("colourbar").style.background = "linear-gradient(90deg," + TH.ramp_volume.join(",") + ")";
@@ -610,6 +610,7 @@ function exportSVG() {
   }
   parts.push(`<text x="${W - 16}" y="${y + 4}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc([f.provenance, f.source, f.credit].filter(Boolean).join(" · "))}</text>`);
   parts.push(`<text x="${W - 16}" y="${y + 20}" font-size="11" font-weight="700" text-anchor="end" fill="${TH.ink}">openmobisim</text>`);
+  parts.push(`<path transform="translate(${W - 106} ${y + 8}) scale(0.22)" d="${LOGO}" fill="${TH.mark}"/>`);
   parts.push("</svg>");
   return parts.join("");
 }
@@ -635,6 +636,7 @@ function exportPNG() {
   o.textAlign = "right"; o.fillStyle = TH.ink2; o.font = "9.5px " + FONT;
   o.fillText([f.provenance, f.source, f.credit].filter(Boolean).join(" · "), W - 16, y + 4);
   o.fillStyle = TH.ink; o.font = "700 11px " + FONT; o.fillText("openmobisim", W - 16, y + 20);
+  o.save(); o.translate(W - 106, y + 8); o.scale(0.22, 0.22); o.fillStyle = TH.mark; o.fill(new Path2D(LOGO)); o.restore();
   return off.toDataURL("image/png");
 }
 function download(name, url) { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
@@ -681,6 +683,10 @@ function start() {
   $("provenance").textContent = META.provenance; $("provenance").title = META.provenance; $("source").textContent = META.source; if (META.credit) { $("credit").textContent = META.credit; $("credit").hidden = false; }
   $("logo").hidden = !META.logo; $("budget").textContent = META.size_note;
   document.title = META.title + " · openmobisim";
+  // The tab icon: the mark, as a data URL made here (the page names no address).
+  const icon = document.createElement("link"); icon.rel = "icon";
+  icon.href = "data:image/svg+xml," + encodeURIComponent(`<svg xmlns="${$("compass").querySelector("svg").namespaceURI}" viewBox="0 0 64 64"><path d="${LOGO}" fill="${TOK.paper.mark}"/></svg>`);
+  document.head.appendChild(icon);
   $("trafficgroup").hidden = !HAS_TRAFFIC; $("routegroup").hidden = !HAS_ROUTES;
   $("spillrow").hidden = !SB; if (SB) $("spillcount").textContent = "(" + fmt(META.n_spillback) + ")";
   if (HAS_TRAFFIC) { $("bin").max = NB - 1; $("bin").disabled = true; }
