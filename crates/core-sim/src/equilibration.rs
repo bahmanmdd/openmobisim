@@ -226,36 +226,68 @@ pub fn gap_verdict(gap: f64) -> Option<GapVerdict> {
 
 impl PartialEq for IterationReport {
     fn eq(&self, other: &Self) -> bool {
-        let floats = |r: &Self| {
-            [
-                r.reselected_share,
-                r.changed_share,
-                r.total_travel_time_s,
-                r.completed_people,
-                r.time_change,
-                r.gap,
-                r.gap_expected,
-                r.gap_excess,
-                r.incomplete_share,
-                r.gap_network,
-                r.gap_network_excess,
-                r.gap_flow,
-                r.gap_flow_floor,
-                r.gap_flow_excess,
-                r.hub_mismatch_s,
-                r.mode_changed_share,
-            ]
-            .map(f64::to_bits)
-        };
-        self.iteration == other.iteration
-            && self.completed == other.completed
-            && self.truncated == other.truncated
-            && self.routes_added == other.routes_added
-            && self.route_searches == other.route_searches
-            && floats(self) == floats(other)
-            && self.itinerary_gap.map(f64::to_bits) == other.itinerary_gap.map(f64::to_bits)
-            && self.itinerary_recosted == other.itinerary_recosted
-            && self.reroutes == other.reroutes
+        // Every field by name, with no `..`: a field added to the report does not compile here
+        // until it is compared too. Floats compare by their bits, so a repeated run is checked
+        // to the bit and a NaN (a number not measured) equals itself.
+        let Self {
+            iteration,
+            reselected_share,
+            changed_share,
+            total_travel_time_s,
+            completed,
+            completed_people,
+            truncated,
+            time_change,
+            gap,
+            gap_expected,
+            gap_excess,
+            incomplete_share,
+            gap_network,
+            gap_network_excess,
+            gap_flow,
+            gap_flow_floor,
+            gap_flow_excess,
+            routes_added,
+            route_searches,
+            itinerary_gap,
+            itinerary_recosted,
+            reroutes,
+            itinerary_gap_excess,
+            mode_changed_floor,
+            reroute_searches,
+            hub_mismatch_s,
+            mode_changed_share,
+        } = self;
+        let floats = [
+            (*reselected_share, other.reselected_share),
+            (*changed_share, other.changed_share),
+            (*total_travel_time_s, other.total_travel_time_s),
+            (*completed_people, other.completed_people),
+            (*time_change, other.time_change),
+            (*gap, other.gap),
+            (*gap_expected, other.gap_expected),
+            (*gap_excess, other.gap_excess),
+            (*incomplete_share, other.incomplete_share),
+            (*gap_network, other.gap_network),
+            (*gap_network_excess, other.gap_network_excess),
+            (*gap_flow, other.gap_flow),
+            (*gap_flow_floor, other.gap_flow_floor),
+            (*gap_flow_excess, other.gap_flow_excess),
+            (*itinerary_gap_excess, other.itinerary_gap_excess),
+            (*mode_changed_floor, other.mode_changed_floor),
+            (*hub_mismatch_s, other.hub_mismatch_s),
+            (*mode_changed_share, other.mode_changed_share),
+        ];
+        *iteration == other.iteration
+            && *completed == other.completed
+            && *truncated == other.truncated
+            && *routes_added == other.routes_added
+            && *route_searches == other.route_searches
+            && *itinerary_recosted == other.itinerary_recosted
+            && *reroutes == other.reroutes
+            && *reroute_searches == other.reroute_searches
+            && floats.iter().all(|(a, b)| a.to_bits() == b.to_bits())
+            && itinerary_gap.map(f64::to_bits) == other.itinerary_gap.map(f64::to_bits)
     }
 }
 
