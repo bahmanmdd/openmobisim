@@ -216,6 +216,20 @@ fn events_sampling_keeps_everything_at_rate_one_and_fewer_below_it() {
     assert_eq!(sampled_rows, 10, "every 100th row, deterministically");
 }
 
+/// **Property (X-55):** a rate of nothing samples nothing: 0, a negative rate and NaN write no
+/// row, where they wrote the first.
+#[test]
+fn events_sampling_at_a_rate_of_nothing_keeps_nothing() {
+    let events: Vec<EventRow> = (0..100)
+        .map(|i| EventRow::trip(Second(i), EventType::TripCompleted, TripId::new(i)))
+        .collect();
+    for (k, rate) in [0.0, -0.5, f64::NAN].into_iter().enumerate() {
+        let path = temp_path(&format!("events_none_{k}.parquet"));
+        write_events(&path, "run-1", &events, rate).expect("write");
+        assert_eq!(count_rows(&path), 0, "rate {rate}");
+    }
+}
+
 #[test]
 fn events_writer_handles_an_empty_run() {
     let path = temp_path("events_empty.parquet");

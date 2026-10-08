@@ -21,16 +21,18 @@ pub const DEFAULT_SAMPLE_RATE: f64 = 0.01;
 /// Keep every `round(1 / sample_rate)`-th row, by position — a fixed
 /// stride, not a random draw, so the sample is a pure function of `events`'
 /// own (already deterministic) order rather than of a seed this crate has
-/// no reason to own. `sample_rate >= 1.0` keeps everything;
-/// `events` empty always keeps nothing.
+/// no reason to own, so a rate is rounded to a whole stride (0.4 keeps every
+/// second row). `sample_rate >= 1.0` keeps everything; 0, a negative rate or
+/// NaN keeps nothing (X-55: it kept the first row); `events` empty always
+/// keeps nothing.
 fn sample(events: &[EventRow], sample_rate: f64) -> Vec<&EventRow> {
-    if events.is_empty() {
+    if events.is_empty() || sample_rate.is_nan() || sample_rate <= 0.0 {
         return Vec::new();
     }
     if sample_rate >= 1.0 {
         return events.iter().collect();
     }
-    let rate = sample_rate.max(f64::MIN_POSITIVE);
+    let rate = sample_rate;
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
