@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import warnings
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -1208,6 +1209,19 @@ class Scenario:
         self._master_seed = master_seed
         self._choice_model = choice_model
         self._choice_options = choice_options
+        if choice_options and self._class_options:
+            # A class's coefficients replace the run's by name: say so, or a study varying a
+            # run-wide one that every class sets would see no effect and not know why.
+            for name in sorted(choice_options):
+                classes = sorted(c for c, betas in self._class_options.items() if name in betas)
+                if classes:
+                    whom = "every class" if len(classes) == len(table) else ", ".join(classes)
+                    warnings.warn(
+                        f"choice_options' {name} is replaced by the class's own for {whom}: a "
+                        "class's coefficients win by name, so the run-wide value applies to the "
+                        "other classes only.",
+                        stacklevel=2,
+                    )
         self._equilibration = equilibration
         self._equilibration_options = equilibration_options
         self._route_update = route_update

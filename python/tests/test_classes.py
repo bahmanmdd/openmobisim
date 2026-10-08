@@ -320,3 +320,17 @@ def test_a_model_of_one_s_own_sees_each_situation_s_class_by_name() -> None:
                   choice_model=BikesForKeenOnes())  # fmt: skip
     assert modes_of(run) == {"keen": {"bike"}, "plain": {"car"}}, "car 80 s, bike 120 s"
     assert BikesForKeenOnes.seen == {"keen", "plain"}
+
+
+def test_a_run_wide_coefficient_a_class_replaces_is_said() -> None:
+    import warnings
+
+    rows = toy_trips(3, "keen") + toy_trips(3, "plain")
+    both = {"modes": ["car", "bike"]}
+    classes = {"keen": {**both, "beta_mode_bike": 3.0}, "plain": both}
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        toy_run(rows, "classes-override", classes, choice_options={"beta_mode_bike": 1.0})
+        toy_run(rows, "classes-no-override", classes, choice_options={"beta_time_min": -0.3})
+    said = [str(w.message) for w in caught if "replaced by the class" in str(w.message)]
+    assert len(said) == 1 and "beta_mode_bike" in said[0] and "keen" in said[0], said
