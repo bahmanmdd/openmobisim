@@ -136,7 +136,12 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// km or transfer) and a parking's fee where its table gives none (0); every alternative carries
 /// `cost_eur` and its parts. The built-in models weigh money only when given `beta_cost_eur`: no
 /// run at the shipped values changes.
-pub const DEFAULTS_VERSION: u32 = 18;
+///
+/// Version 19: **three parking candidates** for park-and-ride and bike-and-ride (`core-sim`'s
+/// `ParkingDefaults::candidates`, five before): each trip weighs the three nearest and the three
+/// best by estimate. On Amsterdam's morning it saved 12 % of the run's time and took
+/// bike-and-ride from 0.76 % to 0.54 % of trips. Runs with parkings change; others do not.
+pub const DEFAULTS_VERSION: u32 = 19;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

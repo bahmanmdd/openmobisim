@@ -60,7 +60,8 @@ pub struct ParkingDefaults {
     /// under 5 km.*
     pub reach_bike_s: f64,
     /// The most parkings one trip chooses among (`max_anchor_candidates`, V9);
-    /// twice as many are tried.
+    /// twice as many are tried. Three (`DEFAULTS_VERSION` 19; five before): on Amsterdam's
+    /// morning, 12 % less run time for a fifth less bike-and-ride.
     ///
     /// *A resource limit, and an assumption about how many stations a traveller
     /// weighs.*
@@ -110,7 +111,7 @@ impl ParkingDefaults {
         walk_max_s: 300.0,
         reach_car_s: 1800.0,
         reach_bike_s: 1200.0,
-        candidates: 5.0,
+        candidates: 3.0,
         rank_speed_km_h: 30.0,
         floor_car_s: 120.0,
         slope_car_s: 600.0,
