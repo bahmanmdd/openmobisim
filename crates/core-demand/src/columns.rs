@@ -31,12 +31,25 @@ fn column<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a std::sync::Arc<d
     batch.column_by_name(name)
 }
 
+/// A required column has a value in every row: a null (what tools such as pandas and pyarrow
+/// write for a missing value) is refused, not read as whatever its slot happens to hold.
+fn no_nulls(array: &dyn Array, name: &str) -> Result<(), DemandError> {
+    if array.null_count() == 0 {
+        return Ok(());
+    }
+    let row = (0..array.len()).find(|&i| array.is_null(i)).unwrap_or(0);
+    Err(DemandError::Schema(format!(
+        "column `{name}` is required but has no value (null) in row {row} of its batch"
+    )))
+}
+
 /// An id column, `traveller_id` in the schema tables: "string/int". Integers
 /// are rendered with `to_string`, so `7` and `"7"` become the same external
 /// id — the same convention `io-osm` uses for OSM node and way ids.
 pub(crate) fn required_id(batch: &RecordBatch, name: &str) -> Result<Vec<String>, DemandError> {
     let array = column(batch, name)
         .ok_or_else(|| DemandError::Schema(format!("column `{name}` is missing")))?;
+    no_nulls(array.as_ref(), name)?;
     if let Some(a) = array.as_any().downcast_ref::<StringArray>() {
         return Ok((0..a.len()).map(|i| a.value(i).to_string()).collect());
     }
@@ -59,6 +72,7 @@ pub(crate) fn required_f64(batch: &RecordBatch, name: &str) -> Result<Vec<f64>, 
     let a = array.as_any().downcast_ref::<Float64Array>().ok_or_else(|| {
         DemandError::Schema(format!("column `{name}` must be float64, got {:?}", array.data_type()))
     })?;
+    no_nulls(a, name)?;
     Ok((0..a.len()).map(|i| a.value(i)).collect())
 }
 
@@ -79,6 +93,7 @@ pub(crate) fn required_u32(batch: &RecordBatch, name: &str) -> Result<Vec<u32>, 
 fn required_i64(batch: &RecordBatch, name: &str) -> Result<Vec<i64>, DemandError> {
     let array = column(batch, name)
         .ok_or_else(|| DemandError::Schema(format!("column `{name}` is missing")))?;
+    no_nulls(array.as_ref(), name)?;
     integer_column(array, name)
 }
 

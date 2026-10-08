@@ -436,3 +436,72 @@ fn an_unknown_mode_is_refused_rather_than_guessed() {
     let err = read_trips_parquet(&path).expect_err("a typo is not a car trip").to_string();
     assert!(err.contains("`cycle`") && err.contains("bike"), "{err}");
 }
+
+/// A `trips.parquet` whose `column` holds a null in its second row, as pandas and pyarrow write a
+/// missing value; every other column complete.
+fn write_trips_with_a_null(path: &std::path::Path, column: &str) {
+    let null_at = |name: &str| name == column;
+    let ids: Vec<Option<&str>> = vec![Some("a"), (!null_at("traveller_id")).then_some("b")];
+    let seq: Vec<Option<u32>> = vec![Some(0), (!null_at("trip_seq")).then_some(0)];
+    let coord = |name: &str, v: f64| -> ArrayRef {
+        Arc::new(arrow_array::Float64Array::from(vec![Some(v), (!null_at(name)).then_some(v)]))
+    };
+    let departure: Vec<Option<u32>> =
+        vec![Some(3600), (!null_at("departure_time_s")).then_some(7200)];
+    let class: Vec<Option<&str>> =
+        vec![Some("commuter"), (!null_at("user_class")).then_some("commuter")];
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("traveller_id", DataType::Utf8, true),
+        Field::new("trip_seq", DataType::UInt32, true),
+        Field::new("origin_lon", DataType::Float64, true),
+        Field::new("origin_lat", DataType::Float64, true),
+        Field::new("destination_lon", DataType::Float64, true),
+        Field::new("destination_lat", DataType::Float64, true),
+        Field::new("departure_time_s", DataType::UInt32, true),
+        Field::new("user_class", DataType::Utf8, true),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(StringArray::from(ids)),
+            Arc::new(UInt32Array::from(seq)),
+            coord("origin_lon", 4.90),
+            coord("origin_lat", 52.37),
+            coord("destination_lon", 4.91),
+            coord("destination_lat", 52.38),
+            Arc::new(UInt32Array::from(departure)),
+            Arc::new(StringArray::from(class)),
+        ],
+    )
+    .expect("valid batch");
+    let file = File::create(path).expect("create fixture");
+    let mut writer = ArrowWriter::try_new(file, schema, None).expect("writer");
+    writer.write(&batch).expect("write batch");
+    writer.close().expect("close writer");
+}
+
+#[test]
+fn a_null_in_a_required_column_is_refused_not_read_as_a_value() {
+    for column in [
+        "traveller_id",
+        "trip_seq",
+        "origin_lon",
+        "origin_lat",
+        "destination_lon",
+        "destination_lat",
+        "departure_time_s",
+        "user_class",
+    ] {
+        let path = temp_path(&format!("null_{column}.parquet"));
+        write_trips_with_a_null(&path, column);
+        let error = read_trips_parquet(&path).expect_err(column).to_string();
+        assert!(error.contains(column) && error.contains("null"), "{column}: {error}");
+    }
+    let path = temp_path("no_null.parquet");
+    write_trips_with_a_null(&path, "none");
+    assert_eq!(
+        read_trips_parquet(&path).expect("complete").len(),
+        2,
+        "nullable but complete reads"
+    );
+}
