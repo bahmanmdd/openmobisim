@@ -752,6 +752,14 @@ impl<'a> LtmNetwork<'a> {
         self.discharge_rate[i] = discharge * factor;
         self.inflow_rate[i] = inflow * factor;
         let at = change.time;
+        if change.factor <= 0.0 {
+            // Closed from `at`: its headway clocks restart there. A headway counts from the last
+            // vehicle in or out, and with none yet (the clocks at -inf) even a closed link's
+            // tiny rate would let the first one pass at once.
+            let curves = &mut self.curves[i];
+            curves.set_last_entry(Duration(curves.last_entry().get().max(at)));
+            curves.set_last_exit(Duration(curves.last_exit().get().max(at)));
+        }
         // The link's own queue (its discharge), its departures (their inflow) and the queues
         // bound onto it from upstream (their inflow): each front's time, again.
         let n = self.links;

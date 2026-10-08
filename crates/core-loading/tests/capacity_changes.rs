@@ -105,3 +105,43 @@ fn a_narrowed_link_discharges_at_its_share_of_capacity() {
         assert!((w[1] - w[0] - headway).abs() <= 1.0, "{} apart against {headway}", w[1] - w[0]);
     }
 }
+
+/// One car leaving `A` for `C` at `depart` seconds, under `changes`: its arrival, whole seconds.
+fn one_car(depart: u32, changes: Vec<CapacityChange>) -> f64 {
+    let (net, ab, bc) = line();
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    let car = [Vehicle::new(VehicleId::new(0), vec![ab, bc], Pcu(1.0), Second(depart))];
+    let out = run_ltm_chained(
+        &net,
+        &turns,
+        &car,
+        &[],
+        Duration(3600.0),
+        Duration(300.0),
+        FidelityLevel::Full,
+        Recording::Trajectories,
+        Rules { capacity_changes: changes, ..Rules::default() },
+        None,
+    );
+    f64::from(out.trajectories[0].arrival().get())
+}
+
+#[test]
+fn a_closed_link_holds_even_a_first_vehicle() {
+    // No vehicle has passed `BC` before it closes, so no headway runs from an earlier one: the
+    // closure itself must hold the car, entering and leaving alike.
+    let (_, _, bc) = line();
+    let closed = |from: f64| {
+        vec![
+            CapacityChange { time: from, link: bc, factor: 0.0 },
+            CapacityChange { time: 400.0, link: bc, factor: 1.0 },
+        ]
+    };
+    assert!((one_car(10, Vec::new()) - 82.0).abs() < 1e-6, "free: 10 + 72 s");
+    // Closed before it reaches `B`: it waits there and enters at 400 s, then 36 s on `BC`.
+    let held_at_b = one_car(10, closed(0.0));
+    assert!((held_at_b - 436.0).abs() < 1e-6, "entering a closed link: {held_at_b}");
+    // On `BC` (it entered at 36 s) when `BC` closes at 50 s: it leaves when it opens.
+    let held_on_bc = one_car(0, closed(50.0));
+    assert!((held_on_bc - 400.0).abs() < 1e-6, "leaving a closed link: {held_on_bc}");
+}
