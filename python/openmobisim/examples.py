@@ -222,8 +222,8 @@ def traveller_classes() -> dict[str, dict]:
     ================  =====  ==================================
 
     Each class owns what its modes need (a car for one that may drive or park and ride, a bike
-    for one that may cycle, every class a transit pass) and **all four weigh alike**: a bike
-    constant of 3.0 (every other mode's 0) and each kilometre of a ride in mixed traffic at
+    for one that may cycle, every class a transit pass), and **the two that cycle weigh alike**: a
+    bike constant of 3.0 (every other mode's 0) and each kilometre of a ride in mixed traffic at
     -0.16 on top of its time (``beta_bike_mixed_km``: at the default time weight and speed in
     mixed traffic, a minute there counting 1.2, as the bike route choice assumes). The constant
     was fitted (S250) so that a synthetic morning
@@ -241,10 +241,11 @@ def traveller_classes() -> dict[str, dict]:
     from openmobisim.demand import _class_table
     from openmobisim.scenario import MODES
 
-    betas = {"beta_mode_bike": 3.0, "beta_bike_mixed_km": -0.16}
+    # The bike's weights only where a class can cycle: elsewhere they could never apply.
+    bike = {"beta_mode_bike": 3.0, "beta_bike_mixed_km": -0.16}
     return _class_table({
-        "car_and_bike": {"share": 0.40, "modes": list(MODES), **betas},
-        "no_vehicle": {"share": 0.30, "modes": ["walk", "transit"], **betas},
-        "bike_only": {"share": 0.20, "modes": ["walk", "bike", "transit", "bike_transit"], **betas},
-        "car_only": {"share": 0.10, "modes": ["walk", "car", "transit", "car_transit"], **betas},
+        "car_and_bike": {"share": 0.40, "modes": list(MODES), **bike},
+        "no_vehicle": {"share": 0.30, "modes": ["walk", "transit"]},
+        "bike_only": {"share": 0.20, "modes": ["walk", "bike", "transit", "bike_transit"], **bike},
+        "car_only": {"share": 0.10, "modes": ["walk", "car", "transit", "car_transit"]},
     })  # fmt: skip
