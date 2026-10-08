@@ -783,6 +783,8 @@ impl Run {
     /// before [`Self::execute`]; it depends only on the inputs.
     #[must_use]
     pub fn description(&self) -> RunDescription {
+        let read = self.choice_model.required_attributes();
+        let reads = |name: &str| read.as_ref().is_none_or(|names| names.iter().any(|n| n == name));
         describe(&Inputs {
             network: &self.network,
             travellers: &self.travellers,
@@ -816,6 +818,7 @@ impl Run {
             loading: &self.loading,
             prices: self.reads_money().then_some(&self.prices),
             demand_values: &self.demand_values,
+            reads: &reads,
         })
     }
 

@@ -170,6 +170,10 @@ pub(crate) struct Inputs<'a> {
     pub prices: Option<&'a crate::prices::Prices>,
     /// The user's traveller and trip values (S249).
     pub demand_values: &'a crate::demand_values::DemandValues,
+    /// Whether the choice model reads an attribute (a model that lists none reads them all):
+    /// a link, traveller or trip value no model reads shapes nothing, so it is not hashed, as
+    /// prices are not when money is not read.
+    pub reads: &'a dyn Fn(&str) -> bool,
 }
 
 pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
@@ -250,10 +254,24 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             }
         }
     }
-    // The user's link values (S236): nothing when none is given.
-    if !inputs.link_values.is_empty() {
+    // The user's link values (S236): the columns a model reads (a road toll also when money is
+    // read); nothing when none is.
+    let money = inputs.prices.is_some();
+    let read_link: Vec<_> = inputs
+        .link_values
+        .columns()
+        .filter(|(layer, name, _)| {
+            let attribute = |suffix: &str| format!("{}_{name}_{suffix}", layer.as_str());
+            (inputs.reads)(&attribute("km"))
+                || (inputs.reads)(&attribute("sum"))
+                || (money
+                    && *layer == crate::link_values::ValueLayer::Road
+                    && *name == crate::prices::TOLL_COLUMN)
+        })
+        .collect();
+    if !read_link.is_empty() {
         h.write_str("link-values");
-        for (layer, name, values) in inputs.link_values.columns() {
+        for (layer, name, values) in read_link {
             h.write_str(layer.as_str());
             h.write_str(name);
             h.write_u64(values.len() as u64);
@@ -290,13 +308,33 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             h.write_u32(t.to_s);
         }
     }
-    // The user's traveller and trip values (S249): nothing when none is given.
-    if !inputs.demand_values.is_empty() {
+    // The user's traveller and trip values (S249): the columns a model reads (the parking fee at
+    // the destination also when money is read); nothing when none is.
+    let read_demand = |kind: &str, name: &str| {
+        (inputs.reads)(&format!("{kind}_{name}"))
+            || (money && kind == "trip" && name == crate::demand_values::DESTINATION_PARKING)
+    };
+    let columns = [
+        (
+            "person",
+            inputs
+                .demand_values
+                .persons()
+                .filter(|(n, _)| read_demand("person", n))
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "trip",
+            inputs
+                .demand_values
+                .trips()
+                .filter(|(n, _)| read_demand("trip", n))
+                .collect::<Vec<_>>(),
+        ),
+    ];
+    if columns.iter().any(|(_, c)| !c.is_empty()) {
         h.write_str("demand-values");
-        for (kind, columns) in [
-            ("person", inputs.demand_values.persons().collect::<Vec<_>>()),
-            ("trip", inputs.demand_values.trips().collect::<Vec<_>>()),
-        ] {
+        for (kind, columns) in columns {
             for (name, values) in columns {
                 h.write_str(kind);
                 h.write_str(name);

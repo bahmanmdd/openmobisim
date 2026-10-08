@@ -5,8 +5,9 @@ settings): a toll on the roads, a dearer fare and a dearer kilometre by car neve
 of the travellers they charge, and a large rise takes most of them away; separated bike tracks
 draw cyclists who dislike riding in mixed traffic; halving every road's capacity lengthens the
 mean trip and a third of the demand shortens it; and values a run is given but no model weighs
-(a traveller's, a trip's, a link's, a price) change no result. The steps are large on purpose:
-each assertion is about a direction, which sampling noise at these sizes cannot reverse.
+(a traveller's, a trip's, a link's, a price) change no result and not the fingerprint. The steps
+are large on purpose: each assertion is about a direction, which sampling noise at these sizes
+cannot reverse.
 
 The choice runs load at free flow (``flow_level=0``, one loading), so a response is the choice
 model's alone and not the congestion's; the capacity and demand runs are congested on purpose.
@@ -154,3 +155,7 @@ def test_values_no_model_weighs_change_no_result():
         assert other.total_travel_time_s == base.total_travel_time_s, name
         assert other.completion == base.completion, name
         assert np.array_equal(other.link_bins("road").pcu(), base.link_bins("road").pcu()), name
+        assert other.fingerprint == base.fingerprint, f"{name}: not read, not in the fingerprint"
+    weighed = run(person_values=given["person_values"],
+                  choice_options={"beta_mode_car*person_income": -0.1})  # fmt: skip
+    assert weighed.fingerprint != base.fingerprint, "a value a model reads is in the fingerprint"
