@@ -247,8 +247,11 @@ pub fn read_feed(
             let mut t = start;
             while t < end {
                 for (out, call) in shifted.iter_mut().zip(&calls) {
-                    out.arrival = call.arrival - first_departure + t;
-                    out.departure = call.departure - first_departure + t;
+                    // Add before subtracting: a first stop's arrival can be before the run's
+                    // first departure (a dwell there), and unsigned seconds must not go below 0.
+                    out.arrival = call.arrival.saturating_add(t).saturating_sub(first_departure);
+                    out.departure =
+                        call.departure.saturating_add(t).saturating_sub(first_departure);
                 }
                 builder.add_run(
                     format!("{}@{t}", trip_ids[trip as usize]),
@@ -660,7 +663,13 @@ fn parse_time(text: &str) -> Option<u32> {
         return None;
     }
     let (h, m, s): (u32, u32, u32) = (h.trim().parse().ok()?, m.parse().ok()?, s.parse().ok()?);
-    (m < 60 && s < 60).then(|| h * 3600 + m * 60 + s)
+    if m >= 60 || s >= 60 {
+        return None;
+    }
+    // An hour too large for the seconds to fit (or to tell from a blank) is not a time: the row
+    // is skipped and counted, not wrapped round to some other time of day.
+    let seconds = h.checked_mul(3600)?.checked_add(m * 60 + s)?;
+    (seconds != UNSET).then_some(seconds)
 }
 
 /// Complete a run's times: a missing arrival or departure is the other; a call
@@ -777,8 +786,10 @@ mod tests {
         assert_eq!(parse_time("8:05:09"), Some(8 * 3600 + 5 * 60 + 9));
         assert_eq!(parse_time("25:00:00"), Some(25 * 3600), "past midnight");
         assert_eq!(parse_time(""), Some(UNSET));
-        for bad in ["8:5:09", "08:60:00", "x", "08:00", "08:00:00:00"] {
+        for bad in ["8:5:09", "08:60:00", "x", "08:00", "08:00:00:00", "1193047:00:00"] {
             assert_eq!(parse_time(bad), None, "{bad:?}");
         }
+        assert_eq!(parse_time("1193046:28:14"), Some(UNSET - 1), "the largest time");
+        assert_eq!(parse_time("1193046:28:15"), None, "the blank's own value is not a time");
     }
 }

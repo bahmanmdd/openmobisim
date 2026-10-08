@@ -234,3 +234,42 @@ fn a_missing_file_is_an_error() {
     assert_eq!(err, GtfsError::MissingFile("stop_times.txt"));
     std::fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn a_frequency_run_whose_first_stop_has_a_dwell_keeps_its_times() {
+    // The trip arrives at its first stop a minute before it leaves; its runs repeat every ten
+    // minutes from 08:01. The arrival there is before the run's first departure, which an
+    // unsigned "time less first departure" would take below zero.
+    let dir = std::env::temp_dir().join(format!("openmobisim-gtfs-dwell-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let files = [
+        (
+            "stops.txt",
+            "stop_id,stop_name,stop_lat,stop_lon\nA,Alpha,52.37,4.90\nB,Bravo,52.37,4.91\n",
+        ),
+        ("routes.txt", "route_id,route_short_name,route_long_name,route_type\nR,1,One,3\n"),
+        ("trips.txt", "route_id,service_id,trip_id\nR,WK,F\n"),
+        (
+            "calendar.txt",
+            "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n\
+             WK,1,1,1,1,1,0,0,20261001,20261031\n",
+        ),
+        (
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             F,08:00:00,08:01:00,A,1\nF,08:11:00,08:11:00,B,2\n",
+        ),
+        ("frequencies.txt", "trip_id,start_time,end_time,headway_secs\nF,08:01:00,08:30:00,600\n"),
+    ];
+    for (file, text) in files {
+        std::fs::write(dir.join(file), text).unwrap();
+    }
+    let (t, report) = read_gtfs(&dir, ServiceDate::parse("20261007"), &west_of_five).unwrap();
+    assert_eq!(report.runs_from_frequencies, 3);
+    for start in [8 * 3600 + 60, 8 * 3600 + 660, 8 * 3600 + 1260] {
+        let got = calls(&t, &format!("F@{start}"));
+        assert_eq!((got[0].1, got[0].2), (start - 60, start), "a minute's dwell at A");
+        assert_eq!((got[1].1, got[1].2), (start + 600, start + 600), "ten minutes to B");
+    }
+    std::fs::remove_dir_all(dir).ok();
+}
