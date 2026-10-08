@@ -28,6 +28,13 @@ fn grid_rejects_a_zero_step() {
 }
 
 #[test]
+fn grid_rejects_a_zero_window() {
+    // A grid of no steps has no step to place an instant in: `step_of` would have none to give.
+    let err = StepGrid::new(Second::ZERO, 300, 0).unwrap_err();
+    assert!(matches!(err, StepGridError::ZeroWindow), "{err:?}");
+}
+
+#[test]
 fn grid_rejects_a_window_past_the_end_of_the_clock() {
     let err = StepGrid::new(Second(u32::MAX - 10), 1, 100).unwrap_err();
     assert!(matches!(err, StepGridError::WindowOverflowsClock { .. }), "{err:?}");

@@ -243,6 +243,8 @@ pub struct StepGrid {
 pub enum StepGridError {
     /// `step_seconds` was zero.
     ZeroStep,
+    /// `window_seconds` was zero: a grid of no steps has no step to place an instant in.
+    ZeroWindow,
     /// The window was not a whole number of steps long.
     WindowNotWholeSteps {
         /// The window length that was offered, in seconds.
@@ -263,6 +265,7 @@ impl fmt::Display for StepGridError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             StepGridError::ZeroStep => f.write_str("step_seconds must be greater than zero"),
+            StepGridError::ZeroWindow => f.write_str("window_seconds must be greater than zero"),
             StepGridError::WindowNotWholeSteps { window_seconds, step_seconds } => write!(
                 f,
                 "window of {window_seconds} s is not a whole number of {step_seconds} s steps"
@@ -288,7 +291,7 @@ impl StepGrid {
     ///
     /// # Errors
     ///
-    /// Returns [`StepGridError`] if the step is zero, if the window is not a
+    /// Returns [`StepGridError`] if the step or the window is zero, if the window is not a
     /// whole number of steps, or if the window would run past the end of the
     /// clock. A partial trailing step is rejected rather than rounded: a
     /// silently shortened or lengthened window would change every rate in the
@@ -301,6 +304,9 @@ impl StepGrid {
         let Some(step) = NonZeroU32::new(step_seconds) else {
             return Err(StepGridError::ZeroStep);
         };
+        if window_seconds == 0 {
+            return Err(StepGridError::ZeroWindow);
+        }
         if window_seconds % step_seconds != 0 {
             return Err(StepGridError::WindowNotWholeSteps { window_seconds, step_seconds });
         }
