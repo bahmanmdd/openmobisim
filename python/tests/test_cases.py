@@ -116,7 +116,9 @@ def test_a_check_compares_with_the_reference_and_the_command_line_runs_it(
     assert {r["status"] for r in ms.examples.case_check(root=made_up, quiet=True)} == {"same"}
     # Another platform's run: the same within the tolerance, or not; other inputs: never.
     elsewhere = {**got, "platform": "elsewhere"}
-    assert _cases._compare(got, elsewhere)[0] == "within tolerance"
+    assert _cases._compare(got, elsewhere)[0] == "same numbers (another platform)"
+    near = {**got, "mean_trip_s": got["mean_trip_s"] * 1.001}
+    assert _cases._compare(near, elsewhere)[0] == "within tolerance"
     assert _cases._compare(got, {**elsewhere, "mean_trip_s": got["mean_trip_s"] * 1.05})[0] == (
         "different"
     )
@@ -150,7 +152,8 @@ def test_the_package_s_references_are_of_its_cases() -> None:
 def test_the_benchmarks_match_the_package_s_references() -> None:
     rows = ms.examples.case_check(["nguyendupuis", "siouxfalls"], root=BUNDLE, quiet=True)
     assert len(rows) == 3
-    assert {r["status"] for r in rows} <= {"same", "within tolerance"}, rows
+    matching = {"same", "same numbers (another platform)", "within tolerance"}
+    assert {r["status"] for r in rows} <= matching, rows
 
 
 @needs_bundle

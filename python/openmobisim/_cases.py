@@ -276,7 +276,10 @@ def case_summary(run: Any) -> dict[str, Any]:
 
 
 def _compare(got: dict[str, Any], ref: dict[str, Any]) -> tuple[str, list[str]]:
-    """``"same"``, ``"within tolerance"`` or ``"different"``, and what differed."""
+    """The verdict and what differed.
+
+    ``"same"``, ``"same numbers (another platform)"``, ``"within tolerance"`` or ``"different"``.
+    """
     notes = []
     if got["fingerprint"] != ref["fingerprint"]:
         notes.append(f"fingerprint {got['fingerprint']} against {ref['fingerprint']}: other inputs")
@@ -304,8 +307,14 @@ def _compare(got: dict[str, Any], ref: dict[str, Any]) -> tuple[str, list[str]]:
         notes.append(f"mean trip {got['mean_trip_s']:.1f} s against {ref['mean_trip_s']:.1f} s")
     if off_share > tol["mode_share_points"]:
         notes.append(f"a mode's share differs by {off_share:.2f} points")
-    within = not notes
-    return ("within tolerance" if within else "different"), notes
+    if notes:
+        return "different", notes
+    identical = (
+        got["completed"] == ref["completed"]
+        and got["mean_trip_s"] == ref["mean_trip_s"]
+        and all(got_s.get(m) == ref_s.get(m) for m in shares)
+    )
+    return ("same numbers (another platform)" if identical else "within tolerance"), notes
 
 
 def case_check(
@@ -319,9 +328,11 @@ def case_check(
     The acceptance test of an installation: every scenario of each case (its ``case.json``) is run
     with the package's defaults, and compared with the results this version of the package
     carries. **Same**: the same fingerprint and, on the platform that made the reference, the same
-    results to the bit. **Within tolerance**: the same fingerprint, and on another platform results
-    within ``CHECK_TOLERANCE``. **Different**: anything else (another fingerprint means other
-    inputs or settings: another bundle or package version).
+    results to the bit. **Same numbers (another platform)**: the same fingerprint and, on another
+    platform, every compared number the same to the bit. **Within tolerance**: the same
+    fingerprint, and on another platform results within ``CHECK_TOLERANCE``. **Different**:
+    anything else (another fingerprint means other inputs or settings: another bundle or package
+    version).
 
     Args:
         names: The cases (``case_names()``); ``None``: every case.
@@ -330,7 +341,8 @@ def case_check(
 
     Returns:
         One row per scenario: ``case``, ``scenario``, ``status`` (``"same"``,
-        ``"within tolerance"``, ``"different"`` or ``"no reference"``), ``notes`` (what differed),
+        ``"same numbers (another platform)"``, ``"within tolerance"``, ``"different"`` or
+        ``"no reference"``), ``notes`` (what differed),
         ``run_s`` (wall-clock seconds, reading included) and ``result`` (``case_summary``).
     """
     import time
@@ -349,6 +361,6 @@ def case_check(
                    "run_s": time.perf_counter() - t, "result": got}  # fmt: skip
             rows.append(row)
             if not quiet:
-                print(f"{name:14s} {scenario:10s} {status:17s} {row['run_s']:7.1f} s  "
+                print(f"{name:14s} {scenario:10s} {status:31s} {row['run_s']:7.1f} s  "
                       + "; ".join(notes), flush=True)  # fmt: skip
     return rows

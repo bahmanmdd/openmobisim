@@ -119,5 +119,6 @@ def test_check_judges_the_reference_platform_to_the_bit():
     assert status == "different" and notes
     elsewhere = dict(REF, platform="q", mean_trip_s=600.6)  # another platform: the tolerance
     assert _cases._compare(elsewhere, REF)[0] == "within tolerance"
+    assert _cases._compare(dict(REF, platform="q"), REF)[0] == "same numbers (another platform)"
     assert _cases._compare(dict(elsewhere, mean_trip_s=700.0), REF)[0] == "different"
     assert _cases._compare(dict(REF, fingerprint="g"), REF)[0] == "different"
