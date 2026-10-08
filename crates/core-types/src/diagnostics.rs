@@ -317,9 +317,13 @@ impl Diagnostics {
     ///
     /// Addition is associative and exact on `u64`, so the merged result does
     /// not depend on how work was chunked — the same property
-    /// [`crate::reduce`] buys for floating-point sums.
+    /// [`crate::reduce`] buys for floating-point sums. `other`'s rows are taken in
+    /// key order, not its map's (which is random per map): past the cap, which
+    /// elements keep their own rows must not depend on it.
     pub fn merge(&mut self, other: &Diagnostics) {
-        for (&key, &count) in &other.counts {
+        let mut rows: Vec<(DiagKey, u64)> = other.counts.iter().map(|(&k, &n)| (k, n)).collect();
+        rows.sort_unstable_by_key(|&(key, _)| key);
+        for (key, count) in rows {
             self.record_n(key, count);
         }
     }

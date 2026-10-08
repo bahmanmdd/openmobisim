@@ -112,6 +112,29 @@ fn merging_is_independent_of_how_work_was_split() {
 }
 
 #[test]
+fn merging_past_the_cap_keeps_the_same_elements_whatever_a_map_s_order() {
+    // Past the cap, which elements keep their own rows must not depend on the order a hash map
+    // yields its entries in (random per map), or two runs of one seed write different reports.
+    let half = u32::try_from(MAX_ELEMENTS_PER_CODE).unwrap() * 3 / 4;
+    let merged = || {
+        let (mut first, mut second) = (Diagnostics::new(), Diagnostics::new());
+        for id in 0..half {
+            first.record(link_key(id));
+            second.record(link_key(half + id));
+        }
+        let mut report = Diagnostics::new();
+        report.merge(&first);
+        report.merge(&second);
+        report.rows()
+    };
+    let once = merged();
+    assert_eq!(once.len(), MAX_ELEMENTS_PER_CODE + 1, "capped, plus the overflow row");
+    for _ in 0..8 {
+        assert_eq!(merged(), once, "fresh maps, fresh orders: the same report");
+    }
+}
+
+#[test]
 fn rows_are_sorted_deterministically() {
     let mut diag = Diagnostics::new();
     diag.record(DiagKey::run_level(Category::Numeric, codes::STORE_OVERDRAFT, Severity::Info));
