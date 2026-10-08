@@ -350,3 +350,28 @@ fn level_zero_has_no_origin_wait_and_the_same_entry_times_as_its_exit_times() {
         assert!((tables.entry.mean_seconds(r) - free).abs() < 1e-6);
     }
 }
+
+/// **Property (X-38 #6):** a vehicle waiting at a signal's stop line when the window ends is
+/// still on its approach, so it is in the entry table with its time so far, as one still
+/// driving along the link is; before, the vehicles at stop lines were left out.
+#[test]
+fn vehicles_waiting_at_a_stop_line_when_the_window_ends_are_counted() {
+    let toy = Toy::new();
+    let cars: Vec<Vehicle> = (0..20).map(|k| toy.car(k, &["a1", "a2"], 1.0, 3 * k)).collect();
+    let window = 100.0;
+    let mut sim =
+        LtmNetwork::new(&toy.net, &toy.turns).with_link_bins(60, window).with_entry_bins();
+    cars.iter().for_each(|v| sim.depart(v));
+    let _ = sim.step(Duration(window));
+    let a1 = toy.id("a1");
+    assert!(sim.waiting_at_stop_line(a1) > 0, "the fixture needs a vehicle at the stop line");
+    assert_eq!(sim.waiting_at_origin(a1), 0, "and every car on the network");
+    sim.record_unfinished(window);
+    let (_, tables) = sim.take_link_bins_with_entry().expect("asked for");
+    let entry = tables.expect("entry bins asked for").entry;
+    let entered_a1: u32 = (0..entry.len())
+        .filter(|&r| entry.links()[r] == a1.raw())
+        .map(|r| entry.crossings()[r])
+        .sum();
+    assert_eq!(entered_a1, 20, "every car that entered a1 is in its entry table once");
+}

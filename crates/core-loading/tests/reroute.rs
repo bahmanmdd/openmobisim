@@ -10,8 +10,8 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    FidelityLevel, LiveTimes, Recording, Reroute, RerouteReason, RerouteRule, Rules, Trajectory,
-    Vehicle, run_ltm_chained,
+    CapacityChange, FidelityLevel, LiveTimes, Recording, Reroute, RerouteReason, RerouteRule,
+    Rules, Trajectory, Vehicle, run_ltm_chained,
 };
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
@@ -175,4 +175,69 @@ fn a_vehicle_re_routes_at_most_max_times_and_only_after_waiting() {
     let mut rr = ByE { ab: d.ab, bc: d.bc, detour: vec![d.be, d.ed], calls: 0, decline: false };
     let (_, _, records) = load(&d, Some(rule), Some(&mut rr));
     assert_eq!((rr.calls, records.len()), (0, 0), "nobody waits a million seconds");
+}
+
+/// A load of `vehicles` on the diamond with `changes`, over `window_s`.
+fn load_changed(
+    d: &Diamond,
+    vehicles: &[Vehicle],
+    changes: Vec<CapacityChange>,
+    window_s: f64,
+    rr: &mut ByE,
+) -> (Vec<Trajectory>, Vec<openmobisim_core_loading::RerouteRecord>) {
+    let turns = TurnTable::build(&d.net, SignalDefaults::SHIPPED);
+    let out = run_ltm_chained(
+        &d.net,
+        &turns,
+        vehicles,
+        &[],
+        Duration(window_s),
+        Duration(60.0),
+        FidelityLevel::Full,
+        Recording::Trajectories,
+        Rules {
+            reroute: Some(RerouteRule { after_s: 120.0, max: 3 }),
+            capacity_changes: changes,
+            ..Rules::default()
+        },
+        Some(rr as &mut dyn Reroute),
+    );
+    (out.trajectories, out.reroutes)
+}
+
+/// **Property (X-37 #3):** a vehicle whose next link is closed is held at the front of its link
+/// like any other blocked vehicle, so it is offered a new route; before, a closure held it by
+/// the next link's inflow headway, which never offered one, and it waited out the closure.
+#[test]
+fn a_vehicle_held_by_a_closure_ahead_is_offered_a_new_route() {
+    let d = diamond();
+    let cars: Vec<Vehicle> = (0..10u32)
+        .map(|n| Vehicle::new(VehicleId::new(n), vec![d.ab, d.bc, d.cd], Pcu(1.0), Second(n)))
+        .collect();
+    let closed = vec![CapacityChange { time: 0.0, link: d.bc, factor: 0.0 }];
+    let mut rr = ByE { ab: d.ab, bc: d.bc, detour: vec![d.be, d.ed], calls: 0, decline: false };
+    let (done, records) = load_changed(&d, &cars, closed, 3600.0, &mut rr);
+    assert_eq!(records.len(), 10, "each vehicle is offered the way round and takes it");
+    assert_eq!(done.len(), 10, "and arrives inside the hour although `bc` never opens");
+    assert!(done.iter().all(|t| t.links.iter().any(|x| x.link == d.be)));
+}
+
+/// **Property (X-37 #11):** a new route is taken only if it joins on where the vehicle is and
+/// each of its links follows the one before; a rerouter's answer that jumps is refused and the
+/// vehicle keeps its plan.
+#[test]
+fn a_new_route_that_does_not_join_on_is_refused() {
+    let d = diamond();
+    let rule = RerouteRule { after_s: 120.0, max: 3 };
+    // `ed` ends where the plan ends, but does not leave `b`, where the vehicle is.
+    let mut rr = ByE { ab: d.ab, bc: d.bc, detour: vec![d.ed], calls: 0, decline: false };
+    let (done, n, records) = load(&d, Some(rule), Some(&mut rr));
+    assert!(rr.calls > 0, "vehicles were offered routes");
+    assert!(records.is_empty(), "no answer that jumps is taken");
+    assert_eq!(n, 1200);
+    for t in &done {
+        for pair in t.links.windows(2) {
+            assert_eq!(d.net.link_to(pair[0].link), d.net.link_from(pair[1].link), "a whole route");
+        }
+    }
 }

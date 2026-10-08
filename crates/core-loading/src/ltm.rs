@@ -810,17 +810,18 @@ impl<'a> LtmNetwork<'a> {
         self
     }
 
-    /// Tell the recorder about every vehicle still on a link, or waiting at an
-    /// origin to enter one, at second `end` (S170; see
+    /// Tell the recorder about every vehicle still on a link (driving, or waiting at its stop
+    /// line), or waiting at an origin to enter one, at second `end` (S170; see
     /// [`LinkBinRecorder::record_unfinished`]). Call once, after the last step.
     pub fn record_unfinished(&mut self, end: f64) {
         let n = self.links;
         let Some(recorder) = self.recorder.as_mut() else { return };
-        for queue in 0..2 * n {
+        for queue in 0..3 * n {
             let link = LinkId::from_index(queue % n);
             for q in &self.queues[queue] {
                 let pcu = self.vehicles[q.slot as usize].pcu.get();
-                if queue < n {
+                if queue < n || queue >= 2 * n {
+                    // On the link, or at its stop line: still on it (X-38).
                     recorder.record_unfinished(link, q.enter, end, pcu);
                 } else {
                     // Still waiting outside the network: `enter` is its departure.
@@ -1408,7 +1409,8 @@ impl<'a> LtmNetwork<'a> {
     }
 
     /// Advance the loading by `dt`, returning every trip that finished in it,
-    /// in the order they finished.
+    /// in the order they finished. Under [`Self::with_rerouting`] nobody is asked for a route:
+    /// [`Self::step_rerouting`] asks.
     ///
     /// # Panics
     ///
@@ -1460,9 +1462,11 @@ impl<'a> LtmNetwork<'a> {
                 }
                 _ => break,
             }
-            if let (Some(rr), Some(r)) = (rr.as_deref_mut(), self.rerouting.as_ref()) {
-                if !r.pending.is_empty() {
-                    self.serve_reroutes(t0, rr);
+            if self.rerouting.as_ref().is_some_and(|r| !r.pending.is_empty()) {
+                match rr.as_deref_mut() {
+                    Some(rr) => self.serve_reroutes(t0, rr),
+                    // Under `step` nobody is asked: the offers lapse rather than pile up (X-37).
+                    None => self.rerouting.as_mut().expect("checked").pending.clear(),
                 }
             }
         }
@@ -1629,7 +1633,7 @@ impl<'a> LtmNetwork<'a> {
                         // On a signalised approach the inflow headway applies
                         // when the vehicle leaves the stop line.
                         if self.stop_delay[i] <= 0.0 && self.inflow_blocks(j, pcu, queue, t, t0) {
-                            return;
+                            return self.offer_if_inflow_holds_long(i, j, pcu, front.ready, t);
                         }
                         match self.admissible(j, pcu, t, Some(i)) {
                             Ok(room) => room,
@@ -1739,6 +1743,9 @@ impl<'a> LtmNetwork<'a> {
                     let clear = self.curves[j].last_entry().get() + pcu / self.inflow_rate[j];
                     if self.stop_delay[i] <= 0.0 && clear > t + TIME_EPSILON {
                         look_again = look_again.min(clear);
+                        if k == 0 {
+                            self.offer_if_inflow_holds_long(i, j, pcu, q.ready, t);
+                        }
                         None
                     } else {
                         match self.admissible(j, pcu, t, Some(i)) {
@@ -2227,6 +2234,17 @@ impl<'a> LtmNetwork<'a> {
         }
     }
 
+    /// Link `i`'s front, held by its next link `j`'s inflow headway, is offered a new route as
+    /// one held for room is when that headway alone keeps it waiting the rule's time: a closed
+    /// or narrowed link ahead (S239). A short headway, the common case, offers nothing (X-37).
+    fn offer_if_inflow_holds_long(&mut self, i: usize, j: usize, pcu: f64, ready: f64, t: f64) {
+        let Some(r) = self.rerouting.as_ref() else { return };
+        let clear = self.curves[j].last_entry().get() + pcu / self.inflow_rate[j];
+        if clear - ready >= r.rule.after_s {
+            self.offer_reroute(i, t);
+        }
+    }
+
     /// Offer every link front due one a new route, in the order they became due (S213).
     fn serve_reroutes(&mut self, t0: f64, rr: &mut dyn Reroute) {
         let Some(pending) = self.rerouting.as_mut().map(|r| std::mem::take(&mut r.pending)) else {
@@ -2247,8 +2265,12 @@ impl<'a> LtmNetwork<'a> {
             let answer = rr.reroute(vehicle, LinkId::from_index(i), &planned, t, &*self, reason);
             let net = self.network;
             let end = net.link_to(*planned.last().expect("not empty"));
+            // Taken only if it leaves where the vehicle is, each link follows the one before,
+            // and it ends where the plan ends (X-37): a rerouter's slip never moves a vehicle.
+            let here = net.link_to(LinkId::from_index(i));
             let accepted = answer.filter(|rest| {
-                rest.first().is_some_and(|&f| f != planned[0])
+                rest.first().is_some_and(|&f| f != planned[0] && net.link_from(f) == here)
+                    && rest.windows(2).all(|w| net.link_to(w[0]) == net.link_from(w[1]))
                     && rest.last().is_some_and(|&l| net.link_to(l) == end)
             });
             let r = self.rerouting.as_mut().expect("rerouting is on");
@@ -2636,10 +2658,14 @@ fn run_ltm_inner_chained(
         }
     }
     let mut completed = Vec::new();
-    for _ in 0..n_steps {
+    for k in 0..n_steps {
+        // The last step ends at the window's end, when the step does not divide it (X-38): the
+        // run stops there, as what is unfinished and what stood still are read there.
+        #[allow(clippy::cast_precision_loss, reason = "a step count far below 2^52")]
+        let this = Duration(step.get().min(window.get() - step.get() * k as f64));
         completed.extend(match rerouter.as_deref_mut() {
-            Some(rr) => sim.step_rerouting(step, rr),
-            None => sim.step(step),
+            Some(rr) => sim.step_rerouting(this, rr),
+            None => sim.step(this),
         });
     }
     completed.retain(|t| Duration::from_clock(t.arrival()) <= window);
@@ -2846,5 +2872,33 @@ mod tests {
             sim.admissible(ring0, MIN_PART, t, Some(ring1)).is_ok(),
             "a vehicle circulating from within the loop itself still gets through"
         );
+    }
+
+    /// **Property (X-37):** stepping without a rerouter under rerouting keeps no offers: the
+    /// list of fronts due one stays empty however long the queues wait, where it grew each step.
+    #[test]
+    fn stepping_without_a_rerouter_keeps_no_offers() {
+        let mut b = RoadNetworkBuilder::new();
+        b.add_node("a", LonLat::new(4.8000, 45.700));
+        b.add_node("b", LonLat::new(4.8036, 45.700));
+        b.add_node("c", LonLat::new(4.8072, 45.700));
+        b.add_link("ab", "a", "b", LinkSpec::new(RoadClass::Primary));
+        b.add_link("bc", "b", "c", LinkSpec::new(RoadClass::Service));
+        let network = b
+            .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+            .expect("buildable");
+        let turns = TurnTable::build(&network, SignalDefaults::SHIPPED);
+        let route = vec![link(&network, "ab"), link(&network, "bc")];
+        let cars: Vec<Vehicle> = (0..600)
+            .map(|k| Vehicle::new(VehicleId::new(k), route.clone(), Pcu(1.0), Second(k)))
+            .collect();
+        let mut sim =
+            LtmNetwork::new(&network, &turns).with_rerouting(RerouteRule { after_s: 10.0, max: 3 });
+        cars.iter().for_each(|v| sim.depart(v));
+        for _ in 0..20 {
+            let _ = sim.step(Duration(60.0));
+            assert!(sim.rerouting.as_ref().expect("on").pending.is_empty());
+        }
+        assert!(sim.queue_len(link(&network, "ab")) > 0, "the fixture needs a queue that waits");
     }
 }
