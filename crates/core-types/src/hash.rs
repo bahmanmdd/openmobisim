@@ -77,6 +77,16 @@ impl Fnv1a {
     pub const fn finish(self) -> u64 {
         self.0
     }
+
+    /// The hash folded into 32 bits (its two halves XORed), for an identity stored in a `u32`.
+    /// A 32-bit identity can collide: a user that drops duplicates by it compares the contents
+    /// too.
+    #[must_use]
+    pub const fn finish32(self) -> u32 {
+        #[allow(clippy::cast_possible_truncation, reason = "folding 64 bits into 32 on purpose")]
+        let folded = (self.0 ^ (self.0 >> 32)) as u32;
+        folded
+    }
 }
 
 impl Default for Fnv1a {

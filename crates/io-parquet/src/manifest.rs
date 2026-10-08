@@ -293,12 +293,33 @@ impl Manifest {
 /// A limit as JSON can hold it: an infinite one (every walk or ride offered) as the string
 /// `"inf"`, since JSON has no infinity (S235: a bare `inf` made the file unreadable).
 fn number(v: f64) -> String {
-    if v.is_finite() { v.to_string() } else { "\"inf\"".to_string() }
+    if v.is_finite() {
+        v.to_string()
+    } else if v.is_nan() {
+        "null".to_string() // JSON has no NaN (X-54)
+    } else if v > 0.0 {
+        "\"inf\"".to_string()
+    } else {
+        "\"-inf\"".to_string()
+    }
 }
 
-/// Escape the two characters that would break a JSON string.
+/// Escape what would break a JSON string: the quote, the backslash and every control
+/// character (X-54: one would have made the file invalid JSON).
 fn escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if u32::from(c) < 0x20 => out.push_str(&format!("\\u{:04x}", u32::from(c))),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Write `manifest.json` for one run.
@@ -309,4 +330,21 @@ fn escape(s: &str) -> String {
 pub fn write_manifest(path: impl AsRef<Path>, manifest: &Manifest) -> Result<(), WriteError> {
     fs::write(path, manifest.to_json())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{escape, number};
+
+    /// **Property (X-54):** every string and number the manifest writes is valid JSON: control
+    /// characters escaped, NaN as `null`, infinities as strings of their sign.
+    #[test]
+    fn strings_and_numbers_are_written_as_valid_json() {
+        assert_eq!(escape("a\tb\nc\"d\\e\u{1}"), "a\\tb\\nc\\\"d\\\\e\\u0001");
+        assert_eq!(escape("plain ünïcode"), "plain ünïcode");
+        assert_eq!(number(1.5), "1.5");
+        assert_eq!(number(f64::NAN), "null");
+        assert_eq!(number(f64::INFINITY), "\"inf\"");
+        assert_eq!(number(f64::NEG_INFINITY), "\"-inf\"");
+    }
 }

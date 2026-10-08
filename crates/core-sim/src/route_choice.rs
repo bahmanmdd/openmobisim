@@ -158,10 +158,7 @@ fn route_identity(links: &[u32]) -> u32 {
     for &l in links {
         h.write_u32(l);
     }
-    let v = h.finish();
-    #[allow(clippy::cast_possible_truncation, reason = "folding 64 bits into 32 on purpose")]
-    let folded = (v ^ (v >> 32)) as u32;
-    folded
+    h.finish32()
 }
 
 /// The key that marks a draw made to pick the trips for the network-wide gap.

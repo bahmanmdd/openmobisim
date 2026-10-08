@@ -288,10 +288,16 @@ impl Alternative {
             h.write_u32(r.board.raw());
             h.write_u32(r.alight.raw());
         }
-        let v = h.finish();
-        #[allow(clippy::cast_possible_truncation, reason = "folding 64 bits into 32 on purpose")]
-        let folded = (v ^ (v >> 32)) as u32;
-        folded
+        h.finish32()
+    }
+
+    /// Whether `other` is the same itinerary: what [`Self::identity_hash`] hashes, compared.
+    fn same_itinerary(&self, other: &Self) -> bool {
+        self.shape == other.shape
+            && (self.shape != Shape::Direct || self.mode == other.mode)
+            && self.parking == other.parking
+            && self.vehicle_links == other.vehicle_links
+            && self.rides == other.rides
     }
 }
 
@@ -1098,15 +1104,15 @@ fn finalise(mut alts: Vec<Alternative>, detour_limit: f64, parkings: usize) -> V
             .then(a.parking.cmp(&b.parking))
             .then(a.identity.cmp(&b.identity))
     });
-    let mut seen: Vec<u32> = Vec::with_capacity(alts.len());
-    alts.retain(|a| {
-        if seen.contains(&a.identity) {
-            false
-        } else {
-            seen.push(a.identity);
-            true
+    // A duplicate has the same identity and the same contents: two different itineraries whose
+    // 32-bit identities collide are both kept (X-28).
+    let mut unique: Vec<Alternative> = Vec::with_capacity(alts.len());
+    for a in alts {
+        if !unique.iter().any(|u| u.identity == a.identity && u.same_itinerary(&a)) {
+            unique.push(a);
         }
-    });
+    }
+    let mut alts = unique;
     if detour_limit > 0.0 {
         let best = best_by_mode(&alts);
         alts.retain(|a| a.total_s <= best[a.mode.index()] * (1.0 + detour_limit));
@@ -1951,8 +1957,11 @@ impl Itineraries {
                     }
                 }
                 // Each planned trip's logsum, on this iteration's costs (S238).
+                // The batch is checked once, before the model's first look at it (X-30).
+                let mut checked = false;
                 if batch.situations() > 0 {
                     batch.validate()?;
+                    checked = true;
                     if let Some(logsums) = inputs.model.logsums(&batch)? {
                         for (s, &w) in situation_of.iter().enumerate() {
                             next.logsum[work[w].0] = logsums[s];
@@ -1960,7 +1969,10 @@ impl Itineraries {
                     }
                 }
                 if !(in_gap.is_empty() && floor.is_empty()) {
-                    batch.validate()?;
+                    if !checked {
+                        batch.validate()?;
+                        checked = true;
+                    }
                     match inputs.model.probabilities(&batch)? {
                         Some(prob) => {
                             // A situation's alternatives are its set's, in order.
@@ -1991,7 +2003,9 @@ impl Itineraries {
                 if movers.is_empty() {
                     continue;
                 }
-                batch.validate()?;
+                if !checked {
+                    batch.validate()?;
+                }
                 let sub = batch.subset(&movers);
                 let choices = inputs.model.choose(&sub, inputs.rng)?;
                 choices.validate(&sub)?;
@@ -2254,5 +2268,30 @@ mod tests {
         assert!((ln(1) - 0.7_f64.ln()).abs() < 1e-12, "{}", ln(1));
         assert!((ln(2) - 0.7_f64.ln()).abs() < 1e-12, "{}", ln(2));
         assert!(ln(3).abs() < 1e-12, "a drive of its own: {}", ln(3));
+    }
+
+    /// **Property (X-28):** duplicates are dropped by their contents, not by their 32-bit identity
+    /// alone: two different itineraries whose identities collide are both kept, a true duplicate
+    /// once.
+    #[test]
+    fn itineraries_whose_identities_collide_are_both_kept() {
+        // Drives over one link each: among a few hundred thousand, two identities collide (the
+        // birthday bound of 32 bits); the search is deterministic.
+        let mut seen = std::collections::HashMap::new();
+        let (a, b) = (0u32..1_000_000)
+            .find_map(|l| {
+                let id = park_and_ride(1, &[l]).identity_hash();
+                seen.insert(id, l).map(|other| (other, l))
+            })
+            .expect("a collision within a million");
+        assert_ne!(a, b);
+        let kept = finalise(
+            vec![park_and_ride(1, &[a]), park_and_ride(1, &[b]), park_and_ride(1, &[a])],
+            0.0,
+            5,
+        );
+        let mut links: Vec<u32> = kept.iter().map(|k| k.vehicle_links[0].raw()).collect();
+        links.sort_unstable();
+        assert_eq!(links, vec![a.min(b), a.max(b)], "both kept, the true duplicate dropped");
     }
 }
