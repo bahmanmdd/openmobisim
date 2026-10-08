@@ -250,3 +250,43 @@ def test_the_page_carries_how_many_travellers_took_each_route(tmp_path):
                 a["ru"][a["ss"][k] + 1 : a["ss"][k + 1]].sum() for k in range(meta["n_pairs"])
             ]
             assert max(second) > 0, "someone takes a second route"
+
+
+def test_the_page_offers_png_and_vector_exports(tmp_path):
+    path = tmp_path / "map.html"
+    viz.map_interactive(grid_run()[1], str(path))
+    page = path.read_text(encoding="utf-8")
+    assert 'id="exportpng"' in page and 'id="exportsvg"' in page
+    assert "function exportSVG" in page and "function exportPNG" in page
+
+
+BROWSER = next(
+    (b for b in ("chromium", "google-chrome", "google-chrome-stable") if shutil.which(b)), None
+)
+
+
+@pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
+@pytest.mark.parametrize("bins", [300, None])
+def test_the_exports_run_in_a_browser_and_carry_the_credit(tmp_path, bins):
+    import html
+    import xml.dom.minidom
+
+    path = tmp_path / "map.html"
+    viz.map_interactive(grid_run(link_bin_s=bins)[1], str(path))
+
+    def exported(kind):
+        dom = subprocess.run(
+            [BROWSER, "--headless=new", "--disable-gpu", "--no-sandbox",
+             "--virtual-time-budget=3000", "--window-size=900,700", "--dump-dom",
+             f"{path.as_uri()}#export={kind}"],
+            capture_output=True, text=True, timeout=90,
+        ).stdout  # fmt: skip
+        found = re.search(r'<textarea id="exported"[^>]*>(.*?)</textarea>', dom, re.S)
+        assert found, f"no {kind} export in the page"
+        return html.unescape(found.group(1))
+
+    svg = exported("svg")
+    xml.dom.minidom.parseString(svg)  # well-formed
+    assert svg.startswith("<svg") and "<path" in svg and ">openmobisim</text>" in svg
+    png = base64.b64decode(exported("png").split(",", 1)[1])
+    assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 10_000

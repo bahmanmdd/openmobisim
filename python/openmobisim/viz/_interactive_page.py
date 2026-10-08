@@ -28,6 +28,7 @@ __CSS__
   <h2>Zoom</h2>
   <div id="levels"><button>Overview</button><button>Region</button><button>District</button><button>Street</button><button>Detail</button></div>
   <div class="row"><button id="zout" title="Zoom out">−</button><button id="zin" title="Zoom in">+</button><button id="fit">Fit</button><span id="levelname"></span></div>
+  <div class="row"><span>Export the view</span><button id="exportpng" title="An image at twice the screen's resolution">PNG</button><button id="exportsvg" title="Vector graphics, for print and editing">SVG</button></div>
   <div id="trafficgroup">
     <h2>Traffic</h2>
     <div class="row"><label>Colour by <select id="colour"><option value="delay">Delay</option><option value="volume">Volume</option><option value="vc">Volume ÷ capacity</option></select></label><button id="theme">Night</button></div>
@@ -233,7 +234,8 @@ function setTheme(name) {
 }
 
 // ---------------------------------------------------------------- view ----
-const canvas = $("map"), ctx = canvas.getContext("2d");
+const canvas = $("map");
+let ctx = canvas.getContext("2d");  // `let`: an export draws the same view into another context
 let W = 0, H = 0, DPR = 1;
 const FIT = { mpp: 1 };
 const LEVELS = ["Overview", "Region", "District", "Street", "Detail"];
@@ -541,6 +543,110 @@ function readHash() {
   const b = p.get("b"); if (b && b !== "all" && HAS_TRAFFIC) { const [x, y] = b.split("-").map(Number); S.bins = [Math.max(0, Math.min(NB - 1, x)), Math.min(NB, y || x + 1)]; }
   return p;
 }
+// ---------------------------------------------------------------- export ----
+// The view as it is, with its title, legend and credit: a PNG at twice the screen's resolution, or an SVG drawn
+// by the same `draw()` into a recorder that writes vector paths instead of pixels.
+class RecPath {
+  constructor() { this.d = []; }
+  moveTo(x, y) { this.d.push("M" + x.toFixed(2) + " " + y.toFixed(2)); }
+  lineTo(x, y) { this.d.push("L" + x.toFixed(2) + " " + y.toFixed(2)); }
+  closePath() { this.d.push("Z"); }
+  arc(x, y, r) { this.d.push("M" + (x - r).toFixed(2) + " " + y.toFixed(2) + "a" + r + " " + r + " 0 1 0 " + (2 * r) + " 0a" + r + " " + r + " 0 1 0 " + (-2 * r) + " 0"); }
+}
+function svgRecorder() {
+  const out = [], esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  let current = new RecPath(), dash = null;
+  const style = (r) => ` opacity="${r.globalAlpha}"`;
+  const r = {
+    out, strokeStyle: "#000", fillStyle: "#000", lineWidth: 1, globalAlpha: 1, lineCap: "round", lineJoin: "round",
+    font: "10px sans-serif", textAlign: "left", textBaseline: "alphabetic",
+    setTransform() {}, setLineDash(a) { dash = a.length ? a.join(" ") : null; },
+    beginPath() { current = new RecPath(); }, moveTo(x, y) { current.moveTo(x, y); }, lineTo(x, y) { current.lineTo(x, y); },
+    closePath() { current.closePath(); }, arc(x, y, rad) { current.arc(x, y, rad); },
+    fillRect(x, y, w, h) { out.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${r.fillStyle}"/>`); },
+    stroke(path) {
+      const d = (path || current).d.join(""); if (!d) return;
+      out.push(`<path d="${d}" fill="none" stroke="${r.strokeStyle}" stroke-width="${r.lineWidth}" stroke-linecap="${r.lineCap}" stroke-linejoin="${r.lineJoin}"${dash ? ` stroke-dasharray="${dash}"` : ""}${style(r)}/>`);
+    },
+    fill(path) { const d = (path || current).d.join(""); if (d) out.push(`<path d="${d}" fill="${r.fillStyle}"${style(r)}/>`); },
+    fillText(t, x, y) {
+      const anchor = { center: "middle", right: "end", end: "end" }[r.textAlign] || "start";
+      out.push(`<text x="${x}" y="${y}" fill="${r.fillStyle}" text-anchor="${anchor}" dominant-baseline="central" style="font:${esc(r.font)}">${esc(t)}</text>`);
+    },
+  };
+  return r;
+}
+// The title above the map and the legend, provenance and credit below it: the words and colours the page shows.
+function exportFrame() {
+  const legend = HAS_TRAFFIC ? { label: $("legendlabel").textContent, low: $("legendlow").textContent, high: $("legendhigh").textContent, stops: TABLES[S.colour] } : null;
+  return { title: $("title").textContent, subtitle: $("subtitle").textContent, legend, provenance: $("provenance").textContent, source: $("source").textContent, credit: $("credit").hidden ? "" : $("credit").textContent };
+}
+const HEAD = 64, FOOT = 46;
+function viewWithMoving(drawInto) {
+  const moving = MOVING, hover = S.hover; MOVING = false; S.hover = -1;
+  try { drawInto(); } finally { MOVING = moving; S.hover = hover; }
+}
+function exportSVG() {
+  const f = exportFrame(), rec = svgRecorder(), keep = ctx, keepPath = window.Path2D;
+  ctx = rec; window.Path2D = RecPath;
+  try { viewWithMoving(draw); } finally { ctx = keep; window.Path2D = keepPath; draw(); }
+  const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  const total = H + HEAD + FOOT, parts = [];
+  // The SVG namespace from the page's own compass (the page names no address anywhere).
+  const ns = $("compass").querySelector("svg").namespaceURI;
+  parts.push(`<svg xmlns="${ns}" width="${W}" height="${total}" viewBox="0 0 ${W} ${total}" font-family="${esc(FONT)}">`);
+  parts.push(`<rect width="${W}" height="${total}" fill="${TH.surface}"/>`);
+  parts.push(`<g transform="translate(0 ${HEAD})">${rec.out.join("")}</g>`);
+  // The bands above and below the map, painted over whatever of it runs past the view.
+  parts.push(`<rect width="${W}" height="${HEAD}" fill="${TH.surface}"/><rect y="${HEAD + H}" width="${W}" height="${FOOT}" fill="${TH.surface}"/>`);
+  parts.push(`<text x="16" y="26" font-size="17" font-weight="700" fill="${TH.ink}">${esc(f.title)}</text>`);
+  parts.push(`<text x="16" y="48" font-size="11.5" fill="${TH.ink2}">${esc(f.subtitle)}</text>`);
+  const y = HEAD + H + 18;
+  if (f.legend) {
+    const n = f.legend.stops.length, w = 160, step = w / n;  // the ramp as one rectangle per colour
+    parts.push(`<text x="16" y="${y - 4}" font-size="10" fill="${TH.ink2}">${esc(f.legend.label)}</text>`);
+    parts.push(f.legend.stops.map((c, i) => `<rect x="${(16 + i * step).toFixed(2)}" y="${y}" width="${(step + 0.3).toFixed(2)}" height="7" fill="${c}"/>`).join(""));
+    parts.push(`<text x="16" y="${y + 19}" font-size="9.5" fill="${TH.ink2}">${esc(f.legend.low)}</text><text x="${16 + w}" y="${y + 19}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc(f.legend.high)}</text>`);
+  }
+  parts.push(`<text x="${W - 16}" y="${y + 4}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc([f.provenance, f.source, f.credit].filter(Boolean).join(" · "))}</text>`);
+  parts.push(`<text x="${W - 16}" y="${y + 20}" font-size="11" font-weight="700" text-anchor="end" fill="${TH.ink}">openmobisim</text>`);
+  parts.push("</svg>");
+  return parts.join("");
+}
+function exportPNG() {
+  const f = exportFrame(), scale = 2, off = document.createElement("canvas");
+  off.width = Math.round(W * scale); off.height = Math.round((H + HEAD + FOOT) * scale);
+  const o = off.getContext("2d"), map = document.createElement("canvas");
+  map.width = Math.round(W * scale); map.height = Math.round(H * scale);
+  const keep = ctx, keepDpr = DPR; ctx = map.getContext("2d"); DPR = scale;
+  try { viewWithMoving(draw); } finally { ctx = keep; DPR = keepDpr; draw(); }
+  o.setTransform(scale, 0, 0, scale, 0, 0);
+  o.fillStyle = TH.surface; o.fillRect(0, 0, W, H + HEAD + FOOT);
+  o.drawImage(map, 0, HEAD, W, H);
+  o.fillStyle = TH.ink; o.font = "700 17px " + FONT; o.fillText(f.title, 16, 26);
+  o.fillStyle = TH.ink2; o.font = "11.5px " + FONT; o.fillText(f.subtitle, 16, 48);
+  const y = HEAD + H + 18;
+  if (f.legend) {
+    const g = o.createLinearGradient(16, 0, 176, 0), n = f.legend.stops.length;
+    f.legend.stops.forEach((c, i) => g.addColorStop(i / Math.max(n - 1, 1), c));
+    o.font = "10px " + FONT; o.fillText(f.legend.label, 16, y - 4); o.fillStyle = g; o.fillRect(16, y, 160, 7);
+    o.fillStyle = TH.ink2; o.font = "9.5px " + FONT; o.fillText(f.legend.low, 16, y + 19); o.textAlign = "right"; o.fillText(f.legend.high, 176, y + 19);
+  }
+  o.textAlign = "right"; o.fillStyle = TH.ink2; o.font = "9.5px " + FONT;
+  o.fillText([f.provenance, f.source, f.credit].filter(Boolean).join(" · "), W - 16, y + 4);
+  o.fillStyle = TH.ink; o.font = "700 11px " + FONT; o.fillText("openmobisim", W - 16, y + 20);
+  return off.toDataURL("image/png");
+}
+function download(name, url) { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+function exportName(ext) { return (META.title || "openmobisim map").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_") + "." + ext; }
+function exportAs(kind, save = true) {
+  try {
+    const data = kind === "svg" ? exportSVG() : exportPNG();
+    document.body.dataset.exported = kind + ":" + data.length;
+    if (save) download(exportName(kind), kind === "svg" ? URL.createObjectURL(new Blob([data], { type: "image/svg+xml" })) : data);
+    else { const t = document.createElement("textarea"); t.id = "exported"; t.hidden = true; t.textContent = data; document.body.appendChild(t); }
+  } catch (e) { document.body.dataset.exported = kind + ":error " + e; throw e; }
+}
 function wire() {
   $("theme").addEventListener("click", () => { setTheme(S.theme === "paper" ? "night" : "paper"); subtitle(); redraw(false); writeHash(); });
   $("colour").addEventListener("change", (e) => { S.colour = e.target.value; subtitle(); redraw(false); writeHash(); });
@@ -553,6 +659,7 @@ function wire() {
   document.querySelectorAll("#levels button").forEach((b, i) => b.addEventListener("click", () => goLevel(i)));
   $("zin").addEventListener("click", () => zoomAt(W / 2, H / 2, 0.5)); $("zout").addEventListener("click", () => zoomAt(W / 2, H / 2, 2));
   $("fit").addEventListener("click", () => { fitTo(EX0, EY0, EX1, EY1, 0.06); redraw(false); levelButtons(); writeHash(); });
+  $("exportpng").addEventListener("click", () => exportAs("png")); $("exportsvg").addEventListener("click", () => exportAs("svg"));
   if (HAS_ROUTES) {
     const nk = SS.length - 1;
     $("pairno").max = nk; $("pairs").textContent = "of " + fmt(nk);
@@ -587,6 +694,7 @@ function start() {
   if (p.get("l") !== null) selectLink(+p.get("l"));
   levelButtons(); draw(); writeHash();
   document.body.dataset.state = "ready"; document.body.dataset.links = NL; document.body.dataset.rows = RL ? RL.length : 0;
+  if (["png", "svg"].includes(p.get("export"))) exportAs(p.get("export"), false);  // `#export=svg`: made, not saved (a check)
 }
 start();
 })();
