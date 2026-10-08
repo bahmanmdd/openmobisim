@@ -320,6 +320,10 @@ impl<'a> Search<'a> {
     /// Panics (when a link is first costed) if `bias` has fewer entries than the network
     /// has links.
     pub fn set_noise(&mut self, seed: u64, sigma: f64, bias: Option<Arc<[f32]>>) {
+        if let Some(b) = &bias {
+            let links = self.ctx.network.link_count() as usize;
+            assert_eq!(b.len(), links, "a bias has one value per link of the network (X-40)");
+        }
         self.noise = Some(Noise { seed, sigma, bias });
     }
 

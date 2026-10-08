@@ -105,7 +105,10 @@ fn noise_on_the_shortest_road_finds_the_other_and_noise_on_the_other_never_does(
     let turns = turns_of(&net);
     let key = RouteKey::new(node(&net, "A"), node(&net, "D"));
     let sets = |bias: Vec<f32>, options: &[(&str, f64)]| {
-        let mc = MonteCarlo::from_options(&opts(options)).expect("valid").with_bias(bias);
+        let mc = MonteCarlo::from_options(&opts(options))
+            .expect("valid")
+            .with_bias(bias)
+            .expect("a valid bias");
         RouteSets::generate(&net, &turns, &[key], &mc)
     };
     // The top road (200 m) is the shortest. Noise on its links raises its cost by up to
@@ -139,7 +142,7 @@ fn a_bias_of_nothing_leaves_only_the_shortest_route_everywhere() {
     let (net, _) = manhattan_grid(7, 200.0, true);
     let turns = turns_of(&net);
     let keys = grid_keys(&net, 7, 120, 4);
-    let mc = MonteCarlo::default().with_bias(vec![0.0; net.link_count() as usize]);
+    let mc = MonteCarlo::default().with_bias(vec![0.0; net.link_count() as usize]).expect("valid");
     let sets = RouteSets::generate(&net, &turns, &keys, &mc);
     let shortest = RouteSets::generate(&net, &turns, &keys, &Shortest);
     for i in 0..sets.keys().len() {
@@ -159,7 +162,7 @@ fn every_route_is_loop_free_connected_and_within_the_limits() {
     let half: Vec<f32> = (0..net.link_count()).map(|l| f32::from(l % 2 == 0)).collect();
     for (label, mc) in [
         ("unbiased", MonteCarlo::from_options(&opts(&[("biased", 0.0)])).unwrap()),
-        ("half the links", MonteCarlo::default().with_bias(half)),
+        ("half the links", MonteCarlo::default().with_bias(half).expect("valid")),
     ] {
         let sets = RouteSets::generate(&net, &turns, &keys, &mc);
         let shortest = RouteSets::generate(&net, &turns, &keys, &Shortest);
@@ -215,7 +218,7 @@ fn the_sets_are_a_function_of_the_pair_the_seed_and_the_options_alone() {
     shuffled.reverse();
     shuffled.rotate_left(37);
     let bias: Vec<f32> = (0..net.link_count()).map(|l| (l % 5) as f32 / 4.0).collect();
-    let mc = MonteCarlo::default().with_bias(bias.clone());
+    let mc = MonteCarlo::default().with_bias(bias.clone()).expect("valid");
     let reference = RouteSets::generate(&net, &turns, &keys, &mc);
     assert_eq!(reference, RouteSets::generate(&net, &turns, &shuffled, &mc), "key order");
     assert_eq!(reference, RouteSets::generate(&net, &turns, &keys, &mc), "repeat");
@@ -237,8 +240,10 @@ fn the_sets_are_a_function_of_the_pair_the_seed_and_the_options_alone() {
     }
     // The seed decides the draws: the same seed is the same sets, another is other ones.
     let seeded = |seed: f64| {
-        let mc =
-            MonteCarlo::from_options(&opts(&[("seed", seed)])).unwrap().with_bias(bias.clone());
+        let mc = MonteCarlo::from_options(&opts(&[("seed", seed)]))
+            .unwrap()
+            .with_bias(bias.clone())
+            .unwrap();
         RouteSets::generate(&net, &turns, &keys, &mc)
     };
     assert_eq!(seeded(7.0), seeded(7.0));
@@ -354,8 +359,8 @@ fn a_method_that_reads_the_demand_is_given_it_once_and_says_so_in_its_descriptor
     }
     let unbiased = MonteCarlo::from_options(&opts(&[("biased", 0.0)])).unwrap();
     assert!(!unbiased.reads_demand() && unbiased.descriptor().contains("bias=none"));
-    let given = MonteCarlo::default().with_bias(vec![0.5; net.link_count() as usize]);
-    assert!(!given.reads_demand() && given.descriptor().contains("bias=given"));
+    let given = MonteCarlo::default().with_bias(vec![0.5; net.link_count() as usize]).unwrap();
+    assert!(!given.reads_demand() && given.descriptor().contains("bias=given:"));
     assert_eq!(given.bias().map(<[f32]>::len), Some(net.link_count() as usize));
 }
 
@@ -422,4 +427,37 @@ fn monte_carlo_generation_is_fast_enough() {
     let elapsed = start.elapsed();
     println!("{} keys, {} routes in {elapsed:?}", sets.keys().len(), sets.route_count());
     assert!(elapsed.as_secs_f64() < 30.0, "1 500 keys on a 3 600-node grid took {elapsed:?}");
+}
+
+/// **Property (X-39):** two given biases name two route sets: the descriptor, which keys the
+/// cache and enters the fingerprint, carries the values, not only that a bias was given; the
+/// same values give the same name.
+#[test]
+fn route_sets_made_with_different_given_biases_have_different_names() {
+    let n = diamond().link_count() as usize;
+    let named = |v: f32| MonteCarlo::default().with_bias(vec![v; n]).unwrap().descriptor();
+    assert_ne!(named(0.25), named(0.75));
+    assert_eq!(named(0.25), named(0.25));
+    assert!(MonteCarlo::default().descriptor().contains("bias=demand;"), "the others unchanged");
+}
+
+/// **Property (X-40):** a bias outside 0 to 1 is refused with the link and the value; a bias of
+/// the wrong length is caught where it meets the network.
+#[test]
+fn a_bias_out_of_range_or_of_the_wrong_length_is_refused() {
+    let net = diamond();
+    let n = net.link_count() as usize;
+    for bad in [-0.1_f32, 1.5, f32::NAN] {
+        let mut bias = vec![0.5; n];
+        bias[1] = bad;
+        let Err(err) = MonteCarlo::default().with_bias(bias) else { panic!("{bad} refused") };
+        assert!(err.to_string().contains("link 1"), "{err}");
+    }
+    let short = MonteCarlo::default().with_bias(vec![0.5; n - 1]).unwrap();
+    let turns = turns_of(&net);
+    let key = RouteKey::new(node(&net, "A"), node(&net, "D"));
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        RouteSets::generate(&net, &turns, &[key], &short)
+    }));
+    assert!(caught.is_err(), "a bias one short is caught, not read past its end");
 }

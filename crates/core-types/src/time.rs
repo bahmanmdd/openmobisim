@@ -407,7 +407,9 @@ impl StepGrid {
     /// How far into its step `t` sits, in `[0, 1)`.
     ///
     /// This is the interpolation parameter for reading a cumulative curve
-    /// between step boundaries.
+    /// between step boundaries. Inside the window only: past its end it is the
+    /// position in a step beyond the last, not in the last step that
+    /// [`Self::step_of`] clamps such a `t` to (X-58), so the two do not pair there.
     #[inline]
     #[must_use]
     pub fn fraction_into_step(self, t: Second) -> f64 {

@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
+use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
 use crate::search::{MAX_ROUTES_PER_SET, Route, Search};
@@ -582,11 +583,38 @@ impl MonteCarlo {
     /// The same method with `bias` as its bias: one number from 0 to 1 per link, by link id
     /// (0 leaves a link's cost alone, 1 lets it change by up to `sigma` times itself).
     /// Replaces whatever the demand would give: the method no longer reads it.
-    #[must_use]
-    pub fn with_bias(mut self, bias: Vec<f32>) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// [`RouteError::BadOption`] if a value is not a number from 0 to 1 (X-40: a negative one
+    /// could make a link's cost negative, which a shortest-path search does not survive).
+    pub fn with_bias(mut self, bias: Vec<f32>) -> Result<Self, RouteError> {
+        if let Some((link, value)) =
+            bias.iter().enumerate().find(|(_, v)| !(0.0..=1.0).contains(*v))
+        {
+            return Err(RouteError::BadOption {
+                method: "montecarlo".into(),
+                option: "bias".into(),
+                reason: format!("link {link} has {value}; each value must be from 0 to 1"),
+            });
+        }
         self.bias = Some(bias.into());
         self.source = BiasSource::Given;
-        self
+        Ok(self)
+    }
+
+    /// How the descriptor names the bias: `none`, `demand`, or for a given one `given:` and a
+    /// hash of its values, so two given biases never share a route set's identity (X-39).
+    fn bias_name(&self) -> String {
+        match (self.source, &self.bias) {
+            (BiasSource::Given, Some(bias)) => {
+                let mut h = Fnv1a::new();
+                h.write_u64(bias.len() as u64);
+                bias.iter().for_each(|v| h.write_u32(v.to_bits()));
+                format!("given:{:016x}", h.finish())
+            }
+            (source, _) => source.name().to_owned(),
+        }
     }
 
     /// The bias in use, by link id, if it has one: given, or found from the demand.
@@ -612,7 +640,7 @@ impl RouteSetGenerator for MonteCarlo {
     fn descriptor(&self) -> String {
         format!(
             "montecarlo;bias={};draws={};max_detour={};max_overlap={};max_paths={};seed={};sigma={}",
-            self.source.name(),
+            self.bias_name(),
             self.draws,
             self.max_detour,
             self.max_overlap,
