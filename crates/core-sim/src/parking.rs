@@ -685,6 +685,9 @@ pub struct ParkingBins {
     pub bin_s: u32,
     /// How many bins.
     pub bins: usize,
+    /// The window the bins cover, in seconds: the last bin ends with it, so it is shorter than
+    /// the others when the window is not a whole number of bins (X-45).
+    pub window_s: f64,
     /// Per parking, then bin (`parking * bins + bin`): vehicles arriving to park
     /// (weighted by traveller weight).
     pub arrivals: Vec<f64>,
@@ -750,6 +753,7 @@ pub(crate) fn tally(
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "seconds")]
         bin_s: bin_s as u32,
         bins,
+        window_s: window,
         arrivals: vec![0.0; n * bins],
         departures: vec![0.0; n * bins],
         occupancy_mean: vec![0.0; n * bins],
@@ -788,7 +792,7 @@ pub(crate) fn tally(
                 if span <= 0.0 {
                     break;
                 }
-                out.occupancy_mean[row + b] += stock * span / bin_s;
+                out.occupancy_mean[row + b] += stock * span / out.bin_len(b);
                 out.occupancy_max[row + b] = out.occupancy_max[row + b].max(stock);
                 out.overflow_max[row + b] = out.overflow_max[row + b].max(stock - capacity);
                 if stock >= capacity {
@@ -822,8 +826,26 @@ pub(crate) fn tally(
 /// Availability per parking and bin from a tally: the share of the bin with a
 /// free space.
 pub(crate) fn availability(bins: &ParkingBins) -> Vec<f64> {
-    let len = f64::from(bins.bin_s);
-    bins.full_s.iter().map(|&f| (1.0 - f / len).clamp(0.0, 1.0)).collect()
+    bins.full_s
+        .iter()
+        .enumerate()
+        .map(|(k, &f)| (1.0 - f / bins.bin_len(k % bins.bins)).clamp(0.0, 1.0))
+        .collect()
+}
+
+impl ParkingBins {
+    /// The length of bin `b` inside the window, in seconds: a whole bin, or for the last one
+    /// what is left of the window (X-45). Never 0, so a share of it is always defined.
+    #[must_use]
+    pub fn bin_len(&self, b: usize) -> f64 {
+        let whole = f64::from(self.bin_s);
+        if b + 1 < self.bins {
+            return whole;
+        }
+        #[allow(clippy::cast_precision_loss, reason = "a count of bins")]
+        let left = self.window_s - whole * (self.bins - 1) as f64;
+        if left > 0.0 { left.min(whole) } else { whole }
+    }
 }
 
 /// The availability of `parking` at second `t` in a tally's `values` (from

@@ -283,3 +283,40 @@ def test_map_parking_draws_a_run_with_parkings(tmp_path) -> None:
     ).run(run_id="no-parkings")
     with pytest.raises(ValueError, match="parkings"):
         viz.map_parking(plain)
+
+
+def test_the_last_bin_of_a_window_that_is_not_whole_bins_is_its_own_length() -> None:
+    """X-45: a parking full all day is full in every bin, the short last one too.
+
+    A window of 1 000 s in bins of 900 s leaves a last bin of 100 s; its mean occupancy and its
+    full time were divided by a whole bin, so the parking read as mostly free there.
+    """
+    rows = ms.examples.toy_network_parkings().rows()
+    i = rows["parking_id"].index("H-car")
+    capacity = int(rows["capacity"][i])
+    full = ms.parking_read_table(
+        [
+            {
+                "parking_id": "H-car",
+                "lon": rows["lon"][i],
+                "lat": rows["lat"][i],
+                "vehicle": "car",
+                "capacity": capacity,
+                "hub_id": rows["hub_id"][i],
+                "initial_occupancy": capacity,
+            }
+        ]
+    )
+    net = ms.examples.toy_network()
+    run = toy_run(
+        [toy_trip(net, "a", "W", "N1", 0, "car_transit")],  # parks (over capacity) in the first bin
+        "x45",
+        parkings=full,
+        window_hours=1000 / 3600,
+        parking_options={"bin_s": 900},
+    )
+    bins = run.parking_bins()
+    assert list(bins["start_s"]) == [0, 900]
+    assert list(bins["full_s"]) == [900.0, 100.0]
+    # The car parked in the first bin and is never fetched: the last bin holds one over capacity.
+    assert bins["occupancy_mean"][1] == pytest.approx(capacity + 1)
