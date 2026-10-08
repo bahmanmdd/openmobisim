@@ -216,6 +216,11 @@ def test_map_transit_draws_a_run_with_a_timetable(tmp_path: Path) -> None:
     assert not names & {t.get_text() for t in unnamed.axes[0].texts}
     with pytest.raises(ValueError, match="colour"):
         viz.map_transit(run, colour="mode")
+    # Every stop inside the frame, the tram's end beyond the roads too.
+    ax = fig.axes[0]
+    (x0, x1), (y0, y1) = ax.get_xlim(), ax.get_ylim()
+    hubs = [c for c in ax.collections if type(c).__name__ == "PathCollection"][0].get_offsets()
+    assert ((hubs[:, 0] >= x0) & (hubs[:, 0] <= x1) & (hubs[:, 1] >= y0) & (hubs[:, 1] <= y1)).all()
     plain = ms.Scenario.from_parts(
         network=net,
         demand=[toy_trip(net, "a", "N1", "D2", 0, "walk")],

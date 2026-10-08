@@ -116,6 +116,8 @@ def map_transit(
         canvas = geo.polylines(pts, offsets, np.arange(network.link_count))
         everything = pts[:: max(len(pts) // 20000, 1)]
     lo, hi = np.percentile(everything, 0.5, axis=0), np.percentile(everything, 99.5, axis=0)
+    # Every stop inside the frame: a line may run beyond the roads (a tram to a stop off them).
+    lo, hi = np.minimum(lo, xy.min(axis=0)), np.maximum(hi, xy.max(axis=0))
     pad = (hi - lo) * 0.04
     page = Page.new(th, size_cm, dpi, lo - pad, hi + pad)
     k = page.k

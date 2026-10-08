@@ -99,6 +99,8 @@ def map_parking(
         canvas = geo.polylines(pts, offsets, np.arange(network.link_count))
         everything = pts[:: max(len(pts) // 20000, 1)]
     lo, hi = np.percentile(everything, 0.5, axis=0), np.percentile(everything, 99.5, axis=0)
+    # Every parking inside the frame, also one beyond the roads drawn.
+    lo, hi = np.minimum(lo, xy.min(axis=0)), np.maximum(hi, xy.max(axis=0))
     pad = (hi - lo) * 0.04
     page = Page.new(th, size_cm, dpi, lo - pad, hi + pad)
     k = page.k
