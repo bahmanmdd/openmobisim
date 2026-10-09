@@ -4,12 +4,12 @@
   "amsterdam": {
    "archive": {
     "name": "amsterdam.zip",
-    "sha256": "5c7bc246ab77158e2823a93e1e8e21a4d1c270644ab960fdea31576971cd2a2b",
-    "bytes": 60772062
+    "sha256": "d0ef7c66a52071a2b42adb4d424cee1b6776fea323acdf61933735bd1683790c",
+    "bytes": 60772021
    },
    "files": {
-    "case.json": "f93f51a8f54c9f80d123dca3bc7fc2faeaba0cb096bbdf613a9e5d09687c2ff8",
-    "demand/classes.csv": "7588b718baa2424407a3f0a6e075f069e3f2dad361fb90ce8b2e97d0510d40cf",
+    "case.json": "11b43206485916ed512750d1c86dc942d6dcead682bee8a5bbfe58d993bd3fb6",
+    "demand/classes.csv": "be7f4a34a0d5f9e47e6c5ba18a11fb68b3f6a643c81be39c04343e8db0dd602e",
     "demand/od.csv": "fbcda9c2867b4f7856e25fa1081977ac502cd16a20814a7a659d2f69d11dd4b9",
     "demand/zones.csv": "eecff5dadc974dacdf9b3c765a525e0a6d1a19e290c8692beea41cf1b8a76172",
     "gtfs.zip": "08d8a401d765762f767dc3097e3d91af7e9b1cb839bb2cd78794e062aa5da3f2",

@@ -3,18 +3,18 @@
  "bundle": "v1",
  "cases": {
   "amsterdam/base": {
-   "fingerprint": "c58186d97e640c84",
+   "fingerprint": "f933aa12f98ac54d",
    "trips": 100000,
-   "completed": 99261,
-   "mean_trip_s": 1490.5128499612133,
+   "completed": 98881,
+   "mean_trip_s": 1567.6457054439174,
    "mode_share_pct": {
-    "bike": 51.633,
-    "bike_transit": 0.076,
-    "car": 28.163,
-    "car_transit": 0.02,
-    "none": 0.738,
-    "transit": 17.888,
-    "walk": 1.482
+    "bike": 43.012,
+    "bike_transit": 0.265,
+    "car": 26.508,
+    "car_transit": 0.04,
+    "none": 1.119,
+    "transit": 27.396,
+    "walk": 1.66
    },
    "loadings": 4,
    "platform": "aarch64-apple-darwin",
