@@ -375,3 +375,30 @@ fn vehicles_waiting_at_a_stop_line_when_the_window_ends_are_counted() {
         .sum();
     assert_eq!(entered_a1, 20, "every car that entered a1 is in its entry table once");
 }
+
+/// **Property (X-38a):** a vehicle still on a link when the window ends is in the entry table
+/// with at least the link's free-flow time. Its time so far is cut off by the window, and no
+/// vehicle crosses a link faster than free flow: filed with less, it would make the link look
+/// faster than anyone can drive it to the next iteration's route search, which reads the mean.
+#[test]
+fn a_vehicle_cut_off_by_the_window_end_counts_at_least_free_flow() {
+    let toy = Toy::new();
+    let a1 = toy.id("a1");
+    let free = toy.net.free_flow_time(a1).get();
+    assert!(free > 5.0, "the fixture needs a1 to take longer than five seconds");
+    let window = 100.0;
+    // One car setting out onto a1 five seconds before the window ends.
+    let car = toy.car(0, &["a1", "a2"], 1.0, 95);
+    let mut sim =
+        LtmNetwork::new(&toy.net, &toy.turns).with_link_bins(60, window).with_entry_bins();
+    sim.depart(&car);
+    let _ = sim.step(Duration(window));
+    assert_eq!(sim.waiting_at_origin(a1), 0, "the car is on a1");
+    sim.record_unfinished(window);
+    let (_, tables) = sim.take_link_bins_with_entry().expect("asked for");
+    let entry = tables.expect("entry bins asked for").entry;
+    let row = (0..entry.len()).find(|&r| entry.links()[r] == a1.raw()).expect("a1 is filed");
+    assert_eq!(entry.crossings()[row], 1);
+    let mean = entry.mean_seconds(row);
+    assert!(mean >= free - 1e-9, "{mean} s filed against a free-flow time of {free} s");
+}

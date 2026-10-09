@@ -813,6 +813,10 @@ impl<'a> LtmNetwork<'a> {
     /// Tell the recorder about every vehicle still on a link (driving, or waiting at its stop
     /// line), or waiting at an origin to enter one, at second `end` (S170; see
     /// [`LinkBinRecorder::record_unfinished`]). Call once, after the last step.
+    ///
+    /// A vehicle still on a link counts at least the link's free-flow time (X-38a): its time so
+    /// far is cut off by the window, and no vehicle crosses faster than free flow. Cost: one
+    /// free-flow lookup per vehicle still on the network, once per loading.
     pub fn record_unfinished(&mut self, end: f64) {
         let n = self.links;
         let Some(recorder) = self.recorder.as_mut() else { return };
@@ -821,8 +825,10 @@ impl<'a> LtmNetwork<'a> {
             for q in &self.queues[queue] {
                 let pcu = self.vehicles[q.slot as usize].pcu.get();
                 if queue < n || queue >= 2 * n {
-                    // On the link, or at its stop line: still on it (X-38).
-                    recorder.record_unfinished(link, q.enter, end, pcu);
+                    // On the link, or at its stop line: still on it (X-38), for at least free
+                    // flow (X-38a).
+                    let free_flow = self.network.free_flow_time(link).get();
+                    recorder.record_unfinished(link, q.enter, end.max(q.enter + free_flow), pcu);
                 } else {
                     // Still waiting outside the network: `enter` is its departure.
                     recorder.record_origin_wait(link, q.enter, end, pcu);

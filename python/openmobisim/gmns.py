@@ -20,7 +20,9 @@ road's direction; walking on every road but motorways and cycleways, both ways).
 (WKT); on the bike layer ``bike_facility`` (``separated``, ``lane`` or ``mixed``).
 ``node.csv``: ``node_id``, ``x_coord``, ``y_coord`` (WGS84 longitude and latitude) and
 ``ctrl_type`` (``signal`` at a signalised node). Ids are the network's own indices,
-zero-padded, so a network read back has its nodes and links in the same order.
+zero-padded, so a network read back has its nodes and links in the same order; the ids it had
+before are not kept, so link values or edits given by id use the new ones after a round trip
+(X-61).
 
 **What is read** — the same columns, the ``config.csv`` units (``long_length`` ``m``, ``km``,
 ``mi`` or ``ft``; ``speed`` ``kmh`` or ``mph``) and, for a link without a ``facility_type``,

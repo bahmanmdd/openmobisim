@@ -1359,7 +1359,12 @@ class Scenario:
                 itself matters (traffic control, incidents, evacuation); under heavy congestion
                 its iterations can drift (S227). ``3`` is a spatial queue. ``0`` is free flow:
                 no vehicle affects another, so there is no congestion, and a run that iterates
-                has nothing to settle — for debugging, or as a lower bound.
+                has nothing to settle — for debugging, or as a lower bound. Under
+                ``equilibration="free_flow"`` (the free-flow loading alone, no iterations) every
+                level from 2 loads as the point queue (``equilibration_options`` ``warmup``, 1 by
+                default), so levels 2, 3 and 4 differ only in whether stuck vehicles may re-route
+                (``loading_options`` ``reroute``: off at 2, on at 3 and 4); the level sets how
+                ``"msa"``'s iterations after it load (X-25).
             flow_step_s: The loading step in seconds, for levels 2-4. It is a
                 bookkeeping boundary: results do not depend on it.
             link_bin_s: If given, also record per-link results in time bins of

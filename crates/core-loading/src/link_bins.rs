@@ -230,8 +230,10 @@ impl LinkBinRecorder {
     /// waiting to enter it, at `end` (S170). Only the entry-time table sees it, and
     /// with the time it had taken so far, a **lower bound** on the time it will
     /// take: without it, a queue that outlasts the window would show only the
-    /// vehicles that got through, and read as if it were short. Does nothing
-    /// unless [`Self::with_entry_bins`] was called.
+    /// vehicles that got through, and read as if it were short. The loading passes
+    /// for `end` at least `enter` plus the link's free-flow time (X-38a), so a
+    /// vehicle cut off soon after it entered does not read as faster than free
+    /// flow. Does nothing unless [`Self::with_entry_bins`] was called.
     pub fn record_unfinished(&mut self, link: LinkId, enter: f64, end: f64, pcu: f64) {
         if let Some(entry) = self.entry.as_mut() {
             #[allow(
