@@ -423,20 +423,21 @@ def test_a_car_route_of_a_trip_given_the_car_costs_its_km_and_tolls_too() -> Non
     assert np.all(a["cost_fare_eur"] == 0)
 
 
-def test_money_weighs_only_when_a_model_asks_for_it() -> None:
+def test_money_weighs_by_default_and_not_when_a_model_is_told_not_to() -> None:
     net = ms.examples.toy_network()
     rows = [toy_trip(net, "b", "W", "M", 0, None)]
     common = {"modes": ["car", "bike"], "transit": None, "parkings": None, "choice_model": "logit"}
     time = {"beta_time_min": -50.0}  # time all but decides: the car, 80 s against the bike's 120 s
+    off = {**time, "beta_cost_eur": 0.0}
     dear = {"car_eur_km": 1000.0}
-    plain = toy_run(rows, "money-plain", choice_options=time, **common)
-    priced = toy_run(rows, "money-unweighed", choice_options=time, price_options=dear, **common)
-    # Not weighed: the prices change nothing, not even the fingerprint.
+    plain = toy_run(rows, "money-plain", choice_options=off, **common)
+    priced = toy_run(rows, "money-unweighed", choice_options=off, price_options=dear, **common)
+    # Told not to weigh money: the prices change nothing, not even the fingerprint.
     assert list(plain.itinerary_choices()["mode"]) == ["car"]
     assert list(priced.itinerary_choices()["mode"]) == ["car"]
     assert priced.fingerprint == plain.fingerprint and plain.manifest()["prices"] is None
-    weighed = toy_run(rows, "money-weighed", price_options=dear,
-                      choice_options={**time, "beta_cost_eur": -1.0}, **common)  # fmt: skip
+    # By default money weighs -1.2 per euro (D-1): at 1000 € a km the car is too dear.
+    weighed = toy_run(rows, "money-weighed", price_options=dear, choice_options=time, **common)
     assert list(weighed.itinerary_choices()["mode"]) == ["bike"], "1000 € a km is too dear"
     assert weighed.manifest()["prices"]["car_eur_km"] == 1000.0
     assert weighed.fingerprint != plain.fingerprint

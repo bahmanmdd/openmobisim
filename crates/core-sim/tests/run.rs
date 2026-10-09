@@ -657,7 +657,9 @@ fn by_default_everyone_takes_the_best_route_and_the_run_says_so() {
 #[test]
 fn a_logit_with_no_aversion_splits_travellers_evenly_and_the_loading_follows() {
     let n = 4_000;
-    let even = logit_with(&[("beta_time_min", 0.0), ("beta_ln_path_size", 0.0)]);
+    // No aversion to anything: time, overlap, and money (D-1), which the roads' lengths would set.
+    let even =
+        logit_with(&[("beta_time_min", 0.0), ("beta_ln_path_size", 0.0), ("beta_cost_eur", 0.0)]);
     let result = choosing_run(n, Some(even), 11).execute(&mut Diagnostics::new());
     let (top, bottom) = (took(&result, 0), took(&result, 1));
     assert_eq!(top + bottom, n);
@@ -709,7 +711,11 @@ fn the_description_names_the_choice_model_and_the_streams_it_draws_from() {
     let sampled = choosing_run(5, Some(logit_with(&[])), 0).description();
     assert_eq!(sampled.choice_model, "logit");
     assert_eq!(sampled.live_streams, ["choice"]);
-    assert!(sampled.choice_descriptor.starts_with("logit;beta_ln_path_size=1"));
+    assert!(
+        sampled
+            .choice_descriptor
+            .starts_with("logit;beta_bike_mixed_km=-0.16;beta_cost_eur=-1.2;beta_ln_path_size=1")
+    );
     assert_ne!(default.fingerprint, sampled.fingerprint);
     let tweaked = choosing_run(5, Some(logit_with(&[("beta_time_min", -0.3)])), 0).description();
     assert_ne!(tweaked.fingerprint, sampled.fingerprint, "a coefficient is an input");

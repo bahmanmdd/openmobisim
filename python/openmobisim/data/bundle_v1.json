@@ -34,11 +34,11 @@
   "nguyendupuis": {
    "archive": {
     "name": "nguyendupuis.zip",
-    "sha256": "02380c93c536c52a9f88b32d3ce443618bb8add716202c32a2f73bce23e1f97c",
-    "bytes": 1595
+    "sha256": "83fa680be532fbd19e306e5b3937d4b96bf93c10cbcddc3dee940240701aa086",
+    "bytes": 1615
    },
    "files": {
-    "case.json": "5357d1c9a175ea379aaf8449d0ce313c9971c0b0915f657395f01a16762cf9ea",
+    "case.json": "62c16029342c50aa43e9b37b10b7b124fa4adfac70f3e6e7b6f53c3edfedb5d2",
     "demand/classes.csv": "732da9800415f29279d5b1973c2c06ea20e9078f195df993d0538d38e8b402c4",
     "demand/od.csv": "67cf5e21ad563d75c7176bd03b04a6f8a44604b88eab2960964ca1d599c8ca0f",
     "demand/zones.csv": "7582c12f615f80c795c3b95a82b9902cd140ff87c61b5401228bbf99eccfb49a",
@@ -64,11 +64,11 @@
   "siouxfalls": {
    "archive": {
     "name": "siouxfalls.zip",
-    "sha256": "434351c17a39a5c42cb1af54c3e32189fa661e7bf623d7bf88966e50e2e5ce8f",
-    "bytes": 3959
+    "sha256": "fe21acdd78b9cf491c5e9a64f35b065564c75b24716273d203a79511a6cc0173",
+    "bytes": 3986
    },
    "files": {
-    "case.json": "919d5b151575ecb9a22e692c69c0e64905ec87876a7d79e8270de88804852327",
+    "case.json": "7906e8f382d10def7737a078a9e60d507ab98d052364c10f90ad41b9c42444bf",
     "demand/classes.csv": "732da9800415f29279d5b1973c2c06ea20e9078f195df993d0538d38e8b402c4",
     "demand/od.csv": "8254bec3e7f3eb3561855934964efa92fca84117e072448e611b304d3017cd0c",
     "demand/zones.csv": "09d51fa109d7cb1246b26a675a6ced7cff642229ca45aab5f200afce1775fe2f",

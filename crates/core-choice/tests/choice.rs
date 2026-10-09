@@ -13,10 +13,18 @@ use openmobisim_core_choice::{
 };
 use openmobisim_core_types::rng::{RngKey, Stream, StreamRng};
 
-/// The attributes the tests' alternatives carry: a route's, and the three the default logit
-/// weighs for itineraries (M4), which are 0 for a route.
-const ATTRIBUTES: [&str; 6] =
-    ["time_min", "ln_path_size", "length_km", "walk_min", "wait_min", "transfers"];
+/// The attributes the tests' alternatives carry: a route's, the four the default logit weighs
+/// for itineraries (M4, S244), which are 0 for a route, and money (D-1), 0 here.
+const ATTRIBUTES: [&str; 8] = [
+    "time_min",
+    "ln_path_size",
+    "length_km",
+    "walk_min",
+    "wait_min",
+    "transfers",
+    "bike_mixed_km",
+    "cost_eur",
+];
 
 fn rng(seed: u64) -> StreamRng {
     StreamRng::new(RngKey::from_seed(seed), Stream::Choice)
@@ -30,7 +38,7 @@ fn batch_of(iteration: u32, situations: &[(u32, u32, Vec<Alt>)]) -> ChoiceBatch 
     for (traveller, trip, alts) in situations {
         b.begin_situation(*traveller, *trip);
         for (id, time, ps, length) in alts {
-            b.push_alternative(*id, &[*time, ps.ln(), *length, 0.0, 0.0, 0.0]);
+            b.push_alternative(*id, &[*time, ps.ln(), *length, 0.0, 0.0, 0.0, 0.0, 0.0]);
         }
     }
     b
@@ -223,7 +231,7 @@ fn the_seed_and_the_iteration_change_the_draws() {
 fn the_descriptor_names_every_coefficient_and_changes_with_any() {
     assert_eq!(
         logit().descriptor(),
-        "logit;beta_ln_path_size=1;beta_time_min=-0.2;beta_transfers=-1;beta_wait_min=-0.09;beta_walk_min=-0.13"
+        "logit;beta_bike_mixed_km=-0.16;beta_cost_eur=-1.2;beta_ln_path_size=1;beta_time_min=-0.2;beta_transfers=-1;beta_wait_min=-0.09;beta_walk_min=-0.13"
     );
     let custom = Logit::from_options(&Options::from([
         ("beta_time_min".into(), -0.5),
@@ -232,7 +240,7 @@ fn the_descriptor_names_every_coefficient_and_changes_with_any() {
     .expect("options");
     assert_eq!(
         custom.descriptor(),
-        "logit;beta_length_km=-0.1;beta_ln_path_size=1;beta_time_min=-0.5;beta_transfers=-1;beta_wait_min=-0.09;beta_walk_min=-0.13"
+        "logit;beta_bike_mixed_km=-0.16;beta_cost_eur=-1.2;beta_length_km=-0.1;beta_ln_path_size=1;beta_time_min=-0.5;beta_transfers=-1;beta_wait_min=-0.09;beta_walk_min=-0.13"
     );
     assert_ne!(custom.descriptor(), logit().descriptor());
     assert!(logit().is_sampled() && !Deterministic.is_sampled());
@@ -252,7 +260,7 @@ fn each_class_weighs_by_its_own_coefficients_and_says_so_in_the_descriptor() {
     for class in [0, 1, 7] {
         b.begin_situation_in(class, class, class);
         for (id, time, ps, length) in &routes {
-            b.push_alternative(*id, &[*time, ps.ln(), *length, 0.0, 0.0, 0.0]);
+            b.push_alternative(*id, &[*time, ps.ln(), *length, 0.0, 0.0, 0.0, 0.0, 0.0]);
         }
     }
     let p = m.probabilities_by_situation(&b).expect("probabilities");
@@ -280,8 +288,8 @@ fn a_product_of_two_attributes_takes_a_coefficient_in_either_order() {
     let mut b = ChoiceBatch::new(0, &ATTRIBUTES);
     for (s, value) in [(0u32, 0.0), (1, 2.0)] {
         b.begin_situation(s, s);
-        b.push_alternative(1, &[10.0, 0.0, 1.0, value, 0.0, 0.0]);
-        b.push_alternative(2, &[10.0, 0.0, 0.0, value, 0.0, 0.0]);
+        b.push_alternative(1, &[10.0, 0.0, 1.0, value, 0.0, 0.0, 0.0, 0.0]);
+        b.push_alternative(2, &[10.0, 0.0, 0.0, value, 0.0, 0.0, 0.0, 0.0]);
     }
     let with = |name: &str| {
         Logit::from_options(&Options::from([(name.into(), 1.5), ("beta_walk_min".into(), 0.0)]))
@@ -304,8 +312,8 @@ fn a_product_of_two_attributes_takes_a_coefficient_in_either_order() {
     let mut c = ChoiceBatch::new(0, &ATTRIBUTES);
     for class in [0, 1] {
         c.begin_situation_in(class, class, class);
-        c.push_alternative(1, &[10.0, 0.0, 1.0, 2.0, 0.0, 0.0]);
-        c.push_alternative(2, &[10.0, 0.0, 0.0, 2.0, 0.0, 0.0]);
+        c.push_alternative(1, &[10.0, 0.0, 1.0, 2.0, 0.0, 0.0, 0.0, 0.0]);
+        c.push_alternative(2, &[10.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0]);
     }
     let q = m.probabilities_by_situation(&c).expect("probabilities");
     assert!((q[0][0] - 1.0 / (1.0 + (-3.0_f64).exp())).abs() < 1e-12, "{q:?}");
@@ -356,7 +364,15 @@ fn a_coefficient_on_an_attribute_that_is_not_offered_says_what_is() {
     m0.choose(&b, &rng(1)).expect("no term, no need");
     assert_eq!(
         m0.required_attributes().unwrap(),
-        ["ln_path_size", "time_min", "transfers", "wait_min", "walk_min"]
+        [
+            "bike_mixed_km",
+            "cost_eur",
+            "ln_path_size",
+            "time_min",
+            "transfers",
+            "wait_min",
+            "walk_min"
+        ]
     );
 }
 
@@ -372,7 +388,7 @@ fn a_malformed_batch_or_answer_is_refused() {
     assert!(duplicate.validate().unwrap_err().to_string().contains("identity 5"));
     let mut nan = ChoiceBatch::new(0, &ATTRIBUTES);
     nan.begin_situation(1, 1);
-    nan.push_alternative(1, &[f64::NAN, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    nan.push_alternative(1, &[f64::NAN, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
     assert!(nan.validate().unwrap_err().to_string().contains("time_min"));
     let ok = batch_of(0, &[(1, 1, three_routes())]);
     ok.validate().expect("fine");

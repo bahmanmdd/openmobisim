@@ -325,9 +325,11 @@ fn the_gap_is_the_relative_excess_over_the_cheapest_route_and_has_a_closed_form(
     // the slow (84 s) by 12 s for everyone. A logit with a time coefficient b per minute sends
     // a share P = 1 / (1 + e^(0.2 |b|)) down the slow road, so the gap, the relative excess over
     // the cheapest route, is P x 12 / 72 exactly, at every iteration.
+    // On time alone: money (D-1) would weigh the slow road's extra length too.
     for b in [-2.0_f64, -0.2, -1.0] {
         let slow_share = 1.0 / (1.0 + (0.2 * b.abs()).exp());
-        let result = setup_level0(6_000, "logit", &[("beta_time_min", b)]).go();
+        let result =
+            setup_level0(6_000, "logit", &[("beta_time_min", b), ("beta_cost_eur", 0.0)]).go();
         for it in &result.iterations {
             assert!(
                 (it.gap - slow_share * 12.0 / 72.0).abs() < 0.006,

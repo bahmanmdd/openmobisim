@@ -104,23 +104,28 @@ impl ChoiceModel for Deterministic {
 /// | `beta_walk_min` | −0.13 | minutes walking, **on top of** `time_min`: walking weighs about 1.65 times riding (M4, A9) |
 /// | `beta_wait_min` | −0.09 | minutes waiting at stops, on top: about 1.47 times riding (M4, A9) |
 /// | `beta_transfers` | −1 | each change of vehicle: about five minutes (M4, A9) |
+/// | `beta_bike_mixed_km` | −0.16 | each kilometre of a bike leg in mixed traffic, **on top of** its time (S244, D-4) |
+/// | `beta_cost_eur` | −1.2 | what the alternative costs, euros: 10 €/h at −0.2 per minute (D-1); see **Money** below |
 ///
-/// The last three are 0 for a car route, so they change nothing there; for an
-/// itinerary (transit, park-and-ride, bike-and-ride) they are the standard
-/// weights of walking, waiting and changing — the averages of Wardman's
-/// meta-analysis of public transport values of time (2004) and the low end of
-/// the transfer penalties Garcia-Martinez et al. (2018) review. CITATION OWED
-/// (the references to check); uncalibrated, like the rest.
+/// Walking, waiting, changing and riding in mixed traffic are 0 for a car route, so they
+/// change nothing there; for an itinerary (transit, park-and-ride, bike-and-ride) the first
+/// three are the standard weights of walking, waiting and changing — the averages of
+/// Wardman's meta-analysis of public transport values of time (2004) and the low end of the
+/// transfer penalties Garcia-Martinez et al. (2018) review. CITATION OWED (the references to
+/// check); uncalibrated, like the rest. The weight on mixed traffic is what the bike route
+/// choice already assumes at the default time weight and speed (a minute in mixed traffic
+/// counts 1.2: 0.8 minute more per km at 15 km/h, times −0.2), so a ride's route and its
+/// mode are chosen alike.
 ///
 /// Any other attribute on offer takes a coefficient the same way — for routes
 /// `beta_length_km`, `beta_detour`, `beta_overlap`, `beta_n_links` — and one not on
 /// offer is refused when the run starts, with the list of those that are. Set a
 /// default to `0` to drop its term.
 ///
-/// **Money** (S248): `beta_cost_eur` weighs what an alternative costs in euros (0 unless
-/// given). A value of time of `V` euros per hour is `beta_cost_eur = beta_time_min · 60 / V`:
-/// −1.2 per euro at −0.2 per minute and 10 €/h; a traveller class's own coefficient is its own
-/// value of time.
+/// **Money** (S248): `beta_cost_eur` weighs what an alternative costs in euros: −1.2 by default
+/// since `DEFAULTS_VERSION` 20 (D-1; 0 before, and 0 drops it). A value of time of `V` euros per
+/// hour is `beta_cost_eur = beta_time_min · 60 / V`: −1.2 per euro at −0.2 per minute and 10 €/h;
+/// a traveller class's own coefficient is its own value of time.
 ///
 /// **Products** (S249): `beta_<a>*<b>` weighs the product of two attributes, so a value that is
 /// the same for every alternative of a choice — the traveller's (`person_<name>`), the trip's
@@ -144,6 +149,8 @@ impl Default for Logit {
     fn default() -> Self {
         Self {
             betas: vec![
+                ("bike_mixed_km".to_string(), -0.16),
+                ("cost_eur".to_string(), -1.2),
                 ("ln_path_size".to_string(), 1.0),
                 ("time_min".to_string(), -0.2),
                 ("transfers".to_string(), -1.0),

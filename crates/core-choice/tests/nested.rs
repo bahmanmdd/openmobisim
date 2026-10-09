@@ -4,7 +4,16 @@
 use openmobisim_core_choice::{ChoiceBatch, ChoiceModel, Logit, NestedLogit, Options, model};
 use openmobisim_core_types::rng::{RngKey, Stream, StreamRng};
 
-const NAMES: [&str; 6] = ["time_min", "ln_path_size", "walk_min", "wait_min", "transfers", "nest"];
+const NAMES: [&str; 8] = [
+    "time_min",
+    "ln_path_size",
+    "walk_min",
+    "wait_min",
+    "transfers",
+    "nest",
+    "bike_mixed_km",
+    "cost_eur",
+];
 
 fn rng(seed: u64) -> StreamRng {
     StreamRng::new(RngKey::from_seed(seed), Stream::Choice)
@@ -16,7 +25,7 @@ fn batch(travellers: u32, alts: &[(u32, f64, f64)]) -> ChoiceBatch {
     for t in 0..travellers {
         b.begin_situation(t, t);
         for &(id, time, nest) in alts {
-            b.push_alternative(id, &[time, 0.0, 0.0, 0.0, 0.0, nest]);
+            b.push_alternative(id, &[time, 0.0, 0.0, 0.0, 0.0, nest, 0.0, 0.0]);
         }
     }
     b

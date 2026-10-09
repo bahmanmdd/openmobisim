@@ -191,8 +191,9 @@ fn outcomes(result: &RunResult) -> Vec<(EventType, u32)> {
     e.into_iter().map(|(_, t, s)| (t, s)).collect()
 }
 
-/// `W → N1`'s alternatives as `(mode, parking, utility, nest)` under the default coefficients
-/// plus `constant` on park-and-ride.
+/// `W → N1`'s alternatives as `(mode, parking, utility, nest)` under the default coefficients of
+/// time, walking, waiting and path size, with money and mixed traffic held at 0 (the test's
+/// model sets both to 0: D-1, D-4), plus `constant` on park-and-ride.
 fn w_n1(constant: f64) -> Vec<(Mode, &'static str, f64)> {
     let walk_s = 300.0 * 2f64.sqrt() / (4.8 / 3.6);
     let ln_ps = (1000.0_f64 / 1200.0).ln();
@@ -251,7 +252,11 @@ fn mc1_the_deterministic_model_takes_the_bike() {
 fn mc1_the_logit_and_the_nested_logit_match_their_closed_forms() {
     let t = toy();
     for (mu, constant) in [(1.0, 0.0), (0.5, 0.0), (0.5, 4.0), (0.3, 4.0)] {
-        let mut o = vec![("beta_mode_car_transit", constant)];
+        let mut o = vec![
+            ("beta_mode_car_transit", constant),
+            ("beta_cost_eur", 0.0),
+            ("beta_bike_mixed_km", 0.0),
+        ];
         let model: Arc<dyn openmobisim_core_choice::ChoiceModel> = if mu == 1.0 {
             Arc::new(Logit::from_options(&options(&o)).unwrap())
         } else {

@@ -26,8 +26,9 @@ def test_every_group_is_listed_with_units():
     assert units["primary.saturation_flow_veh_h_lane"] == "veh/h per lane"
     logit = {r["name"]: r for r in rows if r["group"] == "choice_model.logit"}
     assert logit["beta_mode_bike"]["value"] == 0.0 and logit["beta_time_min"]["unit"] == "per min"
-    # Money (S248): prices in euros, weighed by beta_cost_eur, 0 unless given.
-    assert logit["beta_cost_eur"]["value"] == 0.0 and logit["beta_cost_eur"]["unit"] == "per EUR"
+    # Money (S248): prices in euros, weighed by beta_cost_eur, -1.2 by default (D-1).
+    assert logit["beta_cost_eur"]["value"] == -1.2 and logit["beta_cost_eur"]["unit"] == "per EUR"
+    assert logit["beta_bike_mixed_km"]["value"] == -0.16  # D-4
     prices = {r["name"]: r for r in rows if r["group"] == "prices"}
     assert prices["car_eur_km"]["unit"] == "EUR/km" and prices["fare_base_eur"]["unit"] == "EUR"
     assert all(r["argument"] == "price_options" for r in prices.values())

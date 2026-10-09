@@ -148,16 +148,21 @@ def test_bad_choices_are_refused_before_any_work_and_say_what_is_wrong():
 
 
 class MyLogit:
-    """The built-in logit's defaults, written the way a researcher would write them."""
+    """The built-in logit's defaults, written the way a researcher would write them.
+
+    On car routes: walking, waiting, transfers and a bike's mixed traffic are 0 there; money
+    weighs -1.2 per euro by default (D-1).
+    """
 
     name = "my_logit"
     descriptor = "my_logit;v1"
-    attributes = ["ln_path_size", "time_min"]
+    attributes = ["cost_eur", "ln_path_size", "time_min"]
 
     def choose(self, batch):
         """Sample the logit of the standard utility."""
         a = batch.attributes
-        return choice.sample_random_utility(batch, 1.0 * a["ln_path_size"] - 0.2 * a["time_min"])
+        u = -1.2 * a["cost_eur"] + 1.0 * a["ln_path_size"] - 0.2 * a["time_min"]
+        return choice.sample_random_utility(batch, u)
 
 
 def test_a_python_model_chooses_exactly_what_the_builtin_logit_does():

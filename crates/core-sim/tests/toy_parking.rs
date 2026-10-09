@@ -114,7 +114,7 @@ impl Toy {
             run = run.with_parking(self.parking(parkings));
         }
         if logit {
-            run = run.with_choice_model(Arc::new(Logit::from_options(&Options::new()).unwrap()));
+            run = run.with_choice_model(Arc::new(Logit::from_options(&time_only()).unwrap()));
         }
         run.execute(&mut Diagnostics::new())
     }
@@ -149,6 +149,12 @@ fn outcomes(result: &RunResult) -> Vec<(EventType, u32)> {
 
 fn only(rows: &[&str]) -> Vec<ParkingRow> {
     toy_network_parkings().into_iter().filter(|r| rows.contains(&r.parking_id.as_str())).collect()
+}
+
+/// The default coefficients with money held at 0 (D-1): the hand values here weigh time, walking
+/// and waiting; the two car parks' drives differ in length, so in running cost too.
+fn time_only() -> Options {
+    Options::from([("beta_cost_eur".to_string(), 0.0)])
 }
 
 #[test]
@@ -322,7 +328,7 @@ fn pr3_the_nested_logit_chooses_within_the_park_and_ride_nest() {
         &mut Diagnostics::new(),
     )
     .unwrap();
-    let model = openmobisim_core_choice::NestedLogit::from_options(&Options::new()).unwrap();
+    let model = openmobisim_core_choice::NestedLogit::from_options(&time_only()).unwrap();
     let r = Run::new(t.road.clone(), Arc::new(travellers), Arc::new(trips), Second(20_000))
         .with_layers(t.layers.clone())
         .with_transit(t.transit.clone())

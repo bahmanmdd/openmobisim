@@ -141,7 +141,13 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// `ParkingDefaults::candidates`, five before): each trip weighs the three nearest and the three
 /// best by estimate. On Amsterdam's morning it saved 12 % of the run's time and took
 /// bike-and-ride from 0.76 % to 0.54 % of trips. Runs with parkings change; others do not.
-pub const DEFAULTS_VERSION: u32 = 19;
+///
+/// Version 20 (S254, the pre-release rebuild): **money counts by default** (D-1): the built-in logit
+/// and nested logit weigh `cost_eur` at −1.2 per euro (`beta_cost_eur`; 10 €/h at −0.2 per
+/// minute); and **a bike leg's kilometre in mixed traffic weighs −0.16 on top of its time** (D-4,
+/// S244: `beta_bike_mixed_km`, what the bike route choice already assumes). Every logit run with a
+/// price changes (a car's running cost is one), and every run whose choices include a bike leg.
+pub const DEFAULTS_VERSION: u32 = 20;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

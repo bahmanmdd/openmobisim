@@ -135,7 +135,11 @@ def test_less_capacity_lengthens_trips_and_less_demand_shortens_them(equilibrati
 def test_values_no_model_weighs_change_no_result():
     net, trips = toy_trips()
 
+    # Money weighs by default (D-1): here the model is told not to, so prices are not read.
+    unpriced = {"beta_cost_eur": 0.0}
+
     def run(**settings: object) -> ms.Run:
+        settings.setdefault("choice_options", unpriced)
         return ms.Scenario.from_parts(
             net, trips, classes=CLASSES, transit=ms.examples.toy_network_transit(),
             parkings=ms.examples.toy_network_parkings(), modes=ms.MODES,
@@ -157,5 +161,5 @@ def test_values_no_model_weighs_change_no_result():
         assert np.array_equal(other.link_bins("road").pcu(), base.link_bins("road").pcu()), name
         assert other.fingerprint == base.fingerprint, f"{name}: not read, not in the fingerprint"
     weighed = run(person_values=given["person_values"],
-                  choice_options={"beta_mode_car*person_income": -0.1})  # fmt: skip
+                  choice_options={**unpriced, "beta_mode_car*person_income": -0.1})  # fmt: skip
     assert weighed.fingerprint != base.fingerprint, "a value a model reads is in the fingerprint"

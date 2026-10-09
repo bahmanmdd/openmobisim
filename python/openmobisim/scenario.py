@@ -1417,9 +1417,10 @@ class Scenario:
                 ``"logit"`` and ``"nested_logit"`` a coefficient per attribute,
                 ``beta_time_min`` (default -0.2), ``beta_ln_path_size`` (1),
                 ``beta_walk_min`` (-0.13) and ``beta_wait_min`` (-0.09, on top of the
-                time), ``beta_transfers`` (-1), and 0 for the rest, such as
-                ``beta_length_km``, ``beta_parking_min``, ``beta_cost_eur`` (money, see
-                ``price_options``) or the mode constants
+                time), ``beta_transfers`` (-1), ``beta_bike_mixed_km`` (-0.16, a bike leg's
+                kilometre in mixed traffic, on top of its time), ``beta_cost_eur`` (-1.2 per
+                euro, 10 €/h: money, see ``price_options``), and 0 for the rest, such as
+                ``beta_length_km``, ``beta_parking_min`` or the mode constants
                 ``beta_mode_bike`` … (``openmobisim.choice.ROUTE_ATTRIBUTES`` lists them), and
                 products of two attributes, ``beta_<a>*<b>`` (see ``trip_values``);
                 for ``"nested_logit"`` also ``mu`` (0.5), the nests' scale, from above 0
@@ -1627,10 +1628,10 @@ class Scenario:
                 each passage. Every alternative carries what it costs: ``cost_eur`` and its
                 parts ``cost_running_eur``, ``cost_toll_eur``, ``cost_parking_eur`` (park-and-ride
                 and bike-and-ride, on the trip that parks) and ``cost_fare_eur``. The built-in
-                models weigh money by ``beta_cost_eur`` (or a part's coefficient), **0 unless
-                given**, so no run changes until it is: a value of time of ``V`` euros per hour is
-                ``beta_cost_eur = beta_time_min * 60 / V`` (-1.2 at the default -0.2 and 10 €/h);
-                a class's own ``beta_cost_eur`` (``classes``) is its own value of time.
+                models weigh money by ``beta_cost_eur`` (or a part's coefficient), **-1.2 per euro
+                by default** (D-1; 0 drops it): a value of time of ``V`` euros per hour is
+                ``beta_cost_eur = beta_time_min * 60 / V``, so -1.2 is 10 €/h at the default
+                -0.2; a class's own ``beta_cost_eur`` (``classes``) is its own value of time.
                 Uncalibrated defaults (a flat fare of the order of a single urban ticket: Lyon
                 2.10 €, Paris 2.55 €; Amsterdam charges 1.16 € plus 0.217 € per km); unknown
                 names and values below 0 are refused. Recorded in the fingerprint and the

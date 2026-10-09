@@ -3,42 +3,42 @@
  "bundle": "v1",
  "cases": {
   "amsterdam/base": {
-   "fingerprint": "33706c93bd97f4af",
+   "fingerprint": "c58186d97e640c84",
    "trips": 100000,
-   "completed": 99262,
-   "mean_trip_s": 1473.941780338901,
+   "completed": 99261,
+   "mean_trip_s": 1490.5128499612133,
    "mode_share_pct": {
-    "bike": 47.95,
-    "bike_transit": 0.759,
-    "car": 30.861,
-    "car_transit": 0.187,
+    "bike": 51.633,
+    "bike_transit": 0.076,
+    "car": 28.163,
+    "car_transit": 0.02,
     "none": 0.738,
-    "transit": 18.648,
-    "walk": 0.857
+    "transit": 17.888,
+    "walk": 1.482
    },
    "loadings": 4,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0"
   },
   "lyon/base": {
-   "fingerprint": "39f4358bff99f941",
+   "fingerprint": "057f51e16596c4d8",
    "trips": 65000,
    "completed": 65000,
-   "mean_trip_s": 1378.9234153846153,
+   "mean_trip_s": 1387.3531384615385,
    "mode_share_pct": {
-    "bike": 50.72769230769231,
-    "bike_transit": 0.3415384615384615,
-    "car": 28.063076923076924,
-    "car_transit": 0.5584615384615385,
-    "transit": 19.37076923076923,
-    "walk": 0.9384615384615385
+    "bike": 54.355384615384615,
+    "bike_transit": 0.03230769230769231,
+    "car": 25.436923076923076,
+    "car_transit": 0.07230769230769231,
+    "transit": 18.046153846153846,
+    "walk": 2.056923076923077
    },
    "loadings": 4,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0"
   },
   "nguyendupuis/base": {
-   "fingerprint": "4e708563ab2f9ac3",
+   "fingerprint": "08d2e36819c775e6",
    "trips": 2000,
    "completed": 2000,
    "mean_trip_s": 3205.5995,
@@ -50,24 +50,24 @@
    "version": "0.1.0"
   },
   "paris/base": {
-   "fingerprint": "4f1264109be5135d",
+   "fingerprint": "c5f565298b693d28",
    "trips": 60000,
    "completed": 60000,
-   "mean_trip_s": 1111.1133833333333,
+   "mean_trip_s": 1108.80495,
    "mode_share_pct": {
-    "bike": 56.395,
-    "bike_transit": 1.3483333333333334,
-    "car": 21.128333333333334,
-    "car_transit": 0.058333333333333334,
-    "transit": 20.19333333333333,
-    "walk": 0.8766666666666667
+    "bike": 61.028333333333336,
+    "bike_transit": 0.13166666666666665,
+    "car": 18.546666666666667,
+    "car_transit": 0.005,
+    "transit": 17.843333333333334,
+    "walk": 2.445
    },
    "loadings": 4,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0"
   },
   "siouxfalls/base": {
-   "fingerprint": "56302f871742cc8e",
+   "fingerprint": "857aad73c3cde5e1",
    "trips": 180300,
    "completed": 180300,
    "mean_trip_s": 703.3609816971714,
@@ -79,7 +79,7 @@
    "version": "0.1.0"
   },
   "siouxfalls/congested": {
-   "fingerprint": "cafb513ba4d8b731",
+   "fingerprint": "81e0f90976e47ea4",
    "trips": 270450,
    "completed": 270450,
    "mean_trip_s": 1251.7205768164172,
