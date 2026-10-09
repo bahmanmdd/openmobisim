@@ -187,7 +187,10 @@ def test_a_city_reads_with_its_timetable_parkings_and_classes(name: str) -> None
     transit = case.transit(net)
     assert net.link_count > 10_000 and transit is not None and transit.run_count > 1000
     assert case.parkings() is not None
-    assert set(case.classes()) >= {"bike_enthusiast", "car_captive"}
+    classes = case.classes()
+    assert classes and all(c["share"] > 0 and c["modes"] for c in classes.values())
+    if name == "amsterdam":  # the package's example classes (S255, D-5)
+        assert classes == ms.examples.traveller_classes()
     assert transit.date == case.info["transit"]["date"]
 
 
