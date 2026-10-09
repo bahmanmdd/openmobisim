@@ -147,7 +147,13 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// minute); and **a bike leg's kilometre in mixed traffic weighs −0.16 on top of its time** (D-4,
 /// S244: `beta_bike_mixed_km`, what the bike route choice already assumes). Every logit run with a
 /// price changes (a car's running cost is one), and every run whose choices include a bike leg.
-pub const DEFAULTS_VERSION: u32 = 20;
+///
+/// Version 21 (S256, Q-7): **no prices by default**: a car's running cost per km and a transit
+/// journey's fare are 0 (`core-sim`'s `Prices`; 0.12 € and 2.0 € before), so every shipped price
+/// is 0 — having a car, a bike, a pass or the means to pay a fare is access, which traveller
+/// classes give, and no money is counted for it. `beta_cost_eur` stays −1.2 and weighs the prices
+/// a scenario gives. Every logit run at the shipped prices changes back to one weighing no money.
+pub const DEFAULTS_VERSION: u32 = 21;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

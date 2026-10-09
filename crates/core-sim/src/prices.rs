@@ -14,8 +14,10 @@
 //! felt more than fuel), or both.
 //!
 //! **Value of time.** The built-in logit and nested logit weigh money by `beta_cost_eur` (or a
-//! part's own coefficient), **0 unless given**: the prices are offered, but no run changes until a
-//! model weighs them. A value of time of `V` euros per hour is `beta_cost_eur = beta_time_min · 60
+//! part's own coefficient): −1.2 per euro by default since `DEFAULTS_VERSION` 20 (D-1). **Every
+//! shipped price is 0** since version 21 (S256, Q-7: a car, a bike, a pass or the means to pay a
+//! fare is access, which traveller classes give), so money weighs only the prices a scenario
+//! gives in `price_options`, a parking table or a `toll_eur` column. A value of time of `V` euros per hour is `beta_cost_eur = beta_time_min · 60
 //! / V` (−1.2 per euro at −0.2 per minute and 10 €/h); a traveller class's own `beta_cost_eur` is
 //! its own value of time.
 //!
@@ -41,8 +43,9 @@ pub const COST_ATTRIBUTES: [&str; 5] =
 pub struct Prices {
     /// What driving a car costs per kilometre, in euros: the fuel a driver pays as they go.
     ///
-    /// *Uncalibrated: about 6.5 litres per 100 km at about 1.85 € a litre. CITATION OWED (the
-    /// fleet's consumption and fuel prices; whether drivers perceive wear and depreciation).*
+    /// *Uncalibrated: 0 since `DEFAULTS_VERSION` 21 (S256, Q-7: having a car is access, as
+    /// a traveller class says, and no money is counted for it; 0.12 € before, about 6.5 litres
+    /// per 100 km at about 1.85 € a litre). Set your own to weigh fuel.*
     pub car_eur_km: f64,
     /// What riding one's own bike costs per kilometre, in euros.
     ///
@@ -51,9 +54,10 @@ pub struct Prices {
     pub bike_eur_km: f64,
     /// A transit journey's fare, once per journey, in euros.
     ///
-    /// *Uncalibrated: a flat fare of the order of a single urban ticket in 2026 (Lyon's TCL
-    /// ticket 2.10 €, Paris's metro-train-RER ticket 2.55 €; Amsterdam charges a base fare of
-    /// 1.16 € and 0.217 € per km instead). Set a city's own.*
+    /// *Uncalibrated: 0 since `DEFAULTS_VERSION` 21 (S256, Q-7: holding a pass, or paying the
+    /// fare, is access, as a traveller class says, like owning a car; 2.0 € before). A city's
+    /// single ticket, to weigh fares: Lyon's TCL 2.10 €, Paris's metro-train-RER 2.55 €;
+    /// Amsterdam charges a base fare of 1.16 € and 0.217 € per km.*
     pub fare_base_eur: f64,
     /// A transit journey's fare per kilometre ridden, in euros, the kilometres counted from
     /// each boarding stop to its alighting stop as the crow flies (as Dutch distance fares are).
@@ -84,9 +88,9 @@ impl Default for Prices {
 impl Prices {
     /// The shipped values.
     pub const SHIPPED: Prices = Prices {
-        car_eur_km: 0.12,
+        car_eur_km: 0.0,
         bike_eur_km: 0.0,
-        fare_base_eur: 2.0,
+        fare_base_eur: 0.0,
         fare_km_eur: 0.0,
         fare_transfer_eur: 0.0,
         parking_car_eur: 0.0,
@@ -274,6 +278,7 @@ mod tests {
                 fare_base_eur: 1.16,
                 fare_km_eur: 0.217,
                 fare_transfer_eur: 0.5,
+                car_eur_km: 0.12,
                 ..Prices::SHIPPED
             },
             parking_eur: vec![3.0],
@@ -283,6 +288,9 @@ mod tests {
         // Two rides, 10 km: base, ten kilometres, one transfer.
         assert!((prices.fare(2, 10_000.0) - (1.16 + 2.17 + 0.5)).abs() < 1e-12);
         assert!((prices.running(Some(ParkingKind::Car), 25_000.0) - 3.0).abs() < 1e-12);
+        // Every shipped price is 0 (S256, Q-7): money weighs only the prices a scenario gives.
+        let shipped = Prices::SHIPPED.values();
+        assert!(shipped.iter().all(|(_, v)| *v == 0.0), "{shipped:?}");
         assert_eq!(prices.running(Some(ParkingKind::Bike), 25_000.0), 0.0);
         assert_eq!(prices.running(None, 25_000.0), 0.0);
         assert_eq!(prices.parking(0), 3.0);

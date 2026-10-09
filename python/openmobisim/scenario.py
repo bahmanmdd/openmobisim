@@ -1618,13 +1618,15 @@ class Scenario:
                 per lane, split among the approach's movements.
                 Uncalibrated defaults; unknown names and values out of range are refused.
             price_options: What travel costs, in euros, by name (S248): ``car_eur_km``
-                (0.12, the fuel a driver pays per km), ``bike_eur_km`` (0), a transit
-                journey's fare ``fare_base_eur`` (2.0, once) + ``fare_km_eur`` (0, per km from
+                (the fuel a driver pays per km), ``bike_eur_km``, a transit
+                journey's fare ``fare_base_eur`` (once) + ``fare_km_eur`` (per km from
                 each boarding stop to its alighting stop as the crow flies) +
-                ``fare_transfer_eur`` (0, per transfer), and the fee per stay of a car park or
+                ``fare_transfer_eur`` (per transfer), and the fee per stay of a car park or
                 bike parking whose table gives none (``parking_car_eur``,
-                ``parking_bike_eur``: 0; a parking table's ``fee_eur`` column gives each its
-                own). A toll is a road link value named ``toll_eur`` (``link_values``), paid at
+                ``parking_bike_eur``; a parking table's ``fee_eur`` column gives each its
+                own). **Every one is 0 by default** (S256): having a car, a bike, a pass or
+                the means to pay a fare is access, which ``classes`` give, and no money is
+                counted for it; give prices here to weigh them. A toll is a road link value named ``toll_eur`` (``link_values``), paid at
                 each passage. Every alternative carries what it costs: ``cost_eur`` and its
                 parts ``cost_running_eur``, ``cost_toll_eur``, ``cost_parking_eur`` (park-and-ride
                 and bike-and-ride, on the trip that parks) and ``cost_fare_eur``. The built-in
@@ -1632,9 +1634,9 @@ class Scenario:
                 by default** (D-1; 0 drops it): a value of time of ``V`` euros per hour is
                 ``beta_cost_eur = beta_time_min * 60 / V``, so -1.2 is 10 €/h at the default
                 -0.2; a class's own ``beta_cost_eur`` (``classes``) is its own value of time.
-                Uncalibrated defaults (a flat fare of the order of a single urban ticket: Lyon
-                2.10 €, Paris 2.55 €; Amsterdam charges 1.16 € plus 0.217 € per km); unknown
-                names and values below 0 are refused. Recorded in the fingerprint and the
+                Uncalibrated defaults (a city's own, to weigh fares: a single ticket in Lyon
+                2.10 €, in Paris 2.55 €; Amsterdam charges 1.16 € plus 0.217 € per km; a car's
+                fuel about 0.12 € per km); unknown names and values below 0 are refused. Recorded in the fingerprint and the
                 manifest when the choice model reads money.
             link_values: The user's own numbers per link, for choice models (S236):
                 ``{layer: {name: values}}``, the layer ``"road"``, ``"bike"`` or ``"walk"``,
