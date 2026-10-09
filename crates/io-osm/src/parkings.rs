@@ -253,8 +253,12 @@ pub fn read_parkings(
             continue;
         }
         let closed = node_ids.len() >= 4 && node_ids.first() == node_ids.last();
-        // The centre: the mean of the distinct vertices.
-        let distinct = if closed { &points[..points.len() - 1] } else { &points[..] };
+        // The centre: the mean of the distinct vertices present — by node, so a ring whose closing
+        // node the extract lacks keeps all its other vertices (X-46). The box below is that of the
+        // vertices present: inside the true one, so the duplicate check it serves stays safe.
+        let ring = if closed { &node_ids[..node_ids.len() - 1] } else { &node_ids[..] };
+        let distinct: Vec<LonLat> =
+            ring.iter().filter_map(|n| needed.get(n).copied().flatten()).collect();
         #[allow(clippy::cast_precision_loss, reason = "the vertices of one car park")]
         let n = distinct.len().max(1) as f64;
         let position = LonLat::new(
@@ -473,6 +477,27 @@ mod tests {
         assert_eq!(rack.capacity, 12);
         let bare = rows.iter().find(|r| r.parking_id == "osm:n201").expect("the bare rack");
         assert_eq!(bare.capacity, ParkingReadOptions::SHIPPED.capacity_bike);
+    }
+
+    /// X-46: a closed way cut by the extract's edge, its first (and closing) node missing: the
+    /// centre is the mean of every vertex present, none dropped for the missing closing node.
+    #[test]
+    fn a_ring_missing_its_closing_node_keeps_every_vertex_present_in_its_centre() {
+        let (lot, mut nodes) = square(1, 10, 50.0, &[("amenity", "parking"), ("park_ride", "yes")]);
+        let gone = nodes.remove(0); // node 10: the first, and the closing one
+        let source = MemorySource::new().nodes(nodes.clone()).way(lot);
+        let (rows, _) = read_parkings(&source, None, ParkingReadOptions::SHIPPED).expect("reads");
+        let lot = rows.iter().find(|r| r.parking_id == "osm:w1").expect("the lot");
+        let mean = |f: fn(&OsmNode) -> f64| nodes.iter().map(f).sum::<f64>() / 3.0;
+        assert!(
+            (lot.position.lon - mean(|n| n.lon)).abs() < 1e-12,
+            "{} {}",
+            lot.position.lon,
+            gone.lon
+        );
+        assert!((lot.position.lat - mean(|n| n.lat)).abs() < 1e-12);
+        // Its capacity is not from an area: the ring is not complete.
+        assert_eq!(lot.capacity, ParkingReadOptions::SHIPPED.capacity_car);
     }
 
     #[test]
