@@ -210,7 +210,7 @@ def trips_random(
 def traveller_classes() -> dict[str, dict]:
     """Four example traveller classes by what people own, as ``demand_read_classes`` gives them.
 
-    The classes of S244, their constant fitted in S254 (with money, as the defaults weigh it):
+    The classes of S244, their constant fitted in S256 (with no prices, the defaults' since S256):
 
     ================  =====  ==================================
     Class             Share  Modes
@@ -223,10 +223,11 @@ def traveller_classes() -> dict[str, dict]:
 
     Each class owns what its modes need (a car for one that may drive or park and ride, a bike
     for one that may cycle, every class a transit pass), and **the two that cycle weigh alike**: a
-    bike constant of 1.75 (every other mode's 0), on top of the default weights, which count
-    money (-1.2 per euro) and each kilometre of a ride in mixed traffic (-0.16). The constant
-    was fitted (S254) so that a synthetic morning commute in Amsterdam, with its fares (1.16 EUR
-    a journey plus 0.217 EUR a km), keeps the city's ratio of cycling to driving (38 : 23); public
+    bike constant of 3.1 (every other mode's 0), on top of the default weights, which count each
+    kilometre of a ride in mixed traffic (-0.16) and money (-1.2 per euro), though no price is
+    charged by default: having a car, a bike or a pass is access, which the classes give. The
+    constant was fitted (S256) so that a synthetic morning commute in Amsterdam keeps the city's
+    ratio of cycling to driving (38 : 23); public
     transport's share then follows from who owns no vehicle, and walking, mostly short trips,
     needs a demand that has them. The shares come from the utilities and what people own, which
     is what a study changes. **Illustrative, not calibrated**: a starting point to replace with a
@@ -242,7 +243,7 @@ def traveller_classes() -> dict[str, dict]:
 
     # The bike's constant only where a class can cycle: elsewhere it could never apply. Mixed
     # traffic's weight is the default's (D-4), so the classes leave it to the run (S254).
-    bike = {"beta_mode_bike": 1.75}
+    bike = {"beta_mode_bike": 3.1}
     return _class_table({
         "car_and_bike": {"share": 0.40, "modes": list(MODES), **bike},
         "no_vehicle": {"share": 0.30, "modes": ["walk", "transit"]},
