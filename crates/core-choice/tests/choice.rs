@@ -377,6 +377,30 @@ fn a_coefficient_on_an_attribute_that_is_not_offered_says_what_is() {
 }
 
 #[test]
+fn a_default_whose_attribute_a_batch_lacks_counts_as_zero_but_a_given_one_is_refused() {
+    // S256, C-9: a batch of time and path size only, without money or mixed traffic.
+    let mut b = ChoiceBatch::new(0, &["time_min", "ln_path_size"]);
+    b.begin_situation(1, 1);
+    b.push_alternative(1, &[10.0, 0.0]);
+    b.push_alternative(2, &[13.0, 0.0]);
+    // The defaults weigh time alone here: the closed form of three minutes apart.
+    let p = logit().probabilities_by_situation(&b).expect("defaults on what is offered");
+    assert!((p[0][0] - 0.645_656_306_225_795_4).abs() < 1e-12, "{p:?}");
+    // The run still reads every default's attribute, so it fills them.
+    assert!(logit().required_attributes().unwrap().contains(&"cost_eur".to_string()));
+    // Given by name, even at the default's value, the attribute must be on offer.
+    for given in ["beta_cost_eur", "beta_walk_min"] {
+        let m = Logit::from_options(&Options::from([(given.into(), -1.2)])).expect("made");
+        let message = m.choose(&b, &rng(1)).unwrap_err().to_string();
+        assert!(message.contains(&given[5..]), "{message}");
+    }
+    // A class's own coefficient is given too.
+    let classes = [("a".to_string(), Options::from([("beta_cost_eur".into(), -2.0)]))];
+    let m = logit().with_classes(&classes).expect("made");
+    assert!(m.choose(&b, &rng(1)).is_err());
+}
+
+#[test]
 fn a_malformed_batch_or_answer_is_refused() {
     let empty_situation = {
         let mut b = ChoiceBatch::new(0, &ATTRIBUTES);

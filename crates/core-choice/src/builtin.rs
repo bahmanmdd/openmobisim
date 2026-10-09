@@ -120,7 +120,10 @@ impl ChoiceModel for Deterministic {
 /// Any other attribute on offer takes a coefficient the same way — for routes
 /// `beta_length_km`, `beta_detour`, `beta_overlap`, `beta_n_links` — and one not on
 /// offer is refused when the run starts, with the list of those that are. Set a
-/// default to `0` to drop its term.
+/// default to `0` to drop its term. **A default whose attribute a batch does not carry
+/// counts it as 0** (S256, C-9): only a coefficient given by name must be on offer. A run
+/// offers every default's attribute, so this matters only for a batch made by hand (one
+/// without money, say).
 ///
 /// **Money** (S248): `beta_cost_eur` weighs what an alternative costs in euros: −1.2 by default
 /// since `DEFAULTS_VERSION` 20 (D-1; 0 before, and 0 drops it). A value of time of `V` euros per
@@ -143,6 +146,9 @@ pub struct Logit {
     /// Per traveller class (S231), by class index: its name and its coefficients (the model's,
     /// with the class's overrides), sorted by attribute. Empty: every class weighs alike.
     pub classes: Vec<(String, Vec<(String, f64)>)>,
+    /// The attributes whose coefficient was given by name (the model's options or a class's),
+    /// sorted: a batch must carry them. A default's attribute a batch lacks counts as 0 (S256).
+    pub given: Vec<String>,
 }
 
 impl Default for Logit {
@@ -158,6 +164,7 @@ impl Default for Logit {
                 ("walk_min".to_string(), -0.13),
             ],
             classes: Vec::new(),
+            given: Vec::new(),
         }
     }
 }
@@ -195,8 +202,17 @@ impl Term {
 /// weigh), and its product terms (S249).
 type Dense = (Vec<f64>, Vec<(Term, f64)>);
 
-/// The terms `betas` weigh, on `batch`'s columns, with their coefficients (zeros dropped).
-fn terms(betas: &[(String, f64)], batch: &ChoiceBatch) -> Result<Vec<(Term, f64)>, ChoiceError> {
+/// The attributes the built-in logit weighs by default (its [`Logit::default`]'s).
+const DEFAULT_ATTRIBUTES: [&str; 7] =
+    ["bike_mixed_km", "cost_eur", "ln_path_size", "time_min", "transfers", "wait_min", "walk_min"];
+
+/// The terms `betas` weigh, on `batch`'s columns, with their coefficients (zeros dropped). A
+/// default's attribute the batch lacks, not in `given`, is left out: it counts as 0 (S256, C-9).
+fn terms(
+    betas: &[(String, f64)],
+    given: &[String],
+    batch: &ChoiceBatch,
+) -> Result<Vec<(Term, f64)>, ChoiceError> {
     let names = batch.attribute_names();
     let column = |name: &str| {
         names.iter().position(|n| n == name).ok_or_else(|| ChoiceError::MissingAttribute {
@@ -211,6 +227,12 @@ fn terms(betas: &[(String, f64)], batch: &ChoiceBatch) -> Result<Vec<(Term, f64)
         }
         let term = match product(attribute) {
             Some((a, b)) => Term::Two(column(a)?, column(b)?),
+            None if DEFAULT_ATTRIBUTES.contains(&attribute.as_str())
+                && !names.iter().any(|n| n == attribute)
+                && given.binary_search(attribute).is_err() =>
+            {
+                continue;
+            }
             None => Term::One(column(attribute)?),
         };
         out.push((term, *beta));
@@ -253,12 +275,15 @@ impl Logit {
                 });
             }
             let attribute = canonical(attribute);
+            m.given.push(attribute.clone());
             match m.betas.iter_mut().find(|(a, _)| *a == attribute) {
                 Some(entry) => entry.1 = *value,
                 None => m.betas.push((attribute, *value)),
             }
         }
         m.betas.sort_by(|a, b| a.0.cmp(&b.0));
+        m.given.sort();
+        m.given.dedup();
         Ok(m)
     }
 
@@ -288,6 +313,7 @@ impl Logit {
             let mut merged = self.betas.clone();
             for (option, value) in options {
                 let attribute = canonical(option.strip_prefix("beta_").unwrap_or(option));
+                self.given.push(attribute.clone());
                 match merged.iter_mut().find(|(a, _)| *a == attribute) {
                     Some(entry) => entry.1 = *value,
                     None => merged.push((attribute, *value)),
@@ -296,6 +322,8 @@ impl Logit {
             merged.sort_by(|a, b| a.0.cmp(&b.0));
             self.classes.push((name.clone(), merged));
         }
+        self.given.sort();
+        self.given.dedup();
         Ok(self)
     }
 
@@ -320,12 +348,12 @@ impl Logit {
     ///
     /// # Errors
     ///
-    /// [`ChoiceError::MissingAttribute`] if a coefficient names an attribute the
-    /// batch does not carry.
+    /// [`ChoiceError::MissingAttribute`] if a coefficient given by name names an attribute
+    /// the batch does not carry (a default's counts as 0, S256).
     pub fn utilities(&self, batch: &ChoiceBatch) -> Result<Vec<f64>, ChoiceError> {
         let columns: Vec<&[f64]> =
             (0..batch.attribute_names().len()).map(|k| batch.column(k)).collect();
-        let own = terms(&self.betas, batch)?;
+        let own = terms(&self.betas, &self.given, batch)?;
         let mut utility = vec![0.0; batch.alternatives()];
         if self.classes.is_empty() {
             for (term, beta) in own {
@@ -353,7 +381,7 @@ impl Logit {
         let by_class: Vec<Dense> = self
             .classes
             .iter()
-            .map(|(_, b)| terms(b, batch).map(dense))
+            .map(|(_, b)| terms(b, &self.given, batch).map(dense))
             .collect::<Result<_, _>>()?;
         for (s, &class) in batch.classes().iter().enumerate() {
             let (plain, products) = by_class.get(class as usize).unwrap_or(&own);
@@ -638,5 +666,17 @@ impl ChoiceModel for NestedLogit {
             out.push(crate::model::log_sum_exp(tops));
         }
         Ok(Some(out))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DEFAULT_ATTRIBUTES, Logit};
+
+    #[test]
+    fn the_default_attributes_are_the_default_models() {
+        let model = Logit::default();
+        let names: Vec<&str> = model.betas.iter().map(|(a, _)| a.as_str()).collect();
+        assert_eq!(names, DEFAULT_ATTRIBUTES);
     }
 }
