@@ -4,12 +4,12 @@
   "amsterdam": {
    "archive": {
     "name": "amsterdam.zip",
-    "sha256": "d0ef7c66a52071a2b42adb4d424cee1b6776fea323acdf61933735bd1683790c",
-    "bytes": 60772021
+    "sha256": "a5b10c9d4496c23e4fcc52266eb1e94aff54f9d114caa5bc24588dce46a26da6",
+    "bytes": 60771979
    },
    "files": {
-    "case.json": "11b43206485916ed512750d1c86dc942d6dcead682bee8a5bbfe58d993bd3fb6",
-    "demand/classes.csv": "be7f4a34a0d5f9e47e6c5ba18a11fb68b3f6a643c81be39c04343e8db0dd602e",
+    "case.json": "277ff62ae347f0fed0b831f324bc0617c7526bd2a33476ad03c4a4abe6e33b50",
+    "demand/classes.csv": "442c0479887d6b811f1fc6e18dbc310750503c223338bc854c61eab2d1e7f615",
     "demand/od.csv": "fbcda9c2867b4f7856e25fa1081977ac502cd16a20814a7a659d2f69d11dd4b9",
     "demand/zones.csv": "eecff5dadc974dacdf9b3c765a525e0a6d1a19e290c8692beea41cf1b8a76172",
     "gtfs.zip": "08d8a401d765762f767dc3097e3d91af7e9b1cb839bb2cd78794e062aa5da3f2",
@@ -19,12 +19,13 @@
   "lyon": {
    "archive": {
     "name": "lyon.zip",
-    "sha256": "795f36fd69be46a0aa6dd4c64d285fd71965b1210064294214105158d16d5d1f",
-    "bytes": 37221412
+    "sha256": "b18b115467fedee0c7f533f666be263e3cc99f519dd41d75a1bb2fb222e9e144",
+    "bytes": 38039839
    },
    "files": {
-    "case.json": "1a35acbacea59fcdc124dda0c68689eecb772ea52cb1557a5dd437d3e894886f",
-    "demand/classes.csv": "7588b718baa2424407a3f0a6e075f069e3f2dad361fb90ce8b2e97d0510d40cf",
+    "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
+    "case.json": "3946373ec15885cbc157108c2cb9eee06278333a6c12f29a9e7ed8f52fa0d24f",
+    "demand/classes.csv": "cc67f4d86f06642589d764b8a1da193f4850d8169073781f3e64aad4d2996cba",
     "demand/od.csv": "e62db36211e49483928d00799ebe64a1a5ed023ef1496adb42e25d3c6b1daffb",
     "demand/zones.csv": "2a4ddf1f10db6f42e0d952410e51704662e9bc07981dd6f64a0c9cd9f68e6afd",
     "gtfs.zip": "2d440cd9fe94d475155bda7fecc2f1d97e3ca1e748887845307b20342a929a78",
@@ -49,12 +50,13 @@
   "paris": {
    "archive": {
     "name": "paris.zip",
-    "sha256": "8981f72e9dbe0598fe36e80581710be65e1fb0c64199207b9ad8c386cc41fcd3",
-    "bytes": 92891954
+    "sha256": "4acca5a37c5dfd49f22348f4c96b4416e72cfb7bc99217b990527a7fd3bd8876",
+    "bytes": 93710368
    },
    "files": {
-    "case.json": "8fa82484af4ace6432dc013bd2e6f561c9325819573cec7e739da1a544763629",
-    "demand/classes.csv": "7588b718baa2424407a3f0a6e075f069e3f2dad361fb90ce8b2e97d0510d40cf",
+    "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
+    "case.json": "18374b53b5e6ea5f8e6bc42b383975eb1c1d623f28b6161c158e0a1a8dcbaa8b",
+    "demand/classes.csv": "b5b420592fdd4bc60ffb91f618d79aa555ac2cddbc655fda325b17492081c3d8",
     "demand/od.csv": "50f25510c77ee4875bc5b6fff17930b1f6af64eb5fcfd21ca6e94551a6d89c31",
     "demand/zones.csv": "5510001e0d68f8a8cd0a88e0f56f9bb11d4621d9010e35fec4cafe7b1f59a72e",
     "gtfs.zip": "7a37bab4acb311508073bd0b397c944af807b49e247d0de23d1834298874bae5",
