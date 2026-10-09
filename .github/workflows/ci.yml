@@ -182,9 +182,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install the build and test tooling
-        # pandas: the tests that read the results tables with it run here (X-13); the minimum-versions job
-        # below keeps without it, so the package is tested both with and without.
-        run: python -m pip install --upgrade pip "maturin>=1.9,<2.0" pytest ruff matplotlib pandas
+        # pandas and pyarrow (its Parquet engine): the tests that read the results tables with them run here
+        # (X-13); the minimum-versions job below keeps without them, so the package is tested both with and without.
+        run: python -m pip install --upgrade pip "maturin>=1.9,<2.0" pytest ruff matplotlib pandas pyarrow
       - name: Lint the Python surface
         run: |
           ruff check python

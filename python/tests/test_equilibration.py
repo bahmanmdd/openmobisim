@@ -123,6 +123,7 @@ def test_iterating_is_repeatable_and_follows_the_seed():
 
 def test_the_kpis_file_has_a_row_set_per_iteration():
     pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow")  # pandas reads Parquet through it (X-13)
     run = go("eq-kpis", equilibration_options={"iterations": 4}, **MSA)
     df = run.kpis().to_pandas()
     assert sorted(df["iteration"].unique()) == [0, 1, 2, 3]

@@ -73,6 +73,7 @@ def test_a_short_window_truncates_rather_than_completing() -> None:
 
 def test_kpis_table_round_trips_through_pandas() -> None:
     pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow")  # pandas reads Parquet through it (X-13)
     g = small_grid()
     trips = ms.examples.fixed_car_trips(g, [("dana", (0, 0), (2, 2), 8.0, None)])
     # Pinned to the pre-car-ready-checkpoint defaults (S187 flipped the library's bare default
