@@ -267,9 +267,11 @@ function resize() {
   DPR = window.devicePixelRatio || 1; W = canvas.clientWidth; H = canvas.clientHeight;
   canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
 }
+// The panel's width over the map: it sits on the right of a wide window.
+function panelWidth() { return W > 760 ? 340 : 0; }
 function fitTo(x0, y0, x1, y1, pad) {
-  // Fit into the part of the window the panel leaves free (it sits on the right of a wide window).
-  const w = Math.max(x1 - x0, 60), h = Math.max(y1 - y0, 60), reserve = W > 760 ? 340 : 0;
+  // Fit into the part of the window the panel leaves free.
+  const w = Math.max(x1 - x0, 60), h = Math.max(y1 - y0, 60), reserve = panelWidth();
   S.mpp = Math.max(w / ((W - reserve) * (1 - pad)), h / (H * (1 - pad)));
   S.cx = (x0 + x1) / 2 + reserve / 2 * S.mpp; S.cy = (y0 + y1) / 2;
 }
@@ -666,9 +668,12 @@ function exportFrame() {
   return { title: $("title").textContent, subtitle: $("subtitle").textContent, legend, provenance: $("provenance").textContent, source: $("source").textContent, credit: $("credit").hidden ? "" : $("credit").textContent };
 }
 const HEAD = 64, FOOT = 46;
+// An export has no panel: what the screen shows beside it is centred in the export's whole width, at the same
+// scale, instead of sitting left of centre beside an empty band where the panel was (R-10).
 function viewWithMoving(drawInto) {
-  const moving = MOVING, hover = S.hover; MOVING = false; S.hover = -1;
-  try { drawInto(); } finally { MOVING = moving; S.hover = hover; }
+  const moving = MOVING, hover = S.hover, cx = S.cx; MOVING = false; S.hover = -1;
+  S.cx -= panelWidth() / 2 * S.mpp;
+  try { drawInto(); } finally { MOVING = moving; S.hover = hover; S.cx = cx; }
 }
 function exportSVG() {
   const f = exportFrame(), rec = svgRecorder(), keep = ctx, keepPath = window.Path2D;
