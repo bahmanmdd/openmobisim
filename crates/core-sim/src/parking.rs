@@ -610,7 +610,9 @@ impl ParkingSetup {
         self.car_free_flow.get_or_init(|| {
             let (road, costs, nodes) = self.car_free_flow_inputs();
             let mut reach = openmobisim_core_routes::Reach::new(road, &costs);
-            let seconds = nodes.iter().map(|&n| self.car_free_flow_to(&mut reach, n)).collect();
+            let every = vec![true; road.node_count() as usize];
+            let seconds =
+                nodes.iter().map(|&n| self.car_free_flow_to(&mut reach, n, &every)).collect();
             CarFreeFlow { nodes, seconds }
         })
     }
@@ -622,11 +624,12 @@ impl ParkingSetup {
             return;
         }
         let (road, costs, nodes) = self.car_free_flow_inputs();
+        let every = vec![true; road.node_count() as usize];
         let seconds = crate::transit::par_map(
             &nodes,
             1,
             || openmobisim_core_routes::Reach::new(road, &costs),
-            |reach, &node| self.car_free_flow_to(reach, node),
+            |reach, &node| self.car_free_flow_to(reach, node, &every),
         );
         // Only this thread fills it here; another may have filled it meanwhile with the same.
         let _ = self.car_free_flow.set(CarFreeFlow { nodes, seconds });
@@ -653,15 +656,15 @@ impl ParkingSetup {
     }
 
     /// The free-flow seconds from every road node to car-park node `node`, within the reach.
+    /// `every` is one `true` per road node, made once for all the car parks (X-49).
     fn car_free_flow_to(
         &self,
         reach: &mut openmobisim_core_routes::Reach<'_>,
         node: NodeId,
+        every: &[bool],
     ) -> Vec<f32> {
-        let n = self.road.node_count() as usize;
-        let every = vec![true; n];
-        let mut to = vec![f32::INFINITY; n];
-        for (from, secs) in reach.backward(node, self.defaults.reach_car_s, &every) {
+        let mut to = vec![f32::INFINITY; self.road.node_count() as usize];
+        for (from, secs) in reach.backward(node, self.defaults.reach_car_s, every) {
             #[allow(clippy::cast_possible_truncation, reason = "seconds as f32")]
             let s = secs as f32;
             to[from.index()] = s;

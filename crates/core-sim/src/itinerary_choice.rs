@@ -523,6 +523,38 @@ impl<'a> Planner<'a> {
         finalise(alts, self.detour_limit, k)
     }
 
+    /// The bike parkings a ride from bike node `from` reaches within the reach, as
+    /// `(node, seconds, links, metres)` in the order reached: one static search (S209).
+    fn bike_reach_search(
+        &self,
+        search: &mut Search<'a>,
+        from: NodeId,
+    ) -> Vec<(NodeId, f64, Vec<LinkId>, f64)> {
+        let (Some((layer, ctx)), Some(parking)) = (self.bike, self.parking) else {
+            return Vec::new();
+        };
+        let (targets, count) = parking.targets(ParkingKind::Bike);
+        let cost = |l: u32, _t: f64| ctx.link_cost(LinkId::new(l));
+        let graph = layer.network().network();
+        search
+            .fastest_routes_to(
+                from,
+                targets,
+                count,
+                0.0,
+                parking.defaults().reach_bike_s,
+                &|_, _| 0.0,
+                &cost,
+            )
+            .into_iter()
+            .map(|(node, _, links)| {
+                let t = links.iter().map(|l| layer.seconds()[l.index()]).sum();
+                let m = links.iter().map(|&l| graph.link_length(l).get()).sum();
+                (node, t, links, m)
+            })
+            .collect()
+    }
+
     /// Each bike leg's metres by facility (S236): what a model sees of the route's quality. A
     /// ferry crossing is ridden on no facility, so it counts in none (S241; its time is in the
     /// leg's).
@@ -601,7 +633,6 @@ impl<'a> Planner<'a> {
         let Some(parking) = self.parking else { return Vec::new() };
         let d = parking.defaults();
         let dep = f64::from(departure);
-        let (targets, count) = parking.targets(kind);
         // The vehicle's reach: `(node, seconds, links, metres)`.
         let found: Vec<(NodeId, f64, Vec<LinkId>, f64)> = match kind {
             ParkingKind::Car => {
@@ -651,53 +682,26 @@ impl<'a> Planner<'a> {
                 found
             }
             ParkingKind::Bike => {
-                let Some((layer, ctx)) = self.bike else {
+                let Some((_, ctx)) = self.bike else {
                     return Vec::new();
                 };
                 if n.bike_o.is_null() {
                     return Vec::new();
                 }
-                let mut search_all = || -> Vec<(NodeId, f64, Vec<LinkId>, f64)> {
-                    let cost = |l: u32, _t: f64| ctx.link_cost(LinkId::new(l));
-                    let graph = layer.network().network();
-                    s.bike(ctx)
-                        .fastest_routes_to(
-                            n.bike_o,
-                            targets,
-                            count,
-                            0.0,
-                            d.reach_bike_s,
-                            &|_, _| 0.0,
-                            &cost,
-                        )
-                        .into_iter()
-                        .map(|(node, _, links)| {
-                            let t = links.iter().map(|l| layer.seconds()[l.index()]).sum();
-                            let m = links.iter().map(|&l| graph.link_length(l).get()).sum();
-                            (node, t, links, m)
-                        })
-                        .collect()
-                };
                 // The bike layer's costs are static, so the search's answer is the trip's for
                 // the whole run: found once and kept (S209), pruned to the parkings that can
-                // ever be tried, whatever the parkings' availability.
+                // ever be tried, whatever the parkings' availability; trips from one node
+                // share one search when `Itineraries::fill_bike_reach` found them first (S259).
                 match bike_reach {
                     Some(cell) => cell
                         .get_or_init(|| {
-                            prune_reach(search_all(), parking, kind, destination)
-                                .into_iter()
-                                .map(|(node, seconds, links, metres)| ReachCand {
-                                    node,
-                                    seconds,
-                                    links: links.into_boxed_slice(),
-                                    metres,
-                                })
-                                .collect()
+                            let found = self.bike_reach_search(s.bike(ctx), n.bike_o);
+                            reach_cands(&found, parking, destination)
                         })
                         .iter()
                         .map(|c| (c.node, c.seconds, c.links.to_vec(), c.metres))
                         .collect(),
-                    None => search_all(),
+                    None => self.bike_reach_search(s.bike(ctx), n.bike_o),
                 }
             }
         };
@@ -973,8 +977,8 @@ impl<'a> Planner<'a> {
     }
 }
 
-/// The parkings of `found` (`(node, seconds, links, metres)`, as the bike-and-ride search
-/// returns them) that can ever be among the ones [`Planner::plan_out`] tries: the `K`
+/// Which parkings of `found` (`(node, seconds, links, metres)`, as the bike-and-ride search
+/// returns them) can ever be among the ones [`Planner::plan_out`] tries: the `K`
 /// nearest by riding time, or one of the `K` best by its estimate of the whole trip,
 /// whatever the parkings' availability (S209). Availability moves an estimate only through
 /// the time to park, between its floor (all room) and floor plus slope (full), so a
@@ -982,11 +986,11 @@ impl<'a> Planner<'a> {
 /// the `K` best, and one more than `K` others are nearer than is never among the nearest.
 /// Exact: the kept list gives the same tried set as the whole list, at any availability.
 fn prune_reach(
-    found: Vec<(NodeId, f64, Vec<LinkId>, f64)>,
+    found: &[(NodeId, f64, Vec<LinkId>, f64)],
     parking: &ParkingSetup,
     kind: ParkingKind,
     destination: LonLat,
-) -> Vec<(NodeId, f64, Vec<LinkId>, f64)> {
+) -> Vec<bool> {
     let d = parking.defaults();
     let k = d.candidate_count();
     let speed = (d.rank_speed_km_h / 3.6).max(0.1);
@@ -1001,7 +1005,7 @@ fn prune_reach(
         }
     }
     if each.len() <= k {
-        return found;
+        return vec![true; found.len()];
     }
     let kth = |mut v: Vec<f64>| {
         v.sort_by(f64::total_cmp);
@@ -1015,7 +1019,28 @@ fn prune_reach(
             keep[i] = true;
         }
     }
-    found.into_iter().zip(keep).filter_map(|(f, k)| k.then_some(f)).collect()
+    keep
+}
+
+/// A bike-and-ride trip's reach as kept for the run: the parkings of `found` that
+/// [`prune_reach`] keeps for a trip to `destination`, in the order found.
+fn reach_cands(
+    found: &[(NodeId, f64, Vec<LinkId>, f64)],
+    parking: &ParkingSetup,
+    destination: LonLat,
+) -> Box<[ReachCand]> {
+    let keep = prune_reach(found, parking, ParkingKind::Bike, destination);
+    found
+        .iter()
+        .zip(keep)
+        .filter(|&(_, k)| k)
+        .map(|((node, seconds, links, metres), _)| ReachCand {
+            node: *node,
+            seconds: *seconds,
+            links: links.clone().into_boxed_slice(),
+            metres: *metres,
+        })
+        .collect()
 }
 
 /// Whether a journey comes back to the stop it first boarded at: RAPTOR has no journey
@@ -1444,6 +1469,8 @@ pub(crate) struct Itineraries {
     /// Per position, its bike parkings in reach, found by the first plan that needs them and
     /// kept for the run: the bike layer's costs are static (S209).
     bike_reach: Vec<BikeReach>,
+    /// Set once [`Self::fill_bike_reach`] has run (S259).
+    bike_reach_filled: OnceLock<()>,
     /// Whether any trip may drive to a car park (stated park-and-ride, or offered it in mode
     /// choice): the car parks' free-flow table is then searched before planning (S209).
     parks_cars: bool,
@@ -1546,6 +1573,7 @@ impl Itineraries {
             legs: Vec::new(),
             car_keys: Vec::new(),
             bike_reach: Vec::new(),
+            bike_reach_filled: OnceLock::new(),
             parks_cars: false,
             class_modes: sim.class_modes.to_vec(),
         };
@@ -1756,6 +1784,50 @@ impl Itineraries {
         }
     }
 
+    /// Finds, before the first planning, the bike parkings in reach of every trip that may ride
+    /// out to one: one search per origin node, shared by the trips that start there (S259:
+    /// about four trips per bike node on Amsterdam's morning, which the free-flow loading's
+    /// groups would otherwise search apart). Exact: a trip's reach depends on its origin node and
+    /// destination alone, and a trip not found here is found when first planned, as before.
+    fn fill_bike_reach<'a>(&self, planner: &Planner<'a>, trips: &Trips, travellers: &Travellers) {
+        let (Some((_, ctx)), Some(parking)) = (planner.bike, planner.parking) else {
+            return;
+        };
+        let min_m = parking.defaults().pr_min_km * 1000.0;
+        let bike_transit = Mode::BikeTransit.index();
+        let mut wanted: Vec<(u32, usize)> = (0..self.trips.len())
+            .filter(|&p| {
+                let trip = self.trips[p];
+                if self.nodes[p].bike_o.is_null() {
+                    return false;
+                }
+                if !self.choosing[p] {
+                    return trips.mode(trip) == Mode::BikeTransit;
+                }
+                // As `offer_of` and `Planner::plan` decide it, but for where the bike is.
+                let class = travellers.user_class(trips.traveller(trip)).index();
+                self.offered[bike_transit]
+                    && self.class_modes.get(class).is_none_or(|c| c[bike_transit])
+                    && ground_distance_metres(trips.origin(trip), trips.destination(trip)) >= min_m
+            })
+            .map(|p| (self.nodes[p].bike_o.raw(), p))
+            .collect();
+        wanted.sort_unstable();
+        let groups: Vec<&[(u32, usize)]> = wanted.chunk_by(|a, b| a.0 == b.0).collect();
+        par_map(
+            &groups,
+            64,
+            || Search::new(ctx),
+            |search, group| {
+                let found = planner.bike_reach_search(search, NodeId::new(group[0].0));
+                for &(_, p) in *group {
+                    let destination = trips.destination(self.trips[p]);
+                    let _ = self.bike_reach[p].set(reach_cands(&found, parking, destination));
+                }
+            },
+        );
+    }
+
     /// Choose: every trip (`current` `None`, iteration 0), or, after a loading,
     /// the travellers `strategy` picks to choose again and those whose
     /// alternative is no longer on offer, the rest keeping theirs at the new
@@ -1798,6 +1870,12 @@ impl Itineraries {
         // The car parks' free-flow table, searched here, outside the parallel planning (S209).
         if let (true, Some(parking)) = (self.parks_cars, planner.parking) {
             parking.prepare_car_free_flow();
+        }
+        // The bike-and-ride reaches, one search per origin node, also outside it (S259; not
+        // inside a `OnceLock`'s initialisation, as `prepare_car_free_flow` says why).
+        if self.bike_reach_filled.get().is_none() {
+            self.fill_bike_reach(planner, trips, travellers);
+            let _ = self.bike_reach_filled.set(());
         }
         // With `only` (S223: one group of the free-flow loading's increments), its travellers
         // choose again and no one else is planned or assessed.

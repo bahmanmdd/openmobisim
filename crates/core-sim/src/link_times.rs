@@ -29,16 +29,18 @@ use openmobisim_core_types::ids::{EntityId, LinkId};
 #[derive(Clone, Debug)]
 pub struct LinkTimes {
     bin_seconds: f64,
-    /// `link_count + 1` offsets: link `l`'s rows are `start[l]..start[l + 1]`.
-    start: Vec<u32>,
-    bin: Vec<u32>,
-    mean: Vec<f64>,
     free_flow: Vec<f64>,
     /// The wait to get onto each link from an origin, by the bin of departure, laid
     /// out like the times.
     wait_start: Vec<u32>,
     wait_bin: Vec<u32>,
     wait_mean: Vec<f64>,
+    /// Per link, its first recorded bin; its times from that bin to its last recorded one
+    /// are `span[span_start[l]..span_start[l + 1]]`, a bin with no row holding the free-flow
+    /// time (S259): a lookup is one read instead of a binary search, with the same numbers.
+    span_first: Vec<u32>,
+    span_start: Vec<u32>,
+    span: Vec<f64>,
 }
 
 /// One table's rows, by link then bin.
@@ -63,6 +65,33 @@ fn by_link(links: usize, bins: &LinkBins) -> (Vec<u32>, Vec<u32>, Vec<f64>) {
     (start, bin, mean)
 }
 
+/// Each link's times laid out from its first recorded bin to its last, the bins between with
+/// no row holding its free-flow time: `(first bin, offsets, times)` (see [`LinkTimes`]).
+fn spans(
+    links: usize,
+    start: &[u32],
+    bin: &[u32],
+    mean: &[f64],
+    free_flow: &[f64],
+) -> (Vec<u32>, Vec<u32>, Vec<f64>) {
+    let mut first = vec![0_u32; links];
+    let mut offsets = vec![0_u32; links + 1];
+    let mut span = Vec::new();
+    for l in 0..links {
+        let rows = start[l] as usize..start[l + 1] as usize;
+        if let (Some(&lo), Some(&hi)) = (bin[rows.clone()].first(), bin[rows.clone()].last()) {
+            first[l] = lo;
+            let base = span.len();
+            span.resize(base + (hi - lo) as usize + 1, free_flow[l]);
+            for r in rows {
+                span[base + (bin[r] - lo) as usize] = mean[r];
+            }
+        }
+        offsets[l + 1] = u32::try_from(span.len()).expect("fewer than 2^32 link-bin cells");
+    }
+    (first, offsets, span)
+}
+
 /// The mean in `bin` of a link's rows `rows` of `(bins, means)`, if it has one.
 fn lookup(bins: &[u32], means: &[f64], rows: core::ops::Range<usize>, wanted: u32) -> Option<f64> {
     bins[rows.clone()].binary_search(&wanted).ok().map(|i| means[rows.start + i])
@@ -77,17 +106,19 @@ impl LinkTimes {
         let links = network.link_count() as usize;
         let (start, bin, mean) = by_link(links, &tables.entry);
         let (wait_start, wait_bin, wait_mean) = by_link(links, &tables.origin_wait);
+        let free_flow: Vec<f64> = (0..network.link_count())
+            .map(|i| network.free_flow_time(LinkId::new(i)).get())
+            .collect();
+        let (span_first, span_start, span) = spans(links, &start, &bin, &mean, &free_flow);
         Self {
             bin_seconds: f64::from(tables.entry.bin_seconds()),
-            start,
-            bin,
-            mean,
-            free_flow: (0..network.link_count())
-                .map(|i| network.free_flow_time(LinkId::new(i)).get())
-                .collect(),
+            free_flow,
             wait_start,
             wait_bin,
             wait_mean,
+            span_first,
+            span_start,
+            span,
         }
     }
 
@@ -97,15 +128,15 @@ impl LinkTimes {
         let links = network.link_count() as usize;
         Self {
             bin_seconds: 1.0,
-            start: vec![0; links + 1],
-            bin: Vec::new(),
-            mean: Vec::new(),
             free_flow: (0..network.link_count())
                 .map(|i| network.free_flow_time(LinkId::new(i)).get())
                 .collect(),
             wait_start: vec![0; links + 1],
             wait_bin: Vec::new(),
             wait_mean: Vec::new(),
+            span_first: vec![0; links],
+            span_start: vec![0; links + 1],
+            span: Vec::new(),
         }
     }
 
@@ -129,8 +160,9 @@ impl LinkTimes {
     #[must_use]
     pub fn link_seconds(&self, link: u32, at: f64) -> f64 {
         let l = link as usize;
-        let rows = self.start[l] as usize..self.start[l + 1] as usize;
-        lookup(&self.bin, &self.mean, rows, self.bin_of(at)).unwrap_or(self.free_flow[l])
+        let (a, z) = (self.span_start[l] as usize, self.span_start[l + 1] as usize);
+        let k = self.bin_of(at).wrapping_sub(self.span_first[l]) as usize;
+        if k < z - a { self.span[a + k] } else { self.free_flow[l] }
     }
 
     /// The wait outside the network of someone who sets out at second `departure`

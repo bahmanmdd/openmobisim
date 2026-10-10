@@ -352,10 +352,16 @@ pub fn read_parkings(
 /// Merge parkings of one kind within `merge_m` of a larger one into sites (see
 /// the [module docs](self)); in order of capacity, then id, so the result does
 /// not depend on the order the file had.
+///
+/// The parkings near a seed are looked up in a grid of cells half as wide again as
+/// `merge_m`, so only the nine cells around it are tried (X-47; was every later parking):
+/// the same members in the same order as the scan of all.
 fn merge(mut found: Vec<Found>, merge_m: f64) -> Vec<ParkingRow> {
     found.sort_by(|a, b| b.capacity.cmp(&a.capacity).then_with(|| a.id.cmp(&b.id)));
+    let grid = Grid::new(&found, merge_m);
     let mut taken = vec![false; found.len()];
     let mut rows = Vec::new();
+    let mut near = Vec::new();
     for i in 0..found.len() {
         if taken[i] {
             continue;
@@ -363,15 +369,18 @@ fn merge(mut found: Vec<Found>, merge_m: f64) -> Vec<ParkingRow> {
         taken[i] = true;
         let seed = &found[i];
         let mut members = vec![i];
-        if merge_m > 0.0 {
-            for j in i + 1..found.len() {
-                if !taken[j]
+        if let Some(grid) = &grid {
+            near.clear();
+            near.extend(grid.around(seed.position).filter(|&j| {
+                j > i
+                    && !taken[j]
                     && found[j].kind == seed.kind
                     && ground_distance_metres(seed.position, found[j].position) <= merge_m
-                {
-                    taken[j] = true;
-                    members.push(j);
-                }
+            }));
+            near.sort_unstable();
+            for &j in &near {
+                taken[j] = true;
+                members.push(j);
             }
         }
         let capacity: u32 = members.iter().map(|&m| found[m].capacity).sum();
@@ -400,6 +409,56 @@ fn merge(mut found: Vec<Found>, merge_m: f64) -> Vec<ParkingRow> {
     }
     rows.sort_by(|a, b| a.parking_id.cmp(&b.parking_id));
     rows
+}
+
+/// The parkings by cell of a grid in metres (X-47). Any two within `merge_m` of each other
+/// by [`ground_distance_metres`] are in the same or neighbouring cells: the grid's metres per
+/// degree are at most that distance's (the smallest meridional radius; the equatorial radius
+/// at the latitude farthest from the equator), and a cell is half as wide again as `merge_m`.
+struct Grid {
+    cell_m: f64,
+    kx: f64,
+    ky: f64,
+    cells: HashMap<(i64, i64), Vec<usize>>,
+}
+
+impl Grid {
+    /// The grid of `found`, or `None` when nothing merges (`merge_m` not positive).
+    fn new(found: &[Found], merge_m: f64) -> Option<Self> {
+        if merge_m.is_nan() || merge_m <= 0.0 {
+            return None;
+        }
+        let farthest = found.iter().map(|f| f.position.lat.abs()).fold(0.0, f64::max).min(89.0);
+        let mut grid = Self {
+            cell_m: merge_m * 1.5,
+            kx: 6_378_000.0 * farthest.to_radians().cos() * 1.0_f64.to_radians(),
+            ky: 6_335_000.0 * 1.0_f64.to_radians(),
+            cells: HashMap::new(),
+        };
+        for (i, f) in found.iter().enumerate() {
+            grid.cells.entry(grid.cell(f.position)).or_default().push(i);
+        }
+        Some(grid)
+    }
+
+    fn cell(&self, p: LonLat) -> (i64, i64) {
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a cell index: degrees in metres over a cell's width, far within i64"
+        )]
+        let at = |degrees: f64, k: f64| (degrees * k / self.cell_m).floor() as i64;
+        (at(p.lon, self.kx), at(p.lat, self.ky))
+    }
+
+    /// The parkings in the nine cells around `p`, in no particular order.
+    fn around(&self, p: LonLat) -> impl Iterator<Item = usize> + '_ {
+        let (x, y) = self.cell(p);
+        (-1..=1).flat_map(move |dx| {
+            (-1..=1).flat_map(move |dy| {
+                self.cells.get(&(x + dx, y + dy)).into_iter().flatten().copied()
+            })
+        })
+    }
 }
 
 #[cfg(test)]
@@ -539,5 +598,89 @@ mod tests {
             read_parkings(&source, Some(&region), ParkingReadOptions::SHIPPED).expect("reads");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].parking_id, "osm:n1");
+    }
+
+    /// The merge as it was before X-47: every later parking tried against each seed.
+    fn merge_by_scan(mut found: Vec<Found>, merge_m: f64) -> Vec<ParkingRow> {
+        found.sort_by(|a, b| b.capacity.cmp(&a.capacity).then_with(|| a.id.cmp(&b.id)));
+        let mut taken = vec![false; found.len()];
+        let mut rows = Vec::new();
+        for i in 0..found.len() {
+            if taken[i] {
+                continue;
+            }
+            taken[i] = true;
+            let seed = &found[i];
+            let mut members = vec![i];
+            for j in i + 1..found.len() {
+                if !taken[j]
+                    && found[j].kind == seed.kind
+                    && ground_distance_metres(seed.position, found[j].position) <= merge_m
+                {
+                    taken[j] = true;
+                    members.push(j);
+                }
+            }
+            let capacity: u32 = members.iter().map(|&m| found[m].capacity).sum();
+            let c = f64::from(capacity.max(1));
+            let mean = |f: fn(&LonLat) -> f64| {
+                members
+                    .iter()
+                    .map(|&m| f(&found[m].position) * f64::from(found[m].capacity))
+                    .sum::<f64>()
+                    / c
+            };
+            rows.push(ParkingRow {
+                parking_id: seed.id.clone(),
+                name: members.iter().find_map(|&m| found[m].name.clone()),
+                hub_id: None,
+                position: LonLat::new(mean(|p| p.lon), mean(|p| p.lat)),
+                kind: seed.kind,
+                capacity,
+                initial_occupancy: 0,
+                fee_eur: None,
+            });
+        }
+        rows.sort_by(|a, b| a.parking_id.cmp(&b.parking_id));
+        rows
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(24))]
+        /// X-47: the grid finds the same sites, to the bit, as the scan of every pair, on a
+        /// dense cluster where many parkings are within reach of several seeds, near the equator
+        /// and far north, at any merge distance.
+        #[test]
+        fn the_grid_merges_exactly_as_the_scan_of_every_pair(
+            seed in 0_u64..1_000_000,
+            lat in proptest::prop_oneof![-1.0_f64..1.0, 51.0_f64..53.0, 69.0_f64..70.0],
+            merge_m in proptest::prop_oneof![1.0_f64..40.0, 40.0_f64..400.0],
+        ) {
+            let mut state = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let mut next = move || {
+                state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+                #[allow(clippy::cast_precision_loss, reason = "a uniform draw")]
+                let u = (state >> 11) as f64 / (1_u64 << 53) as f64;
+                u
+            };
+            let found: Vec<Found> = (0..600)
+                .map(|i| {
+                    let u = next();
+                    Found {
+                        id: format!("osm:n{i}"),
+                        name: (next() < 0.3).then(|| format!("site {i}")),
+                        kind: if u < 0.5 { ParkingKind::Bike } else { ParkingKind::Car },
+                        position: LonLat::new(4.9 + next() * 0.01, lat + next() * 0.01),
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a small draw")]
+                        capacity: (next() * 50.0) as u32,
+                        capacity_from: CapacityFrom::Default,
+                        bounds: None,
+                        from_node: true,
+                        private: false,
+                    }
+                })
+                .collect();
+            proptest::prop_assert_eq!(merge(found.clone(), merge_m), merge_by_scan(found, merge_m));
+        }
     }
 }

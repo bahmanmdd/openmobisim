@@ -228,6 +228,42 @@ fn a_route_is_walked_link_by_link_through_the_bins_it_meets() {
 }
 
 #[test]
+fn a_bin_nobody_crossed_between_two_that_were_recorded_costs_free_flow() {
+    // S259: each link's times are laid out from its first recorded bin to its last; a bin
+    // between them with no traffic must read as before, the free-flow time.
+    let (net, ab, bc) = line();
+    let free = |l: u32| net.free_flow_time(LinkId::new(l)).get();
+    let mut r = LinkBinRecorder::new(net.link_count() as usize, 60, 3600.0);
+    r.record(LinkId::new(ab), 0.0, 20.0, 1.0); // bin 0, 20 s
+    r.record(LinkId::new(ab), 150.0, 180.0, 1.0); // bin 2, 30 s (exit at 180 s: bin 3)
+    r.record(LinkId::new(bc), 600.0, 650.0, 1.0); // bin 10, 50 s
+    let none = LinkBinRecorder::new(net.link_count() as usize, 60, 3600.0)
+        .with_entry_bins()
+        .finish_with_entry()
+        .1
+        .unwrap()
+        .origin_wait;
+    let times = LinkTimes::from_tables(&net, &EntryTables { entry: r.finish(), origin_wait: none });
+    let entry_bins = |l: u32| -> Vec<u32> {
+        (0..60)
+            .filter(|&b| (times.link_seconds(l, f64::from(b) * 60.0) - free(l)).abs() > 1e-12)
+            .collect()
+    };
+    // Whatever bins the recorder put the two traversals of ab in, every other bin is free flow,
+    // the bins between included, and so are those before and long after.
+    let recorded = entry_bins(ab);
+    assert_eq!(recorded.len(), 2, "two bins recorded on ab: {recorded:?}");
+    assert!(recorded[1] > recorded[0] + 1, "a gap between them: {recorded:?}");
+    for b in recorded[0] + 1..recorded[1] {
+        assert!((times.link_seconds(ab, f64::from(b) * 60.0 + 1.0) - free(ab)).abs() < 1e-12);
+    }
+    assert_eq!(entry_bins(bc).len(), 1, "one bin on bc");
+    assert!((times.link_seconds(bc, 0.0) - free(bc)).abs() < 1e-12, "before its first bin");
+    assert!((times.link_seconds(ab, 1e7) - free(ab)).abs() < 1e-12, "long after its last");
+    assert!((times.link_seconds(ab, -5.0) - times.link_seconds(ab, 0.0)).abs() < 1e-12);
+}
+
+#[test]
 fn the_change_between_two_loadings_is_a_traffic_weighted_relative_difference() {
     let (net, ab, bc) = line();
     let free = |l: u32| net.free_flow_time(LinkId::new(l)).get();
