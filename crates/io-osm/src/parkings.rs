@@ -47,21 +47,24 @@ pub struct ParkingReadOptions {
     pub merge_m: f64,
     /// The capacity of a car park mapped as a point without a `capacity` tag.
     ///
-    /// *An assumption. CITATION OWED.*
+    /// *An assumption, with no published source (S259).*
     pub capacity_car: u32,
     /// The capacity of a bike parking mapped as a point without a `capacity`
     /// tag: most are street racks.
     ///
-    /// *An assumption. CITATION OWED.*
+    /// *An assumption, with no published source (S259).*
     pub capacity_bike: u32,
     /// The ground area one car takes in a car park, aisles included, in m².
     ///
-    /// *CITATION OWED: design guides give 25–30 m² per space for surface car
-    /// parks.*
+    /// *An assumption: a bay and its share of the aisles and circulation; no design guide was
+    /// read for it (S259).*
     pub area_per_car_m2: f64,
     /// The ground area one bike takes in a bike parking, aisles included, in m².
     ///
-    /// *CITATION OWED: single-tier racks take about 1.2–2 m² per bike.*
+    /// *Rows of racks 1.8 m deep with 1.2 m between facing rows (the APBP guidelines, as
+    /// summarised by the FHWA,
+    /// <https://www.fhwa.dot.gov/publications/research/safety/pedbike/05085/pptchapt17.cfm>)
+    /// give about 1.4 m² per bike for bikes 0.6 m apart, half an aisle counted; 1.5 is taken.*
     pub area_per_bike_m2: f64,
 }
 

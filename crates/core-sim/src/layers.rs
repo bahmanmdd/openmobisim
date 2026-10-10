@@ -124,13 +124,17 @@ pub struct ModeDefaults {
     /// The longest walk mode choice offers as a walk alternative, in seconds.
     ///
     /// *Uncalibrated: design §21.1's main-mode cut-off of 30 minutes for a whole trip on
-    /// foot. CITATION OWED (walk trip-length distributions of national travel surveys).*
+    /// foot; England's average walking trip took 18 minutes in 2022 (Department for Transport,
+    /// *Walking factsheet* 2022,
+    /// <https://assets.publishing.service.gov.uk/media/64e71a3d20ae89000df26d2b/walking-factsheet-2022.pdf>).*
     pub walk_max_s: f64,
     /// The longest ride mode choice offers as a bike alternative, in seconds.
     ///
     /// *Uncalibrated: 60 minutes (S235; design §21.1's 30 until then, which left cyclists
-    /// without a ride home and pushed them into bike-and-ride, S233). CITATION OWED (bike
-    /// trip-length distributions; e-bikes ride further).*
+    /// without a ride home and pushed them into bike-and-ride, S233). About 80 % of Dutch bicycle
+    /// trips are under 5 km (KiM, *Cycling facts: new insights*, 2020,
+    /// <https://english.kimnet.nl/documents/2020/11/03/cycling-facts-new-insights>); the limit
+    /// keeps the longer ones, e-bikes' among them.*
     pub bike_max_s: f64,
 }
 

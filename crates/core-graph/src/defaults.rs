@@ -44,11 +44,12 @@
 //! # Citations
 //!
 //! The saturation-flow and green-time figures come from the Highway Capacity
-//! Manual; the control-delay form is Webster's uniform delay. **Two reference
-//! rows are still owed** and are marked `CITATION OWED` below — the empirical
-//! ranges for jam density and backward wave speed, and a verification of the
-//! Webster constants. Neither blocks code; both block the claim that every
-//! default is grounded.
+//! Manual; the control-delay form is Webster's uniform delay. Jam density and the
+//! backward wave speed are checked against Helbing's review (2001, *Reviews of Modern
+//! Physics* 73(4) 1067–1141, <https://arxiv.org/abs/cond-mat/0012229>: jam densities estimated
+//! "from 120 to 200 vehicles per kilometer and lane", 140–160 "probably most realistic", p. 9;
+//! congested traffic's wave speed "C0 = 15 ± 5 km/h", p. 13); the uniform-delay form is
+//! Webster's (1958), see [`SignalDefaults::uniform_delay`] (S259).
 
 use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 
@@ -374,7 +375,7 @@ pub struct DefaultRow {
 /// |---|---|
 /// | Highway Capacity Manual | saturation flow per lane |
 /// | Common OSM speed conventions | free-flow speeds where `maxspeed` is absent |
-/// | *CITATION OWED* | jam density per lane (the 120–150 veh/km/lane range) |
+/// | Helbing (2001), p. 9 (module docs) | jam density per lane: 130–150 by class, inside the 120–200 estimated (140–160 called most realistic) |
 ///
 /// Pedestrian and cycle classes carry motor-traffic parameters that are never
 /// read — those layers have static costs (design §21.1) and no fundamental
@@ -521,8 +522,11 @@ impl SignalDefaults {
     /// d = 0.5 · C · (1 − g/C)²  /  (1 − min(1, x) · g/C)
     /// ```
     ///
-    /// *CITATION OWED: the Webster constants are working knowledge and must be
-    /// checked against the 1958 paper before the defaults table ships.*
+    /// *The uniform-delay term of Webster (1958, *Traffic signal settings*, Road Research
+    /// Technical Paper 39, HMSO), the first of his expression's three terms as Akgungor and
+    /// Bullen's review of delay models describes them
+    /// (<https://nacto.org/wp-content/uploads/analytical_delay_models_for_signalized_intersections_akgungor.pdf>);
+    /// the 1958 paper itself was not read (S259).*
     #[must_use]
     pub fn uniform_delay(self) -> Duration {
         let g = self.green_fraction;

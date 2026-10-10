@@ -26,9 +26,14 @@ pub struct LoadingOptions {
     /// How long a vehicle waits at the front of its link, blocked, before it re-routes, in
     /// seconds.
     ///
-    /// *Uncalibrated: 300 s. MATSim's stuck time, the nearest device, ranges from 10 s (its
-    /// default) to 3 600 s in its own examples; Olmos et al. (2018) re-route after 120 s.
-    /// CITATION OWED (observed diversion under congestion).*
+    /// *Uncalibrated: 300 s. MATSim's stuck time, the nearest device, defaults to 30 s
+    /// (Mersini and Ziemke, MATSim User Meeting 2025, slide 6,
+    /// <https://matsim.org/conferences/mum2025/presentations/mersini.pdf>) and is 3 600 s in its
+    /// Sioux Falls example
+    /// (<https://svn.vsp.tu-berlin.de/repos/public-svn/matsim/scenarios/countries/us/sioux-falls/output/output_config.xml>);
+    /// Olmos et al. (2018, *PNAS* 115(50) 12654–12661,
+    /// <https://pmc.ncbi.nlm.nih.gov/articles/PMC6294880>) let a vehicle stopped about two minutes
+    /// (96 steps of 1.2375 s) re-route. No observed diversion delay was found (S259).*
     pub reroute_after_s: f64,
     /// The most times one trip re-routes.
     ///
@@ -37,15 +42,19 @@ pub struct LoadingOptions {
     /// How much faster the new route must be, by the costs the vehicle sees, than the rest of
     /// its current one, as a share.
     ///
-    /// *Uncalibrated: 0.1. CITATION OWED (diversion thresholds in route-guidance studies).*
+    /// *Uncalibrated: 0.1. A relative threshold of this kind is the indifference band of
+    /// boundedly rational route switching (Mahmassani and Jayakrishnan 1991, *Transportation
+    /// Research Part A* 25(5) 293–307, <https://doi.org/10.1016/0191-2607(91)90145-G>); no
+    /// observed value was taken from it (S259).*
     pub reroute_min_gain: f64,
     /// Turn pockets on approaches of two lanes or more
     /// ([`openmobisim_core_loading::LtmNetwork::with_pockets`]), in metres per lane: a vehicle at
     /// the end of such a link passes those ahead of it waiting for another movement, as long as
     /// they fit in their pockets. 0 turns them off: every link one first-in-first-out queue.
     ///
-    /// *Uncalibrated: 50 m, a typical turn bay, split among a link's movements by lane share.
-    /// CITATION OWED (turn-bay lengths in design guides). Lanes per movement from OpenStreetMap's
+    /// *Uncalibrated: 50 m, split among a link's movements by lane share; an assumption (design
+    /// guides size a bay from its expected queue, so no single length was found, S259). Lanes
+    /// per movement from OpenStreetMap's
     /// `turn:lanes`, where mapped, are for later (S217).*
     pub pocket_length_m: f64,
 }

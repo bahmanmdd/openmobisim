@@ -44,8 +44,8 @@ pub struct Prices {
     /// What driving a car costs per kilometre, in euros: the fuel a driver pays as they go.
     ///
     /// *Uncalibrated: 0 since `DEFAULTS_VERSION` 21 (S256, Q-7: having a car is access, as
-    /// a traveller class says, and no money is counted for it; 0.12 € before, about 6.5 litres
-    /// per 100 km at about 1.85 € a litre). Set your own to weigh fuel.*
+    /// a traveller class says, and no money is counted for it; 0.12 € before). Set your own to
+    /// weigh fuel.*
     pub car_eur_km: f64,
     /// What riding one's own bike costs per kilometre, in euros.
     ///
@@ -56,8 +56,13 @@ pub struct Prices {
     ///
     /// *Uncalibrated: 0 since `DEFAULTS_VERSION` 21 (S256, Q-7: holding a pass, or paying the
     /// fare, is access, as a traveller class says, like owning a car; 2.0 € before). A city's
-    /// single ticket, to weigh fares: Lyon's TCL 2.10 €, Paris's metro-train-RER 2.55 €;
-    /// Amsterdam charges a base fare of 1.16 € and 0.217 € per km.*
+    /// own, to weigh fares: a single metro-train-RER ticket in Paris is 2.55 € in 2026
+    /// (<https://www.iledefrance-mobilites.fr/tarifs-titre-de-transport-en-commun-2026>), a TCL
+    /// ticket in Lyon 2.10 € in 2025
+    /// (<https://www.lebonbon.fr/lyon/news/augmentation-prix-tcl-1er-janvier-2025/>); Amsterdam's
+    /// GVB charges a base fare of 1.16 € and 0.217 € per km in 2026 (Vervoerregio Amsterdam,
+    /// note BBV/2025/15361, p. 2,
+    /// <https://vervoerregio.bestuurlijkeinformatie.nl/Document/View/abddeeb0-be54-4eae-9622-4ac0935df151>).*
     pub fare_base_eur: f64,
     /// A transit journey's fare per kilometre ridden, in euros, the kilometres counted from
     /// each boarding stop to its alighting stop as the crow flies (as Dutch distance fares are).

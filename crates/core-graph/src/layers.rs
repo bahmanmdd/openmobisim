@@ -201,27 +201,31 @@ pub struct StaticLayerDefaults {
     pub bike_mixed_km_h: f64,
     /// A bike's speed on dedicated infrastructure, in km/h.
     ///
-    /// *CITATION OWED: set 20 % above the mixed-traffic speed for fewer stops
-    /// and conflicts; to be replaced by a measured value (for example from
-    /// GPS studies of speed by facility type).*
+    /// *An assumption: 20 % above the mixed-traffic speed, for fewer stops and conflicts. On a
+    /// Bologna street with many disturbances cyclists slowed about 20 % on a separated facility
+    /// against 40 % in mixed traffic (Bernardi, Krizek and Rupi 2016, *Journal of Transport and
+    /// Land Use*, <https://jtlu.org/index.php/jtlu/article/view/715>); to be replaced by a
+    /// measured speed by facility.*
     pub bike_dedicated_km_h: f64,
     /// The multiplier [`BikeCost::Dedicated`] puts on the travel time of a link
     /// without dedicated infrastructure.
     ///
-    /// *CITATION OWED: the direction is well established — cyclists detour for
-    /// off-street paths and protected facilities (Broach, Dill and Gliebe,
-    /// *Transportation Research Part A* 46(10), 2012; for Amsterdam, Ton, Cats,
-    /// Duives and Hoogendoorn, *Transportation Research Record* 2662, 2017) —
-    /// the value is a placeholder until one is taken from such a model.*
+    /// *An assumption. In Portland cyclists valued off-street paths and bicycle boulevards
+    /// highly (Broach, Dill and Gliebe 2012, *Transportation Research Part A* 46(10)
+    /// 1730–1740, <https://ideas.repec.org/a/eee/transa/v46y2012i10p1730-1740.html>); in
+    /// Amsterdam's inner city they appeared indifferent to separate cycle paths (Ton, Cats,
+    /// Duives and Hoogendoorn 2017, *Transportation Research Record* 2662 75–82,
+    /// <https://doi.org/10.3141/2662-09>). The value is a placeholder until one is taken from
+    /// such a model.*
     pub bike_mixed_cost_factor: f64,
     /// The multiplier [`BikeCost::Dedicated`] puts on the travel time of a link with a
     /// painted lane (or a cycle street), against 1 on a separated track (S236, roadmap I-bb:
     /// lane against track).
     ///
-    /// *Uncalibrated: 1, a lane counted as a track, as before S236. CITATION OWED: route
-    /// choice models find cyclists prefer separated tracks to painted lanes (Broach, Dill and
-    /// Gliebe 2012, above); a value between 1 and [`Self::bike_mixed_cost_factor`] is to be
-    /// taken from such a model.*
+    /// *Uncalibrated: 1, a lane counted as a track, as before S236. In Portland painted lanes
+    /// were no more attractive than a quiet street, while off-street paths were valued highly
+    /// (Broach, Dill and Gliebe 2012, above); a value between 1 and
+    /// [`Self::bike_mixed_cost_factor`] is to be taken from such a model.*
     pub bike_lane_cost_factor: f64,
     /// Walking speed, in km/h: also a bike's speed where the tags say to
     /// dismount.

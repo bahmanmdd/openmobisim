@@ -109,10 +109,15 @@ impl ChoiceModel for Deterministic {
 ///
 /// Walking, waiting, changing and riding in mixed traffic are 0 for a car route, so they
 /// change nothing there; for an itinerary (transit, park-and-ride, bike-and-ride) the first
-/// three are the standard weights of walking, waiting and changing — the averages of
-/// Wardman's meta-analysis of public transport values of time (2004) and the low end of the
-/// transfer penalties Garcia-Martinez et al. (2018) review. CITATION OWED (the references to
-/// check); uncalibrated, like the rest. The weight on mixed traffic is what the bike route
+/// three are the standard weights of walking, waiting and changing. Walking and waiting are
+/// the averages of Wardman's meta-analysis of British evidence, 1.66 and 1.47 times
+/// in-vehicle time, as Wardman (2004, *Transport Policy* 11(4) 363–377,
+/// <https://doi.org/10.1016/j.tranpol.2004.05.001>; p. 5 of
+/// <https://eprints.whiterose.ac.uk/id/eprint/3393/>) reports them — and finds them too low,
+/// stated-preference evidence weighing them down. A change's five minutes are well below the
+/// 15.2–17.7 minutes of riding that Garcia-Martinez et al. (2018, *Transportation Research
+/// Part A* 114 52–66, <https://doi.org/10.1016/j.tra.2018.01.016>) estimate in Madrid.
+/// Uncalibrated, like the rest. The weight on mixed traffic is what the bike route
 /// choice already assumes at the default time weight and speed (a minute in mixed traffic
 /// counts 1.2: 0.8 minute more per km at 15 km/h, times −0.2), so a ride's route and its
 /// mode are chosen alike.
@@ -479,8 +484,8 @@ const NEST_KEY: u32 = 0x4000_0000;
 /// space of its own; then the alternative by Gumbel-max over `Vⱼ / μ`, each error keyed
 /// on its identity, as the logit's.
 ///
-/// **Default `mu` = 0.5**: inside the 0.3–0.8 range reported for route-in-mode nests.
-/// CITATION OWED; uncalibrated, like the coefficients.
+/// **Default `mu` = 0.5**: an assumption, with no published range found for route-in-mode
+/// nests (S259); uncalibrated, like the coefficients.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NestedLogit {
     /// The utility.

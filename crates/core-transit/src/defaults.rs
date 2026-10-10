@@ -8,9 +8,10 @@ pub struct TransitDefaults {
     /// How long before a run leaves a passenger must be at the stop to board
     /// it, in seconds, at every boarding.
     ///
-    /// *An assumption, and a common routing-engine convention: one minute to
-    /// reach the platform and the door, first boarding and transfers alike.
-    /// CITATION OWED.*
+    /// *An assumption: one minute to reach the platform and the door, first boarding and
+    /// transfers alike. Routing engines differ — OpenTripPlanner's `boardSlack` defaults to 0
+    /// (<https://docs.opentripplanner.org/en/latest/RouteRequest/>) — and no published value
+    /// stands behind it (S259).*
     pub board_slack_s: u32,
     /// The most vehicles one journey takes.
     ///
@@ -22,9 +23,11 @@ pub struct TransitDefaults {
     ///
     /// *An assumption: a choice-set limit, not a preference (the walk's minutes are
     /// weighed by the choice model). 30 minutes (S235; 15 until then, which left
-    /// travellers without a vehicle no way to their destination, S233). CITATION OWED:
-    /// the catchment of urban stops in access studies is 400–800 m for buses and up
-    /// to 1.2 km for rail; a few walk further.*
+    /// travellers without a vehicle no way to their destination, S233). In Montréal the 85th
+    /// percentile of the walk to a stop is about 524 m for buses and 1 259 m for commuter rail
+    /// (El-Geneidy et al. 2014, *Transportation* 41(1) 193–210,
+    /// <https://ideas.repec.org/a/kap/transp/v41y2014i1p193-210.html>): the limit leaves room
+    /// for the few who walk further.*
     pub access_walk_max_s: f64,
     /// The longest walk between two stops in a change, in seconds (300 s is
     /// 400 m).
@@ -44,9 +47,9 @@ pub struct TransitDefaults {
     pub stop_transfer_s: f64,
     /// How long a bus stays at each stop, in seconds (D5: fixed, S195).
     ///
-    /// *CITATION OWED: dwell times of urban buses are typically 10–40 s a stop
-    /// and depend on boardings; 20 s stands for a typical stop until
-    /// boarding-dependent dwell arrives.*
+    /// *An assumption: 20 s stands for a typical stop until boarding-dependent dwell arrives;
+    /// a bus's dwell depends mostly on its boardings and alightings (Dueker et al. 2004,
+    /// *Journal of Public Transportation* 7(1) 21–40, <https://doi.org/10.5038/2375-0901.7.1.2>).*
     pub bus_dwell_s: f64,
     /// A bus's passenger car units on the roads (design §10.4).
     pub bus_pcu: f64,

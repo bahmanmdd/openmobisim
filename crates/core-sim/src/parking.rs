@@ -51,13 +51,13 @@ pub struct ParkingDefaults {
     pub walk_max_s: f64,
     /// The longest drive to a park-and-ride, in seconds.
     ///
-    /// *An assumption. CITATION OWED: park-and-ride catchments are mostly within
-    /// 20–30 minutes' drive.*
+    /// *An assumption: 30 minutes; no published drive-time catchment was found (S259).*
     pub reach_car_s: f64,
     /// The longest ride to a bike parking, in seconds of the bike layer's cost.
     ///
-    /// *An assumption. CITATION OWED: most Dutch bike-and-ride access trips are
-    /// under 5 km.*
+    /// *An assumption: 20 minutes; most bike-and-ride users ride 2–5 km to their stop (Martens
+    /// 2004, *Transportation Research Part D* 9(4) 281–294,
+    /// <https://www.worldtransitresearch.info/research/2043>).*
     pub reach_bike_s: f64,
     /// The most parkings one trip chooses among (`max_anchor_candidates`, V9);
     /// twice as many are tried. Three (`DEFAULTS_VERSION` 19; five before): on Amsterdam's
@@ -75,21 +75,23 @@ pub struct ParkingDefaults {
     /// The time to park a car and walk out of the car park when there is room,
     /// in seconds; also the time to fetch it.
     ///
-    /// *An assumption. CITATION OWED.*
+    /// *An assumption, with no published source (S259).*
     pub floor_car_s: f64,
     /// The time a full car park adds, in seconds, at availability 0 (linear in
     /// the unavailability, design §17.2).
     ///
-    /// *An assumption. CITATION OWED: searching for a space.*
+    /// *An assumption: searching for a space, which studies of cruising for kerb parking put
+    /// at several minutes (reviewed by Shoup 2006, *Transport Policy* 13(6) 479–486,
+    /// <https://doi.org/10.1016/j.tranpol.2006.05.005>).*
     pub slope_car_s: f64,
     /// The time to park a bike and walk out when there is room, in seconds; also
     /// the time to fetch it.
     ///
-    /// *An assumption. CITATION OWED.*
+    /// *An assumption, with no published source (S259).*
     pub floor_bike_s: f64,
     /// The time a full bike parking adds, in seconds, at availability 0.
     ///
-    /// *An assumption. CITATION OWED.*
+    /// *An assumption, with no published source (S259).*
     pub slope_bike_s: f64,
     /// The farthest a parking may be from its layers' nearest node, in metres.
     ///

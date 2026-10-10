@@ -1635,9 +1635,15 @@ class Scenario:
                 by default** (D-1; 0 drops it): a value of time of ``V`` euros per hour is
                 ``beta_cost_eur = beta_time_min * 60 / V``, so -1.2 is 10 €/h at the default
                 -0.2; a class's own ``beta_cost_eur`` (``classes``) is its own value of time.
-                Uncalibrated defaults (a city's own, to weigh fares: a single ticket in Lyon
-                2.10 €, in Paris 2.55 €; Amsterdam charges 1.16 € plus 0.217 € per km; a car's
-                fuel about 0.12 € per km); unknown names and values below 0 are refused.
+                Uncalibrated defaults (a city's own, to weigh fares: a single ticket in Paris
+                2.55 € in 2026,
+                https://www.iledefrance-mobilites.fr/tarifs-titre-de-transport-en-commun-2026;
+                in Lyon 2.10 € in 2025,
+                https://www.lebonbon.fr/lyon/news/augmentation-prix-tcl-1er-janvier-2025/;
+                Amsterdam's GVB 1.16 € plus 0.217 € per km in 2026, Vervoerregio Amsterdam's
+                note BBV/2025/15361, p. 2,
+                https://vervoerregio.bestuurlijkeinformatie.nl/Document/View/abddeeb0-be54-4eae-9622-4ac0935df151);
+                unknown names and values below 0 are refused.
                 Recorded in the fingerprint and the manifest when the choice model reads money.
             link_values: The user's own numbers per link, for choice models (S236):
                 ``{layer: {name: values}}``, the layer ``"road"``, ``"bike"`` or ``"walk"``,
