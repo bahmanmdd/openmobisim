@@ -140,6 +140,23 @@ def test_a_zone_may_spread_its_trips_its_own_way() -> None:
         ms.demand_from_od(od_rows(), ZONES, spread_m_by_zone={"a": -1.0})
 
 
+def test_trip_ends_may_share_a_few_points_per_zone() -> None:
+    # S265, option B: every trip end is one of 4 fixed points of its zone, half its spread away,
+    # so trips between the same zones share their routes (and route searches).
+    trips = ms.demand_from_od(od_rows(40.0), ZONES, spread_m=400.0, seed=2, points_per_zone=4)
+    for k in (2, 4):
+        by_zone: dict[str, set] = {}
+        for t in trips:
+            zone = min(ZONES, key=lambda z: metres(t[k : k + 2], ZONES[z]))
+            by_zone.setdefault(zone, set()).add((round(t[k], 9), round(t[k + 1], 9)))
+            assert metres(t[k : k + 2], ZONES[zone]) == pytest.approx(200.0, abs=0.5)
+        assert all(1 <= len(points) <= 4 for points in by_zone.values())
+    one = ms.demand_from_od(od_rows(40.0), ZONES, spread_m=400.0, points_per_zone=1)
+    assert {(t[2], t[3]) for t in one} <= set(ZONES.values())
+    with pytest.raises(ValueError, match="points_per_zone"):
+        ms.demand_from_od(od_rows(), ZONES, points_per_zone=0)
+
+
 def test_od_refusals() -> None:
     with pytest.raises(ValueError, match="profile"):
         ms.demand_from_od(od_rows(), ZONES, profile="pm_peak")

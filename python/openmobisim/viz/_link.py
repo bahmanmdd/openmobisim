@@ -46,6 +46,18 @@ _DELAY_TOP = 0.70
 _DELAY_FREE = 0.04
 
 
+def free_flow_moving_s(network: Any) -> np.ndarray:
+    """Each link's free-flow time without a signal's wait: its length at its free-flow speed.
+
+    The figures' delay is measured against it (S265, the user: like a navigation map's, a link's
+    whole crossing time, its signal's wait included, over its free flow), so a queue at a signal
+    and the signal's own wait both show; ``Network.link_free_flow_s`` has the wait included.
+    """
+    length = np.asarray(network.link_length_m(), dtype=float)
+    speed = np.asarray(network.link_speed_km_h(), dtype=float)
+    return np.where(speed > 0, length / np.maximum(speed, 1e-9) * 3.6, 0.0)
+
+
 def capacity_passing(network: Any) -> tuple[np.ndarray, np.ndarray]:
     """Each road link's capacity as it passes traffic, in PCU/h, and whether it ends at a signal.
 
@@ -179,7 +191,8 @@ def map_link(
         layer: Which layer's traffic to draw: ``"road"`` (default: cars, on the
             road network), ``"bike"`` or ``"walk"`` (each on its own layer's links,
             ``network.layer(...)``; volume counts travellers, not PCU).
-        colour: What the colour shows: ``"delay"`` (delay over free flow; the
+        colour: What the colour shows: ``"delay"`` (delay over free flow, a
+            signal's wait counted as delay, as a navigation map counts it; the
             default on the road), ``"volume"`` (the default on the bike and walk
             layers, where nothing is delayed), or ``"volume_capacity"`` (volume
             over the link's capacity as it passes traffic — at a signal, times the
@@ -262,7 +275,8 @@ def map_link(
         first, stop = busiest_bins(link_bins)
     else:
         first, stop = (None, None) if bins == "all" else _bin_range(bins)
-    table = link_table(link_bins, n_links, network.link_free_flow_s(), first=first, stop=stop)
+    free = free_flow_moving_s(network) if road else network.link_free_flow_s()
+    table = link_table(link_bins, n_links, free, first=first, stop=stop)
     volume, delay = table["volume"], table["delay"]
     active = (volume > 0) & (volume >= min_volume)
 

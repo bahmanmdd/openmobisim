@@ -62,6 +62,15 @@ def demand_sample(trips: list[tuple], weight: int, seed: int = 0) -> list[tuple]
     multiplied by ``weight``, so totals in the results (travel time, volumes, mode shares by
     weight) estimate those of the whole table.
 
+    **A small aggregation, not a rescaled network** (S265): a kept traveller is a group of
+    ``weight`` people who travel and choose together; on the roads it is a platoon of ``weight``
+    cars, each counted at its full size on every link it uses, and the network keeps its real
+    capacities, storage and signal timings. (Sample-based agent simulations such as MATSim often
+    scale the network's capacities to the sample instead, a well-established approach; here
+    nothing about the network is scaled.) What a group gives up is individuality: one choice for
+    all its members, one platoon in the queues; under congestion its queues form and clear in
+    blocks, so delays read a little higher than with one traveller per person.
+
     The same table, ``weight`` and ``seed`` always keep the same travellers, on any machine;
     another ``seed`` is another sample, for replications.
 
@@ -454,6 +463,7 @@ def demand_from_od(
     user_class: str = "default",
     seed: int = 0,
     spread_m_by_zone: Mapping[str, float] | None = None,
+    points_per_zone: int | None = None,
 ) -> list[tuple]:
     """Turn an OD matrix into the trips a ``Scenario`` runs (S97's deterministic integerisation).
 
@@ -470,7 +480,10 @@ def demand_from_od(
     4. **Where:** the zone's point, moved by a random distance of up to ``spread_m`` metres in a
        random direction (uniform over the disc), so a zone's trips do not all start at one node;
        ``spread_m_by_zone`` gives some zones their own (0 for a gateway: a road where the study
-       area's edge cuts it, where trips from outside enter, S265).
+       area's edge cuts it, where trips from outside enter, S265). With ``points_per_zone``, a
+       trip end is instead one of that many fixed points around the zone's (half its spread
+       away, evenly around it; 1: the zone's own point), drawn at random: trips from the same
+       zones then share their routes and their route searches (S265).
 
     The draws come from one generator seeded by ``seed``, consumed in the sorted order of the
     cells, so the same inputs and seed give the same trips on any machine.
@@ -486,6 +499,8 @@ def demand_from_od(
         seed: Which draws.
         spread_m_by_zone: ``{zone_id: metres}``, the spread of these zones instead of
             ``spread_m``. The draws are the same either way: only their distance is scaled.
+        points_per_zone: Draw each trip end from this many fixed points per zone instead of
+            anywhere in its disc (at least 1; ``None``: anywhere).
 
     Returns:
         Trips rows (``traveller_id, trip_seq, origin_lon, origin_lat, destination_lon,
@@ -498,6 +513,9 @@ def demand_from_od(
     if profile not in _PROFILES:
         raise ValueError(f"profile must be one of {_PROFILES}, got {profile!r}")
     spreads = dict(spread_m_by_zone or {})
+    ppz = points_per_zone
+    if ppz is not None and (int(ppz) != ppz or ppz < 1):
+        raise ValueError(f"points_per_zone must be a whole number of at least 1, got {ppz}")
     if spread_m < 0 or any(v < 0 for v in spreads.values()):
         raise ValueError(f"spread_m must not be negative: {spread_m}, by zone {spreads}")
     rows = demand_read_od(od) if isinstance(od, (str, Path)) else list(od)
@@ -528,8 +546,13 @@ def demand_from_od(
             departures = lo + np.floor(u * (hi - lo)).astype(np.int64)
             ends = []
             for at, zone in ((o, cell[0]), (d, cell[1])):
-                r = spreads.get(zone, spread_m) * np.sqrt(rng.random(n))
-                angle = 2.0 * np.pi * rng.random(n)
+                if points_per_zone is None:
+                    r = spreads.get(zone, spread_m) * np.sqrt(rng.random(n))
+                    angle = 2.0 * np.pi * rng.random(n)
+                else:  # one of the zone's fixed points (S265)
+                    k = rng.integers(points_per_zone, size=n)
+                    r = np.full(n, spreads.get(zone, spread_m) / 2 if points_per_zone > 1 else 0.0)
+                    angle = 2.0 * np.pi * (k + 0.125) / points_per_zone
                 lat_m = 110_574.0
                 lon_m = 111_320.0 * math.cos(math.radians(at[1]))
                 ends.append((at[0] + r * np.cos(angle) / lon_m, at[1] + r * np.sin(angle) / lat_m))

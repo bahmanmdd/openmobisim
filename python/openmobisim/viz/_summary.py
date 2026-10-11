@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from openmobisim import __version__
-from openmobisim._start import show_path
+from openmobisim._paths import show_path
 from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._link import map_link
 from openmobisim.viz._style import ION, THEMES

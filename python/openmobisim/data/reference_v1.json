@@ -3,35 +3,35 @@
  "bundle": "v1",
  "cases": {
   "amsterdam/base": {
-   "fingerprint": "ded2eb76ea1a3f8b",
-   "trips": 96456,
-   "completed": 94823,
-   "mean_trip_s": 1528.2814823407823,
+   "fingerprint": "3d72a19d5a35db5b",
+   "trips": 92412,
+   "completed": 90909,
+   "mean_trip_s": 1480.0556820556822,
    "mode_share_pct": {
-    "bike": 35.573733101103095,
-    "bike_transit": 0.10056398772497305,
-    "car": 33.92012938541926,
-    "car_transit": 0.017624616405407648,
-    "none": 1.3114788089906277,
-    "transit": 27.25387741560919,
-    "walk": 1.8225926847474496
+    "bike": 36.70518980219019,
+    "bike_transit": 0.11037527593818984,
+    "car": 31.447214647448384,
+    "car_transit": 0.027052763710340648,
+    "none": 1.229277582997879,
+    "transit": 28.66402631692854,
+    "walk": 1.816863610786478
    },
    "loadings": 10,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0"
   },
   "lyon/base": {
-   "fingerprint": "a7ada910e1001abf",
-   "trips": 99167,
-   "completed": 99167,
-   "mean_trip_s": 1572.4830034184758,
+   "fingerprint": "b8e209a6c0e2a257",
+   "trips": 94203,
+   "completed": 94203,
+   "mean_trip_s": 1494.1807373438214,
    "mode_share_pct": {
-    "bike": 3.376123105468553,
-    "bike_transit": 0.009075599745883208,
-    "car": 44.8203535450301,
-    "car_transit": 0.18957919469178255,
-    "transit": 45.020016739439534,
-    "walk": 6.584851815624149
+    "bike": 3.08164283515387,
+    "bike_transit": 0.00849229854675541,
+    "car": 42.727938600681505,
+    "car_transit": 0.1815228814368969,
+    "transit": 47.35942592061824,
+    "walk": 6.640977463562732
    },
    "loadings": 10,
    "platform": "aarch64-apple-darwin",
@@ -50,17 +50,17 @@
    "version": "0.1.0"
   },
   "paris/base": {
-   "fingerprint": "25b0b57583e14d0f",
-   "trips": 201072,
-   "completed": 201072,
-   "mean_trip_s": 1471.888502625925,
+   "fingerprint": "59d69c436d90681b",
+   "trips": 137194,
+   "completed": 137194,
+   "mean_trip_s": 1299.5786404653265,
    "mode_share_pct": {
-    "bike": 17.279879844035968,
-    "bike_transit": 0.2466778069547227,
-    "car": 11.354639134240472,
-    "car_transit": 0.0024866714410758336,
-    "transit": 65.72571019336357,
-    "walk": 5.390606349964192
+    "bike": 16.916191670189658,
+    "bike_transit": 0.25073982827237346,
+    "car": 11.186349257256149,
+    "car_transit": 0.0007288948496289925,
+    "transit": 66.64650057582693,
+    "walk": 4.9994897736052595
    },
    "loadings": 10,
    "platform": "aarch64-apple-darwin",

@@ -170,7 +170,9 @@ class Case:
 
         return demand_read_classes(self.path(self.info["demand"]["classes"]))
 
-    def demand(self, multiple: float = 1.0, seed: int = 0) -> list[tuple]:
+    def demand(
+        self, multiple: float = 1.0, seed: int = 0, weight: int | None = None
+    ) -> list[tuple]:
         """The trips: the OD matrix times ``multiple``, each traveller given a class by share.
 
         A row of the matrix that names its ``user_class`` (and its ``mode``: trips from outside
@@ -179,12 +181,15 @@ class Case:
         far (0 at a gateway, a road where the area's edge cuts it). With a ``weight`` in the case's
         demand, each simulated traveller stands for that many people: the matrix is divided by it
         and every trip carries it, so the run's totals are the whole demand's and its time a
-        sample's (``demand_sample``).
+        sample's (``demand_sample``): the fast run, a small aggregation (each traveller a platoon of
+        that many cars, each counted at full size on the network's real capacities), not a
+        rescaled network. ``weight`` here overrides it: 1 is the complete run, one simulated
+        traveller per person (the slowest).
         """
         from openmobisim.demand import demand_assign_classes, demand_from_od, demand_read_od
 
         d = self.info["demand"]
-        weight = int(d.get("weight", 1))
+        weight = int(d.get("weight", 1) if weight is None else weight)
         od = demand_read_od(self.path(d["od"]))
         if multiple != 1.0 or weight != 1:
             od = [{**r, "trips": float(r["trips"]) * multiple / weight} for r in od]
@@ -201,8 +206,13 @@ class Case:
             out = [(*t[:8], weight, *t[9:]) for t in out]
         return out
 
-    def scenario(self, scenario: str = "base", seed: int = 0, **options: Any) -> Any:
-        """The case's scenario ``scenario`` (its ``case.json``), with ``options`` added."""
+    def scenario(
+        self, scenario: str = "base", seed: int = 0, weight: int | None = None, **options: Any
+    ) -> Any:
+        """The case's scenario ``scenario`` (its ``case.json``), with ``options`` added.
+
+        ``weight``: people per simulated traveller (``demand``'s); the case's own by default.
+        """
         from openmobisim.scenario import Scenario
 
         settings = dict(self.info.get("scenarios", {}).get(scenario, {}))
@@ -222,7 +232,7 @@ class Case:
         }
         if transit is not None:
             parts.setdefault("parkings", self.parkings())
-        return Scenario.from_parts(network, self.demand(multiple, seed), **parts)
+        return Scenario.from_parts(network, self.demand(multiple, seed, weight), **parts)
 
 
 def case(name: str, root: str | Path | None = None, *, check: bool = True) -> Case:

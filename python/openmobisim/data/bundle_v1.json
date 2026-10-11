@@ -4,14 +4,14 @@
   "amsterdam": {
    "archive": {
     "name": "amsterdam.zip",
-    "sha256": "7db1f0d581abf245cdfe27042cea70e6a2db5996b75581dea4489c79fe4d536c",
-    "bytes": 61245683
+    "sha256": "a068f7184e3b06afe0db045ff4aa9a24d2a61a2aeebf7534366cb8d3de6afd35",
+    "bytes": 61227006
    },
    "files": {
-    "case.json": "e4b653c2672669f030c3e14f5609252810450bdda092834e1eda5a62d4cae92a",
+    "case.json": "18d3b335da1253117c7f442837b833a569a7ebd76ede5e1fb3a71878b24dc1b8",
     "demand/classes.csv": "78be829e138a92ef9fc861cab728e3ee8d726bb00b3df8c06ea2264bd7cefbe3",
-    "demand/morning.json": "9273b59fd49ddbbe78e8ed672579ff50377609b21a0c4350b669823b17249589",
-    "demand/od.csv": "79e2d438fa2a8ce11634ef635a110673ea54adc4df4f87ed236be390fe76dee4",
+    "demand/morning.json": "9b603fabfddac43fb0febe583df291d5de5abf593ecdad15bd3797cdaa5ddd3b",
+    "demand/od.csv": "53d784278f594f6f5c3fdf5fa550aa1f3a94c52d3a20679248244e695948571f",
     "demand/zones.csv": "701dda65648cb8ff174d24a4e303629fcc51aa6af07fef2f997685c9624cc7a4",
     "gtfs.zip": "08d8a401d765762f767dc3097e3d91af7e9b1cb839bb2cd78794e062aa5da3f2",
     "network.osm.pbf": "c775d3f656a37abf433a2536906727e090866ba574bc16a923cbc6bce1d1f7e6"
@@ -20,15 +20,15 @@
   "lyon": {
    "archive": {
     "name": "lyon.zip",
-    "sha256": "a56fd9e0436e9b7c1387630dc84215a18e15edf38a6b693de3c98e5d7326e882",
-    "bytes": 38235748
+    "sha256": "49745fe5c4725c79e27afb07abd9e72e210a4970be51afc7715ba242c70c6af6",
+    "bytes": 38232058
    },
    "files": {
     "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
-    "case.json": "740afe9c2b4c76bde484dee725b629f14e08ff8fb4290aa0090e410c1b430435",
+    "case.json": "2564a7ffb29d31a85c9ca1df2deeff1773fa445b63c891fd0d7f41d106239098",
     "demand/classes.csv": "51126d2ec9eca94878cddc1703d9b46240fb7560c1f34076053ceed38bdc396d",
-    "demand/morning.json": "f3afaf30483ec81ceba75c844dfae6c4ed749a07003ae71524896296edd1e3bf",
-    "demand/od.csv": "5003d26022d9cf419fcf8ee664eb03e34383c8c04c5dbadb43e0c8ccee479c48",
+    "demand/morning.json": "46db08288fc25b650c136a7bbdc4a7a281b7f531eb6383f5df276bea208f608d",
+    "demand/od.csv": "988db6f7c8305ab8459fb799f71d42c9770029cb8d9602e0435f3e1425b122f5",
     "demand/zones.csv": "b2c7821f0afc00c0421aa0a011830540210a58cce796ebd6d39c5210e376caa5",
     "gtfs.zip": "2d440cd9fe94d475155bda7fecc2f1d97e3ca1e748887845307b20342a929a78",
     "network.osm.pbf": "205e1d85b7ed26a060d2c7c475b724ca386f114647ed4d85b6bc944dabff2b7d"
@@ -52,15 +52,15 @@
   "paris": {
    "archive": {
     "name": "paris.zip",
-    "sha256": "c74ded3833ba7020fbbf3def0b38d0eee108b864811c26e998ba0075622fa64c",
-    "bytes": 93888921
+    "sha256": "24585746d1e1bf0a7b60a1b3fd6f42237acae8cafcec794e22945c8d86df7843",
+    "bytes": 93884313
    },
    "files": {
     "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
-    "case.json": "03f36caf7101e3dad631524aeb641b045b3276d8e482e38699bfbc521346fffe",
+    "case.json": "88fd6728c23deb9538015cd27a557b49e52959347bc80051a00b12aa68a62e96",
     "demand/classes.csv": "98c133dc7c57e2593e30cc15e76106fb7b0fc788e4d29205ee5f4824eee921f0",
-    "demand/morning.json": "0ff97ad0f5f0471ccee401e41abab4674138d5c970659d7193908c66e1eec1a5",
-    "demand/od.csv": "d808a4ed0057c70757358f90d7a6ad20eee3341bff8e264d1cbc626f9b90be1e",
+    "demand/morning.json": "5ced776aaf854632567f0be29803712e4ac6c27e64aa84cef76695f803c345f1",
+    "demand/od.csv": "e11be14f7faf8a1b6e6f40a218a713d06bf2a2f89023fd9a6c5067cc5354ca7d",
     "demand/zones.csv": "13bbd27ac6e1155927bb69556ccbf13a76f46bcb43b73fb6187dc35dfd717e61",
     "gtfs.zip": "7a37bab4acb311508073bd0b397c944af807b49e247d0de23d1834298874bae5",
     "network.osm.pbf": "08878670d4e276045f5de926562bccf9d9c781b97ca4bc8e63de79486be13753"

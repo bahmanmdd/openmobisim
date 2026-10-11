@@ -28,10 +28,6 @@ zones, OD matrices and trips as CSV (``demand_read_zones``, ``demand_read_od``,
 ``demand_read_trips``, ``demand_write_trips``), an OD matrix made trips by ``demand_from_od``;
 traveller classes, each with its own modes and coefficients, from a class table
 (``demand_read_classes``), drawn for each traveller by ``demand_assign_classes``.
-
-New here? ``openmobisim.notebooks()`` copies the tutorial notebooks into a folder and links the
-first, ``00_getting_started.ipynb``, which lists the others (``openmobisim notebooks`` in a
-terminal also opens it in JupyterLab).
 """
 
 from openmobisim import _core, choice, examples
@@ -53,7 +49,6 @@ from openmobisim._core import (
     step_of,
     transit_read_gtfs,
 )
-from openmobisim._start import notebooks, pointer_on_import
 from openmobisim.audit import network_check
 from openmobisim.demand import (
     demand_assign_classes,
@@ -106,7 +101,6 @@ __all__ = [
     "network_read_osm",
     "network_read_table",
     "network_write_gmns",
-    "notebooks",
     "parking_read_osm",
     "parking_read_table",
     "route_methods",
@@ -118,5 +112,3 @@ __all__ = [
     "transit_edit",
     "transit_read_gtfs",
 ]
-
-pointer_on_import()

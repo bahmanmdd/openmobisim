@@ -21,12 +21,12 @@ from typing import Any
 import numpy as np
 
 from openmobisim import __version__
-from openmobisim._start import show_path
+from openmobisim._paths import show_path
 from openmobisim.network import LINK_CLASSES
 from openmobisim.viz import _geometry as geo
 from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._interactive_page import PAGE_CSS, PAGE_HTML, PAGE_JS
-from openmobisim.viz._link import capacity_passing
+from openmobisim.viz._link import capacity_passing, free_flow_moving_s
 from openmobisim.viz._logo import LOGO_PATH
 from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._route import _ROUTE_NIGHT, _ROUTE_PAPER
@@ -300,7 +300,11 @@ def map_interactive(
     blob.add("dy", delta[:, 1], "i32")
     blob.add("cls", network.link_class()[keep], "u8")
     blob.add("len", network.link_length_m()[keep], "f32")
-    blob.add("ff", network.link_free_flow_s()[keep], "f32")
+    # The delay counts a signal's wait (S265): free flow is the moving time; the wait apart.
+    moving = free_flow_moving_s(network)
+    blob.add("ff", moving[keep], "f32")
+    wait = np.maximum(np.asarray(network.link_free_flow_s()) - moving, 0.0)
+    blob.add("sw", wait[keep], "f32")
     passing, signal = capacity_passing(network)  # at a signal, times the green fraction (S265)
     blob.add("cap", passing[keep], "f32")
     blob.add("sg", signal[keep].astype(np.uint8), "u8")

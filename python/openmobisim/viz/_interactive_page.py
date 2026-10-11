@@ -141,7 +141,7 @@ const A = {};
 for (const a of META.arrays) A[a.n] = new CTOR[a.t](raw.buffer, a.o, a.c);
 
 const NL = META.n_links, NV = META.n_verts, NB = META.n_bins;
-const VS = A.vs, CLS = A.cls, LEN = A.len, FF = A.ff, CAP = A.cap, SG = A.sg || new Uint8Array(CAP.length);
+const VS = A.vs, CLS = A.cls, LEN = A.len, FF = A.ff, CAP = A.cap, SG = A.sg || new Uint8Array(CAP.length), SW = A.sw || new Float32Array(CAP.length);
 const SB = A.sb || null;
 // The other layers (T-4), each drawn only when its box is ticked.
 const LY = META.layers || {};
@@ -522,7 +522,7 @@ function tip(l, ev) {
   const t = $("tip");
   if (l < 0) { t.hidden = true; return; }
   const rows = [["Class", CLASSES[CLS[l]] + " · " + LEN[l].toFixed(0) + " m"]];
-  if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " PCU/h"]); if (vol[l] > 0) { rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]); rows.push(["Mean time", meanT[l].toFixed(1) + " s (free " + FF[l].toFixed(1) + ")"]); } }
+  if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " PCU/h"]); if (vol[l] > 0) { rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]); rows.push(["Mean time", meanT[l].toFixed(1) + " s (free flow " + FF[l].toFixed(1) + " s" + (SW[l] > 0 ? "; the signal's fixed wait " + SW[l].toFixed(1) + " s" : "") + ")"]); } }
   if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " PCU/h" + (SG[l] ? " at its signal" : "") + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used)" : "")]);
   if (HAS_ROUTES) { const n = LROUTE_START[l + 1] - LROUTE_START[l]; if (n) rows.push(["Routes", n + " use it"]); }
   t.innerHTML = "<b>link " + l + "</b>" + rows.map((r) => "<div><span>" + r[0] + "</span>" + r[1] + "</div>").join("");
