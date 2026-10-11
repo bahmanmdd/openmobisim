@@ -318,10 +318,10 @@ def draw_furniture(
             linewidth=0.8,
         )
     )
-    fig.text(0.0235, 0.0105, provenance, color=t.muted, fontsize=8.6 * k, fontfamily=mono)
+    line = fig.text(0.0235, 0.0105, provenance, color=t.muted, fontsize=8.6 * k, fontfamily=mono)
     if compass:
         _draw_compass(page)
-    _draw_logo(page, credit, logo)
+    _fit_before(line, _draw_logo(page, credit, logo) - 0.008 * k)
 
 
 def _draw_compass(page: Page) -> None:
@@ -399,15 +399,53 @@ def _draw_compass(page: Page) -> None:
     )
 
 
-def _draw_logo(page: Page, credit: str | None, logo: bool) -> None:
+def _fit_before(text: Any, limit: float) -> None:
+    """Shorten a left-aligned line in its middle, with "…", so it ends before ``limit``.
+
+    In figure coordinates. A small figure's provenance line would otherwise run into the
+    signature; its start (the version, the run) and its end (the fingerprint, the network's
+    source) are what is kept. Widths are the glyphs' outlines, the same at any resolution the
+    figure is saved at (a screen renderer's hinting widens small text).
+    """
+    from matplotlib.textpath import TextPath
+
+    fig = text.get_figure()
+    start = float(text.get_position()[0])
+    width_in = fig.get_figwidth()
+    prop, size = text.get_fontproperties(), text.get_fontsize()
+
+    def fits(line: str) -> bool:
+        width_pt = TextPath((0, 0), line, size=size, prop=prop).get_extents().x1 if line else 0
+        return start + width_pt / 72 / width_in <= limit
+
+    def shown(n: int) -> str:
+        head, tail = (n + 1) // 2, n // 2
+        return full[:head].rstrip() + " … " + full[len(full) - tail :].lstrip() if n else ""
+
+    full = text.get_text()
+    if fits(full):
+        return
+    lo, hi = 0, len(full) - 1  # the most characters kept that fit, by bisection
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if fits(shown(mid)):
+            lo = mid
+        else:
+            hi = mid - 1
+    text.set_text(shown(lo))
+
+
+def _draw_logo(page: Page, credit: str | None, logo: bool) -> float:
     """The signature at the bottom right: an optional credit, then the mark.
 
     The mark is the cactus and the wordmark, a lockup like a
     publisher's imprint. It is a logo, not a copyright notice: a figure and its
     data belong to whoever made the run, so the credit line is theirs to fill.
+    Returns the signature's left edge, in figure coordinates.
     """
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.lines import Line2D
+    from matplotlib.textpath import TextPath
 
     fig, t, k = page.fig, page.theme, page.k
     w, h = page.size
@@ -428,10 +466,15 @@ def _draw_logo(page: Page, credit: str | None, logo: bool) -> None:
             fontfamily=sans,
         )
         box = word.get_window_extent(renderer).transformed(inverse)
-        tall = (box.y1 - box.y0) * 1.45
+        # The mark is centred on the wordmark's lowercase body (the ink of an "x", measured on
+        # its outline: a text's extent is the font's whole line), not on its ascenders and
+        # descenders, and kept clear of the provenance rule above it.
+        x_ink = TextPath((0, 0), "x", size=11.5 * k, prop=word.get_fontproperties()).get_extents()
+        middle = y + (x_ink.y0 + x_ink.y1) / 2 / 72 / fig.get_figheight()
+        tall = min((box.y1 - box.y0) * 1.45, 2 * (0.030 - 0.0025 - middle))
         wide = tall * h / w
         x = box.x0 - 0.004 * k - wide
-        for patch in logo_patches(x, box.y0 - tall * 0.12, tall, w / h, t.mark, fig.transFigure):
+        for patch in logo_patches(x, middle - tall / 2, tall, w / h, t.mark, fig.transFigure):
             fig.add_artist(patch)
         right = x - 0.0035 * k
     if credit:
@@ -446,4 +489,8 @@ def _draw_logo(page: Page, credit: str | None, logo: bool) -> None:
                 )
             )
             right -= 0.012 * k
-        fig.text(right, y, credit, color=t.ink2, fontsize=9.5 * k, ha="right", fontfamily=sans)
+        label = fig.text(
+            right, y, credit, color=t.ink2, fontsize=9.5 * k, ha="right", fontfamily=sans
+        )
+        right = label.get_window_extent(renderer).transformed(inverse).x0
+    return float(right)

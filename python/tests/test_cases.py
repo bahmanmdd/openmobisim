@@ -99,6 +99,34 @@ def test_an_unknown_or_missing_case_is_refused(made_up: Path, tmp_path: Path) ->
         ms.examples.case("line", root=tmp_path / "elsewhere")
 
 
+def test_a_case_weighs_its_travellers_keeps_given_classes_and_pins_gateways(made_up: Path) -> None:
+    # S265: a weight (each traveller stands for 5 people), a row that names its class and mode (a
+    # trip from outside), a zone with its own spread (a gateway: 0 m).
+    folder = made_up / "line"
+    (folder / "demand" / "zones.csv").write_text(
+        "zone,lon,lat,spread_m\nA,4.90,52.37,\nC,4.93,52.37,\nG,4.89,52.37,0\n"
+    )
+    (folder / "demand" / "od.csv").write_text(
+        "origin,destination,trips,user_class,mode\nA,C,100,,\nG,C,50,outside,car\n"
+    )
+    (folder / "demand" / "classes.csv").write_text(
+        "class,share,modes\ndefault,1,car\noutside,0,car\n"
+    )
+    info = json.loads((folder / "case.json").read_text())
+    info["demand"]["weight"] = 5
+    info["demand"]["from_od"]["spread_m"] = 300.0
+    (folder / "case.json").write_text(json.dumps(info))
+    case = ms.examples.case("line", root=made_up, check=False)
+    trips = case.demand()
+    assert len(trips) == (100 + 50) // 5 and {t[8] for t in trips} == {5}
+    outside = [t for t in trips if t[7] == "outside"]
+    assert len(outside) == 10 and {t[9] for t in outside} == {"car"}
+    assert {(t[2], t[3]) for t in outside} == {(4.89, 52.37)}, "a gateway's trips start at it"
+    assert {t[7] for t in trips if t not in outside} == {"default"}, "the others drawn by share"
+    run = case.scenario(equilibration="free_flow").run("case-weights", quiet=True)
+    assert run.completion["completed"] == 30
+
+
 def test_a_check_compares_with_the_reference_and_the_command_line_runs_it(
     made_up: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
@@ -128,8 +156,18 @@ def test_a_check_compares_with_the_reference_and_the_command_line_runs_it(
     reference["cases"]["line/base"]["completed"] = 90
     (tmp_path / "reference_v1.json").write_text(json.dumps(reference))
     assert main(["check", "line", "--root", str(made_up)]) == 1
+    # A run writes into ./openmobisim-runs/<case>-<scenario>, with its summary page and map (S264).
+    monkeypatch.chdir(tmp_path)
     assert main(["run", "line", "--root", str(made_up)]) == 0
-    assert f"fingerprint {got['fingerprint']}" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "fingerprint " in out  # not the reference's: per-link results asked for, for the map
+    folder = tmp_path / "openmobisim-runs" / "line-base"
+    assert (folder / "kpis.parquet").exists()
+    assert (folder / "map.html").exists() and (folder / "summary.html").exists()
+    assert (folder / "map.html").resolve().as_uri() in out  # a link to click
+    assert main(["run", "line", "--root", str(made_up), "--no-pages", "--output", "plain"]) == 0
+    assert f"fingerprint {got['fingerprint']}" in capsys.readouterr().out  # the reference's
+    assert not (tmp_path / "plain" / "map.html").exists()
 
 
 # --- the real bundle ------------------------------------------------------------------------------
@@ -188,9 +226,15 @@ def test_a_city_reads_with_its_timetable_parkings_and_classes(name: str) -> None
     assert net.link_count > 10_000 and transit is not None and transit.run_count > 1000
     assert case.parkings() is not None
     classes = case.classes()
-    assert classes and all(c["share"] > 0 and c["modes"] for c in classes.values())
+    assert classes and all(c["modes"] for c in classes.values())
+    # The classes drawn by share, and (S265) those of what enters from outside and goods
+    # vehicles: share 0, never drawn, each with its one fixed mode.
+    drawn = {k: c for k, c in classes.items() if c["share"] > 0}
+    fixed = {k: c for k, c in classes.items() if c["share"] == 0}
+    assert drawn and set(fixed) == {"from_outside_car", "from_outside_transit", "goods"}
+    assert all(len(c["modes"]) == 1 for c in fixed.values())
     if name == "amsterdam":  # the package's example classes (S255, D-5)
-        assert classes == ms.examples.traveller_classes()
+        assert drawn == ms.examples.traveller_classes()
     assert transit.date == case.info["transit"]["date"]
 
 

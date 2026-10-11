@@ -115,7 +115,7 @@ footer #provenance { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overfl
 footer #source { flex: none; white-space: nowrap; margin-right: 16px; }
 #credit { color: var(--ink2); font-size: 12px; padding-right: 10px; border-right: 1px solid var(--base); }
 #logo { display: inline-flex; align-items: center; gap: 4px; color: var(--ink); font-weight: 700; font-size: 13px; }
-#logo .mark { width: 16px; height: 16px; fill: var(--mark); } #logo b { margin-left: 3px; }
+#logo .mark { width: 16px; height: 16px; fill: var(--mark); } #logo b { margin-left: 3px; position: relative; top: -0.1em; }  /* the lowercase body centred on the mark, not the line box */
 @media (max-width: 760px) { .head { max-width: calc(100vw - 20px); } aside#panel { top: auto; bottom: 40px; max-height: 42vh; width: calc(100vw - 28px); } #compass { display: none; } }
 """
 
@@ -141,7 +141,7 @@ const A = {};
 for (const a of META.arrays) A[a.n] = new CTOR[a.t](raw.buffer, a.o, a.c);
 
 const NL = META.n_links, NV = META.n_verts, NB = META.n_bins;
-const VS = A.vs, CLS = A.cls, LEN = A.len, FF = A.ff, CAP = A.cap;
+const VS = A.vs, CLS = A.cls, LEN = A.len, FF = A.ff, CAP = A.cap, SG = A.sg || new Uint8Array(CAP.length);
 const SB = A.sb || null;
 // The other layers (T-4), each drawn only when its box is ticked.
 const LY = META.layers || {};
@@ -523,7 +523,7 @@ function tip(l, ev) {
   if (l < 0) { t.hidden = true; return; }
   const rows = [["Class", CLASSES[CLS[l]] + " · " + LEN[l].toFixed(0) + " m"]];
   if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " PCU/h"]); if (vol[l] > 0) { rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]); rows.push(["Mean time", meanT[l].toFixed(1) + " s (free " + FF[l].toFixed(1) + ")"]); } }
-  if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " PCU/h" + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used)" : "")]);
+  if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " PCU/h" + (SG[l] ? " at its signal" : "") + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used)" : "")]);
   if (HAS_ROUTES) { const n = LROUTE_START[l + 1] - LROUTE_START[l]; if (n) rows.push(["Routes", n + " use it"]); }
   t.innerHTML = "<b>link " + l + "</b>" + rows.map((r) => "<div><span>" + r[0] + "</span>" + r[1] + "</div>").join("");
   t.hidden = false; t.style.left = Math.min(W - 250, ev.clientX + 14) + "px"; t.style.top = Math.min(H - 150, ev.clientY + 14) + "px";
@@ -675,6 +675,14 @@ function viewWithMoving(drawInto) {
   S.cx -= panelWidth() / 2 * S.mpp;
   try { drawInto(); } finally { MOVING = moving; S.hover = hover; S.cx = cx; }
 }
+// Where an export's mark goes: before the wordmark (right-aligned at W - 16, baseline y + 20, bold
+// 11 px), as measured in the viewer's font, and centred on its lowercase body (an "x"'s height).
+function markPlace(y) {
+  const c = document.createElement("canvas").getContext("2d"), s = 0.22;
+  c.font = "700 11px " + FONT;
+  const word = c.measureText("openmobisim").width, x = c.measureText("x").actualBoundingBoxAscent || 6;
+  return { x: W - 16 - word - 4 - 51 * s, y: y + 20 - x / 2 - 32 * s, s };
+}
 function exportSVG() {
   const f = exportFrame(), rec = svgRecorder(), keep = ctx, keepPath = window.Path2D;
   ctx = rec; window.Path2D = RecPath;
@@ -699,7 +707,8 @@ function exportSVG() {
   }
   parts.push(`<text x="${W - 16}" y="${y + 4}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc([f.provenance, f.source, f.credit].filter(Boolean).join(" · "))}</text>`);
   parts.push(`<text x="${W - 16}" y="${y + 20}" font-size="11" font-weight="700" text-anchor="end" fill="${TH.ink}">openmobisim</text>`);
-  parts.push(`<path transform="translate(${W - 106} ${y + 8}) scale(0.22)" d="${LOGO}" fill="${TH.mark}"/>`);
+  const m = markPlace(y);
+  parts.push(`<path transform="translate(${m.x.toFixed(2)} ${m.y.toFixed(2)}) scale(${m.s})" d="${LOGO}" fill="${TH.mark}"/>`);
   parts.push("</svg>");
   return parts.join("");
 }
@@ -725,7 +734,8 @@ function exportPNG() {
   o.textAlign = "right"; o.fillStyle = TH.ink2; o.font = "9.5px " + FONT;
   o.fillText([f.provenance, f.source, f.credit].filter(Boolean).join(" · "), W - 16, y + 4);
   o.fillStyle = TH.ink; o.font = "700 11px " + FONT; o.fillText("openmobisim", W - 16, y + 20);
-  o.save(); o.translate(W - 106, y + 8); o.scale(0.22, 0.22); o.fillStyle = TH.mark; o.fill(new Path2D(LOGO)); o.restore();
+  const m = markPlace(y);
+  o.save(); o.translate(m.x, m.y); o.scale(m.s, m.s); o.fillStyle = TH.mark; o.fill(new Path2D(LOGO)); o.restore();
   return off.toDataURL("image/png");
 }
 function download(name, url) { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }

@@ -10,8 +10,8 @@
 #![allow(clippy::float_cmp, reason = "the shipped values are exact by definition")]
 
 use openmobisim_core_graph::defaults::{
-    DEFAULTS_VERSION, GlobalMultipliers, LinkParameters, ParameterNote, RoadClass, SignalDefaults,
-    WAVE_SPEED_BOUNDS_KM_H, default_row,
+    DEFAULTS_VERSION, GlobalMultipliers, LinkParameters, ParameterNote, RoadClass, SaturationBands,
+    SignalDefaults, WAVE_SPEED_BOUNDS_KM_H, default_row,
 };
 use proptest::prelude::*;
 
@@ -92,7 +92,7 @@ fn derived_wave_speeds_land_where_the_literature_says_they_should() {
 #[test]
 fn the_shipped_numbers_are_what_they_say_they_are() {
     // A change here is a modelling change. Bump DEFAULTS_VERSION with it.
-    assert_eq!(DEFAULTS_VERSION, 21);
+    assert_eq!(DEFAULTS_VERSION, 22);
 
     let motorway = default_row(RoadClass::Motorway);
     assert_eq!(motorway.free_flow_km_h, 110.0);
@@ -103,8 +103,20 @@ fn the_shipped_numbers_are_what_they_say_they_are() {
     assert_eq!(residential.free_flow_km_h, 30.0);
     assert_eq!(residential.saturation_flow_veh_h_lane, 1400.0);
 
+    assert_eq!(default_row(RoadClass::Trunk).saturation_flow_veh_h_lane, 1800.0);
+
     assert_eq!(SignalDefaults::SHIPPED.cycle_seconds, 90.0);
     assert_eq!(SignalDefaults::SHIPPED.green_fraction, 0.48);
+
+    // S265: an at-grade road's lane, by its speed band.
+    let bands = SaturationBands::SHIPPED;
+    assert_eq!((bands.at_30_km_h, bands.at_50_km_h, bands.at_70_km_h), (1000.0, 1200.0, 1500.0));
+    assert_eq!(bands.cap(20.0), 1000.0);
+    assert_eq!(bands.cap(30.0), 1000.0);
+    assert_eq!(bands.cap(50.0), 1200.0);
+    assert_eq!(bands.cap(60.0), 1500.0);
+    assert!(bands.cap(80.0).is_infinite());
+    assert!(RoadClass::Primary.is_at_grade() && !RoadClass::Trunk.is_at_grade());
 }
 
 #[test]

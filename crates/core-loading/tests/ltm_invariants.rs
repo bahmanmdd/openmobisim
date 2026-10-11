@@ -16,7 +16,7 @@
     reason = "test fixtures: vehicle counts, indices and bounds are small and non-negative"
 )]
 
-use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
+use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults, default_row};
 use openmobisim_core_graph::examples::{manhattan_grid, node_name};
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
@@ -47,7 +47,11 @@ fn chain(lengths_m: &[f64], class: RoadClass, signalised: &[usize]) -> (RoadNetw
         b.mark_signalised(format!("n{s}"));
     }
     for i in 0..lengths_m.len() {
-        b.add_link(format!("l{i}"), format!("n{i}"), format!("n{}", i + 1), LinkSpec::new(class));
+        // The class row's capacity, stated (S265): a fixture's numbers stay put when the defaults
+        // for real networks change (the speed bands at signals).
+        let mut spec = LinkSpec::new(class);
+        spec.capacity_veh_h = Some(default_row(class).saturation_flow_veh_h_lane);
+        b.add_link(format!("l{i}"), format!("n{i}"), format!("n{}", i + 1), spec);
     }
     let mut d = Diagnostics::new();
     let net =

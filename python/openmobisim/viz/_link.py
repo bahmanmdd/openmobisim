@@ -46,6 +46,22 @@ _DELAY_TOP = 0.70
 _DELAY_FREE = 0.04
 
 
+def capacity_passing(network: Any) -> tuple[np.ndarray, np.ndarray]:
+    """Each road link's capacity as it passes traffic, in PCU/h, and whether it ends at a signal.
+
+    A link that ends at a signal discharges at its capacity times the green fraction (what the
+    loading does, S90); volume over capacity is judged against that, not against the link's
+    nominal capacity (S265: a two-lane approach of 3 800 PCU/h passes 1 824 at its signal).
+    """
+    from openmobisim.network import network_options
+
+    capacity = np.asarray(network.link_capacity_pcu_h(), dtype=float)
+    signal = np.asarray(network.link_signalised())  # per approach: a signal may stop one direction
+    options = network_options(network)
+    green = float(options["signal_green_fraction"]) * float(options["green_fraction_factor"])
+    return np.where(signal, capacity * green, capacity), signal
+
+
 def link_table(
     bins: Any, n_links: int, free_flow_s: np.ndarray, *, first: int | None, stop: int | None
 ) -> dict[str, np.ndarray]:
@@ -72,6 +88,31 @@ def link_table(
         mean_s = np.where(total > 0, seconds / total, np.nan)
         delay = np.where(total > 0, 1.0 - np.minimum(free_flow_s / mean_s, 1.0), 0.0)
     return {"volume": volume, "mean_s": mean_s, "delay": delay}
+
+
+#: The default window: the bins around the busiest one carrying at least this share of its traffic.
+BUSY_SHARE = 0.25
+
+
+def busiest_bins(link_bins: Any) -> tuple[int, int] | tuple[None, None]:
+    """The busiest part of a run, as ``(first, stop)`` bins (S265).
+
+    The bin with the most traffic (PCU), widened bin by bin on either side while a bin carries
+    at least ``BUSY_SHARE`` of it. A day's timetable runs buses from dawn to midnight; without
+    this, a morning's figure averaged its peak over the whole day.
+    """
+    b = link_bins.bins().astype(np.int64)
+    if not len(b):
+        return None, None
+    per_bin = np.bincount(b, weights=link_bins.pcu())
+    peak = int(np.argmax(per_bin))
+    busy = per_bin >= BUSY_SHARE * per_bin[peak]
+    first, stop = peak, peak + 1
+    while first > 0 and busy[first - 1]:
+        first -= 1
+    while stop < len(per_bin) and busy[stop]:
+        stop += 1
+    return first, stop
 
 
 def _bin_range(bins_arg: int | tuple[int, int] | None) -> tuple[int | None, int | None]:
@@ -102,7 +143,7 @@ _TITLES = {
 def map_link(
     run: Any,
     *,
-    bins: int | tuple[int, int] | None = None,
+    bins: int | tuple[int, int] | str | None = None,
     layer: str = "road",
     colour: str | None = None,
     ramp: str = "spectrum",
@@ -130,16 +171,19 @@ def map_link(
     Args:
         run: A ``Run`` from ``Scenario.run()`` on a scenario built with
             ``link_bin_s``, at ``flow_level`` 2-4 for congestion to show.
-        bins: Which time bins to show: ``None`` for every bin from the first to
-            the last that saw traffic, an ``int`` for one bin, or
-            ``(first, stop)`` for a range (``stop`` excluded).
+        bins: Which time bins to show: ``None`` for the busiest part of the run
+            (the busiest bin and the bins around it carrying at least a quarter of
+            its traffic, S265), ``"all"`` for every bin from the first to the last
+            that saw traffic, an ``int`` for one bin, or ``(first, stop)`` for a
+            range (``stop`` excluded).
         layer: Which layer's traffic to draw: ``"road"`` (default: cars, on the
             road network), ``"bike"`` or ``"walk"`` (each on its own layer's links,
             ``network.layer(...)``; volume counts travellers, not PCU).
         colour: What the colour shows: ``"delay"`` (delay over free flow; the
             default on the road), ``"volume"`` (the default on the bike and walk
             layers, where nothing is delayed), or ``"volume_capacity"`` (volume
-            over the link's capacity, so 1 is a link at capacity and beyond it is
+            over the link's capacity as it passes traffic — at a signal, times the
+            green fraction — so 1 is a link at capacity and beyond it is
             over; the road only).
         ramp: For delay and volume-over-capacity, ``"spectrum"`` (default:
             blue-green for little, gold in the middle, deeper red for more) or
@@ -214,7 +258,10 @@ def map_link(
     lon0, lat0 = float(coords[:, 0].mean()), float(coords[:, 1].mean())
     points = geo.project_lonlat(coords, lon0, lat0)
 
-    first, stop = _bin_range(bins)
+    if bins is None:
+        first, stop = busiest_bins(link_bins)
+    else:
+        first, stop = (None, None) if bins == "all" else _bin_range(bins)
     table = link_table(link_bins, n_links, network.link_free_flow_s(), first=first, stop=stop)
     volume, delay = table["volume"], table["delay"]
     active = (volume > 0) & (volume >= min_volume)
@@ -269,7 +316,7 @@ def map_link(
         legend_stops, low, high = stops, "0%", f"{_DELAY_TOP:.0%}+"
         legend_label = "Delay over free flow"
     elif colour == "volume_capacity":
-        capacity = network.link_capacity_pcu_h()
+        capacity, _ = capacity_passing(network)
         ratio = np.where(capacity > 0, volume / np.maximum(capacity, 1e-9), 0.0)
         link_rgb = ramp_rgb(stops, np.clip(ratio, 0.0, 1.0))
         severity = ratio

@@ -36,3 +36,7 @@ Thumbs.db
 /docs/
 /CLAUDE.md
 /.claude/
+
+# What the command line writes in the folder it runs in (S264)
+openmobisim-runs/
+openmobisim-notebooks/

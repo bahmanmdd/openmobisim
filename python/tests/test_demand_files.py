@@ -120,6 +120,26 @@ def test_departures_stay_in_their_window_and_ends_near_their_zone() -> None:
     assert 0.33 < ((uniform >= 7 * 3600 + 2160) & (uniform < 9 * 3600 - 2160)).mean() < 0.47
 
 
+def test_a_zone_may_spread_its_trips_its_own_way() -> None:
+    # S265: a gateway (0 m) next to zones that spread 250 m; the draws are the same either way.
+    spread = ms.demand_from_od(od_rows(40.0), ZONES, spread_m=250.0, seed=3)
+    pinned = ms.demand_from_od(
+        od_rows(40.0), ZONES, spread_m=250.0, seed=3, spread_m_by_zone={"a": 0.0}
+    )
+    assert [t[6] for t in pinned] == [t[6] for t in spread]  # the same departures
+    at_a = 0
+    for t, u in zip(pinned, spread, strict=True):  # trip by trip: the same draws, a's scaled to 0
+        for k in (2, 4):
+            if min(ZONES, key=lambda z: metres(u[k : k + 2], ZONES[z])) == "a":
+                assert t[k : k + 2] == pytest.approx(ZONES["a"])
+                at_a += 1
+            else:
+                assert t[k : k + 2] == u[k : k + 2]
+    assert at_a > 0
+    with pytest.raises(ValueError, match="spread_m"):
+        ms.demand_from_od(od_rows(), ZONES, spread_m_by_zone={"a": -1.0})
+
+
 def test_od_refusals() -> None:
     with pytest.raises(ValueError, match="profile"):
         ms.demand_from_od(od_rows(), ZONES, profile="pm_peak")

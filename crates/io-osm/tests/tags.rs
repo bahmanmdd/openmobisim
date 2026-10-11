@@ -206,3 +206,24 @@ fn signals_and_barriers_interrupt_a_way() {
     assert!(tags::node_is_signalised(&tags(&[("highway", "traffic_signals")])));
     assert!(!tags::node_is_signalised(&tags(&[("highway", "stop")])));
 }
+
+#[test]
+fn a_signal_says_which_approaches_it_stops() {
+    // S265: a stop line's signal stops one direction; an emergency signal is green for traffic.
+    use tags::SignalDirection::{Backward, Both, Forward};
+    let signal = |extra: &[(&str, &str)]| {
+        let mut t = vec![("highway", "traffic_signals")];
+        t.extend_from_slice(extra);
+        tags::node_signal(&tags(&t))
+    };
+    assert_eq!(signal(&[]), Some(Both));
+    assert_eq!(signal(&[("traffic_signals:direction", "both")]), Some(Both));
+    assert_eq!(signal(&[("traffic_signals:direction", "forward")]), Some(Forward));
+    assert_eq!(signal(&[("traffic_signals:direction", "backward")]), Some(Backward));
+    assert_eq!(signal(&[("traffic_signals", "emergency")]), None);
+    assert!(!tags::node_is_signalised(&tags(&[
+        ("highway", "traffic_signals"),
+        ("traffic_signals", "emergency")
+    ])));
+    assert_eq!(tags::node_signal(&tags(&[("highway", "stop")])), None);
+}

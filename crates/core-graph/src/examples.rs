@@ -91,7 +91,10 @@ pub fn manhattan_grid(n: u32, block_metres: f64, signals: bool) -> (RoadNetwork,
         }
     }
 
-    let spec = LinkSpec::new(RoadClass::Secondary);
+    let mut spec = LinkSpec::new(RoadClass::Secondary);
+    // Stated, not the class's default (S265): a fixture's numbers stay put when the defaults
+    // for real networks change (1 800 veh/h, a secondary road's lane before the speed bands).
+    spec.capacity_veh_h = Some(1800.0);
     let add_pair = |b: &mut RoadNetworkBuilder, a: String, z: String| {
         b.add_link(format!("l_{a}__{z}"), a.clone(), z.clone(), spec);
         b.add_link(format!("l_{z}__{a}"), z, a, spec);
@@ -205,6 +208,11 @@ pub fn toy_network() -> (RoadNetwork, Diagnostics) {
         spec.length_m = Some(length_m);
         spec.lanes = lanes;
         spec.roundabout = roundabout;
+        // Stated, not the class's default (S265): every number the toy network produces is worked
+        // out by hand in the tests and tutorials, so its capacities stay what they were when the
+        // defaults for real networks change: 1 400 PCU/h per lane, 800 on the service road.
+        let per_lane = if class == RoadClass::Service { 800.0 } else { 1400.0 };
+        spec.capacity_veh_h = Some(per_lane * f64::from(lanes.unwrap_or(1)));
         builder.add_link(name, from, to, spec);
     }
 

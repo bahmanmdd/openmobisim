@@ -16,8 +16,9 @@ road's direction; walking on every road but motorways and cycleways, both ways).
 ``directed`` (always true: a two-way street is two links), ``length`` (m), ``free_speed``
 (km/h), and on the road layer ``lanes``, ``capacity`` (PCU/h **per lane**, GMNS's convention),
 ``facility_type`` (the road class: ``primary``, ``residential``, …), ``allowed_uses``
-(``auto``, ``bus``, ``bike``, ``walk``), ``roundabout`` (an extra column), and ``geometry``
-(WKT); on the bike layer ``bike_facility`` (``separated``, ``lane`` or ``mixed``).
+(``auto``, ``bus``, ``bike``, ``walk``), ``roundabout`` and ``signal`` (extra columns: the
+latter a signal at the link's end that stops it alone, one direction's stop line, S265), and
+``geometry`` (WKT); on the bike layer ``bike_facility`` (``separated``, ``lane`` or ``mixed``).
 ``node.csv``: ``node_id``, ``x_coord``, ``y_coord`` (WGS84 longitude and latitude) and
 ``ctrl_type`` (``signal`` at a signalised node). Ids are the network's own indices,
 zero-padded, so a network read back has its nodes and links in the same order; the ids it had
@@ -132,7 +133,9 @@ def _write_layer(network: _core.Network, folder: Path, layer: str, geometry: boo
         cap = np.asarray(network.link_capacity_pcu_h())
         roundabout = np.asarray(network.link_roundabout(), dtype=bool)
         drivable = np.asarray(network.link_drivable(), dtype=bool)
-        header += ["lanes", "capacity", "allowed_uses", "roundabout"]
+        # A signal that stops this link alone (S265): signalised, its end node not.
+        alone = np.asarray(network.link_signalised(), dtype=bool) & ~signal[to]
+        header += ["lanes", "capacity", "allowed_uses", "roundabout", "signal"]
     elif layer == "bike":
         infra = np.asarray(network.link_infrastructure())
         header += ["bike_facility", "allowed_uses"]
@@ -159,7 +162,10 @@ def _write_layer(network: _core.Network, folder: Path, layer: str, geometry: boo
                 if drivable[i]
                 else ("bus" if name == "busway" else _NOT_DRIVEN.get(name, "walk"))
             )
-            row += [n, f"{cap[i] / n:.10g}", uses, "true" if roundabout[i] else ""]
+            row += [
+                n, f"{cap[i] / n:.10g}", uses, "true" if roundabout[i] else "",
+                "true" if alone[i] else "",
+            ]  # fmt: skip
         elif layer == "bike":
             row += [
                 _INFRASTRUCTURE[infra[i]] if infra[i] < len(_INFRASTRUCTURE) else "mixed",
@@ -271,6 +277,7 @@ def _road_rows(folder: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]
             "length": float(length) * to_m if length else None,
             "free_flow_speed": float(speed) * to_km_h if speed else None,
             "roundabout": row.get("roundabout", ""),
+            "signalised": row.get("signal", ""),
         }
         links.append({"id": row["link_id"], **base})
         if not _directed(row):

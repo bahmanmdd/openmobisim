@@ -914,7 +914,7 @@ impl<'a> LtmNetwork<'a> {
         self.priority_major = (0..self.links)
             .map(|b| {
                 let lb = LinkId::from_index(b);
-                net.link_class(lb).carries_motor_traffic() && !net.is_signalised(net.link_to(lb))
+                net.link_class(lb).carries_motor_traffic() && !net.is_link_signalised(lb)
             })
             .collect();
         self
@@ -945,7 +945,7 @@ impl<'a> LtmNetwork<'a> {
             return None;
         }
         let node = net.link_from(lj);
-        if net.is_signalised(node) {
+        if net.in_links(node).iter().any(|&l| net.is_link_signalised(l)) {
             return None;
         }
         net.in_links(node).iter().map(|l| l.index()).find(|&b| {

@@ -421,6 +421,15 @@ impl PyNetwork {
             .into_pyarray(py)
     }
 
+    /// Whether each link ends at a signal that stops it (bool), indexed by link index (S265):
+    /// its end node's signal, or one there for its direction only.
+    fn link_signalised<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
+        (0..self.inner.link_count())
+            .map(|i| self.inner.is_link_signalised(LinkId::new(i)))
+            .collect::<Vec<_>>()
+            .into_pyarray(py)
+    }
+
     /// Every link's start node, as a node index (uint32).
     fn link_from<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
         (0..self.inner.link_count())
@@ -709,6 +718,7 @@ pub fn network_read_osm(
                 multipliers: defaults.multipliers,
                 signals: defaults.signals,
                 classes: defaults.classes,
+                saturation_bands: defaults.saturation_bands,
             };
             let mut diagnostics = Diagnostics::new();
             let source = PbfSource::new(&path);

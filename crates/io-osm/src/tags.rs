@@ -314,9 +314,45 @@ pub fn node_splits_way(tags: &[(String, String)]) -> bool {
 
 /// Whether a node is a signalised junction, which gives its approaches a
 /// control delay and its turns a green-time fraction (S90).
+///
+/// Not an emergency signal (`traffic_signals=emergency`, at a fire station's exit: green for
+/// traffic but when a vehicle turns out, S265).
 #[must_use]
 pub fn node_is_signalised(tags: &[(String, String)]) -> bool {
-    tag_of(tags, "highway") == Some("traffic_signals")
+    node_signal(tags).is_some()
+}
+
+/// Which approaches a signal node governs (S265).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SignalDirection {
+    /// Every approach (no `traffic_signals:direction`, or `both`): a junction's signal.
+    Both,
+    /// Traffic along the way's node order only: one direction's stop line.
+    Forward,
+    /// Traffic against it only.
+    Backward,
+}
+
+/// The signal a node carries, if any, and the approaches it governs (S265).
+///
+/// Mappers often put a signal on each approach's stop line rather than on the junction, with
+/// `traffic_signals:direction=forward|backward` saying which direction it stops: a car passing
+/// the junction meets its own stop line and then, on a two-way street, the other direction's.
+/// That one stops only the traffic going its way; read without the tag, it gave every car two
+/// signals per junction (43 % of Paris's signal nodes carry it, 56 % of Amsterdam's, 61 % of
+/// Lyon's).
+#[must_use]
+pub fn node_signal(tags: &[(String, String)]) -> Option<SignalDirection> {
+    if tag_of(tags, "highway") != Some("traffic_signals")
+        || tag_of(tags, "traffic_signals") == Some("emergency")
+    {
+        return None;
+    }
+    Some(match tag_of(tags, "traffic_signals:direction") {
+        Some("forward") => SignalDirection::Forward,
+        Some("backward") => SignalDirection::Backward,
+        _ => SignalDirection::Both,
+    })
 }
 
 /// What a way offers a bike (S193), in each direction it may be ridden.

@@ -79,18 +79,15 @@ impl TurnTable {
             if incoming.is_empty() || outgoing.is_empty() {
                 continue;
             }
-            let fraction = if network.is_signalised(node) {
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    reason = "a green-time fraction is in [0, 1]; f32 is ample"
-                )]
-                let f = signals.turn_capacity_fraction() as f32;
-                f
-            } else {
-                1.0f32
-            };
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "a green-time fraction is in [0, 1]; f32 is ample"
+            )]
+            let green = signals.turn_capacity_fraction() as f32;
 
             for &in_link in incoming {
+                // S265: per approach — a signal may stop one direction only.
+                let fraction = if network.is_link_signalised(in_link) { green } else { 1.0f32 };
                 // A U-turn is allowed only where the approach has no other exit.
                 let has_other_exit =
                     outgoing.iter().any(|&out| !network.is_reverse_of(in_link, out));

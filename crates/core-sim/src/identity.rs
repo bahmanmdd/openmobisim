@@ -432,6 +432,7 @@ pub(crate) fn hash_network(h: &mut Fnv1a, network: &RoadNetwork, ids: u64) {
     }
     for raw in 0..network.link_count() {
         let link = LinkId::new(raw);
+        h.write_bool(network.is_link_signalised(link)); // S265: a signal may stop one direction
         h.write_u32(network.link_from(link).raw());
         h.write_u32(network.link_to(link).raw());
         h.write_u8(network.link_class(link) as u8);

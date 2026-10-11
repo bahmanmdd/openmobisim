@@ -154,7 +154,18 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// is 0 — having a car, a bike, a pass or the means to pay a fare is access, which traveller
 /// classes give, and no money is counted for it. `beta_cost_eur` stays −1.2 and weighs the prices
 /// a scenario gives. Every logit run at the shipped prices changes back to one weighing no money.
-pub const DEFAULTS_VERSION: u32 = 21;
+///
+/// Version 22 (S265, the user: "the congestion level is always low … are these numbers defensible?"):
+/// **at a signal, a lane of an at-grade road discharges at most its speed band's saturation flow**
+/// ([`SaturationBands`]: 1 000 veh/h at 30 km/h or less, 1 200 at 50, 1 500 at 70, per hour of
+/// green), the French references for signalised junctions, below the Highway Capacity Manual's base
+/// the class rows keep elsewhere; and a trunk road's lane 1 800 veh/h (1 900 before). Every network
+/// read from OpenStreetMap with signalised at-grade approaches of 70 km/h or less changes; a link
+/// table that states its capacities does not. With it, the reader's fix (S265) that **a signal
+/// tagged `traffic_signals:direction` stops only its direction** (a stop line's signal; before,
+/// both, so a car met two signals at most junctions of a two-way street) and that an emergency
+/// signal stops nobody; the network keeps signals per approach ([`crate::RoadNetwork::is_link_signalised`]).
+pub const DEFAULTS_VERSION: u32 = 22;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///
@@ -337,6 +348,18 @@ impl RoadClass {
         )
     }
 
+    /// Whether the class is an at-grade road, with junctions, crossings and frontage (S265):
+    /// everything but motorways, trunk roads and their slip roads. At a signal its lanes discharge
+    /// at most their speed band's saturation flow ([`SaturationBands`]).
+    #[inline]
+    #[must_use]
+    pub const fn is_at_grade(self) -> bool {
+        !matches!(
+            self,
+            RoadClass::Motorway | RoadClass::MotorwayLink | RoadClass::Trunk | RoadClass::TrunkLink
+        )
+    }
+
     /// Whether cyclists may use this class by default.
     #[inline]
     #[must_use]
@@ -396,10 +419,12 @@ pub const fn default_row(class: RoadClass) -> DefaultRow {
             saturation_flow_veh_h_lane: 1600.0,
             jam_density_veh_km_lane: 130.0,
         },
+        // 1 800 (S265): the lower end of the 1 800–2 200 veh/h French managers use on urban
+        // expressways (CEREMA 2016, table 2; see [`SaturationBands`]).
         RoadClass::Trunk => DefaultRow {
             free_flow_km_h: 90.0,
             lanes_per_direction: 2,
-            saturation_flow_veh_h_lane: 1900.0,
+            saturation_flow_veh_h_lane: 1800.0,
             jam_density_veh_km_lane: 130.0,
         },
         RoadClass::TrunkLink => DefaultRow {
@@ -483,6 +508,76 @@ pub const fn default_row(class: RoadClass) -> DefaultRow {
                 saturation_flow_veh_h_lane: 1400.0,
                 jam_density_veh_km_lane: 140.0,
             }
+        }
+    }
+}
+
+/// The most a lane of an at-grade road discharges at a signal, by the road's speed (S265).
+///
+/// The class rows' saturation flows are the Highway Capacity Manual's base, for a lane at its
+/// best; at a city street's signal a lane discharges less: parked cars, bus stops, crossing
+/// pedestrians and cyclists, turning traffic, narrow lanes. European references measure it at
+/// signalised junctions, per hour of green, by the junction's setting, of which the speed limit is
+/// the part a network holds:
+///
+/// | Band | Shipped (veh/h per lane) | CEREMA (2016), measured mean | French managers use | Dutch practice (CROW 328) |
+/// |---|---|---|---|---|
+/// | 30 km/h or less | 1 000 | 800–1 200 ("very urban") | 900–1 200 | — |
+/// | 31–50 km/h | 1 200 | 1 200–1 400 ("urban") | 1 500–1 600 | 1 092–1 248 (50 km/h, 2 × 1 lanes) |
+/// | 51–70 km/h | 1 500 | 1 600–1 800 ("less urban") | 1 800 | 1 400–1 600 (80 km/h) |
+///
+/// Each shipped value is in the lower half of its band's references (the user, S265: "when there
+/// are ranges try to go for lower values"). It applies to an approach that ends at a signal: the
+/// references are measured there, and the green fraction applies on top
+/// ([`SignalDefaults::turn_capacity_fraction`]); a lane between or at unsignalised junctions keeps
+/// the class row (a first version capped every link, and congestion overshot the cities' measured
+/// levels, S265). Above 70 km/h, and on motorways and trunk roads at any speed, the class row
+/// applies. The cap is per lane and before the global capacity factor. A link whose capacity is
+/// given (a link table's column) is not capped.
+///
+/// *Sources:* CEREMA, *Débit de saturation aux carrefours à feux : note de synthèse* (DTer
+/// Méditerranée, October 2016), table 2,
+/// <https://cerema.fr/fr/system/files/documents/2017/10/cerema_pcitcv_oct2016_note_synthese_debit_saturation_cle76df75.pdf>;
+/// CROW publication 328, *Handboek wegontwerp* (2013), as a municipal traffic study applies it
+/// (Woerden, Van Zwietenweg, 1 092–1 248 pae/h per lane for a 50 km/h distributor road with
+/// separate cycle tracks, 1 400–1 600 at 80 km/h),
+/// <https://www.ruimtelijkeplannen.nl/documents/NL.IMRO.0632.Vanzwietenweg-bOW1/b_NL.IMRO.0632.Vanzwietenweg-bOW1_tb15.pdf>
+/// (the handbook itself was not read).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct SaturationBands {
+    /// At 30 km/h or less, in veh/h per lane.
+    pub at_30_km_h: f64,
+    /// Above 30 and at most 50 km/h.
+    pub at_50_km_h: f64,
+    /// Above 50 and at most 70 km/h.
+    pub at_70_km_h: f64,
+}
+
+impl SaturationBands {
+    /// The shipped values.
+    pub const SHIPPED: SaturationBands =
+        SaturationBands { at_30_km_h: 1000.0, at_50_km_h: 1200.0, at_70_km_h: 1500.0 };
+
+    /// The most a lane of an at-grade road of `speed_km_h` carries; infinite above 70 km/h.
+    #[must_use]
+    pub fn cap(self, speed_km_h: f64) -> f64 {
+        if speed_km_h <= 30.0 + 1e-9 {
+            self.at_30_km_h
+        } else if speed_km_h <= 50.0 + 1e-9 {
+            self.at_50_km_h
+        } else if speed_km_h <= 70.0 + 1e-9 {
+            self.at_70_km_h
+        } else {
+            f64::INFINITY
+        }
+    }
+
+    /// `row` with its saturation flow capped for an at-grade road of `speed_km_h`.
+    #[must_use]
+    pub fn applied(self, row: DefaultRow, speed_km_h: f64) -> DefaultRow {
+        DefaultRow {
+            saturation_flow_veh_h_lane: row.saturation_flow_veh_h_lane.min(self.cap(speed_km_h)),
+            ..row
         }
     }
 }

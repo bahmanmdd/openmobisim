@@ -19,6 +19,7 @@
 //! | `<class>.jam_density_veh_km_lane` | veh/km per lane | storage per lane |
 //! | `free_flow_speed_factor`, `capacity_factor`, `jam_density_factor`, `control_delay_factor`, `green_fraction_factor` | — | the global multipliers ([`GlobalMultipliers`]) |
 //! | `signal_cycle_s`, `signal_green_fraction`, `signal_degree_of_saturation` | s, —, — | the signal settings ([`SignalDefaults`]) |
+//! | `street_30.saturation_flow_veh_h_lane`, `street_50.saturation_flow_veh_h_lane`, `street_70.saturation_flow_veh_h_lane` | veh/h per lane | the most a lane of an at-grade road of that speed discharges at a signal, per hour of green (S265, [`SaturationBands`]) |
 //! | `bike_mixed_km_h`, `bike_dedicated_km_h`, `bike_mixed_cost_factor`, `bike_lane_cost_factor`, `walk_km_h`, `ferry_km_h`, `ferry_wait_s` | km/h, km/h, —, —, km/h, km/h, s | the bike and walk layers ([`StaticLayerDefaults`]) |
 //!
 //! `<class>` is a road class's name as OSM writes it (`motorway`, `primary_link`, `residential`,
@@ -26,7 +27,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::defaults::{DefaultRow, GlobalMultipliers, RoadClass, SignalDefaults, default_row};
+use crate::defaults::{
+    DefaultRow, GlobalMultipliers, RoadClass, SaturationBands, SignalDefaults, default_row,
+};
 use crate::layers::StaticLayerDefaults;
 
 /// One row per road class: the defaults used where the data gives nothing.
@@ -61,6 +64,8 @@ pub struct NetworkDefaults {
     pub signals: SignalDefaults,
     /// The bike and walk layers' speeds and costs.
     pub layers: StaticLayerDefaults,
+    /// The most a lane of an at-grade road carries, by its speed (S265).
+    pub saturation_bands: SaturationBands,
 }
 
 impl Default for NetworkDefaults {
@@ -72,7 +77,7 @@ impl Default for NetworkDefaults {
 /// The global and layer names, with how to read and write each.
 type Field = (&'static str, fn(&NetworkDefaults) -> f64, fn(&mut NetworkDefaults, f64));
 
-const FIELDS: [Field; 15] = [
+const FIELDS: [Field; 18] = [
     (
         "free_flow_speed_factor",
         |d| d.multipliers.free_flow_speed,
@@ -116,6 +121,21 @@ const FIELDS: [Field; 15] = [
     ("walk_km_h", |d| d.layers.walk_km_h, |d, v| d.layers.walk_km_h = v),
     ("ferry_km_h", |d| d.layers.ferry_km_h, |d, v| d.layers.ferry_km_h = v),
     ("ferry_wait_s", |d| d.layers.ferry_wait_s, |d, v| d.layers.ferry_wait_s = v),
+    (
+        "street_30.saturation_flow_veh_h_lane",
+        |d| d.saturation_bands.at_30_km_h,
+        |d, v| d.saturation_bands.at_30_km_h = v,
+    ),
+    (
+        "street_50.saturation_flow_veh_h_lane",
+        |d| d.saturation_bands.at_50_km_h,
+        |d, v| d.saturation_bands.at_50_km_h = v,
+    ),
+    (
+        "street_70.saturation_flow_veh_h_lane",
+        |d| d.saturation_bands.at_70_km_h,
+        |d, v| d.saturation_bands.at_70_km_h = v,
+    ),
 ];
 
 /// The per-class fields, by the name after the class's dot.
@@ -131,6 +151,7 @@ impl NetworkDefaults {
             multipliers: GlobalMultipliers::default(),
             signals: SignalDefaults::SHIPPED,
             layers: StaticLayerDefaults::SHIPPED,
+            saturation_bands: SaturationBands::SHIPPED,
         }
     }
 

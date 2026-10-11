@@ -28,7 +28,9 @@
 use std::collections::{HashMap, HashSet};
 
 use openmobisim_core_graph::connectivity::strong_components;
-use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
+use openmobisim_core_graph::defaults::{
+    GlobalMultipliers, RoadClass, SaturationBands, SignalDefaults,
+};
 use openmobisim_core_graph::geometry::{LonLat, Projection, polyline_length_metres};
 use openmobisim_core_graph::layers::{
     BikeInfrastructure, StaticLayer, StaticLayerDefaults, StaticLink, StaticNetwork,
@@ -123,6 +125,9 @@ pub struct ImportOptions {
     /// The road-class table: each class's defaults where the data gives none (S225). The shipped
     /// one by default.
     pub classes: ClassTable,
+    /// The most a lane of an at-grade road carries, by its speed (S265). The shipped bands by
+    /// default.
+    pub saturation_bands: SaturationBands,
     /// What to do about roads outside the main strongly connected component.
     /// [`Connectivity::Keep`] by default: a default import behaves as it always
     /// has.
@@ -164,6 +169,7 @@ impl Default for ImportOptions {
             multipliers: GlobalMultipliers::default(),
             signals: SignalDefaults::SHIPPED,
             classes: ClassTable::shipped(),
+            saturation_bands: SaturationBands::SHIPPED,
             connectivity: Connectivity::Keep,
             layers: LayerOptions::default(),
         }
@@ -263,6 +269,9 @@ struct ProtoLink {
     /// A speed set by the way as a whole, in km/h: a ferry's, its wait folded in
     /// (S197). `None` for everything else.
     speed_km_h: Option<f64>,
+    /// Whether the link's last stretch runs along its way's node order (S265): a signal on its
+    /// end node with `traffic_signals:direction` stops it only in that direction.
+    forward: bool,
     length_m: f64,
     /// This link's own polyline, `from` to `to` (S125). Carried alongside
     /// `length_m` — computed from the same points, at the same place, and
@@ -445,6 +454,8 @@ pub fn import_detailed(
     // --- 2. Nodes -----------------------------------------------------------
     let mut positions: HashMap<i64, LonLat> = HashMap::with_capacity(reference_count.len());
     let mut signalised: HashSet<i64> = HashSet::new();
+    // Which approaches each signal governs (S265): absent for a junction's signal (every one).
+    let mut signal_direction: HashMap<i64, tags::SignalDirection> = HashMap::new();
     let mut forced_splits: HashSet<i64> = HashSet::new();
 
     let mut road_nodes_kept = 0u64;
@@ -459,8 +470,11 @@ pub fn import_detailed(
         }
         road_nodes_kept += u64::from(on_road);
         positions.insert(node.id, LonLat::new(node.lon, node.lat));
-        if tags::node_is_signalised(&node.tags) {
+        if let Some(direction) = tags::node_signal(&node.tags) {
             signalised.insert(node.id);
+            if direction != tags::SignalDirection::Both {
+                signal_direction.insert(node.id, direction);
+            }
         }
         if tags::node_splits_way(&node.tags) {
             forced_splits.insert(node.id);
@@ -560,7 +574,7 @@ pub fn import_detailed(
     for node in used_nodes(&links) {
         let Some(&p) = positions.get(&node) else { continue };
         builder.add_node(node.to_string(), p);
-        if signalised.contains(&node) {
+        if signalised.contains(&node) && !signal_direction.contains_key(&node) {
             builder.mark_signalised(node.to_string());
         }
     }
@@ -577,7 +591,11 @@ pub fn import_detailed(
                 class: link.class,
                 lanes: link.lanes,
                 maxspeed_km_h: link.maxspeed_km_h,
-                signalised: signalised.contains(&link.to),
+                signalised: match signal_direction.get(&link.to) {
+                    Some(tags::SignalDirection::Forward) => link.forward,
+                    Some(tags::SignalDirection::Backward) => !link.forward,
+                    _ => signalised.contains(&link.to),
+                },
                 length_m: Some(link.length_m),
                 roundabout: link.roundabout,
                 capacity_veh_h: None,
@@ -590,6 +608,7 @@ pub fn import_detailed(
         multipliers: options.multipliers,
         signals: options.signals,
         layers: options.layers.defaults,
+        saturation_bands: options.saturation_bands,
     };
     let network =
         builder.build_with(&defaults, diagnostics).map_err(|e| OsmError::Format(e.to_string()))?;
@@ -961,6 +980,7 @@ fn split_way(
                         infrastructure: attrs.infrastructure,
                         dismount: attrs.dismount,
                         speed_km_h,
+                        forward: true,
                         length_m,
                         geometry: geometry.clone(),
                     });
@@ -979,6 +999,7 @@ fn split_way(
                         infrastructure: attrs.infrastructure,
                         dismount: attrs.dismount,
                         speed_km_h,
+                        forward: false,
                         length_m,
                         geometry: backward_geometry,
                     });
@@ -1198,6 +1219,7 @@ fn contract(
                     infrastructure: a.infrastructure,
                     dismount: a.dismount,
                     speed_km_h: a.speed_km_h,
+                    forward: b.forward,
                     length_m: a.length_m + b.length_m,
                     geometry,
                 });

@@ -21,10 +21,12 @@ from typing import Any
 import numpy as np
 
 from openmobisim import __version__
+from openmobisim._start import show_path
 from openmobisim.network import LINK_CLASSES
 from openmobisim.viz import _geometry as geo
 from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._interactive_page import PAGE_CSS, PAGE_HTML, PAGE_JS
+from openmobisim.viz._link import capacity_passing
 from openmobisim.viz._logo import LOGO_PATH
 from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._route import _ROUTE_NIGHT, _ROUTE_PAPER
@@ -209,6 +211,7 @@ def map_interactive(
     logo: bool = True,
     view: tuple[tuple[float, float], tuple[float, float]] | None = None,
     max_route_pairs: int = 2000,
+    quiet: bool = False,
 ) -> Path:
     """Write a run and its route sets as one interactive HTML file.
 
@@ -253,6 +256,8 @@ def map_interactive(
             links that touch this box, and only routes that lie wholly inside it.
         max_route_pairs: At most this many origin-destination pairs are
             embedded, those with the most alternatives first (ties by order).
+        quiet: Do not say where the file was written (by default a link to it
+            is printed, or shown in a notebook).
 
     Returns:
         The path written.
@@ -296,7 +301,9 @@ def map_interactive(
     blob.add("cls", network.link_class()[keep], "u8")
     blob.add("len", network.link_length_m()[keep], "f32")
     blob.add("ff", network.link_free_flow_s()[keep], "f32")
-    blob.add("cap", network.link_capacity_pcu_h()[keep], "f32")
+    passing, signal = capacity_passing(network)  # at a signal, times the green fraction (S265)
+    blob.add("cap", passing[keep], "f32")
+    blob.add("sg", signal[keep].astype(np.uint8), "u8")
 
     bins = run.link_bins()
     n_bins = bin_seconds = 0
@@ -375,6 +382,8 @@ def map_interactive(
     out = Path(path)
     # Bytes, not text: the same file on every platform (no newline translation).
     out.write_bytes(page.encode("utf-8"))
+    if not quiet:
+        show_path("Interactive map", out)
     return out
 
 

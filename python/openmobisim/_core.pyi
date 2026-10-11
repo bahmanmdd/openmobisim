@@ -204,6 +204,11 @@ class Network:
     def node_signalised(self) -> npt.NDArray[np.bool_]:
         """Whether each node is signalised, indexed by node index."""
 
+    def link_signalised(self) -> npt.NDArray[np.bool_]:
+        """Whether each link ends at a signal that stops it (S265).
+
+        Its end node's signal, or one there for its direction only.
+        """
     def link_from(self) -> npt.NDArray[np.uint32]:
         """Every link's start node, as a node index."""
 

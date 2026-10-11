@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from openmobisim import __version__
+from openmobisim._start import show_path
 from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._link import map_link
 from openmobisim.viz._style import ION, THEMES
@@ -206,7 +207,14 @@ def _bars(items: list[tuple[str, float]], unit: str) -> str:
     return '<div class="bars">' + "".join(rows) + "</div>"
 
 
-def summary(run: Any, path: str | None = None, *, title: str | None = None, note: str = "") -> str:
+def summary(
+    run: Any,
+    path: str | None = None,
+    *,
+    title: str | None = None,
+    note: str = "",
+    quiet: bool = False,
+) -> str:
     """Write a run's summary as one self-contained HTML page, and return its path.
 
     Six headline numbers (trips, completed, never finished, mean trip, total travel time, run
@@ -221,6 +229,8 @@ def summary(run: Any, path: str | None = None, *, title: str | None = None, note
         path: Where to write it; ``summary.html`` in the run's output folder by default.
         title: The page's title; ``Run <run_id>`` by default.
         note: A line under the title, for example what the scenario is.
+        quiet: Do not say where the page was written (by default a link to it is printed, or
+            shown in a notebook).
 
     Returns:
         The path written.
@@ -439,4 +449,6 @@ openmobisim {html.escape(manifest.get("openmobisim_version", manifest.get("code_
     if path is None:
         path = str(Path(run.timings_path).parent / "summary.html")
     Path(path).write_text(page, encoding="utf-8")
+    if not quiet:
+        show_path("Summary page", path)
     return path

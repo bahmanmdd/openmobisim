@@ -56,6 +56,7 @@ _LINK_ALIASES: dict[str, tuple[str, ...]] = {
     "capacity": ("capacity", "cap", "capacity_veh_h"),
     "class": ("class", "type", "link_type", "highway", "road_class"),
     "roundabout": ("roundabout",),
+    "signalised": ("signalised", "signal"),
 }
 
 #: Aliases recognised for each canonical node column.
@@ -195,7 +196,10 @@ def network_read_table(
             (``"primary"``, ``"residential"``, …; TNTP's numeric
             ``link_type`` is not one, so it is treated as unrecognised, like
             an unfamiliar OSM tag, with a diagnostic — pass a ``class``
-            column of your own if you have the mapping); ``roundabout``. A
+            column of your own if you have the mapping); ``roundabout``;
+            ``signalised`` (``signal``): a signal at the link's end that stops
+            it alone (a stop line for one direction; a signalised node stops
+            every approach, S265). A
             column not given, for a row that does not state it, defaults from
             the class table exactly as an unstated OSM tag does, with the
             same diagnostics for what was filled in — a two-way street is two
@@ -289,6 +293,7 @@ def network_read_table(
     link_capacity_veh_h: list[float | None] = []
     link_free_flow_km_h: list[float | None] = []
     link_roundabout: list[bool] = []
+    link_signalised: list[bool] = []
     seen_node_ids: dict[str, None] = {}  # insertion-ordered set, for the fallback layout
     width = len(str(len(link_rows)))
 
@@ -327,6 +332,7 @@ def network_read_table(
         link_free_flow_km_h.append(speed_km_h)
 
         link_roundabout.append(_as_bool(_column(row, "roundabout", _LINK_ALIASES)))
+        link_signalised.append(_as_bool(_column(row, "signalised", _LINK_ALIASES)))
 
     node_rows = _load_rows(nodes) if nodes is not None else None
     node_ids: list[str] = []
@@ -378,7 +384,7 @@ def network_read_table(
         link_length_m=link_length_m,
         link_capacity_veh_h=link_capacity_veh_h,
         link_free_flow_km_h=link_free_flow_km_h,
-        link_signalised=[False] * len(link_ids),
+        link_signalised=link_signalised,
         link_roundabout=link_roundabout,
         network_options=dict(network_options) if network_options else None,
     )
@@ -452,9 +458,11 @@ def network_options(network: _core.Network | None = None) -> dict[str, float]:
     ``"<class>.saturation_flow_veh_h_lane"``, ``"<class>.jam_density_veh_km_lane"`` for every
     class: ``motorway``, ``primary``, ``residential``, …), the global multipliers
     (``capacity_factor``, …), the signal settings (``signal_cycle_s``, ``signal_green_fraction``,
-    ``signal_degree_of_saturation``) and the bike and walk layers (``bike_mixed_km_h``,
-    ``walk_km_h``, …). Each is an uncalibrated default; the readers' ``network_options``
-    override them by name.
+    ``signal_degree_of_saturation``), the most a lane of an at-grade road discharges at a signal,
+    by its speed (``street_30.saturation_flow_veh_h_lane`` 1 000, ``street_50.…`` 1 200,
+    ``street_70.…`` 1 500 veh/h per hour of green, S265: CEREMA's values for French signals)
+    and the bike and walk layers (``bike_mixed_km_h``, ``walk_km_h``, …). Each is an uncalibrated
+    default; the readers' ``network_options`` override them by name.
     """
     return dict(_core.network_options(network))
 

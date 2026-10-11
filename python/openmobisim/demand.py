@@ -453,6 +453,7 @@ def demand_from_od(
     spread_m: float = 300.0,
     user_class: str = "default",
     seed: int = 0,
+    spread_m_by_zone: Mapping[str, float] | None = None,
 ) -> list[tuple]:
     """Turn an OD matrix into the trips a ``Scenario`` runs (S97's deterministic integerisation).
 
@@ -467,7 +468,9 @@ def demand_from_od(
        drawn from ``profile``: ``"uniform"``, or ``"am_peak"``, a bell over the window (a Beta(3, 3)
        distribution: two thirds of the trips in its middle 40%, against 40% for ``"uniform"``).
     4. **Where:** the zone's point, moved by a random distance of up to ``spread_m`` metres in a
-       random direction (uniform over the disc), so a zone's trips do not all start at one node.
+       random direction (uniform over the disc), so a zone's trips do not all start at one node;
+       ``spread_m_by_zone`` gives some zones their own (0 for a gateway: a road where the study
+       area's edge cuts it, where trips from outside enter, S265).
 
     The draws come from one generator seeded by ``seed``, consumed in the sorted order of the
     cells, so the same inputs and seed give the same trips on any machine.
@@ -481,6 +484,8 @@ def demand_from_od(
         spread_m: How far from its zone's point a trip may start or end, in metres.
         user_class: The class of rows without one.
         seed: Which draws.
+        spread_m_by_zone: ``{zone_id: metres}``, the spread of these zones instead of
+            ``spread_m``. The draws are the same either way: only their distance is scaled.
 
     Returns:
         Trips rows (``traveller_id, trip_seq, origin_lon, origin_lat, destination_lon,
@@ -492,8 +497,9 @@ def demand_from_od(
     """
     if profile not in _PROFILES:
         raise ValueError(f"profile must be one of {_PROFILES}, got {profile!r}")
-    if spread_m < 0:
-        raise ValueError(f"spread_m must not be negative, got {spread_m}")
+    spreads = dict(spread_m_by_zone or {})
+    if spread_m < 0 or any(v < 0 for v in spreads.values()):
+        raise ValueError(f"spread_m must not be negative: {spread_m}, by zone {spreads}")
     rows = demand_read_od(od) if isinstance(od, (str, Path)) else list(od)
     points = demand_read_zones(zones) if isinstance(zones, (str, Path)) else dict(zones)
     groups: dict[tuple, list[tuple[tuple, float]]] = defaultdict(list)
@@ -521,8 +527,8 @@ def demand_from_od(
             u = rng.beta(3.0, 3.0, n) if profile == "am_peak" else rng.random(n)
             departures = lo + np.floor(u * (hi - lo)).astype(np.int64)
             ends = []
-            for at in (o, d):
-                r = spread_m * np.sqrt(rng.random(n))
+            for at, zone in ((o, cell[0]), (d, cell[1])):
+                r = spreads.get(zone, spread_m) * np.sqrt(rng.random(n))
                 angle = 2.0 * np.pi * rng.random(n)
                 lat_m = 110_574.0
                 lon_m = 111_320.0 * math.cos(math.radians(at[1]))

@@ -99,6 +99,21 @@ def _download(name: str, entry: dict[str, Any], target: Path) -> None:
     raise FileNotFoundError(f"case {name!r}: could not download it: " + "; ".join(errors))
 
 
+#: The class a trip has until it is drawn one (a matrix row that names none).
+_DRAWN = "\x00drawn"
+
+
+def _zone_spreads(path: Path) -> dict[str, float]:
+    """``zones.csv``'s optional ``spread_m`` column: the zones that spread their trips otherwise."""
+    from openmobisim.demand import _first, _rows
+
+    return {
+        _first(row, "zone_id", "zone", "id"): float(row["spread_m"])
+        for row in _rows(path)
+        if row.get("spread_m", "")
+    }
+
+
 class Case:
     """One starter case, its files checked: see :func:`openmobisim.examples.case`."""
 
@@ -156,15 +171,35 @@ class Case:
         return demand_read_classes(self.path(self.info["demand"]["classes"]))
 
     def demand(self, multiple: float = 1.0, seed: int = 0) -> list[tuple]:
-        """The trips: the OD matrix times ``multiple``, each traveller given a class by share."""
+        """The trips: the OD matrix times ``multiple``, each traveller given a class by share.
+
+        A row of the matrix that names its ``user_class`` (and its ``mode``: trips from outside
+        the study area, goods vehicles, S265) keeps it; the others' travellers are drawn a class
+        by the classes' shares. A zone with a ``spread_m`` in ``zones.csv`` spreads its trips that
+        far (0 at a gateway, a road where the area's edge cuts it). With a ``weight`` in the case's
+        demand, each simulated traveller stands for that many people: the matrix is divided by it
+        and every trip carries it, so the run's totals are the whole demand's and its time a
+        sample's (``demand_sample``).
+        """
         from openmobisim.demand import demand_assign_classes, demand_from_od, demand_read_od
 
         d = self.info["demand"]
+        weight = int(d.get("weight", 1))
         od = demand_read_od(self.path(d["od"]))
-        if multiple != 1.0:
-            od = [{**r, "trips": float(r["trips"]) * multiple} for r in od]
-        trips = demand_from_od(od, self.zones(), seed=seed, **d.get("from_od", {}))
-        return demand_assign_classes(trips, self.classes(), seed=seed)
+        if multiple != 1.0 or weight != 1:
+            od = [{**r, "trips": float(r["trips"]) * multiple / weight} for r in od]
+        options = dict(d.get("from_od", {}))
+        spreads = _zone_spreads(self.path(d["zones"]))
+        if spreads:
+            options["spread_m_by_zone"] = spreads
+        trips = demand_from_od(od, self.zones(), seed=seed, user_class=_DRAWN, **options)
+        drawn = [t for t in trips if t[7] == _DRAWN]
+        classes = demand_assign_classes(drawn, self.classes(), seed=seed) if drawn else []
+        given = iter(classes)
+        out = [next(given) if t[7] == _DRAWN else t for t in trips]
+        if weight != 1:
+            out = [(*t[:8], weight, *t[9:]) for t in out]
+        return out
 
     def scenario(self, scenario: str = "base", seed: int = 0, **options: Any) -> Any:
         """The case's scenario ``scenario`` (its ``case.json``), with ``options`` added."""

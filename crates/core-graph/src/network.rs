@@ -268,6 +268,7 @@ impl RoadNetworkBuilder {
         let mut link_lanes = Vec::with_capacity(self.links.len());
         let mut link_length = Vec::with_capacity(self.links.len());
         let mut link_params: Vec<LinkParameters> = Vec::with_capacity(self.links.len());
+        let mut link_signalised: Vec<bool> = Vec::with_capacity(self.links.len());
 
         for &i in &link_order {
             let (external, from, to, spec) = &self.links[i];
@@ -291,12 +292,19 @@ impl RoadNetworkBuilder {
                 length = MIN_LINK_LENGTH_M;
             }
 
-            let row: DefaultRow = defaults.classes.row(spec.class);
+            let mut row: DefaultRow = defaults.classes.row(spec.class);
+            let signalised = spec.signalised || node_signalised[to_id as usize];
+            if signalised && spec.class.is_at_grade() && spec.capacity_veh_h.is_none() {
+                // S265: at a signal, a city street's lane discharges at most its speed band's
+                // saturation flow per hour of green (the green fraction applies on top).
+                let speed = spec.maxspeed_km_h.unwrap_or(row.free_flow_km_h);
+                row = defaults.saturation_bands.applied(row, speed);
+            }
             let lanes = spec.lanes.unwrap_or(row.lanes_per_direction);
             let (params, note) = LinkParameters::from_defaults(
                 row,
                 lanes,
-                spec.signalised || node_signalised[to_id as usize],
+                signalised,
                 signals,
                 multipliers,
                 spec.maxspeed_km_h,
@@ -337,6 +345,7 @@ impl RoadNetworkBuilder {
             link_lanes.push(lanes);
             link_length.push(Metres(length));
             link_params.push(params);
+            link_signalised.push(signalised);
         }
 
         let link_count = u32::try_from(link_from.len()).expect("link count fits u32");
@@ -363,6 +372,7 @@ impl RoadNetworkBuilder {
             node_y,
             node_lonlat,
             node_signalised,
+            link_signalised,
             link_from,
             link_to,
             link_class,
@@ -391,6 +401,9 @@ pub struct RoadNetwork {
     node_y: Vec<f64>,
     node_lonlat: Vec<LonLat>,
     node_signalised: Vec<bool>,
+    /// Whether each link's downstream end is a signal that stops it (S265): its node's signal,
+    /// or a signal there for its direction only.
+    link_signalised: Vec<bool>,
 
     link_from: Vec<NodeId>,
     link_to: Vec<NodeId>,
@@ -488,11 +501,20 @@ impl RoadNetwork {
         self.node_lonlat[node.index()]
     }
 
-    /// Whether a node is signalised.
+    /// Whether a node is signalised for every approach (a junction's signal).
     #[inline]
     #[must_use]
     pub fn is_signalised(&self, node: NodeId) -> bool {
         self.node_signalised[node.index()]
+    }
+
+    /// Whether a link ends at a signal that stops it (S265): its end node's, or one there for its
+    /// direction only (`traffic_signals:direction`). It has the signal's control delay, and its
+    /// turns the green fraction.
+    #[inline]
+    #[must_use]
+    pub fn is_link_signalised(&self, link: LinkId) -> bool {
+        self.link_signalised[link.index()]
     }
 
     /// A link's upstream node.
@@ -604,6 +626,7 @@ impl RoadNetwork {
             node_y: self.node_y.clone(),
             node_lonlat: self.node_lonlat.clone(),
             node_signalised: self.node_signalised.clone(),
+            link_signalised: self.link_signalised.clone(),
             link_from: self.link_from.clone(),
             link_to: self.link_to.clone(),
             link_class: self.link_class.clone(),

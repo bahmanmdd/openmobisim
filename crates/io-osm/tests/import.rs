@@ -146,6 +146,41 @@ fn a_tagged_node_splits_a_way_even_when_nothing_else_uses_it() {
     }
 }
 
+#[test]
+fn a_stop_line_signal_stops_only_its_direction() {
+    // S265: mappers put a signal on each approach's stop line, `traffic_signals:direction` saying
+    // which way it stops. Node 2 stops eastbound traffic (forward along the way), node 3
+    // westbound (backward): a car going east waits at 2 and passes 3, as a junction between them
+    // would have it, instead of waiting at both.
+    let source = MemorySource::new()
+        .nodes([
+            node(1, 0.0),
+            OsmNode::new(2, 4.801, 45.700).with_tags([
+                ("highway", "traffic_signals"),
+                ("traffic_signals:direction", "forward"),
+            ]),
+            OsmNode::new(3, 4.802, 45.700).with_tags([
+                ("highway", "traffic_signals"),
+                ("traffic_signals:direction", "backward"),
+            ]),
+            node(4, 3.0),
+        ])
+        .way(residential(100, [1, 2, 3, 4]));
+    let (net, _, _) = run(&source);
+    let id = |n: &str| net.node_external_ids().typed_id_of::<NodeId>(n).unwrap();
+    let link = |a: &str, b: &str| {
+        net.out_links(id(a)).iter().copied().find(|&l| net.link_to(l) == id(b)).expect("a link")
+    };
+    let stopped = |l: LinkId| net.is_link_signalised(l);
+    assert!(stopped(link("1", "2")), "eastbound at its own stop line");
+    assert!(!stopped(link("2", "3")), "eastbound passes the westbound stop line");
+    assert!(stopped(link("4", "3")), "westbound at its own stop line");
+    assert!(!stopped(link("3", "2")), "westbound passes the eastbound stop line");
+    assert!(!net.is_signalised(id("2")) && !net.is_signalised(id("3")), "no node stops everyone");
+    assert!(net.link_parameters(link("1", "2")).control_delay.get() > 10.0);
+    assert!(net.link_parameters(link("2", "3")).control_delay.get().abs() < 1e-12);
+}
+
 // --- contraction ----------------------------------------------------------
 
 #[test]

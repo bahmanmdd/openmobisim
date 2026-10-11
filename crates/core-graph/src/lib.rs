@@ -39,7 +39,7 @@ pub mod turns;
 pub use csr::Csr;
 pub use defaults::{
     DEFAULTS_VERSION, DefaultRow, GlobalMultipliers, LinkParameters, ParameterNote, RoadClass,
-    SignalDefaults, default_row,
+    SaturationBands, SignalDefaults, default_row,
 };
 pub use examples::{
     manhattan_grid, toy_network, toy_network_hubs, toy_network_layers, toy_network_parkings,

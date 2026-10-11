@@ -33,7 +33,7 @@ fn line(defaults: &NetworkDefaults) -> RoadNetwork {
 #[test]
 fn every_parameter_has_a_name_and_its_shipped_value() {
     let names = NetworkDefaults::names();
-    assert_eq!(names.len(), 15 + 4 * RoadClass::ALL.len());
+    assert_eq!(names.len(), 18 + 4 * RoadClass::ALL.len());
     assert!(names.windows(2).all(|w| w[0] < w[1]), "sorted, no repeats");
     let values: BTreeMap<String, f64> = NetworkDefaults::shipped().values().into_iter().collect();
     assert_eq!(values.len(), names.len());
@@ -126,4 +126,49 @@ fn the_plain_build_is_the_shipped_defaults() {
         .build(Default::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
         .expect("valid");
     assert_eq!(*plain.defaults(), NetworkDefaults::shipped());
+}
+
+#[test]
+fn at_a_signal_an_at_grade_lane_discharges_at_most_its_speed_bands_saturation_flow() {
+    // S265: on an approach that ends at a signal, a 30 km/h street's lane 1 000 veh/h, 50 km/h
+    // 1 200, 70 km/h 1 500; motorways and trunk roads, faster roads, stated capacities and
+    // approaches without a signal keep theirs. Each band is a named option.
+    let build = |defaults: &NetworkDefaults| {
+        let mut b = RoadNetworkBuilder::new();
+        for i in 0..8 {
+            b.add_node(format!("n{i}"), LonLat { lon: 4.9 + 0.005 * f64::from(i), lat: 52.37 });
+        }
+        for i in 1..7 {
+            b.mark_signalised(format!("n{i}"));
+        }
+        let specs = [
+            (RoadClass::Residential, 30.0, None),
+            (RoadClass::Primary, 50.0, None),
+            (RoadClass::Secondary, 70.0, None),
+            (RoadClass::Primary, 90.0, None),
+            (RoadClass::Trunk, 50.0, None),
+            (RoadClass::Primary, 50.0, Some(3000.0)),
+            (RoadClass::Residential, 30.0, None), // ends at n7: no signal
+        ];
+        for (k, (class, speed, capacity)) in specs.into_iter().enumerate() {
+            let mut spec = LinkSpec::new(class);
+            spec.lanes = Some(2);
+            spec.maxspeed_km_h = Some(speed);
+            spec.capacity_veh_h = capacity;
+            b.add_link(format!("l{k}"), format!("n{k}"), format!("n{}", k + 1), spec);
+        }
+        b.build_with(defaults, &mut Diagnostics::new()).expect("a valid network")
+    };
+    let capacity =
+        |n: &RoadNetwork, k: u32| n.link_parameters(LinkId::new(k)).capacity.get() * 3600.0;
+    let shipped = build(&NetworkDefaults::shipped());
+    let got: Vec<f64> = (0..7).map(|k| (capacity(&shipped, k) * 1e6).round() / 1e6).collect();
+    assert_eq!(got, [2000.0, 2400.0, 3000.0, 3800.0, 3600.0, 3000.0, 2800.0]);
+    let wider = NetworkDefaults::from_options(&options(&[(
+        "street_50.saturation_flow_veh_h_lane",
+        1500.0,
+    )]))
+    .expect("known");
+    assert!((capacity(&build(&wider), 1) - 3000.0).abs() < 1e-6, "the band's option acts");
+    assert_eq!(wider.descriptor(), "street_50.saturation_flow_veh_h_lane=1500");
 }
