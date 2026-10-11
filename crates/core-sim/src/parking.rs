@@ -105,6 +105,15 @@ pub struct ParkingDefaults {
     /// *For compute (A18, roadmap I-ag), and an assumption: nobody drives to a car park
     /// for a 1 km trip. Uncalibrated.*
     pub pr_min_km: f64,
+    /// The step, in seconds, by which park-and-ride trips share the search of their drive to
+    /// the car parks (S267): 0 searches each trip's drive at its own departure; above 0, the
+    /// trips leaving one road node within one step (of the day, from midnight) share one
+    /// search, made at the step's middle, and each trip's drive along the routes it found is
+    /// timed at the trip's own departure.
+    ///
+    /// *For compute, not behaviour: approximate, the routes being the fastest at the step's
+    /// middle. Worth it when trips start at a few points per zone.*
+    pub reach_car_step_s: f64,
 }
 
 impl ParkingDefaults {
@@ -122,10 +131,11 @@ impl ParkingDefaults {
         snap_m: 300.0,
         bin_s: 900.0,
         pr_min_km: 3.0,
+        reach_car_step_s: 0.0,
     };
 
     /// The names of the options, in the order [`Self::from_options`] reads them.
-    pub const NAMES: [&'static str; 12] = [
+    pub const NAMES: [&'static str; 13] = [
         "walk_max_s",
         "reach_car_s",
         "reach_bike_s",
@@ -138,6 +148,7 @@ impl ParkingDefaults {
         "snap_m",
         "bin_s",
         "pr_min_km",
+        "reach_car_step_s",
     ];
 
     /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing).
@@ -161,6 +172,7 @@ impl ParkingDefaults {
             "snap_m" => &mut self.snap_m,
             "bin_s" => &mut self.bin_s,
             "pr_min_km" => &mut self.pr_min_km,
+            "reach_car_step_s" => &mut self.reach_car_step_s,
             _ => return None,
         })
     }

@@ -623,6 +623,11 @@ fn hash_parking(h: &mut Fnv1a, parking: &ParkingSetup) {
     ] {
         h.write_f64(v);
     }
+    // The shared drive's step (S267): nothing at 0, so runs without it hash as before.
+    if d.reach_car_step_s > 0.0 {
+        h.write_str("reach_car_step_s");
+        h.write_f64(d.reach_car_step_s);
+    }
 }
 
 fn hash_demand(h: &mut Fnv1a, travellers: &Travellers, trips: &Trips) {

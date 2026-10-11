@@ -163,9 +163,22 @@ impl RouteSets {
         keys.sort_unstable();
         keys.dedup();
 
-        let per_key: Vec<Vec<Route>> = search_map(ctx, &keys, |search, k| {
-            generator.generate(search, NodeId::new(k.origin), NodeId::new(k.destination))
-        });
+        let per_key: Vec<Vec<Route>> = if generator.searches_trees() {
+            // Each origin's pairs together, for one search tree (S267); keys sort by origin.
+            let groups: Vec<&[RouteKey]> = keys.chunk_by(|a, b| a.origin == b.origin).collect();
+            search_map(ctx, &groups, |search, group| {
+                let destinations: Vec<NodeId> =
+                    group.iter().map(|k| NodeId::new(k.destination)).collect();
+                generator.generate_from(search, NodeId::new(group[0].origin), &destinations)
+            })
+            .into_iter()
+            .flatten()
+            .collect()
+        } else {
+            search_map(ctx, &keys, |search, k| {
+                generator.generate(search, NodeId::new(k.origin), NodeId::new(k.destination))
+            })
+        };
 
         let mut sets = Self {
             network: NetworkFingerprint::of(network),

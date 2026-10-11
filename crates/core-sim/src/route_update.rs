@@ -56,6 +56,10 @@ use crate::link_times::LinkTimes;
 /// [`BestResponse::slack`]).
 pub const DEFAULT_SLACK: f64 = 0.02;
 
+/// The step `best_response` rounds departures to for its search trees (S267; see
+/// [`BestResponse::tree_step_s`]).
+pub const DEFAULT_TREE_STEP_S: u32 = 0;
+
 /// The update used unless another is asked for.
 pub const DEFAULT_UPDATE: &str = "none";
 
@@ -96,7 +100,9 @@ pub struct Additions {
     /// none empty. Routes are new (not in the key's set), from the key's origin to its
     /// destination, and carry their free-flow cost and their overlap with the set.
     pub routes: Vec<(usize, Vec<Route>)>,
-    /// How many searches it took.
+    /// How many searches it took; with search trees ([`BestResponse::tree_step_s`]), how many
+    /// pairs the trees searched for (one tree answers many), so that the routes added per search
+    /// mean the same either way.
     pub searches: u32,
 }
 
@@ -180,16 +186,23 @@ pub struct BestResponse {
     /// city (heavy) from 78 512 to 46 205 (−8% of the run); at 5%, 58% of Stockholm's searches.
     /// Assumes the method's routes include a free-flow shortest one, as every built-in method's do.
     pub slack: f64,
+    /// **Search trees** (S267): 0 searches each pair on its own, at its departures; above 0, a
+    /// pair's departures are rounded to this step (in seconds, to its middle) and the pairs of one
+    /// origin at one rounded departure share **one search tree**, which finds each one's fastest
+    /// route at once ([`openmobisim_core_routes::Search::fastest_routes_to`]). Approximate: the
+    /// routes are the fastest at the rounded departure. Worth it when trips start at a few points
+    /// per zone (`demand_from_od`'s `points_per_zone`), so that many pairs share an origin.
+    pub tree_step_s: u32,
 }
 
 impl Default for BestResponse {
     fn default() -> Self {
-        Self { searches: 1, max_routes: 10, slack: DEFAULT_SLACK }
+        Self { searches: 1, max_routes: 10, slack: DEFAULT_SLACK, tree_step_s: DEFAULT_TREE_STEP_S }
     }
 }
 
 impl BestResponse {
-    const OPTIONS: [&'static str; 3] = ["max_routes", "searches", "slack"];
+    const OPTIONS: [&'static str; 4] = ["max_routes", "searches", "slack", "tree_step_s"];
 
     /// Make the update from its options, defaults for those not given.
     ///
@@ -220,6 +233,7 @@ impl BestResponse {
         for (option, &v) in options {
             match option.as_str() {
                 "searches" => m.searches = whole(option, v, 1, 16)?,
+                "tree_step_s" => m.tree_step_s = whole(option, v, 0, 86_400)?,
                 "slack" => {
                     if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
                         return Err(RouteUpdateError::BadOption {
@@ -251,13 +265,21 @@ impl RouteUpdate for BestResponse {
     }
 
     fn descriptor(&self) -> String {
+        let trees = if self.tree_step_s > 0 {
+            format!(";tree_step_s={}", self.tree_step_s)
+        } else {
+            String::new()
+        };
         format!(
-            "best_response;max_routes={};searches={};slack={}",
+            "best_response;max_routes={};searches={};slack={}{trees}",
             self.max_routes, self.searches, self.slack
         )
     }
 
     fn update(&self, cx: &UpdateContext<'_>) -> Additions {
+        if self.tree_step_s > 0 {
+            return self.update_by_trees(cx);
+        }
         let sets = cx.route_sets;
         let (departures, jobs) = self.plan(cx);
         let ctx = SearchContext::new(cx.network, cx.turns);
@@ -322,7 +344,149 @@ impl RouteUpdate for BestResponse {
     }
 }
 
+/// Routes a search tree kept, by key index, and how many pairs it searched for.
+type TreeFound = (Vec<(usize, Vec<LinkId>)>, u32);
+
+/// One search tree: an origin, a rounded departure, and the keys it serves.
+struct Tree {
+    origin: u32,
+    departure: f64,
+    keys: Vec<usize>,
+}
+
 impl BestResponse {
+    /// [`RouteUpdate::update`] with search trees (S267, [`Self::tree_step_s`]): the planned
+    /// departures rounded to the step, the keys grouped by origin and rounded departure, one
+    /// [`Search::fastest_routes_to`] per group bounded by the slowest of its keys' best times; a
+    /// key's route is kept if it is new and no slower than the key's own best. Then the kept
+    /// routes are made routes of their sets (their overlap), key by key.
+    fn update_by_trees(&self, cx: &UpdateContext<'_>) -> Additions {
+        let sets = cx.route_sets;
+        let max_routes = self.max_routes as usize;
+        let step = f64::from(self.tree_step_s);
+        let (departures, jobs) = self.plan(cx);
+        // (origin, rounded departure in steps, key), sorted: the trees in a fixed order.
+        let mut items: Vec<(u32, u64, usize)> = Vec::new();
+        for job in &jobs {
+            let key = sets.keys()[job.key];
+            if key.origin == key.destination {
+                continue;
+            }
+            let mut seen: Vec<u64> = Vec::new();
+            for &second in &departures[job.departures.clone()] {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "a step count"
+                )]
+                let slot = (f64::from(second) / step).floor() as u64;
+                if !seen.contains(&slot) {
+                    seen.push(slot);
+                    items.push((key.origin, slot, job.key));
+                }
+            }
+        }
+        items.sort_unstable();
+        let mut trees: Vec<Tree> = Vec::new();
+        for (origin, slot, key) in items {
+            #[allow(clippy::cast_precision_loss, reason = "a step count")]
+            let departure = (slot as f64 + 0.5) * step;
+            match trees.last_mut() {
+                Some(t) if t.origin == origin && t.departure.to_bits() == departure.to_bits() => {
+                    t.keys.push(key);
+                }
+                _ => trees.push(Tree { origin, departure, keys: vec![key] }),
+            }
+        }
+        let ctx = SearchContext::new(cx.network, cx.turns);
+        let node_count = cx.network.node_count() as usize;
+        let wait = |link: u32, at: f64| cx.times.origin_wait_seconds(link, at);
+        let seconds = |link: u32, at: f64| cx.times.link_seconds(link, at);
+        let found: Vec<TreeFound> = search_map(&ctx, &trees, |search, tree| {
+            // Each key's best at the rounded departure, and whether it is worth searching.
+            let mut wanted: Vec<(usize, f64)> = Vec::new();
+            for &k in &tree.keys {
+                let set = sets.route_range(k);
+                if set.is_empty() || set.len() >= max_routes {
+                    continue;
+                }
+                let free_flow = set
+                    .clone()
+                    .map(|r| f64::from(sets.route(r).cost))
+                    .fold(f64::INFINITY, f64::min);
+                let best = set
+                    .map(|r| cx.times.route_seconds(sets.route(r).links, tree.departure))
+                    .fold(f64::INFINITY, f64::min);
+                if self.slack > 0.0 && best <= free_flow * (1.0 + self.slack) {
+                    continue;
+                }
+                wanted.push((k, best));
+            }
+            if wanted.is_empty() {
+                return (Vec::new(), 0);
+            }
+            let mut targets = vec![false; node_count];
+            for &(k, _) in &wanted {
+                targets[sets.keys()[k].destination as usize] = true;
+            }
+            let bound = wanted.iter().map(|&(_, b)| b).fold(0.0, f64::max);
+            let routes = search.fastest_routes_to(
+                NodeId::new(tree.origin),
+                &targets,
+                wanted.len(),
+                tree.departure,
+                bound,
+                &wait,
+                &seconds,
+            );
+            let mut kept = Vec::new();
+            for (node, time, links) in routes {
+                for &(k, best) in &wanted {
+                    // At least as fast as the set's best: a tie counts (S176).
+                    if sets.keys()[k].destination == node.raw()
+                        && time <= best + 1e-9
+                        && !links.is_empty()
+                        && !is_known(sets, k, &[], &links)
+                    {
+                        kept.push((k, links.clone()));
+                    }
+                }
+            }
+            // Counted as the pairs searched for, as a search per pair would be: what the
+            // stopping rule weighs the routes added against (`route_growth_tolerance`).
+            (kept, u32::try_from(wanted.len()).expect("few keys per tree"))
+        });
+        let mut searches = 0_u32;
+        let mut by_key: BTreeMap<usize, Vec<Vec<LinkId>>> = BTreeMap::new();
+        for (kept, n) in found {
+            searches += n;
+            for (k, links) in kept {
+                by_key.entry(k).or_default().push(links);
+            }
+        }
+        let groups: Vec<(usize, Vec<Vec<LinkId>>)> = by_key.into_iter().collect();
+        let routes: Vec<Vec<Route>> = search_map(&ctx, &groups, |search, (k, candidates)| {
+            let mut added: Vec<Route> = Vec::new();
+            for links in candidates {
+                if sets.route_range(*k).len() + added.len() >= max_routes {
+                    break;
+                }
+                if !is_known(sets, *k, &added, links) {
+                    let route = with_overlap(search, sets, *k, &added, links.clone());
+                    added.push(route);
+                }
+            }
+            added
+        });
+        let mut out = Additions { searches, ..Additions::default() };
+        for ((k, _), added) in groups.iter().zip(routes) {
+            if !added.is_empty() {
+                out.routes.push((*k, added));
+            }
+        }
+        out
+    }
+
     /// The searches to make: for each key with routed trips and room to grow, the departures
     /// to search at (evenly spread quantiles of its trips' departures), flat, with each key's
     /// range. Keys ascend.

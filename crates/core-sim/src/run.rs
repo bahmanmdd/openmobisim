@@ -39,7 +39,9 @@ use openmobisim_core_routes::{
 use openmobisim_core_types::diagnostics::{
     Category, DiagKey, Diagnostics, ElementRef, Severity, codes,
 };
-use openmobisim_core_types::ids::{EntityId, EntityKind, LinkId, TravellerId, TripId, VehicleId};
+use openmobisim_core_types::ids::{
+    EntityId, EntityKind, LinkId, NodeId, TravellerId, TripId, VehicleId,
+};
 use openmobisim_core_types::rng::{DrawAddress, RngKey, Stream, StreamRng};
 use openmobisim_core_types::time::{EventKey, Second};
 use openmobisim_core_types::units::{Duration, Pcu};
@@ -455,7 +457,17 @@ pub struct Run {
     prices: Prices,
     /// The user's traveller and trip values, offered to choice models (S249): none, by default.
     demand_values: DemandValues,
+    /// The walks of itinerary trips' legs found so far in an execution, by (from, to) walk node
+    /// (S267): the walk layer is static, so each is searched once per execution, not once per
+    /// loading. `None`: no walk within the bound.
+    walk_paths: WalkPaths,
 }
+
+/// Walk paths by (from, to) walk node: see [`Run`]'s `walk_paths`.
+type WalkPaths = HashMap<(u32, u32), Option<Box<[LinkId]>>>;
+
+/// A walk leg to bin: from and to walk node, and the second it starts.
+type WalkLeg = (u32, u32, u32);
 
 /// The key of the draw that puts a traveller in a group of the free-flow loading's increments
 /// (S223), apart from every other draw on the re-selection stream: who chooses again at
@@ -526,6 +538,7 @@ impl Run {
             disruptions: Disruptions::default(),
             prices: Prices::SHIPPED,
             demand_values: DemandValues::new(),
+            walk_paths: WalkPaths::new(),
         }
     }
 
@@ -873,6 +886,7 @@ impl Run {
     /// ([`Self::with_class_limits`]). Otherwise never in practice: the panic guards the
     /// invariant that at least one iteration always runs.
     pub fn try_execute(&mut self, diagnostics: &mut Diagnostics) -> Result<RunResult, RunError> {
+        self.walk_paths.clear();
         if let Some(transit) = &self.transit {
             let widest =
                 self.class_limits.iter().filter_map(|l| l.access_walk_max_s).fold(0.0, f64::max);
@@ -1099,6 +1113,20 @@ impl Run {
             prices: &prices,
             demand_values: &demand_values,
         };
+        // The free-flow loading's groups (S223), below: the first chooses on free flow here; the
+        // others choose there, each on the congestion of the groups before it, so only the first
+        // is planned here (S267: the others' free-flow choices were never loaded).
+        let increments = match self.flow_motor {
+            FlowMotor::Ltm { .. } => self.equilibration.increments().max(1),
+            FlowMotor::Level0 => 1,
+        };
+        let group: Vec<u32> = if increments > 1 {
+            (0..travellers.len()).map(|t| increment_of(&reselect_rng, t, increments)).collect()
+        } else {
+            Vec::new()
+        };
+        let first_group: Option<Vec<bool>> =
+            (increments > 1).then(|| group.iter().map(|&g| g == 0).collect());
         let mut chosen: Option<Chosen> = None;
         if let Some(itin) = &itineraries {
             let free = LinkTimes::free_flow(&network);
@@ -1115,7 +1143,9 @@ impl Run {
                     .as_ref()
                     .map(|attributes| CarRoutes { sets: &route_sets, attributes }),
             };
-            chosen = Some(itin.choose(&planner, &choose_inputs, None, 0, None, None)?.0);
+            chosen = Some(
+                itin.choose(&planner, &choose_inputs, None, 0, None, first_group.as_deref())?.0,
+            );
             clock = timings.lap("itinerary_choice", Some(0), clock);
         }
 
@@ -1151,16 +1181,10 @@ impl Run {
         // times of a loading of the groups before it, so the first loading of everyone (iteration
         // 0's, below) is on routes that already spread around congestion. Not at free flow, where
         // loading changes no time.
-        let increments = match self.flow_motor {
-            FlowMotor::Ltm { .. } => strategy.increments().max(1),
-            FlowMotor::Level0 => 1,
-        };
         // What the route update found while it was built up: iteration 0's report counts it.
         let (mut increment_searches, mut increment_added) = (0_u32, 0_u32);
         let mut increment_reroute_searches = 0_u32;
         if increments > 1 {
-            let group: Vec<u32> =
-                (0..travellers.len()).map(|t| increment_of(&reselect_rng, t, increments)).collect();
             for k in 1..increments {
                 let loading: Vec<bool> = group.iter().map(|&g| g < k).collect();
                 // Its diagnostics are not the run's: the run's are iteration 0's, of everyone.
@@ -1183,8 +1207,12 @@ impl Run {
                 );
                 clock = timings.lap("partial_loading", Some(0), clock);
                 increment_reroute_searches += loaded.reroute_searches;
-                let Some(bins) = &loaded.entry_bins else { break };
-                let times = LinkTimes::from_tables(&self.network, bins);
+                // Every group chooses (S267: none chose before), on free flow if this loading
+                // recorded no times.
+                let times = loaded.entry_bins.as_ref().map_or_else(
+                    || LinkTimes::free_flow(&network),
+                    |bins| LinkTimes::from_tables(&self.network, bins),
+                );
                 let choosing: Vec<bool> = group.iter().map(|&g| g == k).collect();
                 // The group's pairs searched on these times: routes that avoid the congestion of
                 // the groups before it, for it to choose among.
@@ -2061,6 +2089,7 @@ impl Run {
                 let (parking, avail) =
                     self.park_arrivals(&pending_itin, chosen, &mut parking_events);
                 parking_result = parking;
+                let mut walk_paths = std::mem::take(&mut self.walk_paths);
                 let executed = self.execute_itineraries(
                     &transit,
                     data,
@@ -2068,8 +2097,9 @@ impl Run {
                     chosen,
                     &pending_itin,
                     avail.as_deref(),
-                    bin_walks,
+                    (bin_walks, &mut walk_paths),
                 );
+                self.walk_paths = walk_paths;
                 itinerary.rides = vec![0; itineraries.trips.len()];
                 for (pend, done) in pending_itin.iter().zip(executed) {
                     let trip = pend.trip;
@@ -2380,8 +2410,10 @@ impl Run {
     }
 
     /// Execute every pending itinerary's transit part on `data` (M4): see
-    /// [`itinerary_choice::follow`]. In parallel, in fixed chunks.
+    /// [`itinerary_choice::follow`]. In parallel, in fixed chunks. With `bin_walks`, each walk
+    /// leg's links, from `walk_paths` or searched once and kept there (S267).
     #[allow(clippy::too_many_arguments, reason = "the loading's pieces")]
+    #[allow(clippy::too_many_lines, reason = "one pass: follow, then the walks")]
     fn execute_itineraries(
         &self,
         transit: &TransitSetup,
@@ -2390,7 +2422,7 @@ impl Run {
         chosen: &Chosen,
         pending: &[PendingItin],
         avail: Option<&[f64]>,
-        bin_walks: bool,
+        (bin_walks, walk_paths): (bool, &mut WalkPaths),
     ) -> Vec<Executed> {
         let parking = self.parking.as_deref();
         let trips = &*self.trips;
@@ -2406,26 +2438,24 @@ impl Run {
         let bins = parking
             .zip(avail)
             .map(|(p, _)| parking_mod::tally(p, &[], f64::from(self.window.get())).0);
-        par_map(
+        // Each trip followed, with its walk legs as (from, to, start); their links after.
+        let followed: Vec<(Executed, Vec<WalkLeg>)> = par_map(
             pending,
             itinerary_choice::SCRATCH_CHUNK,
-            || {
-                (
-                    Reach::new(walk, seconds),
-                    Raptor::new(data, d.max_rides as usize),
-                    vec![false; transit.walk_node_count()],
-                )
-            },
-            |(reach, raptor, wanted), pend| {
+            || (Reach::new(walk, seconds), Raptor::new(data, d.max_rides as usize)),
+            |(reach, raptor), pend| {
                 let alt =
                     chosen.alt[pend.position].as_ref().expect("a pending trip has its choice");
                 let nodes = itineraries.nodes(pend.position);
                 let departure = trips.departure(pend.trip).get();
-                let truncated = || Executed {
-                    outcome: ItinOutcome::Truncated,
-                    followed: None,
-                    mismatch: None,
-                    walks: Vec::new(),
+                let truncated = || {
+                    let e = Executed {
+                        outcome: ItinOutcome::Truncated,
+                        followed: None,
+                        mismatch: None,
+                        walks: Vec::new(),
+                    };
+                    (e, Vec::new())
                 };
                 let (at_first, start, end) = match alt.shape {
                     // (A direct leg is never pending: the loop runs it as a trip of its mode.)
@@ -2488,13 +2518,7 @@ impl Run {
                         if a.is_null() || b.is_null() {
                             continue;
                         }
-                        if let Some(links) =
-                            TransitSetup::walk_path(reach, wanted, a, b, walk_bound)
-                        {
-                            if !links.is_empty() {
-                                walks.push((links, seg.departure));
-                            }
-                        }
+                        walks.push((a.raw(), b.raw(), seg.departure));
                     }
                 }
                 let (outcome, mismatch) = match alt.shape {
@@ -2520,9 +2544,40 @@ impl Run {
                         None,
                     ),
                 };
-                Executed { outcome, followed, mismatch, walks }
+                (Executed { outcome, followed, mismatch, walks: Vec::new() }, walks)
             },
-        )
+        );
+        // The walks not searched yet in this execution, each once, in parallel.
+        let mut missing: Vec<(u32, u32)> = followed
+            .iter()
+            .flat_map(|(_, walks)| walks.iter().map(|&(a, b, _)| (a, b)))
+            .filter(|pair| !walk_paths.contains_key(pair))
+            .collect();
+        missing.sort_unstable();
+        missing.dedup();
+        let found = par_map(
+            &missing,
+            itinerary_choice::SCRATCH_CHUNK,
+            || (Reach::new(walk, seconds), vec![false; transit.walk_node_count()]),
+            |(reach, wanted), &(a, b)| {
+                TransitSetup::walk_path(reach, wanted, NodeId::new(a), NodeId::new(b), walk_bound)
+                    .map(Vec::into_boxed_slice)
+            },
+        );
+        walk_paths.extend(missing.into_iter().zip(found));
+        followed
+            .into_iter()
+            .map(|(mut executed, walks)| {
+                executed.walks = walks
+                    .into_iter()
+                    .filter_map(|(a, b, start)| {
+                        let links = walk_paths.get(&(a, b))?.as_deref()?;
+                        (!links.is_empty()).then(|| (links.to_vec(), start))
+                    })
+                    .collect();
+                executed
+            })
+            .collect()
     }
 
     fn static_outcome(

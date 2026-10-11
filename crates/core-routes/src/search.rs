@@ -435,6 +435,76 @@ impl<'a> Search<'a> {
         route
     }
 
+    /// The least-cost route from `origin` to each of `destinations` (distinct nodes, none of
+    /// them `origin`), in their order, if it costs at most `max_true_cost` unpenalised: one
+    /// search for all of them (S267), plain Dijkstra, which stops once it has reached them all.
+    /// Each route is a least-cost one, as [`Self::shortest_within`]'s is; where several routes
+    /// have the same least cost, it can be another of them.
+    pub fn shortest_tree(
+        &mut self,
+        origin: NodeId,
+        destinations: &[NodeId],
+        max_true_cost: f64,
+    ) -> Vec<Option<Route>> {
+        let ctx = self.ctx;
+        let mut wanted = vec![false; ctx.network.node_count() as usize];
+        for d in destinations {
+            wanted[d.index()] = true;
+        }
+        // The last link of the route to each destination reached, by node.
+        let mut last: std::collections::HashMap<u32, u32> =
+            std::collections::HashMap::with_capacity(destinations.len());
+        for &l in ctx.network.out_links(origin) {
+            let raw = ctx.link_cost(l);
+            let c = raw * self.factor(l);
+            if c.is_finite() && raw <= max_true_cost && c < self.dist[l.index()] {
+                self.set(l.index(), c, raw, NONE);
+                self.heap.push(Entry { cost: c, link: l.raw() });
+            }
+        }
+        while last.len() < destinations.len() {
+            let Some(Entry { cost, link }) = self.heap.pop() else { break };
+            let l = LinkId::new(link);
+            if cost > self.dist[l.index()] {
+                continue; // stale: a cheaper way to this link was found later
+            }
+            let to = ctx.network.link_to(l);
+            if wanted[to.index()] {
+                last.entry(to.raw()).or_insert(link);
+            }
+            let true_cost = self.true_dist[l.index()];
+            for &t in ctx.turns.turns_from(l) {
+                let m = ctx.turns.outgoing(t);
+                let raw = ctx.link_cost(m);
+                if !raw.is_finite() || true_cost + raw > max_true_cost {
+                    continue;
+                }
+                let nd = cost + raw * self.factor(m);
+                if nd < self.dist[m.index()] {
+                    self.set(m.index(), nd, true_cost + raw, link);
+                    self.heap.push(Entry { cost: nd, link: m.raw() });
+                }
+            }
+        }
+        let routes = destinations
+            .iter()
+            .map(|d| {
+                let &end = last.get(&d.raw())?;
+                let mut links = Vec::new();
+                let mut at = end;
+                while at != NONE {
+                    links.push(LinkId::new(at));
+                    at = self.pred[at as usize];
+                }
+                links.reverse();
+                let cost = ctx.route_cost(&links);
+                Some(Route { links, cost, overlap: 0.0 })
+            })
+            .collect();
+        self.clean();
+        routes
+    }
+
     /// The least time to drive from `origin` to `destination` when setting out at
     /// second `departure`, if a link's time depends on when it is entered (S171): the
     /// earliest arrival, found by a search whose labels are arrival times.

@@ -3,35 +3,51 @@
  "bundle": "v1",
  "cases": {
   "amsterdam/base": {
-   "fingerprint": "3d72a19d5a35db5b",
+   "fingerprint": "afbbb8e7bd37ce37",
    "trips": 92412,
-   "completed": 90909,
-   "mean_trip_s": 1480.0556820556822,
+   "completed": 90795,
+   "mean_trip_s": 1489.9329037942618,
    "mode_share_pct": {
-    "bike": 36.70518980219019,
-    "bike_transit": 0.11037527593818984,
-    "car": 31.447214647448384,
-    "car_transit": 0.027052763710340648,
-    "none": 1.229277582997879,
-    "transit": 28.66402631692854,
-    "walk": 1.816863610786478
+    "bike": 36.908626585291955,
+    "bike_transit": 0.09847205990563997,
+    "car": 31.2340388694109,
+    "car_transit": 0.03462753754923603,
+    "none": 1.3461455222265506,
+    "transit": 28.52551616673159,
+    "walk": 1.8525732588841275
    },
-   "loadings": 10,
+   "loadings": 6,
+   "platform": "aarch64-apple-darwin",
+   "version": "0.1.0"
+  },
+  "delft/base": {
+   "fingerprint": "9ddcdf01423c9249",
+   "trips": 40819,
+   "completed": 40694,
+   "mean_trip_s": 1173.2062711947708,
+   "mode_share_pct": {
+    "bike": 23.601754085107427,
+    "car": 41.228349543104926,
+    "none": 0.03674759303265636,
+    "transit": 33.464808055072396,
+    "walk": 1.668340723682599
+   },
+   "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0"
   },
   "lyon/base": {
-   "fingerprint": "b8e209a6c0e2a257",
+   "fingerprint": "98ae09191c6848a2",
    "trips": 94203,
    "completed": 94203,
-   "mean_trip_s": 1494.1807373438214,
+   "mean_trip_s": 1475.814188507797,
    "mode_share_pct": {
-    "bike": 3.08164283515387,
+    "bike": 3.149581223527913,
     "bike_transit": 0.00849229854675541,
-    "car": 42.727938600681505,
-    "car_transit": 0.1815228814368969,
-    "transit": 47.35942592061824,
-    "walk": 6.640977463562732
+    "car": 42.38930819612963,
+    "car_transit": 0.14224600065815313,
+    "transit": 47.75219472840568,
+    "walk": 6.558177552731866
    },
    "loadings": 10,
    "platform": "aarch64-apple-darwin",
@@ -50,17 +66,17 @@
    "version": "0.1.0"
   },
   "paris/base": {
-   "fingerprint": "59d69c436d90681b",
+   "fingerprint": "fa378444e5e4303a",
    "trips": 137194,
    "completed": 137194,
-   "mean_trip_s": 1299.5786404653265,
+   "mean_trip_s": 1301.1353339067307,
    "mode_share_pct": {
-    "bike": 16.916191670189658,
-    "bike_transit": 0.25073982827237346,
-    "car": 11.186349257256149,
+    "bike": 16.70481216379725,
+    "bike_transit": 0.2339752467309066,
+    "car": 11.03328133883406,
     "car_transit": 0.0007288948496289925,
-    "transit": 66.64650057582693,
-    "walk": 4.9994897736052595
+    "transit": 67.05832616586731,
+    "walk": 4.9688761899208425
    },
    "loadings": 10,
    "platform": "aarch64-apple-darwin",

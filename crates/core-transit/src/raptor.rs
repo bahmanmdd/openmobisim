@@ -129,6 +129,10 @@ pub struct RaptorData {
     pattern_run_call: Vec<u32>,
     arrival: Vec<u32>,
     departure: Vec<u32>,
+    /// `departure` again, laid out by position instead of by run: a pattern's departures at
+    /// one stop side by side, for the search for the earliest run there (S267: read run by run,
+    /// that search missed the cache at every step, most of a query's time on Paris).
+    departure_by_pos: Vec<u32>,
     stop_patterns_start: Vec<u32>,
     stop_patterns: Vec<(u32, u32)>,
     footpaths: Footpaths,
@@ -161,6 +165,7 @@ impl RaptorData {
             pattern_run_call: Vec::new(),
             arrival: Vec::new(),
             departure: Vec::new(),
+            departure_by_pos: Vec::new(),
             stop_patterns_start: Vec::new(),
             stop_patterns: Vec::new(),
             footpaths,
@@ -217,6 +222,11 @@ impl RaptorData {
                 self.arrival.push(times.arrival[c]);
                 self.departure.push(times.departure[c]);
             }
+        }
+        let block = &self.departure[pattern.times_start as usize..];
+        for pos in 0..len as usize {
+            self.departure_by_pos
+                .extend((0..runs.len()).map(|rank| block[rank * len as usize + pos]));
         }
         self.pattern_route.push(timetable.run_route(runs[0]));
         self.patterns.push(pattern);
@@ -339,17 +349,34 @@ impl RaptorData {
 
     /// The earliest run of pattern `p` leaving position `pos` at `t` or later.
     fn earliest_run(&self, p: usize, pos: u32, t: u32) -> Option<u32> {
-        let runs = self.patterns[p].runs;
-        let (mut lo, mut hi) = (0u32, runs);
-        while lo < hi {
-            let mid = lo + (hi - lo) / 2;
-            if self.departure[self.time_index(p, mid, pos)] < t {
-                lo = mid + 1;
-            } else {
-                hi = mid;
+        self.earliest_run_below(p, pos, t, self.patterns[p].runs)
+    }
+
+    /// [`Self::earliest_run`] among the runs before run `below`: a pattern's departures at a
+    /// stop never fall from one run to the next, so a binary search over them, side by side.
+    /// Below a run already held, the runs just before it are tried first, one by one: the one
+    /// sought is mostly among them.
+    fn earliest_run_below(&self, p: usize, pos: u32, t: u32, below: u32) -> Option<u32> {
+        let pattern = self.patterns[p];
+        let start = (pattern.times_start + pos * pattern.runs) as usize;
+        let column = &self.departure_by_pos[start..start + below as usize];
+        let mut lo = column.len();
+        if below < pattern.runs {
+            let stop = column.len().saturating_sub(8);
+            while lo > stop && column[lo - 1] >= t {
+                lo -= 1;
             }
+            if lo == stop && lo > 0 && column[lo - 1] >= t {
+                lo = column[..lo].partition_point(|&d| d < t);
+            }
+        } else {
+            lo = column.partition_point(|&d| d < t);
         }
-        (lo < runs && self.departure[self.time_index(p, lo, pos)] != UNKNOWN_TIME).then_some(lo)
+        column.get(lo).is_some_and(|&d| d != UNKNOWN_TIME).then(|| {
+            #[allow(clippy::cast_possible_truncation, reason = "below a run count")]
+            let lo = lo as u32;
+            lo
+        })
     }
 }
 
@@ -542,7 +569,7 @@ impl<'a> Raptor<'a> {
         access: &[(NodeId, u32)],
         egress: &[(NodeId, u32)],
     ) -> Option<Journey> {
-        let found = self.search(access, egress);
+        let found = self.search(access, egress, INF);
         let journey = found.last().map(|&(k, e, at)| self.reconstruct(k, e, at));
         self.finish(egress);
         journey
@@ -556,7 +583,7 @@ impl<'a> Raptor<'a> {
     #[must_use]
     pub fn arrivals(&mut self, access: &[(NodeId, u32)]) -> Vec<u32> {
         self.every_stop = true;
-        let _ = self.search(access, &[]);
+        let _ = self.search(access, &[], INF);
         let out =
             self.best_ridden.iter().map(|&t| if t == INF { UNKNOWN_TIME } else { t }).collect();
         self.every_stop = false;
@@ -570,7 +597,20 @@ impl<'a> Raptor<'a> {
     /// Empty if there is none.
     #[must_use]
     pub fn pareto(&mut self, access: &[(NodeId, u32)], egress: &[(NodeId, u32)]) -> Vec<Journey> {
-        let found = self.search(access, egress);
+        self.pareto_before(access, egress, INF)
+    }
+
+    /// [`Self::pareto`], only the journeys that arrive before `bound` (a second of the day):
+    /// the search prunes everything later, so it costs less (S267: a choice set drops the
+    /// journeys too slow to be offered anyway).
+    #[must_use]
+    pub fn pareto_before(
+        &mut self,
+        access: &[(NodeId, u32)],
+        egress: &[(NodeId, u32)],
+        bound: u32,
+    ) -> Vec<Journey> {
+        let found = self.search(access, egress, bound);
         let journeys = found.iter().map(|&(k, e, at)| self.reconstruct(k, e, at)).collect();
         self.finish(egress);
         journeys
@@ -583,12 +623,13 @@ impl<'a> Raptor<'a> {
         self.reset();
     }
 
-    /// The rounds, and per round that improved the arrival at the destination,
-    /// `(round, egress stop, arrival)`. Leaves the labels for reconstruction.
+    /// The rounds, and per round that improved the arrival at the destination before
+    /// `bound`, `(round, egress stop, arrival)`. Leaves the labels for reconstruction.
     fn search(
         &mut self,
         access: &[(NodeId, u32)],
         egress: &[(NodeId, u32)],
+        bound: u32,
     ) -> Vec<(usize, usize, u32)> {
         let data = self.data;
         for &(s, w) in egress {
@@ -605,7 +646,7 @@ impl<'a> Raptor<'a> {
                 self.mark(i);
             }
         }
-        let mut bound = INF;
+        let mut bound = bound;
         let mut found: Vec<(usize, usize, u32)> = Vec::new();
 
         for k in 1..self.rounds {
@@ -721,10 +762,10 @@ impl<'a> Raptor<'a> {
                     Some((rank, _)) => ready <= data.departure[data.time_index(p, rank, pos)],
                 };
                 if can_do_better {
-                    if let Some(r) = data.earliest_run(p, pos, ready) {
-                        if current.is_none_or(|(rank, _)| r < rank) {
-                            current = Some((r, pos));
-                        }
+                    // A run earlier than the one held, if one can be caught.
+                    let below = current.map_or(pattern.runs, |(rank, _)| rank);
+                    if let Some(r) = data.earliest_run_below(p, pos, ready, below) {
+                        current = Some((r, pos));
                     }
                 }
             }

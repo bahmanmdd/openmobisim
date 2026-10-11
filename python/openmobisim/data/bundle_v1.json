@@ -4,30 +4,46 @@
   "amsterdam": {
    "archive": {
     "name": "amsterdam.zip",
-    "sha256": "a068f7184e3b06afe0db045ff4aa9a24d2a61a2aeebf7534366cb8d3de6afd35",
-    "bytes": 61227006
+    "sha256": "9bb8615b2497424756044fb9050c55f0242d2fde442e9b082fe08f271977e61d",
+    "bytes": 61227075
    },
    "files": {
-    "case.json": "18d3b335da1253117c7f442837b833a569a7ebd76ede5e1fb3a71878b24dc1b8",
+    "case.json": "98fdf4aa6a45fab316bcc47ba870e48d1d1bc55721b09e93c9980e094c241664",
     "demand/classes.csv": "78be829e138a92ef9fc861cab728e3ee8d726bb00b3df8c06ea2264bd7cefbe3",
-    "demand/morning.json": "9b603fabfddac43fb0febe583df291d5de5abf593ecdad15bd3797cdaa5ddd3b",
+    "demand/morning.json": "5364612eb9f7a10b45a32aa2ffc300549358ce61c5f1222f76e701a6873d427f",
     "demand/od.csv": "53d784278f594f6f5c3fdf5fa550aa1f3a94c52d3a20679248244e695948571f",
     "demand/zones.csv": "701dda65648cb8ff174d24a4e303629fcc51aa6af07fef2f997685c9624cc7a4",
     "gtfs.zip": "08d8a401d765762f767dc3097e3d91af7e9b1cb839bb2cd78794e062aa5da3f2",
     "network.osm.pbf": "c775d3f656a37abf433a2536906727e090866ba574bc16a923cbc6bce1d1f7e6"
    }
   },
+  "delft": {
+   "archive": {
+    "name": "delft.zip",
+    "sha256": "30b47a663575f5f74961fc5df6e8d078e50baf0d9df3a314c5bb4bead93184ed",
+    "bytes": 21281322
+   },
+   "files": {
+    "case.json": "537d10b165a77cd676c7bfd566d1efb9d546af8247307750e3535b337b8311d5",
+    "demand/classes.csv": "78be829e138a92ef9fc861cab728e3ee8d726bb00b3df8c06ea2264bd7cefbe3",
+    "demand/morning.json": "444a5c4127cbc311f50e2f61d099f8982c312352a9837d0eb8b126178d4de696",
+    "demand/od.csv": "202d9f33e41b9387bf9a9006ea33b7e80775444437d9b4820d27760ffb71cd11",
+    "demand/zones.csv": "550002390ba78e5e899efea965cdf05eff57a988227dbe43f9ff10817e7a8ec7",
+    "gtfs.zip": "b3c835aba1727bbc9df1fbdfeb8e62771773dd7f3016b3dd08a0aaee97af8c63",
+    "network.osm.pbf": "06a852af0bb4c3047dcb59956682ff34b8228d6291abfda41cd4b70b3f733ed2"
+   }
+  },
   "lyon": {
    "archive": {
     "name": "lyon.zip",
-    "sha256": "49745fe5c4725c79e27afb07abd9e72e210a4970be51afc7715ba242c70c6af6",
-    "bytes": 38232058
+    "sha256": "cb86fffafe74b2687424abc3c1f9953992b02ca7145e4fb4ea266f8e98741a18",
+    "bytes": 38232121
    },
    "files": {
     "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
-    "case.json": "2564a7ffb29d31a85c9ca1df2deeff1773fa445b63c891fd0d7f41d106239098",
+    "case.json": "45e4b20f1003942ed2d715c690927d43b19155015f28d0a687807158324aa673",
     "demand/classes.csv": "51126d2ec9eca94878cddc1703d9b46240fb7560c1f34076053ceed38bdc396d",
-    "demand/morning.json": "46db08288fc25b650c136a7bbdc4a7a281b7f531eb6383f5df276bea208f608d",
+    "demand/morning.json": "a4cdea265477597d5b43f2416f86e3b400bec5ffa6f05b2c4d428943acd4e843",
     "demand/od.csv": "988db6f7c8305ab8459fb799f71d42c9770029cb8d9602e0435f3e1425b122f5",
     "demand/zones.csv": "b2c7821f0afc00c0421aa0a011830540210a58cce796ebd6d39c5210e376caa5",
     "gtfs.zip": "2d440cd9fe94d475155bda7fecc2f1d97e3ca1e748887845307b20342a929a78",
@@ -52,14 +68,14 @@
   "paris": {
    "archive": {
     "name": "paris.zip",
-    "sha256": "24585746d1e1bf0a7b60a1b3fd6f42237acae8cafcec794e22945c8d86df7843",
-    "bytes": 93884313
+    "sha256": "4a5661e8280d21f9754ac38d55671a3dbe7a0af7fcc344b0106e1f71258d8522",
+    "bytes": 93884378
    },
    "files": {
     "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
-    "case.json": "88fd6728c23deb9538015cd27a557b49e52959347bc80051a00b12aa68a62e96",
+    "case.json": "9b02427b4acf8b3f8635e577c9736cff14db18a84db3578db7772d4db4bbe413",
     "demand/classes.csv": "98c133dc7c57e2593e30cc15e76106fb7b0fc788e4d29205ee5f4824eee921f0",
-    "demand/morning.json": "5ced776aaf854632567f0be29803712e4ac6c27e64aa84cef76695f803c345f1",
+    "demand/morning.json": "d328dae1a57e8838f9a4b269f73be2516f666bdecb4d075a8a5879a89f2cc6d6",
     "demand/od.csv": "e11be14f7faf8a1b6e6f40a218a713d06bf2a2f89023fd9a6c5067cc5354ca7d",
     "demand/zones.csv": "13bbd27ac6e1155927bb69556ccbf13a76f46bcb43b73fb6187dc35dfd717e61",
     "gtfs.zip": "7a37bab4acb311508073bd0b397c944af807b49e247d0de23d1834298874bae5",

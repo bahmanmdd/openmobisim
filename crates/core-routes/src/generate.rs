@@ -104,6 +104,25 @@ pub trait RouteSetGenerator: Send + Sync {
     /// is no route. `origin` and `destination` differ.
     fn generate(&self, search: &mut Search<'_>, origin: NodeId, destination: NodeId) -> Vec<Route>;
 
+    /// Whether [`Self::generate_from`] finds the routes from one origin in one search, so that
+    /// [`RouteSets::generate`] hands it each origin's pairs together (S267). False by default:
+    /// the pairs are then handed out one by one, which spreads the work more evenly.
+    fn searches_trees(&self) -> bool {
+        false
+    }
+
+    /// The routes from `origin` to each of `destinations` (distinct, none of them `origin`), in
+    /// their order: one [`Self::generate`] each, unless the method finds them in one search
+    /// ([`Self::searches_trees`]).
+    fn generate_from(
+        &self,
+        search: &mut Search<'_>,
+        origin: NodeId,
+        destinations: &[NodeId],
+    ) -> Vec<Vec<Route>> {
+        destinations.iter().map(|&d| self.generate(search, origin, d)).collect()
+    }
+
     /// Whether the method reads the demand it generates for (see [`Self::with_demand`]).
     /// A run assembles the demand only if it does, so a method that does not costs nothing.
     fn reads_demand(&self) -> bool {
@@ -271,6 +290,24 @@ impl RouteSetGenerator for Shortest {
 
     fn generate(&self, search: &mut Search<'_>, origin: NodeId, destination: NodeId) -> Vec<Route> {
         search.shortest(origin, destination).into_iter().collect()
+    }
+
+    fn searches_trees(&self) -> bool {
+        true
+    }
+
+    /// One search tree for all of them (S267, [`Search::shortest_tree`]).
+    fn generate_from(
+        &self,
+        search: &mut Search<'_>,
+        origin: NodeId,
+        destinations: &[NodeId],
+    ) -> Vec<Vec<Route>> {
+        search
+            .shortest_tree(origin, destinations, f64::INFINITY)
+            .into_iter()
+            .map(|r| r.into_iter().collect())
+            .collect()
     }
 }
 

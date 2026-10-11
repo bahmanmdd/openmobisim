@@ -300,12 +300,42 @@ impl RouteSetGenerator for ShortestFor {
     }
 
     fn generate(&self, search: &mut Search<'_>, origin: NodeId, destination: NodeId) -> Vec<Route> {
-        let key = RouteKey::new(origin, destination);
-        if let Ok(i) = self.bounded.binary_search_by_key(&key, |&(k, _)| k) {
-            search.shortest_within(origin, destination, self.bounded[i].1).into_iter().collect()
-        } else {
-            search.shortest(origin, destination).into_iter().collect()
+        match self.bound(origin, destination) {
+            Some(bound) => search.shortest_within(origin, destination, bound).into_iter().collect(),
+            None => search.shortest(origin, destination).into_iter().collect(),
         }
+    }
+
+    fn searches_trees(&self) -> bool {
+        true
+    }
+
+    /// One search tree for all of them (S267), as far as the loosest of their bounds; a pair's
+    /// route is kept if it is within the pair's own.
+    fn generate_from(
+        &self,
+        search: &mut Search<'_>,
+        origin: NodeId,
+        destinations: &[NodeId],
+    ) -> Vec<Vec<Route>> {
+        let bounds: Vec<f64> =
+            destinations.iter().map(|&d| self.bound(origin, d).unwrap_or(f64::INFINITY)).collect();
+        let widest = bounds.iter().copied().fold(0.0, f64::max);
+        search
+            .shortest_tree(origin, destinations, widest)
+            .into_iter()
+            .zip(bounds)
+            .map(|(route, bound)| route.filter(|r| r.cost <= bound).into_iter().collect())
+            .collect()
+    }
+}
+
+impl ShortestFor {
+    /// The bound in cost a pair is searched within, `None` for a pair searched in full.
+    fn bound(&self, origin: NodeId, destination: NodeId) -> Option<f64> {
+        let key = RouteKey::new(origin, destination);
+        let i = self.bounded.binary_search_by_key(&key, |&(k, _)| k).ok()?;
+        Some(self.bounded[i].1)
     }
 }
 

@@ -59,6 +59,7 @@
 //! query and a search per journey. Parallel in fixed chunks, so results never depend on
 //! the thread count.
 
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use openmobisim_core_choice::{ChoiceBatch, ChoiceError, ChoiceModel};
@@ -435,6 +436,29 @@ pub(crate) struct ReachCand {
 /// One trip's bike parkings in reach, kept once found: see [`Itineraries::bike_reach`].
 pub(crate) type BikeReach = OnceLock<Box<[ReachCand]>>;
 
+/// Park-and-ride's shared drives (S267, [`crate::parking::ParkingDefaults::reach_car_step_s`]),
+/// by road node and step of the day. Searched on one pass's times.
+pub(crate) type CarReach = HashMap<(u32, u64), SharedDrive>;
+
+/// One shared drive (S267): leaving a road node at the middle of a step, to the car parks the
+/// trips leaving there within the step pick.
+pub(crate) struct SharedDrive {
+    /// The car-park nodes searched for, ascending.
+    sought: Box<[u32]>,
+    /// The route to each of them reached within the reach, by node ascending.
+    routes: Box<[(u32, Box<[LinkId]>)]>,
+}
+
+/// A drive along `links` leaving at `dep`, in seconds on `times`: as the search times it.
+fn drive_seconds(times: &LinkTimes, links: &[LinkId], dep: f64) -> f64 {
+    let Some(first) = links.first() else { return 0.0 };
+    let mut t = dep + times.origin_wait_seconds(first.raw(), dep);
+    for l in links {
+        t += times.link_seconds(l.raw(), t);
+    }
+    t - dep
+}
+
 impl<'a> Planner<'a> {
     pub(crate) fn scratch(&self) -> Scratch<'a> {
         Scratch {
@@ -473,6 +497,7 @@ impl<'a> Planner<'a> {
         legs: (Option<&StaticLeg>, Option<&StaticLeg>),
         car_key: Option<RouteKey>,
         bike_reach: Option<&BikeReach>,
+        car_reach: &CarReach,
     ) -> Vec<Alternative> {
         let k = self.parking.map_or(1, |p| p.defaults().candidate_count());
         let vehicles =
@@ -500,12 +525,7 @@ impl<'a> Planner<'a> {
         if offer.transit {
             alts.extend(self.plan_transit(s, n, departure));
         }
-        // Out only for a trip long enough when choosing (A18): nobody drives to a car park for
-        // a 1 km trip. A trip given the mode is offered it at any length.
-        let far_enough = !offer.choosing
-            || self.parking.is_none_or(|p| {
-                ground_distance_metres(origin, destination) >= p.defaults().pr_min_km * 1000.0
-            });
+        let far_enough = self.far_enough(&offer, origin, destination);
         for (shape, kind) in vehicles {
             if let (Some(Shape::Out), true) = (shape, far_enough) {
                 alts.extend(self.plan_out(
@@ -514,13 +534,142 @@ impl<'a> Planner<'a> {
                     departure,
                     destination,
                     kind,
-                    bike_reach,
+                    (bike_reach, car_reach),
                     offer.parking,
                 ));
             }
         }
         self.measure_bike_legs(&mut alts);
         finalise(alts, self.detour_limit, k)
+    }
+
+    /// Whether a trip offered `offer` is offered the ways out through a parking at all: only
+    /// one long enough when choosing (A18; nobody drives to a car park for a 1 km trip). A trip
+    /// given the mode is offered it at any length.
+    fn far_enough(&self, offer: &Offer, origin: LonLat, destination: LonLat) -> bool {
+        !offer.choosing
+            || self.parking.is_none_or(|p| {
+                ground_distance_metres(origin, destination) >= p.defaults().pr_min_km * 1000.0
+            })
+    }
+
+    /// The step of the day a park-and-ride drive leaving at `dep` shares its search in
+    /// (S267, [`crate::parking::ParkingDefaults::reach_car_step_s`]); `None` when each drive
+    /// is searched on its own.
+    fn car_step(&self, dep: f64) -> Option<u64> {
+        let step = self.parking?.defaults().reach_car_step_s;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a step count")]
+        (step > 0.0).then(|| (dep / step).floor() as u64)
+    }
+
+    /// The car parks a park-and-ride trip leaving road node `origin` at `dep` drives to: the
+    /// one its kept itinerary went through (`only`), else its candidates
+    /// ([`Self::car_candidates`]). Their nodes, ascending.
+    fn car_picked(
+        &self,
+        parking: &ParkingSetup,
+        origin: NodeId,
+        dep: f64,
+        destination: LonLat,
+        only: Option<u32>,
+    ) -> Vec<NodeId> {
+        match only {
+            Some(p) => vec![parking.node(p)],
+            None => self.car_candidates(parking, origin, dep, destination),
+        }
+    }
+
+    /// The shared drive (S267) a park-and-ride trip of `n` leaving at `dep` would read, and the
+    /// car parks it needs from it: `None` when drives are not shared, or the trip drives to none.
+    pub(crate) fn car_drive_wanted(
+        &self,
+        n: &TripNodes,
+        dep: f64,
+        destination: LonLat,
+        only: Option<u32>,
+    ) -> Option<((u32, u64), Vec<NodeId>)> {
+        let parking = self.parking?;
+        let slot = self.car_step(dep)?;
+        if n.road_o.is_null() {
+            return None;
+        }
+        let picked = self.car_picked(parking, n.road_o, dep, destination, only);
+        (!picked.is_empty()).then(|| ((n.road_o.raw(), slot), picked))
+    }
+
+    /// Searches the shared drives `wanted` asks for (road node and step, and the car parks
+    /// needed) that `reach` does not hold yet, in parallel (S267): one search per road node and
+    /// step, leaving at the step's middle, to every car park its trips need; a drive held
+    /// already but for fewer car parks is searched again for them all.
+    pub(crate) fn fill_car_reach(
+        &self,
+        wanted: Vec<((u32, u64), Vec<NodeId>)>,
+        reach: &mut CarReach,
+    ) {
+        let Some(parking) = self.parking else { return };
+        let mut by_key: std::collections::BTreeMap<(u32, u64), Vec<u32>> =
+            std::collections::BTreeMap::new();
+        for (key, nodes) in wanted {
+            by_key.entry(key).or_default().extend(nodes.iter().map(|n| n.raw()));
+        }
+        let jobs: Vec<((u32, u64), Vec<u32>)> = by_key
+            .into_iter()
+            .filter_map(|(key, mut nodes)| {
+                nodes.sort_unstable();
+                nodes.dedup();
+                if let Some(held) = reach.get(&key) {
+                    if nodes.iter().all(|n| held.sought.binary_search(n).is_ok()) {
+                        return None;
+                    }
+                    nodes.extend_from_slice(&held.sought);
+                    nodes.sort_unstable();
+                    nodes.dedup();
+                }
+                Some((key, nodes))
+            })
+            .collect();
+        if jobs.is_empty() {
+            return;
+        }
+        let d = parking.defaults();
+        let road = self.car.network;
+        let times = self.times;
+        let wait = |l: u32, t: f64| times.origin_wait_seconds(l, t);
+        let secs = |l: u32, t: f64| times.link_seconds(l, t);
+        let found = par_map(
+            &jobs,
+            16,
+            || (Search::new(self.car), vec![false; road.node_count() as usize]),
+            |(search, mask), ((node, slot), sought)| {
+                #[allow(clippy::cast_precision_loss, reason = "a step count")]
+                let departure = (*slot as f64 + 0.5) * d.reach_car_step_s;
+                for &n in sought {
+                    mask[n as usize] = true;
+                }
+                let mut routes: Vec<(u32, Box<[LinkId]>)> = search
+                    .fastest_routes_to(
+                        NodeId::new(*node),
+                        mask,
+                        sought.len(),
+                        departure,
+                        d.reach_car_s,
+                        &wait,
+                        &secs,
+                    )
+                    .into_iter()
+                    .map(|(to, _, links)| (to.raw(), links.into_boxed_slice()))
+                    .collect();
+                for &n in sought {
+                    mask[n as usize] = false;
+                }
+                routes.sort_unstable_by_key(|r| r.0);
+                SharedDrive {
+                    sought: sought.clone().into_boxed_slice(),
+                    routes: routes.into_boxed_slice(),
+                }
+            },
+        );
+        reach.extend(jobs.into_iter().map(|(key, _)| key).zip(found));
     }
 
     /// The bike parkings a ride from bike node `from` reaches within the reach, as
@@ -627,7 +776,7 @@ impl<'a> Planner<'a> {
         departure: u32,
         destination: LonLat,
         kind: ParkingKind,
-        bike_reach: Option<&BikeReach>,
+        (bike_reach, car_reach): (Option<&BikeReach>, &CarReach),
         only: Option<u32>,
     ) -> Vec<Alternative> {
         let Some(parking) = self.parking else { return Vec::new() };
@@ -642,44 +791,64 @@ impl<'a> Planner<'a> {
                 // The candidates are picked on free-flow times to every car park, searched once
                 // per run (S209); only their routes are searched on the expected times,
                 // by one search that stops once it has reached them all.
-                let picked = match only {
-                    Some(p) => vec![parking.node(p)],
-                    None => self.car_candidates(parking, n.road_o, dep, destination),
-                };
+                let picked = self.car_picked(parking, n.road_o, dep, destination, only);
                 if picked.is_empty() {
                     return Vec::new();
                 }
                 let road = self.car.network;
-                let mut mask = std::mem::take(&mut s.car_mask);
-                mask.resize(road.node_count() as usize, false);
-                for node in &picked {
-                    mask[node.index()] = true;
+                // A drive shared by the trips leaving this node within a step (S267), if it was
+                // searched for every car park picked here: its routes to them, each timed at
+                // this trip's departure.
+                let shared = self
+                    .car_step(dep)
+                    .and_then(|slot| car_reach.get(&(n.road_o.raw(), slot)))
+                    .filter(|drive| {
+                        picked.iter().all(|node| drive.sought.binary_search(&node.raw()).is_ok())
+                    });
+                if let Some(drive) = shared {
+                    let routes = &drive.routes;
+                    picked
+                        .iter()
+                        .filter_map(|node| {
+                            let i = routes.binary_search_by_key(&node.raw(), |r| r.0).ok()?;
+                            let links = &routes[i].1;
+                            let t = drive_seconds(self.times, links, dep);
+                            let m = links.iter().map(|&l| road.link_length(l).get()).sum();
+                            (t <= d.reach_car_s).then(|| (*node, t, links.to_vec(), m))
+                        })
+                        .collect()
+                } else {
+                    let mut mask = std::mem::take(&mut s.car_mask);
+                    mask.resize(road.node_count() as usize, false);
+                    for node in &picked {
+                        mask[node.index()] = true;
+                    }
+                    let times = self.times;
+                    let wait = |l: u32, t: f64| times.origin_wait_seconds(l, t);
+                    let secs = |l: u32, t: f64| times.link_seconds(l, t);
+                    let found = s
+                        .car(self.car)
+                        .fastest_routes_to(
+                            n.road_o,
+                            &mask,
+                            picked.len(),
+                            dep,
+                            d.reach_car_s,
+                            &wait,
+                            &secs,
+                        )
+                        .into_iter()
+                        .map(|(node, t, links)| {
+                            let m = links.iter().map(|&l| road.link_length(l).get()).sum();
+                            (node, t, links, m)
+                        })
+                        .collect();
+                    for node in &picked {
+                        mask[node.index()] = false;
+                    }
+                    s.car_mask = mask;
+                    found
                 }
-                let times = self.times;
-                let wait = |l: u32, t: f64| times.origin_wait_seconds(l, t);
-                let secs = |l: u32, t: f64| times.link_seconds(l, t);
-                let found = s
-                    .car(self.car)
-                    .fastest_routes_to(
-                        n.road_o,
-                        &mask,
-                        picked.len(),
-                        dep,
-                        d.reach_car_s,
-                        &wait,
-                        &secs,
-                    )
-                    .into_iter()
-                    .map(|(node, t, links)| {
-                        let m = links.iter().map(|&l| road.link_length(l).get()).sum();
-                        (node, t, links, m)
-                    })
-                    .collect();
-                for node in &picked {
-                    mask[node.index()] = false;
-                }
-                s.car_mask = mask;
-                found
             }
             ParkingKind::Bike => {
                 let Some((_, ctx)) = self.bike else {
@@ -768,9 +937,24 @@ impl<'a> Planner<'a> {
             return Vec::new();
         }
         let transfer = transit.transfer_s();
-        let mut alts = Vec::new();
+        let mut alts: Vec<Alternative> = Vec::new();
+        // The fastest so far, in seconds door to door: the choice set drops any itinerary of
+        // this mode more than the detour limit slower than its best ([`finalise`]), so each
+        // station's search stops there (S267; a second later, against rounding).
+        let mut best = f64::INFINITY;
         for c in tried {
             let c = &cands[c];
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a second of the day"
+            )]
+            let before = if self.detour_limit > 0.0 && best.is_finite() {
+                (dep + best * (1.0 + self.detour_limit)).floor().min(f64::from(u32::MAX - 2)) as u32
+                    + 2
+            } else {
+                u32::MAX
+            };
             #[allow(
                 clippy::cast_possible_truncation,
                 clippy::cast_sign_loss,
@@ -782,7 +966,12 @@ impl<'a> Planner<'a> {
                 .iter()
                 .map(|&(stop, w)| (stop, parked.saturating_add(w).saturating_add(transfer)))
                 .collect();
-            for j in ts.raptor.pareto(&access, &egress).into_iter().filter(|j| !is_loop(j)) {
+            for j in ts
+                .raptor
+                .pareto_before(&access, &egress, before)
+                .into_iter()
+                .filter(|j| !is_loop(j))
+            {
                 let mut a = self.transit_part(&j, parked);
                 a.shape = Shape::Out;
                 a.mode = transit_mode(kind);
@@ -793,6 +982,7 @@ impl<'a> Planner<'a> {
                 a.parking_s = c.parking_s;
                 a.vehicle_departure = dep;
                 a.total_s = f64::from(j.arrival) - dep;
+                best = best.min(a.total_s);
                 alts.push(a);
             }
         }
@@ -1899,7 +2089,7 @@ impl Itineraries {
                     rng.unit(DrawAddress::from_pair(traveller, iteration | GAP_SAMPLE_SALT)) < share
                 })
         };
-        let plan = |s: &mut Scratch<'a>, p: usize, offer: Offer| {
+        let plan = |s: &mut Scratch<'a>, p: usize, offer: Offer, car_reach: &CarReach| {
             if offer.is_empty() {
                 return Vec::new();
             }
@@ -1915,7 +2105,26 @@ impl Itineraries {
                 (bike.as_ref(), walk.as_ref()),
                 self.car_keys[p],
                 self.bike_reach.get(p),
+                car_reach,
             )
+        };
+        // The drives park-and-ride trips share (S267), searched on this pass's times as the
+        // trips that need them come up, outside the parallel planning.
+        let mut car_reach = CarReach::new();
+        let car_reach_keys = |jobs: &[(usize, Offer)]| -> Vec<((u32, u64), Vec<NodeId>)> {
+            jobs.iter()
+                .filter_map(|&(p, offer)| {
+                    let trip = self.trips[p];
+                    let (origin, destination) = (trips.origin(trip), trips.destination(trip));
+                    let out = matches!(offer.car_transit, Some(Shape::Out))
+                        && planner.far_enough(&offer, origin, destination);
+                    if !out {
+                        return None;
+                    }
+                    let dep = f64::from(trips.departure(trip).get());
+                    planner.car_drive_wanted(&self.nodes[p], dep, destination, offer.parking)
+                })
+                .collect()
         };
         for round in &self.rounds {
             // What each trip is offered, from the choices before it. A trip that keeps its
@@ -1943,8 +2152,13 @@ impl Itineraries {
                 .collect();
             let jobs: Vec<(usize, Offer)> =
                 work.iter().zip(&first).map(|(&(p, _), &offer)| (p, offer)).collect();
-            let mut sets: Vec<Vec<Alternative>> =
-                par_map(&jobs, SCRATCH_CHUNK, || planner.scratch(), |s, &(p, o)| plan(s, p, o));
+            planner.fill_car_reach(car_reach_keys(&jobs), &mut car_reach);
+            let mut sets: Vec<Vec<Alternative>> = par_map(
+                &jobs,
+                SCRATCH_CHUNK,
+                || planner.scratch(),
+                |s, &(p, o)| plan(s, p, o, &car_reach),
+            );
             // Those whose alternative is gone must choose again: among all they are offered.
             let again: Vec<usize> = (0..work.len())
                 .filter(|&w| {
@@ -1955,8 +2169,13 @@ impl Itineraries {
                 })
                 .collect();
             let redo: Vec<(usize, Offer)> = again.iter().map(|&w| work[w]).collect();
-            let replanned =
-                par_map(&redo, SCRATCH_CHUNK, || planner.scratch(), |s, &(p, o)| plan(s, p, o));
+            planner.fill_car_reach(car_reach_keys(&redo), &mut car_reach);
+            let replanned = par_map(
+                &redo,
+                SCRATCH_CHUNK,
+                || planner.scratch(),
+                |s, &(p, o)| plan(s, p, o, &car_reach),
+            );
             for (w, set) in again.into_iter().zip(replanned) {
                 sets[w] = set;
             }

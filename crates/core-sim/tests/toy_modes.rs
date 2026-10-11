@@ -248,6 +248,48 @@ fn mc1_the_deterministic_model_takes_the_bike() {
     assert!(r.bike_link_bins.as_ref().is_none_or(|b| !b.is_empty()));
 }
 
+/// **Shared drives** (S267, `reach_car_step_s`): at free flow a drive's time does not depend on
+/// when it leaves, so park-and-ride trips sharing one search per road node and step are offered
+/// and choose exactly what they are when each searches its own.
+#[test]
+fn mc1_a_shared_drive_at_free_flow_is_the_drive_searched_alone() {
+    let t = toy();
+    let rows = || -> Vec<RawTrip> {
+        (0..40).map(|i| t.trip(&format!("a{i}"), 0, ("W", "N1"), 45 * i, None)).collect()
+    };
+    let logit = || -> Arc<dyn openmobisim_core_choice::ChoiceModel> {
+        Arc::new(Logit::from_options(&Options::new()).unwrap())
+    };
+    let alone = t.run(rows(), &Setup { model: Some(logit()), ..Setup::default() });
+    let mut d = ParkingDefaults::SHIPPED;
+    d.pr_min_km = 0.0;
+    d.reach_car_step_s = 600.0;
+    let parking = Arc::new(
+        ParkingSetup::new(
+            &toy_network_parkings(),
+            t.road.clone(),
+            t.layers.bike.as_ref(),
+            &t.transit,
+            d,
+        )
+        .expect("the toy's parkings"),
+    );
+    let shared = t
+        .build(rows(), &Setup { model: Some(logit()), ..Setup::default() })
+        .with_parking(parking)
+        .execute(&mut Diagnostics::new());
+    let (a, b) = (alone.itineraries.as_ref().unwrap(), shared.itineraries.as_ref().unwrap());
+    let full = a.alternatives.iter().filter(|&&n| n == 5).count();
+    assert!(full > 10, "{full} trips offered two park-and-ride among five: {:?}", a.alternatives);
+    assert_eq!(a.alternatives, b.alternatives);
+    assert_eq!(a.mode, b.mode);
+    assert_eq!(a.parking, b.parking);
+    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(&a.expected_s), bits(&b.expected_s));
+    assert_eq!(bits(&a.probability), bits(&b.probability));
+    assert_eq!(bits(&a.logsum), bits(&b.logsum));
+}
+
 #[test]
 fn mc1_the_logit_and_the_nested_logit_match_their_closed_forms() {
     let t = toy();

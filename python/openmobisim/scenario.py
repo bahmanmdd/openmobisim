@@ -1571,13 +1571,17 @@ class Scenario:
             parking_options: Parking's parameters by name, each replacing its default:
                 ``walk_max_s`` (300: the longest walk from a parking to a stop),
                 ``reach_car_s`` (1800) and ``reach_bike_s`` (1200: the longest drive or ride
-                to a parking), ``candidates`` (5: the most parkings a trip chooses among),
+                to a parking), ``candidates`` (3: the most parkings a trip chooses among),
                 ``rank_speed_km_h`` (30: ranks candidates before they are tried),
                 ``floor_car_s`` (120) and ``floor_bike_s`` (30: the time to park when there
                 is room, and to fetch), ``slope_car_s`` (600) and ``slope_bike_s`` (180: what
                 a parking full for a whole time bin adds), ``snap_m`` (300), ``bin_s``
                 (900) and ``pr_min_km`` (3: the shortest trip, as the crow flies, that mode
                 choice offers park-and-ride and bike-and-ride to). Uncalibrated defaults.
+                For compute, ``reach_car_step_s`` (0: each park-and-ride trip searches its
+                drive to the car parks at its own departure; above 0, the trips leaving one
+                road node within one step of this many seconds share one search, made at the
+                step's middle, each trip's drive timed at its own departure).
                 Unknown names and out-of-range values are refused.
             modes: **Mode choice.** The modes a trip without a stated mode chooses among,
                 with its route, by ``choice_model``: any of ``"walk"``, ``"bike"``,

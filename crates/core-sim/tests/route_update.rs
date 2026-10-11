@@ -234,6 +234,25 @@ fn a_road_that_only_pays_under_congestion_enters_the_set_and_the_gap_to_the_netw
     assert_eq!(sets.update(), "best_response;max_routes=10;searches=1;slack=0.02");
 }
 
+/// **Search trees** (S267): the same road found by one tree per origin and rounded departure,
+/// counted as the pairs searched for, so the stopping rule weighs them alike; the run as good.
+#[test]
+fn search_trees_find_the_road_that_only_pays_under_congestion_too() {
+    let per_pair = Setup::new(1_500).go();
+    let mut setup = Setup::new(1_500);
+    setup.update = ("best_response", vec![("tree_step_s", 900.0)]);
+    let trees = setup.go();
+    let first = &trees.iterations[0];
+    assert_eq!((first.route_searches, first.routes_added), (1, 1), "one pair, one route");
+    let sets = trees.route_sets.as_ref().expect("sets");
+    assert_eq!(sets.route_count(), 2, "the fast road and the slow one");
+    assert_eq!(sets.update(), "best_response;max_routes=10;searches=1;slack=0.02;tree_step_s=900");
+    assert!(trees.iterations[1..].iter().all(|it| it.routes_added == 0));
+    let (a, b) = (trees.total_travel_time.get(), per_pair.total_travel_time.get());
+    assert!((a - b).abs() < 0.05 * b, "{a} with trees against {b} without");
+    assert!(trees.iterations.last().unwrap().gap_network < GAP_ACCEPTABLE);
+}
+
 #[test]
 fn the_gap_against_the_set_is_that_of_the_set_as_grown() {
     // Iteration 0 chose on free flow: everyone is on the fast road, jammed. The update then adds
@@ -382,6 +401,9 @@ fn updates_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
         ("slack", -0.1),
         ("slack", 1.5),
         ("slack", f64::NAN),
+        ("tree_step_s", -1.0),
+        ("tree_step_s", 1.5),
+        ("tree_step_s", 86_401.0),
     ] {
         let e =
             route_update::update("best_response", &options(&[(name, bad)])).err().expect("refused");
@@ -654,7 +676,7 @@ fn a_pair_within_the_slack_of_free_flow_is_not_searched_and_one_beyond_it_is() {
             &network,
             &EntryTables { entry: recorder.finish(), origin_wait: empty },
         );
-        let update = BestResponse { searches: 1, max_routes: 10, slack };
+        let update = BestResponse { searches: 1, max_routes: 10, slack, tree_step_s: 0 };
         let found = update.update(&UpdateContext {
             network: &network,
             turns: &turns,
