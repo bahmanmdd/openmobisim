@@ -9,6 +9,7 @@ base 11.72 min a trip, congested 20.86 min (S225, S229); Nguyen–Dupuis 53.43 m
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -163,7 +164,10 @@ def test_a_check_compares_with_the_reference_and_the_command_line_runs_it(
     assert "fingerprint " in out  # not the reference's: per-link results asked for, for the map
     folder = tmp_path / "openmobisim-runs" / "line-base"
     assert (folder / "kpis.parquet").exists()
-    assert (folder / "map.html").exists() and (folder / "summary.html").exists()
+    assert (folder / "map.html").exists()
+    # The summary page needs matplotlib (the viz extra), which a bare install lacks.
+    has_matplotlib = importlib.util.find_spec("matplotlib") is not None
+    assert (folder / "summary.html").exists() == has_matplotlib
     assert (folder / "map.html").resolve().as_uri() in out  # a link to click
     assert main(["run", "line", "--root", str(made_up), "--no-pages", "--output", "plain"]) == 0
     assert f"fingerprint {got['fingerprint']}" in capsys.readouterr().out  # the reference's
