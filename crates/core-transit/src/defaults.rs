@@ -29,6 +29,14 @@ pub struct TransitDefaults {
     /// <https://ideas.repec.org/a/kap/transp/v41y2014i1p193-210.html>): the limit leaves room
     /// for the few who walk further.*
     pub access_walk_max_s: f64,
+    /// The longest a journey with transit may take door to door, in seconds, to be offered
+    /// (S269): a journey that would take longer is no alternative, as a walk past its limit is
+    /// not. Without it, a timetable's late or night service offered a morning traveller a
+    /// journey of 18 hours that ended after midnight (Delft's riders from its stations, S269).
+    ///
+    /// *An assumption: a choice-set limit, not a preference (the journey's minutes are weighed
+    /// by the choice model); two hours is more than a city's morning trip by transit takes.*
+    pub journey_max_s: f64,
     /// The longest walk between two stops in a change, in seconds (300 s is
     /// 400 m).
     ///
@@ -72,6 +80,7 @@ impl TransitDefaults {
         board_slack_s: 60,
         max_rides: 8,
         access_walk_max_s: 1800.0,
+        journey_max_s: 7200.0,
         transfer_walk_max_s: 300.0,
         stop_walk_snap_m: 300.0,
         stop_transfer_s: 0.0,
@@ -107,6 +116,7 @@ impl TransitDefaults {
             ("board_slack_s", f64::from(self.board_slack_s)),
             ("max_rides", f64::from(self.max_rides)),
             ("access_walk_max_s", self.access_walk_max_s),
+            ("journey_max_s", self.journey_max_s),
             ("transfer_walk_max_s", self.transfer_walk_max_s),
             ("stop_walk_snap_m", self.stop_walk_snap_m),
             ("stop_transfer_s", self.stop_transfer_s),
@@ -118,10 +128,11 @@ impl TransitDefaults {
     }
 
     /// The names of the options, as [`Self::from_options`] takes them: the fields'.
-    pub const NAMES: [&'static str; 10] = [
+    pub const NAMES: [&'static str; 11] = [
         "board_slack_s",
         "max_rides",
         "access_walk_max_s",
+        "journey_max_s",
         "transfer_walk_max_s",
         "stop_walk_snap_m",
         "stop_transfer_s",
@@ -173,6 +184,7 @@ impl TransitDefaults {
                         .ok_or_else(|| bad("must be a whole number of at least 1"))?;
                 }
                 "access_walk_max_s" => d.access_walk_max_s = v,
+                "journey_max_s" => d.journey_max_s = v,
                 "transfer_walk_max_s" => d.transfer_walk_max_s = v,
                 "stop_walk_snap_m" => d.stop_walk_snap_m = v,
                 "stop_transfer_s" => d.stop_transfer_s = v,

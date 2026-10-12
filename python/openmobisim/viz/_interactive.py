@@ -177,13 +177,15 @@ def _add_layers(
         np.add.at(total, lb.links().astype(np.int64), lb.pcu())
         coords, offsets = layer.link_geometry()
         pts = geo.project_lonlat(coords, lon0, lat0)
-        used = np.flatnonzero(total > 0)
+        # Every link of the layer (S269: the unused ones drawn faint, as the road network is),
+        # in the box if there is one.
+        shown = np.arange(int(layer.link_count))
         if box is not None:
             lo_box, hi_box = _link_boxes(pts, offsets)
-            used = used[((hi_box[used] >= box[0]) & (lo_box[used] <= box[1])).all(axis=1)]
-        if not len(used):
+            shown = shown[((hi_box[shown] >= box[0]) & (lo_box[shown] <= box[1])).all(axis=1)]
+        if not len(shown) or not (total[shown] > 0).any():
             continue
-        parts = [pts[int(offsets[i]) : int(offsets[i + 1])] for i in used]
+        parts = [pts[int(offsets[i]) : int(offsets[i + 1])] for i in shown]
         counts = np.array([len(x) for x in parts])
         q = _quantise(np.concatenate(parts))
         delta = np.diff(q, axis=0, prepend=np.zeros((1, 2), dtype=np.int64))
@@ -191,8 +193,11 @@ def _add_layers(
         blob.add(prefix + "vs", np.concatenate([[0], np.cumsum(counts)]), "u32")
         blob.add(prefix + "dx", delta[:, 0], "i32")
         blob.add(prefix + "dy", delta[:, 1], "i32")
-        blob.add(prefix + "v", total[used], "f32")
-        layers[name] = {"links": int(len(used))}
+        blob.add(prefix + "v", total[shown], "f32")
+        blob.add(prefix + "l", np.asarray(layer.link_length_m())[shown], "f32")
+        if name == "bike":
+            blob.add("bi", np.asarray(layer.link_infrastructure())[shown], "u8")
+        layers[name] = {"links": int(len(shown)), "used": int((total[shown] > 0).sum())}
     return layers
 
 

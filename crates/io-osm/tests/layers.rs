@@ -162,7 +162,7 @@ fn bike_speeds_follow_the_infrastructure() {
 }
 
 #[test]
-fn the_walk_layer_walks_every_street_both_ways_but_not_the_motorway_or_cycleway() {
+fn the_walk_layer_walks_every_street_and_the_cycleway_both_ways_but_not_the_motorway() {
     let (out, _) = import(&neighbourhood(), uncontracted());
     let walk = out.walk.expect("asked for").network;
     let g = walk.network();
@@ -170,7 +170,7 @@ fn the_walk_layer_walks_every_street_both_ways_but_not_the_motorway_or_cycleway(
         assert!(has(g, a, b) && has(g, b, a), "{a} ↔ {b}: {:?}", pairs(g));
     }
     assert!(!has(g, "7", "8"), "no motorway");
-    assert!(!has(g, "3", "6"), "no cycleway");
+    assert!(has(g, "3", "6") && has(g, "6", "3"), "the cycleway, untagged `foot` (S269)");
     assert!(!has(g, "5", "9"), "the bike-only road is closed to walkers");
     let speed = StaticLayerDefaults::SHIPPED.walk_km_h;
     assert!(LinkId::iter_space(g.link_count()).all(|l| (walk.speed(l) * 3.6 - speed).abs() < 1e-9));
@@ -204,8 +204,8 @@ fn the_layer_report_counts_its_ways_and_its_dedicated_length() {
     assert_eq!(bike.ways_kept, 5);
     assert!(bike.dedicated_length_m > 0 && bike.dedicated_length_m < bike.length_m);
     let walk = out.walk.unwrap().report;
-    // 100, 101, 102, 104: not the cycleway, the motorway or the bike-only road.
-    assert_eq!(walk.ways_kept, 4);
+    // 100 to 104: not the motorway or the bike-only road.
+    assert_eq!(walk.ways_kept, 5);
     assert_eq!(walk.dedicated_length_m, 0);
 }
 

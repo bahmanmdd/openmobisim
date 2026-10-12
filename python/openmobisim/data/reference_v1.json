@@ -3,52 +3,51 @@
  "bundle": "v1",
  "cases": {
   "amsterdam/base": {
-   "fingerprint": "5cd073fd3ba8d55b",
+   "fingerprint": "faa58be893db5ff9",
    "trips": 97072,
-   "completed": 95496,
-   "mean_trip_s": 1565.5445463684343,
+   "completed": 96318,
+   "mean_trip_s": 1540.332066695737,
    "mode_share_pct": {
-    "bike": 35.37271303774518,
-    "bike_transit": 0.08550354376133179,
-    "car": 34.25086533706939,
-    "car_transit": 0.05974946431514752,
-    "none": 1.2485577715510137,
-    "transit": 27.094321740563704,
-    "walk": 1.8882891049942312
+    "bike": 35.46336739739575,
+    "bike_transit": 0.12671007087522665,
+    "car": 34.346670512609194,
+    "car_transit": 0.06490028020438438,
+    "none": 0.7077221031811439,
+    "transit": 27.65267018295698,
+    "walk": 1.63795945277732
    },
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0"
   },
   "delft/base": {
-   "fingerprint": "2514e3ef089eef38",
+   "fingerprint": "8149d61c6082bfdd",
    "trips": 53298,
-   "completed": 53155,
-   "mean_trip_s": 1544.7102436271282,
+   "completed": 53298,
+   "mean_trip_s": 1439.6781117490336,
    "mode_share_pct": {
-    "bike": 18.2014334496604,
-    "bike_transit": 0.001876243010994784,
-    "car": 54.83695448234455,
-    "none": 0.08818342151675485,
-    "transit": 25.447483958122255,
-    "walk": 1.4240684453450412
+    "bike": 18.19017599159443,
+    "bike_transit": 0.003752486021989568,
+    "car": 54.844459454388534,
+    "transit": 24.224173514953655,
+    "walk": 2.73743855304139
    },
    "loadings": 9,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0"
   },
   "lyon/base": {
-   "fingerprint": "d555d6b64e7b04cb",
+   "fingerprint": "c2f1c6b21a8f8428",
    "trips": 99626,
    "completed": 99626,
-   "mean_trip_s": 1971.5278541746131,
+   "mean_trip_s": 1971.7538393592033,
    "mode_share_pct": {
-    "bike": 3.3153995944833676,
-    "bike_transit": 0.010037540401100114,
-    "car": 44.60080701824825,
-    "car_transit": 0.16060064641760183,
-    "transit": 45.42388533113846,
-    "walk": 6.489269869311224
+    "bike": 3.428823801015799,
+    "bike_transit": 0.006022524240660069,
+    "car": 44.71222371670046,
+    "car_transit": 0.18167948125991207,
+    "transit": 44.823640415152674,
+    "walk": 6.8476100616304985
    },
    "loadings": 10,
    "platform": "aarch64-apple-darwin",
@@ -67,17 +66,17 @@
    "version": "0.1.0"
   },
   "paris/base": {
-   "fingerprint": "89eda80aa3cee027",
+   "fingerprint": "6799378e3977a0fc",
    "trips": 142695,
    "completed": 142695,
-   "mean_trip_s": 1559.4628893794456,
+   "mean_trip_s": 1555.52441921581,
    "mode_share_pct": {
-    "bike": 16.314516976768633,
-    "bike_transit": 0.19762430358456848,
-    "car": 15.887031781071515,
-    "car_transit": 0.0014015908055643154,
-    "transit": 62.902694558323695,
-    "walk": 4.696730789446021
+    "bike": 16.428045832019343,
+    "bike_transit": 0.22145134727916185,
+    "car": 15.89474053050212,
+    "car_transit": 0.003503977013910789,
+    "transit": 62.72118854900312,
+    "walk": 4.731069764182347
    },
    "loadings": 5,
    "platform": "aarch64-apple-darwin",

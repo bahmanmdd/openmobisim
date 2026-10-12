@@ -109,7 +109,9 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
         }
         // The mode shares, by the trips the travellers stand for, when trips chose (M5).
         let choosing = result.itineraries.as_ref().is_some_and(|it| it.choosing.contains(&true));
-        let weighted: f64 = result.by_mode.iter().map(|m| m.weighted_trips).sum();
+        // Over all people, those with no mode to take included (S269).
+        let weighted: f64 = result.by_mode.iter().map(|m| m.weighted_trips).sum::<f64>()
+            + result.no_mode.weighted_trips;
         for mode in Mode::ALL {
             let m = &result.by_mode[mode.index()];
             if m.completion.total_trips == 0 {
@@ -132,7 +134,8 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
     let c = &result.completion;
     // The people the trips stand for (S232): `total_travel_time_s` counts people, the trip
     // counts count simulated trips, so a mean trip is the former over `completed_people`.
-    let people: f64 = result.by_mode.iter().map(|m| m.weighted_trips).sum();
+    let people: f64 = result.by_mode.iter().map(|m| m.weighted_trips).sum::<f64>()
+        + result.no_mode.weighted_trips;
     let completed_people: f64 = result.by_mode.iter().map(|m| m.weighted_completed).sum();
     if result.iterations.len() <= 1 {
         let mut rows = vec![

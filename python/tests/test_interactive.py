@@ -331,8 +331,11 @@ def test_the_page_carries_each_layer_the_run_has_and_shows_only_road_traffic_at_
     assert len(a["pc"]) == len(run.parking_places()["parking_id"])
     assert (a["po"] >= 0).all() and a["pv"].sum() == 1  # one bike parking in the toy's three
     bike = run.link_bins("bike")
-    assert len(a["bv"]) == len(set(bike.links().tolist())) and a["bvs"][-1] == len(a["bdx"])
+    # Every bike link (S269: the unused ones drawn faint), the used ones those with traffic.
+    assert len(a["bv"]) == run.network.layer("bike").link_count and a["bvs"][-1] == len(a["bdx"])
+    assert (a["bv"] > 0).sum() == len(set(bike.links().tolist())) == meta["layers"]["bike"]["used"]
     assert np.isclose(a["bv"].sum(), bike.pcu().sum())
+    assert len(a["bi"]) == len(a["bv"]) and len(a["bl"]) == len(a["bv"])
     text = (tmp_path / "map.html").read_text(encoding="utf-8")
     assert "ly: { road: true, transit: false, parking: false, bike: false, walk: false }" in text
     # A run with none of them carries none.

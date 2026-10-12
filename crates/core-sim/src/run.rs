@@ -175,6 +175,12 @@ pub struct ModeTotals {
     pub weighted_trips: f64,
     /// Its completed trips weighted the same way: the people who arrived (S232).
     pub weighted_completed: f64,
+    /// Its trips still under way at the end, weighted the same way (S269).
+    pub weighted_truncated: f64,
+    /// Its trips that were never simulated (no vehicle, no feasible path, the mode not
+    /// available), weighted the same way (S269): with the completed and the truncated, all of
+    /// its people.
+    pub weighted_not_run: f64,
 }
 
 /// Why a run could not finish.
@@ -248,9 +254,12 @@ pub struct RunResult {
     /// Whether the strategy stopped before its most iterations because it had
     /// converged.
     pub converged: bool,
-    /// The outcomes by mode, in [`Mode::ALL`] order (S195); they add up to
-    /// [`Self::completion`] and [`Self::total_travel_time`].
+    /// The outcomes by mode, in [`Mode::ALL`] order (S195); with [`Self::no_mode`] they add up
+    /// to [`Self::completion`] and [`Self::total_travel_time`].
     pub by_mode: [ModeTotals; Mode::COUNT],
+    /// The trips that chose their mode and had none to choose (S269: counted under the car
+    /// before, a trip's stated mode).
+    pub no_mode: ModeTotals,
     /// The bike layer's per-link, per-time-bin results, when per-link results
     /// were asked for and some bike trip ran (S195); `pcu` there counts
     /// travellers.
@@ -1544,18 +1553,26 @@ impl Run {
             Arc::try_unwrap(route_sets).unwrap_or_else(|shared| RouteSets::clone(&shared));
         // The per-link table is the user's only if they asked for it.
         let link_bins = if self.link_bin_seconds.is_some() { loaded.link_bins } else { None };
-        // Each trip under the mode it took: its choice (M5), else its stated mode.
-        let taken: Vec<Mode> = (0..total_trips)
+        // Each trip under the mode it took: its choice (M5), none if it chose and had none to
+        // choose (S269), else its stated mode.
+        let taken: Vec<Option<Mode>> = (0..total_trips)
             .map(|i| {
                 let trip = TripId::new(i);
-                itineraries
-                    .as_ref()
-                    .zip(chosen.as_ref())
-                    .and_then(|(it, c)| it.position(trip).and_then(|p| c.alt[p].as_ref()))
-                    .map_or_else(|| self.trips.mode(trip), |a| a.mode)
+                match itineraries.as_ref().zip(chosen.as_ref()) {
+                    Some((it, c)) => match it.position(trip) {
+                        Some(p) => match c.alt[p].as_ref() {
+                            Some(a) => Some(a.mode),
+                            // A stated mode stays the trip's mode, whatever became of it.
+                            None if !it.chooses(p) => Some(self.trips.mode(trip)),
+                            None => None,
+                        },
+                        None => Some(self.trips.mode(trip)),
+                    },
+                    None => Some(self.trips.mode(trip)),
+                }
             })
             .collect();
-        let by_mode = mode_totals(&loaded.events, &self.trips, &self.travellers, &taken);
+        let (by_mode, no_mode) = mode_totals(&loaded.events, &self.trips, &self.travellers, &taken);
         let [bike_link_bins, walk_link_bins] = loaded.layer_bins;
         let transit = loaded.transit;
         let itinerary_result = match (&itineraries, &chosen) {
@@ -1584,6 +1601,7 @@ impl Run {
             iterations: reports,
             converged,
             by_mode,
+            no_mode,
             bike_link_bins,
             walk_link_bins,
             transit,
@@ -2683,39 +2701,59 @@ fn completed_people(events: &[EventRow], trips: &Trips, travellers: &Travellers)
 /// Each mode's outcomes, from the events of a loading (one per trip) and the
 /// trips' departures (S195): the same travel time a trip adds to the run's
 /// total, filed under its mode.
+/// Each mode's outcomes, and those of the trips with no mode (S269).
 fn mode_totals(
     events: &[EventRow],
     trips: &Trips,
     travellers: &Travellers,
-    taken: &[Mode],
-) -> [ModeTotals; Mode::COUNT] {
+    taken: &[Option<Mode>],
+) -> ([ModeTotals; Mode::COUNT], ModeTotals) {
     let mut out = [ModeTotals::default(); Mode::COUNT];
+    let mut none = ModeTotals::default();
     for raw in 0..trips.len() {
         let trip = TripId::new(raw);
-        let totals = &mut out[taken[trip.index()].index()];
+        let totals = match taken[trip.index()] {
+            Some(m) => &mut out[m.index()],
+            None => &mut none,
+        };
         totals.completion.total_trips += 1;
         totals.weighted_trips += f64::from(travellers.weight(trips.traveller(trip)));
     }
     for e in events {
         let trip = TripId::new(e.entity_id);
-        let totals = &mut out[taken[trip.index()].index()];
+        let totals = match taken[trip.index()] {
+            Some(m) => &mut out[m.index()],
+            None => &mut none,
+        };
+        let weight = f64::from(travellers.weight(trips.traveller(trip)));
         let c = &mut totals.completion;
         match e.event_type {
             EventType::TripCompleted => {
                 c.completed += 1;
-                let weight = travellers.weight(trips.traveller(trip));
-                totals.weighted_completed += f64::from(weight);
+                totals.weighted_completed += weight;
                 totals.total_travel_time += (Duration::from_clock(e.second)
                     - Duration::from_clock(trips.departure(trip)))
-                    * f64::from(weight);
+                    * weight;
             }
-            EventType::TripTruncated => c.truncated += 1,
-            EventType::NoVehicleAvailable => c.no_vehicle_available += 1,
-            EventType::NoFeasiblePath => c.no_feasible_path += 1,
-            EventType::ModeNotAvailable => c.mode_not_available += 1,
+            EventType::TripTruncated => {
+                c.truncated += 1;
+                totals.weighted_truncated += weight;
+            }
+            EventType::NoVehicleAvailable => {
+                c.no_vehicle_available += 1;
+                totals.weighted_not_run += weight;
+            }
+            EventType::NoFeasiblePath => {
+                c.no_feasible_path += 1;
+                totals.weighted_not_run += weight;
+            }
+            EventType::ModeNotAvailable => {
+                c.mode_not_available += 1;
+                totals.weighted_not_run += weight;
+            }
         }
     }
-    out
+    (out, none)
 }
 
 /// The sets with an update's routes in them, and the trips' choices renumbered to match. Where

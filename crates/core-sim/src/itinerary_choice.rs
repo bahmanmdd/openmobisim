@@ -510,7 +510,7 @@ impl<'a> Planner<'a> {
         }
         if !alts.is_empty() {
             self.measure_bike_legs(&mut alts);
-            return finalise(alts, self.detour_limit, k);
+            return finalise(alts, self.detour_limit, k, self.journey_max_s());
         }
         let (bike_leg, walk_leg) = legs;
         if let (true, Some(leg)) = (offer.walk, walk_leg) {
@@ -540,7 +540,12 @@ impl<'a> Planner<'a> {
             }
         }
         self.measure_bike_legs(&mut alts);
-        finalise(alts, self.detour_limit, k)
+        finalise(alts, self.detour_limit, k, self.journey_max_s())
+    }
+
+    /// The longest journey with transit offered (S269): the timetable's limit, or none.
+    fn journey_max_s(&self) -> f64 {
+        self.transit.map_or(f64::INFINITY, |(t, _)| t.defaults().journey_max_s)
     }
 
     /// Whether a trip offered `offer` is offered the ways out through a parking at all: only
@@ -1308,7 +1313,14 @@ fn transit_mode(kind: ParkingKind) -> Mode {
 /// The limits are per mode (M5) because the modes' times are not alike: a walk is always
 /// slower than a drive, and whether it is a real alternative is for the model to weigh
 /// (with its mode constants), not for a time limit.
-fn finalise(mut alts: Vec<Alternative>, detour_limit: f64, parkings: usize) -> Vec<Alternative> {
+fn finalise(
+    mut alts: Vec<Alternative>,
+    detour_limit: f64,
+    parkings: usize,
+    journey_max_s: f64,
+) -> Vec<Alternative> {
+    // A journey with transit longer than the limit is no alternative (S269).
+    alts.retain(|a| a.rides.is_empty() || a.total_s <= journey_max_s);
     for a in &mut alts {
         a.identity = a.identity_hash();
     }
@@ -1856,6 +1868,11 @@ impl Itineraries {
     pub(crate) fn position(&self, trip: TripId) -> Option<usize> {
         let p = self.pos[trip.index()];
         (p != u32::MAX).then_some(p as usize)
+    }
+
+    /// Whether the trip at `position` chooses its mode (S269), rather than was given it.
+    pub(crate) fn chooses(&self, position: usize) -> bool {
+        self.choosing[position]
     }
 
     /// A trip's nodes.
@@ -2560,6 +2577,7 @@ mod tests {
             vec![park_and_ride(1, &[3, 4]), park_and_ride(2, &[3, 4]), park_and_ride(3, &[5, 6])],
             0.0,
             5,
+            f64::INFINITY,
         );
         let ln = |p: u32| alts.iter().find(|a| a.parking == p).map(|a| a.ln_path_size).unwrap();
         assert!((ln(1) - 0.7_f64.ln()).abs() < 1e-12, "{}", ln(1));
@@ -2586,6 +2604,7 @@ mod tests {
             vec![park_and_ride(1, &[a]), park_and_ride(1, &[b]), park_and_ride(1, &[a])],
             0.0,
             5,
+            f64::INFINITY,
         );
         let mut links: Vec<u32> = kept.iter().map(|k| k.vehicle_links[0].raw()).collect();
         links.sort_unstable();

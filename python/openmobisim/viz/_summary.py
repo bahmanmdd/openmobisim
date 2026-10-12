@@ -32,6 +32,7 @@ MODE_NAMES = {
     "transit": "transit",
     "car_transit": "park-and-ride",
     "bike_transit": "bike-and-ride",
+    "none": "no alternative",
 }
 STAGES = {
     "network_read": "network read (before the run)",
@@ -126,7 +127,9 @@ def _no_alternative(run: Any, manifest: dict[str, Any]) -> str:
 
     limits = (
         f" Walks and bike rides are offered up to {minutes(walk)} and {minutes(bike)}"
-        " (<code>walk_max_s</code>, <code>bike_max_s</code>); transit within its access walk."
+        " (<code>walk_max_s</code>, <code>bike_max_s</code>); transit within its access walk and"
+        " up to two hours door to door (<code>transit_options</code>' <code>access_walk_max_s</code>,"
+        " <code>journey_max_s</code>)."
         if walk is not None and bike is not None
         else ""
     )
@@ -240,22 +243,26 @@ def summary(
     conv = run.convergence()
     manifest = run.manifest()
     by_mode = run.completion_by_mode
-    # People, not simulated trips (S232): a traveller stands for its weight in people.
+    # People, not simulated trips (S232): a traveller stands for its weight in people. Every
+    # person completed, is still under way at the end, or was never simulated (no alternative,
+    # no path, no vehicle): the three add up to all (S269).
     total = sum(r["people"] for r in by_mode.values())
     done = sum(r["completed_people"] for r in by_mode.values())
+    under_way = sum(r.get("truncated_people", 0.0) for r in by_mode.values())
+    not_run = sum(r.get("not_run_people", 0.0) for r in by_mode.values())
     mean_trip_min = run.mean_travel_time_s / 60 if done > 0 else 0.0
-    per_person = total / max(c["total_trips"], 1)
 
     # Tiles: the headline numbers.
     tiles = "".join(
         [
             _tile("trips", _fmt(total, 0)),
-            _tile("completed", _fmt(100 * done / max(total, 1)), "%", f"{_fmt(done, 0)} trips"),
+            _tile("completed", _fmt(100 * done / max(total, 1), 2), "%", f"{_fmt(done, 0)} trips"),
             _tile(
-                "never finished",
-                _fmt(100 * c["truncated"] / max(c["total_trips"], 1), 2),
+                "not completed",
+                _fmt(100 * (under_way + not_run) / max(total, 1), 2),
                 "%",
-                f"{_fmt(c['truncated'] * per_person, 0)} still under way at the end",
+                f"{_fmt(100 * under_way / max(total, 1), 2)} % still under way at the end · "
+                f"{_fmt(100 * not_run / max(total, 1), 2)} % never simulated (no alternative)",
             ),
             _tile("mean trip", _fmt(mean_trip_min), "min", "of the trips that finished"),
             _tile(
@@ -270,25 +277,28 @@ def summary(
 
     # Modes: shares and completion.
     mode_rows, share_cells = [], []
-    for i, m in enumerate(MODES):
+    for i, m in enumerate((*MODES, "none")):
         if m not in by_mode:
             continue
         r = by_mode[m]
         share = 100 * r["people"] / max(total, 1)
         mean_m = r["total_travel_time_s"] / 60 / max(r["completed_people"], 1)
+        # The trips with no alternative in the theme's quiet base colour (S269).
+        c_day, c_night = (
+            (paper.modes[i], night.modes[i]) if m != "none" else (paper.base, night.base)
+        )
         mode_rows.append(
             [
-                f'<span class="sw" style="--c:{paper.modes[i]};--cn:{night.modes[i]}"></span>'
-                f"{MODE_NAMES[m]}",
+                f'<span class="sw" style="--c:{c_day};--cn:{c_night}"></span>{MODE_NAMES[m]}',
                 _fmt(r["people"], 0),
                 _fmt(share),
                 _fmt(100 * r["completed_people"] / max(r["people"], 1)),
-                _fmt(mean_m),
+                _fmt(mean_m) if r["completed_people"] > 0 else "—",
             ]
         )
         share_cells.append(
-            f'<div class="seg" style="flex:{share:.3f};--c:{paper.modes[i]};'
-            f'--cn:{night.modes[i]}" title="{MODE_NAMES[m]}: {share:.1f}%"></div>'
+            f'<div class="seg" style="flex:{share:.3f};--c:{c_day};'
+            f'--cn:{c_night}" title="{MODE_NAMES[m]}: {share:.1f}%"></div>'
         )
     modes_html = f'<div class="stack">{"".join(share_cells)}</div>' + _table(
         ["mode", "trips", "share (%)", "completed (%)", "mean trip (min)"], mode_rows

@@ -1708,7 +1708,11 @@ class Scenario:
                 "from_s": ..., "to_s": ...}`` or ``{"line": "T1", "cancel": True, ...}`` — the
                 line's runs leaving their first stop in that window are late by ``delay_s`` at
                 every call (a bus on the roads leaves late and drives on among the cars) or do
-                not run. Road disruptions act through capacity, so not at ``flow_level`` 0.
+                not run. Road disruptions act through capacity, so not at ``flow_level`` 0. At
+                the point queue (``flow_level`` 2) a closure's queue takes no road space: it
+                delays only the vehicles in it, blocks nobody behind it and, holding them back,
+                eases the roads beyond; with spillback (``flow_level`` 3) it backs up across the
+                junctions behind it, as a real one does.
             disruptions_known: Whether travellers know of the disruptions in advance. ``False``
                 (the default: an accident, a breakdown): the run reaches its equilibrium without
                 them, then loads the day once more with them, every choice kept — only cars

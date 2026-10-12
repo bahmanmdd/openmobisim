@@ -175,7 +175,16 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// still searched, a route a second faster than its best replacing one nobody chose; and the
 /// Python layer's `msa` **stops at a gap of 0.05** (0.02 before). Every run with a choice among
 /// more than five routes changes, and every iterating run.
-pub const DEFAULTS_VERSION: u32 = 23;
+///
+/// Version 24 (S269): **a journey with transit is offered only up to two hours door to door**
+/// (`core-transit`'s `TransitDefaults::journey_max_s`): a timetable's late service had offered
+/// a morning traveller an 18-hour journey that ended after midnight. Every run with transit
+/// where such journeys were found changes; and a trip that chose its mode and had none is
+/// counted apart (`RunResult::no_mode`), not under the car. And the OSM reader's walk layer
+/// **walks cycleways unless `foot=no`** (`io-osm`'s `walk_way`; before, only with `foot=yes`):
+/// every network read from OpenStreetMap with cycleways gains walk links, most in the
+/// Netherlands (Amsterdam's walk network had fallen apart into islands, Schiphol's among them).
+pub const DEFAULTS_VERSION: u32 = 24;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

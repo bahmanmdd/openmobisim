@@ -165,14 +165,17 @@ fn oneway_bicycle_overrides_in_both_senses() {
 // --- walking ------------------------------------------------------------------------
 
 #[test]
-fn walking_is_everywhere_but_motorways_cycleways_and_closed_ways() {
-    for highway in ["primary", "trunk", "residential", "footway", "path", "steps", "pedestrian"] {
+fn walking_is_everywhere_but_motorways_busways_and_closed_ways() {
+    for highway in
+        ["primary", "trunk", "residential", "footway", "path", "steps", "pedestrian", "cycleway"]
+    {
         assert!(walk_way(&tags(&[("highway", highway)]), 2).is_some(), "{highway}");
     }
     for pairs in [
         &[("highway", "motorway")][..],
         &[("highway", "motorway_link")],
-        &[("highway", "cycleway")],
+        &[("highway", "busway")],
+        &[("highway", "cycleway"), ("foot", "no")],
         &[("highway", "primary"), ("foot", "no")],
         &[("highway", "primary"), ("foot", "use_sidepath")],
         &[("highway", "trunk"), ("motorroad", "yes")],
@@ -185,10 +188,7 @@ fn walking_is_everywhere_but_motorways_cycleways_and_closed_ways() {
 
 #[test]
 fn a_cycleway_or_closed_way_open_to_walkers_is_walked() {
-    assert_eq!(
-        walk_way(&tags(&[("highway", "cycleway"), ("foot", "yes")]), 2),
-        Some(RoadClass::Cycleway)
-    );
+    assert_eq!(walk_way(&tags(&[("highway", "cycleway")]), 2), Some(RoadClass::Cycleway));
     assert!(
         walk_way(&tags(&[("highway", "service"), ("access", "no"), ("foot", "designated")]), 2)
             .is_some()

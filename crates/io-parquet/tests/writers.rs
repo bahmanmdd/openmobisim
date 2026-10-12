@@ -75,6 +75,7 @@ fn sample_result() -> RunResult {
         route_choices: None,
         iterations: Vec::new(),
         converged: false,
+        no_mode: ModeTotals::default(),
         by_mode: {
             // Four car trips and one bike trip, adding up to the totals above.
             let mut by_mode = [ModeTotals::default(); Mode::COUNT];
@@ -89,6 +90,8 @@ fn sample_result() -> RunResult {
                 total_travel_time: Duration(600.0),
                 weighted_trips: 4.0,
                 weighted_completed: 2.0,
+                weighted_truncated: 1.0,
+                weighted_not_run: 1.0,
             };
             by_mode[Mode::Bike.index()] = ModeTotals {
                 completion: TripCompletionStats {
@@ -99,6 +102,7 @@ fn sample_result() -> RunResult {
                 total_travel_time: Duration(125.0),
                 weighted_trips: 1.0,
                 weighted_completed: 1.0,
+                ..ModeTotals::default()
             };
             by_mode
         },

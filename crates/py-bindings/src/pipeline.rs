@@ -1052,8 +1052,12 @@ pub fn run_pipeline(
         .as_ref()
         .map_or((0, f64::NAN), |it| (it.replanned, it.return_mismatch_s));
     let completion_by_mode = PyDict::new(py);
-    for mode in Mode::ALL {
-        let m = &result.by_mode[mode.index()];
+    // The modes, and "none": the trips that chose and had no mode to choose (S269).
+    let rows = Mode::ALL
+        .iter()
+        .map(|mode| (mode.as_str(), &result.by_mode[mode.index()]))
+        .chain(std::iter::once(("none", &result.no_mode)));
+    for (name, m) in rows {
         if m.completion.total_trips == 0 {
             continue;
         }
@@ -1067,7 +1071,9 @@ pub fn run_pipeline(
         row.set_item("total_travel_time_s", m.total_travel_time.get())?;
         row.set_item("people", m.weighted_trips)?;
         row.set_item("completed_people", m.weighted_completed)?;
-        completion_by_mode.set_item(mode.as_str(), row)?;
+        row.set_item("truncated_people", m.weighted_truncated)?;
+        row.set_item("not_run_people", m.weighted_not_run)?;
+        completion_by_mode.set_item(name, row)?;
     }
 
     let (transit_calls_table, transit_summary_table) = match (&result.transit, &transit_setup) {

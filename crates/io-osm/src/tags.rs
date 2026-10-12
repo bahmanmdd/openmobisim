@@ -515,7 +515,12 @@ pub fn bike_way(tags: &[(String, String)], node_count: usize) -> Option<BikeWay>
 /// - **Never:** motorways, `motorroad=yes`, `foot=no`, `foot=use_sidepath`,
 ///   areas, and ways with `access=no|private` unless
 ///   `foot=yes|designated|permissive`.
-/// - **Cycleways** only with `foot=yes|designated|permissive`.
+/// - **Cycleways** too, unless `foot=no` (S269): where no footway runs beside it, a
+///   pedestrian may use the cycle path (the Netherlands' RVV 1990, art. 4), and the
+///   mappers of such countries rarely tag `foot`; read as closed to walkers, Amsterdam's
+///   walk network fell apart into islands (Schiphol's station among them, 11 % of its
+///   walk nodes outside the largest part).
+/// - **Busways** only with `foot=yes|designated|permissive`.
 /// - **Ferries** (`route=ferry`, S197) unless `foot=no`.
 /// - **Everything else**, steps included.
 #[must_use]
@@ -537,7 +542,7 @@ pub fn walk_way(tags: &[(String, String)], node_count: usize) -> Option<RoadClas
     let class = layer_class(highway)?;
     match class {
         RoadClass::Motorway | RoadClass::MotorwayLink => None,
-        RoadClass::Cycleway | RoadClass::Busway => permits(foot).then_some(class),
+        RoadClass::Busway => permits(foot).then_some(class),
         _ => Some(class),
     }
 }
