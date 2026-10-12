@@ -184,7 +184,7 @@ def draw_furniture(
     note: str | None,
     provenance: str,
     width_legend: tuple[str, list[tuple[float, float]], str] | None = None,
-    colour_legend: tuple[str, tuple[str, ...], str, str] | None = None,
+    colour_legend: tuple[str, tuple[str, ...], str | tuple[str, ...], str] | None = None,
     credit: str | None = None,
     logo: bool = True,
     compass: bool = True,
@@ -195,7 +195,9 @@ def draw_furniture(
 
     `width_legend` is ``(label, [(value, width_pt), ...], unit)``, the unit shown once, after
     the label (empty: none); `colour_legend`
-    is ``(label, ramp_stops, low_label, high_label)``, its label left out when it is the width
+    is ``(label, ramp_stops, low_label, high_label)``, or, for bands (S268), ``(label, colours,
+    labels, "")`` with one label per colour, each under its swatch; its label left out when it is
+    empty or is the width
     legend's title (both show one quantity: the title once); `route_legend` is a list of
     ``(rgb, text)`` rows, one per route, in place of both; `marker_legend` is a list
     of ``(marker, filled, text)`` rows, one per kind of symbol on the map, in the place
@@ -204,6 +206,7 @@ def draw_furniture(
     logo is a signature, not a claim over the figure or its data.
     """
     from matplotlib.lines import Line2D
+    from matplotlib.patches import Rectangle
 
     fig, t, k = page.fig, page.theme, page.k
     w, h = page.size
@@ -291,9 +294,33 @@ def draw_furniture(
     if colour_legend is not None:
         label, stops, low, high = colour_legend
         cx = 0.815
-        if label != title_text:
+        if label and label != title_text:
             # Width and colour showing the same quantity share the width legend's title (S243).
             fig.text(cx, ly + 0.030, label, color=t.ink2, fontsize=9.5 * k, fontfamily=sans)
+    if colour_legend is not None and not isinstance(low, str):
+        # Bands (S268): a swatch per colour, its range under it.
+        step = 0.16 / len(stops)
+        for i, (colour, text) in enumerate(zip(stops, low, strict=True)):
+            fig.add_artist(
+                Rectangle(
+                    (cx + i * step, ly + 0.008),
+                    step * 0.92,
+                    0.012,
+                    transform=fig.transFigure,
+                    facecolor=colour,
+                    edgecolor="none",
+                )
+            )
+            fig.text(
+                cx + i * step + step * 0.46,
+                ly - 0.006,
+                text,
+                color=t.ink2,
+                fontsize=8.5 * k,
+                fontfamily=mono,
+                ha="center",
+            )
+    elif colour_legend is not None:
         bar = fig.add_axes((cx, ly + 0.008, 0.16, 0.012), facecolor=t.surface)
         bar.set_axis_off()
         bar.imshow(ramp_rgb(stops, np.linspace(0, 1, 256))[None, :, :], aspect="auto")

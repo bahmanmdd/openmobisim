@@ -40,7 +40,7 @@ __CSS__
     <div class="row"><input id="bin" type="range" min="0" max="0" value="0" step="1"></div>
     <div class="row"><label><input id="allbins" type="checkbox" checked> All bins</label><button id="play">Play</button></div>
     <div class="row" id="spillrow" hidden><label title="Links whose queue would not have fitted on the road: where it would spill back (point queue)"><input id="spill" type="checkbox"> Spillback links <span id="spillcount"></span></label></div>
-    <div class="legend"><h2 id="legendlabel">Delay over free flow</h2><div class="bar" id="colourbar"></div><div class="ends"><span id="legendlow">0%</span><span id="legendhigh">70%+</span></div></div>
+    <div class="legend"><h2 id="legendlabel" hidden></h2><div class="bar" id="colourbar"></div><div class="ends"><span id="legendlow"></span><span id="legendhigh"></span></div><div class="bands" id="bands"></div></div>
   </div>
   <div id="routegroup">
     <h2>Route alternatives</h2>
@@ -91,6 +91,8 @@ input[type=number] { width: 62px; }
 label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2); }
 .legend .bar { height: 10px; border-radius: 3px; margin: 4px 0 2px; }
 .legend .ends { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--ink2); }
+.legend .bands { display: flex; font: 11px var(--mono); color: var(--ink2); }
+.legend .bands span { flex: 1; text-align: center; }
 .route { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 6px; font-family: var(--mono); font-size: 11.5px; cursor: default; }
 .route:hover { background: color-mix(in srgb, var(--base) 45%, transparent); }
 .route i { width: 22px; height: 4px; border-radius: 2px; display: inline-block; }
@@ -211,7 +213,7 @@ function aggregate(b0, b1) {
   const span = Math.max(1, b1 - b0) * META.bin_seconds, pos = [];
   for (let l = 0; l < NL; l++) {
     vol[l] = tot[l] / span * 3600;
-    if (tot[l] > 0) { meanT[l] = sec[l] / tot[l]; delay[l] = 1 - Math.min(FF[l] / Math.max(meanT[l], 1e-6), 1); pos.push(vol[l]); } else { meanT[l] = 0; delay[l] = 0; }
+    if (tot[l] > 0) { meanT[l] = sec[l] / tot[l]; delay[l] = 1 - Math.min((FF[l] + SW[l]) / Math.max(meanT[l], 1e-6), 1); pos.push(vol[l]); } else { meanT[l] = 0; delay[l] = 0; }
   }
   VMAX = (b1 - b0 === 1) ? GLOBAL_VMAX : Math.max(1, percentile(pos, 0.99));
   let hi = pos.length ? percentile(pos, 0.95) : 0; VHIGH = hi;
@@ -244,6 +246,10 @@ function rampTable(stops, n) {
   return out;
 }
 const NCOL = 24;
+// The delay's bands (S268): the upper edges of each, as META gives them, and their labels.
+const BANDS = META.delay_bands, BAND_LABELS = META.delay_band_labels;
+function band(d) { let b = 0; while (b < BANDS.length && d >= BANDS[b]) b++; return b; }
+function bandColours() { const n = BAND_LABELS.length; return BAND_LABELS.map((_, i) => TABLES.delay[Math.round(i / (n - 1) * (NCOL - 1))]); }
 const S = { theme: META.theme, colour: "delay", bin: -1, bins: [0, NB], playing: false, pair: -1, link: -1, hover: -1, hoverRoute: -1, routes: true, dim: true, spill: false, cx: 0, cy: 0, mpp: 1, ly: { road: true, transit: false, parking: false, bike: false, walk: false } };
 let TH = TOK[S.theme], TABLES = {};
 function setTheme(name) {
@@ -251,8 +257,7 @@ function setTheme(name) {
   const r = document.documentElement.style;
   r.setProperty("--surface", TH.surface); r.setProperty("--ink", TH.ink); r.setProperty("--ink2", TH.ink2); r.setProperty("--muted", TH.muted); r.setProperty("--base", TH.base); r.setProperty("--mark", TH.mark);
   TABLES = { delay: rampTable(TH.ramp_delay, NCOL), volume: rampTable(TH.ramp_volume, NCOL), vc: rampTable(TH.ramp_delay, NCOL) };
-  $("colourbar").style.background = "linear-gradient(90deg," + TH.ramp_delay.join(",") + ")";
-  if (S.colour === "volume") $("colourbar").style.background = "linear-gradient(90deg," + TH.ramp_volume.join(",") + ")";
+  legend();
   $("theme").textContent = name === "paper" ? "Night" : "Paper";
 }
 
@@ -289,7 +294,7 @@ function ribbonWidth(l) {
 }
 function colourIndex(l) {
   let t;
-  if (S.colour === "delay") t = (delay[l] - 0.04) / 0.70;
+  if (S.colour === "delay") t = band(delay[l]) / (BANDS.length);
   else if (S.colour === "vc") t = CAP[l] > 0 ? vol[l] / CAP[l] : 0;
   else t = Math.sqrt(Math.min(vol[l], VMAX) / VMAX);
   return Math.max(0, Math.min(NCOL - 1, Math.round(t * (NCOL - 1))));
@@ -522,7 +527,7 @@ function tip(l, ev) {
   const t = $("tip");
   if (l < 0) { t.hidden = true; return; }
   const rows = [["Class", CLASSES[CLS[l]] + " · " + LEN[l].toFixed(0) + " m"]];
-  if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " PCU/h"]); if (vol[l] > 0) { rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]); rows.push(["Mean time", meanT[l].toFixed(1) + " s (free flow " + FF[l].toFixed(1) + " s" + (SW[l] > 0 ? "; the signal's fixed wait " + SW[l].toFixed(1) + " s" : "") + ")"]); } }
+  if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " PCU/h"]); if (vol[l] > 0) { rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]); rows.push(["Mean time", meanT[l].toFixed(1) + " s (free flow " + (FF[l] + SW[l]).toFixed(1) + " s" + (SW[l] > 0 ? ", the signal's mean wait of " + SW[l].toFixed(1) + " s included" : "") + ")"]); } }
   if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " PCU/h" + (SG[l] ? " at its signal" : "") + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used)" : "")]);
   if (HAS_ROUTES) { const n = LROUTE_START[l + 1] - LROUTE_START[l]; if (n) rows.push(["Routes", n + " use it"]); }
   t.innerHTML = "<b>link " + l + "</b>" + rows.map((r) => "<div><span>" + r[0] + "</span>" + r[1] + "</div>").join("");
@@ -609,9 +614,22 @@ function setBins(a, b) { S.bins = [a, b]; aggregate(a, b); subtitle(); redraw(fa
 const COLOUR_WORDS = { delay: "delay over free flow", volume: "volume", vc: "volume over capacity" };
 function subtitle() {
   $("subtitle").textContent = binLabel() + " · one ribbon per direction · width = volume, colour = " + COLOUR_WORDS[S.colour];
-  $("legendlabel").textContent = { delay: "Delay over free flow", volume: "Volume per direction", vc: "Volume over capacity" }[S.colour];
-  $("legendlow").textContent = S.colour === "volume" ? "0" : S.colour === "vc" ? "0" : "0%"; $("legendhigh").textContent = S.colour === "volume" ? fmt(VMAX) + "+" : S.colour === "vc" ? "1.0+" : "70%+";
-  $("colourbar").style.background = "linear-gradient(90deg," + (S.colour === "volume" ? TH.ramp_volume : TH.ramp_delay).join(",") + ")";
+  legend();
+}
+// The legend: for delay, a swatch per band with its range and no title (S268); else the ramp.
+function legend() {
+  const delayed = S.colour === "delay";
+  $("legendlabel").hidden = delayed;
+  $("legendlabel").textContent = delayed ? "" : { volume: "Volume per direction", vc: "Volume over capacity" }[S.colour];
+  $("legendlow").textContent = delayed ? "" : "0"; $("legendhigh").textContent = delayed ? "" : S.colour === "volume" ? fmt(VMAX) + "+" : "1.0+";
+  if (delayed) {
+    const c = bandColours(), n = c.length;
+    $("colourbar").style.background = "linear-gradient(90deg," + c.map((x, i) => x + " " + (100 * i / n).toFixed(2) + "% " + (100 * (i + 1) / n).toFixed(2) + "%").join(",") + ")";
+    $("bands").innerHTML = BAND_LABELS.map((t) => "<span>" + t + "</span>").join("");
+  } else {
+    $("colourbar").style.background = "linear-gradient(90deg," + (S.colour === "volume" ? TH.ramp_volume : TH.ramp_delay).join(",") + ")";
+    $("bands").innerHTML = "";
+  }
 }
 function writeHash() {
   const p = new URLSearchParams(); p.set("t", S.theme); p.set("c", S.colour);
@@ -664,7 +682,7 @@ function svgRecorder() {
 }
 // The title above the map and the legend, provenance and credit below it: the words and colours the page shows.
 function exportFrame() {
-  const legend = HAS_TRAFFIC ? { label: $("legendlabel").textContent, low: $("legendlow").textContent, high: $("legendhigh").textContent, stops: TABLES[S.colour] } : null;
+  const legend = HAS_TRAFFIC ? (S.colour === "delay" ? { label: "", bands: BAND_LABELS, stops: bandColours() } : { label: $("legendlabel").textContent, low: $("legendlow").textContent, high: $("legendhigh").textContent, stops: TABLES[S.colour] }) : null;
   return { title: $("title").textContent, subtitle: $("subtitle").textContent, legend, provenance: $("provenance").textContent, source: $("source").textContent, credit: $("credit").hidden ? "" : $("credit").textContent };
 }
 const HEAD = 64, FOOT = 46;
@@ -703,7 +721,8 @@ function exportSVG() {
     const n = f.legend.stops.length, w = 160, step = w / n;  // the ramp as one rectangle per colour
     parts.push(`<text x="16" y="${y - 4}" font-size="10" fill="${TH.ink2}">${esc(f.legend.label)}</text>`);
     parts.push(f.legend.stops.map((c, i) => `<rect x="${(16 + i * step).toFixed(2)}" y="${y}" width="${(step + 0.3).toFixed(2)}" height="7" fill="${c}"/>`).join(""));
-    parts.push(`<text x="16" y="${y + 19}" font-size="9.5" fill="${TH.ink2}">${esc(f.legend.low)}</text><text x="${16 + w}" y="${y + 19}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc(f.legend.high)}</text>`);
+    if (f.legend.bands) parts.push(f.legend.bands.map((t, i) => `<text x="${(16 + (i + 0.5) * step).toFixed(2)}" y="${y + 19}" font-size="9.5" text-anchor="middle" fill="${TH.ink2}">${esc(t)}</text>`).join(""));
+    else parts.push(`<text x="16" y="${y + 19}" font-size="9.5" fill="${TH.ink2}">${esc(f.legend.low)}</text><text x="${16 + w}" y="${y + 19}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc(f.legend.high)}</text>`);
   }
   parts.push(`<text x="${W - 16}" y="${y + 4}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc([f.provenance, f.source, f.credit].filter(Boolean).join(" · "))}</text>`);
   parts.push(`<text x="${W - 16}" y="${y + 20}" font-size="11" font-weight="700" text-anchor="end" fill="${TH.ink}">openmobisim</text>`);
@@ -726,10 +745,19 @@ function exportPNG() {
   o.fillStyle = TH.ink2; o.font = "11.5px " + FONT; o.fillText(f.subtitle, 16, 48);
   const y = HEAD + H + 18;
   if (f.legend) {
-    const g = o.createLinearGradient(16, 0, 176, 0), n = f.legend.stops.length;
-    f.legend.stops.forEach((c, i) => g.addColorStop(i / Math.max(n - 1, 1), c));
-    o.font = "10px " + FONT; o.fillText(f.legend.label, 16, y - 4); o.fillStyle = g; o.fillRect(16, y, 160, 7);
-    o.fillStyle = TH.ink2; o.font = "9.5px " + FONT; o.fillText(f.legend.low, 16, y + 19); o.textAlign = "right"; o.fillText(f.legend.high, 176, y + 19);
+    const n = f.legend.stops.length;
+    o.font = "10px " + FONT; o.fillText(f.legend.label, 16, y - 4);
+    if (f.legend.bands) {
+      const step = 160 / n;
+      f.legend.stops.forEach((c, i) => { o.fillStyle = c; o.fillRect(16 + i * step, y, step - 1, 7); });
+      o.fillStyle = TH.ink2; o.font = "9.5px " + FONT; o.textAlign = "center";
+      f.legend.bands.forEach((t, i) => o.fillText(t, 16 + (i + 0.5) * step, y + 19));
+    } else {
+      const g = o.createLinearGradient(16, 0, 176, 0);
+      f.legend.stops.forEach((c, i) => g.addColorStop(i / Math.max(n - 1, 1), c));
+      o.fillStyle = g; o.fillRect(16, y, 160, 7);
+      o.fillStyle = TH.ink2; o.font = "9.5px " + FONT; o.fillText(f.legend.low, 16, y + 19); o.textAlign = "right"; o.fillText(f.legend.high, 176, y + 19);
+    }
   }
   o.textAlign = "right"; o.fillStyle = TH.ink2; o.font = "9.5px " + FONT;
   o.fillText([f.provenance, f.source, f.credit].filter(Boolean).join(" · "), W - 16, y + 4);

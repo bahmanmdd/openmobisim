@@ -295,6 +295,87 @@ impl RouteSets {
         (out, shift)
     }
 
+    /// These sets with some routes **removed** and routes added (S268: a full set making room for
+    /// a better route, see `core-sim`'s `BestResponse::max_routes`). `additions` as for
+    /// [`Self::extended`]; `removed[r]` drops route `r` of this store. Every key keeps at least
+    /// one route.
+    ///
+    /// Returns the new store and, for each route of this store, its index in the new one, or
+    /// `u32::MAX` if it was removed.
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::extended`]; and if `removed` is not one flag per route, or would leave a key
+    /// with no route.
+    #[must_use]
+    pub fn revised(
+        &self,
+        additions: &[(usize, Vec<Route>)],
+        removed: &[bool],
+        stamp: u32,
+        update: &str,
+    ) -> (Self, Vec<u32>) {
+        assert_eq!(removed.len(), self.route_count(), "one flag per route");
+        assert!(
+            additions.windows(2).all(|w| w[0].0 < w[1].0),
+            "additions must be in strictly ascending key order, one entry per key"
+        );
+        assert!(
+            additions.last().is_none_or(|a| a.0 < self.keys.len()),
+            "an addition names a key the store does not have"
+        );
+        let mut out = Self {
+            network: self.network,
+            method: self.method.clone(),
+            descriptor: self.descriptor.clone(),
+            update: update.to_string(),
+            keys: self.keys.clone(),
+            set_start: Vec::with_capacity(self.set_start.len()),
+            route_start: Vec::with_capacity(self.route_start.len()),
+            links: Vec::with_capacity(self.links.len()),
+            cost: Vec::with_capacity(self.cost.len()),
+            overlap: Vec::with_capacity(self.cost.len()),
+            stamp: Vec::with_capacity(self.cost.len()),
+        };
+        out.set_start.push(0);
+        out.route_start.push(0);
+        let mut map = vec![u32::MAX; self.route_count()];
+        let mut next = additions.iter().peekable();
+        for k in 0..self.keys.len() {
+            let first = out.cost.len();
+            for r in self.route_range(k) {
+                if removed[r] {
+                    continue;
+                }
+                let view = self.route(r);
+                map[r] = u32::try_from(out.cost.len()).expect("routes fit u32");
+                out.links.extend_from_slice(view.links);
+                out.route_start.push(u32::try_from(out.links.len()).expect("links fit u32"));
+                out.cost.push(view.cost);
+                out.overlap.push(view.overlap);
+                out.stamp.push(self.stamp[r]);
+            }
+            if let Some((_, routes)) = next.next_if(|(key, _)| *key == k) {
+                for route in routes {
+                    out.links.extend(route.links.iter().map(|l| l.raw()));
+                    out.route_start.push(u32::try_from(out.links.len()).expect("links fit u32"));
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        reason = "f32 costs are the stored form"
+                    )]
+                    {
+                        out.cost.push(route.cost as f32);
+                        out.overlap.push(route.overlap as f32);
+                    }
+                    out.stamp.push(stamp);
+                }
+            }
+            assert!(out.cost.len() > first, "a key keeps at least one route");
+            out.set_start.push(u32::try_from(out.cost.len()).expect("routes fit u32"));
+        }
+        (out, map)
+    }
+
     /// The name of the method that made this store.
     #[must_use]
     pub fn method(&self) -> &str {

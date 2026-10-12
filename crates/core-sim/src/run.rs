@@ -69,12 +69,12 @@ use crate::prices::{PreparedPrices, Prices};
 use crate::reroute::Rerouter;
 use crate::route_cache::{RouteSetCache, generation_key};
 use crate::route_choice::{self, NO_ROUTE, RouteChoices};
-use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext};
+use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext, make_room};
 use crate::timings::{Stage, Timings};
 use crate::transit::{TransitResult, TransitSetup, par_map};
 use openmobisim_core_graph::hubs::ParkingKind;
 use openmobisim_core_graph::layers::StaticLayer;
-use openmobisim_core_routes::{Reach, SearchContext};
+use openmobisim_core_routes::{Reach, Route, SearchContext};
 use openmobisim_core_transit::{JourneyLeg, Raptor};
 
 /// Which loading engine a [`Run`] uses.
@@ -427,6 +427,9 @@ pub struct Run {
     /// A traveller is offered only the routes whose expected time is within this share of the
     /// best's (S178); 0 offers them all. [`DEFAULT_CHOICE_DETOUR_LIMIT`] by default.
     choice_detour_limit: f64,
+    /// A traveller is offered at most this many routes, the fastest at their departure (S268).
+    /// [`DEFAULT_CHOICE_MAX_ROUTES`] by default.
+    choice_max_routes: u32,
     /// Generated route sets kept for the next run that asks for the same (S178): none, by default.
     route_cache: Option<Arc<RouteSetCache>>,
     /// The bike and walk layers (S195): none, by default.
@@ -497,6 +500,15 @@ fn increment_of(rng: &StreamRng, traveller: u32, increments: u32) -> u32 {
 /// one drops the routes congestion has made much slower than the best.
 pub const DEFAULT_CHOICE_DETOUR_LIMIT: f64 = 0.5;
 
+/// The most routes a traveller is offered by default (S268, the user: "a 5 route max because
+/// empirically it is shown that people don't consider more options than that"): the fastest five
+/// at their departure, of those within the detour limit. *An assumption* on the size of a
+/// consideration set: Prato (2009), "Route choice modeling: past, present and future research
+/// directions", *Journal of Choice Modelling* 2(1), 65-100,
+/// <https://doi.org/10.1016/S1755-5345(13)70005-8>, reviews choice sets of a handful of routes. The
+/// sets themselves may hold more (`BestResponse::max_routes`): a route not offered now can be later.
+pub const DEFAULT_CHOICE_MAX_ROUTES: u32 = 5;
+
 impl Run {
     /// Build a run. Vehicle locations are seeded per S129: every owned car
     /// starts at its traveller's first trip's origin. Uses
@@ -523,6 +535,7 @@ impl Run {
             equilibration: Arc::new(FreeFlow::default()),
             route_update: Arc::new(NoRouteUpdate),
             choice_detour_limit: DEFAULT_CHOICE_DETOUR_LIMIT,
+            choice_max_routes: DEFAULT_CHOICE_MAX_ROUTES,
             route_cache: None,
             layers: Arc::new(StaticLayers::default()),
             transit: None,
@@ -775,6 +788,15 @@ impl Run {
         self
     }
 
+    /// The same run, offering each traveller at most `n` routes, the fastest at their departure
+    /// among those within the detour limit (S268; [`DEFAULT_CHOICE_MAX_ROUTES`] by default; 0
+    /// offers every such route). The gap is still measured against the whole set.
+    #[must_use]
+    pub fn with_choice_max_routes(mut self, n: u32) -> Self {
+        self.choice_max_routes = n;
+        self
+    }
+
     /// The same run, taking its route sets from `cache` if it holds the sets this run would
     /// generate, and leaving them there if not (S178): see [`RouteSetCache`]. Results do not depend
     /// on whether the cache was used.
@@ -819,6 +841,7 @@ impl Run {
             route_update_descriptor: &self.route_update.descriptor(),
             route_update_active: self.route_update.is_active(),
             choice_detour_limit: self.choice_detour_limit,
+            choice_max_routes: self.choice_max_routes,
             layers: &self.layers,
             transit: self.transit.as_deref(),
             parking: self.parking.as_deref(),
@@ -1077,6 +1100,7 @@ impl Run {
             model: model.as_ref(),
             turns: &turns,
             detour_limit: self.choice_detour_limit,
+            max_routes: self.choice_max_routes,
             link_values: &link_values,
             link_value_names: &link_value_names,
             prices: &prices,
@@ -1231,12 +1255,16 @@ impl Run {
                         active: Some(&trip_choosing),
                     });
                     increment_searches += found.searches;
-                    increment_added +=
-                        u32::try_from(found.route_count()).expect("few routes are added");
                     if !found.routes.is_empty() {
-                        let (grown, shift) =
-                            route_sets.extended(&found.routes, 1, &route_update.descriptor());
-                        route_choices.grown(&route_sets, &shift, &grown, &trip_keys);
+                        let (grown, added) = grow_sets(
+                            &route_sets,
+                            found.routes,
+                            route_update.as_ref(),
+                            &mut route_choices,
+                            &trip_keys,
+                            1,
+                        );
+                        increment_added += added;
                         route_sets = Arc::new(grown);
                         chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
                     }
@@ -1341,15 +1369,16 @@ impl Run {
                             active: None,
                         });
                         report.route_searches = found.searches;
-                        report.routes_added =
-                            u32::try_from(found.route_count()).expect("few routes are added");
                         if !found.routes.is_empty() {
-                            let (grown, shift) = route_sets.extended(
-                                &found.routes,
+                            let (grown, added) = grow_sets(
+                                &route_sets,
+                                found.routes,
+                                route_update.as_ref(),
+                                &mut route_choices,
+                                &trip_keys,
                                 next,
-                                &route_update.descriptor(),
                             );
-                            route_choices.grown(&route_sets, &shift, &grown, &trip_keys);
+                            report.routes_added = added;
                             route_sets = Arc::new(grown);
                             chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
                         }
@@ -2687,4 +2716,39 @@ fn mode_totals(
         }
     }
     out
+}
+
+/// The sets with an update's routes in them, and the trips' choices renumbered to match. Where
+/// the update caps its sets and some would overflow, they make room first (S268, [`make_room`]:
+/// a trip on a route that made room moves to the route that replaced it); otherwise every route
+/// stays (S176). Returns the sets and how many routes went in.
+fn grow_sets(
+    sets: &RouteSets,
+    mut additions: Vec<(usize, Vec<Route>)>,
+    update: &dyn RouteUpdate,
+    choices: &mut RouteChoices,
+    trip_keys: &[RouteKey],
+    stamp: u32,
+) -> (RouteSets, u32) {
+    let count = |a: &[(usize, Vec<Route>)]| {
+        u32::try_from(a.iter().map(|(_, r)| r.len()).sum::<usize>()).expect("few routes are added")
+    };
+    let overflows = |max: usize| {
+        additions.iter().any(|(k, routes)| sets.route_range(*k).len() + routes.len() > max)
+    };
+    match update.max_routes() {
+        Some(max) if overflows(max) => {
+            let removed = make_room(sets, &mut additions, &choices.route, &choices.weight, max);
+            let added = count(&additions);
+            let (grown, map) = sets.revised(&additions, &removed, stamp, &update.descriptor());
+            choices.revised(&map, &grown, trip_keys);
+            (grown, added)
+        }
+        _ => {
+            let added = count(&additions);
+            let (grown, shift) = sets.extended(&additions, stamp, &update.descriptor());
+            choices.grown(sets, &shift, &grown, trip_keys);
+            (grown, added)
+        }
+    }
 }

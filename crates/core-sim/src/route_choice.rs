@@ -118,6 +118,25 @@ impl RouteChoices {
         }
     }
 
+    /// After a set made room (S268, [`RouteSets::revised`]): each trip's route renumbered by
+    /// `map` (a removed route had no trip; were one on it, it would take its set's last route).
+    pub(crate) fn revised(&mut self, map: &[u32], grown: &RouteSets, trip_keys: &[RouteKey]) {
+        for t in 0..self.route.len() {
+            if self.route[t] == NO_ROUTE {
+                continue;
+            }
+            let key = grown.key_index(trip_keys[t]).expect("a routed trip has a set");
+            let range = grown.route_range(key);
+            let new = map[self.route[t] as usize];
+            self.route[t] = if new == u32::MAX {
+                u32::try_from(range.end - 1).expect("routes fit u32")
+            } else {
+                new
+            };
+            self.alternatives[t] = u32::try_from(range.len()).expect("few alternatives");
+        }
+    }
+
     /// How many trips.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -142,6 +161,8 @@ pub(crate) struct Inputs<'a> {
     /// An alternative is offered only if its expected time is within this share of the best's
     /// (0: all of them; S178).
     pub detour_limit: f64,
+    /// At most this many of them, the fastest (0: no limit; S268).
+    pub max_routes: u32,
     /// The user's link values (S236): a route's `road_<name>_km` and `road_<name>_sum`.
     pub link_values: &'a PreparedLinkValues,
     /// The attributes' names of the user's link, traveller and trip values.
@@ -299,7 +320,8 @@ impl<'a> Chooser<'a> {
     /// Put trips `from..to` that have a set into `batch`, with `times` as their cost (free flow
     /// if `None`), only those of the travellers `who` marks if it is given. Each situation offers
     /// the routes of its pair's set **whose expected time is within [`Inputs::detour_limit`] of
-    /// the best's** (all of them if the limit is 0: the best route is always offered). What is
+    /// the best's** (all of them if the limit is 0: the best route is always offered), **at most
+    /// [`Inputs::max_routes`] of them, the fastest** (S268). What is
     /// left besides the batch is in `filled`.
     fn fill(
         &self,
@@ -309,7 +331,7 @@ impl<'a> Chooser<'a> {
         times: Option<&LinkTimes>,
         who: Option<&[bool]>,
     ) {
-        let Inputs { trips, trip_keys, detour_limit, .. } = *self.inputs;
+        let Inputs { trips, trip_keys, detour_limit, max_routes, .. } = *self.inputs;
         let route_sets = &*self.route_sets;
         batch.clear();
         filled.clear();
@@ -346,8 +368,19 @@ impl<'a> Chooser<'a> {
             let best = seconds.iter().copied().fold(f64::INFINITY, f64::min);
             let reach =
                 if detour_limit > 0.0 { best * (1.0 + detour_limit) } else { f64::INFINITY };
+            // At most `max_routes` offered, the fastest, the earlier first among equals (S268).
+            let cap = max_routes as usize;
+            let offered: Option<Vec<bool>> = (cap > 0 && seconds.len() > cap).then(|| {
+                let mut order: Vec<usize> = (0..seconds.len()).collect();
+                order.sort_by(|&x, &y| seconds[x].total_cmp(&seconds[y]).then(x.cmp(&y)));
+                let mut keep = vec![false; seconds.len()];
+                for &a in &order[..cap] {
+                    keep[a] = true;
+                }
+                keep
+            });
             for (a, r) in set.clone().enumerate() {
-                if seconds[a] > reach {
+                if seconds[a] > reach || offered.as_ref().is_some_and(|k| !k[a]) {
                     continue;
                 }
                 let view = route_sets.route(r);

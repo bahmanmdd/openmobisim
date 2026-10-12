@@ -644,3 +644,50 @@ fn a_buffer_keeps_main_roads_near_the_region_and_nothing_else() {
     assert_eq!(ids(ClipOptions { stubs: false, main_road_buffer_m: 2000.0 }), vec![10, 30]);
     assert_eq!(ids(ClipOptions { stubs: false, main_road_buffer_m: 100.0 }), vec![10], "too far");
 }
+
+#[test]
+fn a_buffer_joins_a_cut_dual_carriageway_by_a_turnaround() {
+    // A box over steps 0..2, 0..2, and a motorway leaving it southwards on two carriageways 0.3
+    // steps (about 23 m) apart: south from (1, 1) and north back to (1.3, 1), each running 30
+    // steps (3.3 km) out, past a 2 km buffer; a street joins them inside. Without a turnaround,
+    // each carriageway ends in a sink or a source at the buffer's edge and strong connectivity
+    // removes both back to the box (S268: Delft's A13 and A4).
+    let ys = [1.0, -5.0, -15.0, -30.0];
+    let mut src = MemorySource::new();
+    for (k, &y) in ys.iter().enumerate() {
+        src = src.node(at(1 + k as i64, 1.0, y)).node(at(11 + k as i64, 1.3, y));
+    }
+    let motorway = [("highway", "motorway"), ("ref", "A13")];
+    src = src
+        .way(OsmWay::new(100, [1, 2, 3, 4], motorway))
+        .way(OsmWay::new(101, [14, 13, 12, 11], motorway))
+        .way(road(102, [11, 1]));
+    let region = Region::bbox(4.80, 45.70, 4.80 + 2.0 * STEP, 45.70 + 2.0 * STEP).unwrap();
+    let options = ClipOptions { stubs: true, main_road_buffer_m: 2000.0 };
+    let clipped = ClippedSource::with_options(&src, &region, options);
+    let mut ways = Vec::new();
+    clipped.for_each_way(&mut |w| ways.push(w)).unwrap();
+    let turn: Vec<&OsmWay> =
+        ways.iter().filter(|w| w.tag("openmobisim:turnaround") == Some("yes")).collect();
+    assert_eq!(turn.len(), 1, "one turnaround");
+    assert_eq!(turn[0].node_ids, vec![3, 13], "from the southbound cut end to the northbound one");
+    assert_eq!(turn[0].tag("highway"), Some("motorway_link"));
+    // Imported with strong connectivity, both carriageways stay to the buffer's edge.
+    let (out, _) = run_raw(&clipped, Connectivity::Strong);
+    let south = 15.0 * STEP * 110_574.0;
+    assert!(
+        total_length(&out.network) > 2.0 * (south + STEP * 110_574.0),
+        "both carriageways kept"
+    );
+    // The plain buffer, as before S268, would have lost them: no turnaround without a buffer.
+    let plain = ClippedSource::with_options(
+        &src,
+        &region,
+        ClipOptions { stubs: true, ..ClipOptions::default() },
+    );
+    let mut n = 0;
+    plain
+        .for_each_way(&mut |w| n += usize::from(w.tag("openmobisim:turnaround").is_some()))
+        .unwrap();
+    assert_eq!(n, 0);
+}

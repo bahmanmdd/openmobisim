@@ -19,7 +19,8 @@
 //!   straight link across the gap. Bridging the gap would invent a street
 //!   through whatever is outside.
 //! * Nothing is added: no node is placed on the boundary, and no road is
-//!   moved. The network is a subset of the extract's.
+//!   moved. The network is a subset of the extract's (but for the main roads'
+//!   turnarounds, below).
 //!
 //! Where a one-way road crosses the boundary its cut end becomes a source or a
 //! sink, which is what [`Connectivity::Strong`](crate::import::Connectivity)
@@ -36,12 +37,21 @@
 //!   within [`ClipOptions::main_road_buffer_m`] of the region, so a ring road just outside a
 //!   study area (Amsterdam's A10, Paris' Périphérique) and the main approaches stay, as people
 //!   use them for trips inside the area. Nothing else outside is kept.
+//! * **Turnarounds for main roads (S268):** with a buffer, a one-way motorway or trunk carriageway
+//!   cut at the buffer's edge would end in a sink (or start at a source), and strong connectivity
+//!   would then remove it back to its last interchange — Delft's A13 and A4 vanished 2 km inside
+//!   the study area. Each such cut end is joined to the nearest cut end of the opposite direction
+//!   within [`TURNAROUND_MAX_M`] (the same `ref` first) by a short one-way slip road at 30 km/h,
+//!   tagged `openmobisim:turnaround=yes`, so both carriageways stay to the buffer's edge, where
+//!   traffic from outside enters and leaves. The only roads a clip adds.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::source::{OsmError, OsmNode, OsmSource, OsmWay};
+use crate::source::{OsmError, OsmNode, OsmSource, OsmWay, tag_of};
+use crate::tags::{Direction, direction};
+use openmobisim_core_graph::defaults::RoadClass;
 
 /// A study area.
 #[derive(Clone, Debug, PartialEq)]
@@ -91,6 +101,14 @@ const M_PER_DEG_LAT: f64 = 111_320.0;
 
 /// The `highway` values a main-road buffer keeps.
 const MAIN_ROADS: [&str; 4] = ["motorway", "motorway_link", "trunk", "trunk_link"];
+
+/// The farthest apart two cut ends of a main road's carriageways may be to be joined by a
+/// turnaround (S268): a dual carriageway's two sides are tens of metres apart.
+pub const TURNAROUND_MAX_M: f64 = 300.0;
+
+/// The first way id of the turnarounds a clip adds (S268), counting up: far below any id an
+/// extract holds, hand-edited negative ones included.
+const TURNAROUND_FIRST_ID: i64 = i64::MIN / 2;
 
 impl Region {
     /// How far a point is from the region, in metres: 0 inside, otherwise the distance to its
@@ -231,10 +249,22 @@ pub struct ClippedSource<'a> {
 /// What a clip keeps.
 struct Kept {
     inside: HashSet<i64>,
-    /// Nodes outside within the main-road buffer.
-    near: HashSet<i64>,
+    /// Nodes outside within the main-road buffer, with their positions.
+    near: HashMap<i64, (f64, f64)>,
     /// Every node some way keeps.
     all: HashSet<i64>,
+    /// The turnarounds to add (S268): from a carriageway's cut end to the opposite one's, with the
+    /// `highway` value they take.
+    turnarounds: Vec<(i64, i64, &'static str)>,
+}
+
+/// A one-way main road's end where the clip cut it (S268).
+struct CutEnd {
+    node: i64,
+    /// Traffic leaves the network here (a sink), else enters (a source).
+    sink: bool,
+    motorway: bool,
+    reference: Option<String>,
 }
 
 impl<'a> ClippedSource<'a> {
@@ -263,7 +293,7 @@ impl<'a> ClippedSource<'a> {
         let (w, s, e, n) = self.region.bounds();
         let grow_lat = buffer / M_PER_DEG_LAT;
         let grow_lon = buffer / (M_PER_DEG_LAT * s.abs().max(n.abs()).to_radians().cos().max(1e-6));
-        let (mut inside, mut near) = (HashSet::new(), HashSet::new());
+        let (mut inside, mut near) = (HashSet::new(), HashMap::new());
         self.inner.for_each_node(&mut |node| {
             if self.region.contains(node.lon, node.lat) {
                 inside.insert(node.id);
@@ -274,31 +304,127 @@ impl<'a> ClippedSource<'a> {
                 && node.lat <= n + grow_lat
                 && self.region.distance_m(node.lon, node.lat) <= buffer
             {
-                near.insert(node.id);
+                near.insert(node.id, (node.lon, node.lat));
             }
         })?;
         let mut all = inside.clone();
+        let mut cuts: Vec<CutEnd> = Vec::new();
         if self.options.stubs || buffer > 0.0 {
             self.inner.for_each_way(&mut |way| {
-                for (k, keep) in self.positions(&way, &inside, &near).into_iter().enumerate() {
-                    if keep {
+                let keep = self.positions(&way, &inside, &near);
+                for (k, &kept) in keep.iter().enumerate() {
+                    if kept {
                         all.insert(way.node_ids[k]);
                     }
                 }
+                if buffer > 0.0 {
+                    cut_ends(&way, &keep, &mut cuts);
+                }
             })?;
         }
-        *self.kept.borrow_mut() = Some(Kept { inside, near, all });
+        let turnarounds = if cuts.is_empty() { Vec::new() } else { self.pair(&cuts, &all, &near)? };
+        *self.kept.borrow_mut() = Some(Kept { inside, near, all, turnarounds });
         Ok(())
     }
 
+    /// The turnarounds (S268): each cut end that is still a dead end once every kept way is in
+    /// (no kept road leaves a sink, none enters a source), joined to the nearest dead cut end of
+    /// the other kind within [`TURNAROUND_MAX_M`], one with the same `ref` first. Costs one more
+    /// pass over the ways, only where a main road was cut.
+    fn pair(
+        &self,
+        cuts: &[CutEnd],
+        all: &HashSet<i64>,
+        near: &HashMap<i64, (f64, f64)>,
+    ) -> Result<Vec<(i64, i64, &'static str)>, OsmError> {
+        let candidates: HashSet<i64> = cuts.iter().map(|c| c.node).collect();
+        // (leaving, entering) kept segments at each candidate, any road.
+        let mut degree: HashMap<i64, (u32, u32)> = HashMap::new();
+        self.inner.for_each_way(&mut |way| {
+            if !way.node_ids.iter().any(|n| candidates.contains(n)) {
+                return;
+            }
+            let Some(highway) = way.tag("highway") else { return };
+            let class = RoadClass::from_osm_highway(highway);
+            let dir = class.map_or(Direction::Both, |c| direction(&way.tags, c));
+            for pair in way.node_ids.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                if !(all.contains(&a) && all.contains(&b)) {
+                    continue;
+                }
+                let mut step = |from: i64, to: i64| {
+                    if candidates.contains(&from) {
+                        degree.entry(from).or_default().0 += 1;
+                    }
+                    if candidates.contains(&to) {
+                        degree.entry(to).or_default().1 += 1;
+                    }
+                };
+                match dir {
+                    Direction::Forward => step(a, b),
+                    Direction::Backward => step(b, a),
+                    Direction::Both => {
+                        step(a, b);
+                        step(b, a);
+                    }
+                }
+            }
+        })?;
+        let dead = |c: &CutEnd| {
+            let (leaving, entering) = degree.get(&c.node).copied().unwrap_or((0, 0));
+            near.contains_key(&c.node) && if c.sink { leaving == 0 } else { entering == 0 }
+        };
+        let (mut sinks, mut sources): (Vec<&CutEnd>, Vec<&CutEnd>) =
+            cuts.iter().filter(|c| dead(c)).partition(|c| c.sink);
+        sinks.sort_by_key(|c| c.node);
+        sinks.dedup_by_key(|c| c.node);
+        sources.sort_by_key(|c| c.node);
+        sources.dedup_by_key(|c| c.node);
+        let mut out = Vec::new();
+        for sink in sinks {
+            let (x0, y0) = near[&sink.node];
+            let m_per_deg_lon = M_PER_DEG_LAT * y0.to_radians().cos();
+            let best = sources
+                .iter()
+                .filter(|s| s.node != sink.node)
+                .map(|s| {
+                    let (x, y) = near[&s.node];
+                    let d = ((x - x0) * m_per_deg_lon).hypot((y - y0) * M_PER_DEG_LAT);
+                    let same = sink.reference.is_some() && sink.reference == s.reference;
+                    (s, d, same)
+                })
+                .filter(|&(_, d, _)| d <= TURNAROUND_MAX_M)
+                .min_by(|a, b| {
+                    b.2.cmp(&a.2).then(a.1.total_cmp(&b.1)).then(a.0.node.cmp(&b.0.node))
+                });
+            if let Some((source, _, _)) = best {
+                let highway =
+                    if sink.motorway || source.motorway { "motorway_link" } else { "trunk_link" };
+                out.push((sink.node, source.node, highway));
+            }
+        }
+        Ok(out)
+    }
+
     /// Which of a way's nodes it keeps: those inside; a main road's within the buffer; and, with
-    /// stubs, the node just outside either end of every run so far.
-    fn positions(&self, way: &OsmWay, inside: &HashSet<i64>, near: &HashSet<i64>) -> Vec<bool> {
+    /// stubs, the node just outside either end of every run so far (but on a main road under a
+    /// buffer, S268).
+    fn positions(
+        &self,
+        way: &OsmWay,
+        inside: &HashSet<i64>,
+        near: &HashMap<i64, (f64, f64)>,
+    ) -> Vec<bool> {
         let main = self.options.main_road_buffer_m > 0.0
             && way.tag("highway").is_some_and(|h| MAIN_ROADS.contains(&h));
-        let mut keep: Vec<bool> =
-            way.node_ids.iter().map(|n| inside.contains(n) || (main && near.contains(n))).collect();
-        if self.options.stubs {
+        let mut keep: Vec<bool> = way
+            .node_ids
+            .iter()
+            .map(|n| inside.contains(n) || (main && near.contains_key(n)))
+            .collect();
+        // A main road under a buffer needs no stub: the buffer keeps its crossing, and its cut end
+        // stays a node within the buffer, where a turnaround can join it (S268).
+        if self.options.stubs && !main {
             let base = keep.clone();
             for k in 0..base.len() {
                 if base[k] {
@@ -312,6 +438,49 @@ impl<'a> ClippedSource<'a> {
             }
         }
         keep
+    }
+}
+
+/// A one-way main road's cut ends (S268): where a run of kept nodes stops before the way does, or
+/// starts after it began. In traffic order, a run's last node is a sink and its first a source.
+fn cut_ends(way: &OsmWay, keep: &[bool], out: &mut Vec<CutEnd>) {
+    let Some(highway) = way.tag("highway") else { return };
+    if !MAIN_ROADS.contains(&highway) {
+        return;
+    }
+    let Some(class) = RoadClass::from_osm_highway(highway) else { return };
+    let forward = match direction(&way.tags, class) {
+        Direction::Forward => true,
+        Direction::Backward => false,
+        Direction::Both => return,
+    };
+    let motorway = highway.starts_with("motorway");
+    let reference = tag_of(&way.tags, "ref").map(str::to_owned);
+    let n = keep.len();
+    let mut k = 0;
+    while k < n {
+        if !keep[k] {
+            k += 1;
+            continue;
+        }
+        let s = k;
+        while k < n && keep[k] {
+            k += 1;
+        }
+        let e = k; // the run is s..e
+        let (cut_before, cut_after) = (s > 0, e < n);
+        if e - s == 1 && cut_before && cut_after {
+            continue; // one node kept mid-way: no road to join
+        }
+        let mut push = |node: i64, sink: bool| {
+            out.push(CutEnd { node, sink, motorway, reference: reference.clone() });
+        };
+        if cut_after {
+            push(way.node_ids[e - 1], forward);
+        }
+        if cut_before {
+            push(way.node_ids[s], !forward);
+        }
     }
 }
 
@@ -356,7 +525,20 @@ impl OsmSource for ClippedSource<'_> {
                     });
                 }
             }
-        })
+        })?;
+        for (k, &(from, to, highway)) in kept.turnarounds.iter().enumerate() {
+            visit(OsmWay::new(
+                TURNAROUND_FIRST_ID + i64::try_from(k).expect("few turnarounds"),
+                [from, to],
+                [
+                    ("highway", highway),
+                    ("oneway", "yes"),
+                    ("maxspeed", "30"),
+                    ("openmobisim:turnaround", "yes"),
+                ],
+            ));
+        }
+        Ok(())
     }
 
     fn for_each_node(&self, visit: &mut dyn FnMut(OsmNode)) -> Result<(), OsmError> {

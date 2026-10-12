@@ -89,6 +89,9 @@ pub struct Manifest {
     /// How far above the best route's expected time a route may be and still be offered to a
     /// traveller (S178); 0 offers every route of the pair's set.
     pub choice_detour_limit: f64,
+    /// The most routes a traveller is offered, the fastest (S268); 0 offers every route within
+    /// the detour limit.
+    pub choice_max_routes: u32,
     /// The longest walk and bike ride mode choice offers, in seconds, when trips choose
     /// their mode (S233); `None` otherwise.
     pub walk_bike_max_s: Option<(f64, f64)>,
@@ -165,6 +168,7 @@ impl Manifest {
             route_update: description.route_update.clone(),
             route_update_descriptor: description.route_update_descriptor.clone(),
             choice_detour_limit: description.choice_detour_limit,
+            choice_max_routes: description.choice_max_routes,
             walk_bike_max_s: description.walk_bike_max_s,
             class_limits: description
                 .class_limits
@@ -239,7 +243,7 @@ impl Manifest {
                 format!("[{}]", names.iter().map(|n| text(n)).collect::<Vec<_>>().join(", "))
             })
         };
-        let fields: [(&str, String); 37] = [
+        let fields: [(&str, String); 38] = [
             ("openmobisim_version", text(&self.openmobisim_version)),
             ("code_version", self.code_version.to_string()),
             ("defaults_version", self.defaults_version.to_string()),
@@ -271,6 +275,7 @@ impl Manifest {
             ("route_update", text(&self.route_update)),
             ("route_update_descriptor", text(&self.route_update_descriptor)),
             ("choice_detour_limit", self.choice_detour_limit.to_string()),
+            ("choice_max_routes", self.choice_max_routes.to_string()),
             ("walk_max_s", optional(self.walk_bike_max_s.map(|(w, _)| number(w)))),
             ("bike_max_s", optional(self.walk_bike_max_s.map(|(_, b)| number(b)))),
             ("class_limits", optional(class_limits)),

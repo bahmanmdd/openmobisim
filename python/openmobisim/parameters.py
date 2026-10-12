@@ -49,6 +49,7 @@ _SCENARIO = [
     ("default_weight", 1.0, "travellers"),
     ("master_seed", 0.0, "—"),
     ("choice_detour_limit", 0.5, "share"),
+    ("choice_max_routes", 5.0, "routes"),
 ]
 
 _COUNTS = ("iterations", "max_paths", "max_attempts", "max_routes", "searches", "candidates",

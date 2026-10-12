@@ -34,9 +34,10 @@ FLOW_LEVELS = (0, 2, 3, 4)
 FREE_FLOW_INCREMENTS = 5
 
 #: ``"msa"`` stops once the disequilibrium, averaged over the last three iterations, is below this
-#: (S229; uncalibrated: a tight "good", which is below 0.05), unless ``equilibration_options``
-#: says otherwise; ``iterations`` stays the most it makes.
-GAP_TOLERANCE = 0.02
+#: (S268, the user's ruling U-24: the verdict's "good" itself; 0.02 from S229 to S267;
+#: uncalibrated), unless ``equilibration_options`` says otherwise; ``iterations`` stays the most it
+#: makes.
+GAP_TOLERANCE = 0.05
 
 #: ... and while the last route update added routes for at most this share of the pairs it
 #: searched (S229). 1 by default: the gap alone decides, since it is measured against the sets as
@@ -1118,6 +1119,7 @@ class Scenario:
         route_update: str | None = None,
         route_update_options: dict[str, float] | None = None,
         choice_detour_limit: float | None = None,
+        choice_max_routes: int | None = None,
         route_cache: bool = False,
         bike_cost: str = "dedicated",
         transit: _core.Transit | None = None,
@@ -1227,6 +1229,7 @@ class Scenario:
         self._route_update = route_update
         self._route_update_options = route_update_options
         self._choice_detour_limit = choice_detour_limit
+        self._choice_max_routes = choice_max_routes
         self._route_cache = route_cache
         self._bike_cost = bike_cost
         self._transit = transit
@@ -1279,6 +1282,7 @@ class Scenario:
         route_update: str | None = None,
         route_update_options: dict[str, float] | None = None,
         choice_detour_limit: float | None = None,
+        choice_max_routes: int | None = None,
         route_cache: bool = False,
         bike_cost: str = "dedicated",
         transit: _core.Transit | None = None,
@@ -1438,6 +1442,12 @@ class Scenario:
                 left out is still in the set and returns when times change. The gaps are still
                 measured against the whole set. The ``ln_path_size`` attribute is computed over
                 the whole set.
+            choice_max_routes: The most routes a traveller is offered: the fastest at their
+                departure, of those within ``choice_detour_limit`` (S268: people consider a
+                handful of routes, Prato 2009, https://doi.org/10.1016/S1755-5345(13)70005-8;
+                uncalibrated). ``None`` (the default) is the library's default, **5**; ``0``
+                offers every route within the limit. A pair's set may hold more (the route
+                update's ``max_routes``, 10), so a route not offered now can be later.
             bike_cost: How bike trips choose their route on the bike layer: ``"dedicated"``
                 (the default) is the fastest route with every minute in mixed traffic
                 counting a little more (1.2 times), so cyclists go a little out of their way
@@ -1485,9 +1495,9 @@ class Scenario:
                 the disequilibrium the last iteration ended at.
             equilibration_options: The strategy's options, numbers by name: for
                 ``"msa"``, ``iterations`` (10; the most loadings), ``gap_tolerance``
-                (0.02, S229: stop once the disequilibrium, averaged over the last three
-                iterations, is below this; 0.05 is good, 0.15 acceptable; 0 never stops
-                early), ``route_growth_tolerance`` (1: and only while the last route update
+                (0.05, S268: stop once the disequilibrium, averaged over the last three
+                iterations, is below this, the verdict's "good"; 0.15 is acceptable; 0 never
+                stops early), ``route_growth_tolerance`` (1: and only while the last route update
                 added routes for at most this share of the pairs it searched; 1 lets the gap
                 alone decide, since it is measured against the sets as grown),
                 ``gap_sample`` (300; how many trips are tested against the whole
@@ -1526,8 +1536,10 @@ class Scenario:
             route_update_options: The update's options, numbers by name: for
                 ``"best_response"``, ``searches`` (1: how many searches per pair per
                 iteration, at spread quantiles of the pair's departures; more finds routes
-                that pay only at some hours and makes bigger sets) and ``max_routes`` (10:
-                the most routes a pair's set may hold; a pair at the limit is not searched) and
+                that pay only at some hours and makes bigger sets) and ``max_routes`` (5:
+                the most routes a pair's set may hold; a full set is still searched, and a
+                route at least a second faster than its best replaces a route nobody chose,
+                never its free-flow shortest; if all are in use it waits, S268) and
                 ``slack`` (0: a pair is not searched while its set's best route is within this
                 share of free flow, since nothing is faster than free flow and so at most that
                 much is left to gain).
@@ -1742,6 +1754,7 @@ class Scenario:
             route_update=route_update,
             route_update_options=route_update_options,
             choice_detour_limit=choice_detour_limit,
+            choice_max_routes=choice_max_routes,
             route_cache=route_cache,
             bike_cost=bike_cost,
             transit=transit,
@@ -1804,6 +1817,7 @@ class Scenario:
             route_update=self._route_update,
             route_update_options=self._route_update_options,
             choice_detour_limit=self._choice_detour_limit,
+            choice_max_routes=self._choice_max_routes,
             route_cache=self._route_cache,
             bike_cost=self._bike_cost,
             transit=self._transit,

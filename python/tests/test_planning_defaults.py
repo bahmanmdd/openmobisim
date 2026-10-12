@@ -27,7 +27,7 @@ def test_a_default_run_is_a_point_queue_run_that_stops_when_converged():
     run = jam("pd-default")
     assert run.flow_level == 2
     m = run.manifest()
-    assert "gap_tolerance=0.02" in m["equilibration_descriptor"]
+    assert "gap_tolerance=0.05" in m["equilibration_descriptor"]
     assert "route_growth_tolerance=1" in m["equilibration_descriptor"]
     explicit = jam("pd-explicit", loading_options={"reroute": 0})
     assert explicit.fingerprint == run.fingerprint, "rerouting is off: nothing waits for room"

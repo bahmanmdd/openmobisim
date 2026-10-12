@@ -40,10 +40,21 @@ _WIDTH_MIN_PT, _WIDTH_SPAN_PT = 0.5, 5.2
 #: No ribbon is thinner than this many points (on a full-screen page), whatever the
 #: view scale: a link with any traffic must stay visible.
 _WIDTH_FLOOR_PT = 0.9
-#: A delay of this share of the free-flow time is the top of the colour ramp.
-_DELAY_TOP = 0.70
-#: Below this delay a ribbon counts as free flow.
-_DELAY_FREE = 0.04
+#: The delay colours' bands (S268, the user: "discrete values (google maps like but for their
+#: labels, just put the value range, no title)"), as the upper edges of the share of a link's
+#: mean time that is not free flow: the Highway Capacity Manual's urban-street levels of service by
+#: travel speed over free-flow speed (A above 85 %, B-C 50-85 %, D-E 30-50 %, F 30 % or less; TRB,
+#: *HCM 2010*, ch. 16, as tabulated in
+#: https://etrr.springeropen.com/articles/10.1186/s12544-024-00701-w/tables/4).
+#: Free flow counts a signal's mean wait (S268): only the waiting beyond it is delay.
+DELAY_BANDS = (0.15, 0.50, 0.70)
+#: Each band's label: its range, nothing else.
+DELAY_BAND_LABELS = ("0–15%", "15–50%", "50–70%", "70%+")
+
+
+def delay_band(delay: np.ndarray) -> np.ndarray:
+    """Each delay's band, 0 (free) to 3 (the worst): :data:`DELAY_BANDS`'s edges."""
+    return np.searchsorted(np.asarray(DELAY_BANDS), np.asarray(delay), side="right")
 
 
 def free_flow_moving_s(network: Any) -> np.ndarray:
@@ -191,9 +202,11 @@ def map_link(
         layer: Which layer's traffic to draw: ``"road"`` (default: cars, on the
             road network), ``"bike"`` or ``"walk"`` (each on its own layer's links,
             ``network.layer(...)``; volume counts travellers, not PCU).
-        colour: What the colour shows: ``"delay"`` (delay over free flow, a
-            signal's wait counted as delay, as a navigation map counts it; the
-            default on the road), ``"volume"`` (the default on the bike and walk
+        colour: What the colour shows: ``"delay"`` (the share of a link's mean
+            time that is not free flow, in four bands, 0-15 %, 15-50 %, 50-70 % and
+            70 % or more, the Highway Capacity Manual's levels of service; free flow
+            counts a signal's mean wait, so only waiting beyond it is delay, S268;
+            the default on the road), ``"volume"`` (the default on the bike and walk
             layers, where nothing is delayed), or ``"volume_capacity"`` (volume
             over the link's capacity as it passes traffic — at a signal, times the
             green fraction — so 1 is a link at capacity and beyond it is
@@ -275,7 +288,7 @@ def map_link(
         first, stop = busiest_bins(link_bins)
     else:
         first, stop = (None, None) if bins == "all" else _bin_range(bins)
-    free = free_flow_moving_s(network) if road else network.link_free_flow_s()
+    free = network.link_free_flow_s()  # a signal's mean wait in it (S268)
     table = link_table(link_bins, n_links, free, first=first, stop=stop)
     volume, delay = table["volume"], table["delay"]
     active = (volume > 0) & (volume >= min_volume)
@@ -322,13 +335,17 @@ def map_link(
     ribbon_points = geo.offset_points(points, owner, offset_m)
     stops = th.ramp_delay if ramp == "spectrum" else th.ramp_delay_ember
     if colour == "delay":
-        t = np.clip((delay - _DELAY_FREE) / _DELAY_TOP, 0.0, 1.0)
-        link_rgb = ramp_rgb(stops, t)
+        band = delay_band(delay)
+        band_rgb = ramp_rgb(stops, np.linspace(0.0, 1.0, len(DELAY_BAND_LABELS)))
+        link_rgb = band_rgb[band]
         if ramp == "ember":  # the first version: free flow recedes as a quiet slate
-            link_rgb = np.where((delay < _DELAY_FREE)[:, None], rgb(th.free)[None, :], link_rgb)
+            link_rgb = np.where((band == 0)[:, None], rgb(th.free)[None, :], link_rgb)
         severity = delay
-        legend_stops, low, high = stops, "0%", f"{_DELAY_TOP:.0%}+"
-        legend_label = "Delay over free flow"
+        legend_stops = tuple(
+            "#" + "".join(f"{round(float(v) * 255):02x}" for v in c) for c in band_rgb
+        )
+        low, high = DELAY_BAND_LABELS, ""
+        legend_label = ""
     elif colour == "volume_capacity":
         capacity, _ = capacity_passing(network)
         ratio = np.where(capacity > 0, volume / np.maximum(capacity, 1e-9), 0.0)

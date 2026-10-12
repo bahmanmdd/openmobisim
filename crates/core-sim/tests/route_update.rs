@@ -345,18 +345,19 @@ fn light_demand_adds_nothing_and_changes_nothing_but_the_fingerprint() {
 // --- the options --------------------------------------------------------------------------------
 
 #[test]
-fn a_pair_at_its_limit_is_not_searched_and_a_limit_is_kept() {
-    // A limit of one route: the set already holds it, so no search is made and none added.
+fn a_full_set_keeps_its_limit_and_its_free_flow_shortest_route() {
+    // A limit of one route: the set holds its free-flow shortest, which never makes room (S268),
+    // so nothing is added.
     let capped =
         Setup { update: ("best_response", vec![("max_routes", 1.0)]), ..Setup::new(1_500) }.go();
-    assert!(capped.iterations.iter().all(|it| it.route_searches == 0 && it.routes_added == 0));
+    assert!(capped.iterations.iter().all(|it| it.routes_added == 0));
     assert_eq!(capped.route_sets.as_ref().unwrap().route_count(), 1);
-    // A limit of two: the slow road fits, and nothing more could be added.
+    // A limit of two: the slow road fits; then the full set is searched, but nothing beats its
+    // best by a second, so nothing replaces anything.
     let two =
         Setup { update: ("best_response", vec![("max_routes", 2.0)]), ..Setup::new(1_500) }.go();
     assert_eq!(two.route_sets.as_ref().unwrap().route_count(), 2);
-    // Once full, a pair is no longer searched.
-    assert!(two.iterations[1..].iter().all(|it| it.route_searches == 0), "{:?}", two.iterations);
+    assert!(two.iterations[1..].iter().all(|it| it.routes_added == 0), "{:?}", two.iterations);
 }
 
 #[test]
@@ -793,7 +794,12 @@ fn what_is_added_is_a_route_of_the_network_and_new_to_its_set() {
             strategy("msa", &[("iterations".to_string(), 5.0)].into_iter().collect()).unwrap(),
         ))
         .with_route_update(Arc::from(
-            route_update::update("best_response", &Default::default()).unwrap(),
+            // Room for ten, so that nothing is replaced and every route added is still there.
+            route_update::update(
+                "best_response",
+                &[("max_routes".to_string(), 10.0)].into_iter().collect(),
+            )
+            .unwrap(),
         ));
     let result = run.execute(&mut Diagnostics::new());
     let sets = result.route_sets.as_ref().expect("sets");
@@ -919,4 +925,95 @@ fn an_adapting_run_is_the_same_at_one_thread_and_at_seven() {
     assert_eq!(one.iterations, seven.iterations, "reports");
     // And run again on the same pool: the same.
     assert_eq!(one, Setup { seed: 9, ..Setup::new(1_200) }.go());
+}
+
+/// **A full set makes room** (S268): on the jammed grid, with the generator's five routes per
+/// pair and a limit of five, better routes replace routes nobody chose; every set keeps the limit
+/// and its free-flow shortest route, and every trip's route is one of its own pair's.
+#[test]
+fn a_full_set_makes_room_for_a_better_route() {
+    let (network, _) = manhattan_grid(7, 200.0, true);
+    let network = Arc::new(network);
+    let turns = Arc::new(TurnTable::build(&network, SignalDefaults::SHIPPED));
+    let raw: Vec<RawTrip> = grid_trips(&network, 7, 3_000);
+    let (travellers, raw) =
+        build_travellers(raw, Vec::new(), &car_owning(), 1, &mut Diagnostics::new()).unwrap();
+    let mut run = Run::new(network.clone(), Arc::new(travellers), Arc::new(raw), Second(3600))
+        .with_flow_motor(FlowMotor::Ltm { turns, step: Duration(30.0), level: FidelityLevel::Full })
+        .with_master_seed(3)
+        .with_route_generator(Arc::from(
+            openmobisim_core_routes::generator("penalty", &Default::default()).unwrap(),
+        ))
+        .with_choice_model(Arc::from(model("logit", &Default::default()).unwrap()))
+        .with_equilibration(Arc::from(
+            strategy("msa", &[("iterations".to_string(), 5.0)].into_iter().collect()).unwrap(),
+        ))
+        .with_route_update(Arc::from(
+            route_update::update(
+                "best_response",
+                &[("max_routes".to_string(), 5.0)].into_iter().collect(),
+            )
+            .unwrap(),
+        ));
+    let result = run.execute(&mut Diagnostics::new());
+    let sets = result.route_sets.as_ref().expect("sets");
+    let added: u32 = result.iterations.iter().map(|it| it.routes_added).sum();
+    assert!(added > 0, "the test needs a replacement");
+    let stamps = sets.stamps();
+    for k in 0..sets.keys().len() {
+        let range = sets.route_range(k);
+        assert!(range.len() <= 5, "the limit");
+        let shortest = range
+            .clone()
+            .min_by(|&a, &b| sets.route(a).cost.total_cmp(&sets.route(b).cost).then(a.cmp(&b)))
+            .unwrap();
+        assert_eq!(stamps[shortest], 0, "the generator's free-flow shortest route stays");
+    }
+    let rc = result.route_choices.as_ref().unwrap();
+    let keys: Vec<_> = sets.keys().to_vec();
+    let mut on_added = 0;
+    for (t, &r) in rc.route.iter().enumerate() {
+        if r == NO_ROUTE {
+            continue; // a trip within one node
+        }
+        let k = (0..keys.len()).find(|&k| sets.route_range(k).contains(&(r as usize))).unwrap();
+        assert_eq!(rc.alternatives[t] as usize, sets.route_range(k).len());
+        on_added += usize::from(stamps[r as usize] > 0);
+    }
+    assert!(on_added > 0, "some trips ride a route that made it in");
+}
+
+/// **At most `choice_max_routes` offered** (S268): with one, every traveller takes the fastest
+/// route of their pair's set; at free flow, the one of least cost.
+#[test]
+fn a_traveller_is_offered_at_most_the_fastest_routes() {
+    let (network, _) = manhattan_grid(7, 200.0, true);
+    let network = Arc::new(network);
+    let turns = Arc::new(TurnTable::build(&network, SignalDefaults::SHIPPED));
+    let raw: Vec<RawTrip> = grid_trips(&network, 7, 500);
+    let (travellers, raw) =
+        build_travellers(raw, Vec::new(), &car_owning(), 1, &mut Diagnostics::new()).unwrap();
+    let mut run = Run::new(network.clone(), Arc::new(travellers), Arc::new(raw), Second(3600))
+        .with_flow_motor(FlowMotor::Ltm { turns, step: Duration(30.0), level: FidelityLevel::Full })
+        .with_master_seed(3)
+        .with_route_generator(Arc::from(
+            openmobisim_core_routes::generator("penalty", &Default::default()).unwrap(),
+        ))
+        .with_choice_model(Arc::from(model("logit", &Default::default()).unwrap()))
+        .with_choice_max_routes(1);
+    let result = run.execute(&mut Diagnostics::new());
+    let sets = result.route_sets.as_ref().expect("sets");
+    let rc = result.route_choices.as_ref().unwrap();
+    let mut checked = 0;
+    for &r in &rc.route {
+        if r == NO_ROUTE {
+            continue;
+        }
+        let r = r as usize;
+        let k = (0..sets.keys().len()).find(|&k| sets.route_range(k).contains(&r)).unwrap();
+        let least = sets.route_range(k).map(|x| sets.route(x).cost).fold(f32::INFINITY, f32::min);
+        assert!((sets.route(r).cost - least).abs() < 1e-3, "the fastest route, offered alone");
+        checked += usize::from(sets.route_range(k).len() > 1);
+    }
+    assert!(checked > 0, "the test needs pairs with more than one route");
 }

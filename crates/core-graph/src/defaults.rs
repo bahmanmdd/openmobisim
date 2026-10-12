@@ -165,7 +165,17 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// tagged `traffic_signals:direction` stops only its direction** (a stop line's signal; before,
 /// both, so a car met two signals at most junctions of a two-way street) and that an emergency
 /// signal stops nobody; the network keeps signals per approach ([`crate::RoadNetwork::is_link_signalised`]).
-pub const DEFAULTS_VERSION: u32 = 22;
+///
+/// Version 23 (S268, the user's rulings of 2026-10-12): **a region clip joins a main road's cut
+/// carriageways by a turnaround** (`io-osm`'s `ClipOptions`, with a buffer), so motorways and
+/// trunk roads stay to the buffer's edge instead of vanishing back to their last interchange
+/// (every network read with a region and a buffer changes); **a traveller is offered at most 5
+/// routes**, the fastest at their departure (`core-sim`'s `Run::with_choice_max_routes`; every
+/// route within the detour limit before), while a set still holds up to 10 and a full set is
+/// still searched, a route a second faster than its best replacing one nobody chose; and the
+/// Python layer's `msa` **stops at a gap of 0.05** (0.02 before). Every run with a choice among
+/// more than five routes changes, and every iterating run.
+pub const DEFAULTS_VERSION: u32 = 23;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

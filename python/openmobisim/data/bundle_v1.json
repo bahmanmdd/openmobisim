@@ -4,15 +4,16 @@
   "amsterdam": {
    "archive": {
     "name": "amsterdam.zip",
-    "sha256": "9bb8615b2497424756044fb9050c55f0242d2fde442e9b082fe08f271977e61d",
-    "bytes": 61227075
+    "sha256": "8ce22a136f25bc4bb7064f2a8df0e0500239f1cbb8aaa5f4f9a69179b7774e6e",
+    "bytes": 61223527
    },
    "files": {
-    "case.json": "98fdf4aa6a45fab316bcc47ba870e48d1d1bc55721b09e93c9980e094c241664",
+    "case.json": "0a66172bd8b9fe992485e1fca89858ff3be0b34dc9a24dc5a33451023eed1613",
     "demand/classes.csv": "78be829e138a92ef9fc861cab728e3ee8d726bb00b3df8c06ea2264bd7cefbe3",
-    "demand/morning.json": "5364612eb9f7a10b45a32aa2ffc300549358ce61c5f1222f76e701a6873d427f",
-    "demand/od.csv": "53d784278f594f6f5c3fdf5fa550aa1f3a94c52d3a20679248244e695948571f",
-    "demand/zones.csv": "701dda65648cb8ff174d24a4e303629fcc51aa6af07fef2f997685c9624cc7a4",
+    "demand/gateway_counts.csv": "dbaef3f544d714ee10b6344f51cc5124dca26717045c16b21d9f255242edc36d",
+    "demand/morning.json": "001476a8eec1238a721f86f547b65eb9c3866b38c4e2ce8de7e829870175d672",
+    "demand/od.csv": "f7ded963a8127aa7106918babe0fc7c09f86a27a8330cb876f606b45147d8dd6",
+    "demand/zones.csv": "84be7a363cd417acef56c93a523a381e9482eaecb065ab408bb322adf6ec207e",
     "gtfs.zip": "08d8a401d765762f767dc3097e3d91af7e9b1cb839bb2cd78794e062aa5da3f2",
     "network.osm.pbf": "c775d3f656a37abf433a2536906727e090866ba574bc16a923cbc6bce1d1f7e6"
    }
@@ -20,15 +21,16 @@
   "delft": {
    "archive": {
     "name": "delft.zip",
-    "sha256": "30b47a663575f5f74961fc5df6e8d078e50baf0d9df3a314c5bb4bead93184ed",
-    "bytes": 21281322
+    "sha256": "03d1fd7373f21e038394706cc9cc9009fa2c88578f88759321ecdfc5b34b9685",
+    "bytes": 21283759
    },
    "files": {
-    "case.json": "537d10b165a77cd676c7bfd566d1efb9d546af8247307750e3535b337b8311d5",
+    "case.json": "261a54066cf8ecc6a901481b1c4744814d913f303e6c15545774a6c52e734ec5",
     "demand/classes.csv": "78be829e138a92ef9fc861cab728e3ee8d726bb00b3df8c06ea2264bd7cefbe3",
-    "demand/morning.json": "444a5c4127cbc311f50e2f61d099f8982c312352a9837d0eb8b126178d4de696",
-    "demand/od.csv": "202d9f33e41b9387bf9a9006ea33b7e80775444437d9b4820d27760ffb71cd11",
-    "demand/zones.csv": "550002390ba78e5e899efea965cdf05eff57a988227dbe43f9ff10817e7a8ec7",
+    "demand/gateway_counts.csv": "a5c891c8f1407cacbd3de6bf3c6d73c263497c27ff8d96f3d4b2edbc52300d42",
+    "demand/morning.json": "27340696bcc5113ef04b51243d60b932c2a4e0288a838ab83730682723911f70",
+    "demand/od.csv": "0858c645a63a24f1d2d449e8664abc717ab90fd3648a0848a811bc1ab7352a8d",
+    "demand/zones.csv": "d58d168b144f53d0bc90cf9edc4ceed5dfa4b3caa877381b27d057d938f233ef",
     "gtfs.zip": "b3c835aba1727bbc9df1fbdfeb8e62771773dd7f3016b3dd08a0aaee97af8c63",
     "network.osm.pbf": "06a852af0bb4c3047dcb59956682ff34b8228d6291abfda41cd4b70b3f733ed2"
    }
@@ -36,16 +38,17 @@
   "lyon": {
    "archive": {
     "name": "lyon.zip",
-    "sha256": "cb86fffafe74b2687424abc3c1f9953992b02ca7145e4fb4ea266f8e98741a18",
-    "bytes": 38232121
+    "sha256": "17aba5d712142be454f26d0eba889249e9669a54ad067c6323761b26a8c90b5f",
+    "bytes": 38266513
    },
    "files": {
     "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
     "case.json": "45e4b20f1003942ed2d715c690927d43b19155015f28d0a687807158324aa673",
     "demand/classes.csv": "51126d2ec9eca94878cddc1703d9b46240fb7560c1f34076053ceed38bdc396d",
-    "demand/morning.json": "a4cdea265477597d5b43f2416f86e3b400bec5ffa6f05b2c4d428943acd4e843",
-    "demand/od.csv": "988db6f7c8305ab8459fb799f71d42c9770029cb8d9602e0435f3e1425b122f5",
-    "demand/zones.csv": "b2c7821f0afc00c0421aa0a011830540210a58cce796ebd6d39c5210e376caa5",
+    "demand/gateway_counts.csv": "4ad2ac4c7eba979e6109f301a4ac274acf2745a622758491294b579b3914ccf2",
+    "demand/morning.json": "ea75f71b996cb7c29c4e80cc4efba365c72920b109ebda986ce51665f9299c99",
+    "demand/od.csv": "e379444d7a959897824b553fdc77c86b89552f6287d76602cf969eddad7f0558",
+    "demand/zones.csv": "830a150a847325e5fe7a767fd4abbba2a261ea14d632e554a66ca36f29fa28d2",
     "gtfs.zip": "2d440cd9fe94d475155bda7fecc2f1d97e3ca1e748887845307b20342a929a78",
     "network.osm.pbf": "205e1d85b7ed26a060d2c7c475b724ca386f114647ed4d85b6bc944dabff2b7d"
    }
@@ -68,18 +71,19 @@
   "paris": {
    "archive": {
     "name": "paris.zip",
-    "sha256": "4a5661e8280d21f9754ac38d55671a3dbe7a0af7fcc344b0106e1f71258d8522",
-    "bytes": 93884378
+    "sha256": "b96a5cf2bd229f40eb56ce8bdeaf61c195b37bef1e5527eed3fb32a2d38641a1",
+    "bytes": 100912244
    },
    "files": {
     "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
-    "case.json": "9b02427b4acf8b3f8635e577c9736cff14db18a84db3578db7772d4db4bbe413",
+    "case.json": "9345d438c689b33441c4b6fa7c0d4e4f6e16aade179c95c844a000804020be8f",
     "demand/classes.csv": "98c133dc7c57e2593e30cc15e76106fb7b0fc788e4d29205ee5f4824eee921f0",
-    "demand/morning.json": "d328dae1a57e8838f9a4b269f73be2516f666bdecb4d075a8a5879a89f2cc6d6",
-    "demand/od.csv": "e11be14f7faf8a1b6e6f40a218a713d06bf2a2f89023fd9a6c5067cc5354ca7d",
-    "demand/zones.csv": "13bbd27ac6e1155927bb69556ccbf13a76f46bcb43b73fb6187dc35dfd717e61",
-    "gtfs.zip": "7a37bab4acb311508073bd0b397c944af807b49e247d0de23d1834298874bae5",
-    "network.osm.pbf": "08878670d4e276045f5de926562bccf9d9c781b97ca4bc8e63de79486be13753"
+    "demand/gateway_counts.csv": "671324572587b5754c9cebb4f6221e77fc2add824748b3ace842956de36f54b2",
+    "demand/morning.json": "94dbaa903616932b0e9e5b8f5bcce8d48d497a44411b848ef47cce4d300f651e",
+    "demand/od.csv": "6715aaba73a9ae5b64c9dcf0814d4c39902eeb883f6f3154b9422ad57c1fa6ad",
+    "demand/zones.csv": "814136082893cdd94dcbdfd9f5f68969a32ae6c69d516aee48ab61ffda2d8a41",
+    "gtfs.zip": "69b0c3cce283ea940db7d967f4fa4fd44fb921877f92d420b0c0379bbbddc101",
+    "network.osm.pbf": "08b9de6755fe9298b1ccbe542357ff8790c596f96f33a080f68f92e5c07fd335"
    }
   },
   "siouxfalls": {

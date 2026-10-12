@@ -567,7 +567,7 @@ fn convergence_arrays(
     choice_model=None, choice_options=None,
     equilibration="free_flow", equilibration_options=None,
     route_update="none", route_update_options=None,
-    choice_detour_limit=None, route_cache=false, bike_cost="dedicated", transit=None,
+    choice_detour_limit=None, choice_max_routes=None, route_cache=false, bike_cost="dedicated", transit=None,
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
     loading_options=None, price_options=None,
 ))]
@@ -610,6 +610,7 @@ pub fn run_pipeline(
     route_update: &str,
     route_update_options: Option<HashMap<String, f64>>,
     choice_detour_limit: Option<f64>,
+    choice_max_routes: Option<u32>,
     route_cache: bool,
     bike_cost: &str,
     transit: Option<PyRef<'_, PyTransit>>,
@@ -834,6 +835,9 @@ pub fn run_pipeline(
         .with_route_update(Arc::from(update));
     if let Some(limit) = choice_detour_limit {
         run = run.with_choice_detour_limit(limit);
+    }
+    if let Some(n) = choice_max_routes {
+        run = run.with_choice_max_routes(n);
     }
     if route_cache {
         run = run.with_route_cache(route_cache_handle().clone());

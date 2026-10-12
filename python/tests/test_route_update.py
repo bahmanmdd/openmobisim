@@ -162,9 +162,9 @@ def test_a_run_is_repeatable_with_an_update():
 def test_the_options_change_what_it_does():
     one = go("ru-one", route_update="best_response")
     capped = go("ru-cap", route_update="best_response", route_update_options={"max_routes": 1})
-    # A limit of one route per pair leaves no room: nothing is searched or added.
+    # A limit of one route per pair: the set's free-flow shortest never makes room (S268), so
+    # nothing is added (the full set is still searched).
     assert (capped.convergence()["routes_added"] == 0).all()
-    assert (capped.convergence()["route_searches"] == 0).all()
     three = go("ru-3", route_update="best_response", route_update_options={"searches": 3})
     assert three.route_sets().update == "best_response;max_routes=10;searches=3;slack=0.02"
     assert three.convergence()["route_searches"][0] > one.convergence()["route_searches"][0]

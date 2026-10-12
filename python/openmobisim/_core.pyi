@@ -859,6 +859,7 @@ def run_pipeline(
     route_update: str = "none",
     route_update_options: dict[str, float] | None = None,
     choice_detour_limit: float | None = None,
+    choice_max_routes: int | None = None,
     route_cache: bool = False,
     bike_cost: str = "dedicated",
     transit: Transit | None = None,
@@ -946,6 +947,8 @@ def run_pipeline(
             the same (same network, pairs, method and, for a method that reads it, demand).
         choice_detour_limit: Offer a traveller only the routes whose expected time is within this
             share of the best's (``0`` offers every route, ``None`` the library's default).
+        choice_max_routes: Offer a traveller at most this many routes, the fastest (``0`` no
+            limit, ``None`` the library's default, 5).
         bike_cost: ``"dedicated"`` (the default) or ``"time"``: how bike trips
             choose their route on the bike layer.
         transit: The timetable for the ``"transit"`` trips; its buses ride this

@@ -60,6 +60,16 @@ pub const DEFAULT_SLACK: f64 = 0.02;
 /// [`BestResponse::tree_step_s`]).
 pub const DEFAULT_TREE_STEP_S: u32 = 0;
 
+/// The most routes a pair's set holds by default (S176). A traveller is offered at most five of
+/// them (`Run::with_choice_max_routes`, S268): the set remembers more, so that a route that
+/// congestion made slow can come back, and a full set does not hold the run back (with five
+/// stored, Lyon's run ended poor instead of acceptable, S268).
+pub const DEFAULT_MAX_ROUTES: u32 = 10;
+
+/// How much faster than a full set's best a route must be to replace one of its routes, in
+/// seconds (S268): a tie keeps the set as it is.
+pub const REPLACE_GAIN_S: f64 = 1.0;
+
 /// The update used unless another is asked for.
 pub const DEFAULT_UPDATE: &str = "none";
 
@@ -132,6 +142,12 @@ pub trait RouteUpdate: Send + Sync {
     /// The routes to add, given the state after a loading. Must be a function of `cx`
     /// alone: the same for any thread count.
     fn update(&self, cx: &UpdateContext<'_>) -> Additions;
+
+    /// The most routes a set may hold, if the update caps it: a set its additions would take
+    /// past this makes room ([`make_room`], S268).
+    fn max_routes(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// Leave the sets as the generator made them.
@@ -174,8 +190,11 @@ pub struct BestResponse {
     /// cost of more searches and a bigger set, which raises the logit's own gap (S174: 1
     /// measured best).
     pub searches: u32,
-    /// The most routes a pair's set may hold (1 to [`MAX_ROUTES_PER_SET`]); a pair at the
-    /// limit is not searched.
+    /// The most routes a pair's set may hold (1 to [`MAX_ROUTES_PER_SET`]; [`DEFAULT_MAX_ROUTES`]).
+    /// **A full set is still searched (S268):** a route at least [`REPLACE_GAIN_S`] faster than
+    /// its best takes the place of a route nobody chose in the last choice (never its free-flow
+    /// shortest one, which the slack rests on); if every route is in use, it waits. No trip is
+    /// moved. Ties do not replace, so equal routes do not cycle in and out.
     pub max_routes: u32,
     /// A pair is **not searched** while the set's best route at its departure is within this share
     /// of the route's free-flow time (0 to 1; 0 searches every pair; [`DEFAULT_SLACK`], S178). No
@@ -197,7 +216,12 @@ pub struct BestResponse {
 
 impl Default for BestResponse {
     fn default() -> Self {
-        Self { searches: 1, max_routes: 10, slack: DEFAULT_SLACK, tree_step_s: DEFAULT_TREE_STEP_S }
+        Self {
+            searches: 1,
+            max_routes: DEFAULT_MAX_ROUTES,
+            slack: DEFAULT_SLACK,
+            tree_step_s: DEFAULT_TREE_STEP_S,
+        }
     }
 }
 
@@ -260,6 +284,10 @@ struct Job {
 }
 
 impl RouteUpdate for BestResponse {
+    fn max_routes(&self) -> Option<usize> {
+        Some(self.max_routes as usize)
+    }
+
     fn name(&self) -> &str {
         "best_response"
     }
@@ -291,12 +319,15 @@ impl RouteUpdate for BestResponse {
             let seconds = |link: u32, at: f64| cx.times.link_seconds(link, at);
             let mut added: Vec<Route> = Vec::new();
             let mut searches = 0_u32;
+            // A full set may take one route, which replaces one of its own (S268).
+            let full = set.len() >= max_routes;
+            let room = max_routes.saturating_sub(set.len()).max(1);
             // The set's free-flow shortest time: no route is faster than it.
             let free_flow =
                 set.clone().map(|r| f64::from(sets.route(r).cost)).fold(f64::INFINITY, f64::min);
             for &second in &departures[job.departures.clone()] {
                 let departure = f64::from(second);
-                if set.len() + added.len() >= max_routes {
+                if added.len() >= room {
                     break;
                 }
                 // What the set offers at this departure, the routes added a moment ago included.
@@ -313,7 +344,7 @@ impl RouteUpdate for BestResponse {
                     continue;
                 }
                 searches += 1;
-                let Some((_, links)) = search.fastest_route(
+                let Some((time, links)) = search.fastest_route(
                     NodeId::new(key.origin),
                     NodeId::new(key.destination),
                     departure,
@@ -323,6 +354,9 @@ impl RouteUpdate for BestResponse {
                 ) else {
                     continue;
                 };
+                if full && time >= best - REPLACE_GAIN_S {
+                    continue;
+                }
                 // The search was bounded by the set's best, so `links` is at least as good. A
                 // route the set already holds is what it usually finds: not new.
                 if is_known(sets, job.key, &added, &links) {
@@ -407,9 +441,10 @@ impl BestResponse {
             let mut wanted: Vec<(usize, f64)> = Vec::new();
             for &k in &tree.keys {
                 let set = sets.route_range(k);
-                if set.is_empty() || set.len() >= max_routes {
+                if set.is_empty() {
                     continue;
                 }
+                let full = set.len() >= max_routes;
                 let free_flow = set
                     .clone()
                     .map(|r| f64::from(sets.route(r).cost))
@@ -420,7 +455,8 @@ impl BestResponse {
                 if self.slack > 0.0 && best <= free_flow * (1.0 + self.slack) {
                     continue;
                 }
-                wanted.push((k, best));
+                // A full set takes only a route that beats its best (S268): the bound to beat.
+                wanted.push((k, if full { best - REPLACE_GAIN_S } else { best }));
             }
             if wanted.is_empty() {
                 return (Vec::new(), 0);
@@ -442,7 +478,8 @@ impl BestResponse {
             let mut kept = Vec::new();
             for (node, time, links) in routes {
                 for &(k, best) in &wanted {
-                    // At least as fast as the set's best: a tie counts (S176).
+                    // At least as fast as the set's best: a tie counts (S176), but for a full
+                    // set, whose bound is below its best (S268).
                     if sets.keys()[k].destination == node.raw()
                         && time <= best + 1e-9
                         && !links.is_empty()
@@ -468,7 +505,7 @@ impl BestResponse {
         let routes: Vec<Vec<Route>> = search_map(&ctx, &groups, |search, (k, candidates)| {
             let mut added: Vec<Route> = Vec::new();
             for links in candidates {
-                if sets.route_range(*k).len() + added.len() >= max_routes {
+                if added.len() >= max_routes.saturating_sub(sets.route_range(*k).len()).max(1) {
                     break;
                 }
                 if !is_known(sets, *k, &added, links) {
@@ -487,20 +524,18 @@ impl BestResponse {
         out
     }
 
-    /// The searches to make: for each key with routed trips and room to grow, the departures
-    /// to search at (evenly spread quantiles of its trips' departures), flat, with each key's
-    /// range. Keys ascend.
+    /// The searches to make: for each key with routed trips (full sets too, S268), the
+    /// departures to search at (evenly spread quantiles of its trips' departures), flat, with
+    /// each key's range. Keys ascend.
     fn plan(&self, cx: &UpdateContext<'_>) -> (Vec<u32>, Vec<Job>) {
         let sets = cx.route_sets;
-        let max_routes = self.max_routes as usize;
         // (key, departure) packed so that one sort orders by key, then departure.
         let mut pairs: Vec<u64> = (0..cx.trips.len())
             .filter(|&i| cx.active.is_none_or(|a| a[i as usize]))
             .filter_map(|i| {
                 let k = sets.key_index(cx.trip_keys[i as usize])?;
-                let room =
-                    !sets.route_range(k).is_empty() && sets.route_range(k).len() < max_routes;
-                room.then(|| {
+                // A full set is searched too: a better route replaces one of its own (S268).
+                (!sets.route_range(k).is_empty()).then(|| {
                     let departure = cx.trips.departure(TripId::new(i)).get();
                     (k as u64) << 32 | u64::from(departure)
                 })
@@ -531,6 +566,63 @@ impl BestResponse {
         }
         (departures, jobs)
     }
+}
+
+/// Room in the sets that `additions` would take past `max_routes` (S268): each such set drops
+/// routes **nobody chose** in the last choice (by `chosen` and `weight` per trip, as
+/// `RouteChoices` hold them), the highest free-flow cost first, never its free-flow shortest
+/// one. Additions that cannot fit are dropped. Returns which of the store's routes to remove.
+///
+/// # Panics
+///
+/// Panics if an addition names a key whose set is empty (a store never holds one).
+#[must_use]
+pub fn make_room(
+    sets: &RouteSets,
+    additions: &mut Vec<(usize, Vec<Route>)>,
+    chosen: &[u32],
+    weight: &[u32],
+    max_routes: usize,
+) -> Vec<bool> {
+    let mut usage = vec![0_u64; sets.route_count()];
+    for (&r, &w) in chosen.iter().zip(weight) {
+        if let Some(u) = usage.get_mut(r as usize) {
+            *u += u64::from(w);
+        }
+    }
+    let mut removed = vec![false; sets.route_count()];
+    for (k, routes) in additions.iter_mut() {
+        let range = sets.route_range(*k);
+        let range_len = range.len();
+        let excess = (range_len + routes.len()).saturating_sub(max_routes);
+        if excess == 0 {
+            continue;
+        }
+        let cost = |r: usize| sets.route(r).cost;
+        let shortest = range
+            .clone()
+            .min_by(|&a, &b| cost(a).total_cmp(&cost(b)).then(a.cmp(&b)))
+            .expect("a set is never empty");
+        // Only a route nobody chose makes room: no trip is moved, so the averaging of the
+        // iterations is not disturbed (a forced move set back Lyon's convergence, S268).
+        let mut candidates: Vec<usize> =
+            range.filter(|&r| r != shortest && usage[r] == 0).collect();
+        candidates.sort_by(|&a, &b| cost(b).total_cmp(&cost(a)).then(a.cmp(&b)));
+        // The new routes that fit once every removable route is gone; none: nothing removed. A
+        // set may already hold more than the limit (a generator's, under a lower limit).
+        let keep_new = routes.len().saturating_sub(excess - excess.min(candidates.len()));
+        if keep_new == 0 {
+            routes.clear();
+            continue;
+        }
+        let needed = (range_len + keep_new).saturating_sub(max_routes);
+        for &r in &candidates[..needed] {
+            removed[r] = true;
+        }
+        routes.truncate(keep_new);
+    }
+    additions.retain(|(_, routes)| !routes.is_empty());
+    removed
 }
 
 /// Whether `links` is a route of the key's set already, or one of the `added`.

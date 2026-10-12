@@ -26,7 +26,12 @@ from openmobisim.network import LINK_CLASSES
 from openmobisim.viz import _geometry as geo
 from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._interactive_page import PAGE_CSS, PAGE_HTML, PAGE_JS
-from openmobisim.viz._link import capacity_passing, free_flow_moving_s
+from openmobisim.viz._link import (
+    DELAY_BAND_LABELS,
+    DELAY_BANDS,
+    capacity_passing,
+    free_flow_moving_s,
+)
 from openmobisim.viz._logo import LOGO_PATH
 from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._route import _ROUTE_NIGHT, _ROUTE_PAPER
@@ -300,7 +305,7 @@ def map_interactive(
     blob.add("dy", delta[:, 1], "i32")
     blob.add("cls", network.link_class()[keep], "u8")
     blob.add("len", network.link_length_m()[keep], "f32")
-    # The delay counts a signal's wait (S265): free flow is the moving time; the wait apart.
+    # Free flow is the moving time plus a signal's mean wait (S268): the wait apart, for the hover.
     moving = free_flow_moving_s(network)
     blob.add("ff", moving[keep], "f32")
     wait = np.maximum(np.asarray(network.link_free_flow_s()) - moving, 0.0)
@@ -361,6 +366,7 @@ def map_interactive(
     meta: dict[str, Any] = {
         "version": __version__, "theme": theme, "n_links": n_links, "n_verts": int(len(pts)),
         "n_bins": n_bins, "bin_seconds": bin_seconds, "has_routes": has_routes,
+        "delay_bands": list(DELAY_BANDS), "delay_band_labels": list(DELAY_BAND_LABELS),
         "n_pairs": n_pairs, "n_routes": n_routes, "class_names": _CLASS_NAMES,
         "title": title or _default_title(bins is not None and n_bins > 0, has_routes),
         "note": note, "credit": credit, "logo": bool(logo),
@@ -389,6 +395,10 @@ def map_interactive(
     if not quiet:
         show_path("Interactive map", out)
     return out
+
+
+#: The most routes the map draws per pair (S268): as many as a traveller is offered by default.
+MAP_ROUTES = 5
 
 
 def _route_usage(run: Any) -> np.ndarray | None:
@@ -431,6 +441,14 @@ def _add_routes(
     key_of_route = np.repeat(np.arange(n_keys), np.diff(set_off))
     inside = np.add.reduceat(keep[links].astype(np.int64), route_off[:-1]) == route_len
     inside &= route_len > 0
+    # At most MAP_ROUTES per pair (S268, the user: more "doesn't look good"): the most used, then
+    # the cheapest, then the first.
+    used = usage if usage is not None else np.zeros(n_routes)
+    order = np.lexsort((np.arange(n_routes), sets.costs(), -used, ~inside, key_of_route))
+    in_order = key_of_route[order]
+    rank = np.empty(n_routes, dtype=np.int64)
+    rank[order] = np.arange(n_routes) - np.searchsorted(in_order, in_order)
+    inside &= rank < MAP_ROUTES
     per_key = np.bincount(key_of_route[inside], minlength=n_keys)
     candidates = np.nonzero(per_key > 0)[0]
     if not len(candidates):
