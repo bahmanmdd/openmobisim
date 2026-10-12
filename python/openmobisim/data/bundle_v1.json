@@ -4,11 +4,11 @@
   "amsterdam": {
    "archive": {
     "name": "amsterdam.zip",
-    "sha256": "8ce22a136f25bc4bb7064f2a8df0e0500239f1cbb8aaa5f4f9a69179b7774e6e",
-    "bytes": 61223527
+    "sha256": "d6fedf6e891e72af1c19aff8db8cfa82d318d5cadc074f3d49dd428b72aebeb7",
+    "bytes": 61223504
    },
    "files": {
-    "case.json": "0a66172bd8b9fe992485e1fca89858ff3be0b34dc9a24dc5a33451023eed1613",
+    "case.json": "5d7290b4fb3e0cc532cf9ca93de3ce11290a838c5e3c005472db07e4a3167a86",
     "demand/classes.csv": "78be829e138a92ef9fc861cab728e3ee8d726bb00b3df8c06ea2264bd7cefbe3",
     "demand/gateway_counts.csv": "dbaef3f544d714ee10b6344f51cc5124dca26717045c16b21d9f255242edc36d",
     "demand/morning.json": "001476a8eec1238a721f86f547b65eb9c3866b38c4e2ce8de7e829870175d672",
@@ -21,29 +21,29 @@
   "delft": {
    "archive": {
     "name": "delft.zip",
-    "sha256": "03d1fd7373f21e038394706cc9cc9009fa2c88578f88759321ecdfc5b34b9685",
-    "bytes": 21283759
+    "sha256": "a5d3bb9866de0a023c9949f681e8d5b566e69850a84acb20e2341a0f3b7934a9",
+    "bytes": 18996981
    },
    "files": {
     "case.json": "261a54066cf8ecc6a901481b1c4744814d913f303e6c15545774a6c52e734ec5",
     "demand/classes.csv": "78be829e138a92ef9fc861cab728e3ee8d726bb00b3df8c06ea2264bd7cefbe3",
-    "demand/gateway_counts.csv": "a5c891c8f1407cacbd3de6bf3c6d73c263497c27ff8d96f3d4b2edbc52300d42",
-    "demand/morning.json": "27340696bcc5113ef04b51243d60b932c2a4e0288a838ab83730682723911f70",
-    "demand/od.csv": "0858c645a63a24f1d2d449e8664abc717ab90fd3648a0848a811bc1ab7352a8d",
-    "demand/zones.csv": "d58d168b144f53d0bc90cf9edc4ceed5dfa4b3caa877381b27d057d938f233ef",
-    "gtfs.zip": "b3c835aba1727bbc9df1fbdfeb8e62771773dd7f3016b3dd08a0aaee97af8c63",
-    "network.osm.pbf": "06a852af0bb4c3047dcb59956682ff34b8228d6291abfda41cd4b70b3f733ed2"
+    "demand/gateway_counts.csv": "c173b0f8be2ff2dec9d177ed28abd31a79e680bcb89078b6d491a671e1afb588",
+    "demand/morning.json": "b9567d05b1239e3c946b72e71d6eeb25128171dcb45c0b95823ef594913f4e62",
+    "demand/od.csv": "e9630bc09de5c9f6567d80f130627cd7a40773a27de52c7e843fa1ca591a3e8b",
+    "demand/zones.csv": "1e0288a310d74aff86bdde35349a3a659f05aeee6796695ac9fba83f7c03eb33",
+    "gtfs.zip": "b68d4e99e474eafd75eb0900d6aa12e127701d22d2b10cc040bff2fe159cd6e3",
+    "network.osm.pbf": "1e533e33797ac3132361fb7065bbceee7f5f739e0e16ec2353cb22fd7c62e883"
    }
   },
   "lyon": {
    "archive": {
     "name": "lyon.zip",
-    "sha256": "17aba5d712142be454f26d0eba889249e9669a54ad067c6323761b26a8c90b5f",
-    "bytes": 38266513
+    "sha256": "fa7f6e307287a92da6751acc8fe2a87f507a2d1a126d41df201eab62bddddce6",
+    "bytes": 38266501
    },
    "files": {
     "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
-    "case.json": "45e4b20f1003942ed2d715c690927d43b19155015f28d0a687807158324aa673",
+    "case.json": "b32574b743bf12b2e278d884a98647dd9b10341dc4e65300d7349bc8980664ff",
     "demand/classes.csv": "51126d2ec9eca94878cddc1703d9b46240fb7560c1f34076053ceed38bdc396d",
     "demand/gateway_counts.csv": "4ad2ac4c7eba979e6109f301a4ac274acf2745a622758491294b579b3914ccf2",
     "demand/morning.json": "ea75f71b996cb7c29c4e80cc4efba365c72920b109ebda986ce51665f9299c99",
@@ -56,11 +56,11 @@
   "nguyendupuis": {
    "archive": {
     "name": "nguyendupuis.zip",
-    "sha256": "83fa680be532fbd19e306e5b3937d4b96bf93c10cbcddc3dee940240701aa086",
-    "bytes": 1615
+    "sha256": "c391d399f6b62055792ee6e091d86ccee9c0b62753ad37395b4747f67f2c5855",
+    "bytes": 1623
    },
    "files": {
-    "case.json": "62c16029342c50aa43e9b37b10b7b124fa4adfac70f3e6e7b6f53c3edfedb5d2",
+    "case.json": "e377bcdcc407325aef4123eb08bf37fa9683900d7703f9ca0e20d3e75fd2a4d9",
     "demand/classes.csv": "732da9800415f29279d5b1973c2c06ea20e9078f195df993d0538d38e8b402c4",
     "demand/od.csv": "67cf5e21ad563d75c7176bd03b04a6f8a44604b88eab2960964ca1d599c8ca0f",
     "demand/zones.csv": "7582c12f615f80c795c3b95a82b9902cd140ff87c61b5401228bbf99eccfb49a",
@@ -71,12 +71,12 @@
   "paris": {
    "archive": {
     "name": "paris.zip",
-    "sha256": "b96a5cf2bd229f40eb56ce8bdeaf61c195b37bef1e5527eed3fb32a2d38641a1",
-    "bytes": 100912244
+    "sha256": "8bbc9ec6f9e2cf89fd078a7ac74d7be55778cb55c33eb435418befc9c48a4f91",
+    "bytes": 100912224
    },
    "files": {
     "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
-    "case.json": "9345d438c689b33441c4b6fa7c0d4e4f6e16aade179c95c844a000804020be8f",
+    "case.json": "8f5495a3f75e90ff966a1ba42238dba4f343c17da49a50b43e9f7bcad73dbaa6",
     "demand/classes.csv": "98c133dc7c57e2593e30cc15e76106fb7b0fc788e4d29205ee5f4824eee921f0",
     "demand/gateway_counts.csv": "671324572587b5754c9cebb4f6221e77fc2add824748b3ace842956de36f54b2",
     "demand/morning.json": "94dbaa903616932b0e9e5b8f5bcce8d48d497a44411b848ef47cce4d300f651e",
@@ -89,11 +89,11 @@
   "siouxfalls": {
    "archive": {
     "name": "siouxfalls.zip",
-    "sha256": "fe21acdd78b9cf491c5e9a64f35b065564c75b24716273d203a79511a6cc0173",
-    "bytes": 3986
+    "sha256": "d31c83d54d569666cdeacbcb0ce6d1416bb8de9d01c858a622c6e45764a8fbb5",
+    "bytes": 3995
    },
    "files": {
-    "case.json": "7906e8f382d10def7737a078a9e60d507ab98d052364c10f90ad41b9c42444bf",
+    "case.json": "df5b0034386a4457506e735883cd422e14bf44b1feb7b041acda43d8b00a46c9",
     "demand/classes.csv": "732da9800415f29279d5b1973c2c06ea20e9078f195df993d0538d38e8b402c4",
     "demand/od.csv": "8254bec3e7f3eb3561855934964efa92fca84117e072448e611b304d3017cd0c",
     "demand/zones.csv": "09d51fa109d7cb1246b26a675a6ced7cff642229ca45aab5f200afce1775fe2f",

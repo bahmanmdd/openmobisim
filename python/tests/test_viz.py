@@ -310,9 +310,9 @@ def test_a_quantity_shown_by_width_and_colour_is_titled_once():
     assert sum(w.startswith("Volume per direction") for w in words) == 1
     words = [t.get_text() for t in viz.map_link(run, colour="delay", **kwargs).texts]
     assert any(w.startswith("Volume per") for w in words)
-    # The delay's bands (S268): each labelled with its range only, no title.
+    # The delay's bands (S268): each labelled with its range only, under a general title (S269).
     assert all(label in words for label in viz._link.DELAY_BAND_LABELS)
-    assert "Delay over free flow" not in words
+    assert "Delay over free flow" in words
 
 
 def test_the_logo_and_the_credit_are_optional_and_never_a_copyright_claim():

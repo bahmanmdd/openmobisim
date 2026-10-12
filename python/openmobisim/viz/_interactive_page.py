@@ -33,20 +33,22 @@ __CSS__
   <div id="layergroup" hidden>
     <h2>Layers</h2>
     <div class="layers" id="layerrows"></div>
+    <div class="legend" id="transitlegend" hidden><h2>Transit lines</h2><div class="kinds" id="transitkinds"></div><div class="note">width = passengers on board</div></div>
   </div>
   <div id="trafficgroup">
     <h2>Traffic</h2>
     <div class="row"><label>Colour by <select id="colour"><option value="delay">Delay</option><option value="volume">Volume</option><option value="vc">Volume ÷ capacity</option></select></label><button id="theme">Night</button></div>
+    <div class="legend"><h2 id="legendlabel">Delay over free flow</h2><div class="bar" id="colourbar"></div><div class="ends"><span id="legendlow"></span><span id="legendhigh"></span></div><div class="bands" id="bands"></div></div>
     <div class="row"><input id="bin" type="range" min="0" max="0" value="0" step="1"></div>
     <div class="row"><label><input id="allbins" type="checkbox" checked> All bins</label><button id="play">Play</button></div>
     <div class="row" id="spillrow" hidden><label title="Links whose queue would not have fitted on the road: where it would spill back (point queue)"><input id="spill" type="checkbox"> Spillback links <span id="spillcount"></span></label></div>
-    <div class="legend"><h2 id="legendlabel" hidden></h2><div class="bar" id="colourbar"></div><div class="ends"><span id="legendlow"></span><span id="legendhigh"></span></div><div class="bands" id="bands"></div></div>
   </div>
   <div id="routegroup">
     <h2>Route alternatives</h2>
     <div class="row"><label>Pair <input id="pairno" type="number" min="1" value=""></label><span id="pairs"></span></div>
     <div class="row"><button id="prev">‹</button><button id="next">›</button><button id="richest">Most alternatives</button><button id="clear">Clear</button></div>
     <div class="row"><label><input id="showroutes" type="checkbox" checked> Show routes</label><label><input id="dim" type="checkbox" checked> Dim traffic</label></div>
+    <div class="row"><label title="A pair's routes, the most chosen first">Routes <select id="nroutes"><option value="5">5 most chosen</option><option value="0">All</option></select></label></div>
     <p id="routehint">Pick a pair above, or click a link and choose one of the pairs that use it.</p>
     <div id="routelist"></div>
   </div>
@@ -93,6 +95,9 @@ label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2);
 .legend .ends { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--ink2); }
 .legend .bands { display: flex; font: 11px var(--mono); color: var(--ink2); }
 .legend .bands span { flex: 1; text-align: center; }
+.legend .kinds { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--ink2); margin-top: 4px; }
+.legend .kinds i { width: 18px; height: 4px; border-radius: 2px; display: inline-block; margin-right: 5px; vertical-align: middle; }
+.legend .note { font: 11px var(--mono); color: var(--muted); margin-top: 3px; }
 .route { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 6px; font-family: var(--mono); font-size: 11.5px; cursor: default; }
 .route:hover { background: color-mix(in srgb, var(--base) 45%, transparent); }
 .route i { width: 22px; height: 4px; border-radius: 2px; display: inline-block; }
@@ -246,18 +251,20 @@ function rampTable(stops, n) {
   return out;
 }
 const NCOL = 24;
+// The first bin with traffic (S269): the slider and Play start there, not at midnight.
+const FIRST = META.first_bin || 0;
 // The delay's bands (S268): the upper edges of each, as META gives them, and their labels.
 const BANDS = META.delay_bands, BAND_LABELS = META.delay_band_labels;
 function band(d) { let b = 0; while (b < BANDS.length && d >= BANDS[b]) b++; return b; }
 function bandColours() { const n = BAND_LABELS.length; return BAND_LABELS.map((_, i) => TABLES.delay[Math.round(i / (n - 1) * (NCOL - 1))]); }
-const S = { theme: META.theme, colour: "delay", bin: -1, bins: [0, NB], playing: false, pair: -1, link: -1, hover: -1, hoverRoute: -1, routes: true, dim: true, spill: false, cx: 0, cy: 0, mpp: 1, ly: { road: true, transit: false, parking: false, bike: false, walk: false } };
+const S = { theme: META.theme, colour: "delay", bin: -1, bins: [0, NB], playing: false, pair: -1, link: -1, hover: -1, hoverRoute: -1, routes: true, nroutes: META.routes_shown || 0, dim: true, spill: false, cx: 0, cy: 0, mpp: 1, ly: { road: true, transit: false, parking: false, bike: false, walk: false } };
 let TH = TOK[S.theme], TABLES = {};
 function setTheme(name) {
   S.theme = name; TH = TOK[name]; document.documentElement.dataset.theme = name;
   const r = document.documentElement.style;
   r.setProperty("--surface", TH.surface); r.setProperty("--ink", TH.ink); r.setProperty("--ink2", TH.ink2); r.setProperty("--muted", TH.muted); r.setProperty("--base", TH.base); r.setProperty("--mark", TH.mark);
   TABLES = { delay: rampTable(TH.ramp_delay, NCOL), volume: rampTable(TH.ramp_volume, NCOL), vc: rampTable(TH.ramp_delay, NCOL) };
-  legend();
+  legend(); if (typeof LY !== "undefined") transitLegend();
   $("theme").textContent = name === "paper" ? "Night" : "Paper";
 }
 
@@ -275,14 +282,18 @@ function resize() {
 // The panel's width over the map: it sits on the right of a wide window.
 function panelWidth() { return W > 760 ? 340 : 0; }
 function fitTo(x0, y0, x1, y1, pad) {
-  // Fit into the part of the window the panel leaves free.
+  // Fit into the part of the window the panel, the title above and the footer below leave free (S269: a tall
+  // network ran under both).
+  const top = 78, bottom = 34;
   const w = Math.max(x1 - x0, 60), h = Math.max(y1 - y0, 60), reserve = panelWidth();
-  S.mpp = Math.max(w / ((W - reserve) * (1 - pad)), h / (H * (1 - pad)));
-  S.cx = (x0 + x1) / 2 + reserve / 2 * S.mpp; S.cy = (y0 + y1) / 2;
+  S.mpp = Math.max(w / ((W - reserve) * (1 - pad)), h / ((H - top - bottom) * (1 - pad)));
+  S.cx = (x0 + x1) / 2 + reserve / 2 * S.mpp; S.cy = (y0 + y1) / 2 + (top - bottom) / 2 * S.mpp;
 }
 function levelMpp(i) { return Math.max(MIN_MPP, FIT.mpp / Math.pow(3.2, i)); }
 function currentLevel() { let best = 0, bd = 1e9; for (let i = 0; i < LEVELS.length; i++) { const d = Math.abs(Math.log(S.mpp / levelMpp(i))); if (d < bd) { bd = d; best = i; } } return best; }
-function classLimit() { return S.mpp > 25 ? 5 : S.mpp > 8 ? 9 : S.mpp > 2.5 ? 13 : 16; }
+// Which road classes show at this zoom; a small network (a benchmark) shows all of them at every zoom (S269: Sioux
+// Falls's 76 links, all unclassified, showed nothing at an overview).
+function classLimit() { return NL < 5000 ? 16 : S.mpp > 25 ? 5 : S.mpp > 8 ? 9 : S.mpp > 2.5 ? 13 : 16; }
 const sx = (x) => (x - S.cx) / S.mpp + W / 2, sy = (y) => H / 2 - (y - S.cy) / S.mpp;
 
 // ---------------------------------------------------------------- draw ----
@@ -449,7 +460,8 @@ function layerRows() {
   const rows = LAYER_ROWS.filter(([k]) => present[k]);
   $("layergroup").hidden = rows.length < 2;  // one layer alone needs no switch
   $("layerrows").innerHTML = rows.map(([k, name, hint]) => `<label title="${hint}"><input type="checkbox" data-layer="${k}"${S.ly[k] ? " checked" : ""}> ${name}</label>`).join("");
-  document.querySelectorAll("#layerrows input").forEach((box) => box.addEventListener("change", (e) => { S.ly[e.target.dataset.layer] = e.target.checked; redraw(false); writeHash(); }));
+  document.querySelectorAll("#layerrows input").forEach((box) => box.addEventListener("change", (e) => { S.ly[e.target.dataset.layer] = e.target.checked; transitLegend(); redraw(false); writeHash(); }));
+  transitLegend();
 }
 function drawChevrons(cand, lim) {
   ctx.fillStyle = TH.surface; ctx.globalAlpha = 0.9;
@@ -477,7 +489,7 @@ function highlight(l, colour, w) {
 }
 function routeColour(r) { const p = TOK.route[S.theme]; return p[r % p.length]; }
 function drawRoutes() {
-  const k = S.pair, r0 = SS[k], r1 = SS[k + 1], step = 3.8;
+  const k = S.pair, r0 = SS[k], r1 = r0 + shownRoutes(k), step = 3.8;
   for (let r = r0; r < r1; r++) {
     const own = r - r0, path = new Path2D(), off = (own + 0.5) * step;
     const n = routeLine(r, off, 1.2);
@@ -559,12 +571,14 @@ function levelButtons() { const cur = currentLevel(); document.querySelectorAll(
 
 // ---------------------------------------------------------- selection ----
 function pairRoutes(k) { return SS[k + 1] - SS[k]; }
+// The routes shown of pair k: its first S.nroutes (the most chosen; the page holds them in that order, S269), or all.
+function shownRoutes(k) { const n = pairRoutes(k); return S.nroutes > 0 ? Math.min(n, S.nroutes) : n; }
 function selectPair(k, fit) {
   if (!HAS_ROUTES) return;
   S.pair = k; S.hoverRoute = -1;
   if (k >= 0 && fit !== false) {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (let r = SS[k]; r < SS[k + 1]; r++) for (let i = RST[r]; i < RST[r + 1]; i++) { const l = RLK[i]; if (BX0[l] < x0) x0 = BX0[l]; if (BY0[l] < y0) y0 = BY0[l]; if (BX1[l] > x1) x1 = BX1[l]; if (BY1[l] > y1) y1 = BY1[l]; }
+    for (let r = SS[k]; r < SS[k] + shownRoutes(k); r++) for (let i = RST[r]; i < RST[r + 1]; i++) { const l = RLK[i]; if (BX0[l] < x0) x0 = BX0[l]; if (BY0[l] < y0) y0 = BY0[l]; if (BX1[l] > x1) x1 = BX1[l]; if (BY1[l] > y1) y1 = BY1[l]; }
     fitTo(x0, y0, x1, y1, 0.3); S.mpp = Math.max(MIN_MPP, Math.min(MAX_MPP, S.mpp));
   }
   $("pairno").value = k >= 0 ? k + 1 : ""; routePanel(); redraw(false); levelButtons(); writeHash();
@@ -573,9 +587,10 @@ function routePanel() {
   const box = $("routelist"); box.innerHTML = "";
   if (S.pair < 0) { $("routehint").hidden = false; return; }
   $("routehint").hidden = true;
-  const k = S.pair, r0 = SS[k], n = pairRoutes(k), best = RC[r0];
-  if (n === 0) { box.textContent = "No route between this pair."; return; }
-  let used = 0; if (RU) for (let i = 0; i < n; i++) used += RU[r0 + i];
+  const k = S.pair, r0 = SS[k], all = pairRoutes(k), n = shownRoutes(k);
+  if (all === 0) { box.textContent = "No route between this pair."; return; }
+  let best = Infinity, used = 0;
+  for (let i = 0; i < all; i++) { best = Math.min(best, RC[r0 + i]); if (RU) used += RU[r0 + i]; }
   for (let i = 0; i < n; i++) {
     const r = r0 + i, row = document.createElement("div"); row.className = "route";
     const u = RU ? RU[r] : 0;
@@ -584,6 +599,7 @@ function routePanel() {
     row.addEventListener("pointerenter", () => { S.hoverRoute = i; redraw(false); }); row.addEventListener("pointerleave", () => { S.hoverRoute = -1; redraw(false); });
     box.appendChild(row);
   }
+  if (n < all) { const more = document.createElement("small"); more.className = "note"; more.textContent = (all - n) + " more, less chosen: Routes → All"; box.appendChild(more); }
 }
 function selectLink(l) {
   S.link = l; const box = $("linkinfo");
@@ -605,10 +621,12 @@ function selectLink(l) {
 }
 
 // ------------------------------------------------------------ controls ----
+// A bin's time of day, "08:15" (S269: clock times, not minutes since midnight).
+function clock(seconds) { const m = Math.round(seconds / 60), h = Math.floor(m / 60); return String(h).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"); }
 function binLabel() {
   if (!HAS_TRAFFIC) return "no traffic recorded";
-  const [a, b] = S.bins, s = META.bin_seconds / 60;
-  return b - a === NB && NB > 1 ? "all bins, " + fmt(a * s, 1) + "–" + fmt(b * s, 1) + " min" : fmt(a * s, 1) + "–" + fmt(b * s, 1) + " min";
+  const [a, b] = S.bins, s = META.bin_seconds;
+  return b - a === NB && NB > 1 ? "all bins, " + clock((META.first_bin || 0) * s) + "–" + clock(b * s) : clock(a * s) + "–" + clock(b * s);
 }
 function setBins(a, b) { S.bins = [a, b]; aggregate(a, b); subtitle(); redraw(false); writeHash(); }
 const COLOUR_WORDS = { delay: "delay over free flow", volume: "volume", vc: "volume over capacity" };
@@ -616,11 +634,16 @@ function subtitle() {
   $("subtitle").textContent = binLabel() + " · one ribbon per direction · width = volume, colour = " + COLOUR_WORDS[S.colour];
   legend();
 }
-// The legend: for delay, a swatch per band with its range and no title (S268); else the ramp.
+// The transit layer's legend (S269): the kinds of service it shows, by colour; width is passengers on board.
+function transitKinds() { if (!LY.transit) return []; const seen = new Set(A.tk); return LY.transit.kinds.map((name, k) => [name, k]).filter(([, k]) => seen.has(k)); }
+function transitLegend() {
+  const on = !!(S.ly.transit && LY.transit); $("transitlegend").hidden = !on; if (!on) return;
+  $("transitkinds").innerHTML = transitKinds().map(([name, k]) => '<span><i style="background:' + TH.kinds[k] + '"></i>' + name + "</span>").join("");
+}
+// The legend: for delay, a swatch per band with its range (S268), under its title (S269); else the ramp.
 function legend() {
   const delayed = S.colour === "delay";
-  $("legendlabel").hidden = delayed;
-  $("legendlabel").textContent = delayed ? "" : { volume: "Volume per direction", vc: "Volume over capacity" }[S.colour];
+  $("legendlabel").textContent = { delay: "Delay over free flow", volume: "Volume per direction", vc: "Volume over capacity" }[S.colour];
   $("legendlow").textContent = delayed ? "" : "0"; $("legendhigh").textContent = delayed ? "" : S.colour === "volume" ? fmt(VMAX) + "+" : "1.0+";
   if (delayed) {
     const c = bandColours(), n = c.length;
@@ -682,8 +705,9 @@ function svgRecorder() {
 }
 // The title above the map and the legend, provenance and credit below it: the words and colours the page shows.
 function exportFrame() {
-  const legend = HAS_TRAFFIC ? (S.colour === "delay" ? { label: "", bands: BAND_LABELS, stops: bandColours() } : { label: $("legendlabel").textContent, low: $("legendlow").textContent, high: $("legendhigh").textContent, stops: TABLES[S.colour] }) : null;
-  return { title: $("title").textContent, subtitle: $("subtitle").textContent, legend, provenance: $("provenance").textContent, source: $("source").textContent, credit: $("credit").hidden ? "" : $("credit").textContent };
+  const legend = HAS_TRAFFIC && S.ly.road ? (S.colour === "delay" ? { label: $("legendlabel").textContent, bands: BAND_LABELS, stops: bandColours() } : { label: $("legendlabel").textContent, low: $("legendlow").textContent, high: $("legendhigh").textContent, stops: TABLES[S.colour] }) : null;
+  const transit = S.ly.transit && LY.transit ? transitKinds().map(([name, k]) => [name, TH.kinds[k]]) : null;
+  return { title: $("title").textContent, subtitle: $("subtitle").textContent, legend, transit, provenance: $("provenance").textContent, source: $("source").textContent, credit: $("credit").hidden ? "" : $("credit").textContent };
 }
 const HEAD = 64, FOOT = 46;
 // An export has no panel: what the screen shows beside it is centred in the export's whole width, at the same
@@ -717,12 +741,17 @@ function exportSVG() {
   parts.push(`<text x="16" y="26" font-size="17" font-weight="700" fill="${TH.ink}">${esc(f.title)}</text>`);
   parts.push(`<text x="16" y="48" font-size="11.5" fill="${TH.ink2}">${esc(f.subtitle)}</text>`);
   const y = HEAD + H + 18;
-  if (f.legend) {
-    const n = f.legend.stops.length, w = 160, step = w / n;  // the ramp as one rectangle per colour
-    parts.push(`<text x="16" y="${y - 4}" font-size="10" fill="${TH.ink2}">${esc(f.legend.label)}</text>`);
-    parts.push(f.legend.stops.map((c, i) => `<rect x="${(16 + i * step).toFixed(2)}" y="${y}" width="${(step + 0.3).toFixed(2)}" height="7" fill="${c}"/>`).join(""));
-    if (f.legend.bands) parts.push(f.legend.bands.map((t, i) => `<text x="${(16 + (i + 0.5) * step).toFixed(2)}" y="${y + 19}" font-size="9.5" text-anchor="middle" fill="${TH.ink2}">${esc(t)}</text>`).join(""));
-    else parts.push(`<text x="16" y="${y + 19}" font-size="9.5" fill="${TH.ink2}">${esc(f.legend.low)}</text><text x="${16 + w}" y="${y + 19}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc(f.legend.high)}</text>`);
+  if (f.legend) {  // at the top right, as in the package's figures (S269)
+    const n = f.legend.stops.length, w = 200, step = w / n, x0 = W - 16 - w, ly = 30;
+    parts.push(`<text x="${x0}" y="${ly - 8}" font-size="10.5" fill="${TH.ink2}">${esc(f.legend.label)}</text>`);
+    parts.push(f.legend.stops.map((c, i) => `<rect x="${(x0 + i * step).toFixed(2)}" y="${ly}" width="${(f.legend.bands ? step - 1.5 : step + 0.3).toFixed(2)}" height="7" fill="${c}"/>`).join(""));
+    if (f.legend.bands) parts.push(f.legend.bands.map((t, i) => `<text x="${(x0 + (i + 0.5) * step).toFixed(2)}" y="${ly + 19}" font-size="9.5" text-anchor="middle" fill="${TH.ink2}">${esc(t)}</text>`).join(""));
+    else parts.push(`<text x="${x0}" y="${ly + 19}" font-size="9.5" fill="${TH.ink2}">${esc(f.legend.low)}</text><text x="${x0 + w}" y="${ly + 19}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc(f.legend.high)}</text>`);
+  }
+  if (f.transit && f.transit.length) {  // transit's kinds at the bottom left
+    let x = 16;
+    parts.push(`<text x="${x}" y="${y - 2}" font-size="10" fill="${TH.ink2}">Transit lines · width = passengers on board</text>`);
+    for (const [name, c] of f.transit) { parts.push(`<rect x="${x}" y="${y + 9}" width="16" height="4" fill="${c}"/><text x="${x + 21}" y="${y + 14}" font-size="9.5" fill="${TH.ink2}">${esc(name)}</text>`); x += 32 + name.length * 6; }
   }
   parts.push(`<text x="${W - 16}" y="${y + 4}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc([f.provenance, f.source, f.credit].filter(Boolean).join(" · "))}</text>`);
   parts.push(`<text x="${W - 16}" y="${y + 20}" font-size="11" font-weight="700" text-anchor="end" fill="${TH.ink}">openmobisim</text>`);
@@ -744,20 +773,25 @@ function exportPNG() {
   o.fillStyle = TH.ink; o.font = "700 17px " + FONT; o.fillText(f.title, 16, 26);
   o.fillStyle = TH.ink2; o.font = "11.5px " + FONT; o.fillText(f.subtitle, 16, 48);
   const y = HEAD + H + 18;
-  if (f.legend) {
-    const n = f.legend.stops.length;
-    o.font = "10px " + FONT; o.fillText(f.legend.label, 16, y - 4);
+  if (f.legend) {  // at the top right, as in the package's figures (S269)
+    const n = f.legend.stops.length, w = 200, step = w / n, x0 = W - 16 - w, ly = 30;
+    o.textAlign = "left"; o.fillStyle = TH.ink2; o.font = "10.5px " + FONT; o.fillText(f.legend.label, x0, ly - 8);
     if (f.legend.bands) {
-      const step = 160 / n;
-      f.legend.stops.forEach((c, i) => { o.fillStyle = c; o.fillRect(16 + i * step, y, step - 1, 7); });
+      f.legend.stops.forEach((c, i) => { o.fillStyle = c; o.fillRect(x0 + i * step, ly, step - 1.5, 7); });
       o.fillStyle = TH.ink2; o.font = "9.5px " + FONT; o.textAlign = "center";
-      f.legend.bands.forEach((t, i) => o.fillText(t, 16 + (i + 0.5) * step, y + 19));
+      f.legend.bands.forEach((t, i) => o.fillText(t, x0 + (i + 0.5) * step, ly + 19));
     } else {
-      const g = o.createLinearGradient(16, 0, 176, 0);
+      const g = o.createLinearGradient(x0, 0, x0 + w, 0);
       f.legend.stops.forEach((c, i) => g.addColorStop(i / Math.max(n - 1, 1), c));
-      o.fillStyle = g; o.fillRect(16, y, 160, 7);
-      o.fillStyle = TH.ink2; o.font = "9.5px " + FONT; o.fillText(f.legend.low, 16, y + 19); o.textAlign = "right"; o.fillText(f.legend.high, 176, y + 19);
+      o.fillStyle = g; o.fillRect(x0, ly, w, 7);
+      o.fillStyle = TH.ink2; o.font = "9.5px " + FONT; o.fillText(f.legend.low, x0, ly + 19); o.textAlign = "right"; o.fillText(f.legend.high, x0 + w, ly + 19);
     }
+  }
+  if (f.transit && f.transit.length) {  // transit's kinds at the bottom left
+    let x = 16; o.textAlign = "left"; o.fillStyle = TH.ink2; o.font = "10px " + FONT;
+    o.fillText("Transit lines · width = passengers on board", x, y - 2);
+    o.font = "9.5px " + FONT;
+    for (const [name, c] of f.transit) { o.fillStyle = c; o.fillRect(x, y + 9, 16, 4); o.fillStyle = TH.ink2; o.fillText(name, x + 21, y + 14); x += 32 + o.measureText(name).width; }
   }
   o.textAlign = "right"; o.fillStyle = TH.ink2; o.font = "9.5px " + FONT;
   o.fillText([f.provenance, f.source, f.credit].filter(Boolean).join(" · "), W - 16, y + 4);
@@ -783,7 +817,7 @@ function wire() {
   $("bin").addEventListener("input", (e) => { $("allbins").checked = false; $("bin").disabled = false; setBins(+e.target.value, +e.target.value + 1); });
   $("play").addEventListener("click", () => {
     S.playing = !S.playing; $("play").textContent = S.playing ? "Pause" : "Play";
-    if (S.playing) { $("allbins").checked = false; $("bin").disabled = false; const tick = () => { if (!S.playing) return; const nb = (S.bins[1] - S.bins[0] === NB ? 0 : (S.bins[0] + 1) % NB); $("bin").value = nb; setBins(nb, nb + 1); setTimeout(tick, 450); }; tick(); }
+    if (S.playing) { $("allbins").checked = false; $("bin").disabled = false; const tick = () => { if (!S.playing) return; const nb = (S.bins[1] - S.bins[0] === NB || S.bins[0] + 1 >= NB ? FIRST : S.bins[0] + 1); $("bin").value = nb; setBins(nb, nb + 1); setTimeout(tick, 450); }; tick(); }
   });
   document.querySelectorAll("#levels button").forEach((b, i) => b.addEventListener("click", () => goLevel(i)));
   $("zin").addEventListener("click", () => zoomAt(W / 2, H / 2, 0.5)); $("zout").addEventListener("click", () => zoomAt(W / 2, H / 2, 2));
@@ -794,9 +828,19 @@ function wire() {
     $("pairno").max = nk; $("pairs").textContent = "of " + fmt(nk);
     $("pairno").addEventListener("change", (e) => { const k = +e.target.value - 1; selectPair(k >= 0 && k < nk ? k : -1, true); });
     $("prev").addEventListener("click", () => selectPair((S.pair - 1 + nk) % nk, true)); $("next").addEventListener("click", () => selectPair((S.pair + 1) % nk, true));
-    $("richest").addEventListener("click", () => { let b = 0, bn = -1; for (let k = 0; k < nk; k++) if (pairRoutes(k) > bn) { bn = pairRoutes(k); b = k; } selectPair(b, true); });
+    // The pair with the most routes; among equals, the most travellers (S269: a pair everyone left shows nothing).
+    $("richest").addEventListener("click", () => {
+      let b = 0, bn = -1, bu = -1;
+      for (let k = 0; k < nk; k++) {
+        const n = pairRoutes(k); let u = 0; if (RU) for (let r = SS[k]; r < SS[k + 1]; r++) u += RU[r];
+        if (n > bn || (n === bn && u > bu)) { bn = n; bu = u; b = k; }
+      }
+      selectPair(b, true);
+    });
     $("clear").addEventListener("click", () => { selectPair(-1, false); selectLink(-1); });
     $("showroutes").addEventListener("change", (e) => { S.routes = e.target.checked; redraw(false); });
+    $("nroutes").value = String(S.nroutes); if ($("nroutes").value !== String(S.nroutes)) $("nroutes").value = "0";
+    $("nroutes").addEventListener("change", (e) => { S.nroutes = +e.target.value; routePanel(); redraw(false); });
     $("dim").addEventListener("change", (e) => { S.dim = e.target.checked; redraw(false); });
   }
   if (SB) $("spill").addEventListener("change", (e) => { S.spill = e.target.checked; redraw(false); });
@@ -816,9 +860,9 @@ function start() {
   document.head.appendChild(icon);
   $("trafficgroup").hidden = !HAS_TRAFFIC; $("routegroup").hidden = !HAS_ROUTES;
   $("spillrow").hidden = !SB; if (SB) $("spillcount").textContent = "(" + fmt(META.n_spillback) + ")";
-  if (HAS_TRAFFIC) { $("bin").max = NB - 1; $("bin").disabled = true; }
+  if (HAS_TRAFFIC) { $("bin").min = FIRST; $("bin").max = NB - 1; $("bin").value = FIRST; $("bin").disabled = true; }
   const p = readHash(); setTheme(S.theme); $("colour").value = S.colour; resize();
-  if (HAS_TRAFFIC) { const all = S.bins[1] - S.bins[0] === NB; $("allbins").checked = all; $("bin").disabled = all; $("bin").value = all ? 0 : S.bins[0]; }
+  if (HAS_TRAFFIC) { const all = S.bins[1] - S.bins[0] === NB; $("allbins").checked = all; $("bin").disabled = all; $("bin").value = all ? FIRST : S.bins[0]; }
   fitTo(EX0, EY0, EX1, EY1, 0.06); FIT.mpp = S.mpp; MAX_MPP = FIT.mpp * 1.6; MIN_MPP = Math.max(0.25, Math.min(0.5, FIT.mpp / 200));
   if (HAS_TRAFFIC) aggregate(S.bins[0], S.bins[1]); subtitle();
   layerRows(); wire();

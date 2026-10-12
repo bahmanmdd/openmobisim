@@ -315,12 +315,13 @@ def map_interactive(
     blob.add("sg", signal[keep].astype(np.uint8), "u8")
 
     bins = run.link_bins()
-    n_bins = bin_seconds = 0
+    n_bins = bin_seconds = first_bin = 0
     if bins is not None and len(bins):
         b, link = bins.bins().astype(np.int64), bins.links().astype(np.int64)
         rows = keep[link]
         b, link = b[rows], new_id[link[rows]]
         n_bins = int(b.max()) + 1 if len(b) else 0
+        first_bin = int(b.min()) if len(b) else 0  # "all bins" names its hours (S269)
         bin_seconds = int(bins.bin_seconds)
         blob.add("bs", np.searchsorted(b, np.arange(n_bins + 1)), "u32")
         blob.add("rl", link, "u32")
@@ -367,6 +368,7 @@ def map_interactive(
         "version": __version__, "theme": theme, "n_links": n_links, "n_verts": int(len(pts)),
         "n_bins": n_bins, "bin_seconds": bin_seconds, "has_routes": has_routes,
         "delay_bands": list(DELAY_BANDS), "delay_band_labels": list(DELAY_BAND_LABELS),
+        "routes_shown": MAP_ROUTES, "first_bin": first_bin,
         "n_pairs": n_pairs, "n_routes": n_routes, "class_names": _CLASS_NAMES,
         "title": title or _default_title(bins is not None and n_bins > 0, has_routes),
         "note": note, "credit": credit, "logo": bool(logo),
@@ -397,7 +399,8 @@ def map_interactive(
     return out
 
 
-#: The most routes the map draws per pair (S268): as many as a traveller is offered by default.
+#: How many routes the map shows per pair until asked for all (S268, S269): as many as a
+#: traveller is offered by default, the most chosen first; the page holds them all.
 MAP_ROUTES = 5
 
 
@@ -441,14 +444,6 @@ def _add_routes(
     key_of_route = np.repeat(np.arange(n_keys), np.diff(set_off))
     inside = np.add.reduceat(keep[links].astype(np.int64), route_off[:-1]) == route_len
     inside &= route_len > 0
-    # At most MAP_ROUTES per pair (S268, the user: more "doesn't look good"): the most used, then
-    # the cheapest, then the first.
-    used = usage if usage is not None else np.zeros(n_routes)
-    order = np.lexsort((np.arange(n_routes), sets.costs(), -used, ~inside, key_of_route))
-    in_order = key_of_route[order]
-    rank = np.empty(n_routes, dtype=np.int64)
-    rank[order] = np.arange(n_routes) - np.searchsorted(in_order, in_order)
-    inside &= rank < MAP_ROUTES
     per_key = np.bincount(key_of_route[inside], minlength=n_keys)
     candidates = np.nonzero(per_key > 0)[0]
     if not len(candidates):
@@ -457,13 +452,21 @@ def _add_routes(
     chosen = np.zeros(n_keys, dtype=bool)
     chosen[richest] = True
     take = inside & chosen[key_of_route]
-    lengths = route_len[take]
-    link_of_route = np.repeat(np.arange(n_routes), route_len)
+    # Each pair's routes the most chosen first, then the cheapest, then the first (S269): the page
+    # shows the first MAP_ROUTES of them unless asked for all.
+    used = usage if usage is not None else np.zeros(n_routes)
+    order = np.lexsort((np.arange(n_routes), sets.costs(), -used, key_of_route))
+    order = order[take[order]]
+    lengths = route_len[order]
+    starts = route_off[:-1][order]
+    at = np.repeat(starts - np.concatenate([[0], np.cumsum(lengths)[:-1]]), lengths) + np.arange(
+        lengths.sum()
+    )
     blob.add("ss", np.concatenate([[0], np.cumsum(per_key[chosen])]), "u32")
     blob.add("rst", np.concatenate([[0], np.cumsum(lengths)]), "u32")
-    blob.add("rlk", new_id[links[take[link_of_route]]], "u32")
-    blob.add("rc", sets.costs()[take], "f32")
-    blob.add("ro", sets.overlaps()[take], "f32")
+    blob.add("rlk", new_id[links[at]], "u32")
+    blob.add("rc", sets.costs()[order], "f32")
+    blob.add("ro", sets.overlaps()[order], "f32")
     if usage is not None:
-        blob.add("ru", usage[take], "f32")
+        blob.add("ru", usage[order], "f32")
     return int(chosen.sum()), int(take.sum())

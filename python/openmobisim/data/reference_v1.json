@@ -21,18 +21,19 @@
    "version": "0.1.0"
   },
   "delft/base": {
-   "fingerprint": "28ea29febc3c63a9",
-   "trips": 53338,
-   "completed": 53178,
-   "mean_trip_s": 1490.9457294369852,
+   "fingerprint": "2514e3ef089eef38",
+   "trips": 53298,
+   "completed": 53155,
+   "mean_trip_s": 1544.7102436271282,
    "mode_share_pct": {
-    "bike": 18.30027372604897,
-    "car": 54.7414601222393,
-    "none": 0.06186958641118902,
-    "transit": 25.49214443736173,
-    "walk": 1.4042521279388054
+    "bike": 18.2014334496604,
+    "bike_transit": 0.001876243010994784,
+    "car": 54.83695448234455,
+    "none": 0.08818342151675485,
+    "transit": 25.447483958122255,
+    "walk": 1.4240684453450412
    },
-   "loadings": 10,
+   "loadings": 9,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0"
   },
@@ -54,7 +55,7 @@
    "version": "0.1.0"
   },
   "nguyendupuis/base": {
-   "fingerprint": "fdbaa1b9478777d0",
+   "fingerprint": "99a33aca3d1092d2",
    "trips": 2000,
    "completed": 2000,
    "mean_trip_s": 3257.0975,
@@ -83,7 +84,7 @@
    "version": "0.1.0"
   },
   "siouxfalls/base": {
-   "fingerprint": "1a544ced6fb9b621",
+   "fingerprint": "1794ed845860f1b3",
    "trips": 180300,
    "completed": 180300,
    "mean_trip_s": 708.1771491957848,
@@ -95,7 +96,7 @@
    "version": "0.1.0"
   },
   "siouxfalls/congested": {
-   "fingerprint": "400ad4c3eca0a1a8",
+   "fingerprint": "96d88c5fbd01d20a",
    "trips": 270450,
    "completed": 270450,
    "mean_trip_s": 1285.94599371418,

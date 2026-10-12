@@ -41,10 +41,10 @@ _WIDTH_MIN_PT, _WIDTH_SPAN_PT = 0.5, 5.2
 #: view scale: a link with any traffic must stay visible.
 _WIDTH_FLOOR_PT = 0.9
 #: The delay colours' bands (S268, the user: "discrete values (google maps like but for their
-#: labels, just put the value range, no title)"), as the upper edges of the share of a link's
-#: mean time that is not free flow: the Highway Capacity Manual's urban-street levels of service by
-#: travel speed over free-flow speed (A above 85 %, B-C 50-85 %, D-E 30-50 %, F 30 % or less; TRB,
-#: *HCM 2010*, ch. 16, as tabulated in
+#: labels, just put the value range"; S269: "a general title should be there"), as the upper
+#: edges of the share of a link's mean time that is not free flow: the Highway Capacity Manual's
+#: urban-street levels of service by travel speed over free-flow speed (A above 85 %, B-C 50-85 %,
+#: D-E 30-50 %, F 30 % or less; TRB, *HCM 2010*, ch. 16, as tabulated in
 #: https://etrr.springeropen.com/articles/10.1186/s12544-024-00701-w/tables/4).
 #: Free flow counts a signal's mean wait (S268): only the waiting beyond it is delay.
 DELAY_BANDS = (0.15, 0.50, 0.70)
@@ -345,7 +345,9 @@ def map_link(
             "#" + "".join(f"{round(float(v) * 255):02x}" for v in c) for c in band_rgb
         )
         low, high = DELAY_BAND_LABELS, ""
-        legend_label = ""
+        legend_label = (
+            "Delay over free flow"  # a general title; the bands name only their ranges (S269)
+        )
     elif colour == "volume_capacity":
         capacity, _ = capacity_passing(network)
         ratio = np.where(capacity > 0, volume / np.maximum(capacity, 1e-9), 0.0)
