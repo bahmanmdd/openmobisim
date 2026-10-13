@@ -11,8 +11,9 @@ from __future__ import annotations
 import os
 
 import openmobisim as ms
-import pyarrow.parquet as pq
 import pytest
+
+pq = pytest.importorskip("pyarrow.parquet")  # the results are compared as tables
 
 BUNDLE = os.environ.get("OPENMOBISIM_TEST_BUNDLE")
 
