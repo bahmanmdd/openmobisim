@@ -184,7 +184,15 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// **walks cycleways unless `foot=no`** (`io-osm`'s `walk_way`; before, only with `foot=yes`):
 /// every network read from OpenStreetMap with cycleways gains walk links, most in the
 /// Netherlands (Amsterdam's walk network had fallen apart into islands, Schiphol's among them).
-pub const DEFAULTS_VERSION: u32 = 24;
+///
+/// Version 25 (S271): **the simulation window is the study period**: a run starts at the
+/// window's start and stops at its end (before, it ran from midnight, and its end defaulted to
+/// midnight). Without a window given, it starts at the earliest departure, rounded down to the
+/// quarter hour, and lasts **three hours** (the starter mornings' departures span 06:30–09:30);
+/// trips departing outside it are left out with a warning, and a timetable keeps only the calls
+/// inside it. And **a trip with no alternative at all travels by car** (`core-sim`'s
+/// `ModeDefaults::fallback_car`, W-1), counted and reported apart. Every run changes.
+pub const DEFAULTS_VERSION: u32 = 25;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

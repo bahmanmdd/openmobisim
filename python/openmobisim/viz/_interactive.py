@@ -325,9 +325,14 @@ def map_interactive(
         b, link = bins.bins().astype(np.int64), bins.links().astype(np.int64)
         rows = keep[link]
         b, link = b[rows], new_id[link[rows]]
+        bin_seconds = int(bins.bin_seconds)
         n_bins = int(b.max()) + 1 if len(b) else 0
         first_bin = int(b.min()) if len(b) else 0  # "all bins" names its hours (S269)
-        bin_seconds = int(bins.bin_seconds)
+        window = getattr(run, "window", None)
+        if window is not None:
+            # The bins are the window's (S271): from its start to its end, traffic or not.
+            first_bin = int(window["start_s"]) // bin_seconds
+            n_bins = max(n_bins, -(-int(window["end_s"]) // bin_seconds))
         blob.add("bs", np.searchsorted(b, np.arange(n_bins + 1)), "u32")
         blob.add("rl", link, "u32")
         blob.add("rp", bins.pcu()[rows], "f32")

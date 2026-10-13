@@ -133,7 +133,7 @@ def simulated(
         flow_level=4,
         choice_model="deterministic",
         link_bin_s=1,
-        window_hours=HORIZON / 3600,
+        window=(0, HORIZON),
         loading_options=loading_options,
     ).run("ltm-reference")
     bins = run.link_bins()

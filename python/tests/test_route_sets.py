@@ -133,7 +133,7 @@ def test_a_run_routes_from_its_sets_and_the_method_does_not_change_the_run():
     # against an explicit "shortest".
     kwargs = {
         "classes": CAR,
-        "window_hours": 1,
+        "window": (0, 3_600),
         "flow_level": 4,
         "link_bin_s": 300,
         "choice_model": "deterministic",
@@ -205,7 +205,7 @@ def test_montecarlo_is_biased_by_the_demand_it_is_generated_for():
             net,
             rows,
             classes={"commuter": (True, False, False)},
-            window_hours=2,
+            window=(0, 7_200),
             flow_level=4,
             default_weight=weight,
             route_method=method,

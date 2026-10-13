@@ -54,7 +54,7 @@
    "version": "0.1.0"
   },
   "nguyendupuis/base": {
-   "fingerprint": "99a33aca3d1092d2",
+   "fingerprint": "cc84d06dd3c15f7b",
    "trips": 2000,
    "completed": 2000,
    "mean_trip_s": 3257.0975,
@@ -83,7 +83,7 @@
    "version": "0.1.0"
   },
   "siouxfalls/base": {
-   "fingerprint": "1794ed845860f1b3",
+   "fingerprint": "9871e7517e002bce",
    "trips": 180300,
    "completed": 180300,
    "mean_trip_s": 708.1771491957848,
@@ -95,7 +95,7 @@
    "version": "0.1.0"
   },
   "siouxfalls/congested": {
-   "fingerprint": "96d88c5fbd01d20a",
+   "fingerprint": "8410bcac57c61b53",
    "trips": 270450,
    "completed": 270450,
    "mean_trip_s": 1285.94599371418,

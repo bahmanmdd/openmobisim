@@ -238,7 +238,8 @@ pub(crate) fn parking_bins<'py>(
         for k in 0..b.bins {
             let k32 = u32::try_from(k).expect("bins fit u32");
             bin.push(k32);
-            start.push(k32 * b.bin_s);
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "seconds")]
+            start.push(b.start_s as u32 + k32 * b.bin_s);
             parking.push(p32);
             id.push(setup.external_id(p32).to_string());
             hub.push(setup.hub_external_id(p32).to_string());
@@ -367,6 +368,51 @@ pub(crate) fn itinerary_choices<'py>(
     d.set_item("probability", result.probability.clone().into_pyarray(py))?;
     d.set_item("expected_s", result.expected_s.clone().into_pyarray(py))?;
     d.set_item("rides", result.rides.clone().into_pyarray(py))?;
+    Ok(d)
+}
+
+/// The trips that had no alternative and travelled by car (S271, W-1), as columns: who, when,
+/// from where to where, and how many people each stands for.
+pub(crate) fn fallback_car<'py>(
+    py: Python<'py>,
+    fallback: &[TripId],
+    trips: &Trips,
+    travellers: &Travellers,
+) -> PyResult<Bound<'py, PyDict>> {
+    let n = fallback.len();
+    let (mut who, mut seq, mut departure, mut weight) = (
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+    );
+    let (mut olon, mut olat, mut dlon, mut dlat) = (
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+    );
+    for &trip in fallback {
+        let traveller = trips.traveller(trip);
+        who.push(travellers.external_ids().external(traveller.raw()).to_string());
+        seq.push(trip.raw() - travellers.first_trip(traveller).raw());
+        departure.push(trips.departure(trip).get());
+        weight.push(travellers.weight(traveller));
+        let (o, d) = (trips.origin(trip), trips.destination(trip));
+        olon.push(o.lon);
+        olat.push(o.lat);
+        dlon.push(d.lon);
+        dlat.push(d.lat);
+    }
+    let d = PyDict::new(py);
+    d.set_item("traveller_id", who)?;
+    d.set_item("trip_seq", seq.into_pyarray(py))?;
+    d.set_item("departure_s", departure.into_pyarray(py))?;
+    d.set_item("weight", weight.into_pyarray(py))?;
+    d.set_item("origin_lon", olon.into_pyarray(py))?;
+    d.set_item("origin_lat", olat.into_pyarray(py))?;
+    d.set_item("destination_lon", dlon.into_pyarray(py))?;
+    d.set_item("destination_lat", dlat.into_pyarray(py))?;
     Ok(d)
 }
 

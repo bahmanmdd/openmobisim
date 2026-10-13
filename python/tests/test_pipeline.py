@@ -29,7 +29,7 @@ def test_a_single_car_trip_completes() -> None:
     g = small_grid()
     trips = ms.examples.fixed_car_trips(g, [("alice", (0, 0), (2, 2), 8.0, None)])
     sc = ms.Scenario.from_parts(
-        network=g, demand=trips, classes=car_owning_commuters(), window_hours=24.0
+        network=g, demand=trips, classes=car_owning_commuters(), window=(0, 86_400)
     )
     run = sc.run(run_id="pytest-single-trip")
 
@@ -63,7 +63,7 @@ def test_a_short_window_truncates_rather_than_completing() -> None:
     g = small_grid()
     trips = ms.examples.fixed_car_trips(g, [("carol", (0, 0), (2, 2), 8.0, None)])
     sc = ms.Scenario.from_parts(
-        network=g, demand=trips, classes=car_owning_commuters(), window_hours=8.0001
+        network=g, demand=trips, classes=car_owning_commuters(), window=(0, 28_801)
     )
     run = sc.run(run_id="pytest-truncated")
 

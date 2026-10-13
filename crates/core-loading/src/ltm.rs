@@ -353,6 +353,9 @@ pub struct Rules {
     pub pocket_length_m: f64,
     /// Timed capacity changes (S239, [`LtmNetwork::with_capacity_changes`]); empty: none.
     pub capacity_changes: Vec<CapacityChange>,
+    /// The simulation window's start, in seconds after midnight (S271): the loading's clock
+    /// starts there ([`LtmNetwork::starting_at`]); 0 by default.
+    pub start_s: f64,
 }
 
 /// When a vehicle is offered a new route (S213, [`LtmNetwork::with_rerouting`]).
@@ -1151,6 +1154,20 @@ impl<'a> LtmNetwork<'a> {
     #[must_use]
     pub fn now(&self) -> Duration {
         Duration(self.now)
+    }
+
+    /// The loading's clock started at `start` (S271, the simulation window's start) rather
+    /// than midnight: the first step begins there. Call before any step.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `start` is negative or not finite.
+    #[must_use]
+    pub fn starting_at(mut self, start: Duration) -> Self {
+        assert!(start.get() >= 0.0 && start.is_finite(), "a start of {start:?}");
+        self.now = start.get();
+        self.clock = start.get();
+        self
     }
 
     /// One link's counts and recent exits, for tests and diagnostics.
@@ -2602,14 +2619,15 @@ fn run_ltm_inner_chained(
     mut rerouter: Option<&mut dyn Reroute>,
 ) -> Inner {
     assert!(step.get() > 0.0, "the loading step must be positive, got {step:?}");
+    let start = rules.start_s;
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         reason = "window and step are finite and non-negative scenario parameters"
     )]
-    let n_steps = (window.get() / step.get()).ceil().max(0.0) as usize;
+    let n_steps = ((window.get() - start) / step.get()).ceil().max(0.0) as usize;
 
-    let mut sim = LtmNetwork::new(network, turns).with_level(level);
+    let mut sim = LtmNetwork::new(network, turns).with_level(level).starting_at(Duration(start));
     if rules.priority {
         sim = sim.with_priority();
     }
@@ -2668,7 +2686,7 @@ fn run_ltm_inner_chained(
         // The last step ends at the window's end, when the step does not divide it (X-38): the
         // run stops there, as what is unfinished and what stood still are read there.
         #[allow(clippy::cast_precision_loss, reason = "a step count far below 2^52")]
-        let this = Duration(step.get().min(window.get() - step.get() * k as f64));
+        let this = Duration(step.get().min(window.get() - start - step.get() * k as f64));
         completed.extend(match rerouter.as_deref_mut() {
             Some(rr) => sim.step_rerouting(this, rr),
             None => sim.step(this),

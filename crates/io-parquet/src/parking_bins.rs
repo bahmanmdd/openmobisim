@@ -64,7 +64,8 @@ pub fn write_parking_bins(
         for k in 0..b.bins {
             let k32 = u32::try_from(k).expect("bins fit u32");
             bin.push(k32);
-            start.push(k32 * b.bin_s);
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "seconds")]
+            start.push(b.start_s as u32 + k32 * b.bin_s);
             index.push(p32);
             id.push(parking.external_id(p32));
             hub.push(parking.hub_external_id(p32));

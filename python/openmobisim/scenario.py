@@ -22,7 +22,7 @@ from typing import Any
 from openmobisim import _core
 from openmobisim.demand import _class_table, demand_read_trips
 
-__all__ = ["Run", "Scenario", "Table"]
+__all__ = ["FallbackWarning", "Run", "Scenario", "Table", "WindowWarning"]
 
 #: The flow levels ``Scenario`` accepts: 0 is free flow
 #: with no interaction between vehicles; 2, 3 and 4 are the link transmission
@@ -44,6 +44,67 @@ GAP_TOLERANCE = 0.05
 #: grown (a route found faster than the set's best raises it; an equally fast one, which grids
 #: keep yielding, does not). Lower it to also wait for the sets to settle.
 ROUTE_GROWTH_TOLERANCE = 1.0
+
+
+class WindowWarning(UserWarning):
+    """Trips of the demand departed outside the simulation window and were left out (S271).
+
+    They are not simulated and not counted in any result.
+    """
+
+
+class FallbackWarning(UserWarning):
+    """Trips with no alternative at all travelled by car instead (S271, W-1).
+
+    They are counted under the car; ``Run.fallback_car`` lists them.
+    """
+
+
+# Shown at every run, not once per place in the code: a run says what it did each time.
+warnings.simplefilter("always", WindowWarning)
+warnings.simplefilter("always", FallbackWarning)
+
+
+def _clock(seconds: float) -> str:
+    """Seconds after midnight as a clock time, ``07:30`` (``24:30`` past midnight, in order)."""
+    s = round(seconds)
+    return f"{s // 3600:02d}:{s % 3600 // 60:02d}" + (f":{s % 60:02d}" if s % 60 else "")
+
+
+def _clock_s(value: str | float, what: str) -> int:
+    """Seconds after midnight from ``"07:30"``, ``"07:30:15"`` or a number of seconds (S271)."""
+    if isinstance(value, str):
+        parts = value.strip().split(":")
+        if 2 <= len(parts) <= 3 and all(p.isdigit() for p in parts):
+            h, m, s = (int(p) for p in (*parts, "0")[:3])
+            if m < 60 and s < 60:
+                return h * 3600 + m * 60 + s
+        raise ValueError(
+            f"window {what} {value!r}: give a clock time such as '07:30' or seconds after midnight"
+        )
+    seconds = float(value)
+    if not (seconds >= 0 and seconds < float("inf")):
+        raise ValueError(f"window {what} {value!r}: seconds after midnight, 0 or more")
+    return round(seconds)
+
+
+def _window(window: Any) -> tuple[int | None, int | None]:
+    """A scenario's ``window`` as (start, end) seconds after midnight, ``None`` where not given."""
+    if window is None:
+        return None, None
+    if isinstance(window, str) or len(window) != 2:
+        raise ValueError(
+            f"window {window!r}: give (start, end), for example ('07:30', '09:30') or "
+            "(27000, 34200) in seconds after midnight"
+        )
+    start, end = (
+        None if v is None else _clock_s(v, what)
+        for v, what in zip(window, ("start", "end"), strict=True)
+    )
+    if start is not None and end is not None and end <= start:
+        raise ValueError(f"window {window!r}: it ends before it starts")
+    return start, end
+
 
 #: What ``Run.timings()`` calls each stage, as the printout shows it (S223).
 _STAGE_LABELS = {
@@ -117,7 +178,6 @@ class Run:
         run_id: str = "run",
         flow_level: int = 0,
         flow_step_s: int = 300,
-        window_s: int = 86_400,
         transit: _core.Transit | None = None,
         parkings: _core.Parkings | None = None,
     ) -> None:
@@ -129,7 +189,6 @@ class Run:
         self.run_id = run_id
         self.flow_level = flow_level
         self.flow_step_s = flow_step_s
-        self.window_s = window_s
 
     @property
     def network(self) -> _core.Network | None:
@@ -469,6 +528,108 @@ class Run:
         """Path to ``timings.csv``: ``Run.timings()`` as a file."""
         return self._summary.timings_path
 
+    @property
+    def fallback_car(self) -> dict[str, Any]:
+        """The trips that had no alternative and travelled by car (S271, W-1), as columns.
+
+        No mode they may use reached their destination within the limits (a walk too long, no
+        transit journey, no vehicle), so they went by car — for a traveller without one, a lift
+        or a taxi. They are counted under the car everywhere. Columns: ``traveller_id``,
+        ``trip_seq``, ``departure_s``, ``weight`` (people), ``origin_lon``, ``origin_lat``,
+        ``destination_lon``, ``destination_lat``. ``mode_options={"fallback_car": 0}`` leaves
+        such trips unsimulated instead.
+        """
+        return dict(self._summary.fallback_car)
+
+    def _fallback_text(self, places: int = 5) -> str | None:
+        """The trips that fell back to the car, in words, and where most went; ``None`` if none."""
+        f = self.fallback_car
+        n = len(f["traveller_id"])
+        if not n:
+            return None
+        people = float(sum(f["weight"]))
+        total = sum(r["people"] for r in self.completion_by_mode.values())
+        # Where: origins and destinations on a grid of about a kilometre.
+        cell = 0.01
+        pairs: dict[tuple, float] = {}
+        for olon, olat, dlon, dlat, w in zip(
+            f["origin_lon"],
+            f["origin_lat"],
+            f["destination_lon"],
+            f["destination_lat"],
+            f["weight"],
+            strict=True,
+        ):
+            key = tuple(round(v / cell) * cell for v in (olat, olon, dlat, dlon))
+            pairs[key] = pairs.get(key, 0.0) + float(w)
+        top = sorted(pairs.items(), key=lambda kv: (-kv[1], kv[0]))[:places]
+        where = "; ".join(
+            f"{w:,.0f} people from ({a:.2f}, {b:.2f}) to ({c:.2f}, {d:.2f})"
+            for (a, b, c, d), w in top
+        )
+        return (
+            f"{n:,} trips ({people:,.0f} people, {people / max(total, 1):.1%} of run "
+            f"{self.run_id!r}) had no alternative — no mode they may use reached their "
+            "destination within the limits — and travelled by car instead (a lift or a taxi for "
+            "a traveller without one); they are counted under the car. Most between (latitude, "
+            f"longitude, about 1 km): {where}. Run.fallback_car lists them all; "
+            "mode_options={'fallback_car': 0} leaves them unsimulated instead."
+        )
+
+    @property
+    def window(self) -> dict[str, Any]:
+        """The simulation window (S271) and what departed outside it, left out of the run.
+
+        Keys: ``start_s`` and ``end_s`` (seconds after midnight), ``start_given`` and
+        ``end_given`` (whether the scenario gave them; else from the earliest departure, rounded
+        down to the quarter hour, for ``default_s``), ``trips`` and ``people`` (the whole demand),
+        ``before_trips``, ``before_people``, ``before_first_s``, ``before_last_s`` and the same
+        ``after_*`` (left out), and ``timetable_runs_kept``, ``timetable_runs_cut``,
+        ``timetable_runs_dropped``, ``timetable_calls_dropped`` (the timetable kept only its
+        calls inside the window; ``None`` without one).
+        """
+        return dict(self._summary.window)
+
+    def _window_text(self) -> str | None:
+        """What the run left out, departing outside the window, in words; ``None`` if nothing."""
+        w = self.window
+        out = w["before_trips"] + w["after_trips"]
+        if not out:
+            return None
+        people = w["before_people"] + w["after_people"]
+        share = people / w["people"] if w["people"] else 0.0
+        span = f"{_clock(w['start_s'])}–{_clock(w['end_s'])}"
+        sides = []
+        if w["before_trips"]:
+            sides.append(
+                f"{w['before_trips']:,} depart before it "
+                f"({_clock(w['before_first_s'])}–{_clock(w['before_last_s'])})"
+            )
+        if w["after_trips"]:
+            sides.append(
+                f"{w['after_trips']:,} at or after its end "
+                f"({_clock(w['after_first_s'])}–{_clock(w['after_last_s'])})"
+            )
+        if w["start_given"] and w["end_given"]:
+            origin = "the scenario's window"
+        else:
+            origin = (
+                "a window set from the earliest departure (rounded down to the quarter hour), "
+                f"{w['default_s'] / 3600:g} hours long, as no window was given"
+            )
+        first = min(w["start_s"], w["before_first_s"] or w["start_s"])
+        last = max(w["end_s"], (w["after_last_s"] or 0) + 3600)
+        wide = (f"{_clock(first // 900 * 900)}", f"{_clock(-(-last // 900) * 900)}")
+        return (
+            f"{out:,} of the demand's {w['trips']:,} trips ({people:,} of {w['people']:,} "
+            f"people, {share:.1%}) depart outside the simulation window {span} and are left "
+            f"out of run {self.run_id!r}: {'; '.join(sides)}. They are not simulated and not "
+            "counted in any result (not as completed, unfinished or without an alternative). "
+            f"The window is {origin}. To run them, widen it, for example "
+            f"Scenario(..., window=({wide[0]!r}, {wide[1]!r})), leaving each trip time to "
+            "finish before the end; or take them out of the demand."
+        )
+
     def _timings_text(self) -> str:
         """``Run.timings()`` as the run prints it.
 
@@ -492,7 +653,15 @@ class Run:
             else:
                 cell = per.setdefault(iteration, {})
                 cell[stage] = cell.get(stage, 0.0) + seconds
-        lines = [f"Run {self.run_id!r}: wall-clock seconds by stage"]
+        w = self.window
+        out = w["before_trips"] + w["after_trips"]
+        fell = len(self.fallback_car["traveller_id"])
+        lines = [
+            f"Run {self.run_id!r}: window {_clock(w['start_s'])}–{_clock(w['end_s'])}"
+            + (f", {out:,} trips left out (departing outside it)" if out else "")
+            + (f", {fell:,} trips with no alternative went by car" if fell else ""),
+            f"Run {self.run_id!r}: wall-clock seconds by stage",
+        ]
         width = max(len(label) for label in _STAGE_LABELS.values())
         iterations_total = sum(sum(c.values()) for c in per.values())
         for stage, seconds in outside:
@@ -1105,7 +1274,7 @@ class Scenario:
         persons_path: str | None = None,
         classes: dict[str, Any] | None = None,
         default_weight: int = 1,
-        window_hours: float = 24.0,
+        window: tuple[str | float | None, str | float | None] | None = None,
         flow_level: int = 2,
         flow_step_s: int = 300,
         link_bin_s: int | None = None,
@@ -1178,7 +1347,7 @@ class Scenario:
             # The classes say which modes their travellers may use: the run offers them all.
             modes = [m for m in MODES if any(m in ms for ms in self._class_modes.values())]
         self._default_weight = default_weight
-        self._window_s = round(window_hours * 3600)
+        self._window = _window(window)
         self._flow_level = flow_level
         self._flow_step_s = flow_step_s
         self._link_bin_s = link_bin_s
@@ -1268,7 +1437,7 @@ class Scenario:
         persons: list[tuple] | str | None = None,
         classes: dict[str, Any] | None = None,
         default_weight: int = 1,
-        window_hours: float = 24.0,
+        window: tuple[str | float | None, str | float | None] | None = None,
         flow_level: int = 2,
         flow_step_s: int = 300,
         link_bin_s: int | None = None,
@@ -1347,8 +1516,15 @@ class Scenario:
             default_weight: How many people a simulated traveller stands for,
                 for a trip whose row gives no weight. 1 simulates everyone; a
                 larger number is faster and coarser.
-            window_hours: Trips still in progress after this many hours are
-                truncated.
+            window: The simulation window (S271), ``(start, end)`` as clock times
+                (``("07:30", "09:30")``) or seconds after midnight. The run starts at the start
+                and stops at the end: a trip still under way then is unfinished, counted and
+                reported (S57); a timetable keeps only each run's calls inside the window. A trip
+                departing outside it is **left out** — not simulated, not counted in any result
+                — with a ``WindowWarning`` that says how many, when and how to widen the window.
+                Not given (or ``None`` for either end): from the earliest departure, rounded down
+                to the quarter hour, for three hours. Leave each trip time to finish: a demand
+                whose departures end well before the window does (an hour, say) finishes inside it.
             flow_level: How vehicles load the network. ``2`` (the default, S229) is the
                 **point queue**: the link transmission model with capacities at every link
                 and junction, where a queue forms behind capacity and delays everyone in it,
@@ -1744,7 +1920,7 @@ class Scenario:
             persons_path=persons_path,
             classes=classes,
             default_weight=default_weight,
-            window_hours=window_hours,
+            window=window,
             flow_level=flow_level,
             flow_step_s=flow_step_s,
             link_bin_s=link_bin_s,
@@ -1807,7 +1983,8 @@ class Scenario:
             class_options=self._class_options,
             class_limits=self._class_limits,
             default_weight=self._default_weight,
-            window_s=self._window_s,
+            window_start_s=self._window[0],
+            window_end_s=self._window[1],
             flow_level=self._flow_level,
             flow_step_s=self._flow_step_s,
             link_bin_s=self._link_bin_s,
@@ -1846,10 +2023,15 @@ class Scenario:
             run_id=run_id,
             flow_level=self._flow_level,
             flow_step_s=self._flow_step_s,
-            window_s=self._window_s,
             transit=self._transit,
             parkings=self._parkings,
         )
         if not quiet:
             print(run._timings_text())
+        left_out = run._window_text()
+        if left_out is not None:
+            warnings.warn(left_out, WindowWarning, stacklevel=2)
+        fell_back = run._fallback_text()
+        if fell_back is not None:
+            warnings.warn(fell_back, FallbackWarning, stacklevel=2)
         return run

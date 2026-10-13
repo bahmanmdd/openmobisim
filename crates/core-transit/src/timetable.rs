@@ -646,26 +646,7 @@ impl Timetable {
             }
         }
         let mut report = ServiceChangeReport::default();
-        let mut b = TimetableBuilder::new(self.date);
-        for s in 0..self.stop_count() {
-            let stop = NodeId::new(s);
-            b.add_stop(StopSpec {
-                external_id: self.stop_ids.external(s).to_string(),
-                name: self.stop_name(stop).to_string(),
-                position: self.stop_position(stop),
-                parent: self.stop_parent(stop).map(str::to_string),
-            });
-        }
-        for r in 0..routes {
-            b.add_route(RouteSpec {
-                external_id: self.route_ids.external(r).to_string(),
-                short_name: self.route_short_name(r).to_string(),
-                route_type: self.route_type(r),
-            });
-        }
-        for t in &self.transfers {
-            b.add_transfer(t.from.raw(), t.to.raw(), t.seconds);
-        }
+        let mut b = self.same_places();
         let times = self.scheduled();
         let calls_of = |run: TransitRunId, shift: i64| -> Vec<CallSpec> {
             self.run_calls(run)
@@ -722,6 +703,83 @@ impl Timetable {
         let (timetable, _) = b.build();
         Ok((timetable, report))
     }
+
+    /// The part of the day from `from_s` to `to_s` (S271, the simulation window): each run keeps
+    /// the calls it makes within it (arriving at or after `from_s`, leaving at or before `to_s`),
+    /// so a run under way when the window opens starts at its first stop inside it, and one
+    /// still going when it closes ends at its last. A run left with fewer than two calls is
+    /// dropped. Stops, lines and transfers are kept, so their ids stay as they were.
+    #[must_use]
+    pub fn within(&self, from_s: u32, to_s: u32) -> (Timetable, WindowCut) {
+        let mut cut = WindowCut::default();
+        let mut b = self.same_places();
+        let times = self.scheduled();
+        for r in 0..self.run_count() {
+            let run = TransitRunId::new(r);
+            let calls: Vec<CallSpec> = self
+                .run_calls(run)
+                .filter(|&c| times.arrival[c] >= from_s && times.departure[c] <= to_s)
+                .map(|c| CallSpec {
+                    stop: self.call_stop[c].raw(),
+                    arrival: times.arrival[c],
+                    departure: times.departure[c],
+                    flags: self.call_flags[c],
+                })
+                .collect();
+            let all = self.run_calls(run).len();
+            if calls.len() < 2 {
+                cut.runs_dropped += 1;
+                cut.calls_dropped += u32::try_from(all).unwrap_or(u32::MAX);
+                continue;
+            }
+            cut.calls_dropped += u32::try_from(all - calls.len()).unwrap_or(u32::MAX);
+            if calls.len() < all {
+                cut.runs_cut += 1;
+            }
+            b.add_run(self.run_ids.external(r), self.run_route(run), &calls);
+        }
+        let (timetable, _) = b.build();
+        cut.runs_kept = timetable.run_count();
+        (timetable, cut)
+    }
+
+    /// A builder holding this timetable's stops, lines and transfers, and no runs.
+    fn same_places(&self) -> TimetableBuilder {
+        let mut b = TimetableBuilder::new(self.date);
+        for s in 0..self.stop_count() {
+            let stop = NodeId::new(s);
+            b.add_stop(StopSpec {
+                external_id: self.stop_ids.external(s).to_string(),
+                name: self.stop_name(stop).to_string(),
+                position: self.stop_position(stop),
+                parent: self.stop_parent(stop).map(str::to_string),
+            });
+        }
+        for r in 0..self.route_count() {
+            b.add_route(RouteSpec {
+                external_id: self.route_ids.external(r).to_string(),
+                short_name: self.route_short_name(r).to_string(),
+                route_type: self.route_type(r),
+            });
+        }
+        for t in &self.transfers {
+            b.add_transfer(t.from.raw(), t.to.raw(), t.seconds);
+        }
+        b
+    }
+}
+
+/// What [`Timetable::within`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WindowCut {
+    /// Runs kept, whole or cut.
+    pub runs_kept: u32,
+    /// Runs kept with some of their calls outside the window taken off.
+    pub runs_cut: u32,
+    /// Runs with fewer than two calls inside the window, dropped.
+    pub runs_dropped: u32,
+    /// Calls outside the window, taken off (those of dropped runs included).
+    pub calls_dropped: u32,
 }
 
 #[cfg(test)]
@@ -768,6 +826,30 @@ mod tests {
         let group: Vec<&str> =
             t.group_runs(0).iter().map(|&r| t.run_ids().external(r.raw())).collect();
         assert_eq!(group, ["t1", "t2"], "by departure");
+    }
+
+    #[test]
+    fn a_window_keeps_each_runs_calls_inside_it() {
+        let mut b = TimetableBuilder::new(ServiceDate::parse("20261009").unwrap());
+        let (x, y, z) = (b.add_stop(stop("x")), b.add_stop(stop("y")), b.add_stop(stop("z")));
+        let line = b.add_route(RouteSpec {
+            external_id: "L".into(),
+            short_name: "1".into(),
+            route_type: 3,
+        });
+        b.add_run("early", line, &[call(x, 100), call(y, 200), call(z, 300)]);
+        b.add_run("across", line, &[call(x, 900), call(y, 1000), call(z, 1100)]);
+        b.add_run("inside", line, &[call(x, 1200), call(y, 1300), call(z, 1400)]);
+        b.add_run("late", line, &[call(x, 1950), call(y, 2100), call(z, 2200)]);
+        let (t, _) = b.build();
+        let (w, cut) = t.within(1000, 2000);
+        assert_eq!(cut, WindowCut { runs_kept: 2, runs_cut: 1, runs_dropped: 2, calls_dropped: 7 });
+        assert_eq!(w.stop_count(), 3, "stops stay");
+        let across = TransitRunId::new(w.run_ids().id_of("across").unwrap());
+        let calls = w.run_calls(across);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(w.scheduled().departure[calls.start], 1000, "starts at its first stop inside");
+        assert!(w.run_ids().id_of("early").is_none() && w.run_ids().id_of("late").is_none());
     }
 
     #[test]

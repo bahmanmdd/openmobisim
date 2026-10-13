@@ -110,7 +110,7 @@ def test_trips_with_no_alternative_are_counted_by_class_with_the_limits(tmp_path
         "modes": ["car"], "share": 1}}, seed=1)  # fmt: skip
     short = ms.Scenario.from_parts(
         net, rows, classes={"walker": walker, "driver": {"modes": ["car"]}},
-        mode_options={"walk_max_s": 600.0}, equilibration="free_flow",
+        mode_options={"walk_max_s": 600.0, "fallback_car": 0}, equilibration="free_flow",
     ).run("sum-none", quiet=True)  # fmt: skip
     ch = short.itinerary_choices()
     stuck = [c for c, m in zip(ch["user_class"], ch["mode"], strict=True) if m is None]
@@ -120,3 +120,32 @@ def test_trips_with_no_alternative_are_counted_by_class_with_the_limits(tmp_path
 
     assert "Trips with no alternative" in page and f"<b>{_fmt(len(stuck), 0)}</b>" in page
     assert "up to 10 min and 60 min" in page and '<td class="">walker</td>' in page
+
+
+def test_trips_with_no_alternative_fall_back_to_the_car_and_are_reported(tmp_path):
+    # S271 (W-1): by default the walkers beyond the walk limit travel by car instead, counted
+    # under the car, listed, warned about, and named on the page.
+    walker = {"modes": ["walk"], "owns_car": False}
+    net = ms.examples.manhattan_grid(n=6, block_metres=200.0, signals=False)
+    rows = ms.examples.trips_random(net, 200, seed=5, min_m=300.0, max_m=1500.0, spread_s=600)
+    rows = ms.demand_assign_classes(rows, {"walker": {**walker, "share": 1}, "driver": {
+        "modes": ["car"], "share": 1}}, seed=1)  # fmt: skip
+    classes = {"walker": walker, "driver": {"modes": ["car"]}}
+
+    def scenario(**options):
+        return ms.Scenario.from_parts(
+            net, rows, classes=classes, mode_options={"walk_max_s": 600.0, **options},
+            equilibration="free_flow",
+        )  # fmt: skip
+
+    off = scenario(fallback_car=0).run("sum-fallback-off", quiet=True)
+    stuck = sum(m is None for m in off.itinerary_choices()["mode"])
+    with pytest.warns(ms.FallbackWarning, match="had no alternative") as caught:
+        on = scenario().run("sum-fallback-on", quiet=True)
+    fell = on.fallback_car
+    assert len(fell["traveller_id"]) == stuck > 0, "the same trips, now by car"
+    assert "travelled by car instead" in str(caught[0].message)
+    assert on.completion["completed"] == off.completion["completed"] + stuck
+    assert "none" not in on.completion_by_mode, "nobody left without a mode"
+    page = Path(viz.summary(on, str(tmp_path / "fallback.html"))).read_text(encoding="utf-8")
+    assert "travelled by car instead" in page

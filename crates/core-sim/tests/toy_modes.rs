@@ -485,7 +485,7 @@ fn mc7b_a_class_s_own_limits_replace_the_run_s() {
             .execute(&mut Diagnostics::new())
     };
     let count = |r: &RunResult| r.itineraries.as_ref().unwrap().alternatives[0];
-    let short = ModeDefaults { walk_max_s: 300.0, bike_max_s: 100.0 };
+    let short = ModeDefaults { walk_max_s: 300.0, bike_max_s: 100.0, ..ModeDefaults::SHIPPED };
     // A class giving nothing takes the run's: walk and bike dropped, as in mc7.
     assert_eq!(count(&run(short, ClassLimits::default())), 3);
     // Its own longer ride brings the bike back (144 s), the walk stays out (318.198 s).
@@ -559,7 +559,7 @@ fn mc7_mode_choice_offers_a_walk_or_a_ride_only_up_to_its_cut_offs() {
     assert_eq!(count(&r), 4, "bike, two park-and-ride, one bike-and-ride");
     assert_eq!(chosen(&t, &r, 0).0, Mode::Bike);
     // A 100-s ride limit drops the bike too; bike-and-ride's own ride is not a bike trip.
-    let r = run(ModeDefaults { walk_max_s: 300.0, bike_max_s: 100.0 });
+    let r = run(ModeDefaults { walk_max_s: 300.0, bike_max_s: 100.0, ..ModeDefaults::SHIPPED });
     assert_eq!(count(&r), 3, "two park-and-ride, one bike-and-ride");
     assert!(!matches!(chosen(&t, &r, 0).0, Mode::Bike | Mode::Walk));
     // A trip given the mode is not cut off: it walks its 318.198 s.

@@ -260,6 +260,9 @@ pub struct RunResult {
     /// The trips that chose their mode and had none to choose (S269: counted under the car
     /// before, a trip's stated mode).
     pub no_mode: ModeTotals,
+    /// The trips that had no alternative and travelled by car (S271, W-1), in trip order:
+    /// counted under the car in [`Self::by_mode`], listed here.
+    pub fallback_car: Vec<TripId>,
     /// The bike layer's per-link, per-time-bin results, when per-link results
     /// were asked for and some bike trip ran (S195); `pcu` there counts
     /// travellers.
@@ -418,6 +421,8 @@ pub struct Run {
     vehicles: VehicleLocations,
     /// Trips still in progress after this second are truncated (S57).
     window: Second,
+    /// The window's start (S271): the loading's clock starts here; 0 (midnight) unless set.
+    window_start: Second,
     flow_motor: FlowMotor,
     /// Length of the time bins of the per-link results, if asked for.
     link_bin_seconds: Option<u32>,
@@ -536,6 +541,7 @@ impl Run {
             trips,
             vehicles,
             window,
+            window_start: Second(0),
             flow_motor: FlowMotor::default(),
             link_bin_seconds: None,
             route_generator: Arc::from(default_generator()),
@@ -834,6 +840,7 @@ impl Run {
             travellers: &self.travellers,
             trips: &self.trips,
             window: self.window,
+            window_start: self.window_start,
             flow_motor: &self.flow_motor,
             link_bin_seconds: self.link_bin_seconds,
             route_method: self.route_generator.name(),
@@ -878,6 +885,20 @@ impl Run {
     pub fn with_link_bins(mut self, bin_seconds: u32) -> Self {
         assert!(bin_seconds > 0, "a time bin must be at least one second long");
         self.link_bin_seconds = Some(bin_seconds);
+        self
+    }
+
+    /// Start the simulation window at `start` (S271) rather than midnight: the loading's clock
+    /// starts there, and the parkings' bins with it. The demand is the caller's to fit: a trip
+    /// departing before `start` sets off at it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `start` is not before the window's end.
+    #[must_use]
+    pub fn with_window_start(mut self, start: Second) -> Self {
+        assert!(start < self.window, "the window starts at {start:?}, after its end");
+        self.window_start = start;
         self
     }
 
@@ -1029,10 +1050,12 @@ impl Run {
             })
             .filter(|i| !i.is_empty());
         clock = timings.lap("itineraries_setup", None, clock);
+        // A trip with no alternative travels by car (S271, W-1): its car pair has route sets.
+        let fallback_car = self.mode_defaults.fallback_car && itineraries.is_some();
         // The pairs route sets are made for: the car trips', and the car pairs of the trips
         // choosing their mode (M5), which the route update grows too.
         let car_keys: Vec<RouteKey> = match &itineraries {
-            Some(itin) if mode_choice.is_some() => (0..total_trips)
+            Some(itin) if mode_choice.is_some() || fallback_car => (0..total_trips)
                 .map(|i| {
                     let trip = TripId::new(i);
                     itin.position(trip)
@@ -1134,8 +1157,9 @@ impl Run {
         });
         let bike_planner = layers_arc.bike.as_ref().zip(bike_ctx.as_ref());
         let window_s = f64::from(self.window.get());
+        let start_s = f64::from(self.window_start.get());
         let mut availability =
-            parking_arc.as_deref().map(|p| ExpectedAvailability::initial(p, window_s));
+            parking_arc.as_deref().map(|p| ExpectedAvailability::initial(p, start_s, window_s));
         let choose_inputs = ChooseInputs {
             trips: &trips,
             travellers: &travellers,
@@ -1163,7 +1187,8 @@ impl Run {
         let mut chosen: Option<Chosen> = None;
         if let Some(itin) = &itineraries {
             let free = LinkTimes::free_flow(&network);
-            let attributes = mode_choice.as_ref().map(|_| route_sets.attributes(&network));
+            let attributes =
+                (mode_choice.is_some() || fallback_car).then(|| route_sets.attributes(&network));
             let planner = Planner {
                 transit: transit_arc.as_deref().map(|t| (t, t.scheduled())),
                 parking: parking_arc.as_deref(),
@@ -1289,7 +1314,8 @@ impl Run {
                     let realised = transit
                         .zip(loaded.transit.as_ref())
                         .map(|(transit, t)| transit.on_times(&t.times));
-                    let attributes = mode_choice.as_ref().map(|_| route_sets.attributes(&network));
+                    let attributes = (mode_choice.is_some() || fallback_car)
+                        .then(|| route_sets.attributes(&network));
                     let planner = Planner {
                         transit: transit
                             .map(|t| (t, realised.as_ref().unwrap_or_else(|| t.scheduled()))),
@@ -1431,8 +1457,8 @@ impl Run {
                         let realised = transit
                             .zip(loaded.transit.as_ref())
                             .map(|(transit, t)| transit.on_times(&t.times));
-                        let attributes =
-                            mode_choice.as_ref().map(|_| route_sets.attributes(&network));
+                        let attributes = (mode_choice.is_some() || fallback_car)
+                            .then(|| route_sets.attributes(&network));
                         let planner = Planner {
                             transit: transit
                                 .map(|t| (t, realised.as_ref().unwrap_or_else(|| t.scheduled()))),
@@ -1573,6 +1599,16 @@ impl Run {
             })
             .collect();
         let (by_mode, no_mode) = mode_totals(&loaded.events, &self.trips, &self.travellers, &taken);
+        let fallback_car: Vec<TripId> = match itineraries.as_ref().zip(chosen.as_ref()) {
+            Some((it, c)) => it
+                .trips
+                .iter()
+                .enumerate()
+                .filter(|&(p, _)| c.alt[p].as_ref().is_some_and(|a| a.fallback))
+                .map(|(_, &trip)| trip)
+                .collect(),
+            None => Vec::new(),
+        };
         let [bike_link_bins, walk_link_bins] = loaded.layer_bins;
         let transit = loaded.transit;
         let itinerary_result = match (&itineraries, &chosen) {
@@ -1602,6 +1638,7 @@ impl Run {
             converged,
             by_mode,
             no_mode,
+            fallback_car,
             bike_link_bins,
             walk_link_bins,
             transit,
@@ -1699,6 +1736,8 @@ impl Run {
             // A trip that chose a direct leg (M5) runs as a trip of that mode, on the car
             // route it chose (a bike or walk route is its layer's one).
             let mut chosen_route: Option<Vec<LinkId>> = None;
+            // A car trip for want of any alternative (S271, W-1): no car of the traveller's.
+            let mut fallback = false;
             if let Some((itineraries, chosen)) = itin {
                 if let Some(position) = itineraries.position(trip) {
                     if let Some(alt) =
@@ -1706,6 +1745,7 @@ impl Run {
                     {
                         mode = alt.mode;
                         chosen_route = Some(alt.vehicle_links.clone());
+                        fallback = alt.fallback;
                     }
                 }
             }
@@ -1798,12 +1838,14 @@ impl Run {
                         }
                     }
                 }
-            } else if !self.vehicles.is_at_origin(
-                &self.travellers,
-                traveller,
-                VehicleKind::Car,
-                origin,
-            ) {
+            } else if !fallback
+                && !self.vehicles.is_at_origin(
+                    &self.travellers,
+                    traveller,
+                    VehicleKind::Car,
+                    origin,
+                )
+            {
                 diagnostics.record(DiagKey::new(
                     Category::Modelling,
                     local_codes::NO_VEHICLE_AVAILABLE,
@@ -1845,13 +1887,17 @@ impl Run {
                         // nothing to traverse. `core_loading::Vehicle`
                         // requires a non-empty route, so this is handled
                         // here rather than passed down.
-                        self.vehicles.relocate(traveller, VehicleKind::Car, destination);
+                        if !fallback {
+                            self.vehicles.relocate(traveller, VehicleKind::Car, destination);
+                        }
                         completion.completed += 1;
                         events.push(EventRow::trip(departure, EventType::TripCompleted, trip));
                     }
                     Some(path) => {
                         let weight = self.travellers.weight(traveller);
-                        self.vehicles.relocate(traveller, VehicleKind::Car, destination);
+                        if !fallback {
+                            self.vehicles.relocate(traveller, VehicleKind::Car, destination);
+                        }
 
                         match &self.flow_motor {
                             FlowMotor::Level0 => {
@@ -1996,6 +2042,7 @@ impl Run {
                     max: u8::try_from(o.reroute_max).unwrap_or(u8::MAX),
                 }),
                 pocket_length_m: o.pocket_length_m,
+                start_s: f64::from(self.window_start.get()),
                 capacity_changes: if disrupted {
                     self.disruptions.capacity_changes()
                 } else {
@@ -2405,7 +2452,8 @@ impl Run {
             }
         }
         let window = f64::from(self.window.get());
-        let (bins, full) = parking_mod::tally(parking, events, window);
+        let start = f64::from(self.window_start.get());
+        let (bins, full) = parking_mod::tally(parking, events, start, window);
         let avail = parking_mod::availability(&bins);
         let (mut total, mut overflow, mut mismatch) = (0.0, 0.0, 0.0);
         let mut by_kind = [parking_mod::ParkingTotals::default(); 2];
@@ -2482,9 +2530,10 @@ impl Run {
             .max(d.transfer_walk_max_s)
             .max(parking.map_or(0.0, |p| p.defaults().walk_max_s))
             + 1.0;
-        let bins = parking
-            .zip(avail)
-            .map(|(p, _)| parking_mod::tally(p, &[], f64::from(self.window.get())).0);
+        let bins = parking.zip(avail).map(|(p, _)| {
+            let (start, end) = (self.window_start.get(), self.window.get());
+            parking_mod::tally(p, &[], f64::from(start), f64::from(end)).0
+        });
         // Each trip followed, with its walk legs as (from, to, start); their links after.
         let followed: Vec<(Executed, Vec<WalkLeg>)> = par_map(
             pending,

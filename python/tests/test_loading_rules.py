@@ -25,7 +25,7 @@ def jammed(**kwargs: object) -> ms.Run:
         "equilibration_options": {"increments": 1, "warmup": 0},
     }
     return ms.Scenario.from_parts(
-        net, rows, classes=CAR, window_hours=3, **{**settings, **kwargs}
+        net, rows, classes=CAR, window=(0, 10_800), **{**settings, **kwargs}
     ).run("rules")
 
 

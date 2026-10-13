@@ -23,7 +23,7 @@ def scenario(trips=1_800, **kwargs):
     rows = ms.examples.trips_random(net, trips, seed=5, min_m=300.0, max_m=1400.0, spread_s=300)
     settings = {
         "classes": CAR,
-        "window_hours": 2,
+        "window": (0, 7_200),
         "flow_level": 4,
         "choice_model": "logit",
         "equilibration": "msa",

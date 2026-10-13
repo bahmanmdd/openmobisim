@@ -45,7 +45,7 @@ _SCENARIO_DEFAULTS: dict[tuple[str, str], tuple[float, str]] = {
 _SCENARIO = [
     ("flow_level", 2.0, "level"),
     ("flow_step_s", 300.0, "s"),
-    ("window_hours", 24.0, "h"),
+    ("window", 3.0, "h", "from the earliest departure (rounded down to the quarter hour)"),
     ("default_weight", 1.0, "travellers"),
     ("master_seed", 0.0, "—"),
     ("choice_detour_limit", 0.5, "share"),
@@ -55,7 +55,7 @@ _SCENARIO = [
 _COUNTS = ("iterations", "max_paths", "max_attempts", "max_routes", "searches", "candidates",
            "lanes", "increments", "max_rides", "reroute_max", "draws", "gap_sample",
            "itinerary_gap_sample", "warmup", "seed")  # fmt: skip
-_FLAGS = ("priority", "reroute", "biased")
+_FLAGS = ("priority", "reroute", "biased", "fallback_car")
 
 
 def _unit(name: str) -> str:
@@ -105,8 +105,8 @@ def parameters() -> dict[str, list[Any]]:
         The table, as lists by column.
     """
     rows = []
-    for name, value, unit in _SCENARIO:
-        rows.append(("scenario", name, name, value, unit, ""))
+    for name, value, unit, *note in _SCENARIO:
+        rows.append(("scenario", name, name, value, unit, note[0] if note else ""))
     listed: dict[str, set[str]] = {}
     for group, argument, name, value in _core.parameter_rows():
         value, note = _SCENARIO_DEFAULTS.get((group, name), (value, ""))

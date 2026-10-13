@@ -136,19 +136,31 @@ pub struct ModeDefaults {
     /// <https://english.kimnet.nl/documents/2020/11/03/cycling-facts-new-insights>); the limit
     /// keeps the longer ones, e-bikes' among them.*
     pub bike_max_s: f64,
+    /// Whether a trip left with no alternative at all — no mode it may use reaches its
+    /// destination within the limits — travels by car instead (S271, the user's W-1: "people
+    /// doing those kinds of trips always use car anyway"), counted and reported apart; a trip
+    /// with no car path either stays without one. For a traveller without a car the car stands
+    /// for a lift or a taxi: no car of theirs moves. On by default (`1`); `0` leaves such trips
+    /// unsimulated, as before.
+    pub fallback_car: bool,
 }
 
 impl ModeDefaults {
     /// The shipped values.
-    pub const SHIPPED: ModeDefaults = ModeDefaults { walk_max_s: 1800.0, bike_max_s: 3600.0 };
+    pub const SHIPPED: ModeDefaults =
+        ModeDefaults { walk_max_s: 1800.0, bike_max_s: 3600.0, fallback_car: true };
 
     /// The names of the options.
-    pub const NAMES: [&'static str; 2] = ["walk_max_s", "bike_max_s"];
+    pub const NAMES: [&'static str; 3] = ["walk_max_s", "bike_max_s", "fallback_car"];
 
     /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing).
     #[must_use]
     pub fn values(&self) -> Vec<(&'static str, f64)> {
-        vec![("walk_max_s", self.walk_max_s), ("bike_max_s", self.bike_max_s)]
+        vec![
+            ("walk_max_s", self.walk_max_s),
+            ("bike_max_s", self.bike_max_s),
+            ("fallback_car", f64::from(u8::from(self.fallback_car))),
+        ]
     }
 
     /// The shipped values with `options` in place of their namesakes.
@@ -156,10 +168,24 @@ impl ModeDefaults {
     /// # Errors
     ///
     /// The name and the list of known names for an unknown option; the reason for a
-    /// value that is not a positive number (`inf` offers every walk and ride).
+    /// value that is not a positive number (`inf` offers every walk and ride), or for
+    /// `fallback_car` not 0 or 1.
     pub fn from_options(options: &std::collections::BTreeMap<String, f64>) -> Result<Self, String> {
         let mut d = Self::SHIPPED;
         for (name, &value) in options {
+            if name == "fallback_car" {
+                // A flag: exactly 0 or 1.
+                d.fallback_car = match value.to_bits() {
+                    b if b == 1.0_f64.to_bits() => true,
+                    b if b == 0.0_f64.to_bits() => false,
+                    _ => {
+                        return Err(format!(
+                            "mode_options \"fallback_car\" is 0 or 1, got {value}"
+                        ));
+                    }
+                };
+                continue;
+            }
             let slot = match name.as_str() {
                 "walk_max_s" => &mut d.walk_max_s,
                 "bike_max_s" => &mut d.bike_max_s,
@@ -272,6 +298,7 @@ impl ClassLimits {
         ModeDefaults {
             walk_max_s: self.walk_max_s.unwrap_or(run.walk_max_s),
             bike_max_s: self.bike_max_s.unwrap_or(run.bike_max_s),
+            fallback_car: run.fallback_car,
         }
     }
 }

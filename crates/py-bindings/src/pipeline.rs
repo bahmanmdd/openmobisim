@@ -43,7 +43,7 @@ use openmobisim_core_sim::{
     Run as CoreRun, Skimmer, StaticLayers, Timings, TransitDisruption, TransitEffect, TransitSetup,
     ValueLayer,
 };
-use openmobisim_core_transit::TransitDefaults;
+use openmobisim_core_transit::{TransitDefaults, WindowCut};
 
 use crate::parking::{
     PyParkings, itinerary_choices, parking_bins, parking_places, parking_summary, trip_modes,
@@ -103,13 +103,14 @@ fn person_from_row(row: PersonRow) -> RawPerson {
 
 /// The user's traveller and trip values (S249) by traveller and trip index: traveller values by
 /// external id (an id not in the demand ignored, a traveller not given 0); trip values one per
-/// row of the demand as given (`row_keys`, each row's traveller and sequence number), or keyed by
+/// row of the demand as given (`row_keys`, each row's traveller, sequence number and whether it
+/// departs inside the window and is run, S271), or keyed by
 /// `(traveller id, trip sequence)` (a key not in the demand ignored, a trip not given 0). Names in
 /// sorted order, so the attributes and the fingerprint do not depend on a dict's order.
 fn demand_values(
     travellers: &openmobisim_core_demand::Travellers,
     trips: &openmobisim_core_demand::Trips,
-    row_keys: &[(String, u32)],
+    row_keys: &[(String, u32, bool)],
     persons: HashMap<String, Vec<(String, f64)>>,
     aligned: HashMap<String, Vec<f64>>,
     keyed: KeyedTripValues,
@@ -130,7 +131,7 @@ fn demand_values(
     // A trip's index from its traveller and sequence number: the demand keeps each traveller's
     // trips in sequence order, one per number (S128).
     let mut seqs: HashMap<&str, Vec<u32>> = HashMap::new();
-    for (id, seq) in row_keys {
+    for (id, seq, _) in row_keys.iter().filter(|k| k.2) {
         seqs.entry(id.as_str()).or_default().push(*seq);
     }
     for list in seqs.values_mut() {
@@ -154,9 +155,10 @@ fn demand_values(
         }
         let mut column = vec![0.0; n];
         let mut set = vec![false; n];
-        for ((id, seq), value) in row_keys.iter().zip(values) {
-            // A repeated (traveller, sequence) row is dropped by the demand: its first counts.
-            if let Some(i) = index_of(id, *seq).filter(|&i| !set[i]) {
+        for ((id, seq, run), value) in row_keys.iter().zip(values) {
+            // A repeated (traveller, sequence) row is dropped by the demand: its first counts;
+            // a row outside the window is not run (S271).
+            if let Some(i) = run.then(|| index_of(id, *seq)).flatten().filter(|&i| !set[i]) {
                 column[i] = value;
                 set[i] = true;
             }
@@ -180,6 +182,115 @@ fn demand_values(
         out = out.with_trip(&name, column, &ROUTE_ATTRIBUTES).map_err(PyValueError::new_err)?;
     }
     Ok(out)
+}
+
+/// Without a window given, a run lasts this long from the earliest departure, rounded down to
+/// the quarter hour (S271; *an assumption*: the starter mornings' departures span three hours,
+/// 06:30–09:30, and a two-hour window would have cut or rescaled them).
+pub(crate) const WINDOW_DEFAULT_S: u32 = 3 * 3600;
+
+/// Trips departing on one side of the simulation window (S271).
+#[derive(Clone, Copy, Debug, Default)]
+struct Outside {
+    trips: u32,
+    /// The people they stand for (traveller weights summed).
+    people: u64,
+    /// The earliest and latest of their departures, seconds after midnight.
+    first_s: u32,
+    last_s: u32,
+}
+
+impl Outside {
+    fn add(&mut self, at: u32, people: u32) {
+        if self.trips == 0 {
+            (self.first_s, self.last_s) = (at, at);
+        }
+        self.first_s = self.first_s.min(at);
+        self.last_s = self.last_s.max(at);
+        self.trips += 1;
+        self.people += u64::from(people);
+    }
+}
+
+/// The run's simulation window (S271, W-2) and what in the demand departs outside it.
+#[derive(Clone, Copy, Debug)]
+struct Window {
+    start_s: u32,
+    end_s: u32,
+    /// Whether the scenario gave the start, and the end.
+    start_given: bool,
+    end_given: bool,
+    /// The demand's trips and people, all of them.
+    trips: u32,
+    people: u64,
+    before: Outside,
+    after: Outside,
+}
+
+impl Window {
+    fn resolve(
+        trips: &[RawTrip],
+        start: Option<u32>,
+        end: Option<u32>,
+        default_weight: u32,
+    ) -> PyResult<Self> {
+        let earliest = trips.iter().map(|t| t.departure_time.get()).min().unwrap_or(0);
+        let start_s = start.unwrap_or(earliest / 900 * 900);
+        let end_s = end.unwrap_or_else(|| start_s.saturating_add(WINDOW_DEFAULT_S));
+        if end_s <= start_s {
+            return Err(PyValueError::new_err(format!(
+                "the window ends at {end_s} s, not after its start at {start_s} s (seconds after midnight)"
+            )));
+        }
+        let mut w = Self {
+            start_s,
+            end_s,
+            start_given: start.is_some(),
+            end_given: end.is_some(),
+            trips: 0,
+            people: 0,
+            before: Outside::default(),
+            after: Outside::default(),
+        };
+        for t in trips {
+            let (at, people) = (t.departure_time.get(), t.weight.unwrap_or(default_weight));
+            w.trips += 1;
+            w.people += u64::from(people);
+            if at < start_s {
+                w.before.add(at, people);
+            } else if at >= end_s {
+                w.after.add(at, people);
+            }
+        }
+        Ok(w)
+    }
+
+    fn contains(&self, at: Second) -> bool {
+        (self.start_s..self.end_s).contains(&at.get())
+    }
+
+    /// As a dict for Python, with what the timetable's cut took off, if there was one.
+    fn to_dict<'py>(self, py: Python<'py>, cut: Option<WindowCut>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new(py);
+        d.set_item("start_s", self.start_s)?;
+        d.set_item("end_s", self.end_s)?;
+        d.set_item("start_given", self.start_given)?;
+        d.set_item("end_given", self.end_given)?;
+        d.set_item("default_s", WINDOW_DEFAULT_S)?;
+        d.set_item("trips", self.trips)?;
+        d.set_item("people", self.people)?;
+        for (side, o) in [("before", self.before), ("after", self.after)] {
+            d.set_item(format!("{side}_trips"), o.trips)?;
+            d.set_item(format!("{side}_people"), o.people)?;
+            d.set_item(format!("{side}_first_s"), (o.trips > 0).then_some(o.first_s))?;
+            d.set_item(format!("{side}_last_s"), (o.trips > 0).then_some(o.last_s))?;
+        }
+        d.set_item("timetable_runs_kept", cut.map(|c| c.runs_kept))?;
+        d.set_item("timetable_runs_cut", cut.map(|c| c.runs_cut))?;
+        d.set_item("timetable_runs_dropped", cut.map(|c| c.runs_dropped))?;
+        d.set_item("timetable_calls_dropped", cut.map(|c| c.calls_dropped))?;
+        Ok(d)
+    }
 }
 
 /// Trip values keyed by trip, as Python gives them (S249): per name, `(traveller id, trip sequence,
@@ -295,6 +406,17 @@ pub struct PyRunSummary {
     /// Path to the written `transit_calls.parquet`, if the run had a timetable.
     #[pyo3(get)]
     pub transit_calls_path: Option<String>,
+    /// The simulation window (S271) as a dict: `start_s` and `end_s` (seconds after midnight),
+    /// whether each was given, the demand's trips and people, those departing before and after
+    /// it (left out: `before_trips`, `before_people`, `before_first_s`, `before_last_s`, and
+    /// `after_*`), and what the timetable's cut took off (`timetable_*`, `None` without one).
+    #[pyo3(get)]
+    pub window: Py<PyDict>,
+    /// The trips that had no alternative and travelled by car (S271, W-1), as columns
+    /// (`traveller_id`, `trip_seq`, `departure_s`, `weight`, `origin_lon`, `origin_lat`,
+    /// `destination_lon`, `destination_lat`).
+    #[pyo3(get)]
+    pub fallback_car: Py<PyDict>,
     /// How full each parking was, bin by bin, as columns (M4); `None` without parkings.
     #[pyo3(get)]
     pub parking_bins: Option<Py<PyDict>>,
@@ -561,7 +683,7 @@ fn convergence_arrays(
     class_defaults=None, class_modes=None, class_options=None, class_limits=None,
     link_values=None, person_values=None, trip_values=None, trip_values_keyed=None,
     road_disruptions=None, transit_disruptions=None, disruptions_known=false,
-    default_weight=1, window_s=86_400,
+    default_weight=1, window_start_s=None, window_end_s=None,
     flow_level=0, flow_step_s=300, link_bin_s=None,
     route_method="penalty", route_options=None, master_seed=0,
     choice_model=None, choice_options=None,
@@ -596,7 +718,8 @@ pub fn run_pipeline(
     transit_disruptions: Option<Vec<(u32, i64, u32, u32)>>,
     disruptions_known: bool,
     default_weight: u32,
-    window_s: u32,
+    window_start_s: Option<u32>,
+    window_end_s: Option<u32>,
     flow_level: u32,
     flow_step_s: u32,
     link_bin_s: Option<u32>,
@@ -722,7 +845,7 @@ pub fn run_pipeline(
     let update =
         openmobisim_core_sim::route_update::update(route_update, &to_options(route_update_options))
             .map_err(to_value_error)?;
-    let raw_trips = match (trips, trips_path) {
+    let mut raw_trips: Vec<RawTrip> = match (trips, trips_path) {
         (Some(rows), None) => rows.into_iter().map(trip_from_row).collect::<PyResult<_>>()?,
         (None, Some(path)) => read_trips_parquet(path).map_err(to_value_error)?,
         _ => return Err(PyValueError::new_err("give exactly one of trips or trips_path")),
@@ -746,13 +869,21 @@ pub fn run_pipeline(
     }
 
     // Each row's traveller and place in their day, for trip values given row by row (S249).
-    let row_keys: Vec<(String, u32)> = if trip_values.as_ref().is_some_and(|v| !v.is_empty())
+    // The simulation window (S271, W-2): the scenario's, or from the earliest departure rounded
+    // down to the quarter hour, for `WINDOW_DEFAULT_S`. A trip departing outside it is left out
+    // and reported (U-34 (b)): a warning, not an error.
+    let window = Window::resolve(&raw_trips, window_start_s, window_end_s, default_weight)?;
+    let row_keys: Vec<(String, u32, bool)> = if trip_values.as_ref().is_some_and(|v| !v.is_empty())
         || trip_values_keyed.as_ref().is_some_and(|v| !v.is_empty())
     {
-        raw_trips.iter().map(|t| (t.traveller_id.clone(), t.trip_seq)).collect()
+        raw_trips
+            .iter()
+            .map(|t| (t.traveller_id.clone(), t.trip_seq, window.contains(t.departure_time)))
+            .collect()
     } else {
         Vec::new()
     };
+    raw_trips.retain(|t| window.contains(t.departure_time));
     let mut build_diagnostics = Diagnostics::new();
     let (travellers, trips_table) = build_travellers(
         raw_trips,
@@ -796,7 +927,8 @@ pub fn run_pipeline(
     let trips_used = trips_table.clone();
 
     let mut run =
-        CoreRun::new(network.inner.clone(), travellers.clone(), trips_table, Second(window_s));
+        CoreRun::new(network.inner.clone(), travellers.clone(), trips_table, Second(window.end_s))
+            .with_window_start(Second(window.start_s));
     let level = match flow_level {
         0 => None,
         2 => Some(FidelityLevel::PointQueue),
@@ -870,11 +1002,15 @@ pub fn run_pipeline(
         },
     };
     // Stops with walk and bike access points, and buses on this network's roads.
+    let mut window_cut = None;
     let transit_setup = match &transit {
         Some(t) => {
             let walk = layers.walk.as_ref().expect("made above for a timetable");
             let bike = setup(StaticLayer::Bike)?;
-            let built = TransitSetup::new(t.timetable.clone(), walk, Some(&bike), transit_defaults)
+            // Only the window's part of the day (S271): each run's calls inside it.
+            let (cut, report) = t.timetable.within(window.start_s, window.end_s);
+            window_cut = Some(report);
+            let built = TransitSetup::new(Arc::new(cut), walk, Some(&bike), transit_defaults)
                 .with_access_search_s(access_search_s)
                 .with_roads(network.inner.clone());
             Some(Arc::new(built))
@@ -969,8 +1105,11 @@ pub fn run_pipeline(
         openmobisim_io_parquet::events::DEFAULT_SAMPLE_RATE,
     )
     .map_err(to_value_error)?;
-    let manifest =
-        Manifest::for_run(&travellers, &result, Second(window_s), default_weight, &description);
+    let mut manifest =
+        Manifest::for_run(&travellers, &result, Second(window.end_s), default_weight, &description);
+    manifest.window_start_seconds = window.start_s;
+    manifest.trips_outside_window = window.before.trips + window.after.trips;
+    manifest.people_outside_window = window.before.people + window.after.people;
     write_manifest(&manifest_path, &manifest).map_err(to_value_error)?;
     let link_bins_path = match &result.link_bins {
         Some(bins) => {
@@ -1198,6 +1337,14 @@ pub fn run_pipeline(
         itinerary_replanned,
         return_mismatch_s,
         transit_calls_path,
+        window: window.to_dict(py, window_cut)?.unbind(),
+        fallback_car: crate::parking::fallback_car(
+            py,
+            &result.fallback_car,
+            &trips_used,
+            &travellers,
+        )?
+        .unbind(),
         transit_calls: transit_calls_table,
         transit_summary: transit_summary_table,
         kpis_path: kpis_path.to_string_lossy().into_owned(),

@@ -96,7 +96,7 @@ def toy_run(level=4, hours=1, **kwargs):
         net,
         rows,
         classes=CAR,
-        window_hours=hours,
+        window=(0, hours * 3600),
         flow_level=level,
         link_bin_s=300,
         **kwargs,
@@ -284,7 +284,7 @@ def test_a_link_with_almost_no_traffic_is_still_drawn():
     (olon, olat), (dlon, dlat) = net.node_lonlat("W"), net.node_lonlat("D1")
     rows = [("only", 0, olon, olat, dlon, dlat, 0, "commuter", None)]
     run = ms.Scenario.from_parts(
-        net, rows, classes=CAR, window_hours=2, flow_level=4, link_bin_s=3600
+        net, rows, classes=CAR, window=(0, 7_200), flow_level=4, link_bin_s=3600
     ).run("one-car")
     kwargs = {"size_cm": (15.24, 8.64), "dpi": 60, "chevrons": False}
     shown = pixels(viz.map_link(run, **kwargs))

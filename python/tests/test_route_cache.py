@@ -22,7 +22,7 @@ def scenario(trips=200, **kwargs):
     # "shortest" the default).
     settings = {
         "classes": CAR,
-        "window_hours": 1,
+        "window": (0, 3_600),
         "master_seed": 3,
         "equilibration": "free_flow",
         "equilibration_options": {"increments": 1, "warmup": 0},

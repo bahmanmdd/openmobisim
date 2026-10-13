@@ -263,6 +263,9 @@ pub struct Alternative {
     /// The rides' metres from each boarding stop to its alighting stop as the crow flies: what a
     /// distance fare charges (S248).
     pub ride_m: f64,
+    /// A car trip offered only because the trip had no alternative at all (S271, W-1): it
+    /// takes no car of the traveller's (a lift or a taxi for one without), and is counted apart.
+    pub fallback: bool,
 }
 
 impl Alternative {
@@ -726,6 +729,19 @@ impl<'a> Planner<'a> {
 
     /// The car alternatives of a mode-choice trip: its pair's routes, costed on the
     /// expected times, with their route set's path sizes.
+    /// The car routes of `key` for a trip that had no alternative (S271, W-1), each marked
+    /// [`Alternative::fallback`]; none without route sets for it.
+    fn fallback_car(&self, key: RouteKey, departure: u32) -> Vec<Alternative> {
+        let Some(routes) = &self.car_routes else { return Vec::new() };
+        let mut alts = self.plan_car(routes, key, departure);
+        for a in &mut alts {
+            a.fallback = true;
+        }
+        // Numbered and trimmed as every choice set is.
+        let k = self.parking.map_or(1, |p| p.defaults().candidate_count());
+        finalise(alts, self.detour_limit, k, self.journey_max_s())
+    }
+
     fn plan_car(&self, routes: &CarRoutes<'_>, key: RouteKey, departure: u32) -> Vec<Alternative> {
         let Some(k) = routes.sets.key_index(key) else { return Vec::new() };
         routes
@@ -1280,6 +1296,7 @@ fn blank(mode: Mode, shape: Shape) -> Alternative {
         wait_first_s: 0,
         ride_kind_s: [0; 6],
         ride_m: 0.0,
+        fallback: false,
     }
 }
 
@@ -1678,6 +1695,9 @@ pub(crate) struct Itineraries {
     parks_cars: bool,
     /// The modes each traveller class may use, by class index (S231); empty: every class all.
     class_modes: Vec<[bool; Mode::COUNT]>,
+    /// Whether a trip with no alternative travels by car (S271, W-1): then every trip has its
+    /// car pair in `car_keys`, chooser or not.
+    fallback_car: bool,
 }
 
 /// Where a vehicle is expected to be, following a traveller's choices.
@@ -1778,6 +1798,7 @@ impl Itineraries {
             bike_reach_filled: OnceLock::new(),
             parks_cars: false,
             class_modes: sim.class_modes.to_vec(),
+            fallback_car: sim.modes.fallback_car,
         };
         for i in 0..total {
             let trip = TripId::from_index(i);
@@ -1804,7 +1825,7 @@ impl Itineraries {
                     .access_walk_max_s
                     .unwrap_or_else(|| transit.map_or(0.0, |t| t.defaults().access_walk_max_s)),
             };
-            if choosing || mode == Mode::CarTransit {
+            if choosing || mode == Mode::CarTransit || out.fallback_car {
                 nodes.road_o = road_snapper.nearest(road, o);
                 nodes.road_d = road_snapper.nearest(road, d);
             }
@@ -1815,15 +1836,17 @@ impl Itineraries {
                     nodes.bike_d = snapper.nearest(graph, d);
                 }
             }
-            let (legs, car_key) = if choosing {
+            // The car pair: a chooser's, offered the car; with the fallback (S271), everyone's.
+            let key = ((choosing && offered[Mode::Car.index()]) || out.fallback_car)
+                && nodes.road_o != nodes.road_d;
+            let car_key = key.then(|| RouteKey::new(nodes.road_o, nodes.road_d));
+            let legs = if choosing {
                 let max = limits.modes(sim.modes);
                 let leg =
                     |layer| sim.static_routes.leg(sim.layers, trip, layer, max.max_seconds(layer));
-                let key = (offered[Mode::Car.index()] && nodes.road_o != nodes.road_d)
-                    .then(|| RouteKey::new(nodes.road_o, nodes.road_d));
-                ([leg(StaticLayer::Bike), leg(StaticLayer::Walk)], key)
+                [leg(StaticLayer::Bike), leg(StaticLayer::Walk)]
             } else {
-                ([None, None], None)
+                [None, None]
             };
             out.pos[i] = u32::try_from(out.trips.len()).expect("trips fit u32");
             out.trips.push(trip);
@@ -2107,23 +2130,29 @@ impl Itineraries {
                 })
         };
         let plan = |s: &mut Scratch<'a>, p: usize, offer: Offer, car_reach: &CarReach| {
-            if offer.is_empty() {
-                return Vec::new();
-            }
             let trip = self.trips[p];
             let [bike, walk] = &self.legs[p];
-            planner.plan(
-                s,
-                &self.nodes[p],
-                trips.departure(trip).get(),
-                trips.origin(trip),
-                trips.destination(trip),
-                offer,
-                (bike.as_ref(), walk.as_ref()),
-                self.car_keys[p],
-                self.bike_reach.get(p),
-                car_reach,
-            )
+            let set = if offer.is_empty() {
+                Vec::new()
+            } else {
+                planner.plan(
+                    s,
+                    &self.nodes[p],
+                    trips.departure(trip).get(),
+                    trips.origin(trip),
+                    trips.destination(trip),
+                    offer,
+                    (bike.as_ref(), walk.as_ref()),
+                    self.car_keys[p],
+                    self.bike_reach.get(p),
+                    car_reach,
+                )
+            };
+            // No alternative at all: the car (S271, W-1), if it has a road path.
+            match (set.is_empty() && self.fallback_car, self.car_keys[p]) {
+                (true, Some(key)) => planner.fallback_car(key, trips.departure(trip).get()),
+                _ => set,
+            }
         };
         // The drives park-and-ride trips share (S267), searched on this pass's times as the
         // trips that need them come up, outside the parallel planning.
@@ -2156,7 +2185,8 @@ impl Itineraries {
             let first: Vec<Offer> = work
                 .iter()
                 .map(|&(p, offer)| match current.and_then(|c| c.alt[p].as_ref()) {
-                    Some(old) if !reselects(p) && !offer.fetches() => {
+                    // A trip that fell back to the car (S271) looks at all it is offered again.
+                    Some(old) if !old.fallback && !reselects(p) && !offer.fetches() => {
                         let only = offer.only(old.mode);
                         if old.shape == Shape::Out && !in_sample(p) {
                             only.at_parking(old.parking)
@@ -2566,6 +2596,7 @@ mod tests {
             wait_first_s: 0,
             ride_kind_s: [0; 6],
             ride_m: 0.0,
+            fallback: false,
         }
     }
 

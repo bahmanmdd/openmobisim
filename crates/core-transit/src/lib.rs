@@ -34,5 +34,5 @@ pub use kind::ServiceKind;
 pub use raptor::{Footpaths, Journey, JourneyLeg, Raptor, RaptorData};
 pub use timetable::{
     ALIGHT, BOARD, CallSpec, CallTimes, Headway, RouteSpec, ServiceChangeReport, ServiceChanges,
-    StopSpec, Timetable, TimetableBuilder, TimetableReport, Transfer, UNKNOWN_TIME,
+    StopSpec, Timetable, TimetableBuilder, TimetableReport, Transfer, UNKNOWN_TIME, WindowCut,
 };

@@ -134,6 +134,7 @@ pub(crate) struct Inputs<'a> {
     pub travellers: &'a Travellers,
     pub trips: &'a Trips,
     pub window: Second,
+    pub window_start: Second,
     pub flow_motor: &'a FlowMotor,
     pub link_bin_seconds: Option<u32>,
     pub route_method: &'a str,
@@ -193,6 +194,11 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     hash_network(&mut h, inputs.network, network_fingerprint);
     hash_demand(&mut h, inputs.travellers, inputs.trips);
     h.write_u32(inputs.window.get());
+    // A window starting at midnight hashes as before S271, so earlier fingerprints still hold.
+    if inputs.window_start.get() > 0 {
+        h.write_str("window_start");
+        h.write_u32(inputs.window_start.get());
+    }
     h.write_u32(flow_level);
     h.write_bool(flow_step_seconds.is_some());
     h.write_f64(flow_step_seconds.unwrap_or(0.0));

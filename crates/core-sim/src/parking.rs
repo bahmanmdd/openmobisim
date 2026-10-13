@@ -702,8 +702,10 @@ pub struct ParkingBins {
     pub bin_s: u32,
     /// How many bins.
     pub bins: usize,
-    /// The window the bins cover, in seconds: the last bin ends with it, so it is shorter than
-    /// the others when the window is not a whole number of bins (X-45).
+    /// The window's start, in seconds after midnight (S271): the first bin starts there.
+    pub start_s: f64,
+    /// The window's end, in seconds after midnight: the last bin ends with it, so it is shorter
+    /// than the others when the window is not a whole number of bins (X-45).
     pub window_s: f64,
     /// Per parking, then bin (`parking * bins + bin`): vehicles arriving to park
     /// (weighted by traveller weight).
@@ -760,16 +762,18 @@ pub struct ParkingResult {
 pub(crate) fn tally(
     setup: &ParkingSetup,
     events: &[ParkingEvent],
+    start: f64,
     window: f64,
 ) -> (ParkingBins, Vec<bool>) {
     let bin_s = setup.defaults.bin_s.max(1.0);
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a count of bins")]
-    let bins = ((window / bin_s).ceil() as usize).max(1);
+    let bins = (((window - start) / bin_s).ceil() as usize).max(1);
     let n = setup.count();
     let mut out = ParkingBins {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "seconds")]
         bin_s: bin_s as u32,
         bins,
+        start_s: start,
         window_s: window,
         arrivals: vec![0.0; n * bins],
         departures: vec![0.0; n * bins],
@@ -788,7 +792,7 @@ pub(crate) fn tally(
     let mut full_on_arrival = vec![false; events.len()];
     let bin_of = |t: f64| {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin")]
-        let b = (t.max(0.0) / bin_s) as usize;
+        let b = ((t - start).max(0.0) / bin_s) as usize;
         b.min(bins - 1)
     };
     let mut i = 0;
@@ -796,7 +800,7 @@ pub(crate) fn tally(
         let p32 = u32::try_from(p).expect("parkings fit u32");
         let capacity = f64::from(setup.capacity(p32));
         let mut stock = f64::from(setup.initial_occupancy(p32));
-        let mut clock = 0.0;
+        let mut clock = start;
         let row = p * bins;
         // Close the interval [clock, t) at occupancy `stock`.
         let advance = |out: &mut ParkingBins, from: f64, to: f64, stock: f64| {
@@ -804,7 +808,7 @@ pub(crate) fn tally(
             while t < to {
                 let b = bin_of(t);
                 #[allow(clippy::cast_precision_loss, reason = "a count of bins")]
-                let end = (((b + 1) as f64) * bin_s).min(to);
+                let end = (start + ((b + 1) as f64) * bin_s).min(to);
                 let span = end - t;
                 if span <= 0.0 {
                     break;
@@ -820,7 +824,7 @@ pub(crate) fn tally(
         };
         while i < order.len() && events[order[i]].1 == p32 {
             let (t, _, change) = events[order[i]];
-            let t = t.clamp(0.0, window);
+            let t = t.clamp(start, window);
             advance(&mut out, clock, t, stock);
             clock = clock.max(t);
             let b = bin_of(t);
@@ -860,7 +864,7 @@ impl ParkingBins {
             return whole;
         }
         #[allow(clippy::cast_precision_loss, reason = "a count of bins")]
-        let left = self.window_s - whole * (self.bins - 1) as f64;
+        let left = self.window_s - self.start_s - whole * (self.bins - 1) as f64;
         if left > 0.0 { left.min(whole) } else { whole }
     }
 }
@@ -869,7 +873,7 @@ impl ParkingBins {
 /// [`availability`]).
 pub(crate) fn availability_at(values: &[f64], bins: &ParkingBins, parking: u32, t: f64) -> f64 {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin")]
-    let b = ((t.max(0.0) / f64::from(bins.bin_s)) as usize).min(bins.bins - 1);
+    let b = (((t - bins.start_s).max(0.0) / f64::from(bins.bin_s)) as usize).min(bins.bins - 1);
     values[parking as usize * bins.bins + b]
 }
 
@@ -878,6 +882,7 @@ pub(crate) fn availability_at(values: &[f64], bins: &ParkingBins, parking: u32, 
 /// where a parking starts the day full.
 #[derive(Clone, Debug)]
 pub(crate) struct ExpectedAvailability {
+    start_s: f64,
     bin_s: f64,
     bins: usize,
     values: Vec<f64>,
@@ -886,9 +891,15 @@ pub(crate) struct ExpectedAvailability {
 
 impl ExpectedAvailability {
     /// Before any loading: from the initial occupancy alone.
-    pub(crate) fn initial(setup: &ParkingSetup, window: f64) -> Self {
-        let (bins, _) = tally(setup, &[], window);
-        Self { bin_s: f64::from(bins.bin_s), bins: bins.bins, values: availability(&bins), seen: 0 }
+    pub(crate) fn initial(setup: &ParkingSetup, start: f64, window: f64) -> Self {
+        let (bins, _) = tally(setup, &[], start, window);
+        Self {
+            start_s: start,
+            bin_s: f64::from(bins.bin_s),
+            bins: bins.bins,
+            values: availability(&bins),
+            seen: 0,
+        }
     }
 
     /// Average in a loading's realised availability.
@@ -903,7 +914,7 @@ impl ExpectedAvailability {
     /// The expected availability of `parking` at second `t`.
     pub(crate) fn at(&self, parking: u32, t: f64) -> f64 {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin")]
-        let b = ((t.max(0.0) / self.bin_s) as usize).min(self.bins - 1);
+        let b = (((t - self.start_s).max(0.0) / self.bin_s) as usize).min(self.bins - 1);
         self.values[parking as usize * self.bins + b]
     }
 }

@@ -26,8 +26,15 @@ pub struct Manifest {
     /// The target triple this binary was built for (`crate::TARGET`). S60's
     /// determinism guarantee is same-platform; this is the platform.
     pub platform: String,
-    /// Trips still in progress after this second are truncated (S57).
+    /// Trips still in progress after this second are truncated (S57): the window's end, in
+    /// seconds after midnight.
     pub window_seconds: u32,
+    /// The window's start, in seconds after midnight (S271): the run starts there.
+    pub window_start_seconds: u32,
+    /// Trips of the demand departing outside the window, left out of the run (S271).
+    pub trips_outside_window: u32,
+    /// The people those trips stand for (traveller weights summed).
+    pub people_outside_window: u64,
     /// The scenario's `traveller_weight` (S89): 1 for `default`, 10 for
     /// `fast`, for a trip no row gives an explicit weight.
     pub default_weight: u32,
@@ -147,6 +154,9 @@ impl Manifest {
             defaults_version: openmobisim_core_graph::DEFAULTS_VERSION,
             platform: crate::TARGET.to_string(),
             window_seconds: window.get(),
+            window_start_seconds: 0,
+            trips_outside_window: 0,
+            people_outside_window: 0,
             default_weight,
             simulated_travellers: travellers.len(),
             car_owning_travellers,
@@ -243,12 +253,15 @@ impl Manifest {
                 format!("[{}]", names.iter().map(|n| text(n)).collect::<Vec<_>>().join(", "))
             })
         };
-        let fields: [(&str, String); 38] = [
+        let fields: [(&str, String); 41] = [
             ("openmobisim_version", text(&self.openmobisim_version)),
             ("code_version", self.code_version.to_string()),
             ("defaults_version", self.defaults_version.to_string()),
             ("platform", text(&self.platform)),
             ("window_seconds", self.window_seconds.to_string()),
+            ("window_start_seconds", self.window_start_seconds.to_string()),
+            ("trips_outside_window", self.trips_outside_window.to_string()),
+            ("people_outside_window", self.people_outside_window.to_string()),
             ("default_weight", self.default_weight.to_string()),
             ("simulated_travellers", self.simulated_travellers.to_string()),
             ("car_owning_travellers", self.car_owning_travellers.to_string()),

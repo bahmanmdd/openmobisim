@@ -29,7 +29,9 @@ use openmobisim_core_graph::hubs::HubKind;
 use openmobisim_core_graph::layers::{BikeCost, Layer, StaticLayerDefaults};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::{LonLat, toy_network, toy_network_layers};
-use openmobisim_core_sim::{EventType, LayerSetup, Run, RunResult, StaticLayers, TransitSetup};
+use openmobisim_core_sim::{
+    EventType, LayerSetup, ModeDefaults, Run, RunResult, StaticLayers, TransitSetup,
+};
 use openmobisim_core_transit::TransitDefaults;
 use openmobisim_core_transit::examples::toy_tram;
 use openmobisim_core_types::diagnostics::Diagnostics;
@@ -79,6 +81,16 @@ impl Toy {
     }
 
     fn run(&self, rows: Vec<RawTrip>, window: u32, with_transit: bool) -> RunResult {
+        self.run_with(rows, window, with_transit, ModeDefaults::SHIPPED)
+    }
+
+    fn run_with(
+        &self,
+        rows: Vec<RawTrip>,
+        window: u32,
+        with_transit: bool,
+        modes: ModeDefaults,
+    ) -> RunResult {
         let defaults = ClassDefaults::new()
             .with_default("everyone", Ownership { car: false, bike: false, transit_pass: false });
         let (travellers, trips) =
@@ -86,7 +98,8 @@ impl Toy {
         let mut run =
             Run::new(self.road.clone(), Arc::new(travellers), Arc::new(trips), Second(window))
                 .with_layers(self.layers.clone())
-                .with_link_bins(300);
+                .with_link_bins(300)
+                .with_mode_defaults(modes);
         if with_transit {
             run = run.with_transit(self.transit.clone());
         }
@@ -161,11 +174,20 @@ fn tr1_to_tr3_ride_the_tram() {
 }
 
 #[test]
-fn tr4_after_the_last_tram_there_is_no_path() {
+fn tr4_after_the_last_tram_there_is_no_path_and_the_trip_goes_by_car() {
     let t = toy();
-    let result = t.run(vec![t.trip("a", "N1", "D2", 20_000)], 86_400, true);
+    // Without the fallback (S271, W-1) the trip has no path.
+    let off = ModeDefaults { fallback_car: false, ..ModeDefaults::SHIPPED };
+    let result = t.run_with(vec![t.trip("a", "N1", "D2", 20_000)], 86_400, true, off);
     assert_eq!(outcomes(&result), [(EventType::NoFeasiblePath, 20_000)]);
     assert_eq!(result.by_mode[Mode::Transit.index()].completion.no_feasible_path, 1);
+    assert!(result.fallback_car.is_empty());
+    // With it (the default) it travels by car, though the traveller owns none: a lift.
+    let result = t.run(vec![t.trip("a", "N1", "D2", 20_000)], 86_400, true);
+    let [(outcome, _)] = outcomes(&result)[..] else { panic!("one trip") };
+    assert_eq!(outcome, EventType::TripCompleted);
+    assert_eq!(result.by_mode[Mode::Car.index()].completion.completed, 1, "counted as a car trip");
+    assert_eq!(result.fallback_car.len(), 1, "and listed");
 }
 
 #[test]

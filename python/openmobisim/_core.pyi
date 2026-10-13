@@ -799,6 +799,10 @@ class RunSummary:
     transit_summary: dict[str, float] | None
     #: The written ``transit_calls.parquet``, if the run had a timetable.
     transit_calls_path: str | None
+    #: The simulation window and what departed outside it (``Run.window``'s keys).
+    window: dict[str, Any]
+    #: The trips that had no alternative and went by car (``Run.fallback_car``'s columns).
+    fallback_car: dict[str, Any]
     #: How full each parking was, bin by bin (see ``Run.parking_bins``).
     parking_bins: dict[str, Any] | None
     #: Each parking the run kept (see ``Run.parking_places``).
@@ -845,7 +849,8 @@ def run_pipeline(
     transit_disruptions: list[tuple[int, int, int, int]] | None = None,
     disruptions_known: bool = False,
     default_weight: int = 1,
-    window_s: int = 86_400,
+    window_start_s: int | None = None,
+    window_end_s: int | None = None,
     flow_level: int = 0,
     flow_step_s: int = 300,
     link_bin_s: int | None = None,
@@ -915,7 +920,11 @@ def run_pipeline(
         disruptions_known: Whether travellers know of the disruptions in advance.
         default_weight: How many people a simulated traveller stands for, for
             a trip whose row gives none.
-        window_s: Trips still in progress after this second are truncated.
+        window_start_s: The simulation window's start, in seconds after midnight; ``None``:
+            the earliest departure, rounded down to the quarter hour. Trips departing before
+            it are left out.
+        window_end_s: Its end: trips still in progress then are truncated, and trips
+            departing at or after it left out; ``None``: three hours after the start.
         flow_level: 0 for free flow, or 2, 3, 4 for the link transmission
             model as a point queue, a spatial queue and the full diagram.
         flow_step_s: The loading step in seconds, for levels 2-4.

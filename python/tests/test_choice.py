@@ -24,7 +24,7 @@ def grid_run(trips=400, seed=5, **kwargs):
     rows = ms.examples.trips_random(net, trips, seed=seed, min_m=300.0, max_m=1200.0)
     settings = {
         "classes": CAR,
-        "window_hours": 1,
+        "window": (0, 3_600),
         "flow_level": 4,
         "link_bin_s": 300,
         "choice_model": "deterministic",

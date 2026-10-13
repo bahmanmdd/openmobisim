@@ -30,7 +30,7 @@ FIELDS = [
 def scenario(trips=600, **kwargs):
     net = ms.examples.manhattan_grid(n=8, block_metres=200.0, signals=False)
     rows = ms.examples.trips_random(net, trips, seed=5, min_m=300.0, max_m=1400.0, spread_s=600)
-    settings = {"classes": CAR, "window_hours": 2, "flow_level": 4, "link_bin_s": 300}
+    settings = {"classes": CAR, "window": (0, 7_200), "flow_level": 4, "link_bin_s": 300}
     settings.update(kwargs)
     return ms.Scenario.from_parts(net, rows, **settings)
 
@@ -415,7 +415,7 @@ def test_the_free_flow_loading_is_iteration_0_of_an_iterated_run_and_cannot_lock
     # A jammed grid (S223): the free-flow loading, alone or as an iterated run's first, is the same
     # loading, with the point queue, so every trip finishes in a long window; and an iterated run's
     # time includes it.
-    heavy = {"trips": 3_500, "window_hours": 6, "choice_model": "logit", "master_seed": 3}
+    heavy = {"trips": 3_500, "window": (0, 21_600), "choice_model": "logit", "master_seed": 3}
     alone = scenario(equilibration="free_flow", **heavy).run("eq-ff-alone", quiet=True)
     first = scenario(equilibration_options={"iterations": 2}, **heavy).run("eq-ff-msa", quiet=True)
     a, b = alone.convergence(), first.convergence()

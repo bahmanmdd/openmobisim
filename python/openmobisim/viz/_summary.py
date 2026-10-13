@@ -19,7 +19,7 @@ from typing import Any
 from openmobisim import __version__
 from openmobisim._paths import show_path
 from openmobisim.viz._figure import CREATOR
-from openmobisim.viz._link import map_link
+from openmobisim.viz._link import _clock, map_link
 from openmobisim.viz._style import ION, THEMES
 
 __all__ = ["summary"]
@@ -96,7 +96,9 @@ def _no_alternative(run: Any, manifest: dict[str, Any]) -> str:
     Counted in people; the walk and bike limits mode choice applies are stated with them.
     """
     modes = run.trip_modes()
-    if not any(modes["mode_choice"]):
+    fb = getattr(run, "fallback_car", None) or {"traveller_id": [], "trip_seq": []}
+    fell_back = {(w, int(q)) for w, q in zip(fb["traveller_id"], fb["trip_seq"], strict=True)}
+    if not any(modes["mode_choice"]) and not fell_back:
         return ""
     choices = run.itinerary_choices() or {"traveller_id": [], "trip_seq": [], "user_class": []}
     class_of = {
@@ -111,11 +113,12 @@ def _no_alternative(run: Any, manifest: dict[str, Any]) -> str:
         modes["traveller_id"], modes["trip_seq"], modes["mode"], modes["mode_choice"],
         modes["weight"], strict=True,
     ):  # fmt: skip
-        if not choosing:
+        fell = (w, int(q)) in fell_back
+        if not (choosing or fell):
             continue
         cls = class_of.get((w, int(q)), "")
         people[cls] = people.get(cls, 0.0) + float(weight)
-        if mode is None:
+        if mode is None or fell:
             stuck[cls] = stuck.get(cls, 0.0) + float(weight)
     total, none = sum(people.values()), sum(stuck.values())
     walk, bike = manifest.get("walk_max_s"), manifest.get("bike_max_s")
@@ -146,10 +149,18 @@ def _no_alternative(run: Any, manifest: dict[str, Any]) -> str:
             )
             + "."
         )
+    # With the fallback (S271, W-1) they travel by car; without it they are not simulated.
+    fate = (
+        "travelled by car instead (a lift or a taxi for a traveller without one), counted under "
+        "the car (<code>Run.fallback_car</code> lists them)"
+        if fell_back
+        else "counted, not simulated"
+    )
     text = (
         f'<p class="note">Trips with no alternative: <b>{_fmt(none, 0)}</b> '
-        f"({_fmt(100 * none / max(total, 1), 2)}% of the trips choosing their mode), counted, "
-        f"not simulated: none of the modes their class may use is within reach.{limits}</p>"
+        f"({_fmt(100 * none / max(total, 1), 2)}% of the trips choosing their mode or left "
+        f"without their stated one): none of the modes they may use is within reach; they "
+        f"{fate}.{limits}</p>"
     )
     if len(people) > 1:
         rows = [
@@ -252,10 +263,19 @@ def summary(
     not_run = sum(r.get("not_run_people", 0.0) for r in by_mode.values())
     mean_trip_min = run.mean_travel_time_s / 60 if done > 0 else 0.0
 
+    # The simulation window (S271), and what departed outside it and was left out.
+    window = getattr(run, "window", None)
+    span = ""
+    if window is not None:
+        span = f"in {_clock(window['start_s'])}–{_clock(window['end_s'])}"
+        out = window["before_people"] + window["after_people"]
+        if out:
+            span += f" · <b>{_fmt(out, 0)} more left out</b> (departing outside it)"
+
     # Tiles: the headline numbers.
     tiles = "".join(
         [
-            _tile("trips", _fmt(total, 0)),
+            _tile("trips", _fmt(total, 0), "", span),
             _tile("completed", _fmt(100 * done / max(total, 1), 2), "%", f"{_fmt(done, 0)} trips"),
             _tile(
                 "not completed",

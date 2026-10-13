@@ -76,6 +76,7 @@ fn sample_result() -> RunResult {
         iterations: Vec::new(),
         converged: false,
         no_mode: ModeTotals::default(),
+        fallback_car: Vec::new(),
         by_mode: {
             // Four car trips and one bike trip, adding up to the totals above.
             let mut by_mode = [ModeTotals::default(); Mode::COUNT];
