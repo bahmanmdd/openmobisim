@@ -52,7 +52,8 @@ use crate::equilibration::{Equilibration, FreeFlow, IterationReport};
 use crate::events::{EventRow, EventType};
 use crate::identity::{Inputs, RunDescription, describe};
 use crate::itinerary_choice::{
-    self, CarRoutes, ChooseInputs, Chosen, Followed, Itineraries, ItineraryResult, Planner, Shape,
+    self, CarRoutes, ChooseInputs, Chosen, Followed, Itineraries, ItineraryResult, NoAlternative,
+    Planner, Shape,
     Simulated, WalkEnd, parking_kind_of,
 };
 use crate::layers::{
@@ -263,6 +264,10 @@ pub struct RunResult {
     /// The trips that had no alternative and travelled by car (S271, W-1), in trip order:
     /// counted under the car in [`Self::by_mode`], listed here.
     pub fallback_car: Vec<TripId>,
+    /// The trips the last choice left with no alternative (S276, roadmap I-ca), in trip order,
+    /// with why each mode gave them none; those that then travelled by car
+    /// ([`crate::ModeDefaults::fallback_car`]) among them.
+    pub no_alternative: Vec<NoAlternative>,
     /// The bike layer's per-link, per-time-bin results, when per-link results
     /// were asked for and some bike trip ran (S195); `pcu` there counts
     /// travellers.
@@ -459,6 +464,8 @@ pub struct Run {
     loading: LoadingOptions,
     /// Wall-clock time by stage of the last execution (S223).
     timings: Timings,
+    /// How many threads the run's parallel work uses (S277): all logical cores, by default.
+    threads: Option<std::num::NonZeroUsize>,
     /// The modes each traveller class may use, by class index (S231); empty: every class all.
     class_modes: Vec<[bool; Mode::COUNT]>,
     /// Each traveller class's own choice-set limits, by class index (S235); empty: the run's.
@@ -559,6 +566,7 @@ impl Run {
             mode_defaults: ModeDefaults::SHIPPED,
             loading: LoadingOptions::SHIPPED,
             timings: Timings::new(),
+            threads: None,
             class_modes: Vec::new(),
             class_limits: Vec::new(),
             link_values: LinkValues::new(),
@@ -821,6 +829,32 @@ impl Run {
         self
     }
 
+    /// The same run, its parallel work on `threads` threads (S277, roadmap I-bz); `None`, the
+    /// default, on every logical core. The run uses a thread pool of its own, not rayon's
+    /// global one, so `RAYON_NUM_THREADS` does not change it. **Results do not depend on it**
+    /// (Foundations §3.5: reductions in a fixed order, random draws keyed to the seed, the
+    /// traveller and the iteration, never to a thread), so it is recorded in the manifest
+    /// ([`RunDescription::threads`]) and not in the fingerprint.
+    #[must_use]
+    pub fn with_threads(mut self, threads: Option<std::num::NonZeroUsize>) -> Self {
+        self.threads = threads;
+        self
+    }
+
+    /// How many threads the run's parallel work uses: [`Self::with_threads`]'s, else every
+    /// logical core (1 without the `parallel` feature).
+    #[must_use]
+    pub fn threads(&self) -> usize {
+        if cfg!(feature = "parallel") {
+            self.threads.map_or_else(
+                || std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
+                std::num::NonZeroUsize::get,
+            )
+        } else {
+            1
+        }
+    }
+
     /// Whether the run's choice model reads money (S248): a model that lists no attributes reads
     /// them all. Only then do the prices shape the run, and its fingerprint records them.
     fn reads_money(&self) -> bool {
@@ -836,6 +870,7 @@ impl Run {
         let read = self.choice_model.required_attributes();
         let reads = |name: &str| read.as_ref().is_none_or(|names| names.iter().any(|n| n == name));
         describe(&Inputs {
+            threads: self.threads(),
             network: &self.network,
             travellers: &self.travellers,
             trips: &self.trips,
@@ -939,6 +974,23 @@ impl Run {
     /// ([`Self::with_class_limits`]). Otherwise never in practice: the panic guards the
     /// invariant that at least one iteration always runs.
     pub fn try_execute(&mut self, diagnostics: &mut Diagnostics) -> Result<RunResult, RunError> {
+        // The run's own pool (S277): its parallel work on `threads()` threads, whatever the
+        // global pool has. A choice model in Python is called from the pool's thread, so a
+        // caller holding Python's lock releases it around the run.
+        #[cfg(feature = "parallel")]
+        {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(self.threads())
+                .build()
+                .map_err(|e| RunError::Input(format!("the run's thread pool: {e}")))?;
+            pool.install(|| self.execute_here(diagnostics))
+        }
+        #[cfg(not(feature = "parallel"))]
+        self.execute_here(diagnostics)
+    }
+
+    /// [`Self::try_execute`]'s work, on the calling thread's pool.
+    fn execute_here(&mut self, diagnostics: &mut Diagnostics) -> Result<RunResult, RunError> {
         self.walk_paths.clear();
         if let Some(transit) = &self.transit {
             let widest =
@@ -1609,6 +1661,18 @@ impl Run {
                 .collect(),
             None => Vec::new(),
         };
+        // Why the trips left with no alternative had none (S276), once, over those trips alone.
+        let no_alternative = match itineraries.as_ref().zip(chosen.as_ref()) {
+            Some((it, c)) => it.explain_none(
+                &self.trips,
+                &self.travellers,
+                c,
+                transit_arc.as_deref(),
+                parking_arc.as_deref(),
+                Some(&route_sets),
+            ),
+            None => Vec::new(),
+        };
         let [bike_link_bins, walk_link_bins] = loaded.layer_bins;
         let transit = loaded.transit;
         let itinerary_result = match (&itineraries, &chosen) {
@@ -1639,6 +1703,7 @@ impl Run {
             by_mode,
             no_mode,
             fallback_car,
+            no_alternative,
             bike_link_bins,
             walk_link_bins,
             transit,

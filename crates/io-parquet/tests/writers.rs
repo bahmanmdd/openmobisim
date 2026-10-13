@@ -77,6 +77,7 @@ fn sample_result() -> RunResult {
         converged: false,
         no_mode: ModeTotals::default(),
         fallback_car: Vec::new(),
+        no_alternative: Vec::new(),
         by_mode: {
             // Four car trips and one bike trip, adding up to the totals above.
             let mut by_mode = [ModeTotals::default(); Mode::COUNT];
@@ -397,6 +398,7 @@ fn sample_description(step: Option<f64>, bins: Option<u32>) -> RunDescription {
         class_limits: Vec::new(),
         link_values: Vec::new(),
         disruptions: None,
+        threads: 1,
         prices: None,
         person_values: Vec::new(),
         trip_values: Vec::new(),

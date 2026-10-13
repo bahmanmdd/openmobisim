@@ -36,6 +36,7 @@ use openmobisim_core_demand::{Mode, Travellers, Trips};
 use openmobisim_core_graph::layers::StaticLayer;
 use openmobisim_core_graph::link_geometry::NetworkFingerprint;
 use openmobisim_core_graph::network::RoadNetwork;
+use openmobisim_core_transit::TransitDefaults;
 use openmobisim_core_types::hash::{Fnv1a, fingerprint_hex};
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TravellerId, TripId};
 use openmobisim_core_types::time::Second;
@@ -97,6 +98,9 @@ pub struct RunDescription {
     /// trips choose their mode (S233: recorded, since a trip beyond both may have no
     /// alternative); `None` otherwise.
     pub walk_bike_max_s: Option<(f64, f64)>,
+    /// How many threads the run's parallel work used (S277): recorded, **not hashed** — results
+    /// do not depend on it.
+    pub threads: usize,
     /// The traveller classes that give limits of their own (S235), by class name, in the
     /// demand's class order; empty if none does.
     pub class_limits: Vec<(String, crate::layers::ClassLimits)>,
@@ -130,6 +134,8 @@ impl RunDescription {
 
 /// The inputs a [`crate::Run`] hands over to be described.
 pub(crate) struct Inputs<'a> {
+    /// How many threads the run uses (S277): recorded, not hashed.
+    pub threads: usize,
     pub network: &'a RoadNetwork,
     pub travellers: &'a Travellers,
     pub trips: &'a Trips,
@@ -251,6 +257,13 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
                 }
             }
         }
+    }
+    // The car fallback (S271), wherever it can act: a run with itinerary trips. Off means
+    // absent (off by default since S276), so a run without it hashes as before it existed.
+    if inputs.mode_defaults.fallback_car
+        && (inputs.mode_choice.is_some() || inputs.transit.is_some())
+    {
+        h.write_str("fallback-car");
     }
     // The classes' own limits (S235): nothing when no class gives one, so such a run's
     // fingerprint is what it was.
@@ -403,6 +416,7 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         walk_bike_max_s: inputs
             .mode_choice
             .map(|_| (inputs.mode_defaults.walk_max_s, inputs.mode_defaults.bike_max_s)),
+        threads: inputs.threads,
         class_limits: {
             let names = inputs.travellers.class_external_ids();
             inputs
@@ -583,6 +597,12 @@ fn hash_transit(h: &mut Fnv1a, transit: &TransitSetup) {
         d.bus_stop_snap_m,
     ] {
         h.write_f64(v);
+    }
+    // The longest journey offered (S269), missing here until S276: hashed when it is not the
+    // shipped two hours, so a run at the default keeps the fingerprint it had.
+    if d.journey_max_s.to_bits() != TransitDefaults::SHIPPED.journey_max_s.to_bits() {
+        h.write_str("journey_max_s");
+        h.write_f64(d.journey_max_s);
     }
     let walk = transit.walk().network();
     hash_network(h, walk, NetworkFingerprint::of(walk).value());

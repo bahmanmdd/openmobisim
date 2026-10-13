@@ -30,7 +30,8 @@ use openmobisim_core_graph::layers::{BikeCost, Layer, StaticLayerDefaults};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::{LonLat, toy_network, toy_network_layers};
 use openmobisim_core_sim::{
-    EventType, LayerSetup, ModeDefaults, Run, RunResult, StaticLayers, TransitSetup,
+    EventType, LayerSetup, ModeDefaults, NoAlternativeReason, Run, RunResult, StaticLayers,
+    TransitSetup,
 };
 use openmobisim_core_transit::TransitDefaults;
 use openmobisim_core_transit::examples::toy_tram;
@@ -174,20 +175,31 @@ fn tr1_to_tr3_ride_the_tram() {
 }
 
 #[test]
-fn tr4_after_the_last_tram_there_is_no_path_and_the_trip_goes_by_car() {
+fn tr4_after_the_last_tram_there_is_no_path_and_the_trip_may_go_by_car() {
     let t = toy();
-    // Without the fallback (S271, W-1) the trip has no path.
-    let off = ModeDefaults { fallback_car: false, ..ModeDefaults::SHIPPED };
-    let result = t.run_with(vec![t.trip("a", "N1", "D2", 20_000)], 86_400, true, off);
+    // By default (S276) the trip has no path, and the run says why: stops in reach, no journey.
+    let result = t.run(vec![t.trip("a", "N1", "D2", 20_000)], 86_400, true);
     assert_eq!(outcomes(&result), [(EventType::NoFeasiblePath, 20_000)]);
     assert_eq!(result.by_mode[Mode::Transit.index()].completion.no_feasible_path, 1);
     assert!(result.fallback_car.is_empty());
-    // With it (the default) it travels by car, though the traveller owns none: a lift.
-    let result = t.run(vec![t.trip("a", "N1", "D2", 20_000)], 86_400, true);
+    let [none] = &result.no_alternative[..] else { panic!("one trip with no alternative") };
+    assert!(!none.choosing && !none.fallback_car);
+    for mode in Mode::ALL {
+        let expected = if mode == Mode::Transit {
+            NoAlternativeReason::NoTransitJourney
+        } else {
+            NoAlternativeReason::NotOffered
+        };
+        assert_eq!(none.reasons[mode.index()], expected, "{mode:?}");
+    }
+    // With the fallback (S271, W-1) it travels by car, though the traveller owns none: a lift.
+    let on = ModeDefaults { fallback_car: true, ..ModeDefaults::SHIPPED };
+    let result = t.run_with(vec![t.trip("a", "N1", "D2", 20_000)], 86_400, true, on);
     let [(outcome, _)] = outcomes(&result)[..] else { panic!("one trip") };
     assert_eq!(outcome, EventType::TripCompleted);
     assert_eq!(result.by_mode[Mode::Car.index()].completion.completed, 1, "counted as a car trip");
     assert_eq!(result.fallback_car.len(), 1, "and listed");
+    assert!(result.no_alternative[0].fallback_car, "and explained");
 }
 
 #[test]

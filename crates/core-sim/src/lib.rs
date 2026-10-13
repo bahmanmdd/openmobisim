@@ -64,7 +64,9 @@ pub use equilibration::{Equilibration, FreeFlow, IterationReport, Msa};
 pub use events::{EventRow, EventType};
 pub use identity::RunDescription;
 pub use itinerary::{Itinerary, LegRoute, Networks};
-pub use itinerary_choice::{ATTRIBUTES, ItineraryResult, NO_MODE, NO_PARKING};
+pub use itinerary_choice::{
+    ATTRIBUTES, ItineraryResult, NO_MODE, NO_PARKING, NoAlternative, NoAlternativeReason,
+};
 pub use layers::{ClassLimits, LayerSetup, ModeDefaults, StaticLayers};
 pub use link_times::{LinkTimes, relative_time_change};
 pub use link_values::{LinkValues, ValueLayer};

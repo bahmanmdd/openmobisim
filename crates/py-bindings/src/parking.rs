@@ -9,7 +9,9 @@ use pyo3::types::PyDict;
 use openmobisim_core_demand::{Mode, Travellers, Trips};
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::hubs::{ParkingKind, ParkingRow};
-use openmobisim_core_sim::{ItineraryResult, NO_MODE, NO_PARKING, ParkingResult, ParkingSetup};
+use openmobisim_core_sim::{
+    ItineraryResult, NO_MODE, NO_PARKING, NoAlternative, ParkingResult, ParkingSetup,
+};
 use openmobisim_core_types::ids::{EntityId, TripId};
 use openmobisim_io_osm::{ParkingReadOptions, ParkingReadReport, PbfSource, read_parkings};
 
@@ -413,6 +415,70 @@ pub(crate) fn fallback_car<'py>(
     d.set_item("origin_lat", olat.into_pyarray(py))?;
     d.set_item("destination_lon", dlon.into_pyarray(py))?;
     d.set_item("destination_lat", dlat.into_pyarray(py))?;
+    Ok(d)
+}
+
+/// The trips the last choice left with no alternative (S276, roadmap I-ca), as columns: who,
+/// their class, when, from where to where, how many people each stands for, the mode stated
+/// (`None`: the trip chose its mode), whether it then went by car, and per mode
+/// (`reason_car` … `reason_bike_transit`) why that mode gave it nothing (`""`: not offered).
+pub(crate) fn no_alternative<'py>(
+    py: Python<'py>,
+    none: &[NoAlternative],
+    trips: &Trips,
+    travellers: &Travellers,
+) -> PyResult<Bound<'py, PyDict>> {
+    let n = none.len();
+    let (mut who, mut class, mut seq, mut departure, mut weight) = (
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+    );
+    let (mut olon, mut olat, mut dlon, mut dlat) = (
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+    );
+    let (mut stated, mut fallback) = (Vec::with_capacity(n), Vec::with_capacity(n));
+    let mut reasons: Vec<Vec<&str>> = vec![Vec::with_capacity(n); Mode::COUNT];
+    for row in none {
+        let trip = row.trip;
+        let traveller = trips.traveller(trip);
+        who.push(travellers.external_ids().external(traveller.raw()).to_string());
+        let c = travellers.user_class(traveller).raw();
+        class.push(travellers.class_external_ids().external(c).to_string());
+        seq.push(trip.raw() - travellers.first_trip(traveller).raw());
+        departure.push(trips.departure(trip).get());
+        weight.push(travellers.weight(traveller));
+        let (o, d) = (trips.origin(trip), trips.destination(trip));
+        olon.push(o.lon);
+        olat.push(o.lat);
+        dlon.push(d.lon);
+        dlat.push(d.lat);
+        stated.push((!row.choosing).then(|| trips.mode(trip).as_str()));
+        fallback.push(row.fallback_car);
+        for (column, reason) in reasons.iter_mut().zip(row.reasons) {
+            column.push(reason.as_str());
+        }
+    }
+    let d = PyDict::new(py);
+    d.set_item("traveller_id", who)?;
+    d.set_item("trip_seq", seq.into_pyarray(py))?;
+    d.set_item("user_class", class)?;
+    d.set_item("departure_s", departure.into_pyarray(py))?;
+    d.set_item("weight", weight.into_pyarray(py))?;
+    d.set_item("origin_lon", olon.into_pyarray(py))?;
+    d.set_item("origin_lat", olat.into_pyarray(py))?;
+    d.set_item("destination_lon", dlon.into_pyarray(py))?;
+    d.set_item("destination_lat", dlat.into_pyarray(py))?;
+    d.set_item("mode_stated", stated)?;
+    d.set_item("fallback_car", fallback)?;
+    for (mode, column) in Mode::ALL.iter().zip(reasons) {
+        d.set_item(format!("reason_{}", mode.as_str()), column)?;
+    }
     Ok(d)
 }
 

@@ -417,6 +417,10 @@ pub struct PyRunSummary {
     /// `destination_lon`, `destination_lat`).
     #[pyo3(get)]
     pub fallback_car: Py<PyDict>,
+    /// The trips the last choice left with no alternative, and why each mode gave them none
+    /// (S276, roadmap I-ca), as columns (`crate::parking::no_alternative`).
+    #[pyo3(get)]
+    pub no_alternative: Py<PyDict>,
     /// How full each parking was, bin by bin, as columns (M4); `None` without parkings.
     #[pyo3(get)]
     pub parking_bins: Option<Py<PyDict>>,
@@ -691,7 +695,7 @@ fn convergence_arrays(
     route_update="none", route_update_options=None,
     choice_detour_limit=None, choice_max_routes=None, route_cache=false, bike_cost="dedicated", transit=None,
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
-    loading_options=None, price_options=None,
+    loading_options=None, price_options=None, threads=None, fingerprint_only=false,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -744,7 +748,14 @@ pub fn run_pipeline(
     mode_options: Option<HashMap<String, f64>>,
     loading_options: Option<HashMap<String, f64>>,
     price_options: Option<HashMap<String, f64>>,
-) -> PyResult<PyRunSummary> {
+    threads: Option<usize>,
+    fingerprint_only: bool,
+) -> PyResult<Py<PyAny>> {
+    // The run's thread count (S277): `None` for every logical core; never 0.
+    let threads = match threads {
+        Some(0) => return Err(PyValueError::new_err("threads must be at least 1, or None")),
+        n => n.and_then(std::num::NonZeroUsize::new),
+    };
     let started = Instant::now();
     let mut clock = started;
     let mut timings = Timings::new();
@@ -1069,12 +1080,20 @@ pub fn run_pipeline(
         })
         .with_mode_defaults(mode_defaults)
         .with_loading_options(loading)
-        .with_prices(prices);
+        .with_prices(prices)
+        .with_threads(threads);
     // What went in, taken before it runs (S168).
     let description = run.description();
+    // Only the fingerprint (S277): what the run would be, without running it.
+    if fingerprint_only {
+        return Ok(description.fingerprint_hex().into_pyobject(py)?.into_any().unbind());
+    }
     timings.lap("setup", None, clock);
     let mut run_diagnostics = Diagnostics::new();
-    let result = run.try_execute(&mut run_diagnostics).map_err(to_value_error)?;
+    // Python's lock released (S277): the run works on a pool of its own, and a choice model in
+    // Python is called from that pool's thread, which takes the lock when it needs it.
+    let result =
+        py.detach(|| run.try_execute(&mut run_diagnostics)).map_err(to_value_error)?;
     let core_stages = run.timings().to_vec();
     // What a skim needs after the run (S238), kept with the summary.
     let skimmer = Arc::new(Skimmer::new(
@@ -1319,7 +1338,7 @@ pub fn run_pipeline(
         None => None,
     };
 
-    Ok(PyRunSummary {
+    let summary = PyRunSummary {
         skimmer,
         bike_cost,
         spillback,
@@ -1341,6 +1360,13 @@ pub fn run_pipeline(
         fallback_car: crate::parking::fallback_car(
             py,
             &result.fallback_car,
+            &trips_used,
+            &travellers,
+        )?
+        .unbind(),
+        no_alternative: crate::parking::no_alternative(
+            py,
+            &result.no_alternative,
             &trips_used,
             &travellers,
         )?
@@ -1383,7 +1409,8 @@ pub fn run_pipeline(
             .route_sets
             .map(|sets| Py::new(py, PyRouteSets::new(Arc::new(sets), network.inner.link_count())))
             .transpose()?,
-    })
+    };
+    Ok(Py::new(py, summary)?.into_any())
 }
 
 /// Write the run's time by stage as `stage,iteration,seconds` (S223); an empty iteration is a

@@ -1909,6 +1909,114 @@ impl Itineraries {
         self.car_keys[position]
     }
 
+    /// The trips the last choice (`chosen`) left with no alternative, or with only the car
+    /// they fell back to, and why each mode gave them none (S276, roadmap I-ca). Run once at
+    /// the end, over those trips alone: what they were offered is worked out again from their
+    /// day's choices, and a transit trip's stops in reach are the walks its planning searched
+    /// and kept (`TransitSetup::access`'s memo), so nothing is searched again.
+    pub(crate) fn explain_none(
+        &self,
+        trips: &Trips,
+        travellers: &Travellers,
+        chosen: &Chosen,
+        transit: Option<&TransitSetup>,
+        parking: Option<&ParkingSetup>,
+        car_sets: Option<&RouteSets>,
+    ) -> Vec<NoAlternative> {
+        use NoAlternativeReason as R;
+        let mut reach = transit.map(|t| Reach::new(t.walk().network(), t.walk_link_seconds()));
+        let mut out = Vec::new();
+        for (p, &trip) in self.trips.iter().enumerate() {
+            let fallback = match &chosen.alt[p] {
+                None => false,
+                Some(a) if a.fallback => true,
+                Some(_) => continue,
+            };
+            let origin = trips.origin(trip);
+            let shape = |kind| match self.vehicle_at(trips, travellers, trip, kind, &chosen.alt) {
+                Loc::Parked(parking) => Some(Shape::Back(parking)),
+                Loc::At(o) if o == origin => Some(Shape::Out),
+                _ => None,
+            };
+            let n = &self.nodes[p];
+            let departure = trips.departure(trip).get();
+            // Transit's reason: no stop within the walk at either end, or no journey.
+            let mut transit_reason = || match (transit, reach.as_mut()) {
+                (Some(t), Some(r)) if !n.walk_o.is_null() && !n.walk_d.is_null() => {
+                    let none = t.access(r, n.walk_o, departure, n.access_walk_s).is_empty()
+                        || t.egress(r, n.walk_d, n.access_walk_s).is_empty();
+                    if none { R::NoStopInReach } else { R::NoTransitJourney }
+                }
+                _ => R::NoStopInReach,
+            };
+            let mut reasons = [R::NotOffered; Mode::COUNT];
+            let choosing = self.choosing[p];
+            if choosing {
+                let class = travellers.user_class(trips.traveller(trip)).index();
+                let on = |m: Mode| {
+                    self.offered[m.index()]
+                        && self.class_modes.get(class).is_none_or(|c| c[m.index()])
+                };
+                let [bike_leg, walk_leg] = &self.legs[p];
+                if on(Mode::Walk) {
+                    reasons[Mode::Walk.index()] =
+                        if walk_leg.is_none() { R::WalkTooLong } else { R::Unexplained };
+                }
+                if on(Mode::Bike) {
+                    reasons[Mode::Bike.index()] = match (shape(ParkingKind::Bike), bike_leg) {
+                        (Some(Shape::Out), None) => R::RideTooLong,
+                        (Some(Shape::Out), Some(_)) => R::Unexplained,
+                        _ => R::NoVehicle,
+                    };
+                }
+                if on(Mode::Car) {
+                    let routes = |key: RouteKey| {
+                        car_sets
+                            .and_then(|s| s.key_index(key).map(|k| s.route_range(k)))
+                            .is_some_and(|r| !r.is_empty())
+                    };
+                    reasons[Mode::Car.index()] = match (shape(ParkingKind::Car), self.car_keys[p])
+                    {
+                        (Some(Shape::Out), Some(key)) if routes(key) => R::Unexplained,
+                        (Some(Shape::Out), _) => R::NoRoadRoute,
+                        _ => R::NoVehicle,
+                    };
+                }
+                if on(Mode::Transit) {
+                    reasons[Mode::Transit.index()] = transit_reason();
+                }
+                let far_enough = parking.is_none_or(|pk| {
+                    ground_distance_metres(origin, trips.destination(trip))
+                        >= pk.defaults().pr_min_km * 1000.0
+                });
+                for (mode, kind) in
+                    [(Mode::CarTransit, ParkingKind::Car), (Mode::BikeTransit, ParkingKind::Bike)]
+                {
+                    // A vehicle parked at a parking is offered back whatever the modes asked
+                    // for (`offer_of`).
+                    reasons[mode.index()] = match shape(kind) {
+                        Some(Shape::Back(_)) => R::NoTransitJourney,
+                        _ if !on(mode) => R::NotOffered,
+                        Some(Shape::Out) if !far_enough => R::TooShort,
+                        Some(Shape::Out) => R::NoTransitJourney,
+                        _ => R::NoVehicle,
+                    };
+                }
+            } else {
+                let mode = trips.mode(trip);
+                reasons[mode.index()] = match parking_kind_of(mode) {
+                    None => transit_reason(),
+                    Some(kind) => match shape(kind) {
+                        Some(_) => R::NoTransitJourney,
+                        None => R::NoVehicle,
+                    },
+                };
+            }
+            out.push(NoAlternative { trip, choosing, reasons, fallback_car: fallback });
+        }
+        out
+    }
+
     /// Where the traveller's vehicle of `kind` is expected as `trip` starts, following
     /// their stated modes and their choices so far (`chosen`).
     fn vehicle_at(
@@ -2407,6 +2515,67 @@ pub struct ItineraryResult {
 
 /// No mode: a trip that had no alternative.
 pub const NO_MODE: u8 = u8::MAX;
+
+/// Why a mode gave a trip left with no alternative nothing to choose (S276, roadmap I-ca).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NoAlternativeReason {
+    /// Not offered to the trip: not among the run's modes, not one its class may use, or, for
+    /// a trip whose mode was stated, not that mode.
+    NotOffered,
+    /// No walk within the walk limit (`walk_max_s`): a longer one, or none on the walk layer.
+    WalkTooLong,
+    /// No ride within the ride limit (`bike_max_s`): a longer one, or none on the bike layer.
+    RideTooLong,
+    /// The vehicle is not at the origin: the traveller has none, or left it elsewhere earlier
+    /// in their day.
+    NoVehicle,
+    /// No road route: none between origin and destination, or both on one road node.
+    NoRoadRoute,
+    /// No stop within the walk to a stop (`access_walk_max_s`) of the origin or of the
+    /// destination.
+    NoStopInReach,
+    /// Stops in reach, but no journey with transit arriving within the longest one offered
+    /// (`journey_max_s`) on the window's timetable.
+    NoTransitJourney,
+    /// Shorter than the shortest trip offered a parking on the way (`pr_min_km`).
+    TooShort,
+    /// None of the above: what the mode was offered should have given an alternative. A
+    /// defect to report.
+    Unexplained,
+}
+
+impl NoAlternativeReason {
+    /// The stable snake_case name, as the results write it (`""` for [`Self::NotOffered`]).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotOffered => "",
+            Self::WalkTooLong => "walk_too_long",
+            Self::RideTooLong => "ride_too_long",
+            Self::NoVehicle => "no_vehicle",
+            Self::NoRoadRoute => "no_road_route",
+            Self::NoStopInReach => "no_stop_in_reach",
+            Self::NoTransitJourney => "no_transit_journey",
+            Self::TooShort => "too_short",
+            Self::Unexplained => "unexplained",
+        }
+    }
+}
+
+/// A trip left with no alternative in the run's last choice (S276, roadmap I-ca), and why each
+/// mode gave it none.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NoAlternative {
+    /// The trip.
+    pub trip: TripId,
+    /// Whether it chose its mode; else its mode was stated (transit, park-and-ride or
+    /// bike-and-ride) and only that mode was offered.
+    pub choosing: bool,
+    /// Per mode, by [`Mode::index`], why it gave the trip nothing.
+    pub reasons: [NoAlternativeReason; Mode::COUNT],
+    /// Whether the trip then travelled by car ([`crate::ModeDefaults::fallback_car`]).
+    pub fallback_car: bool,
+}
 
 impl ItineraryResult {
     pub(crate) fn of(

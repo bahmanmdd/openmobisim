@@ -910,12 +910,12 @@ fn grid_trips(network: &RoadNetwork, side: u32, count: u32) -> Vec<RawTrip> {
 
 #[test]
 fn an_adapting_run_is_the_same_at_one_thread_and_at_seven() {
+    // The run's own pool (S277), at each count; the default (every core) last.
     let at = |threads: usize| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
-            .expect("a pool")
-            .install(|| Setup { seed: 9, ..Setup::new(1_200) }.go())
+        Setup { seed: 9, ..Setup::new(1_200) }
+            .run()
+            .with_threads(std::num::NonZeroUsize::new(threads))
+            .execute(&mut Diagnostics::new())
     };
     let (one, seven) = (at(1), at(7));
     assert!(one.iterations.iter().map(|it| it.routes_added).sum::<u32>() > 0, "it adapted");
@@ -1016,4 +1016,23 @@ fn a_traveller_is_offered_at_most_the_fastest_routes() {
         checked += usize::from(sets.route_range(k).len() > 1);
     }
     assert!(checked > 0, "the test needs pairs with more than one route");
+}
+
+#[test]
+fn the_run_s_thread_count_is_its_own_and_not_in_the_fingerprint() {
+    let run = |threads: Option<usize>| {
+        Setup::new(10).run().with_threads(threads.and_then(std::num::NonZeroUsize::new))
+    };
+    // An outer pool of two does not change the run's count: it builds its own (S277).
+    let inside = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .expect("a pool")
+        .install(|| run(Some(3)).threads());
+    assert_eq!(inside, 3);
+    let every = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    assert_eq!(run(None).threads(), every, "every logical core by default");
+    let (one, all) = (run(Some(1)).description(), run(None).description());
+    assert_eq!((one.threads, all.threads), (1, every), "recorded");
+    assert_eq!(one.fingerprint, all.fingerprint, "and not hashed");
 }

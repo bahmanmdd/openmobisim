@@ -26,6 +26,7 @@
 //! | MC4 | `modes = [car]` | the run without mode choice, bit for bit (and `[bike]` makes every such trip a bike trip) |
 //! | MC5 | park-and-ride out `W → N1`, then `N1 → D2` choosing | the car is parked: the trip back is offered only the ways back to it (`D2` is where the car goes, from either car park, as PR4) |
 //! | MC6 | no timetable | walk, bike and car are still chosen among: `W → M` by car, **80 s** |
+//! | MC8 | `W → N1` under MC7's short limits, park-and-ride from 3 km | no alternative (S276): the car has no road route, the ride and the walk are too long, transit has stops but no journey, both parking modes too short; reported, not simulated |
 //! | MC7 | mode choice's cut-offs (S209) | `W → N1`'s walk (**318.198 s**) is offered under the 1800-s default and not under a 300-s one; its ride (**144 s**) not under a 100-s one; a trip given the mode walks or rides at any length |
 
 #![allow(clippy::float_cmp, reason = "hand-derived values")]
@@ -43,8 +44,8 @@ use openmobisim_core_graph::{LonLat, toy_network, toy_network_layers};
 use openmobisim_core_loading::FidelityLevel;
 use openmobisim_core_sim::equilibration::strategy;
 use openmobisim_core_sim::{
-    ClassLimits, EventType, FlowMotor, LayerSetup, ModeDefaults, NO_MODE, ParkingDefaults,
-    ParkingSetup, Run, RunResult, StaticLayers, TransitSetup,
+    ClassLimits, EventType, FlowMotor, LayerSetup, ModeDefaults, NO_MODE, NoAlternativeReason,
+    ParkingDefaults, ParkingSetup, Run, RunResult, StaticLayers, TransitSetup,
 };
 use openmobisim_core_transit::TransitDefaults;
 use openmobisim_core_transit::examples::toy_tram;
@@ -568,4 +569,78 @@ fn mc7_mode_choice_offers_a_walk_or_a_ride_only_up_to_its_cut_offs() {
         .with_mode_defaults(ModeDefaults { walk_max_s: 300.0, ..ModeDefaults::SHIPPED })
         .execute(&mut Diagnostics::new());
     assert_eq!(outcomes(&stated), [(EventType::TripCompleted, 318)]);
+}
+
+#[test]
+fn mc8_a_trip_with_no_alternative_is_reported_with_each_mode_s_reason() {
+    let t = toy();
+    let setup = Setup { parking_at_any_length: false, ..Setup::default() };
+    let short = ModeDefaults { walk_max_s: 300.0, bike_max_s: 100.0, ..ModeDefaults::SHIPPED };
+    let r = t
+        .build(vec![t.trip("a", 0, ("W", "N1"), 0, None)], &setup)
+        .with_mode_defaults(short)
+        .execute(&mut Diagnostics::new());
+    assert_eq!(r.itineraries.as_ref().unwrap().alternatives, [0]);
+    assert_eq!(r.no_mode.completion.total_trips, 1, "counted under no mode");
+    let [none] = &r.no_alternative[..] else { panic!("one trip with no alternative") };
+    assert!(none.choosing && !none.fallback_car);
+    // In `Mode::ALL`'s order: car, bike, walk, transit, park-and-ride, bike-and-ride.
+    assert_eq!(
+        none.reasons.map(NoAlternativeReason::as_str),
+        [
+            "no_road_route",
+            "ride_too_long",
+            "walk_too_long",
+            "no_transit_journey",
+            "too_short",
+            "too_short"
+        ]
+    );
+    // A trip that had alternatives is not listed.
+    let r = t.run(vec![t.trip("a", 0, ("W", "N1"), 0, None)], &setup);
+    assert!(r.no_alternative.is_empty());
+}
+
+#[test]
+fn mc8b_the_car_fallback_enters_the_fingerprint_where_it_can_act() {
+    let t = toy();
+    let one = || vec![t.trip("a", 0, ("W", "N1"), 0, None)];
+    let fingerprint = |fallback_car: bool, setup: &Setup| {
+        t.build(one(), setup)
+            .with_mode_defaults(ModeDefaults { fallback_car, ..ModeDefaults::SHIPPED })
+            .description()
+            .fingerprint
+    };
+    // With mode choice (and transit) it can act: it changes the fingerprint.
+    let all = Setup::default();
+    assert_ne!(fingerprint(false, &all), fingerprint(true, &all));
+    // Off is the default and hashes as nothing at all.
+    assert_eq!(fingerprint(false, &all), t.build(one(), &all).description().fingerprint);
+}
+
+#[test]
+fn mc8c_the_longest_journey_with_transit_enters_the_fingerprint() {
+    let t = toy();
+    let with_limit = |journey_max_s: f64| {
+        let transit = Arc::new(
+            TransitSetup::new(
+                Arc::new(toy_tram()),
+                t.layers.walk.as_ref().unwrap(),
+                t.layers.bike.as_ref(),
+                TransitDefaults {
+                    access_walk_max_s: 900.0,
+                    journey_max_s,
+                    ..TransitDefaults::SHIPPED
+                },
+            )
+            .with_access_search_s(1800.0),
+        );
+        Toy { road: t.road.clone(), layers: t.layers.clone(), transit }
+            .build(vec![t.trip("a", 0, ("W", "N1"), 0, None)], &Setup::default())
+            .description()
+            .fingerprint
+    };
+    let shipped = TransitDefaults::SHIPPED.journey_max_s;
+    assert_ne!(with_limit(shipped), with_limit(3600.0));
+    assert_eq!(with_limit(shipped), with_limit(shipped));
 }

@@ -64,7 +64,15 @@ from openmobisim.gmns import network_read_gmns, network_write_gmns
 from openmobisim.network import LINK_CLASSES, network_edit, network_options, network_read_table
 from openmobisim.parameters import parameters
 from openmobisim.parking import parking_read_table
-from openmobisim.scenario import MODES, FallbackWarning, Run, Scenario, Table, WindowWarning
+from openmobisim.scenario import (
+    MODES,
+    FallbackWarning,
+    NoAlternativeWarning,
+    Run,
+    Scenario,
+    Table,
+    WindowWarning,
+)
 from openmobisim.transit import transit_edit
 
 __version__: str = _core.__version__
@@ -73,6 +81,7 @@ __all__ = [
     "FallbackWarning",
     "LINK_CLASSES",
     "MODES",
+    "NoAlternativeWarning",
     "Parkings",
     "Run",
     "Scenario",

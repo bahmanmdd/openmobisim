@@ -107,6 +107,9 @@ pub struct Manifest {
     pub class_limits: Vec<(String, Vec<(String, f64)>)>,
     /// The user's link values (S236): each column's layer and name; empty if none.
     pub link_values: Vec<(String, String)>,
+    /// How many threads the run's parallel work used (S277). Not in the fingerprint: results
+    /// do not depend on it.
+    pub threads: usize,
     /// Disruptions (S239): on roads, on lines, and whether travellers knew; `None` if none.
     pub disruptions: Option<(usize, usize, bool)>,
     /// The prices by name (S248), when the choice model reads money; `None` otherwise.
@@ -191,6 +194,7 @@ impl Manifest {
                 })
                 .collect(),
             link_values: description.link_values.clone(),
+            threads: description.threads,
             disruptions: description.disruptions,
             prices: description.prices.clone(),
             person_values: description.person_values.clone(),
@@ -253,7 +257,7 @@ impl Manifest {
                 format!("[{}]", names.iter().map(|n| text(n)).collect::<Vec<_>>().join(", "))
             })
         };
-        let fields: [(&str, String); 41] = [
+        let fields: [(&str, String); 42] = [
             ("openmobisim_version", text(&self.openmobisim_version)),
             ("code_version", self.code_version.to_string()),
             ("defaults_version", self.defaults_version.to_string()),
@@ -293,6 +297,7 @@ impl Manifest {
             ("bike_max_s", optional(self.walk_bike_max_s.map(|(_, b)| number(b)))),
             ("class_limits", optional(class_limits)),
             ("link_values", optional(link_values)),
+            ("threads", self.threads.to_string()),
             ("disruptions", optional(disruptions)),
             ("prices", optional(prices)),
             ("person_values", optional(names(&self.person_values))),

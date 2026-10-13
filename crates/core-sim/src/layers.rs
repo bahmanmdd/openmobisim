@@ -140,15 +140,16 @@ pub struct ModeDefaults {
     /// destination within the limits — travels by car instead (S271, the user's W-1: "people
     /// doing those kinds of trips always use car anyway"), counted and reported apart; a trip
     /// with no car path either stays without one. For a traveller without a car the car stands
-    /// for a lift or a taxi: no car of theirs moves. On by default (`1`); `0` leaves such trips
-    /// unsimulated, as before.
+    /// for a lift or a taxi: no car of theirs moves. **Experimental, off by default** (`0`,
+    /// S276): such trips stay unsimulated, and the run reports each with why every mode gave
+    /// it none (`RunResult::no_alternative`); `1` turns the fallback on.
     pub fallback_car: bool,
 }
 
 impl ModeDefaults {
     /// The shipped values.
     pub const SHIPPED: ModeDefaults =
-        ModeDefaults { walk_max_s: 1800.0, bike_max_s: 3600.0, fallback_car: true };
+        ModeDefaults { walk_max_s: 1800.0, bike_max_s: 3600.0, fallback_car: false };
 
     /// The names of the options.
     pub const NAMES: [&'static str; 3] = ["walk_max_s", "bike_max_s", "fallback_car"];

@@ -192,7 +192,12 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// trips departing outside it are left out with a warning, and a timetable keeps only the calls
 /// inside it. And **a trip with no alternative at all travels by car** (`core-sim`'s
 /// `ModeDefaults::fallback_car`, W-1), counted and reported apart. Every run changes.
-pub const DEFAULTS_VERSION: u32 = 25;
+///
+/// Version 26 (S276): **the car fallback is off by default** (`core-sim`'s
+/// `ModeDefaults::fallback_car`, experimental): a trip with no alternative stays unsimulated,
+/// as before version 25, and the run reports it with why every mode gave it none. Every run
+/// where some trip had no alternative changes.
+pub const DEFAULTS_VERSION: u32 = 26;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

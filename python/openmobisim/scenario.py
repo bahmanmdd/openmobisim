@@ -22,7 +22,7 @@ from typing import Any
 from openmobisim import _core
 from openmobisim.demand import _class_table, demand_read_trips
 
-__all__ = ["FallbackWarning", "Run", "Scenario", "Table", "WindowWarning"]
+__all__ = ["FallbackWarning", "NoAlternativeWarning", "Run", "Scenario", "Table", "WindowWarning"]
 
 #: The flow levels ``Scenario`` accepts: 0 is free flow
 #: with no interaction between vehicles; 2, 3 and 4 are the link transmission
@@ -56,13 +56,37 @@ class WindowWarning(UserWarning):
 class FallbackWarning(UserWarning):
     """Trips with no alternative at all travelled by car instead (S271, W-1).
 
+    Only with ``mode_options={"fallback_car": 1}`` (experimental; off by default since S276).
     They are counted under the car; ``Run.fallback_car`` lists them.
+    """
+
+
+class NoAlternativeWarning(UserWarning):
+    """Trips had no alternative at all and were not simulated (S276).
+
+    No mode they may use reached their destination within the limits. The warning says how
+    many, of which classes, why each mode gave them none and what to change;
+    ``Run.report_no_alternative()`` lists every one.
     """
 
 
 # Shown at every run, not once per place in the code: a run says what it did each time.
 warnings.simplefilter("always", WindowWarning)
 warnings.simplefilter("always", FallbackWarning)
+warnings.simplefilter("always", NoAlternativeWarning)
+
+#: What to change for each reason a mode gave a trip no alternative (S276), as
+#: ``Run.report_no_alternative()``'s ``change`` column and the warning name them.
+NO_ALTERNATIVE_CHANGES = {
+    "walk_too_long": "mode_options['walk_max_s'] or the class's walk_max_s",
+    "ride_too_long": "mode_options['bike_max_s'] or the class's bike_max_s",
+    "no_vehicle": "the class's owns_car or owns_bike, or its modes",
+    "no_road_route": "the road network between the two (network_check)",
+    "no_stop_in_reach": "transit_options['access_walk_max_s'] or the class's access_walk_max_s",
+    "no_transit_journey": "transit_options['journey_max_s'], the window, or the timetable",
+    "too_short": "parking_options['pr_min_km']",
+    "unexplained": "nothing: a defect, please report it",
+}
 
 
 def _clock(seconds: float) -> str:
@@ -536,10 +560,109 @@ class Run:
         transit journey, no vehicle), so they went by car — for a traveller without one, a lift
         or a taxi. They are counted under the car everywhere. Columns: ``traveller_id``,
         ``trip_seq``, ``departure_s``, ``weight`` (people), ``origin_lon``, ``origin_lat``,
-        ``destination_lon``, ``destination_lat``. ``mode_options={"fallback_car": 0}`` leaves
-        such trips unsimulated instead.
+        ``destination_lon``, ``destination_lat``. Empty unless ``mode_options={"fallback_car":
+        1}`` (experimental; off by default since S276, when such trips stay unsimulated).
+        ``report_no_alternative()`` says why each had no alternative.
         """
         return dict(self._summary.fallback_car)
+
+    def report_no_alternative(self) -> dict[str, Any]:
+        """The trips the last choice left with no alternative, and why (S276), as columns.
+
+        No mode they may use reached their destination within the limits, so they were not
+        simulated (unless ``mode_options={"fallback_car": 1}``, when they went by car). One row
+        per trip, in trip order: ``traveller_id``, ``trip_seq``, ``user_class``,
+        ``departure_s``, ``weight`` (people), ``origin_lon``, ``origin_lat``,
+        ``destination_lon``, ``destination_lat``, ``mode_stated`` (``None``: the trip chose its
+        mode; else its stated transit, park-and-ride or bike-and-ride, the only mode it was
+        offered), ``fallback_car`` (whether it then went by car), and per mode, ``reason_car``,
+        ``reason_bike``, ``reason_walk``, ``reason_transit``, ``reason_car_transit``,
+        ``reason_bike_transit``: ``""`` if the mode was not offered (not among the run's
+        ``modes``, not one the class may use, or not the stated mode), else why it gave nothing:
+
+        - ``walk_too_long``: no walk within the walk limit (``walk_max_s``);
+        - ``ride_too_long``: no ride within the ride limit (``bike_max_s``);
+        - ``no_vehicle``: the traveller has no such vehicle, or left it elsewhere that day;
+        - ``no_road_route``: no road route between origin and destination;
+        - ``no_stop_in_reach``: no stop within the walk to a stop (``access_walk_max_s``) of the
+          origin or of the destination;
+        - ``no_transit_journey``: stops in reach, but no journey within the longest offered
+          (``journey_max_s``) on the window's timetable;
+        - ``too_short``: shorter than park-and-ride's and bike-and-ride's shortest trip
+          (``pr_min_km``);
+        - ``unexplained``: none of these; a defect to report.
+
+        ``change`` names, for each row, what to change: the options behind its reasons
+        (``NO_ALTERNATIVE_CHANGES``).
+        """
+        table = dict(self._summary.no_alternative)
+        columns = [f"reason_{mode}" for mode in MODES]
+        table["change"] = [
+            "; ".join(dict.fromkeys(NO_ALTERNATIVE_CHANGES[r] for r in reasons if r))
+            for reasons in zip(*(table[c] for c in columns), strict=True)
+        ]
+        return table
+
+    def _no_alternative_text(self, places: int = 5) -> str | None:
+        """The trips left with no alternative and not simulated, in words; ``None`` if none."""
+        t = self.report_no_alternative()
+        rows = [i for i, fell in enumerate(t["fallback_car"]) if not fell]
+        if not rows:
+            return None
+        weight = [float(t["weight"][i]) for i in rows]
+        people = sum(weight)
+        total = sum(r["people"] for r in self.completion_by_mode.values())
+        # Who: by class and stated mode ("choosing" for a trip that chose its mode).
+        groups: dict[tuple[str, str], int] = {}
+        for i in rows:
+            key = (t["user_class"][i], t["mode_stated"][i] or "choosing")
+            groups[key] = groups.get(key, 0) + 1
+        who = ", ".join(
+            f"{n:,} {cls!r} ({mode})"
+            for (cls, mode), n in sorted(groups.items(), key=lambda kv: (-kv[1], kv[0]))
+        )
+        # Why: per mode offered, the trips each reason held back.
+        why = []
+        for mode in MODES:
+            counts: dict[str, int] = {}
+            for i in rows:
+                reason = t[f"reason_{mode}"][i]
+                if reason:
+                    counts[reason] = counts.get(reason, 0) + 1
+            if counts:
+                parts = ", ".join(
+                    f"{r} {n:,}" for r, n in sorted(counts.items(), key=lambda kv: -kv[1])
+                )
+                why.append(f"{mode}: {parts}")
+        # Where: origins and destinations on a grid of about a kilometre.
+        cell = 0.01
+        pairs: dict[tuple, float] = {}
+        for i, w in zip(rows, weight, strict=True):
+            values = (
+                t["origin_lat"][i],
+                t["origin_lon"][i],
+                t["destination_lat"][i],
+                t["destination_lon"][i],
+            )
+            key = tuple(round(v / cell) * cell for v in values)
+            pairs[key] = pairs.get(key, 0.0) + w
+        top = sorted(pairs.items(), key=lambda kv: (-kv[1], kv[0]))[:places]
+        where = "; ".join(
+            f"{w:,.0f} people from ({a:.2f}, {b:.2f}) to ({c:.2f}, {d:.2f})"
+            for (a, b, c, d), w in top
+        )
+        reasons = {r for mode in MODES for i in rows if (r := t[f"reason_{mode}"][i])}
+        change = "; ".join(
+            f"{r}: {NO_ALTERNATIVE_CHANGES[r]}" for r in NO_ALTERNATIVE_CHANGES if r in reasons
+        )
+        return (
+            f"{len(rows):,} trips ({people:,.0f} people, {people / max(total, 1):.1%} of run "
+            f"{self.run_id!r}) had no alternative — no mode they may use reached their "
+            "destination within the limits — and were not simulated. By class (stated mode): "
+            f"{who}. Why, by mode offered (trips): {'; '.join(why)}. Most between (latitude, "
+            f"longitude, about 1 km): {where}. To change: {change}. "
+            "Run.report_no_alternative() lists every trip with its reasons."
+        )
 
     def _fallback_text(self, places: int = 5) -> str | None:
         """The trips that fell back to the car, in words, and where most went; ``None`` if none."""
@@ -572,8 +695,9 @@ class Run:
             f"{self.run_id!r}) had no alternative — no mode they may use reached their "
             "destination within the limits — and travelled by car instead (a lift or a taxi for "
             "a traveller without one); they are counted under the car. Most between (latitude, "
-            f"longitude, about 1 km): {where}. Run.fallback_car lists them all; "
-            "mode_options={'fallback_car': 0} leaves them unsimulated instead."
+            f"longitude, about 1 km): {where}. Run.fallback_car lists them all and "
+            "Run.report_no_alternative() says why; mode_options={'fallback_car': 0}, the "
+            "default, leaves them unsimulated instead."
         )
 
     @property
@@ -656,10 +780,12 @@ class Run:
         w = self.window
         out = w["before_trips"] + w["after_trips"]
         fell = len(self.fallback_car["traveller_id"])
+        stranded = sum(not f for f in self._summary.no_alternative["fallback_car"])
         lines = [
             f"Run {self.run_id!r}: window {_clock(w['start_s'])}–{_clock(w['end_s'])}"
             + (f", {out:,} trips left out (departing outside it)" if out else "")
-            + (f", {fell:,} trips with no alternative went by car" if fell else ""),
+            + (f", {fell:,} trips with no alternative went by car" if fell else "")
+            + (f", {stranded:,} trips with no alternative not simulated" if stranded else ""),
             f"Run {self.run_id!r}: wall-clock seconds by stage",
         ]
         width = max(len(label) for label in _STAGE_LABELS.values())
@@ -1740,6 +1866,7 @@ class Scenario:
                 ``transit_options`` overrides them.
             transit_options: Transit's parameters by name, each replacing its default:
                 ``board_slack_s`` (60), ``max_rides`` (8), ``access_walk_max_s`` (1800),
+                ``journey_max_s`` (7200: the longest journey with transit offered),
                 ``transfer_walk_max_s`` (300), ``stop_walk_snap_m`` (300),
                 ``stop_transfer_s`` (0), ``bus_dwell_s`` (20), ``bus_pcu`` (2),
                 ``bus_plausibility_ratio`` (1.6), ``bus_stop_snap_m`` (300). Unknown names
@@ -1791,7 +1918,11 @@ class Scenario:
                 ``walk_max_s`` (1800) and ``bike_max_s`` (3600), the longest walk and ride
                 offered to a trip choosing its mode (a trip given the mode takes it at any
                 length; a class may give its own, ``classes``); ``float("inf")`` offers
-                every walk or ride. Uncalibrated defaults.
+                every walk or ride. Uncalibrated defaults. ``fallback_car`` (0; experimental):
+                1 sends a trip with no alternative at all by car (a lift or a taxi for a
+                traveller without one), counted under the car and listed by
+                ``Run.fallback_car``; at 0 such a trip is not simulated, and the run warns
+                (``NoAlternativeWarning``) and lists it (``Run.report_no_alternative()``).
                 Unknown names and values that are not above 0 are refused.
             loading_options: The loading's rules by name, for ``flow_level`` 2–4 (gridlock
                 remedies; at ``flow_level`` 2, where nothing waits for room, ``reroute`` is off
@@ -1953,24 +2084,9 @@ class Scenario:
             class_defaults=class_defaults,
         )
 
-    def run(self, run_id: str = "run", output_dir: str | None = None, quiet: bool = False) -> Run:
-        """Run the scenario and write its output artifacts.
-
-        Args:
-            run_id: Recorded in every output row; also names the default
-                output directory.
-            output_dir: Where ``kpis.parquet`` etc. are written. Defaults to
-                a directory under the system temp directory, named after
-                ``run_id``.
-            quiet: If true, do not print the run's wall-clock time by stage when it ends
-                (``Run.timings()`` and ``timings.csv`` have it either way).
-
-        Returns:
-            A ``Run`` with the four artifacts and the completion statistics.
-        """
-        if output_dir is None:
-            output_dir = str(Path(tempfile.gettempdir()) / "openmobisim-runs" / run_id)
-        summary = _core.run_pipeline(
+    def _pipeline(self, run_id: str, output_dir: str, **extra: Any) -> Any:
+        """The core's run, with this scenario's parts and ``extra``."""
+        return _core.run_pipeline(
             self._network,
             run_id,
             output_dir,
@@ -2016,7 +2132,47 @@ class Scenario:
             road_disruptions=self._road_disruptions,
             transit_disruptions=self._transit_disruptions,
             disruptions_known=self._disruptions_known,
+            **extra,
         )
+
+    def _fingerprint(self) -> str:
+        """The fingerprint a run of this scenario would have, without running it (S277).
+
+        Everything a run prepares before it starts is prepared (the layers, the timetable,
+        the parkings), so it takes a run's setup time, not its run time.
+        """
+        out = str(Path(tempfile.gettempdir()) / "openmobisim-runs" / "fingerprint")
+        return str(self._pipeline("fingerprint", out, fingerprint_only=True))
+
+    def run(
+        self,
+        run_id: str = "run",
+        output_dir: str | None = None,
+        quiet: bool = False,
+        threads: int | None = None,
+    ) -> Run:
+        """Run the scenario and write its output artifacts.
+
+        Args:
+            run_id: Recorded in every output row; also names the default
+                output directory.
+            output_dir: Where ``kpis.parquet`` etc. are written. Defaults to
+                a directory under the system temp directory, named after
+                ``run_id``.
+            quiet: If true, do not print the run's wall-clock time by stage when it ends
+                (``Run.timings()`` and ``timings.csv`` have it either way).
+            threads: How many threads the run's parallel work uses; ``None`` (the default),
+                every logical core. Results do not depend on it (each is the same, bit for bit,
+                at any count), so it is recorded in ``manifest.json`` (``threads``) and not in
+                the fingerprint. The run uses a pool of its own: ``RAYON_NUM_THREADS`` does not
+                change it.
+
+        Returns:
+            A ``Run`` with the four artifacts and the completion statistics.
+        """
+        if output_dir is None:
+            output_dir = str(Path(tempfile.gettempdir()) / "openmobisim-runs" / run_id)
+        summary = self._pipeline(run_id, output_dir, threads=threads)
         run = Run(
             summary,
             network=self._network,
@@ -2034,4 +2190,7 @@ class Scenario:
         fell_back = run._fallback_text()
         if fell_back is not None:
             warnings.warn(fell_back, FallbackWarning, stacklevel=2)
+        stranded = run._no_alternative_text()
+        if stranded is not None:
+            warnings.warn(stranded, NoAlternativeWarning, stacklevel=2)
         return run

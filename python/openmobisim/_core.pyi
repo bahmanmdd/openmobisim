@@ -803,6 +803,8 @@ class RunSummary:
     window: dict[str, Any]
     #: The trips that had no alternative and went by car (``Run.fallback_car``'s columns).
     fallback_car: dict[str, Any]
+    #: The trips with no alternative and why (``Run.report_no_alternative()``'s columns).
+    no_alternative: dict[str, Any]
     #: How full each parking was, bin by bin (see ``Run.parking_bins``).
     parking_bins: dict[str, Any] | None
     #: Each parking the run kept (see ``Run.parking_places``).
@@ -875,7 +877,9 @@ def run_pipeline(
     mode_options: dict[str, float] | None = None,
     loading_options: dict[str, float] | None = None,
     price_options: dict[str, float] | None = None,
-) -> RunSummary:
+    threads: int | None = None,
+    fingerprint_only: bool = False,
+) -> RunSummary | str:
     """Run the whole pipeline and write all four output artifacts.
 
     Prefer ``openmobisim.Scenario`` to calling this directly — it manages
@@ -971,9 +975,13 @@ def run_pipeline(
         mode_options: Mode choice's parameters by name (see ``Scenario.from_parts``).
         loading_options: The loading's rules by name (see ``Scenario.from_parts``).
         price_options: The prices by name, in euros (see ``Scenario.from_parts``; S248).
+        threads: How many threads the run's parallel work uses (S277); ``None``, every
+            logical core. Recorded in the manifest, not the fingerprint (``Scenario.run``).
+        fingerprint_only: If true, prepare the run and return its fingerprint without running
+            it, writing nothing (S277).
 
     Returns:
-        A :class:`RunSummary`.
+        A :class:`RunSummary`; with ``fingerprint_only``, the fingerprint (16 hex digits).
 
     Raises:
         ValueError: If the trips/persons arguments are not exactly one form

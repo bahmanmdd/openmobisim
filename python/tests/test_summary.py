@@ -122,9 +122,10 @@ def test_trips_with_no_alternative_are_counted_by_class_with_the_limits(tmp_path
     assert "up to 10 min and 60 min" in page and '<td class="">walker</td>' in page
 
 
-def test_trips_with_no_alternative_fall_back_to_the_car_and_are_reported(tmp_path):
-    # S271 (W-1): by default the walkers beyond the walk limit travel by car instead, counted
-    # under the car, listed, warned about, and named on the page.
+def test_trips_with_no_alternative_fall_back_to_the_car_only_when_asked(tmp_path):
+    # S271 (W-1), off by default since S276: with the fallback on, the walkers beyond the walk
+    # limit travel by car instead, counted under the car, listed, warned about, and named on
+    # the page; off, they are warned about and listed with their reasons.
     walker = {"modes": ["walk"], "owns_car": False}
     net = ms.examples.manhattan_grid(n=6, block_metres=200.0, signals=False)
     rows = ms.examples.trips_random(net, 200, seed=5, min_m=300.0, max_m=1500.0, spread_s=600)
@@ -138,14 +139,59 @@ def test_trips_with_no_alternative_fall_back_to_the_car_and_are_reported(tmp_pat
             equilibration="free_flow",
         )  # fmt: skip
 
-    off = scenario(fallback_car=0).run("sum-fallback-off", quiet=True)
+    with pytest.warns(ms.NoAlternativeWarning, match="were not simulated"):
+        off = scenario().run("sum-fallback-off", quiet=True)
     stuck = sum(m is None for m in off.itinerary_choices()["mode"])
+    assert len(off.report_no_alternative()["traveller_id"]) == stuck > 0
+    assert not off.fallback_car["traveller_id"], "off by default"
     with pytest.warns(ms.FallbackWarning, match="had no alternative") as caught:
-        on = scenario().run("sum-fallback-on", quiet=True)
+        on = scenario(fallback_car=1).run("sum-fallback-on", quiet=True)
+    assert not [w for w in caught if w.category is ms.NoAlternativeWarning], "all went by car"
     fell = on.fallback_car
-    assert len(fell["traveller_id"]) == stuck > 0, "the same trips, now by car"
+    assert len(fell["traveller_id"]) == stuck, "the same trips, now by car"
+    assert all(on.report_no_alternative()["fallback_car"]), "and still explained"
     assert "travelled by car instead" in str(caught[0].message)
     assert on.completion["completed"] == off.completion["completed"] + stuck
     assert "none" not in on.completion_by_mode, "nobody left without a mode"
+    assert on.fingerprint != off.fingerprint, "the fallback is an input"
     page = Path(viz.summary(on, str(tmp_path / "fallback.html"))).read_text(encoding="utf-8")
     assert "travelled by car instead" in page
+
+
+def test_trips_with_no_alternative_are_listed_with_each_mode_s_reason():
+    # S276 (I-ca): a walker beyond the walk limit, and a would-be cyclist without a bike whose
+    # walk is too long too: each mode offered says why it gave nothing, and what to change.
+    net = ms.examples.manhattan_grid(n=6, block_metres=200.0, signals=False)
+    rows = ms.examples.trips_random(net, 200, seed=5, min_m=300.0, max_m=1500.0, spread_s=600)
+    classes = {
+        "walker": {"modes": ["walk"]},
+        "no_bike": {"modes": ["bike", "walk"], "owns_bike": False},
+    }
+    rows = ms.demand_assign_classes(
+        rows, {name: {**c, "share": 1} for name, c in classes.items()}, seed=1
+    )
+    with pytest.warns(ms.NoAlternativeWarning) as caught:
+        run = ms.Scenario.from_parts(
+            net, rows, classes=classes, mode_options={"walk_max_s": 600.0},
+            equilibration="free_flow",
+        ).run("noalt-reasons", quiet=True)  # fmt: skip
+    t = run.report_no_alternative()
+    n = len(t["traveller_id"])
+    assert n == sum(m is None for m in run.itinerary_choices()["mode"]) > 0
+    columns = ["traveller_id", "trip_seq", "user_class", "departure_s", "weight", "origin_lon",
+               "origin_lat", "destination_lon", "destination_lat", "mode_stated",
+               "fallback_car"]  # fmt: skip
+    columns += [f"reason_{m}" for m in ms.MODES] + ["change"]
+    assert list(t) == columns and all(len(t[c]) == n for c in columns)
+    assert set(t["user_class"]) == {"walker", "no_bike"}
+    assert all(m is None for m in t["mode_stated"]), "they chose their mode"
+    for i in range(n):
+        assert t["reason_walk"][i] == "walk_too_long"
+        assert t["reason_bike"][i] == ("no_vehicle" if t["user_class"][i] == "no_bike" else "")
+        assert t["reason_car"][i] == t["reason_transit"][i] == "", "not offered"
+        assert "walk_max_s" in t["change"][i]
+    text = str(caught[0].message)
+    assert f"{n:,} trips" in text and "walk: walk_too_long" in text and "bike: no_vehicle" in text
+    assert "mode_options['walk_max_s']" in text and "owns_car or owns_bike" in text
+    assert "Run.report_no_alternative()" in text
+    assert "not simulated" in run._timings_text()
