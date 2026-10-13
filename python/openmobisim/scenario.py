@@ -1712,8 +1712,7 @@ class Scenario:
             choice_model: How each trip picks a route from its pair's set: a
                 name from ``openmobisim.choice_models()`` or an object with a
                 ``choose(batch)`` method (see ``openmobisim.choice`` for how to
-                write one). ``"logit"`` (the default since the car-ready
-                checkpoint, 2026-09-23) is the standard path-size logit, sampled per
+                write one). ``"logit"`` (the default) is the standard path-size logit, sampled per
                 traveller; ``"nested_logit"`` is the logit with the alternatives of each
                 mode in a nest of their own, for mode choice (``modes``): a mode's many
                 routes do not outweigh another mode's one; ``"deterministic"`` sends
@@ -1767,7 +1766,7 @@ class Scenario:
                 them, ``openmobisim.route_cache_info()`` says ``(hits, misses, held)``.
             equilibration: How choice and loading are repeated (see
                 ``openmobisim.equilibration_strategies()``). ``"msa"`` (the
-                default since the car-ready checkpoint, 2026-09-23) is the method of successive
+                default) is the method of successive
                 averages in traveller form: load the network, read the link
                 times it produced, let a share ``1/(i + 1)`` of travellers
                 choose again on those times at iteration ``i``, load again.
@@ -1838,17 +1837,18 @@ class Scenario:
             route_update_options: The update's options, numbers by name: for
                 ``"best_response"``, ``searches`` (1: how many searches per pair per
                 iteration, at spread quantiles of the pair's departures; more finds routes
-                that pay only at some hours and makes bigger sets) and ``max_routes`` (5:
+                that pay only at some hours and makes bigger sets) and ``max_routes`` (10:
                 the most routes a pair's set may hold; a full set is still searched, and a
                 route at least a second faster than its best replaces a route nobody chose,
                 never its free-flow shortest; if all are in use it waits, S268) and
-                ``slack`` (0: a pair is not searched while its set's best route is within this
+                ``slack`` (0.02: a pair is not searched while its set's best route is within this
                 share of free flow, since nothing is faster than free flow and so at most that
                 much is left to gain).
                 Unknown names and out-of-range values are refused.
             transit: The timetable of a service day (``openmobisim.transit_read_gtfs``),
-                for the ``"transit"`` trips. A transit trip walks (4.8 km/h, at most 15
-                minutes) to a stop, rides one or more vehicles and walks on, boarding only if
+                for the ``"transit"`` trips. A transit trip walks (4.8 km/h, at most 30
+                minutes, ``transit_options``' ``access_walk_max_s``) to a stop, rides one or more
+                vehicles and walks on, boarding only if
                 at the stop a minute before a vehicle leaves; walks between stops are at most
                 5 minutes. **Its journey is chosen by** ``choice_model`` among the
                 competitive ones: for each number of vehicles, the earliest arrival that beats
@@ -1856,7 +1856,8 @@ class Scenario:
                 ``ride_min`` and ``transfers`` say what it costs). It is chosen on the times
                 expected — the schedule at first, the last iteration's after — and ridden on
                 the times the run makes: the traveller boards the first vehicle of each line
-                chosen they can catch. The run's clock starts at the service day's midnight.
+                chosen they can catch. The run's clock counts seconds after the service day's
+                midnight and starts at the window.
                 **Buses ride the roads**, 2 PCU each, among the cars: routed stop to stop at
                 free flow, dwelling 20 s at a stop without blocking the traffic behind, never
                 leaving a stop before their scheduled time, so congestion makes them late

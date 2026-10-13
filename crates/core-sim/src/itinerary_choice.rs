@@ -1975,8 +1975,7 @@ impl Itineraries {
                             .and_then(|s| s.key_index(key).map(|k| s.route_range(k)))
                             .is_some_and(|r| !r.is_empty())
                     };
-                    reasons[Mode::Car.index()] = match (shape(ParkingKind::Car), self.car_keys[p])
-                    {
+                    reasons[Mode::Car.index()] = match (shape(ParkingKind::Car), self.car_keys[p]) {
                         (Some(Shape::Out), Some(key)) if routes(key) => R::Unexplained,
                         (Some(Shape::Out), _) => R::NoRoadRoute,
                         _ => R::NoVehicle,

@@ -66,6 +66,7 @@ def _unit(name: str) -> str:
         ("_veh_km_lane", "veh/km per lane"),
         ("_km_h", "km/h"),
         ("_eur_km", "EUR/km"),
+        ("_km_eur", "EUR/km"),
         ("_eur", "EUR"),
         ("_min", "min"),
         ("_km", "km"),

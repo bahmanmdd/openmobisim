@@ -1092,8 +1092,7 @@ pub fn run_pipeline(
     let mut run_diagnostics = Diagnostics::new();
     // Python's lock released (S277): the run works on a pool of its own, and a choice model in
     // Python is called from that pool's thread, which takes the lock when it needs it.
-    let result =
-        py.detach(|| run.try_execute(&mut run_diagnostics)).map_err(to_value_error)?;
+    let result = py.detach(|| run.try_execute(&mut run_diagnostics)).map_err(to_value_error)?;
     let core_stages = run.timings().to_vec();
     // What a skim needs after the run (S238), kept with the summary.
     let skimmer = Arc::new(Skimmer::new(

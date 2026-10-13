@@ -49,10 +49,8 @@ pub struct Manifest {
     /// How [`RunResult::total_travel_time`] was computed — always
     /// `"traveller_weight_scaled"` today. Recorded here, not just in a code
     /// comment, because the manifest is the file an analyst reads to know
-    /// what a number means (confirmed by the user, 2026-09-14: both a
-    /// weighted and an unweighted form will be reported once comprehensive
-    /// KPIs exist, so this field is what tells a reader which one a given
-    /// `kpis.parquet` row is).
+    /// what a number means: should an unweighted form be reported too, this
+    /// field is what tells a reader which one a given `kpis.parquet` row is.
     pub kpi_weighting: String,
     /// The scenario's master seed (S168): the one number that starts every
     /// random stream. Under a sampled choice model it decides who takes which

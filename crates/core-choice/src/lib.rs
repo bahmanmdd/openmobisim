@@ -4,7 +4,7 @@
 //! |---|---|
 //! | [`batch`] | [`ChoiceBatch`] (situations × alternatives, with named attributes and stable identities) and [`Choices`] (the answer) |
 //! | [`model`](mod@model) | The [`ChoiceModel`] interface, the helpers a new model builds on ([`gumbel`], [`sample_random_utility`], …), the by-name [`Registry`] |
-//! | [`builtin`] | [`Deterministic`] (the default) and [`Logit`] (with the path-size term, the standard route-choice model) |
+//! | [`builtin`] | [`Deterministic`] (the core's default), [`Logit`] (with the path-size term, the standard route-choice model; the Python `Scenario`'s default) and [`NestedLogit`] (modes in nests) |
 //!
 //! # Extending it
 //!

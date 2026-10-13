@@ -7,9 +7,8 @@ models, selected by name (``choice_models()``):
 
 * ``"deterministic"``: everyone takes the route with the least travel time.
   All-or-nothing; no randomness. Useful for debugging or an upper bound.
-* ``"logit"`` (``Scenario.from_parts``'s default since the car-ready
-  checkpoint, 2026-09-23): a random utility model, linear in named attributes
-  and sampled exactly (Gumbel-max). With its defaults it is the standard
+* ``"logit"`` (``Scenario.from_parts``'s default): a random utility model, linear in
+  named attributes and sampled exactly (Gumbel-max). With its defaults it is the standard
   **path-size logit** for route choice: ``U = -0.2 · time_min + 1 ·
   ln_path_size``. Set any coefficient with ``choice_options``:
   ``{"beta_time_min": -0.3, "beta_length_km": -0.1}``. **The defaults are an
@@ -67,7 +66,7 @@ how far the pattern is from equilibrium; without it those measures are ``nan``.
 And it may have a ``logsum(batch)`` method returning one number per situation, the
 expected utility of its best alternative (S238): ``Run.itinerary_choices()["logsum"]``,
 for accessibility; without it that column is ``nan``.
- Optional attributes of the model: ``name``, ``descriptor`` (both in
+Optional attributes of the model: ``name``, ``descriptor`` (both in
 the manifest and part of the run's fingerprint: **change the descriptor when the
 model's behaviour changes**, or two different models look like one run),
 ``sampled`` (``False`` if it never uses ``batch.gumbel``; default ``True``) and

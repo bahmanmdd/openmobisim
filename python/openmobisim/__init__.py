@@ -12,8 +12,8 @@ imported on demand, so ``import openmobisim`` never needs matplotlib.
 
 The scenario surface is intentionally narrow: a network, a trips table, one
 run, its output artifacts, route choice among each trip's alternatives
-(``openmobisim.choice`` says how to add your own choice model) and, by default
-since the car-ready checkpoint (2026-09-23), iteration towards an equilibrium
+(``openmobisim.choice`` says how to add your own choice model) and, by default,
+iteration towards an equilibrium
 (``equilibration="msa"``), during which the route sets may grow
 (``route_update="best_response"``). Trips may also cycle, walk, take scheduled
 public transport (``transit_read_gtfs``, ``Scenario(transit=...)``), whose buses

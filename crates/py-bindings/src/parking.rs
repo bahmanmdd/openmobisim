@@ -443,7 +443,7 @@ pub(crate) fn no_alternative<'py>(
         Vec::with_capacity(n),
     );
     let (mut stated, mut fallback) = (Vec::with_capacity(n), Vec::with_capacity(n));
-    let mut reasons: Vec<Vec<&str>> = vec![Vec::with_capacity(n); Mode::COUNT];
+    let mut reasons: Vec<Vec<&str>> = (0..Mode::COUNT).map(|_| Vec::with_capacity(n)).collect();
     for row in none {
         let trip = row.trip;
         let traveller = trips.traveller(trip);

@@ -341,9 +341,9 @@ def demand_read_classes(path: str | Path) -> dict[str, dict[str, Any]]:
     calibration.
 
     Returns:
-        ``{class: {"share", "modes", "owns_car", "owns_bike", "has_transit_pass", "betas",
-        "limits"}}`` in the file's order, the shape ``Scenario(classes=...)`` and
-        ``demand_assign_classes`` take.
+        The classes in the file's order, a dict by class name of dicts with the keys ``share``,
+        ``modes``, ``owns_car``, ``owns_bike``, ``has_transit_pass``, ``betas`` and ``limits``:
+        the shape ``Scenario(classes=...)`` and ``demand_assign_classes`` take.
 
     Raises:
         ValueError: If a row has no class, a class repeats, or a column or value is not one of

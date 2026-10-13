@@ -53,8 +53,7 @@ use crate::events::{EventRow, EventType};
 use crate::identity::{Inputs, RunDescription, describe};
 use crate::itinerary_choice::{
     self, CarRoutes, ChooseInputs, Chosen, Followed, Itineraries, ItineraryResult, NoAlternative,
-    Planner, Shape,
-    Simulated, WalkEnd, parking_kind_of,
+    Planner, Shape, Simulated, WalkEnd, parking_kind_of,
 };
 use crate::layers::{
     ClassLimits, ModeDefaults, StaticLayers, StaticRoute, StaticRoutes, class_limits,
@@ -434,7 +433,7 @@ pub struct Run {
     /// How route sets are generated (S165): the penalty method by default.
     route_generator: Arc<dyn RouteSetGenerator>,
     /// The scenario's master seed (S168): the one number that starts every
-    /// random stream. Nothing draws from it yet; see [`RunDescription`].
+    /// random stream (the choice draws and `msa`'s reselection); see [`RunDescription`].
     master_seed: u64,
     /// How each trip picks a route from its pair's set (S169): all-or-nothing on
     /// the best route by default, so a run is what it was before choice existed.
