@@ -43,8 +43,8 @@
 //!
 //! **Cost of a search:** one label per touched link; the scratch is reset by
 //! visiting only what was touched, so a search costs what it explores, not the
-//! size of the network. **Scratch per thread:** 20 bytes per link plus the
-//! heap.
+//! size of the network. **Scratch per thread:** 32 bytes per link (the cost, the true
+//! cost, the predecessor, the marks and the factors) plus the heap.
 //!
 //! **Determinism:** ties are broken by link id, so a search never depends on
 //! heap insertion order (Foundations §1).
@@ -288,7 +288,7 @@ pub struct Search<'a> {
 }
 
 impl<'a> Search<'a> {
-    /// A fresh scratch over `ctx`: 20 bytes per link plus 4 for the marks.
+    /// A fresh scratch over `ctx`: 32 bytes per link.
     #[must_use]
     pub fn new(ctx: &'a SearchContext<'a>) -> Self {
         let n = ctx.network.link_count() as usize;

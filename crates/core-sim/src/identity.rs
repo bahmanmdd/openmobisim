@@ -675,6 +675,8 @@ fn hash_demand(h: &mut Fnv1a, travellers: &Travellers, trips: &Trips) {
         let own = travellers.ownership(traveller);
         h.write_bool(own.car);
         h.write_bool(own.bike);
+        // Hashed although nothing reads the pass yet: a pass gates nothing until brief A14 makes it
+        // act (CM-13). Leave it in, so the fingerprints do not change twice.
         h.write_bool(own.transit_pass);
     }
     h.write_u32(trips.len());

@@ -57,7 +57,8 @@ pub struct Ownership {
     pub car: bool,
     /// Owns a bike.
     pub bike: bool,
-    /// Holds a transit pass.
+    /// Holds a transit pass. Nothing reads it yet: a pass gates no journey (CM-13), though it is
+    /// part of the run's fingerprint; a later change makes it act (brief A14).
     pub transit_pass: bool,
 }
 

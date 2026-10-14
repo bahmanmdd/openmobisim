@@ -14,7 +14,6 @@
 use std::sync::Arc;
 
 use openmobisim_core_demand::{Mode, Trips};
-use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults, StaticNetwork};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::generate::RouteSetGenerator;
@@ -38,7 +37,7 @@ impl LayerSetup {
     /// time), with the painted-lane and mixed-traffic multipliers of `defaults`.
     #[must_use]
     pub fn new(network: Arc<StaticNetwork>, cost: BikeCost, defaults: StaticLayerDefaults) -> Self {
-        let turns = TurnTable::build(network.network(), SignalDefaults::SHIPPED);
+        let turns = TurnTable::build(network.network(), network.network().signals());
         let seconds = network.link_seconds();
         let costs = network.link_costs(
             cost,

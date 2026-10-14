@@ -138,7 +138,9 @@ impl RoadNetworkBuilder {
 
     /// Declare a node at a WGS84 coordinate.
     ///
-    /// Declaring the same external id twice keeps the first coordinate.
+    /// Declaring the same external id twice keeps the **last** coordinate: the node is one (its
+    /// id is interned once), and the build reads the coordinates in order, so a later one
+    /// overwrites an earlier one (G-4).
     pub fn add_node(&mut self, external_id: impl Into<String>, at: LonLat) {
         let id = external_id.into();
         self.node_ids.insert(id.clone());

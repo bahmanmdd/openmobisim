@@ -1742,6 +1742,9 @@ impl<'a> LtmNetwork<'a> {
         }
         let mut look_again = f64::INFINITY;
         let mut front_held = None;
+        // At most eight held movements are remembered. A link with more than eight movements
+        // degrades to FIFO safely: `Ahead::add` returns false for a ninth distinct movement, which
+        // ends the scan there, so nothing past it is considered or lost (L-16).
         let mut held = [(0, Blocked { link: 0, retry_at: None }); 8];
         let mut n_held = 0;
         let last_exit = self.curves[i].last_exit().get();
@@ -2699,6 +2702,8 @@ fn run_ltm_inner_chained(
             None => sim.step(this),
         });
     }
+    // Filters nothing since X-38 (every step ends at or before the window's end, so no vehicle
+    // completes later); kept as a guard that nothing past the window is ever reported (L-15).
     completed.retain(|t| Duration::from_clock(t.arrival()) <= window);
     if entry_bins {
         sim.record_unfinished(window.get());

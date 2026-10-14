@@ -1,3 +1,6 @@
+//! **Not called by the loading** (L-19): the reference node model, kept for a future aggregate
+//! (volume-delay or static) level and as the specification the vehicle form is checked against.
+//!
 //! The node model (S48, qualified by S77) in aggregate form: per-turn demand,
 //! per-link supply, proportional distribution, full-blocking FIFO on the
 //! incoming approach.

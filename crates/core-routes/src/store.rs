@@ -25,6 +25,7 @@
 use openmobisim_core_graph::link_geometry::NetworkFingerprint;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
+use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, NodeId};
 
 use crate::generate::RouteSetGenerator;
@@ -400,13 +401,8 @@ impl RouteSets {
     /// they have (FNV-1a over the fingerprint, descriptor and update).
     #[must_use]
     pub fn identity(&self) -> u64 {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        let mut feed = |bytes: &[u8]| {
-            for &b in bytes {
-                h ^= u64::from(b);
-                h = h.wrapping_mul(0x0100_0000_01b3);
-            }
-        };
+        let mut h = Fnv1a::new();
+        let mut feed = |bytes: &[u8]| h.write_bytes(bytes);
         feed(&self.network.value().to_le_bytes());
         feed(self.descriptor.as_bytes());
         // A store nobody has grown hashes as it always did.
@@ -414,7 +410,7 @@ impl RouteSets {
             feed(b"+update:");
             feed(self.update.as_bytes());
         }
-        h
+        h.finish()
     }
 
     /// Whether this store was made from `network`.

@@ -485,8 +485,11 @@ def demand_from_od(
        away, evenly around it; 1: the zone's own point), drawn at random: trips from the same
        zones then share their routes and their route searches (S265).
 
-    The draws come from one generator seeded by ``seed``, consumed in the sorted order of the
-    cells, so the same inputs and seed give the same trips on any machine.
+    The draws (steps 3 and 4) come from one NumPy generator seeded by ``seed``, consumed in the
+    sorted order of the cells, so the same inputs and seed give the same trips on any machine for
+    one NumPy version: NumPy does not promise the same stream across its releases, so another
+    release may give other departures and places (the whole trips of step 1 are keyed hashes and
+    do not depend on it). Keep the returned trips, not only the seed, to repeat a study.
 
     Args:
         od: ``od.csv``'s path, or its rows (``demand_read_od``'s shape).
