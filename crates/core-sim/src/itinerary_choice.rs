@@ -392,6 +392,11 @@ pub(crate) struct Planner<'a> {
     pub times: &'a LinkTimes,
     pub availability: Option<&'a ExpectedAvailability>,
     pub detour_limit: f64,
+    /// At most this many car routes offered to a trip choosing its mode — the fastest at its
+    /// departure, the earlier first among equals (0: every route of the set). The cap stated
+    /// car trips get (`choice_max_routes`, S268), applied here too since S279 (CM-2): under a
+    /// flat logit a mode's share grew with how many routes its set held.
+    pub max_routes: u32,
     /// The car's route sets, when the run offers mode choice.
     pub car_routes: Option<CarRoutes<'a>>,
 }
@@ -744,7 +749,7 @@ impl<'a> Planner<'a> {
 
     fn plan_car(&self, routes: &CarRoutes<'_>, key: RouteKey, departure: u32) -> Vec<Alternative> {
         let Some(k) = routes.sets.key_index(key) else { return Vec::new() };
-        routes
+        let mut alts: Vec<Alternative> = routes
             .sets
             .route_range(k)
             .map(|r| {
@@ -758,7 +763,24 @@ impl<'a> Planner<'a> {
                 a.fixed_ln_path_size = Some(routes.attributes.path_size[r].max(1e-9).ln());
                 a
             })
-            .collect()
+            .collect();
+        // At most `max_routes` offered, the fastest, the earlier first among equals: the same
+        // rule as `route_choice::Chooser::fill` applies to stated car trips (S268, S279).
+        let cap = self.max_routes as usize;
+        if cap > 0 && alts.len() > cap {
+            let mut order: Vec<usize> = (0..alts.len()).collect();
+            order.sort_by(|&x, &y| alts[x].vehicle_s.total_cmp(&alts[y].vehicle_s).then(x.cmp(&y)));
+            let mut keep = vec![false; alts.len()];
+            for &i in &order[..cap] {
+                keep[i] = true;
+            }
+            let mut i = 0;
+            alts.retain(|_| {
+                i += 1;
+                keep[i - 1]
+            });
+        }
+        alts
     }
 
     fn plan_transit(&self, s: &mut Scratch<'a>, n: &TripNodes, departure: u32) -> Vec<Alternative> {
@@ -2415,7 +2437,13 @@ impl Itineraries {
                     checked = true;
                     if let Some(logsums) = inputs.model.logsums(&batch)? {
                         for (s, &w) in situation_of.iter().enumerate() {
-                            next.logsum[work[w].0] = logsums[s];
+                            // A trip that kept its alternative planned only its mode: its
+                            // logsum stays the one of its last full choice set (S279, CM-1:
+                            // before, the one-mode logsum overwrote it, and `logsum_od` mixed
+                            // the two kinds).
+                            if first[w] == work[w].1 {
+                                next.logsum[work[w].0] = logsums[s];
+                            }
                         }
                     }
                 }

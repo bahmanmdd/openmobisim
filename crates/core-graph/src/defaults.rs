@@ -726,13 +726,16 @@ pub struct LinkParameters {
 pub enum ParameterNote {
     /// The diagram was consistent as given; nothing to record.
     Consistent,
-    /// The derived wave speed was outside [`WAVE_SPEED_BOUNDS_KM_H`] and was
-    /// clamped; jam density was re-derived to keep the diagram consistent.
+    /// The derived wave speed was below [`WAVE_SPEED_BOUNDS_KM_H`] (a capacity low for the
+    /// jam density) and was clamped up; jam density was re-derived (lowered) so the triangle
+    /// closes with the capacity given.
     WaveSpeedClamped,
-    /// Capacity implied a critical density at or above jam density — no
-    /// triangular diagram exists. Capacity was reduced to the largest value
-    /// the given free-flow speed and jam density admit.
-    CapacityReducedToFitJamDensity,
+    /// The derived wave speed was above [`WAVE_SPEED_BOUNDS_KM_H`], or no triangle existed
+    /// (the free-flow branch reached capacity at or past jam density); the wave speed was
+    /// clamped down and jam density re-derived (raised) so the triangle closes with the
+    /// capacity given: a table's, a factor's or a tag's capacity is trusted over a default
+    /// jam density (S279).
+    JamDensityRaisedToFitCapacity,
 }
 
 impl LinkParameters {
@@ -767,38 +770,33 @@ impl LinkParameters {
         let lanes = f64::from(lanes.max(1));
 
         let v_km_h = maxspeed_km_h.unwrap_or(row.free_flow_km_h) * multipliers.free_flow_speed;
-        let mut q_veh_h =
+        let q_veh_h =
             capacity_veh_h.unwrap_or(row.saturation_flow_veh_h_lane * lanes) * multipliers.capacity;
         let mut k_j_veh_km = row.jam_density_veh_km_lane * lanes * multipliers.jam_density;
 
         // Critical density: where the free-flow branch meets capacity.
         let k_c = q_veh_h / v_km_h;
 
-        let mut note = ParameterNote::Consistent;
-
-        // No triangular diagram exists if the free-flow branch reaches capacity
-        // at or beyond jam density. Reduce capacity rather than invent storage:
-        // capacity is the quantity the run can least afford to be wrong about
-        // upward, and an over-stated capacity produces a network that never
-        // congests, which is a silent failure.
-        if k_c >= k_j_veh_km * 0.95 {
-            q_veh_h = 0.95 * k_j_veh_km * v_km_h * 0.5;
-            note = ParameterNote::CapacityReducedToFitJamDensity;
-        }
-
-        let k_c = q_veh_h / v_km_h;
-        let mut w_km_h = q_veh_h / (k_j_veh_km - k_c);
-
+        // The backward wave speed closes the triangle: w = q / (k_j − k_c). Capacity and
+        // free-flow speed are held (a table, a factor or a tag means them). When w falls
+        // outside [`WAVE_SPEED_BOUNDS_KM_H`] — a capacity too high for the jam density, the
+        // free-flow branch reaching capacity only at or past jam density (no triangle), or a
+        // capacity too low — it is clamped and jam density re-derived so the triangle closes
+        // again, k_j = q/w + k_c: storage is raised above the bound and lowered below it, and
+        // the note says which. (Until S279 a capacity near or past jam density was halved and
+        // the clamp then raised storage anyway, while the note reported only the reduction.)
         let (w_min, w_max) = WAVE_SPEED_BOUNDS_KM_H;
-        if !(w_min..=w_max).contains(&w_km_h) {
-            w_km_h = w_km_h.clamp(w_min, w_max);
-            // Hold capacity and free-flow speed; re-derive jam density so the
-            // triangle closes. k_j = q/w + q/v.
+        let w_raw = if k_c < k_j_veh_km { q_veh_h / (k_j_veh_km - k_c) } else { f64::INFINITY };
+        let w_km_h = w_raw.clamp(w_min, w_max);
+        let note = if w_raw > w_max {
             k_j_veh_km = q_veh_h / w_km_h + k_c;
-            if note == ParameterNote::Consistent {
-                note = ParameterNote::WaveSpeedClamped;
-            }
-        }
+            ParameterNote::JamDensityRaisedToFitCapacity
+        } else if w_raw < w_min {
+            k_j_veh_km = q_veh_h / w_km_h + k_c;
+            ParameterNote::WaveSpeedClamped
+        } else {
+            ParameterNote::Consistent
+        };
 
         let control_delay = if signalised {
             signals.uniform_delay() * multipliers.control_delay
@@ -821,21 +819,17 @@ impl LinkParameters {
     /// The same link with its capacity multiplied by `factor`, jam density and free-flow speed
     /// kept (S238: a bottleneck), the backward wave speed derived again from the triangle and,
     /// outside [`WAVE_SPEED_BOUNDS_KM_H`], clamped with jam density re-derived, as
-    /// [`Self::from_defaults`] does; capacity is held below 95 % of what the jam density
-    /// allows at the free-flow speed, as there.
+    /// [`Self::from_defaults`] does; the capacity asked for is held, as there.
     #[must_use]
     pub fn with_capacity_times(&self, factor: f64) -> Self {
         let v = self.free_flow_speed.as_km_per_hour();
         let mut k_j = self.jam_density.as_veh_per_km();
-        let mut q = self.capacity.as_veh_per_hour() * factor;
-        if q / v >= k_j * 0.95 {
-            q = 0.95 * k_j * v * 0.5;
-        }
+        let q = self.capacity.as_veh_per_hour() * factor;
         let k_c = q / v;
-        let mut w = q / (k_j - k_c);
         let (w_min, w_max) = WAVE_SPEED_BOUNDS_KM_H;
-        if !(w_min..=w_max).contains(&w) {
-            w = w.clamp(w_min, w_max);
+        let w_raw = if k_c < k_j { q / (k_j - k_c) } else { f64::INFINITY };
+        let w = w_raw.clamp(w_min, w_max);
+        if w_raw < w_min || w_raw > w_max {
             k_j = q / w + k_c;
         }
         Self {

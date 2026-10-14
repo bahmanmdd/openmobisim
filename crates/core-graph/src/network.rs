@@ -40,8 +40,9 @@ pub mod codes {
     /// An OSM `highway` value the defaults table does not model; the link was
     /// treated as `unclassified`.
     pub const UNKNOWN_HIGHWAY_CLASS: DiagCode = DiagCode("unknown_highway_class");
-    /// A link's parameters implied no triangular diagram; capacity was reduced.
-    pub const CAPACITY_REDUCED: DiagCode = DiagCode("capacity_reduced_to_fit_jam_density");
+    /// A link's capacity implied a backward wave above its bound, or no triangle at all; jam
+    /// density was raised so the triangle closes with the capacity given (S279).
+    pub const JAM_DENSITY_RAISED: DiagCode = DiagCode("jam_density_raised_to_fit_capacity");
     /// A link's derived backward wave speed was clamped to its bound.
     pub const WAVE_SPEED_CLAMPED: DiagCode = DiagCode("wave_speed_clamped");
     /// A link referenced a node that was never declared; the link was dropped.
@@ -323,9 +324,9 @@ impl RoadNetworkBuilder {
             }
             match note {
                 ParameterNote::Consistent => {}
-                ParameterNote::CapacityReducedToFitJamDensity => diagnostics.record(DiagKey::new(
+                ParameterNote::JamDensityRaisedToFitCapacity => diagnostics.record(DiagKey::new(
                     Category::DataQuality,
-                    codes::CAPACITY_REDUCED,
+                    codes::JAM_DENSITY_RAISED,
                     Severity::Warning,
                     element,
                 )),

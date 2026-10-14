@@ -1553,6 +1553,13 @@ impl<'a> LtmNetwork<'a> {
         self.queues[queue].push_back(queued);
         if self.queues[queue].len() == 1 {
             self.schedule_front(queue, t0, f64::NEG_INFINITY);
+        } else if queue < self.links && self.pocket(queue) > 0.0 {
+            // With turn pockets a vehicle behind a front that is parked for room may move
+            // on its own, towards another street (S217). Look at the queue again when the
+            // newcomer is ready, unless an earlier look is pending (`schedule_earlier`):
+            // before S279 nothing did, and a vehicle bound for a free street behind a front
+            // parked on a full one waited as if there were no pockets (L-1).
+            self.schedule_front(queue, t0, queued.ready);
         }
     }
 

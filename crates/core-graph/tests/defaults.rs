@@ -247,7 +247,16 @@ fn impossible_parameters_are_resolved_and_recorded_never_raised() {
         None,
         None,
     );
-    assert_eq!(note, ParameterNote::CapacityReducedToFitJamDensity);
+    assert_eq!(note, ParameterNote::JamDensityRaisedToFitCapacity);
+    // The capacity asked for is held; storage is what gives (S279).
+    let asked = 20.0 * row.saturation_flow_veh_h_lane;
+    assert!(
+        (p.capacity.as_veh_per_hour() - asked).abs() < 1e-6,
+        "{}",
+        p.capacity.as_veh_per_hour()
+    );
+    assert!(p.jam_density.as_veh_per_km() > row.jam_density_veh_km_lane);
+    assert!((p.wave_speed.as_km_per_hour() - WAVE_SPEED_BOUNDS_KM_H.1).abs() < 1e-9);
     assert!(p.capacity.get() > 0.0 && p.capacity.get().is_finite());
     assert!(p.wave_speed.get() > 0.0 && p.wave_speed.get().is_finite());
     assert!(p.jam_density.get() > 0.0 && p.jam_density.get().is_finite());

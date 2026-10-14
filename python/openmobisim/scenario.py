@@ -941,7 +941,8 @@ class Run:
         ``alternatives`` (how many it chose among when it last chose; 0: it did not travel),
         ``probability`` (what the model gave its choice), ``expected_s`` (the chosen itinerary's
         door-to-door time expected at the choice), ``rides`` (vehicles boarded) and ``logsum``
-        (S238: the **logsum** of the trip's choice set when it was last planned — the expected
+        (S238: the **logsum** of the trip's choice set when it was last planned in full — its first
+        choice and each time it chose again; a trip that kept its alternative keeps it — the expected
         utility of its best alternative, ``ln Σ exp(utility)`` for the logit and its nested form
         for the nested logit; ``nan`` for a model that gives none; a model of one's own may give
         one with a ``logsum(batch)`` method, one number per situation). In the utility's units:
@@ -1407,7 +1408,7 @@ class Scenario:
         route_method: str | None = None,
         route_options: dict[str, float] | None = None,
         master_seed: int = 0,
-        choice_model: str | Any = "logit",
+        choice_model: str | Any | None = None,
         choice_options: dict[str, float] | None = None,
         equilibration: str = "msa",
         equilibration_options: dict[str, float] | None = None,
@@ -1472,6 +1473,11 @@ class Scenario:
         if modes is None and self._class_modes:
             # The classes say which modes their travellers may use: the run offers them all.
             modes = [m for m in MODES if any(m in ms for ms in self._class_modes.values())]
+        if choice_model is None:
+            # Mode choice by the nested logit, one nest per mode, so a mode's share does not
+            # grow with how many routes or journeys its nest holds; route choice alone by the
+            # path-size logit (S279, CM-2).
+            choice_model = "nested_logit" if modes else "logit"
         self._default_weight = default_weight
         self._window = _window(window)
         self._flow_level = flow_level
@@ -1570,7 +1576,7 @@ class Scenario:
         route_method: str | None = None,
         route_options: dict[str, float] | None = None,
         master_seed: int = 0,
-        choice_model: str | Any = "logit",
+        choice_model: str | Any | None = None,
         choice_options: dict[str, float] | None = None,
         equilibration: str = "msa",
         equilibration_options: dict[str, float] | None = None,
@@ -1712,10 +1718,14 @@ class Scenario:
             choice_model: How each trip picks a route from its pair's set: a
                 name from ``openmobisim.choice_models()`` or an object with a
                 ``choose(batch)`` method (see ``openmobisim.choice`` for how to
-                write one). ``"logit"`` (the default) is the standard path-size logit, sampled per
-                traveller; ``"nested_logit"`` is the logit with the alternatives of each
-                mode in a nest of their own, for mode choice (``modes``): a mode's many
-                routes do not outweigh another mode's one; ``"deterministic"`` sends
+                write one). Unsaid: ``"nested_logit"`` when the run offers modes (``modes``, or
+                the classes name them), ``"logit"`` otherwise. ``"logit"`` is the standard
+                path-size logit, sampled per traveller; ``"nested_logit"`` is the logit with
+                the alternatives of each mode in a nest of their own, for mode choice: a
+                mode's many routes do not outweigh another mode's one (under a flat logit the
+                car's share grows with how many of its routes are offered), and within a nest
+                the choice is sharper by ``1/mu`` — a stated car trip's route choice too, in
+                a run that offers modes; ``"deterministic"`` sends
                 everyone down the best route, with probability 1 — useful for debugging or
                 an upper bound, not for a result to report.
             choice_options: A built-in model's options, numbers by name: for

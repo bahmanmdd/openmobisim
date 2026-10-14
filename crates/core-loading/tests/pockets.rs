@@ -18,7 +18,7 @@ use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefau
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
-use openmobisim_core_loading::{LtmNetwork, Trajectory, Vehicle};
+use openmobisim_core_loading::{CapacityChange, LtmNetwork, Trajectory, Vehicle};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
 use openmobisim_core_types::time::Second;
@@ -399,4 +399,27 @@ proptest! {
             }
         }
     }
+}
+
+#[test]
+fn behind_a_front_parked_for_room_a_vehicle_turning_free_still_passes() {
+    // `cd` closed from the start: `bc` fills and never drains, so the vehicles on `ab` bound
+    // for `c` are parked for room with nothing to wait for. Before S279 (L-1) a vehicle that
+    // joined `ab` behind such a front was never looked at again, and those bound for the free
+    // street `e` waited with it as if there were no pockets.
+    let f = fork(2);
+    let (vehicles, to_e) = demand(&f, 4);
+    let turns = TurnTable::build(&f.net, SignalDefaults::SHIPPED);
+    let mut sim = LtmNetwork::new(&f.net, &turns)
+        .with_pockets(&turns, 50.0)
+        .with_capacity_changes(vec![CapacityChange { time: 0.0, link: f.cd, factor: 0.0 }]);
+    vehicles.iter().for_each(|v| sim.depart(v));
+    let mut done = Vec::new();
+    for _ in 0..120 {
+        done.extend(sim.step(Duration(60.0)));
+    }
+    let arrived = done.iter().filter(|t| to_e.contains(&t.vehicle.raw())).count();
+    assert_eq!(arrived, 20, "every vehicle bound for `e` arrives within two hours");
+    let wait = worst_wait_on_ab(&f, &done, &to_e);
+    assert!(wait < 2.0, "past the parked front in its own lane: {wait} s beyond free flow");
 }
