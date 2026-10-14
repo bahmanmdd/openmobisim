@@ -1721,8 +1721,8 @@ class Scenario:
                 ``choose(batch)`` method (see ``openmobisim.choice`` for how to
                 write one). Unsaid: ``"nested_logit"`` when the run offers more than one mode
                 (``modes``, or the classes name them), ``"logit"`` otherwise. ``"logit"`` is the
-                standard path-size logit, sampled per traveller; ``"nested_logit"`` is the logit with
-                the alternatives of each mode in a nest of their own, for mode choice: a
+                standard path-size logit, sampled per traveller; ``"nested_logit"`` is the logit
+                with the alternatives of each mode in a nest of their own, for mode choice: a
                 mode's many routes do not outweigh another mode's one (under a flat logit the
                 car's share grows with how many of its routes are offered), and within a nest
                 the choice is sharper by ``1/mu`` — a stated car trip's route choice too, in
