@@ -1018,8 +1018,14 @@ pub fn run_pipeline(
         Some(t) => {
             let walk = layers.walk.as_ref().expect("made above for a timetable");
             let bike = setup(StaticLayer::Bike)?;
-            // Only the window's part of the day (S271): each run's calls inside it.
-            let (cut, report) = t.timetable.within(window.start_s, window.end_s);
+            // The window's part of the day and the planning horizon past its end (S271, S279):
+            // each run's calls from the window's start to its end plus the longest journey a
+            // trip may take, so a trip leaving late in the window still sees the journeys that
+            // end after it, as it sees its car and bike alternatives that would. The loading
+            // stops at the end, and the outputs keep the window's calls alone.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "seconds")]
+            let horizon = window.end_s.saturating_add(transit_defaults.journey_max_s.ceil() as u32);
+            let (cut, report) = t.timetable.within(window.start_s, horizon);
             window_cut = Some(report);
             let built = TransitSetup::new(Arc::new(cut), walk, Some(&bike), transit_defaults)
                 .with_access_search_s(access_search_s)
@@ -1163,6 +1169,7 @@ pub fn run_pipeline(
                 t.timetable(),
                 r,
                 &description,
+                window.end_s,
             )
             .map_err(to_value_error)?;
             Some(path.to_string_lossy().into_owned())
@@ -1235,7 +1242,7 @@ pub fn run_pipeline(
 
     let (transit_calls_table, transit_summary_table) = match (&result.transit, &transit_setup) {
         (Some(r), Some(t)) => (
-            Some(transit_calls(py, t.timetable(), r)?.unbind()),
+            Some(transit_calls(py, t.timetable(), r, window.end_s)?.unbind()),
             Some(transit_summary(py, r, t.bus_report())?.unbind()),
         ),
         _ => (None, None),

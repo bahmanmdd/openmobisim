@@ -241,8 +241,12 @@ pub(crate) fn transit_calls<'py>(
     py: Python<'py>,
     timetable: &Timetable,
     result: &TransitResult,
+    until_s: u32,
 ) -> PyResult<Bound<'py, PyDict>> {
     let n = timetable.call_count();
+    let s = timetable.scheduled();
+    // The window's calls alone (`until_s`, its end; S279): the timetable reaches past it.
+    let mut keep: Vec<usize> = Vec::with_capacity(n);
     let mut run = Vec::with_capacity(n);
     let mut line = Vec::with_capacity(n);
     let mut kind = Vec::with_capacity(n);
@@ -252,6 +256,10 @@ pub(crate) fn transit_calls<'py>(
         let id = TransitRunId::new(r);
         let route = timetable.run_route(id);
         for (k, c) in timetable.run_calls(id).enumerate() {
+            if s.departure[c] > until_s {
+                continue;
+            }
+            keep.push(c);
             run.push(timetable.run_ids().external(r).to_string());
             line.push(timetable.route_short_name(route).to_string());
             kind.push(timetable.route_kind(route).as_str());
@@ -260,22 +268,25 @@ pub(crate) fn transit_calls<'py>(
         }
     }
     let seconds = |v: &[u32]| -> Vec<f64> {
-        v.iter().map(|&t| if t == UNKNOWN_TIME { f64::NAN } else { f64::from(t) }).collect()
+        keep.iter()
+            .map(|&c| if v[c] == UNKNOWN_TIME { f64::NAN } else { f64::from(v[c]) })
+            .collect()
     };
+    let floats = |v: &[f64]| -> Vec<f64> { keep.iter().map(|&c| v[c]).collect() };
+    let on_board = result.on_board(timetable);
     let d = PyDict::new(py);
     d.set_item("run", run)?;
     d.set_item("line", line)?;
     d.set_item("kind", kind)?;
     d.set_item("stop_id", stop)?;
     d.set_item("sequence", sequence.into_pyarray(py))?;
-    let s = timetable.scheduled();
     d.set_item("scheduled_arrival_s", seconds(&s.arrival).into_pyarray(py))?;
     d.set_item("scheduled_departure_s", seconds(&s.departure).into_pyarray(py))?;
     d.set_item("arrival_s", seconds(&result.times.arrival).into_pyarray(py))?;
     d.set_item("departure_s", seconds(&result.times.departure).into_pyarray(py))?;
-    d.set_item("boardings", result.boardings.clone().into_pyarray(py))?;
-    d.set_item("alightings", result.alightings.clone().into_pyarray(py))?;
-    d.set_item("on_board", result.on_board(timetable).into_pyarray(py))?;
+    d.set_item("boardings", floats(&result.boardings).into_pyarray(py))?;
+    d.set_item("alightings", floats(&result.alightings).into_pyarray(py))?;
+    d.set_item("on_board", floats(&on_board).into_pyarray(py))?;
     Ok(d)
 }
 

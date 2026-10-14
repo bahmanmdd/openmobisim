@@ -1208,6 +1208,7 @@ impl Run {
         });
         let bike_planner = layers_arc.bike.as_ref().zip(bike_ctx.as_ref());
         let window_s = f64::from(self.window.get());
+        let window_end = self.window.get();
         let start_s = f64::from(self.window_start.get());
         let mut availability =
             parking_arc.as_deref().map(|p| ExpectedAvailability::initial(p, start_s, window_s));
@@ -1363,9 +1364,9 @@ impl Run {
                 clock = timings.lap("route_choice", Some(0), clock);
                 if let (Some(itin), Some(current)) = (&itineraries, &chosen) {
                     let transit = transit_arc.as_deref();
-                    let realised = transit
-                        .zip(loaded.transit.as_ref())
-                        .map(|(transit, t)| transit.on_times(&t.times));
+                    let realised = transit.zip(loaded.transit.as_ref()).map(|(transit, t)| {
+                        transit.on_times(&transit.expected(&t.times, window_end))
+                    });
                     let attributes = (mode_choice.is_some() || fallback_car)
                         .then(|| route_sets.attributes(&network));
                     let planner = Planner {
@@ -1507,9 +1508,9 @@ impl Run {
                             av.absorb(real);
                         }
                         let transit = transit_arc.as_deref();
-                        let realised = transit
-                            .zip(loaded.transit.as_ref())
-                            .map(|(transit, t)| transit.on_times(&t.times));
+                        let realised = transit.zip(loaded.transit.as_ref()).map(|(transit, t)| {
+                            transit.on_times(&transit.expected(&t.times, window_end))
+                        });
                         let attributes = (mode_choice.is_some() || fallback_car)
                             .then(|| route_sets.attributes(&network));
                         let planner = Planner {
@@ -2034,9 +2035,10 @@ impl Run {
         // and their times read back for the passengers.
         let transit = self.transit.clone();
         let disruptions = &self.disruptions;
+        let window_end_s = f64::from(self.window.get());
         let bus_load = transit.as_ref().filter(|t| t.rides(&self.network)).map(|t| {
             let timetable = t.timetable();
-            t.bus_load(total_trips, &|run| {
+            t.bus_load(total_trips, window_end_s, &|run| {
                 if disrupted { disruptions.effect_on(timetable, run) } else { None }
             })
         });

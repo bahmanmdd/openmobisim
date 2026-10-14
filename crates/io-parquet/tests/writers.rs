@@ -680,6 +680,7 @@ fn transit_calls_round_trip_with_an_unknown_time() {
         &timetable,
         &result,
         &sample_description(None, None),
+        u32::MAX,
     )
     .unwrap();
     let batch = read_first_batch(&path);

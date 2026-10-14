@@ -453,9 +453,12 @@ impl TransitSetup {
     /// The day's road-running runs as chained vehicles, their ids from `first_id` up; `effect`
     /// says which are disrupted (S239): a cancelled run's buses do not run, a delayed run's
     /// first leaves its first stop that much later.
+    /// `until_s` is the window's end: a run leaving its first stop at or after it is not
+    /// loaded (the timetable reaches past the end for planning, S279; the roads stop at it).
     pub(crate) fn bus_load(
         &self,
         first_id: u32,
+        until_s: f64,
         effect: &dyn Fn(TransitRunId) -> Option<crate::disruptions::TransitEffect>,
     ) -> BusLoad {
         use crate::disruptions::TransitEffect;
@@ -473,6 +476,10 @@ impl TransitSetup {
                 };
                 let calls: Vec<usize> = t.run_calls(run).collect();
                 let sched = t.scheduled();
+                if f64::from(sched.departure[calls[0]]) + late >= until_s {
+                    // After the window: planned on, never loaded; its calls keep the schedule.
+                    continue;
+                }
                 // The departure rule for the next leg: max(leader's arrival + wait, not_before);
                 // with no leader yet, `not_before` alone.
                 let (mut wait, mut not_before) = (0.0, f64::from(sched.departure[calls[0]]) + late);
@@ -588,6 +595,42 @@ impl TransitSetup {
             times.departure[last] = times.arrival[last];
         }
         times
+    }
+
+    /// The times a traveller plans on after a loading (S279): `times` with every call scheduled
+    /// after `until_s` (the window's end) that is unknown — a bus still under way when the
+    /// window closed, or one never loaded because it leaves after it — filled with the
+    /// schedule shifted by the run's last known delay (its last realised call against the
+    /// schedule; none known: the schedule). A journey that ends after the window's end is then
+    /// offered like the car trip that would, and is unfinished if taken. A call scheduled
+    /// inside the window stays unknown when it is: a cancelled run, or a bus that never came,
+    /// is not planned on; execution keeps the realised times throughout, so nobody boards a
+    /// bus the loading never brought.
+    #[must_use]
+    pub fn expected(&self, times: &CallTimes, until_s: u32) -> CallTimes {
+        let t = &self.timetable;
+        let sched = t.scheduled();
+        let mut out = times.clone();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "clamped")]
+        let shifted = |s: u32, delay: i64| -> u32 {
+            (i64::from(s) + delay).clamp(0, i64::from(UNKNOWN_TIME - 1)) as u32
+        };
+        for r in 0..t.run_count() {
+            let mut delay: i64 = 0;
+            for c in t.run_calls(TransitRunId::new(r)) {
+                if times.arrival[c] != UNKNOWN_TIME {
+                    delay = i64::from(times.arrival[c]) - i64::from(sched.arrival[c]);
+                } else if sched.arrival[c] > until_s {
+                    out.arrival[c] = shifted(sched.arrival[c], delay);
+                }
+                if times.departure[c] != UNKNOWN_TIME {
+                    delay = i64::from(times.departure[c]) - i64::from(sched.departure[c]);
+                } else if sched.departure[c] > until_s {
+                    out.departure[c] = shifted(sched.departure[c], delay);
+                }
+            }
+        }
+        out
     }
 
     /// The timetable.

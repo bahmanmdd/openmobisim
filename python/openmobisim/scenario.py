@@ -1475,9 +1475,9 @@ class Scenario:
             modes = [m for m in MODES if any(m in ms for ms in self._class_modes.values())]
         if choice_model is None:
             # Mode choice by the nested logit, one nest per mode, so a mode's share does not
-            # grow with how many routes or journeys its nest holds; route choice alone by the
-            # path-size logit (S279, CM-2).
-            choice_model = "nested_logit" if modes else "logit"
+            # grow with how many routes or journeys its nest holds; a run offering one mode
+            # (or none) chooses routes by the path-size logit (S279, CM-2).
+            choice_model = "nested_logit" if modes and len(modes) > 1 else "logit"
         self._default_weight = default_weight
         self._window = _window(window)
         self._flow_level = flow_level
@@ -1718,8 +1718,8 @@ class Scenario:
             choice_model: How each trip picks a route from its pair's set: a
                 name from ``openmobisim.choice_models()`` or an object with a
                 ``choose(batch)`` method (see ``openmobisim.choice`` for how to
-                write one). Unsaid: ``"nested_logit"`` when the run offers modes (``modes``, or
-                the classes name them), ``"logit"`` otherwise. ``"logit"`` is the standard
+                write one). Unsaid: ``"nested_logit"`` when the run offers more than one mode
+                (``modes``, or the classes name them), ``"logit"`` otherwise. ``"logit"`` is the standard
                 path-size logit, sampled per traveller; ``"nested_logit"`` is the logit with
                 the alternatives of each mode in a nest of their own, for mode choice: a
                 mode's many routes do not outweigh another mode's one (under a flat logit the

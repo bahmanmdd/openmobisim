@@ -452,6 +452,7 @@ fn transit_probe(dir: &std::path::Path) {
         transit.timetable(),
         t,
         &description,
+        u32::MAX,
     )
     .expect("write transit calls");
     println!("transit_fingerprint   {}", description.fingerprint_hex());

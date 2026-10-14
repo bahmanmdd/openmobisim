@@ -3,7 +3,8 @@
 What is defended: trips departing outside the window are left out, not simulated and not
 counted, with a warning that says how many and when; without a window the run takes three hours
 from the earliest departure; a run started at the window's start finishes trips as one started
-at midnight; a timetable keeps only the calls inside the window.
+at midnight; a timetable keeps the calls inside the window and, for planning, those up to the
+longest journey past its end (S279), while the calls table shows the window's alone.
 """
 
 import openmobisim as ms
@@ -116,3 +117,33 @@ def test_a_timetable_keeps_only_its_calls_inside_the_window():
     calls = r.transit_calls()
     assert max(calls["scheduled_departure_s"]) <= 1800, "no call after the window's end"
     assert r.completion_by_mode["transit"]["completed"] == 1
+
+
+def test_a_journey_that_ends_after_the_window_is_offered_and_left_unfinished():
+    # The toy tram leaves N1 at 600 and is at H at 900; W → N3 at 200 walks 318 s to the stop,
+    # rides, and walks 345 s on: at N3 at 1245. With the window closing at 800 the tram's call
+    # at 900 is past it. Before S279 the timetable was cut at the window's end and the trip had
+    # no alternative; now the journey is planned on (the timetable reaches past the end) and the
+    # trip is unfinished at 800, as a car trip arriving at 1245 would be. The calls table still
+    # shows the window's calls alone.
+    import warnings
+
+    net = ms.examples.toy_network()
+    o, d = net.node_lonlat("W"), net.node_lonlat("N3")
+    rows = [("p", 0, o[0], o[1], d[0], d[1], 200, "everyone", None, "transit")]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ms.NoAlternativeWarning)
+        r = ms.Scenario.from_parts(
+            net,
+            rows,
+            classes=EVERYONE,
+            transit=ms.examples.toy_network_transit(),
+            equilibration="free_flow",
+            window=(0, 800),
+        ).run("window-horizon", quiet=True)
+    assert r.completion["total_trips"] == 1 and r.completion["completed"] == 0, r.completion
+    calls = r.transit_calls()
+    assert len(calls["scheduled_departure_s"]) > 0
+    assert max(calls["scheduled_departure_s"]) <= 800, "nothing after the window is shown"
+    assert r.window["timetable_runs_kept"] >= 1
+

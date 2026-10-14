@@ -51,9 +51,14 @@ pub fn write_transit_calls(
     timetable: &Timetable,
     result: &TransitResult,
     description: &RunDescription,
+    until_s: u32,
 ) -> Result<(), WriteError> {
     let n = timetable.call_count();
     assert_eq!(result.boardings.len(), n, "the result is of this timetable");
+    let scheduled = timetable.scheduled();
+    // The window's calls alone (`until_s`, its end): the timetable reaches past it for
+    // planning (S279), and nothing after the window is shown.
+    let mut keep: Vec<usize> = Vec::with_capacity(n);
     let mut run = Vec::with_capacity(n);
     let mut line = Vec::with_capacity(n);
     let mut kind = Vec::with_capacity(n);
@@ -63,6 +68,10 @@ pub fn write_transit_calls(
         let id = TransitRunId::new(r);
         let route = timetable.run_route(id);
         for (k, c) in timetable.run_calls(id).enumerate() {
+            if scheduled.departure[c] > until_s {
+                continue;
+            }
+            keep.push(c);
             run.push(timetable.run_ids().external(r));
             line.push(timetable.route_short_name(route));
             kind.push(timetable.route_kind(route).as_str());
@@ -72,12 +81,15 @@ pub fn write_transit_calls(
     }
     let times = |v: &[u32]| -> ArrayRef {
         Arc::new(UInt32Array::from(
-            v.iter().map(|&t| (t != UNKNOWN_TIME).then_some(t)).collect::<Vec<_>>(),
+            keep.iter().map(|&c| (v[c] != UNKNOWN_TIME).then_some(v[c])).collect::<Vec<_>>(),
         ))
     };
-    let scheduled = timetable.scheduled();
+    let floats = |v: &[f64]| -> ArrayRef {
+        Arc::new(Float64Array::from(keep.iter().map(|&c| v[c]).collect::<Vec<_>>()))
+    };
+    let on_board = result.on_board(timetable);
     let columns: Vec<ArrayRef> = vec![
-        Arc::new(StringArray::from(vec![run_id; n])),
+        Arc::new(StringArray::from(vec![run_id; keep.len()])),
         Arc::new(StringArray::from(run)),
         Arc::new(StringArray::from(line)),
         Arc::new(StringArray::from(kind)),
@@ -87,9 +99,9 @@ pub fn write_transit_calls(
         times(&scheduled.departure),
         times(&result.times.arrival),
         times(&result.times.departure),
-        Arc::new(Float64Array::from(result.boardings.clone())),
-        Arc::new(Float64Array::from(result.alightings.clone())),
-        Arc::new(Float64Array::from(result.on_board(timetable))),
+        floats(&result.boardings),
+        floats(&result.alightings),
+        floats(&on_board),
     ];
     let metadata = vec![
         ("openmobisim.run_fingerprint".to_string(), description.fingerprint_hex()),
