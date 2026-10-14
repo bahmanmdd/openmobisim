@@ -53,6 +53,17 @@ use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 
+/// The shipped mode defaults without the car's access and egress (S279): the hand values here are
+/// the drives and rides alone (`W → M`: the car's 80 s against the bike's 120 s); the access and
+/// egress are tested in the Python suite (`test_modes.py`).
+const NO_ACCESS: ModeDefaults = ModeDefaults {
+    walk_max_s: 1800.0,
+    bike_max_s: 3600.0,
+    fallback_car: false,
+    car_access_s: 0.0,
+    car_egress_s: 0.0,
+};
+
 struct Toy {
     road: Arc<RoadNetwork>,
     layers: Arc<StaticLayers>,
@@ -149,6 +160,7 @@ impl Toy {
         let mut run =
             Run::new(self.road.clone(), Arc::new(travellers), Arc::new(trips), Second(20_000))
                 .with_layers(self.layers.clone())
+                .with_mode_defaults(NO_ACCESS)
                 .with_mode_choice(&setup.modes);
         if setup.transit {
             run = run
@@ -486,7 +498,7 @@ fn mc7b_a_class_s_own_limits_replace_the_run_s() {
             .execute(&mut Diagnostics::new())
     };
     let count = |r: &RunResult| r.itineraries.as_ref().unwrap().alternatives[0];
-    let short = ModeDefaults { walk_max_s: 300.0, bike_max_s: 100.0, ..ModeDefaults::SHIPPED };
+    let short = ModeDefaults { walk_max_s: 300.0, bike_max_s: 100.0, ..NO_ACCESS };
     // A class giving nothing takes the run's: walk and bike dropped, as in mc7.
     assert_eq!(count(&run(short, ClassLimits::default())), 3);
     // Its own longer ride brings the bike back (144 s), the walk stays out (318.198 s).
@@ -495,15 +507,15 @@ fn mc7b_a_class_s_own_limits_replace_the_run_s() {
     assert_eq!(chosen(&t, &r, 0).0, Mode::Bike);
     // Its own shorter limits drop them under the run's longer ones.
     let r = run(
-        ModeDefaults::SHIPPED,
+        NO_ACCESS,
         ClassLimits { walk_max_s: Some(300.0), bike_max_s: Some(100.0), ..ClassLimits::default() },
     );
     assert_eq!(count(&r), 3, "as the run's own short limits");
     // A class walking 30 minutes to a stop, the shipped limit, is also offered the tram from
     // W, beyond the toy's 15 minutes; one walking 15 minutes of its own is not.
     let walking = |s: f64| ClassLimits { access_walk_max_s: Some(s), ..ClassLimits::default() };
-    assert_eq!(count(&run(ModeDefaults::SHIPPED, walking(1800.0))), 6, "and plain transit");
-    assert_eq!(count(&run(ModeDefaults::SHIPPED, walking(900.0))), 5);
+    assert_eq!(count(&run(NO_ACCESS, walking(1800.0))), 6, "and plain transit");
+    assert_eq!(count(&run(NO_ACCESS, walking(900.0))), 5);
     // Another class's limits do not touch this one's trips.
     let two = t
         .build(one(), &Setup::default())
@@ -554,19 +566,19 @@ fn mc7_mode_choice_offers_a_walk_or_a_ride_only_up_to_its_cut_offs() {
     };
     let count = |r: &RunResult| r.itineraries.as_ref().unwrap().alternatives[0];
     // The defaults (30 minutes' walk, 60 minutes' ride) offer both: bike 144 s, walk 318.198 s.
-    assert_eq!(count(&run(ModeDefaults::SHIPPED)), 5);
+    assert_eq!(count(&run(NO_ACCESS)), 5);
     // A 300-s walk limit drops the walk only; the bike still wins.
-    let r = run(ModeDefaults { walk_max_s: 300.0, ..ModeDefaults::SHIPPED });
+    let r = run(ModeDefaults { walk_max_s: 300.0, ..NO_ACCESS });
     assert_eq!(count(&r), 4, "bike, two park-and-ride, one bike-and-ride");
     assert_eq!(chosen(&t, &r, 0).0, Mode::Bike);
     // A 100-s ride limit drops the bike too; bike-and-ride's own ride is not a bike trip.
-    let r = run(ModeDefaults { walk_max_s: 300.0, bike_max_s: 100.0, ..ModeDefaults::SHIPPED });
+    let r = run(ModeDefaults { walk_max_s: 300.0, bike_max_s: 100.0, ..NO_ACCESS });
     assert_eq!(count(&r), 3, "two park-and-ride, one bike-and-ride");
     assert!(!matches!(chosen(&t, &r, 0).0, Mode::Bike | Mode::Walk));
     // A trip given the mode is not cut off: it walks its 318.198 s.
     let stated = t
         .build(vec![t.trip("b", 0, ("W", "N1"), 0, Some(Mode::Walk))], &Setup::default())
-        .with_mode_defaults(ModeDefaults { walk_max_s: 300.0, ..ModeDefaults::SHIPPED })
+        .with_mode_defaults(ModeDefaults { walk_max_s: 300.0, ..NO_ACCESS })
         .execute(&mut Diagnostics::new());
     assert_eq!(outcomes(&stated), [(EventType::TripCompleted, 318)]);
 }
@@ -575,7 +587,7 @@ fn mc7_mode_choice_offers_a_walk_or_a_ride_only_up_to_its_cut_offs() {
 fn mc8_a_trip_with_no_alternative_is_reported_with_each_mode_s_reason() {
     let t = toy();
     let setup = Setup { parking_at_any_length: false, ..Setup::default() };
-    let short = ModeDefaults { walk_max_s: 300.0, bike_max_s: 100.0, ..ModeDefaults::SHIPPED };
+    let short = ModeDefaults { walk_max_s: 300.0, bike_max_s: 100.0, ..NO_ACCESS };
     let r = t
         .build(vec![t.trip("a", 0, ("W", "N1"), 0, None)], &setup)
         .with_mode_defaults(short)
@@ -607,7 +619,7 @@ fn mc8b_the_car_fallback_enters_the_fingerprint_where_it_can_act() {
     let one = || vec![t.trip("a", 0, ("W", "N1"), 0, None)];
     let fingerprint = |fallback_car: bool, setup: &Setup| {
         t.build(one(), setup)
-            .with_mode_defaults(ModeDefaults { fallback_car, ..ModeDefaults::SHIPPED })
+            .with_mode_defaults(ModeDefaults { fallback_car, ..NO_ACCESS })
             .description()
             .fingerprint
     };
