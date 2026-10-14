@@ -406,7 +406,13 @@ impl RoadClass {
         )
     }
 
-    /// Whether cyclists may use this class by default.
+    /// Whether cyclists may use this class by default, when no tag says more.
+    ///
+    /// Not motorways, trunk roads and their links (a tag such as
+    /// `bicycle=yes` overrides the class; the OSM reader reads it so, G-19),
+    /// footways, pedestrian streets (a bike is let on them by a tag only) and
+    /// busways. This is the single source of the class part of the bike rule,
+    /// for the OSM reader and the bike layer derived from a road table alike.
     #[inline]
     #[must_use]
     pub const fn carries_cyclists(self) -> bool {
@@ -414,8 +420,10 @@ impl RoadClass {
             self,
             RoadClass::Motorway
                 | RoadClass::MotorwayLink
-                | RoadClass::Footway
                 | RoadClass::Trunk
+                | RoadClass::TrunkLink
+                | RoadClass::Footway
+                | RoadClass::Pedestrian
                 | RoadClass::Busway
         )
     }

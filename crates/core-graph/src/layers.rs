@@ -615,14 +615,7 @@ impl StaticNetwork {
 
 /// Whether a road link of `class` is a bike link when no tags say more.
 fn carries_bikes_by_class(class: RoadClass) -> bool {
-    !matches!(
-        class,
-        RoadClass::Motorway
-            | RoadClass::MotorwayLink
-            | RoadClass::Footway
-            | RoadClass::Pedestrian
-            | RoadClass::Busway
-    )
+    class.carries_cyclists()
 }
 
 /// Whether a road link of `class` is a walk link when no tags say more.
