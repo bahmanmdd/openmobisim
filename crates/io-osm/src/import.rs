@@ -50,8 +50,12 @@ pub mod codes {
 
     /// A way carried a `highway` value the defaults table does not model.
     pub const UNKNOWN_HIGHWAY_CLASS: DiagCode = DiagCode("osm_unknown_highway_class");
-    /// A way was excluded by `access=no` or `access=private`.
+    /// A way was excluded by `access=no` or `access=private`, or a car-class way
+    /// by `motorcar`, `motor_vehicle` or `vehicle` set to `no` or `private`.
     pub const ACCESS_DENIED: DiagCode = DiagCode("osm_access_denied");
+    /// A `highway=service` way that is a parking aisle, driveway, drive-through or
+    /// emergency access was left out of the road network.
+    pub const SERVICE_NOT_A_STREET: DiagCode = DiagCode("osm_service_not_a_street");
     /// A way was tagged `area=yes` and is not a linear road.
     pub const IS_AN_AREA: DiagCode = DiagCode("osm_is_an_area");
     /// A way had fewer than two nodes.
@@ -822,6 +826,7 @@ fn record_rejection(diagnostics: &mut Diagnostics, reason: Rejection) {
         Rejection::UnknownHighwayClass => codes::UNKNOWN_HIGHWAY_CLASS,
         Rejection::IsAnArea => codes::IS_AN_AREA,
         Rejection::AccessDenied => codes::ACCESS_DENIED,
+        Rejection::ServiceNotAStreet => codes::SERVICE_NOT_A_STREET,
         Rejection::TooFewNodes => codes::TOO_FEW_NODES,
     };
     diagnostics.record(DiagKey::run_level(Category::DataQuality, code, Severity::Info));

@@ -275,3 +275,49 @@ fn a_ferry_joins_two_banks_for_bikes_and_walkers_but_not_for_cars() {
         bike.network.link_costs(openmobisim_core_graph::layers::BikeCost::Dedicated, 1.0, 1.2);
     assert!((costs[ferry.index()] - 600.0).abs() < 1e-6);
 }
+
+#[test]
+fn a_street_closed_to_cars_is_no_road_link_but_keeps_its_bike_and_walk_links() {
+    // G-17: `motor_vehicle=no` (and `motorcar=no`, `vehicle=no`) on a residential
+    // street closes it to cars; bikes and walkers keep it by their own rules.
+    for (key, value) in [("motor_vehicle", "no"), ("motorcar", "no"), ("vehicle", "private")] {
+        let source = MemorySource::new()
+            .nodes([node(1, 0.0, 0.0), node(2, 1.0, 0.0), node(3, 2.0, 0.0)])
+            .way(OsmWay::new(100, [1, 2], [("highway", "residential")]))
+            .way(OsmWay::new(101, [2, 3], [("highway", "residential"), (key, value)]));
+        let (out, diag) =
+            import(&source, ImportOptions { connectivity: Connectivity::Keep, ..uncontracted() });
+        assert!(has(&out.network, "1", "2") && has(&out.network, "2", "1"));
+        assert!(
+            !has(&out.network, "2", "3") && !has(&out.network, "3", "2"),
+            "{key}={value} carries no car link: {:?}",
+            pairs(&out.network)
+        );
+        assert_eq!(diag.count_of(openmobisim_io_osm::import::codes::ACCESS_DENIED), 1);
+        let (bike, walk) = (out.bike.unwrap().network, out.walk.unwrap().network);
+        for g in [bike.network(), walk.network()] {
+            assert!(has(g, "2", "3") && has(g, "3", "2"), "{key}={value}: {:?}", pairs(g));
+        }
+    }
+}
+
+#[test]
+fn a_parking_aisle_or_driveway_is_no_road_link_but_stays_walkable() {
+    // G-18.
+    for service in ["parking_aisle", "driveway", "drive-through", "emergency_access"] {
+        let source = MemorySource::new()
+            .nodes([node(1, 0.0, 0.0), node(2, 1.0, 0.0), node(3, 2.0, 0.0)])
+            .way(OsmWay::new(100, [1, 2], [("highway", "residential")]))
+            .way(OsmWay::new(101, [2, 3], [("highway", "service"), ("service", service)]));
+        let (out, diag) =
+            import(&source, ImportOptions { connectivity: Connectivity::Keep, ..uncontracted() });
+        assert!(
+            !has(&out.network, "2", "3") && !has(&out.network, "3", "2"),
+            "service={service} carries no car link: {:?}",
+            pairs(&out.network)
+        );
+        assert_eq!(diag.count_of(openmobisim_io_osm::import::codes::SERVICE_NOT_A_STREET), 1);
+        let walk = out.walk.unwrap().network;
+        assert!(has(walk.network(), "2", "3") && has(walk.network(), "3", "2"), "{service}");
+    }
+}

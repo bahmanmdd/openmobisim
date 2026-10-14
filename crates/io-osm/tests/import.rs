@@ -341,7 +341,7 @@ fn an_unparseable_speed_limit_falls_back_and_is_recorded() {
     let source = MemorySource::new().nodes([node(1, 0.0), node(2, 1.0)]).way(OsmWay::new(
         100,
         [1, 2],
-        [("highway", "primary"), ("maxspeed", "DE:urban")],
+        [("highway", "primary"), ("maxspeed", "XX:signals")],
     ));
 
     let (net, diag, _) = run(&source);

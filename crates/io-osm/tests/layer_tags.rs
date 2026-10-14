@@ -34,15 +34,37 @@ fn motorways_and_ways_closed_to_bikes_are_not_bike_links() {
 }
 
 #[test]
-fn every_other_car_road_is_a_mixed_bike_link_trunk_included() {
-    for highway in ["trunk", "trunk_link", "primary", "secondary", "tertiary", "unclassified"]
-        .into_iter()
-        .chain(["residential", "living_street", "service"])
-    {
+fn every_other_car_road_is_a_mixed_bike_link() {
+    for highway in ["primary", "secondary", "tertiary", "unclassified"].into_iter().chain([
+        "residential",
+        "living_street",
+        "service",
+    ]) {
         let way = bike(&[("highway", highway)]).expect(highway);
         assert_eq!((way.forward, way.backward), (Some(Mixed), Some(Mixed)), "{highway}");
         assert!(!way.dismount);
     }
+}
+
+#[test]
+fn a_trunk_road_carries_bikes_only_where_a_tag_lets_them_on() {
+    for highway in ["trunk", "trunk_link"] {
+        assert_eq!(bike(&[("highway", highway)]), None, "plain {highway}");
+        assert_eq!(bike(&[("highway", highway), ("bicycle", "dismount")]), None, "{highway}");
+        for value in ["yes", "designated", "permissive"] {
+            let way = bike(&[("highway", highway), ("bicycle", value)]).expect(value);
+            assert_eq!(
+                (way.forward, way.backward),
+                (Some(Mixed), Some(Mixed)),
+                "{highway} {value}"
+            );
+        }
+        // The other closing tags still win.
+        assert_eq!(bike(&[("highway", highway), ("bicycle", "yes"), ("motorroad", "yes")]), None);
+        assert_eq!(bike(&[("highway", highway), ("bicycle", "no")]), None);
+    }
+    // The class rule is the one place the class part of the rule lives.
+    assert!(!RoadClass::Trunk.carries_cyclists() && !RoadClass::TrunkLink.carries_cyclists());
 }
 
 #[test]
@@ -142,6 +164,72 @@ fn opposite_values_open_the_contraflow_with_their_own_infrastructure() {
     let track =
         bike(&[("highway", "residential"), ("oneway", "yes"), ("cycleway", "opposite_track")]);
     assert_eq!(track.map(|w| (w.forward, w.backward)), Some((Some(Mixed), Some(Separated))));
+}
+
+#[test]
+fn modern_contraflow_tagging_opens_the_contraflow_on_its_own_side() {
+    let one_way = [("highway", "residential"), ("oneway", "yes")];
+    let with = |extra: &[(&'static str, &'static str)]| {
+        let mut all = one_way.to_vec();
+        all.extend_from_slice(extra);
+        bike(&all).map(|w| (w.forward, w.backward))
+    };
+    // `oneway:bicycle=no` opens it; the left lane is the contraflow lane and the
+    // with-flow side is mixed traffic.
+    assert_eq!(
+        with(&[("oneway:bicycle", "no"), ("cycleway:left", "lane")]),
+        Some((Some(Mixed), Some(Lane)))
+    );
+    assert_eq!(
+        with(&[("oneway:bicycle", "no"), ("cycleway:left", "track")]),
+        Some((Some(Mixed), Some(Separated)))
+    );
+    // Both sides: right with the flow, left against it.
+    assert_eq!(
+        with(&[("oneway:bicycle", "no"), ("cycleway:right", "track"), ("cycleway:left", "lane")]),
+        Some((Some(Separated), Some(Lane)))
+    );
+    // `opposite_*` on a side key opens it with that facility, from either key.
+    for key in ["cycleway:left", "cycleway:right", "cycleway:both"] {
+        assert_eq!(
+            with(&[(key, "opposite_lane")]),
+            Some((Some(Mixed), Some(Lane))),
+            "{key}=opposite_lane"
+        );
+    }
+    assert_eq!(with(&[("cycleway:left", "opposite_track")]), Some((Some(Mixed), Some(Separated))));
+    // A lane whose own `oneway` runs against the street is a contraflow lane.
+    assert_eq!(
+        with(&[("cycleway:left", "lane"), ("cycleway:left:oneway", "-1")]),
+        Some((Some(Mixed), Some(Lane)))
+    );
+    // The with-flow lane on the right stays with the flow when the contraflow is open.
+    assert_eq!(
+        with(&[("oneway:bicycle", "no"), ("cycleway:right", "lane")]),
+        Some((Some(Lane), Some(Mixed)))
+    );
+    // A left lane alone, with the contraflow closed, serves the street's direction (as before).
+    assert_eq!(with(&[("cycleway:left", "lane")]), Some((Some(Lane), None)));
+}
+
+#[test]
+fn modern_contraflow_tagging_is_mirrored_on_a_street_one_way_the_other_way() {
+    let reverse = [("highway", "residential"), ("oneway", "-1")];
+    let with = |extra: &[(&'static str, &'static str)]| {
+        let mut all = reverse.to_vec();
+        all.extend_from_slice(extra);
+        bike(&all).map(|w| (w.forward, w.backward))
+    };
+    // Cars go against the way's node order, so the contraflow (bikes forward) is the right side.
+    assert_eq!(
+        with(&[("oneway:bicycle", "no"), ("cycleway:right", "lane")]),
+        Some((Some(Lane), Some(Mixed)))
+    );
+    assert_eq!(
+        with(&[("oneway:bicycle", "no"), ("cycleway:left", "track")]),
+        Some((Some(Mixed), Some(Separated)))
+    );
+    assert_eq!(with(&[("cycleway", "opposite_lane")]), Some((Some(Lane), Some(Mixed))));
 }
 
 #[test]

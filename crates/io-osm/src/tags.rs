@@ -16,10 +16,12 @@
 //!
 //! # What is deliberately not here
 //!
-//! **Implicit country speed limits.** `maxspeed=DE:urban` means 50 km/h to a
-//! German, and the mapping is a table of a few hundred entries that changes
-//! with the law. It is a v2 addition with its own data file; until then the
-//! road class default applies and the way is recorded.
+//! **Country-specific speed limits.** `maxspeed=DE:urban` means 50 km/h to a
+//! German; the real mapping is a table of a few hundred entries that changes
+//! with the law. [`maxspeed`] reads a small table of the usual implicit codes
+//! with the country prefix ignored ([`IMPLICIT_SPEED_LIMITS_KM_H`], G-21);
+//! a per-country data file is a later addition. Codes the table lacks fall to
+//! the road class default and the way is recorded.
 //!
 //! **Turn restrictions.** They are OSM *relations*, not way tags, and they only
 //! ever remove turns — so they can arrive later without changing anything built
@@ -116,8 +118,15 @@ pub enum Rejection {
     UnknownHighwayClass,
     /// `area=yes` — a pedestrian square, not a linear way.
     IsAnArea,
-    /// `access=no` or `access=private`.
+    /// `access=no` or `access=private`, or a car-class way closed to cars by
+    /// `motorcar`, `motor_vehicle` or `vehicle` set to `no` or `private`
+    /// (G-17).
     AccessDenied,
+    /// A `highway=service` way that is a parking aisle, driveway,
+    /// drive-through or emergency access (`service=…`, G-18): not part of the
+    /// street network cars are routed on (it stays walkable, and cycleable
+    /// where tagged).
+    ServiceNotAStreet,
     /// Fewer than two nodes, so it has no geometry.
     TooFewNodes,
 }
@@ -131,12 +140,35 @@ impl Rejection {
             Rejection::UnknownHighwayClass => "unknown_highway_class",
             Rejection::IsAnArea => "is_an_area",
             Rejection::AccessDenied => "access_denied",
+            Rejection::ServiceNotAStreet => "service_not_a_street",
             Rejection::TooFewNodes => "too_few_nodes",
         }
     }
 }
 
+/// The `service=…` values of a `highway=service` way that is not a street cars
+/// are routed on: a parking aisle, a driveway, a drive-through lane, an
+/// emergency access (G-18). `alley` and an untyped `service` stay roads.
+const NON_STREET_SERVICES: [&str; 4] =
+    ["parking_aisle", "driveway", "drive-through", "emergency_access"];
+
+/// Whether `value` closes a way (`no`, `private`) when read as an access value.
+fn closes(value: &str) -> bool {
+    matches!(value, "no" | "private")
+}
+
 /// Decide whether a way is a road this importer models, and which class.
+///
+/// A way closed to cars is not a car link (G-17): `access=no|private`, or
+/// the most specific of `motorcar`, `motor_vehicle`, `vehicle` that the way
+/// carries being `no` or `private` (`motor_vehicle=yes` therefore overrides
+/// `vehicle=no`). Such a way stays in the bike and walk layers by their own
+/// rules, and is a [`RoadClass::Busway`] instead when buses may use it
+/// (`bus` or `psv` `yes|designated`). `access=destination|delivery|customers`
+/// stay drivable — a level-0 simplification: the restriction is on through
+/// traffic and belongs to routing, not to the network. `highway=service` ways
+/// that are parking aisles, driveways, drive-throughs or emergency accesses
+/// (`service=…`) are refused with [`Rejection::ServiceNotAStreet`] (G-18).
 ///
 /// # Errors
 ///
@@ -160,15 +192,29 @@ pub fn classify(tags: &[(String, String)], node_count: usize) -> Result<RoadClas
         (for_buses("bus") || for_buses("psv"))
             && class.as_ref().is_ok_and(|c| c.carries_motor_traffic())
     };
-    if matches!(tag_of(tags, "access"), Some("no" | "private")) {
+    if tag_of(tags, "access").is_some_and(closes) {
         return if bus_only_road(&class) {
             Ok(RoadClass::Busway)
         } else {
             Err(Rejection::AccessDenied)
         };
     }
-    if tag_of(tags, "motor_vehicle") == Some("no") && bus_only_road(&class) {
-        return Ok(RoadClass::Busway);
+    // Closed to cars by the most specific vehicle key (G-17).
+    let closed_to_cars = ["motorcar", "motor_vehicle", "vehicle"]
+        .into_iter()
+        .find_map(|key| tag_of(tags, key))
+        .is_some_and(closes);
+    if closed_to_cars && class.as_ref().is_ok_and(|c| c.carries_motor_traffic()) {
+        return if bus_only_road(&class) {
+            Ok(RoadClass::Busway)
+        } else {
+            Err(Rejection::AccessDenied)
+        };
+    }
+    if highway == "service"
+        && tag_of(tags, "service").is_some_and(|v| NON_STREET_SERVICES.contains(&v))
+    {
+        return Err(Rejection::ServiceNotAStreet);
     }
     class
 }
@@ -241,9 +287,13 @@ pub fn lanes(tags: &[(String, String)], direction: Direction) -> Lanes {
 /// Read a speed limit.
 ///
 /// Accepted forms: a bare number (km/h); a number with `km/h`, `kph`, `kmh`,
-/// `mph` or `knots`; `walk`; `none`. A semicolon-separated list takes its first
-/// entry. Anything else — country codes such as `DE:urban`, free text — is
-/// [`Maxspeed::Unparsed`].
+/// `mph` or `knots`; `walk`; `none`; and an implicit country code
+/// (`XX:urban`, `XX:rural`, `XX:motorway`, `XX:trunk`, `XX:living_street`,
+/// `XX:zone30`, `XX:zone20`, with `XX` two capital letters), read from
+/// [`IMPLICIT_SPEED_LIMITS_KM_H`] with the country ignored (G-21), except
+/// `DE:motorway`, which has no limit ([`Maxspeed::Unlimited`]). A
+/// semicolon-separated list takes its first entry. Anything else — other
+/// codes, free text — is [`Maxspeed::Unparsed`].
 ///
 /// # Examples
 ///
@@ -255,7 +305,10 @@ pub fn lanes(tags: &[(String, String)], direction: Direction) -> Lanes {
 /// assert_eq!(maxspeed(&tag("50")), Maxspeed::Known(50.0));
 /// assert_eq!(maxspeed(&tag("30 mph")), Maxspeed::Known(30.0 * 1.609_344));
 /// assert_eq!(maxspeed(&tag("none")), Maxspeed::Unlimited);
-/// assert_eq!(maxspeed(&tag("DE:urban")), Maxspeed::Unparsed);
+/// assert_eq!(maxspeed(&tag("NL:urban")), Maxspeed::Known(50.0));
+/// assert_eq!(maxspeed(&tag("FR:rural")), Maxspeed::Known(80.0));
+/// assert_eq!(maxspeed(&tag("DE:motorway")), Maxspeed::Unlimited);
+/// assert_eq!(maxspeed(&tag("XX:signals")), Maxspeed::Unparsed);
 /// assert_eq!(maxspeed(&[]), Maxspeed::Absent);
 /// ```
 #[must_use]
@@ -272,6 +325,9 @@ pub fn maxspeed(tags: &[(String, String)]) -> Maxspeed {
         "none" | "unlimited" => return Maxspeed::Unlimited,
         "walk" | "walking" => return Maxspeed::Known(WALKING_SPEED_KM_H),
         _ => {}
+    }
+    if let Some(implicit) = implicit_limit(value) {
+        return implicit;
     }
 
     // Split a leading number from a trailing unit.
@@ -291,6 +347,40 @@ pub fn maxspeed(tags: &[(String, String)]) -> Maxspeed {
         "knots" => Maxspeed::Known(n * 1.852),
         _ => Maxspeed::Unparsed,
     }
+}
+
+/// The speed limits that an implicit `maxspeed=XX:<kind>` code stands for, in
+/// km/h, by `<kind>` (G-21). The country prefix `XX` is ignored, except that
+/// `DE:motorway` has no limit and is read as [`Maxspeed::Unlimited`].
+///
+/// *Uncalibrated: the usual limit of the countries that use these codes (NL, FR,
+/// BE, DE, …), one value for all of them. Source: the OpenStreetMap wiki,
+/// *Default speed limits*, <https://wiki.openstreetmap.org/wiki/Default_speed_limits>.
+/// Where a country differs (Germany's rural roads 100 km/h, the Netherlands'
+/// motorways 100 km/h by day, Belgium's regional rural limits) the table gives
+/// the common value; set the way's `maxspeed` to a number, or calibrate, to
+/// change it.*
+pub const IMPLICIT_SPEED_LIMITS_KM_H: [(&str, f64); 7] = [
+    ("urban", 50.0),
+    ("rural", 80.0),
+    ("motorway", 130.0),
+    ("trunk", 100.0),
+    ("living_street", 15.0),
+    ("zone30", 30.0),
+    ("zone20", 20.0),
+];
+
+/// The limit an implicit code `XX:<kind>` stands for, if `value` is one.
+fn implicit_limit(value: &str) -> Option<Maxspeed> {
+    let (country, kind) = value.split_once(':')?;
+    if country.len() != 2 || !country.bytes().all(|b| b.is_ascii_uppercase()) {
+        return None;
+    }
+    let kind = kind.to_ascii_lowercase();
+    if country == "DE" && kind == "motorway" {
+        return Some(Maxspeed::Unlimited);
+    }
+    IMPLICIT_SPEED_LIMITS_KM_H.iter().find(|(k, _)| *k == kind).map(|&(_, v)| Maxspeed::Known(v))
 }
 
 /// The speed `maxspeed=walk` stands for, in km/h.
@@ -391,6 +481,92 @@ fn infrastructure_of(value: Option<&str>) -> Option<BikeInfrastructure> {
     }
 }
 
+/// Whether a `cycleway…` value is an `opposite…` one, which names a facility
+/// against the street's direction.
+fn is_opposite(value: &str) -> bool {
+    value.starts_with("opposite")
+}
+
+/// The direction a `cycleway:<side>:oneway` tag says a lane or track runs, in
+/// the way's node order (`yes` forward, `-1` backward).
+fn lane_runs(tags: &[(String, String)], key: &str) -> Option<Direction> {
+    match tag_of(tags, key) {
+        Some("yes" | "true" | "1") => Some(Direction::Forward),
+        Some("-1" | "reverse") => Some(Direction::Backward),
+        _ => None,
+    }
+}
+
+/// Whether the tags open a one-way street's contraflow to bikes by naming a
+/// facility, not by `oneway:bicycle` (G-20): `opposite…` in `cycleway` or
+/// `cycleway:both|left|right`, or a lane or track on a side whose `:oneway`
+/// runs against the street. Always false on a two-way street.
+fn contraflow_opened(tags: &[(String, String)], road_direction: Direction) -> bool {
+    let against = match road_direction {
+        Direction::Forward => Direction::Backward,
+        Direction::Backward => Direction::Forward,
+        Direction::Both => return false,
+    };
+    let opposite = ["cycleway", "cycleway:both", "cycleway:left", "cycleway:right"]
+        .into_iter()
+        .any(|key| tag_of(tags, key).is_some_and(is_opposite));
+    let lane_against =
+        [("cycleway:left", "cycleway:left:oneway"), ("cycleway:right", "cycleway:right:oneway")]
+            .into_iter()
+            .any(|(side, oneway)| {
+                infrastructure_of(tag_of(tags, side)).is_some()
+                    && lane_runs(tags, oneway) == Some(against)
+            });
+    opposite || lane_against
+}
+
+/// The facility a one-way street offers bikes with the flow and against it,
+/// as `(forward, backward)` in the way's node order (G-20).
+///
+/// Right-hand traffic: the right side serves the forward direction and the left
+/// the backward one. With the contraflow closed, a lane or track on either side
+/// serves the one direction (right first). With it open, the contraflow side's
+/// lane or track (`opposite…` values, a lane running against the street, or
+/// the left side of a `oneway=yes` street, the right of a `oneway=-1` one)
+/// serves the contraflow and the other side the with-flow direction.
+fn one_way_infrastructure(
+    tags: &[(String, String)],
+    road_direction: Direction,
+    bike_direction: Direction,
+) -> (Option<BikeInfrastructure>, Option<BikeInfrastructure>) {
+    let forward_road = road_direction == Direction::Forward;
+    let against = if forward_road { Direction::Backward } else { Direction::Forward };
+    let open =
+        if forward_road { bike_direction.has_backward() } else { bike_direction.has_forward() };
+
+    let plain = |key: &str| infrastructure_of(tag_of(tags, key).filter(|v| !is_opposite(v)));
+    let both = plain("cycleway:both").or_else(|| plain("cycleway"));
+    let right = plain("cycleway:right").or(both);
+    let left = plain("cycleway:left").or(both);
+    let (with, contra) = if open {
+        // The contraflow side.
+        let (with_side, contra_side) = if forward_road { (right, left) } else { (left, right) };
+        // A facility named `opposite…`, or a lane that runs against the street.
+        let named = ["cycleway", "cycleway:both", "cycleway:left", "cycleway:right"]
+            .into_iter()
+            .find_map(|key| infrastructure_of(tag_of(tags, key).filter(|v| is_opposite(v))));
+        let running_against = [
+            ("cycleway:left", "cycleway:left:oneway"),
+            ("cycleway:right", "cycleway:right:oneway"),
+        ]
+        .into_iter()
+        .find_map(|(side, oneway)| {
+            (lane_runs(tags, oneway) == Some(against))
+                .then(|| infrastructure_of(tag_of(tags, side)))
+                .flatten()
+        });
+        (with_side, named.or(running_against).or(contra_side))
+    } else {
+        (right.or(left), None)
+    };
+    if forward_road { (with, contra) } else { (contra, with) }
+}
+
 /// Decide whether a way is a bike link, and what it offers in each direction
 /// (the minimal bike layer of S193, S195).
 ///
@@ -398,7 +574,10 @@ fn infrastructure_of(value: Option<&str>) -> Option<BikeInfrastructure> {
 ///   (a parallel cycleway is mapped and used instead), areas, and ways with
 ///   `access=no|private` unless `bicycle=yes|designated|permissive` lets bikes
 ///   through (a bike-only road).
-/// - **Every other car road, trunk included**, in mixed traffic, unless a
+/// - **Trunk roads and their links** only with `bicycle=yes|designated|permissive`
+///   (G-19; [`RoadClass::carries_cyclists`] says the class does not carry bikes
+///   by default, the tag overrides it).
+/// - **Every other car road**, in mixed traffic, unless a
 ///   `cycleway`, `cycleway:both|right|left` tag names a lane or a track, or the
 ///   street is a cycle street (`cyclestreet=yes`, `bicycle_road=yes`).
 /// - **`highway=cycleway`**, and a footway, path or bridleway with
@@ -410,12 +589,17 @@ fn infrastructure_of(value: Option<&str>) -> Option<BikeInfrastructure> {
 /// - **Ferries** (`route=ferry`, S197): bikes ride on unless `bicycle=no`.
 ///
 /// **Direction:** the car rules ([`direction`]), except that `oneway:bicycle`
-/// overrides them and `cycleway=opposite*` opens the contraflow. **Sides:** on a
-/// two-way street, the right side serves the way's own direction and the left
-/// the reverse — right-hand traffic is assumed, a known simplification for
-/// left-hand-traffic countries; on a one-way street a lane or track on either
-/// side serves the one direction, and the contraflow is mixed unless
-/// `cycleway=opposite_lane|opposite_track` says otherwise.
+/// overrides them and the contraflow is opened by `oneway:bicycle=no`, by
+/// `opposite*` in `cycleway` or `cycleway:both|left|right`, or by a lane or
+/// track whose `cycleway:left:oneway` / `cycleway:right:oneway` runs against
+/// the street (G-20). **Sides:** the right side serves the way's own direction
+/// and the left the reverse — right-hand traffic is assumed, a known
+/// simplification for left-hand-traffic countries. On a one-way street whose
+/// contraflow is closed, a lane or track on either side serves the one
+/// direction; where the contraflow is open, the left lane or track (the right
+/// one on a `oneway=-1` street) serves the contraflow, the other side the
+/// with-flow direction, and the contraflow is mixed where no lane or track
+/// is tagged (`opposite_lane|opposite_track` name theirs).
 #[must_use]
 pub fn bike_way(tags: &[(String, String)], node_count: usize) -> Option<BikeWay> {
     if is_ferry(tags) {
@@ -444,15 +628,19 @@ pub fn bike_way(tags: &[(String, String)], node_count: usize) -> Option<BikeWay>
         return None;
     }
     let class = layer_class(highway)?;
-    // A busway (S199) carries bikes only where its tags say so.
-    if class == RoadClass::Busway && !permits(bicycle) {
+    // A busway (S199) carries bikes only where its tags say so; so does a
+    // trunk road (G-19): the class says no, the tag overrides it.
+    if (class == RoadClass::Busway
+        || (matches!(class, RoadClass::Trunk | RoadClass::TrunkLink) && !class.carries_cyclists()))
+        && !permits(bicycle)
+    {
         return None;
     }
     let dismount = bicycle == Some("dismount") || highway == "steps";
 
     let road_direction = direction(tags, class);
     let cycleway = tag_of(tags, "cycleway");
-    let contraflow = cycleway.is_some_and(|v| v.starts_with("opposite"));
+    let contraflow = contraflow_opened(tags, road_direction);
     let bike_direction = match tag_of(tags, "oneway:bicycle") {
         Some("no" | "false" | "0") => Direction::Both,
         Some("yes" | "true" | "1") if road_direction == Direction::Backward => Direction::Backward,
@@ -481,22 +669,14 @@ pub fn bike_way(tags: &[(String, String)], node_count: usize) -> Option<BikeWay>
             } else {
                 BikeInfrastructure::Mixed
             };
-            let both = infrastructure_of(tag_of(tags, "cycleway:both"))
-                .or_else(|| infrastructure_of(cycleway.filter(|_| !contraflow)));
-            let right = infrastructure_of(tag_of(tags, "cycleway:right")).or(both);
-            let left = infrastructure_of(tag_of(tags, "cycleway:left")).or(both);
-            let opposite = infrastructure_of(cycleway.filter(|_| contraflow));
             let (f, b) = if road_direction == Direction::Both {
+                let both = infrastructure_of(tag_of(tags, "cycleway:both"))
+                    .or_else(|| infrastructure_of(cycleway.filter(|v| !v.starts_with("opposite"))));
+                let right = infrastructure_of(tag_of(tags, "cycleway:right")).or(both);
+                let left = infrastructure_of(tag_of(tags, "cycleway:left")).or(both);
                 (right, left)
             } else {
-                // One way for cars: a lane on either side serves it; the
-                // contraflow is what `opposite_*` says.
-                let with = right.or(left);
-                if road_direction == Direction::Backward {
-                    (opposite, with)
-                } else {
-                    (with, opposite)
-                }
+                one_way_infrastructure(tags, road_direction, bike_direction)
             };
             (base.max(f.unwrap_or(base)), base.max(b.unwrap_or(base)))
         }

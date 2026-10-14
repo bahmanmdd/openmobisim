@@ -169,21 +169,22 @@ fn a_list_takes_the_limit_that_applies_at_the_start() {
 fn unlimited_and_uninterpretable_limits_fall_back_and_are_flagged() {
     let s = |v: &str| tags::maxspeed(&tags(&[("maxspeed", v)]));
     assert_eq!(s("none"), Maxspeed::Unlimited);
-    // Country codes need an implicit-limit table, which is a v2 addition.
-    assert_eq!(s("DE:urban"), Maxspeed::Unparsed);
-    assert_eq!(s("RO:motorway"), Maxspeed::Unparsed);
+    // A code the implicit-limit table lacks, or a malformed country prefix.
+    assert_eq!(s("DE:bicycle_road"), Maxspeed::Unparsed);
+    assert_eq!(s("XX:signals"), Maxspeed::Unparsed);
+    assert_eq!(s("de:urban"), Maxspeed::Unparsed);
     assert_eq!(s("signals"), Maxspeed::Unparsed);
     assert_eq!(s("-20"), Maxspeed::Unparsed);
     assert_eq!(s("0"), Maxspeed::Unparsed);
 
     assert!(s("none").is_noteworthy(), "an unlimited limit must be recorded");
-    assert!(s("DE:urban").is_noteworthy());
+    assert!(s("XX:signals").is_noteworthy());
     assert!(!s("50").is_noteworthy());
     assert!(!tags::maxspeed(&[]).is_noteworthy(), "an absent tag is the normal case, not news");
 
     // All of the above hand the defaults table nothing, so the class row applies.
     assert_eq!(s("none").value_km_h(), None);
-    assert_eq!(s("DE:urban").value_km_h(), None);
+    assert_eq!(s("XX:signals").value_km_h(), None);
     assert_eq!(s("50").value_km_h(), Some(50.0));
 }
 
@@ -226,4 +227,103 @@ fn a_signal_says_which_approaches_it_stops() {
         ("traffic_signals", "emergency")
     ])));
     assert_eq!(tags::node_signal(&tags(&[("highway", "stop")])), None);
+}
+
+// --- ways closed to cars (G-17) ---------------------------------------------
+
+#[test]
+fn a_way_closed_to_cars_is_not_a_car_link() {
+    for pairs in [
+        &[("motor_vehicle", "no")][..],
+        &[("motor_vehicle", "private")],
+        &[("motorcar", "no")],
+        &[("vehicle", "no")],
+        &[("vehicle", "private")],
+        // The most specific key wins: cars are named, so `vehicle=yes` does not reopen the way.
+        &[("vehicle", "yes"), ("motor_vehicle", "no")],
+    ] {
+        let mut all = vec![("highway", "residential")];
+        all.extend_from_slice(pairs);
+        assert_eq!(tags::classify(&tags(&all), 2), Err(Rejection::AccessDenied), "{pairs:?}");
+    }
+}
+
+#[test]
+fn a_more_specific_yes_reopens_a_way_and_destination_access_stays_drivable() {
+    for pairs in [
+        &[("vehicle", "no"), ("motor_vehicle", "yes")][..],
+        &[("motor_vehicle", "no"), ("motorcar", "yes")],
+        &[("motor_vehicle", "destination")],
+        &[("motor_vehicle", "delivery")],
+        &[("vehicle", "destination")],
+        &[("motorcar", "customers")],
+    ] {
+        let mut all = vec![("highway", "residential")];
+        all.extend_from_slice(pairs);
+        assert_eq!(tags::classify(&tags(&all), 2), Ok(RoadClass::Residential), "{pairs:?}");
+    }
+}
+
+#[test]
+fn a_way_closed_to_cars_but_open_to_buses_is_a_busway_and_a_footway_is_unchanged() {
+    for key in ["motor_vehicle", "motorcar", "vehicle"] {
+        assert_eq!(
+            tags::classify(&tags(&[("highway", "residential"), (key, "no"), ("bus", "yes")]), 2),
+            Ok(RoadClass::Busway),
+            "{key}=no, bus=yes"
+        );
+    }
+    // Not a car class to begin with: nothing to close.
+    assert_eq!(
+        tags::classify(&tags(&[("highway", "footway"), ("motor_vehicle", "no")]), 2),
+        Ok(RoadClass::Footway)
+    );
+}
+
+// --- service roads (G-18) -----------------------------------------------------
+
+#[test]
+fn parking_aisles_and_driveways_are_not_car_links_but_alleys_and_plain_service_are() {
+    for service in ["parking_aisle", "driveway", "drive-through", "emergency_access"] {
+        assert_eq!(
+            tags::classify(&tags(&[("highway", "service"), ("service", service)]), 2),
+            Err(Rejection::ServiceNotAStreet),
+            "service={service}"
+        );
+    }
+    for pairs in [
+        &[("highway", "service")][..],
+        &[("highway", "service"), ("service", "alley")],
+        &[("highway", "service"), ("service", "spur")],
+        // `service=driveway` on another class is not read.
+        &[("highway", "residential"), ("service", "driveway")],
+    ] {
+        assert!(tags::classify(&tags(pairs), 2).is_ok(), "{pairs:?}");
+    }
+}
+
+// --- implicit speed limits (G-21) ---------------------------------------------
+
+#[test]
+fn implicit_country_codes_read_the_table_with_the_country_ignored() {
+    let s = |v: &str| tags::maxspeed(&tags(&[("maxspeed", v)]));
+    assert_eq!(s("NL:urban"), Maxspeed::Known(50.0));
+    assert_eq!(s("FR:rural"), Maxspeed::Known(80.0));
+    assert_eq!(s("BE:urban"), Maxspeed::Known(50.0));
+    assert_eq!(s("FR:motorway"), Maxspeed::Known(130.0));
+    assert_eq!(s("NL:trunk"), Maxspeed::Known(100.0));
+    assert_eq!(s("DE:living_street"), Maxspeed::Known(15.0));
+    assert_eq!(s("FR:zone30"), Maxspeed::Known(30.0));
+    assert_eq!(s("NL:zone20"), Maxspeed::Known(20.0));
+    // Every row of the table, under an arbitrary country.
+    for (kind, km_h) in tags::IMPLICIT_SPEED_LIMITS_KM_H {
+        assert_eq!(s(&format!("LU:{kind}")), Maxspeed::Known(km_h), "{kind}");
+    }
+    // A list takes its first entry, as ever.
+    assert_eq!(s("NL:urban;30"), Maxspeed::Known(50.0));
+    // Germany's motorway has no limit: the class default applies, and it is recorded.
+    assert_eq!(s("DE:motorway"), Maxspeed::Unlimited);
+    assert_eq!(s("DE:motorway").value_km_h(), None);
+    assert_eq!(s("NL:urban").value_km_h(), Some(50.0));
+    assert!(!s("NL:urban").is_noteworthy());
 }
