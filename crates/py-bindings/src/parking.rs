@@ -239,9 +239,10 @@ pub(crate) fn parking_bins<'py>(
         let p32 = u32::try_from(p).expect("parkings fit u32");
         for k in 0..b.bins {
             let k32 = u32::try_from(k).expect("bins fit u32");
-            bin.push(k32);
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "seconds")]
-            start.push(b.start_s as u32 + k32 * b.bin_s);
+            let start_s = b.start_s as u32 + k32 * b.bin_s;
+            bin.push(start_s / b.bin_s); // from midnight, like link_bins (G-31)
+            start.push(start_s);
             parking.push(p32);
             id.push(setup.external_id(p32).to_string());
             hub.push(setup.hub_external_id(p32).to_string());

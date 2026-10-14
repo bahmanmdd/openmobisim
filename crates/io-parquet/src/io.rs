@@ -26,7 +26,8 @@ pub(crate) fn write_single_batch(
 
 /// [`write_single_batch`], compressed with `compression` and also recording
 /// `metadata` as the file's key-value metadata, where `pq.read_metadata` and
-/// other Parquet tools find it.
+/// other Parquet tools find it. Every file also carries the layout version
+/// ([`crate::SCHEMA_VERSION_KEY`]).
 pub(crate) fn write_single_batch_with(
     path: &Path,
     schema: Arc<Schema>,
@@ -35,12 +36,16 @@ pub(crate) fn write_single_batch_with(
     compression: Compression,
 ) -> Result<(), WriteError> {
     let file = File::create(path)?;
-    let mut properties = WriterProperties::builder().set_compression(compression);
-    if !metadata.is_empty() {
-        properties = properties.set_key_value_metadata(Some(
-            metadata.iter().map(|(k, v)| KeyValue::new(k.clone(), v.clone())).collect(),
-        ));
-    }
+    let version =
+        KeyValue::new(crate::SCHEMA_VERSION_KEY.to_string(), crate::SCHEMA_VERSION.to_string());
+    let key_values: Vec<KeyValue> = metadata
+        .iter()
+        .map(|(k, v)| KeyValue::new(k.clone(), v.clone()))
+        .chain(std::iter::once(version))
+        .collect();
+    let properties = WriterProperties::builder()
+        .set_compression(compression)
+        .set_key_value_metadata(Some(key_values));
     let mut writer = ArrowWriter::try_new(file, schema, Some(properties.build()))?;
     writer.write(batch)?;
     writer.close()?;

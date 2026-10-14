@@ -884,7 +884,9 @@ class Run:
     def parking_bins(self) -> dict[str, Any] | None:
         """How full each parking was over the day, bin by bin; ``None`` without parkings.
 
-        Columns, one row per parking and bin: ``bin``, ``start_s``, ``parking`` (its
+        Columns, one row per parking and bin: ``bin`` (counted from midnight, like the link
+        bins': ``bin = start_s // bin_s``, so a window starting at 07:30 in 15-minute bins
+        starts at bin 30), ``start_s``, ``parking`` (its
         index in the run), ``parking_id``, ``hub_id``, ``vehicle`` (``"car"`` or
         ``"bike"``), ``capacity``, ``arrivals`` and ``departures`` (vehicles parked and
         fetched in the bin, weighted by traveller weight), ``occupancy_mean``,

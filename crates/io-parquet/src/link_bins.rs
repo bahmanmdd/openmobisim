@@ -1,12 +1,15 @@
 //! `link_bins.parquet` — the per-link, per-time-bin results (S168).
 //!
-//! One row per (bin, link) that saw traffic, sorted by bin then link:
+//! One row per (bin, link) that saw traffic, sorted by bin then link (`bin` counts from
+//! midnight: `start_s = bin × bin_seconds`):
 //! `run_id, bin, start_s, link, link_index, crossings, pcu, pcu_seconds`. The
 //! same table `RunResult::link_bins` holds in memory and the figures draw, in
 //! the form an analyst reads with pandas, polars or R.
 //!
-//! - `link` is the link's **external id**, the one that survives a rebuilt
-//!   network; `link_index` is the internal id, the row of the network's arrays,
+//! - `link` is the link's **external id**, `"{way_id}:{index:08}"` for a link built from OSM
+//!   (the way's OSM id, then the link's number within the build). The way id part survives a
+//!   rebuild of the network; the whole id does only if the network is rebuilt with the same
+//!   options and the same extract. `link_index` is the internal id, the row of the network's arrays,
 //!   good only next to this file's `network_fingerprint` (Foundations §1: an
 //!   internal id is meaningful only with its network fingerprint).
 //! - `crossings` counts traversals that *finished* in the bin, unweighted;

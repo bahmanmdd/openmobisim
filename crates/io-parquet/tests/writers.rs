@@ -281,7 +281,7 @@ fn manifest_reports_the_fields_phase_1_actually_has() {
 
     assert_eq!(manifest.simulated_travellers, 2);
     assert_eq!(manifest.car_owning_travellers, 1, "only alice owns a car");
-    assert_eq!(manifest.window_seconds, 3600);
+    assert_eq!(manifest.window_end_seconds, 3600);
     assert_eq!(manifest.default_weight, 1);
     assert_eq!(manifest.kpi_weighting, "traveller_weight_scaled");
     assert_eq!(manifest.code_version, openmobisim_core_types::CODE_VERSION);
@@ -290,6 +290,9 @@ fn manifest_reports_the_fields_phase_1_actually_has() {
     let path = temp_path("manifest.json");
     write_manifest(&path, &manifest).expect("write");
     let json = std::fs::read_to_string(&path).expect("read back");
+    assert!(json.contains("\"manifest_version\": 1"));
+    assert!(json.contains("\"window_end_seconds\": 3600"));
+    assert!(!json.contains("\"window_seconds\""), "renamed (G-34)");
     assert!(json.contains("\"simulated_travellers\": 2"));
     assert!(json.contains("\"car_owning_travellers\": 1"));
     assert!(json.contains("\"kpi_weighting\": \"traveller_weight_scaled\""));
@@ -704,4 +707,41 @@ fn transit_calls_round_trip_with_an_unknown_time() {
     let get = |k: &str| kv.iter().find(|e| e.key == k).and_then(|e| e.value.clone());
     assert_eq!(get("openmobisim.service_date").as_deref(), Some("2026-10-09"));
     assert_eq!(get("openmobisim.run_fingerprint").as_deref(), Some("00000000deadbeef"));
+}
+
+/// Every Parquet file carries the layout version (G-32): the three plain writers and the ones
+/// with metadata of their own.
+#[test]
+fn every_parquet_file_carries_the_schema_version() {
+    let version = |path: &std::path::Path| -> Option<String> {
+        let reader = ParquetRecordBatchReaderBuilder::try_new(File::open(path).unwrap()).unwrap();
+        let kv =
+            reader.metadata().file_metadata().key_value_metadata().cloned().unwrap_or_default();
+        kv.iter()
+            .find(|e| e.key == openmobisim_io_parquet::SCHEMA_VERSION_KEY)
+            .and_then(|e| e.value.clone())
+    };
+    let expected = Some(openmobisim_io_parquet::SCHEMA_VERSION.to_string());
+    assert_eq!(openmobisim_io_parquet::SCHEMA_VERSION_KEY, "openmobisim.schema_version");
+    assert_eq!(expected.as_deref(), Some("1"));
+
+    let result = sample_result();
+    let kpis = temp_path("version-kpis.parquet");
+    write_kpis(&kpis, "r", "d", 0, 0, &result).unwrap();
+    assert_eq!(version(&kpis), expected, "kpis");
+
+    let diagnostics = temp_path("version-diagnostics.parquet");
+    write_diagnostics(&diagnostics, "r", &Diagnostics::new()).unwrap();
+    assert_eq!(version(&diagnostics), expected, "diagnostics");
+
+    let events = temp_path("version-events.parquet");
+    write_events(&events, "r", &result.events, 1.0).unwrap();
+    assert_eq!(version(&events), expected, "events");
+
+    let bins = temp_path("version-link-bins.parquet");
+    let network = two_link_network();
+    let recorder = LinkBinRecorder::new(2, 300, 3600.0);
+    write_link_bins(&bins, "r", &recorder.finish(), &network, &sample_description(None, Some(300)))
+        .unwrap();
+    assert_eq!(version(&bins), expected, "link_bins");
 }

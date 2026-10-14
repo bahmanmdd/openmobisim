@@ -65,6 +65,11 @@ const LENGTH_AGREEMENT_TOLERANCE_M: f64 = 1e-6;
 /// geometry artifact paired with a network it was not built from. When the
 /// artifact cache lands, this can feed into that wider formula rather than
 /// being replaced by it.
+///
+/// **It hashes the ids only, not the content**: two networks with the same ids and other
+/// lengths, speeds or capacities have the same one. This is the `network_fingerprint` of the
+/// output files (what an internal link id is meaningful next to); a run's `run_fingerprint`
+/// hashes the network's content as well, and the route-set cache keys on that (B4).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct NetworkFingerprint(u64);
 

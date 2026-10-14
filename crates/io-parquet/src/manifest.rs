@@ -15,6 +15,9 @@ use crate::WriteError;
 /// What is recorded about a run, in the shape that becomes `manifest.json`.
 #[derive(Clone, Debug)]
 pub struct Manifest {
+    /// The layout version of this file and of the run's Parquet files
+    /// ([`crate::SCHEMA_VERSION`]), written as `manifest_version` (G-32).
+    pub manifest_version: u32,
     /// The `openmobisim` crate version (`CARGO_PKG_VERSION`).
     pub openmobisim_version: String,
     /// `openmobisim_core_types::CODE_VERSION` — bumped whenever an artifact's
@@ -26,9 +29,9 @@ pub struct Manifest {
     /// The target triple this binary was built for (`crate::TARGET`). S60's
     /// determinism guarantee is same-platform; this is the platform.
     pub platform: String,
-    /// Trips still in progress after this second are truncated (S57): the window's end, in
-    /// seconds after midnight.
-    pub window_seconds: u32,
+    /// Trips still in progress after this second are truncated (S57): the window's **end**, in
+    /// seconds after midnight (not its length; written as `window_end_seconds`, G-34).
+    pub window_end_seconds: u32,
     /// The window's start, in seconds after midnight (S271): the run starts there.
     pub window_start_seconds: u32,
     /// Trips of the demand departing outside the window, left out of the run (S271).
@@ -61,8 +64,10 @@ pub struct Manifest {
     /// network, the demand, each setting, the route method, the seed, the code
     /// version. Two runs with the same one were given the same inputs.
     pub run_fingerprint: String,
-    /// A hash of the network's ids (16 hex digits): what an internal link id in
-    /// any of this run's files is meaningful next to.
+    /// A hash of the network's **ids only** (16 hex digits), not of its content: what an internal
+    /// link id in any of this run's files is meaningful next to. Two networks with the same ids
+    /// but other lengths or speeds have the same one; the `run_fingerprint` hashes the network's
+    /// content (and the route-set cache keys on that), so it tells those apart (B4).
     pub network_fingerprint: String,
     /// The loading engine's level: 0 for free flow, 2, 3 or 4 for the link
     /// transmission model.
@@ -150,11 +155,12 @@ impl Manifest {
         let car_owning_travellers = car_owning_travellers as u32;
 
         Self {
+            manifest_version: crate::SCHEMA_VERSION,
             openmobisim_version: openmobisim_core_types::VERSION.to_string(),
             code_version: openmobisim_core_types::CODE_VERSION,
             defaults_version: openmobisim_core_graph::DEFAULTS_VERSION,
             platform: crate::TARGET.to_string(),
-            window_seconds: window.get(),
+            window_end_seconds: window.get(),
             window_start_seconds: 0,
             trips_outside_window: 0,
             people_outside_window: 0,
@@ -255,12 +261,13 @@ impl Manifest {
                 format!("[{}]", names.iter().map(|n| text(n)).collect::<Vec<_>>().join(", "))
             })
         };
-        let fields: [(&str, String); 42] = [
+        let fields: [(&str, String); 43] = [
+            ("manifest_version", self.manifest_version.to_string()),
             ("openmobisim_version", text(&self.openmobisim_version)),
             ("code_version", self.code_version.to_string()),
             ("defaults_version", self.defaults_version.to_string()),
             ("platform", text(&self.platform)),
-            ("window_seconds", self.window_seconds.to_string()),
+            ("window_end_seconds", self.window_end_seconds.to_string()),
             ("window_start_seconds", self.window_start_seconds.to_string()),
             ("trips_outside_window", self.trips_outside_window.to_string()),
             ("people_outside_window", self.people_outside_window.to_string()),

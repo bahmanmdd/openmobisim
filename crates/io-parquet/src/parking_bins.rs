@@ -6,6 +6,9 @@
 //! arrivals, departures, occupancy_mean, occupancy_max, full_s, overflow_max`.
 //! The same table `Run.parking_bins()` returns in Python.
 //!
+//! - `bin` counts from **midnight**, like `link_bins.parquet`'s (G-31, S280): `bin = start_s /
+//!   bin_s`, so the first row of a window starting at 07:30 with 15-minute bins has `bin` 30 and
+//!   `start_s` 27 000. The file records `bin_s` as `openmobisim.bin_seconds`.
 //! - `parking` is the parking's index in the run, `parking_id` its id in the
 //!   parking table, `hub_id` its hub's; `vehicle` is `car` or `bike`.
 //! - `arrivals` and `departures` count vehicles parked and fetched in the bin,
@@ -13,7 +16,7 @@
 //!   vehicles parked; `full_s` the seconds of the bin the parking was full;
 //!   `overflow_max` the most vehicles above capacity at once (soft capacity: a
 //!   full parking refuses nobody).
-//! - The key-value metadata carries `openmobisim.run_fingerprint` and
+//! - The key-value metadata carries `openmobisim.bin_seconds`, `openmobisim.run_fingerprint` and
 //!   `openmobisim.master_seed`.
 //!
 //! **Cost.** About 80 bytes per row while writing: a city's thousand bike
@@ -63,9 +66,10 @@ pub fn write_parking_bins(
         let p32 = u32::try_from(p).expect("parkings fit u32");
         for k in 0..b.bins {
             let k32 = u32::try_from(k).expect("bins fit u32");
-            bin.push(k32);
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "seconds")]
-            start.push(b.start_s as u32 + k32 * b.bin_s);
+            let start_s = b.start_s as u32 + k32 * b.bin_s;
+            bin.push(start_s / b.bin_s); // from midnight, like link_bins (G-31)
+            start.push(start_s);
             index.push(p32);
             id.push(parking.external_id(p32));
             hub.push(parking.hub_external_id(p32));
@@ -92,6 +96,7 @@ pub fn write_parking_bins(
         )),
     ];
     let metadata = vec![
+        ("openmobisim.bin_seconds".to_string(), b.bin_s.to_string()),
         ("openmobisim.run_fingerprint".to_string(), description.fingerprint_hex()),
         ("openmobisim.master_seed".to_string(), description.master_seed.to_string()),
     ];

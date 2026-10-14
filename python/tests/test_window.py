@@ -50,7 +50,8 @@ def test_trips_departing_outside_the_window_are_left_out_with_a_warning():
     assert (w["before_trips"], w["after_trips"], w["trips"]) == (1, 2, 5)
     assert w["timetable_runs_kept"] is None, "no timetable"
     manifest = r.manifest()
-    assert manifest["window_start_seconds"] == 27000 and manifest["window_seconds"] == 34200
+    assert manifest["window_start_seconds"] == 27000 and manifest["window_end_seconds"] == 34200
+    assert "window_seconds" not in manifest, "renamed: it was the window's end, not its length"
     assert manifest["trips_outside_window"] == 3
 
 

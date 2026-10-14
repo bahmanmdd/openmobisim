@@ -100,6 +100,15 @@ impl From<arrow_schema::ArrowError> for WriteError {
     }
 }
 
+/// The version of the output files' layout (G-32, S280): written to every Parquet file as the
+/// key-value `openmobisim.schema_version` ([`SCHEMA_VERSION_KEY`]) and to `manifest.json` as
+/// `manifest_version`. A reader checks it before trusting a column; it is raised when a column
+/// is renamed, removed or changes meaning (the version 1 files are the first versioned ones).
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// The Parquet key-value metadata key under which every file carries [`SCHEMA_VERSION`].
+pub const SCHEMA_VERSION_KEY: &str = "openmobisim.schema_version";
+
 /// The target triple this crate was built for — the manifest's `platform`
 /// field. Recorded at build time (`build.rs`), the same pattern
 /// `py-bindings` uses: S60's determinism guarantee is same-platform, so the
