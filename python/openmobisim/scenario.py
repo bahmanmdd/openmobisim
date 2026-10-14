@@ -1953,10 +1953,12 @@ class Scenario:
                 blocked at the front of its link for ``reroute_after_s`` (300) re-routes from
                 where it is, at
                 most ``reroute_max`` (3) times, if the new route is at least
-                ``reroute_min_gain`` (0.1) faster; ``pocket_length_m`` (50, 0 turns it off) —
-                on an approach of two lanes or more, a vehicle passes those ahead of it that
-                wait for another movement while they fit in their turn pockets, this many metres
-                per lane, split among the approach's movements.
+                ``reroute_min_gain`` (0.1) faster; ``pocket_length_m`` (0: off; 50 turns turn
+                pockets on) — on an approach of two lanes or more, a vehicle passes those ahead
+                of it that wait for another movement while they fit in their turn pockets, this
+                many metres per lane, split among the approach's movements; off by default
+                because with them an iterated run under heavy congestion mispriced the waiting
+                movements and trip times rose with the iterations.
                 Uncalibrated defaults; unknown names and values out of range are refused.
             price_options: What travel costs, in euros, by name (S248): ``car_eur_km``
                 (the fuel a driver pays per km), ``bike_eur_km``, a transit

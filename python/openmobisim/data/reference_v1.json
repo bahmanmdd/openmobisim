@@ -3,58 +3,58 @@
  "bundle": "v1",
  "cases": {
   "amsterdam/base": {
-   "fingerprint": "3cdc552d76959cf8",
+   "fingerprint": "3581884089cf9c94",
    "trips": 56475,
-   "completed": 55079,
-   "mean_trip_s": 1450.4062165253545,
+   "completed": 55264,
+   "mean_trip_s": 1474.5967356687897,
    "mode_share_pct": {
-    "bike": 35.23328906595839,
-    "bike_transit": 0.1363435148295706,
-    "car": 34.2257636122178,
-    "car_transit": 0.07259849490925188,
-    "none": 0.83576803895529,
-    "transit": 27.85303231518371,
-    "walk": 1.6432049579459937
+    "bike": 39.58211598052235,
+    "bike_transit": 0.13988490482514387,
+    "car": 29.76007082779991,
+    "car_transit": 0.06905710491367861,
+    "none": 0.5312084993359893,
+    "transit": 28.247897299690127,
+    "walk": 1.6697653829127932
    },
    "loadings": 5,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0"
   },
   "delft/base": {
-   "fingerprint": "e44e88c91209dd55",
+   "fingerprint": "93ca12188c44ca32",
    "trips": 30879,
-   "completed": 30836,
-   "mean_trip_s": 1358.3482293423272,
+   "completed": 30506,
+   "mean_trip_s": 1415.4840359273585,
    "mode_share_pct": {
-    "bike": 18.290747757375563,
-    "car": 54.80747433530878,
-    "transit": 24.191197901486447,
-    "walk": 2.7105800058292044
+    "bike": 19.016159849736066,
+    "car": 54.03348554033486,
+    "car_transit": 0.003238446840895107,
+    "transit": 24.25596683830435,
+    "walk": 2.691149324783834
    },
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0"
   },
   "lyon/base": {
-   "fingerprint": "bd5e6dd40dee44c1",
+   "fingerprint": "08874a485f5e89eb",
    "trips": 57892,
-   "completed": 55945,
-   "mean_trip_s": 1589.2640629189382,
+   "completed": 55607,
+   "mean_trip_s": 1587.0813926304243,
    "mode_share_pct": {
-    "bike": 3.7500863677192013,
-    "bike_transit": 0.006909417536101707,
-    "car": 46.43819526013957,
-    "car_transit": 0.16582602086644097,
-    "none": 0.0034547087680508533,
-    "transit": 42.45146134180889,
-    "walk": 7.18406688316175
+    "bike": 4.71395011400539,
+    "bike_transit": 0.01036412630415256,
+    "car": 37.602777585849516,
+    "car_transit": 0.27810405582809367,
+    "transit": 49.626891453050504,
+    "walk": 7.767912664962344
    },
    "loadings": 10,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0"
   },
   "nguyendupuis/base": {
-   "fingerprint": "cc84d06dd3c15f7b",
+   "fingerprint": "97626182f74c47e7",
    "trips": 2000,
    "completed": 2000,
    "mean_trip_s": 3257.0975,
@@ -66,27 +66,27 @@
    "version": "0.1.0"
   },
   "paris/base": {
-   "fingerprint": "8617b5b838103837",
+   "fingerprint": "5ed3ebb4a5a5ad38",
    "trips": 82790,
-   "completed": 80994,
-   "mean_trip_s": 1260.231412203373,
+   "completed": 80971,
+   "mean_trip_s": 1251.7394128762148,
    "mode_share_pct": {
-    "bike": 16.428312598139872,
-    "bike_transit": 0.18842855417320933,
-    "car": 15.855779683536658,
+    "bike": 17.543181543664694,
+    "bike_transit": 0.15823167049160528,
+    "car": 12.714095905302573,
     "car_transit": 0.003623626041792487,
-    "transit": 62.6524942625921,
-    "walk": 4.871361275516366
+    "transit": 64.70588235294117,
+    "walk": 4.874984901558159
    },
-   "loadings": 6,
+   "loadings": 5,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0"
   },
   "siouxfalls/base": {
-   "fingerprint": "9871e7517e002bce",
+   "fingerprint": "48066da9c0bc6fa6",
    "trips": 180300,
    "completed": 180300,
-   "mean_trip_s": 708.1771491957848,
+   "mean_trip_s": 791.1667110371603,
    "mode_share_pct": {
     "car": 100.0
    },
@@ -95,10 +95,10 @@
    "version": "0.1.0"
   },
   "siouxfalls/congested": {
-   "fingerprint": "8410bcac57c61b53",
+   "fingerprint": "dd7d94cf4b1fc79f",
    "trips": 270450,
    "completed": 270450,
-   "mean_trip_s": 1285.94599371418,
+   "mean_trip_s": 1547.4311443889812,
    "mode_share_pct": {
     "car": 100.0
    },

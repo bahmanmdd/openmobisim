@@ -203,7 +203,10 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// and walking from it, counted in a car alternative's door-to-door time, its walk and its
 /// parking time, and in the drive to a park-and-ride car park; every other mode paid its walks
 /// and waits already. The loading moves the car from the trip's departure as before. Every run
-/// with mode choice changes. Also (no default moved): the **nested logit** is the choice model a
+/// with mode choice changes. **Turn pockets are off by default** (`core-sim`'s
+/// `LoadingOptions::pocket_length_m` 0; 50 m since S218): with them an iterated run under heavy
+/// congestion mispriced the waiting movements (S227) and the fix (I-au) is not built; every run at
+/// flow levels 3–4 on a multi-lane network changes. Also (no default moved): the **nested logit** is the choice model a
 /// scenario takes when it offers more than one mode, and mode choice offers at most
 /// `choice_max_routes` car routes, as stated car trips get; the fundamental diagram keeps the
 /// capacity a table or a factor gives and raises jam density when the backward wave would be

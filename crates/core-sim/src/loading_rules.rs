@@ -52,10 +52,13 @@ pub struct LoadingOptions {
     /// the end of such a link passes those ahead of it waiting for another movement, as long as
     /// they fit in their pockets. 0 turns them off: every link one first-in-first-out queue.
     ///
-    /// *Uncalibrated: 50 m, split among a link's movements by lane share; an assumption (design
-    /// guides size a bay from its expected queue, so no single length was found, S259). Lanes
-    /// per movement from OpenStreetMap's
-    /// `turn:lanes`, where mapped, are for later (S217).*
+    /// **Off by default (0) since S279:** with pockets on, the link times an iterated run
+    /// averages over a link's movements misprice the movements that wait, and trip times rose
+    /// iteration after iteration under heavy congestion (S227); the entry-delay attribution that
+    /// would fix it (roadmap I-au) is not built. `50` turns them on as they were (S218).
+    /// *Uncalibrated: 50 m when on, split among a link's movements by lane share; an assumption
+    /// (design guides size a bay from its expected queue, so no single length was found, S259).
+    /// Lanes per movement from OpenStreetMap's `turn:lanes`, where mapped, are for later (S217).*
     pub pocket_length_m: f64,
 }
 
@@ -67,7 +70,7 @@ impl LoadingOptions {
         reroute_after_s: 300.0,
         reroute_max: 3,
         reroute_min_gain: 0.1,
-        pocket_length_m: 50.0,
+        pocket_length_m: 0.0,
     };
 
     /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing);
