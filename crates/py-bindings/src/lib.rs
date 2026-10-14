@@ -28,7 +28,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use openmobisim_core_types::{
-    CODE_VERSION, RNG_SCHEME_VERSION, VERSION,
+    CODE_VERSION, GIT_SHA, RNG_SCHEME_VERSION, VERSION,
     reduce::{fixed_order_sum, is_parallel_build},
     rng::{DrawAddress, RngKey, Stream, StreamRng},
     time::{Second, StepGrid},
@@ -57,6 +57,7 @@ use transit::{PyTransit, toy_network_transit, transit_edit, transit_read_gtfs};
 /// | Key | Meaning |
 /// |---|---|
 /// | `version` | The crate version |
+/// | `git_sha` | The git commit the build is from: 12 hex digits, or `unknown` without a repository |
 /// | `code_version` | Artifact layout and build-semantics version |
 /// | `rng_scheme_version` | Seed-derivation scheme version |
 /// | `parallel` | Whether this build reduces in parallel |
@@ -66,6 +67,7 @@ use transit::{PyTransit, toy_network_transit, transit_edit, transit_read_gtfs};
 fn build_info(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     let d = PyDict::new(py);
     d.set_item("version", VERSION)?;
+    d.set_item("git_sha", GIT_SHA)?;
     d.set_item("code_version", CODE_VERSION)?;
     d.set_item("rng_scheme_version", RNG_SCHEME_VERSION)?;
     d.set_item("parallel", is_parallel_build())?;

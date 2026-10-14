@@ -293,6 +293,11 @@ fn manifest_reports_the_fields_phase_1_actually_has() {
     assert!(json.contains("\"manifest_version\": 1"));
     assert!(json.contains("\"window_end_seconds\": 3600"));
     assert!(!json.contains("\"window_seconds\""), "renamed (G-34)");
+    let sha = json_string_field(&json, "git_sha");
+    assert!(
+        sha == "unknown" || (sha.len() == 12 && sha.chars().all(|c| c.is_ascii_hexdigit())),
+        "twelve hex digits or unknown, got {sha:?}"
+    );
     assert!(json.contains("\"simulated_travellers\": 2"));
     assert!(json.contains("\"car_owning_travellers\": 1"));
     assert!(json.contains("\"kpi_weighting\": \"traveller_weight_scaled\""));

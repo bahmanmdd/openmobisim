@@ -326,7 +326,8 @@ def case_summary(run: Any) -> dict[str, Any]:
     """What a starter case's run is compared on: its fingerprint, trips, mean trip and modes.
 
     The mode shares are of people (traveller weights), ``"none"`` for trips with nothing to
-    choose from; ``platform`` is the build's target, ``version`` the package's.
+    choose from; ``platform`` is the build's target, ``version`` the package's and ``git_sha`` the
+    commit the build is from (``"unknown"`` without a repository; not compared by ``case_check``).
     """
     modes = run.trip_modes()
     people: dict[str, float] = {}
@@ -343,6 +344,7 @@ def case_summary(run: Any) -> dict[str, Any]:
         "loadings": len(run.convergence()["gap"]),
         "platform": info["target"],
         "version": info["version"],
+        "git_sha": info["git_sha"],
     }
 
 
@@ -408,7 +410,8 @@ def case_check(
     Args:
         names: The cases (``case_names()``); ``None``: every case.
         root: Where the bundle is, as for :func:`case`.
-        quiet: If false, print a line per scenario as it finishes.
+        quiet: If false, print the build's git commit (and the reference's) and a line per
+            scenario as it finishes.
 
     Returns:
         One row per scenario: ``case``, ``scenario``, ``status`` (``"same"``,
@@ -419,6 +422,9 @@ def case_check(
     import time
 
     reference = json.loads(_REFERENCE.read_text(encoding="utf-8")) if _REFERENCE.exists() else {}
+    if not quiet:
+        made = reference.get("git_sha") or "not recorded"
+        print(f"build {_core.build_info()['git_sha']}; the reference was made by build {made}")
     rows = []
     for name in names or case_names():
         c = case(name, root)

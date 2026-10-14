@@ -20,6 +20,9 @@ def test_extension_module_loads_and_reports_itself() -> None:
     assert isinstance(info["parallel"], bool)
     assert info["profile"] in {"debug", "release"}
     assert info["target"]
+    sha = info["git_sha"]
+    assert isinstance(sha, str)
+    assert sha == "unknown" or (len(sha) == 12 and all(c in "0123456789abcdef" for c in sha))
 
 
 def test_version_is_a_semver_string() -> None:

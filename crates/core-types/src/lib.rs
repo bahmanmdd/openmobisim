@@ -84,3 +84,10 @@ pub const CODE_VERSION: u32 = 1;
 
 /// The crate version, as reported in `manifest.json`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The git commit this build was made from: twelve hex digits, or `"unknown"` for a build without
+/// a `.git` directory (a source archive, an sdist) or without `git` (T-6, S280). Set when the
+/// crate is built (`build.rs`); the environment variable `OPENMOBISIM_GIT_SHA` overrides it.
+/// Reported in `manifest.json` (`git_sha`) and by `build_info()` in Python. Not part of any
+/// fingerprint: two builds of different commits that compute the same numbers stay equal.
+pub const GIT_SHA: &str = env!("OPENMOBISIM_GIT_SHA");

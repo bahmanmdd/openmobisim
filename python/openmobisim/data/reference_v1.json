@@ -1,6 +1,7 @@
 {
  "openmobisim": "0.1.0",
  "bundle": "v1",
+ "git_sha": null,
  "cases": {
   "amsterdam/base": {
    "fingerprint": "3581884089cf9c94",

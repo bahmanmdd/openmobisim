@@ -20,6 +20,9 @@ pub struct Manifest {
     pub manifest_version: u32,
     /// The `openmobisim` crate version (`CARGO_PKG_VERSION`).
     pub openmobisim_version: String,
+    /// The git commit the code was built from (`openmobisim_core_types::GIT_SHA`): twelve hex
+    /// digits, or `"unknown"` for a build without a repository (T-6). Not in any fingerprint.
+    pub git_sha: String,
     /// `openmobisim_core_types::CODE_VERSION` — bumped whenever an artifact's
     /// layout or build semantics change (Foundations §8).
     pub code_version: u32,
@@ -157,6 +160,7 @@ impl Manifest {
         Self {
             manifest_version: crate::SCHEMA_VERSION,
             openmobisim_version: openmobisim_core_types::VERSION.to_string(),
+            git_sha: openmobisim_core_types::GIT_SHA.to_string(),
             code_version: openmobisim_core_types::CODE_VERSION,
             defaults_version: openmobisim_core_graph::DEFAULTS_VERSION,
             platform: crate::TARGET.to_string(),
@@ -261,9 +265,10 @@ impl Manifest {
                 format!("[{}]", names.iter().map(|n| text(n)).collect::<Vec<_>>().join(", "))
             })
         };
-        let fields: [(&str, String); 43] = [
+        let fields: [(&str, String); 44] = [
             ("manifest_version", self.manifest_version.to_string()),
             ("openmobisim_version", text(&self.openmobisim_version)),
+            ("git_sha", text(&self.git_sha)),
             ("code_version", self.code_version.to_string()),
             ("defaults_version", self.defaults_version.to_string()),
             ("platform", text(&self.platform)),

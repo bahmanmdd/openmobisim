@@ -16,7 +16,8 @@ def build_info() -> dict[str, object]:
     """Return facts about the compiled core.
 
     Returns:
-        A dict with keys ``version`` (str), ``code_version`` (int),
+        A dict with keys ``version`` (str), ``git_sha`` (str: the 12 hex digits of the
+        commit the build is from, or ``"unknown"`` without a repository), ``code_version`` (int),
         ``rng_scheme_version`` (int), ``parallel`` (bool), ``target`` (str) and
         ``profile`` (str). These are the fields a bug report should quote.
     """
