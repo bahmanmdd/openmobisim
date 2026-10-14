@@ -1250,6 +1250,8 @@ impl Run {
                 availability: availability.as_ref(),
                 detour_limit: self.choice_detour_limit,
                 max_routes: self.choice_max_routes,
+                car_access_s: self.mode_defaults.car_access_s,
+                car_egress_s: self.mode_defaults.car_egress_s,
                 car_routes: attributes
                     .as_ref()
                     .map(|attributes| CarRoutes { sets: &route_sets, attributes }),
@@ -1379,6 +1381,8 @@ impl Run {
                         availability: availability.as_ref(),
                         detour_limit: self.choice_detour_limit,
                         max_routes: self.choice_max_routes,
+                        car_access_s: self.mode_defaults.car_access_s,
+                        car_egress_s: self.mode_defaults.car_egress_s,
                         car_routes: attributes
                             .as_ref()
                             .map(|attributes| CarRoutes { sets: &route_sets, attributes }),
@@ -1523,6 +1527,8 @@ impl Run {
                             availability: availability.as_ref(),
                             detour_limit: self.choice_detour_limit,
                             max_routes: self.choice_max_routes,
+                            car_access_s: self.mode_defaults.car_access_s,
+                            car_egress_s: self.mode_defaults.car_egress_s,
                             car_routes: attributes
                                 .as_ref()
                                 .map(|attributes| CarRoutes { sets: &route_sets, attributes }),

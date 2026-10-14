@@ -144,15 +144,36 @@ pub struct ModeDefaults {
     /// S276): such trips stay unsimulated, and the run reports each with why every mode gave
     /// it none (`RunResult::no_alternative`); `1` turns the fallback on.
     pub fallback_car: bool,
+    /// The time a car trip takes before its drive — reaching the car and setting off — in
+    /// seconds (S279): added to a car alternative's door-to-door time and its walk in mode
+    /// choice, and to the drive to a park-and-ride car park. Before S279 a car trip started and
+    /// ended at its road node with no such time while every other mode paid its walks and
+    /// waits, which biased mode choice toward the car. *Uncalibrated: 120 s, an assumption with
+    /// no published source; 0 switches it off.*
+    pub car_access_s: f64,
+    /// The time a car trip takes after its drive — finding a place and walking from it — in
+    /// seconds (S279): added to a car alternative's door-to-door time and its parking time in
+    /// mode choice; a park-and-ride drive pays its car park's own time instead. *Uncalibrated:
+    /// 180 s, an assumption; cruising for parking alone averaged 8 minutes in sixteen downtown
+    /// studies (Shoup 2006, *Cruising for parking*, Transport Policy 13(6), 479–486,
+    /// <https://doi.org/10.1016/j.tranpol.2006.05.005>), far above a city-wide mean that counts
+    /// home and workplace parking; 0 switches it off.*
+    pub car_egress_s: f64,
 }
 
 impl ModeDefaults {
     /// The shipped values.
-    pub const SHIPPED: ModeDefaults =
-        ModeDefaults { walk_max_s: 1800.0, bike_max_s: 3600.0, fallback_car: false };
+    pub const SHIPPED: ModeDefaults = ModeDefaults {
+        walk_max_s: 1800.0,
+        bike_max_s: 3600.0,
+        fallback_car: false,
+        car_access_s: 120.0,
+        car_egress_s: 180.0,
+    };
 
     /// The names of the options.
-    pub const NAMES: [&'static str; 3] = ["walk_max_s", "bike_max_s", "fallback_car"];
+    pub const NAMES: [&'static str; 5] =
+        ["walk_max_s", "bike_max_s", "fallback_car", "car_access_s", "car_egress_s"];
 
     /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing).
     #[must_use]
@@ -161,6 +182,8 @@ impl ModeDefaults {
             ("walk_max_s", self.walk_max_s),
             ("bike_max_s", self.bike_max_s),
             ("fallback_car", f64::from(u8::from(self.fallback_car))),
+            ("car_access_s", self.car_access_s),
+            ("car_egress_s", self.car_egress_s),
         ]
     }
 
@@ -187,9 +210,12 @@ impl ModeDefaults {
                 };
                 continue;
             }
-            let slot = match name.as_str() {
-                "walk_max_s" => &mut d.walk_max_s,
-                "bike_max_s" => &mut d.bike_max_s,
+            // A limit must be above 0; a time may be 0 (off).
+            let (slot, may_be_zero) = match name.as_str() {
+                "walk_max_s" => (&mut d.walk_max_s, false),
+                "bike_max_s" => (&mut d.bike_max_s, false),
+                "car_access_s" => (&mut d.car_access_s, true),
+                "car_egress_s" => (&mut d.car_egress_s, true),
                 _ => {
                     return Err(format!(
                         "mode_options has no {name:?}; the options are: {}",
@@ -197,8 +223,9 @@ impl ModeDefaults {
                     ));
                 }
             };
-            if value.is_nan() || value <= 0.0 {
-                return Err(format!("mode_options {name:?} must be above 0, got {value}"));
+            if value.is_nan() || value < 0.0 || (!may_be_zero && value <= 0.0) {
+                let bound = if may_be_zero { "0 or above" } else { "above 0" };
+                return Err(format!("mode_options {name:?} must be {bound}, got {value}"));
             }
             *slot = value;
         }
@@ -299,7 +326,7 @@ impl ClassLimits {
         ModeDefaults {
             walk_max_s: self.walk_max_s.unwrap_or(run.walk_max_s),
             bike_max_s: self.bike_max_s.unwrap_or(run.bike_max_s),
-            fallback_car: run.fallback_car,
+            ..*run
         }
     }
 }

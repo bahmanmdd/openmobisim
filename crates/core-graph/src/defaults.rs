@@ -197,7 +197,18 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// `ModeDefaults::fallback_car`, experimental): a trip with no alternative stays unsimulated,
 /// as before version 25, and the run reports it with why every mode gave it none. Every run
 /// where some trip had no alternative changes.
-pub const DEFAULTS_VERSION: u32 = 26;
+///
+/// Version 27 (S279): **a car trip pays its access and egress** in mode choice (`core-sim`'s
+/// `ModeDefaults::car_access_s` 120 s and `car_egress_s` 180 s): reaching the car, and parking
+/// and walking from it, counted in a car alternative's door-to-door time, its walk and its
+/// parking time, and in the drive to a park-and-ride car park; every other mode paid its walks
+/// and waits already. The loading moves the car from the trip's departure as before. Every run
+/// with mode choice changes. Also (no default moved): the **nested logit** is the choice model a
+/// scenario takes when it offers more than one mode, and mode choice offers at most
+/// `choice_max_routes` car routes, as stated car trips get; the fundamental diagram keeps the
+/// capacity a table or a factor gives and raises jam density when the backward wave would be
+/// faster than its bound.
+pub const DEFAULTS_VERSION: u32 = 27;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

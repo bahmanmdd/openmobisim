@@ -247,6 +247,8 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         hash_mode_choice(&mut h, inputs.trips, inputs.layers, modes);
         h.write_f64(inputs.mode_defaults.walk_max_s);
         h.write_f64(inputs.mode_defaults.bike_max_s);
+        h.write_f64(inputs.mode_defaults.car_access_s);
+        h.write_f64(inputs.mode_defaults.car_egress_s);
         // The classes' modes (S231): nothing when every class may use all, so such a run's
         // fingerprint is what it was.
         if inputs.class_modes.iter().any(|modes| modes.contains(&false)) {

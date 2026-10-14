@@ -40,6 +40,10 @@ def toy_trips(n: int, cls: str = "everyone", frm: str = "W", to: str = "M") -> l
     return [(f"{cls}{i}", 0, o[0], o[1], d[0], d[1], 0, cls, None, None) for i in range(n)]
 
 
+# The hand values are the drives and rides alone: the car's access and egress (S279) are off.
+NO_ACCESS = {"car_access_s": 0, "car_egress_s": 0}
+
+
 def toy_run(rows: list[tuple], run_id: str, classes: dict, **kwargs: object) -> ms.Run:
     return ms.Scenario.from_parts(
         network=ms.examples.toy_network(),
@@ -48,6 +52,7 @@ def toy_run(rows: list[tuple], run_id: str, classes: dict, **kwargs: object) -> 
         transit=None,
         equilibration="free_flow",
         flow_level=0,
+        mode_options={**NO_ACCESS, **kwargs.pop("mode_options", {})},
         **kwargs,
     ).run(run_id=run_id, quiet=True)
 

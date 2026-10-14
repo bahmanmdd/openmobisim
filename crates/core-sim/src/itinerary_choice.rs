@@ -397,6 +397,12 @@ pub(crate) struct Planner<'a> {
     /// car trips get (`choice_max_routes`, S268), applied here too since S279 (CM-2): under a
     /// flat logit a mode's share grew with how many routes its set held.
     pub max_routes: u32,
+    /// A car trip's time before its drive (reaching the car) and after it (parking and walking
+    /// from it), in seconds (`ModeDefaults::car_access_s`, `car_egress_s`; S279): added to a
+    /// car alternative's door-to-door time, and the access to a park-and-ride drive.
+    pub car_access_s: f64,
+    /// See [`Self::car_access_s`].
+    pub car_egress_s: f64,
     /// The car's route sets, when the run offers mode choice.
     pub car_routes: Option<CarRoutes<'a>>,
 }
@@ -759,7 +765,10 @@ impl<'a> Planner<'a> {
                 a.vehicle_links = view.links.iter().map(|&l| LinkId::new(l)).collect();
                 a.vehicle_s = seconds;
                 a.vehicle_m = routes.attributes.length_m[r];
-                a.total_s = seconds;
+                // Reaching the car; parking and walking from it (S279).
+                a.walk_s = self.car_access_s;
+                a.parking_s = self.car_egress_s;
+                a.total_s = seconds + self.car_access_s + self.car_egress_s;
                 a.fixed_ln_path_size = Some(routes.attributes.path_size[r].max(1e-9).ln());
                 a
             })
@@ -980,6 +989,8 @@ impl<'a> Planner<'a> {
             return Vec::new();
         }
         let transfer = transit.transfer_s();
+        // Reaching the car before the drive (S279); a bike is at hand.
+        let access_s = if kind == ParkingKind::Car { self.car_access_s } else { 0.0 };
         let mut alts: Vec<Alternative> = Vec::new();
         // The fastest so far, in seconds door to door: the choice set drops any itinerary of
         // this mode more than the detour limit slower than its best ([`finalise`]), so each
@@ -1003,7 +1014,7 @@ impl<'a> Planner<'a> {
                 clippy::cast_sign_loss,
                 reason = "a second of the day"
             )]
-            let parked = (dep + c.vehicle_s + c.parking_s).floor() as u32;
+            let parked = (dep + access_s + c.vehicle_s + c.parking_s).floor() as u32;
             let access: Vec<(NodeId, u32)> = parking
                 .stops(c.parking)
                 .iter()
@@ -1023,6 +1034,7 @@ impl<'a> Planner<'a> {
                 a.vehicle_s = c.vehicle_s;
                 a.vehicle_m = c.metres;
                 a.parking_s = c.parking_s;
+                a.walk_s += access_s;
                 a.vehicle_departure = dep;
                 a.total_s = f64::from(j.arrival) - dep;
                 best = best.min(a.total_s);

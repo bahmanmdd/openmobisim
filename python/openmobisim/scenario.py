@@ -941,8 +941,9 @@ class Run:
         ``alternatives`` (how many it chose among when it last chose; 0: it did not travel),
         ``probability`` (what the model gave its choice), ``expected_s`` (the chosen itinerary's
         door-to-door time expected at the choice), ``rides`` (vehicles boarded) and ``logsum``
-        (S238: the **logsum** of the trip's choice set when it was last planned in full — its first
-        choice and each time it chose again; a trip that kept its alternative keeps it — the expected
+        (S238: the **logsum** of the trip's choice set when it was last planned in full — its
+        first choice and each time it chose again; a trip that kept its alternative keeps it —
+        the expected
         utility of its best alternative, ``ln Σ exp(utility)`` for the logit and its nested form
         for the nested logit; ``nan`` for a model that gives none; a model of one's own may give
         one with a ``logsum(batch)`` method, one number per situation). In the utility's units:
@@ -1719,8 +1720,8 @@ class Scenario:
                 name from ``openmobisim.choice_models()`` or an object with a
                 ``choose(batch)`` method (see ``openmobisim.choice`` for how to
                 write one). Unsaid: ``"nested_logit"`` when the run offers more than one mode
-                (``modes``, or the classes name them), ``"logit"`` otherwise. ``"logit"`` is the standard
-                path-size logit, sampled per traveller; ``"nested_logit"`` is the logit with
+                (``modes``, or the classes name them), ``"logit"`` otherwise. ``"logit"`` is the
+                standard path-size logit, sampled per traveller; ``"nested_logit"`` is the logit with
                 the alternatives of each mode in a nest of their own, for mode choice: a
                 mode's many routes do not outweigh another mode's one (under a flat logit the
                 car's share grows with how many of its routes are offered), and within a nest
@@ -1934,7 +1935,13 @@ class Scenario:
                 traveller without one), counted under the car and listed by
                 ``Run.fallback_car``; at 0 such a trip is not simulated, and the run warns
                 (``NoAlternativeWarning``) and lists it (``Run.report_no_alternative()``).
-                Unknown names and values that are not above 0 are refused.
+                ``car_access_s`` (120) and ``car_egress_s`` (180): what a car trip takes before
+                its drive (reaching the car) and after it (parking and walking from it), counted
+                in a car alternative's door-to-door time, walk and parking time in mode choice
+                and in the drive to a park-and-ride car park — every other mode pays its walks
+                and waits; uncalibrated, 0 switches either off. The loading moves the car from
+                the trip's departure. Unknown names and negative values are refused (the limits
+                must be above 0).
             loading_options: The loading's rules by name, for ``flow_level`` 2–4 (gridlock
                 remedies; at ``flow_level`` 2, where nothing waits for room, ``reroute`` is off
                 unless asked for): ``priority`` (0 or 1, off by default: without per-turn queues a

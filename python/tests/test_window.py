@@ -146,4 +146,3 @@ def test_a_journey_that_ends_after_the_window_is_offered_and_left_unfinished():
     assert len(calls["scheduled_departure_s"]) > 0
     assert max(calls["scheduled_departure_s"]) <= 800, "nothing after the window is shown"
     assert r.window["timetable_runs_kept"] >= 1
-

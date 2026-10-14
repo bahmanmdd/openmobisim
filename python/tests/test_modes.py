@@ -15,6 +15,11 @@ def toy_trip(net: object, who: str, frm: str, to: str, depart: int, mode: str | 
     return (who, 0, o[0], o[1], d[0], d[1], depart, "everyone", None, mode)
 
 
+# The hand values are the drives and rides alone: the car's access and egress (S279, 120 and 180 s
+# by default) are switched off here and tested on their own below.
+NO_ACCESS = {"car_access_s": 0, "car_egress_s": 0}
+
+
 def toy_run(rows: list[tuple], run_id: str, **kwargs: object) -> ms.Run:
     return ms.Scenario.from_parts(
         network=ms.examples.toy_network(),
@@ -25,6 +30,7 @@ def toy_run(rows: list[tuple], run_id: str, **kwargs: object) -> ms.Run:
         choice_model=kwargs.pop("choice_model", "deterministic"),
         equilibration=kwargs.pop("equilibration", "free_flow"),
         flow_level=kwargs.pop("flow_level", 0),
+        mode_options={**NO_ACCESS, **kwargs.pop("mode_options", {})},
         **kwargs,
     ).run(run_id=run_id)
 
@@ -636,3 +642,28 @@ def test_the_logsums_by_pair_are_the_people_weighted_means_of_its_trips() -> Non
     }  # fmt: skip
     with pytest.raises(ValueError, match="not in trips"):
         run.logsum_od(rows[1:], zones)
+
+
+def test_a_car_trip_pays_its_access_and_egress_in_mode_choice() -> None:
+    # W → M: the drive takes 80 s, the ride 120 s. A car trip pays reaching the car and parking
+    # and walking from it on top of its drive (S279): with the defaults (120 + 180 s) the bike is
+    # the faster door to door; with 10 + 20 s the car still is, at 110 s expected.
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, "b", "W", "M", 0, None)]
+    run = lambda name, access, egress: toy_run(  # noqa: E731
+        rows, name, modes=("car", "bike"), transit=None, parkings=None,
+        mode_options={"car_access_s": access, "car_egress_s": egress},
+    )  # fmt: skip
+    bare = run("access-none", 0, 0)
+    assert list(bare.itinerary_choices()["mode"]) == ["car"]
+    drive = float(bare.itinerary_choices()["expected_s"][0])
+    assert drive == pytest.approx(80.0, abs=1.0)
+    paid = run("access-default", 120, 180)
+    assert list(paid.itinerary_choices()["mode"]) == ["bike"], "300 s of access: the bike wins"
+    little = run("access-little", 10, 20)
+    assert list(little.itinerary_choices()["mode"]) == ["car"]
+    expected = float(little.itinerary_choices()["expected_s"][0])
+    assert expected == pytest.approx(drive + 30.0), "the drive and its access and egress"
+    assert bare.fingerprint != paid.fingerprint, "a named default, in the fingerprint"
+    with pytest.raises(ValueError, match="car_access_s"):
+        run("access-bad", -1, 0)
