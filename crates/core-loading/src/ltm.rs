@@ -662,6 +662,9 @@ impl<'a> LtmNetwork<'a> {
             let link = LinkId::from_index(idx);
             let params = network.link_parameters(link);
             let capacity = params.capacity.get().max(f64::MIN_POSITIVE);
+            // The approach's green share is the largest over its turns (K37, ruled D-4 iv,
+            // S280): an upper bound on the approach's discharge, documented as such for 0.1;
+            // shares per movement (from `turn:lanes`) come later.
             let green = turns
                 .turns_from(link)
                 .iter()

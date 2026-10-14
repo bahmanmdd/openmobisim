@@ -276,7 +276,13 @@ class Run:
 
     @property
     def converged(self) -> bool:
-        """Whether the run stopped before its most iterations because it had converged."""
+        """Whether the run met its stopping rule by its last loading.
+
+        Under ``"msa"``: the disequilibrium, averaged over the last three iterations, under
+        ``gap_tolerance`` with the route sets no longer growing, whether that stopped the run
+        early or held at its last allowed iteration (S280). Always ``False`` with a
+        ``gap_tolerance`` of 0, or under ``"free_flow"``.
+        """
         return self._summary.converged
 
     @property
@@ -323,7 +329,8 @@ class Run:
         NumPy arrays, one entry per iteration (a ``"free_flow"`` run has one).
         ``nan`` marks a number that was not measured. The result of the run
         (``completion``, ``total_travel_time_s``, ``link_bins()``, ``route_choices()``)
-        is that of the **last** iteration.
+        is that of the **last** iteration; with disruptions travellers did not know of, it is
+        that of the one more loading made with them, which no row here describes.
 
         * ``iteration`` — 0 is the free-flow loading: everyone's first choice, in groups each
           on the congestion of those before it (``increments``), loaded with the point queue.

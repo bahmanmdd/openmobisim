@@ -570,8 +570,10 @@ impl BestResponse {
 
 /// Room in the sets that `additions` would take past `max_routes` (S268): each such set drops
 /// routes **nobody chose** in the last choice (by `chosen` and `weight` per trip, as
-/// `RouteChoices` hold them), the highest free-flow cost first, never its free-flow shortest
-/// one. Additions that cannot fit are dropped. Returns which of the store's routes to remove.
+/// `RouteChoices` hold them, and never a route `kept` names: one a trip choosing its mode drives
+/// as its car alternative, which no route choice names, S280), the highest free-flow cost first,
+/// never its free-flow shortest one. Additions that cannot fit are dropped. Returns which of the
+/// store's routes to remove.
 ///
 /// # Panics
 ///
@@ -582,6 +584,7 @@ pub fn make_room(
     additions: &mut Vec<(usize, Vec<Route>)>,
     chosen: &[u32],
     weight: &[u32],
+    kept: &[bool],
     max_routes: usize,
 ) -> Vec<bool> {
     let mut usage = vec![0_u64; sets.route_count()];
@@ -605,8 +608,9 @@ pub fn make_room(
             .expect("a set is never empty");
         // Only a route nobody chose makes room: no trip is moved, so the averaging of the
         // iterations is not disturbed (a forced move set back Lyon's convergence, S268).
-        let mut candidates: Vec<usize> =
-            range.filter(|&r| r != shortest && usage[r] == 0).collect();
+        let mut candidates: Vec<usize> = range
+            .filter(|&r| r != shortest && usage[r] == 0 && !kept.get(r).copied().unwrap_or(false))
+            .collect();
         candidates.sort_by(|&a, &b| cost(b).total_cmp(&cost(a)).then(a.cmp(&b)));
         // The new routes that fit once every removable route is gone; none: nothing removed. A
         // set may already hold more than the limit (a generator's, under a lower limit).

@@ -249,10 +249,13 @@ pub struct RunResult {
     /// What each iteration showed (S170): one report for a run without
     /// equilibration, one per loading under `msa`. `route_choices`, `events`,
     /// `link_bins`, the completion counts and the total travel time are those of
-    /// the last.
+    /// the last; with disruptions travellers did not know of, those of the one more loading
+    /// made with them, which no report here describes (S280).
     pub iterations: Vec<IterationReport>,
-    /// Whether the strategy stopped before its most iterations because it had
-    /// converged.
+    /// Whether the run met its strategy's stopping rule by its last loading (S280: under `msa`,
+    /// the three-iteration mean disequilibrium under `gap_tolerance` with the sets grown; before,
+    /// only a run that stopped early counted, not one that met the rule at its last allowed
+    /// iteration). Always false with a `gap_tolerance` of 0, or under `free_flow`.
     pub converged: bool,
     /// The outcomes by mode, in [`Mode::ALL`] order (S195); with [`Self::no_mode`] they add up
     /// to [`Self::completion`] and [`Self::total_travel_time`].
@@ -1345,12 +1348,18 @@ impl Run {
                     });
                     increment_searches += found.searches;
                     if !found.routes.is_empty() {
+                        let kept_routes = itinerary_routes_kept(
+                            &route_sets,
+                            &car_keys,
+                            itineraries.as_ref().zip(chosen.as_ref()),
+                        );
                         let (grown, added) = grow_sets(
                             &route_sets,
                             found.routes,
                             route_update.as_ref(),
                             &mut route_choices,
                             &trip_keys,
+                            &kept_routes,
                             1,
                         );
                         increment_added += added;
@@ -1463,12 +1472,18 @@ impl Run {
                         });
                         report.route_searches = found.searches;
                         if !found.routes.is_empty() {
+                            let kept_routes = itinerary_routes_kept(
+                                &route_sets,
+                                &car_keys,
+                                itineraries.as_ref().zip(chosen.as_ref()),
+                            );
                             let (grown, added) = grow_sets(
                                 &route_sets,
                                 found.routes,
                                 route_update.as_ref(),
                                 &mut route_choices,
                                 &trip_keys,
+                                &kept_routes,
                                 next,
                             );
                             report.routes_added = added;
@@ -1589,7 +1604,7 @@ impl Run {
                     }
                     clock = timings.lap("network_gap", Some(iteration), clock);
                 }
-                converged = iteration + 1 < max_iterations;
+                converged = strategy.is_converged(&reports);
                 self.final_times = times_now.map(Arc::new);
                 break;
             }
@@ -2884,12 +2899,42 @@ fn mode_totals(
 /// the update caps its sets and some would overflow, they make room first (S268, [`make_room`]:
 /// a trip on a route that made room moves to the route that replaced it); otherwise every route
 /// stays (S176). Returns the sets and how many routes went in.
+/// Which routes of `sets` the itinerary trips drive as their direct car alternative (M5): no
+/// route choice names them, so `make_room` is told to keep them (S280; a dropped one forced its
+/// trip to choose again outside the strategy's reselection).
+fn itinerary_routes_kept(
+    sets: &RouteSets,
+    car_keys: &[RouteKey],
+    itin: Option<(&Itineraries, &Chosen)>,
+) -> Vec<bool> {
+    let mut kept = vec![false; sets.route_count()];
+    let Some((itineraries, chosen)) = itin else { return kept };
+    for (p, &trip) in itineraries.trips.iter().enumerate() {
+        let Some(alt) = chosen.alt[p].as_ref() else { continue };
+        if alt.shape != Shape::Direct || alt.mode != Mode::Car || alt.vehicle_links.is_empty() {
+            continue;
+        }
+        let Some(k) = sets.key_index(car_keys[trip.index()]) else { continue };
+        for r in sets.route_range(k) {
+            let links = sets.route(r).links;
+            if links.len() == alt.vehicle_links.len()
+                && links.iter().zip(&alt.vehicle_links).all(|(a, b)| *a == b.raw())
+            {
+                kept[r] = true;
+                break;
+            }
+        }
+    }
+    kept
+}
+
 fn grow_sets(
     sets: &RouteSets,
     mut additions: Vec<(usize, Vec<Route>)>,
     update: &dyn RouteUpdate,
     choices: &mut RouteChoices,
     trip_keys: &[RouteKey],
+    kept: &[bool],
     stamp: u32,
 ) -> (RouteSets, u32) {
     let count = |a: &[(usize, Vec<Route>)]| {
@@ -2900,7 +2945,8 @@ fn grow_sets(
     };
     match update.max_routes() {
         Some(max) if overflows(max) => {
-            let removed = make_room(sets, &mut additions, &choices.route, &choices.weight, max);
+            let removed =
+                make_room(sets, &mut additions, &choices.route, &choices.weight, kept, max);
             let added = count(&additions);
             let (grown, map) = sets.revised(&additions, &removed, stamp, &update.descriptor());
             choices.revised(&map, &grown, trip_keys);
