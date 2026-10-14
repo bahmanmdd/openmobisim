@@ -41,14 +41,14 @@ def test_a_link_to_an_unknown_node_is_left_out_and_reported():
     assert any("left out" in s and "cz" in s for s in said), said
 
 
-def test_a_capacity_factor_is_not_reported_as_capacities_reduced():
+def test_a_capacity_factor_is_not_reported_as_storage_raised():
     rows = [{"from": "a", "to": "b", "capacity": 1000, "class": "primary", "lanes": 2}]
     plain, said_plain = read(rows)
     scaled, said_scaled = read(rows, network_options={"capacity_factor": 0.9})
     assert scaled.link_capacity_pcu_h()[0] == pytest.approx(0.9 * plain.link_capacity_pcu_h()[0])
-    assert not [s for s in said_plain + said_scaled if "jam density cannot carry" in s]
+    assert not [s for s in said_plain + said_scaled if "jam density" in s]
     _, said_too_high = read([{**rows[0], "lanes": 1, "capacity": 9000}])
-    assert any("jam density cannot carry" in s for s in said_too_high), "a real one still warns"
+    assert any("jam density" in s and "raised" in s for s in said_too_high), "a real one warns"
 
 
 def test_a_closed_road_stays_closed_through_gmns(tmp_path: Path):

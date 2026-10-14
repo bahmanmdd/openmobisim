@@ -65,21 +65,26 @@ def test_an_unrecognised_class_falls_back_and_warns_once_in_aggregate():
     assert (net.link_class() == 10).all()
 
 
-def test_a_capacity_too_high_for_the_class_rows_jam_density_is_reduced_and_warned_about():
-    # A single unclassified lane's jam density (140 veh/km) cannot carry
-    # 20000 veh/h at 100 km/h; the core resolves it (design §12.1) and this
-    # must say so, since the number a caller gets back is not the one asked
-    # for — found on a real Sioux Falls link, kept as a regression test.
+def test_a_capacity_too_high_for_the_class_rows_jam_density_is_kept_with_storage_raised():
+    # A single unclassified lane's jam density (140 veh/km) cannot carry 20000 veh/h at
+    # 100 km/h within the backward wave's bound. The core keeps the capacity asked for — a
+    # table's capacity is the quantity meant (found on a real Sioux Falls link; until S279 it
+    # was cut to a third, silently for a caller) — and raises the link's jam density so the
+    # diagram closes, and this must say so.
     rows = [
         {"from": "a", "to": "b", "length": 1000, "free_flow_speed": 100, "capacity": 20_000},
-        {"from": "b", "to": "c", "length": 1000, "free_flow_speed": 30, "capacity": 400},
+        {"from": "b", "to": "c", "length": 1000, "free_flow_speed": 50, "capacity": 1200},
     ]
     nodes = [{"id": n, "x": i, "y": 0} for i, n in enumerate("abc")]
     with pytest.warns(UserWarning, match="1 link"):
         net = ms.network_read_table(rows, nodes)
     cap = net.link_capacity_pcu_h()
-    assert cap[0] < 20_000, "the impossible request was reduced, not honoured silently"
-    assert cap[1] == pytest.approx(400.0), "a request the diagram can carry is untouched"
+    assert cap[0] == pytest.approx(20_000.0), "the capacity asked for is kept"
+    assert cap[1] == pytest.approx(1200.0), "a request the diagram can carry is untouched"
+    storage = net.link_storage_pcu()
+    row_jam = dict(ms.network_options(net))["unclassified.jam_density_veh_km_lane"]
+    assert storage[0] > row_jam * 1.5, "jam density raised so the triangle closes (1 km, 1 lane)"
+    assert storage[1] == pytest.approx(row_jam, rel=0.01), "the other link's is the row's"
 
 
 def test_free_flow_time_is_converted_to_a_speed_using_length_and_the_stated_units():

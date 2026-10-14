@@ -19,6 +19,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from openmobisim import _core
 
 __all__ = ["LINK_CLASSES", "network_edit", "network_read_table"]
@@ -407,18 +409,6 @@ def network_read_table(
             stacklevel=2,
         )
 
-    # A stated capacity can ask for more than the class row's jam density can
-    # carry at the link's free-flow speed (design §12.1: no triangular diagram
-    # exists past that point) — common precisely where `class` fell back to
-    # unclassified's single, modest lane, as a high-capacity TNTP corridor
-    # does. The core resolves it (capacity is reduced to what the diagram can
-    # hold, recorded as a diagnostic) rather than failing, but nothing in
-    # `network_from_columns` surfaces that diagnostic to Python yet, so a
-    # requested capacity silently becoming a different number needs its own
-    # check here. Links are matched by id, since the builder leaves out a link
-    # that names a node the node table lacks, and the stated capacity is
-    # compared after the network's global `capacity_factor`, which scales
-    # every capacity on purpose.
     built = {link_id: index for index, link_id in enumerate(network.link_ids())}
     dropped = [link_id for link_id in link_ids if link_id not in built]
     if dropped:
@@ -427,24 +417,32 @@ def network_read_table(
             f"out of the network: {', '.join(dropped[:5])}{' …' if len(dropped) > 5 else ''}.",
             stacklevel=2,
         )
-    # `_core` directly: the parameter `network_options` shadows the function of that name.
-    factor = dict(_core.network_options(network))["capacity_factor"]
-    actual_capacity = network.link_capacity_pcu_h()
-    reduced = sum(
-        1
-        for link_id, asked in zip(link_ids, link_capacity_veh_h, strict=True)
-        if asked is not None
-        and link_id in built
-        and abs(actual_capacity[built[link_id]] - asked * factor) > 1.0
+    # A stated capacity can exceed what the class row's jam density carries at the link's
+    # free-flow speed within the backward wave's bound (design §12.1). The core keeps the
+    # capacity asked for and raises the link's jam density so the triangle closes (S279;
+    # before, it cut the capacity, silently for a caller) — common where `class` fell back to
+    # unclassified's single lane and a TNTP corridor's capacity is per link. Nothing surfaces
+    # the core's diagnostic to Python yet, so the raised storage is found from the network's
+    # own numbers: storage over length against the row's jam density (after the network's
+    # global `jam_density_factor`).
+    options = dict(_core.network_options(network))
+    jam_factor = options["jam_density_factor"]
+    link_class = network.link_class()
+    row_jam = np.array(
+        [options[f"{LINK_CLASSES[c]}.jam_density_veh_km_lane"] for c in link_class], dtype=float
     )
-    if reduced:
+    expected_jam = row_jam * np.maximum(network.link_lanes().astype(float), 1.0) * jam_factor
+    length_km = np.maximum(np.asarray(network.link_length_m(), dtype=float) / 1000.0, 1e-9)
+    actual_jam = np.asarray(network.link_storage_pcu(), dtype=float) / length_km
+    raised = int((actual_jam > expected_jam * 1.001).sum())
+    if raised:
         warnings.warn(
-            f"{reduced} link(s) asked for a capacity the class row's jam density cannot carry "
-            "at the link's free-flow speed, and were reduced to the largest value that diagram "
-            "admits (the rule for an inconsistent triangular diagram — not a failure, "
-            "but the capacity used is not the one asked for). A `class` that fell back to "
-            "unclassified assumes a single modest lane; give a `lanes` value, or a `class` this "
-            "table recognises, if you know the real one.",
+            f"{raised} link(s) asked for a capacity above what the class row's jam density "
+            "carries at the link's free-flow speed within the backward wave's bound; the "
+            "capacity is kept, and the link's jam density (its storage, used by flow levels 3 "
+            "and 4) raised so the diagram closes. Common where `class` fell back to "
+            "unclassified's single modest lane and the capacity is per link, as in TNTP: give "
+            "a `lanes` value, or a `class` this table recognises, if you know the real ones.",
             stacklevel=2,
         )
     network.read_s = time.perf_counter() - started
