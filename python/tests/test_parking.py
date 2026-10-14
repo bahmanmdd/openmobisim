@@ -151,8 +151,9 @@ def test_the_parking_bins_file_and_the_kpis_rows() -> None:
         "overflow_max",
     ]
     assert t.schema.metadata[b"openmobisim.run_fingerprint"].decode() == run.fingerprint
-    assert t.schema.metadata[b"openmobisim.schema_version"] == b"1"
-    assert t.schema.metadata[b"openmobisim.bin_seconds"] == b"900"
+    kv = pa.read_metadata(table.path).metadata  # the file's key-values, every writer's
+    assert kv[b"openmobisim.schema_version"] == b"1"
+    assert kv[b"openmobisim.bin_seconds"] == b"900"
     kpis = pa.read_table(run.kpis().path).to_pylist()
     got = {(r["mode"], r["metric"]): r["value"] for r in kpis}
     assert got[("car_transit", "parking_arrivals")] == 1.0
@@ -163,14 +164,15 @@ def test_the_parking_bins_file_and_the_kpis_rows() -> None:
 def test_the_parking_bins_count_from_midnight_like_the_link_bins() -> None:
     pa = pytest.importorskip("pyarrow.parquet")
     net = ms.examples.toy_network()
-    rows = [toy_trip(net, "a", "W", "N1", 27000, "car_transit")]
-    run = toy_run(rows, "pr1-midnight", window=("07:30", "07:45"))
+    rows = [toy_trip(net, "a", "W", "N1", 180, "car_transit")]
+    run = toy_run(rows, "pr1-midnight", parking_options={"bin_s": 60}, window=("00:03", "01:00"))
+    assert run.completion["completed"] == 1
     bins = run.parking_bins()
     assert bins is not None
     start = [int(s) for s in bins["start_s"]]
-    assert start[0] == 27000
-    assert [int(b) for b in bins["bin"]] == [s // 900 for s in start], "bin = start_s / bin_s"
-    assert int(bins["bin"][0]) == 30, "07:30 in 15-minute bins from midnight"
+    assert start[0] == 180, "the window starts at 00:03"
+    assert [int(b) for b in bins["bin"]] == [s // 60 for s in start], "bin = start_s / bin_s"
+    assert int(bins["bin"][0]) == 3, "counted from midnight, not from the window's start"
     t = pa.read_table(run.parking_bins_table().path)
     assert t.column("bin").to_pylist() == [int(b) for b in bins["bin"]], "the file says the same"
 
