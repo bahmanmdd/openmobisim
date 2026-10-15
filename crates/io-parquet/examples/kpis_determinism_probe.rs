@@ -363,6 +363,7 @@ fn main() {
     transit_probe(&dir);
     parking_probe(&dir);
     mode_choice_probe();
+    default_pipeline_probe();
 }
 
 /// Transit (S199): the toy network with its tram and bus, the bus on the roads among
@@ -701,4 +702,149 @@ fn mode_choice_probe() {
     println!("modes_fingerprint     {}", description.fingerprint_hex());
     println!("modes_trips           {}", shares.join(", "));
     println!("modes_digest          {digest:016x}");
+}
+
+/// The shipped default pipeline (T-3): the toy network with its tram, bus, parkings and two
+/// traveller classes, the loading at level 2 (point queue) with the shipped rules (en-route
+/// rerouting on) and a timed, unannounced narrowing of `a3`, mode and route choice under a
+/// logit with a coefficient per class and `msa`. Every mode, choice, probability, reroute
+/// and trip outcome must be the same on every run and at any thread count.
+fn default_pipeline_probe() {
+    use openmobisim_core_demand::Mode;
+    use openmobisim_core_graph::layers::{BikeCost, StaticLayerDefaults};
+    use openmobisim_core_sim::{
+        Disruptions, LayerSetup, LoadingOptions, ParkingDefaults, ParkingSetup, RoadDisruption,
+        StaticLayers, TransitSetup,
+    };
+
+    let (road, _) = openmobisim_core_graph::toy_network();
+    let road = Arc::new(road);
+    let (bike, walk) = openmobisim_core_graph::toy_network_layers();
+    let d = StaticLayerDefaults::SHIPPED;
+    let layers = Arc::new(StaticLayers {
+        bike: Some(LayerSetup::new(Arc::new(bike), BikeCost::Dedicated, d)),
+        walk: Some(LayerSetup::new(Arc::new(walk), BikeCost::Dedicated, d)),
+    });
+    let transit = Arc::new(
+        TransitSetup::new(
+            Arc::new(openmobisim_core_transit::examples::toy_transit()),
+            layers.walk.as_ref().expect("made above"),
+            layers.bike.as_ref(),
+            openmobisim_core_transit::TransitDefaults::SHIPPED,
+        )
+        .with_roads(road.clone()),
+    );
+    let parking_defaults = ParkingDefaults { pr_min_km: 0.0, ..ParkingDefaults::SHIPPED };
+    let parking = Arc::new(
+        ParkingSetup::new(
+            &openmobisim_core_graph::toy_network_parkings(),
+            road.clone(),
+            layers.bike.as_ref(),
+            &transit,
+            parking_defaults,
+        )
+        .expect("the toy's parkings"),
+    );
+    let at = |name: &str| {
+        road.node_lonlat(road.node_external_ids().typed_id_of(name).expect("a toy node"))
+    };
+    let trip = |who: String, class: &str, seq: u32, from: &str, to: &str, t: u32| RawTrip {
+        traveller_id: who,
+        trip_seq: seq,
+        origin: at(from),
+        destination: at(to),
+        departure_time: Second(t),
+        user_class: class.to_string(),
+        weight: None,
+        mode: None,
+    };
+    // Class 0 `commuter` (first met), class 1 `student`; a round trip each, the cars of the
+    // commuters going over `a3` while it is narrowed.
+    let mut rows = Vec::new();
+    for i in 0..60u32 {
+        rows.push(trip(format!("c{i:03}"), "commuter", 0, "W", "D1", 10 * i));
+        rows.push(trip(format!("c{i:03}"), "commuter", 1, "D1", "W", 3600 + 10 * i));
+        rows.push(trip(format!("s{i:03}"), "student", 0, "S", "X0", 15 * i));
+        rows.push(trip(format!("s{i:03}"), "student", 1, "X0", "S", 3600 + 15 * i));
+        rows.push(trip(format!("m{i:03}"), "commuter", 0, "N1", "D2", 20 * i));
+    }
+    let defaults = ClassDefaults::new()
+        .with_default("commuter", Ownership { car: true, bike: true, ..Ownership::NONE })
+        .with_default("student", Ownership { bike: true, ..Ownership::NONE });
+    let (travellers, trips) =
+        build_travellers(rows, Vec::new(), &defaults, 1, &mut Diagnostics::new()).expect("valid");
+    let classes = vec![
+        ("commuter".to_string(), Default::default()),
+        ("student".to_string(), [("beta_time_min".to_string(), -0.35)].into_iter().collect()),
+    ];
+    let logit = Arc::from(
+        openmobisim_core_choice::model_with_classes("logit", &Default::default(), &classes)
+            .expect("built in"),
+    );
+    let msa = Arc::from(
+        openmobisim_core_sim::equilibration::strategy(
+            "msa",
+            &[("iterations".to_string(), 3.0)].into_iter().collect(),
+        )
+        .expect("built in"),
+    );
+    // The students have no car: no mode that needs one.
+    let class_modes =
+        vec![[true; Mode::COUNT], Mode::ALL.map(|m| !matches!(m, Mode::Car | Mode::CarTransit))];
+    let a3 = road.link_external_ids().typed_id_of("a3").expect("a toy link");
+    let narrowing = Disruptions {
+        road: vec![RoadDisruption { links: vec![a3], factor: 0.0, from_s: 600.0, to_s: 3000.0 }],
+        transit: Vec::new(),
+        known: false,
+    };
+    let mut run = Run::new(road.clone(), Arc::new(travellers), Arc::new(trips), Second(86_400))
+        .with_flow_motor(FlowMotor::Ltm {
+            turns: Arc::new(TurnTable::build(&road, SignalDefaults::SHIPPED)),
+            step: Duration(60.0),
+            level: FidelityLevel::PointQueue,
+        })
+        .with_loading_options(LoadingOptions::SHIPPED)
+        .with_master_seed(20_261_015)
+        .with_choice_model(logit)
+        .with_equilibration(msa)
+        .with_layers(layers)
+        .with_transit(transit)
+        .with_parking(parking)
+        .with_mode_choice(&Mode::ALL)
+        .with_class_modes(class_modes)
+        .with_disruptions(narrowing);
+    let description = run.description();
+    let result = run.execute(&mut Diagnostics::new());
+    let it = result.itineraries.as_ref().expect("itinerary trips");
+    let mut digest = 0u64;
+    let mut step = |v: u64| digest = digest.wrapping_mul(0x0100_0000_01b3).wrapping_add(v);
+    for i in 0..it.trip.len() {
+        step(u64::from(it.mode[i]));
+        step(u64::from(it.parking[i]));
+        step(it.probability[i].to_bits());
+        step(u64::from(it.alternatives[i]));
+    }
+    for e in &result.events {
+        step(u64::from(e.second.get()));
+        step(u64::from(e.entity_id));
+    }
+    for r in &result.iterations {
+        step(r.mode_changed_share.to_bits());
+        step(u64::from(r.reroutes));
+        step(u64::from(r.reroute_searches));
+        step(r.total_travel_time_s.to_bits());
+        for g in r.itinerary_gap {
+            step(g.to_bits());
+        }
+    }
+    let shares: Vec<String> = Mode::ALL
+        .iter()
+        .map(|m| format!("{} {}", m.as_str(), result.by_mode[m.index()].completion.total_trips))
+        .collect();
+    println!("default_fingerprint   {}", description.fingerprint_hex());
+    println!("default_level         {}", FidelityLevel::PointQueue.number());
+    println!("default_trips         {}", shares.join(", "));
+    println!("default_reroutes      {}", result.reroutes.len());
+    println!("default_time_s        {:016x}", result.total_travel_time.get().to_bits());
+    println!("default_digest        {digest:016x}");
 }
