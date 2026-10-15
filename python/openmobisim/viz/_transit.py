@@ -6,7 +6,9 @@ for, by its line (lines sharing a stretch drawn side by side), as wide as the
 passengers the day's runs carried over it; stops are hubs, sized by their
 boardings, and named on a small network. The look was put to the user with the
 first figure and accepted (S200); the colour by line and the stops' names were
-asked for with the validation figures (T-8).
+asked for with the validation figures (T-8). Since S281 the hops are ribbons in the
+link map's own idiom: the same width rule, the two directions side by side on the
+driver's side, a halo, the legend block and the three-line footer.
 """
 
 from __future__ import annotations
@@ -17,7 +19,16 @@ import numpy as np
 
 from openmobisim import __version__
 from openmobisim.viz import _geometry as geo
-from openmobisim.viz._figure import SIZE_CM, Page, draw_furniture, load_matplotlib, rgb, save_figure
+from openmobisim.viz._figure import (
+    SIZE_CM,
+    Page,
+    draw_furniture,
+    load_matplotlib,
+    nice_number,
+    rgb,
+    save_figure,
+)
+from openmobisim.viz._link import _WIDTH_MIN_PT, _WIDTH_SPAN_PT
 from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._route import _ROUTE_NIGHT, _ROUTE_PAPER
 from openmobisim.viz._style import Theme, get_theme
@@ -45,10 +56,11 @@ def map_transit(
 ) -> Any:
     """Draw a run's transit: lines by kind, width = passengers on board, stops as hubs.
 
-    Each hop of every run, from one stop to the next, is a straight segment
+    Each hop of every run, from one stop to the next, is a straight ribbon
     coloured by its kind of service (rail, metro, tram, bus, ferry, other) and as
     wide as the passengers on board over the whole day, summed over the runs that
-    make it; the busiest on top. Stops are drawn as hubs, sized by boardings. The
+    make it; the two directions side by side, each on the driver's side, as on the
+    link map; the busiest on top. Stops are drawn as hubs, sized by boardings. The
     run's network is drawn quietly underneath.
 
     Args:
@@ -126,27 +138,49 @@ def map_transit(
             LineCollection(canvas, colors=th.base, linewidths=0.3 * k, capstyle="round", zorder=1)
         )
     keys = sorted(loads, key=lambda key: (loads[key], key))  # the busiest on top
+    top = 1.0
+    width_of = None
     if keys:
         values = np.array([loads[key] for key in keys])
+        # The link map's width rule (S281): the square root of the load up to the busiest hop.
         top = float(values.max()) or 1.0
-        width = (0.5 + 6.0 * np.sqrt(values / top)) * k
+
+        def width_of(v: Any) -> Any:
+            return (_WIDTH_MIN_PT + _WIDTH_SPAN_PT * np.sqrt(np.minimum(v, top) / top)) * k
+
+        width = width_of(values)
         segments = np.array([[xy[key[1]], xy[key[2]]] for key in keys])
+        mpp = page.metres_per_point
         if by_line:
             palette = _ROUTE_NIGHT if th.glow else _ROUTE_PAPER
             lines = sorted(line_runs)
             colours = np.array([rgb(palette[lines.index(key[0]) % len(palette)]) for key in keys])
-            segments = _side_by_side(keys, segments, 7.5 * k * page.metres_per_point)
+            segments = _side_by_side(keys, segments, 7.5 * k * mpp)
         else:
             colours = np.array([rgb(th.kinds[KINDS.index(key[0])]) for key in keys])
-        page.ax.add_collection(
-            LineCollection(
-                segments,
-                colors=[rgb(th.surface)],
-                linewidths=width + 1.0 * k,
-                capstyle="round",
-                zorder=2,
+            # Each direction on the driver's side, by its own width, as the link map does.
+            segments = _offset_right(segments, (width / 2 + 0.25) * mpp)
+        surface = rgb(th.surface)
+        if th.glow:
+            page.ax.add_collection(
+                LineCollection(
+                    segments,
+                    colors=surface + (colours - surface) * 0.14,
+                    linewidths=width * 2.8 + 1.2,
+                    capstyle="round",
+                    zorder=2,
+                )
             )
-        )
+        else:
+            page.ax.add_collection(
+                LineCollection(
+                    segments,
+                    colors=[surface],
+                    linewidths=width + 1.4,
+                    capstyle="round",
+                    zorder=2,
+                )
+            )
         page.ax.add_collection(
             LineCollection(segments, colors=colours, linewidths=width, capstyle="round", zorder=3)
         )
@@ -184,7 +218,10 @@ def map_transit(
         palette = _ROUTE_NIGHT if th.glow else _ROUTE_PAPER
         lines = sorted(line_runs)
         legend = [
-            (rgb(palette[j % len(palette)]), f"{line:<6} {len(line_runs[line]):>6,} runs")
+            (
+                rgb(palette[j % len(palette)]),
+                f"{line:<6} {len(line_runs[line]):>6,} runs".replace(",", "\u202f"),
+            )
             for j, line in enumerate(lines)
         ]
         if len(lines) > 8:
@@ -192,22 +229,42 @@ def map_transit(
     else:
         count = transit.runs_by_kind()
         legend = [
-            (rgb(th.kinds[i]), f"{kind:<6} {count[kind]:>6,} runs")
+            (rgb(th.kinds[i]), f"{kind:<6} {count[kind]:>6,} runs".replace(",", "\u202f"))
             for i, kind in enumerate(KINDS)
             if kind in count
         ]
     total = float(np.asarray(calls["boardings"]).sum())
+    samples = []
+    if width_of is not None:
+        for v in (nice_number(top / 10), nice_number(top / 3), nice_number(top)):
+            samples.append((v, float(width_of(np.array(v)))))
+    # The footer's first line: the day's numbers (S281).
+    busiest = max(loads.values()) if loads else 0.0
+    summary = run.transit_summary or {}
+    numbers = [
+        f"{total:,.0f} boardings".replace(",", "\u202f"),
+        f"{transit.run_count:,} runs on {transit.route_count:,} lines".replace(",", "\u202f"),
+        f"busiest hop {busiest:,.0f} passengers".replace(",", "\u202f"),
+    ]
+    if summary.get("bus_runs_on_roads"):
+        delay = summary.get("bus_delay_mean_s", 0.0)
+        on_roads = f"{summary['bus_runs_on_roads']:,.0f}".replace(",", "\u202f")
+        numbers.append(f"{on_roads} bus runs on the roads, mean delay {delay / 60:+.1f} min")
     draw_furniture(
         page,
         title=title or "Transit: lines and stops",
         subtitle=subtitle
         or (
-            f"{transit.date} · {transit.run_count:,} runs, {transit.stop_count:,} stops · "
-            "width: passengers on board"
+            f"{transit.date} · straight ribbons from stop to stop, one per direction of travel · "
+            "stops sized by boardings"
         ),
-        note=note
-        or f"{total:,.0f} boardings · stops sized by boardings · straight lines stop to stop",
-        provenance=f"{__version__} · {run_identity(run)} · GTFS · {network_source(network)}",
+        note=note,
+        provenance=[
+            " · ".join(numbers),
+            f"run {run.run_id} · {run_identity(run)}",
+            f"openmobisim {__version__} · GTFS · {network_source(network)}",
+        ],
+        width_legend=("Width: passengers on board over the day", samples, ""),
         route_legend=legend,
         credit=credit,
         logo=logo,
@@ -216,6 +273,15 @@ def map_transit(
     if path is not None:
         save_figure(page.fig, path, th.surface)
     return page.fig
+
+
+def _offset_right(segments: np.ndarray, distance: np.ndarray) -> np.ndarray:
+    """Shift each straight segment right of its direction of travel by ``distance`` metres."""
+    d = segments[:, 1] - segments[:, 0]
+    length = np.hypot(d[:, 0], d[:, 1])
+    length[length == 0] = 1.0
+    right = np.column_stack([d[:, 1], -d[:, 0]]) / length[:, None]
+    return segments + (right * distance[:, None])[:, None, :]
 
 
 def _side_by_side(

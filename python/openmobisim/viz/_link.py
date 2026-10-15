@@ -18,6 +18,7 @@ from openmobisim.viz._figure import (
     SIZE_CM,
     Page,
     draw_furniture,
+    font_mono_name,
     load_matplotlib,
     nice_number,
     ramp_rgb,
@@ -115,6 +116,33 @@ def link_table(
     return {"volume": volume, "mean_s": mean_s, "delay": delay}
 
 
+def flow_summary(network: Any, table: dict[str, np.ndarray], unit: str, active: np.ndarray) -> str:
+    """The map's flow numbers in one line (S281): the footer's first line.
+
+    Vehicle-kilometres per hour over the bins shown (volume times length, summed over the
+    drawn ribbons), the mean speed over them (kilometres over hours spent), the share of the
+    time spent that is delay beyond free flow, and the busiest ribbon's volume.
+    """
+    length_km = network.link_length_m() / 1000.0
+    volume, mean_s, delay = table["volume"], table["mean_s"], table["delay"]
+    drawn = active & (volume > 0)
+    if not drawn.any():
+        return "no traffic on this layer"
+    veh_km = float((volume[drawn] * length_km[drawn]).sum())
+    hours = float((volume[drawn] * np.nan_to_num(mean_s[drawn]) / 3600.0).sum())
+    delay_h = float((volume[drawn] * np.nan_to_num(mean_s[drawn]) * delay[drawn] / 3600.0).sum())
+    what = "PCU" if unit.startswith("PCU") else "traveller"
+    speed = veh_km / hours if hours > 0 else 0.0
+    parts = [
+        f"{veh_km:,.0f} {what}-km per hour".replace(",", "\u202f"),
+        f"mean speed {speed:.0f} km/h",
+    ]
+    if hours > 0:
+        parts.append(f"{100 * delay_h / hours:.0f} % of the time spent is delay")
+    parts.append(f"busiest ribbon {volume[drawn].max():,.0f} {unit}".replace(",", "\u202f"))
+    return " · ".join(parts)
+
+
 #: The default window: the bins around the busiest one carrying at least this share of its traffic.
 BUSY_SHARE = 0.25
 
@@ -182,6 +210,7 @@ def map_link(
     scale: float | None = None,
     chevrons: bool | None = None,
     min_volume: float = 0.0,
+    labels: int = 0,
     credit: str | None = None,
     logo: bool = True,
     path: str | None = None,
@@ -235,6 +264,8 @@ def map_link(
         min_volume: Links carrying no more than this (PCU/h) are drawn only as
             canvas; the default 0 draws every link that saw any traffic, at least
             a fine line wide.
+        labels: Write the volume (PCU/h) beside this many of the busiest ribbons, 0 for none
+            (S281). The footer's first line gives the flow numbers of the whole map either way.
         credit: A line of your own before the logo (a name, an institution, your
             copyright). The logo is a signature, not a claim on your figure.
         logo: Draw the openmobisim logo at the bottom right (``False`` for none).
@@ -347,8 +378,8 @@ def map_link(
             "#" + "".join(f"{round(float(v) * 255):02x}" for v in c) for c in band_rgb
         )
         low, high = DELAY_BAND_LABELS, ""
-        legend_label = (
-            "Delay over free flow"  # a general title; the bands name only their ranges (S269)
+        legend_label = (  # a general title; the bands name only their ranges (S269)
+            "Colour: delay over free flow"
         )
     elif colour == "volume_capacity":
         capacity, _ = capacity_passing(network)
@@ -356,13 +387,13 @@ def map_link(
         link_rgb = ramp_rgb(stops, np.clip(ratio, 0.0, 1.0))
         severity = ratio
         legend_stops, low, high = stops, "0", "1.0+"
-        legend_label = "Volume over capacity"
+        legend_label = "Colour: volume over capacity"
     else:
         t = np.sqrt(np.minimum(volume, vmax) / vmax)
         link_rgb = ramp_rgb(th.ramp_volume, t)
         severity = volume
         legend_stops, low, high = th.ramp_volume, "0", f"{vmax:,.0f}+"
-        legend_label = f"Volume per direction ({unit})"
+        legend_label = f"Width: volume per direction ({unit})"
     drawn = np.nonzero(active)[0]
     drawn = drawn[np.argsort(severity[drawn], kind="stable")]  # the worst on top
     lines = geo.polylines(ribbon_points, offsets, drawn)
@@ -405,25 +436,61 @@ def map_link(
             PolyCollection(triangles, facecolors=[surface], edgecolors="none", alpha=0.9, zorder=4)
         )
 
-    # Furniture.
+    # 4. Labels on the busiest ribbons (S281): the volume, at the link's middle, with a halo.
+    if labels > 0 and active.any():
+        from matplotlib import patheffects
+
+        halo = [patheffects.withStroke(linewidth=2.6 * page.k, foreground=th.surface)]
+        link_from, link_to = network.link_from(), network.link_to()
+        labelled: set[tuple[int, int]] = set()  # one label per two-way street: its busier side
+        placed: list[np.ndarray] = []  # and none within 4 % of the view of another
+        for link in np.argsort(-volume):
+            if volume[link] <= 0 or len(placed) >= labels:
+                break
+            ends = (min(link_from[link], link_to[link]), max(link_from[link], link_to[link]))
+            if ends in labelled:
+                continue
+            poly = ribbon_points[offsets[link] : offsets[link + 1]]
+            mid = poly[len(poly) // 2]
+            if any(np.hypot(*(mid - p)) < 0.04 * width_m for p in placed):
+                continue
+            labelled.add(ends)
+            placed.append(mid)
+            page.ax.annotate(
+                f"{volume[link]:,.0f}".replace(",", "\u202f"),
+                mid,
+                xytext=(4 * page.k, 4 * page.k),
+                textcoords="offset points",
+                fontsize=8.5 * page.k,
+                color=th.ink,
+                fontfamily=font_mono_name(),
+                path_effects=halo,
+                zorder=6,
+            )
+
+    # Furniture (S281: the subtitle says when; the legends say how to read the ribbons; the
+    # footer's first line gives the flow numbers, its second what the run was).
     step = run.link_bins().bin_seconds
     seen = link_bins.bins()
     if len(seen) or (first is not None and stop is not None):
         window = (first if first is not None else int(seen.min())) * step
         end = (stop if stop is not None else int(seen.max()) + 1) * step
+        when = "the busiest part of the run" if bins is None else "the bins shown"
         default_subtitle = (
-            f"{_clock(window)}–{_clock(end)} · one ribbon per direction · "
-            f"width = volume, colour = {_COLOUR_WORDS[colour]}"
+            f"{_clock(window)}–{_clock(end)} ({when}) · one ribbon per direction of travel, "
+            "on the driver's side"
         )
     else:  # no vehicle crossed a link on this layer: nothing to time
-        default_subtitle = "no traffic on this layer · one ribbon per direction"
+        default_subtitle = "no traffic on this layer · one ribbon per direction of travel"
     level = _LEVEL_NAMES.get(run.flow_level, str(run.flow_level))
     stepping = f" · step {run.flow_step_s} s" if run.flow_level else ""
     source = network_source(network)
-    provenance = (
-        f"{__version__} · run {run.run_id} · level {run.flow_level} ({level})"
-        f"{stepping} · bin {step} s · {run_identity(run)} · {source}"
-    )
+    provenance = [
+        flow_summary(network, table, unit, active),
+        f"run {run.run_id} · {run_identity(run)}",
+        f"openmobisim {__version__} · level {run.flow_level} ({level}){stepping} · "
+        f"bins of {step} s · {source}",
+    ]
     sample_values = [nice_number(vmax / 10), nice_number(vmax / 3), nice_number(vmax)]
     samples = [
         (
@@ -443,7 +510,7 @@ def map_link(
         subtitle=subtitle or default_subtitle,
         note=note,
         provenance=provenance,
-        width_legend=("Volume per direction", samples, unit),
+        width_legend=("Width: volume per direction", samples, unit),
         colour_legend=(legend_label, legend_stops, low, high),
         credit=credit,
         logo=logo,

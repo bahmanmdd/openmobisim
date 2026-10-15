@@ -307,12 +307,13 @@ def test_a_quantity_shown_by_width_and_colour_is_titled_once():
     run, _ = toy_run()
     kwargs = {"size_cm": (20.32, 11.43), "dpi": 60}
     words = [t.get_text() for t in viz.map_link(run, colour="volume", **kwargs).texts]
-    assert sum(w.startswith("Volume per direction") for w in words) == 1
+    assert sum(w.startswith("Width: volume per direction") for w in words) == 1
     words = [t.get_text() for t in viz.map_link(run, colour="delay", **kwargs).texts]
-    assert any(w.startswith("Volume per") for w in words)
-    # The delay's bands (S268): each labelled with its range only, under a general title (S269).
+    assert any(w.startswith("Width: volume per") for w in words)
+    # The delay's bands (S268): each labelled with its range only, under a general title (S269);
+    # the titles say what encodes what (S281).
     assert all(label in words for label in viz._link.DELAY_BAND_LABELS)
-    assert "Delay over free flow" in words
+    assert "Colour: delay over free flow" in words
 
 
 def test_the_logo_and_the_credit_are_optional_and_never_a_copyright_claim():

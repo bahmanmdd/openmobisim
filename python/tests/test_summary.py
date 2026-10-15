@@ -37,7 +37,9 @@ def test_the_page_holds_the_runs_identity_numbers_and_sections(tmp_path):
         "Flows",
         "Modes",
         "Convergence",
-        "Where the time went",
+        "Computation time",
+        "When people left",
+        "On the roads",
         "Settings",
         "400",
     ):

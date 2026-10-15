@@ -175,7 +175,7 @@ def draw_furniture(
     title: str,
     subtitle: str,
     note: str | None,
-    provenance: str,
+    provenance: str | list[str],
     width_legend: tuple[str, list[tuple[float, float]], str] | None = None,
     colour_legend: tuple[str, tuple[str, ...], str | tuple[str, ...], str] | None = None,
     credit: str | None = None,
@@ -184,10 +184,12 @@ def draw_furniture(
     route_legend: list[tuple[np.ndarray, str]] | None = None,
     marker_legend: list[tuple[str, bool, str]] | None = None,
 ) -> None:
-    """Title with the signal glyph, legends, the provenance strip and the logo.
+    """Title with the signal glyph, legends, the footer strip and the logo.
 
-    `width_legend` is ``(label, [(value, width_pt), ...], unit)``, the unit shown once, after
-    the label (empty: none); `colour_legend`
+    `provenance` is the footer: one line, or up to three (S281: the run's numbers, then what
+    identifies the run, then what ran it), the first the most readable, the last the
+    provenance proper, in the mono face. `width_legend` is ``(label, [(value, width_pt), ...],
+    unit)``, the unit shown once, after the label (empty: none); `colour_legend`
     is ``(label, ramp_stops, low_label, high_label)``, or, for bands (S268), ``(label, colours,
     labels, "")`` with one label per colour, each under its swatch; its label left out when it is
     empty or is the width
@@ -223,20 +225,24 @@ def draw_furniture(
             0.0235, 0.885, note, color=t.muted, fontsize=10 * k, fontfamily=sans, style="italic"
         )
 
-    # Legends, top right.
+    # Legends, top right (S281: one block on shared baselines — a title row, a mark row and a
+    # label row for each legend; the width samples are ribbons with their value beside them,
+    # the colour bands one bar with a label under each band).
     lx, ly = 0.585, 0.905
+    y_title, y_mark, y_label = ly + 0.030, ly + 0.014, ly - 0.006
     title_text = None
     if width_legend is not None:
         label, samples, unit = width_legend
         # The unit once, in the title (S232): the chips stay short at any page width.
         title_text = f"{label} ({unit})" if unit else label
-        fig.text(lx, ly + 0.030, title_text, color=t.ink2, fontsize=9.5 * k, fontfamily=sans)
-        for i, (value, width_pt) in enumerate(samples):
-            x0 = lx + i * 0.075
+        fig.text(lx, y_title, title_text, color=t.ink2, fontsize=9.5 * k, fontfamily=sans)
+        x0 = lx
+        for value, width_pt in samples:
+            ribbon = 0.034
             fig.add_artist(
                 Line2D(
-                    [x0, x0 + 0.05],
-                    [ly + 0.014] * 2,
+                    [x0, x0 + ribbon],
+                    [y_mark] * 2,
                     transform=fig.transFigure,
                     color=t.free,
                     linewidth=width_pt,
@@ -244,13 +250,15 @@ def draw_furniture(
                 )
             )
             fig.text(
-                x0,
-                ly - 0.006,
-                f"{value:g}",
-                color=t.muted,
+                x0 + ribbon / 2,
+                y_label,
+                f"{value:,.0f}".replace(",", "\u202f"),
+                color=t.ink2,
                 fontsize=8.5 * k,
                 fontfamily=mono,
+                ha="center",
             )
+            x0 += ribbon + 0.030
     if marker_legend:
         for i, (marker, filled, text) in enumerate(marker_legend[:4]):
             y0 = 0.950 - i * 0.021
@@ -269,9 +277,13 @@ def draw_furniture(
             )
             fig.text(lx + 0.022, y0, text, color=t.ink2, fontsize=9 * k, fontfamily=font_mono())
     if route_legend:
+        # Rows of colour and text, two columns of four; to the right of the width legend when
+        # there is one (S281: the transit map shows both), else from the legend block's left.
+        rx = 0.815 if width_legend is not None else lx
+        per_column = 6 if width_legend is not None else 4
         for i, (colour, text) in enumerate(route_legend[:8]):
-            col, row = divmod(i, 4)
-            x0 = 0.585 + col * 0.20
+            col, row = divmod(i, per_column)
+            x0 = rx + col * (0.095 if width_legend is not None else 0.20)
             y0 = 0.950 - row * 0.021
             fig.add_artist(
                 Line2D(
@@ -289,24 +301,25 @@ def draw_furniture(
         cx = 0.815
         if label and label != title_text:
             # Width and colour showing the same quantity share the width legend's title (S243).
-            fig.text(cx, ly + 0.030, label, color=t.ink2, fontsize=9.5 * k, fontfamily=sans)
+            fig.text(cx, y_title, label, color=t.ink2, fontsize=9.5 * k, fontfamily=sans)
     if colour_legend is not None and not isinstance(low, str):
-        # Bands (S268): a swatch per colour, its range under it.
+        # Bands (S268): one bar of touching swatches, each band's range under it (S281).
         step = 0.16 / len(stops)
         for i, (colour, text) in enumerate(zip(stops, low, strict=True)):
             fig.add_artist(
                 Rectangle(
-                    (cx + i * step, ly + 0.008),
-                    step * 0.92,
+                    (cx + i * step, y_mark - 0.006),
+                    step,
                     0.012,
                     transform=fig.transFigure,
                     facecolor=colour,
-                    edgecolor="none",
+                    edgecolor=t.surface,
+                    linewidth=0.6 * k,
                 )
             )
             fig.text(
-                cx + i * step + step * 0.46,
-                ly - 0.006,
+                cx + i * step + step / 2,
+                y_label,
                 text,
                 color=t.ink2,
                 fontsize=8.5 * k,
@@ -314,13 +327,13 @@ def draw_furniture(
                 ha="center",
             )
     elif colour_legend is not None:
-        bar = fig.add_axes((cx, ly + 0.008, 0.16, 0.012), facecolor=t.surface)
+        bar = fig.add_axes((cx, y_mark - 0.006, 0.16, 0.012), facecolor=t.surface)
         bar.set_axis_off()
         bar.imshow(ramp_rgb(stops, np.linspace(0, 1, 256))[None, :, :], aspect="auto")
-        fig.text(cx, ly - 0.006, low, color=t.ink2, fontsize=8.5 * k, fontfamily=mono)
+        fig.text(cx, y_label, low, color=t.ink2, fontsize=8.5 * k, fontfamily=mono)
         fig.text(
             cx + 0.16,
-            ly - 0.006,
+            y_label,
             high,
             color=t.muted,
             fontsize=8.5 * k,
@@ -328,20 +341,38 @@ def draw_furniture(
             ha="right",
         )
 
-    # The provenance strip: what is needed to regenerate the figure.
+    # The footer strip (S281): up to three lines above a rule, the last one the provenance
+    # proper (what is needed to regenerate the figure), in the mono face; the lines before it
+    # the run's numbers and its identity, in the text face. The logo sits centred on the strip.
+    lines = [provenance] if isinstance(provenance, str) else list(provenance)[:3]
+    pitch = 0.0165 * k
+    rule_y = 0.030 + pitch * (len(lines) - 1)
     fig.add_artist(
         Line2D(
             [0.0235, 0.9765],
-            [0.030, 0.030],
+            [rule_y, rule_y],
             transform=fig.transFigure,
             color=t.base,
             linewidth=0.8,
         )
     )
-    line = fig.text(0.0235, 0.0105, provenance, color=t.muted, fontsize=8.6 * k, fontfamily=mono)
     if compass:
         _draw_compass(page)
-    _fit_before(line, _draw_logo(page, credit, logo) - 0.008 * k)
+    left_of_logo = _draw_logo(
+        page, credit, logo, strip_middle=0.0105 + pitch * (len(lines) - 1) / 2
+    )
+    for i, text in enumerate(lines):
+        last = i == len(lines) - 1
+        y = 0.0105 + pitch * (len(lines) - 1 - i)
+        line = fig.text(
+            0.0235,
+            y,
+            text,
+            color=t.muted if last else t.ink2,
+            fontsize=(8.6 if last else 9.2) * k,
+            fontfamily=mono if last else sans,
+        )
+        _fit_before(line, left_of_logo - 0.008 * k)
 
 
 def _draw_compass(page: Page) -> None:
@@ -455,13 +486,17 @@ def _fit_before(text: Any, limit: float) -> None:
     text.set_text(shown(lo))
 
 
-def _draw_logo(page: Page, credit: str | None, logo: bool) -> float:
+def _draw_logo(
+    page: Page, credit: str | None, logo: bool, strip_middle: float | None = None
+) -> float:
     """The signature at the bottom right: an optional credit, then the mark.
 
     The mark is the cactus and the wordmark, a lockup like a
     publisher's imprint. It is a logo, not a copyright notice: a figure and its
     data belong to whoever made the run, so the credit line is theirs to fill.
-    Returns the signature's left edge, in figure coordinates.
+    ``strip_middle`` is the footer strip's middle line (figure fraction) when the strip has
+    more than one line (S281); the signature is then centred on it. Returns the signature's
+    left edge, in figure coordinates.
     """
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.lines import Line2D
@@ -473,7 +508,7 @@ def _draw_logo(page: Page, credit: str | None, logo: bool) -> float:
     canvas = FigureCanvasAgg(fig)
     renderer = canvas.get_renderer()
     inverse = fig.transFigure.inverted()
-    right, y = 0.9765, 0.0105
+    right, y = 0.9765, 0.0105 if strip_middle is None else strip_middle
     if logo:
         word = fig.text(
             right,
@@ -491,7 +526,9 @@ def _draw_logo(page: Page, credit: str | None, logo: bool) -> float:
         # descenders, and kept clear of the provenance rule above it.
         x_ink = TextPath((0, 0), "x", size=11.5 * k, prop=word.get_fontproperties()).get_extents()
         middle = y + (x_ink.y0 + x_ink.y1) / 2 / 72 / fig.get_figheight()
-        tall = min((box.y1 - box.y0) * 1.45, 2 * (0.030 - 0.0025 - middle))
+        tall = (box.y1 - box.y0) * 1.45
+        if strip_middle is None:
+            tall = min(tall, 2 * (0.030 - 0.0025 - middle))
         wide = tall * h / w
         x = box.x0 - 0.004 * k - wide
         for patch in logo_patches(x, middle - tall / 2, tall, w / h, t.mark, fig.transFigure):
