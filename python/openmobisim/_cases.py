@@ -182,20 +182,26 @@ class Case:
         A row of the matrix that names its ``user_class`` (and its ``mode``: trips from outside
         the study area, goods vehicles, S265) keeps it; the others' travellers are drawn a class
         by the classes' shares. A zone with a ``spread_m`` in ``zones.csv`` spreads its trips that
-        far (0 at a gateway, a road where the area's edge cuts it). With a ``weight`` in the case's
-        demand, each simulated traveller stands for that many people: the matrix is divided by it
-        and every trip carries it, so the run's totals are the whole demand's and its time a
-        sample's (``demand_sample``): the fast run, a small aggregation (each traveller a platoon of
-        that many cars, each counted at full size on the network's real capacities), not a
-        rescaled network. ``weight`` here overrides it: 1 is the complete run, one simulated
-        traveller per person (the slowest).
+        far (0 at a gateway, a road where the area's edge cuts it); a case with a ``zone_points``
+        table draws its trip ends among each zone's points by weight. With a ``weight`` in the
+        case's demand, each simulated traveller stands for that many people: the matrix is
+        divided by it and every trip carries it, so the run's totals are the whole demand's and
+        its time a sample's (``demand_sample``): the fast run, a small aggregation (each
+        traveller a platoon of that many cars, each counted at full size on the network's real
+        capacities), not a rescaled network. ``weight`` here overrides it: 1 is the complete run,
+        one simulated traveller per person (the slowest).
 
         ``departures``: keep only the trips departing in ``(start, end)`` (clock times or seconds
         after midnight; start included, end not), at their own times, the rest left out; the
         case's own ``departures`` (``case.json``) by default; ``"all"`` keeps every trip of the
         matrix (S278: the bundle's demand stays whole, the selection is made here).
         """
-        from openmobisim.demand import demand_assign_classes, demand_from_od, demand_read_od
+        from openmobisim.demand import (
+            demand_assign_classes,
+            demand_from_od,
+            demand_read_od,
+            demand_read_zone_points,
+        )
 
         d = self.info["demand"]
         weight = int(d.get("weight", 1) if weight is None else weight)
@@ -206,6 +212,8 @@ class Case:
         spreads = _zone_spreads(self.path(d["zones"]))
         if spreads:
             options["spread_m_by_zone"] = spreads
+        if d.get("zone_points"):  # S282: trip ends where the zone's buildings are
+            options["zone_points"] = demand_read_zone_points(self.path(d["zone_points"]))
         trips = demand_from_od(od, self.zones(), seed=seed, user_class=_DRAWN, **options)
         drawn = [t for t in trips if t[7] == _DRAWN]
         classes = demand_assign_classes(drawn, self.classes(), seed=seed) if drawn else []

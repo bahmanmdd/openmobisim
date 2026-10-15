@@ -157,6 +157,74 @@ def test_trip_ends_may_share_a_few_points_per_zone() -> None:
         ms.demand_from_od(od_rows(), ZONES, points_per_zone=0)
 
 
+def test_trip_ends_may_be_drawn_from_a_zones_weighted_points(tmp_path: Path) -> None:
+    """A zone with points places its trips on them, by weight; a zone without keeps the disc.
+
+    Origins by one weight, destinations by the other; a trip within the zone ends at another
+    point than it starts.
+    """
+    path = write(
+        tmp_path / "zone_points.csv",
+        "zone_id,x_coord,y_coord,weight_origin,weight_destination\n"
+        "a,4.900,52.370,1,0\na,4.905,52.370,0,1\nb,4.920,52.371,2,2\n",
+    )
+    points = ms.demand_read_zone_points(path)
+    assert points == {
+        "a": [(4.9, 52.37, 1.0, 0.0), (4.905, 52.37, 0.0, 1.0)],
+        "b": [(4.92, 52.371, 2.0, 2.0)],
+    }
+    od = [
+        {"origin_zone": "a", "destination_zone": "a", "trips": 20},
+        {"origin_zone": "a", "destination_zone": "b", "trips": 10},
+        {"origin_zone": "b", "destination_zone": "c", "trips": 5},
+    ]
+    trips = ms.demand_from_od(od, ZONES, zone_points=points, seed=3)
+    assert len(trips) == 35
+    home, work, b = (4.9, 52.37), (4.905, 52.37), (4.92, 52.371)
+    within = [t for t in trips if (t[2], t[3]) == home and (t[4], t[5]) == work]
+    assert len(within) == 20  # every a→a trip from the residents' point to the workplaces' point
+    to_b = [t for t in trips if (t[2], t[3]) == home and (t[4], t[5]) == b]
+    assert len(to_b) == 10
+    from_b = [t for t in trips if (t[2], t[3]) == b]
+    assert len(from_b) == 5 and all(metres((t[4], t[5]), ZONES["c"]) <= 300.0 for t in from_b)
+    assert (
+        ms.demand_from_od(od, ZONES, zone_points=points, seed=3) == trips
+    )  # the same seed, the same
+    # Weights all 0: uniform draws; within a one-point zone a trip starts and ends there.
+    flat = {
+        "a": [(4.9, 52.37, 0.0, 0.0), (4.905, 52.37, 0.0, 0.0)],
+        "b": [(4.92, 52.371, 1.0, 1.0)],
+    }
+    trips = ms.demand_from_od(od, ZONES, zone_points=flat, seed=1)
+    within = [t for t in trips if (t[2], t[3]) in (home, work) and (t[4], t[5]) in (home, work)]
+    assert len(within) == 20 and all((t[2], t[3]) != (t[4], t[5]) for t in within)
+    only_b = [{"origin_zone": "b", "destination_zone": "b", "trips": 3}]
+    bb = ms.demand_from_od(only_b, ZONES, zone_points=flat)
+    assert all((t[2], t[3]) == b and (t[4], t[5]) == b for t in bb)
+
+
+def test_zone_points_refusals(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="which zones does not have"):
+        ms.demand_from_od(od_rows(), ZONES, zone_points={"x": [(4.9, 52.37, 1.0, 1.0)]})
+    with pytest.raises(ValueError, match="negative"):
+        ms.demand_from_od(od_rows(), ZONES, zone_points={"a": [(4.9, 52.37, -1.0, 1.0)]})
+
+    def table(name: str, text: str) -> Path:
+        return write(tmp_path / name, text)
+
+    with pytest.raises(ValueError, match="must not be negative"):
+        ms.demand_read_zone_points(table("p.csv", "zone_id,lon,lat,weight\na,4.9,52.37,-2\n"))
+    with pytest.raises(ValueError, match="must be a number"):
+        ms.demand_read_zone_points(table("q.csv", "zone_id,lon,lat,weight_origin\na,4.9,52.37,x\n"))
+    with pytest.raises(ValueError, match="needs zone_id"):
+        ms.demand_read_zone_points(table("r.csv", "zone_id,lon,lat\n,4.9,52.37\n"))
+    # ``weight`` stands for both weights; a missing weight is 1.
+    both = ms.demand_read_zone_points(
+        table("s.csv", "zone_id,lon,lat,weight\na,4.9,52.37,3\nb,4.92,52.371,\n")
+    )
+    assert both == {"a": [(4.9, 52.37, 3.0, 3.0)], "b": [(4.92, 52.371, 1.0, 1.0)]}
+
+
 def test_od_refusals() -> None:
     with pytest.raises(ValueError, match="profile"):
         ms.demand_from_od(od_rows(), ZONES, profile="pm_peak")

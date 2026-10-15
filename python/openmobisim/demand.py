@@ -36,6 +36,7 @@ __all__ = [
     "demand_read_classes",
     "demand_read_od",
     "demand_read_trips",
+    "demand_read_zone_points",
     "demand_read_zones",
     "demand_sample",
     "demand_write_trips",
@@ -153,6 +154,41 @@ def demand_read_zones(path: str | Path) -> dict[str, tuple[float, float]]:
             raise ValueError(f"{path}: zone {zone!r} is listed twice")
         zones[zone] = (float(x), float(y))
     return zones
+
+
+def demand_read_zone_points(path: str | Path) -> dict[str, list[tuple[float, float, float, float]]]:
+    """Read ``zone_points.csv``: where within each zone its trips may start and end, with weights.
+
+    Columns: ``zone_id``, ``x_coord``/``y_coord`` (or ``lon``/``lat``, WGS84 degrees) and the
+    weights ``weight_origin`` and ``weight_destination`` (either may be replaced by ``weight``,
+    which stands for both; a missing weight is 1). A point with a residents' weight as origin and
+    a workplaces' weight as destination places a zone's trips where its buildings are, instead of
+    around its centre. Returns ``{zone_id: [(lon, lat, weight_origin, weight_destination), …]}``
+    in the file's order; see ``demand_from_od``'s ``zone_points``.
+
+    Raises:
+        ValueError: If a row has no id or no point, or a weight is negative or not a number.
+    """
+    points: dict[str, list[tuple[float, float, float, float]]] = defaultdict(list)
+    for i, row in enumerate(_rows(path)):
+        zone = _first(row, "zone_id", "zone", "id")
+        x, y = _first(row, "x_coord", "lon", "longitude"), _first(row, "y_coord", "lat", "latitude")
+        if not zone or not x or not y:
+            raise ValueError(f"{path}: row {i + 1} needs zone_id and x_coord/y_coord (or lon/lat)")
+        weights = []
+        for name in ("weight_origin", "weight_destination"):
+            text = _first(row, name, "weight")
+            try:
+                w = float(text) if text else 1.0
+            except ValueError:
+                raise ValueError(
+                    f"{path}: row {i + 1}: {name} must be a number, got {text!r}"
+                ) from None
+            if not w >= 0.0:
+                raise ValueError(f"{path}: row {i + 1}: {name} must not be negative, got {w}")
+            weights.append(w)
+        points[zone].append((float(x), float(y), weights[0], weights[1]))
+    return dict(points)
 
 
 def demand_read_od(path: str | Path) -> list[dict[str, Any]]:
@@ -466,6 +502,7 @@ def demand_from_od(
     seed: int = 0,
     spread_m_by_zone: Mapping[str, float] | None = None,
     points_per_zone: int | None = None,
+    zone_points: Mapping[str, list[tuple[float, float, float, float]]] | None = None,
 ) -> list[tuple]:
     """Turn an OD matrix into the trips a ``Scenario`` runs (S97's deterministic integerisation).
 
@@ -485,7 +522,13 @@ def demand_from_od(
        area's edge cuts it, where trips from outside enter, S265). With ``points_per_zone``, a
        trip end is instead one of that many fixed points around the zone's (half its spread
        away, evenly around it; 1: the zone's own point), drawn at random: trips from the same
-       zones then share their routes and their route searches (S265).
+       zones then share their routes and their route searches (S265). With ``zone_points``
+       (``demand_read_zone_points``'s shape), a zone that has points draws each trip end among
+       them by weight, the origin by ``weight_origin`` and the destination by
+       ``weight_destination`` (both uniform when a zone's weights are all 0), so trips start
+       where people live and end where they work; a trip within such a zone ends at a point
+       other than its origin's when the zone has more than one (with one point, both ends are
+       that point). A zone without points keeps the rule above (S282).
 
     The draws (steps 3 and 4) come from one NumPy generator seeded by ``seed``, consumed in the
     sorted order of the cells, so the same inputs and seed give the same trips on any machine for
@@ -506,6 +549,8 @@ def demand_from_od(
             ``spread_m``. The draws are the same either way: only their distance is scaled.
         points_per_zone: Draw each trip end from this many fixed points per zone instead of
             anywhere in its disc (at least 1; ``None``: anywhere).
+        zone_points: ``{zone_id: [(lon, lat, weight_origin, weight_destination), …]}``, the
+            places a zone's trips start and end, drawn by weight; the other zones as above.
 
     Returns:
         Trips rows (``traveller_id, trip_seq, origin_lon, origin_lat, destination_lon,
@@ -513,7 +558,8 @@ def demand_from_od(
 
     Raises:
         ValueError: For an unknown profile, a window that is empty, a zone the matrix names but
-            ``zones`` does not have, or a negative spread.
+            ``zones`` does not have, a negative spread, or a zone in ``zone_points`` that
+            ``zones`` does not have or whose points have a negative weight.
     """
     if profile not in _PROFILES:
         raise ValueError(f"profile must be one of {_PROFILES}, got {profile!r}")
@@ -525,6 +571,24 @@ def demand_from_od(
         raise ValueError(f"spread_m must not be negative: {spread_m}, by zone {spreads}")
     rows = demand_read_od(od) if isinstance(od, (str, Path)) else list(od)
     points = demand_read_zones(zones) if isinstance(zones, (str, Path)) else dict(zones)
+    # A zone with its own points: their coordinates, origin weights and destination weights.
+    placed: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    for zone, its in (zone_points or {}).items():
+        if zone not in points:
+            raise ValueError(f"zone_points names zone {zone!r}, which zones does not have")
+        if not its:
+            continue
+        xy = np.array([[p[0], p[1]] for p in its], dtype=float)
+        wo = np.array([p[2] for p in its], dtype=float)
+        wd = np.array([p[3] for p in its], dtype=float)
+        if (wo < 0).any() or (wd < 0).any():
+            raise ValueError(f"zone_points: zone {zone!r} has a negative weight")
+        uniform = np.full(len(its), 1.0 / len(its))
+        placed[zone] = (
+            xy,
+            wo / wo.sum() if wo.sum() > 0 else uniform,
+            wd / wd.sum() if wd.sum() > 0 else uniform,
+        )
     groups: dict[tuple, list[tuple[tuple, float]]] = defaultdict(list)
     for row in rows:
         o, d = str(row["origin_zone"]), str(row["destination_zone"])
@@ -550,7 +614,21 @@ def demand_from_od(
             u = rng.beta(3.0, 3.0, n) if profile == "am_peak" else rng.random(n)
             departures = lo + np.floor(u * (hi - lo)).astype(np.int64)
             ends = []
-            for at, zone in ((o, cell[0]), (d, cell[1])):
+            chosen: list[np.ndarray] = []  # each end's point, for a trip within a zone with points
+            for at, zone, which in ((o, cell[0], 1), (d, cell[1], 2)):
+                if zone in placed:  # one of the zone's own points, by weight (S282)
+                    xy, wo, wd = placed[zone]
+                    k = rng.choice(len(xy), size=n, p=wo if which == 1 else wd)
+                    if which == 2 and cell[0] == cell[1] and len(xy) > 1:
+                        for i in np.flatnonzero(k == chosen[0]):  # not the trip's own origin
+                            others = wd.copy()
+                            others[k[i]] = 0.0
+                            if others.sum() <= 0:
+                                others = np.where(np.arange(len(xy)) != k[i], 1.0, 0.0)
+                            k[i] = rng.choice(len(xy), p=others / others.sum())
+                    chosen.append(k)
+                    ends.append((xy[k, 0], xy[k, 1]))
+                    continue
                 if points_per_zone is None:
                     r = spreads.get(zone, spread_m) * np.sqrt(rng.random(n))
                     angle = 2.0 * np.pi * rng.random(n)
