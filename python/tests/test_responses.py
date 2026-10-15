@@ -76,9 +76,12 @@ def test_a_toll_takes_drivers_off_the_road():
 
 def test_a_dearer_fare_takes_riders_off_transit():
     net, trips = toy_trips()
+    # The example classes all hold a pass, and a pass holder pays no fare (S279, CM-15): the
+    # travellers who pay one are the same classes without it.
+    paying = {name: {**c, "has_transit_pass": False} for name, c in CLASSES.items()}
     riding = [
-        share(choose(net, trips, choice_options=MONEY, price_options={"fare_base_eur": fare}),
-              TRANSIT)
+        share(choose(net, trips, classes=paying, choice_options=MONEY,
+                     price_options={"fare_base_eur": fare}), TRANSIT)
         for fare in (0.0, 3.0, 20.0)
     ]  # fmt: skip
     assert riding[0] > riding[1] > riding[2], riding

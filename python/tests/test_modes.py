@@ -403,6 +403,38 @@ def test_a_model_sees_what_each_alternative_costs_by_part() -> None:
     assert set(choice.ROUTE_ATTRIBUTES) == set(a) - tolls, "Python's list is the core's"
 
 
+def test_a_traveller_with_a_transit_pass_pays_no_fare() -> None:
+    import numpy as np
+    from openmobisim import choice
+
+    def fares(has_pass: bool) -> np.ndarray:
+        seen: list[dict[str, np.ndarray]] = []
+
+        class Recorder:
+            name = "recorder"
+            attributes = ["time_min", "ride_min", "cost_fare_eur"]
+
+            def choose(self, batch):
+                seen.append({k: np.array(v) for k, v in batch.attributes.items()})
+                return choice.segment_argmax(-batch.attributes["time_min"], batch.offsets)
+
+        net = ms.examples.toy_network()
+        rows = [toy_trip(net, "a", "W", "N1", 0, None), toy_trip(net, "b", "W", "M", 0, None)]
+        ms.Scenario.from_parts(
+            network=net, demand=rows, classes={"everyone": (True, True, has_pass)},
+            transit=ms.examples.toy_network_transit(), parkings=ms.examples.toy_network_parkings(),
+            choice_model=Recorder(), equilibration="free_flow", flow_level=0, modes=ms.MODES,
+            mode_options=NO_ACCESS, price_options={"fare_base_eur": 2.0},
+        ).run(run_id=f"pass-{has_pass}")  # fmt: skip
+        a = {k: np.concatenate([s[k] for s in seen]) for k in seen[0]}
+        return a["cost_fare_eur"][a["ride_min"] > 0]
+
+    # A journey with one ride costs the base fare, 2 euros, unless the traveller holds a pass.
+    paying, holding = fares(False), fares(True)
+    assert len(paying) > 0 and len(holding) == len(paying)
+    assert np.allclose(paying, 2.0) and np.all(holding == 0.0)
+
+
 def test_a_car_route_of_a_trip_given_the_car_costs_its_km_and_tolls_too() -> None:
     import numpy as np
     from openmobisim import choice

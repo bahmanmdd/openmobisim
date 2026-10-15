@@ -1535,7 +1535,13 @@ fn cost(a: &Alternative, inputs: &ChooseInputs<'_>, trip: TripId) -> Cost {
         } else {
             0.0
         },
-        fare: prices.fare(a.rides.len(), a.ride_m),
+        // A pass holder pays no fare (S279, CM-15): the pass is access, not money, and its own
+        // price is not counted (Q-7).
+        fare: if inputs.travellers.ownership(inputs.trips.traveller(trip)).transit_pass {
+            0.0
+        } else {
+            prices.fare(a.rides.len(), a.ride_m)
+        },
     }
 }
 

@@ -6,7 +6,7 @@
 //! | `cost_running_eur` | the car or bike leg's kilometres times the vehicle's price per km ([`Prices::car_eur_km`], [`Prices::bike_eur_km`]) |
 //! | `cost_toll_eur` | the car leg's tolls: the road link value named `toll_eur` ([`TOLL_COLUMN`], given with the run's link values, [`crate::link_values`]) summed over its links, paid at each passage |
 //! | `cost_parking_eur` | the fee of the parking a park-and-ride or bike-and-ride trip leaves its vehicle at: the parking table's `fee_eur`, or the price for its kind ([`Prices::parking_car_eur`], [`Prices::parking_bike_eur`]); counted on the trip that parks, not on the one that fetches |
-//! | `cost_fare_eur` | a transit journey's fare: [`Prices::fare_base_eur`] once, [`Prices::fare_km_eur`] per kilometre from each boarding stop to its alighting stop as the crow flies, and [`Prices::fare_transfer_eur`] per transfer |
+//! | `cost_fare_eur` | a transit journey's fare: [`Prices::fare_base_eur`] once, [`Prices::fare_km_eur`] per kilometre from each boarding stop to its alighting stop as the crow flies, and [`Prices::fare_transfer_eur`] per transfer; **0 for a traveller who holds a transit pass** (`has_transit_pass` of their class or person: the pass is access, not money, and its own price is not counted) |
 //! | `cost_eur` | their sum |
 //!
 //! A car route of a trip given the car pays running costs and tolls; a walk pays nothing. Each
@@ -241,7 +241,8 @@ impl PreparedPrices {
     }
 
     /// The fare of a journey of `rides` rides covering `ride_m` metres as the crow flies; 0
-    /// without a ride.
+    /// without a ride. A pass holder pays none: the caller (`itinerary_choice`'s `cost`) does not
+    /// ask (S279, CM-15).
     pub(crate) fn fare(&self, rides: usize, ride_m: f64) -> f64 {
         if rides == 0 {
             return 0.0;

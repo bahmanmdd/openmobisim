@@ -1647,7 +1647,10 @@ class Scenario:
                 ``owns_car``, ``owns_bike``, ``has_transit_pass`` (what each of them owns, unless a
                 ``persons`` row says otherwise; unsaid: as its modes imply, a car for a class that
                 may drive or park and ride, a bike for one that may cycle, all three for one whose
-                modes are unsaid) and any ``beta_*`` coefficient of the choice model (its own mode
+                modes are unsaid; **a traveller with a transit pass pays no fare**, whatever
+                the ``price_options``: the pass is access, not money, and its own price is not
+                counted, so give ``has_transit_pass`` as 0 for a class that pays fares) and any
+                ``beta_*`` coefficient of the choice model (its own mode
                 constants, ``beta_mode_bike`` …, or its own value of time, ``beta_time_min``;
                 unsaid: ``choice_options``'), for ``"logit"`` and ``"nested_logit"``, and its own
                 choice-set limits in seconds (S235): ``walk_max_s`` and ``bike_max_s``, the longest
@@ -1986,7 +1989,9 @@ class Scenario:
                 ``parking_bike_eur``; a parking table's ``fee_eur`` column gives each its
                 own). **Every one is 0 by default** (S256): having a car, a bike, a pass or
                 the means to pay a fare is access, which ``classes`` give, and no money is
-                counted for it; give prices here to weigh them. A toll is a road link value
+                counted for it; give prices here to weigh them. **A traveller whose class or
+                person has a transit pass pays no fare** (``cost_fare_eur`` is 0), whatever the
+                fare prices (S279). A toll is a road link value
                 named ``toll_eur`` (``link_values``), paid at each passage. Every alternative
                 carries what it costs: ``cost_eur`` and its
                 parts ``cost_running_eur``, ``cost_toll_eur``, ``cost_parking_eur`` (park-and-ride
