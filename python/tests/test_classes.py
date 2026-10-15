@@ -25,11 +25,11 @@ walker,0.05,walk;transit,0,0,1,,,1.0,0,2700,,
 park_and_ride_commuter,0.05,car;transit;car_transit,1,0,1,0,,,0.3,,,
 """  # noqa: E501
 
-#: The example classes (``examples.traveller_classes()``): four by ownership (S244, fitted S256).
+#: The example classes (``examples.traveller_classes()``): four by ownership (S244, fitted S282).
 TABLE = """class,share,modes,owns_car,owns_bike,has_transit_pass,beta_mode_bike
-car_and_bike,0.40,car;bike;walk;transit;car_transit;bike_transit,1,1,0,3.1
+car_and_bike,0.40,car;bike;walk;transit;car_transit;bike_transit,1,1,0,0.77
 no_vehicle,0.30,walk;transit,0,0,0,
-bike_only,0.20,walk;bike;transit;bike_transit,0,1,0,3.1
+bike_only,0.20,walk;bike;transit;bike_transit,0,1,0,0.77
 car_only,0.10,walk;car;transit;car_transit,1,0,0,
 """  # noqa: E501
 

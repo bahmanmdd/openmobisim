@@ -222,14 +222,15 @@ def test_nguyen_dupuis_gives_its_reference_result() -> None:
 
 
 @needs_bundle
-@pytest.mark.parametrize("name", ["amsterdam", "paris", "lyon"])
+@pytest.mark.parametrize("name", ["delft", "amsterdam", "paris", "lyon"])
 def test_a_city_reads_with_its_timetable_parkings_and_classes(name: str) -> None:
     if name not in ms.examples.case_names():
         pytest.skip(f"{name} is not in this bundle yet")
     case = ms.examples.case(name, root=BUNDLE)
     net = case.network()
     transit = case.transit(net)
-    assert net.link_count > 10_000 and transit is not None and transit.run_count > 1000
+    runs = 500 if name == "delft" else 1000  # Delft's small town: 869 runs in 05:00-12:00
+    assert net.link_count > 10_000 and transit is not None and transit.run_count > runs
     assert case.parkings() is not None
     classes = case.classes()
     assert classes and all(c["modes"] for c in classes.values())
@@ -239,13 +240,10 @@ def test_a_city_reads_with_its_timetable_parkings_and_classes(name: str) -> None
     fixed = {k: c for k, c in classes.items() if c["share"] == 0}
     assert drawn and set(fixed) == {"from_outside_car", "from_outside_transit", "goods"}
     assert all(len(c["modes"]) == 1 for c in fixed.values())
-    if name == "amsterdam":  # the package's example classes (S255, D-5)
-        # The bundle's table says every class holds a pass (from before U-42, S281: the package's
-        # examples hold none); the column is set to 0 at the next repack (UNTESTED 21).
-        without_pass = lambda t: {  # noqa: E731
-            k: {c: v for c, v in cls.items() if c != "has_transit_pass"} for k, cls in t.items()
-        }
-        assert without_pass(drawn) == without_pass(ms.examples.traveller_classes())
+    if name in ("amsterdam", "delft"):  # the package's example classes (S255, D-5), passes and all
+        assert drawn == ms.examples.traveller_classes()
+    # Trip ends where the buildings are (S282): every city names its zone points.
+    assert "zone_points" in case.info["demand"]
     assert transit.date == case.info["transit"]["date"]
 
 

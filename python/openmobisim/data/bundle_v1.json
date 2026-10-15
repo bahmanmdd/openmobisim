@@ -4,16 +4,17 @@
   "amsterdam": {
    "archive": {
     "name": "amsterdam.zip",
-    "sha256": "89cabba1717891abf8d6939d4989048af0f34d6b8cf98b68e07e3fd32288de6a",
-    "bytes": 59659162
+    "sha256": "8d4cb9e4d6325611abf994224a7840d6e4317055df80691edf4cdabb2470a717",
+    "bytes": 59654728
    },
    "files": {
-    "case.json": "e327b703ca55af7a31644254af24b55213f0e656bb345eb8707f0272cc0ad685",
-    "demand/classes.csv": "78be829e138a92ef9fc861cab728e3ee8d726bb00b3df8c06ea2264bd7cefbe3",
+    "case.json": "410f161a82afb221b8c176a84020ccd2164ad67004f8b22f45b07783ca2aa915",
+    "demand/classes.csv": "f20107e0a58a409e223b1e05ce0b33940e95e12928c7c5a395590f9b29b5dc4d",
     "demand/gateway_counts.csv": "dbaef3f544d714ee10b6344f51cc5124dca26717045c16b21d9f255242edc36d",
-    "demand/morning.json": "001476a8eec1238a721f86f547b65eb9c3866b38c4e2ce8de7e829870175d672",
-    "demand/od.csv": "f7ded963a8127aa7106918babe0fc7c09f86a27a8330cb876f606b45147d8dd6",
-    "demand/zones.csv": "84be7a363cd417acef56c93a523a381e9482eaecb065ab408bb322adf6ec207e",
+    "demand/morning.json": "7a5de9b54cdda054e8ed73bcec819b83c41894f49ddf19ad400ada00e2db55c6",
+    "demand/od.csv": "32658119b1dc560a01e2ea08111bfdfe62144654817c45dda6ecabd5a7bafeb2",
+    "demand/zone_points.csv": "5dc408cc6ef1579e5d62c3b43b789294e56e1f012ba21e1f6fef53785a068c4a",
+    "demand/zones.csv": "aec9b41f19367582af64a54378c3621f77e9bed8b765331ebbf51e70d28dcf08",
     "gtfs.zip": "71ba5177ae5b720670915c19bbd9cb44a0574184b4bde0a097eaa2d4cb082328",
     "network.osm.pbf": "c775d3f656a37abf433a2536906727e090866ba574bc16a923cbc6bce1d1f7e6"
    }
@@ -21,16 +22,17 @@
   "delft": {
    "archive": {
     "name": "delft.zip",
-    "sha256": "64d7b27341d7dbca11de7d968ca71b5f0f3c75bae49730ec847f87c1dafcbf73",
-    "bytes": 18477896
+    "sha256": "58cb9fb74ba8f731c070f5f4390f1a7fb23cef537d9dcbd5b577e47e7f918239",
+    "bytes": 18481727
    },
    "files": {
-    "case.json": "b55114388a73f5b9631e5e93334409600021d517505e19ae0c7ec66d7d525a44",
-    "demand/classes.csv": "78be829e138a92ef9fc861cab728e3ee8d726bb00b3df8c06ea2264bd7cefbe3",
+    "case.json": "8e485e328e45badee51eb9015eaf389397953c0978de443ce212981d03716648",
+    "demand/classes.csv": "f20107e0a58a409e223b1e05ce0b33940e95e12928c7c5a395590f9b29b5dc4d",
     "demand/gateway_counts.csv": "c173b0f8be2ff2dec9d177ed28abd31a79e680bcb89078b6d491a671e1afb588",
-    "demand/morning.json": "b9567d05b1239e3c946b72e71d6eeb25128171dcb45c0b95823ef594913f4e62",
-    "demand/od.csv": "e9630bc09de5c9f6567d80f130627cd7a40773a27de52c7e843fa1ca591a3e8b",
-    "demand/zones.csv": "1e0288a310d74aff86bdde35349a3a659f05aeee6796695ac9fba83f7c03eb33",
+    "demand/morning.json": "400893600efd6aea3927d73de8055e8476442d3f38321c17637f93872913d43d",
+    "demand/od.csv": "1cc0907740a264a46fd12fa68bb6a3e17bfdf9d556ff7a755fd56907ce9796fa",
+    "demand/zone_points.csv": "f3309861881b16b4143c61c894ef09147fa813995b1f72b6255cb4df81d9daa5",
+    "demand/zones.csv": "cefe12776e74f7e695fc0e3f1fd2e6075b738b23d30a3cce9d88f60f411cb955",
     "gtfs.zip": "772951c27c7c4e1d834a0b7535c07b5b3faf9a326ed547f6d7443dd94a66b704",
     "network.osm.pbf": "1e533e33797ac3132361fb7065bbceee7f5f739e0e16ec2353cb22fd7c62e883"
    }
@@ -38,17 +40,18 @@
   "lyon": {
    "archive": {
     "name": "lyon.zip",
-    "sha256": "487532b80c1c958a40bd4690130fe2e30994a25373f8b17dc8bf931b8227f34e",
-    "bytes": 36754507
+    "sha256": "cb2cd07a0ab7b003250cbff8e990f4adf0ac71b61a72eeda4d9cb6866fa1753c",
+    "bytes": 36760928
    },
    "files": {
     "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
-    "case.json": "0c946795d311242a09754f89a1931c40b60d26260d4714a586ba908528b5e7c5",
-    "demand/classes.csv": "51126d2ec9eca94878cddc1703d9b46240fb7560c1f34076053ceed38bdc396d",
-    "demand/gateway_counts.csv": "4ad2ac4c7eba979e6109f301a4ac274acf2745a622758491294b579b3914ccf2",
-    "demand/morning.json": "ea75f71b996cb7c29c4e80cc4efba365c72920b109ebda986ce51665f9299c99",
-    "demand/od.csv": "e379444d7a959897824b553fdc77c86b89552f6287d76602cf969eddad7f0558",
-    "demand/zones.csv": "830a150a847325e5fe7a767fd4abbba2a261ea14d632e554a66ca36f29fa28d2",
+    "case.json": "e09f433965afa99fffbca06fc29a2e5071cca9abbf4cce688451679cf2633586",
+    "demand/classes.csv": "ec197b12e723024e2769aada9d96b42416de286d1070132ce1036082f8c37005",
+    "demand/gateway_counts.csv": "e92fff8a7f62fbb4173c4425d45e898b87090af44cf99859038e26f307ec8cc8",
+    "demand/morning.json": "4e59d5f390c6a93a1edd24beaa98b455d9364d950fbc81bf013e164c9a68fa8f",
+    "demand/od.csv": "c16918ca812206e1c0e1913aee18ba0900224ae1440790f8113f5eb1f910bcd2",
+    "demand/zone_points.csv": "9f1c21a84cc7ea14ddfd713952aa39ab60720be241b9574af36f239b8395080f",
+    "demand/zones.csv": "e583ecf0e96987a77745bf65e3949e5e9f24a52378dc4d3d1f1eb1ae542fa4db",
     "gtfs.zip": "ee550dabcbc63719de10fda33c505cbfcfa341ac650983f9ab15350829ccb4b4",
     "network.osm.pbf": "205e1d85b7ed26a060d2c7c475b724ca386f114647ed4d85b6bc944dabff2b7d"
    }
@@ -71,17 +74,18 @@
   "paris": {
    "archive": {
     "name": "paris.zip",
-    "sha256": "c00589d60ff9c416eda8fbb928f7420835226cdc2bbb468570c944f9a49094f6",
-    "bytes": 91360463
+    "sha256": "ae3f633cfaee105599e0954e05c22bae2a4464548a7a52ddd5db107843a719f1",
+    "bytes": 91366372
    },
    "files": {
     "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
-    "case.json": "6e24b973439724b5fea4c91ceaf0eb31392eff57615983c690ca93e27ec805a5",
-    "demand/classes.csv": "98c133dc7c57e2593e30cc15e76106fb7b0fc788e4d29205ee5f4824eee921f0",
-    "demand/gateway_counts.csv": "671324572587b5754c9cebb4f6221e77fc2add824748b3ace842956de36f54b2",
-    "demand/morning.json": "94dbaa903616932b0e9e5b8f5bcce8d48d497a44411b848ef47cce4d300f651e",
-    "demand/od.csv": "6715aaba73a9ae5b64c9dcf0814d4c39902eeb883f6f3154b9422ad57c1fa6ad",
-    "demand/zones.csv": "814136082893cdd94dcbdfd9f5f68969a32ae6c69d516aee48ab61ffda2d8a41",
+    "case.json": "31ba1d5416305f9c15b159b9860b48142fc0b7d6db71f06854a0749c8214e41e",
+    "demand/classes.csv": "40ec6088cd85034b84e28bac27a11fd10ad881c14a166603c3940083b88059df",
+    "demand/gateway_counts.csv": "8aa8ae370e02c35428cf65328a27bc001d4038d43b98dce293391fc4087bd918",
+    "demand/morning.json": "d9355b12cee68bfd4f08c6030e1d24f5c961f2908dab65c0ec68de6d1a83e417",
+    "demand/od.csv": "fd071c47663453fa6c3f439a592c6247ce6c1d32dfb8b8659815d8e76e4a5f7c",
+    "demand/zone_points.csv": "7423bfcb99bb6396907cd72b1bfb79586880ad25745c7c3633ad1718b3253eb5",
+    "demand/zones.csv": "b721b3a269ebb373c32b0091f47a18c1b14b7b3b85aa190f04357c612f726322",
     "gtfs.zip": "3733b78c453686afb99ebe100878cac786ff5a731c2bbbfda31bb2386520087e",
     "network.osm.pbf": "08b9de6755fe9298b1ccbe542357ff8790c596f96f33a080f68f92e5c07fd335"
    }
