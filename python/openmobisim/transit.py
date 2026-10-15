@@ -17,7 +17,7 @@ def transit_edit(
     transit: _core.Transit,
     *,
     cancel: Sequence[str] | None = None,
-    headway: Mapping[str, float | tuple[float, float, float]] | None = None,
+    headway: Mapping[str, float | Sequence[float]] | None = None,
 ) -> _core.Transit:
     """The same service day with a scenario's changes made (S238).
 
@@ -27,9 +27,9 @@ def transit_edit(
             in advance: passengers plan without them.
         headway: ``{line: seconds}`` to run a line every so many seconds through its day (from
             its first departure to its last, ``lines()``' ``first_s`` and ``last_s``), or
-            ``{line: (seconds, from_s, to_s)}`` within a window of seconds after midnight
-            (``(300, 7 * 3600, 9 * 3600)``: every 5 minutes from 07:00 to 09:00). Within the
-            window, each of the line's stop patterns (its runs calling at the same stops, each
+            ``{line: (seconds, from_s, to_s)}`` (a tuple or a list) within a window of seconds after
+            midnight (``(300, 7 * 3600, 9 * 3600)``: every 5 minutes from 07:00 to 09:00). Within
+            the window, each of the line's stop patterns (its runs calling at the same stops, each
             direction one) runs every ``seconds`` from its first departure there, at the times
             of its middle run there; a pattern with no run in the window gets none, so a line
             is made more or less frequent, not new. A new run is named
@@ -54,7 +54,11 @@ def transit_edit(
 
     changes = []
     for line, value in (headway or {}).items():
-        if isinstance(value, tuple):
+        if isinstance(value, (tuple, list)):
+            if len(value) != 3:
+                raise ValueError(
+                    f"line {line!r}: a headway window is (seconds, from_s, to_s), got {value!r}"
+                )
             seconds, start, end = value
         else:
             # Its own day: from its first departure to its last.

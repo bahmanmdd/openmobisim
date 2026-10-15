@@ -153,10 +153,14 @@ def _parse_delimited_text(text: str) -> list[dict[str, str]]:
 
 def _load_rows(source: str | Rows) -> list[Row]:
     if isinstance(source, str):
+        # A string with a line break is the table's text; one without is a path, so a typo in a
+        # file name is a missing file, not a table with no usable rows (P-23).
+        if "\n" in source:
+            return _parse_delimited_text(source)
         path = Path(source)
-        # The string is the table's text, not a path, if there is no such file.
-        text = path.read_text(encoding="utf-8") if path.exists() else source
-        return _parse_delimited_text(text)
+        if not path.exists():
+            raise FileNotFoundError(f"no such table file: {source!r}")
+        return _parse_delimited_text(path.read_text(encoding="utf-8"))
     return list(source)
 
 
@@ -255,6 +259,8 @@ def network_read_table(
         `report_connectivity`, and every ``openmobisim.viz`` figure.
 
     Raises:
+        FileNotFoundError: If `links` or `nodes` is a string without a line break (a path)
+            and no such file exists.
         ValueError: If `links` has no usable rows, a row's ``from``/``to`` is
             missing, `length_unit`/`speed_unit`/`time_unit`/`coordinates` is
             not one of the values above, or the resulting network holds no

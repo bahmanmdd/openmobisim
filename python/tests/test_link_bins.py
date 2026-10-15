@@ -178,7 +178,11 @@ def toy_run(**kwargs):
         "equilibration_options": {"increments": 1, "warmup": 0},
     }
     settings.update(kwargs)
-    return net, rows, ms.Scenario.from_parts(net, rows, **settings).run("identity-test")
+    return (
+        net,
+        rows,
+        ms.Scenario.from_parts(net, rows, **settings).run("identity-test", overwrite=True),
+    )
 
 
 def test_per_link_results_are_written_to_a_parquet_file():
@@ -256,7 +260,7 @@ def test_the_fingerprint_follows_the_inputs_and_only_the_inputs():
     variants.append(
         ms.Scenario.from_parts(
             net, shifted, classes=CAR, window=(0, 3_600), flow_level=4, link_bin_s=300
-        ).run("identity-test")
+        ).run("identity-test", overwrite=True)
     )
     prints = {v.fingerprint for v in variants} | {base.fingerprint}
     assert len(prints) == len(variants) + 1, "every change is a different run"
@@ -281,7 +285,9 @@ def test_recording_a_flow_map_changes_no_result():
     trips = ms.examples.trips_random(net, 8000, seed=3, spread_s=1800, min_m=400, max_m=1500)
 
     def run(**kwargs):
-        return ms.Scenario.from_parts(net, trips, classes=CAR, **kwargs).run("map", quiet=True)
+        return ms.Scenario.from_parts(net, trips, classes=CAR, **kwargs).run(
+            "map", quiet=True, overwrite=True
+        )
 
     plain, mapped = run(), run(link_bin_s=900)
     assert plain.convergence()["gap"][-1] > 0, "a congested run, with choices to settle"

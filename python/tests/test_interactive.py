@@ -31,7 +31,9 @@ def grid_run(n=8, trips=120, seed=5, **kwargs):
     rows = ms.examples.trips_random(net, trips, seed=seed, min_m=300.0, max_m=1200.0)
     settings = {"classes": CAR, "window": (0, 3_600), "flow_level": 4, "link_bin_s": 300}
     settings.update(kwargs)
-    return net, ms.Scenario.from_parts(net, rows, **settings).run("interactive-test")
+    return net, ms.Scenario.from_parts(net, rows, **settings).run(
+        "interactive-test", overwrite=True
+    )
 
 
 def decode(path):

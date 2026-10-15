@@ -44,7 +44,9 @@ def choose(net: object, trips: list[tuple], **settings: object) -> dict[str, flo
         "equilibration": "free_flow",
         "flow_level": 0,
     }
-    run = ms.Scenario.from_parts(net, trips, **{**parts, **settings}).run("responses", quiet=True)
+    run = ms.Scenario.from_parts(net, trips, **{**parts, **settings}).run(
+        "responses", quiet=True, overwrite=True
+    )
     return shares(run)
 
 
@@ -106,7 +108,8 @@ def test_separated_tracks_draw_cyclists_who_dislike_mixed_traffic(tmp_path: Path
     def run(network: object) -> dict[str, float]:
         return shares(ms.Scenario.from_parts(
             network, trips, classes=classes, modes=("walk", "bike", "car"),
-            equilibration="free_flow", flow_level=0).run("tracks", quiet=True))  # fmt: skip
+            equilibration="free_flow", flow_level=0,
+        ).run("tracks", quiet=True, overwrite=True))  # fmt: skip
 
     before, after = run(net), run(tracks)
     assert after["bike"] > before["bike"] + 1.0, (before, after)
@@ -115,7 +118,7 @@ def test_separated_tracks_draw_cyclists_who_dislike_mixed_traffic(tmp_path: Path
 
 def congested(network: object, trips: list[tuple], equilibration: str) -> float:
     run = ms.Scenario.from_parts(network, trips, equilibration=equilibration).run(
-        "congested", quiet=True
+        "congested", quiet=True, overwrite=True
     )
     assert run.completion["completed"] == len(trips)
     return run.mean_travel_time_s
@@ -144,7 +147,7 @@ def test_values_no_model_weighs_change_no_result():
             net, trips, classes=CLASSES, transit=ms.examples.toy_network_transit(),
             parkings=ms.examples.toy_network_parkings(), modes=ms.MODES,
             parking_options={"pr_min_km": 0}, link_bin_s=300, **settings,
-        ).run("unweighed", quiet=True)  # fmt: skip
+        ).run("unweighed", quiet=True, overwrite=True)  # fmt: skip
 
     base = run()
     given = {

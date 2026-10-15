@@ -25,7 +25,7 @@ def bike_and_ride(network: object) -> ms.Run:
         parkings=ms.examples.toy_network_parkings(),
         parking_options={"pr_min_km": 0},
         equilibration="free_flow",
-    ).run("fingerprint", quiet=True)
+    ).run("fingerprint", quiet=True, overwrite=True)
 
 
 def test_bike_and_ride_on_another_bike_network_has_another_fingerprint():

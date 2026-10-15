@@ -36,7 +36,7 @@ def scenario(trips=600, **kwargs):
 
 
 def go(name, **kwargs):
-    return scenario(**kwargs).run(name)
+    return scenario(**kwargs).run(name, overwrite=True)
 
 
 # These tests defend equilibration on the method's own sets: no route update, whatever an iterating
@@ -313,7 +313,7 @@ def test_the_choice_detour_limit_is_offered_routes_within_it_of_the_best():
             choice_options={"beta_time_min": -0.05},
             choice_detour_limit=limit,
             master_seed=3,
-        ).run("eq-limit")
+        ).run("eq-limit", overwrite=True)
         return run.route_choices()
 
     everyone = routes(0.0)
@@ -366,7 +366,7 @@ def test_a_run_that_loads_more_than_once_defaults_to_one_route_per_pair_an_updat
     def run(name, **kwargs):
         settings = {"classes": CAR, "flow_level": 4, "choice_model": "logit"}
         settings.update(kwargs)
-        return ms.Scenario.from_parts(net, rows, **settings).run(name, quiet=True)
+        return ms.Scenario.from_parts(net, rows, **settings).run(name, quiet=True, overwrite=True)
 
     # The free-flow loading alone (S223): built up in five groups, so it loads more than once: one
     # route per pair to start, the update to search each group's pairs, the point queue.

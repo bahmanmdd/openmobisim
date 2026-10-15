@@ -4,7 +4,7 @@ What is defended: a class table is read as written and refused where it is wrong
 drawn for travellers by their shares, exactly to within one traveller and the same for the same
 seed; a class's modes bound what its trips choose among, and a class not listed may use them
 all; a class's coefficients move its choices and only its; both are part of the run's
-fingerprint; the old ``class_defaults`` is refused with a pointer.
+fingerprint; the old ``class_defaults`` is no longer a keyword.
 
 The toy network's hand values are the mode tests' (``test_modes.py``): ``W → M`` is fastest by
 car (80 s, against the bike's 120 s).
@@ -49,12 +49,12 @@ def toy_run(rows: list[tuple], run_id: str, classes: dict, **kwargs: object) -> 
         network=ms.examples.toy_network(),
         demand=rows,
         classes=classes,
-        transit=None,
+        transit=kwargs.pop("transit", None),
         equilibration="free_flow",
         flow_level=0,
         mode_options={**NO_ACCESS, **kwargs.pop("mode_options", {})},
         **kwargs,
-    ).run(run_id=run_id, quiet=True)
+    ).run(run_id=run_id, quiet=True, overwrite=True)
 
 
 def modes_of(run: ms.Run) -> dict[str, set[str]]:
@@ -243,8 +243,8 @@ def test_class_coefficients_need_a_random_utility_model() -> None:
         toy_run(rows, "classes-typo", {"keen": {"beta_tme_min": -1.0}}, choice_model="logit")
 
 
-def test_the_old_class_defaults_is_refused_with_a_pointer() -> None:
-    with pytest.raises(ValueError, match="class_defaults is now classes"):
+def test_the_old_class_defaults_is_no_longer_a_keyword() -> None:
+    with pytest.raises(TypeError, match="class_defaults"):
         ms.Scenario.from_parts(
             ms.examples.toy_network(), toy_trips(1), class_defaults={"everyone": (1, 1, 0)}
         )
@@ -258,9 +258,16 @@ def test_the_example_classes_are_the_table_s(tmp_path) -> None:
 
 def test_a_class_allowed_every_mode_leaves_the_fingerprint_as_it_was() -> None:
     rows = toy_trips(5, "everyone")
-    old = toy_run(rows, "classes-tuple", {"everyone": (True, True, False)}, modes=ms.MODES)
+    # Every mode asked for needs what simulates it (CM-22): a timetable and parkings.
+    served = {
+        "transit": ms.examples.toy_network_transit(),
+        "parkings": ms.examples.toy_network_parkings(),
+    }
+    old = toy_run(
+        rows, "classes-tuple", {"everyone": (True, True, False)}, modes=ms.MODES, **served
+    )
     every = {"modes": list(ms.MODES), "owns_car": 1, "owns_bike": 1, "has_transit_pass": 0}
-    new = toy_run(rows, "classes-every", {"everyone": every})
+    new = toy_run(rows, "classes-every", {"everyone": every}, **served)
     assert new.fingerprint == old.fingerprint
 
 

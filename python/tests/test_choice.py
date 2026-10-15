@@ -39,7 +39,7 @@ def grid_run(trips=400, seed=5, **kwargs):
 
 
 def go(name, **kwargs):
-    return grid_run(**kwargs)[2].run(name)
+    return grid_run(**kwargs)[2].run(name, overwrite=True)
 
 
 # --- the models by name -------------------------------------------------------------

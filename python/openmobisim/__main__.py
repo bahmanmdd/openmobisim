@@ -40,7 +40,7 @@ def _run(args: argparse.Namespace) -> int:
     settings = c.info.get("scenarios", {}).get(args.scenario, {})
     bins = {} if "link_bin_s" in settings or args.no_pages else {"link_bin_s": 900}
     scenario = c.scenario(args.scenario, **bins)
-    run = scenario.run(f"{args.case}-{args.scenario}", output_dir=str(out))
+    run = scenario.run(f"{args.case}-{args.scenario}", output_dir=str(out), overwrite=True)
     s = case_summary(run)
     print(
         f"\n{args.case} / {args.scenario}: {s['completed']} of {s['trips']} trips completed, "

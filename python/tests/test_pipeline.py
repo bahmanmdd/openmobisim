@@ -127,7 +127,7 @@ def test_a_run_is_deterministic() -> None:
             [("alice", (0, 0), (2, 2), 8.0, None), ("bob", (0, 2), (2, 0), 8.5, 2)],
         )
         sc = ms.Scenario.from_parts(network=g, demand=trips, classes=car_owning_commuters())
-        run = sc.run(run_id="pytest-determinism")
+        run = sc.run(run_id="pytest-determinism", overwrite=True)
         return {"completion": run.completion, "total_travel_time_s": run.total_travel_time_s}
 
     first = run_once()

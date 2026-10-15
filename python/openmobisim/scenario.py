@@ -70,11 +70,6 @@ class NoAlternativeWarning(UserWarning):
     """
 
 
-# Shown at every run, not once per place in the code: a run says what it did each time.
-warnings.simplefilter("always", WindowWarning)
-warnings.simplefilter("always", FallbackWarning)
-warnings.simplefilter("always", NoAlternativeWarning)
-
 #: What to change for each reason a mode gave a trip no alternative (S276), as
 #: ``Run.report_no_alternative()``'s ``change`` column and the warning name them.
 NO_ALTERNATIVE_CHANGES = {
@@ -1228,6 +1223,24 @@ LAYERS = ("road", "bike", "walk")
 MODES = ("car", "bike", "walk", "transit", "car_transit", "bike_transit")
 
 
+def _check_modes_can_run(modes: list[str], has_transit: bool, has_parkings: bool) -> None:
+    """Refuse a mode asked for in ``modes=`` that the run has nothing to simulate it with (CM-22).
+
+    A mode left out silently would read as a result (its share is 0); the error names the mode and
+    what it needs. Modes the classes imply are not checked: a class table may name them for
+    scenarios with and without a timetable.
+    """
+    needs = {
+        "transit": ("transit=…", has_transit),
+        "car_transit": ("transit=… and parkings=…", has_transit and has_parkings),
+        "bike_transit": ("transit=… and parkings=…", has_transit and has_parkings),
+    }
+    for mode in modes:
+        what, present = needs.get(mode, ("", True))
+        if not present:
+            raise ValueError(f'modes: "{mode}" needs {what}; give it, or leave "{mode}" out')
+
+
 def _check_layer(layer: str) -> str:
     if layer not in LAYERS:
         raise ValueError(f"layer must be one of {LAYERS}, got {layer!r}")
@@ -1441,7 +1454,6 @@ class Scenario:
         trip_values: dict[str, Any] | None = None,
         disruptions: list[dict[str, Any]] | None = None,
         disruptions_known: bool = False,
-        class_defaults: None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
         if bike_cost not in BIKE_COSTS:
@@ -1463,12 +1475,6 @@ class Scenario:
         self._trips_path = trips_path
         self._persons = persons
         self._persons_path = persons_path
-        if class_defaults is not None:
-            raise ValueError(
-                "class_defaults is now classes (S231): the same {class: (owns_car, owns_bike, "
-                "has_transit_pass)} works there, and a class may also say its modes and its "
-                "coefficients"
-            )
         # Traveller classes (S231): what each owns, the modes it may use, its coefficients.
         table = _class_table(classes) if classes is not None else {}
         self._class_defaults = {
@@ -1480,6 +1486,7 @@ class Scenario:
         } or None
         self._class_options = {name: c["betas"] for name, c in table.items() if c["betas"]} or None
         self._class_limits = {name: c["limits"] for name, c in table.items() if c["limits"]} or None
+        modes_asked = modes is not None
         if modes is None and self._class_modes:
             # The classes say which modes their travellers may use: the run offers them all.
             modes = [m for m in MODES if any(m in ms for ms in self._class_modes.values())]
@@ -1552,6 +1559,8 @@ class Scenario:
             unknown = [m for m in modes if m not in MODES]
             if unknown:
                 raise ValueError(f"modes must be among {MODES}, got {unknown}")
+            if modes_asked:
+                _check_modes_can_run(modes, transit is not None, parkings is not None)
         self._modes = modes
         self._mode_options = mode_options
         loading = dict(loading_options or {})
@@ -1609,7 +1618,6 @@ class Scenario:
         trip_values: dict[str, Any] | None = None,
         disruptions: list[dict[str, Any]] | None = None,
         disruptions_known: bool = False,
-        class_defaults: None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
@@ -2058,8 +2066,6 @@ class Scenario:
                 **zero-adaptation** one. ``True`` (works announced, a strike): every loading has
                 them and choices adapt over the iterations. Both are in the fingerprint and the
                 manifest (``disruptions``).
-            class_defaults: Replaced by ``classes`` (S231), which takes the same tuples;
-                refused, with a pointer to it.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -2110,7 +2116,6 @@ class Scenario:
             trip_values=trip_values,
             disruptions=disruptions,
             disruptions_known=disruptions_known,
-            class_defaults=class_defaults,
         )
 
     def _pipeline(self, run_id: str, output_dir: str, **extra: Any) -> Any:
@@ -2179,6 +2184,7 @@ class Scenario:
         output_dir: str | None = None,
         quiet: bool = False,
         threads: int | None = None,
+        overwrite: bool = False,
     ) -> Run:
         """Run the scenario and write its output artifacts.
 
@@ -2186,8 +2192,8 @@ class Scenario:
             run_id: Recorded in every output row; also names the default
                 output directory.
             output_dir: Where ``kpis.parquet`` etc. are written. Defaults to
-                a directory under the system temp directory, named after
-                ``run_id``.
+                ``./openmobisim-runs/<run_id>`` (the command line's default folder), under the
+                current directory.
             quiet: If true, do not print the run's wall-clock time by stage when it ends
                 (``Run.timings()`` and ``timings.csv`` have it either way).
             threads: How many threads the run's parallel work uses; ``None`` (the default),
@@ -2195,12 +2201,23 @@ class Scenario:
                 at any count), so it is recorded in ``manifest.json`` (``threads``) and not in
                 the fingerprint. The run uses a pool of its own: ``RAYON_NUM_THREADS`` does not
                 change it.
+            overwrite: Whether a folder that already holds a run (a ``manifest.json``) may be
+                written into again. ``False`` (the default) refuses, so a second run with the
+                same ``run_id`` cannot silently replace the first one's files.
 
         Returns:
             A ``Run`` with the four artifacts and the completion statistics.
+
+        Raises:
+            FileExistsError: If ``output_dir`` already holds a run and ``overwrite`` is false.
         """
         if output_dir is None:
-            output_dir = str(Path(tempfile.gettempdir()) / "openmobisim-runs" / run_id)
+            output_dir = str(Path.cwd() / "openmobisim-runs" / run_id)
+        if not overwrite and (Path(output_dir) / "manifest.json").exists():
+            raise FileExistsError(
+                f"{output_dir!r} already holds a run (manifest.json); give another run_id or "
+                "output_dir, or run(..., overwrite=True) to replace its files"
+            )
         summary = self._pipeline(run_id, output_dir, threads=threads)
         run = Run(
             summary,

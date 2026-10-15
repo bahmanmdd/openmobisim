@@ -47,7 +47,7 @@ def scenario(trips=1_800, **kwargs):
 
 
 def go(name, **kwargs):
-    return scenario(**kwargs).run(name)
+    return scenario(**kwargs).run(name, overwrite=True)
 
 
 def test_the_updates_are_listed_with_the_default_first():

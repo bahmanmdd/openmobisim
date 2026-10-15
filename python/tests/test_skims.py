@@ -16,14 +16,14 @@ import pytest
 
 
 @pytest.fixture(scope="module")
-def run() -> ms.Run:
+def run(tmp_path_factory: pytest.TempPathFactory) -> ms.Run:
     net = ms.examples.toy_network()
     o, d = net.node_lonlat("W"), net.node_lonlat("M")
     rows = [("a", 0, o[0], o[1], d[0], d[1], 0, "x", None, "car")]
     return ms.Scenario.from_parts(
         net, rows, classes={"x": (True, True, True)}, transit=ms.examples.toy_network_transit(),
         equilibration="free_flow", flow_level=0,
-    ).run("skims", quiet=True)  # fmt: skip
+    ).run("skims", str(tmp_path_factory.mktemp("skims")), quiet=True)  # fmt: skip
 
 
 def at(*names: str) -> dict[str, tuple[float, float]]:

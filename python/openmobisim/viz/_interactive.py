@@ -211,7 +211,7 @@ def _link_boxes(points: np.ndarray, offsets: np.ndarray) -> tuple[np.ndarray, np
 
 def map_interactive(
     run: Any,
-    path: str | Path,
+    path: str | Path | None = None,
     *,
     routes: Any = True,
     theme: str = "paper",
@@ -252,7 +252,8 @@ def map_interactive(
     Args:
         run: A ``Run`` from ``Scenario.run()``. Built with ``link_bin_s`` it
             shows traffic; without, the network and routes only.
-        path: Where to write the ``.html`` file.
+        path: Where to write the ``.html`` file; ``map.html`` in the run's output folder by
+            default.
         routes: ``True`` (default) to include the run's route sets, ``False`` or
             ``None`` for none, or a ``RouteSets`` object (from
             ``openmobisim.route_sets_build``) to show instead.
@@ -401,7 +402,7 @@ def map_interactive(
         .replace("__BLOB__", payload)
         .replace("__JS__", PAGE_JS.replace("__LOGO__", LOGO_PATH))
     )
-    out = Path(path)
+    out = Path(run.timings_path).parent / "map.html" if path is None else Path(path)
     # Bytes, not text: the same file on every platform (no newline translation).
     out.write_bytes(page.encode("utf-8"))
     if not quiet:

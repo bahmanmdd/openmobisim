@@ -223,12 +223,12 @@ def _bars(items: list[tuple[str, float]], unit: str) -> str:
 
 def summary(
     run: Any,
-    path: str | None = None,
+    path: str | Path | None = None,
     *,
     title: str | None = None,
     note: str = "",
     quiet: bool = False,
-) -> str:
+) -> Path:
     """Write a run's summary as one self-contained HTML page, and return its path.
 
     Six headline numbers (trips, completed, never finished, mean trip, total travel time, run
@@ -247,7 +247,7 @@ def summary(
             shown in a notebook).
 
     Returns:
-        The path written.
+        The path written, a ``Path``.
     """
     paper, night = THEMES["paper"], THEMES["night"]
     c = run.completion
@@ -476,9 +476,8 @@ openmobisim {html.escape(manifest.get("openmobisim_version", manifest.get("code_
 <section><h2>Settings</h2>{settings_html}</section></div>
 <footer>Every number here is also in the run's files (kpis.parquet, timings.csv, manifest.json).</footer>
 </main></body></html>"""
-    if path is None:
-        path = str(Path(run.timings_path).parent / "summary.html")
-    Path(path).write_text(page, encoding="utf-8")
+    out = Path(run.timings_path).parent / "summary.html" if path is None else Path(path)
+    out.write_text(page, encoding="utf-8")
     if not quiet:
-        show_path("Summary page", path)
-    return path
+        show_path("Summary page", out)
+    return out

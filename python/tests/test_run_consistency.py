@@ -151,7 +151,7 @@ def run_case(name: str, weight: int = 1, money: bool = False, **settings: object
         parts = {**parts, "price_options": PRICES}
         settings = {**settings, "choice_options": {"beta_cost_eur": -0.2}}
     run = ms.Scenario.from_parts(net, trips, link_bin_s=300, **parts, **settings).run(
-        f"consistency-{name}", quiet=True
+        f"consistency-{name}", quiet=True, overwrite=True
     )
     return net, trips, run
 

@@ -430,7 +430,9 @@ def case_check(
         c = case(name, root)
         for scenario in c.info.get("scenarios", {"base": {}}):
             t = time.perf_counter()
-            run = c.scenario(scenario).run(f"check-{name}-{scenario}", quiet=True)
+            run_id = f"check-{name}-{scenario}"
+            out = Path(tempfile.gettempdir()) / "openmobisim-runs" / run_id  # a check, not a study
+            run = c.scenario(scenario).run(run_id, str(out), quiet=True, overwrite=True)
             got = case_summary(run)
             ref = reference.get("cases", {}).get(f"{name}/{scenario}")
             status, notes = ("no reference", []) if ref is None else _compare(got, ref)

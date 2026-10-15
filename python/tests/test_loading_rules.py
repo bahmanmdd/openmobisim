@@ -26,7 +26,7 @@ def jammed(**kwargs: object) -> ms.Run:
     }
     return ms.Scenario.from_parts(
         net, rows, classes=CAR, window=(0, 10_800), **{**settings, **kwargs}
-    ).run("rules")
+    ).run("rules", overwrite=True)
 
 
 def test_the_gridlock_report_finds_what_stands_and_checks_the_guarantee() -> None:

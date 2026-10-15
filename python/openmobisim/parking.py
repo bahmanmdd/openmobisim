@@ -74,9 +74,14 @@ def _fee(row: Mapping[str, Any], parking: str) -> float | None:
 
 def _csv_rows(source: str) -> list[dict[str, str]]:
     """A CSV or TSV table's rows, from its path or its text: quoted fields and blank cells kept."""
-    # The string is the table's text, not a path, if it has a line break or there is no such file.
-    is_path = "\n" not in source and Path(source).exists()
-    text = Path(source).read_text(encoding="utf-8-sig") if is_path else source
+    # A string with a line break is the table's text; one without is a path, so a typo in a file
+    # name is a missing file, not a table with no usable rows (P-23).
+    if "\n" in source:
+        text = source
+    else:
+        if not Path(source).exists():
+            raise FileNotFoundError(f"no such table file: {source!r}")
+        text = Path(source).read_text(encoding="utf-8-sig")
     header = next((line for line in text.splitlines() if line.strip()), "")
     delimiter = "\t" if "\t" in header else ","
     reader = csv.DictReader(io.StringIO(text.strip("\n")), delimiter=delimiter)
@@ -106,6 +111,8 @@ def parking_read_table(source: str | Iterable[Mapping[str, Any]]) -> _core.Parki
         source: A CSV/TSV file's path or text, or rows as dicts.
 
     Raises:
+        FileNotFoundError: If `source` is a string without a line break (a path) and no such
+            file exists.
         ValueError: If a required column is missing, a value is not valid, or a
             ``parking_id`` repeats.
     """
