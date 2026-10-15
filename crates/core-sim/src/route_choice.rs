@@ -15,7 +15,7 @@
 //! | `length_km` | length in kilometres |
 //! | `detour` | `time / best time − 1` within the set: 0 for the best route |
 //! | `overlap` | the largest share of its cost shared with a route found before it (0 to 1) |
-//! | `ln_path_size` | the natural log of the route's path size (Ben-Akiva and Bierlaire): 0 for a route that shares nothing, negative as it shares more |
+//! | `ln_path_size` | the natural log of the route's path size (Ben-Akiva and Bierlaire, by length) **over the routes offered** in this situation, not over the whole stored set (the itineraries' is by time share, the project's extension): 0 for a route that shares nothing, negative as it shares more |
 //! | `n_links` | how many links |
 //! | `car_min` | the same as `time_min`: a route is driven all the way |
 //! | `bike_min`, `walk_min`, `wait_min`, `ride_min`, `transfers`, `parking_min` | 0: a route has none |
@@ -40,7 +40,7 @@ use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::{RouteAttributes, RouteKey, RouteSets, Search, SearchContext};
 use openmobisim_core_types::hash::Fnv1a;
-use openmobisim_core_types::ids::{EntityId, NodeId, TripId};
+use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
 
 use crate::demand_values::DemandValues;
 use crate::equilibration::Equilibration;
@@ -265,6 +265,8 @@ pub(crate) struct Chooser<'a> {
     route_sets: Arc<RouteSets>,
     wanted: Vec<String>,
     attributes: Option<RouteAttributes>,
+    /// Whether the model reads `ln_path_size`, computed per situation over the offered routes.
+    wants_path_size: bool,
     identity: Vec<u32>,
     weight: Vec<u32>,
 }
@@ -293,12 +295,11 @@ impl<'a> Chooser<'a> {
             inputs.link_value_names,
         )?;
         let needs = |name: &str| wanted.iter().any(|w| w == name);
-        // Lengths for `length_km`, path sizes, and a route's running cost (S248).
-        let attributes = (needs("length_km")
-            || needs("ln_path_size")
-            || needs("cost_eur")
-            || needs("cost_running_eur"))
-        .then(|| route_sets.attributes(network));
+        // Lengths for `length_km` and a route's running cost (S248); the path size is taken
+        // per situation over the routes offered (S279, CM-3), not from the store.
+        let wants_path_size = needs("ln_path_size");
+        let attributes = (needs("length_km") || needs("cost_eur") || needs("cost_running_eur"))
+            .then(|| route_sets.attributes(network));
         let mut identity: Vec<u32> = (0..route_sets.route_count())
             .map(|r| route_identity(route_sets.route(r).links))
             .collect();
@@ -314,7 +315,7 @@ impl<'a> Chooser<'a> {
         let weight = (0..trips.len())
             .map(|i| travellers.weight(trips.traveller(TripId::from_index(i as usize))))
             .collect();
-        Ok(Self { inputs, route_sets, wanted, attributes, identity, weight })
+        Ok(Self { inputs, route_sets, wanted, attributes, wants_path_size, identity, weight })
     }
 
     /// Put trips `from..to` that have a set into `batch`, with `times` as their cost (free flow
@@ -379,8 +380,27 @@ impl<'a> Chooser<'a> {
                 }
                 keep
             });
+            let is_offered =
+                |a: usize| seconds[a] <= reach && offered.as_ref().is_none_or(|k| k[a]);
+            // The path size over the routes offered, by length (S279, CM-3), not over the
+            // whole stored set: overlap with a route nobody is offered is no overlap.
+            let path_size = if self.wants_path_size {
+                let links: Vec<&[u32]> = set
+                    .clone()
+                    .enumerate()
+                    .filter(|&(a, _)| is_offered(a))
+                    .map(|(_, r)| route_sets.route(r).links)
+                    .collect();
+                let network = self.inputs.network;
+                openmobisim_core_routes::path_sizes(&links, |l| {
+                    network.link_length(LinkId::new(l)).get()
+                })
+            } else {
+                Vec::new()
+            };
+            let mut offered_so_far = 0;
             for (a, r) in set.clone().enumerate() {
-                if seconds[a] > reach || offered.as_ref().is_some_and(|k| !k[a]) {
+                if !is_offered(a) {
                     continue;
                 }
                 let view = route_sets.route(r);
@@ -422,9 +442,7 @@ impl<'a> Chooser<'a> {
                         }
                         "detour" => (seconds[a] / best - 1.0).max(0.0),
                         "overlap" => f64::from(view.overlap),
-                        "ln_path_size" => {
-                            self.attributes.as_ref().map_or(1.0, |x| x.path_size[r]).ln()
-                        }
+                        "ln_path_size" => path_size[offered_so_far].ln(),
                         "n_links" => f64::from(u32::try_from(view.links.len()).unwrap_or(u32::MAX)),
                         "car_min" => seconds[a] / 60.0,
                         other => {
@@ -435,6 +453,7 @@ impl<'a> Chooser<'a> {
                 batch.push_alternative(self.identity[r], &row);
                 filled.alt_route.push(u32::try_from(r).expect("route ids fit in 32 bits"));
                 filled.alt_seconds.push(seconds[a]);
+                offered_so_far += 1;
             }
             filled.set_first.push(set.start);
             filled.set_len.push(set.len());

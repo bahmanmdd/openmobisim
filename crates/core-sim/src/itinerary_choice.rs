@@ -207,8 +207,9 @@ pub struct Alternative {
     /// The mode it is: [`Mode::Transit`], [`Mode::CarTransit`] or [`Mode::BikeTransit`]
     /// for an itinerary, [`Mode::Car`], [`Mode::Bike`] or [`Mode::Walk`] for a direct leg.
     pub mode: Mode,
-    /// The path size's log fixed from elsewhere (a car route's, from its route set), or
-    /// `None` to work it out over the alternatives.
+    /// The path size's log fixed from elsewhere (a car route's, over the car routes offered:
+    /// by length, [`openmobisim_core_routes::path_sizes`]), or `None` to work it out over the
+    /// alternatives (by time share, the project's extension to itineraries).
     pub fixed_ln_path_size: Option<f64>,
     /// The parking used ([`NO_PARKING`] for plain transit).
     pub parking: u32,
@@ -739,7 +740,7 @@ impl<'a> Planner<'a> {
     }
 
     /// The car alternatives of a mode-choice trip: its pair's routes, costed on the
-    /// expected times, with their route set's path sizes.
+    /// expected times, with the path sizes over the routes offered (by length; S279).
     /// The car routes of `key` for a trip that had no alternative (S271, W-1), each marked
     /// [`Alternative::fallback`]; none without route sets for it.
     fn fallback_car(&self, key: RouteKey, departure: u32) -> Vec<Alternative> {
@@ -769,7 +770,6 @@ impl<'a> Planner<'a> {
                 a.walk_s = self.car_access_s;
                 a.parking_s = self.car_egress_s;
                 a.total_s = seconds + self.car_access_s + self.car_egress_s;
-                a.fixed_ln_path_size = Some(routes.attributes.path_size[r].max(1e-9).ln());
                 a
             })
             .collect();
@@ -788,6 +788,18 @@ impl<'a> Planner<'a> {
                 i += 1;
                 keep[i - 1]
             });
+        }
+        // The path size over the routes **offered**, by length (S279, CM-3), not over the whole
+        // stored set. (An itinerary's is by time share, over the alternatives it competes
+        // with: the project's extension, in `finalise`.)
+        let road = self.car.network;
+        let links: Vec<Vec<u32>> =
+            alts.iter().map(|a| a.vehicle_links.iter().map(|l| l.raw()).collect()).collect();
+        let refs: Vec<&[u32]> = links.iter().map(Vec::as_slice).collect();
+        let sizes =
+            openmobisim_core_routes::path_sizes(&refs, |l| road.link_length(LinkId::new(l)).get());
+        for (a, size) in alts.iter_mut().zip(sizes) {
+            a.fixed_ln_path_size = Some(size.max(1e-9).ln());
         }
         alts
     }

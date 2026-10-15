@@ -725,6 +725,32 @@ fn one_keys_links_do_not_leak_into_the_next_keys_path_size() {
     assert_eq!(attributes, sets.attributes(&net));
 }
 
+#[test]
+fn path_sizes_over_given_routes_equal_the_stores_over_the_whole_set_and_ignore_the_rest() {
+    let net = shared_start();
+    let (a, d) = (node(&net, "A"), node(&net, "D"));
+    let sets = RouteSets::generate(
+        &net,
+        &turns_of(&net),
+        &[RouteKey::new(a, d)],
+        generator(DEFAULT_METHOD, &no_options()).expect("default").as_ref(),
+    );
+    let length = |l: u32| net.link_length(LinkId::new(l)).get();
+    let both: Vec<&[u32]> = sets.routes(0).map(|r| r.links).collect();
+    let stored = sets.attributes(&net).path_size;
+    let over_both = openmobisim_core_routes::path_sizes(&both, length);
+    assert_eq!(over_both.len(), 2);
+    for (got, want) in over_both.iter().zip(&stored) {
+        assert_eq!(got.to_bits(), want.to_bits(), "{over_both:?} against {stored:?}");
+    }
+    // One route alone shares with nobody; a repeated route splits with its twin by half.
+    let alone = openmobisim_core_routes::path_sizes(&both[..1], length);
+    assert_eq!(alone, [1.0]);
+    let twins = openmobisim_core_routes::path_sizes(&[both[0], both[0]], length);
+    assert_eq!(twins, [0.5, 0.5]);
+    assert!(openmobisim_core_routes::path_sizes(&[], length).is_empty());
+}
+
 // --- the fastest way when times depend on when a link is entered (S171) ------------------
 
 #[test]

@@ -7,6 +7,9 @@
 //!   only the fast road (everyone takes it, with probability 1) and one over it offers both (the logit's
 //!   split); the best route is always offered; a route left out keeps its place in the set and a traveller who
 //!   is offered only the others is mapped to the right route number;
+//! * **a path size over the routes offered** (S279, CM-3): of three stored routes, two of which share a
+//!   link, the two fastest offered do not share, so their `ln_path_size` is 0; offered all three, it is
+//!   worked out by hand from the lengths;
 //! * **a warm-up**: the first loading is the point-queue model's, the last never is, and a warm-up longer
 //!   than the run allows is cut;
 //! * **who counts in the gap**: trips still under way when the window ends are left out and counted apart;
@@ -17,18 +20,23 @@
     reason = "test fixtures: counts of a few thousand travellers"
 )]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use openmobisim_core_choice::{Options as ChoiceOptions, model};
+use openmobisim_core_choice::{
+    ChoiceBatch, ChoiceError, ChoiceModel, Choices, Options as ChoiceOptions, model,
+};
 use openmobisim_core_demand::{ClassDefaults, Ownership, RawTrip, build_travellers};
 use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::FidelityLevel;
+use openmobisim_core_routes::{Route, RouteSetGenerator, Search};
 use openmobisim_core_sim::equilibration::{Options, strategy};
 use openmobisim_core_sim::{FlowMotor, Run, RunResult};
 use openmobisim_core_types::diagnostics::Diagnostics;
+use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
+use openmobisim_core_types::rng::StreamRng;
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 
@@ -289,4 +297,132 @@ fn trips_still_under_way_at_the_end_are_left_out_of_the_gap_and_counted_apart() 
     // With time to finish, nobody is left out.
     let all = Setup::jam(n).go();
     assert!(all.iterations.iter().all(|it| it.incomplete_share.abs() < 1e-12));
+}
+
+// --- the path size is over the routes offered --------------------------------------------------------
+
+/// Three ways from `o` to `d`: `A` = `o-a-d`, `B` = `o-b-d` and `C` = `o-a-c-d`, so that `A` and `C` share
+/// the link `o-a` (500 m) and `B` shares nothing. Lengths: `o-a` 500, `a-d` 500, `o-b` 600, `b-d` 600,
+/// `a-c` 400, `c-d` 600 m. The generator finds them by name.
+fn three_ways() -> RoadNetwork {
+    let mut b = RoadNetworkBuilder::new();
+    b.add_node("o", LonLat::new(O.0, O.1));
+    b.add_node("a", LonLat::new(4.805, 45.7004));
+    b.add_node("b", LonLat::new(4.805, 45.6996));
+    b.add_node("c", LonLat::new(4.807, 45.7008));
+    b.add_node("d", LonLat::new(D.0, D.1));
+    for (name, from, to, length) in [
+        ("oa", "o", "a", 500.0),
+        ("ad", "a", "d", 500.0),
+        ("ob", "o", "b", 600.0),
+        ("bd", "b", "d", 600.0),
+        ("ac", "a", "c", 400.0),
+        ("cd", "c", "d", 600.0),
+    ] {
+        let mut spec = LinkSpec::new(RoadClass::Residential);
+        spec.length_m = Some(length);
+        b.add_link(name, from, to, spec);
+    }
+    b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable")
+}
+
+/// Stores exactly `A`, `B` and `C` (in this order, best first) for the pair; `links` are the ids of
+/// `oa`, `ad`, `ob`, `bd`, `ac`, `cd`.
+struct ThreeRoutes {
+    links: [u32; 6],
+}
+
+impl RouteSetGenerator for ThreeRoutes {
+    fn name(&self) -> &str {
+        "three_routes"
+    }
+    fn descriptor(&self) -> String {
+        "three_routes".to_string()
+    }
+    fn generate(&self, _: &mut Search<'_>, _: NodeId, _: NodeId) -> Vec<Route> {
+        let l = &self.links;
+        let route = |links: &[u32], cost: f64| Route {
+            links: links.iter().map(|&l| LinkId::new(l)).collect(),
+            cost,
+            overlap: 0.0,
+        };
+        vec![
+            route(&[l[0], l[1]], 60.0),
+            route(&[l[2], l[3]], 70.0),
+            route(&[l[0], l[4], l[5]], 80.0),
+        ]
+    }
+}
+
+/// A model that takes the first route and records each situation's `time_min` and `ln_path_size`.
+struct PathSizes {
+    seen: Mutex<Vec<Vec<(f64, f64)>>>,
+}
+
+impl ChoiceModel for PathSizes {
+    fn name(&self) -> &str {
+        "path_sizes"
+    }
+    fn descriptor(&self) -> String {
+        "path_sizes".to_string()
+    }
+    fn is_sampled(&self) -> bool {
+        false
+    }
+    fn required_attributes(&self) -> Option<Vec<String>> {
+        Some(vec!["time_min".to_string(), "ln_path_size".to_string()])
+    }
+    fn choose(&self, batch: &ChoiceBatch, _rng: &StreamRng) -> Result<Choices, ChoiceError> {
+        let time = batch.attribute("time_min").expect("asked for");
+        let ln_ps = batch.attribute("ln_path_size").expect("asked for");
+        let mut seen = self.seen.lock().expect("lock");
+        for s in 0..batch.situations() {
+            seen.push(batch.range(s).map(|a| (time[a] * 60.0, ln_ps[a])).collect());
+        }
+        let n = batch.situations();
+        Ok(Choices { chosen: vec![0; n], probability: vec![f64::NAN; n] })
+    }
+}
+
+/// What the model is told for one trip from `o` to `d` when at most `max_routes` are offered.
+fn offered(max_routes: u32) -> Vec<(f64, f64)> {
+    let network = Arc::new(three_ways());
+    let links = ["oa", "ad", "ob", "bd", "ac", "cd"]
+        .map(|name| network.link_external_ids().typed_id_of::<LinkId>(name).unwrap().raw());
+    let classes =
+        ClassDefaults::new().with_default("commuter", Ownership { car: true, ..Ownership::NONE });
+    let (travellers, raw) =
+        build_travellers(trips(1), Vec::new(), &classes, 1, &mut Diagnostics::new())
+            .expect("buildable");
+    let spy = Arc::new(PathSizes { seen: Mutex::new(Vec::new()) });
+    let mut run = Run::new(network, Arc::new(travellers), Arc::new(raw), Second(3600))
+        .with_master_seed(1)
+        .with_route_generator(Arc::new(ThreeRoutes { links }))
+        .with_choice_model(spy.clone())
+        .with_choice_detour_limit(0.0)
+        .with_choice_max_routes(max_routes);
+    let _ = run.execute(&mut Diagnostics::new());
+    let seen = spy.seen.lock().expect("lock");
+    assert_eq!(seen.len(), 1, "one trip, asked once");
+    seen[0].clone()
+}
+
+#[test]
+fn the_path_size_is_over_the_routes_offered_not_over_the_stored_set() {
+    // All three offered: A = (500/2 + 500) / 1000 = 3/4, B = 1, C = (500/2 + 400 + 600) / 1500 = 5/6.
+    let all = offered(3);
+    assert_eq!(all.len(), 3);
+    let expected = [0.75_f64.ln(), 0.0, (5.0_f64 / 6.0).ln()];
+    for (got, want) in all.iter().zip(expected) {
+        assert!((got.1 - want).abs() < 1e-12, "{all:?}");
+    }
+    // Two offered, the fastest (A and B): they share nothing, so both have a path size of 1, whatever
+    // the stored C shares with A. (Over the whole set A would have had 3/4.)
+    let two = offered(2);
+    assert_eq!(two.len(), 2);
+    assert!((two[0].0 - 60.0).abs() < 1e-3 && (two[1].0 - 70.0).abs() < 1e-3, "{two:?}");
+    assert!(two.iter().all(|a| a.1.abs() < 1e-12), "{two:?}");
+    // One offered: nothing to share.
+    assert!(offered(1).iter().all(|a| a.1.abs() < 1e-12));
 }

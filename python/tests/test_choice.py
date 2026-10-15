@@ -317,3 +317,39 @@ def test_segment_helpers_do_the_per_situation_arithmetic():
     assert choice.segment_softmax([1000.0, 1001.0], [0, 2]) == pytest.approx(
         [1 / (1 + np.e), np.e / (1 + np.e)]
     )
+
+
+def test_a_routes_path_size_is_over_the_routes_offered_not_over_the_stored_set():
+    """``ln_path_size`` is over the routes a traveller is offered (S279, CM-3)."""
+    seen: dict[str, list[np.ndarray]] = {"ln_path_size": [], "offsets": []}
+
+    class Recorder:
+        name = "recorder"
+        attributes = ["time_min", "ln_path_size"]
+
+        def choose(self, batch):
+            seen["ln_path_size"].append(np.array(batch.attributes["ln_path_size"]))
+            seen["offsets"].append(np.array(batch.offsets))
+            return choice.segment_argmax(-batch.attributes["time_min"], batch.offsets)
+
+    def offered(max_routes: int) -> tuple[np.ndarray, np.ndarray]:
+        for key in seen:
+            seen[key].clear()
+        go(
+            f"choice-ps-{max_routes}",
+            trips=200,
+            choice_model=Recorder(),
+            choice_max_routes=max_routes,
+            choice_detour_limit=0.0,
+        )
+        return np.concatenate(seen["ln_path_size"]), np.diff(seen["offsets"][0])
+
+    # One route offered shares with nobody, whatever else the pair's set stores.
+    ln_one, sizes_one = offered(1)
+    assert len(ln_one) > 0 and (sizes_one == 1).all() and (ln_one == 0).all()
+    # Two offered share at most all of their links: each has a path size of at least 1/2 (over the
+    # stored set of up to ten routes it fell far below), and on a grid some of them overlap.
+    ln_two, sizes_two = offered(2)
+    assert (sizes_two <= 2).all() and (sizes_two == 2).any()
+    assert (ln_two <= 1e-12).all() and (ln_two >= np.log(0.5) - 1e-9).all()
+    assert (ln_two < -1e-6).any(), "routes on a grid share links"
