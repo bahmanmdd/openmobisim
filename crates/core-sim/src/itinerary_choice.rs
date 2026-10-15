@@ -817,7 +817,7 @@ impl<'a> Planner<'a> {
             return Vec::new();
         }
         ts.raptor
-            .pareto(&access, &egress)
+            .pareto_last_walk(&access, &egress, u32::MAX, last_walk_max(n.access_walk_s))
             .iter()
             .filter(|j| !is_loop(j))
             .map(|j| {
@@ -1034,7 +1034,7 @@ impl<'a> Planner<'a> {
                 .collect();
             for j in ts
                 .raptor
-                .pareto_before(&access, &egress, before)
+                .pareto_last_walk(&access, &egress, before, last_walk_max(n.access_walk_s))
                 .into_iter()
                 .filter(|j| !is_loop(j))
             {
@@ -1468,6 +1468,23 @@ fn finalise(
         }
     }
     alts
+}
+
+/// The longest last walk of an itinerary, in whole seconds: the traveller's `access_walk_max_s`
+/// bounds the transfer walk and the egress walk **together** (S279, CM-7). A walk limit that is
+/// not finite or not positive leaves the search to its own reach (`u32::MAX`: none).
+fn last_walk_max(access_walk_s: f64) -> u32 {
+    if access_walk_s.is_finite() && access_walk_s > 0.0 {
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "seconds, clamped below u32::MAX"
+        )]
+        let s = access_walk_s.floor().min(f64::from(u32::MAX - 1)) as u32;
+        s
+    } else {
+        u32::MAX
+    }
 }
 
 /// The least expected door-to-door time of each mode's alternatives (infinite for a mode

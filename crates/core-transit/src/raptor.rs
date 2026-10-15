@@ -21,6 +21,15 @@
 //! start from every stop a ride improved: the result is exact for single walks
 //! between rides, which the brute-force check in the tests confirms.
 //!
+//! **The last walk.** A journey may end with a transfer walk (from the stop a ride alights
+//! at to a stop it walks to) and then the egress walk to the destination, two bounded walks
+//! in a row. [`Raptor::pareto_last_walk`] bounds their **sum** by the limit it is given (the
+//! class's or the run's `access_walk_max_s`, S279, CM-7): a destination reached through a
+//! footpath-reached stop counts only if both walks together fit, else the stop's arrival by
+//! its ride (no transfer) is tried. The access side is asymmetric on purpose: a journey
+//! starts at an access stop, within the limit of the origin, and **never walks a footpath
+//! before its first ride**, so its first walk is a single bounded walk.
+//!
 //! **What a query returns:** the earliest arrival at the destination, given the
 //! times the passenger can be at each access stop and the walk from each egress
 //! stop; among journeys arriving then, the one with fewest vehicles. At least one
@@ -569,8 +578,8 @@ impl<'a> Raptor<'a> {
         access: &[(NodeId, u32)],
         egress: &[(NodeId, u32)],
     ) -> Option<Journey> {
-        let found = self.search(access, egress, INF);
-        let journey = found.last().map(|&(k, e, at)| self.reconstruct(k, e, at));
+        let found = self.search(access, egress, INF, INF);
+        let journey = found.last().map(|&(k, e, at, direct)| self.reconstruct(k, e, at, direct));
         self.finish(egress);
         journey
     }
@@ -583,7 +592,7 @@ impl<'a> Raptor<'a> {
     #[must_use]
     pub fn arrivals(&mut self, access: &[(NodeId, u32)]) -> Vec<u32> {
         self.every_stop = true;
-        let _ = self.search(access, &[], INF);
+        let _ = self.search(access, &[], INF, INF);
         let out =
             self.best_ridden.iter().map(|&t| if t == INF { UNKNOWN_TIME } else { t }).collect();
         self.every_stop = false;
@@ -610,8 +619,24 @@ impl<'a> Raptor<'a> {
         egress: &[(NodeId, u32)],
         bound: u32,
     ) -> Vec<Journey> {
-        let found = self.search(access, egress, bound);
-        let journeys = found.iter().map(|&(k, e, at)| self.reconstruct(k, e, at)).collect();
+        self.pareto_last_walk(access, egress, bound, INF)
+    }
+
+    /// [`Self::pareto_before`], and a journey that ends through a footpath-reached stop only
+    /// if its transfer walk **plus** its egress walk is at most `walk_max` seconds (S279,
+    /// CM-7; `u32::MAX` for no limit, which is [`Self::pareto_before`]). See the
+    /// [module docs](self): the last walk is otherwise the sum of two bounded walks.
+    #[must_use]
+    pub fn pareto_last_walk(
+        &mut self,
+        access: &[(NodeId, u32)],
+        egress: &[(NodeId, u32)],
+        bound: u32,
+        walk_max: u32,
+    ) -> Vec<Journey> {
+        let found = self.search(access, egress, bound, walk_max);
+        let journeys =
+            found.iter().map(|&(k, e, at, direct)| self.reconstruct(k, e, at, direct)).collect();
         self.finish(egress);
         journeys
     }
@@ -624,13 +649,16 @@ impl<'a> Raptor<'a> {
     }
 
     /// The rounds, and per round that improved the arrival at the destination before
-    /// `bound`, `(round, egress stop, arrival)`. Leaves the labels for reconstruction.
+    /// `bound`, `(round, egress stop, arrival, direct)`, `direct` when the stop is taken by its
+    /// ride and not by the transfer walk that reached it sooner (`walk_max`, see
+    /// [`Self::pareto_last_walk`]). Leaves the labels for reconstruction.
     fn search(
         &mut self,
         access: &[(NodeId, u32)],
         egress: &[(NodeId, u32)],
         bound: u32,
-    ) -> Vec<(usize, usize, u32)> {
+        walk_max: u32,
+    ) -> Vec<(usize, usize, u32, bool)> {
         let data = self.data;
         for &(s, w) in egress {
             let e = &mut self.egress[s.index()];
@@ -647,7 +675,7 @@ impl<'a> Raptor<'a> {
             }
         }
         let mut bound = bound;
-        let mut found: Vec<(usize, usize, u32)> = Vec::new();
+        let mut found: Vec<(usize, usize, u32, bool)> = Vec::new();
 
         for k in 1..self.rounds {
             if self.marked_list.is_empty() {
@@ -701,22 +729,33 @@ impl<'a> Raptor<'a> {
             self.ride_improved.clear();
 
             // The destination, from the stops improved this round.
-            let mut round_best: Option<(usize, u32)> = None;
+            let mut round_best: Option<(usize, u32, bool)> = None;
             for &(e, _) in egress {
                 let i = e.index();
-                let t = self.arr[k][i];
+                let mut t = self.arr[k][i];
+                let mut direct = false;
+                // The last walk: the transfer to this stop and the egress walk together must
+                // fit `walk_max`; else the stop's arrival by its own ride, if it has one.
+                let from = self.walk_from[k][i];
+                if t != INF && from != NULL_ID && walk_max != INF {
+                    let transfer = t - self.ride_arr[k][from as usize];
+                    if transfer.saturating_add(self.egress[i]) > walk_max {
+                        t = self.ride_arr[k][i];
+                        direct = true;
+                    }
+                }
                 if t != INF {
                     let at = t.saturating_add(self.egress[i]);
                     // A tie within the round goes to the lower stop id, whatever the order given.
-                    let tie = at == bound && round_best.is_some_and(|(fe, _)| i < fe);
+                    let tie = at == bound && round_best.is_some_and(|(fe, _, _)| i < fe);
                     if at < bound || tie {
                         bound = at;
-                        round_best = Some((i, at));
+                        round_best = Some((i, at, direct));
                     }
                 }
             }
-            if let Some((i, at)) = round_best {
-                found.push((k, i, at));
+            if let Some((i, at, direct)) = round_best {
+                found.push((k, i, at, direct));
             }
             for &s in &self.marked_list {
                 self.prev[s as usize] = self.best[s as usize];
@@ -772,7 +811,9 @@ impl<'a> Raptor<'a> {
         }
     }
 
-    fn reconstruct(&self, k: usize, egress_stop: usize, arrival: u32) -> Journey {
+    /// The journey that reaches the destination through `egress_stop` in round `k`; `direct`:
+    /// by the stop's ride, not by the transfer walk that reached it sooner.
+    fn reconstruct(&self, k: usize, egress_stop: usize, arrival: u32, direct: bool) -> Journey {
         let data = self.data;
         let mut legs = vec![JourneyLeg::Egress {
             stop: NodeId::from_index(egress_stop),
@@ -787,7 +828,11 @@ impl<'a> Raptor<'a> {
                 });
                 break;
             }
-            let from = self.walk_from[round][stop];
+            let from = if direct && round == k && stop == egress_stop {
+                NULL_ID
+            } else {
+                self.walk_from[round][stop]
+            };
             let ride_stop = if from == NULL_ID {
                 stop
             } else {

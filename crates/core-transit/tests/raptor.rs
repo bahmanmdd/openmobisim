@@ -152,6 +152,48 @@ fn a_walk_from_a_stop_reached_earlier_by_walking_is_not_lost() {
 }
 
 #[test]
+fn a_journey_does_not_end_in_two_walks_longer_than_the_limit_together() {
+    // s0 → s1 by a ride (arrives 200); a transfer walk s1 → s2 of 290 s; the only egress is s2, a
+    // walk of 1 790 s from the destination. Alone each fits a limit of 1 800 s (S279, CM-7), together
+    // they are 2 080 s: no journey. Unlimited, or with a limit of 2 080 s, it is found, at 200 + 290 +
+    // 1 790 = 2 280.
+    let t = timetable(3, &[(0, vec![(0, 100, BOTH), (1, 200, BOTH)])]);
+    let walks = Footpaths::new(3, vec![(stop(1), stop(2), 290)]);
+    let data = RaptorData::new(&t, t.scheduled(), walks, 0);
+    let mut raptor = Raptor::new(&data, 8);
+    let (access, egress) = ([(stop(0), 0)], [(stop(2), 1790)]);
+    assert!(raptor.pareto_last_walk(&access, &egress, u32::MAX, 1800).is_empty());
+    let unlimited = raptor.pareto_last_walk(&access, &egress, u32::MAX, u32::MAX);
+    assert_eq!(unlimited.iter().map(|j| j.arrival).collect::<Vec<_>>(), [2280]);
+    assert_eq!(raptor.pareto(&access, &egress), unlimited, "no limit is the plain query");
+    let fits = raptor.pareto_last_walk(&access, &egress, u32::MAX, 2080);
+    assert_eq!(fits, unlimited, "a limit equal to the two walks together lets it through");
+    assert!(raptor.pareto_last_walk(&access, &egress, u32::MAX, 2079).is_empty());
+}
+
+#[test]
+fn a_stop_reached_sooner_by_a_walk_that_is_too_long_is_taken_by_its_ride() {
+    // Ride A: s0 → s1 (arrives 100), then a 60 s walk to s2 (160). Ride B: s0 → s2 (arrives 250).
+    // The egress from s2 is 500 s. Within a limit of 520 the walk route (60 + 500) is too long, so
+    // the journey takes ride B and no transfer: 250 + 500 = 750. Within 600 the walk route fits: 660.
+    let t = timetable(
+        3,
+        &[(0, vec![(0, 10, BOTH), (1, 100, BOTH)]), (1, vec![(0, 10, BOTH), (2, 250, BOTH)])],
+    );
+    let walks = Footpaths::new(3, vec![(stop(1), stop(2), 60)]);
+    let data = RaptorData::new(&t, t.scheduled(), walks, 0);
+    let mut raptor = Raptor::new(&data, 8);
+    let (access, egress) = ([(stop(0), 0)], [(stop(2), 500)]);
+    let by_walk = raptor.pareto_last_walk(&access, &egress, u32::MAX, 600);
+    assert_eq!(by_walk.iter().map(|j| j.arrival).collect::<Vec<_>>(), [660]);
+    assert!(by_walk[0].legs.iter().any(|l| matches!(l, JourneyLeg::Transfer { .. })));
+    let by_ride = raptor.pareto_last_walk(&access, &egress, u32::MAX, 520);
+    assert_eq!(by_ride.iter().map(|j| j.arrival).collect::<Vec<_>>(), [750]);
+    assert!(!by_ride[0].legs.iter().any(|l| matches!(l, JourneyLeg::Transfer { .. })));
+    assert_eq!(rides(&by_ride[0]), [(0, 2, 10, 250)]);
+}
+
+#[test]
 fn among_equal_arrivals_the_fewest_vehicles() {
     // Direct s0 → s2 arriving 500; or s0 → s1 → s2 arriving 500 too.
     let t = timetable(
@@ -355,7 +397,7 @@ proptest! {
     /// RAPTOR's earliest arrival and vehicle count equal the exhaustive search's,
     /// and its journey is one a passenger could make.
     #[test]
-    fn raptor_equals_brute_force((n, runs, walks, from, to) in arb_case(), slack in 0u32..90, depart in 0u32..700) {
+    fn raptor_equals_brute_force((n, runs, walks, from, to) in arb_case(), slack in 0u32..90, depart in 0u32..700, limit in 0u32..400) {
         let t = timetable(n, &runs);
         let footpaths = Footpaths::new(
             n,
@@ -378,6 +420,15 @@ proptest! {
         let summary: Vec<(u32, usize)> = set.iter().map(|j| (j.arrival, j.rides())).collect();
         prop_assert_eq!(summary, brute_force_pareto(&t, &kept, slack, 4, &access, &egress));
         prop_assert_eq!(set.last(), got.as_ref());
+        // With a limit on the last walk (S279, CM-7): no journey ends in a transfer and an egress
+        // walk longer than it together, and no limit is the plain query.
+        prop_assert_eq!(&raptor.pareto_last_walk(&[(stop(from), depart)], &[(stop(to), 7)], u32::MAX, u32::MAX), &set);
+        for j in raptor.pareto_last_walk(&[(stop(from), depart)], &[(stop(to), 7)], u32::MAX, limit) {
+            let n = j.legs.len();
+            if let [.., JourneyLeg::Transfer { seconds, .. }, JourneyLeg::Egress { seconds: egress, .. }] = j.legs[..n] {
+                prop_assert!(seconds + egress <= limit, "{j:?} against {limit}");
+            }
+        }
         if let Some(j) = got {
             // The legs chain: each starts no earlier than the one before ends.
             let mut clock = 0u32;
