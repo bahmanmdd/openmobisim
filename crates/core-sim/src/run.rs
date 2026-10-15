@@ -34,7 +34,7 @@ use openmobisim_core_loading::{
     load_timed_binned, run_ltm_chained, traverse_free_flow, traverse_timed,
 };
 use openmobisim_core_routes::{
-    Demand, NodeSnapper, RouteKey, RouteSetGenerator, RouteSets, TripDemand, default_generator,
+    Demand, RouteKey, RouteSetGenerator, RouteSets, TripDemand, TripSnapper, default_generator,
 };
 use openmobisim_core_types::diagnostics::{
     Category, DiagKey, Diagnostics, ElementRef, Severity, codes,
@@ -1037,8 +1037,9 @@ impl Run {
 
         // Route sets for every origin-destination pair the demand asks for,
         // made once, in parallel, before any trip runs (S165): each trip's
-        // endpoints are snapped to the nearest drivable node with a grid, not
-        // a scan, and the pair's set is looked up, not searched for.
+        // endpoints are snapped to the nearest street node with a grid, not
+        // a scan (a motorway-only node only within `car_snap_motorway_m`, U-41),
+        // and the pair's set is looked up, not searched for.
         //
         // A trip that is not a car trip gets a key from a node to itself, which no
         // route set, choice or gap takes part in (S195): its own layer routes it. So does a
@@ -1047,7 +1048,7 @@ impl Run {
         let mode_choice = self.mode_choice.clone();
         let choosing = |trip: TripId| mode_choice.is_some() && !self.trips.mode_given(trip);
         let offers = |mode: Mode| mode_choice.as_ref().is_some_and(|m| m.contains(&mode));
-        let snapper = NodeSnapper::new(&self.network);
+        let snapper = TripSnapper::new(&self.network, self.mode_defaults.car_snap_motorway_m);
         let trip_keys: Vec<RouteKey> = (0..total_trips)
             .map(|i| {
                 let trip = TripId::new(i);

@@ -101,11 +101,12 @@ class Network:
     #: times. Settable.
     read_s: float | None
 
-    def node_nearest(self, lon: float, lat: float) -> int:
-        """The index of the drivable node nearest to ``(lon, lat)``.
+    def node_nearest(self, lon: float, lat: float, car_snap_motorway_m: float | None = None) -> int:
+        """The index of the node a trip starting or ending at ``(lon, lat)`` is routed from or to.
 
-        This is the node a trip starting or ending there is routed from or to,
-        and node indices key :class:`RouteSets`.
+        On the road network the nearest street node — a motorway-only node only within
+        ``car_snap_motorway_m`` (the run's ``mode_options`` value; 50 m unless given) — and on a
+        bike or walk layer the nearest node. Node indices key :class:`RouteSets`.
         """
 
     def node_lonlat(self, name: str) -> tuple[float, float]:
@@ -904,7 +905,7 @@ def run_pipeline(
         persons_path: A ``persons.parquet`` path, instead of `persons`.
         class_defaults: ``{class_name: (owns_car, owns_bike,
             has_transit_pass)}`` — what each class owns by default; a class not listed owns
-            a car, a bike and a pass (S243).
+            a car and a bike and holds no pass (S243, U-42).
         class_modes: ``{class_name: [mode, ...]}`` — the modes each class's travellers
             may use (S231); a class not listed may use every mode the run offers.
         class_options: ``{class_name: {beta_name: value}}`` — each class's own

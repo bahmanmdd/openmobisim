@@ -6,7 +6,7 @@
 //! | [`attributes`] | [`RouteAttributes`]: each route's length and path size, for the choice layer |
 //! | [`generate`] | The [`RouteSetGenerator`] interface, the built-in methods (`penalty`, the default, `shortest` and the congestion-biased `montecarlo`) and the by-name [`Registry`] |
 //! | [`store`] | [`RouteSets`]: routes flat in CSR form, with identity, an inverted link index and per-route metadata; it can be [extended](RouteSets::extended) with routes found later (S176); [`search_map`] runs a search over many items in parallel, in order |
-//! | [`snap`] | [`NodeSnapper`]: the nearest drivable node to a point, from a grid, not a scan |
+//! | [`snap`] | [`NodeSnapper`]: the nearest drivable node to a point, from a grid, not a scan; [`TripSnapper`]: where a trip's end joins the roads (a street, not a motorway) |
 //! | [`reach`] | [`Reach`]: bounded one-to-many searches by node, forward and backward (transit's walks, S199) |
 //!
 //! # Extending it
@@ -35,5 +35,5 @@ pub use generate::{
 };
 pub use reach::Reach;
 pub use search::{LinkFactors, MAX_ROUTES_PER_SET, Route, Search, SearchContext};
-pub use snap::NodeSnapper;
+pub use snap::{NodeSnapper, TripSnapper};
 pub use store::{LinkIndex, RouteKey, RouteSets, RouteView, search_map};

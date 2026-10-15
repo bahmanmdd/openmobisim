@@ -3,61 +3,61 @@
  "bundle": "v1",
  "cases": {
   "amsterdam/base": {
-   "fingerprint": "9ab1823b584c0c66",
+   "fingerprint": "200efa986186d2cb",
    "trips": 56475,
-   "completed": 55186,
-   "mean_trip_s": 1469.6375167614974,
+   "completed": 55210,
+   "mean_trip_s": 1468.0922658938598,
    "mode_share_pct": {
-    "bike": 39.612217795484725,
-    "bike_transit": 0.1363435148295706,
-    "car": 29.72465692784418,
-    "car_transit": 0.07082779991146525,
+    "bike": 39.5626383355467,
+    "bike_transit": 0.13811420982735723,
+    "car": 29.758300132802123,
+    "car_transit": 0.07791057990261177,
     "none": 0.580787959274015,
-    "transit": 28.203629924745464,
-    "walk": 1.67153607791058
+    "transit": 28.214254094732183,
+    "walk": 1.6679946879150067
    },
    "loadings": 5,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "11364aa31dd0"
+   "git_sha": "1656f5104d4b"
   },
   "delft/base": {
-   "fingerprint": "9d91a9fb901f75c2",
+   "fingerprint": "d5dfceba82b1eb63",
    "trips": 30879,
-   "completed": 30476,
-   "mean_trip_s": 1408.3556897230608,
+   "completed": 29696,
+   "mean_trip_s": 1406.1882408405172,
    "mode_share_pct": {
-    "bike": 19.01292140289517,
-    "car": 54.027008646653066,
+    "bike": 19.025875190258752,
+    "car": 54.03672398717575,
     "car_transit": 0.003238446840895107,
     "transit": 24.343404903008516,
-    "walk": 2.613426600602351
+    "walk": 2.5907574727160854
    },
-   "loadings": 6,
+   "loadings": 5,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "11364aa31dd0"
+   "git_sha": "1656f5104d4b"
   },
   "lyon/base": {
-   "fingerprint": "84153b124e78ba5a",
+   "fingerprint": "901effcddb3d25a9",
    "trips": 57892,
-   "completed": 55681,
-   "mean_trip_s": 1581.1189633806864,
+   "completed": 55601,
+   "mean_trip_s": 1583.776227046276,
    "mode_share_pct": {
-    "bike": 4.617218268499966,
-    "bike_transit": 0.01036412630415256,
-    "car": 38.27644579561943,
-    "car_transit": 0.23319284184343259,
-    "transit": 49.06204656947419,
-    "walk": 7.800732398258827
+    "bike": 4.6534927105645,
+    "bike_transit": 0.008636771920127134,
+    "car": 38.443999170869894,
+    "car_transit": 0.18482691909072066,
+    "transit": 48.915221446832035,
+    "walk": 7.793822980722725
    },
    "loadings": 10,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "11364aa31dd0"
+   "git_sha": "1656f5104d4b"
   },
   "nguyendupuis/base": {
-   "fingerprint": "97626182f74c47e7",
+   "fingerprint": "208bd2b137288090",
    "trips": 2000,
    "completed": 2000,
    "mean_trip_s": 3271.1375,
@@ -67,28 +67,27 @@
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "11364aa31dd0"
+   "git_sha": "1656f5104d4b"
   },
   "paris/base": {
-   "fingerprint": "057c8fb8f5788514",
+   "fingerprint": "e82a7e7b7be0a309",
    "trips": 82790,
-   "completed": 80982,
-   "mean_trip_s": 1253.7837667629844,
+   "completed": 80990,
+   "mean_trip_s": 1251.3051364365972,
    "mode_share_pct": {
-    "bike": 17.544389419011956,
-    "bike_transit": 0.16185529653339775,
-    "car": 12.680275395579176,
-    "car_transit": 0.003623626041792487,
-    "transit": 64.70588235294117,
-    "walk": 4.903973909892499
+    "bike": 17.526271288802995,
+    "bike_transit": 0.1534001691025486,
+    "car": 12.604179248701534,
+    "transit": 64.74332648870636,
+    "walk": 4.972822804686556
    },
-   "loadings": 5,
+   "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "11364aa31dd0"
+   "git_sha": "1656f5104d4b"
   },
   "siouxfalls/base": {
-   "fingerprint": "48066da9c0bc6fa6",
+   "fingerprint": "4ae3671336d2d99d",
    "trips": 180300,
    "completed": 180300,
    "mean_trip_s": 790.231120354964,
@@ -98,10 +97,10 @@
    "loadings": 5,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "11364aa31dd0"
+   "git_sha": "1656f5104d4b"
   },
   "siouxfalls/congested": {
-   "fingerprint": "dd7d94cf4b1fc79f",
+   "fingerprint": "659ce9cdcd2d11f8",
    "trips": 270450,
    "completed": 270450,
    "mean_trip_s": 1546.0826067665002,
@@ -111,7 +110,7 @@
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "11364aa31dd0"
+   "git_sha": "1656f5104d4b"
   }
  }
 }

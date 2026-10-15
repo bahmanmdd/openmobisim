@@ -14,6 +14,7 @@
 //! free-flow time, storage, and the whole diagram: speed, capacity, jam
 //! density, wave speed, control delay); every traveller (id, class, weight,
 //! what they own) and every trip (traveller, departure, origin, destination);
+//! how close to a motorway a trip's end may join the roads (`car_snap_motorway_m`, U-41);
 //! the window; the loading engine, its level and its step; the route method
 //! and its options; the choice model and its options; the equilibration
 //! strategy and its options; the choice-set detour limit (S178); the route update and its options, if there is one (S176);
@@ -242,6 +243,8 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             h.write_f64(o.pocket_length_m);
         }
     }
+    // Where a trip's end joins the roads (U-41): read by every car trip, so always hashed.
+    h.write_f64(inputs.mode_defaults.car_snap_motorway_m);
     hash_modes(&mut h, inputs.trips, inputs.layers);
     // Off means absent (M5): a run without mode choice hashes as it did before it.
     if let Some(modes) = inputs.mode_choice {
@@ -676,8 +679,7 @@ fn hash_demand(h: &mut Fnv1a, travellers: &Travellers, trips: &Trips) {
         let own = travellers.ownership(traveller);
         h.write_bool(own.car);
         h.write_bool(own.bike);
-        // Hashed although nothing reads the pass yet: a pass gates nothing until brief A14 makes it
-        // act (CM-13). Leave it in, so the fingerprints do not change twice.
+        // A pass holder pays no fare (A14): money, so hashed with what they own.
         h.write_bool(own.transit_pass);
     }
     h.write_u32(trips.len());

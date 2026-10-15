@@ -183,12 +183,16 @@ class Run:
         flow_step_s: int = 300,
         transit: _core.Transit | None = None,
         parkings: _core.Parkings | None = None,
+        car_snap_motorway_m: float | None = None,
     ) -> None:
         """Wrap a `RunSummary` from `run_pipeline`, with what it was run on."""
         self._summary = summary
         self._network = network
         self._transit = transit
         self._parkings = parkings
+        # Where the run's trips joined the roads (``mode_options``; None: the default), so a
+        # report snapping points to nodes agrees with the run (U-41).
+        self._car_snap_motorway_m = car_snap_motorway_m
         self.run_id = run_id
         self.flow_level = flow_level
         self.flow_step_s = flow_step_s
@@ -1017,8 +1021,9 @@ class Run:
             if self._network is None:
                 raise ValueError("give zones: this run does not know its network")
             snap = self._network.node_nearest
-            origin = [snap(lon, lat) for lon, lat in points[:, :2]]
-            destination = [snap(lon, lat) for lon, lat in points[:, 2:]]
+            within = self._car_snap_motorway_m
+            origin = [snap(lon, lat, within) for lon, lat in points[:, :2]]
+            destination = [snap(lon, lat, within) for lon, lat in points[:, 2:]]
         groups: dict[tuple, list[float]] = {}
         for j, i in enumerate(keep):
             key = (origin[j], destination[j]) + ((choices["user_class"][i],) if by_class else ())
@@ -1607,11 +1612,12 @@ class Scenario:
                 dict of the same columns. A class may say ``modes`` (the modes its travellers may
                 use: ``["car", "transit", "car_transit"]``; unsaid: every mode the run offers),
                 ``owns_car``, ``owns_bike``, ``has_transit_pass`` (what each of them owns, unless a
-                ``persons`` row says otherwise; unsaid: as its modes imply, a car for a class that
-                may drive or park and ride, a bike for one that may cycle, all three for one whose
-                modes are unsaid; **a traveller with a transit pass pays no fare**, whatever
-                the ``price_options``: the pass is access, not money, and its own price is not
-                counted, so give ``has_transit_pass`` as 0 for a class that pays fares) and any
+                ``persons`` row says otherwise; unsaid: a car for a class that may drive or park
+                and ride, a bike for one that may cycle, both for one whose modes are unsaid, and
+                no pass; **a traveller with a transit pass pays no fare**, whatever the
+                ``price_options`` — the pass is money, never access: who may take transit is said
+                by the modes, so give ``has_transit_pass`` as 1 for a class that holds one; its
+                own price is not counted) and any
                 ``beta_*`` coefficient of the choice model (its own mode
                 constants, ``beta_mode_bike`` …, or its own value of time, ``beta_time_min``;
                 unsaid: ``choice_options``'), for ``"logit"`` and ``"nested_logit"``, and its own
@@ -1922,7 +1928,13 @@ class Scenario:
                 in a car alternative's door-to-door time, walk and parking time in mode choice
                 and in the drive to a park-and-ride car park — every other mode pays its walks
                 and waits; uncalibrated, 0 switches either off. The loading moves the car from
-                the trip's departure. Unknown names and negative values are refused (the limits
+                the trip's departure. ``car_snap_motorway_m`` (50): a trip's end joins the roads
+                at the nearest street node (one with a road a car can enter from; motorways,
+                trunk roads and their ramps are not), unless it lies within this distance of a
+                node that has only such roads, which it then takes (through traffic placed on
+                the motorway keeps its node; an address beside it does not start on it);
+                uncalibrated, 0 sends every trip to a street, ``inf`` takes the nearest drivable
+                node of any class. Unknown names and negative values are refused (the limits
                 must be above 0).
             loading_options: The loading's rules by name, for ``flow_level`` 2–4 (gridlock
                 remedies; at ``flow_level`` 2, where nothing waits for room, ``reroute`` is off
@@ -2194,6 +2206,7 @@ class Scenario:
             flow_step_s=self._flow_step_s,
             transit=self._transit,
             parkings=self._parkings,
+            car_snap_motorway_m=(self._mode_options or {}).get("car_snap_motorway_m"),
         )
         if not quiet:
             print(run._timings_text())

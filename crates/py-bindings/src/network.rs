@@ -7,7 +7,7 @@
 //! by the link's internal id, the same index the per-link results use.
 
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods};
 use pyo3::exceptions::PyValueError;
@@ -27,7 +27,8 @@ use openmobisim_core_graph::network::{
 };
 use openmobisim_core_graph::network_options::NetworkDefaults;
 use openmobisim_core_graph::turns::TurnTable;
-use openmobisim_core_routes::NodeSnapper;
+use openmobisim_core_routes::{NodeSnapper, TripSnapper};
+use openmobisim_core_sim::ModeDefaults;
 use openmobisim_core_types::diagnostics::{Category, Diagnostics, Severity};
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 use openmobisim_io_osm::{
@@ -52,6 +53,9 @@ pub struct PyNetwork {
     pub(crate) source: String,
     /// The nearest-drivable-node index, built the first time it is asked for.
     pub(crate) snapper: OnceLock<NodeSnapper>,
+    /// The trip-end index (a street node, a motorway-only node within a distance; U-41), built
+    /// the first time it is asked for and kept for the last distance asked.
+    pub(crate) trip_snapper: Mutex<Option<(u64, Arc<TripSnapper>)>>,
     /// What the import did, for a network read from OSM.
     import: Option<Arc<ImportInfo>>,
     /// Which layer this handle is: `"road"`, or `"bike"` / `"walk"` for a
@@ -117,6 +121,7 @@ impl PyNetwork {
             geometry,
             source: source.to_string(),
             snapper: OnceLock::new(),
+            trip_snapper: Mutex::new(None),
             import: None,
             layer: "road".to_string(),
             static_network: None,
@@ -158,6 +163,7 @@ impl PyNetwork {
             geometry: self.geometry.clone(),
             source: self.source.clone(),
             snapper: OnceLock::new(),
+            trip_snapper: Mutex::new(None),
             import: self.import.clone(),
             layer: "road".to_string(),
             static_network: None,
@@ -188,15 +194,35 @@ impl PyNetwork {
             }
         })
     }
+
+    /// The trip-end snapper for `car_snap_motorway_m` (U-41), built on first use and kept for
+    /// the last distance asked.
+    pub(crate) fn trip_snapper(&self, car_snap_motorway_m: f64) -> Arc<TripSnapper> {
+        let mut cached = self.trip_snapper.lock().expect("no panic holds the lock");
+        if let Some((bits, snapper)) = cached.as_ref() {
+            if *bits == car_snap_motorway_m.to_bits() {
+                return snapper.clone();
+            }
+        }
+        let snapper = Arc::new(TripSnapper::new(&self.inner, car_snap_motorway_m));
+        *cached = Some((car_snap_motorway_m.to_bits(), snapper.clone()));
+        snapper
+    }
 }
 
 #[pymethods]
 impl PyNetwork {
-    /// The index of the drivable node nearest to `(lon, lat)`: the node a trip
-    /// starting or ending there is routed from or to. Node indices key route
-    /// sets.
-    fn node_nearest(&self, lon: f64, lat: f64) -> u32 {
-        self.snapper().nearest(&self.inner, LonLat::new(lon, lat)).raw()
+    /// The index of the node a trip starting or ending at `(lon, lat)` is routed from or to:
+    /// on the road network the nearest street node (a motorway-only node only within
+    /// `car_snap_motorway_m`, the run's `mode_options` value; U-41), on a bike or walk layer the
+    /// nearest node. Node indices key route sets.
+    #[pyo3(signature = (lon, lat, car_snap_motorway_m = None))]
+    fn node_nearest(&self, lon: f64, lat: f64, car_snap_motorway_m: Option<f64>) -> u32 {
+        if self.static_network.is_some() {
+            return self.snapper().nearest(&self.inner, LonLat::new(lon, lat)).raw();
+        }
+        let within = car_snap_motorway_m.unwrap_or(ModeDefaults::SHIPPED.car_snap_motorway_m);
+        self.trip_snapper(within).nearest(&self.inner, LonLat::new(lon, lat)).raw()
     }
 
     /// The WGS84 `(lon, lat)` of the node with external id `name` — for
@@ -1133,6 +1159,7 @@ pub fn network_edit(
         geometry: network.geometry.clone(),
         source: network.source.clone(),
         snapper: OnceLock::new(),
+        trip_snapper: Mutex::new(None),
         import: network.import.clone(),
         layer: "road".to_string(),
         static_network: None,

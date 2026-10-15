@@ -888,8 +888,9 @@ pub fn run_pipeline(
         }
     };
 
-    // A class the scenario does not list may use every mode, so it owns what they need (S243).
-    let mut class_defaults_built = ClassDefaults::new().with_fallback(Ownership::ALL);
+    // A class the scenario does not list may use every mode, so it owns what they need (S243):
+    // a car and a bike; transit needs no pass, and a pass is held only where said (U-42).
+    let mut class_defaults_built = ClassDefaults::new().with_fallback(Ownership::VEHICLES);
     if let Some(map) = class_defaults {
         for (class, (car, bike, transit_pass)) in map {
             class_defaults_built =

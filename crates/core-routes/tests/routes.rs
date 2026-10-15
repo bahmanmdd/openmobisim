@@ -20,7 +20,7 @@ use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder}
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::{
     DEFAULT_METHOD, NodeSnapper, Options, Penalty, Registry, RouteError, RouteKey, RouteSets,
-    Search, SearchContext, Shortest, generator,
+    Search, SearchContext, Shortest, TripSnapper, generator,
 };
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
@@ -573,6 +573,76 @@ fn snapping_agrees_with_a_scan_across_wide_empty_gaps_between_clusters() {
             .expect("nodes");
         assert_eq!(snapper.nearest_xy(x, y), brute, "at ({x:.1}, {y:.1})");
     }
+}
+
+/// A motorway M0–M1–M2 running east along y = 0 (M1 is reached by a ramp only), a street S0–S1
+/// 120 m north of it, parallel, and a ramp from S1 down to M1. M0 and M2 have only the motorway;
+/// M1 has the motorway and a ramp; S0 and S1 have the street.
+fn motorway_beside_a_street() -> RoadNetwork {
+    let mut b = RoadNetworkBuilder::new();
+    for (n, x, y) in [
+        ("M0", 0.0, 0.0),
+        ("M1", 500.0, 0.0),
+        ("M2", 1000.0, 0.0),
+        ("S0", 0.0, 120.0),
+        ("S1", 500.0, 120.0),
+    ] {
+        b.add_node(n, LonLat::new(4.8 + x / 77_800.0, 45.7 + y / 110_574.0));
+    }
+    for (name, from, to, class, len) in [
+        ("m01", "M0", "M1", RoadClass::Motorway, 500.0),
+        ("m12", "M1", "M2", RoadClass::Motorway, 500.0),
+        ("s01", "S0", "S1", RoadClass::Residential, 500.0),
+        ("ramp", "S1", "M1", RoadClass::MotorwayLink, 130.0),
+    ] {
+        let mut spec = LinkSpec::new(class);
+        spec.length_m = Some(len);
+        b.add_link(name, from, to, spec);
+    }
+    b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable")
+}
+
+#[test]
+fn a_trip_end_joins_a_street_unless_it_lies_on_the_motorway() {
+    let net = motorway_beside_a_street();
+    let at = |x: f64, y: f64| LonLat::new(4.8 + x / 77_800.0, 45.7 + y / 110_574.0);
+    let plain = NodeSnapper::new(&net);
+    let trips = TripSnapper::new(&net, 50.0);
+    // A point 30 m from the motorway's end and 90 m from the street: the plain snapper takes
+    // the motorway node, the trip snapper the street (the point is farther than 50 m from M0
+    // once it is more than 50 m away; here it is within, so it stays).
+    assert_eq!(plain.nearest(&net, at(0.0, 30.0)), node(&net, "M0"));
+    assert_eq!(trips.nearest(&net, at(0.0, 30.0)), node(&net, "M0"), "within 50 m: kept");
+    assert_eq!(plain.nearest(&net, at(0.0, 55.0)), node(&net, "M0"));
+    assert_eq!(trips.nearest(&net, at(0.0, 55.0)), node(&net, "S0"), "beyond 50 m: a street");
+    // On the node itself (a gateway row): kept.
+    assert_eq!(trips.nearest(&net, at(1000.0, 0.0)), node(&net, "M2"));
+    // M1 carries a ramp but no street: motorway-only, so a point beside it goes to S1.
+    assert!(!trips.on_street(node(&net, "M1")));
+    assert_eq!(trips.nearest(&net, at(500.0, 60.0)), node(&net, "S1"));
+    // A street node is always itself; 0 sends every trip to a street; infinity is the plain rule.
+    assert_eq!(trips.nearest(&net, at(0.0, 125.0)), node(&net, "S0"));
+    assert_eq!(TripSnapper::new(&net, 0.0).nearest(&net, at(1000.0, 0.0)), node(&net, "S1"));
+    assert_eq!(
+        TripSnapper::new(&net, f64::INFINITY).nearest(&net, at(0.0, 55.0)),
+        node(&net, "M0")
+    );
+}
+
+#[test]
+fn a_network_of_motorways_only_snaps_to_them() {
+    let mut b = RoadNetworkBuilder::new();
+    b.add_node("A", LonLat::new(4.8, 45.7));
+    b.add_node("B", LonLat::new(4.8 + 500.0 / 77_800.0, 45.7));
+    let mut spec = LinkSpec::new(RoadClass::Motorway);
+    spec.length_m = Some(500.0);
+    b.add_link("ab", "A", "B", spec);
+    let net = b
+        .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable");
+    let trips = TripSnapper::new(&net, 50.0);
+    assert_eq!(trips.nearest(&net, LonLat::new(4.8, 45.7 + 300.0 / 110_574.0)), node(&net, "A"));
 }
 
 #[test]

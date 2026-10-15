@@ -148,14 +148,25 @@ impl NodeSnapper {
     /// Panics if the network had no nodes.
     #[must_use]
     pub fn nearest_xy(&self, x: f64, y: f64) -> NodeId {
-        let best = self.nearest_in_rings(x, y).unwrap_or_else(|| self.nearest_scan(x, y));
-        NodeId::new(best)
+        self.nearest_xy_at(x, y).0
     }
 
-    fn nearest_scan(&self, x: f64, y: f64) -> u32 {
+    /// [`Self::nearest_xy`] with the distance to the node, in metres.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the network had no nodes.
+    #[must_use]
+    pub fn nearest_xy_at(&self, x: f64, y: f64) -> (NodeId, f64) {
+        let i = self.nearest_in_rings(x, y).unwrap_or_else(|| self.nearest_scan(x, y));
+        let d = (self.positions[i].0 - x).hypot(self.positions[i].1 - y);
+        (NodeId::new(self.nodes[i]), d)
+    }
+
+    /// The index into `nodes` of the nearest node, by a scan of them all.
+    fn nearest_scan(&self, x: f64, y: f64) -> usize {
         (0..self.nodes.len())
             .min_by(|&a, &b| self.better(x, y, a, b))
-            .map(|i| self.nodes[i])
             .expect("a network has at least one node")
     }
 
@@ -164,7 +175,8 @@ impl NodeSnapper {
         d(a).total_cmp(&d(b)).then_with(|| self.nodes[a].cmp(&self.nodes[b]))
     }
 
-    fn nearest_in_rings(&self, x: f64, y: f64) -> Option<u32> {
+    /// The index into `nodes` of the nearest node, from the grid's rings; `None` off the grid.
+    fn nearest_in_rings(&self, x: f64, y: f64) -> Option<usize> {
         // Outside the grid the ring bound below does not hold; scan instead.
         #[allow(clippy::cast_precision_loss, reason = "a grid dimension is far below 2^52")]
         let (gx, gy) =
@@ -211,7 +223,7 @@ impl NodeSnapper {
                 }
             }
         }
-        best.map(|i| self.nodes[i])
+        best
     }
 
     /// How many nodes are indexed.
@@ -224,5 +236,71 @@ impl NodeSnapper {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
+    }
+}
+
+/// Where a trip's end joins the road network (U-41, S281): the nearest **street** node — a
+/// node with a road a car can enter from, motorways, trunk roads and their ramps excluded —
+/// unless the point lies within `motorway_within_m` of a node that has only such roads, which
+/// it then takes (a through trip placed on the motorway by design keeps its node; an address
+/// beside a motorway does not start on it).
+///
+/// A network without a street node (a toy of motorways only) snaps as [`NodeSnapper::new`]
+/// does. **Cost:** two grids instead of one; a query is two ring searches at most.
+/// **Determinism:** each grid breaks ties by node id.
+#[derive(Clone, Debug)]
+pub struct TripSnapper {
+    drivable: NodeSnapper,
+    streets: Option<NodeSnapper>,
+    /// Per node of the network: whether a street (a road that is not a motorway or trunk road,
+    /// and carries motor traffic) touches it.
+    on_street: Vec<bool>,
+    motorway_within_m: f64,
+}
+
+impl TripSnapper {
+    /// Index `network` for trip ends; `motorway_within_m` is how close to a motorway-only
+    /// node a point must lie to keep it (0: never; infinite: always, the rule before S281).
+    #[must_use]
+    pub fn new(network: &RoadNetwork, motorway_within_m: f64) -> Self {
+        let street = |l: &LinkId| {
+            let class = network.link_class(*l);
+            class.carries_motor_traffic() && !class.is_motorway_or_trunk()
+        };
+        let on_street: Vec<bool> = (0..network.node_count())
+            .map(|n| {
+                let node = NodeId::new(n);
+                network.out_links(node).iter().any(street)
+                    || network.in_links(node).iter().any(street)
+            })
+            .collect();
+        let ids: Vec<u32> = (0..network.node_count()).filter(|&n| on_street[n as usize]).collect();
+        let streets = (!ids.is_empty()).then(|| NodeSnapper::over(network, &ids));
+        Self { drivable: NodeSnapper::new(network), streets, on_street, motorway_within_m }
+    }
+
+    /// The node a trip starting or ending at `point` is routed from or to.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the network had no nodes, which a built network never has.
+    #[must_use]
+    pub fn nearest(&self, network: &RoadNetwork, point: LonLat) -> NodeId {
+        let p = network.projection().project(point);
+        let (node, distance) = self.drivable.nearest_xy_at(p.x, p.y);
+        // Strictly closer: 0 means never, so a point on the node itself goes to a street too.
+        if self.on_street[node.raw() as usize] || distance < self.motorway_within_m {
+            return node;
+        }
+        match &self.streets {
+            Some(streets) => streets.nearest_xy(p.x, p.y),
+            None => node,
+        }
+    }
+
+    /// Whether `node` has a street (a road that is not a motorway or trunk road).
+    #[must_use]
+    pub fn on_street(&self, node: NodeId) -> bool {
+        self.on_street[node.raw() as usize]
     }
 }

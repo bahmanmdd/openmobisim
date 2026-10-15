@@ -286,12 +286,14 @@ def _class_entry(name: str, spec: object) -> dict[str, Any]:
         share = float(share)
         if not (math.isfinite(share) and share >= 0):
             raise ValueError(f"class {name!r}: share must be a number of at least 0, got {share}")
-    # Unsaid ownership follows the modes: a class that may drive owns a car (S231); one whose
-    # modes are unsaid may use every mode, so it owns a car, a bike and a pass (S243).
+    # Unsaid vehicles follow the modes: a class that may drive owns a car (S231); one whose
+    # modes are unsaid may use every mode, so it owns a car and a bike (S243). A pass is never
+    # implied (U-42): it only waives the fare, and transit needs none, so a class holds one
+    # only when it says so.
     implied = {
         "owns_car": modes is None or any(m in ("car", "car_transit") for m in modes),
         "owns_bike": modes is None or any(m in ("bike", "bike_transit") for m in modes),
-        "has_transit_pass": modes is None or any("transit" in m for m in modes),
+        "has_transit_pass": False,
     }
     entry: dict[str, Any] = {"share": share, "modes": modes}
     for key in _OWNERSHIP:
@@ -332,9 +334,9 @@ def demand_read_classes(path: str | Path) -> dict[str, dict[str, Any]]:
     Columns: ``class`` (its name, as the trips' ``user_class``); optionally ``share`` (the share of
     the people in the class, for ``demand_assign_classes``), ``modes`` (the modes its travellers may
     use, separated by ``;``: ``car;bike;walk``; empty: every mode the run offers), ``owns_car``,
-    ``owns_bike`` and ``has_transit_pass`` (``1`` or ``0``; empty: as the modes imply, a car for a
-    class that may drive or park and ride, a bike for one that may cycle, a pass for one that may
-    take transit, all three when the modes are empty), any ``beta_*`` coefficient of the choice
+    ``owns_bike`` and ``has_transit_pass`` (``1`` or ``0``; empty: a car for a class that may drive
+    or park and ride, a bike for one that may cycle, both when the modes are empty, and no pass —
+    a pass only waives the fare, never gates transit), any ``beta_*`` coefficient of the choice
     model (``beta_mode_bike``, ``beta_time_min`` …; empty: the model's own) and the class's own
     choice-set limits in seconds, ``walk_max_s``, ``bike_max_s`` and ``access_walk_max_s`` (empty:
     the run's ``mode_options`` and ``transit_options``). Every value is what the user gives, not a

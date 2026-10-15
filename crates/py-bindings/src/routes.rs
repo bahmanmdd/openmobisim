@@ -19,6 +19,7 @@ use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::{
     DEFAULT_METHOD, Demand, LinkIndex, Registry, RouteKey, RouteSets, TripDemand,
 };
+use openmobisim_core_sim::ModeDefaults;
 
 use crate::network::PyNetwork;
 
@@ -224,7 +225,8 @@ pub fn route_sets_build(
     let generator = Registry::builtin()
         .create(method, &to_options(options))
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    let snapper = network.snapper();
+    // The ends join the roads as a run's trips do (U-41), at the shipped distance.
+    let snapper = network.trip_snapper(ModeDefaults::SHIPPED.car_snap_motorway_m);
     let keys: Vec<RouteKey> = od_lonlat
         .iter()
         .map(|&(a, b, c, d)| {

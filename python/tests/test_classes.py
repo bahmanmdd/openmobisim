@@ -27,10 +27,10 @@ park_and_ride_commuter,0.05,car;transit;car_transit,1,0,1,0,,,0.3,,,
 
 #: The example classes (``examples.traveller_classes()``): four by ownership (S244, fitted S256).
 TABLE = """class,share,modes,owns_car,owns_bike,has_transit_pass,beta_mode_bike
-car_and_bike,0.40,car;bike;walk;transit;car_transit;bike_transit,1,1,1,3.1
-no_vehicle,0.30,walk;transit,0,0,1,
-bike_only,0.20,walk;bike;transit;bike_transit,0,1,1,3.1
-car_only,0.10,walk;car;transit;car_transit,1,0,1,
+car_and_bike,0.40,car;bike;walk;transit;car_transit;bike_transit,1,1,0,3.1
+no_vehicle,0.30,walk;transit,0,0,0,
+bike_only,0.20,walk;bike;transit;bike_transit,0,1,0,3.1
+car_only,0.10,walk;car;transit;car_transit,1,0,0,
 """  # noqa: E501
 
 
@@ -99,14 +99,14 @@ def test_unsaid_ownership_follows_the_modes_and_a_tuple_says_only_what_is_owned(
         "nothing": {},
     })  # fmt: skip
     assert (t["pr"]["owns_car"], t["pr"]["owns_bike"], t["pr"]["has_transit_pass"]) == (
-        True, False, True,
+        True, False, False,
     )  # fmt: skip
     assert (t["cyclist"]["owns_car"], t["cyclist"]["owns_bike"]) == (False, True)
     assert t["old"]["modes"] is None and t["old"]["owns_car"] and t["old"]["has_transit_pass"]
-    # Modes unsaid: every mode, so a car, a bike and a pass (S243).
+    # Modes unsaid: every mode, so a car and a bike (S243); never a pass unless said (U-42).
     assert t["nothing"]["modes"] is None
     assert (t["nothing"]["owns_car"], t["nothing"]["owns_bike"]) == (True, True)
-    assert t["nothing"]["has_transit_pass"]
+    assert not t["nothing"]["has_transit_pass"]
 
 
 @pytest.mark.parametrize(

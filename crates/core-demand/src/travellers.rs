@@ -57,17 +57,20 @@ pub struct Ownership {
     pub car: bool,
     /// Owns a bike.
     pub bike: bool,
-    /// Holds a transit pass. Nothing reads it yet: a pass gates no journey (CM-13), though it is
-    /// part of the run's fingerprint; a later change makes it act (brief A14).
+    /// Holds a transit pass: a holder pays no fare (A14). A pass is money, never access — who
+    /// may take transit is said by the class's modes — and nobody holds one unless their class
+    /// or their `persons.parquet` row says so (U-42, S281).
     pub transit_pass: bool,
 }
 
 impl Ownership {
     /// Owns nothing.
     pub const NONE: Ownership = Ownership { car: false, bike: false, transit_pass: false };
-    /// Owns a car and a bike and holds a transit pass: what a traveller who may use every mode
-    /// needs (S243).
+    /// Owns a car and a bike and holds a transit pass.
     pub const ALL: Ownership = Ownership { car: true, bike: true, transit_pass: true };
+    /// Owns a car and a bike, and no pass: what a traveller who may use every mode needs
+    /// (S243), since transit needs no pass (a pass only waives the fare; U-42, S281).
+    pub const VEHICLES: Ownership = Ownership { car: true, bike: true, transit_pass: false };
 
     /// Apply a `persons.parquet` row's overrides, field by field — each of
     /// `owns_car`, `owns_bike`, `has_transit_pass` overrides independently of
@@ -102,8 +105,8 @@ impl Ownership {
 ///
 /// A class with no declared default takes the fallback: [`Ownership::NONE`]
 /// unless [`ClassDefaults::with_fallback`] says otherwise. The scenario layer
-/// gives every undeclared class [`Ownership::ALL`] (S243: a class not listed
-/// may use every mode, so it owns what they need).
+/// gives every undeclared class [`Ownership::VEHICLES`] (S243: a class not listed
+/// may use every mode, so it owns what they need; no pass, U-42).
 #[derive(Clone, Debug, Default)]
 pub struct ClassDefaults {
     declared: HashMap<String, Ownership>,

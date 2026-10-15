@@ -158,6 +158,16 @@ pub struct ModeDefaults {
     /// <https://doi.org/10.1016/j.tranpol.2006.05.005>), far above a city-wide mean that counts
     /// home and workplace parking; 0 switches it off.*
     pub car_egress_s: f64,
+    /// How close to a motorway-only node a trip's end must lie to join the roads there, in
+    /// metres (U-41, S281). A trip's end snaps to the nearest **street** node — one with a road
+    /// a car can enter from; motorways, trunk roads and their ramps are not — unless it lies
+    /// within this distance of a node that has only such roads, which it then takes: a through
+    /// trip placed on the motorway by design keeps its node, an address beside the motorway does
+    /// not start on it. Read by every car trip, with or without mode choice. *Uncalibrated:
+    /// 50 m, an assumption (a gateway row lies on its node, an address never within 50 m of a
+    /// carriageway's node); 0 sends every trip to a street, `inf` restores the plain nearest
+    /// drivable node.*
+    pub car_snap_motorway_m: f64,
 }
 
 impl ModeDefaults {
@@ -168,11 +178,18 @@ impl ModeDefaults {
         fallback_car: false,
         car_access_s: 120.0,
         car_egress_s: 180.0,
+        car_snap_motorway_m: 50.0,
     };
 
     /// The names of the options.
-    pub const NAMES: [&'static str; 5] =
-        ["walk_max_s", "bike_max_s", "fallback_car", "car_access_s", "car_egress_s"];
+    pub const NAMES: [&'static str; 6] = [
+        "walk_max_s",
+        "bike_max_s",
+        "fallback_car",
+        "car_access_s",
+        "car_egress_s",
+        "car_snap_motorway_m",
+    ];
 
     /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing).
     #[must_use]
@@ -183,6 +200,7 @@ impl ModeDefaults {
             ("fallback_car", f64::from(u8::from(self.fallback_car))),
             ("car_access_s", self.car_access_s),
             ("car_egress_s", self.car_egress_s),
+            ("car_snap_motorway_m", self.car_snap_motorway_m),
         ]
     }
 
@@ -191,8 +209,8 @@ impl ModeDefaults {
     /// # Errors
     ///
     /// The name and the list of known names for an unknown option; the reason for a
-    /// value that is not a positive number (`inf` offers every walk and ride), or for
-    /// `fallback_car` not 0 or 1.
+    /// value that is not a positive number (`inf` offers every walk and ride; a time or a
+    /// distance may be 0), or for `fallback_car` not 0 or 1.
     pub fn from_options(options: &std::collections::BTreeMap<String, f64>) -> Result<Self, String> {
         let mut d = Self::SHIPPED;
         for (name, &value) in options {
@@ -215,6 +233,7 @@ impl ModeDefaults {
                 "bike_max_s" => (&mut d.bike_max_s, false),
                 "car_access_s" => (&mut d.car_access_s, true),
                 "car_egress_s" => (&mut d.car_egress_s, true),
+                "car_snap_motorway_m" => (&mut d.car_snap_motorway_m, true),
                 _ => {
                     return Err(format!(
                         "mode_options has no {name:?}; the options are: {}",

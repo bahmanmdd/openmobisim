@@ -222,10 +222,11 @@ def traveller_classes() -> dict[str, dict]:
     ================  =====  ==================================
 
     Each class owns what its modes need (a car for one that may drive or park and ride, a bike
-    for one that may cycle, every class a transit pass), and **the two that cycle weigh alike**: a
+    for one that may cycle; transit needs no pass, and none of the four holds one, so a fare,
+    if a study sets one, is paid by all), and **the two that cycle weigh alike**: a
     bike constant of 3.1 (every other mode's 0), on top of the default weights, which count each
     kilometre of a ride in mixed traffic (-0.16) and money (-1.2 per euro), though no price is
-    charged by default: having a car, a bike or a pass is access, which the classes give. The
+    charged by default: money plays no part until a study sets prices. The
     constant was fitted (S256) so that a synthetic morning commute in Amsterdam keeps the city's
     ratio of cycling to driving (38 : 23); public
     transport's share then follows from who owns no vehicle, and walking, mostly short trips,

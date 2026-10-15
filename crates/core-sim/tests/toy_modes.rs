@@ -83,6 +83,7 @@ const NO_ACCESS: ModeDefaults = ModeDefaults {
     fallback_car: false,
     car_access_s: 0.0,
     car_egress_s: 0.0,
+    car_snap_motorway_m: 50.0,
 };
 
 struct Toy {

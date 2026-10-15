@@ -216,7 +216,18 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// 0.05, `route_growth_tolerance` 1; `FreeFlow` 5 increments, warm-up 1; `LoadingOptions::reroute`
 /// settled by the level: on at 3 and 4, off at the point queue unless asked). A Python run
 /// simulates what it did; a run of the Rust core at its defaults now does the same.
-pub const DEFAULTS_VERSION: u32 = 28;
+///
+/// Version 29 (S281, U-41 and U-42): **a trip's end snaps to a street**, the nearest node with
+/// a road a car can enter from — motorways, trunk roads and their ramps excluded — unless the
+/// point lies within `core-sim`'s `ModeDefaults::car_snap_motorway_m` (50 m) of a node that has
+/// only such roads (a through trip placed on the motorway by design); before, the nearest
+/// drivable node of any class, so 1–7 % of a city's trips began on a carriageway. Every run
+/// whose trips lie near a motorway changes; the benchmark networks have none. And **a transit
+/// pass is held only where said**: an unsaid `has_transit_pass` is false for every class (it was
+/// true for a class that may take transit), so a fare, if set, is paid by all but the classes
+/// and persons that say they hold a pass; the pass never gates transit. Prices are 0 by default,
+/// so no shipped result moves; every fingerprint does (ownership is hashed).
+pub const DEFAULTS_VERSION: u32 = 29;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///
@@ -375,6 +386,18 @@ impl RoadClass {
                 | RoadClass::Cycleway
                 | RoadClass::Ferry
                 | RoadClass::Busway
+        )
+    }
+
+    /// Whether this is a motorway or a trunk road, or one of their ramps: a carriageway a trip
+    /// does not start or end on (U-41, S281: a trip's end snaps to a street unless it lies on
+    /// such a node, `ModeDefaults::car_snap_motorway_m`).
+    #[inline]
+    #[must_use]
+    pub const fn is_motorway_or_trunk(self) -> bool {
+        matches!(
+            self,
+            RoadClass::Motorway | RoadClass::MotorwayLink | RoadClass::Trunk | RoadClass::TrunkLink
         )
     }
 
