@@ -762,6 +762,62 @@ fn saturated_merges_share_room_in_proportion_to_capacity() {
     );
 }
 
+/// **Property (S48, S279, L-3, proportional to capacity on exact ties):** two saturated
+/// approaches with headways of exactly 1 s and 2 s (3 600 and 1 800 veh/h, one vehicle of 1 PCU
+/// each) merge into a bottleneck: their service tags tie every other release (A: 1, 2, 3, 4;
+/// B: 2, 4), and the tie must not tip the shares. The merge is shared 2 : 1 over a long run.
+#[test]
+fn saturated_merges_with_headways_of_one_and_two_seconds_share_two_to_one() {
+    let mut b = RoadNetworkBuilder::new();
+    b.add_node("w", LonLat::new(4.790, 45.700));
+    b.add_node("s", LonLat::new(4.800, 45.690));
+    b.add_node("m", LonLat::new(4.800, 45.700));
+    b.add_node("x", LonLat::new(4.8004, 45.700));
+    b.add_node("e", LonLat::new(4.840, 45.700));
+    b.mark_signalised("x");
+    let with = |class: RoadClass, capacity: f64| {
+        let mut spec = LinkSpec::new(class);
+        spec.capacity_veh_h = Some(capacity);
+        spec
+    };
+    b.add_link("wm", "w", "m", with(RoadClass::Primary, 3600.0));
+    b.add_link("sm", "s", "m", with(RoadClass::Residential, 1800.0));
+    b.add_link("mx", "m", "x", LinkSpec::new(RoadClass::Residential));
+    b.add_link("xe", "x", "e", LinkSpec::new(RoadClass::Residential));
+    let mut d = Diagnostics::new();
+    let net =
+        b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut d).expect("buildable");
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    let id = |e: &str| net.link_external_ids().typed_id_of::<LinkId>(e).expect("link");
+    let (wm, sm, mx, xe) = (id("wm"), id("sm"), id("mx"), id("xe"));
+    // The headways are exactly 1 s and 2 s.
+    let (cw, cs) = (net.link_parameters(wm).capacity.get(), net.link_parameters(sm).capacity.get());
+    assert!((cw - 1.0).abs() < 1e-12 && (cs - 0.5).abs() < 1e-12, "{cw} and {cs} veh/s");
+    let mut vehicles = Vec::new();
+    for i in 0..6000u32 {
+        let route = if i % 2 == 0 { vec![wm, mx, xe] } else { vec![sm, mx, xe] };
+        vehicles.push(Vehicle::new(VehicleId::new(i), route, Pcu(1.0), Second(0)));
+    }
+    let mut sim = LtmNetwork::new(&net, &turns);
+    vehicles.iter().for_each(|v| sim.depart(v));
+    for _ in 0..2 {
+        let _ = sim.step(Duration(300.0));
+    }
+    let (w0, s0) = (sim.cumulative_out(wm).get(), sim.cumulative_out(sm).get());
+    for _ in 0..6 {
+        let _ = sim.step(Duration(300.0));
+    }
+    let (w, s) = (sim.cumulative_out(wm).get() - w0, sim.cumulative_out(sm).get() - s0);
+    assert!(w + s > 200.0, "the merge must be busy: {w} + {s}");
+    // The 1 : 2 headways share the merge 2 : 1 (1 s against 2 s: the primary takes 2/3).
+    let share = w / (w + s);
+    let expected = cw / (cw + cs);
+    assert!(
+        (share - expected).abs() <= 0.02,
+        "the 1 s approach took {share:.3} of the merge, expected {expected:.3}"
+    );
+}
+
 // --- Stop lines, origins and waiting cycles (S153) -------------------------
 
 /// **Property (S153, stop line):** a signalised approach shorter than its

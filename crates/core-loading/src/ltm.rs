@@ -187,6 +187,16 @@
 //!   link, so while a signalised approach is held back by a full next link it
 //!   stores, beyond its own storage, the vehicles that passed its stop line in
 //!   the last control delay (at most `capacity × g/C × delay`).
+//! - **The service tag is per approach, not per movement** (S279, L-4): an approach (a link's
+//!   queue) has one tag, though its vehicles go to different next links. An approach that also
+//!   diverges shares the room of each link it feeds by everything it sends, not by what it sends
+//!   to that link. The tag is `max(V, F_prev + h)`, `V` the largest tag released onto the next link
+//!   and `F_prev` the approach's last released tag, worked out when a vehicle reaches the
+//!   front of its queue. Weighted fair queueing's `max(V, F_prev) + h` (Demers, Keshav and
+//!   Shenker 1989) tags a packet on arrival, when `F_prev` can still be ahead of `V`; here
+//!   `F_prev` has been released by then, and that form would give every approach `V + h`
+//!   and let the smaller headway starve the larger (tried in S279: the minor approach of a
+//!   saturated merge got nothing).
 //! - **Turn pockets are a capacity per movement, not lanes** (S217): every movement of a link
 //!   gets the same pocket, the lanes split evenly among them, whatever the movements' volumes;
 //!   a vehicle that passes others is ordered against other approaches by its approach's
@@ -1577,7 +1587,11 @@ impl<'a> LtmNetwork<'a> {
                 // headway has passed, and the step has begun. Real seconds.
                 let ready = front.ready.max(self.curves[i].last_exit().get() + headway).max(t0);
                 // Who goes first among approaches ready for the same room: a
-                // virtual time, in its own units, never mixed with `ready`.
+                // virtual time, in its own units, never mixed with `ready`. The tag is
+                // `max(V, F_prev + h)`, not weighted fair queueing's `max(V, F_prev) + h`: it
+                // is worked out when the vehicle reaches the front, after `F_prev` was
+                // released, so `F_prev <= V` and WFQ's form would be `V + h` for every
+                // approach, which starves the one with the larger headway (S279, L-3).
                 let onto = self.route(front.slot).get(front.leg as usize + 1);
                 let virtual_now = onto.map_or(0.0, |l| self.virtual_time[l.index()]);
                 let tag = virtual_now.max(self.service_tag[queue] + headway);
