@@ -99,10 +99,14 @@ def map_transit(
     by_line = colour == "line"
     th = get_theme(theme)
     stops = transit.stops()
-    index = {s: i for i, s in enumerate(stops["stop_id"])}
     lonlat = np.column_stack([stops["lon"], stops["lat"]])
     lon0, lat0 = float(lonlat[:, 0].mean()), float(lonlat[:, 1].mean())
-    xy = geo.project_lonlat(lonlat, lon0, lat0)
+    xy_stop = geo.project_lonlat(lonlat, lon0, lat0)
+    # A station's platforms and a street's two bus stops are one place on the map (S282, the
+    # user: the two directions of a rail hop made a V): stops with the same name within 300 m
+    # are drawn as one node, so a hop's two directions share their ends and lie side by side.
+    node_of, xy, names = _merge_stops(stops, xy_stop)
+    index = {s: node_of[i] for i, s in enumerate(stops["stop_id"])}
 
     # Passengers on board between consecutive calls, summed per (kind or line, from, to).
     runs, kinds, stop_ids = calls["run"], calls["kind"], calls["stop_id"]
@@ -116,7 +120,7 @@ def map_transit(
             key = (group[i], a, b)
             loads[key] = loads.get(key, 0.0) + float(on_board[i])
             line_runs.setdefault(group[i], set()).add(runs[i])
-    boardings = np.zeros(len(index))
+    boardings = np.zeros(len(xy))
     np.add.at(boardings, [index[s] for s in stop_ids], np.asarray(calls["boardings"]))
 
     everything = xy
@@ -197,15 +201,14 @@ def map_transit(
     )
 
     if stop_labels is None:
-        stop_labels = len(index) <= 40
+        stop_labels = len(xy) <= 40
     if stop_labels:
         from matplotlib import patheffects
 
-        names = stops.get("name") or stops["stop_id"]
         halo = [patheffects.withStroke(linewidth=2.5 * k, foreground=th.surface)]
         for i, name in enumerate(names):
             page.ax.annotate(
-                str(name or stops["stop_id"][i]),
+                name,
                 xy[i],
                 xytext=(6 * k, 5 * k),
                 textcoords="offset points",
@@ -273,6 +276,35 @@ def map_transit(
     if path is not None:
         save_figure(page.fig, path, th.surface)
     return page.fig
+
+
+def _merge_stops(
+    stops: dict[str, Any], xy: np.ndarray, within_m: float = 300.0
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Stops with the same name within ``within_m`` of each other as one node.
+
+    Returns each stop's node, the nodes' coordinates (the mean of their stops') and their
+    names.
+    """
+    names = stops.get("name") or stops["stop_id"]
+    key = [str(n or stops["stop_id"][i]).strip().casefold() for i, n in enumerate(names)]
+    node_of = np.full(len(key), -1, dtype=np.int64)
+    members: list[list[int]] = []
+    by_name: dict[str, list[int]] = {}
+    for i in np.argsort(key, kind="stable"):
+        i = int(i)
+        for n in by_name.get(key[i], ()):
+            if float(np.hypot(*(xy[members[n]].mean(axis=0) - xy[i]))) <= within_m:
+                node_of[i] = n
+                members[n].append(i)
+                break
+        else:
+            node_of[i] = len(members)
+            by_name.setdefault(key[i], []).append(len(members))
+            members.append([i])
+    nodes = np.array([xy[m].mean(axis=0) for m in members]) if members else xy[:0]
+    labels = [str(names[m[0]] or stops["stop_id"][m[0]]) for m in members]
+    return node_of, nodes, labels
 
 
 def _offset_right(segments: np.ndarray, distance: np.ndarray) -> np.ndarray:

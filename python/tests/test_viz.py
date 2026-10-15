@@ -257,7 +257,8 @@ def test_more_delay_is_always_a_deeper_red(theme):
     t = np.linspace(0.0, 1.0, 101)
     colours = ramp_rgb(th.ramp_delay, t)
     high = colours[-1]
-    assert high[0] > 0.5 and high[0] > 2 * high[1] and high[0] > 2 * high[2], "the top is a red"
+    # A deep red (S282): the red channel leads by far, dark though it is.
+    assert high[0] > 0.4 and high[0] > 2 * high[1] and high[0] > 2 * high[2], "the top is a red"
     assert colours[0][2] > colours[0][0], "the bottom is blue-green, not red"
     # From the gold in the middle up to the top the colour only gets darker.
     from_gold = np.array([luminance(c) for c in colours[34:]])

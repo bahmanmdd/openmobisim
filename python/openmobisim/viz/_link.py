@@ -18,7 +18,6 @@ from openmobisim.viz._figure import (
     SIZE_CM,
     Page,
     draw_furniture,
-    font_mono_name,
     load_matplotlib,
     nice_number,
     ramp_rgb,
@@ -210,7 +209,6 @@ def map_link(
     scale: float | None = None,
     chevrons: bool | None = None,
     min_volume: float = 0.0,
-    labels: int = 0,
     credit: str | None = None,
     logo: bool = True,
     path: str | None = None,
@@ -264,8 +262,6 @@ def map_link(
         min_volume: Links carrying no more than this (PCU/h) are drawn only as
             canvas; the default 0 draws every link that saw any traffic, at least
             a fine line wide.
-        labels: Write the volume (PCU/h) beside this many of the busiest ribbons, 0 for none
-            (S281). The footer's first line gives the flow numbers of the whole map either way.
         credit: A line of your own before the logo (a name, an institution, your
             copyright). The logo is a signature, not a claim on your figure.
         logo: Draw the openmobisim logo at the bottom right (``False`` for none).
@@ -435,38 +431,6 @@ def map_link(
         page.ax.add_collection(
             PolyCollection(triangles, facecolors=[surface], edgecolors="none", alpha=0.9, zorder=4)
         )
-
-    # 4. Labels on the busiest ribbons (S281): the volume, at the link's middle, with a halo.
-    if labels > 0 and active.any():
-        from matplotlib import patheffects
-
-        halo = [patheffects.withStroke(linewidth=2.6 * page.k, foreground=th.surface)]
-        link_from, link_to = network.link_from(), network.link_to()
-        labelled: set[tuple[int, int]] = set()  # one label per two-way street: its busier side
-        placed: list[np.ndarray] = []  # and none within 4 % of the view of another
-        for link in np.argsort(-volume):
-            if volume[link] <= 0 or len(placed) >= labels:
-                break
-            ends = (min(link_from[link], link_to[link]), max(link_from[link], link_to[link]))
-            if ends in labelled:
-                continue
-            poly = ribbon_points[offsets[link] : offsets[link + 1]]
-            mid = poly[len(poly) // 2]
-            if any(np.hypot(*(mid - p)) < 0.04 * width_m for p in placed):
-                continue
-            labelled.add(ends)
-            placed.append(mid)
-            page.ax.annotate(
-                f"{volume[link]:,.0f}".replace(",", "\u202f"),
-                mid,
-                xytext=(4 * page.k, 4 * page.k),
-                textcoords="offset points",
-                fontsize=8.5 * page.k,
-                color=th.ink,
-                fontfamily=font_mono_name(),
-                path_effects=halo,
-                zorder=6,
-            )
 
     # Furniture (S281: the subtitle says when; the legends say how to read the ribbons; the
     # footer's first line gives the flow numbers, its second what the run was).

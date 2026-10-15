@@ -412,7 +412,26 @@ def _departures(run: Any, paper: Any, night: Any) -> str:
             (paper.modes[i], night.modes[i]) if m != "none" else (paper.base, night.base)
         )
         series.append((MODE_NAMES[m], c_day, c_night, [float(x) for x in counts]))
-    return _stacked(bins, series, "departures by quarter hour (people)", "people")
+    chart = _stacked(bins, series, "departures by quarter hour (people)", "people")
+    # The same numbers as a table under the chart (S282, the user): a row per quarter hour, a
+    # column per mode, and the totals.
+    head = ["from", *(name for name, _, _, _ in series), "all"]
+    rows = [
+        [
+            bins[i],
+            *(_fmt(values[i], 0) for _, _, _, values in series),
+            _fmt(sum(values[i] for _, _, _, values in series), 0),
+        ]
+        for i in range(len(bins))
+    ]
+    rows.append(
+        [
+            "all",
+            *(_fmt(sum(values), 0) for _, _, _, values in series),
+            _fmt(sum(sum(values) for _, _, _, values in series), 0),
+        ]
+    )
+    return chart + _table(head, rows)
 
 
 def _services(run: Any) -> str:
@@ -624,7 +643,7 @@ def summary(
             "total travel time",
             _fmt(run.total_travel_time_s / 3600, 0),
             "h",
-            "person-hours, weighted",
+            "person-hours of the trips that finished",
         ),
     ]
     if road_tiles:

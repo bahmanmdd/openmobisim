@@ -10,7 +10,8 @@ the diverging scale for differences between scenarios.
 
 **Delay is a spectrum** (S164): a blue-green for little delay, gold in the
 middle, and ember for a lot, so more delay is always a deeper red on both
-themes. Three hues and no more, to stay clean. The single-hue ember ramp it
+themes; its last stop is a deep red well apart from the orange-red before it
+(S282). Three hues and no more, to stay clean. The single-hue ember ramp it
 replaced (S162) is kept as ``ramp_delay_ember`` and selectable with
 ``map_link(..., ramp="ember")``; its night version ran the other way (lighter =
 more) so that congestion glowed, which read as backwards and was dropped.
@@ -60,7 +61,11 @@ AMBER = "#fab219"
 #: The low and middle stops of the delay spectrum, per theme (S164). Built with
 #: the same OKLCH generator as the brand ramps; the high end is ember.
 TEAL_PAPER, GOLD_PAPER = "#04938e", "#ce9c0f"  # 3.7:1 and 2.4:1 on the paper surface
-TEAL_NIGHT, GOLD_NIGHT = "#40c8c1", "#f7cd3a"  # 9.2:1 and 12.3:1 on the night surface
+# 9.2:1 and 8.8:1 on the night surface (S282: a gold, not a yellow, like the paper's).
+TEAL_NIGHT, GOLD_NIGHT = "#40c8c1", "#dcaa1e"
+#: The ramp's deep end (S282, the user: the two reds were too alike; the orange-red is kept and
+#: the last stop is much darker).
+DEEP_PAPER, DEEP_NIGHT = "#6b0014", "#a8101f"
 
 _SANS = ("Inter", "Helvetica Neue", "Segoe UI", "DejaVu Sans")
 _MONO = ("JetBrains Mono", "Menlo", "Consolas", "DejaVu Sans Mono")
@@ -107,7 +112,7 @@ THEMES: dict[str, Theme] = {
         base="#c5cfda",  # S162: #dce3ea
         free="#5d7189",  # S162: #8fa1b5
         glow=False,
-        ramp_delay=(TEAL_PAPER, GOLD_PAPER, EMBER[500], EMBER[700]),
+        ramp_delay=(TEAL_PAPER, GOLD_PAPER, EMBER[500], DEEP_PAPER),
         ramp_delay_ember=(EMBER[300], EMBER[400], EMBER[500], EMBER[600], EMBER[700]),
         ramp_volume=(ION[400], ION[500], ION[600], ION[700]),  # S162: from ION[300]
         kinds=("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"),
@@ -122,7 +127,7 @@ THEMES: dict[str, Theme] = {
         base="#364966",  # S164: #1f2c40 - small streets were invisible
         free="#5f7897",  # S164: #4f6684
         glow=True,
-        ramp_delay=(TEAL_NIGHT, GOLD_NIGHT, EMBER[500], EMBER[600]),
+        ramp_delay=(TEAL_NIGHT, GOLD_NIGHT, EMBER[500], DEEP_NIGHT),
         ramp_delay_ember=(EMBER[600], EMBER[500], EMBER[400], EMBER[300]),
         ramp_volume=(ION[600], ION[500], ION[400], ION[300], ION[200]),
         kinds=("#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300"),
