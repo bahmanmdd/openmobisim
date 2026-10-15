@@ -263,7 +263,9 @@ fn t3_a_full_approach_admits_what_left_one_wave_time_earlier() {
 /// **T4 · A saturated merge shares the supply in proportion to capacity
 /// (S48).** Both approaches always have a car waiting; the merged link takes
 /// its own capacity. Approach capacities are 1 : 2 (`a2` one lane, `m1` two),
-/// so `a2` gets a third.
+/// so `a2` gets a third. The two streams are fed at the same rate (1 : 1, not
+/// the capacities' 1 : 2), so a merge that shared in proportion to demand
+/// would give `a2` a half and fail (T-1, S280).
 #[test]
 fn t4_a_saturated_merge_shares_in_proportion_to_capacity() {
     let toy = Toy::new();
@@ -281,7 +283,7 @@ fn t4_a_saturated_merge_shares_in_proportion_to_capacity() {
         let (lo, hi) = (200u32, 500u32);
         let in_window: Vec<&Trajectory> =
             done.iter().filter(|t| (lo..hi).contains(&enter(t, 1))).collect();
-        let from_a2 = in_window.iter().filter(|t| t.vehicle.raw() < 300).count();
+        let from_a2 = in_window.iter().filter(|t| t.vehicle.raw() < MERGE_STREAM).count();
         let share = from_a2 as f64 / in_window.len() as f64;
         let rate = in_window.len() as f64 / f64::from(hi - lo);
         assert!(
@@ -295,11 +297,15 @@ fn t4_a_saturated_merge_shares_in_proportion_to_capacity() {
     }
 }
 
-/// Stream A (300 cars, one per 2 s, ids below 300) on `a`, stream B (600 cars,
-/// one per second) on `b`: both stay backlogged for the first ten minutes.
+/// Cars in each stream of `merge_demand`; stream A has the ids below it.
+const MERGE_STREAM: u32 = 600;
+
+/// Stream A (ids below `MERGE_STREAM`) on `a` and stream B on `b`, each 600 cars
+/// at one per second, the same rate on both: both stay backlogged for the first
+/// ten minutes, so the shares in the merge come from the supply and not from the demand.
 fn merge_demand(toy: &Toy, a: &[&str], b: &[&str]) -> Vec<Vehicle> {
-    let mut cars: Vec<Vehicle> = (0..300).map(|k| toy.vehicle(k, a, 1.0, 2 * k)).collect();
-    cars.extend((0..600).map(|k| toy.vehicle(300 + k, b, 1.0, k)));
+    let mut cars: Vec<Vehicle> = (0..MERGE_STREAM).map(|k| toy.vehicle(k, a, 1.0, k)).collect();
+    cars.extend((0..MERGE_STREAM).map(|k| toy.vehicle(MERGE_STREAM + k, b, 1.0, k)));
     cars
 }
 
