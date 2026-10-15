@@ -112,12 +112,17 @@ jobs:
           # `--no-index` on the openmobisim install below is what makes this a
           # real test of the wheel rather than a rebuild from source; numpy
           # is openmobisim's one runtime dependency and still needs to come from
-          # PyPI, so it is installed up front, outside that constraint.
-          python -m pip install --upgrade pip pytest numpy
+          # PyPI, so it is installed up front, outside that constraint. So are
+          # the optional dependencies (plots, tables, Parquet), so the tests
+          # that need them run against the wheel instead of skipping (T-4).
+          python -m pip install --upgrade pip pytest numpy matplotlib pyarrow pandas
           python -m pip install --no-index --find-links dist openmobisim
       - name: Import and report
         shell: bash
-        run: python -c "import openmobisim, json; print(json.dumps(openmobisim.build_info(), indent=2))"
+        run: |
+          python -c "import openmobisim, json; print(json.dumps(openmobisim.build_info(), indent=2))"
+          # The import must resolve to the installed wheel and not to the checkout (T-4).
+          python -c "import openmobisim, pathlib; p = pathlib.Path(openmobisim.__file__); print(p); assert 'site-packages' in p.parts, p"
       - name: Run the boundary tests against the installed wheel
         shell: bash
         run: pytest python/tests
