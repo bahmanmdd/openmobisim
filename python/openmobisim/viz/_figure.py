@@ -12,7 +12,6 @@ ribbon's width in points and its offset in metres always agree.
 from __future__ import annotations
 
 import io
-import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -55,38 +54,34 @@ def load_matplotlib() -> Any:
         import matplotlib
     except ImportError as e:
         raise ImportError("figures need matplotlib: pip install 'openmobisim[viz]'") from e
-    _show_in_notebooks()
     return matplotlib
 
 
-_NOTEBOOK_DISPLAY = False
+_FIGURE_CLASS: Any = None
 
 
-def _figure_png(fig: Any) -> bytes:
-    buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", facecolor=fig.get_facecolor())
-    return buffer.getvalue()
+def figure_class() -> Any:
+    """The figure type the package draws on: a matplotlib ``Figure`` that a notebook can show.
 
-
-def _show_in_notebooks() -> None:
-    """Let a notebook show a figure that ends a cell (S232).
-
-    The figures are made without pyplot (no global state), so IPython has no rule to display them
-    until a matplotlib backend is loaded. This gives it one, once, when IPython is running: a PNG
-    of the page as designed, not cropped. IPython is never imported here.
+    The figures are made without pyplot (no global state), so IPython has no rule to display
+    them. This subclass carries its own ``_repr_png_`` (S232): a PNG of the page as designed, not
+    cropped, shown when a figure ends a cell. Nothing is registered with IPython, so a user's own
+    figures display as they always did (P-43). Built once, when matplotlib is first needed.
     """
-    global _NOTEBOOK_DISPLAY
-    if _NOTEBOOK_DISPLAY:
-        return
-    _NOTEBOOK_DISPLAY = True
-    ipython = sys.modules.get("IPython")
-    shell = ipython.get_ipython() if ipython is not None else None
-    formatters = getattr(getattr(shell, "display_formatter", None), "formatters", None)
-    if not formatters or "image/png" not in formatters:
-        return
-    from matplotlib.figure import Figure
+    global _FIGURE_CLASS
+    if _FIGURE_CLASS is None:
+        from matplotlib.figure import Figure
 
-    formatters["image/png"].for_type(Figure, _figure_png)
+        class OpenmobisimFigure(Figure):
+            """A matplotlib figure that shows itself as a PNG in a notebook."""
+
+            def _repr_png_(self) -> bytes:
+                buffer = io.BytesIO()
+                self.savefig(buffer, format="png", facecolor=self.get_facecolor())
+                return buffer.getvalue()
+
+        _FIGURE_CLASS = OpenmobisimFigure
+    return _FIGURE_CLASS
 
 
 def font_mono_name() -> str:
@@ -159,10 +154,8 @@ class Page:
         ``size_cm`` is the page's width and height in centimetres.
         """
         load_matplotlib()
-        from matplotlib.figure import Figure
-
         size = (size_cm[0] / CM_PER_INCH, size_cm[1] / CM_PER_INCH)
-        fig = Figure(figsize=size, dpi=dpi, facecolor=theme.surface)
+        fig = figure_class()(figsize=size, dpi=dpi, facecolor=theme.surface)
         left, bottom, width, height = MAP_RECT
         ax = fig.add_axes((left, bottom, width, height), facecolor=theme.surface)
         ax.set_axis_off()

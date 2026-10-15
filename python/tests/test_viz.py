@@ -101,7 +101,7 @@ def toy_run(level=4, hours=1, **kwargs):
         link_bin_s=300,
         **kwargs,
     )
-    return scenario.run("viz-test"), rows
+    return scenario.run("viz-test", overwrite=True), rows
 
 
 def png_bytes(fig):
@@ -127,34 +127,34 @@ def test_map_link_draws_a_figure_that_is_not_blank(theme):
     assert len(np.unique(image.reshape(-1, 4), axis=0)) > 20, "a real picture has many colours"
 
 
-def test_a_notebook_shows_a_figure_that_ends_a_cell(monkeypatch):
-    # The figures are made without pyplot, so IPython needs a display rule for them; a
-    # stand-in shell records what the package registers (IPython itself need not be installed).
+def test_a_notebook_shows_a_figure_that_ends_a_cell_without_touching_other_figures(monkeypatch):
+    # The figures are made without pyplot, so a notebook needs a display rule for them: the
+    # figure carries its own (P-43), and nothing is registered with IPython, so a user's own
+    # figures display as before. A stand-in shell records any registration.
     import sys
     import types
 
-    from openmobisim.viz import _figure
+    from matplotlib.figure import Figure
+
+    registered = []
 
     class Formatter:
-        rules: dict = {}
-
         def for_type(self, cls, rule):
-            self.rules[cls] = rule
+            registered.append(cls)
 
-    png = Formatter()
     shell = types.SimpleNamespace(
-        display_formatter=types.SimpleNamespace(formatters={"image/png": png})
+        display_formatter=types.SimpleNamespace(formatters={"image/png": Formatter()})
     )
     monkeypatch.setitem(
         sys.modules,
         "IPython",
         types.SimpleNamespace(get_ipython=lambda: shell, version_info=(9, 0)),
     )
-    monkeypatch.setattr(_figure, "_NOTEBOOK_DISPLAY", False)
     run, _ = toy_run()
     fig = viz.map_link(run, size_cm=(20.32, 11.43), dpi=80)
-    ((cls, rule),) = png.rules.items()
-    assert isinstance(fig, cls) and rule(fig) == png_bytes(fig), "the page as drawn, uncropped"
+    assert isinstance(fig, Figure) and not registered
+    assert fig._repr_png_() == png_bytes(fig), "the page as drawn, uncropped"
+    assert not hasattr(Figure(), "_repr_png_"), "a user's own figure is left alone"
 
 
 def test_the_same_run_draws_the_same_picture():

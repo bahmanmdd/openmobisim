@@ -609,6 +609,9 @@ function pickItem(px, py) {
   for (let i = 0; i < A.px.length; i++) { const d = Math.hypot(A.px[i] * 0.1 - mx, A.py[i] * 0.1 - my); if (d < bd + 4 * S.mpp) { bd = d; best = i; } }
   return best >= 0 ? { kind: "parking", id: best } : null;
 }
+// A hover card as HTML, every string from the run's data (stop names, parking ids) escaped (P-44).
+function escHtml(x) { return String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function tipHtml(head, rows) { return "<b>" + escHtml(head) + "</b>" + rows.map((r) => "<div><span>" + escHtml(r[0]) + "</span>" + escHtml(r[1]) + "</div>").join(""); }
 function sameItem(a, b) { return a === b || (!!a && !!b && a.kind === b.kind && a.id === b.id && !!a.stop === !!b.stop); }
 const INFRA = ["mixed traffic", "painted lane or cycle street", "separated track"];
 function tipItem(it, ev) {
@@ -633,7 +636,7 @@ function tipItem(it, ev) {
     rows.push(["Capacity", fmt(A.pc[i]) + (A.pv[i] ? " bikes" : " cars")]);
     rows.push(["Busiest", fmt(A.po[i] * 100) + "% in use"]);
   }
-  t.innerHTML = "<b>" + head + "</b>" + rows.map((r) => "<div><span>" + r[0] + "</span>" + r[1] + "</div>").join("");
+  t.innerHTML = tipHtml(head, rows);
   t.hidden = false; t.style.left = Math.min(W - 250, ev.clientX + 14) + "px"; t.style.top = Math.min(H - 150, ev.clientY + 14) + "px";
 }
 // The hovered element of a layer other than the road, outlined (S269).
@@ -656,7 +659,7 @@ function tip(l, ev) {
   if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " PCU/h"]); if (vol[l] > 0) { rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]); rows.push(["Mean time", meanT[l].toFixed(1) + " s (free flow " + (FF[l] + SW[l]).toFixed(1) + " s" + (SW[l] > 0 ? ", the signal's mean wait of " + SW[l].toFixed(1) + " s included" : "") + ")"]); } }
   if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " PCU/h" + (SG[l] ? " at its signal" : "") + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used)" : "")]);
   if (HAS_ROUTES) { const n = LROUTE_START[l + 1] - LROUTE_START[l]; if (n) rows.push(["Routes", n + " use it"]); }
-  t.innerHTML = "<b>link " + l + "</b>" + rows.map((r) => "<div><span>" + r[0] + "</span>" + r[1] + "</div>").join("");
+  t.innerHTML = tipHtml("link " + l, rows);
   t.hidden = false; t.style.left = Math.min(W - 250, ev.clientX + 14) + "px"; t.style.top = Math.min(H - 150, ev.clientY + 14) + "px";
 }
 let raf = 0, idle = 0;
