@@ -81,7 +81,9 @@ def capacity_passing(network: Any) -> tuple[np.ndarray, np.ndarray]:
     capacity = np.asarray(network.link_capacity_pcu_h(), dtype=float)
     signal = np.asarray(network.link_signalised())  # per approach: a signal may stop one direction
     options = network_options(network)
-    green = float(options["signal_green_fraction"]) * float(options["green_fraction_factor"])
+    green = min(
+        1.0, float(options["signal_green_fraction"]) * float(options["green_fraction_factor"])
+    )
     return np.where(signal, capacity * green, capacity), signal
 
 

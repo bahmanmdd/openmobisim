@@ -656,3 +656,26 @@ fn mc8c_the_longest_journey_with_transit_enters_the_fingerprint() {
     assert_ne!(with_limit(shipped), with_limit(3600.0));
     assert_eq!(with_limit(shipped), with_limit(shipped));
 }
+
+#[test]
+fn mc9_a_fallback_car_trip_takes_no_car_of_the_travellers() {
+    // CM-4: a trip with no alternative at all travels by car as a lift or a taxi (S271); the
+    // traveller's own car is not on it. With walks over 10 s refused and park-and-ride the only
+    // other mode, `W -> D2` has no way (the toy offers no park-and-ride there) and falls back to
+    // the car. The traveller's car stays at `W`, so the trip `D2 -> M` is not offered the way
+    // back to a car parked at `D2` (it was, when the fallback moved the car there).
+    let t = toy();
+    let setup = Setup {
+        parking_at_any_length: true,
+        modes: vec![Mode::Walk, Mode::CarTransit],
+        ..Setup::default()
+    };
+    let rows = vec![t.trip("a", 0, ("W", "D2"), 0, None), t.trip("a", 1, ("D2", "M"), 1800, None)];
+    let defaults = ModeDefaults { walk_max_s: 10.0, fallback_car: true, ..NO_ACCESS };
+    let r = t.build(rows, &setup).with_mode_defaults(defaults).execute(&mut Diagnostics::new());
+    let it = r.itineraries.as_ref().unwrap();
+    assert_eq!(it.alternatives, [1, 0], "the fallback car; then nothing: the car is at W");
+    assert_eq!(it.mode, [0, NO_MODE]);
+    let listed: Vec<_> = r.no_alternative.iter().map(|n| (n.trip, n.fallback_car)).collect();
+    assert_eq!(listed.len(), 2, "both trips had no alternative of their own: {listed:?}");
+}

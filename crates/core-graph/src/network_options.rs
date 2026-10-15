@@ -138,6 +138,10 @@ const FIELDS: [Field; 18] = [
     ),
 ];
 
+/// The names for which 0 is a meaning (no signal delay, no wait for a ferry), not a mistake; every
+/// other name must be above 0 (G-5).
+const MAY_BE_ZERO: [&str; 2] = ["control_delay_factor", "ferry_wait_s"];
+
 /// The per-class fields, by the name after the class's dot.
 const CLASS_FIELDS: [&str; 4] =
     ["free_flow_km_h", "lanes", "saturation_flow_veh_h_lane", "jam_density_veh_km_lane"];
@@ -156,11 +160,13 @@ impl NetworkDefaults {
     }
 
     /// The signal settings the network uses: [`Self::signals`] with the green fraction scaled by
-    /// [`GlobalMultipliers::green_fraction`] (S225: the factor had no effect before).
+    /// [`GlobalMultipliers::green_fraction`] (S225: the factor had no effect before), kept within
+    /// 0 to 1: a green share cannot pass more than the saturation flow (G-5).
     #[must_use]
     pub fn effective_signals(&self) -> SignalDefaults {
         SignalDefaults {
-            green_fraction: self.signals.green_fraction * self.multipliers.green_fraction,
+            green_fraction: (self.signals.green_fraction * self.multipliers.green_fraction)
+                .clamp(0.0, 1.0),
             ..self.signals
         }
     }
@@ -217,12 +223,18 @@ impl NetworkDefaults {
     /// # Errors
     ///
     /// A message naming an unknown name (with every known one), or a value that is not finite
-    /// and positive (a lane count must also be a whole number from 1 to 20; a fraction, from 0 to
-    /// 1).
+    /// and positive (`control_delay_factor` and `ferry_wait_s` may also be 0; a lane count must
+    /// also be a whole number from 1 to 20; a fraction, from 0 to 1).
     pub fn from_options(options: &BTreeMap<String, f64>) -> Result<Self, String> {
         let mut d = Self::shipped();
         for (name, &v) in options {
-            if !(v.is_finite() && v > 0.0) {
+            if MAY_BE_ZERO.contains(&name.as_str()) {
+                if !(v.is_finite() && v >= 0.0) {
+                    return Err(format!(
+                        "network option {name} must be a number of 0 or more (0 is off), got {v}"
+                    ));
+                }
+            } else if !(v.is_finite() && v > 0.0) {
                 return Err(format!("network option {name} must be a positive number, got {v}"));
             }
             if let Some((_, _, set)) = FIELDS.iter().find(|(n, _, _)| *n == name) {

@@ -101,6 +101,35 @@ fn the_green_fraction_factor_reaches_turn_capacity_at_signals() {
 }
 
 #[test]
+fn a_factor_that_can_be_off_accepts_0_and_a_green_share_never_passes_more_than_the_saturation_flow()
+{
+    // G-5: 0 is "no signal delay" and "no ferry wait", not a mistake; the others stay above 0.
+    let off = NetworkDefaults::from_options(&options(&[
+        ("control_delay_factor", 0.0),
+        ("ferry_wait_s", 0.0),
+    ]))
+    .expect("0 is off");
+    let delay = |n: &RoadNetwork| n.link_parameters(LinkId::new(0)).control_delay.get();
+    assert!(delay(&line(&NetworkDefaults::shipped())) > 10.0, "a signalised approach waits");
+    assert!(delay(&line(&off)).abs() < 1e-12, "and with the factor at 0 it does not");
+    for bad in ["control_delay_factor", "ferry_wait_s"] {
+        let e = NetworkDefaults::from_options(&options(&[(bad, -1.0)])).unwrap_err();
+        assert!(e.contains("0 or more"), "{e}");
+    }
+    assert!(NetworkDefaults::from_options(&options(&[("green_fraction_factor", 0.0)])).is_err());
+
+    // A factor of 3 on the shipped 0.48 would be 1.44 of the cycle: clamped, every turn carries
+    // at most its saturation flow.
+    let more = NetworkDefaults::from_options(&options(&[("green_fraction_factor", 3.0)]))
+        .expect("accepted");
+    assert!((more.effective_signals().green_fraction - 1.0).abs() < 1e-12);
+    let net = line(&more);
+    assert!((net.signals().green_fraction - 1.0).abs() < 1e-12);
+    let turns = TurnTable::build(&net, net.signals());
+    assert!(turns.capacity_fractions().iter().all(|&f| (0.0..=1.0).contains(&f)));
+}
+
+#[test]
 fn unknown_names_and_bad_values_are_refused_with_the_reason() {
     let err = |pairs: &[(&str, f64)]| NetworkDefaults::from_options(&options(pairs)).unwrap_err();
     let unknown = err(&[("residential.speed", 30.0)]);

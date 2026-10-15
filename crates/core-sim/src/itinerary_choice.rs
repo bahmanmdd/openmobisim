@@ -2080,6 +2080,8 @@ impl Itineraries {
             // What trip `t` did: its choice, or its stated car or bike trip.
             let (mode, shape, parking) = match self.position(t) {
                 Some(p) => match &chosen[p] {
+                    // A fallback car trip takes no car of the traveller's (CM-4): theirs stays.
+                    Some(a) if a.fallback => continue,
                     Some(a) => (a.mode, a.shape, a.parking),
                     None => continue,
                 },
