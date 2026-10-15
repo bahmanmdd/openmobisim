@@ -187,7 +187,8 @@ def test_the_package_s_references_are_of_its_cases() -> None:
     assert {key.split("/")[0] for key in reference["cases"]} <= set(ms.examples.case_names())
     for summary in reference["cases"].values():
         assert set(summary) == {"fingerprint", "trips", "completed", "mean_trip_s",
-                                "mode_share_pct", "loadings", "platform", "version"}  # fmt: skip
+                                "mode_share_pct", "loadings", "platform", "version",
+                                "git_sha"}  # fmt: skip
 
 
 @needs_bundle
@@ -216,7 +217,8 @@ def test_sioux_falls_gives_its_reference_results(scenario: str, mean_min: float)
 def test_nguyen_dupuis_gives_its_reference_result() -> None:
     run = ms.examples.case("nguyendupuis", root=BUNDLE).scenario().run("nd", quiet=True)
     assert run.completion["completed"] == 2000
-    assert run.mean_travel_time_s / 60 == pytest.approx(54.28, abs=0.01)
+    # 54.28 before S280: the path size over the routes offered (A4) moved the route choice.
+    assert run.mean_travel_time_s / 60 == pytest.approx(54.52, abs=0.01)
 
 
 @needs_bundle
