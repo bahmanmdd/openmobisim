@@ -865,6 +865,14 @@ impl Run {
         })
     }
 
+    /// The loading's level: `None` at free flow.
+    fn level(&self) -> Option<FidelityLevel> {
+        match &self.flow_motor {
+            FlowMotor::Ltm { level, .. } => Some(*level),
+            FlowMotor::Level0 => None,
+        }
+    }
+
     /// What went into this run: its seed and its fingerprint (S168). Take it
     /// before [`Self::execute`]; it depends only on the inputs.
     #[must_use]
@@ -904,7 +912,7 @@ impl Run {
             class_limits: &self.class_limits,
             link_values: &self.link_values,
             disruptions: &self.disruptions,
-            loading: &self.loading,
+            loading: &self.loading.resolved(self.level()),
             prices: self.reads_money().then_some(&self.prices),
             demand_values: &self.demand_values,
             reads: &reads,
@@ -2124,10 +2132,13 @@ impl Run {
                 Some(b) => Recording::Bins(b),
                 None => Recording::Trajectories,
             };
-            let o = self.loading;
+            // The rerouting setting settled for the run's own level (S280, C1): a warm-up
+            // loading of a level-4 run keeps the run's rule, as the fingerprint does.
+            let o = self.loading.resolved(self.level());
+            let rerouting = o.reroutes(self.level());
             let rules = Rules {
                 priority: o.priority,
-                reroute: o.reroute.then(|| RerouteRule {
+                reroute: rerouting.then(|| RerouteRule {
                     after_s: o.reroute_after_s,
                     max: u8::try_from(o.reroute_max).unwrap_or(u8::MAX),
                 }),
@@ -2139,7 +2150,7 @@ impl Run {
                     Vec::new()
                 },
             };
-            let mut rerouter = o.reroute.then(|| Rerouter::new(car_ctx, expected, &o, total_trips));
+            let mut rerouter = rerouting.then(|| Rerouter::new(car_ctx, expected, &o, total_trips));
             let out = run_ltm_chained(
                 &self.network,
                 turns,

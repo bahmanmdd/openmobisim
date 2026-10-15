@@ -229,8 +229,9 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         let o = inputs.loading;
         h.write_str("loading-rules");
         h.write_bool(o.priority);
-        h.write_bool(o.reroute);
-        if o.reroute {
+        let reroute = o.reroute == crate::loading_rules::RerouteSetting::On;
+        h.write_bool(reroute);
+        if reroute {
             h.write_f64(o.reroute_after_s);
             h.write_u32(o.reroute_max);
             h.write_f64(o.reroute_min_gain);

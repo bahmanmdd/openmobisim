@@ -384,7 +384,8 @@ def test_a_run_that_loads_more_than_once_defaults_to_one_route_per_pair_an_updat
     # At free flow nothing congests: no groups, and so one loading.
     free = run("eq-default-free", equilibration="free_flow", flow_level=0)
     assert free.route_sets().method == "penalty" and free.route_update == "none"
-    assert free.manifest()["equilibration_descriptor"] == "free_flow"
+    # The descriptor names every setting (S280); at flow level 0 the run uses one group anyway.
+    assert free.manifest()["equilibration_descriptor"] == "free_flow;increments=5;warmup=1"
     # Iterating: one route per pair to start, the update to find the rest, a warm-up of one loading.
     many = run("eq-default-many", equilibration="msa", equilibration_options={"iterations": 3})
     assert many.route_sets().method == "shortest" and many.route_update == "best_response"
@@ -427,7 +428,9 @@ def test_the_free_flow_loading_is_iteration_0_of_an_iterated_run_and_cannot_lock
     old = scenario(
         equilibration="free_flow", equilibration_options={"increments": 1, "warmup": 0}, **heavy
     ).run("eq-ff-old", quiet=True)
-    assert old.manifest()["equilibration_descriptor"] == "free_flow", "the plain single loading"
+    assert old.manifest()["equilibration_descriptor"] == "free_flow;increments=1;warmup=0", (
+        "the plain single loading"
+    )
     assert old.total_travel_time_s != alone.total_travel_time_s
 
 

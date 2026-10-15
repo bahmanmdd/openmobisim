@@ -29,7 +29,7 @@ use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder}
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{EntryTables, FidelityLevel, LinkBinRecorder, LinkBins};
 use openmobisim_core_sim::equilibration::{
-    GAP_ACCEPTABLE, GAP_GOOD, GapVerdict, Options, Registry, gap_verdict, strategy,
+    GAP_ACCEPTABLE, GAP_GOOD, GapVerdict, Options, Registry, gap_verdict,
 };
 use openmobisim_core_sim::{
     Equilibration, FlowMotor, IterationReport, LinkTimes, Run, RunResult, relative_time_change,
@@ -38,6 +38,28 @@ use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
+
+/// What the tests here assume unless they say otherwise: one loading of everyone on free flow
+/// first, at the run's own level, iterating to `iterations` whatever the gap. The shipped
+/// defaults (S280, C1: one default table) build the free-flow loading in five groups with the
+/// point queue and stop when converged, which these tests do not mean to exercise.
+fn strategy(
+    name: &str,
+    given: &openmobisim_core_sim::equilibration::Options,
+) -> Result<
+    Box<dyn openmobisim_core_sim::equilibration::Equilibration>,
+    openmobisim_core_sim::equilibration::EquilibrationError,
+> {
+    let mut options = given.clone();
+    let mut plain = vec![("increments", 1.0), ("warmup", 0.0)];
+    if name == "msa" {
+        plain.extend([("gap_tolerance", 0.0), ("route_growth_tolerance", 0.0)]);
+    }
+    for (k, v) in plain {
+        options.entry(k.to_string()).or_insert(v);
+    }
+    openmobisim_core_sim::equilibration::strategy(name, &options)
+}
 
 const O: (f64, f64) = (4.800, 45.700);
 const D: (f64, f64) = (4.810, 45.700);

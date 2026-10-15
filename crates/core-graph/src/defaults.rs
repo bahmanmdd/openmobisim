@@ -211,7 +211,12 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// `choice_max_routes` car routes, as stated car trips get; the fundamental diagram keeps the
 /// capacity a table or a factor gives and raises jam density when the backward wave would be
 /// faster than its bound.
-pub const DEFAULTS_VERSION: u32 = 27;
+/// Version 28 (S280, C1): **one default table**: the core's defaults are the Python layer's,
+/// which no longer sets its own (`core-sim`'s `Msa` 5 increments, warm-up 1, `gap_tolerance`
+/// 0.05, `route_growth_tolerance` 1; `FreeFlow` 5 increments, warm-up 1; `LoadingOptions::reroute`
+/// settled by the level: on at 3 and 4, off at the point queue unless asked). A Python run
+/// simulates what it did; a run of the Rust core at its defaults now does the same.
+pub const DEFAULTS_VERSION: u32 = 28;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

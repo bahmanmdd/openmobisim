@@ -9,6 +9,21 @@
 
 use std::collections::BTreeMap;
 
+use openmobisim_core_loading::FidelityLevel;
+
+/// Whether en-route rerouting is on: by the level, or as asked (S280, C1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RerouteSetting {
+    /// On at the levels with spillback (3 and 4), where a vehicle can be held for room; off at
+    /// the point queue (2), where only a closed or narrowed link ahead could hold one (S239) and
+    /// rerouting must be asked for. The shipped setting.
+    Auto,
+    /// Off at every level.
+    Off,
+    /// On at every level (at the point queue it acts only behind a closed or narrowed link).
+    On,
+}
+
 /// The loading's rules, each with an uncalibrated default (S202).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LoadingOptions {
@@ -20,9 +35,12 @@ pub struct LoadingOptions {
     /// for per-turn queues.*
     pub priority: bool,
     /// En-route rerouting: a vehicle stuck at the front of its link re-routes from where it is.
-    /// *On (S215): it removed the locks of Amsterdam's morning at 1× and 1.25× and leaves
-    /// uncongested results as they were (S214).*
-    pub reroute: bool,
+    /// *On at levels 3 and 4 ([`RerouteSetting::Auto`]; S215: it removed the locks of
+    /// Amsterdam's morning at 1× and 1.25× and leaves uncongested results as they were, S214);
+    /// off at the point queue, where nothing waits for room (S229), unless asked for.* The
+    /// option `reroute` is 1 (on) or 0 (off) at every level; [`Self::resolved`] settles the
+    /// shipped setting for a run's level.
+    pub reroute: RerouteSetting,
     /// How long a vehicle waits at the front of its link, blocked, before it re-routes, in
     /// seconds.
     ///
@@ -66,7 +84,7 @@ impl LoadingOptions {
     /// The shipped values.
     pub const SHIPPED: LoadingOptions = LoadingOptions {
         priority: false,
-        reroute: true,
+        reroute: RerouteSetting::Auto,
         reroute_after_s: 300.0,
         reroute_max: 3,
         reroute_min_gain: 0.1,
@@ -74,13 +92,14 @@ impl LoadingOptions {
     };
 
     /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing);
-    /// `priority` and `reroute` as 0 or 1.
+    /// `priority` and `reroute` as 0 or 1 (`reroute` 1 for [`RerouteSetting::Auto`]: on where
+    /// it can act; [`Self::resolved`] gives a run's own).
     #[must_use]
     pub fn values(&self) -> Vec<(&'static str, f64)> {
         let flag = |b: bool| if b { 1.0 } else { 0.0 };
         vec![
             ("priority", flag(self.priority)),
-            ("reroute", flag(self.reroute)),
+            ("reroute", flag(self.reroute != RerouteSetting::Off)),
             ("reroute_after_s", self.reroute_after_s),
             ("reroute_max", f64::from(self.reroute_max)),
             ("reroute_min_gain", self.reroute_min_gain),
@@ -118,7 +137,10 @@ impl LoadingOptions {
         for (name, &v) in options {
             match name.as_str() {
                 "priority" => d.priority = flag(name, v)?,
-                "reroute" => d.reroute = flag(name, v)?,
+                "reroute" => {
+                    d.reroute =
+                        if flag(name, v)? { RerouteSetting::On } else { RerouteSetting::Off };
+                }
                 "reroute_after_s" => {
                     if v.is_nan() || v < 0.0 || v.is_infinite() {
                         return Err(format!(
@@ -173,9 +195,29 @@ impl LoadingOptions {
     }
 
     /// Whether any rule is on: a run with every rule off hashes as runs did before the rules.
+    /// Settle [`RerouteSetting::Auto`] first ([`Self::resolved`]): here it counts as on.
     #[must_use]
     pub fn any(&self) -> bool {
-        self.priority || self.reroute || self.pocket_length_m > 0.0
+        self.priority || self.reroute != RerouteSetting::Off || self.pocket_length_m > 0.0
+    }
+
+    /// Whether this run re-routes, at `level` (`None`: free flow, where nothing is ever held).
+    #[must_use]
+    pub fn reroutes(&self, level: Option<FidelityLevel>) -> bool {
+        match (self.reroute, level) {
+            (_, None) | (RerouteSetting::Off, _) => false,
+            (RerouteSetting::On, Some(_)) => true,
+            (RerouteSetting::Auto, Some(level)) => level != FidelityLevel::PointQueue,
+        }
+    }
+
+    /// These options with the rerouting setting settled for `level` ([`Self::reroutes`]): what
+    /// a run hashes and reports, so a point-queue run and a level-4 run of the shipped options
+    /// say what each does (S280, C1).
+    #[must_use]
+    pub fn resolved(&self, level: Option<FidelityLevel>) -> Self {
+        let reroute = if self.reroutes(level) { RerouteSetting::On } else { RerouteSetting::Off };
+        Self { reroute, ..*self }
     }
 }
 

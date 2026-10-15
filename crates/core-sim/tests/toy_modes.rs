@@ -42,7 +42,6 @@ use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_graph::{LonLat, toy_network, toy_network_layers};
 use openmobisim_core_loading::FidelityLevel;
-use openmobisim_core_sim::equilibration::strategy;
 use openmobisim_core_sim::{
     ClassLimits, EventType, FlowMotor, LayerSetup, ModeDefaults, NO_MODE, NoAlternativeReason,
     ParkingDefaults, ParkingSetup, Run, RunResult, StaticLayers, TransitSetup,
@@ -52,6 +51,28 @@ use openmobisim_core_transit::examples::toy_tram;
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
+
+/// What the tests here assume unless they say otherwise: one loading of everyone on free flow
+/// first, at the run's own level, iterating to `iterations` whatever the gap. The shipped
+/// defaults (S280, C1: one default table) build the free-flow loading in five groups with the
+/// point queue and stop when converged, which these tests do not mean to exercise.
+fn strategy(
+    name: &str,
+    given: &openmobisim_core_sim::equilibration::Options,
+) -> Result<
+    Box<dyn openmobisim_core_sim::equilibration::Equilibration>,
+    openmobisim_core_sim::equilibration::EquilibrationError,
+> {
+    let mut options = given.clone();
+    let mut plain = vec![("increments", 1.0), ("warmup", 0.0)];
+    if name == "msa" {
+        plain.extend([("gap_tolerance", 0.0), ("route_growth_tolerance", 0.0)]);
+    }
+    for (k, v) in plain {
+        options.entry(k.to_string()).or_insert(v);
+    }
+    openmobisim_core_sim::equilibration::strategy(name, &options)
+}
 
 /// The shipped mode defaults without the car's access and egress (S279): the hand values here are
 /// the drives and rides alone (`W → M`: the car's 80 s against the bike's 120 s); the access and

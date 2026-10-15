@@ -29,22 +29,6 @@ __all__ = ["FallbackWarning", "NoAlternativeWarning", "Run", "Scenario", "Table"
 #: model as a point queue, a spatial queue and the full triangular diagram.
 FLOW_LEVELS = (0, 2, 3, 4)
 
-#: In how many groups the free-flow loading is built up unless ``equilibration_options`` says
-#: (S223; uncalibrated, the user's suggestion: groups of a fifth of the travellers).
-FREE_FLOW_INCREMENTS = 5
-
-#: ``"msa"`` stops once the disequilibrium, averaged over the last three iterations, is below this
-#: (S268, the user's ruling U-24: the verdict's "good" itself; 0.02 from S229 to S267;
-#: uncalibrated), unless ``equilibration_options`` says otherwise; ``iterations`` stays the most it
-#: makes.
-GAP_TOLERANCE = 0.05
-
-#: ... and while the last route update added routes for at most this share of the pairs it
-#: searched (S229). 1 by default: the gap alone decides, since it is measured against the sets as
-#: grown (a route found faster than the set's best raises it; an equally fast one, which grids
-#: keep yielding, does not). Lower it to also wait for the sets to settle.
-ROUTE_GROWTH_TOLERANCE = 1.0
-
 
 class WindowWarning(UserWarning):
     """Trips of the demand departed outside the simulation window and were left out (S271).
@@ -1500,30 +1484,11 @@ class Scenario:
         self._flow_level = flow_level
         self._flow_step_s = flow_step_s
         self._link_bin_s = link_bin_s
-        options = dict(equilibration_options or {})
-        iterates = equilibration != "free_flow" and int(options.get("iterations", 10)) > 1
-        if equilibration == "msa":
-            # Stop when converged (S229), not always after `iterations`.
-            options.setdefault("gap_tolerance", GAP_TOLERANCE)
-            options.setdefault("route_growth_tolerance", ROUTE_GROWTH_TOLERANCE)
-        if equilibration in ("free_flow", "msa"):
-            # The free-flow loading (S223): built up in groups, each choosing on the congestion
-            # of those before it, with the point-queue model, which cannot gridlock. At free
-            # flow nothing congests, so there are no groups.
-            if flow_level >= 2:
-                options.setdefault("increments", FREE_FLOW_INCREMENTS)
-            if flow_level >= 2 or iterates:
-                options.setdefault("warmup", 1)
-        # A run that loads more than once: iterations, or the free-flow loading's groups.
-        reloads = iterates or (flow_level >= 2 and int(options.get("increments", 1)) > 1)
-        if route_method is None:
-            # Such a run starts from one route per pair and lets the route update find the
-            # rest (S179, S223); a run that loads once has no later loading to choose among new
-            # routes. Options given for a method mean the default method of a single loading.
-            route_method = "shortest" if reloads and route_options is None else "penalty"
-        if route_update is None:
-            route_update = "best_response" if reloads or route_update_options else "none"
-        equilibration_options = options or None
+        # One default table (S280, C1): every default below is the core's, listed by
+        # ``parameters()``; the strategy's options, the route method and the route update are
+        # passed as given (``None``: the core's rule — a run that loads more than once starts
+        # from one route per pair and lets ``best_response`` grow the sets, S179, S223).
+        equilibration_options = dict(equilibration_options or {}) or None
         self._route_method = route_method
         self._route_options = route_options
         self._master_seed = master_seed
@@ -1563,12 +1528,9 @@ class Scenario:
                 _check_modes_can_run(modes, transit is not None, parkings is not None)
         self._modes = modes
         self._mode_options = mode_options
-        loading = dict(loading_options or {})
-        if flow_level <= 2:
-            # In a point queue nothing waits for room, so nothing is stuck to re-route (S229);
-            # rerouting stays a feature of the levels with spillback.
-            loading.setdefault("reroute", 0)
-        self._loading_options = loading or None
+        # ``reroute`` unsaid is the core's rule: on at levels 3 and 4, off at the point queue,
+        # where nothing waits for room (S229, S280).
+        self._loading_options = dict(loading_options or {}) or None
         self._price_options = price_options
         self._link_values = _link_values(network, link_values) if link_values else None
         self._person_values = _person_values(person_values) if person_values else None

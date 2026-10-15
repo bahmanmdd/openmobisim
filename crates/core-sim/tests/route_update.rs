@@ -35,7 +35,7 @@ use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder}
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::FidelityLevel;
 use openmobisim_core_routes::{Demand, Route, RouteSetGenerator, Search, Shortest};
-use openmobisim_core_sim::equilibration::{GAP_ACCEPTABLE, Options, strategy};
+use openmobisim_core_sim::equilibration::{GAP_ACCEPTABLE, Options};
 use openmobisim_core_sim::route_update::{self, RouteUpdateError};
 use openmobisim_core_sim::{
     Equilibration, FlowMotor, IterationReport, Msa, NO_ROUTE, Run, RunResult,
@@ -45,6 +45,28 @@ use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 use openmobisim_core_types::rng::StreamRng;
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
+
+/// What the tests here assume unless they say otherwise: one loading of everyone on free flow
+/// first, at the run's own level, iterating to `iterations` whatever the gap. The shipped
+/// defaults (S280, C1: one default table) build the free-flow loading in five groups with the
+/// point queue and stop when converged, which these tests do not mean to exercise.
+fn strategy(
+    name: &str,
+    given: &openmobisim_core_sim::equilibration::Options,
+) -> Result<
+    Box<dyn openmobisim_core_sim::equilibration::Equilibration>,
+    openmobisim_core_sim::equilibration::EquilibrationError,
+> {
+    let mut options = given.clone();
+    let mut plain = vec![("increments", 1.0), ("warmup", 0.0)];
+    if name == "msa" {
+        plain.extend([("gap_tolerance", 0.0), ("route_growth_tolerance", 0.0)]);
+    }
+    for (k, v) in plain {
+        options.entry(k.to_string()).or_insert(v);
+    }
+    openmobisim_core_sim::equilibration::strategy(name, &options)
+}
 
 const O: (f64, f64) = (4.800, 45.700);
 const D: (f64, f64) = (4.810, 45.700);
@@ -423,7 +445,15 @@ fn updates_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
 
 #[test]
 fn a_tolerance_is_not_met_while_routes_are_still_being_added() {
-    let msa = Msa { iterations: 10, gap_tolerance: 0.1, gap_sample: 0, ..Msa::default() };
+    let msa = Msa {
+        iterations: 10,
+        gap_tolerance: 0.1,
+        gap_sample: 0,
+        increments: 1,
+        warmup: 0,
+        route_growth_tolerance: 0.0,
+        ..Msa::default()
+    };
     let report = |i: u32, added: u32| IterationReport {
         gap: 0.01,
         routes_added: added,
@@ -1000,6 +1030,11 @@ fn a_traveller_is_offered_at_most_the_fastest_routes() {
             openmobisim_core_routes::generator("penalty", &Default::default()).unwrap(),
         ))
         .with_choice_model(Arc::from(model("logit", &Default::default()).unwrap()))
+        // One loading of everyone on free-flow costs: the fastest route is the set's shortest.
+        .with_equilibration(Arc::new(openmobisim_core_sim::equilibration::FreeFlow {
+            increments: 1,
+            warmup: 0,
+        }))
         .with_choice_max_routes(1);
     let result = run.execute(&mut Diagnostics::new());
     let sets = result.route_sets.as_ref().expect("sets");

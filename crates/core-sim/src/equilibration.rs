@@ -10,7 +10,7 @@
 //!
 //! | name | what it does |
 //! |---|---|
-//! | `free_flow` (the default, [`DEFAULT_STRATEGY`]) | The free-flow loading alone (below): one choice, built up in groups if asked, and one loading of everyone |
+//! | `free_flow` (the default, [`DEFAULT_STRATEGY`]) | The free-flow loading alone (below): one choice, built up in five groups by default, and one loading of everyone |
 //! | `msa` | The method of successive averages **in traveller form** (S86): at iteration `i` (from 1; iteration 0 is everyone's first choice) each traveller chooses again with probability `1/(i + 1)`, decided by a draw keyed on `(traveller, iteration)` from its own stream, so who moves does not depend on thread count or order; the others keep their route. In expectation the route flows are the average of the flows of every iteration so far, which is classical MSA with step `1/(i + 1)` |
 //!
 //! **The free-flow loading** (iteration 0, S223) is where every run starts, and all
@@ -21,10 +21,11 @@
 //!   that loading produced, until every group has chosen and the whole demand is loaded
 //!   (incremental assignment: Sheffi 1985, *Urban Transportation Networks*, §5.2). Each group
 //!   sees the congestion of those before it, so routes spread before the first full loading.
-//!   1 (the default here) lets everyone choose at once on free-flow costs.
-//! - `warmup` ([`Equilibration::warmup_iterations`]): with 1 or more, the free-flow loading,
-//!   its increments included, uses the point-queue model (S178): queues delay but take no
-//!   space, so nothing spills back and nothing locks.
+//!   5 by default (S280, C1: one default table for the core and the Python layer); 1 lets
+//!   everyone choose at once on free-flow costs; at level 0 the run uses 1 whatever is set.
+//! - `warmup` ([`Equilibration::warmup_iterations`]): with 1 or more (1 by default, S280), the
+//!   free-flow loading, its increments included, uses the point-queue model (S178): queues delay
+//!   but take no space, so nothing spills back and nothing locks.
 //!
 //! **Every iteration is reported** ([`IterationReport`]): the stability of the
 //! pattern (who changed, how much the link times moved) and **the gap**: how much
@@ -469,16 +470,19 @@ pub trait Equilibration: Send + Sync {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FreeFlow {
     /// In how many groups the loading is built up (1 to [`MAX_INCREMENTS`]; see
-    /// [`Equilibration::increments`]). 1 by default: everyone chooses at once on free flow.
+    /// [`Equilibration::increments`]). 5 by default (S280, C1: the one default table; 1 lets
+    /// everyone choose at once on free flow; at level 0 the run uses 1 whatever is set).
     pub increments: u32,
     /// 1 (or more) loads with the point-queue model, 0 at the run's own level (see
-    /// [`Equilibration::warmup_iterations`]). 0 by default.
+    /// [`Equilibration::warmup_iterations`]). 1 by default (S280): the single loading of a
+    /// `free_flow` run at levels 3–4 is then a point-queue loading, which cannot gridlock; 0
+    /// loads it at the run's own level.
     pub warmup: u32,
 }
 
 impl Default for FreeFlow {
     fn default() -> Self {
-        Self { increments: 1, warmup: 0 }
+        Self { increments: 5, warmup: 1 }
     }
 }
 
@@ -487,11 +491,9 @@ impl Equilibration for FreeFlow {
         "free_flow"
     }
     fn descriptor(&self) -> String {
-        if *self == Self::default() {
-            "free_flow".to_string()
-        } else {
-            format!("free_flow;increments={};warmup={}", self.increments, self.warmup)
-        }
+        // Every field, always (S280): a descriptor that named only what differs from the
+        // default would change with the default, and the fingerprint with it.
+        format!("free_flow;increments={};warmup={}", self.increments, self.warmup)
     }
     fn max_iterations(&self) -> u32 {
         1
@@ -567,7 +569,7 @@ pub struct Msa {
     pub iterations: u32,
     /// Stop once the **disequilibrium** ([`IterationReport::disequilibrium`]: the gap less what
     /// the choice model itself expects, S178), averaged over the last three iterations, is below
-    /// this share; 0 means never stop early. 0.05 is good, 0.15 acceptable
+    /// this share; 0 means never stop early. 0.05 by default (S229, S280). 0.05 is good, 0.15 acceptable
     /// ([`GAP_GOOD`], [`GAP_ACCEPTABLE`]). Never while a route update is still adding routes
     /// (S176): the last update must have added routes for at most
     /// [`Self::route_growth_tolerance`] of the pairs it searched.
@@ -590,14 +592,15 @@ pub struct Msa {
     /// least 1). Shorter follows a queue more closely and costs more memory.
     pub cost_bin_s: u32,
     /// How many of the first loadings use the point-queue model (0 to [`MAX_ITERATIONS`]; see
-    /// [`Equilibration::warmup_iterations`]). 0 by default.
+    /// [`Equilibration::warmup_iterations`]). 1 by default (S280).
     pub warmup: u32,
     /// In how many groups the free-flow loading is built up (1 to [`MAX_INCREMENTS`]; see
-    /// [`Equilibration::increments`]). 1 by default.
+    /// [`Equilibration::increments`]). 5 by default (S280; 1 at level 0 whatever is set).
     pub increments: u32,
     /// A run may stop at its [`Self::gap_tolerance`] only while the last route update added
-    /// routes for at most this share of the pairs it searched (0 to 1; S229). 0 by default: not
-    /// while it adds any (S176). A few routes found late barely move the gap.
+    /// routes for at most this share of the pairs it searched (0 to 1; S229). 1 by default
+    /// (S280): the gap alone decides; 0 stops no run while the update adds any route (S176). A
+    /// few routes found late barely move the gap.
     pub route_growth_tolerance: f64,
 }
 
@@ -605,13 +608,13 @@ impl Default for Msa {
     fn default() -> Self {
         Self {
             iterations: 10,
-            gap_tolerance: 0.0,
+            gap_tolerance: 0.05,
             gap_sample: 300,
             itinerary_gap_sample: MAX_ITINERARY_GAP_SAMPLE,
             cost_bin_s: 300,
-            warmup: 0,
-            increments: 1,
-            route_growth_tolerance: 0.0,
+            warmup: 1,
+            increments: 5,
+            route_growth_tolerance: 1.0,
         }
     }
 }

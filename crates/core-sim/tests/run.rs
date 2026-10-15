@@ -707,10 +707,12 @@ fn the_seed_decides_a_sampled_choice_and_nothing_else() {
 #[test]
 fn the_description_names_the_choice_model_and_the_streams_it_draws_from() {
     let default = choosing_run(5, None, 0).description();
-    assert_eq!((default.choice_model.as_str(), default.live_streams.len()), ("deterministic", 0));
+    // The shipped free-flow loading is built up in five groups (S280): the groups are drawn
+    // from the reselection stream, the only one an all-or-nothing run draws from.
+    assert_eq!((default.choice_model.as_str(), default.live_streams.len()), ("deterministic", 1));
     let sampled = choosing_run(5, Some(logit_with(&[])), 0).description();
     assert_eq!(sampled.choice_model, "logit");
-    assert_eq!(sampled.live_streams, ["choice"]);
+    assert_eq!(sampled.live_streams, ["choice", "msa_reselection"]);
     assert!(
         sampled
             .choice_descriptor

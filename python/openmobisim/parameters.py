@@ -10,35 +10,15 @@ from typing import Any
 
 from openmobisim import _core
 from openmobisim.choice import ROUTE_ATTRIBUTES
-from openmobisim.scenario import (
-    FREE_FLOW_INCREMENTS,
-    GAP_TOLERANCE,
-    ROUTE_GROWTH_TOLERANCE,
-)
 
 __all__ = ["parameters"]
 
-#: Where a ``Scenario`` departs from the core's default, and why (S223, S229).
-_SCENARIO_DEFAULTS: dict[tuple[str, str], tuple[float, str]] = {
-    ("equilibration.msa", "gap_tolerance"): (
-        GAP_TOLERANCE,
-        "Scenario's default: stop when converged",
-    ),
-    ("equilibration.msa", "route_growth_tolerance"): (
-        ROUTE_GROWTH_TOLERANCE,
-        "Scenario's default: the gap alone decides",
-    ),
-    ("equilibration.msa", "increments"): (
-        FREE_FLOW_INCREMENTS,
-        "Scenario's default at flow_level 2-4 (1 at 0)",
-    ),
-    ("equilibration.msa", "warmup"): (1, "Scenario's default at flow_level 2-4"),
-    ("equilibration.free_flow", "increments"): (
-        FREE_FLOW_INCREMENTS,
-        "Scenario's default at flow_level 2-4 (1 at 0)",
-    ),
-    ("equilibration.free_flow", "warmup"): (1, "Scenario's default at flow_level 2-4"),
-    ("loading", "reroute"): (0, "Scenario's default at flow_level 2 (1 at 3 and 4)"),
+#: Where a default is a rule of the run's level rather than one number (S280, C1: the core's
+#: defaults are the table; a ``Scenario`` sets none of its own).
+_NOTES: dict[tuple[str, str], str] = {
+    ("equilibration.msa", "increments"): "1 at flow_level 0 whatever is set",
+    ("equilibration.free_flow", "increments"): "1 at flow_level 0 whatever is set",
+    ("loading", "reroute"): "on at flow_level 3 and 4; off at 2 unless asked for (1)",
 }
 
 #: Scenario arguments that are numbers, with their defaults.
@@ -99,7 +79,7 @@ def parameters() -> dict[str, list[Any]]:
     (what overrides it by name: ``network_options`` of a network reader, ``loading_options``,
     ``equilibration_options`` … of ``Scenario.from_parts``, or the argument itself for the
     ``scenario`` group), ``name``, ``value``, ``unit`` (read from the name, which carries it) and
-    ``note`` (where a ``Scenario`` departs from the core's default). Every value is an
+    ``note`` (where a default is a rule of the run's level). Every value is an
     uncalibrated default; the documentation of each argument says where it comes from.
 
     Returns:
@@ -110,7 +90,7 @@ def parameters() -> dict[str, list[Any]]:
         rows.append(("scenario", name, name, value, unit, note[0] if note else ""))
     listed: dict[str, set[str]] = {}
     for group, argument, name, value in _core.parameter_rows():
-        value, note = _SCENARIO_DEFAULTS.get((group, name), (value, ""))
+        note = _NOTES.get((group, name), "")
         rows.append((group, argument, name, float(value), _unit(name), note))
         listed.setdefault(group, set()).add(name)
     # A random-utility model weighs every attribute an alternative carries; those it does not

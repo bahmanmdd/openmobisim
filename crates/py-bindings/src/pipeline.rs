@@ -689,10 +689,10 @@ fn convergence_arrays(
     road_disruptions=None, transit_disruptions=None, disruptions_known=false,
     default_weight=1, window_start_s=None, window_end_s=None,
     flow_level=0, flow_step_s=300, link_bin_s=None,
-    route_method="penalty", route_options=None, master_seed=0,
+    route_method=None, route_options=None, master_seed=0,
     choice_model=None, choice_options=None,
     equilibration="free_flow", equilibration_options=None,
-    route_update="none", route_update_options=None,
+    route_update=None, route_update_options=None,
     choice_detour_limit=None, choice_max_routes=None, route_cache=false, bike_cost="dedicated", transit=None,
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
     loading_options=None, price_options=None, threads=None, fingerprint_only=false,
@@ -727,14 +727,14 @@ pub fn run_pipeline(
     flow_level: u32,
     flow_step_s: u32,
     link_bin_s: Option<u32>,
-    route_method: &str,
+    route_method: Option<&str>,
     route_options: Option<HashMap<String, f64>>,
     master_seed: u64,
     choice_model: Option<&Bound<'_, PyAny>>,
     choice_options: Option<HashMap<String, f64>>,
     equilibration: &str,
     equilibration_options: Option<HashMap<String, f64>>,
-    route_update: &str,
+    route_update: Option<&str>,
     route_update_options: Option<HashMap<String, f64>>,
     choice_detour_limit: Option<f64>,
     choice_max_routes: Option<u32>,
@@ -850,6 +850,24 @@ pub fn run_pipeline(
         &to_options(equilibration_options),
     )
     .map_err(to_value_error)?;
+    // The route method and the route update unless named (S179, S223; here since S280, C1 —
+    // one default table): a run that loads more than once (iterations, or the free-flow
+    // loading's groups at a level with queues) starts from one route per pair and lets the
+    // update find the rest; a run that loads once has no later loading to choose among new
+    // routes, so it gets the penalty method's set and no update. Options given for a method
+    // mean the default method of a single loading.
+    let iterates = equilibration != "free_flow" && strategy.max_iterations() > 1;
+    let reloads = iterates || (flow_level >= 2 && strategy.increments() > 1);
+    let route_method = route_method.unwrap_or(if reloads && route_options.is_none() {
+        "shortest"
+    } else {
+        "penalty"
+    });
+    let route_update = route_update.unwrap_or(if reloads || route_update_options.is_some() {
+        "best_response"
+    } else {
+        "none"
+    });
     let generator = Registry::builtin()
         .create(route_method, &to_options(route_options))
         .map_err(to_value_error)?;
