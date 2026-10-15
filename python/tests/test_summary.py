@@ -1,7 +1,8 @@
 """A run's summary page (S227, roadmap I-ad).
 
 What is defended: one self-contained HTML file with the run's identity and headline numbers, its
-sections, the flow map when the run recorded per-link results (and none otherwise), the mode-choice
+sections, a map per mode at the end when the run recorded its per-link results (and none otherwise),
+the networks' sizes, the mode-choice
 measure where trips choose their mode, and the default place next to the run's files.
 """
 
@@ -34,7 +35,8 @@ def test_the_page_holds_the_runs_identity_numbers_and_sections(tmp_path):
         "a test",
         r.fingerprint,
         "sum-1",
-        "Flows",
+        "Car traffic",
+        "The networks",
         "Modes",
         "Convergence",
         "Computation time",
@@ -44,7 +46,10 @@ def test_the_page_holds_the_runs_identity_numbers_and_sections(tmp_path):
         "400",
     ):
         assert piece in text, piece
-    assert text.count("data:image/png;base64,") == 2, "the flow map, by day and by night"
+    assert text.count("data:image/png;base64,") == 2, "the car map, by day and by night"
+    assert "<h2>Bike traffic</h2>" not in text and "<h2>Transit</h2>" not in text, "no other mode"
+    # The maps come last (S282): after the settings.
+    assert text.index("Car traffic") > text.index("Settings")
     assert "http" not in text.replace("http://www.w3.org", ""), "self-contained: nothing fetched"
 
 
@@ -53,7 +58,7 @@ def test_without_per_link_results_there_is_no_map_and_the_default_place_is_the_r
     path = viz.summary(r)
     assert Path(path) == Path(r.timings_path).parent / "summary.html"
     text = Path(path).read_text(encoding="utf-8")
-    assert "data:image/png" not in text and "Flows" not in text
+    assert "data:image/png" not in text and "Car traffic" not in text
 
 
 def test_a_mode_choice_run_shows_the_share_whose_mode_changed(tmp_path):

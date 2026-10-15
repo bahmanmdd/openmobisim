@@ -26,6 +26,7 @@ from openmobisim._paths import show_path
 from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._link import DELAY_BAND_LABELS, _clock, delay_band, link_table, map_link
 from openmobisim.viz._style import ION, THEMES
+from openmobisim.viz._transit import map_transit
 
 __all__ = ["summary"]
 
@@ -431,7 +432,7 @@ def _departures(run: Any, paper: Any, night: Any) -> str:
             _fmt(sum(sum(values) for _, _, _, values in series), 0),
         ]
     )
-    return chart + _table(head, rows)
+    return chart + f'<div class="below">{_table(head, rows)}</div>'
 
 
 def _services(run: Any) -> str:
@@ -515,6 +516,44 @@ def _services(run: Any) -> str:
     )
 
 
+def _layers(run: Any) -> str:
+    """Each layer's size: links, nodes and length, the roads, bike and walk layers and transit (S282).
+
+    Transit's links are its stop-to-stop hops (distinct pairs of consecutive calls), its nodes
+    its stops, its length the hops' straight lines.
+    """
+    network = run.network
+    if network is None:
+        return ""
+    rows = []
+    for name, net in (("roads", network), ("bike", network.layer("bike")),
+                      ("walk", network.layer("walk"))):  # fmt: skip
+        if net is None:
+            continue
+        km = float(np.asarray(net.link_length_m()).sum()) / 1000
+        rows.append([name, _fmt(net.link_count, 0), _fmt(net.node_count, 0), _fmt(km, 0)])
+    calls, transit = run.transit_calls(), run.transit
+    if calls is not None and transit is not None:
+        stops = transit.stops()
+        where = {s: (lon, lat) for s, lon, lat in zip(stops["stop_id"], stops["lon"], stops["lat"],
+                                                    strict=True)}  # fmt: skip
+        runs, ids = calls["run"], calls["stop_id"]
+        hops = {(ids[i], ids[i + 1]) for i in range(len(ids) - 1)
+                if runs[i] == runs[i + 1] and ids[i] != ids[i + 1]}  # fmt: skip
+        km = 0.0
+        for a, b in hops:
+            (x0, y0), (x1, y1) = where[a], where[b]
+            dx = (x1 - x0) * 111.32 * math.cos(math.radians((y0 + y1) / 2))
+            km += math.hypot(dx, (y1 - y0) * 110.574)
+        rows.append(["transit", _fmt(len(hops), 0), _fmt(len(where), 0), _fmt(km, 0)])
+    return (
+        "<h3>The networks</h3>"
+        + _table(["layer", "links", "nodes", "length (km)"], rows)
+        + '<p class="note">Transit\'s links are its stop-to-stop hops and its nodes its stops; '
+        "their length is the straight line between the stops.</p>"
+    )
+
+
 def _computation(run: Any) -> tuple[str, str]:
     """The three-part time for the summary, and the stage-by-stage page's body (S281)."""
     t = run.timings()
@@ -585,11 +624,13 @@ def summary(
     The headline numbers (trips, completed, mean trip, total travel time, the roads' PCU-km and
     mean speed, run time), the travel statistics (the modes' shares, completion and mean trips;
     when people left, by mode; the roads' traffic over the day, its delay by band and the
-    busiest links; transit, parking, bikes and walking in numbers), the flow map (if the run
-    recorded per-link results, ``link_bins_s``), the convergence by iteration with its verdict,
-    the computation time in three parts (reading, running, writing; stage by stage on
-    ``timings.html`` beside it, S281) and the settings with the fingerprint. Light and dark
-    follow the reader's system. Needs matplotlib for the map.
+    busiest links; transit, parking, bikes and walking in numbers), the convergence by iteration
+    with its verdict, the computation time in three parts (reading, running, writing; stage by
+    stage on ``timings.html`` beside it, S281) with each layer's size (links, nodes, length),
+    the settings with the fingerprint, and at the end a map per mode (S282): car traffic,
+    transit, bike traffic and walking, each where the run has its results (per-link results
+    need ``link_bins_s``). Light and dark follow the reader's system. Needs matplotlib for the
+    maps.
 
     Args:
         run: A ``Run``.
@@ -736,6 +777,7 @@ def summary(
 
     # Computation time: three parts here, every stage on its own page (S281).
     time_html, timings_body = _computation(run)
+    time_html += _layers(run)
 
     # Settings.
     settings = [
@@ -754,15 +796,52 @@ def summary(
         '</td><td class="">', '</td><td class="v">'
     )
 
-    # Figures: the flow map in both themes, swapped by the colour scheme.
-    figs = ""
-    if run.link_bins() is not None:
-        day = _png(map_link(run, theme="paper", size_cm=MAP_SIZE_CM))
-        dark = _png(map_link(run, theme="night", size_cm=MAP_SIZE_CM))
-        figs = (
-            f'<img class="day" src="data:image/png;base64,{day}" alt="flow map">'
-            f'<img class="dark" src="data:image/png;base64,{dark}" alt="flow map">'
+    # The maps, one per main mode, in both themes swapped by the colour scheme (S282, the user:
+    # "one network figure per mode ... at the end"): cars, transit, bikes, walking.
+    def pair(draw: Any) -> str:
+        day = _png(draw("paper"))
+        dark = _png(draw("night"))
+        return (
+            f'<img class="day" src="data:image/png;base64,{day}" alt="map">'
+            f'<img class="dark" src="data:image/png;base64,{dark}" alt="map">'
         )
+
+    maps = []
+    if run.link_bins() is not None:
+        maps.append(
+            (
+                "Car traffic",
+                pair(
+                    lambda th: map_link(
+                        run,
+                        theme=th,
+                        size_cm=MAP_SIZE_CM,
+                        title="Car traffic: flow and delay by direction",
+                    )
+                ),
+            )
+        )
+    if run.transit_calls() is not None and run.transit is not None:
+        maps.append(
+            (
+                "Transit",
+                pair(
+                    lambda th: map_transit(
+                        run,
+                        theme=th,
+                        size_cm=MAP_SIZE_CM,
+                        title="Transit: passengers by line and stop",
+                    )
+                ),
+            )
+        )
+    for layer, name, map_title in (
+        ("bike", "Bike traffic", "Cycling: travellers by direction"),
+        ("walk", "Walking", "Walking: travellers by direction"),
+    ):
+        if run.link_bins(layer) is not None:
+            maps.append((name, pair(lambda th, layer=layer, map_title=map_title: map_link(
+                run, theme=th, size_cm=MAP_SIZE_CM, layer=layer, title=map_title))))  # fmt: skip
 
     when = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     title = title or f"Run {run.run_id}"
@@ -780,10 +859,10 @@ def summary(
         f"<section><h2>Transit, parking, bikes and walking</h2>{services_html}</section>"
         if services_html
         else "",
-        f"<section><h2>Flows</h2>{figs}</section>" if figs else "",
         f"<section><h2>Convergence</h2>{conv_html}</section>",  # the chart beside its table
         f'<div class="grid2"><section><h2>Computation time</h2>{time_html}</section>'
         f"<section><h2>Settings</h2>{settings_html}</section></div>",
+        *(f"<section><h2>{name}</h2>{figure}</section>" for name, figure in maps),
     ]
     page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -852,6 +931,7 @@ td {{ border-bottom:1px solid color-mix(in srgb, var(--base) 50%, transparent); 
 .bf {{ background:var(--accent); height:12px; border-radius:4px; }}
 .bv {{ text-align:right; font-variant-numeric:tabular-nums; }}
 .note {{ color:var(--muted); font-size:12px; margin:8px 0 0; }} a {{ color:var(--accent); }}
+.below {{ margin-top:14px; padding-top:10px; border-top:1px solid var(--base); }}
 img {{ width:100%; border-radius:8px; }} img.dark {{ display:none; }}
 footer {{ color:var(--muted); font:12px "JetBrains Mono", Menlo, monospace; margin-top:22px; }}
 .grid2 > section {{ min-width:0; }} td.v {{ word-break:break-all; font:12px "JetBrains Mono", Menlo, monospace; }}

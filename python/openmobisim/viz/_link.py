@@ -434,7 +434,7 @@ def map_link(
 
     # Furniture (S281: the subtitle says when; the legends say how to read the ribbons; the
     # footer's first line gives the flow numbers, its second what the run was).
-    step = run.link_bins().bin_seconds
+    step = link_bins.bin_seconds  # this layer's bins (S282: a run may record only the layers')
     seen = link_bins.bins()
     if len(seen) or (first is not None and stop is not None):
         window = (first if first is not None else int(seen.min())) * step
