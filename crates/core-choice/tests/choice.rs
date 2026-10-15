@@ -53,6 +53,18 @@ fn logit() -> Logit {
     Logit::from_options(&Options::new()).expect("defaults")
 }
 
+/// The default logit's `beta_time_min`, read from the model itself, so a change of the default
+/// moves the expected numbers and not the tests (T-10).
+fn default_beta_time() -> f64 {
+    Logit::default().betas.iter().find(|(a, _)| a == "time_min").expect("a time coefficient").1
+}
+
+/// The default logit's probability of the faster of two routes three minutes apart, equal in
+/// everything else: `1 / (1 + exp(3 β))`.
+fn fast_of_three_minutes_apart() -> f64 {
+    1.0 / (1.0 + (3.0 * default_beta_time()).exp())
+}
+
 // --- exact probabilities, by hand ---------------------------------------------------
 
 #[test]
@@ -61,8 +73,9 @@ fn two_routes_three_minutes_apart_split_by_the_closed_form() {
     // P(fast) = 1 / (1 + e^-0.6) and P(slow) = 1 / (1 + e^0.6).
     let b = batch_of(0, &[(1, 1, vec![(1, 10.0, 1.0, 5.0), (2, 13.0, 1.0, 5.0)])]);
     let p = logit().probabilities_by_situation(&b).expect("probabilities");
-    assert!((p[0][0] - 0.645_656_306_225_795_4).abs() < 1e-12, "{p:?}");
-    assert!((p[0][1] - 0.354_343_693_774_204_6).abs() < 1e-12);
+    let fast = fast_of_three_minutes_apart();
+    assert!((p[0][0] - fast).abs() < 1e-12, "{p:?}");
+    assert!((p[0][1] - (1.0 - fast)).abs() < 1e-12);
     assert!((p[0][0] + p[0][1] - 1.0).abs() < 1e-15);
 }
 
@@ -103,8 +116,9 @@ fn a_large_positive_utility_does_not_overflow_the_logit() {
     let b = batch_of(0, &[(1, 1, vec![(1, -100_000.0, 1.0, 5.0), (2, -99_997.0, 1.0, 5.0)])]);
     let p = logit().probabilities_by_situation(&b).expect("probabilities");
     assert!(p[0][0].is_finite() && p[0][1].is_finite(), "must not be NaN: {p:?}");
-    assert!((p[0][0] - 0.645_656_306_225_795_4).abs() < 1e-9, "{p:?}");
-    assert!((p[0][1] - 0.354_343_693_774_204_6).abs() < 1e-9, "{p:?}");
+    let fast = fast_of_three_minutes_apart();
+    assert!((p[0][0] - fast).abs() < 1e-9, "{p:?}");
+    assert!((p[0][1] - (1.0 - fast)).abs() < 1e-9, "{p:?}");
 }
 
 // --- deterministic -------------------------------------------------------------------
@@ -385,7 +399,7 @@ fn a_default_whose_attribute_a_batch_lacks_counts_as_zero_but_a_given_one_is_ref
     b.push_alternative(2, &[13.0, 0.0]);
     // The defaults weigh time alone here: the closed form of three minutes apart.
     let p = logit().probabilities_by_situation(&b).expect("defaults on what is offered");
-    assert!((p[0][0] - 0.645_656_306_225_795_4).abs() < 1e-12, "{p:?}");
+    assert!((p[0][0] - fast_of_three_minutes_apart()).abs() < 1e-12, "{p:?}");
     // The run still reads every default's attribute, so it fills them.
     assert!(logit().required_attributes().unwrap().contains(&"cost_eur".to_string()));
     // Given by name, even at the default's value, the attribute must be on offer.
