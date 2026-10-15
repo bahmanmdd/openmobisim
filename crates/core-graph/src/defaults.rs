@@ -227,7 +227,14 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// true for a class that may take transit), so a fare, if set, is paid by all but the classes
 /// and persons that say they hold a pass; the pass never gates transit. Prices are 0 by default,
 /// so no shipped result moves; every fingerprint does (ownership is hashed).
-pub const DEFAULTS_VERSION: u32 = 29;
+///
+/// Version 30 (S282, A8 / G-3): **a direction-less signal on a street belongs to the nearest
+/// junction within `signal_merge_m` (25 m) along it**, and stops only the traffic heading into
+/// that junction: a car leaving a junction no longer pays the far side's stop line too (14–16 %
+/// of the signal passages of Amsterdam, Lyon and Paris), and a junction tagged just past a stop
+/// line (or a second signalised junction within the distance) adds no second delay (0.2–4 %).
+/// Every OSM city's results change; the benchmark networks have no such signals.
+pub const DEFAULTS_VERSION: u32 = 30;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///
@@ -683,6 +690,21 @@ pub struct SignalDefaults {
     /// constant per approach — it does **not** respond to the flow the run
     /// produces, which is the price of costing nothing at run time.
     pub nominal_degree_of_saturation: f64,
+    /// How far from a junction, along its street, a signal is that junction's (S282, A8, G-3),
+    /// in metres. OpenStreetMap tags a signal at a junction's node or on each approach's stop
+    /// line, often without `traffic_signals:direction`; a reader then gives such a stop-line
+    /// signal to the traffic heading into its junction only (not to the traffic just leaving
+    /// it on the far side), and adds no second delay at a junction that is itself tagged (or at
+    /// another signalised junction) within this distance. A signal farther from every junction
+    /// (a mid-block crossing) stops both directions, as before. 0 turns the rule off (every
+    /// direction-less signal stops every approach to its node).
+    ///
+    /// *Uncalibrated: an assumption. A stop line lies a few metres to about 20 m before the
+    /// junction's centre; the OpenStreetMap wiki asks for the signal on the junction's node or
+    /// on the stop line of each approach (<https://wiki.openstreetmap.org/wiki/Tag:highway%3Dtraffic_signals>).
+    /// 25 m takes the stop lines and the short links inside a junction, not the next junction
+    /// down the street.*
+    pub merge_m: f64,
 }
 
 impl SignalDefaults {
@@ -691,6 +713,7 @@ impl SignalDefaults {
         cycle_seconds: 90.0,
         green_fraction: 0.48,
         nominal_degree_of_saturation: 0.85,
+        merge_m: 25.0,
     };
 
     /// Webster's uniform delay for a signalised approach, in seconds.

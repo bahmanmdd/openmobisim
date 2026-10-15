@@ -439,7 +439,8 @@ impl PyNetwork {
             .into_pyarray(py)
     }
 
-    /// Whether each node is signalised (bool), indexed by node index.
+    /// Whether a signal stands at each node (bool), indexed by node index: a junction's, or one that
+    /// stops some approaches only (S282); `link_signalised` says which links each stops.
     fn node_signalised<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
         (0..self.inner.node_count())
             .map(|i| self.inner.is_signalised(NodeId::new(i)))
@@ -820,7 +821,7 @@ pub fn network_read_osm(
     node_ids, node_lon, node_lat, node_signalised,
     link_ids, link_from, link_to, link_class, link_lanes,
     link_length_m, link_capacity_veh_h, link_free_flow_km_h, link_signalised, link_roundabout,
-    network_options=None,
+    network_options=None, node_signal_location=None,
 ))]
 pub fn network_from_columns(
     node_ids: Vec<String>,
@@ -838,6 +839,7 @@ pub fn network_from_columns(
     link_signalised: Vec<bool>,
     link_roundabout: Vec<bool>,
     network_options: Option<HashMap<String, f64>>,
+    node_signal_location: Option<Vec<bool>>,
 ) -> PyResult<PyNetwork> {
     let defaults = network_defaults(network_options)?;
     let nodes = node_ids.len();
@@ -876,6 +878,9 @@ pub fn network_from_columns(
         builder.add_node(node_ids[i].clone(), LonLat::new(node_lon[i], node_lat[i]));
         if node_signalised[i] {
             builder.mark_signalised(node_ids[i].clone());
+        } else if node_signal_location.as_ref().is_some_and(|v| v.get(i) == Some(&true)) {
+            // A signal stands here; its links say which approaches it stops (S282).
+            builder.mark_signal_location(node_ids[i].clone());
         }
     }
 

@@ -67,6 +67,7 @@ _NODE_ALIASES: dict[str, tuple[str, ...]] = {
     "x": ("x", "lon", "longitude"),
     "y": ("y", "lat", "latitude"),
     "signalised": ("signalised", "signal", "signals"),
+    "signal_location": ("signal_location",),
 }
 
 #: Latitude a table's arbitrary x/y is laid out at, and the fallback grid's
@@ -219,7 +220,9 @@ def network_read_table(
             loading. Recognised columns: ``id`` (``node``) — **required**;
             ``x``/``y`` or ``lon``/``lat`` depending on `coordinates`;
             ``signalised`` (``signal``) — every approach to a signalised node
-            gets a control delay and a green-time fraction.
+            gets a control delay and a green-time fraction; ``signal_location``
+            — a signal stands at the node but stops only the links whose own
+            ``signalised`` says so (a stop line's, S282).
         length_unit: The unit of a `links` ``length`` column: ``"m"``
             (the default), ``"km"`` or ``"mi"``.
         speed_unit: The unit of a `links` ``free_flow_speed`` column:
@@ -347,6 +350,7 @@ def network_read_table(
     node_lon: list[float] = []
     node_lat: list[float] = []
     node_signalised: list[bool] = []
+    node_signal_location: list[bool] = []
 
     if node_rows is not None:
         for row in node_rows:
@@ -365,6 +369,7 @@ def network_read_table(
                 node_lon.append(lon)
                 node_lat.append(lat)
             node_signalised.append(_as_bool(_column(row, "signalised", _NODE_ALIASES)))
+            node_signal_location.append(_as_bool(_column(row, "signal_location", _NODE_ALIASES)))
     else:
         # No node table and the links carry no coordinates either: a
         # deterministic placeholder grid, in first-appearance order, so a
@@ -378,6 +383,7 @@ def network_read_table(
             node_lon.append(lon)
             node_lat.append(lat)
             node_signalised.append(False)
+            node_signal_location.append(False)
 
     network = _core.network_from_columns(
         node_ids=node_ids,
@@ -395,6 +401,7 @@ def network_read_table(
         link_signalised=link_signalised,
         link_roundabout=link_roundabout,
         network_options=dict(network_options) if network_options else None,
+        node_signal_location=node_signal_location,
     )
     # A table-read network has no `report_import`-style diagnostics yet (the
     # Rust side records an unrecognised `class` value the same way an

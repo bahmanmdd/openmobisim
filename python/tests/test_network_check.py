@@ -82,3 +82,35 @@ def test_an_osm_import_is_connected_on_every_layer() -> None:
     s = statuses(report)
     for layer in ("road", "bike", "walk"):
         assert s[(layer, "strongly connected")] == "pass"
+
+
+def _junction_with_a_stop_line(both_ways: bool):
+    """A four-arm junction J with a stop line S 10 m west of it, on a two-way street (S282, H6)."""
+    step = 10.0 / 111_320.0 / 0.69  # 10 m of longitude at 46° N, in degrees (cos 46° ≈ 0.69)
+    nodes = [
+        {"id": "J", "x": 4.80, "y": 46.0},
+        {"id": "S", "x": 4.80 - step, "y": 46.0},
+        {"id": "W", "x": 4.80 - 20 * step, "y": 46.0},
+        {"id": "E", "x": 4.80 + 20 * step, "y": 46.0},
+        {"id": "N", "x": 4.80, "y": 46.0 + 0.0018},
+        {"id": "X", "x": 4.80, "y": 46.0 - 0.0018},
+    ]
+    if both_ways:
+        nodes[1]["signalised"] = True  # every link into S stops: the far side too
+    else:
+        nodes[1]["signal_location"] = True  # S stands here; its links say what it stops
+    links = []
+    for a, b in (("W", "S"), ("S", "J"), ("J", "E"), ("J", "N"), ("J", "X")):
+        for f, t in ((a, b), (b, a)):
+            stop = (not both_ways) and (f, t) == ("W", "S")
+            links.append({"id": f"{f}{t}", "from": f, "to": t, "class": "residential",
+                          "signalised": stop})  # fmt: skip
+    return ms.network_read_table(links, nodes)
+
+
+def test_a_stop_line_that_stops_both_directions_is_flagged() -> None:
+    # S282, H6 (DR-129): the reader bug of S265 (a stop line's direction ignored) went unnoticed
+    # for months; this check would have shown it.
+    check = ("road", "stop lines stop one direction")
+    assert statuses(ms.network_check(_junction_with_a_stop_line(both_ways=True)))[check] == "warn"
+    assert statuses(ms.network_check(_junction_with_a_stop_line(both_ways=False)))[check] == "pass"

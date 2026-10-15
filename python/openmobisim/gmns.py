@@ -20,7 +20,9 @@ road's direction; walking on every road but motorways and cycleways, both ways).
 latter a signal at the link's end that stops it alone, one direction's stop line, S265), and
 ``geometry`` (WKT); on the bike layer ``bike_facility`` (``separated``, ``lane`` or ``mixed``).
 ``node.csv``: ``node_id``, ``x_coord``, ``y_coord`` (WGS84 longitude and latitude) and
-``ctrl_type`` (``signal`` at a signalised node). Ids are the network's own indices,
+``ctrl_type`` (``signal`` at a signalised node) and ``signal_stops`` (``all`` for a signal that
+stops every link into its node, ``links`` for one that stops only the links whose ``signal``
+says so: a stop line's, S282). Ids are the network's own indices,
 zero-padded, so a network read back has its nodes and links in the same order; the ids it had
 before are not kept, so link values or edits given by id use the new ones after a round trip
 (X-61).
@@ -106,6 +108,15 @@ def _write_layer(network: _core.Network, folder: Path, layer: str, geometry: boo
         pos[frm] = coords[offsets[:-1]]
         pos[to] = coords[offsets[1:] - 1]
     signal = np.asarray(network.node_signalised(), dtype=bool) if layer == "road" else None
+    every = None
+    if signal is not None:
+        # A signal that stops every link into its node (a junction's); the others stop only the
+        # links flagged in link.csv's ``signal`` (S265, S282), their node marked ``signal_stops``
+        # ``links`` so a reader does not stop every approach.
+        stopped = np.asarray(network.link_signalised(), dtype=bool)
+        missed = np.zeros(n_nodes, dtype=bool)
+        np.logical_or.at(missed, to, ~stopped)
+        every = signal & ~missed
     node_rows = []
     for i in range(n_nodes):
         if math.isnan(pos[i, 0]):
@@ -113,8 +124,10 @@ def _write_layer(network: _core.Network, folder: Path, layer: str, geometry: boo
         row = [f"{i:0{nw}d}", f"{pos[i, 0]:.7f}", f"{pos[i, 1]:.7f}"]
         if signal is not None:
             row.append("signal" if signal[i] else "")
+            row.append("" if not signal[i] else ("all" if every[i] else "links"))
         node_rows.append(row)
-    node_header = ["node_id", "x_coord", "y_coord"] + (["ctrl_type"] if signal is not None else [])
+    extra = ["ctrl_type", "signal_stops"] if signal is not None else []
+    node_header = ["node_id", "x_coord", "y_coord", *extra]
     _write(folder / "node.csv", node_header, node_rows)
     length = np.asarray(network.link_length_m())
     speed = np.asarray(network.link_speed_km_h())
@@ -133,8 +146,8 @@ def _write_layer(network: _core.Network, folder: Path, layer: str, geometry: boo
         cap = np.asarray(network.link_capacity_pcu_h())
         roundabout = np.asarray(network.link_roundabout(), dtype=bool)
         drivable = np.asarray(network.link_drivable(), dtype=bool)
-        # A signal that stops this link alone (S265): signalised, its end node not.
-        alone = np.asarray(network.link_signalised(), dtype=bool) & ~signal[to]
+        # A signal that stops this link alone (S265): signalised, its end node's not every one's.
+        alone = np.asarray(network.link_signalised(), dtype=bool) & ~every[to]
         header += ["lanes", "capacity", "allowed_uses", "roundabout", "signal"]
     elif layer == "bike":
         infra = np.asarray(network.link_infrastructure())
@@ -289,7 +302,11 @@ def _road_rows(folder: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]
             "id": r["node_id"],
             "x": r["x_coord"],
             "y": r["y_coord"],
-            "signalised": r.get("ctrl_type", "").lower() in _SIGNAL,
+            "signalised": r.get("ctrl_type", "").lower() in _SIGNAL
+            and r.get("signal_stops", "") != "links",
+            # A stop line's place: its links say what it stops (S282).
+            "signal_location": r.get("ctrl_type", "").lower() in _SIGNAL
+            and r.get("signal_stops", "") == "links",
         }
         for r in _read(folder / "node.csv")
     ]

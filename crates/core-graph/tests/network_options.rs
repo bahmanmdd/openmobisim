@@ -33,7 +33,7 @@ fn line(defaults: &NetworkDefaults) -> RoadNetwork {
 #[test]
 fn every_parameter_has_a_name_and_its_shipped_value() {
     let names = NetworkDefaults::names();
-    assert_eq!(names.len(), 18 + 4 * RoadClass::ALL.len());
+    assert_eq!(names.len(), 19 + 4 * RoadClass::ALL.len()); // S282: signal_merge_m
     assert!(names.windows(2).all(|w| w[0] < w[1]), "sorted, no repeats");
     let values: BTreeMap<String, f64> = NetworkDefaults::shipped().values().into_iter().collect();
     assert_eq!(values.len(), names.len());

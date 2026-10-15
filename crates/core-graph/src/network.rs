@@ -123,6 +123,8 @@ pub struct RoadNetworkBuilder {
     node_ids: ExternalIdTableBuilder,
     nodes: Vec<(String, LonLat)>,
     signalised: Vec<String>,
+    /// Nodes where a signal stands whose links say which approaches it stops (S282).
+    signal_locations: Vec<String>,
     links: Vec<(String, String, String, LinkSpec)>,
     /// The projection to use instead of one chosen from the extent (S195: a
     /// bike or walk layer shares the road network's).
@@ -151,6 +153,14 @@ impl RoadNetworkBuilder {
     /// delay and every turn through it a green-time fraction (S90).
     pub fn mark_signalised(&mut self, external_id: impl Into<String>) {
         self.signalised.push(external_id.into());
+    }
+
+    /// Record that a signal stands at a node without giving its approaches a delay: the links
+    /// that it stops say so themselves ([`LinkSpec::signalised`]). For a reader that decides per
+    /// approach (a stop line's direction, a junction's far side; S265, S282), so that
+    /// [`RoadNetwork::is_signalised`] still knows every signal's place.
+    pub fn mark_signal_location(&mut self, external_id: impl Into<String>) {
+        self.signal_locations.push(external_id.into());
     }
 
     /// Project in `projection` rather than in one chosen from the nodes'
@@ -257,6 +267,13 @@ impl RoadNetworkBuilder {
                 node_signalised[id as usize] = true;
             }
         }
+        // The nodes whose every approach is stopped; a signal location only marks the node.
+        let stops_every_approach = node_signalised.clone();
+        for external in &self.signal_locations {
+            if let Some(id) = node_ids.id_of(external) {
+                node_signalised[id as usize] = true;
+            }
+        }
 
         // Links, in the order their external ids sort — the same determinism
         // rule as nodes, so link ids are reproducible too.
@@ -296,7 +313,7 @@ impl RoadNetworkBuilder {
             }
 
             let mut row: DefaultRow = defaults.classes.row(spec.class);
-            let signalised = spec.signalised || node_signalised[to_id as usize];
+            let signalised = spec.signalised || stops_every_approach[to_id as usize];
             if signalised && spec.class.is_at_grade() && spec.capacity_veh_h.is_none() {
                 // S265: at a signal, a city street's lane discharges at most its speed band's
                 // saturation flow per hour of green (the green fraction applies on top).
@@ -504,7 +521,9 @@ impl RoadNetwork {
         self.node_lonlat[node.index()]
     }
 
-    /// Whether a node is signalised for every approach (a junction's signal).
+    /// Whether a signal stands at a node: a junction's, stopping every approach, or one that
+    /// stops some approaches only (a stop line's direction, a junction's far side passed freely;
+    /// S265, S282), whose links say which ([`Self::is_link_signalised`]).
     #[inline]
     #[must_use]
     pub fn is_signalised(&self, node: NodeId) -> bool {

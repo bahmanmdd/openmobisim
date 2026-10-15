@@ -18,7 +18,7 @@
 //! | `<class>.saturation_flow_veh_h_lane` | veh/h per lane | the class's capacity per lane |
 //! | `<class>.jam_density_veh_km_lane` | veh/km per lane | storage per lane |
 //! | `free_flow_speed_factor`, `capacity_factor`, `jam_density_factor`, `control_delay_factor`, `green_fraction_factor` | — | the global multipliers ([`GlobalMultipliers`]) |
-//! | `signal_cycle_s`, `signal_green_fraction`, `signal_degree_of_saturation` | s, —, — | the signal settings ([`SignalDefaults`]) |
+//! | `signal_cycle_s`, `signal_green_fraction`, `signal_degree_of_saturation`, `signal_merge_m` | s, —, —, m | the signal settings ([`SignalDefaults`]); `signal_merge_m` is read by the OpenStreetMap reader (S282) |
 //! | `street_30.saturation_flow_veh_h_lane`, `street_50.saturation_flow_veh_h_lane`, `street_70.saturation_flow_veh_h_lane` | veh/h per lane | the most a lane of an at-grade road of that speed discharges at a signal, per hour of green (S265, [`SaturationBands`]) |
 //! | `bike_mixed_km_h`, `bike_dedicated_km_h`, `bike_mixed_cost_factor`, `bike_lane_cost_factor`, `walk_km_h`, `ferry_km_h`, `ferry_wait_s` | km/h, km/h, —, —, km/h, km/h, s | the bike and walk layers ([`StaticLayerDefaults`]) |
 //!
@@ -77,7 +77,7 @@ impl Default for NetworkDefaults {
 /// The global and layer names, with how to read and write each.
 type Field = (&'static str, fn(&NetworkDefaults) -> f64, fn(&mut NetworkDefaults, f64));
 
-const FIELDS: [Field; 18] = [
+const FIELDS: [Field; 19] = [
     (
         "free_flow_speed_factor",
         |d| d.multipliers.free_flow_speed,
@@ -102,6 +102,7 @@ const FIELDS: [Field; 18] = [
         |d| d.signals.nominal_degree_of_saturation,
         |d, v| d.signals.nominal_degree_of_saturation = v,
     ),
+    ("signal_merge_m", |d| d.signals.merge_m, |d, v| d.signals.merge_m = v),
     ("bike_mixed_km_h", |d| d.layers.bike_mixed_km_h, |d, v| d.layers.bike_mixed_km_h = v),
     (
         "bike_dedicated_km_h",
@@ -140,7 +141,7 @@ const FIELDS: [Field; 18] = [
 
 /// The names for which 0 is a meaning (no signal delay, no wait for a ferry), not a mistake; every
 /// other name must be above 0 (G-5).
-const MAY_BE_ZERO: [&str; 2] = ["control_delay_factor", "ferry_wait_s"];
+const MAY_BE_ZERO: [&str; 3] = ["control_delay_factor", "ferry_wait_s", "signal_merge_m"];
 
 /// The per-class fields, by the name after the class's dot.
 const CLASS_FIELDS: [&str; 4] =
@@ -223,7 +224,7 @@ impl NetworkDefaults {
     /// # Errors
     ///
     /// A message naming an unknown name (with every known one), or a value that is not finite
-    /// and positive (`control_delay_factor` and `ferry_wait_s` may also be 0; a lane count must
+    /// and positive (`control_delay_factor`, `ferry_wait_s` and `signal_merge_m` may also be 0; a lane count must
     /// also be a whole number from 1 to 20; a fraction, from 0 to 1).
     pub fn from_options(options: &BTreeMap<String, f64>) -> Result<Self, String> {
         let mut d = Self::shipped();

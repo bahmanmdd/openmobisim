@@ -95,6 +95,49 @@ def _common(checks: _Checks, net: _core.Network, layer: str, links: np.ndarray) 
     )  # fmt: skip
 
 
+def _signals(
+    checks: _Checks,
+    net: _core.Network,
+    frm: np.ndarray,
+    to: np.ndarray,
+    length: np.ndarray,
+    d: np.ndarray,
+    signal: np.ndarray,
+    stopped: np.ndarray,
+) -> None:
+    """Whether the street signals near a junction stop one direction (S282, H6; DR-129).
+
+    A signal on a two-way street (a node with two neighbours) within ``signal_merge_m`` of a
+    junction is a stop line: it stops the traffic heading into the junction, not both directions.
+    One that stops both is a direction ignored, the reader bug that S265 fixed and that no check
+    caught for months; a few may be mapped that way. Junctions' own signals and mid-block crossings
+    are not counted. The value also gives the signals per drivable kilometre.
+    """
+    n = net.node_count
+    merge = float(dict(_core.network_options(net)).get("signal_merge_m", 25.0)) or 25.0
+    a, b = np.minimum(frm[d], to[d]), np.maximum(frm[d], to[d])
+    pairs = np.unique(a.astype(np.int64) * n + b)
+    degree = np.bincount(pairs // n, minlength=n) + np.bincount(pairs % n, minlength=n)
+    short = d & (length <= merge)
+    near = np.zeros(n, dtype=bool)
+    near[frm[short & (degree[to] >= 3)]] = True
+    near[to[short & (degree[frm] >= 3)]] = True
+    into = np.bincount(to[d], minlength=n)
+    into_stopped = np.bincount(to[d & stopped], minlength=n)
+    lines = signal & (degree == 2) & near & (into >= 2)
+    both = int((lines & (into_stopped == into)).sum())
+    count = int(lines.sum())
+    share = both / count if count else 0.0
+    km = float(length[d].sum()) / 1000
+    signals = int(signal.sum())
+    checks.add("road", "stop lines stop one direction", share < 0.10,
+               f"{_share(share)} of {count} two-way stop lines stop both directions; "
+               f"{signals} signals, {signals / max(km, 1e-9):.2f} per drivable km",
+               f"under 10% of the signals on a two-way street within {merge:g} m of a junction "
+               "stop both directions (a stop line stops the traffic into its junction)",
+               )  # fmt: skip
+
+
 def _road(checks: _Checks, net: _core.Network) -> dict[str, Any]:
     drivable = np.asarray(net.link_drivable())
     _common(checks, net, "road", drivable)
@@ -106,7 +149,8 @@ def _road(checks: _Checks, net: _core.Network) -> dict[str, Any]:
     cls = np.asarray(net.link_class())
     lanes = np.asarray(net.link_lanes()).astype(float)
     cap = np.asarray(net.link_capacity_pcu_h())
-    signal = np.asarray(net.node_signalised())
+    signal = np.asarray(net.node_signalised())  # where signals stand (S282: every one)
+    stopped = np.asarray(net.link_signalised())  # the links a signal stops
     d = drivable
     short = float(np.mean(length[d] < 5.0))
     checks.add("road", "very short links", short < 0.03, f"{_share(short)} under 5 m",
@@ -120,7 +164,7 @@ def _road(checks: _Checks, net: _core.Network) -> dict[str, Any]:
     for c in np.unique(cls[d]):
         name = LINK_CLASSES[int(c)] if int(c) < len(LINK_CLASSES) else str(int(c))
         m = d & (cls == c)
-        free = m & ~signal[to]
+        free = m & ~stopped
         m = free if free.sum() >= 20 else m
         base = name.replace("_link", "")
         if base in _ROAD_SPEED and m.sum() >= 20:
@@ -151,6 +195,7 @@ def _road(checks: _Checks, net: _core.Network) -> dict[str, Any]:
     checks.add("road", "dead ends", share < 0.25, f"{_share(share)} of nodes",
                "under 25% of nodes are a street's end (many is a sign of over-mapping)",
                )  # fmt: skip
+    _signals(checks, net, frm, to, length, d, signal, stopped)
     return {
         "links": net.link_count, "nodes": net.node_count, "drivable_links": int(d.sum()),
         "drivable_km": round(float(length[d].sum()) / 1000, 1),

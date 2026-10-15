@@ -12,7 +12,9 @@
     reason = "test fixtures build coordinates from small integer counts"
 )]
 
+use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::geometry::{LonLat, ground_distance_metres};
+use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 use openmobisim_io_osm::import::{ImportOptions, codes, import};
@@ -176,9 +178,116 @@ fn a_stop_line_signal_stops_only_its_direction() {
     assert!(!stopped(link("2", "3")), "eastbound passes the westbound stop line");
     assert!(stopped(link("4", "3")), "westbound at its own stop line");
     assert!(!stopped(link("3", "2")), "westbound passes the eastbound stop line");
-    assert!(!net.is_signalised(id("2")) && !net.is_signalised(id("3")), "no node stops everyone");
+    // Both nodes are signal locations (S282), but neither stops every approach: the links say.
+    assert!(net.is_signalised(id("2")) && net.is_signalised(id("3")), "the signals' places");
     assert!(net.link_parameters(link("1", "2")).control_delay.get() > 10.0);
     assert!(net.link_parameters(link("2", "3")).control_delay.get().abs() < 1e-12);
+}
+
+// --- signals near junctions (S282, A8) ------------------------------------
+
+/// A street west to east through a junction at node 3 (x = 1 step) with a side street north and
+/// south; `tagged` nodes carry a direction-less `highway=traffic_signals`. Node 2 lies at `west`
+/// steps and node 4 at `east` steps (a step is about 78 m here).
+fn crossing(tagged: &[i64], west: f64, east: f64, merge_m: Option<f64>) -> RoadNetwork {
+    let at = |id: i64, x: f64, y: f64| {
+        let n = OsmNode::new(id, 4.80 + x * STEP, 45.70 + y * STEP);
+        if tagged.contains(&id) { n.with_tags([("highway", "traffic_signals")]) } else { n }
+    };
+    let source = MemorySource::new()
+        .nodes([
+            at(1, 0.0, 0.0),
+            at(2, west, 0.0),
+            at(3, 1.0, 0.0),
+            at(4, east, 0.0),
+            at(5, 2.0, 0.0),
+            at(6, 1.0, 1.0),
+            at(7, 1.0, -1.0),
+        ])
+        .ways([residential(100, [1, 2, 3, 4, 5]), residential(101, [6, 3, 7])]);
+    let mut options = ImportOptions::default();
+    if let Some(m) = merge_m {
+        options.signals = SignalDefaults { merge_m: m, ..SignalDefaults::SHIPPED };
+    }
+    let mut diagnostics = Diagnostics::new();
+    import(&source, options, &mut diagnostics).expect("importable").0
+}
+
+fn stops(net: &RoadNetwork, a: &str, b: &str) -> bool {
+    let id = |n: &str| net.node_external_ids().typed_id_of::<NodeId>(n).unwrap();
+    let link =
+        net.out_links(id(a)).iter().copied().find(|&l| net.link_to(l) == id(b)).expect("a link");
+    net.is_link_signalised(link)
+}
+
+/// 10 m in steps: a stop line's distance from its junction.
+const TEN_M: f64 = 0.128;
+
+#[test]
+fn a_stop_line_signal_stops_the_traffic_into_its_junction_not_out_of_it() {
+    // Dutch tagging: a direction-less signal on each approach's stop line, 10 m before the
+    // junction, the junction itself untagged. Eastbound waits at 2, westbound at 4; a car that
+    // has just crossed the junction passes the far side's stop line freely.
+    let net = crossing(&[2, 4], 1.0 - TEN_M, 1.0 + TEN_M, None);
+    assert!(stops(&net, "1", "2"), "eastbound at its stop line");
+    assert!(!stops(&net, "3", "2"), "westbound, just out of the junction, passes it");
+    assert!(stops(&net, "5", "4"), "westbound at its stop line");
+    assert!(!stops(&net, "3", "4"), "eastbound, just out of the junction, passes it");
+    assert!(!stops(&net, "6", "3") && !stops(&net, "2", "3"), "the junction is not tagged");
+    let id = |n: &str| net.node_external_ids().typed_id_of::<NodeId>(n).unwrap();
+    assert!(net.is_signalised(id("2")) && net.is_signalised(id("4")), "the signals' places");
+    // With the rule off, each stop line stops both directions, as before.
+    let old = crossing(&[2, 4], 1.0 - TEN_M, 1.0 + TEN_M, Some(0.0));
+    assert!(stops(&old, "3", "2") && stops(&old, "3", "4"));
+}
+
+#[test]
+fn a_tagged_junction_behind_its_stop_line_adds_no_second_delay() {
+    let net = crossing(&[2, 3], 1.0 - TEN_M, 1.5, None);
+    assert!(stops(&net, "1", "2"), "eastbound at the stop line");
+    assert!(!stops(&net, "2", "3"), "then into the junction: one crossing, one delay");
+    assert!(stops(&net, "6", "3") && stops(&net, "7", "3"), "the side streets at the junction");
+    // Node 4 is a plain street node here, merged away: westbound comes straight from node 5.
+    assert!(stops(&net, "5", "3"), "westbound, with no stop line of its own, at the junction");
+    assert!(!stops(&net, "3", "2"), "westbound out of the junction passes the stop line");
+    let old = crossing(&[2, 3], 1.0 - TEN_M, 1.5, Some(0.0));
+    assert!(stops(&old, "2", "3") && stops(&old, "3", "2"));
+}
+
+#[test]
+fn a_mid_block_crossing_stops_both_directions() {
+    // Node 2 halfway between node 1 (a dead end) and the junction, 39 m from it: no junction
+    // within 25 m, so it is a crossing of its own.
+    let net = crossing(&[2], 0.5, 1.5, None);
+    assert!(stops(&net, "1", "2") && stops(&net, "3", "2"));
+}
+
+#[test]
+fn two_signalised_junctions_close_together_are_one_crossing() {
+    // A dual carriageway's two crossings, 16 m apart, each tagged: a car through both waits once.
+    let at = |id: i64, x: f64, y: f64| OsmNode::new(id, 4.80 + x * STEP, 45.70 + y * STEP);
+    let signal = |id: i64, x: f64, y: f64| at(id, x, y).with_tags([("highway", "traffic_signals")]);
+    let source = MemorySource::new()
+        .nodes([
+            at(1, 0.0, 0.0),
+            signal(2, 1.0, 0.0),
+            signal(3, 1.2, 0.0),
+            at(4, 2.0, 0.0),
+            at(5, 1.0, 1.0),
+            at(6, 1.0, -1.0),
+            at(7, 1.2, 1.0),
+            at(8, 1.2, -1.0),
+        ])
+        .ways([
+            residential(100, [1, 2, 3, 4]),
+            residential(101, [5, 2, 6]),
+            residential(102, [7, 3, 8]),
+        ]);
+    let mut diagnostics = Diagnostics::new();
+    let net = import(&source, ImportOptions::default(), &mut diagnostics).expect("importable").0;
+    assert!(stops(&net, "1", "2") && stops(&net, "4", "3"), "into the pair from either end");
+    assert!(!stops(&net, "2", "3") && !stops(&net, "3", "2"), "between them, no second delay");
+    assert!(stops(&net, "5", "2") && stops(&net, "7", "3"), "each side street at its own");
 }
 
 // --- contraction ----------------------------------------------------------

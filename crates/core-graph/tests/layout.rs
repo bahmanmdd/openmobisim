@@ -32,5 +32,6 @@ fn the_projection_is_cheap_to_copy() {
     assert!(size_of::<Projection>() <= 160, "Projection grew to {} bytes", size_of::<Projection>());
     assert_eq!(size_of::<UtmZone>(), 2);
     assert_eq!(size_of::<Hemisphere>(), 1);
-    assert_eq!(size_of::<SignalDefaults>(), 24);
+    // Four numbers (S282: the merge distance): one per network, never per link.
+    assert_eq!(size_of::<SignalDefaults>(), 32);
 }

@@ -250,6 +250,125 @@ impl ImportReport {
     }
 }
 
+/// Which links the signal at their end stops (S265, S282: A8, G-3), one flag per link of `links`.
+///
+/// A signal with `traffic_signals:direction` stops the links running that way into its node. A
+/// direction-less one at a junction (a node with three or more neighbours on the motor network)
+/// stops every approach, except one coming from a signal that already stopped that traffic
+/// within `merge_m` metres: the junction's own stop line, or another signalised junction (one
+/// controlled crossing, one delay). A direction-less one on a street (two neighbours or fewer)
+/// belongs to the nearest junction within `merge_m` along the street, and stops only the traffic
+/// heading into it: a car just leaving that junction passes the far side's stop line freely. One
+/// with no junction that close (a mid-block crossing) stops both directions. `merge_m` 0: every
+/// direction-less signal stops every approach to its node, as before S282.
+///
+/// Cost: one pass over the links and a short walk along the street from each signal node, at
+/// import only; nothing at run time.
+fn signal_stops(
+    links: &[ProtoLink],
+    signalised: &HashSet<i64>,
+    direction: &HashMap<i64, tags::SignalDirection>,
+    merge_m: f64,
+) -> Vec<bool> {
+    let by_direction = |l: &ProtoLink| match direction.get(&l.to) {
+        Some(tags::SignalDirection::Forward) => l.forward,
+        Some(tags::SignalDirection::Backward) => !l.forward,
+        _ => signalised.contains(&l.to),
+    };
+    if merge_m <= 0.0 {
+        return links.iter().map(by_direction).collect();
+    }
+    // The motor network: each node's distinct neighbours, the shortest link between two nodes,
+    // and the links into each node.
+    let mut neighbours: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut gap: HashMap<(i64, i64), f64> = HashMap::new();
+    let mut into: HashMap<i64, Vec<usize>> = HashMap::new();
+    for (k, l) in links.iter().enumerate() {
+        if !l.class.carries_buses() || l.from == l.to {
+            continue;
+        }
+        for (a, b) in [(l.from, l.to), (l.to, l.from)] {
+            let n = neighbours.entry(a).or_default();
+            if !n.contains(&b) {
+                n.push(b);
+            }
+        }
+        let e = gap.entry((l.from.min(l.to), l.from.max(l.to))).or_insert(f64::INFINITY);
+        *e = e.min(l.length_m);
+        into.entry(l.to).or_default().push(k);
+    }
+    let junction = |n: i64| neighbours.get(&n).is_some_and(|x| x.len() >= 3);
+    let gap_of = |a: i64, b: i64| gap.get(&(a.min(b), a.max(b))).copied().unwrap_or(f64::INFINITY);
+    // How far along the street from `v`, leaving by its neighbour `w`, the nearest junction is,
+    // if within `merge_m` (through nodes with two neighbours; a dead end has none).
+    let reach = |v: i64, w: i64| -> Option<f64> {
+        let (mut prev, mut here, mut dist) = (v, w, gap_of(v, w));
+        for _ in 0..64 {
+            if dist > merge_m {
+                return None;
+            }
+            if junction(here) {
+                return Some(dist);
+            }
+            let next = neighbours.get(&here)?.iter().copied().find(|&x| x != prev)?;
+            if next == v {
+                return None; // a loop of street back to the signal
+            }
+            dist += gap_of(here, next);
+            (prev, here) = (here, next);
+        }
+        None
+    };
+    // Each direction-less street signal's junction: the neighbour on the side of the nearest.
+    let mut owner: HashMap<i64, i64> = HashMap::new();
+    for &v in signalised {
+        if direction.contains_key(&v) || junction(v) {
+            continue;
+        }
+        let Some(sides) = neighbours.get(&v) else { continue };
+        let nearest = sides
+            .iter()
+            .filter_map(|&w| reach(v, w).map(|d| (d, w)))
+            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        if let Some((_, w)) = nearest {
+            owner.insert(v, w);
+        }
+    }
+    // Whether the traffic on `link`, leaving its start node `u`, was stopped at `u` already.
+    let stopped_at_start = |link: &ProtoLink| -> bool {
+        let u = link.from;
+        if !signalised.contains(&u) {
+            return false;
+        }
+        if junction(u) {
+            return !direction.contains_key(&u); // a signalised junction just before this one
+        }
+        if let Some(&w) = owner.get(&u) {
+            return w == link.to; // `u` is the stop line of this junction
+        }
+        // A directional stop line: it stopped the traffic coming from its other side.
+        into.get(&u).is_some_and(|ks| {
+            ks.iter().any(|&k| links[k].from != link.to && by_direction(&links[k]))
+        })
+    };
+    links
+        .iter()
+        .map(|l| {
+            let base = by_direction(l);
+            if !base || !l.class.carries_buses() || direction.contains_key(&l.to) {
+                return base;
+            }
+            if let Some(&w) = owner.get(&l.to) {
+                return l.from != w; // into the junction, not out of it
+            }
+            if junction(l.to) && l.length_m <= merge_m && stopped_at_start(l) {
+                return false; // one controlled crossing, one delay
+            }
+            base
+        })
+        .collect()
+}
+
 /// A directed link, before it is handed to the graph builder.
 ///
 /// Kept separate from `LinkSpec` because contraction works on these, and it
@@ -578,10 +697,12 @@ pub fn import_detailed(
     for node in used_nodes(&links) {
         let Some(&p) = positions.get(&node) else { continue };
         builder.add_node(node.to_string(), p);
-        if signalised.contains(&node) && !signal_direction.contains_key(&node) {
-            builder.mark_signalised(node.to_string());
+        if signalised.contains(&node) {
+            // Each link says whether the signal at its end stops it (S265, S282).
+            builder.mark_signal_location(node.to_string());
         }
     }
+    let stopped = signal_stops(&links, &signalised, &signal_direction, options.signals.merge_m);
     let mut geometry_by_external_id: HashMap<String, Vec<LonLat>> =
         HashMap::with_capacity(links.len());
     for (i, link) in links.iter().enumerate() {
@@ -595,11 +716,7 @@ pub fn import_detailed(
                 class: link.class,
                 lanes: link.lanes,
                 maxspeed_km_h: link.maxspeed_km_h,
-                signalised: match signal_direction.get(&link.to) {
-                    Some(tags::SignalDirection::Forward) => link.forward,
-                    Some(tags::SignalDirection::Backward) => !link.forward,
-                    _ => signalised.contains(&link.to),
-                },
+                signalised: stopped[i],
                 length_m: Some(link.length_m),
                 roundabout: link.roundabout,
                 capacity_veh_h: None,

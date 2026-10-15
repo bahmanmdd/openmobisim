@@ -204,7 +204,12 @@ class Network:
         """Whether each link is part of a roundabout's circulating carriageway."""
 
     def node_signalised(self) -> npt.NDArray[np.bool_]:
-        """Whether each node is signalised, indexed by node index."""
+        """Whether a signal stands at each node, indexed by node index.
+
+        A junction's, stopping every approach, or one that stops some approaches only (a stop
+        line's direction, a junction's far side passed freely; S282): ``link_signalised`` says
+        which links each signal stops.
+        """
 
     def link_signalised(self) -> npt.NDArray[np.bool_]:
         """Whether each link ends at a signal that stops it (S265).

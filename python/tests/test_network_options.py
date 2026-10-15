@@ -32,8 +32,9 @@ def read(**options):
 
 def test_every_parameter_is_listed_with_its_shipped_value():
     shipped = ms.network_options()
-    assert len(shipped) == 18 + 4 * 19
+    assert len(shipped) == 19 + 4 * 19
     assert shipped["residential.free_flow_km_h"] > 0 and shipped["capacity_factor"] == 1.0
+    assert shipped["signal_merge_m"] == 25.0  # S282, A8
     assert {"signal_cycle_s", "walk_km_h", "bike_mixed_km_h", "primary.lanes"} <= set(shipped)
     assert ms.network_options(read()) == shipped
 
@@ -85,3 +86,9 @@ def test_an_osm_import_takes_the_options_too():
     assert ms.network_options(net)["walk_km_h"] == 4.0
     walk = np.asarray(net.layer("walk").link_speed_km_h())
     assert np.median(walk) == pytest.approx(4.0)
+
+
+def test_the_signal_merge_distance_may_be_zero_and_is_refused_below():
+    read(signal_merge_m=0.0)  # 0: the rule off
+    with pytest.raises(ValueError, match="signal_merge_m"):
+        read(signal_merge_m=-1.0)
