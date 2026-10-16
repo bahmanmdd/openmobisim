@@ -7,8 +7,8 @@ overrides it by name (S202). ``parameters()`` lists them all, at the defaults a 
 from __future__ import annotations
 
 from openmobisim import _core
-from openmobisim._columns import Columns
 from openmobisim.choice import ROUTE_ATTRIBUTES
+from openmobisim.table import Columns
 
 __all__ = ["parameters"]
 

@@ -1,10 +1,13 @@
-"""``Columns``: one shape for every result given as columns (C2, D-5 a)."""
+"""Results as tables: ``Table`` (a file a run wrote) and ``Columns`` (a result held as columns).
+
+Split from ``scenario.py`` (C3, P-13); ``openmobisim.scenario`` re-exports ``Table``.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["Columns"]
+__all__ = ["Columns", "Table"]
 
 
 def _need(module: str, what: str) -> Any:
@@ -65,3 +68,65 @@ class Columns(dict):
     def __repr__(self) -> str:
         """The size and the column names (the values: ``dict(columns)`` or a data frame)."""
         return f"Columns({self.row_count} rows; {', '.join(self)})"
+
+
+class Table:
+    """A results table backed by a Parquet file.
+
+    ``.to_polars()``, ``.to_pandas()`` and ``.to_arrow()`` read the file on demand. A later version
+    may hand the table over without reading a file; the call shape stays the
+    same.
+    """
+
+    def __init__(self, path: str) -> None:
+        """Wrap the Parquet file at `path`."""
+        self.path = path
+
+    def to_polars(self) -> Any:
+        """Read this table with polars.
+
+        Raises:
+            ImportError: If polars is not installed — install
+                ``openmobisim[notebooks]``.
+        """
+        try:
+            import polars as pl
+        except ImportError as e:
+            raise ImportError(
+                "reading a Table needs polars: pip install 'openmobisim[notebooks]'"
+            ) from e
+        return pl.read_parquet(self.path)
+
+    def to_pandas(self) -> Any:
+        """Read this table with pandas.
+
+        Raises:
+            ImportError: If pandas is not installed — install
+                ``openmobisim[notebooks]``.
+        """
+        try:
+            import pandas as pd
+        except ImportError as e:
+            raise ImportError(
+                "reading a Table needs pandas: pip install 'openmobisim[notebooks]'"
+            ) from e
+        return pd.read_parquet(self.path)
+
+    def to_arrow(self) -> Any:
+        """Read this table with pyarrow, as a ``pyarrow.Table``.
+
+        Raises:
+            ImportError: If pyarrow is not installed — install
+                ``openmobisim[notebooks]``.
+        """
+        try:
+            import pyarrow.parquet as pq
+        except ImportError as e:
+            raise ImportError(
+                "reading a Table needs pyarrow: pip install 'openmobisim[notebooks]'"
+            ) from e
+        return pq.read_table(self.path)
+
+    def __repr__(self) -> str:
+        """The path this table reads from."""
+        return f"Table({self.path!r})"

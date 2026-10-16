@@ -32,7 +32,6 @@ traveller classes, each with its own modes and coefficients, from a class table
 """
 
 from openmobisim import _core, choice, examples, options
-from openmobisim._columns import Columns
 from openmobisim._core import (
     Parkings,
     Transit,
@@ -94,6 +93,7 @@ from openmobisim.scenario import (
     Table,
     WindowWarning,
 )
+from openmobisim.table import Columns
 from openmobisim.transit import transit_edit
 
 __version__: str = _core.__version__
