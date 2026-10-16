@@ -1501,7 +1501,7 @@ fn traversal(link: usize, enter: f64, exit: f64) -> LinkTraversal {
 }
 
 fn link_u32(index: usize) -> u32 {
-    u32::try_from(index).expect("link ids are u32 (Foundations §1)")
+    u32::try_from(index).expect("link ids are u32")
 }
 
 fn queue_u32(index: usize) -> u32 {

@@ -177,7 +177,7 @@ fn memory_footprints_match_the_design_estimates() {
 
     // Cumulative curves: links x steps x 2 (up and down) x 8 bytes.
     let curve_bytes = links * steps * 2 * size_of::<f64>();
-    assert_eq!(curve_bytes, 38_400_000, "the ~40 MB curve figure in Foundations §5");
+    assert_eq!(curve_bytes, 38_400_000, "the ~40 MB curve figure");
 
     // A vehicle in flight: id, link, path position — four u32s at most.
     assert!(size_of::<LinkId>() * 4 <= 16, "a vehicle record must stay within 16 bytes");
