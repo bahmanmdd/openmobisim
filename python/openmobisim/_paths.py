@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from openmobisim._log import logger
+
 
 def _in_notebook() -> bool:
     """Whether this runs in a Jupyter kernel (JupyterLab, VS Code, PyCharm, Colab)."""
@@ -31,4 +33,4 @@ def show_path(what: str, path: str | Path) -> None:
         link = f"[{relative}]({relative})" if relative else f"`{path}`"
         display(Markdown(f"**{what}:** {link} — {path.as_uri()}"))
     else:
-        print(f"{what}: {path.as_uri()}")
+        logger.info(f"{what}: {path.as_uri()}")

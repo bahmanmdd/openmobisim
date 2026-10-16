@@ -616,7 +616,7 @@ def summary(
     path: str | Path | None = None,
     *,
     title: str | None = None,
-    note: str = "",
+    note: str | None = None,
     quiet: bool = False,
 ) -> Path:
     """Write a run's summary as one self-contained HTML page, and return its path.
@@ -636,7 +636,7 @@ def summary(
         run: A ``Run``.
         path: Where to write it; ``summary.html`` in the run's output folder by default.
         title: The page's title; ``Run <run_id>`` by default.
-        note: A line under the title, for example what the scenario is.
+        note: A line under the title, for example what the scenario is; none by default.
         quiet: Do not say where the page was written (by default a link to it is printed, or
             shown in a notebook).
 
@@ -868,7 +868,7 @@ def summary(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="generator" content="{generator}"><title>{html.escape(title)}</title>
 <style>{css}</style></head><body><main>
-<h1>{html.escape(title)}</h1><p class="sub">{html.escape(note)}</p>
+<h1>{html.escape(title)}</h1><p class="sub">{html.escape(note or "")}</p>
 {meta}
 <div class="tiles">{"".join(tiles)}</div>
 {"".join(s for s in sections if s)}

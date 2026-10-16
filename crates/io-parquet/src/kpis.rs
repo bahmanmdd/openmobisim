@@ -37,7 +37,8 @@ type Row = (u32, &'static str, &'static str, f64);
 /// loading, and what the iteration showed of the pattern settling
 /// (`reselected_share`, `changed_share`, `time_change`, `gap`, `gap_expected`, `gap_excess`,
 /// `incomplete_share`, `gap_network`, `gap_network_excess`, `gap_flow`, `gap_flow_floor`,
-/// `gap_flow_excess`; a number that was not measured has no row); the counts that cannot change from one loading to the next
+/// `gap_flow_excess`, `itinerary_gap_excess`; a number that was not measured has no row); the
+/// counts that cannot change from one loading to the next
 /// (`trips`, `no_vehicle_available_trips`, `no_feasible_path_trips`,
 /// `mode_not_available_trips`, `completion_rate`) are written once, for the last.
 /// All of these are `mode` `all`; the last loading's trip metrics are also written
@@ -171,6 +172,9 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
             ("gap_flow", r.gap_flow),
             ("gap_flow_floor", r.gap_flow_floor),
             ("gap_flow_excess", r.gap_flow_excess),
+            // The itineraries' disequilibrium (S227), the third input of the run's verdict, so
+            // the verdict can be read back from the file (C2, `Run.open`).
+            ("itinerary_gap_excess", r.itinerary_gap_excess),
         ] {
             if value.is_finite() {
                 rows.push((i, all, name, value));

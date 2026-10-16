@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from openmobisim import _core
+from openmobisim._log import logger
 
 #: The bundle's version: a case's files never change within one.
 BUNDLE_VERSION = "v1"
@@ -432,7 +433,9 @@ def case_check(
     reference = json.loads(_REFERENCE.read_text(encoding="utf-8")) if _REFERENCE.exists() else {}
     if not quiet:
         made = reference.get("git_sha") or "not recorded"
-        print(f"build {_core.build_info()['git_sha']}; the reference was made by build {made}")
+        logger.info(
+            f"build {_core.build_info()['git_sha']}; the reference was made by build {made}"
+        )
     rows = []
     for name in names or case_names():
         c = case(name, root)
@@ -448,6 +451,6 @@ def case_check(
                    "run_s": time.perf_counter() - t, "result": got}  # fmt: skip
             rows.append(row)
             if not quiet:
-                print(f"{name:14s} {scenario:10s} {status:31s} {row['run_s']:7.1f} s  "
-                      + "; ".join(notes), flush=True)  # fmt: skip
+                logger.info(f"{name:14s} {scenario:10s} {status:31s} {row['run_s']:7.1f} s  "
+                            + "; ".join(notes))  # fmt: skip
     return rows

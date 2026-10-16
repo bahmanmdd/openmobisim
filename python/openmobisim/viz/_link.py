@@ -167,12 +167,36 @@ def busiest_bins(link_bins: Any) -> tuple[int, int] | tuple[None, None]:
     return first, stop
 
 
-def _bin_range(bins_arg: int | tuple[int, int] | None) -> tuple[int | None, int | None]:
+def _clock_seconds(value: str) -> int:
+    """``"07:30"`` (or ``"07:30:15"``) as seconds after midnight."""
+    try:
+        parts = [int(x) for x in value.split(":")]
+        if len(parts) not in (2, 3) or not 0 <= parts[1] < 60 or parts[0] < 0:
+            raise ValueError
+        return parts[0] * 3600 + parts[1] * 60 + (parts[2] if len(parts) == 3 else 0)
+    except ValueError:
+        raise ValueError(f"a clock time reads like '07:30', got {value!r}") from None
+
+
+def _bin_range(bins_arg: Any, bin_s: int = 1) -> tuple[int | None, int | None]:
+    """The bins asked for, as ``(first, stop)``: bin numbers counted from midnight, or clock times.
+
+    A clock time alone is the bin it falls in; a pair of clock times, the bins that cover the
+    span between them (C2).
+    """
     if bins_arg is None:
         return None, None
+    if isinstance(bins_arg, str):
+        b = _clock_seconds(bins_arg) // bin_s
+        return b, b + 1
     if isinstance(bins_arg, int):
         return bins_arg, bins_arg + 1
     first, stop = bins_arg
+    if isinstance(first, str) or isinstance(stop, str):
+        start_s, end_s = _clock_seconds(str(first)), _clock_seconds(str(stop))
+        if end_s <= start_s:
+            raise ValueError(f"bins: the second clock time must be later, got {bins_arg!r}")
+        return start_s // bin_s, -(-end_s // bin_s)
     return int(first), int(stop)
 
 
@@ -195,7 +219,7 @@ _TITLES = {
 def map_link(
     run: Any,
     *,
-    bins: int | tuple[int, int] | str | None = None,
+    bins: int | str | tuple[int, int] | tuple[str, str] | None = None,
     layer: str = "road",
     colour: str | None = None,
     ramp: str = "spectrum",
@@ -226,8 +250,10 @@ def map_link(
         bins: Which time bins to show: ``None`` for the busiest part of the run
             (the busiest bin and the bins around it carrying at least a quarter of
             its traffic, S265), ``"all"`` for every bin from the first to the last
-            that saw traffic, an ``int`` for one bin, or ``(first, stop)`` for a
-            range (``stop`` excluded).
+            that saw traffic, a clock time for the bin it falls in (``"07:45"``), a
+            pair of clock times for the bins that cover the span (``("07:30",
+            "08:30")``), or bin numbers counted from midnight: an ``int`` for one
+            bin, ``(first, stop)`` for a range (``stop`` excluded).
         layer: Which layer's traffic to draw: ``"road"`` (default: cars, on the
             road network), ``"bike"`` or ``"walk"`` (each on its own layer's links,
             ``network.layer(...)``; volume counts travellers, not PCU).
@@ -316,7 +342,7 @@ def map_link(
     if bins is None:
         first, stop = busiest_bins(link_bins)
     else:
-        first, stop = (None, None) if bins == "all" else _bin_range(bins)
+        first, stop = (None, None) if bins == "all" else _bin_range(bins, link_bins.bin_seconds)
     free = network.link_free_flow_s()  # a signal's mean wait in it (S268)
     table = link_table(link_bins, n_links, free, first=first, stop=stop)
     volume, delay = table["volume"], table["delay"]

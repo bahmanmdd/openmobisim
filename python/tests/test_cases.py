@@ -129,7 +129,11 @@ def test_a_case_weighs_its_travellers_keeps_given_classes_and_pins_gateways(made
 
 
 def test_a_check_compares_with_the_reference_and_the_command_line_runs_it(
-    made_up: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    made_up: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     from openmobisim.__main__ import main
 
@@ -168,7 +172,7 @@ def test_a_check_compares_with_the_reference_and_the_command_line_runs_it(
     # The summary page needs matplotlib (the viz extra), which a bare install lacks.
     has_matplotlib = importlib.util.find_spec("matplotlib") is not None
     assert (folder / "summary.html").exists() == has_matplotlib
-    assert (folder / "map.html").resolve().as_uri() in out  # a link to click
+    assert (folder / "map.html").resolve().as_uri() in caplog.text  # a link to click (logging)
     assert main(["run", "line", "--root", str(made_up), "--no-pages", "--output", "plain"]) == 0
     assert f"fingerprint {got['fingerprint']}" in capsys.readouterr().out  # the reference's
     assert not (tmp_path / "plain" / "map.html").exists()

@@ -12,6 +12,7 @@ transit (``parkings=``). Roads and lines can be disrupted at a time of day
 
 from __future__ import annotations
 
+import csv
 import json
 import tempfile
 import warnings
@@ -19,8 +20,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from openmobisim import _core
 from openmobisim._columns import Columns
+from openmobisim._log import logger
 from openmobisim.demand import _class_table, _trips_checked, demand_read_trips
 
 __all__ = [
@@ -205,6 +209,73 @@ class Table:
         return f"Table({self.path!r})"
 
 
+#: The per-iteration measures ``Run.open`` reads back from ``kpis.parquet`` (mode ``all``).
+_FILE_CONVERGENCE = (
+    "reselected_share", "changed_share", "total_travel_time_s", "completed_trips",
+    "completed_people", "truncated_trips", "time_change", "gap", "gap_network", "gap_expected",
+    "gap_excess", "gap_network_excess", "incomplete_share", "gap_flow", "gap_flow_floor",
+    "gap_flow_excess", "mode_changed_share", "itinerary_gap_excess",
+)  # fmt: skip
+#: ``completion``'s keys and the ``kpis.parquet`` metrics they are.
+_FILE_COMPLETION = {
+    "total_trips": "trips", "completed": "completed_trips", "truncated": "truncated_trips",
+    "no_vehicle_available": "no_vehicle_available_trips",
+    "no_feasible_path": "no_feasible_path_trips", "mode_not_available": "mode_not_available_trips",
+}  # fmt: skip
+
+
+def _run_ids(path: str | None) -> set[str]:
+    """The run ids a ``kpis.parquet`` holds (one, for a run's own file)."""
+    if path is None:
+        return set()
+    import pyarrow.parquet as pq
+
+    return set(pq.read_table(path, columns=["run_id"]).column("run_id").to_pylist())
+
+
+class _Files:
+    """A finished run's folder in place of the core's summary (``Run.open``, C2).
+
+    It gives what the files hold; anything else raises, naming what is missing.
+    """
+
+    def __init__(self, folder: Path) -> None:
+        manifest_path = folder / "manifest.json"
+        if not manifest_path.exists():
+            raise FileNotFoundError(f"{str(folder)!r} holds no run: no manifest.json")
+        self._folder = folder
+        m = json.loads(manifest_path.read_text())
+        self._manifest = m
+        self.manifest_path = str(manifest_path)
+        for name in ("kpis", "diagnostics", "events", "link_bins", "parking_bins", "transit_calls"):
+            path = folder / f"{name}.parquet"
+            setattr(self, f"{name}_path", str(path) if path.exists() else None)
+        for layer in ("bike", "walk"):
+            path = folder / f"link_bins_{layer}.parquet"
+            setattr(self, f"link_bins_{layer}_path", str(path) if path.exists() else None)
+        timings = folder / "timings.csv"
+        self.timings_path = str(timings) if timings.exists() else None
+        self.fingerprint = m["run_fingerprint"]
+        self.master_seed = int(m["master_seed"])
+        self.choice_model = m["choice_model"]
+        self.equilibration = m["equilibration"]
+        self.route_update = m.get("route_update") or "none"
+        self.converged = bool(m.get("converged", False))
+
+    def _kpis(self) -> list[tuple[int, str, str, float]]:
+        import pyarrow.parquet as pq
+
+        t = pq.read_table(self.kpis_path, columns=["iteration", "mode", "metric", "value"])
+        columns = [t.column(c).to_pylist() for c in ("iteration", "mode", "metric", "value")]
+        return list(zip(*columns, strict=True))
+
+    def __getattr__(self, name: str) -> Any:
+        raise RuntimeError(
+            f"this run was opened from its folder (Run.open), whose files do not hold {name!r}; "
+            "run the scenario again for it"
+        )
+
+
 class Run:
     """What one run produced."""
 
@@ -231,6 +302,79 @@ class Run:
         self.run_id = run_id
         self.flow_level = flow_level
         self.flow_step_s = flow_step_s
+        self._files: _Files | None = None
+
+    @classmethod
+    def open(cls, folder: str | Path) -> Run:
+        """A finished run, read back from the folder it wrote (C2), without running it again.
+
+        It gives what the files hold: ``fingerprint``, ``master_seed``, ``choice_model``,
+        ``equilibration``, ``route_update``, ``converged`` and ``manifest()`` (from
+        ``manifest.json``); ``completion``, ``completion_by_mode``, ``total_travel_time_s``,
+        ``mean_travel_time_s``, ``convergence()``, ``convergence_gap`` and
+        ``convergence_verdict`` (from ``kpis.parquet``); ``timings()``; and every table
+        (``kpis()``, ``diagnostics()``, ``events()``, ``link_bins_table()``,
+        ``parking_bins_table()``, ``transit_calls_table()``). What only the run in memory holds
+        (the network, the route sets and choices, the per-link arrays, the itinerary choices)
+        raises a ``RuntimeError`` that says so. Needs pyarrow.
+
+        Args:
+            folder: The run's ``output_dir``, holding its ``manifest.json``.
+
+        Raises:
+            FileNotFoundError: If the folder holds no ``manifest.json``.
+        """
+        files = _Files(Path(folder))
+        m = files._manifest
+        run = cls(
+            files,  # in place of the core's summary
+            run_id=Path(folder).name,
+            flow_level=int(m.get("flow_level", 0)),
+            flow_step_s=int(m.get("flow_step_seconds", 300)),
+        )
+        run._files = files
+        kpis = files._kpis()
+        run_ids = {r for r in _run_ids(files.kpis_path)}
+        run.run_id = run_ids.pop() if len(run_ids) == 1 else run.run_id
+        last = max((i for i, mode, _, _ in kpis if mode == "all"), default=0)
+        totals = {name: v for i, mode, name, v in kpis if mode == "all" and i == last}
+        files.total_trips, files.total_travel_time_s = int(totals.get("trips", 0)), 0.0
+        for key, metric in _FILE_COMPLETION.items():
+            setattr(files, key, int(totals.get(metric, 0)))
+        files.total_travel_time_s = float(totals.get("total_travel_time_s", 0.0))
+        by_mode: dict[str, dict[str, float]] = {}
+        for i, mode, name, v in kpis:
+            if mode != "all" and i == last:
+                by_mode.setdefault(mode, {})[name] = v
+        files.completion_by_mode = {
+            mode: {
+                **{key: int(row.get(metric, 0)) for key, metric in _FILE_COMPLETION.items()},
+                "total_travel_time_s": float(row.get("total_travel_time_s", 0.0)),
+                "people": float(row.get("people", 0.0)),
+                "completed_people": float(row.get("completed_people", 0.0)),
+            }
+            for mode, row in sorted(by_mode.items())
+            if "trips" in row
+        }
+        iterations = sorted({i for i, mode, _, _ in kpis if mode == "all"})
+        values = {(i, name): v for i, mode, name, v in kpis if mode == "all"}
+        nan = float("nan")
+        files.convergence = {
+            "iteration": np.array(iterations, dtype=np.uint32),
+            **{
+                name: np.array([values.get((i, name), nan) for i in iterations], dtype=float)
+                for name in _FILE_CONVERGENCE
+            },
+        }
+        files.convergence["completed"] = files.convergence.pop("completed_trips")
+        files.convergence["truncated"] = files.convergence.pop("truncated_trips")
+        if files.timings_path is not None:
+            with open(files.timings_path, newline="") as f:
+                rows = list(csv.reader(f))[1:]
+            files.timings = [
+                (stage, int(it) if it else None, float(sec)) for stage, it, sec in rows
+            ]
+        return run
 
     @property
     def network(self) -> _core.Network | None:
@@ -777,6 +921,19 @@ class Run:
             f"The window is {origin}. To run them, widen it, for example "
             f"Scenario(..., window=({wide[0]!r}, {wide[1]!r})), leaving each trip time to "
             "finish before the end; or take them out of the demand."
+        )
+
+    def _summary_line(self) -> str:
+        """The one line a run says when it ends (``logging``, INFO; C2)."""
+        c, w = self.completion, self.window
+        seconds = sum(s for stage, it, s in self._summary.timings if stage == "total")
+        verdict = self.convergence_verdict
+        return (
+            f"Run {self.run_id!r}: {seconds:.1f} s, window {_clock(w['start_s'])}–"
+            f"{_clock(w['end_s'])}, {c['completed']:,} of {c['total_trips']:,} trips completed, "
+            f"mean trip {self.mean_travel_time_s / 60:.1f} min"
+            + (f", verdict {verdict}" if verdict else "")
+            + " (run.timings() has every stage)"
         )
 
     def _timings_text(self) -> str:
@@ -2311,7 +2468,8 @@ class Scenario:
             car_snap_motorway_m=(self._mode_options or {}).get("car_snap_motorway_m"),
         )
         if not quiet:
-            print(run._timings_text())
+            logger.info(run._summary_line())
+            logger.debug(run._timings_text())
         left_out = run._window_text()
         if left_out is not None:
             warnings.warn(left_out, WindowWarning, stacklevel=2)
