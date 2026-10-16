@@ -45,7 +45,7 @@ pub mod transit_calls;
 
 pub use diagnostics::write_diagnostics;
 pub use events::write_events;
-pub use kpis::write_kpis;
+pub use kpis::{write_kpis, write_kpis_csv};
 pub use link_bins::{write_layer_link_bins, write_link_bins};
 pub use manifest::{Manifest, write_manifest};
 pub use parking_bins::write_parking_bins;

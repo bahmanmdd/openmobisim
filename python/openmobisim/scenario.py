@@ -1121,6 +1121,7 @@ class Scenario:
         overwrite: bool = False,
         design_id: str = "default",
         replication: int = 0,
+        outputs: str = "all",
     ) -> Run:
         """Run the scenario and write its output artifacts.
 
@@ -1146,6 +1147,14 @@ class Scenario:
             replication: Which replication of its design this run is (``kpis.parquet``'s
                 ``replication``), from 0: runs of one design that differ only in their
                 ``master_seed``. Like ``run_id``, both are labels, not in the fingerprint.
+            outputs: Which files the run writes in ``output_dir``. ``"all"`` (the default):
+                ``kpis.parquet``, ``diagnostics.parquet``, ``events.parquet``, ``manifest.json``,
+                ``timings.csv`` and, as the run has them, the link bins, ``transit_calls.parquet``
+                and ``parking_bins.parquet``. ``"minimal"``, for mass runs (thousands of
+                scenarios, a design space): ``kpis.csv`` (the rows of ``kpis.parquet``) and
+                ``manifest.json`` only, a few kilobytes; the run's results in memory, its
+                fingerprint and ``Run.open`` are the same, and the files it left out are
+                refused by name. No page or figure is ever written by ``run``.
 
         Returns:
             A ``Run`` with the four artifacts and the completion statistics.
@@ -1164,8 +1173,15 @@ class Scenario:
             raise ValueError(f"design_id must be a non-empty string, got {design_id!r}")
         if not isinstance(replication, int) or replication < 0:
             raise ValueError(f"replication must be a whole number from 0, got {replication!r}")
+        if outputs not in ("all", "minimal"):
+            raise ValueError(f'outputs must be "all" or "minimal", got {outputs!r}')
         summary = self._pipeline(
-            run_id, output_dir, threads=threads, design_id=design_id, replication=replication
+            run_id,
+            output_dir,
+            threads=threads,
+            design_id=design_id,
+            replication=replication,
+            outputs=outputs,
         )
         run = Run(
             summary,
@@ -1177,6 +1193,7 @@ class Scenario:
             parkings=self._parkings,
             car_snap_motorway_m=(self._mode_options or {}).get("car_snap_motorway_m"),
         )
+        run._outputs = outputs
         if not quiet:
             logger.info(run._summary_line())
             logger.debug(run._timings_text())

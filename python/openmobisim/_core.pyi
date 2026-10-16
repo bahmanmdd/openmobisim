@@ -888,6 +888,7 @@ def run_pipeline(
     fingerprint_only: bool = False,
     design_id: str = "default",
     replication: int = 0,
+    outputs: str = "all",
 ) -> RunSummary | str:
     """Run the whole pipeline and write all four output artifacts.
 
@@ -990,6 +991,7 @@ def run_pipeline(
             it, writing nothing (S277).
         design_id: The design written in every row of ``kpis.parquet`` (``"default"``).
         replication: The replication written in every row of ``kpis.parquet`` (0).
+        outputs: ``"all"`` (every file), or ``"minimal"``: ``kpis.csv`` and ``manifest.json`` only.
 
     Returns:
         A :class:`RunSummary`; with ``fingerprint_only``, the fingerprint (16 hex digits).

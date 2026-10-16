@@ -129,6 +129,9 @@ pub struct Manifest {
     /// Whether the strategy stopped before its most iterations because it had
     /// converged.
     pub converged: bool,
+    /// Which files the run wrote (C2): `"all"`, or `"minimal"` (this manifest and `kpis.csv`
+    /// only, for mass runs). Results do not depend on it, so it is in no fingerprint.
+    pub outputs: String,
 }
 
 impl Manifest {
@@ -209,6 +212,7 @@ impl Manifest {
             trip_values: description.trip_values.clone(),
             iterations_run: u32::try_from(result.iterations.len().max(1)).unwrap_or(u32::MAX),
             converged: result.converged,
+            outputs: "all".to_string(),
         }
     }
 
@@ -265,7 +269,7 @@ impl Manifest {
                 format!("[{}]", names.iter().map(|n| text(n)).collect::<Vec<_>>().join(", "))
             })
         };
-        let fields: [(&str, String); 44] = [
+        let fields: [(&str, String); 45] = [
             ("manifest_version", self.manifest_version.to_string()),
             ("openmobisim_version", text(&self.openmobisim_version)),
             ("git_sha", text(&self.git_sha)),
@@ -314,8 +318,16 @@ impl Manifest {
             ("trip_values", optional(names(&self.trip_values))),
             ("iterations_run", self.iterations_run.to_string()),
             ("converged", self.converged.to_string()),
+            ("outputs", text(&self.outputs)),
             ("link_bin_seconds", optional(self.link_bin_seconds.map(|s| s.to_string()))),
-            ("link_bins_file", optional(self.link_bin_seconds.map(|_| text("link_bins.parquet")))),
+            (
+                "link_bins_file",
+                optional(
+                    self.link_bin_seconds
+                        .filter(|_| self.outputs == "all")
+                        .map(|_| text("link_bins.parquet")),
+                ),
+            ),
         ];
         let body: Vec<String> =
             fields.iter().map(|(key, value)| format!("  \"{key}\": {value}")).collect();

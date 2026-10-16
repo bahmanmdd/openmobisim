@@ -79,8 +79,9 @@ class Table:
     """
 
     def __init__(self, path: str) -> None:
-        """Wrap the Parquet file at `path`."""
+        """Wrap the Parquet file (or, for a run's minimal outputs, the CSV file) at `path`."""
         self.path = path
+        self._csv = str(path).endswith(".csv")
 
     def to_polars(self) -> Any:
         """Read this table with polars.
@@ -95,7 +96,7 @@ class Table:
             raise ImportError(
                 "reading a Table needs polars: pip install 'openmobisim[notebooks]'"
             ) from e
-        return pl.read_parquet(self.path)
+        return pl.read_csv(self.path) if self._csv else pl.read_parquet(self.path)
 
     def to_pandas(self) -> Any:
         """Read this table with pandas.
@@ -110,6 +111,8 @@ class Table:
             raise ImportError(
                 "reading a Table needs pandas: pip install 'openmobisim[notebooks]'"
             ) from e
+        if self._csv:  # exact: the default parser may be one unit off in the last place
+            return pd.read_csv(self.path, float_precision="round_trip")
         return pd.read_parquet(self.path)
 
     def to_arrow(self) -> Any:
@@ -120,12 +123,13 @@ class Table:
                 ``openmobisim[notebooks]``.
         """
         try:
+            import pyarrow.csv as pc
             import pyarrow.parquet as pq
         except ImportError as e:
             raise ImportError(
                 "reading a Table needs pyarrow: pip install 'openmobisim[notebooks]'"
             ) from e
-        return pq.read_table(self.path)
+        return pc.read_csv(self.path) if self._csv else pq.read_table(self.path)
 
     def __repr__(self) -> str:
         """The path this table reads from."""

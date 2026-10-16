@@ -80,9 +80,12 @@ _FILE_COMPLETION = {
 
 
 def _run_ids(path: str | None) -> set[str]:
-    """The run ids a ``kpis.parquet`` holds (one, for a run's own file)."""
+    """The run ids a ``kpis.parquet`` (or ``kpis.csv``) holds: one, for a run's own file."""
     if path is None:
         return set()
+    if path.endswith(".csv"):
+        with open(path, newline="") as f:
+            return {row["run_id"] for row in csv.DictReader(f)}
     import pyarrow.parquet as pq
 
     return set(pq.read_table(path, columns=["run_id"]).column("run_id").to_pylist())
@@ -105,6 +108,9 @@ class _Files:
         for name in ("kpis", "diagnostics", "events", "link_bins", "parking_bins", "transit_calls"):
             path = folder / f"{name}.parquet"
             setattr(self, f"{name}_path", str(path) if path.exists() else None)
+        if self.kpis_path is None and (folder / "kpis.csv").exists():  # the minimal outputs
+            self.kpis_path = str(folder / "kpis.csv")
+        self.outputs = m.get("outputs", "all")
         for layer in ("bike", "walk"):
             path = folder / f"link_bins_{layer}.parquet"
             setattr(self, f"link_bins_{layer}_path", str(path) if path.exists() else None)
@@ -118,6 +124,10 @@ class _Files:
         self.converged = bool(m.get("converged", False))
 
     def _kpis(self) -> list[tuple[int, str, str, float]]:
+        if self.kpis_path is not None and self.kpis_path.endswith(".csv"):
+            with open(self.kpis_path, newline="") as f:
+                rows = list(csv.DictReader(f))
+            return [(int(r["iteration"]), r["mode"], r["metric"], float(r["value"])) for r in rows]
         import pyarrow.parquet as pq
 
         t = pq.read_table(self.kpis_path, columns=["iteration", "mode", "metric", "value"])
@@ -158,6 +168,17 @@ class Run:
         self.flow_level = flow_level
         self.flow_step_s = flow_step_s
         self._files: _Files | None = None
+        # Which files the run wrote (C2): "all", or "minimal" (kpis.csv, manifest.json).
+        self._outputs = "all"
+
+    def _written(self, path: str | None, what: str) -> str | None:
+        """``path``, or a clear refusal for a file the run's minimal outputs leave out."""
+        if self._outputs == "minimal":
+            raise RuntimeError(
+                f"this run wrote its minimal outputs (outputs='minimal': kpis.csv and "
+                f"manifest.json), so not {what}; run with outputs='all' for it"
+            )
+        return path
 
     @classmethod
     def open(cls, folder: str | Path) -> Run:
@@ -188,6 +209,7 @@ class Run:
             flow_step_s=int(m.get("flow_step_seconds", 300)),
         )
         run._files = files
+        run._outputs = files.outputs
         kpis = files._kpis()
         run_ids = {r for r in _run_ids(files.kpis_path)}
         run.run_id = run_ids.pop() if len(run_ids) == 1 else run.run_id
@@ -511,6 +533,7 @@ class Run:
             "bike": self._summary.link_bins_bike_path,
             "walk": self._summary.link_bins_walk_path,
         }[_check_layer(layer)]
+        path = self._written(path, f"the {layer} layer's link bins")
         return None if path is None else Table(path)
 
     def kpis(self) -> Table:
@@ -531,15 +554,15 @@ class Run:
         ``mode_share`` (of the trips, weighted by the travellers), and every iteration adds
         ``mode_changed_share`` under ``"all"``.
         """
-        return Table(self._summary.kpis_path)
+        return Table(self._summary.kpis_path)  # kpis.csv for a run's minimal outputs
 
     def diagnostics(self) -> Table:
         """``diagnostics.parquet``: aggregated counters, one row per issue."""
-        return Table(self._summary.diagnostics_path)
+        return Table(self._written(self._summary.diagnostics_path, "diagnostics.parquet"))
 
     def events(self) -> Table:
         """``events.parquet``: sampled per-trip events."""
-        return Table(self._summary.events_path)
+        return Table(self._written(self._summary.events_path, "events.parquet"))
 
     def manifest(self) -> dict[str, Any]:
         """``manifest.json``: the file that makes this run reproducible."""
@@ -574,7 +597,7 @@ class Run:
     @property
     def timings_path(self) -> str:
         """Path to ``timings.csv``: ``Run.timings()`` as a file."""
-        return self._summary.timings_path
+        return self._written(self._summary.timings_path, "timings.csv")
 
     @property
     def fallback_car(self) -> Columns:
@@ -884,7 +907,7 @@ class Run:
         reached by the end of the window is null. The file's metadata carries the
         run's fingerprint, its master seed and the service date.
         """
-        path = self._summary.transit_calls_path
+        path = self._written(self._summary.transit_calls_path, "transit_calls.parquet")
         return None if path is None else Table(path)
 
     def transit_calls(self) -> Columns | None:
@@ -941,7 +964,7 @@ class Run:
 
         The file's metadata carries the run's fingerprint and its master seed.
         """
-        path = self._summary.parking_bins_path
+        path = self._written(self._summary.parking_bins_path, "parking_bins.parquet")
         return None if path is None else Table(path)
 
     def parking_places(self) -> Columns | None:

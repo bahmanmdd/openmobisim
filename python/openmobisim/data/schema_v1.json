@@ -526,6 +526,7 @@
     "master_seed",
     "network_fingerprint",
     "openmobisim_version",
+    "outputs",
     "people_outside_window",
     "person_values",
     "platform",

@@ -60,8 +60,8 @@ use crate::routes::{PyRouteSets, to_options};
 use openmobisim_core_routes::Registry;
 use openmobisim_io_parquet::manifest::Manifest;
 use openmobisim_io_parquet::{
-    write_diagnostics, write_events, write_kpis, write_layer_link_bins, write_link_bins,
-    write_manifest,
+    write_diagnostics, write_events, write_kpis, write_kpis_csv, write_layer_link_bins,
+    write_link_bins, write_manifest,
 };
 
 /// One `trips.parquet` row, as a plain tuple in `RawTrip`'s field order; the
@@ -696,7 +696,7 @@ fn convergence_arrays(
     choice_detour_limit=None, choice_max_routes=None, route_cache=false, bike_cost="dedicated", transit=None,
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
     loading_options=None, price_options=None, threads=None, fingerprint_only=false,
-    design_id="default", replication=0,
+    design_id="default", replication=0, outputs="all",
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -753,7 +753,19 @@ pub fn run_pipeline(
     fingerprint_only: bool,
     design_id: &str,
     replication: u32,
+    outputs: &str,
 ) -> PyResult<Py<PyAny>> {
+    // Which files the run writes (C2): "all", or "minimal" (kpis.csv and manifest.json) for mass
+    // runs; the results in memory are the same either way.
+    let minimal = match outputs {
+        "all" => false,
+        "minimal" => true,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "outputs must be \"all\" or \"minimal\", got {other:?}"
+            )));
+        }
+    };
     // The run's thread count (S277): `None` for every logical core; never 0.
     let threads = match threads {
         Some(0) => return Err(PyValueError::new_err("threads must be at least 1, or None")),
@@ -1137,29 +1149,37 @@ pub fn run_pipeline(
 
     let dir = Path::new(output_dir);
     std::fs::create_dir_all(dir).map_err(to_value_error)?;
-    let kpis_path = dir.join("kpis.parquet");
+    let kpis_path = dir.join(if minimal { "kpis.csv" } else { "kpis.parquet" });
     let diagnostics_path = dir.join("diagnostics.parquet");
     let events_path = dir.join("events.parquet");
     let manifest_path = dir.join("manifest.json");
 
     // C2: the design and replication a batch names ("default" and 0 for a single run); like the
     // run's id, labels and not inputs, so not in the fingerprint.
-    write_kpis(&kpis_path, run_id, design_id, replication, 0, &result).map_err(to_value_error)?;
-    write_diagnostics(&diagnostics_path, run_id, &diagnostics).map_err(to_value_error)?;
-    write_events(
-        &events_path,
-        run_id,
-        &result.events,
-        openmobisim_io_parquet::events::DEFAULT_SAMPLE_RATE,
-    )
-    .map_err(to_value_error)?;
+    if minimal {
+        write_kpis_csv(&kpis_path, run_id, design_id, replication, 0, &result)
+            .map_err(to_value_error)?;
+    } else {
+        write_kpis(&kpis_path, run_id, design_id, replication, 0, &result)
+            .map_err(to_value_error)?;
+        write_diagnostics(&diagnostics_path, run_id, &diagnostics).map_err(to_value_error)?;
+        write_events(
+            &events_path,
+            run_id,
+            &result.events,
+            openmobisim_io_parquet::events::DEFAULT_SAMPLE_RATE,
+        )
+        .map_err(to_value_error)?;
+    }
     let mut manifest =
         Manifest::for_run(&travellers, &result, Second(window.end_s), default_weight, &description);
     manifest.window_start_seconds = window.start_s;
     manifest.trips_outside_window = window.before.trips + window.after.trips;
     manifest.people_outside_window = window.before.people + window.after.people;
+    manifest.outputs = outputs.to_string();
     write_manifest(&manifest_path, &manifest).map_err(to_value_error)?;
     let link_bins_path = match &result.link_bins {
+        Some(_) if minimal => None,
         Some(bins) => {
             let path = dir.join("link_bins.parquet");
             write_link_bins(&path, run_id, bins, &network.inner, &description)
@@ -1174,7 +1194,7 @@ pub fn run_pipeline(
             .into_iter()
             .enumerate()
     {
-        if let Some(bins) = bins {
+        if let Some(bins) = bins.as_ref().filter(|_| !minimal) {
             let path = dir.join(format!("link_bins_{}.parquet", layer.as_str()));
             let graph = network.static_layer(layer)?;
             write_layer_link_bins(&path, run_id, layer, bins, graph.network(), &description)
@@ -1185,7 +1205,7 @@ pub fn run_pipeline(
     let [link_bins_bike_path, link_bins_walk_path] = layer_paths;
     // Every call of the timetable, with its times and passengers (S199, S200).
     let transit_calls_path = match (&result.transit, &transit_setup) {
-        (Some(r), Some(t)) => {
+        (Some(r), Some(t)) if !minimal => {
             let path = dir.join("transit_calls.parquet");
             openmobisim_io_parquet::write_transit_calls(
                 &path,
@@ -1202,7 +1222,7 @@ pub fn run_pipeline(
     };
     // How full every parking was, bin by bin (M4, D12).
     let parking_bins_path = match (&result.parking, &parking_setup) {
-        (Some(r), Some(p)) => {
+        (Some(r), Some(p)) if !minimal => {
             let path = dir.join("parking_bins.parquet");
             openmobisim_io_parquet::write_parking_bins(&path, run_id, p, r, &description)
                 .map_err(to_value_error)?;
@@ -1339,7 +1359,9 @@ pub fn run_pipeline(
     }
     timing_rows.push(("total".to_string(), None, started.elapsed().as_secs_f64()));
     let timings_path = dir.join("timings.csv");
-    write_timings(&timings_path, &timing_rows).map_err(to_value_error)?;
+    if !minimal {
+        write_timings(&timings_path, &timing_rows).map_err(to_value_error)?;
+    }
 
     // Where a queue outgrew its link (S229): peak occupancy against storage, worst first.
     let spillback = match &result.link_peak_pcu {

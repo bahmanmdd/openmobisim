@@ -273,3 +273,36 @@ pub fn write_kpis(
 
     write_single_batch(path.as_ref(), schema, &batch)
 }
+
+/// The same rows as [`write_kpis`], as a CSV file (`kpis.csv`): the run's only results file when
+/// it writes the minimal outputs (C2, `outputs="minimal"`, for mass runs). The header is the seven
+/// columns of `kpis.parquet`; values are written in full (the shortest form that reads back to the
+/// same number); a text field holding a comma, a quote or a line break is quoted.
+///
+/// # Errors
+///
+/// [`WriteError`] if the file cannot be created or written.
+pub fn write_kpis_csv(
+    path: impl AsRef<Path>,
+    run_id: &str,
+    design_id: &str,
+    replication: u32,
+    iteration: u32,
+    result: &RunResult,
+) -> Result<(), WriteError> {
+    use std::fmt::Write as _;
+    let quoted = |field: &str| -> String {
+        if field.contains([',', '"', '\n', '\r']) {
+            format!("\"{}\"", field.replace('"', "\"\""))
+        } else {
+            field.to_string()
+        }
+    };
+    let (run_id, design_id) = (quoted(run_id), quoted(design_id));
+    let mut text = String::from("run_id,design_id,replication,iteration,mode,metric,value\n");
+    for (i, mode, name, value) in metrics(result, iteration) {
+        let _ = writeln!(text, "{run_id},{design_id},{replication},{i},{mode},{name},{value}");
+    }
+    std::fs::write(path, text)?;
+    Ok(())
+}
