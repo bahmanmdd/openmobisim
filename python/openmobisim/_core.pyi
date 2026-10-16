@@ -886,6 +886,8 @@ def run_pipeline(
     price_options: dict[str, float] | None = None,
     threads: int | None = None,
     fingerprint_only: bool = False,
+    design_id: str = "default",
+    replication: int = 0,
 ) -> RunSummary | str:
     """Run the whole pipeline and write all four output artifacts.
 
@@ -986,6 +988,8 @@ def run_pipeline(
             logical core. Recorded in the manifest, not the fingerprint (``Scenario.run``).
         fingerprint_only: If true, prepare the run and return its fingerprint without running
             it, writing nothing (S277).
+        design_id: The design written in every row of ``kpis.parquet`` (``"default"``).
+        replication: The replication written in every row of ``kpis.parquet`` (0).
 
     Returns:
         A :class:`RunSummary`; with ``fingerprint_only``, the fingerprint (16 hex digits).

@@ -20,9 +20,29 @@ from pathlib import Path
 from typing import Any
 
 from openmobisim import _core
-from openmobisim.demand import _class_table, demand_read_trips
+from openmobisim._columns import Columns
+from openmobisim.demand import _class_table, _trips_checked, demand_read_trips
 
-__all__ = ["FallbackWarning", "NoAlternativeWarning", "Run", "Scenario", "Table", "WindowWarning"]
+__all__ = [
+    "PRESETS",
+    "FallbackWarning",
+    "NoAlternativeWarning",
+    "Run",
+    "Scenario",
+    "Table",
+    "WindowWarning",
+]
+
+#: Named settings for speed (C2, D-5 a): ``"fast"`` is what the starter cases set (S267): the
+#: route searches shared by origin and half hour, and the park-and-ride drives likewise;
+#: ``"complete"`` is the core's defaults, every search made on its own.
+PRESETS: dict[str, dict[str, dict[str, float]]] = {
+    "fast": {
+        "route_update_options": {"tree_step_s": 1800},
+        "parking_options": {"reach_car_step_s": 1800},
+    },
+    "complete": {},
+}
 
 #: The flow levels ``Scenario`` accepts: 0 is free flow
 #: with no interaction between vehicles; 2, 3 and 4 are the link transmission
@@ -126,7 +146,7 @@ _STAGE_LABELS = {
 class Table:
     """A results table backed by a Parquet file.
 
-    ``.to_polars()``/``.to_pandas()`` read the file on demand. A later version
+    ``.to_polars()``, ``.to_pandas()`` and ``.to_arrow()`` read the file on demand. A later version
     may hand the table over without reading a file; the call shape stays the
     same.
     """
@@ -164,6 +184,21 @@ class Table:
                 "reading a Table needs pandas: pip install 'openmobisim[notebooks]'"
             ) from e
         return pd.read_parquet(self.path)
+
+    def to_arrow(self) -> Any:
+        """Read this table with pyarrow, as a ``pyarrow.Table``.
+
+        Raises:
+            ImportError: If pyarrow is not installed — install
+                ``openmobisim[notebooks]``.
+        """
+        try:
+            import pyarrow.parquet as pq
+        except ImportError as e:
+            raise ImportError(
+                "reading a Table needs pyarrow: pip install 'openmobisim[notebooks]'"
+            ) from e
+        return pq.read_table(self.path)
 
     def __repr__(self) -> str:
         """The path this table reads from."""
@@ -306,7 +341,7 @@ class Run:
             return None
         return "good" if gap < 0.05 else "acceptable" if gap < 0.15 else "poor"
 
-    def convergence(self) -> dict[str, Any]:
+    def convergence(self) -> Columns:
         """What each iteration showed: how far the run is from an equilibrium.
 
         NumPy arrays, one entry per iteration (a ``"free_flow"`` run has one).
@@ -405,7 +440,7 @@ class Run:
         per iteration, and so are the itinerary gaps (under their modes, as ``gap``),
         ``hub_mismatch_s`` and ``mode_changed_share``.
         """
-        return dict(self._summary.convergence)
+        return Columns(self._summary.convergence)
 
     def route_sets(self) -> _core.RouteSets:
         """The route sets the trips were routed from.
@@ -513,7 +548,7 @@ class Run:
             data: dict[str, Any] = json.load(f)
         return data
 
-    def timings(self) -> dict[str, list[Any]]:
+    def timings(self) -> Columns:
         """Wall-clock time by stage, measured on this machine's clock (S223).
 
         Columns by name, one row per stage in the order the stages ended: ``stage``,
@@ -531,11 +566,11 @@ class Run:
         result and not in the fingerprint.
         """
         rows = self._summary.timings
-        return {
-            "stage": [r[0] for r in rows],
-            "iteration": [r[1] for r in rows],
-            "seconds": [r[2] for r in rows],
-        }
+        return Columns(
+            stage=[r[0] for r in rows],
+            iteration=[r[1] for r in rows],
+            seconds=[r[2] for r in rows],
+        )
 
     @property
     def timings_path(self) -> str:
@@ -543,7 +578,7 @@ class Run:
         return self._summary.timings_path
 
     @property
-    def fallback_car(self) -> dict[str, Any]:
+    def fallback_car(self) -> Columns:
         """The trips that had no alternative and travelled by car (S271, W-1), as columns.
 
         No mode they may use reached their destination within the limits (a walk too long, no
@@ -554,9 +589,9 @@ class Run:
         1}`` (experimental; off by default since S276, when such trips stay unsimulated).
         ``report_no_alternative()`` says why each had no alternative.
         """
-        return dict(self._summary.fallback_car)
+        return Columns(self._summary.fallback_car)
 
-    def report_no_alternative(self) -> dict[str, Any]:
+    def report_no_alternative(self) -> Columns:
         """The trips the last choice left with no alternative, and why (S276), as columns.
 
         No mode they may use reached their destination within the limits, so they were not
@@ -585,7 +620,7 @@ class Run:
         ``change`` names, for each row, what to change: the options behind its reasons
         (``NO_ALTERNATIVE_CHANGES``).
         """
-        table = dict(self._summary.no_alternative)
+        table = Columns(self._summary.no_alternative)
         columns = [f"reason_{mode}" for mode in MODES]
         table["change"] = [
             "; ".join(dict.fromkeys(NO_ALTERNATIVE_CHANGES[r] for r in reasons if r))
@@ -840,7 +875,7 @@ class Run:
         path = self._summary.transit_calls_path
         return None if path is None else Table(path)
 
-    def transit_calls(self) -> dict[str, Any] | None:
+    def transit_calls(self) -> Columns | None:
         """Every call of the timetable in this run, as columns; ``None`` without one.
 
         One row per call (a run at a stop, in order): ``run`` (the GTFS
@@ -854,7 +889,7 @@ class Run:
         weighted by traveller weight. Seconds count from the service day's midnight.
         """
         calls = self._summary.transit_calls
-        return None if calls is None else dict(calls)
+        return None if calls is None else Columns(calls)
 
     @property
     def transit_summary(self) -> dict[str, float] | None:
@@ -871,7 +906,7 @@ class Run:
         summary = self._summary.transit_summary
         return None if summary is None else dict(summary)
 
-    def parking_bins(self) -> dict[str, Any] | None:
+    def parking_bins(self) -> Columns | None:
         """How full each parking was over the day, bin by bin; ``None`` without parkings.
 
         Columns, one row per parking and bin: ``bin`` (counted from midnight, like the link
@@ -886,7 +921,7 @@ class Run:
         written to ``parking_bins.parquet``: read it with ``parking_bins_table()``.
         """
         bins = self._summary.parking_bins
-        return None if bins is None else dict(bins)
+        return None if bins is None else Columns(bins)
 
     def parking_bins_table(self) -> Table | None:
         """``parking_bins.parquet``: ``parking_bins()`` after ``run_id``; ``None`` without parkings.
@@ -896,14 +931,14 @@ class Run:
         path = self._summary.parking_bins_path
         return None if path is None else Table(path)
 
-    def parking_places(self) -> dict[str, Any] | None:
+    def parking_places(self) -> Columns | None:
         """Each parking the run kept, as columns; ``None`` without parkings.
 
         ``parking_id``, ``hub_id``, ``vehicle``, ``capacity``, ``lon``, ``lat`` and
         ``name``. ``parking`` in ``parking_bins()`` indexes these.
         """
         places = self._summary.parking_places
-        return None if places is None else dict(places)
+        return None if places is None else Columns(places)
 
     @property
     def parking_summary(self) -> dict[str, float] | None:
@@ -919,7 +954,7 @@ class Run:
         summary = self._summary.parking_summary
         return None if summary is None else dict(summary)
 
-    def itinerary_choices(self) -> dict[str, Any] | None:
+    def itinerary_choices(self) -> Columns | None:
         """Each itinerary trip's choice, and each choice of mode; ``None`` without any.
 
         One row per transit, park-and-ride and bike-and-ride trip, and per trip choosing its mode
@@ -944,7 +979,7 @@ class Run:
         class or by origin zone.
         """
         choices = self._summary.itinerary_choices
-        return None if choices is None else dict(choices)
+        return None if choices is None else Columns(choices)
 
     def logsum_od(
         self,
@@ -952,7 +987,7 @@ class Run:
         zones: Mapping[str, tuple[float, float]] | None = None,
         *,
         by_class: bool = False,
-    ) -> dict[str, list[Any]]:
+    ) -> Columns:
         """The trips' logsums by origin-destination pair (S245): utility-based accessibility.
 
         The logsum of a trip's choice set (``itinerary_choices()["logsum"]``) averaged over the
@@ -1032,7 +1067,7 @@ class Run:
             g[0] += 1
             g[1] += w
             g[2] += w * float(choices["logsum"][i])
-        out: dict[str, list[Any]] = {"origin": [], "destination": []}
+        out = Columns(origin=[], destination=[])
         if by_class:
             out["user_class"] = []
         out |= {"trips": [], "people": [], "logsum": []}
@@ -1100,7 +1135,7 @@ class Run:
             )
         )
 
-    def report_spillback(self, min_excess_pcu: float = 5.0) -> dict[str, Any] | None:
+    def report_spillback(self, min_excess_pcu: float = 5.0) -> Columns | None:
         """The links where a queue outgrew the road in the last loading (S229).
 
         Under the point queue (``flow_level=2``, the default) a queue takes no road space; a link
@@ -1123,7 +1158,7 @@ class Run:
         if s is None:
             return None
         keep = (s["peak_pcu"] - s["storage_pcu"]) > min_excess_pcu
-        return {name: values[keep] for name, values in s.items()}
+        return Columns({name: values[keep] for name, values in s.items()})
 
     def report_gridlock(self) -> dict[str, Any] | None:
         """What stood still when the last loading's window ended; ``None`` at level 0.
@@ -1140,7 +1175,7 @@ class Run:
         report = self._summary.gridlock
         return None if report is None else dict(report)
 
-    def route_changes(self) -> dict[str, Any]:
+    def route_changes(self) -> Columns:
         """Every reroute of the last loading, as columns (empty without rerouting).
 
         A vehicle blocked at the front of its link for ``reroute_after_s`` re-routes from where
@@ -1152,17 +1187,17 @@ class Run:
         planned route is its route choice
         (``route_choices``); what it actually took is in ``route_realised``.
         """
-        return dict(self._summary.route_changes)
+        return Columns(self._summary.route_changes)
 
-    def route_realised(self) -> dict[str, Any]:
+    def route_realised(self) -> Columns:
         """The realised routes of the trips that re-routed in the last loading and arrived.
 
         ``trip`` (their indices) and ``links`` (for each, the link indices it took, in order).
         Every other trip followed its planned route, which nothing stores twice.
         """
-        return dict(self._summary.route_realised)
+        return Columns(self._summary.route_realised)
 
-    def trip_modes(self) -> dict[str, Any]:
+    def trip_modes(self) -> Columns:
         """Every trip's departure and the mode it took, as columns.
 
         One row per trip, by traveller and then by the order of their day: ``traveller_id``,
@@ -1172,7 +1207,7 @@ class Run:
         (whether the trip chose its mode) and ``weight`` (the people its traveller stands
         for). A trip that could not travel keeps its mode. ``viz.chart_mode_share`` draws it.
         """
-        return dict(self._summary.trip_modes)
+        return Columns(self._summary.trip_modes)
 
     @property
     def total_travel_time_s(self) -> float:
@@ -1234,19 +1269,6 @@ def _check_layer(layer: str) -> str:
     if layer not in LAYERS:
         raise ValueError(f"layer must be one of {LAYERS}, got {layer!r}")
     return layer
-
-
-def _trip_row(row: tuple) -> tuple:
-    """A trips row with its mode: nine fields take none (a car trip), ten give it."""
-    if len(row) == 9:
-        return (*row, None)
-    if len(row) == 10:
-        return tuple(row)
-    raise ValueError(
-        "a trips row has 9 fields (traveller_id, trip_seq, origin_lon, origin_lat, "
-        "destination_lon, destination_lat, departure_time_s, user_class, weight) or 10 "
-        f"(and mode), not {len(row)}: {row!r}"
-    )
 
 
 def _link_values(
@@ -1443,12 +1465,37 @@ class Scenario:
         trip_values: dict[str, Any] | None = None,
         disruptions: list[dict[str, Any]] | None = None,
         disruptions_known: bool = False,
+        preset: str | None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
+        # The arguments as given, by ``from_parts``' names (``parts``, ``replace``; C2).
+        given = dict(locals())
+        del given["self"]
+        trips_given, persons_given = given.pop("trips"), given.pop("persons")
+        trips_path_given, persons_path_given = given.pop("trips_path"), given.pop("persons_path")
+        self._parts = {
+            "network": given.pop("network"),
+            "demand": trips_given if trips_given is not None else trips_path_given,
+            "persons": persons_given if persons_given is not None else persons_path_given,
+            **given,
+        }
+        if preset is not None:
+            if preset not in PRESETS:
+                raise ValueError(f"preset must be one of {sorted(PRESETS)} or None, got {preset!r}")
+            # The preset's settings, under any option given by name.
+            chosen = PRESETS[preset]
+            route_update_options = {
+                **chosen.get("route_update_options", {}),
+                **(route_update_options or {}),
+            } or None
+            parking_options = {
+                **chosen.get("parking_options", {}),
+                **(parking_options or {}),
+            } or None
         if bike_cost not in BIKE_COSTS:
             raise ValueError(f"bike_cost must be one of {BIKE_COSTS}, got {bike_cost!r}")
         if trips is not None:
-            trips = [_trip_row(row) for row in trips]
+            trips = _trips_checked(trips)
         if flow_level not in FLOW_LEVELS:
             raise ValueError(f"flow_level must be one of {FLOW_LEVELS}, got {flow_level}")
         if flow_step_s <= 0:
@@ -1551,7 +1598,7 @@ class Scenario:
     def from_parts(
         cls,
         network: _core.Network,
-        demand: list[tuple] | str | Path,
+        demand: Any,
         persons: list[tuple] | str | None = None,
         classes: dict[str, Any] | None = None,
         default_weight: int = 1,
@@ -1585,16 +1632,20 @@ class Scenario:
         trip_values: dict[str, Any] | None = None,
         disruptions: list[dict[str, Any]] | None = None,
         disruptions_known: bool = False,
+        preset: str | None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
 
         Args:
             network: Built by, for example, ``examples.manhattan_grid``.
-            demand: Either an in-memory trips table (rows in the schema
-                ``examples.fixed_car_trips`` returns, or hand-built the same
-                way) or a path to a ``trips.parquet`` file or a ``trips.csv``
-                (read by ``demand_read_trips``) — the same schema either way,
-                never two different shapes. A row may end with
+            demand: The trips, in the schema of ``trips.parquet`` whatever the form: rows
+                (``Trip`` named tuples, or plain tuples of the same fields, as
+                ``examples.fixed_car_trips`` returns), a dict of columns or a pandas or polars
+                data frame with those columns (``weight`` and ``mode`` optional), or a path to a
+                ``trips.parquet`` file or a ``trips.csv`` (read by ``demand_read_trips``). Every
+                row in memory is checked first, and a bad one is refused with its number and the
+                field (a latitude outside ±90, a departure that is not whole seconds …). A row
+                may end with
                 a **mode** (the ``mode`` column of ``trips.parquet``): ``"car"``,
                 ``"bike"``, ``"walk"``, ``"transit"``, ``"car_transit"`` (park-and-ride)
                 or ``"bike_transit"`` (bike-and-ride; see ``parkings``). A trip without
@@ -2045,6 +2096,13 @@ class Scenario:
                 **zero-adaptation** one. ``True`` (works announced, a strike): every loading has
                 them and choices adapt over the iterations. Both are in the fingerprint and the
                 manifest (``disruptions``).
+            preset: Named settings for speed (``PRESETS``). ``"fast"`` is what the starter cases
+                use: the route update's searches shared by origin and half hour
+                (``route_update_options`` ``tree_step_s`` 1 800) and the park-and-ride drives
+                likewise (``parking_options`` ``reach_car_step_s`` 1 800), slightly approximate
+                and several times faster on a city. ``"complete"`` or ``None`` (the default): the
+                core's defaults, every search made on its own. An option given by name wins over
+                the preset's; the run's options, not the preset's name, are in the fingerprint.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.
@@ -2095,7 +2153,37 @@ class Scenario:
             trip_values=trip_values,
             disruptions=disruptions,
             disruptions_known=disruptions_known,
+            preset=preset,
         )
+
+    @property
+    def parts(self) -> dict[str, Any]:
+        """The arguments this scenario was built from, by the names of ``from_parts``: a copy.
+
+        ``Scenario.from_parts(**scenario.parts)`` builds the same scenario again (the same
+        fingerprint); ``replace`` builds one with some of them changed. A demand read from a
+        CSV file is here as the rows read.
+        """
+        return dict(self._parts)
+
+    def replace(self, **changes: Any) -> Scenario:
+        """A new scenario: this one with the arguments in ``changes`` changed.
+
+        The names are those of ``from_parts``; everything not named stays as it is. This
+        scenario is not changed. For example ``base.replace(flow_level=4)`` or
+        ``base.replace(choice_options={"beta_time_min": -0.1})`` (an options dict replaces the
+        whole dict: give every option you set).
+
+        Raises:
+            TypeError: If a name is not an argument of ``from_parts``, with the list of them.
+        """
+        unknown = sorted(set(changes) - set(self._parts))
+        if unknown:
+            raise TypeError(
+                f"replace() takes the arguments of from_parts; no {unknown}. They are: "
+                f"{sorted(self._parts)}"
+            )
+        return Scenario.from_parts(**{**self._parts, **changes})
 
     def _pipeline(self, run_id: str, output_dir: str, **extra: Any) -> Any:
         """The core's run, with this scenario's parts and ``extra``."""
@@ -2164,6 +2252,8 @@ class Scenario:
         quiet: bool = False,
         threads: int | None = None,
         overwrite: bool = False,
+        design_id: str = "default",
+        replication: int = 0,
     ) -> Run:
         """Run the scenario and write its output artifacts.
 
@@ -2183,6 +2273,12 @@ class Scenario:
             overwrite: Whether a folder that already holds a run (a ``manifest.json``) may be
                 written into again. ``False`` (the default) refuses, so a second run with the
                 same ``run_id`` cannot silently replace the first one's files.
+            design_id: The design this run belongs to, written in every row of ``kpis.parquet``
+                (``design_id``): a study comparing designs gives each its name. ``"default"``
+                for a single run.
+            replication: Which replication of its design this run is (``kpis.parquet``'s
+                ``replication``), from 0: runs of one design that differ only in their
+                ``master_seed``. Like ``run_id``, both are labels, not in the fingerprint.
 
         Returns:
             A ``Run`` with the four artifacts and the completion statistics.
@@ -2197,7 +2293,13 @@ class Scenario:
                 f"{output_dir!r} already holds a run (manifest.json); give another run_id or "
                 "output_dir, or run(..., overwrite=True) to replace its files"
             )
-        summary = self._pipeline(run_id, output_dir, threads=threads)
+        if not isinstance(design_id, str) or not design_id:
+            raise ValueError(f"design_id must be a non-empty string, got {design_id!r}")
+        if not isinstance(replication, int) or replication < 0:
+            raise ValueError(f"replication must be a whole number from 0, got {replication!r}")
+        summary = self._pipeline(
+            run_id, output_dir, threads=threads, design_id=design_id, replication=replication
+        )
         run = Run(
             summary,
             network=self._network,

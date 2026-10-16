@@ -6,9 +6,8 @@ overrides it by name (S202). ``parameters()`` lists them all, at the defaults a 
 
 from __future__ import annotations
 
-from typing import Any
-
 from openmobisim import _core
+from openmobisim._columns import Columns
 from openmobisim.choice import ROUTE_ATTRIBUTES
 
 __all__ = ["parameters"]
@@ -70,7 +69,7 @@ def _unit(name: str) -> str:
     return "—"
 
 
-def parameters() -> dict[str, list[Any]]:
+def parameters() -> Columns:
     """Every parameter openmobisim assumes, at the defaults a ``Scenario`` uses.
 
     Columns by name, one row per parameter: ``group`` (``network``, ``loading``, ``modes``,
@@ -83,7 +82,7 @@ def parameters() -> dict[str, list[Any]]:
     uncalibrated default; the documentation of each argument says where it comes from.
 
     Returns:
-        The table, as lists by column.
+        The table, as ``Columns`` (a dict of lists by column, with ``to_pandas()`` …).
     """
     rows = []
     for name, value, unit, *note in _SCENARIO:
@@ -101,4 +100,4 @@ def parameters() -> dict[str, list[Any]]:
             if attribute != "nest" and name not in listed.get(group, set()):
                 rows.append((group, "choice_options", name, 0.0, _unit(name), "0 unless set"))
     columns = ("group", "argument", "name", "value", "unit", "note")
-    return {c: [r[i] for r in rows] for i, c in enumerate(columns)}
+    return Columns({c: [r[i] for r in rows] for i, c in enumerate(columns)})

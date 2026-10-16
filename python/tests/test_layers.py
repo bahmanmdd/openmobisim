@@ -148,7 +148,7 @@ def test_transit_is_reported_as_not_available_yet() -> None:
 
 def test_a_bad_row_mode_or_bike_cost_is_refused() -> None:
     net = grid()
-    with pytest.raises(ValueError, match="unknown mode"):
+    with pytest.raises(ValueError, match="row 0.*mode must be one of"):
         run(net, [trip(net, "x", (0, 0), (4, 4), "cycle")], "layers-bad-mode")
     with pytest.raises(ValueError, match="9 fields"):
         ms.Scenario.from_parts(network=net, demand=[("x", 0, 4.8)])

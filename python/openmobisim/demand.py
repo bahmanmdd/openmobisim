@@ -23,14 +23,16 @@ from __future__ import annotations
 import csv
 import hashlib
 import math
+import numbers
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
 __all__ = [
+    "Trip",
     "demand_assign_classes",
     "demand_from_od",
     "demand_read_classes",
@@ -44,6 +46,127 @@ __all__ = [
 
 # Columns of a trips row (``Scenario.from_parts``' demand schema).
 _TRAVELLER, _CLASS, _WEIGHT, _MODE = 0, 7, 8, 9
+
+#: The modes a trips row may state (``Scenario``'s ``MODES``).
+_MODES = ("car", "bike", "walk", "transit", "car_transit", "bike_transit")
+
+
+class Trip(NamedTuple):
+    """One trip: a row of the demand ``Scenario.from_parts`` takes (``trips.parquet``'s columns).
+
+    A plain tuple of the same nine or ten fields is the same row; ``Trip`` names them. Times are
+    seconds after midnight, coordinates WGS 84 degrees; ``user_class`` names the traveller's class
+    (one of ``classes``, or any name for the defaults). ``weight`` is how many people the row
+    stands for (``None``: the scenario's ``default_weight``); ``mode`` the stated mode (``None``:
+    a car trip, or with ``modes`` one that chooses).
+    """
+
+    traveller_id: str
+    trip_seq: int
+    origin_lon: float
+    origin_lat: float
+    destination_lon: float
+    destination_lat: float
+    departure_time_s: int
+    user_class: str
+    weight: int | None = None
+    mode: str | None = None
+
+
+def _whole(value: Any) -> int | None:
+    """``value`` as an int if it is a whole number (a data frame's float column included)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real) and math.isfinite(value) and float(value).is_integer():
+        return int(value)
+    return None
+
+
+def _missing(value: Any) -> bool:
+    """A cell left empty: ``None`` or a data frame's NaN."""
+    return value is None or (isinstance(value, float) and math.isnan(value))
+
+
+def _trip_checked(i: int, row: Any) -> Trip:
+    """Row ``i`` of a demand as a ``Trip``, or a ``ValueError`` naming the row and the field."""
+
+    def bad(field: str, what: str, value: Any) -> ValueError:
+        return ValueError(
+            f"demand row {i} (from 0): {field} must be {what}, got {value!r}; the row: {row!r}"
+        )
+
+    if not isinstance(row, tuple | list) or len(row) not in (9, 10):
+        raise ValueError(
+            f"demand row {i} (from 0): a row has 9 fields (traveller_id, trip_seq, origin_lon, "
+            "origin_lat, destination_lon, destination_lat, departure_time_s, user_class, weight) "
+            f"or 10 (and mode); got {row!r}"
+        )
+    traveller, seq, olon, olat, dlon, dlat, depart, user_class, weight, *rest = row
+    mode = rest[0] if rest else None
+    if not isinstance(traveller, str) or not traveller:
+        raise bad("traveller_id", "a non-empty string", traveller)
+    seq_i = _whole(seq)
+    if seq_i is None or seq_i < 0:
+        raise bad("trip_seq", "a whole number from 0", seq)
+    places = (
+        ("origin_lon", olon, 180),
+        ("origin_lat", olat, 90),
+        ("destination_lon", dlon, 180),
+        ("destination_lat", dlat, 90),
+    )
+    for field, value, limit in places:
+        ok = isinstance(value, numbers.Real) and not isinstance(value, bool)
+        if not ok or not math.isfinite(value) or abs(value) > limit:
+            raise bad(field, f"degrees from -{limit} to {limit}", value)
+    depart_i = _whole(depart)
+    if depart_i is None or depart_i < 0:
+        raise bad("departure_time_s", "whole seconds after midnight, from 0", depart)
+    if not isinstance(user_class, str):
+        raise bad("user_class", "a class name (a string)", user_class)
+    if _missing(weight):
+        weight = None
+    else:
+        weight_i = _whole(weight)
+        if weight_i is None or weight_i < 1:
+            raise bad("weight", "a whole number from 1, or None", weight)
+        weight = weight_i
+    if _missing(mode):
+        mode = None
+    elif mode not in _MODES:
+        raise bad("mode", f"one of {_MODES} or None", mode)
+    return Trip(traveller, seq_i, float(olon), float(olat), float(dlon), float(dlat), depart_i,
+                user_class, weight, mode)  # fmt: skip
+
+
+def _trips_checked(demand: Any) -> list[Trip]:
+    """A demand as checked ``Trip`` rows: rows (tuples, ``Trip``), columns or a data frame.
+
+    The columns are those of ``trips.parquet``: the eight of ``Trip`` up to ``user_class``,
+    with ``weight`` and ``mode`` optional. A data frame (pandas or polars) is read by its columns.
+    """
+    if hasattr(demand, "columns") and hasattr(demand, "to_dict"):  # a pandas or polars frame
+        try:
+            demand = demand.to_dict("list")  # pandas
+        except (TypeError, ValueError):
+            demand = demand.to_dict(as_series=False)  # polars
+    if isinstance(demand, Mapping):
+        names = list(demand)
+        unknown = [n for n in names if n not in Trip._fields]
+        missing = [n for n in Trip._fields[:8] if n not in demand]
+        if unknown or missing:
+            raise ValueError(
+                f"a demand given as columns has the columns of trips.parquet {list(Trip._fields)} "
+                f"(weight and mode optional); unknown {unknown}, missing {missing}"
+            )
+        lengths = {len(demand[n]) for n in names}
+        if len(lengths) > 1:
+            raise ValueError(f"a demand's columns must have one length, got {sorted(lengths)}")
+        count = lengths.pop() if lengths else 0
+        columns = [list(demand[n]) if n in demand else [None] * count for n in Trip._fields]
+        demand = list(zip(*columns, strict=True))
+    return [_trip_checked(i, row) for i, row in enumerate(demand)]
 
 
 def _draw(seed: int, traveller: object) -> bytes:

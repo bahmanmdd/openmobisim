@@ -32,6 +32,7 @@ traveller classes, each with its own modes and coefficients, from a class table
 """
 
 from openmobisim import _core, choice, examples
+from openmobisim._columns import Columns
 from openmobisim._core import (
     Parkings,
     Transit,
@@ -52,6 +53,7 @@ from openmobisim._core import (
 )
 from openmobisim.audit import network_check
 from openmobisim.demand import (
+    Trip,
     demand_assign_classes,
     demand_from_od,
     demand_read_classes,
@@ -68,6 +70,7 @@ from openmobisim.parameters import parameters
 from openmobisim.parking import parking_read_table
 from openmobisim.scenario import (
     MODES,
+    PRESETS,
     FallbackWarning,
     NoAlternativeWarning,
     Run,
@@ -80,15 +83,18 @@ from openmobisim.transit import transit_edit
 __version__: str = _core.__version__
 
 __all__ = [
+    "Columns",
     "FallbackWarning",
     "LINK_CLASSES",
     "MODES",
     "NoAlternativeWarning",
+    "PRESETS",
     "Parkings",
     "Run",
     "Scenario",
     "Table",
     "Transit",
+    "Trip",
     "WindowWarning",
     "__version__",
     "build_info",

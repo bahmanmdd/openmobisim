@@ -696,6 +696,7 @@ fn convergence_arrays(
     choice_detour_limit=None, choice_max_routes=None, route_cache=false, bike_cost="dedicated", transit=None,
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
     loading_options=None, price_options=None, threads=None, fingerprint_only=false,
+    design_id="default", replication=0,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -750,6 +751,8 @@ pub fn run_pipeline(
     price_options: Option<HashMap<String, f64>>,
     threads: Option<usize>,
     fingerprint_only: bool,
+    design_id: &str,
+    replication: u32,
 ) -> PyResult<Py<PyAny>> {
     // The run's thread count (S277): `None` for every logical core; never 0.
     let threads = match threads {
@@ -1139,7 +1142,9 @@ pub fn run_pipeline(
     let events_path = dir.join("events.parquet");
     let manifest_path = dir.join("manifest.json");
 
-    write_kpis(&kpis_path, run_id, "default", 0, 0, &result).map_err(to_value_error)?;
+    // C2: the design and replication a batch names ("default" and 0 for a single run); like the
+    // run's id, labels and not inputs, so not in the fingerprint.
+    write_kpis(&kpis_path, run_id, design_id, replication, 0, &result).map_err(to_value_error)?;
     write_diagnostics(&diagnostics_path, run_id, &diagnostics).map_err(to_value_error)?;
     write_events(
         &events_path,
@@ -1539,11 +1544,16 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
     }
     for name in route_update_methods() {
         let u = openmobisim_core_sim::route_update::update(&name, &none).map_err(to_value_error)?;
-        push(
-            &format!("route_update.{name}"),
-            "route_update_options",
-            descriptor_values(&u.descriptor()),
-        );
+        let mut values = descriptor_values(&u.descriptor());
+        // The descriptor writes the search trees only when on (so older fingerprints stay), and
+        // the table lists every option at its default (S282).
+        if name == "best_response" && !values.iter().any(|(n, _)| n == "tree_step_s") {
+            values.push((
+                "tree_step_s".to_string(),
+                f64::from(openmobisim_core_sim::route_update::DEFAULT_TREE_STEP_S),
+            ));
+        }
+        push(&format!("route_update.{name}"), "route_update_options", values);
     }
     for name in crate::choice::choice_models() {
         let m = openmobisim_core_choice::model(&name, &none).map_err(to_value_error)?;
