@@ -221,7 +221,7 @@ pub struct StaticLayerDefaults {
     /// The multiplier [`BikeCost::Dedicated`] puts on the travel time of a link with a
     /// painted lane (or a cycle street), against 1 on a separated track.
     ///
-    /// *Uncalibrated: 1, a lane counted as a track, as before. In Portland painted lanes
+    /// *Uncalibrated: 1, a lane counted as a track. In Portland painted lanes
     /// were no more attractive than a quiet street, while off-street paths were valued highly
     /// (Broach, Dill and Gliebe 2012, above); a value between 1 and
     /// [`Self::bike_mixed_cost_factor`] is to be taken from such a model.*

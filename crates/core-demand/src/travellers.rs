@@ -51,8 +51,7 @@ pub mod codes {
 /// A traveller's vehicle and pass ownership (§23).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Ownership {
-    /// Owns a car — a fleet of size one with a restrictive access policy
-    /// .
+    /// Owns a car — a fleet of size one with a restrictive access policy.
     pub car: bool,
     /// Owns a bike.
     pub bike: bool,

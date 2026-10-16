@@ -38,8 +38,7 @@ pub enum HubKind {
     Declared = 0,
     /// A transit stop, made automatically from GTFS.
     Stop = 1,
-    /// A kerb hub, made where a car or bike trip leaves or joins the walk layer
-    /// .
+    /// A kerb hub, made where a car or bike trip leaves or joins the walk layer.
     Kerb = 2,
 }
 

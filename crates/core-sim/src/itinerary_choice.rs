@@ -2196,7 +2196,7 @@ impl Itineraries {
     /// out to one: one search per origin node, shared by the trips that start there
     /// (about four trips per bike node on Amsterdam's morning, which the free-flow loading's
     /// groups would otherwise search apart). Exact: a trip's reach depends on its origin node and
-    /// destination alone, and a trip not found here is found when first planned, as before.
+    /// destination alone, and a trip not found here is found when first planned.
     fn fill_bike_reach<'a>(&self, planner: &Planner<'a>, trips: &Trips, travellers: &Travellers) {
         let (Some((_, ctx)), Some(parking)) = (planner.bike, planner.parking) else {
             return;

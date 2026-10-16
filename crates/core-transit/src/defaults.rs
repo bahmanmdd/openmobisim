@@ -22,7 +22,7 @@ pub struct TransitDefaults {
     /// destination, in seconds (at walking speed, 1 800 s is 2.4 km).
     ///
     /// *An assumption: a choice-set limit, not a preference (the walk's minutes are
-    /// weighed by the choice model). 30 minutes (15 until then, which left
+    /// weighed by the choice model). 30 minutes (a shorter limit leaves
     /// travellers without a vehicle no way to their destination). In Montréal the 85th
     /// percentile of the walk to a stop is about 524 m for buses and 1 259 m for commuter rail
     /// (El-Geneidy et al. 2014, *Transportation* 41(1) 193–210,

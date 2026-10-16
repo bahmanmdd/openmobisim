@@ -1,10 +1,9 @@
-//! The Phase 1 pipeline, exposed to Python: a grid network, demand as a
-//! plain list of rows or a `trips.parquet` path, one run, four output
-//! artifacts.
+//! The run pipeline, exposed to Python: a network, the demand as rows or a `trips.parquet`
+//! path, one run, its output files.
 //!
 //! Deliberately low-level — a network handle, a function, a summary of
 //! plain fields. `python/openmobisim`'s `Scenario`/`Run`/`Table` classes are
-//! where this becomes the ergonomic API the interface doc describes
+//! where this becomes the ergonomic API
 //! (behaviour in Python, physics in Rust); this module's
 //! job is only to move data across the boundary correctly.
 //!

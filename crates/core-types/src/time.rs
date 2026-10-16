@@ -1,5 +1,4 @@
-//! The master clock, the loading step grid and the event-queue total order
-//! .
+//! The master clock, the loading step grid and the event-queue total order.
 //!
 //! # One clock, integer seconds
 //!

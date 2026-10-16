@@ -16,8 +16,7 @@
 //! ([`crate::parking`]); none of them is part of the car routes' choice or gap.
 //!
 //! The defaults here are the core's own and unconditional (`Level0`,
-//! `deterministic`, `none`); the Python `Scenario` layers its own on top
-//! .
+//! `deterministic`, `none`); the Python `Scenario` layers its own on top.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -79,15 +78,13 @@ use openmobisim_core_transit::{JourneyLeg, Raptor};
 
 /// Which loading engine a [`Run`] uses.
 ///
-/// **Opt-in: [`Run::new`]'s behaviour and Phase 1's acceptance number
-/// are unchanged unless a caller explicitly asks for the LTM** via
-/// [`Run::with_flow_motor`]. Nothing about `Level0` — the original
-/// placeholder — has changed; it stays available on purpose, as the cheap,
+/// **Opt-in: [`Run::new`] loads at level 0 unless a caller asks for the LTM** via
+/// [`Run::with_flow_motor`]. `Level0` stays available on purpose, as the cheap,
 /// interaction-free debugging rung the fidelity ladder names it.
 #[derive(Clone, Debug, Default)]
 pub enum FlowMotor {
-    /// The placeholder: each vehicle traverses independently at
-    /// free-flow time. Phase 1's default, and still is.
+    /// Level 0: each vehicle traverses independently at free-flow time. [`Run::new`]'s
+    /// default.
     #[default]
     Level0,
     /// The iterative LTM (`core_loading::ltm`) — vehicles genuinely
@@ -218,7 +215,7 @@ impl From<ChoiceError> for RunError {
     }
 }
 
-/// What a run produced: Phase 1's one KPI, the statistics that make it
+/// What a run produced: its results, the statistics that make it
 /// honest about what it did and did not simulate, and the per-trip events
 /// `io-parquet`'s `events.parquet` writer reads from.
 #[derive(Clone, PartialEq, Debug, Default)]
@@ -795,7 +792,7 @@ impl Run {
     /// of the best route's: **a time-dependent choice set**. A route far slower than
     /// the best at the moment is no realistic alternative, and in a logit it only takes
     /// probability that belongs to routes that compete (the gap grows with the size of the set).
-    /// `0.0` offers every route, as before. The best route is always offered; a route dropped
+    /// `0.0` offers every route. The best route is always offered; a route dropped
     /// keeps its place in the sets and can return when the times change. The gap is still
     /// measured against the whole set.
     ///

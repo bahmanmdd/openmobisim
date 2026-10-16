@@ -119,8 +119,7 @@ pub enum Rejection {
     /// `area=yes` — a pedestrian square, not a linear way.
     IsAnArea,
     /// `access=no` or `access=private`, or a car-class way closed to cars by
-    /// `motorcar`, `motor_vehicle` or `vehicle` set to `no` or `private`
-    /// .
+    /// `motorcar`, `motor_vehicle` or `vehicle` set to `no` or `private`.
     AccessDenied,
     /// A `highway=service` way that is a parking aisle, driveway,
     /// drive-through or emergency access (`service=…`, G-18): not part of the

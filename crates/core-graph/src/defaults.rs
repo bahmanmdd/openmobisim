@@ -408,8 +408,7 @@ impl RoadClass {
         )
     }
 
-    /// Whether buses may use this class: every class cars may, and busways
-    /// .
+    /// Whether buses may use this class: every class cars may, and busways.
     #[inline]
     #[must_use]
     pub const fn carries_buses(self) -> bool {

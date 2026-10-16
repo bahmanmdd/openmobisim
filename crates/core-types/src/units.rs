@@ -1,5 +1,4 @@
-//! Internal units: SI, per-second, and enforced by the type system
-//! .
+//! Internal units: SI, per-second, and enforced by the type system.
 //!
 //! # The rule
 //!

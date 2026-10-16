@@ -14,8 +14,8 @@ pub struct EventRow {
     pub second: Second,
     /// What happened.
     pub event_type: EventType,
-    /// Always [`EntityKind::Trip`] in Phase 1 — the only entity kind this
-    /// run produces events about.
+    /// Always [`EntityKind::Trip`]: the only entity kind a run produces
+    /// events about.
     pub entity_kind: EntityKind,
     /// The trip's raw id.
     pub entity_id: u32,
@@ -29,14 +29,13 @@ impl EventRow {
     }
 }
 
-/// What kind of thing happened — Phase 1's vocabulary, matching
+/// What kind of thing happened, matching
 /// [`crate::run::TripCompletionStats`]'s four buckets exactly.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EventType {
     /// A trip's trajectory finished within the simulation window.
     TripCompleted,
-    /// A trip's trajectory was still in progress when the window ended
-    /// .
+    /// A trip's trajectory was still in progress when the window ended.
     TripTruncated,
     /// A trip's stated mode needed a vehicle its traveller did not have at the origin.
     NoVehicleAvailable,

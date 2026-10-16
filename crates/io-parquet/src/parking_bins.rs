@@ -1,5 +1,4 @@
-//! `parking_bins.parquet` — how full every parking was over the day, bin by bin
-//! .
+//! `parking_bins.parquet` — how full every parking was over the day, bin by bin.
 //!
 //! One row per parking and time bin, parking by parking:
 //! `run_id, bin, start_s, parking, parking_id, hub_id, vehicle, capacity,

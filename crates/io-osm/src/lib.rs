@@ -23,8 +23,7 @@
 //!
 //! Nothing here fails because of odd data. A way with an uninterpretable speed
 //! limit, a node referenced but never defined, a way of one node — each has a
-//! documented fallback and a diagnostic, because the simulation never stops
-//! .
+//! documented fallback and a diagnostic, because the simulation never stops.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

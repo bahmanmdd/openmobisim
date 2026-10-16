@@ -138,16 +138,14 @@ impl VehicleLocations {
     }
 
     /// Whether `traveller`'s vehicle of `kind` is exactly at `origin` — the
-    /// Phase 1 form of the rule: **"a vehicle the traveller may
+    /// The rule: **"a vehicle the traveller may
     /// use is reachable from the origin."**
     ///
     /// Exact coordinate match only. After the trip-chain correction this
     /// is exactly right for every trip after the traveller's first — the
     /// vehicle was left at the previous trip's destination, which *is* the
     /// next trip's origin by construction. A tolerance or a walking-distance
-    /// radius is a routing question this crate has no network to answer;
-    /// the access correction is the natural home for it once route sets
-    /// exist (Phase 2).
+    /// radius is a routing question this crate has no network to answer.
     #[must_use]
     pub fn is_at_origin(
         &self,

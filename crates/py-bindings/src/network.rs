@@ -325,8 +325,7 @@ impl PyNetwork {
     }
 
     /// Every link's travel speed, in km/h (float64): the free-flow speed on the
-    /// road network; the bike's or walker's speed on a bike or walk layer
-    /// .
+    /// road network; the bike's or walker's speed on a bike or walk layer.
     fn link_speed_km_h<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         (0..self.inner.link_count())
             .map(|i| {
@@ -1064,8 +1063,7 @@ fn network_defaults(options: Option<HashMap<String, f64>>) -> PyResult<NetworkDe
     NetworkDefaults::from_options(&map).map_err(PyValueError::new_err)
 }
 
-/// The road classes' names, in the order of their numbers (`link_class`): `motorway` is 0
-/// .
+/// The road classes' names, in the order of their numbers (`link_class`): `motorway` is 0.
 #[pyfunction]
 pub fn link_classes() -> Vec<&'static str> {
     RoadClass::ALL.iter().map(|c| c.as_str()).collect()

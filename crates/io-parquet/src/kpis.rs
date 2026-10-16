@@ -1,9 +1,8 @@
 //! `kpis.parquet` — long format:
 //! `run_id, design_id, replication, iteration, mode, metric, value`.
 //!
-//! A new KPI needs no schema change, only a new row — which is exactly what
-//! lets Phase 1 write a real (if short) `kpis.parquet` today and grow the
-//! set of metrics later without touching this file's shape.
+//! A new KPI needs no schema change, only a new row, so the set of metrics grows without
+//! touching this file's shape.
 //!
 //! **`mode`**: `all` for the whole run; the trip metrics of the last
 //! loading are also written once per mode that has trips (`car`, `bike`,

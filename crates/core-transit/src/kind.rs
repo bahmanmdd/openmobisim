@@ -58,7 +58,7 @@ impl ServiceKind {
     }
 
     /// Whether its vehicles ride the road network, among the cars, in this
-    /// version: buses. Trams are run by the schedule for now,
+    /// version: buses. Trams are run by the schedule,
     /// since GTFS does not say which run on the street and which on their own
     /// track; rail, metro and ferries follow the schedule by construction.
     #[must_use]

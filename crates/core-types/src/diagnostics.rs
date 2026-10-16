@@ -122,9 +122,8 @@ impl core::fmt::Display for DiagCode {
 
 /// The core diagnostic codes.
 ///
-/// Each is carried by a specific mechanism named Phase 1
-/// only emits a few of them; the rest are declared here so that the vocabulary
-/// is settled in one place and cannot drift as the mechanisms land.
+/// Each is carried by a specific mechanism. Some are declared before any mechanism
+/// records them, so that the vocabulary is settled in one place.
 pub mod codes {
     use super::DiagCode;
 

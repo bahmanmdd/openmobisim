@@ -18,8 +18,8 @@
 //! split so that no run overtakes another ([`crate::raptor`]); the split depends
 //! on the times, so it is made where the times are known.
 //!
-//! **Identity.** Stops, routes and runs get dense ids by sorted external id
-//! , so two builds of the same feed have the same ids; groups
+//! **Identity.** Stops, routes and runs get dense ids by sorted external id,
+//! so two builds of the same feed have the same ids; groups
 //! are numbered in the order of their smallest run id.
 //!
 //! **Cost:** per call, a stop id, a flag byte and two times — 13 bytes; per run,

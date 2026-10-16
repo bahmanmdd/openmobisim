@@ -1,5 +1,4 @@
-//! Scheduled public transport: the timetable of one service day and RAPTOR
-//! .
+//! Scheduled public transport: the timetable of one service day and RAPTOR.
 //!
 //! | Module | What it owns |
 //! |---|---|

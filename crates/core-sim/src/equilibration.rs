@@ -430,7 +430,7 @@ pub trait Equilibration: Send + Sync {
     /// How many itinerary trips, besides those choosing again, plan their whole choice set after
     /// a loading to measure the itinerary gap; the others that keep an itinerary out
     /// through a parking are re-costed at that parking instead of re-planned. A number at least the run's count of itinerary trips plans every
-    /// trip in full, as before (the default here: a strategy that does not say).
+    /// trip in full (the default here: a strategy that does not say).
     fn itinerary_gap_sample(&self) -> u32 {
         u32::MAX
     }

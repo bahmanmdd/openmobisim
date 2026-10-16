@@ -12,7 +12,7 @@
 //! wander below its own sampling floor, and makes two evaluations of the same
 //! design differ — all without a single error message. It is the single most
 //! likely thing to be quietly wrong in a first implementation, which is why
-//! the run-twice bit-identity check is a CI gate from Phase 1.
+//! the run-twice bit-identity check is a CI gate.
 //!
 //! # The fix
 //!

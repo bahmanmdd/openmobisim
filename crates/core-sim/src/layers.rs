@@ -129,8 +129,8 @@ pub struct ModeDefaults {
     pub walk_max_s: f64,
     /// The longest ride mode choice offers as a bike alternative, in seconds.
     ///
-    /// *Uncalibrated: 60 minutes (the 30 until then, which left cyclists
-    /// without a ride home and pushed them into bike-and-ride). About 80 % of Dutch bicycle
+    /// *Uncalibrated: 60 minutes (a shorter limit leaves cyclists
+    /// without a ride home and pushes them into bike-and-ride). About 80 % of Dutch bicycle
     /// trips are under 5 km (KiM, *Cycling facts: new insights*, 2020,
     /// <https://english.kimnet.nl/documents/2020/11/03/cycling-facts-new-insights>); the limit
     /// keeps the longer ones, e-bikes' among them.*

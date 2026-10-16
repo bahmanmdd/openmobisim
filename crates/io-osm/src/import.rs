@@ -141,8 +141,7 @@ pub struct ImportOptions {
     pub layers: LayerOptions,
 }
 
-/// Which bike and walk layers an import builds, and with which defaults
-/// .
+/// Which bike and walk layers an import builds, and with which defaults.
 ///
 /// Each layer is its own graph, read from the same ways in the same pass: its
 /// own junctions, its own strong-connectivity trim (under
@@ -260,7 +259,7 @@ impl ImportReport {
 /// belongs to the nearest junction within `merge_m` along the street, and stops only the traffic
 /// heading into it: a car just leaving that junction passes the far side's stop line freely. One
 /// with no junction that close (a mid-block crossing) stops both directions. `merge_m` 0: every
-/// direction-less signal stops every approach to its node, as before.
+/// direction-less signal stops every approach to its node.
 ///
 /// Cost: one pass over the links and a short walk along the street from each signal node, at
 /// import only; nothing at run time.

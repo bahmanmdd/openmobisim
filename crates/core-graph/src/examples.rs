@@ -1,5 +1,4 @@
-//! `manhattan_grid` and `toy_network` — the shared synthetic-network fixtures
-//! .
+//! `manhattan_grid` and `toy_network` — the shared synthetic-network fixtures.
 //!
 //! A grid is the right shape for a fixture that has to double as both a
 //! correctness check and a demo: every count — nodes, links, turns — is
@@ -7,9 +6,7 @@
 //! rather than only what the code currently produces, and a reader can
 //! eyeball a small one on a map. This is the same builder the notebook
 //! ladder's `ms.examples.manhattan_grid(n, block_metres, signals)` wraps
-//! (the N3 fixture) and that `core-graph`'s own test suite
-//! already used privately before this module existed to promote it into
-//! .
+//! (the N3 fixture), and the one `core-graph`'s own test suite uses.
 //!
 //! Coordinates use a flat local approximation (metres per degree at a fixed
 //! reference latitude), not the ellipsoidal projection the rest of this
