@@ -13,7 +13,9 @@ from typing import Any
 import numpy as np
 
 from openmobisim import __version__
+from openmobisim.scenario import LEVEL_NAMES
 from openmobisim.viz import _geometry as geo
+from openmobisim.viz._canvas import Canvas
 from openmobisim.viz._figure import (
     SIZE_CM,
     Page,
@@ -34,7 +36,6 @@ _COLOUR_WORDS = {
     "volume": "volume",
     "volume_capacity": "volume over capacity",
 }
-_LEVEL_NAMES = {0: "free flow", 2: "point queue", 3: "spatial queue", 4: "full"}
 #: Ribbon width in points at zero and at maximum volume, before the view scale.
 _WIDTH_MIN_PT, _WIDTH_SPAN_PT = 0.5, 5.2
 #: No ribbon is thinner than this many points (on a full-screen page), whatever the
@@ -334,10 +335,9 @@ def map_link(
     th = get_theme(theme)
     n_links = network.link_count
 
-    coords, offsets = network.link_geometry()
-    owner = geo.link_of_vertex(offsets)
-    lon0, lat0 = float(coords[:, 0].mean()), float(coords[:, 1].mean())
-    points = geo.project_lonlat(coords, lon0, lat0)
+    canvas = Canvas.from_network(network)
+    lon0, lat0, points, owner = canvas.lon0, canvas.lat0, canvas.points, canvas.owner
+    offsets = canvas.offsets
 
     if bins is None:
         first, stop = busiest_bins(link_bins)
@@ -374,16 +374,7 @@ def map_link(
     )
 
     # 1. The canvas: every link, thin, in the network's own geometry.
-    everything = np.arange(n_links)
-    page.ax.add_collection(
-        LineCollection(
-            geo.polylines(points, offsets, everything),
-            colors=th.base,
-            linewidths=0.35 if width_m > 6000.0 else 0.6,
-            capstyle="round",
-            zorder=1,
-        )
-    )
+    page.ax.add_collection(canvas.base(th.base, 0.35 if width_m > 6000.0 else 0.6))
 
     # 2. One ribbon per directed link, offset to the driver's side.
     offset_m = (width_pt / 2 + 0.25) * mpp
@@ -472,7 +463,7 @@ def map_link(
         )
     else:  # no vehicle crossed a link on this layer: nothing to time
         default_subtitle = "no traffic on this layer · one ribbon per direction of travel"
-    level = _LEVEL_NAMES.get(run.flow_level, str(run.flow_level))
+    level = LEVEL_NAMES.get(run.flow_level, str(run.flow_level))
     stepping = f" · step {run.flow_step_s} s" if run.flow_level else ""
     source = network_source(network)
     provenance = [

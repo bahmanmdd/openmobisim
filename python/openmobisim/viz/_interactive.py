@@ -23,6 +23,7 @@ import numpy as np
 from openmobisim import __version__
 from openmobisim._paths import show_path
 from openmobisim.network import LINK_CLASSES
+from openmobisim.scenario import LEVEL_NAMES
 from openmobisim.viz import _geometry as geo
 from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._interactive_page import PAGE_CSS, PAGE_HTML, PAGE_JS
@@ -35,13 +36,12 @@ from openmobisim.viz._link import (
 from openmobisim.viz._logo import LOGO_PATH
 from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._route import _ROUTE_NIGHT, _ROUTE_PAPER
-from openmobisim.viz._style import THEMES, get_theme
+from openmobisim.viz._style import KINDS, THEMES, get_theme
 
 __all__ = ["map_interactive"]
 
 #: The road classes' names as the page shows them, in the order of their numbers (X-23).
 _CLASS_NAMES = [name.replace("_", " ") for name in LINK_CLASSES]
-_LEVEL_NAMES = {0: "free flow", 2: "point queue", 3: "spatial queue", 4: "full"}
 #: Coordinates are stored in tenths of a metre as 32-bit integers: good to ~214 km.
 _UNIT_M = 0.1
 _LIMIT = 2**31 - 1
@@ -112,13 +112,13 @@ def _add_layers(
     click away).
     """
     layers: dict[str, Any] = {}
-    calls = run.transit_calls() if hasattr(run, "transit_calls") else None
+    calls = run.transit_calls()
     transit = getattr(run, "transit", None)
     if calls is not None and transit is not None and len(calls["run"]):
         stops = transit.stops()
         index = {sid: i for i, sid in enumerate(stops["stop_id"])}
         xy = geo.project_lonlat(np.column_stack([stops["lon"], stops["lat"]]), lon0, lat0)
-        kinds = ("rail", "metro", "tram", "bus", "ferry", "other")
+        kinds = KINDS
         runs, kind, stop_ids = calls["run"], calls["kind"], calls["stop_id"]
         on_board = np.asarray(calls["on_board"], dtype=float)
         loads: dict[tuple[int, int, int], float] = {}
@@ -146,8 +146,8 @@ def _add_layers(
                 "stops": [str(n or stops["stop_id"][i]) for i, n in enumerate(names)],
                 "shown": keep.tolist() if box is not None else None,
             }
-    places = run.parking_places() if hasattr(run, "parking_places") else None
-    bins = run.parking_bins() if hasattr(run, "parking_bins") else None
+    places = run.parking_places()
+    bins = run.parking_bins()
     if places is not None and len(places["parking_id"]):
         xy = geo.project_lonlat(np.column_stack([places["lon"], places["lat"]]), lon0, lat0)
         keep = _inside(xy, box)
@@ -169,7 +169,7 @@ def _add_layers(
             ids = np.asarray(places["parking_id"])[keep]
             layers["parking"] = {"ids": [str(i) for i in ids]}
     for name in ("bike", "walk"):
-        lb = run.link_bins(name) if hasattr(run, "link_bins") else None
+        lb = run.link_bins(name)
         if lb is None or not len(lb):
             continue
         layer = network.layer(name)
@@ -341,7 +341,7 @@ def map_interactive(
 
     # The links where a queue outgrew the road (S229): one optional layer.
     n_spill = 0
-    spill = run.report_spillback() if hasattr(run, "report_spillback") else None
+    spill = run.report_spillback()
     if spill is not None and len(spill["link"]):
         flag = np.zeros(n_all, dtype=np.uint8)
         flag[np.asarray(spill["link"], dtype=np.int64)] = 1
@@ -365,7 +365,7 @@ def map_interactive(
         n_pairs, n_routes = _add_routes(blob, route_sets, keep, new_id, max_route_pairs, usage)
     has_routes = n_pairs > 0
 
-    level = _LEVEL_NAMES.get(run.flow_level, str(run.flow_level))
+    level = LEVEL_NAMES.get(run.flow_level, str(run.flow_level))
     source = network_source(network)
     provenance = (
         f"{__version__} · run {run.run_id} · level {run.flow_level} ({level})"

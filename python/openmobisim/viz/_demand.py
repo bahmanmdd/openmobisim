@@ -15,6 +15,7 @@ import numpy as np
 
 from openmobisim import __version__
 from openmobisim.viz import _geometry as geo
+from openmobisim.viz._canvas import Canvas
 from openmobisim.viz._figure import (
     SIZE_CM,
     Page,
@@ -130,9 +131,8 @@ def map_demand(
     everything = np.vstack([o, d]) if len(o) else np.zeros((1, 2))
     canvas = None
     if network is not None:
-        coords, offsets = network.link_geometry()
-        pts = geo.project_lonlat(coords, lon0, lat0)
-        canvas = geo.polylines(pts, offsets, np.arange(network.link_count))
+        canvas = Canvas.from_network(network, lon0, lat0)
+        pts = canvas.points
         everything = np.vstack([everything, pts[:: max(len(pts) // 20000, 1)]])
     lo, hi = np.percentile(everything, 1, axis=0), np.percentile(everything, 99, axis=0)
     pad = (hi - lo) * 0.06
@@ -140,9 +140,7 @@ def map_demand(
     mpp = page.metres_per_point
 
     if canvas is not None:
-        page.ax.add_collection(
-            LineCollection(canvas, colors=th.base, linewidths=0.35, capstyle="round", zorder=1)
-        )
+        page.ax.add_collection(canvas.base(th.base, 0.35))
     wmax = float(w.max()) if len(w) else 1.0
     frac = np.sqrt(w / wmax)
     width_pt = 0.6 + 5.4 * frac

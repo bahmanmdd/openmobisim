@@ -23,6 +23,7 @@ import numpy as np
 
 from openmobisim import __version__
 from openmobisim._paths import show_path
+from openmobisim.run import MODES
 from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._link import DELAY_BAND_LABELS, _clock, delay_band, link_table, map_link
 from openmobisim.viz._style import ION, THEMES
@@ -30,7 +31,6 @@ from openmobisim.viz._transit import map_transit
 
 __all__ = ["summary"]
 
-MODES = ("car", "bike", "walk", "transit", "car_transit", "bike_transit")
 MODE_NAMES = {
     "car": "car",
     "bike": "bike",

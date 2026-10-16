@@ -19,6 +19,7 @@ import numpy as np
 
 from openmobisim import __version__
 from openmobisim.viz import _geometry as geo
+from openmobisim.viz._canvas import Canvas
 from openmobisim.viz._figure import (
     SIZE_CM,
     Page,
@@ -31,12 +32,9 @@ from openmobisim.viz._figure import (
 from openmobisim.viz._link import _WIDTH_MIN_PT, _WIDTH_SPAN_PT
 from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._route import _ROUTE_NIGHT, _ROUTE_PAPER
-from openmobisim.viz._style import Theme, get_theme
+from openmobisim.viz._style import KINDS, Theme, get_theme
 
 __all__ = ["map_transit"]
-
-#: The kinds of service, in the order the theme's colours follow.
-KINDS = ("rail", "metro", "tram", "bus", "ferry", "other")
 
 
 def map_transit(
@@ -127,10 +125,8 @@ def map_transit(
     canvas = None
     network = run.network
     if network is not None:
-        coords, offsets = network.link_geometry()
-        pts = geo.project_lonlat(coords, lon0, lat0)
-        canvas = geo.polylines(pts, offsets, np.arange(network.link_count))
-        everything = pts[:: max(len(pts) // 20000, 1)]
+        canvas = Canvas.from_network(network, lon0, lat0)
+        everything = canvas.points[:: max(len(canvas.points) // 20000, 1)]
     lo, hi = np.percentile(everything, 0.5, axis=0), np.percentile(everything, 99.5, axis=0)
     # Every stop inside the frame: a line may run beyond the roads (a tram to a stop off them).
     lo, hi = np.minimum(lo, xy.min(axis=0)), np.maximum(hi, xy.max(axis=0))
@@ -138,9 +134,7 @@ def map_transit(
     page = Page.new(th, size_cm, dpi, lo - pad, hi + pad)
     k = page.k
     if canvas is not None:
-        page.ax.add_collection(
-            LineCollection(canvas, colors=th.base, linewidths=0.3 * k, capstyle="round", zorder=1)
-        )
+        page.ax.add_collection(canvas.base(th.base, 0.3 * k))
     keys = sorted(loads, key=lambda key: (loads[key], key))  # the busiest on top
     top = 1.0
     width_of = None

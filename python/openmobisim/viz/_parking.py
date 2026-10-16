@@ -16,6 +16,7 @@ import numpy as np
 
 from openmobisim import __version__
 from openmobisim.viz import _geometry as geo
+from openmobisim.viz._canvas import Canvas
 from openmobisim.viz._figure import (
     SIZE_CM,
     Page,
@@ -73,7 +74,6 @@ def map_parking(
         ImportError: If matplotlib is not installed (``openmobisim[viz]``).
     """
     load_matplotlib()
-    from matplotlib.collections import LineCollection
 
     places, bins, summary = run.parking_places(), run.parking_bins(), run.parking_summary
     if places is None or bins is None or summary is None:
@@ -94,10 +94,8 @@ def map_parking(
     canvas = None
     network = run.network
     if network is not None:
-        coords, offsets = network.link_geometry()
-        pts = geo.project_lonlat(coords, lon0, lat0)
-        canvas = geo.polylines(pts, offsets, np.arange(network.link_count))
-        everything = pts[:: max(len(pts) // 20000, 1)]
+        canvas = Canvas.from_network(network, lon0, lat0)
+        everything = canvas.points[:: max(len(canvas.points) // 20000, 1)]
     lo, hi = np.percentile(everything, 0.5, axis=0), np.percentile(everything, 99.5, axis=0)
     # Every parking inside the frame, also one beyond the roads drawn.
     lo, hi = np.minimum(lo, xy.min(axis=0)), np.maximum(hi, xy.max(axis=0))
@@ -105,9 +103,7 @@ def map_parking(
     page = Page.new(th, size_cm, dpi, lo - pad, hi + pad)
     k = page.k
     if canvas is not None:
-        page.ax.add_collection(
-            LineCollection(canvas, colors=th.base, linewidths=0.3 * k, capstyle="round", zorder=1)
-        )
+        page.ax.add_collection(canvas.base(th.base, 0.3 * k))
     top_car = float(cap[car].max()) if car.any() else 1.0
     top_bike = float(cap[~car].max()) if (~car).any() else 1.0
     radius = np.where(

@@ -169,3 +169,7 @@ def font_sans() -> str:
 def font_mono() -> str:
     """The provenance and number font: JetBrains Mono if installed, else a system mono."""
     return _first_available(_MONO)
+
+
+#: The kinds of service, in the order the theme's colours follow.
+KINDS = ("rail", "metro", "tram", "bus", "ferry", "other")

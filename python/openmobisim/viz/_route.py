@@ -14,6 +14,7 @@ import numpy as np
 
 from openmobisim import __version__
 from openmobisim.viz import _geometry as geo
+from openmobisim.viz._canvas import Canvas
 from openmobisim.viz._figure import SIZE_CM, Page, draw_furniture, load_matplotlib, rgb, save_figure
 from openmobisim.viz._provenance import network_source
 from openmobisim.viz._style import Theme, get_theme
@@ -110,10 +111,8 @@ def map_route(
     route_costs = costs[first_route : first_route + len(alternatives)]
     route_overlap = routes.overlaps()[first_route : first_route + len(alternatives)]
 
-    coords, offsets = network.link_geometry()
-    owner = geo.link_of_vertex(offsets)
-    lon0, lat0 = float(coords[:, 0].mean()), float(coords[:, 1].mean())
-    points = geo.project_lonlat(coords, lon0, lat0)
+    canvas = Canvas.from_network(network)
+    points, owner, offsets = canvas.points, canvas.owner, canvas.offsets
     normals = geo.right_normals(points, owner)
 
     used = np.unique(np.concatenate(alternatives))
@@ -126,16 +125,7 @@ def map_route(
     mpp = page.metres_per_point
     k = page.k
 
-    everything = np.arange(network.link_count)
-    page.ax.add_collection(
-        LineCollection(
-            geo.polylines(points, offsets, everything),
-            colors=th.base,
-            linewidths=0.6,
-            capstyle="round",
-            zorder=1,
-        )
-    )
+    page.ax.add_collection(canvas.base(th.base, 0.6))
     palette = _ROUTE_NIGHT if th.glow else _ROUTE_PAPER
     surface = rgb(th.surface)
     step = (_WIDTH_PT + 0.8) * k * mpp

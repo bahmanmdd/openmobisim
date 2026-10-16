@@ -49,6 +49,8 @@ PRESETS: dict[str, dict[str, dict[str, float]]] = {
 #: with no interaction between vehicles; 2, 3 and 4 are the link transmission
 #: model as a point queue, a spatial queue and the full triangular diagram.
 FLOW_LEVELS = (0, 2, 3, 4)
+#: Each flow level's name, as figures and pages write it (C3, P-14: one place).
+LEVEL_NAMES = {0: "free flow", 2: "point queue", 3: "spatial queue", 4: "full"}
 
 
 class WindowWarning(UserWarning):
