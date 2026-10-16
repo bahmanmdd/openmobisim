@@ -178,6 +178,22 @@ def test_map_route_draws_the_alternatives_of_a_pair(theme, tmp_path):
     viz.map_route(rs, net, (a, b), size_cm=(15.24, 8.64), dpi=60)
 
 
+def test_map_route_draws_each_route_as_one_joined_line():
+    # Shifted to the side link by link, a route's links parted at every turn and the route
+    # showed gaps; drawn as one line, each route is one path that turns with its streets.
+    from matplotlib.collections import LineCollection
+
+    net = grid()
+    rs = ms.route_sets_build(net, corner_pairs(net))
+    fig = viz.map_route(rs, net, 0, size_cm=(15.24, 8.64), dpi=60)
+    alternatives = rs.routes(0)
+    route_lines = [
+        c for c in fig.axes[0].collections if isinstance(c, LineCollection) and c.get_zorder() >= 2
+    ]
+    assert len(route_lines) == 2 * len(alternatives)  # each route's halo and line
+    assert all(len(c.get_paths()) == 1 for c in route_lines)
+
+
 def test_map_route_says_what_is_wrong():
     net = ms.examples.toy_network()
     (wlon, wlat), (dlon, dlat) = net.node_lonlat("W"), net.node_lonlat("D1")

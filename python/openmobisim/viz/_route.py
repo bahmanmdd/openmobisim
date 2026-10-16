@@ -112,8 +112,7 @@ def map_route(
     route_overlap = routes.overlaps()[first_route : first_route + len(alternatives)]
 
     canvas = Canvas.from_network(network)
-    points, owner, offsets = canvas.points, canvas.owner, canvas.offsets
-    normals = geo.right_normals(points, owner)
+    points, offsets = canvas.points, canvas.offsets
 
     used = np.unique(np.concatenate(alternatives))
     span_pts = np.concatenate(
@@ -132,8 +131,9 @@ def map_route(
     legend: list[tuple[np.ndarray, str]] = []
     for r, links in enumerate(alternatives):
         colour = rgb(palette[r % len(palette)])
-        shifted = points + normals * (step * (r + 0.5))
-        lines = geo.polylines(shifted, offsets, links.astype(np.int64))
+        line, pieces = _route_path(points, offsets, links.astype(np.int64))
+        shifted = line + geo.right_normals(line, np.zeros(len(line), np.int64)) * (step * (r + 0.5))
+        lines = [shifted]
         page.ax.add_collection(
             LineCollection(
                 lines,
@@ -153,7 +153,10 @@ def map_route(
             )
         )
         tri = geo.chevron_triangles(
-            shifted, offsets, links.astype(np.int64), np.full(len(links), 1.5 * k * mpp)
+            np.concatenate([shifted[a:b] for a, b in pieces]),
+            np.concatenate([[0], np.cumsum(pieces[:, 1] - pieces[:, 0])]),
+            np.arange(len(pieces)),
+            np.full(len(pieces), 1.5 * k * mpp),
         )
         if len(tri):
             page.ax.add_collection(
@@ -211,6 +214,34 @@ def map_route(
     if path is not None:
         save_figure(page.fig, path, th.surface)
     return page.fig
+
+
+def _route_path(
+    points: np.ndarray, offsets: np.ndarray, links: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """A route as one polyline: its links' points in order, each junction once.
+
+    Shifted to the side as one line, a route stays joined where it turns; shifted link by
+    link, each link's ends moved apart at every corner and the route showed gaps. Returns the
+    path and, for each link, the ``[start, stop)`` of the path it covers, its end shared with
+    the next link's start (for the direction marks).
+    """
+    parts: list[np.ndarray] = []
+    pieces = np.zeros((len(links), 2), np.int64)
+    count = 0
+    last: np.ndarray | None = None
+    for i, link in enumerate(links.tolist()):
+        p = points[int(offsets[link]) : int(offsets[link + 1])]
+        first = count
+        if last is not None and len(p) and np.allclose(p[0], last):
+            p, first = p[1:], count - 1
+        parts.append(p)
+        count += len(p)
+        if len(p):
+            last = p[-1]
+        pieces[i] = first, count
+    path = np.concatenate(parts) if parts else np.zeros((0, 2))
+    return path, pieces
 
 
 def _key_index(routes: Any, network: Any, pair: Any) -> int:
