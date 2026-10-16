@@ -77,6 +77,8 @@ The helpers below do the array bookkeeping so a model is a few lines.
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
@@ -84,6 +86,8 @@ import numpy as np
 __all__ = [
     "ROUTE_ATTRIBUTES",
     "ChoiceModel",
+    "choice_model_register",
+    "choice_models",
     "sample_random_utility",
     "segment_argmax",
     "segment_softmax",
@@ -170,6 +174,61 @@ class ChoiceModel(Protocol):
 
     def choose(self, batch: Any) -> Any:
         """The chosen alternative of each situation, as an index within it."""
+
+
+#: The Python models registered by name (C5): name -> factory(options) -> model.
+_REGISTERED: dict[str, Callable[[dict[str, float]], Any]] = {}
+
+
+def choice_model_register(name: str, factory: Callable[[dict[str, float]], Any]) -> None:
+    """Make a Python choice model usable by name, like the built-in ones (C5).
+
+    After ``choice_model_register("my_model", MyModel)``, ``Scenario.from_parts(...,
+    choice_model="my_model", choice_options={...})`` builds the model as
+    ``factory(choice_options)`` (a dict, empty when none are given) and runs it; the scenario
+    keeps the name, so ``replace`` and a plain design can name it. The model is shown in the
+    manifest by its ``name`` (the registered name unless it has its own) and identified in the
+    fingerprint by its ``descriptor``, which should hold every option it read. A name is
+    registered once per session: registering it again replaces the factory.
+
+    Args:
+        name: Letters, digits and underscores, not a built-in model's name.
+        factory: Called with the options dict; returns an object with ``choose(batch)``.
+
+    Raises:
+        ValueError: If the name is a built-in model's or not a plain identifier.
+    """
+    from openmobisim import _core
+
+    if not name.isidentifier():
+        raise ValueError(f"a choice model's name is letters, digits and underscores, got {name!r}")
+    if name in _core.choice_models():
+        raise ValueError(f"{name!r} is a built-in choice model; register yours under another name")
+    if not callable(factory):
+        raise ValueError(f"the factory must be callable (options -> model), got {factory!r}")
+    _REGISTERED[name] = factory
+
+
+def choice_models() -> list[str]:
+    """The choice models that can be selected by name.
+
+    The built-in ones, the default (``"deterministic"``) first, then those registered with
+    ``choice_model_register``, in the order registered.
+    """
+    from openmobisim import _core
+
+    return [*_core.choice_models(), *_REGISTERED]
+
+
+def _choice_model_built(name: str, options: dict[str, float] | None) -> Any:
+    """The registered model ``name``, built from its options, named if it has no name."""
+    model = _REGISTERED[name](dict(options or {}))
+    if not hasattr(model, "choose"):
+        raise ValueError(f"the factory of {name!r} returned {model!r}, which has no choose(batch)")
+    if getattr(model, "name", None) is None:
+        with contextlib.suppress(AttributeError):
+            model.name = name
+    return model
 
 
 def _segments(offsets: Any) -> tuple[np.ndarray, np.ndarray]:

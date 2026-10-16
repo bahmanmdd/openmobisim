@@ -38,7 +38,6 @@ from openmobisim._core import (
     Transit,
     build_info,
     choice_draw,
-    choice_models,
     equilibration_strategies,
     fixed_order_sum_f64,
     network_read_osm,
@@ -52,6 +51,7 @@ from openmobisim._core import (
     transit_read_gtfs,
 )
 from openmobisim.audit import network_check
+from openmobisim.choice import choice_model_register, choice_models
 from openmobisim.demand import (
     Trip,
     demand_assign_classes,
@@ -129,6 +129,7 @@ __all__ = [
     "build_info",
     "choice",
     "choice_draw",
+    "choice_model_register",
     "choice_models",
     "demand_assign_classes",
     "demand_from_od",

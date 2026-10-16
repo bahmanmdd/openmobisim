@@ -22,7 +22,7 @@ from typing import Any
 
 import numpy as np
 
-from openmobisim import _core
+from openmobisim import _core, choice
 from openmobisim._columns import Columns
 from openmobisim._log import logger
 from openmobisim.demand import _class_table, _trips_checked, demand_read_trips
@@ -1683,6 +1683,11 @@ class Scenario:
         if modes is None and self._class_modes:
             # The classes say which modes their travellers may use: the run offers them all.
             modes = [m for m in MODES if any(m in ms for ms in self._class_modes.values())]
+        if isinstance(choice_model, str) and choice_model in choice._REGISTERED:
+            # A Python model registered by name (C5): built from the options, which it reads
+            # (they reach the fingerprint through its descriptor, not the core's options).
+            choice_model = choice._choice_model_built(choice_model, choice_options)
+            choice_options = None
         if choice_model is None:
             # Mode choice by the nested logit, one nest per mode, so a mode's share does not
             # grow with how many routes or journeys its nest holds; a run offering one mode
