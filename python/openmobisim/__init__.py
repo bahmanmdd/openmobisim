@@ -31,7 +31,7 @@ traveller classes, each with its own modes and coefficients, from a class table
 (``demand_read_classes``), drawn for each traveller by ``demand_assign_classes``.
 """
 
-from openmobisim import _core, choice, examples
+from openmobisim import _core, choice, examples, options
 from openmobisim._columns import Columns
 from openmobisim._core import (
     Parkings,
@@ -66,6 +66,22 @@ from openmobisim.demand import (
 )
 from openmobisim.gmns import network_read_gmns, network_write_gmns
 from openmobisim.network import LINK_CLASSES, network_edit, network_options, network_read_table
+from openmobisim.options import (
+    BestResponseOptions,
+    FreeFlowOptions,
+    LinkClassOptions,
+    LoadingOptions,
+    LogitOptions,
+    ModeOptions,
+    MonteCarloOptions,
+    MsaOptions,
+    NestedLogitOptions,
+    NetworkOptions,
+    ParkingOptions,
+    PenaltyOptions,
+    PriceOptions,
+    TransitOptions,
+)
 from openmobisim.parameters import parameters
 from openmobisim.parking import parking_read_table
 from openmobisim.scenario import (
@@ -83,20 +99,33 @@ from openmobisim.transit import transit_edit
 __version__: str = _core.__version__
 
 __all__ = [
+    "BestResponseOptions",
     "Columns",
     "FallbackWarning",
+    "FreeFlowOptions",
     "LINK_CLASSES",
+    "LinkClassOptions",
+    "LoadingOptions",
+    "LogitOptions",
     "MODES",
+    "ModeOptions",
+    "MonteCarloOptions",
+    "MsaOptions",
+    "NestedLogitOptions",
+    "NetworkOptions",
     "NoAlternativeWarning",
     "PRESETS",
+    "ParkingOptions",
     "Parkings",
+    "PenaltyOptions",
+    "PriceOptions",
     "Run",
     "Scenario",
     "Table",
     "Transit",
+    "TransitOptions",
     "Trip",
     "WindowWarning",
-    "__version__",
     "build_info",
     "choice",
     "choice_draw",
@@ -114,21 +143,23 @@ __all__ = [
     "examples",
     "fixed_order_sum_f64",
     "network_check",
-    "network_read_gmns",
     "network_edit",
     "network_options",
-    "parameters",
+    "network_read_gmns",
     "network_read_osm",
     "network_read_table",
     "network_write_gmns",
+    "options",
+    "parameters",
     "parking_read_osm",
     "parking_read_table",
-    "route_methods",
     "route_cache_clear",
     "route_cache_info",
+    "route_methods",
     "route_sets_build",
     "route_update_methods",
     "step_of",
     "transit_edit",
     "transit_read_gtfs",
+    "__version__",
 ]
