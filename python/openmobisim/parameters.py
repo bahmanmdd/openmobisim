@@ -29,6 +29,7 @@ _SCENARIO = [
     ("master_seed", 0.0, "—"),
     ("choice_detour_limit", 0.5, "share"),
     ("choice_max_routes", 5.0, "routes"),
+    ("hub_group_m", 150.0, "m", "a label of the outputs (Scenario.run); not in the fingerprint"),
 ]
 
 _COUNTS = ("iterations", "max_paths", "max_attempts", "max_routes", "searches", "candidates",

@@ -40,6 +40,7 @@ pub mod demand_values;
 pub mod disruptions;
 pub mod equilibration;
 pub mod events;
+pub mod hub_groups;
 pub mod identity;
 pub mod itinerary;
 pub mod itinerary_choice;

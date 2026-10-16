@@ -1122,6 +1122,7 @@ class Scenario:
         design_id: str = "default",
         replication: int = 0,
         outputs: str = "all",
+        hub_group_m: float = 150.0,
     ) -> Run:
         """Run the scenario and write its output artifacts.
 
@@ -1155,6 +1156,12 @@ class Scenario:
                 ``manifest.json`` only, a few kilobytes; the run's results in memory, its
                 fingerprint and ``Run.open`` are the same, and the files it left out are
                 refused by name. No page or figure is ever written by ``run``.
+            hub_group_m: How far a parking may be from a stop, in metres in a straight line, to
+                share its hub group (``hub_group`` in ``transit_calls`` and ``parking_bins``: a
+                stop's station, or the stop itself without one; a parking whose table names a
+                hub keeps it). A label of the outputs: results do not depend on it, so it is not
+                in the fingerprint. 150 by default, a short walk across a station's forecourt (an
+                assumption).
 
         Returns:
             A ``Run`` with the four artifacts and the completion statistics.
@@ -1182,6 +1189,7 @@ class Scenario:
             design_id=design_id,
             replication=replication,
             outputs=outputs,
+            hub_group_m=hub_group_m,
         )
         run = Run(
             summary,

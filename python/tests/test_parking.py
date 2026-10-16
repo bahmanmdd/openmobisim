@@ -149,6 +149,7 @@ def test_the_parking_bins_file_and_the_kpis_rows() -> None:
         "occupancy_max",
         "full_s",
         "overflow_max",
+        "hub_group",
     ]
     assert t.schema.metadata[b"openmobisim.run_fingerprint"].decode() == run.fingerprint
     kv = pa.read_metadata(table.path).metadata  # the file's key-values, every writer's

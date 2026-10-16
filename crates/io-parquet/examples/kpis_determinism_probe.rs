@@ -454,6 +454,7 @@ fn transit_probe(dir: &std::path::Path) {
         t,
         &description,
         u32::MAX,
+        &openmobisim_core_sim::hub_groups::hub_groups(Some(transit.timetable()), None, 150.0).stops,
     )
     .expect("write transit calls");
     println!("transit_fingerprint   {}", description.fingerprint_hex());
@@ -581,6 +582,7 @@ fn parking_probe(dir: &std::path::Path) {
         &parking,
         p,
         &description,
+        &openmobisim_core_sim::hub_groups::hub_groups(None, Some(&parking), 150.0).parkings,
     )
     .expect("write parking bins");
     println!("parking_fingerprint   {}", description.fingerprint_hex());

@@ -696,7 +696,7 @@ fn convergence_arrays(
     choice_detour_limit=None, choice_max_routes=None, route_cache=false, bike_cost="dedicated", transit=None,
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
     loading_options=None, price_options=None, threads=None, fingerprint_only=false,
-    design_id="default", replication=0, outputs="all",
+    design_id="default", replication=0, outputs="all", hub_group_m=150.0,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -754,6 +754,7 @@ pub fn run_pipeline(
     design_id: &str,
     replication: u32,
     outputs: &str,
+    hub_group_m: f64,
 ) -> PyResult<Py<PyAny>> {
     // Which files the run writes (C2): "all", or "minimal" (kpis.csv and manifest.json) for mass
     // runs; the results in memory are the same either way.
@@ -766,6 +767,11 @@ pub fn run_pipeline(
             )));
         }
     };
+    if !(hub_group_m.is_finite() && hub_group_m >= 0.0) {
+        return Err(PyValueError::new_err(format!(
+            "hub_group_m must be 0 or more metres, got {hub_group_m}"
+        )));
+    }
     // The run's thread count (S277): `None` for every logical core; never 0.
     let threads = match threads {
         Some(0) => return Err(PyValueError::new_err("threads must be at least 1, or None")),
@@ -1147,6 +1153,12 @@ pub fn run_pipeline(
     let mut diagnostics = build_diagnostics;
     diagnostics.merge(&run_diagnostics);
 
+    // C4: the hub groups, a label of the outputs (in no fingerprint).
+    let groups = openmobisim_core_sim::hub_groups::hub_groups(
+        transit_setup.as_ref().map(|t| t.timetable().as_ref()),
+        parking_setup.as_deref(),
+        hub_group_m,
+    );
     let dir = Path::new(output_dir);
     std::fs::create_dir_all(dir).map_err(to_value_error)?;
     let kpis_path = dir.join(if minimal { "kpis.csv" } else { "kpis.parquet" });
@@ -1214,6 +1226,7 @@ pub fn run_pipeline(
                 r,
                 &description,
                 window.end_s,
+                &groups.stops,
             )
             .map_err(to_value_error)?;
             Some(path.to_string_lossy().into_owned())
@@ -1224,8 +1237,15 @@ pub fn run_pipeline(
     let parking_bins_path = match (&result.parking, &parking_setup) {
         (Some(r), Some(p)) if !minimal => {
             let path = dir.join("parking_bins.parquet");
-            openmobisim_io_parquet::write_parking_bins(&path, run_id, p, r, &description)
-                .map_err(to_value_error)?;
+            openmobisim_io_parquet::write_parking_bins(
+                &path,
+                run_id,
+                p,
+                r,
+                &description,
+                &groups.parkings,
+            )
+            .map_err(to_value_error)?;
             Some(path.to_string_lossy().into_owned())
         }
         _ => None,
@@ -1233,8 +1253,8 @@ pub fn run_pipeline(
     let (parking_bins_table, parking_places_table, parking_summary_table) =
         match (&result.parking, &parking_setup) {
             (Some(r), Some(p)) => (
-                Some(parking_bins(py, p, r)?.unbind()),
-                Some(parking_places(py, p)?.unbind()),
+                Some(parking_bins(py, p, r, &groups.parkings)?.unbind()),
+                Some(parking_places(py, p, &groups.parkings)?.unbind()),
                 Some(parking_summary(py, p, r)?.unbind()),
             ),
             _ => (None, None, None),
@@ -1286,7 +1306,7 @@ pub fn run_pipeline(
 
     let (transit_calls_table, transit_summary_table) = match (&result.transit, &transit_setup) {
         (Some(r), Some(t)) => (
-            Some(transit_calls(py, t.timetable(), r, window.end_s)?.unbind()),
+            Some(transit_calls(py, t.timetable(), r, window.end_s, &groups.stops)?.unbind()),
             Some(transit_summary(py, r, t.bus_report())?.unbind()),
         ),
         _ => (None, None),

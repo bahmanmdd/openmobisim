@@ -3,14 +3,16 @@
 //!
 //! One row per parking and time bin, parking by parking:
 //! `run_id, bin, start_s, parking, parking_id, hub_id, vehicle, capacity,
-//! arrivals, departures, occupancy_mean, occupancy_max, full_s, overflow_max`.
+//! arrivals, departures, occupancy_mean, occupancy_max, full_s, overflow_max, hub_group`.
 //! The same table `Run.parking_bins()` returns in Python.
 //!
 //! - `bin` counts from **midnight**, like `link_bins.parquet`'s (G-31, S280): `bin = start_s /
 //!   bin_s`, so the first row of a window starting at 07:30 with 15-minute bins has `bin` 30 and
 //!   `start_s` 27 000. The file records `bin_s` as `openmobisim.bin_seconds`.
 //! - `parking` is the parking's index in the run, `parking_id` its id in the
-//!   parking table, `hub_id` its hub's; `vehicle` is `car` or `bike`.
+//!   parking table, `hub_id` its hub's (the model's); `vehicle` is `car` or `bike`;
+//!   `hub_group` the group it shares with the stops beside it (C4: a label,
+//!   `openmobisim_core_sim::hub_groups`).
 //! - `arrivals` and `departures` count vehicles parked and fetched in the bin,
 //!   weighted by traveller weight; `occupancy_mean` and `occupancy_max` the
 //!   vehicles parked; `full_s` the seconds of the bin the parking was full;
@@ -50,6 +52,7 @@ pub fn write_parking_bins(
     parking: &ParkingSetup,
     result: &ParkingResult,
     description: &RunDescription,
+    parking_groups: &[String],
 ) -> Result<(), WriteError> {
     let b = &result.bins;
     let parkings = parking.count();
@@ -62,7 +65,8 @@ pub fn write_parking_bins(
     let mut hub = Vec::with_capacity(n);
     let mut vehicle = Vec::with_capacity(n);
     let mut capacity = Vec::with_capacity(n);
-    for p in 0..parkings {
+    let mut group = Vec::with_capacity(n);
+    for (p, parking_group) in parking_groups.iter().enumerate().take(parkings) {
         let p32 = u32::try_from(p).expect("parkings fit u32");
         for k in 0..b.bins {
             let k32 = u32::try_from(k).expect("bins fit u32");
@@ -75,6 +79,7 @@ pub fn write_parking_bins(
             hub.push(parking.hub_external_id(p32));
             vehicle.push(parking.kind(p32).as_str());
             capacity.push(parking.capacity(p32));
+            group.push(parking_group.as_str());
         }
     }
     let columns: Vec<ArrayRef> = vec![
@@ -94,6 +99,7 @@ pub fn write_parking_bins(
         Arc::new(Float64Array::from(
             b.overflow_max.iter().map(|&v| v.max(0.0)).collect::<Vec<_>>(),
         )),
+        Arc::new(StringArray::from(group)),
     ];
     let metadata = vec![
         ("openmobisim.bin_seconds".to_string(), b.bin_s.to_string()),
@@ -117,6 +123,7 @@ pub fn write_parking_bins(
             field("occupancy_max", DataType::Float64),
             field("full_s", DataType::Float64),
             field("overflow_max", DataType::Float64),
+            field("hub_group", DataType::Utf8),
         ])
         .with_metadata(metadata.iter().cloned().collect::<HashMap<_, _>>()),
     );

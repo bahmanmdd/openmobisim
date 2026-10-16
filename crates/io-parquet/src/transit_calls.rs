@@ -4,7 +4,9 @@
 //! One row per call — a run at a stop — in run order, then stop order:
 //! `run_id, run, line, kind, stop_id, sequence, scheduled_arrival_s,
 //! scheduled_departure_s, arrival_s, departure_s, boardings, alightings,
-//! on_board`. The same table `Run.transit_calls()` returns in Python.
+//! on_board, hub_group`. The same table `Run.transit_calls()` returns in Python.
+//! `hub_group` is the stop's hub group (C4: its station, or the stop; a label,
+//! `openmobisim_core_sim::hub_groups`).
 //!
 //! - `run` is the GTFS `trip_id`, `line` the route's short name, `kind` the
 //!   service (`bus`, `tram`, `metro`, `rail`, `ferry`, `other`), `sequence` the
@@ -52,6 +54,7 @@ pub fn write_transit_calls(
     result: &TransitResult,
     description: &RunDescription,
     until_s: u32,
+    stop_groups: &[String],
 ) -> Result<(), WriteError> {
     let n = timetable.call_count();
     assert_eq!(result.boardings.len(), n, "the result is of this timetable");
@@ -64,6 +67,7 @@ pub fn write_transit_calls(
     let mut kind = Vec::with_capacity(n);
     let mut stop = Vec::with_capacity(n);
     let mut sequence = Vec::with_capacity(n);
+    let mut group = Vec::with_capacity(n);
     for r in 0..timetable.run_count() {
         let id = TransitRunId::new(r);
         let route = timetable.run_route(id);
@@ -76,6 +80,7 @@ pub fn write_transit_calls(
             line.push(timetable.route_short_name(route));
             kind.push(timetable.route_kind(route).as_str());
             stop.push(timetable.stop_ids().external(timetable.call_stop(c).raw()));
+            group.push(stop_groups[timetable.call_stop(c).index()].as_str());
             sequence.push(u32::try_from(k).expect("calls of a run fit u32"));
         }
     }
@@ -102,6 +107,7 @@ pub fn write_transit_calls(
         floats(&result.boardings),
         floats(&result.alightings),
         floats(&on_board),
+        Arc::new(StringArray::from(group)),
     ];
     let metadata = vec![
         ("openmobisim.run_fingerprint".to_string(), description.fingerprint_hex()),
@@ -124,6 +130,7 @@ pub fn write_transit_calls(
             field("boardings", DataType::Float64, false),
             field("alightings", DataType::Float64, false),
             field("on_board", DataType::Float64, false),
+            field("hub_group", DataType::Utf8, false),
         ])
         .with_metadata(metadata.iter().cloned().collect::<HashMap<_, _>>()),
     );

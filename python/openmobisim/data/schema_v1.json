@@ -400,6 +400,12 @@
      "type": "double",
      "nullable": false,
      "unit": "vehicles"
+    },
+    {
+     "name": "hub_group",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
     }
    ],
    "metadata": [
@@ -488,6 +494,12 @@
      "type": "double",
      "nullable": false,
      "unit": "travellers"
+    },
+    {
+     "name": "hub_group",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
     }
    ],
    "metadata": [

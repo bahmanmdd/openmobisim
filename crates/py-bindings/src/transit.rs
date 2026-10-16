@@ -242,6 +242,7 @@ pub(crate) fn transit_calls<'py>(
     timetable: &Timetable,
     result: &TransitResult,
     until_s: u32,
+    stop_groups: &[String],
 ) -> PyResult<Bound<'py, PyDict>> {
     let n = timetable.call_count();
     let s = timetable.scheduled();
@@ -252,6 +253,7 @@ pub(crate) fn transit_calls<'py>(
     let mut kind = Vec::with_capacity(n);
     let mut stop = Vec::with_capacity(n);
     let mut sequence = Vec::with_capacity(n);
+    let mut group = Vec::with_capacity(n);
     for r in 0..timetable.run_count() {
         let id = TransitRunId::new(r);
         let route = timetable.run_route(id);
@@ -264,6 +266,7 @@ pub(crate) fn transit_calls<'py>(
             line.push(timetable.route_short_name(route).to_string());
             kind.push(timetable.route_kind(route).as_str());
             stop.push(timetable.stop_ids().external(timetable.call_stop(c).raw()).to_string());
+            group.push(stop_groups[timetable.call_stop(c).index()].clone());
             sequence.push(u32::try_from(k).expect("calls of a run fit u32"));
         }
     }
@@ -287,6 +290,7 @@ pub(crate) fn transit_calls<'py>(
     d.set_item("boardings", floats(&result.boardings).into_pyarray(py))?;
     d.set_item("alightings", floats(&result.alightings).into_pyarray(py))?;
     d.set_item("on_board", floats(&on_board).into_pyarray(py))?;
+    d.set_item("hub_group", group)?;
     Ok(d)
 }
 

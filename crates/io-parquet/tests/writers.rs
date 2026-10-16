@@ -689,6 +689,7 @@ fn transit_calls_round_trip_with_an_unknown_time() {
         &result,
         &sample_description(None, None),
         u32::MAX,
+        &openmobisim_core_sim::hub_groups::hub_groups(Some(&timetable), None, 150.0).stops,
     )
     .unwrap();
     let batch = read_first_batch(&path);
@@ -700,6 +701,7 @@ fn transit_calls_round_trip_with_an_unknown_time() {
         batch.column_by_name(name).unwrap().as_any().downcast_ref::<UInt32Array>().unwrap().clone()
     };
     assert_eq!((text("run").value(0), text("stop_id").value(1)), ("B1:00", "M"));
+    assert_eq!(text("hub_group").value(1), "M", "a stop without a parent station is its own group");
     assert_eq!((text("line").value(0), text("kind").value(0)), ("B1", "bus"));
     assert_eq!(u32s("sequence").value(2), 2);
     assert_eq!((u32s("arrival_s").value(1), u32s("scheduled_arrival_s").value(1)), (139, 120));

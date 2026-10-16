@@ -223,6 +223,7 @@ pub(crate) fn parking_bins<'py>(
     py: Python<'py>,
     setup: &ParkingSetup,
     result: &ParkingResult,
+    parking_groups: &[String],
 ) -> PyResult<Bound<'py, PyDict>> {
     let b = &result.bins;
     let n = setup.count() * b.bins;
@@ -267,19 +268,25 @@ pub(crate) fn parking_bins<'py>(
         "overflow_max",
         b.overflow_max.iter().map(|&v| v.max(0.0)).collect::<Vec<_>>().into_pyarray(py),
     )?;
+    let group: Vec<&str> = (0..setup.count())
+        .flat_map(|p| std::iter::repeat_n(parking_groups[p].as_str(), b.bins))
+        .collect();
+    d.set_item("hub_group", group)?;
     Ok(d)
 }
 
-/// Where each parking is and what it holds, for maps: ``{"parking_id", "hub_id",
+/// Where each parking is and what it holds, for maps: ``{"parking_id", "hub_id", "hub_group",
 /// "vehicle", "capacity", "lon", "lat", "name"}``.
 pub(crate) fn parking_places<'py>(
     py: Python<'py>,
     setup: &ParkingSetup,
+    parking_groups: &[String],
 ) -> PyResult<Bound<'py, PyDict>> {
     let n = u32::try_from(setup.count()).expect("parkings fit u32");
     let d = PyDict::new(py);
     d.set_item("parking_id", (0..n).map(|p| setup.external_id(p).to_string()).collect::<Vec<_>>())?;
     d.set_item("hub_id", (0..n).map(|p| setup.hub_external_id(p).to_string()).collect::<Vec<_>>())?;
+    d.set_item("hub_group", parking_groups.to_vec())?;
     d.set_item("vehicle", (0..n).map(|p| setup.kind(p).as_str()).collect::<Vec<_>>())?;
     d.set_item("capacity", (0..n).map(|p| setup.capacity(p)).collect::<Vec<_>>().into_pyarray(py))?;
     d.set_item("lon", (0..n).map(|p| setup.position(p).lon).collect::<Vec<_>>().into_pyarray(py))?;

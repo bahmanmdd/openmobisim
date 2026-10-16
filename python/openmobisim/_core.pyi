@@ -889,6 +889,7 @@ def run_pipeline(
     design_id: str = "default",
     replication: int = 0,
     outputs: str = "all",
+    hub_group_m: float = 150.0,
 ) -> RunSummary | str:
     """Run the whole pipeline and write all four output artifacts.
 
@@ -992,6 +993,7 @@ def run_pipeline(
         design_id: The design written in every row of ``kpis.parquet`` (``"default"``).
         replication: The replication written in every row of ``kpis.parquet`` (0).
         outputs: ``"all"`` (every file), or ``"minimal"``: ``kpis.csv`` and ``manifest.json`` only.
+        hub_group_m: The radius within which a parking joins the nearest stop's hub group (150).
 
     Returns:
         A :class:`RunSummary`; with ``fingerprint_only``, the fingerprint (16 hex digits).
