@@ -4,14 +4,14 @@
   "amsterdam": {
    "archive": {
     "name": "amsterdam.zip",
-    "sha256": "53f262ab4dca0c239e353cf6e7603b919f097bb1990533046ed7de5efe1d0c1c",
-    "bytes": 59654728
+    "sha256": "a6960ca56c59ff42748aa89eaa7e7db66f39526609ff1e0986a4a68fc539b252",
+    "bytes": 59654725
    },
    "files": {
-    "case.json": "410f161a82afb221b8c176a84020ccd2164ad67004f8b22f45b07783ca2aa915",
+    "case.json": "160bd925055d1ddc718f0e4596db833493ba0c217aa3c13ce055ba1014c8a965",
     "demand/classes.csv": "5eef65d870b5f358daac2fdbded0be676649bd66fddc3958bb3d67392df614a4",
     "demand/gateway_counts.csv": "dbaef3f544d714ee10b6344f51cc5124dca26717045c16b21d9f255242edc36d",
-    "demand/morning.json": "7a5de9b54cdda054e8ed73bcec819b83c41894f49ddf19ad400ada00e2db55c6",
+    "demand/morning.json": "0e48e5ff585f9e385503a484e59b510187c061b4ccebd46f23edf34e92854555",
     "demand/od.csv": "32658119b1dc560a01e2ea08111bfdfe62144654817c45dda6ecabd5a7bafeb2",
     "demand/zone_points.csv": "5dc408cc6ef1579e5d62c3b43b789294e56e1f012ba21e1f6fef53785a068c4a",
     "demand/zones.csv": "aec9b41f19367582af64a54378c3621f77e9bed8b765331ebbf51e70d28dcf08",
@@ -22,14 +22,14 @@
   "delft": {
    "archive": {
     "name": "delft.zip",
-    "sha256": "7868dbae621566ed446ea4e169335d77582965dc19e73c45f9ca20f3a9e30cc8",
-    "bytes": 18481727
+    "sha256": "2e5c443916cc50fe8263b6a2719241fe54cc35b0dee8461624fcdbeae6ef71b9",
+    "bytes": 18481724
    },
    "files": {
-    "case.json": "8e485e328e45badee51eb9015eaf389397953c0978de443ce212981d03716648",
+    "case.json": "bbd3b5076d2ec318cfb88f1af7c61dfb88ac5305be66ac67ed2f921b38eb98a0",
     "demand/classes.csv": "5eef65d870b5f358daac2fdbded0be676649bd66fddc3958bb3d67392df614a4",
     "demand/gateway_counts.csv": "c173b0f8be2ff2dec9d177ed28abd31a79e680bcb89078b6d491a671e1afb588",
-    "demand/morning.json": "400893600efd6aea3927d73de8055e8476442d3f38321c17637f93872913d43d",
+    "demand/morning.json": "da2efed1c07e244d0a1d0745625257e2b4b9ffbe6f067e3f16d9518d99220289",
     "demand/od.csv": "1cc0907740a264a46fd12fa68bb6a3e17bfdf9d556ff7a755fd56907ce9796fa",
     "demand/zone_points.csv": "f3309861881b16b4143c61c894ef09147fa813995b1f72b6255cb4df81d9daa5",
     "demand/zones.csv": "cefe12776e74f7e695fc0e3f1fd2e6075b738b23d30a3cce9d88f60f411cb955",
@@ -40,15 +40,15 @@
   "lyon": {
    "archive": {
     "name": "lyon.zip",
-    "sha256": "2b5186cf277abb8a60dc55ce04dd59e426447a816a8d435614715a9570f0a11c",
-    "bytes": 36760589
+    "sha256": "64db7d56fc35956b275a2ad11f96a3ccad8ecfdacee963a49b4f0d08031ec790",
+    "bytes": 36760584
    },
    "files": {
     "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
-    "case.json": "87e497c62dc1b99c97c7ef7c0fa03703771580d3b9b8f81602f5eea3a613ad64",
+    "case.json": "11a5b7e7c1dff93ca4a3325059a094d9c02877c4f587818095af75873736b938",
     "demand/classes.csv": "4eb3ed2c879d1905955f13fddaa0274466b56ea4334edbb2c49af8cbb60169d4",
     "demand/gateway_counts.csv": "4c788b09e72b7e7464d47ddd693f7cb236230cd5fbe5660add8fed77f8e8848a",
-    "demand/morning.json": "ee19598770f0d87babeb6988e9f3d1e144e0e14f2ec4c381dd1e96154e648c73",
+    "demand/morning.json": "1b24d240752c8b6c0fb6eb5729b8f5fa2d807b07a3a4d74a2fa9294817352d82",
     "demand/od.csv": "46327ed023c6d9bfa4b5869e5b6a94fd39f8aa5a2d3e7e01cb779ebd49aa14ad",
     "demand/zone_points.csv": "9f1c21a84cc7ea14ddfd713952aa39ab60720be241b9574af36f239b8395080f",
     "demand/zones.csv": "e583ecf0e96987a77745bf65e3949e5e9f24a52378dc4d3d1f1eb1ae542fa4db",
@@ -74,15 +74,15 @@
   "paris": {
    "archive": {
     "name": "paris.zip",
-    "sha256": "d12696bc70d1b0ca5b971f5662d64e47da4738f023d3804d3bf7cba6b7049e3d",
-    "bytes": 91365927
+    "sha256": "59017d73adaf5aca7856e263a0a3f5ae65b39344e7d3ae1e53d9dc5e2336ec45",
+    "bytes": 91365923
    },
    "files": {
     "LICENCE_MOBILITES.pdf": "85ec9a682d4d6e38de2f051b53f0d8b99f1bb07f37e817f727ea81051916144d",
-    "case.json": "2da0cfc6b97cf3e813c34027011e9bd42fdf33cdf5cf370671d23accf3468684",
+    "case.json": "846b99e8fbcdc69cc02bc6a5acf27e3e6a01fef40cec4fea77a39e5a08b67af4",
     "demand/classes.csv": "7909488375f9ec94fe6522031531afcf34169b55e28847deefffd625c6c1c439",
     "demand/gateway_counts.csv": "ced3ab0dda24f922dada6b8e8b345d0c170ba7a2e83461b2bdb984459152df1a",
-    "demand/morning.json": "67c51a2b04391b008d54c50e9d933e65ef67f59aaf01f5864a3cef57c631ba93",
+    "demand/morning.json": "a62d03207b73c25bd1630461f488e0bc68cd70f8d5df7300979948c427cbada6",
     "demand/od.csv": "ed3e763e1efd498b09b0f8eae39a9b11dc6bce88f07291e99cd08d4e349426bc",
     "demand/zone_points.csv": "7423bfcb99bb6396907cd72b1bfb79586880ad25745c7c3633ad1718b3253eb5",
     "demand/zones.csv": "b721b3a269ebb373c32b0091f47a18c1b14b7b3b85aa190f04357c612f726322",

@@ -19,7 +19,7 @@
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "f7938dcf2d41"
+   "git_sha": "782f05ce0cc1"
   },
   "delft/base": {
    "fingerprint": "961a8c7dd8a867f6",
@@ -36,7 +36,7 @@
    "loadings": 7,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "f7938dcf2d41"
+   "git_sha": "782f05ce0cc1"
   },
   "lyon/base": {
    "fingerprint": "4586ad26ece801c2",
@@ -54,7 +54,7 @@
    "loadings": 10,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "f7938dcf2d41"
+   "git_sha": "782f05ce0cc1"
   },
   "nguyendupuis/base": {
    "fingerprint": "208bd2b137288090",
@@ -67,7 +67,7 @@
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "f7938dcf2d41"
+   "git_sha": "782f05ce0cc1"
   },
   "paris/base": {
    "fingerprint": "1807e4569ad6c412",
@@ -85,7 +85,7 @@
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "f7938dcf2d41"
+   "git_sha": "782f05ce0cc1"
   },
   "siouxfalls/base": {
    "fingerprint": "4ae3671336d2d99d",
@@ -98,7 +98,7 @@
    "loadings": 5,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "f7938dcf2d41"
+   "git_sha": "782f05ce0cc1"
   },
   "siouxfalls/congested": {
    "fingerprint": "659ce9cdcd2d11f8",
@@ -111,7 +111,7 @@
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "f7938dcf2d41"
+   "git_sha": "782f05ce0cc1"
   }
  }
 }
