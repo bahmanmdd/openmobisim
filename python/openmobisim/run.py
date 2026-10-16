@@ -896,7 +896,8 @@ class Run:
         (the call's place in its run, from 0), ``scheduled_arrival_s``,
         ``scheduled_departure_s``, and ``arrival_s``, ``departure_s`` — the times in
         the run: a bus that rode the roads keeps the loading's, the rest the
-        schedule's; ``NaN`` where a bus had not got there by the end of the window —
+        schedule's; ``NaN`` (null in ``transit_calls.parquet``) where a bus had not got there by the
+        end of the window —
         then ``boardings``, ``alightings`` and ``on_board`` (as the vehicle leaves),
         weighted by traveller weight. Seconds count from the service day's midnight.
         """

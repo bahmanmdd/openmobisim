@@ -20,7 +20,8 @@ public transport (``transit_read_gtfs``, ``Scenario(transit=...)``), whose buses
 ride the roads among the cars, or drive or cycle to a parking and go on by
 transit (``parking_read_osm``, ``parking_read_table``, ``Scenario(parkings=...)``),
 the station chosen by the choice model. ``demand_sample`` simulates one traveller for
-every few people, for faster screening runs. No disruptions yet.
+every few people, for faster screening runs. Roads and lines can be disrupted at a time of day
+(``Scenario.from_parts(..., disruptions=...)``).
 
 Networks and demand may come from files in standard formats: GMNS networks
 (``network_read_gmns``, ``network_write_gmns``), checked before a run by ``network_check``;

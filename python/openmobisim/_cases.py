@@ -27,10 +27,13 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openmobisim import _core
 from openmobisim._log import logger
+
+if TYPE_CHECKING:
+    from openmobisim.scenario import Scenario
 
 #: The bundle's version: a case's files never change within one.
 BUNDLE_VERSION = "v1"
@@ -237,7 +240,7 @@ class Case:
         weight: int | None = None,
         departures: tuple[str | float, str | float] | str | None = None,
         **options: Any,
-    ) -> Any:
+    ) -> Scenario:
         """The case's scenario ``scenario`` (its ``case.json``), with ``options`` added.
 
         ``weight``: people per simulated traveller (``demand``'s); the case's own by default.
@@ -273,10 +276,11 @@ class Case:
 def case(name: str, root: str | Path | None = None, *, check: bool = True) -> Case:
     """A starter case (S240): its files found or fetched, checked, ready to read.
 
-    The cases: ``amsterdam``, ``paris``, ``lyon`` (OpenStreetMap clipped to the study area, the
-    transit feed of one service day, the parkings, a synthetic morning commute 07:00–09:00 with six
-    traveller classes), ``siouxfalls`` and ``nguyendupuis`` (the benchmarks: link tables, an OD
-    matrix, cars). ``case_names()`` lists them.
+    The cases: ``delft``, ``amsterdam``, ``paris``, ``lyon`` (OpenStreetMap clipped to the study
+    area, the transit feed of one service day, the parkings, a synthetic morning with four example
+    traveller classes and the trips from outside: departures 07:30–08:30 simulated to 09:30 by
+    default), ``siouxfalls`` and ``nguyendupuis`` (the benchmarks: link tables, an OD matrix,
+    cars). ``case_names()`` lists them.
 
     Args:
         name: The case.

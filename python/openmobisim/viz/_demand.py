@@ -2,7 +2,7 @@
 
 Demand here is the same trips table a ``Scenario`` takes (rows of
 ``(traveller_id, trip_seq, origin_lon, origin_lat, destination_lon,
-destination_lat, departure_time_s, user_class, weight)``). Until zones exist,
+destination_lat, departure_time_s, user_class, weight[, mode])``, ``Trip``). Until zones exist,
 places are square cells of `cell_m` metres; when zones arrive they replace the
 cells and everything else stays.
 """

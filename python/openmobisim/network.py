@@ -196,10 +196,10 @@ def network_read_table(
             case-insensitive): ``from`` (``init_node``, ``from_node``),
             ``to`` (``term_node``, ``to_node``) — **required**; ``id``
             (auto-numbered if absent); ``length`` (``length_m``, ``dist``);
-            ``lanes``; ``free_flow_speed`` (``speed``) or ``free_flow_time``
-            (``fftt``) — at most one is read, ``free_flow_speed`` first;
+            ``lanes``; ``free_flow_speed`` (``free_flow_speed_km_h``; not ``speed``) or
+            ``free_flow_time`` (``fftt``) — at most one is read, ``free_flow_speed`` first;
             ``capacity`` (``cap``); ``class`` (``type``, ``link_type``,
-            ``highway``) — a name from ``openmobisim.viz``'s road classes
+            ``highway``) — a name from ``openmobisim.LINK_CLASSES``
             (``"primary"``, ``"residential"``, …; TNTP's numeric
             ``link_type`` is not one, so it is treated as unrecognised, like
             an unfamiliar OSM tag, with a diagnostic — pass a ``class``
