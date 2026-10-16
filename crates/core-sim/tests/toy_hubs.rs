@@ -1,4 +1,4 @@
-//! Itineraries through the toy network's hub `H` at `D2` (S198): every number
+//! Itineraries through the toy network's hub `H` at `D2`: every number
 //! derived by hand.
 //!
 //! The toy network's constants: residential 30 km/h

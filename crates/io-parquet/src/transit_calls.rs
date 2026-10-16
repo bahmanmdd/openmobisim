@@ -1,5 +1,5 @@
 //! `transit_calls.parquet` — every call of the run's timetable, with its times
-//! in the run and its passengers (S199; the schema ruled by the user, S200).
+//! in the run and its passengers.
 //!
 //! One row per call — a run at a stop — in run order, then stop order:
 //! `run_id, run, line, kind, stop_id, sequence, scheduled_arrival_s,

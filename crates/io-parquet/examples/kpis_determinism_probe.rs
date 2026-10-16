@@ -46,7 +46,7 @@ const WINDOW_S: u32 = 50_000;
 /// complete every trip, one owns no car at all (`no_vehicle_available`),
 /// and the window is set to strand one traveller's second trip
 /// (`truncated`). Small and hand-authored, matching every other crate's
-/// fixture convention this session (S133) — this is a determinism check,
+/// fixture convention this session — this is a determinism check,
 /// not a demand-realism one.
 fn demand(node: impl Fn(u32, u32) -> LonLat) -> Vec<RawTrip> {
     let trip = |traveller: &str,
@@ -366,7 +366,7 @@ fn main() {
     default_pipeline_probe();
 }
 
-/// Transit (S199): the toy network with its tram and bus, the bus on the roads among
+/// Transit: the toy network with its tram and bus, the bus on the roads among
 /// cars, and enough transit trips that routing them is split across threads. Every
 /// realised time, boarding and trip outcome must be the same on every run and at any
 /// thread count, and so must the `transit_calls.parquet` written.
@@ -466,7 +466,7 @@ fn transit_probe(dir: &std::path::Path) {
     println!("transit_digest        {digest:016x}");
 }
 
-/// Park-and-ride and bike-and-ride (M4): the toy network with its tram and bus and its
+/// Park-and-ride and bike-and-ride: the toy network with its tram and bus and its
 /// parkings, round trips out and back, a logit choosing the parkings and journeys under
 /// `msa`, cars in the loading. Every choice, probability, parking tally and trip outcome
 /// must be the same on every run and at any thread count, and so must the
@@ -590,7 +590,7 @@ fn parking_probe(dir: &std::path::Path) {
     println!("parking_digest        {digest:016x}");
 }
 
-/// Mode choice (M5): the toy network with its tram, bus and parkings; travellers without a
+/// Mode choice: the toy network with its tram, bus and parkings; travellers without a
 /// stated mode choosing among every mode under a nested logit and `msa`, a round trip each
 /// (park-and-ride offered at any length), with cars in the loading. Every mode, choice,
 /// probability and trip outcome must be the same on every run and at any thread count.
@@ -706,7 +706,7 @@ fn mode_choice_probe() {
     println!("modes_digest          {digest:016x}");
 }
 
-/// The shipped default pipeline (T-3): the toy network with its tram, bus, parkings and two
+/// The shipped default pipeline: the toy network with its tram, bus, parkings and two
 /// traveller classes, the loading at level 2 (point queue) with the shipped rules (en-route
 /// rerouting on) and a timed, unannounced narrowing of `a3`, mode and route choice under a
 /// logit with a coefficient per class and `msa`. Every mode, choice, probability, reroute

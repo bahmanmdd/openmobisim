@@ -1,12 +1,10 @@
-"""Transit on the map: lines, stops as hubs, passengers on board (S199, V2).
+"""Transit on the map: lines, stops as hubs, passengers on board (V2).
 
 Every run's hop from one call to the next is a straight segment from stop to
 stop (a feed's shapes are not read yet), coloured by the kind of service or, asked
 for, by its line (lines sharing a stretch drawn side by side), as wide as the
 passengers the day's runs carried over it; stops are hubs, sized by their
-boardings, and named on a small network. The look was put to the user with the
-first figure and accepted (S200); the colour by line and the stops' names were
-asked for with the validation figures (T-8). Since S281 the hops are ribbons in the
+boardings, and named on a small network. The hops are ribbons in the
 link map's own idiom: the same width rule, the two directions side by side on the
 driver's side, a halo, the legend block and the three-line footer.
 """

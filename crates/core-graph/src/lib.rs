@@ -3,22 +3,22 @@
 //!
 //! | Module | What it owns |
 //! |---|---|
-//! | [`geometry`] | WGS84 → projected metres, from scratch, UTM only (S81) |
+//! | [`geometry`] | WGS84 → projected metres, from scratch, UTM only |
 //! | [`connectivity`] | Strongly connected components of the node graph and of the link graph (legal turns) |
 //! | [`csr`] | The compressed-sparse-row adjacency every structure here is built from |
 //! | [`defaults`] | The versioned, cited, overridable table that turns OSM tags into a fundamental diagram |
 //! | [`network`] | The road network itself: structure of arrays, built once, then immutable |
 //! | [`turns`] | (incoming link, outgoing link) pairs — the node model's unit of work |
-//! | [`link_geometry`] | The shape of each street, kept outside `RoadNetwork` (S125) |
-//! | [`layers`] | The bike and walk layers: static-cost networks over the same geometry (S193, S195) |
-//! | [`hubs`] | Hubs: access points on layers and the transfers between them (S198) |
-//! | [`examples`] | `manhattan_grid` and `toy_network` — the shared synthetic-network fixtures (S105, S161) |
+//! | [`link_geometry`] | The shape of each street, kept outside `RoadNetwork` |
+//! | [`layers`] | The bike and walk layers: static-cost networks over the same geometry |
+//! | [`hubs`] | Hubs: access points on layers and the transfers between them |
+//! | [`examples`] | `manhattan_grid` and `toy_network` — the shared synthetic-network fixtures |
 //!
 //! # The one thing to know
 //!
 //! **Everything in this crate is built once and then immutable.** The network,
 //! its turns and its parameters are shared behind an `Arc` by every run in a
-//! batch (Foundations §5); nothing here is per-run state. A disruption does not
+//! batch; nothing here is per-run state. A disruption does not
 //! mutate the network — it writes new immutable arrays at its scheduled time
 //! (§3e).
 

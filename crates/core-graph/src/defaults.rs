@@ -1,5 +1,5 @@
 //! The OSM defaults table: how a `highway=residential` tag becomes a
-//! fundamental diagram (S15, design §12).
+//! fundamental diagram.
 //!
 //! # What this buys, and what it promises
 //!
@@ -49,90 +49,90 @@
 //! Physics* 73(4) 1067–1141, <https://arxiv.org/abs/cond-mat/0012229>: jam densities estimated
 //! "from 120 to 200 vehicles per kilometer and lane", 140–160 "probably most realistic", p. 9;
 //! congested traffic's wave speed "C0 = 15 ± 5 km/h", p. 13); the uniform-delay form is
-//! Webster's (1958), see [`SignalDefaults::uniform_delay`] (S259).
+//! Webster's (1958), see [`SignalDefaults::uniform_delay`].
 
 use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 
 /// Version of this table.
 ///
-/// Part of every artifact fingerprint (Foundations §8), so **bump it whenever
+/// Part of every artifact fingerprint, so **bump it whenever
 /// any number below changes**. A cached network built with different parameters
 /// is not the same network, and silently reusing it is the kind of error that
 /// takes a week to find.
 ///
-/// Version 2 (S195): the bike and walk layers' speeds and the dedicated-bike
+/// Version 2: the bike and walk layers' speeds and the dedicated-bike
 /// preference ([`crate::layers::StaticLayerDefaults`]) joined the table.
 ///
-/// Version 3 (S197): ferry crossings on the bike and walk layers, their default
+/// Version 3: ferry crossings on the bike and walk layers, their default
 /// speed and expected wait.
 ///
-/// Version 4 (S199): scheduled public transport joined the table (`core-transit`'s
+/// Version 4: scheduled public transport joined the table (`core-transit`'s
 /// `TransitDefaults`): the boarding slack, walks to and between stops, bus dwell,
 /// PCU and the plausibility ratio; and the busway class's row.
 ///
-/// Version 5 (M4, S201): parking joined the table (`core-sim`'s
+/// Version 5: parking joined the table (`core-sim`'s
 /// `ParkingDefaults`: walks from parkings, the reach of park-and-ride and
 /// bike-and-ride, the candidates, the parking times and their occupancy
 /// response), and the itineraries' choice coefficients joined the built-in
 /// logit's defaults (walking, waiting, transfers); car routes are unchanged.
 ///
-/// Version 6 (M5, S205): mode choice. The nested logit's nest scale (`mu`, 0.5) and
+/// Version 6: mode choice. The nested logit's nest scale (`mu`, 0.5) and
 /// park-and-ride's shortest trip in mode choice (`ParkingDefaults::pr_min_km`, 3 km); the
 /// mode constants are 0. A run without mode choice is unchanged.
 ///
-/// Version 7 (S209): mode choice offers a walk or a ride only up to 30 minutes
-/// (`core-sim`'s `ModeDefaults`: `walk_max_s`, `bike_max_s`, design §21.1). A run without
+/// Version 7: mode choice offers a walk or a ride only up to 30 minutes
+/// (`core-sim`'s `ModeDefaults`: `walk_max_s`, `bike_max_s`). A run without
 /// mode choice is unchanged.
 ///
-/// Version 8 (S210): `msa`'s itinerary gap sample (`core-sim`'s `Msa::itinerary_gap_sample`):
+/// Version 8: `msa`'s itinerary gap sample (`core-sim`'s `Msa::itinerary_gap_sample`):
 /// how many itinerary trips plan their whole choice set to measure the gap, the others that
 /// keep an itinerary out through a parking re-costed there. Its default is every trip, as
 /// before: no run changes.
 ///
-/// Version 9 (S213): the loading's rules (`core-sim`'s `LoadingOptions`): priority at merges
+/// Version 9: the loading's rules (`core-sim`'s `LoadingOptions`): priority at merges
 /// and en-route rerouting (`reroute_after_s` 300, `reroute_max` 3, `reroute_min_gain` 0.1),
 /// both off while they are measured: no run changes.
 ///
-/// Version 10 (S215): **en-route rerouting on by default** (300 s, at most 3, 10% faster),
+/// Version 10: **en-route rerouting on by default** (300 s, at most 3, 10% faster),
 /// priority off. Runs where vehicles stand still for five minutes change; others do not.
 ///
-/// Version 11 (S217): **turn pockets** on approaches of two lanes or more (`core-sim`'s
+/// Version 11: **turn pockets** on approaches of two lanes or more (`core-sim`'s
 /// `LoadingOptions::pocket_length_m`, 50 m per lane): a vehicle waiting to turn into a full
 /// street no longer holds up those behind it turning elsewhere, while the waiting ones fit in
 /// their pockets. Runs where a multi-lane approach's front waits change; others do not.
 ///
-/// Version 12 (S223): **the free-flow loading** (iteration 0) is built up in groups and loaded
+/// Version 12: **the free-flow loading** (iteration 0) is built up in groups and loaded
 /// with the point queue: `core-sim`'s `Equilibration::increments` (the Python layer's default
-/// 5, uncalibrated: the user's suggestion) and `warmup` 1 for a run of one loading as for one
+/// 5, uncalibrated) and `warmup` 1 for a run of one loading as for one
 /// that iterates, at flow levels 2 to 4. Every such run changes; level-0 runs do not.
 ///
-/// Version 13 (S225): **every network parameter by name** (`network_options`, the
+/// Version 13: **every network parameter by name** (`network_options`, the
 /// [`crate::network_options`] module: the road-class table, the multipliers, the signal settings,
 /// the bike and walk layers' speeds), kept by the network and used by its turn table and bike
 /// costs; the green-fraction multiplier, which nothing read, now scales the green time. No run at
 /// the shipped values changes.
 ///
-/// Version 14 (S229): **the point queue is the default loading** (`flow_level` 2 in the Python
+/// Version 14: **the point queue is the default loading** (`flow_level` 2 in the Python
 /// layer; the full model, with spillback, pockets and rerouting, at 4); `msa` stops when
 /// converged (`gap_tolerance` 0.02, `route_growth_tolerance` 1, the most `iterations` 10);
 /// en-route rerouting off at level 2, where nothing waits for room. Every default run changes.
 ///
-/// Version 15 (S230): **a region clip keeps what can be kept** (`network_read_osm`'s
+/// Version 15: **a region clip keeps what can be kept** (`network_read_osm`'s
 /// `region_stubs` and `region_buffer_m`, `io-osm`'s `ClipOptions`): each road's first node past
 /// the edge, and motorways, trunk roads and their slip roads within 2 km, so a ring road just
 /// outside a study area stays. Every network read with a region changes.
 ///
-/// Version 16 (S235): **longer choice-set limits**: mode choice offers a ride up to 60 minutes
+/// Version 16: **longer choice-set limits**: mode choice offers a ride up to 60 minutes
 /// (`core-sim`'s `ModeDefaults::bike_max_s`, 30 before), and a walk to or from a stop is up to
 /// 30 minutes (`core-transit`'s `TransitDefaults::access_walk_max_s`, 15 before), counted in
 /// whole seconds; a traveller class may give its own (`core-sim`'s `ClassLimits`). Runs with
 /// mode choice or a timetable change; others do not.
 ///
-/// Version 17 (S236): a painted lane's own multiplier in the bike layer's dedicated cost
+/// Version 17: a painted lane's own multiplier in the bike layer's dedicated cost
 /// (`bike_lane_cost_factor`, 1: a lane counted as a track, as before), overridable by name in
 /// `network_options`. No run at the shipped values changes.
 ///
-/// Version 18 (S248): **prices** (`core-sim`'s `Prices`, a scenario's `price_options`): a car's
+/// Version 18: **prices** (`core-sim`'s `Prices`, a scenario's `price_options`): a car's
 /// running cost per km (0.12 €), a bike's (0), a transit journey's flat fare (2.0 €, nothing per
 /// km or transfer) and a parking's fee where its table gives none (0); every alternative carries
 /// `cost_eur` and its parts. The built-in models weigh money only when given `beta_cost_eur`: no
@@ -143,30 +143,30 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// best by estimate. On Amsterdam's morning it saved 12 % of the run's time and took
 /// bike-and-ride from 0.76 % to 0.54 % of trips. Runs with parkings change; others do not.
 ///
-/// Version 20 (S254, the pre-release rebuild): **money counts by default** (D-1): the built-in logit
+/// Version 20 (the pre-release rebuild): **money counts by default**: the built-in logit
 /// and nested logit weigh `cost_eur` at −1.2 per euro (`beta_cost_eur`; 10 €/h at −0.2 per
-/// minute); and **a bike leg's kilometre in mixed traffic weighs −0.16 on top of its time** (D-4,
-/// S244: `beta_bike_mixed_km`, what the bike route choice already assumes). Every logit run with a
+/// minute); and **a bike leg's kilometre in mixed traffic weighs −0.16 on top of its time**
+/// (`beta_bike_mixed_km`, what the bike route choice already assumes). Every logit run with a
 /// price changes (a car's running cost is one), and every run whose choices include a bike leg.
 ///
-/// Version 21 (S256, Q-7): **no prices by default**: a car's running cost per km and a transit
+/// Version 21: **no prices by default**: a car's running cost per km and a transit
 /// journey's fare are 0 (`core-sim`'s `Prices`; 0.12 € and 2.0 € before), so every shipped price
 /// is 0 — having a car, a bike, a pass or the means to pay a fare is access, which traveller
 /// classes give, and no money is counted for it. `beta_cost_eur` stays −1.2 and weighs the prices
 /// a scenario gives. Every logit run at the shipped prices changes back to one weighing no money.
 ///
-/// Version 22 (S265, the user: "the congestion level is always low … are these numbers defensible?"):
+/// Version 22:
 /// **at a signal, a lane of an at-grade road discharges at most its speed band's saturation flow**
 /// ([`SaturationBands`]: 1 000 veh/h at 30 km/h or less, 1 200 at 50, 1 500 at 70, per hour of
 /// green), the French references for signalised junctions, below the Highway Capacity Manual's base
 /// the class rows keep elsewhere; and a trunk road's lane 1 800 veh/h (1 900 before). Every network
 /// read from OpenStreetMap with signalised at-grade approaches of 70 km/h or less changes; a link
-/// table that states its capacities does not. With it, the reader's fix (S265) that **a signal
+/// table that states its capacities does not. With it, the reader's fix that **a signal
 /// tagged `traffic_signals:direction` stops only its direction** (a stop line's signal; before,
 /// both, so a car met two signals at most junctions of a two-way street) and that an emergency
 /// signal stops nobody; the network keeps signals per approach ([`crate::RoadNetwork::is_link_signalised`]).
 ///
-/// Version 23 (S268, the user's rulings of 2026-10-12): **a region clip joins a main road's cut
+/// Version 23: **a region clip joins a main road's cut
 /// carriageways by a turnaround** (`io-osm`'s `ClipOptions`, with a buffer), so motorways and
 /// trunk roads stay to the buffer's edge instead of vanishing back to their last interchange
 /// (every network read with a region and a buffer changes); **a traveller is offered at most 5
@@ -176,7 +176,7 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// Python layer's `msa` **stops at a gap of 0.05** (0.02 before). Every run with a choice among
 /// more than five routes changes, and every iterating run.
 ///
-/// Version 24 (S269): **a journey with transit is offered only up to two hours door to door**
+/// Version 24: **a journey with transit is offered only up to two hours door to door**
 /// (`core-transit`'s `TransitDefaults::journey_max_s`): a timetable's late service had offered
 /// a morning traveller an 18-hour journey that ended after midnight. Every run with transit
 /// where such journeys were found changes; and a trip that chose its mode and had none is
@@ -185,7 +185,7 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// every network read from OpenStreetMap with cycleways gains walk links, most in the
 /// Netherlands (Amsterdam's walk network had fallen apart into islands, Schiphol's among them).
 ///
-/// Version 25 (S271): **the simulation window is the study period**: a run starts at the
+/// Version 25: **the simulation window is the study period**: a run starts at the
 /// window's start and stops at its end (before, it ran from midnight, and its end defaulted to
 /// midnight). Without a window given, it starts at the earliest departure, rounded down to the
 /// quarter hour, and lasts **three hours** (the starter mornings' departures span 06:30–09:30);
@@ -193,31 +193,31 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// inside it. And **a trip with no alternative at all travels by car** (`core-sim`'s
 /// `ModeDefaults::fallback_car`, W-1), counted and reported apart. Every run changes.
 ///
-/// Version 26 (S276): **the car fallback is off by default** (`core-sim`'s
+/// Version 26: **the car fallback is off by default** (`core-sim`'s
 /// `ModeDefaults::fallback_car`, experimental): a trip with no alternative stays unsimulated,
 /// as before version 25, and the run reports it with why every mode gave it none. Every run
 /// where some trip had no alternative changes.
 ///
-/// Version 27 (S279): **a car trip pays its access and egress** in mode choice (`core-sim`'s
+/// Version 27: **a car trip pays its access and egress** in mode choice (`core-sim`'s
 /// `ModeDefaults::car_access_s` 120 s and `car_egress_s` 180 s): reaching the car, and parking
 /// and walking from it, counted in a car alternative's door-to-door time, its walk and its
 /// parking time, and in the drive to a park-and-ride car park; every other mode paid its walks
 /// and waits already. The loading moves the car from the trip's departure as before. Every run
 /// with mode choice changes. **Turn pockets are off by default** (`core-sim`'s
-/// `LoadingOptions::pocket_length_m` 0; 50 m since S218): with them an iterated run under heavy
-/// congestion mispriced the waiting movements (S227) and the fix (I-au) is not built; every run at
+/// `LoadingOptions::pocket_length_m` 0; 50 m): with them an iterated run under heavy
+/// congestion mispriced the waiting movements and the fix is not built; every run at
 /// flow levels 3–4 on a multi-lane network changes. Also (no default moved): the **nested logit** is the choice model a
 /// scenario takes when it offers more than one mode, and mode choice offers at most
 /// `choice_max_routes` car routes, as stated car trips get; the fundamental diagram keeps the
 /// capacity a table or a factor gives and raises jam density when the backward wave would be
 /// faster than its bound.
-/// Version 28 (S280, C1): **one default table**: the core's defaults are the Python layer's,
+/// Version 28: **one default table**: the core's defaults are the Python layer's,
 /// which no longer sets its own (`core-sim`'s `Msa` 5 increments, warm-up 1, `gap_tolerance`
 /// 0.05, `route_growth_tolerance` 1; `FreeFlow` 5 increments, warm-up 1; `LoadingOptions::reroute`
 /// settled by the level: on at 3 and 4, off at the point queue unless asked). A Python run
 /// simulates what it did; a run of the Rust core at its defaults now does the same.
 ///
-/// Version 29 (S281, U-41 and U-42): **a trip's end snaps to a street**, the nearest node with
+/// Version 29 (U-41 and U-42): **a trip's end snaps to a street**, the nearest node with
 /// a road a car can enter from — motorways, trunk roads and their ramps excluded — unless the
 /// point lies within `core-sim`'s `ModeDefaults::car_snap_motorway_m` (50 m) of a node that has
 /// only such roads (a through trip placed on the motorway by design); before, the nearest
@@ -228,7 +228,7 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// and persons that say they hold a pass; the pass never gates transit. Prices are 0 by default,
 /// so no shipped result moves; every fingerprint does (ownership is hashed).
 ///
-/// Version 30 (S282, A8 / G-3): **a direction-less signal on a street belongs to the nearest
+/// Version 30 (A8 / G-3): **a direction-less signal on a street belongs to the nearest
 /// junction within `signal_merge_m` (25 m) along it**, and stops only the traffic heading into
 /// that junction: a car leaving a junction no longer pays the far side's stop line too (14–16 %
 /// of the signal passages of Amsterdam, Lyon and Paris), and a junction tagged just past a stop
@@ -289,13 +289,13 @@ pub enum RoadClass {
     Footway = 15,
     /// `highway=cycleway`.
     Cycleway = 16,
-    /// `route=ferry` — a ferry crossing, on the bike and walk layers only
-    /// (S197): not a `highway` value, so no road is ever of this class.
+    /// `route=ferry` — a ferry crossing, on the bike and walk layers only:
+    /// not a `highway` value, so no road is ever of this class.
     Ferry = 17,
     /// `highway=busway`, or a road closed to other motor traffic but open to
     /// buses (`access=no`, or `motor_vehicle=no`, with `bus` or `psv`): **buses
-    /// only** (S199). Cars never use it; a bus rides it among the other buses,
-    /// which is design §18.2's "dedicated-lane links exempt".
+    /// only**. Cars never use it; a bus rides it among the other buses,
+    /// which is the "dedicated-lane links exempt".
     Busway = 18,
 }
 
@@ -397,7 +397,7 @@ impl RoadClass {
     }
 
     /// Whether this is a motorway or a trunk road, or one of their ramps: a carriageway a trip
-    /// does not start or end on (U-41, S281: a trip's end snaps to a street unless it lies on
+    /// does not start or end on (a trip's end snaps to a street unless it lies on
     /// such a node, `ModeDefaults::car_snap_motorway_m`).
     #[inline]
     #[must_use]
@@ -409,7 +409,7 @@ impl RoadClass {
     }
 
     /// Whether buses may use this class: every class cars may, and busways
-    /// (S199).
+    /// .
     #[inline]
     #[must_use]
     pub const fn carries_buses(self) -> bool {
@@ -429,7 +429,7 @@ impl RoadClass {
         )
     }
 
-    /// Whether the class is an at-grade road, with junctions, crossings and frontage (S265):
+    /// Whether the class is an at-grade road, with junctions, crossings and frontage:
     /// everything but motorways, trunk roads and their slip roads. At a signal its lanes discharge
     /// at most their speed band's saturation flow ([`SaturationBands`]).
     #[inline]
@@ -490,7 +490,7 @@ pub struct DefaultRow {
 /// | Helbing (2001), p. 9 (module docs) | jam density per lane: 130–150 by class, inside the 120–200 estimated (140–160 called most realistic) |
 ///
 /// Pedestrian and cycle classes carry motor-traffic parameters that are never
-/// read — those layers have static costs (design §21.1) and no fundamental
+/// read — those layers have static costs and no fundamental
 /// diagram. They are filled with the residential row rather than with zeros so
 /// that a mistaken read produces something sane rather than a division by zero.
 #[must_use]
@@ -601,7 +601,7 @@ pub const fn default_row(class: RoadClass) -> DefaultRow {
     }
 }
 
-/// The most a lane of an at-grade road discharges at a signal, by the road's speed (S265).
+/// The most a lane of an at-grade road discharges at a signal, by the road's speed.
 ///
 /// The class rows' saturation flows are the Highway Capacity Manual's base, for a lane at its
 /// best; at a city street's signal a lane discharges less: parked cars, bus stops, crossing
@@ -615,12 +615,12 @@ pub const fn default_row(class: RoadClass) -> DefaultRow {
 /// | 31–50 km/h | 1 200 | 1 200–1 400 ("urban") | 1 500–1 600 | 1 092–1 248 (50 km/h, 2 × 1 lanes) |
 /// | 51–70 km/h | 1 500 | 1 600–1 800 ("less urban") | 1 800 | 1 400–1 600 (80 km/h) |
 ///
-/// Each shipped value is in the lower half of its band's references (the user, S265: "when there
-/// are ranges try to go for lower values"). It applies to an approach that ends at a signal: the
+/// Each shipped value is in the lower half of its band's references, where they give a range.
+/// It applies to an approach that ends at a signal: the
 /// references are measured there, and the green fraction applies on top
 /// ([`SignalDefaults::turn_capacity_fraction`]); a lane between or at unsignalised junctions keeps
 /// the class row (a first version capped every link, and congestion overshot the cities' measured
-/// levels, S265). Above 70 km/h, and on motorways and trunk roads at any speed, the class row
+/// levels). Above 70 km/h, and on motorways and trunk roads at any speed, the class row
 /// applies. The cap is per lane and before the global capacity factor. A link whose capacity is
 /// given (a link table's column) is not capped.
 ///
@@ -671,7 +671,7 @@ impl SaturationBands {
     }
 }
 
-/// Signal defaults (S90, design §12.2).
+/// Signal defaults.
 ///
 /// OSM gives signal *locations* and never timings, so both numbers here are
 /// assumptions — visible ones, in a table a user can override, rather than
@@ -690,7 +690,7 @@ pub struct SignalDefaults {
     /// constant per approach — it does **not** respond to the flow the run
     /// produces, which is the price of costing nothing at run time.
     pub nominal_degree_of_saturation: f64,
-    /// How far from a junction, along its street, a signal is that junction's (S282, A8, G-3),
+    /// How far from a junction, along its street, a signal is that junction's,
     /// in metres. OpenStreetMap tags a signal at a junction's node or on each approach's stop
     /// line, often without `traffic_signals:direction`; a reader then gives such a stop-line
     /// signal to the traffic heading into its junction only (not to the traffic just leaving
@@ -726,7 +726,7 @@ impl SignalDefaults {
     /// Technical Paper 39, HMSO), the first of his expression's three terms as Akgungor and
     /// Bullen's review of delay models describes them
     /// (<https://nacto.org/wp-content/uploads/analytical_delay_models_for_signalized_intersections_akgungor.pdf>);
-    /// the 1958 paper itself was not read (S259).*
+    /// the 1958 paper itself was not read.*
     #[must_use]
     pub fn uniform_delay(self) -> Duration {
         let g = self.green_fraction;
@@ -744,7 +744,7 @@ impl SignalDefaults {
     }
 }
 
-/// The five global multipliers (S15).
+/// The five global multipliers.
 ///
 /// The whole calibration surface a user gets before they start editing
 /// per-link parameters. Few enough to sweep, and each one has a direction a
@@ -778,7 +778,7 @@ impl Default for GlobalMultipliers {
 
 /// The internal, per-link parameters the loading actually reads.
 ///
-/// SI and per-second (Foundations §9). Everything here was converted exactly
+/// SI and per-second. Everything here was converted exactly
 /// once, at the build boundary; nothing downstream divides by 3600 again.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct LinkParameters {
@@ -790,7 +790,7 @@ pub struct LinkParameters {
     pub jam_density: Density,
     /// Backward wave speed — **derived**, see the [module docs](self).
     pub wave_speed: Speed,
-    /// Constant control delay added to the free-flow traversal time (S90).
+    /// Constant control delay added to the free-flow traversal time.
     pub control_delay: Duration,
 }
 
@@ -807,7 +807,7 @@ pub enum ParameterNote {
     /// (the free-flow branch reached capacity at or past jam density); the wave speed was
     /// clamped down and jam density re-derived (raised) so the triangle closes with the
     /// capacity given: a table's, a factor's or a tag's capacity is trusted over a default
-    /// jam density (S279).
+    /// jam density.
     JamDensityRaisedToFitCapacity,
 }
 
@@ -821,7 +821,7 @@ impl LinkParameters {
     /// directly, rather than through `highway` × `lanes`); either or both may
     /// be `None`, in which case that quantity still comes from the row. Jam
     /// density has no override yet — no source this table reads from states it
-    /// (design §12.1: it is the quantity that varies least between road
+    /// (it is the quantity that varies least between road
     /// types), so it always comes from the row.
     ///
     /// Returns the parameters and a note saying whether anything had to be
@@ -890,7 +890,7 @@ impl LinkParameters {
     }
 
     /// The same link with its capacity multiplied by `factor`, jam density and free-flow speed
-    /// kept (S238: a bottleneck), the backward wave speed derived again from the triangle and,
+    /// kept (a bottleneck), the backward wave speed derived again from the triangle and,
     /// outside [`WAVE_SPEED_BOUNDS_KM_H`], clamped with jam density re-derived, as
     /// [`Self::from_defaults`] does; the capacity asked for is held, as there.
     #[must_use]
@@ -914,7 +914,7 @@ impl LinkParameters {
     }
 
     /// The free-flow traversal time of a link of this length, including the
-    /// control delay (S90).
+    /// control delay.
     #[inline]
     #[must_use]
     pub fn free_flow_time(&self, length: Metres) -> Duration {

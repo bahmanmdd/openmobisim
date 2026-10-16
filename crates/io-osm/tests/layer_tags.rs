@@ -1,4 +1,4 @@
-//! The bike and walk tag rules (S193, S195): one test per row of the rule
+//! The bike and walk tag rules: one test per row of the rule
 //! table, so that a changed rule is a failed test and not a quietly different
 //! bike network.
 

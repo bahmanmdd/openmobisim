@@ -1,11 +1,11 @@
-//! What a run was, in one line: its master seed and its fingerprint (S168).
+//! What a run was, in one line: its master seed and its fingerprint.
 //!
 //! A [`RunDescription`] is made from a [`crate::Run`] *before* it executes and
 //! says what went in: the network's content, the demand, every setting that
 //! changes results, the route method with its options, and the master seed.
 //! Its [`fingerprint`](RunDescription::fingerprint) is a hash of exactly those
 //! inputs, so two runs with the same fingerprint were given the same inputs;
-//! on one platform they then give the same results (S60). It is what a figure's
+//! on one platform they then give the same results. It is what a figure's
 //! footer and a results file's header carry, so a picture or a table can be
 //! traced to the run that made it.
 //!
@@ -14,13 +14,13 @@
 //! free-flow time, storage, and the whole diagram: speed, capacity, jam
 //! density, wave speed, control delay); every traveller (id, class, weight,
 //! what they own) and every trip (traveller, departure, origin, destination);
-//! how close to a motorway a trip's end may join the roads (`car_snap_motorway_m`, U-41);
+//! how close to a motorway a trip's end may join the roads (`car_snap_motorway_m`);
 //! the window; the loading engine, its level and its step; the route method
 //! and its options; the choice model and its options; the equilibration
-//! strategy and its options; the choice-set detour limit (S178); the route update and its options, if there is one (S176);
+//! strategy and its options; the choice-set detour limit; the route update and its options, if there is one;
 //! the bin length of the per-link results; and, if any trip is not a car trip,
 //! every trip's mode and each static layer a trip uses (its graph, speeds and
-//! search costs, S195) — a car-only run hashes as it did before modes existed.
+//! search costs) — a car-only run hashes as it did before modes existed.
 //!
 //! **What is not.** The platform and the crate version (the manifest carries
 //! them next to the fingerprint: a fingerprint says *what was run*, the
@@ -62,7 +62,7 @@ pub struct RunDescription {
     /// (`NetworkFingerprint`): an internal id means something only next to it.
     pub network_fingerprint: u64,
     /// The loading engine's level: 0 for free flow, 2, 3 or 4 for the link
-    /// transmission model (design §10.1).
+    /// transmission model.
     pub flow_level: u32,
     /// The loading step in seconds, under the link transmission model.
     pub flow_step_seconds: Option<f64>,
@@ -73,49 +73,49 @@ pub struct RunDescription {
     pub route_descriptor: String,
     /// The bin length of the per-link results, if asked for.
     pub link_bin_seconds: Option<u32>,
-    /// The choice model's name (S169).
+    /// The choice model's name.
     pub choice_model: String,
     /// The choice model with every option and default, canonical.
     pub choice_descriptor: String,
     /// The random streams the run draws from: `"choice"` under a sampled choice
     /// model, `"msa_reselection"` under an equilibration that iterates.
     pub live_streams: Vec<String>,
-    /// The equilibration strategy's name (S170).
+    /// The equilibration strategy's name.
     pub equilibration: String,
     /// The strategy with every option and default, canonical.
     pub equilibration_descriptor: String,
     /// The most loadings the run makes.
     pub max_iterations: u32,
     /// How far above the best route's expected time a route may be and still be offered to a
-    /// traveller (S178); 0 offers every route.
+    /// traveller; 0 offers every route.
     pub choice_detour_limit: f64,
-    /// The most routes a traveller is offered, the fastest at their departure (S268).
+    /// The most routes a traveller is offered, the fastest at their departure.
     pub choice_max_routes: u32,
-    /// The route update's name (S176): `"none"` if the sets stay as generated.
+    /// The route update's name: `"none"` if the sets stay as generated.
     pub route_update: String,
     /// The update with every option and default, canonical.
     pub route_update_descriptor: String,
-    /// The longest walk and the longest bike ride mode choice offers, in seconds (S209), when
-    /// trips choose their mode (S233: recorded, since a trip beyond both may have no
+    /// The longest walk and the longest bike ride mode choice offers, in seconds, when
+    /// trips choose their mode (recorded, since a trip beyond both may have no
     /// alternative); `None` otherwise.
     pub walk_bike_max_s: Option<(f64, f64)>,
-    /// How many threads the run's parallel work used (S277): recorded, **not hashed** — results
+    /// How many threads the run's parallel work used: recorded, **not hashed** — results
     /// do not depend on it.
     pub threads: usize,
-    /// The traveller classes that give limits of their own (S235), by class name, in the
+    /// The traveller classes that give limits of their own, by class name, in the
     /// demand's class order; empty if none does.
     pub class_limits: Vec<(String, crate::layers::ClassLimits)>,
-    /// The user's link values (S236): each column's layer and name, in the order given; empty
+    /// The user's link values: each column's layer and name, in the order given; empty
     /// if none.
     pub link_values: Vec<(String, String)>,
-    /// Disruptions at a time of day (S239): how many on roads, how many on lines, and whether
+    /// Disruptions at a time of day: how many on roads, how many on lines, and whether
     /// travellers knew of them; `None` if none.
     pub disruptions: Option<(usize, usize, bool)>,
-    /// The prices, by name (S248), when the choice model reads money; `None` otherwise.
+    /// The prices, by name, when the choice model reads money; `None` otherwise.
     pub prices: Option<Vec<(String, f64)>>,
-    /// The user's traveller values' names (S249), in the order given; empty if none.
+    /// The user's traveller values' names, in the order given; empty if none.
     pub person_values: Vec<String>,
-    /// The user's trip values' names (S249), in the order given; empty if none.
+    /// The user's trip values' names, in the order given; empty if none.
     pub trip_values: Vec<String>,
 }
 
@@ -135,7 +135,7 @@ impl RunDescription {
 
 /// The inputs a [`crate::Run`] hands over to be described.
 pub(crate) struct Inputs<'a> {
-    /// How many threads the run uses (S277): recorded, not hashed.
+    /// How many threads the run uses: recorded, not hashed.
     pub threads: usize,
     pub network: &'a RoadNetwork,
     pub travellers: &'a Travellers,
@@ -162,24 +162,24 @@ pub(crate) struct Inputs<'a> {
     pub layers: &'a StaticLayers,
     pub transit: Option<&'a TransitSetup>,
     pub parking: Option<&'a ParkingSetup>,
-    /// The modes a trip without a stated mode chooses among (M5), if the run offers a choice.
+    /// The modes a trip without a stated mode chooses among, if the run offers a choice.
     pub mode_choice: Option<&'a [Mode]>,
-    /// How long a walk or ride mode choice offers (S209); hashed only with mode choice.
+    /// How long a walk or ride mode choice offers; hashed only with mode choice.
     pub mode_defaults: &'a crate::layers::ModeDefaults,
-    /// The modes each traveller class may use (S231); empty: every class all.
+    /// The modes each traveller class may use; empty: every class all.
     pub class_modes: &'a [[bool; Mode::COUNT]],
-    /// Each traveller class's own limits (S235); empty: the run's.
+    /// Each traveller class's own limits; empty: the run's.
     pub class_limits: &'a [crate::layers::ClassLimits],
-    /// The user's link values (S236).
+    /// The user's link values.
     pub link_values: &'a crate::link_values::LinkValues,
-    /// Disruptions at a time of day (S239).
+    /// Disruptions at a time of day.
     pub disruptions: &'a crate::disruptions::Disruptions,
-    /// The loading's rules (S213); hashed only when one is on and the run has junctions to
+    /// The loading's rules; hashed only when one is on and the run has junctions to
     /// apply them at (the link transmission model).
     pub loading: &'a crate::loading_rules::LoadingOptions,
-    /// The prices (S248), when the choice model reads money; `None` otherwise.
+    /// The prices, when the choice model reads money; `None` otherwise.
     pub prices: Option<&'a crate::prices::Prices>,
-    /// The user's traveller and trip values (S249).
+    /// The user's traveller and trip values.
     pub demand_values: &'a crate::demand_values::DemandValues,
     /// Whether the choice model reads an attribute (a model that lists none reads them all):
     /// a link, traveller or trip value no model reads shapes nothing, so it is not hashed, as
@@ -489,7 +489,7 @@ pub(crate) fn hash_network(h: &mut Fnv1a, network: &RoadNetwork, ids: u64) {
     }
 }
 
-/// Every trip's mode and the static layers the trips use (S195); nothing at
+/// Every trip's mode and the static layers the trips use; nothing at
 /// all if every trip is a car trip.
 fn hash_modes(h: &mut Fnv1a, trips: &Trips, layers: &StaticLayers) {
     let mut used = [false; 2];
@@ -536,7 +536,7 @@ fn hash_layer(h: &mut Fnv1a, layers: &StaticLayers, layer: StaticLayer) {
     }
 }
 
-/// Mode choice (M5): the modes offered, which trips choose, and the layers they may use.
+/// Mode choice: the modes offered, which trips choose, and the layers they may use.
 fn hash_mode_choice(h: &mut Fnv1a, trips: &Trips, layers: &StaticLayers, modes: &[Mode]) {
     h.write_str("mode-choice");
     h.write_u32(u32::try_from(modes.len()).expect("few modes"));
@@ -552,7 +552,7 @@ fn hash_mode_choice(h: &mut Fnv1a, trips: &Trips, layers: &StaticLayers, modes: 
 }
 
 /// The timetable, its defaults, and how its stops are linked to the walk and
-/// bike layers (S199).
+/// bike layers.
 fn hash_transit(h: &mut Fnv1a, transit: &TransitSetup) {
     let t = transit.timetable();
     h.write_str("transit");
@@ -614,7 +614,7 @@ fn hash_transit(h: &mut Fnv1a, transit: &TransitSetup) {
     hash_network(h, walk, NetworkFingerprint::of(walk).value());
 }
 
-/// The parkings, where they are linked to the layers, and parking's defaults (M4).
+/// The parkings, where they are linked to the layers, and parking's defaults.
 fn hash_parking(h: &mut Fnv1a, parking: &ParkingSetup) {
     h.write_str("parking");
     let n = u32::try_from(parking.count()).expect("parkings fit u32");

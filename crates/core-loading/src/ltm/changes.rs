@@ -5,7 +5,7 @@ use openmobisim_core_types::units::Duration;
 
 use super::LtmNetwork;
 
-/// A link's capacity from a second on, as a share of its own (S239, disruptions): `factor` 0
+/// A link's capacity from a second on, as a share of its own (disruptions): `factor` 0
 /// closes it (nothing passes until a later change opens it), 1 restores it. Made by the loading
 /// when its clock reaches `time`; zero cost when there is none.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -23,7 +23,7 @@ pub struct CapacityChange {
 const CLOSED_FACTOR: f64 = 1e-9;
 
 impl LtmNetwork<'_> {
-    /// The same network with timed capacity changes (S239, disruptions): a road narrowed or
+    /// The same network with timed capacity changes (disruptions): a road narrowed or
     /// closed for a while by an accident or works. Each is made when the loading's clock
     /// reaches it — before any movement at that second — and the queues it touches (the link's
     /// own, those feeding it, the departures onto it) are looked at again, so a reopened link

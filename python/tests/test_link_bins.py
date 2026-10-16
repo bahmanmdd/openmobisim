@@ -1,4 +1,4 @@
-"""Per-link results and the network's arrays, across the boundary (S163).
+"""Per-link results and the network's arrays, across the boundary.
 
 What is defended: the arrays a figure reads describe the network (shapes,
 dtypes, indexing), and the per-link table agrees with the demand that made it.
@@ -164,7 +164,7 @@ def test_link_capacity_follows_class_and_lanes():
 def toy_run(**kwargs):
     net = ms.examples.toy_network()
     rows = toy_rows(net, [("W", "D1", 30, 10)])
-    # Pinned to the pre-car-ready-checkpoint defaults as this file's own fixture default (not
+    # Pinned to the earlier defaults as this file's own fixture default (not
     # the library's, "logit"/"msa" since 2026-09-23): this file is about link-bin output and
     # fingerprint/manifest identity, not the choice model or equilibration.
     settings = {

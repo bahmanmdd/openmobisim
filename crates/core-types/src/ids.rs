@@ -1,4 +1,4 @@
-//! Dense `u32` identity spaces, one per entity kind (Foundations §1).
+//! Dense `u32` identity spaces, one per entity kind.
 //!
 //! # Why `u32`, and why a sentinel
 //!
@@ -41,7 +41,7 @@ pub const MAX_ID: u32 = u32::MAX - 1;
 /// # The discriminants are part of a total order
 ///
 /// The event queue is keyed on `(second, entity_kind, entity_id)`
-/// (Foundations §2), and that tuple is what makes ties resolve identically on
+/// , and that tuple is what makes ties resolve identically on
 /// every run. The numeric values below are therefore **stable**: reordering
 /// them changes the order in which simultaneous events fire, which changes
 /// results. Append new kinds at the end; never renumber existing ones.

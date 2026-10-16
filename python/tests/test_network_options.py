@@ -1,4 +1,4 @@
-"""Every network parameter by name (S225, roadmap I-ae).
+"""Every network parameter by name.
 
 What is defended: the readers take ``network_options`` by name and refuse an unknown one with the
 list; each kind of parameter acts (a class row, a multiplier, a layer speed); the network keeps

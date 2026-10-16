@@ -1,4 +1,4 @@
-"""The words a figure's footer says about the run it draws (S168).
+"""The words a figure's footer says about the run it draws.
 
 No dependencies, so the interactive map and the static figures share it.
 """
@@ -31,7 +31,7 @@ def network_source(network: Any) -> str:
     """Where the drawn network came from, for a footer.
 
     The OpenStreetMap credit its licence asks for, or ``table network``, ``synthetic network``
-    and so on for a network that is not OpenStreetMap's (X-59).
+    and so on for a network that is not OpenStreetMap's.
     """
     if network.source == "osm":
         return "© OpenStreetMap contributors (ODbL)"

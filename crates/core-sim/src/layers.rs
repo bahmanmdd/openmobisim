@@ -1,4 +1,4 @@
-//! Bike and walk trips in a run (S195): routed on their own layer, once per
+//! Bike and walk trips in a run: routed on their own layer, once per
 //! run, and traversed at the layer's static speeds.
 //!
 //! A bike or walk trip never enters the car's route sets, its choice or its
@@ -109,7 +109,7 @@ impl StaticLayers {
     }
 }
 
-/// The defaults of mode choice's walk and bike alternatives (S209):
+/// The defaults of mode choice's walk and bike alternatives:
 /// how long a walk or a ride may take to be offered to a trip that chooses its mode.
 ///
 /// A trip with a stated walk or bike mode takes it at any length; only a trip choosing its
@@ -122,36 +122,35 @@ impl StaticLayers {
 pub struct ModeDefaults {
     /// The longest walk mode choice offers as a walk alternative, in seconds.
     ///
-    /// *Uncalibrated: design §21.1's main-mode cut-off of 30 minutes for a whole trip on
+    /// *Uncalibrated: the main-mode cut-off of 30 minutes for a whole trip on
     /// foot; England's average walking trip took 18 minutes in 2022 (Department for Transport,
     /// *Walking factsheet* 2022,
     /// <https://assets.publishing.service.gov.uk/media/64e71a3d20ae89000df26d2b/walking-factsheet-2022.pdf>).*
     pub walk_max_s: f64,
     /// The longest ride mode choice offers as a bike alternative, in seconds.
     ///
-    /// *Uncalibrated: 60 minutes (S235; design §21.1's 30 until then, which left cyclists
-    /// without a ride home and pushed them into bike-and-ride, S233). About 80 % of Dutch bicycle
+    /// *Uncalibrated: 60 minutes (the 30 until then, which left cyclists
+    /// without a ride home and pushed them into bike-and-ride). About 80 % of Dutch bicycle
     /// trips are under 5 km (KiM, *Cycling facts: new insights*, 2020,
     /// <https://english.kimnet.nl/documents/2020/11/03/cycling-facts-new-insights>); the limit
     /// keeps the longer ones, e-bikes' among them.*
     pub bike_max_s: f64,
     /// Whether a trip left with no alternative at all — no mode it may use reaches its
-    /// destination within the limits — travels by car instead (S271, the user's W-1: "people
-    /// doing those kinds of trips always use car anyway"), counted and reported apart; a trip
+    /// destination within the limits — travels by car instead, counted and reported apart; a trip
     /// with no car path either stays without one. For a traveller without a car the car stands
-    /// for a lift or a taxi: no car of theirs moves. **Experimental, off by default** (`0`,
-    /// S276): such trips stay unsimulated, and the run reports each with why every mode gave
+    /// for a lift or a taxi: no car of theirs moves. **Experimental, off by default** (`0`):
+    /// such trips stay unsimulated, and the run reports each with why every mode gave
     /// it none (`RunResult::no_alternative`); `1` turns the fallback on.
     pub fallback_car: bool,
     /// The time a car trip takes before its drive — reaching the car and setting off — in
-    /// seconds (S279): added to a car alternative's door-to-door time and its walk in mode
-    /// choice, and to the drive to a park-and-ride car park. Before S279 a car trip started and
-    /// ended at its road node with no such time while every other mode paid its walks and
-    /// waits, which biased mode choice toward the car. *Uncalibrated: 120 s, an assumption with
+    /// seconds: added to a car alternative's door-to-door time and its walk in mode
+    /// choice, and to the drive to a park-and-ride car park. Without it a car trip would start
+    /// and end at its road node at no cost while every other mode pays its walks and waits,
+    /// which biases mode choice toward the car. *Uncalibrated: 120 s, an assumption with
     /// no published source; 0 switches it off.*
     pub car_access_s: f64,
     /// The time a car trip takes after its drive — finding a place and walking from it — in
-    /// seconds (S279): added to a car alternative's door-to-door time and its parking time in
+    /// seconds: added to a car alternative's door-to-door time and its parking time in
     /// mode choice; a park-and-ride drive pays its car park's own time instead. *Uncalibrated:
     /// 180 s, an assumption; cruising for parking alone averaged 8 minutes in sixteen downtown
     /// studies (Shoup 2006, *Cruising for parking*, Transport Policy 13(6), 479–486,
@@ -159,7 +158,7 @@ pub struct ModeDefaults {
     /// home and workplace parking; 0 switches it off.*
     pub car_egress_s: f64,
     /// How close to a motorway-only node a trip's end must lie to join the roads there, in
-    /// metres (U-41, S281). A trip's end snaps to the nearest **street** node — one with a road
+    /// metres. A trip's end snaps to the nearest **street** node — one with a road
     /// a car can enter from; motorways, trunk roads and their ramps are not — unless it lies
     /// within this distance of a node that has only such roads, which it then takes: a through
     /// trip placed on the motorway by design keeps its node, an address beside the motorway does
@@ -191,7 +190,7 @@ impl ModeDefaults {
         "car_snap_motorway_m",
     ];
 
-    /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing).
+    /// Every option's value, by name, in [`Self::NAMES`]' order (the parameter listing).
     #[must_use]
     pub fn values(&self) -> Vec<(&'static str, f64)> {
         vec![
@@ -266,7 +265,7 @@ impl Default for ModeDefaults {
     }
 }
 
-/// A traveller class's own choice-set limits (S235, roadmap I-ax): the longest walk and ride
+/// A traveller class's own choice-set limits: the longest walk and ride
 /// mode choice offers its travellers, and the longest walk to or from a stop they take. Each
 /// `None` is the run's ([`ModeDefaults`], `TransitDefaults::access_walk_max_s`).
 ///
@@ -359,7 +358,7 @@ pub(crate) fn class_limits(classes: &[ClassLimits], class: usize) -> ClassLimits
 /// full for the rest (a trip given the mode takes it at any length).
 struct ShortestFor {
     /// Keys searched within a bound, sorted, each with its bound in cost: the longest any
-    /// of its trips is offered (S235: a class's own limit bounds only its pairs).
+    /// of its trips is offered (a class's own limit bounds only its pairs).
     bounded: Vec<(RouteKey, f64)>,
 }
 
@@ -383,7 +382,7 @@ impl RouteSetGenerator for ShortestFor {
         true
     }
 
-    /// One search tree for all of them (S267), as far as the loosest of their bounds; a pair's
+    /// One search tree for all of them, as far as the loosest of their bounds; a pair's
     /// route is kept if it is within the pair's own.
     fn generate_from(
         &self,
@@ -426,7 +425,7 @@ pub(crate) enum StaticRoute {
 }
 
 /// Every bike and walk trip's route, made once per run; and, for a trip choosing its
-/// mode (M5), its route on each of the two layers.
+/// mode, its route on each of the two layers.
 #[derive(Debug, Default)]
 pub(crate) struct StaticRoutes {
     /// The bike layer's route sets, then the walk layer's.
@@ -537,7 +536,7 @@ impl StaticRoutes {
         self.route[slot(layer)].get(trip.index()).copied().unwrap_or(StaticRoute::None)
     }
 
-    /// The trip's route on `layer` as a leg to choose (M5): its links, seconds and metres.
+    /// The trip's route on `layer` as a leg to choose: its links, seconds and metres.
     /// `None` if it has none there, or if it takes longer than `max_seconds` (mode choice's
     /// cut-off, [`ModeDefaults`]).
     pub(crate) fn leg(

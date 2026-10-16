@@ -1,4 +1,4 @@
-//! Money in the choice (S248, roadmap I-bb U5): what an alternative costs, in euros, offered to
+//! Money in the choice: what an alternative costs, in euros, offered to
 //! choice models as attributes.
 //!
 //! | attribute | what it is |
@@ -14,8 +14,8 @@
 //! felt more than fuel), or both.
 //!
 //! **Value of time.** The built-in logit and nested logit weigh money by `beta_cost_eur` (or a
-//! part's own coefficient): −1.2 per euro by default since `DEFAULTS_VERSION` 20 (D-1). **Every
-//! shipped price is 0** since version 21 (S256, Q-7: a car, a bike, a pass or the means to pay a
+//! part's own coefficient): −1.2 per euro by default since `DEFAULTS_VERSION` 20. **Every
+//! shipped price is 0** since version 21 (a car, a bike, a pass or the means to pay a
 //! fare is access, which traveller classes give), so money weighs only the prices a scenario
 //! gives in `price_options`, a parking table or a `toll_eur` column. A value of time of `V` euros per hour is `beta_cost_eur = beta_time_min · 60
 //! / V` (−1.2 per euro at −0.2 per minute and 10 €/h); a traveller class's own `beta_cost_eur` is
@@ -37,13 +37,13 @@ pub const TOLL_COLUMN: &str = "toll_eur";
 pub const COST_ATTRIBUTES: [&str; 5] =
     ["cost_eur", "cost_running_eur", "cost_toll_eur", "cost_parking_eur", "cost_fare_eur"];
 
-/// The prices a run charges: every one named, uncalibrated and overridable by name (S202) in a
+/// The prices a run charges: every one named, uncalibrated and overridable by name in a
 /// scenario's `price_options`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Prices {
     /// What driving a car costs per kilometre, in euros: the fuel a driver pays as they go.
     ///
-    /// *Uncalibrated: 0 since `DEFAULTS_VERSION` 21 (S256, Q-7: having a car is access, as
+    /// *Uncalibrated: 0 since `DEFAULTS_VERSION` 21 (having a car is access, as
     /// a traveller class says, and no money is counted for it; 0.12 € before). Set your own to
     /// weigh fuel.*
     pub car_eur_km: f64,
@@ -54,7 +54,7 @@ pub struct Prices {
     pub bike_eur_km: f64,
     /// A transit journey's fare, once per journey, in euros.
     ///
-    /// *Uncalibrated: 0 since `DEFAULTS_VERSION` 21 (S256, Q-7: holding a pass, or paying the
+    /// *Uncalibrated: 0 since `DEFAULTS_VERSION` 21 (holding a pass, or paying the
     /// fare, is access, as a traveller class says, like owning a car; 2.0 € before). A city's
     /// own, to weigh fares: a single metro-train-RER ticket in Paris is 2.55 € in 2026
     /// (<https://www.iledefrance-mobilites.fr/tarifs-titre-de-transport-en-commun-2026>), a TCL
@@ -242,7 +242,7 @@ impl PreparedPrices {
 
     /// The fare of a journey of `rides` rides covering `ride_m` metres as the crow flies; 0
     /// without a ride. A pass holder pays none: the caller (`itinerary_choice`'s `cost`) does not
-    /// ask (S279, CM-15).
+    /// ask.
     pub(crate) fn fare(&self, rides: usize, ride_m: f64) -> f64 {
         if rides == 0 {
             return 0.0;

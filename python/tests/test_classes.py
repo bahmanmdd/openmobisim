@@ -1,4 +1,4 @@
-"""Traveller classes (S231): the modes a class may use, what it owns, its own coefficients.
+"""Traveller classes: the modes a class may use, what it owns, its own coefficients.
 
 What is defended: a class table is read as written and refused where it is wrong; classes are
 drawn for travellers by their shares, exactly to within one traveller and the same for the same
@@ -15,7 +15,7 @@ from __future__ import annotations
 import openmobisim as ms
 import pytest
 
-#: A table using every column and an empty cell (unsaid): the six classes of S231 (S234's shares).
+#: A table using every column and an empty cell (unsaid): the six classes of S231 (the shares).
 SIX = """class,share,modes,owns_car,owns_bike,has_transit_pass,beta_mode_car,beta_mode_bike,beta_mode_walk,beta_mode_transit,walk_max_s,bike_max_s,access_walk_max_s
 car_captive,0.05,car,1,0,0,0,,,,,,
 bike_enthusiast,0.45,bike;walk;transit;bike_transit,0,1,1,,1.5,0,0,,5400,
@@ -25,7 +25,7 @@ walker,0.05,walk;transit,0,0,1,,,1.0,0,2700,,
 park_and_ride_commuter,0.05,car;transit;car_transit,1,0,1,0,,,0.3,,,
 """  # noqa: E501
 
-#: The example classes (``examples.traveller_classes()``): four by ownership (S244, fitted S282).
+#: The example classes (``examples.traveller_classes()``): four by ownership (fitted S282).
 TABLE = """class,share,modes,owns_car,owns_bike,has_transit_pass,beta_mode_bike
 car_and_bike,0.40,car;bike;walk;transit;car_transit;bike_transit,1,1,0,1.23
 no_vehicle,0.30,walk;transit,0,0,0,
@@ -307,7 +307,7 @@ def test_the_shipped_limits_and_an_infinite_one_are_recorded() -> None:
     assert m["class_limits"] == {"everyone": {"walk_max_s": "inf"}}, "JSON has no infinity"
 
 
-# --- a model of one's own sees the classes (S236, roadmap I-bb U1) -------------------------------
+# --- a model of one's own sees the classes (S236) -------------------------------
 
 
 def test_a_model_of_one_s_own_sees_each_situation_s_class_by_name() -> None:

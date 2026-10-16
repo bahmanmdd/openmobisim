@@ -1,4 +1,4 @@
-//! Invariants of the LTM loading (levels 2–4) that S150's defects broke.
+//! Invariants of the LTM loading (levels 2–4) that the defects broke.
 //!
 //! Each test names the property it defends. They were written *before* the
 //! hybrid loading (S147/S151) and run against the S141 prototype first, where
@@ -118,7 +118,7 @@ fn grid_route(
 
 // --- D1/D2: vehicles and curves agree -------------------------------------
 
-/// **Property (D1):** one vehicle of PCU `p` over a chain — including a link
+/// **Property:** one vehicle of PCU `p` over a chain — including a link
 /// shorter than it — is counted once on every link: what enters a link leaves
 /// it, never more than `p` is counted, and exactly `p` passes each link's end.
 #[test]
@@ -145,7 +145,7 @@ fn a_vehicle_is_counted_once_on_every_link() {
     }
 }
 
-/// **Property (K17, S189):** a route may visit the same link twice — go round
+/// **Property (K17):** a route may visit the same link twice — go round
 /// a small loop once, then leave through the same link it entered the loop
 /// by. Nothing about a link's state is keyed to "has this vehicle been here
 /// before": the second pass is a second, independent traversal, with its own
@@ -195,7 +195,7 @@ fn a_route_may_cross_the_same_link_twice() {
 proptest! {
     #![proptest_config(ProptestConfig { cases: 24, .. ProptestConfig::default() })]
 
-    /// **Property (D2):** at the end of every step, on every link, the PCU the
+    /// **Property:** at the end of every step, on every link, the PCU the
     /// curves say is on the link equals the PCU of the vehicles queued on it.
     /// No inflow without a vehicle, no vehicle without inflow.
     #[test]
@@ -256,7 +256,7 @@ proptest! {
 
 // --- D3/D4/G1: discharge happens at capacity, and always happens ---------
 
-/// **Property (D4, and S141's smear):** a lone vehicle on an empty network
+/// **Property (and the smear):** a lone vehicle on an empty network
 /// takes its free-flow time on every link, to the one-second clock, for any
 /// step length — and always completes.
 #[test]
@@ -288,13 +288,13 @@ fn a_lone_vehicle_takes_free_flow_time_for_any_step() {
     }
 }
 
-/// Every timing check elsewhere in this crate tolerates ±1 s (S88's own tolerance;
+/// Every timing check elsewhere in this crate tolerates ±1 s (the own tolerance;
 /// `a_lone_vehicle_takes_free_flow_time_for_any_step` above, and every case in
 /// `toy_network.rs`), wide enough to hide flooring vs. rounding entirely — confirmed live in
-/// checkpoint 8b's adversarial pass: floor-to-nearest-second changed to round-to-nearest
+/// an adversarial review: floor-to-nearest-second changed to round-to-nearest
 /// survived all 60 tests this crate had at the time. A length chosen so the free-flow time's
 /// own fractional part is 0.6 makes floor and round disagree by a whole second, checked at a
-/// tolerance tight enough (0.05 s) that only flooring — S88's documented rule — can pass.
+/// tolerance tight enough (0.05 s) that only flooring — the documented rule — can pass.
 #[test]
 fn recorded_times_are_floored_not_rounded() {
     let (net, route) = chain(&[105.0], RoadClass::Residential, &[]);
@@ -317,7 +317,7 @@ fn recorded_times_are_floored_not_rounded() {
     );
 }
 
-/// **Property (D3):** a saturated approach discharges at its capacity,
+/// **Property:** a saturated approach discharges at its capacity,
 /// whatever the vehicles' PCU and the step length — within one vehicle.
 #[test]
 fn a_queue_discharges_at_capacity_for_any_vehicle_size() {
@@ -352,7 +352,7 @@ fn a_queue_discharges_at_capacity_for_any_vehicle_size() {
     }
 }
 
-/// **Property (S153, vehicles straddle links):** a queue passes through a link at
+/// **Property (vehicles straddle links):** a queue passes through a link at
 /// capacity whatever the link's length relative to the vehicles — including
 /// links shorter than one vehicle and links just above any size. Each piece
 /// of the chain is fed by a standing queue, so its entries are limited by
@@ -388,7 +388,7 @@ fn a_queue_passes_links_of_any_length_at_capacity() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// **Property (G1):** a signalised approach discharges at capacity × g/C.
+/// **Property:** a signalised approach discharges at capacity × g/C.
 #[test]
 fn a_signalised_approach_discharges_at_green_time_capacity() {
     let (net, route) = chain(&[101.0, 3000.0], RoadClass::Secondary, &[1]);
@@ -455,7 +455,7 @@ fn heavy_and_light_vehicles_have_the_same_throughput() {
 
 // --- G2: memory ------------------------------------------------------------
 
-/// **Property (G2):** what a link keeps for its receiving-flow lookups does
+/// **Property:** what a link keeps for its receiving-flow lookups does
 /// not grow with the length of the run.
 #[test]
 fn retained_history_is_bounded_by_the_wave_travel_time() {
@@ -498,7 +498,7 @@ fn retained_history_is_bounded_by_the_wave_travel_time() {
 
 // --- Determinism and FIFO ----------------------------------------------------
 
-/// **Property (S77):** the result does not depend on the order vehicles are
+/// **Property:** the result does not depend on the order vehicles are
 /// handed to the loading.
 #[test]
 fn results_do_not_depend_on_input_order() {
@@ -648,7 +648,7 @@ fn spillback_limits_upstream_discharge_to_the_bottleneck_rate() {
     }
 }
 
-/// **Property (K22, S189):** a link that is every vehicle's *destination*
+/// **Property (K22):** a link that is every vehicle's *destination*
 /// never inherits congestion from beyond it — there is no "beyond" for it to
 /// inherit from — even though the identical link, carrying the identical
 /// demand onward into a genuine bottleneck, spills back and throttles its own
@@ -715,7 +715,7 @@ fn a_destination_link_is_never_throttled_by_what_is_not_there() {
     );
 }
 
-/// **Property (S48, proportional to capacity):** two saturated approaches
+/// **Property (proportional to capacity):** two saturated approaches
 /// merging into a bottleneck share it in proportion to their own discharge
 /// capacities.
 #[test]
@@ -762,7 +762,7 @@ fn saturated_merges_share_room_in_proportion_to_capacity() {
     );
 }
 
-/// **Property (S48, S279, L-3, proportional to capacity on exact ties):** two saturated
+/// **Property (proportional to capacity on exact ties):** two saturated
 /// approaches with headways of exactly 1 s and 2 s (3 600 and 1 800 veh/h, one vehicle of 1 PCU
 /// each) merge into a bottleneck: their service tags tie every other release (A: 1, 2, 3, 4;
 /// B: 2, 4), and the tie must not tip the shares. The merge is shared 2 : 1 over a long run.
@@ -820,7 +820,7 @@ fn saturated_merges_with_headways_of_one_and_two_seconds_share_two_to_one() {
 
 // --- Stop lines, origins and waiting cycles (S153) -------------------------
 
-/// **Property (S153, stop line):** a signalised approach shorter than its
+/// **Property (stop line):** a signalised approach shorter than its
 /// queue's delay would need still discharges at capacity × g/C: the signal
 /// delay is spent at the stop line, off the approach's storage. A lone
 /// vehicle still takes the approach's free-flow time including the delay.
@@ -864,7 +864,7 @@ fn a_short_signalised_approach_discharges_at_green_time_capacity() {
     );
 }
 
-/// **Property (S153, stop line and spillback):** a full link ahead holds a
+/// **Property (stop line and spillback):** a full link ahead holds a
 /// signalised approach back — the approach discharges at the bottleneck's
 /// rate, its stop line holds no more than one control delay's worth of
 /// vehicles, and the short link ahead never counts more than its storage. A
@@ -928,7 +928,7 @@ fn spillback_holds_back_a_signalised_approach() {
     assert!(sim.queue_len(ab) > 20, "the queue spills back onto ab");
 }
 
-/// **Property (S153, origins):** departures wait outside the network until
+/// **Property (origins):** departures wait outside the network until
 /// their first link has room, never overfilling it, and the wait is part of
 /// the travel time.
 #[test]
@@ -966,7 +966,7 @@ fn departures_wait_at_the_origin_and_the_wait_counts() {
 /// A one-way ring of pieces with the given lengths (metres), each ring node
 /// with a 100-m entry and a 100-m exit: `ring[i]` runs from node `i` to node
 /// `i + 1`, `entries[i]` ends at node `i`, `exits[i]` starts there. With
-/// `tagged`, the ring is marked as a roundabout, so entries give way (S155). The ring is of
+/// `tagged`, the ring is marked as a roundabout, so entries give way. The ring is of
 /// class `ring_class`, entries and exits residential.
 fn roundabout(
     pieces: &[f64],
@@ -1026,7 +1026,7 @@ fn roundabout(
     (net, ring, entries, exits)
 }
 
-/// **Property (S153, traffic stops only at jam density):** a roundabout
+/// **Property (traffic stops only at jam density):** a roundabout
 /// whose pieces span the whole range of lengths — shorter than one vehicle,
 /// just above one, one and a half, two — under demand far above its capacity,
 /// with cars, with vehicles aggregated 10 to a unit, and with a mix of cars and
@@ -1098,7 +1098,7 @@ fn an_overloaded_roundabout_stops_only_at_jam_density() {
     }
 }
 
-/// **Property (S155, give way at roundabouts):** the same overloaded
+/// **Property (give way at roundabouts):** the same overloaded
 /// roundabout, tagged as one, keeps moving — entries wait for circulating
 /// traffic instead of filling the ring — and every trip completes once demand
 /// ends, for cars and for a mix of cars and buses.
@@ -1154,7 +1154,7 @@ fn ring_demand(ring: &[LinkId], entries: &[LinkId], exits: &[LinkId]) -> Vec<Veh
     vehicles
 }
 
-/// **Property (S213, priority at merges):** the overloaded ring, **untagged**, a primary road
+/// **Property (priority at merges):** the overloaded ring, **untagged**, a primary road
 /// with residential entries. Sharing each merge by capacity, entries fill the ring until it
 /// locks (Daganzo 1996: a merge in a fixed ratio lets a loop destroy itself). Under priority by
 /// road hierarchy, entries give way to the ring's own traffic: it keeps moving, nothing ever
@@ -1188,7 +1188,7 @@ fn priority_to_the_major_road_keeps_an_untagged_ring_moving() {
     assert!(lock.loops.is_empty() && lock.room_waits_with_room == 0);
 }
 
-/// **Property (S213):** two approaches merging into one link, the major one (primary) fed above
+/// **Property:** two approaches merging into one link, the major one (primary) fed above
 /// the link's capacity, the minor one (residential) fed too. Under priority, while the major
 /// stream queues the minor one passes almost nothing; once the major queue has gone, it passes.
 /// By capacity, both pass all along.

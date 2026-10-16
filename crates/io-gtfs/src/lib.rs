@@ -1,5 +1,5 @@
 //! GTFS import: one service day of a feed, clipped to a study area, as a
-//! [`Timetable`](openmobisim_core_transit::Timetable) (S199).
+//! [`Timetable`](openmobisim_core_transit::Timetable).
 //!
 //! | Module | What it owns |
 //! |---|---|

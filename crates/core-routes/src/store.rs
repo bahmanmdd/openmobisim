@@ -1,4 +1,4 @@
-//! The route-set store: every route of every key, flat (design §13.1).
+//! The route-set store: every route of every key, flat.
 //!
 //! **Layout.** Paths are one flat array of link ids with offsets (CSR); a key's
 //! routes are a range of route numbers; per-route metadata (cost, overlap, a
@@ -11,7 +11,7 @@
 //! with other settings, or on another network, is never mistaken for this one.
 //!
 //! **Order.** A key's routes are the generator's, best first; a store that has
-//! been [extended](RouteSets::extended) (S176: routes added between the iterations of a
+//! been [extended](RouteSets::extended) (routes added between the iterations of a
 //! run) has the added routes after them, in the order they were added, and
 //! [`RouteSets::stamps`] says in which iteration each came. Nothing that already
 //! has a number changes it except by a fixed shift per key.
@@ -104,8 +104,8 @@ pub struct RouteSets {
     network: NetworkFingerprint,
     method: String,
     descriptor: String,
-    /// The descriptor of the update that has grown the sets since they were generated
-    /// (S176); empty for a store as its generator made it.
+    /// The descriptor of the update that has grown the sets since they were generated;
+    /// empty for a store as its generator made it.
     update: String,
     keys: Vec<RouteKey>,
     /// `keys.len() + 1` offsets into the route arrays.
@@ -147,7 +147,7 @@ impl RouteSets {
     }
 
     /// [`Self::generate`] over the link costs `ctx` holds: a bike or walk
-    /// layer's (S195), made with [`SearchContext::with_costs`].
+    /// layer's, made with [`SearchContext::with_costs`].
     ///
     /// # Panics
     ///
@@ -210,7 +210,7 @@ impl RouteSets {
         sets
     }
 
-    /// These sets with routes added to some keys (S176: the routes a run finds between
+    /// These sets with routes added to some keys (the routes a run finds between
     /// iterations, see `core-sim`'s `RouteUpdate`).
     ///
     /// `additions` are `(key index, routes)` in **strictly ascending key order**, one entry
@@ -296,7 +296,7 @@ impl RouteSets {
         (out, shift)
     }
 
-    /// These sets with some routes **removed** and routes added (S268: a full set making room for
+    /// These sets with some routes **removed** and routes added (a full set making room for
     /// a better route, see `core-sim`'s `BestResponse::max_routes`). `additions` as for
     /// [`Self::extended`]; `removed[r]` drops route `r` of this store. Every key keeps at least
     /// one route.

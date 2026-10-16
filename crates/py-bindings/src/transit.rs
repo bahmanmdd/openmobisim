@@ -1,4 +1,4 @@
-//! Transit for Python (S199): reading a GTFS feed, the toy network's timetable,
+//! Transit for Python: reading a GTFS feed, the toy network's timetable,
 //! and what a run's transit did.
 
 use std::sync::Arc;
@@ -111,7 +111,7 @@ impl PyTransit {
     }
 
     /// Every line (GTFS route): ``{"route_id", "name", "kind", "runs", "first_s", "last_s"}``,
-    /// lists by line in id order (S238): the ids and names ``transit_edit`` takes, the kind of
+    /// lists by line in id order: the ids and names ``transit_edit`` takes, the kind of
     /// service, how many runs it makes that day, and the first and last of their departures from
     /// their first stops, in seconds after midnight (``None`` for a line with no run).
     fn lines<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -316,7 +316,7 @@ pub(crate) fn transit_summary<'py>(
     Ok(d)
 }
 
-/// The same day with a scenario's changes made (S238): lines (by index) cancelled, and lines
+/// The same day with a scenario's changes made: lines (by index) cancelled, and lines
 /// run at a new headway in a window, `(line, headway_s, from_s, to_s)`; with what was done.
 /// `openmobisim.transit_edit` is the Python face.
 ///

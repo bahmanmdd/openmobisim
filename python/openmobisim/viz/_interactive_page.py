@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""The page of the interactive map (S167): HTML shell, stylesheet and script.
+"""The page of the interactive map: HTML shell, stylesheet and script.
 
 Kept as text in Python so the map is one self-contained file and nothing has to
 be found on disk at run time. The script needs no library and no network: it

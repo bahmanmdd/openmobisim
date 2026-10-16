@@ -1,6 +1,6 @@
 """What ``Scenario.run()`` returns: ``Run``, and ``Run.open`` to read one back from its folder.
 
-Split from ``scenario.py`` (C3, P-13); ``openmobisim.scenario`` re-exports every name.
+Split from ``scenario.py``; ``openmobisim.scenario`` re-exports every name.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ LAYERS = ("road", "bike", "walk")
 MODES = ("car", "bike", "walk", "transit", "car_transit", "bike_transit")
 
 
-#: What to change for each reason a mode gave a trip no alternative (S276), as
+#: What to change for each reason a mode gave a trip no alternative, as
 #: ``Run.report_no_alternative()``'s ``change`` column and the warning name them.
 NO_ALTERNATIVE_CHANGES = {
     "walk_too_long": "mode_options['walk_max_s'] or the class's walk_max_s",
@@ -44,7 +44,7 @@ def _clock(seconds: float) -> str:
     return f"{s // 3600:02d}:{s % 3600 // 60:02d}" + (f":{s % 60:02d}" if s % 60 else "")
 
 
-#: What ``Run.timings()`` calls each stage, as the printout shows it (S223).
+#: What ``Run.timings()`` calls each stage, as the printout shows it.
 _STAGE_LABELS = {
     "network_read": "network read (before the run)",
     "demand_read": "demand read",
@@ -182,7 +182,7 @@ class Run:
 
     @classmethod
     def open(cls, folder: str | Path) -> Run:
-        """A finished run, read back from the folder it wrote (C2), without running it again.
+        """A finished run, read back from the folder it wrote, without running it again.
 
         It gives what the files hold: ``fingerprint``, ``master_seed``, ``choice_model``,
         ``equilibration``, ``route_update``, ``converged`` and ``manifest()`` (from
@@ -319,7 +319,7 @@ class Run:
 
         Under ``"msa"``: the disequilibrium, averaged over the last three iterations, under
         ``gap_tolerance`` with the route sets no longer growing, whether that stopped the run
-        early or held at its last allowed iteration (S280). Always ``False`` with a
+        early or held at its last allowed iteration. Always ``False`` with a
         ``gap_tolerance`` of 0, or under ``"free_flow"``.
         """
         return self._summary.converged
@@ -333,7 +333,7 @@ class Run:
         (``convergence()["gap_network_excess"][-1]``, a sample), so a route the choice set
         was missing cannot hide behind a small in-set number, and of the itineraries
         (``convergence()["itinerary_gap_excess"][-1]``: transit, park-and-ride, bike-and-ride
-        and trips choosing their mode, each against the best of the mode it kept; S227). The
+        and trips choosing their mode, each against the best of the mode it kept). The
         disequilibrium is the gap **less what the choice model itself expects** (a logit sends
         some travellers down a slower route by design, so its gap is never 0); where the model
         gives no probabilities the plain gaps are used instead.
@@ -455,7 +455,7 @@ class Run:
         * ``itinerary_gap_excess`` — **the itineraries' disequilibrium**: over the transit,
           park-and-ride, bike-and-ride and mode-choosing trips, the gap to the best alternative
           of the mode each kept, less what the choice model itself expects. Part of
-          ``convergence_gap`` and of what ``gap_tolerance`` stops on (S227).
+          ``convergence_gap`` and of what ``gap_tolerance`` stops on.
 
         The numbers up to ``gap_flow_excess`` are also in ``kpis.parquet``, a row per metric
         per iteration, and so are the itinerary gaps (under their modes, as ``gap``),
@@ -571,7 +571,7 @@ class Run:
         return data
 
     def timings(self) -> Columns:
-        """Wall-clock time by stage, measured on this machine's clock (S223).
+        """Wall-clock time by stage, measured on this machine's clock.
 
         Columns by name, one row per stage in the order the stages ended: ``stage``,
         ``iteration`` (``None`` for a stage outside the iterations) and ``seconds``. Before the
@@ -601,20 +601,20 @@ class Run:
 
     @property
     def fallback_car(self) -> Columns:
-        """The trips that had no alternative and travelled by car (S271, W-1), as columns.
+        """The trips that had no alternative and travelled by car, as columns.
 
         No mode they may use reached their destination within the limits (a walk too long, no
         transit journey, no vehicle), so they went by car — for a traveller without one, a lift
         or a taxi. They are counted under the car everywhere. Columns: ``traveller_id``,
         ``trip_seq``, ``departure_s``, ``weight`` (people), ``origin_lon``, ``origin_lat``,
         ``destination_lon``, ``destination_lat``. Empty unless ``mode_options={"fallback_car":
-        1}`` (experimental; off by default since S276, when such trips stay unsimulated).
+        1}`` (experimental, off by default, when such trips stay unsimulated).
         ``report_no_alternative()`` says why each had no alternative.
         """
         return Columns(self._summary.fallback_car)
 
     def report_no_alternative(self) -> Columns:
-        """The trips the last choice left with no alternative, and why (S276), as columns.
+        """The trips the last choice left with no alternative, and why, as columns.
 
         No mode they may use reached their destination within the limits, so they were not
         simulated (unless ``mode_options={"fallback_car": 1}``, when they went by car). One row
@@ -749,7 +749,7 @@ class Run:
 
     @property
     def window(self) -> dict[str, Any]:
-        """The simulation window (S271) and what departed outside it, left out of the run.
+        """The simulation window and what departed outside it, left out of the run.
 
         Keys: ``start_s`` and ``end_s`` (seconds after midnight), ``start_given`` and
         ``end_given`` (whether the scenario gave them; else from the earliest departure, rounded
@@ -996,7 +996,7 @@ class Run:
         One row per transit, park-and-ride and bike-and-ride trip, and per trip choosing its mode
         (``modes``), by traveller and then by the order of their day. Columns: ``trip`` (its index
         in the run, where trips are grouped by traveller), ``traveller_id`` and ``trip_seq`` (its
-        place in that traveller's day, from 0), ``user_class`` (the traveller's class, S231),
+        place in that traveller's day, from 0), ``user_class`` (the traveller's class),
         ``mode`` (the mode taken; ``None`` for a trip choosing its mode that had nothing to choose
         from), ``mode_choice`` (whether the trip chose its mode), ``parking_id`` (the parking used;
         ``None`` for plain transit or a trip that did not travel), ``direction`` (``"out"``: vehicle
@@ -1004,7 +1004,7 @@ class Run:
         ``alternatives`` (how many it chose among when it last chose; 0: it did not travel),
         ``probability`` (what the model gave its choice), ``expected_s`` (the chosen itinerary's
         door-to-door time expected at the choice), ``rides`` (vehicles boarded) and ``logsum``
-        (S238: the **logsum** of the trip's choice set when it was last planned in full — its
+        (the **logsum** of the trip's choice set when it was last planned in full — its
         first choice and each time it chose again; a trip that kept its alternative keeps it —
         the expected
         utility of its best alternative, ``ln Σ exp(utility)`` for the logit and its nested form
@@ -1024,7 +1024,7 @@ class Run:
         *,
         by_class: bool = False,
     ) -> Columns:
-        """The trips' logsums by origin-destination pair (S245): utility-based accessibility.
+        """The trips' logsums by origin-destination pair: utility-based accessibility.
 
         The logsum of a trip's choice set (``itinerary_choices()["logsum"]``) averaged over the
         trips of each pair, weighted by the people they stand for. Trips with a logsum are those
@@ -1127,7 +1127,7 @@ class Run:
         departure_s: float = 8 * 3600,
         max_s: float = 3 * 3600,
     ) -> Any:
-        """A skim: seconds from each origin to each destination by ``mode``, after this run (S238).
+        """A skim: seconds from each origin to each destination by ``mode``, after this run.
 
         The door-to-door time leaving at ``departure_s`` (seconds after midnight), by
         ``"car"`` — the earliest arrival on the **last loading's link times**, congestion by
@@ -1172,7 +1172,7 @@ class Run:
         )
 
     def report_spillback(self, min_excess_pcu: float = 5.0) -> Columns | None:
-        """The links where a queue outgrew the road in the last loading (S229).
+        """The links where a queue outgrew the road in the last loading.
 
         Under the point queue (``flow_level=2``, the default) a queue takes no road space; a link
         whose peak occupancy (the most PCU on it at once) exceeded its storage (jam density x
@@ -1257,7 +1257,7 @@ class Run:
 
     @property
     def mean_travel_time_s(self) -> float:
-        """The mean travel time of the completed trips, in seconds, per person (S232).
+        """The mean travel time of the completed trips, in seconds, per person.
 
         ``total_travel_time_s`` over the people the completed trips stand for (their travellers'
         weights). Dividing by ``completion["completed"]`` instead counts simulated trips, which

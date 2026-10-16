@@ -94,7 +94,7 @@ fn adjacency_lookup_is_a_slice_not_a_search() {
 
 #[test]
 fn a_city_scale_network_fits_the_memory_the_design_expects() {
-    // Foundations §5 budgets the immutable inputs as shared and small next to
+    // The immutable inputs are budgeted as shared and small next to
     // the per-run state. This pins the network's share of that claim.
     let (net, _) = grid(150, true);
     let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);

@@ -1,12 +1,12 @@
-//! A small, dependency-free hash for fingerprints (S168).
+//! A small, dependency-free hash for fingerprints.
 //!
 //! FNV-1a, 64 bits, written by hand: not cryptographic and not meant as one.
 //! A fingerprint here only has to tell two inputs apart when they differ by
 //! accident (another network, another seed, an edited demand row), not resist
 //! someone who builds a collision on purpose. Ten lines of arithmetic do that
 //! without adding to the dependency graph the wheel-building promise has to
-//! keep pure Rust (Foundations §3). The wider, cache-keyed fingerprint of
-//! Foundations §8 (BLAKE3) arrives with the artifact cache and can replace this
+//! keep pure Rust. A wider, cache-keyed fingerprint
+//! (BLAKE3) can arrive with an artifact cache and can replace this
 //! behind the same call sites.
 //!
 //! Every write is little-endian and fixed-width, so a fingerprint is the same

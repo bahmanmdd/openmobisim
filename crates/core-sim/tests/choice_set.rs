@@ -1,4 +1,4 @@
-//! What a traveller is offered, how a run starts, and who counts in the gap (S178).
+//! What a traveller is offered, how a run starts, and who counts in the gap.
 //!
 //! What is defended, and how each is checked (on a hand-made bottleneck, where the answer is worked out):
 //!
@@ -7,7 +7,7 @@
 //!   only the fast road (everyone takes it, with probability 1) and one over it offers both (the logit's
 //!   split); the best route is always offered; a route left out keeps its place in the set and a traveller who
 //!   is offered only the others is mapped to the right route number;
-//! * **a path size over the routes offered** (S279, CM-3): of three stored routes, two of which share a
+//! * **a path size over the routes offered**: of three stored routes, two of which share a
 //!   link, the two fastest offered do not share, so their `ln_path_size` is 0; offered all three, it is
 //!   worked out by hand from the lengths;
 //! * **a warm-up**: the first loading is the point-queue model's, the last never is, and a warm-up longer
@@ -154,8 +154,8 @@ fn took(result: &RunResult, k: usize) -> usize {
 fn the_detour_attribute_is_time_over_the_bests_within_the_set() {
     // Free flow: fast = 72 s (the set's best, detour 0), slow = 84 s (detour = 84/72 - 1 = 1/6).
     // Zeroing beta_time_min and driving the split with beta_detour alone makes the observed choices
-    // a direct, hand-checkable readout of `detour`'s own value — found untested by checkpoint 8b's
-    // adversarial pass (hardcoding `detour` to 0.0 broke nothing in the suite as it stood).
+    // a direct, hand-checkable readout of `detour`'s own value — found untested by an adversarial
+    // review (hardcoding `detour` to 0.0 broke nothing in the suite as it stood).
     let n = 6_000;
     let network = Arc::new(bottleneck());
     let classes =

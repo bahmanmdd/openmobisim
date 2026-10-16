@@ -1,4 +1,4 @@
-//! Equilibration (S170): the successive averages in traveller form, and the
+//! Equilibration: the successive averages in traveller form, and the
 //! numbers that say how close a run is to equilibrium.
 //!
 //! What is defended, and how each is checked:
@@ -41,7 +41,7 @@ use openmobisim_core_types::units::Duration;
 
 /// What the tests here assume unless they say otherwise: one loading of everyone on free flow
 /// first, at the run's own level, iterating to `iterations` whatever the gap. The shipped
-/// defaults (S280, C1: one default table) build the free-flow loading in five groups with the
+/// defaults (C1: one default table) build the free-flow loading in five groups with the
 /// point queue and stop when converged, which these tests do not mean to exercise.
 fn strategy(
     name: &str,

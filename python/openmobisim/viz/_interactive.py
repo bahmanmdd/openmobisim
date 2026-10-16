@@ -1,4 +1,4 @@
-"""``map_interactive``: the run, and its route sets, as one self-contained HTML file (S167).
+"""``map_interactive``: the run, and its route sets, as one self-contained HTML file.
 
 The page needs no server, no network and no library. Everything is embedded:
 the network's street shapes (coordinates in tenths of a metre, delta-encoded),
@@ -40,7 +40,7 @@ from openmobisim.viz._style import KINDS, THEMES, get_theme
 
 __all__ = ["map_interactive"]
 
-#: The road classes' names as the page shows them, in the order of their numbers (X-23).
+#: The road classes' names as the page shows them, in the order of their numbers.
 _CLASS_NAMES = [name.replace("_", " ") for name in LINK_CLASSES]
 #: Coordinates are stored in tenths of a metre as 32-bit integers: good to ~214 km.
 _UNIT_M = 0.1
@@ -410,7 +410,7 @@ def map_interactive(
     return out
 
 
-#: How many routes the map shows per pair until asked for all (S268, S269): as many as a
+#: How many routes the map shows per pair until asked for all: as many as a
 #: traveller is offered by default, the most chosen first; the page holds them all.
 MAP_ROUTES = 5
 

@@ -1,4 +1,4 @@
-//! The git commit recorded at build time (T-6): twelve hex digits, or `unknown` without a repository.
+//! The git commit recorded at build time: twelve hex digits, or `unknown` without a repository.
 
 use openmobisim_core_types::GIT_SHA;
 

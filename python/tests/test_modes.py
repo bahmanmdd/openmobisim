@@ -214,7 +214,7 @@ def test_a_ferry_crossing_counts_in_no_bike_facility(tmp_path) -> None:
 
 
 def test_a_model_sees_the_bike_leg_by_facility_and_transit_s_parts(tmp_path) -> None:
-    # S236 (roadmap I-bb U2, U3): the parts add up to their totals, by kind of service.
+    # S236 (U3): the parts add up to their totals, by kind of service.
     import numpy as np
     from openmobisim import choice
 
@@ -253,7 +253,7 @@ def test_a_painted_lane_s_factor_is_a_network_option() -> None:
     assert ms.network_options()["bike_lane_cost_factor"] == 1.0, "S236: a lane counted as a track"
 
 
-# --- the user's link values (S236, roadmap I-bb U4) ----------------------------------------------
+# --- the user's link values (S236) ----------------------------------------------
 
 
 def test_link_values_are_offered_along_each_leg_and_weighed_by_the_built_in_models() -> None:
@@ -347,7 +347,7 @@ def test_a_layer_s_link_ids_tie_its_links_to_the_road_s() -> None:
     assert set(grid.layer("bike").link_ids()) <= set(grid.link_ids()), "derived: the road's"
 
 
-# --- money (S248, roadmap I-bb U5) ---------------------------------------------------------------
+# --- money (S248) ---------------------------------------------------------------
 
 
 def test_a_model_sees_what_each_alternative_costs_by_part() -> None:
@@ -490,7 +490,7 @@ def test_unknown_or_negative_prices_are_refused() -> None:
         toy_run(rows, "money-neg", transit=None, parkings=None, price_options={"car_eur_km": -1})
 
 
-# --- traveller and trip values (S249, roadmap I-bb U6) -------------------------------------------
+# --- traveller and trip values (S249) -------------------------------------------
 
 
 def test_a_model_sees_each_traveller_s_and_trip_s_values() -> None:

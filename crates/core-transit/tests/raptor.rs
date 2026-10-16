@@ -465,7 +465,7 @@ proptest! {
         }
     }
 
-    /// Every stop's earliest arrival with a vehicle, in one search (S238: skims), equals the
+    /// Every stop's earliest arrival with a vehicle, in one search (skims), equals the
     /// search to that stop alone, with no walk out.
     #[test]
     fn arrivals_at_every_stop_equal_one_search_each((n, runs, walks, from, _to) in arb_case(), slack in 0u32..90, depart in 0u32..700) {

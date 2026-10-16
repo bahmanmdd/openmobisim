@@ -1,4 +1,4 @@
-"""The output files keep their schema (G4, G-32): a contract checked against a versioned file.
+"""The output files keep their schema: a contract checked against a versioned file.
 
 ``openmobisim/data/schema_v1.json`` lists, for every file a run writes, its columns in order with
 their Arrow type, whether they may be null and their unit, and the Parquet metadata keys it

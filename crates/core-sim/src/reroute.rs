@@ -1,4 +1,4 @@
-//! En-route rerouting's decision (S213): what a vehicle stuck at the front of its link does,
+//! En-route rerouting's decision: what a vehicle stuck at the front of its link does,
 //! asked by the loading ([`openmobisim_core_loading::Reroute`]).
 //!
 //! **The costs a vehicle sees:** each link's time is the larger of what the trip planned on —

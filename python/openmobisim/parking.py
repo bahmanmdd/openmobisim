@@ -101,7 +101,7 @@ def parking_read_table(source: str | Iterable[Mapping[str, Any]]) -> _core.Parki
       station's car park and its bike parking; else each parking is its own hub);
       ``initial_occupancy`` (vehicles parked when the day starts; 0); ``fee_eur`` (what a
       stay costs, in euros, seen by choice models as ``cost_parking_eur``; empty: the
-      scenario's ``price_options`` ``parking_car_eur`` or ``parking_bike_eur``, S248).
+      scenario's ``price_options`` ``parking_car_eur`` or ``parking_bike_eur``).
 
     A run snaps each parking to its vehicle's layer and to the walk layer, and
     keeps it only if a stop is within walking distance (see ``Scenario``'s

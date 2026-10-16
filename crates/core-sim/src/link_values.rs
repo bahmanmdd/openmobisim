@@ -1,6 +1,6 @@
-//! Numbers the user gives per link of a layer, offered to choice models (S236, roadmap I-bb
-//! U4): greenery along a bike link, its slope, the car flow on the road beside it (from a
-//! previous run), a toll, lighting — anything a utility may weigh.
+//! Numbers you give per link of a layer, offered to choice models: greenery along a bike link, its
+//! slope, the car flow on the road beside it (from a previous run), a toll, lighting — anything a
+//! utility may weigh.
 //!
 //! A column named `name` on layer `layer` (`road`, `bike` or `walk`) becomes two attributes of
 //! every alternative whose vehicle or walking leg runs on that layer:
@@ -231,7 +231,7 @@ impl PreparedLinkValues {
             .map(|i| (i, aggregate))
     }
 
-    /// The column named `name` on `layer`, if given (S248: the toll, [`crate::prices`]).
+    /// The column named `name` on `layer`, if given (the toll, [`crate::prices`]).
     pub(crate) fn column(&self, layer: ValueLayer, name: &str) -> Option<usize> {
         self.columns.iter().position(|c| c.layer == layer && c.name == name)
     }

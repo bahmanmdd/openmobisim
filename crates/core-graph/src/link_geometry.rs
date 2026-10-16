@@ -1,5 +1,5 @@
 //! The link-geometry artifact: the shape of each street, kept **outside**
-//! [`RoadNetwork`] (S125).
+//! [`RoadNetwork`].
 //!
 //! # Why an artifact and not a field
 //!
@@ -8,7 +8,7 @@
 //! and anything that plots the network need the shape; every one of them runs
 //! outside the iteration loop. A [`LinkGeometry`] is built once, held
 //! alongside a [`RoadNetwork`] rather than inside it, and a run that never
-//! asks for it never pays for it (brief §3e) — this is what keeps the road
+//! asks for it never pays for it — this is what keeps the road
 //! network's structure-of-arrays layout from doubling in size for the sake of
 //! a feature most runs do not touch.
 //!
@@ -19,13 +19,13 @@
 //!   storage time it is irreversible, and the map matcher is the thing it
 //!   would break.
 //! - **WGS84 lon/lat, `f64`.** Projected metres are valid only for the UTM
-//!   zone the study area's extent selected (Foundations §9); storing them
+//!   zone the study area's extent selected; storing them
 //!   would bake a build parameter into stored data.
 //! - **One point run per undirected street.** A two-way street's two
 //!   directed links share one run; the direction that does not own it reads
 //!   the same points back to front — see [`LinkGeometry::points`].
 //! - **Length is never re-derived from this.** [`RoadNetwork::link_length`]
-//!   stays the measured fact of S119; `LinkGeometry` is for placement and
+//!   stays the measured fact; `LinkGeometry` is for placement and
 //!   display only. [`LinkGeometry::build`] checks the two agree to a
 //!   micrometre in every debug build, which is how that separation stays
 //!   honest rather than assumed.
@@ -42,7 +42,7 @@ use crate::network::{MIN_LINK_LENGTH_M, RoadNetwork};
 const NO_STREET: u32 = u32::MAX;
 
 /// Two links agreeing to within this many metres are treated as sharing one
-/// physical street when pairing geometry (S125's "micrometre" tolerance).
+/// physical street when pairing geometry (the "micrometre" tolerance).
 ///
 /// A true reverse pair's lengths are the same length measured twice from the
 /// same underlying points, so they agree far inside this; two distinct
@@ -55,13 +55,12 @@ const LENGTH_AGREEMENT_TOLERANCE_M: f64 = 1e-6;
 /// A lightweight identity for the exact [`RoadNetwork`] a [`LinkGeometry`]
 /// was built from.
 ///
-/// **Not** the full cache fingerprint Foundations §8 describes —
+/// **Not** the full cache fingerprint —
 /// `BLAKE3(input_bytes_hash, build_params, CODE_VERSION, defaults_version)`
-/// — which belongs to the artifact cache (S65, not yet built: roadmap Phase 2
-/// item 1) and needs the scenario builder's input bytes and build parameters,
-/// neither of which this module has. This is a content hash of the network's
+/// — which belongs to an artifact cache (not yet built) and needs the scenario builder's input
+/// bytes and build parameters, neither of which this module has. This is a content hash of the network's
 /// own identity — every node and link external id, in the deterministic
-/// order [`Foundations §1`](crate) assigns them — good enough to catch a
+/// order of their ids — good enough to catch a
 /// geometry artifact paired with a network it was not built from. When the
 /// artifact cache lands, this can feed into that wider formula rather than
 /// being replaced by it.
@@ -69,7 +68,7 @@ const LENGTH_AGREEMENT_TOLERANCE_M: f64 = 1e-6;
 /// **It hashes the ids only, not the content**: two networks with the same ids and other
 /// lengths, speeds or capacities have the same one. This is the `network_fingerprint` of the
 /// output files (what an internal link id is meaningful next to); a run's `run_fingerprint`
-/// hashes the network's content as well, and the route-set cache keys on that (B4).
+/// hashes the network's content as well, and the route-set cache keys on that.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct NetworkFingerprint(u64);
 
@@ -122,7 +121,7 @@ impl LinkGeometry {
     ///
     /// `points_of` is keyed by the same external link id `network` was built
     /// from; a link absent from it, or one `network` dropped for its own
-    /// reasons (Foundations §1's "an internal id is meaningful only with its
+    /// reasons (the "an internal id is meaningful only with its
     /// fingerprint" cuts both ways), simply has no stored geometry —
     /// [`LinkGeometry::points`] reports `None` for it, which is a normal
     /// condition here, not a bug.
@@ -159,7 +158,7 @@ impl LinkGeometry {
             // then, by design, so the micrometre check below is skipped for
             // exactly that case rather than firing on every OSM extract that
             // happens to contain a duplicate-node or mapping-error link
-            // (found on a real Andorra import, checkpoint 8b).
+            // (found on a real Andorra import).
             debug_assert!(
                 network.link_length(link).get() <= MIN_LINK_LENGTH_M
                     || (polyline_length_metres(own_points) - network.link_length(link).get()).abs()
@@ -204,7 +203,7 @@ impl LinkGeometry {
     /// Whether this artifact was built from `network`.
     ///
     /// A geometry file must never be read against a network it was not built
-    /// with (S125); this is the check that catches it.
+    /// with; this is the check that catches it.
     #[must_use]
     pub fn matches(&self, network: &RoadNetwork) -> bool {
         self.fingerprint == NetworkFingerprint::of(network)

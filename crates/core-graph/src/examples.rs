@@ -1,5 +1,5 @@
 //! `manhattan_grid` and `toy_network` — the shared synthetic-network fixtures
-//! (S105, S161).
+//! .
 //!
 //! A grid is the right shape for a fixture that has to double as both a
 //! correctness check and a demo: every count — nodes, links, turns — is
@@ -9,7 +9,7 @@
 //! ladder's `ms.examples.manhattan_grid(n, block_metres, signals)` wraps
 //! (the N3 fixture) and that `core-graph`'s own test suite
 //! already used privately before this module existed to promote it into
-//! (roadmap Phase 1 step 8).
+//! .
 //!
 //! Coordinates use a flat local approximation (metres per degree at a fixed
 //! reference latitude), not the ellipsoidal projection the rest of this
@@ -117,7 +117,7 @@ pub fn manhattan_grid(n: u32, block_metres: f64, signals: bool) -> (RoadNetwork,
     (network, diagnostics)
 }
 
-/// The toy network's road part (I-m, S161): a small, one-way network on which
+/// The toy network's road part (I-m): a small, one-way network on which
 /// every number the loading produces can be checked by hand.
 ///
 /// Sixteen nodes and sixteen links, each a mechanism in a few lines. Streets
@@ -223,7 +223,7 @@ pub fn toy_network() -> (RoadNetwork, Diagnostics) {
     (network, diagnostics)
 }
 
-/// The toy network's bike and walk layers (S195): the road part's own streets,
+/// The toy network's bike and walk layers: the road part's own streets,
 /// plus what makes each layer's hand-derived cases.
 ///
 /// **Bike layer.** Every road link, in the road's direction, in mixed traffic;
@@ -320,10 +320,10 @@ pub fn toy_network_layers() -> (crate::layers::StaticNetwork, crate::layers::Sta
     (bike, walk)
 }
 
-/// The toy network's hub `H` at `D2` (S198; planned as
+/// The toy network's hub `H` at `D2` (planned as
 /// a park-and-ride): a car access point on the road node `D2`, a bike and a walk
 /// access point on the layers' `D2` ([`toy_network_layers`]), and a
-/// **60-second** transfer between any two, and its parking (M4, S201): **6 car
+/// **60-second** transfer between any two, and its parking: **6 car
 /// and 3 bike spaces**, empty at the start of the day. The tram stop at `D2` is a
 /// hub of its own, reached on foot (a walk of 0 m).
 ///
@@ -366,8 +366,8 @@ pub fn toy_network_hubs() -> crate::hubs::HubSet {
     }])
 }
 
-/// The toy network's parkings as a parking table (M4, S201;
-/// the toy's multimodal extension): `H`'s **6 car and 3 bike spaces** at `D2`, where
+/// The toy network's parkings as a parking table (the toy's
+/// multimodal extension): `H`'s **6 car and 3 bike spaces** at `D2`, where
 /// the tram stop is, and a second car park **`P2` at `R2`** with 20 spaces, 300 m
 /// on foot from the tram stop (`e2` walked), so a park-and-ride trip has two
 /// parkings to choose between.

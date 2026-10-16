@@ -1,4 +1,4 @@
-//! Deterministic parallel reductions (Foundations §3).
+//! Deterministic parallel reductions.
 //!
 //! # The hazard this module exists to remove
 //!

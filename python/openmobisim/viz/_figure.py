@@ -1,4 +1,4 @@
-"""What every openmobisim figure shares (S162).
+"""What every openmobisim figure shares.
 
 The page, the signal glyph, the legend chips and the provenance strip.
 
@@ -34,7 +34,7 @@ __all__ = [
 MAP_RECT = (0.02, 0.085, 0.96, 0.78)
 
 
-#: Who made a file the package saves, in its metadata: the software and its creator (T-2), never on
+#: Who made a file the package saves, in its metadata: the software and its creator, never on
 #: the picture itself.
 CREATOR = "openmobisim {version}, by Bahman Madadi"
 
@@ -64,9 +64,9 @@ def figure_class() -> Any:
     """The figure type the package draws on: a matplotlib ``Figure`` that a notebook can show.
 
     The figures are made without pyplot (no global state), so IPython has no rule to display
-    them. This subclass carries its own ``_repr_png_`` (S232): a PNG of the page as designed, not
+    them. This subclass carries its own ``_repr_png_``: a PNG of the page as designed, not
     cropped, shown when a figure ends a cell. Nothing is registered with IPython, so a user's own
-    figures display as they always did (P-43). Built once, when matplotlib is first needed.
+    figures display as they always did. Built once, when matplotlib is first needed.
     """
     global _FIGURE_CLASS
     if _FIGURE_CLASS is None:
@@ -186,11 +186,11 @@ def draw_furniture(
 ) -> None:
     """Title with the signal glyph, legends, the footer strip and the logo.
 
-    `provenance` is the footer: one line, or up to three (S281: the run's numbers, then what
+    `provenance` is the footer: one line, or up to three (the run's numbers, then what
     identifies the run, then what ran it), the first the most readable, the last the
     provenance proper, in the mono face. `width_legend` is ``(label, [(value, width_pt), ...],
     unit)``, the unit shown once, after the label (empty: none); `colour_legend`
-    is ``(label, ramp_stops, low_label, high_label)``, or, for bands (S268), ``(label, colours,
+    is ``(label, ramp_stops, low_label, high_label)``, or, for bands, ``(label, colours,
     labels, "")`` with one label per colour, each under its swatch; its label left out when it is
     empty or is the width
     legend's title (both show one quantity: the title once); `route_legend` is a list of
@@ -495,7 +495,7 @@ def _draw_logo(
     publisher's imprint. It is a logo, not a copyright notice: a figure and its
     data belong to whoever made the run, so the credit line is theirs to fill.
     ``strip_middle`` is the footer strip's middle line (figure fraction) when the strip has
-    more than one line (S281); the signature is then centred on it. Returns the signature's
+    more than one line; the signature is then centred on it. Returns the signature's
     left edge, in figure coordinates.
     """
     from matplotlib.backends.backend_agg import FigureCanvasAgg

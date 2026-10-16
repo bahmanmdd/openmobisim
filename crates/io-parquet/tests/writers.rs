@@ -222,7 +222,7 @@ fn events_sampling_keeps_everything_at_rate_one_and_fewer_below_it() {
     assert_eq!(sampled_rows, 10, "every 100th row, deterministically");
 }
 
-/// **Property (X-55):** a rate of nothing samples nothing: 0, a negative rate and NaN write no
+/// **Property:** a rate of nothing samples nothing: 0, a negative rate and NaN write no
 /// row, where they wrote the first.
 #[test]
 fn events_sampling_at_a_rate_of_nothing_keeps_nothing() {
@@ -327,8 +327,8 @@ fn manifest_reports_the_fields_phase_1_actually_has() {
 #[test]
 fn a_descriptor_containing_a_quote_or_a_backslash_still_writes_valid_json() {
     // route_descriptor/choice_descriptor are the one string here that can hold
-    // arbitrary characters (a Python-authored choice model's own descriptor,
-    // design §24): found untested in the 8b checkpoint's adversarial pass —
+    // arbitrary characters (a Python-authored choice model's own descriptor):
+    // found untested in an adversarial review —
     // dropping the escaping broke nothing in the suite as it stood.
     let mut description = sample_description(None, None);
     description.route_descriptor = "penalty(name=\"a\\b\")".to_string();
@@ -716,7 +716,7 @@ fn transit_calls_round_trip_with_an_unknown_time() {
     assert_eq!(get("openmobisim.run_fingerprint").as_deref(), Some("00000000deadbeef"));
 }
 
-/// Every Parquet file carries the layout version (G-32): the three plain writers and the ones
+/// Every Parquet file carries the layout version: the three plain writers and the ones
 /// with metadata of their own.
 #[test]
 fn every_parquet_file_carries_the_schema_version() {

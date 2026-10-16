@@ -1,4 +1,4 @@
-//! Bounded one-to-many searches by node (S199): every node reachable **from** a
+//! Bounded one-to-many searches by node: every node reachable **from** a
 //! source within a cost, or every node **from which** a target is within it.
 //!
 //! Transit uses them for walking: to the stops around an origin, from the stops

@@ -15,7 +15,7 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
-/// A grid index over the network's drivable nodes (S153: a node with at least
+/// A grid index over the network's drivable nodes (a node with at least
 /// one link that carries motor traffic; if there is none, every node).
 #[derive(Clone, Debug)]
 pub struct NodeSnapper {
@@ -40,7 +40,7 @@ impl NodeSnapper {
     }
 
     /// Index the nodes of `network`'s links whose class `keep` accepts (every node
-    /// if none): a bus stop snaps to the nodes of links buses use (S199).
+    /// if none): a bus stop snaps to the nodes of links buses use.
     #[must_use]
     pub fn of_links(network: &RoadNetwork, keep: impl Fn(RoadClass) -> bool) -> Self {
         let kept = |l: &LinkId| keep(network.link_class(*l));
@@ -57,7 +57,7 @@ impl NodeSnapper {
     }
 
     /// Index every node of `network` that has a link: a bike or walk layer's
-    /// graph (S195), whose every link is usable by its mode.
+    /// graph, whose every link is usable by its mode.
     #[must_use]
     pub fn every_node(network: &RoadNetwork) -> Self {
         let ids: Vec<u32> = (0..network.node_count())
@@ -239,7 +239,7 @@ impl NodeSnapper {
     }
 }
 
-/// Where a trip's end joins the road network (U-41, S281): the nearest **street** node — a
+/// Where a trip's end joins the road network: the nearest **street** node — a
 /// node with a road a car can enter from, motorways, trunk roads and their ramps excluded —
 /// unless the point lies within `motorway_within_m` of a node that has only such roads, which
 /// it then takes (a through trip placed on the motorway by design keeps its node; an address
@@ -260,7 +260,7 @@ pub struct TripSnapper {
 
 impl TripSnapper {
     /// Index `network` for trip ends; `motorway_within_m` is how close to a motorway-only
-    /// node a point must lie to keep it (0: never; infinite: always, the rule before S281).
+    /// node a point must lie to keep it (0: never, infinite: always, the rule before).
     #[must_use]
     pub fn new(network: &RoadNetwork, motorway_within_m: f64) -> Self {
         let street = |l: &LinkId| {

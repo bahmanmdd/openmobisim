@@ -1,4 +1,4 @@
-"""The planning defaults (S229).
+"""The planning defaults.
 
 The point queue for every loading, stopping when converged, rerouting only where queues take
 space, and the list of links where a queue outgrew the road. What is defended: a default run is a

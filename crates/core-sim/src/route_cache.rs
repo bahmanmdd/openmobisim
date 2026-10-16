@@ -1,6 +1,6 @@
-//! A cache of generated route sets, for runs that repeat the same network and demand (S178).
+//! A cache of generated route sets, for runs that repeat the same network and demand.
 //!
-//! Generating route sets is the largest single cost of a run that iterates (S177: 48% of the best
+//! Generating route sets is the largest single cost of a run that iterates (48% of the best
 //! method's time on Stockholm's inner city), and it is a **pure function of its inputs**: the
 //! network, the origin–destination pairs, the method and its options, and, for a method that reads
 //! the demand ([`RouteSetGenerator::reads_demand`]), the demand itself. A study that runs the same

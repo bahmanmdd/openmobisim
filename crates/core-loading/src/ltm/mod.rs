@@ -1,20 +1,20 @@
 //! The loading at levels 2–4: the link transmission model with vehicles on
-//! the curves (S84, S85), in S147's hybrid form (S151), with vehicles that
-//! straddle links, stop lines and origin queues (S153).
+//! the curves, in the hybrid form, with vehicles that
+//! straddle links, stop lines and origin queues.
 //!
 //! # What it computes
 //!
-//! Every vehicle carries its route (S85) and its own clock. Every link has a
-//! triangular fundamental diagram (S113) that limits four things:
+//! Every vehicle carries its route and its own clock. Every link has a
+//! triangular fundamental diagram that limits four things:
 //!
 //! 1. **Free-flow travel** — a vehicle's front reaches the downstream end of a
 //!    link no earlier than it entered plus the link's free-flow travel time.
 //! 2. **Discharge capacity** — vehicle fronts pass the downstream end no closer
 //!    together than `PCU / (capacity × g/C)` seconds, the saturation headway of
-//!    the approach (S90's green-time fraction; 1 at an unsignalised node).
+//!    the approach (the green-time fraction, 1 at an unsignalised node).
 //! 3. **Signal delay at the stop line** — on a signalised approach, a vehicle
 //!    passes the stop line when the next link has room for it, leaves the
-//!    approach, and waits S90's control delay at the stop line before
+//!    approach, and waits the control delay at the stop line before
 //!    entering the next link, checking its room again. The delay belongs to
 //!    the approach in the vehicle's trajectory but holds no storage — neither
 //!    the approach's nor the next link's — so a short signalised approach, and
@@ -41,23 +41,23 @@
 //!
 //! While a vehicle straddles a link's upstream end, nothing else enters that
 //! link, and the vehicle behind it on the link it is leaving cannot move: it is
-//! physically in the way (S77's full blocking).
+//! physically in the way (the full blocking).
 //!
 //! # Roundabouts: entering traffic gives way
 //!
 //! Where a link is part of a roundabout's circulating carriageway (OSM
 //! `junction=roundabout`), a vehicle entering it from outside the roundabout —
 //! from an approach, an origin or a stop line — waits while the circulating
-//! link before it holds any vehicle bound for the same link (S155): the
+//! link before it holds any vehicle bound for the same link: the
 //! priority merge, where circulating traffic that wants the room gets it
 //! first, so entries use only room circulating traffic does not need. Without
 //! this, entries compete equally for room and fill the ring until it locks
-//! (S153). It costs one flag per link and, per entry into a roundabout link, a
+//! . It costs one flag per link and, per entry into a roundabout link, a
 //! look at the few vehicles on the circulating link before it.
 //!
 //! # Any local lock: don't seal it from outside
 //!
-//! The roundabout rule above is one case of a general one (I-u idea 1, S157):
+//! The roundabout rule above is one case of a general one (I-u idea 1):
 //! a vehicle whose own link is not already part of a forming waiting loop may
 //! not take the last room on a link when doing so would close that loop back
 //! on itself — an outsider does not seal a lock shut, whether or not the ring
@@ -66,7 +66,7 @@
 //! A vehicle already circulating within the forming loop is let through: this
 //! is what keeps a loop's own traffic moving for as long as it still can. On
 //! its own this is prevention, not a guarantee — a loop can still fill through
-//! its own circulation alone; **idea 2 (creep)**, S157's other half, is meant
+//! its own circulation alone; **idea 2 (creep)**, the other half, is meant
 //! to guarantee a standing lock resolves, but is not built yet: a
 //! "give-equals-receive rotation" (every member gives what it moves to the
 //! next and receives that much from the one before, so no link's occupancy
@@ -75,7 +75,7 @@
 //! straddle-closing and front-crossing paths threaded together iteratively —
 //! real design, attempted and set aside rather than shipped half-working.
 //!
-//! # Priority at merges (S213, when asked for)
+//! # Priority at merges (when asked for)
 //!
 //! [`LtmNetwork::with_priority`]: at an unsignalised merge a vehicle gives way while the front
 //! vehicle of an approach of higher priority — a higher road class, or the same class and
@@ -84,16 +84,16 @@
 //! prevention his 1996 analysis of gridlock on loops names. Without it, merges share room by
 //! capacity, as described above.
 //!
-//! # En-route rerouting (S213, when asked for)
+//! # En-route rerouting (when asked for)
 //!
 //! [`LtmNetwork::with_rerouting`]: a vehicle that has waited at the front of its link, blocked,
 //! for a set time is offered a new route by a [`Reroute`] the caller supplies (the loading never
-//! routes, design §10.4), with the loading's live estimate of each link's time
+//! routes), with the loading's live estimate of each link's time
 //! ([`LiveTimes`]); it may take a few. Its trajectory records the links it actually took (its
 //! realised route), and every reroute is recorded ([`RerouteRecord`]). A vehicle that re-routes
 //! still waits for room like any other: rerouting changes where it goes, never the physics.
 //!
-//! # Turn pockets (S217, when asked for)
+//! # Turn pockets (when asked for)
 //!
 //! [`LtmNetwork::with_pockets`]: on an approach of two lanes or more, a vehicle at the end of the
 //! link may pass vehicles ahead of it that wait for another movement, as long as they fit in
@@ -111,7 +111,7 @@
 //! vehicle entitled to it. So a set of vehicles waiting on one another forever
 //! must be waiting on links that are all full (to within [`MIN_PART`]; an
 //! entry giving way at a roundabout also waits on a circulating vehicle, which
-//! itself waits for room): **traffic stops only at jam density**, where the fundamental diagram's flow is zero (S152, S153). No
+//! itself waits for room): **traffic stops only at jam density**, where the fundamental diagram's flow is zero. No
 //! vehicle is removed or forced. [`LtmNetwork::waiting_cycles`] lists such
 //! stops.
 //!
@@ -124,7 +124,7 @@
 //!
 //! # Chained vehicles: a bus from stop to stop
 //!
-//! A vehicle may be **chained** to another (S199, [`LtmNetwork::depart_after`]):
+//! A vehicle may be **chained** to another ([`LtmNetwork::depart_after`]):
 //! it departs when the one before it arrives, `wait` seconds later and not
 //! before `not_before` — a bus's next leg, leaving its stop after the dwell and
 //! not before its scheduled departure. Between the two it is outside the
@@ -149,21 +149,21 @@
 //! every queue, spillback resolved to the second.
 //!
 //! Events are ordered by `(time, service tag, queue)` — a total order, so the
-//! result never depends on input order (S77's requirement, met by ordering;
-//! S88's event-queue convention). The **service tag** is weighted fair
+//! result never depends on input order (the requirement, met by ordering;
+//! the event-queue convention). The **service tag** is weighted fair
 //! queueing's virtual finish time: an approach's tag advances by one saturation
 //! headway per vehicle it releases, and a queue that has just become
 //! backlogged starts from the link's **virtual time** — the largest tag released
 //! onto the link it is bound for. Approaches that are never held back are
 //! served first come, first served (by `time`), and saturated approaches
 //! competing for the same room are served in proportion to their discharge
-//! capacities (S48), whatever the loading step. Tags are in their own units and
+//! capacities, whatever the loading step. Tags are in their own units and
 //! are never compared with real seconds: under saturation the virtual clock
 //! runs slower than the real one, and mixing them let the queue that had waited
-//! longest win merges regardless of capacity (S161, K31). A vehicle that cannot
-//! move blocks everything behind it in its queue (S77's full blocking).
+//! longest win merges regardless of capacity (K31). A vehicle that cannot
+//! move blocks everything behind it in its queue (the full blocking).
 //!
-//! The loading step is an output and bookkeeping boundary (S84): nothing about
+//! The loading step is an output and bookkeeping boundary: nothing about
 //! a vehicle's timing depends on it. At each step's end every link forgets
 //! exits older than one backward-wave travel time
 //! ([`crate::curves::LinkCurves::forget_before`]).
@@ -176,18 +176,18 @@
 //!   it closes up as the room arrives. Its PCU is always counted in full.
 //! - **The smallest part a vehicle's front takes** is [`MIN_PART`] PCU, or the
 //!   whole of a link's storage if that is less.
-//! - **Give way is keyed to the OSM tag only** (S154, S155): a ring mapped
+//! - **Give way is keyed to the OSM tag only**: a ring mapped
 //!   without `junction=roundabout` does not give way, and can still lock at jam
 //!   density — [`LtmNetwork::waiting_cycles`] reports it. Priority is by
 //!   presence on the circulating link before the entry, not by a critical gap
 //!   in time: a long circulating link holds entries back further ahead of an
 //!   arriving vehicle than a driver would (roundabout pieces are short).
-//! - **Signal delay is a cycle average** at the stop line (S90): queues within a
+//! - **Signal delay is a cycle average** at the stop line: queues within a
 //!   cycle are not represented. Vehicles serving their delay are counted on no
 //!   link, so while a signalised approach is held back by a full next link it
 //!   stores, beyond its own storage, the vehicles that passed its stop line in
 //!   the last control delay (at most `capacity × g/C × delay`).
-//! - **The service tag is per approach, not per movement** (S279, L-4): an approach (a link's
+//! - **The service tag is per approach, not per movement**: an approach (a link's
 //!   queue) has one tag, though its vehicles go to different next links. An approach that also
 //!   diverges shares the room of each link it feeds by everything it sends, not by what it sends
 //!   to that link. The tag is `max(V, F_prev + h)`, `V` the largest tag released onto the next link
@@ -195,9 +195,9 @@
 //!   front of its queue. Weighted fair queueing's `max(V, F_prev) + h` (Demers, Keshav and
 //!   Shenker 1989) tags a packet on arrival, when `F_prev` can still be ahead of `V`; here
 //!   `F_prev` has been released by then, and that form would give every approach `V + h`
-//!   and let the smaller headway starve the larger (tried in S279: the minor approach of a
+//!   and let the smaller headway starve the larger (tried: the minor approach of a
 //!   saturated merge got nothing).
-//! - **Turn pockets are a capacity per movement, not lanes** (S217): every movement of a link
+//! - **Turn pockets are a capacity per movement, not lanes**: every movement of a link
 //!   gets the same pocket, the lanes split evenly among them, whatever the movements' volumes;
 //!   a vehicle that passes others is ordered against other approaches by its approach's
 //!   service tag, not its own; only the front is offered a new route; and vehicles at a
@@ -246,12 +246,12 @@ const TIME_EPSILON: f64 = 1e-9;
 /// network" in a vehicle's parts.
 const NONE: u32 = u32::MAX;
 
-/// The movement of a vehicle whose route ends at the end of its link (S217).
+/// The movement of a vehicle whose route ends at the end of its link.
 const EXIT: u32 = u32::MAX - 1;
 
-/// Which term of the triangular diagram this run keeps — design §10.1's
+/// Which term of the triangular diagram this run keeps — the levels'
 /// nesting: levels 2–4 are **the same code**, called with a limiting
-/// parameter overridden (S76). Levels 0 and 1 are separate mechanisms
+/// parameter overridden. Levels 0 and 1 are separate mechanisms
 /// (free-flow traversal, `crate::level0`; volume-delay, not yet built) and
 /// are not represented here.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -269,7 +269,7 @@ pub enum FidelityLevel {
 }
 
 impl FidelityLevel {
-    /// The level's number in the fidelity ladder (design §10.1): 2, 3 or 4.
+    /// The level's number in the fidelity ladder: 2, 3 or 4.
     #[must_use]
     pub const fn number(self) -> u32 {
         match self {
@@ -313,11 +313,11 @@ enum Place {
     StopLine(usize),
     /// Room released on this link reaches its upstream end.
     Heard(usize),
-    /// The front vehicle of this link may have waited long enough to re-route (S213).
+    /// The front vehicle of this link may have waited long enough to re-route.
     RerouteDue(usize),
 }
 
-/// A vehicle that departs when another arrives (S199; see the
+/// A vehicle that departs when another arrives (see the
 /// [module docs](self)): `wait` seconds after the vehicle at index `after` of
 /// the same list arrives, and not before `not_before` (seconds).
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -340,11 +340,11 @@ pub enum Recording {
     /// Per-link results in bins of this many seconds.
     Bins(u32),
     /// Those, and the traversals filed by the bin they entered their link in, in bins of
-    /// the second length (S232: what the next choice reads, apart from the flow map's).
+    /// the second length (what the next choice reads, apart from the flow map's).
     BinsAndEntry(u32, u32),
 }
 
-/// Rules a loading applies beyond the link transmission model itself (S213).
+/// Rules a loading applies beyond the link transmission model itself.
 #[derive(Clone, Debug, Default)]
 pub struct Rules {
     /// Priority by road hierarchy at unsignalised merges ([`LtmNetwork::with_priority`]).
@@ -354,9 +354,9 @@ pub struct Rules {
     pub reroute: Option<RerouteRule>,
     /// Turn pockets this many metres long ([`LtmNetwork::with_pockets`]); 0: none.
     pub pocket_length_m: f64,
-    /// Timed capacity changes (S239, [`LtmNetwork::with_capacity_changes`]); empty: none.
+    /// Timed capacity changes ([`LtmNetwork::with_capacity_changes`]); empty: none.
     pub capacity_changes: Vec<CapacityChange>,
-    /// The simulation window's start, in seconds after midnight (S271): the loading's clock
+    /// The simulation window's start, in seconds after midnight: the loading's clock
     /// starts there ([`LtmNetwork::starting_at`]); 0 by default.
     pub start_s: f64,
 }
@@ -374,7 +374,7 @@ pub struct LtmOutput {
     pub lock: LockReport,
     /// Every reroute, in the order they happened (empty without rerouting).
     pub reroutes: Vec<RerouteRecord>,
-    /// Per link, the most PCU it held at once (S229): against the link's physical storage, where
+    /// Per link, the most PCU it held at once: against the link's physical storage, where
     /// a point queue would have spilled back.
     pub peak_occupancy: Vec<f64>,
 }
@@ -405,12 +405,12 @@ pub struct LtmNetwork<'a> {
     /// The vehicle straddling each link's upstream end, or `NONE`.
     straddling_in: Vec<u32>,
     /// How many vehicles straddle each link's downstream end: at most one, unless the link has
-    /// turn pockets (S217). Each is the vehicle straddling the upstream end of a link it leads to.
+    /// turn pockets. Each is the vehicle straddling the upstream end of a link it leads to.
     out_straddlers: Vec<u32>,
     /// When a room-heard event is pending for each link, or `+∞`.
     heard_due: Vec<f64>,
     /// The largest service tag released onto each link: the virtual time a
-    /// queue that has just become backlogged for it starts from (S161, K31).
+    /// queue that has just become backlogged for it starts from (K31).
     virtual_time: Vec<f64>,
 
     // Per queue: links `0..n`, origins `n..2n`, stop lines `2n..3n`. Room-heard
@@ -431,28 +431,28 @@ pub struct LtmNetwork<'a> {
     /// Slots not yet departed, latest departure first (so `pop` is next).
     pending: Vec<u32>,
     pending_sorted: bool,
-    /// Chained vehicles (S199), once one is added: absent otherwise.
+    /// Chained vehicles, once one is added: absent otherwise.
     chains: Option<Chains>,
 
-    /// Priority by road hierarchy at unsignalised merges (S213), when asked for: per link,
+    /// Priority by road hierarchy at unsignalised merges, when asked for: per link,
     /// whether a vehicle may be giving way to its front — every motor link into an
     /// unsignalised node, since departures give way to any approach — so its front moving on
     /// wakes them. Empty when priority is off.
     priority_major: Vec<bool>,
 
-    /// At most one event per queue (S210); `4n..5n` are the links' reroute timers (S213).
+    /// At most one event per queue; `4n..5n` are the links' reroute timers.
     events: EventQueue,
 
-    /// En-route rerouting (S213), when asked for.
+    /// En-route rerouting, when asked for.
     rerouting: Option<Rerouting>,
 
-    /// Turn pockets (S217), when asked for.
+    /// Turn pockets, when asked for.
     pockets: Option<Pockets>,
 
-    /// Per-link, per-bin results, when asked for (S163).
+    /// Per-link, per-bin results, when asked for.
     recorder: Option<LinkBinRecorder>,
 
-    /// Timed capacity changes (S239, disruptions): sorted by time, then link; empty when none.
+    /// Timed capacity changes (disruptions): sorted by time, then link; empty when none.
     changes: Vec<CapacityChange>,
     /// The next change not yet made.
     next_change: usize,
@@ -465,7 +465,7 @@ impl<'a> LtmNetwork<'a> {
     ///
     /// Reads each approach's green-time fraction from `turns` once: an
     /// approach discharges at `capacity × g/C`, the largest fraction among
-    /// its turns (all turns of a signalised approach share it, S90).
+    /// its turns (all turns of a signalised approach share it).
     #[must_use]
     pub fn new(network: &'a RoadNetwork, turns: &TurnTable) -> Self {
         let n = network.link_count() as usize;
@@ -537,7 +537,7 @@ impl<'a> LtmNetwork<'a> {
         sim
     }
 
-    /// The same network, also recording per-link, per-time-bin results (S163):
+    /// The same network, also recording per-link, per-time-bin results:
     /// bins of `bin_seconds`, ignoring traversals that finish at or after
     /// `window` seconds. Collect them with [`Self::take_link_bins`].
     ///
@@ -554,7 +554,7 @@ impl<'a> LtmNetwork<'a> {
     }
 
     /// The same network, also recording each traversal under the bin it
-    /// **entered** its link in (S170; see [`LinkBinRecorder::with_entry_bins`]).
+    /// **entered** its link in (see [`LinkBinRecorder::with_entry_bins`]).
     /// Needs [`Self::with_link_bins`] first; collect with
     /// [`Self::take_link_bins_with_entry`].
     #[must_use]
@@ -563,7 +563,7 @@ impl<'a> LtmNetwork<'a> {
         self
     }
 
-    /// [`Self::with_entry_bins`], in entry-time bins of `entry_bin_seconds` (S232; see
+    /// [`Self::with_entry_bins`], in entry-time bins of `entry_bin_seconds` (see
     /// [`LinkBinRecorder::with_entry_bins_of`]).
     #[must_use]
     pub fn with_entry_bins_of(mut self, entry_bin_seconds: u32) -> Self {
@@ -572,10 +572,10 @@ impl<'a> LtmNetwork<'a> {
     }
 
     /// Tell the recorder about every vehicle still on a link (driving, or waiting at its stop
-    /// line), or waiting at an origin to enter one, at second `end` (S170; see
+    /// line), or waiting at an origin to enter one, at second `end` (see
     /// [`LinkBinRecorder::record_unfinished`]). Call once, after the last step.
     ///
-    /// A vehicle still on a link counts at least the link's free-flow time (X-38a): its time so
+    /// A vehicle still on a link counts at least the link's free-flow time: its time so
     /// far is cut off by the window, and no vehicle crosses faster than free flow. Cost: one
     /// free-flow lookup per vehicle still on the network, once per loading.
     pub fn record_unfinished(&mut self, end: f64) {
@@ -611,7 +611,7 @@ impl<'a> LtmNetwork<'a> {
         self.recorder.take().map(LinkBinRecorder::finish)
     }
 
-    /// The same network, run at `level` (S76's nesting: nothing else changes).
+    /// The same network, run at `level` (the nesting: nothing else changes).
     #[must_use]
     pub fn with_level(mut self, level: FidelityLevel) -> Self {
         self.level = level;
@@ -652,7 +652,7 @@ impl<'a> LtmNetwork<'a> {
         Duration(self.now)
     }
 
-    /// The loading's clock started at `start` (S271, the simulation window's start) rather
+    /// The loading's clock started at `start` (the simulation window's start) rather
     /// than midnight: the first step begins there. Call before any step.
     ///
     /// # Panics
@@ -822,7 +822,7 @@ impl<'a> LtmNetwork<'a> {
     }
 
     /// [`Self::step`], asking `rr` for a new route for every vehicle due one under
-    /// [`Self::with_rerouting`] (S213).
+    /// [`Self::with_rerouting`].
     ///
     /// # Panics
     ///
@@ -1318,7 +1318,7 @@ impl<'a> LtmNetwork<'a> {
     }
 
     /// Whether a queue waits on link `l`: for its front, or with turn pockets for another
-    /// movement (S217).
+    /// movement.
     #[inline]
     fn waited_on(&self, l: usize) -> bool {
         self.first_parked[l] != NONE
@@ -1429,7 +1429,7 @@ impl<'a> LtmNetwork<'a> {
 
     /// Link `l`'s front has moved on: reschedule, no earlier than `at`, the queues parked on `l`
     /// that give way to it — those waiting at its downstream node — and leave parked those
-    /// waiting for room on `l`, at its upstream node, whose room is heard later (S218: waking
+    /// waiting for room on `l`, at its upstream node, whose room is heard later (waking
     /// them too cost every unsignalised merge a look at each of them per vehicle, under priority).
     fn wake_giving_way(&mut self, l: usize, at: f64, t0: f64) {
         let node = self.network.link_to(LinkId::from_index(l)).index();
@@ -1512,7 +1512,7 @@ fn leg_u32(index: usize) -> u32 {
     u32::try_from(index).expect("route lengths fit u32")
 }
 
-/// Floor a time in seconds onto the whole-second clock (S88).
+/// Floor a time in seconds onto the whole-second clock.
 fn floor_to_second(seconds: f64) -> Second {
     debug_assert!(seconds.is_finite(), "a traversal time must be finite, got {seconds}");
     #[allow(
@@ -1529,8 +1529,8 @@ fn floor_to_second(seconds: f64) -> Second {
 /// comes first: the whole-network entry point.
 ///
 /// Trips still in flight when `window` ends are **not** returned; `core-sim`
-/// counts them as truncated (S57). `level` picks which term of the triangular
-/// diagram is in force (S76).
+/// counts them as truncated. `level` picks which term of the triangular
+/// diagram is in force.
 ///
 /// # Panics
 ///
@@ -1547,7 +1547,7 @@ pub fn run_ltm(
     run_ltm_inner(network, turns, vehicles, window, step, level, None).0
 }
 
-/// [`run_ltm`], also returning the per-link, per-time-bin results (S163):
+/// [`run_ltm`], also returning the per-link, per-time-bin results:
 /// every traversal that finished inside the window, including those of
 /// vehicles still on their way when it ends, in bins of `bin_seconds`.
 ///
@@ -1570,7 +1570,7 @@ pub fn run_ltm_binned(
 }
 
 /// [`run_ltm_binned`], also returning the same traversals filed by the bin they
-/// **entered** their link in (S170): what an iterated run reads back as link
+/// **entered** their link in: what an iterated run reads back as link
 /// travel times by time of entry.
 ///
 /// # Panics
@@ -1599,7 +1599,7 @@ pub fn run_ltm_recorded(
     (done, exit, tables.expect("entry bins were asked for"))
 }
 
-/// [`run_ltm`] with **chained vehicles** (S199; see the [module docs](self)):
+/// [`run_ltm`] with **chained vehicles** (see the [module docs](self)):
 /// each [`Chain`] departs its vehicle when the one it follows arrives. A chained
 /// vehicle's own `departure` is not read; its trajectory's departure is its
 /// release, floored. `recording` says what else to keep.
@@ -1828,10 +1828,10 @@ mod tests {
         assert_eq!(trajectories[0].links.len(), 3);
     }
 
-    /// S76's exact-assertion pair, through the whole engine: `bc` is short,
+    /// The exact-assertion pair, through the whole engine: `bc` is short,
     /// low-capacity and signalised at its end, downstream of higher-capacity
     /// `ab`. Under the full diagram a burst fills `bc` and spillback throttles
-    /// `ab`'s discharge (S77); with
+    /// `ab`'s discharge; with
     /// infinite storage it cannot, so `ab` discharges strictly more in the same
     /// time. With infinite wave speed, room freed on `bc` is available at once,
     /// so `ab` discharges at least as much as under the full diagram.
@@ -1901,8 +1901,8 @@ mod tests {
     }
 
     /// A 2-link ring (`ring0`: r0→r1, `ring1`: r1→r0) plus one outside approach
-    /// into r0 (`entry`), **none tagged as a roundabout** — idea 1 (S157) is
-    /// the tag-free rule, unlike S155's `must_give_way`. Returns the network
+    /// into r0 (`entry`), **none tagged as a roundabout** — idea 1 is
+    /// the tag-free rule, unlike the `must_give_way`. Returns the network
     /// and the three link indices `(ring0, ring1, entry)`.
     fn tiny_ring() -> (RoadNetwork, usize, usize, usize) {
         let mut b = RoadNetworkBuilder::new();
@@ -1921,7 +1921,7 @@ mod tests {
         (network, ring0.index(), ring1.index(), entry.index())
     }
 
-    /// **Property (idea 1, S157):** with `ring0`'s own front already parked
+    /// **Property (idea 1):** with `ring0`'s own front already parked
     /// waiting for room on `ring1`, and `ring1`'s front already parked waiting
     /// for room on `ring0` — a mutual block, the closed 2-link loop
     /// `ring0 → ring1 → ring0` — a vehicle asking for `ring0`'s one remaining
@@ -1930,7 +1930,7 @@ mod tests {
     /// that loop shut from the outside, and admitted again for a vehicle
     /// coming from `ring1` itself — a loop's own circulation is not what idea
     /// 1 refuses, only an outsider closing it. (The two `parked_on` pointers
-    /// are set directly: **S157's exact scenario**, not derived from a full
+    /// are set directly: **The exact scenario**, not derived from a full
     /// run, the same hand-built-fixture style `node_model.rs` uses for
     /// `solve_node` — see the module doc's "Any local lock" section for why
     /// this state is physically reachable, not merely convenient.)
@@ -1966,7 +1966,7 @@ mod tests {
         );
     }
 
-    /// **Property (X-37):** stepping without a rerouter under rerouting keeps no offers: the
+    /// **Property:** stepping without a rerouter under rerouting keeps no offers: the
     /// list of fronts due one stays empty however long the queues wait, where it grew each step.
     #[test]
     fn stepping_without_a_rerouter_keeps_no_offers() {

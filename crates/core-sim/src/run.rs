@@ -1,14 +1,14 @@
-//! The `Run` (S62): orchestration, trip completion statistics (S57), driven
-//! by an event queue in seconds (S88).
+//! The `Run`: orchestration, trip completion statistics, driven
+//! by an event queue in seconds.
 //!
 //! One run: `core-demand`'s travellers and trips, a route set
-//! for every origin-destination pair (`core-routes`, S166), a route per trip
-//! from a choice model (`core-choice`, S169), a loading by the chosen
+//! for every origin-destination pair (`core-routes`), a route per trip
+//! from a choice model (`core-choice`), a loading by the chosen
 //! [`FlowMotor`], and — under an [`Equilibration`] — choice and loading
 //! repeated, with the route sets grown between iterations by a
-//! [`RouteUpdate`] and a convergence report per iteration (S170, S176). That is
+//! [`RouteUpdate`] and a convergence report per iteration. That is
 //! for car trips; **bike and walk trips** travel on their own static layer
-//! ([`crate::layers`], S195), routed once and never part of the car's choice or
+//! ([`crate::layers`]), routed once and never part of the car's choice or
 //! gap; **transit, park-and-ride and bike-and-ride trips** choose an itinerary
 //! ([`crate::itinerary_choice`], M4) on expected costs before each loading and
 //! execute it on the loading's times after it: the car of a park-and-ride trip is
@@ -17,7 +17,7 @@
 //!
 //! The defaults here are the core's own and unconditional (`Level0`,
 //! `deterministic`, `none`); the Python `Scenario` layers its own on top
-//! (S179, S187, S191).
+//! .
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -79,28 +79,28 @@ use openmobisim_core_transit::{JourneyLeg, Raptor};
 
 /// Which loading engine a [`Run`] uses.
 ///
-/// **Opt-in (G4): [`Run::new`]'s behaviour and Phase 1's acceptance number
+/// **Opt-in: [`Run::new`]'s behaviour and Phase 1's acceptance number
 /// are unchanged unless a caller explicitly asks for the LTM** via
-/// [`Run::with_flow_motor`]. Nothing about `Level0` — S133/S134's original
+/// [`Run::with_flow_motor`]. Nothing about `Level0` — the original
 /// placeholder — has changed; it stays available on purpose, as the cheap,
-/// interaction-free debugging rung design §10.1's fidelity ladder names it.
+/// interaction-free debugging rung the fidelity ladder names it.
 #[derive(Clone, Debug, Default)]
 pub enum FlowMotor {
-    /// S133/S134's placeholder: each vehicle traverses independently at
+    /// The placeholder: each vehicle traverses independently at
     /// free-flow time. Phase 1's default, and still is.
     #[default]
     Level0,
-    /// S84/S85's iterative LTM (`core_loading::ltm`) — vehicles genuinely
+    /// The iterative LTM (`core_loading::ltm`) — vehicles genuinely
     /// interact through shared link curves and the node model. What both
-    /// shipped presets eventually run (design §10.1, `level` = `Full`).
+    /// shipped presets eventually run (`level` = `Full`).
     Ltm {
         /// The network's turn table (built once, outside `Run`, since it
         /// needs [`openmobisim_core_graph::defaults::SignalDefaults`], which
         /// `Run` itself has no other reason to carry).
         turns: Arc<TurnTable>,
-        /// The loading step (S84/S89 default: 300 s).
+        /// The loading step (300 s by default).
         step: Duration,
-        /// Which term of the triangular diagram is in force (S76).
+        /// Which term of the triangular diagram is in force.
         level: FidelityLevel,
     },
 }
@@ -116,15 +116,15 @@ pub mod local_codes {
     pub const NO_VEHICLE_AVAILABLE: DiagCode = DiagCode("no_vehicle_available");
     /// The trip's mode cannot be simulated by this run: what it needs is not
     /// there (a bike or walk layer, a timetable for transit and its
-    /// combinations, parkings for park-and-ride and bike-and-ride; S195).
+    /// combinations, parkings for park-and-ride and bike-and-ride).
     pub const MODE_NOT_AVAILABLE: DiagCode = DiagCode("mode_not_available");
 }
 
-/// Trip-level outcomes across a run (S57).
+/// Trip-level outcomes across a run.
 ///
 /// `total_trips` is every trip in the demand; `no_vehicle_available`,
 /// `no_feasible_path` and `mode_not_available` are trips that never travel;
-/// `completed` and `truncated` are S57's statistics proper, over trips that
+/// `completed` and `truncated` are the statistics proper, over trips that
 /// *did* set off.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct TripCompletionStats {
@@ -136,9 +136,9 @@ pub struct TripCompletionStats {
     pub no_feasible_path: u32,
     /// Arrived within the simulation window.
     pub completed: u32,
-    /// Still in progress when the window ended (S57).
+    /// Still in progress when the window ended.
     pub truncated: u32,
-    /// The trip's mode cannot be simulated by this run (S195): what it needs
+    /// The trip's mode cannot be simulated by this run: what it needs
     /// (a layer, a timetable, parkings) is missing.
     pub mode_not_available: u32,
 }
@@ -161,7 +161,7 @@ impl TripCompletionStats {
     }
 }
 
-/// One mode's outcomes in a run (S195): its trips' completion counts and
+/// One mode's outcomes in a run: its trips' completion counts and
 /// their total travel time, weighted by traveller weight as
 /// [`RunResult::total_travel_time`] is.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
@@ -173,12 +173,12 @@ pub struct ModeTotals {
     /// Its trips weighted by their travellers' weights: the trips they stand for (M5, for
     /// the mode share).
     pub weighted_trips: f64,
-    /// Its completed trips weighted the same way: the people who arrived (S232).
+    /// Its completed trips weighted the same way: the people who arrived.
     pub weighted_completed: f64,
-    /// Its trips still under way at the end, weighted the same way (S269).
+    /// Its trips still under way at the end, weighted the same way.
     pub weighted_truncated: f64,
     /// Its trips that were never simulated (no vehicle, no feasible path, the mode not
-    /// available), weighted the same way (S269): with the completed and the truncated, all of
+    /// available), weighted the same way: with the completed and the truncated, all of
     /// its people.
     pub weighted_not_run: f64,
 }
@@ -186,10 +186,10 @@ pub struct ModeTotals {
 /// Why a run could not finish.
 #[derive(Clone, PartialEq, Debug)]
 pub enum RunError {
-    /// The choice model could not choose (S169): it needs an attribute routes do
+    /// The choice model could not choose: it needs an attribute routes do
     /// not carry, it failed, or its answer does not fit.
     Choice(ChoiceError),
-    /// An input does not fit the run (S236): a link value's column is not as long as its
+    /// An input does not fit the run: a link value's column is not as long as its
     /// layer.
     Input(String),
 }
@@ -224,78 +224,78 @@ impl From<ChoiceError> for RunError {
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct RunResult {
     /// Total travel time, summed over completed trips, weighted by
-    /// traveller weight (S86: a simulated traveller represents *w* people).
+    /// traveller weight (a simulated traveller represents *w* people).
     /// **An assumption, not a settled decision** — see the crate docs.
     pub total_travel_time: Duration,
-    /// S57's completion statistics.
+    /// The completion statistics.
     pub completion: TripCompletionStats,
     /// One row per trip outcome, unsampled — `io-parquet`'s writer applies
-    /// Foundations §6's "sampled at 1% by default" at write time, since
+    /// the "sampled at 1% by default" at write time, since
     /// sampling is a property of the output format, not of what a run
     /// tracks internally.
     pub events: Vec<EventRow>,
     /// Per-link, per-time-bin results, when asked for with
-    /// [`Run::with_link_bins`] (S163): every link traversal that finished
+    /// [`Run::with_link_bins`]: every link traversal that finished
     /// inside the window, including those of trips still under way when it
     /// ended.
     pub link_bins: Option<LinkBins>,
-    /// The route sets the trips were routed from (S165): every alternative the
+    /// The route sets the trips were routed from: every alternative the
     /// method found for every origin-destination pair the demand asked for.
     /// Each trip takes the route the choice model picks from its pair's set.
     pub route_sets: Option<RouteSets>,
     /// Which route each trip took, out of how many, and how likely the model
-    /// found it (S169).
+    /// found it.
     pub route_choices: Option<RouteChoices>,
-    /// What each iteration showed (S170): one report for a run without
+    /// What each iteration showed: one report for a run without
     /// equilibration, one per loading under `msa`. `route_choices`, `events`,
     /// `link_bins`, the completion counts and the total travel time are those of
     /// the last; with disruptions travellers did not know of, those of the one more loading
-    /// made with them, which no report here describes (S280).
+    /// made with them, which no report here describes.
     pub iterations: Vec<IterationReport>,
-    /// Whether the run met its strategy's stopping rule by its last loading (S280: under `msa`,
+    /// Whether the run met its strategy's stopping rule by its last loading (under `msa`,
     /// the three-iteration mean disequilibrium under `gap_tolerance` with the sets grown; before,
     /// only a run that stopped early counted, not one that met the rule at its last allowed
     /// iteration). Always false with a `gap_tolerance` of 0, or under `free_flow`.
     pub converged: bool,
-    /// The outcomes by mode, in [`Mode::ALL`] order (S195); with [`Self::no_mode`] they add up
+    /// The outcomes by mode, in [`Mode::ALL`] order; with [`Self::no_mode`] they add up
     /// to [`Self::completion`] and [`Self::total_travel_time`].
     pub by_mode: [ModeTotals; Mode::COUNT],
-    /// The trips that chose their mode and had none to choose (S269: counted under the car
+    /// The trips that chose their mode and had none to choose (counted under the car
     /// before, a trip's stated mode).
     pub no_mode: ModeTotals,
-    /// The trips that had no alternative and travelled by car (S271, W-1), in trip order:
+    /// The trips that had no alternative and travelled by car, in trip order:
     /// counted under the car in [`Self::by_mode`], listed here.
     pub fallback_car: Vec<TripId>,
-    /// The trips the last choice left with no alternative (S276, roadmap I-ca), in trip order,
+    /// The trips the last choice left with no alternative, in trip order,
     /// with why each mode gave them none; those that then travelled by car
     /// ([`crate::ModeDefaults::fallback_car`]) among them.
     pub no_alternative: Vec<NoAlternative>,
     /// The bike layer's per-link, per-time-bin results, when per-link results
-    /// were asked for and some bike trip ran (S195); `pcu` there counts
+    /// were asked for and some bike trip ran; `pcu` there counts
     /// travellers.
     pub bike_link_bins: Option<LinkBins>,
     /// The walk layer's, likewise.
     pub walk_link_bins: Option<LinkBins>,
-    /// What transit did (S199), if the run has a timetable: the times the runs
+    /// What transit did, if the run has a timetable: the times the runs
     /// kept and who boarded and alighted where.
     pub transit: Option<TransitResult>,
-    /// What the parkings did (M4), if the run has parkings.
+    /// What the parkings did, if the run has parkings.
     pub parking: Option<ParkingResult>,
-    /// Each itinerary trip's choice and how it went (M4), if the run has any.
+    /// Each itinerary trip's choice and how it went, if the run has any.
     pub itineraries: Option<ItineraryResult>,
-    /// What stood still when the last loading's window ended (S213): the vehicles that did not
+    /// What stood still when the last loading's window ended: the vehicles that did not
     /// finish, where they are, and the closed loops of links waiting on one another, with the
     /// check on the loading's guarantee ([`LockReport::room_waits_with_room`], always 0).
     /// `None` at level 0, where nothing waits.
     pub gridlock: Option<LockReport>,
-    /// Every reroute of the last loading (S213), in the order they happened; a car's vehicle id
+    /// Every reroute of the last loading, in the order they happened; a car's vehicle id
     /// is its trip's index. Empty without rerouting.
     pub reroutes: Vec<RerouteRecord>,
     /// The **realised route** of each trip that re-routed in the last loading and arrived, by
     /// trip: the links it took. Every other trip followed its planned route (its route choice);
     /// nothing is kept for those.
     pub routes_realised: Vec<(TripId, Vec<LinkId>)>,
-    /// Per link, the most PCU it held at once in the last loading (S229); `None` at level 0.
+    /// Per link, the most PCU it held at once in the last loading; `None` at level 0.
     /// Above the link's storage under the point queue: where the queue would have spilled back.
     pub link_peak_pcu: Option<Vec<f64>>,
 }
@@ -307,13 +307,13 @@ struct LoadPlan<'a> {
     record_bins: Option<u32>,
     /// Also record the entry-time tables the next iteration's costs are read from.
     want_entry: bool,
-    /// Load with this level of the link transmission model instead of the run's (S178: the
+    /// Load with this level of the link transmission model instead of the run's (the
     /// warm-up's point-queue model).
     level_override: Option<FidelityLevel>,
-    /// Load only the travellers marked here, by traveller (S223: the free-flow loading's
+    /// Load only the travellers marked here, by traveller (the free-flow loading's
     /// increments); everyone if `None`.
     active: Option<&'a [bool]>,
-    /// Whether this loading has the run's disruptions (S239).
+    /// Whether this loading has the run's disruptions.
     disrupted: bool,
 }
 
@@ -338,12 +338,12 @@ struct Loaded {
     itinerary: ItineraryTally,
     /// What stood still when the window ended (the link transmission model only).
     gridlock: Option<LockReport>,
-    /// Every reroute (S213), and the realised routes of the trips that re-routed and arrived.
+    /// Every reroute, and the realised routes of the trips that re-routed and arrived.
     reroutes: Vec<RerouteRecord>,
     routes_realised: Vec<(TripId, Vec<LinkId>)>,
-    /// How many reroute offers (searches) the loading made (S223).
+    /// How many reroute offers (searches) the loading made.
     reroute_searches: u32,
-    /// Per link, the most PCU it held at once (S229); `None` at level 0.
+    /// Per link, the most PCU it held at once; `None` at level 0.
     peak_pcu: Option<Vec<f64>>,
 }
 
@@ -419,72 +419,72 @@ enum StaticOutcome {
 }
 
 /// One simulation run: immutable shared inputs plus the mutable state
-/// Foundations §5 says a `Run` owns (S62) — here, just vehicle locations,
+/// a `Run` owns — here, just vehicle locations,
 /// since there are no curves, hubs or choice state yet.
 pub struct Run {
     network: Arc<RoadNetwork>,
     travellers: Arc<Travellers>,
     trips: Arc<Trips>,
     vehicles: VehicleLocations,
-    /// Trips still in progress after this second are truncated (S57).
+    /// Trips still in progress after this second are truncated.
     window: Second,
-    /// The window's start (S271): the loading's clock starts here; 0 (midnight) unless set.
+    /// The window's start: the loading's clock starts here; 0 (midnight) unless set.
     window_start: Second,
     flow_motor: FlowMotor,
     /// Length of the time bins of the per-link results, if asked for.
     link_bin_seconds: Option<u32>,
-    /// How route sets are generated (S165): the penalty method by default.
+    /// How route sets are generated: the penalty method by default.
     route_generator: Arc<dyn RouteSetGenerator>,
-    /// The scenario's master seed (S168): the one number that starts every
+    /// The scenario's master seed: the one number that starts every
     /// random stream (the choice draws and `msa`'s reselection); see [`RunDescription`].
     master_seed: u64,
-    /// How each trip picks a route from its pair's set (S169): all-or-nothing on
+    /// How each trip picks a route from its pair's set: all-or-nothing on
     /// the best route by default, so a run is what it was before choice existed.
     choice_model: Arc<dyn ChoiceModel>,
-    /// How choice and loading are repeated (S170): once, by default.
+    /// How choice and loading are repeated: once, by default.
     equilibration: Arc<dyn Equilibration>,
-    /// How the route sets grow between iterations (S176): not at all, by default.
+    /// How the route sets grow between iterations: not at all, by default.
     route_update: Arc<dyn RouteUpdate>,
     /// A traveller is offered only the routes whose expected time is within this share of the
-    /// best's (S178); 0 offers them all. [`DEFAULT_CHOICE_DETOUR_LIMIT`] by default.
+    /// best's; 0 offers them all. [`DEFAULT_CHOICE_DETOUR_LIMIT`] by default.
     choice_detour_limit: f64,
-    /// A traveller is offered at most this many routes, the fastest at their departure (S268).
+    /// A traveller is offered at most this many routes, the fastest at their departure.
     /// [`DEFAULT_CHOICE_MAX_ROUTES`] by default.
     choice_max_routes: u32,
-    /// Generated route sets kept for the next run that asks for the same (S178): none, by default.
+    /// Generated route sets kept for the next run that asks for the same: none, by default.
     route_cache: Option<Arc<RouteSetCache>>,
-    /// The bike and walk layers (S195): none, by default.
+    /// The bike and walk layers: none, by default.
     layers: Arc<StaticLayers>,
-    /// The timetable, linked to the walk and bike layers (S199): none, by default.
+    /// The timetable, linked to the walk and bike layers: none, by default.
     transit: Option<Arc<TransitSetup>>,
-    /// The parkings, linked to the layers and stops (M4): none, by default.
+    /// The parkings, linked to the layers and stops: none, by default.
     parking: Option<Arc<ParkingSetup>>,
-    /// The modes a trip without a stated mode chooses among (M5): no choice, by default.
+    /// The modes a trip without a stated mode chooses among: no choice, by default.
     mode_choice: Option<Vec<Mode>>,
-    /// How long a walk or ride mode choice offers (S209): the shipped values, by default.
+    /// How long a walk or ride mode choice offers: the shipped values, by default.
     mode_defaults: ModeDefaults,
     loading: LoadingOptions,
-    /// Wall-clock time by stage of the last execution (S223).
+    /// Wall-clock time by stage of the last execution.
     timings: Timings,
-    /// How many threads the run's parallel work uses (S277): all logical cores, by default.
+    /// How many threads the run's parallel work uses: all logical cores, by default.
     threads: Option<std::num::NonZeroUsize>,
-    /// The modes each traveller class may use, by class index (S231); empty: every class all.
+    /// The modes each traveller class may use, by class index; empty: every class all.
     class_modes: Vec<[bool; Mode::COUNT]>,
-    /// Each traveller class's own choice-set limits, by class index (S235); empty: the run's.
+    /// Each traveller class's own choice-set limits, by class index; empty: the run's.
     class_limits: Vec<ClassLimits>,
-    /// The user's link values, offered to choice models as attributes (S236): none, by default.
+    /// The user's link values, offered to choice models as attributes: none, by default.
     link_values: LinkValues,
-    /// The last loading's link times, kept after a run for skims (S238): `None` before one, or
+    /// The last loading's link times, kept after a run for skims: `None` before one, or
     /// for a run of one loading, which records none.
     final_times: Option<Arc<LinkTimes>>,
-    /// Disruptions at a time of day (S239): none, by default.
+    /// Disruptions at a time of day: none, by default.
     disruptions: Disruptions,
-    /// The prices alternatives are costed at (S248): the shipped values, by default.
+    /// The prices alternatives are costed at: the shipped values, by default.
     prices: Prices,
-    /// The user's traveller and trip values, offered to choice models (S249): none, by default.
+    /// The user's traveller and trip values, offered to choice models: none, by default.
     demand_values: DemandValues,
-    /// The walks of itinerary trips' legs found so far in an execution, by (from, to) walk node
-    /// (S267): the walk layer is static, so each is searched once per execution, not once per
+    /// The walks of itinerary trips' legs found so far in an execution, by (from, to) walk node:
+    /// the walk layer is static, so each is searched once per execution, not once per
     /// loading. `None`: no walk within the bound.
     walk_paths: WalkPaths,
 }
@@ -495,13 +495,13 @@ type WalkPaths = HashMap<(u32, u32), Option<Box<[LinkId]>>>;
 /// A walk leg to bin: from and to walk node, and the second it starts.
 type WalkLeg = (u32, u32, u32);
 
-/// The key of the draw that puts a traveller in a group of the free-flow loading's increments
-/// (S223), apart from every other draw on the re-selection stream: who chooses again at
+/// The key of the draw that puts a traveller in a group of the free-flow loading's increments,
+/// apart from every other draw on the re-selection stream: who chooses again at
 /// iteration `i` (keys 1 to `MAX_ITERATIONS`), the itinerary gap's sample (from `1 << 31`) and
 /// the network gap's (`u32::MAX`, keyed on trips).
 const INCREMENT_KEY: u32 = u32::MAX - 1;
 
-/// The group (0 to `increments − 1`) of the free-flow loading `traveller` is in (S223): a draw
+/// The group (0 to `increments − 1`) of the free-flow loading `traveller` is in: a draw
 /// keyed on the traveller alone, so groups are the same for any thread count and order, and
 /// about equal in size.
 fn increment_of(rng: &StreamRng, traveller: u32, increments: u32) -> u32 {
@@ -516,15 +516,14 @@ fn increment_of(rng: &StreamRng, traveller: u32, increments: u32) -> u32 {
 }
 
 /// The share above the best route's expected time beyond which a route is not offered to a
-/// traveller, unless the run says otherwise (S178; the user chose 0.5, S179). 0 offers every route
+/// traveller, unless the run says otherwise. 0 offers every route
 /// of the pair's set. At 0.5 a route is offered only if it is at most 50% slower than the best;
 /// every built-in method's routes are within 30% (`penalty`) or 100% (`montecarlo`) of the best
 /// at free flow, so a run that does not iterate changes only for `montecarlo`, and an iterating
 /// one drops the routes congestion has made much slower than the best.
 pub const DEFAULT_CHOICE_DETOUR_LIMIT: f64 = 0.5;
 
-/// The most routes a traveller is offered by default (S268, the user: "a 5 route max because
-/// empirically it is shown that people don't consider more options than that"): the fastest five
+/// The most routes a traveller is offered by default: the fastest five
 /// at their departure, of those within the detour limit. *An assumption* on the size of a
 /// consideration set: Prato (2009), "Route choice modeling: past, present and future research
 /// directions", *Journal of Choice Modelling* 2(1), 65-100,
@@ -533,7 +532,7 @@ pub const DEFAULT_CHOICE_DETOUR_LIMIT: f64 = 0.5;
 pub const DEFAULT_CHOICE_MAX_ROUTES: u32 = 5;
 
 impl Run {
-    /// Build a run. Vehicle locations are seeded per S129: every owned car
+    /// Build a run. Vehicle locations are seeded so that every owned car
     /// starts at its traveller's first trip's origin. Uses
     /// [`FlowMotor::Level0`] — call [`Self::with_flow_motor`] for the LTM.
     #[must_use]
@@ -580,7 +579,7 @@ impl Run {
         }
     }
 
-    /// The same run with disruptions at a time of day (S239, [`crate::disruptions`]): roads
+    /// The same run with disruptions at a time of day ([`crate::disruptions`]): roads
     /// narrowed or closed for a while, a line's runs delayed or cancelled; known to travellers
     /// or not. Checked when the run executes ([`RunError::Input`]).
     #[must_use]
@@ -589,7 +588,7 @@ impl Run {
         self
     }
 
-    /// The link times of the last loading of the last execution (S238): what a car took on
+    /// The link times of the last loading of the last execution: what a car took on
     /// each link, by time bin, for travel-time matrices after the run
     /// ([`crate::skims::Skimmer`]). `None` before an execution, or after one of a single
     /// loading, which records none (free-flow times stand in).
@@ -598,7 +597,7 @@ impl Run {
         self.final_times.clone()
     }
 
-    /// The same run with the modes each traveller class may use (S231), by class index (the
+    /// The same run with the modes each traveller class may use, by class index (the
     /// travellers' [`openmobisim_core_demand::Travellers::user_class`]): a trip choosing its
     /// mode is offered only those its class may use. A class past the end may use all.
     #[must_use]
@@ -607,7 +606,7 @@ impl Run {
         self
     }
 
-    /// The same run with each traveller class's own choice-set limits (S235, roadmap I-ax), by
+    /// The same run with each traveller class's own choice-set limits, by
     /// class index as [`Self::with_class_modes`]: the longest walk and ride a trip choosing its
     /// mode is offered, and the longest walk to and from a stop of any of its transit
     /// itineraries. A limit a class does not give, and a class past the end, take the run's.
@@ -619,7 +618,7 @@ impl Run {
         self
     }
 
-    /// The same run with the user's link values (S236, roadmap I-bb U4): each column a value
+    /// The same run with the user's link values: each column a value
     /// per link of its layer, offered to choice models as `<layer>_<name>_km` and
     /// `<layer>_<name>_sum` ([`crate::link_values`]). A column must have one value per link
     /// of its layer ([`RunError::Input`] otherwise).
@@ -629,7 +628,7 @@ impl Run {
         self
     }
 
-    /// The same run with the user's traveller and trip values (S249, roadmap I-bb U6), offered
+    /// The same run with the user's traveller and trip values, offered
     /// to choice models as `person_<name>` and `trip_<name>` ([`crate::demand_values`]). A column
     /// must have one value per traveller or trip of the run's demand ([`RunError::Input`]
     /// otherwise).
@@ -639,7 +638,7 @@ impl Run {
         self
     }
 
-    /// The same run with `prices` (S248, roadmap I-bb U5): what driving, riding, parking and
+    /// The same run with `prices`: what driving, riding, parking and
     /// fares cost, offered to choice models as `cost_eur` and its parts ([`crate::prices`]).
     #[must_use]
     pub fn with_prices(mut self, prices: Prices) -> Self {
@@ -647,7 +646,7 @@ impl Run {
         self
     }
 
-    /// Wall-clock time by stage of the last [`Self::execute`] or [`Self::try_execute`] (S223),
+    /// Wall-clock time by stage of the last [`Self::execute`] or [`Self::try_execute`],
     /// in the order the stages ended; empty before. Kept apart from [`RunResult`], since it
     /// differs from run to run. The names: [`Timings::lap`].
     #[must_use]
@@ -656,8 +655,8 @@ impl Run {
     }
 
     /// The same run, with a timetable for the trips whose mode is
-    /// [`Mode::Transit`] (S199): they walk to a stop, ride and walk on, by the
-    /// journey the choice model picks among the competitive ones (M4). Without it such a trip is counted as
+    /// [`Mode::Transit`]: they walk to a stop, ride and walk on, by the
+    /// journey the choice model picks among the competitive ones. Without it such a trip is counted as
     /// `mode_not_available`. Its walks are counted on the walk layer's per-link
     /// results when that layer is the run's own ([`Self::with_layers`]).
     #[must_use]
@@ -666,7 +665,7 @@ impl Run {
         self
     }
 
-    /// Parkings (M4), for trips whose mode is [`Mode::CarTransit`] or
+    /// Parkings, for trips whose mode is [`Mode::CarTransit`] or
     /// [`Mode::BikeTransit`]: they drive or ride to a parking the choice model
     /// picks, park and go on by transit, or come back by transit to where their
     /// vehicle is. They need the timetable too ([`Self::with_transit`]), and
@@ -678,7 +677,7 @@ impl Run {
     }
 
     /// The same run, in which **a trip whose mode was not stated chooses one** among
-    /// `modes` (M5), with its route, by the run's choice model: the walk, the bike route,
+    /// `modes`, with its route, by the run's choice model: the walk, the bike route,
     /// the car's routes, transit journeys, park-and-ride and bike-and-ride, each offered
     /// where the traveller can use it (their car or bike where the trip starts; the layer,
     /// timetable or parkings in the run; park-and-ride and bike-and-ride only beyond
@@ -705,7 +704,7 @@ impl Run {
         self
     }
 
-    /// The same run, its loading applying `options` (S213): priority at merges, en-route
+    /// The same run, its loading applying `options`: priority at merges, en-route
     /// rerouting. Only the link transmission model has junctions and queues; level 0 ignores
     /// them.
     #[must_use]
@@ -715,7 +714,7 @@ impl Run {
     }
 
     /// The same run, offering mode choice's walk and bike alternatives only up to the
-    /// times of `defaults` (S209); a trip given the mode takes it at any length.
+    /// times of `defaults`; a trip given the mode takes it at any length.
     #[must_use]
     pub fn with_mode_defaults(mut self, defaults: ModeDefaults) -> Self {
         self.mode_defaults = defaults;
@@ -723,7 +722,7 @@ impl Run {
     }
 
     /// The same run, with bike and walk layers for the trips whose mode is
-    /// [`Mode::Bike`] or [`Mode::Walk`] (S195). Without them such a trip is
+    /// [`Mode::Bike`] or [`Mode::Walk`]. Without them such a trip is
     /// counted as `mode_not_available`.
     #[must_use]
     pub fn with_layers(mut self, layers: Arc<StaticLayers>) -> Self {
@@ -740,7 +739,7 @@ impl Run {
     }
 
     /// The same run, routing its trips from route sets made by `generator`
-    /// instead of the default penalty method (S165). Any
+    /// instead of the default penalty method. Any
     /// [`RouteSetGenerator`] works: select a built-in one by name with
     /// `openmobisim_core_routes::generator`, or pass your own.
     #[must_use]
@@ -749,7 +748,7 @@ impl Run {
         self
     }
 
-    /// The same run, with `master_seed` as its master seed (S168; default 0).
+    /// The same run, with `master_seed` as its master seed (default 0).
     ///
     /// Every random stream of a run is keyed from this one number, so a run
     /// is reproduced by giving it the same seed. No stochastic step draws from
@@ -762,7 +761,7 @@ impl Run {
     }
 
     /// The same run, choosing each trip's route with `model` instead of the
-    /// default all-or-nothing [`Deterministic`] (S169). Select a built-in model
+    /// default all-or-nothing [`Deterministic`]. Select a built-in model
     /// by name with `openmobisim_core_choice::model`, or pass your own
     /// [`ChoiceModel`].
     #[must_use]
@@ -772,7 +771,7 @@ impl Run {
     }
 
     /// The same run, repeating choice and loading under `strategy` instead of
-    /// once (S170). Select a built-in one by name with
+    /// once. Select a built-in one by name with
     /// [`crate::equilibration::strategy`], or pass your own [`Equilibration`].
     #[must_use]
     pub fn with_equilibration(mut self, strategy: Arc<dyn Equilibration>) -> Self {
@@ -781,7 +780,7 @@ impl Run {
     }
 
     /// The same run, growing its route sets between iterations with `update` instead of
-    /// leaving them as the generator made them (S176). Select a built-in one by name with
+    /// leaving them as the generator made them. Select a built-in one by name with
     /// [`crate::route_update::update`], or pass your own [`RouteUpdate`]. It changes nothing
     /// unless the run iterates (an [`Equilibration`] with more than one loading): the
     /// sets grow *between* loadings.
@@ -793,9 +792,9 @@ impl Run {
 
     /// The same run, offering each traveller only the routes of the pair's set whose expected time
     /// (at the times of the last loading; at free flow for the first choice) is within `limit`
-    /// of the best route's: **a time-dependent choice set** (S178). A route far slower than
+    /// of the best route's: **a time-dependent choice set**. A route far slower than
     /// the best at the moment is no realistic alternative, and in a logit it only takes
-    /// probability that belongs to routes that compete (the gap grows with the size of the set, S177).
+    /// probability that belongs to routes that compete (the gap grows with the size of the set).
     /// `0.0` offers every route, as before. The best route is always offered; a route dropped
     /// keeps its place in the sets and can return when the times change. The gap is still
     /// measured against the whole set.
@@ -814,7 +813,7 @@ impl Run {
     }
 
     /// The same run, offering each traveller at most `n` routes, the fastest at their departure
-    /// among those within the detour limit (S268; [`DEFAULT_CHOICE_MAX_ROUTES`] by default; 0
+    /// among those within the detour limit ([`DEFAULT_CHOICE_MAX_ROUTES`] by default; 0
     /// offers every such route). The gap is still measured against the whole set.
     #[must_use]
     pub fn with_choice_max_routes(mut self, n: u32) -> Self {
@@ -823,7 +822,7 @@ impl Run {
     }
 
     /// The same run, taking its route sets from `cache` if it holds the sets this run would
-    /// generate, and leaving them there if not (S178): see [`RouteSetCache`]. Results do not depend
+    /// generate, and leaving them there if not: see [`RouteSetCache`]. Results do not depend
     /// on whether the cache was used.
     #[must_use]
     pub fn with_route_cache(mut self, cache: Arc<RouteSetCache>) -> Self {
@@ -831,10 +830,10 @@ impl Run {
         self
     }
 
-    /// The same run, its parallel work on `threads` threads (S277, roadmap I-bz); `None`, the
+    /// The same run, its parallel work on `threads` threads; `None`, the
     /// default, on every logical core. The run uses a thread pool of its own, not rayon's
     /// global one, so `RAYON_NUM_THREADS` does not change it. **Results do not depend on it**
-    /// (Foundations §3.5: reductions in a fixed order, random draws keyed to the seed, the
+    /// (reductions in a fixed order, random draws keyed to the seed, the
     /// traveller and the iteration, never to a thread), so it is recorded in the manifest
     /// ([`RunDescription::threads`]) and not in the fingerprint.
     #[must_use]
@@ -857,7 +856,7 @@ impl Run {
         }
     }
 
-    /// Whether the run's choice model reads money (S248): a model that lists no attributes reads
+    /// Whether the run's choice model reads money: a model that lists no attributes reads
     /// them all. Only then do the prices shape the run, and its fingerprint records them.
     fn reads_money(&self) -> bool {
         self.choice_model.required_attributes().is_none_or(|names| {
@@ -873,7 +872,7 @@ impl Run {
         }
     }
 
-    /// What went into this run: its seed and its fingerprint (S168). Take it
+    /// What went into this run: its seed and its fingerprint. Take it
     /// before [`Self::execute`]; it depends only on the inputs.
     #[must_use]
     pub fn description(&self) -> RunDescription {
@@ -919,7 +918,7 @@ impl Run {
         })
     }
 
-    /// The same run, also recording per-link, per-time-bin results (S163) in
+    /// The same run, also recording per-link, per-time-bin results in
     /// bins of `bin_seconds`. Costs 20 bytes per link of scratch and a
     /// 28-byte row per (link, bin) that saw traffic; nothing when not asked.
     ///
@@ -933,7 +932,7 @@ impl Run {
         self
     }
 
-    /// Start the simulation window at `start` (S271) rather than midnight: the loading's clock
+    /// Start the simulation window at `start` rather than midnight: the loading's clock
     /// starts there, and the parkings' bins with it. The demand is the caller's to fit: a trip
     /// departing before `start` sets off at it.
     ///
@@ -951,10 +950,10 @@ impl Run {
     /// the result.
     ///
     /// Processes trips in departure-time order via an event queue keyed the
-    /// way Foundations §2 fixes for every event in the core —
+    /// way every event in the core is —
     /// `(second, entity_kind, entity_id)` — so ties resolve identically
-    /// every run (S60). Under [`FlowMotor::Level0`] nothing in the *loading*
-    /// depends on processing order (vehicles never interact, design §10.4);
+    /// every run. Under [`FlowMotor::Level0`] nothing in the *loading*
+    /// depends on processing order (vehicles never interact);
     /// under [`FlowMotor::Ltm`] every eligible trip's vehicle is collected
     /// here and loaded together, once, after the queue drains, since the LTM
     /// needs the whole batch to let vehicles interact. Either way a
@@ -2401,7 +2400,7 @@ impl Run {
     /// Decide and make one bike or walk trip: whether its mode can run, whether
     /// the traveller's bike is at the origin, and its traversal of its route on
     /// the layer. A bike that travels is left at the destination.
-    /// Start an itinerary trip at its departure (M4): check its vehicle is where
+    /// Start an itinerary trip at its departure: check its vehicle is where
     /// its choice needs it, move the vehicle (parked out, fetched back), put the
     /// vehicle leg on its layer — a car into the loading — and leave the rest for
     /// after the loading.
@@ -2606,9 +2605,9 @@ impl Run {
         (Some(result), Some(avail))
     }
 
-    /// Execute every pending itinerary's transit part on `data` (M4): see
+    /// Execute every pending itinerary's transit part on `data`: see
     /// [`itinerary_choice::follow`]. In parallel, in fixed chunks. With `bin_walks`, each walk
-    /// leg's links, from `walk_paths` or searched once and kept there (S267).
+    /// leg's links, from `walk_paths` or searched once and kept there.
     #[allow(clippy::too_many_arguments, reason = "the loading's pieces")]
     #[allow(clippy::too_many_lines, reason = "one pass: follow, then the walks")]
     fn execute_itineraries(
@@ -2840,7 +2839,7 @@ impl Run {
 }
 
 /// The people the completed trips of a loading stand for: their travellers' weights, from its
-/// events (one per trip; S232).
+/// events (one per trip).
 fn completed_people(events: &[EventRow], trips: &Trips, travellers: &Travellers) -> f64 {
     events
         .iter()
@@ -2850,9 +2849,9 @@ fn completed_people(events: &[EventRow], trips: &Trips, travellers: &Travellers)
 }
 
 /// Each mode's outcomes, from the events of a loading (one per trip) and the
-/// trips' departures (S195): the same travel time a trip adds to the run's
+/// trips' departures: the same travel time a trip adds to the run's
 /// total, filed under its mode.
-/// Each mode's outcomes, and those of the trips with no mode (S269).
+/// Each mode's outcomes, and those of the trips with no mode.
 fn mode_totals(
     events: &[EventRow],
     trips: &Trips,
@@ -2908,11 +2907,11 @@ fn mode_totals(
 }
 
 /// The sets with an update's routes in them, and the trips' choices renumbered to match. Where
-/// the update caps its sets and some would overflow, they make room first (S268, [`make_room`]:
+/// the update caps its sets and some would overflow, they make room first ([`make_room`]:
 /// a trip on a route that made room moves to the route that replaced it); otherwise every route
-/// stays (S176). Returns the sets and how many routes went in.
-/// Which routes of `sets` the itinerary trips drive as their direct car alternative (M5): no
-/// route choice names them, so `make_room` is told to keep them (S280; a dropped one forced its
+/// stays. Returns the sets and how many routes went in.
+/// Which routes of `sets` the itinerary trips drive as their direct car alternative: no
+/// route choice names them, so `make_room` is told to keep them (a dropped one forced its
 /// trip to choose again outside the strategy's reselection).
 fn itinerary_routes_kept(
     sets: &RouteSets,

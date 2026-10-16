@@ -1,4 +1,4 @@
-//! The toy network's timetable (S199): the fixture the hand-derived transit
+//! The toy network's timetable: the fixture the hand-derived transit
 //! cases run on.
 //!
 //! **Tram `T1`** — a two-stop shuttle, segregated (it runs by the schedule),

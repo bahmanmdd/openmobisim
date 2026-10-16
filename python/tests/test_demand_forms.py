@@ -1,4 +1,4 @@
-"""The demand in any form, checked row by row (C2, D-5 a): rows, ``Trip``, columns, data frames."""
+"""The demand in any form, checked row by row (D-5 a): rows, ``Trip``, columns, data frames."""
 
 from __future__ import annotations
 

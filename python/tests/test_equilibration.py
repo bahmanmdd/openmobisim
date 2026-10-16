@@ -1,4 +1,4 @@
-"""Equilibration across the boundary (S170).
+"""Equilibration across the boundary.
 
 What is defended: a run without it reports one iteration and is unchanged; with
 ``"msa"`` every iteration is reported, the run's result is the last iteration's,
@@ -141,7 +141,7 @@ def test_the_kpis_file_has_a_row_set_per_iteration():
     # A number not measured has no row; what cannot change between loadings is written once.
     assert 0 not in df[df["metric"] == "time_change"]["iteration"].tolist()
     assert (df["metric"] == "completion_rate").sum() == 1
-    # Without iterating, the file is what it was. Pinned to the pre-car-ready-checkpoint
+    # Without iterating, the file is what it was. Pinned to the earlier
     # defaults (S187 flipped the library's bare default to "logit"/"msa"): this assertion is
     # about the plain, single-loading file shape, not the library's own default.
     plain = (

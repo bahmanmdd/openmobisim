@@ -1,4 +1,4 @@
-//! Park-and-ride and bike-and-ride on the toy network (M4, S201): every number
+//! Park-and-ride and bike-and-ride on the toy network: every number
 //! derived by hand (the toy network's multimodal extension).
 //!
 //! **The pieces.** Hub `H` at `D2` holds **6 car and 3 bike spaces**, where tram
@@ -151,7 +151,7 @@ fn only(rows: &[&str]) -> Vec<ParkingRow> {
     toy_network_parkings().into_iter().filter(|r| rows.contains(&r.parking_id.as_str())).collect()
 }
 
-/// The default coefficients with money held at 0 (D-1): the hand values here weigh time, walking
+/// The default coefficients with money held at 0: the hand values here weigh time, walking
 /// and waiting; the two car parks' drives differ in length, so in running cost too.
 fn time_only() -> Options {
     Options::from([("beta_cost_eur".to_string(), 0.0)])

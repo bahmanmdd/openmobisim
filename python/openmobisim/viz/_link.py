@@ -1,4 +1,4 @@
-"""``map_link``: one ribbon per direction of every link, coloured by delay (S162, S163).
+"""``map_link``: one ribbon per direction of every link, coloured by delay.
 
 A two-way street is two ribbons side by side, each on its own driver's side
 (right-hand traffic), so the two directions never overlap and both read.
@@ -41,13 +41,12 @@ _WIDTH_MIN_PT, _WIDTH_SPAN_PT = 0.5, 5.2
 #: No ribbon is thinner than this many points (on a full-screen page), whatever the
 #: view scale: a link with any traffic must stay visible.
 _WIDTH_FLOOR_PT = 0.9
-#: The delay colours' bands (S268, the user: "discrete values (google maps like but for their
-#: labels, just put the value range"; S269: "a general title should be there"), as the upper
+#: The delay colours' bands, as the upper
 #: edges of the share of a link's mean time that is not free flow: the Highway Capacity Manual's
 #: urban-street levels of service by travel speed over free-flow speed (A above 85 %, B-C 50-85 %,
 #: D-E 30-50 %, F 30 % or less; TRB, *HCM 2010*, ch. 16, as tabulated in
 #: https://etrr.springeropen.com/articles/10.1186/s12544-024-00701-w/tables/4).
-#: Free flow counts a signal's mean wait (S268): only the waiting beyond it is delay.
+#: Free flow counts a signal's mean wait: only the waiting beyond it is delay.
 DELAY_BANDS = (0.15, 0.50, 0.70)
 #: Each band's label: its range, nothing else.
 DELAY_BAND_LABELS = ("0–15%", "15–50%", "50–70%", "70%+")
@@ -61,7 +60,7 @@ def delay_band(delay: np.ndarray) -> np.ndarray:
 def free_flow_moving_s(network: Any) -> np.ndarray:
     """Each link's free-flow time without a signal's wait: its length at its free-flow speed.
 
-    The figures' delay is measured against it (S265, the user: like a navigation map's, a link's
+    The figures' delay is measured against it (like a navigation map's, a link's
     whole crossing time, its signal's wait included, over its free flow), so a queue at a signal
     and the signal's own wait both show; ``Network.link_free_flow_s`` has the wait included.
     """
@@ -74,8 +73,8 @@ def capacity_passing(network: Any) -> tuple[np.ndarray, np.ndarray]:
     """Each road link's capacity as it passes traffic, in PCU/h, and whether it ends at a signal.
 
     A link that ends at a signal discharges at its capacity times the green fraction (what the
-    loading does, S90); volume over capacity is judged against that, not against the link's
-    nominal capacity (S265: a two-lane approach of 3 800 PCU/h passes 1 824 at its signal).
+    loading does); volume over capacity is judged against that, not against the link's
+    nominal capacity (a two-lane approach of 3 800 PCU/h passes 1 824 at its signal).
     """
     from openmobisim.network import network_options
 
@@ -117,7 +116,7 @@ def link_table(
 
 
 def flow_summary(network: Any, table: dict[str, np.ndarray], unit: str, active: np.ndarray) -> str:
-    """The map's flow numbers in one line (S281): the footer's first line.
+    """The map's flow numbers in one line: the footer's first line.
 
     Vehicle-kilometres per hour over the bins shown (volume times length, summed over the
     drawn ribbons), the mean speed over them (kilometres over hours spent), the share of the
@@ -148,7 +147,7 @@ BUSY_SHARE = 0.25
 
 
 def busiest_bins(link_bins: Any) -> tuple[int, int] | tuple[None, None]:
-    """The busiest part of a run, as ``(first, stop)`` bins (S265).
+    """The busiest part of a run, as ``(first, stop)`` bins.
 
     The bin with the most traffic (PCU), widened bin by bin on either side while a bin carries
     at least ``BUSY_SHARE`` of it. A day's timetable runs buses from dawn to midnight; without
@@ -183,7 +182,7 @@ def _bin_range(bins_arg: Any, bin_s: int = 1) -> tuple[int | None, int | None]:
     """The bins asked for, as ``(first, stop)``: bin numbers counted from midnight, or clock times.
 
     A clock time alone is the bin it falls in; a pair of clock times, the bins that cover the
-    span between them (C2).
+    span between them.
     """
     if bins_arg is None:
         return None, None
@@ -202,7 +201,7 @@ def _bin_range(bins_arg: Any, bin_s: int = 1) -> tuple[int | None, int | None]:
 
 
 def _clock(seconds: float) -> str:
-    """A second of the day as clock time, ``07:00`` (S227).
+    """A second of the day as clock time, ``07:00``.
 
     Past midnight it reads ``24:30``, so a window that runs on past it still reads in order.
     """
@@ -250,7 +249,7 @@ def map_link(
             ``link_bin_s``, at ``flow_level`` 2-4 for congestion to show.
         bins: Which time bins to show: ``None`` for the busiest part of the run
             (the busiest bin and the bins around it carrying at least a quarter of
-            its traffic, S265), ``"all"`` for every bin from the first to the last
+            its traffic), ``"all"`` for every bin from the first to the last
             that saw traffic, a clock time for the bin it falls in (``"07:45"``), a
             pair of clock times for the bins that cover the span (``("07:30",
             "08:30")``), or bin numbers counted from midnight: an ``int`` for one
@@ -261,7 +260,7 @@ def map_link(
         colour: What the colour shows: ``"delay"`` (the share of a link's mean
             time that is not free flow, in four bands, 0-15 %, 15-50 %, 50-70 % and
             70 % or more, the Highway Capacity Manual's levels of service; free flow
-            counts a signal's mean wait, so only waiting beyond it is delay, S268;
+            counts a signal's mean wait, so only waiting beyond it is delay;
             the default on the road), ``"volume"`` (the default on the bike and walk
             layers, where nothing is delayed), or ``"volume_capacity"`` (volume
             over the link's capacity as it passes traffic — at a signal, times the

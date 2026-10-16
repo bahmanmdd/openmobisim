@@ -1,4 +1,4 @@
-//! Turn pockets in the loading (S217): on an approach of two lanes or more, a vehicle passes
+//! Turn pockets in the loading: on an approach of two lanes or more, a vehicle passes
 //! vehicles ahead of it that wait for another movement, as long as they fit in their pockets.
 //!
 //! A fork: from `a`, link `ab` to `b`, then `bc`–`cd` (towards a one-lane service road, whose

@@ -1,4 +1,4 @@
-//! Busways (S199): a bus takes the busway, a car cannot.
+//! Busways: a bus takes the busway, a car cannot.
 //!
 //! `A → B` directly is a 300 m busway (50 km/h: **21.6 s**); round by `C` it is two
 //! residential streets of 400 m (30 km/h: **96 s**; capacity 1400/h, so a 2-PCU bus

@@ -76,7 +76,7 @@ def test_kpis_table_round_trips_through_pandas() -> None:
     pytest.importorskip("pyarrow")  # pandas reads Parquet through it (X-13)
     g = small_grid()
     trips = ms.examples.fixed_car_trips(g, [("dana", (0, 0), (2, 2), 8.0, None)])
-    # Pinned to the pre-car-ready-checkpoint defaults (S187 flipped the library's bare default
+    # Pinned to the earlier defaults (S187 flipped the library's bare default
     # to "logit"/"msa"): this test is about the plain, single-loading kpis shape.
     sc = ms.Scenario.from_parts(
         network=g,

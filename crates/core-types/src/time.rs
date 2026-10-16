@@ -1,5 +1,5 @@
 //! The master clock, the loading step grid and the event-queue total order
-//! (Foundations §2).
+//! .
 //!
 //! # One clock, integer seconds
 //!
@@ -46,7 +46,7 @@ impl Second {
     /// `self + delta`, saturating at [`Second::MAX`] rather than wrapping.
     ///
     /// Saturating is the right behaviour here: a simulation that would
-    /// schedule past the end of the clock must still complete (brief §3c), and
+    /// schedule past the end of the clock must still complete, and
     /// the window bound will discard the event anyway.
     #[inline]
     #[must_use]
@@ -367,7 +367,7 @@ impl StepGrid {
     ///
     /// Instants before the origin map to step zero and instants at or after
     /// the end map to the last step. Clamping rather than failing is
-    /// deliberate: the simulation never stops (brief §3c), and a traveller who
+    /// deliberate: the simulation never stops, and a traveller who
     /// is still moving at the end of the window is counted as truncated by the
     /// completion statistics, not by a panic here.
     #[inline]
@@ -409,7 +409,7 @@ impl StepGrid {
     /// This is the interpolation parameter for reading a cumulative curve
     /// between step boundaries. Inside the window only: past its end it is the
     /// position in a step beyond the last, not in the last step that
-    /// [`Self::step_of`] clamps such a `t` to (X-58), so the two do not pair there.
+    /// [`Self::step_of`] clamps such a `t` to, so the two do not pair there.
     #[inline]
     #[must_use]
     pub fn fraction_into_step(self, t: Second) -> f64 {
@@ -419,7 +419,7 @@ impl StepGrid {
 
     /// Convert a fractional position within step `i` back to a whole second.
     ///
-    /// The result is **floored**, which is the rule fixed in Foundations §2:
+    /// The result is **floored**, which is the rule fixed:
     /// link-exit times interpolated inside a step become whole seconds, so
     /// that the event queue stays integer and ties break identically.
     ///
@@ -450,7 +450,7 @@ impl StepGrid {
 /// The key that gives the event queue its total order.
 ///
 /// Ordering is lexicographic on `(second, kind, entity)` — exactly the tuple
-/// fixed in Foundations §2. Simultaneous events therefore resolve identically
+/// fixed Simultaneous events therefore resolve identically
 /// on every run of the same binary, which is half of what makes a seeded run
 /// reproducible. (The other half is [`crate::reduce`].)
 ///

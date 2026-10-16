@@ -1,4 +1,4 @@
-//! What a choice model is asked, and what it answers (design §4).
+//! What a choice model is asked, and what it answers.
 //!
 //! A [`ChoiceBatch`] is **situations × alternatives**: each situation (one
 //! traveller's one trip, at one iteration) offers a handful of alternatives,
@@ -22,7 +22,7 @@ pub struct ChoiceBatch {
     names: Vec<String>,
     traveller: Vec<u32>,
     trip: Vec<u32>,
-    /// Each situation's traveller class (S231; 0 unless given).
+    /// Each situation's traveller class (0 unless given).
     class: Vec<u32>,
     /// `situations() + 1` entries: situation `s` owns alternatives
     /// `offsets[s]..offsets[s + 1]`.
@@ -64,7 +64,7 @@ impl ChoiceBatch {
         self.begin_situation_in(traveller, trip, 0);
     }
 
-    /// Start a new situation of a traveller of `class` (S231: a model may weigh classes
+    /// Start a new situation of a traveller of `class` (a model may weigh classes
     /// differently).
     pub fn begin_situation_in(&mut self, traveller: u32, trip: u32, class: u32) {
         self.traveller.push(traveller);
@@ -163,7 +163,7 @@ impl ChoiceBatch {
         &self.traveller
     }
 
-    /// Each situation's traveller class (S231): an index into the run's classes.
+    /// Each situation's traveller class: an index into the run's classes.
     #[must_use]
     pub fn classes(&self) -> &[u32] {
         &self.class

@@ -1,4 +1,4 @@
-//! Records the git commit this build was made from (T-6), so a run's files, `build_info()` and the
+//! Records the git commit this build was made from, so a run's files, `build_info()` and the
 //! references can say which code produced them. Twelve hex digits, or `unknown` when the build
 //! has no `.git` (a source archive, an sdist) or no `git` program.
 

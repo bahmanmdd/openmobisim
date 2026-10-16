@@ -1,4 +1,4 @@
-"""The starter cases (S240): small, versioned inputs for the tutorials and the default scenarios.
+"""The starter cases: small, versioned inputs for the tutorials and the default scenarios.
 
 A **starter case** is a network with what runs on it — a timetable, parkings, a demand and its
 traveller classes — prepared once, clipped to its study area and checked: Amsterdam, Paris and Lyon
@@ -184,7 +184,7 @@ class Case:
         """The trips: the OD matrix times ``multiple``, each traveller given a class by share.
 
         A row of the matrix that names its ``user_class`` (and its ``mode``: trips from outside
-        the study area, goods vehicles, S265) keeps it; the others' travellers are drawn a class
+        the study area, goods vehicles) keeps it; the others' travellers are drawn a class
         by the classes' shares. A zone with a ``spread_m`` in ``zones.csv`` spreads its trips that
         far (0 at a gateway, a road where the area's edge cuts it); a case with a ``zone_points``
         table draws its trip ends among each zone's points by weight. With a ``weight`` in the
@@ -198,7 +198,7 @@ class Case:
         ``departures``: keep only the trips departing in ``(start, end)`` (clock times or seconds
         after midnight; start included, end not), at their own times, the rest left out; the
         case's own ``departures`` (``case.json``) by default; ``"all"`` keeps every trip of the
-        matrix (S278: the bundle's demand stays whole, the selection is made here).
+        matrix (the bundle's demand stays whole, the selection is made here).
         """
         from openmobisim.demand import (
             demand_assign_classes,
@@ -245,7 +245,7 @@ class Case:
 
         ``weight``: people per simulated traveller (``demand``'s); the case's own by default.
         ``departures``: which trips run (``demand``'s); the case's own by default. The case's
-        ``window`` (``case.json``) is the scenario's unless ``options`` give one (S278).
+        ``window`` (``case.json``) is the scenario's unless ``options`` give one.
         """
         from openmobisim.scenario import Scenario
 
@@ -274,7 +274,7 @@ class Case:
 
 
 def case(name: str, root: str | Path | None = None, *, check: bool = True) -> Case:
-    """A starter case (S240): its files found or fetched, checked, ready to read.
+    """A starter case: its files found or fetched, checked, ready to read.
 
     The cases: ``delft``, ``amsterdam``, ``paris``, ``lyon`` (OpenStreetMap clipped to the study
     area, the transit feed of one service day, the parkings, a synthetic morning with four example
@@ -328,10 +328,10 @@ def case(name: str, root: str | Path | None = None, *, check: bool = True) -> Ca
 
 _REFERENCE = Path(__file__).with_name("data") / f"reference_{BUNDLE_VERSION}.json"
 
-#: How far a run on another platform may be from the reference and still match (S243): trips
+#: How far a run on another platform may be from the reference and still match: trips
 #: completed, in % of the reference's; the mean trip, in %; each mode's share of the people, in
 #: percentage points. Judgement calls: floating-point results are the same to the bit only on the
-#: platform that made the reference (Foundations §3.5).
+#: platform that made the reference.
 CHECK_TOLERANCE = {"completed_pct": 0.5, "mean_trip_pct": 1.0, "mode_share_points": 0.5}
 
 
@@ -409,7 +409,7 @@ def case_check(
     *,
     quiet: bool = False,
 ) -> list[dict[str, Any]]:
-    """Run starter cases' default scenarios and compare them with the reference results (S243).
+    """Run starter cases' default scenarios and compare them with the reference results.
 
     The acceptance test of an installation: every scenario of each case (its ``case.json``) is run
     with the package's defaults, and compared with the results this version of the package

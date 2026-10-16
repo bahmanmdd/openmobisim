@@ -1,4 +1,4 @@
-//! Travel-time matrices between points, by mode, after a run: **skims** (S238, roadmap I-az).
+//! Travel-time matrices between points, by mode, after a run: **skims**.
 //!
 //! A skim is the door-to-door time from each origin to each destination, leaving at one
 //! second of the day, for one mode — what accessibility measures (cumulative opportunities,

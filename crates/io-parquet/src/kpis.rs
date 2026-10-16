@@ -1,16 +1,16 @@
-//! `kpis.parquet` — long format (Foundations §6):
+//! `kpis.parquet` — long format:
 //! `run_id, design_id, replication, iteration, mode, metric, value`.
 //!
 //! A new KPI needs no schema change, only a new row — which is exactly what
 //! lets Phase 1 write a real (if short) `kpis.parquet` today and grow the
 //! set of metrics later without touching this file's shape.
 //!
-//! **`mode`** (S195): `all` for the whole run; the trip metrics of the last
+//! **`mode`**: `all` for the whole run; the trip metrics of the last
 //! loading are also written once per mode that has trips (`car`, `bike`,
 //! `walk`, …), so a mode's numbers are a filter away. The metrics of how a run
 //! settled (the gaps, the shares, the time change) are the whole run's.
 //!
-//! **Transit** (S199), for a run with a timetable, under `mode` `transit`:
+//! **Transit**, for a run with a timetable, under `mode` `transit`:
 //! `boardings` (weighted by traveller weight) and, if its buses rode the roads,
 //! `bus_runs_on_roads`, `bus_runs_arrived` and `bus_delay_mean_s` (the mean
 //! delay at the last stop, realised minus scheduled; negative is early).
@@ -32,7 +32,7 @@ type Row = (u32, &'static str, &'static str, f64);
 /// Every metric of a run, as `(iteration, mode, name, value)`.
 ///
 /// A `free_flow` run has one iteration (given by the caller, as
-/// before): the totals. A run that iterated (S170) has a row set per
+/// before): the totals. A run that iterated has a row set per
 /// iteration: the total travel time and the completed and truncated trips of that
 /// loading, and what the iteration showed of the pattern settling
 /// (`reselected_share`, `changed_share`, `time_change`, `gap`, `gap_expected`, `gap_excess`,
@@ -42,15 +42,15 @@ type Row = (u32, &'static str, &'static str, f64);
 /// (`trips`, `no_vehicle_available_trips`, `no_feasible_path_trips`,
 /// `mode_not_available_trips`, `completion_rate`) are written once, for the last.
 /// All of these are `mode` `all`; the last loading's trip metrics are also written
-/// per mode that has trips (S195).
+/// per mode that has trips.
 ///
-/// `people` and `completed_people` (S232) are the trips and the completed trips weighted by
+/// `people` and `completed_people` are the trips and the completed trips weighted by
 /// their travellers' weights: the people they stand for.
 ///
 /// `total_travel_time_s` is traveller-weight-scaled (`Σ w · travel_time`) —
 /// see `core-sim`'s own docs for why, and for the standing note that an
 /// unweighted metric row joins this list, rather than replacing this one,
-/// once comprehensive KPIs exist (confirmed by the user, 2026-09-14).
+/// once comprehensive KPIs exist.
 fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
     let all = "all";
     let fixed = |iteration: u32, mode: &'static str, c: &TripCompletionStats| {
@@ -206,11 +206,11 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
 
 /// Write `kpis.parquet` for one run.
 ///
-/// A run that iterated (S170) writes a row set for every iteration it made and
+/// A run that iterated writes a row set for every iteration it made and
 /// takes each row's `iteration` from its report: the total travel time and the
 /// completed and truncated trips of that loading, and what the iteration showed of
 /// the pattern settling (`reselected_share`, `changed_share`, `time_change`,
-/// `gap`, `gap_expected`, `gap_excess` (the disequilibrium, S178), `incomplete_share`,
+/// `gap`, `gap_expected`, `gap_excess` (the disequilibrium), `incomplete_share`,
 /// `gap_network`, `gap_network_excess`, `gap_flow`, `gap_flow_floor`, `gap_flow_excess`; a
 /// number that was not measured has no row). The counts that cannot change from one loading to the
 /// next (`no_vehicle_available_trips`, `no_feasible_path_trips`,

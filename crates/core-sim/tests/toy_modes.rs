@@ -1,4 +1,4 @@
-//! Mode choice on the toy network (M5): every number derived by hand.
+//! Mode choice on the toy network: every number derived by hand.
 //!
 //! **The pieces** are the toy's (`toy_parking.rs`, `toy_layers.rs`, `toy_transit.rs`). A trip
 //! without a stated mode chooses among the modes the run offers, each where the traveller can
@@ -26,8 +26,8 @@
 //! | MC4 | `modes = [car]` | the run without mode choice, bit for bit (and `[bike]` makes every such trip a bike trip) |
 //! | MC5 | park-and-ride out `W → N1`, then `N1 → D2` choosing | the car is parked: the trip back is offered only the ways back to it (`D2` is where the car goes, from either car park, as PR4) |
 //! | MC6 | no timetable | walk, bike and car are still chosen among: `W → M` by car, **80 s** |
-//! | MC8 | `W → N1` under MC7's short limits, park-and-ride from 3 km | no alternative (S276): the car has no road route, the ride and the walk are too long, transit has stops but no journey, both parking modes too short; reported, not simulated |
-//! | MC7 | mode choice's cut-offs (S209) | `W → N1`'s walk (**318.198 s**) is offered under the 1800-s default and not under a 300-s one; its ride (**144 s**) not under a 100-s one; a trip given the mode walks or rides at any length |
+//! | MC8 | `W → N1` under MC7's short limits, park-and-ride from 3 km | no alternative: the car has no road route, the ride and the walk are too long, transit has stops but no journey, both parking modes too short; reported, not simulated |
+//! | MC7 | mode choice's cut-offs | `W → N1`'s walk (**318.198 s**) is offered under the 1800-s default and not under a 300-s one; its ride (**144 s**) not under a 100-s one; a trip given the mode walks or rides at any length |
 
 #![allow(clippy::float_cmp, reason = "hand-derived values")]
 
@@ -54,7 +54,7 @@ use openmobisim_core_types::units::Duration;
 
 /// What the tests here assume unless they say otherwise: one loading of everyone on free flow
 /// first, at the run's own level, iterating to `iterations` whatever the gap. The shipped
-/// defaults (S280, C1: one default table) build the free-flow loading in five groups with the
+/// defaults (C1: one default table) build the free-flow loading in five groups with the
 /// point queue and stop when converged, which these tests do not mean to exercise.
 fn strategy(
     name: &str,
@@ -74,7 +74,7 @@ fn strategy(
     openmobisim_core_sim::equilibration::strategy(name, &options)
 }
 
-/// The shipped mode defaults without the car's access and egress (S279): the hand values here are
+/// The shipped mode defaults without the car's access and egress: the hand values here are
 /// the drives and rides alone (`W → M`: the car's 80 s against the bike's 120 s); the access and
 /// egress are tested in the Python suite (`test_modes.py`).
 const NO_ACCESS: ModeDefaults = ModeDefaults {
@@ -283,7 +283,7 @@ fn mc1_the_deterministic_model_takes_the_bike() {
     assert!(r.bike_link_bins.as_ref().is_none_or(|b| !b.is_empty()));
 }
 
-/// **Shared drives** (S267, `reach_car_step_s`): at free flow a drive's time does not depend on
+/// **Shared drives** (`reach_car_step_s`): at free flow a drive's time does not depend on
 /// when it leaves, so park-and-ride trips sharing one search per road node and step are offered
 /// and choose exactly what they are when each searches its own.
 #[test]

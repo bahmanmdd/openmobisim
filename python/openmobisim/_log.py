@@ -1,4 +1,4 @@
-"""The package's messages through ``logging`` (C2, P-7): the ``openmobisim`` logger.
+"""The package's messages through ``logging``: the ``openmobisim`` logger.
 
 A run says one line at INFO when it ends (its stage-by-stage timings at DEBUG), a page or figure
 where it was written, the reference check each case's row. Without any logging set up by the user

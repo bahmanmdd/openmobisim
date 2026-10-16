@@ -1,4 +1,4 @@
-//! Choice models, seen from Python (S169): the list of models, the batch a
+//! Choice models, seen from Python: the list of models, the batch a
 //! Python model is handed, the adapter that lets a Python object be a model,
 //! and what each trip chose, as numpy arrays.
 //!
@@ -62,7 +62,7 @@ pub struct PyChoiceBatch {
     /// Each situation's trip.
     #[pyo3(get)]
     trip: Py<PyArray1<u32>>,
-    /// Each situation's traveller class, as an index into ``class_names`` (S236).
+    /// Each situation's traveller class, as an index into ``class_names``.
     #[pyo3(get)]
     user_class: Py<PyArray1<u32>>,
     /// The traveller classes' names, by index (the demand's ``user_class`` values).
@@ -139,7 +139,7 @@ pub struct PythonChoice {
     descriptor: String,
     sampled: bool,
     attributes: Option<Vec<String>>,
-    /// The traveller classes' names, by class index, for the batch (S236).
+    /// The traveller classes' names, by class index, for the batch.
     class_names: Vec<String>,
 }
 
@@ -178,7 +178,7 @@ impl PythonChoice {
         })
     }
 
-    /// The same model, handing it the traveller classes' names by index (S236).
+    /// The same model, handing it the traveller classes' names by index.
     #[must_use]
     pub fn with_class_names(mut self, names: Vec<String>) -> Self {
         self.class_names = names;
@@ -363,7 +363,7 @@ pub fn make_choice_model(
     }
 }
 
-/// [`make_choice_model`] with coefficients per traveller class (S231): `classes[c]` is class
+/// [`make_choice_model`] with coefficients per traveller class: `classes[c]` is class
 /// `c`'s name and its `beta_*` overrides of the model's own (empty: the model's).
 ///
 /// # Errors

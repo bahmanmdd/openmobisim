@@ -1,4 +1,4 @@
-"""The interactive map (S167).
+"""The interactive map.
 
 What is defended: the file is one self-contained page (no network, no library),
 its embedded arrays are exactly the run's (geometry to 0.05 m, results and
@@ -186,7 +186,7 @@ def test_text_is_escaped_and_bad_choices_are_refused(tmp_path):
 
 
 def test_the_page_starts_in_the_asked_theme_and_names_its_source(tmp_path):
-    # Pinned to the pre-car-ready-checkpoint defaults: this test is about the footer's theme
+    # Pinned to the earlier defaults: this test is about the footer's theme
     # and provenance text, not about the choice model or equilibration (the library's own
     # defaults since 2026-09-23 are "logit"/"msa" — `test_the_footer_says_the_run_iterated`
     # in test_equilibration.py covers what the footer says once a run has iterated).

@@ -1,4 +1,4 @@
-//! Wall-clock time by stage (S223): what a run spent where, on the machine's own clock.
+//! Wall-clock time by stage: what a run spent where, on the machine's own clock.
 //!
 //! Times differ from one run to the next, so they are kept apart from every result and from the
 //! fingerprint: [`crate::Run::timings`] after the run, never in [`crate::RunResult`]. A stage is
@@ -40,7 +40,7 @@ impl Timings {
     /// The names a run records: `static_routes` (bike and walk routes), `itineraries_setup`,
     /// `route_sets`; per iteration `route_choice` and `itinerary_choice` (the choices made for
     /// it; iteration 0's are everyone's first), `partial_loading`, `route_update` (iteration 0's
-    /// increments, S223: the loadings of part of the demand and what follows each), `loading`,
+    /// increments: the loadings of part of the demand and what follows each), `loading`,
     /// then, after a loading, `route_update`, `route_choice`, `itinerary_choice` for the next
     /// iteration (recorded under the loading's) and `network_gap` after the last; and
     /// `results_assembled` at the end.

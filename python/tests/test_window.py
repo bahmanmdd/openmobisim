@@ -1,10 +1,10 @@
-"""The simulation window (S271): a run starts at its start and stops at its end.
+"""The simulation window: a run starts at its start and stops at its end.
 
 What is defended: trips departing outside the window are left out, not simulated and not
 counted, with a warning that says how many and when; without a window the run takes three hours
 from the earliest departure; a run started at the window's start finishes trips as one started
 at midnight; a timetable keeps the calls inside the window and, for planning, those up to the
-longest journey past its end (S279), while the calls table shows the window's alone.
+longest journey past its end, while the calls table shows the window's alone.
 """
 
 import openmobisim as ms

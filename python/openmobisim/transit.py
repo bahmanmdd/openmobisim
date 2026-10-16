@@ -1,4 +1,4 @@
-"""``transit_edit``: a timetable with lines cancelled or run at another headway (S238).
+"""``transit_edit``: a timetable with lines cancelled or run at another headway.
 
 A scenario edit for frequency setting and disruption studies, like ``network_edit`` for the
 roads: the original timetable is left as it was, and stops and lines keep their ids.
@@ -19,7 +19,7 @@ def transit_edit(
     cancel: Sequence[str] | None = None,
     headway: Mapping[str, float | Sequence[float]] | None = None,
 ) -> _core.Transit:
-    """The same service day with a scenario's changes made (S238).
+    """The same service day with a scenario's changes made.
 
     Args:
         transit: The timetable (``transit_read_gtfs``).

@@ -1,18 +1,18 @@
 """Demand before a run: reading it from files, turning an OD matrix into trips, sampling it.
 
-**Files** (S210, the standard demand files): ``zones.csv`` (``zone_id`` and a point,
+**Files** (the standard demand files): ``zones.csv`` (``zone_id`` and a point,
 ``x_coord``/``y_coord`` or ``lon``/``lat``, WGS84), ``od.csv`` (``origin_zone``,
 ``destination_zone``, ``trips``; optionally ``start_s``, ``end_s``, ``user_class``, ``mode``) and
 ``trips.csv`` (the columns of ``trips.parquet``). ``demand_read_zones``, ``demand_read_od`` and
 ``demand_read_trips`` read them; ``demand_from_od`` turns an OD matrix into the trips a
 ``Scenario`` runs.
 
-**Traveller classes** (S231): a class says which modes its travellers may use, what they own
+**Traveller classes**: a class says which modes its travellers may use, what they own
 and its own coefficients in the choice model (``beta_*``, its mode constants among them).
 ``demand_read_classes`` reads a class table (``classes.csv``); ``demand_assign_classes`` gives
 every traveller a class, drawn by the classes' shares; ``Scenario(classes=...)`` runs them.
 
-``demand_sample`` is the traveller-weight dial (S209): simulate one traveller for every
+``demand_sample`` is the traveller-weight dial: simulate one traveller for every
 ``weight`` people, the rest of the table unchanged. Fewer travellers cost proportionally
 less to choose for, route and load, at the price of sampling noise, which replications
 (different ``seed`` values) measure.
@@ -186,7 +186,7 @@ def demand_sample(trips: list[tuple], weight: int, seed: int = 0) -> list[tuple]
     multiplied by ``weight``, so totals in the results (travel time, volumes, mode shares by
     weight) estimate those of the whole table.
 
-    **A small aggregation, not a rescaled network** (S265): a kept traveller is a group of
+    **A small aggregation, not a rescaled network**: a kept traveller is a group of
     ``weight`` people who travel and choose together; on the roads it is a platoon of ``weight``
     cars, each counted at its full size on every link it uses, and the network keeps its real
     capacities, storage and signal timings. (Sample-based agent simulations such as MATSim often
@@ -387,10 +387,10 @@ def demand_write_trips(trips: Iterable[tuple], path: str | Path) -> int:
 
 # --- traveller classes ------------------------------------------------------------------------
 
-#: A class's own choice-set limits, in seconds (S235): the longest walk and bike ride offered to
+#: A class's own choice-set limits, in seconds: the longest walk and bike ride offered to
 #: its trips choosing their mode, and the longest walk to or from a stop.
 CLASS_LIMITS = ("walk_max_s", "bike_max_s", "access_walk_max_s")
-#: What a class may say besides its ``beta_*`` coefficients (S231; its limits S235).
+#: What a class may say besides its ``beta_*`` coefficients (its limits).
 CLASS_KEYS = ("share", "modes", "owns_car", "owns_bike", "has_transit_pass", *CLASS_LIMITS)
 _OWNERSHIP = ("owns_car", "owns_bike", "has_transit_pass")
 _TRUE, _FALSE = ("1", "true", "yes", "y", "t"), ("0", "false", "no", "n", "f")
@@ -488,7 +488,7 @@ def _class_table(classes: Mapping[str, object]) -> dict[str, dict[str, Any]]:
 
 
 def demand_read_classes(path: str | Path) -> dict[str, dict[str, Any]]:
-    """Read a class table (``classes.csv``): one row per traveller class (S231).
+    """Read a class table (``classes.csv``): one row per traveller class.
 
     Columns: ``class`` (its name, as the trips' ``user_class``); optionally ``share`` (the share of
     the people in the class, for ``demand_assign_classes``), ``modes`` (the modes its travellers may
@@ -528,7 +528,7 @@ def demand_read_classes(path: str | Path) -> dict[str, dict[str, Any]]:
 def demand_assign_classes(
     trips: list[tuple], classes: Mapping[str, object], seed: int = 0
 ) -> list[tuple]:
-    """Give every traveller a class, drawn by the classes' shares (S231).
+    """Give every traveller a class, drawn by the classes' shares.
 
     The shares are of people (a trip's weight, ``None`` taken as 1), scaled to sum to one, and
     are met to within one traveller: the travellers are put in a random order fixed by
@@ -627,7 +627,7 @@ def demand_from_od(
     points_per_zone: int | None = None,
     zone_points: Mapping[str, list[tuple[float, float, float, float]]] | None = None,
 ) -> list[tuple]:
-    """Turn an OD matrix into the trips a ``Scenario`` runs (S97's deterministic integerisation).
+    """Turn an OD matrix into the trips a ``Scenario`` runs (the deterministic integerisation).
 
     1. **Whole trips:** within each group of rows with the same window, class and mode, every
        cell gets the whole part of its trips, and the cells with the largest remainders one more
@@ -642,16 +642,16 @@ def demand_from_od(
     4. **Where:** the zone's point, moved by a random distance of up to ``spread_m`` metres in a
        random direction (uniform over the disc), so a zone's trips do not all start at one node;
        ``spread_m_by_zone`` gives some zones their own (0 for a gateway: a road where the study
-       area's edge cuts it, where trips from outside enter, S265). With ``points_per_zone``, a
+       area's edge cuts it, where trips from outside enter). With ``points_per_zone``, a
        trip end is instead one of that many fixed points around the zone's (half its spread
        away, evenly around it; 1: the zone's own point), drawn at random: trips from the same
-       zones then share their routes and their route searches (S265). With ``zone_points``
+       zones then share their routes and their route searches. With ``zone_points``
        (``demand_read_zone_points``'s shape), a zone that has points draws each trip end among
        them by weight, the origin by ``weight_origin`` and the destination by
        ``weight_destination`` (both uniform when a zone's weights are all 0), so trips start
        where people live and end where they work; a trip within such a zone ends at a point
        other than its origin's when the zone has more than one (with one point, both ends are
-       that point). A zone without points keeps the rule above (S282).
+       that point). A zone without points keeps the rule above.
 
     The draws (steps 3 and 4) come from one NumPy generator seeded by ``seed``, consumed in the
     sorted order of the cells, so the same inputs and seed give the same trips on any machine for

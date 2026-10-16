@@ -1,12 +1,12 @@
-//! **Not called by the loading** (L-19): the reference node model, kept for a future aggregate
+//! **Not called by the loading**: the reference node model, kept for a future aggregate
 //! (volume-delay or static) level and as the specification the vehicle form is checked against.
 //!
-//! The node model (S48, qualified by S77) in aggregate form: per-turn demand,
+//! The node model in aggregate form: per-turn demand,
 //! per-link supply, proportional distribution, full-blocking FIFO on the
 //! incoming approach.
 //!
 //! One call solves one node for one interval of flow — **no fixed point**
-//! (S48). This is the reference statement of the rules. [`crate::ltm`] applies
+//! . This is the reference statement of the rules. [`crate::ltm`] applies
 //! the same rules to individual vehicles in time order (supply shared in
 //! proportion to discharge capacity, a blocked vehicle blocking its whole
 //! approach) and does not call this function; it stays for aggregate loadings
@@ -20,7 +20,7 @@ use openmobisim_core_types::units::Flow;
 /// flow aimed at this outgoing link.
 ///
 /// Read from the vehicles about to leave the incoming link, grouped by their
-/// next link (S85) — [`crate::ltm`] builds these, this module does not care
+/// next link — [`crate::ltm`] builds these, this module does not care
 /// where they came from.
 #[derive(Clone, Copy, Debug)]
 pub struct TurnDemand {
@@ -37,11 +37,11 @@ pub struct TurnDemand {
 /// 1. **Per-link supply:** demand aimed at each outgoing link is summed; the
 ///    link accepts all of it if there is room, otherwise every turn aimed at
 ///    it is scaled down by the same factor (*proportional distribution to
-///    competing turns*, S48).
-/// 2. **Full-blocking FIFO (S77):** an incoming link's *every* turn is then
+///    competing turns*).
+/// 2. **Full-blocking FIFO:** an incoming link's *every* turn is then
 ///    scaled by the **most** restrictive of its own outgoing links' factors
 ///    — one saturated downstream link blocks the whole approach, not just
-///    the turn that feeds it. This is a recorded, directional bias (S77),
+///    the turn that feeds it. This is a recorded, directional bias,
 ///    not a bug: node-level FIFO over-propagates spillback, and the
 ///    alternative (the Tampère generic node model class) is a reserved
 ///    add-on, not this function's job.

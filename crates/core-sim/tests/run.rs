@@ -1,5 +1,5 @@
-//! `Run`: the Phase 1 vertical slice — demand through route sets (S165; S133's placeholder before that)
-//! routing through level-0 loading to one KPI and S57's completion stats.
+//! `Run`: the Phase 1 vertical slice — demand through route sets (the placeholder before that)
+//! routing through level-0 loading to one KPI and the completion stats.
 //!
 //! Fixtures are hand-built directly (`RoadNetworkBuilder` for the network,
 //! `RawTrip`/`RawPerson` structs for demand — no Parquet file needed,
@@ -87,7 +87,7 @@ fn car_owning_defaults() -> ClassDefaults {
     ClassDefaults::new().with_default("commuter", Ownership { car: true, ..Ownership::NONE })
 }
 
-/// The free-flow time of `a -> b -> c`, floored once (S88; S161, F1) — the
+/// The free-flow time of `a -> b -> c`, floored once — the
 /// exact number a completed a-to-c trip's travel time must equal at weight 1.
 fn expected_a_to_c_seconds(network: &RoadNetwork) -> u32 {
     let ab = network.link_external_ids().typed_id_of::<LinkId>("ab").expect("known link");

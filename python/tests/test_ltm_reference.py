@@ -11,7 +11,7 @@ and storage, from which its jam density and backward wave speed follow (the tria
 ``C = v·w·k_j / (v + w)``).
 
 Node models: a series node passes ``min(sending, receiving)``; a merge gives each approach
-room in proportion to its capacity (Daganzo 1995; the loading's rule, S77), what one leaves
+room in proportion to its capacity (Daganzo 1995, the loading's rule), what one leaves
 going to the other; a diverge is first in, first out, its flow ``min(S, R_b / p_b, R_c / p_c)``
 for turning shares ``p`` (Daganzo 1995).
 """

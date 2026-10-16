@@ -1,4 +1,4 @@
-//! Hub groups (C4, D-6 b): one label for a station's stops and the parkings beside them, written in
+//! Hub groups (D-6 b): one label for a station's stops and the parkings beside them, written in
 //! the outputs (`hub_group` in `transit_calls.parquet` and `parking_bins.parquet`).
 //!
 //! **A label only.** The model's own hubs (a parking with the stops its travellers reach on foot)
@@ -17,8 +17,8 @@ use openmobisim_core_types::ids::{EntityId, NodeId};
 
 use crate::parking::ParkingSetup;
 
-/// How far a parking may be from a stop, in a straight line, to join that stop's group, in metres
-/// (C4): a short walk across a station's forecourt. An assumption, uncalibrated; it labels the
+/// How far a parking may be from a stop, in a straight line, to join that stop's group, in metres:
+/// a short walk across a station's forecourt. An assumption, uncalibrated; it labels the
 /// outputs only.
 pub const DEFAULT_HUB_GROUP_M: f64 = 150.0;
 

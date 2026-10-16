@@ -1,4 +1,4 @@
-"""Where a figure or page was written, as a link a reader can click (S264)."""
+"""Where a figure or page was written, as a link a reader can click."""
 
 from __future__ import annotations
 

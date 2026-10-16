@@ -1,4 +1,4 @@
-//! The nested logit (M5): probabilities by hand, the flat logit at μ = 1, sampled shares that
+//! The nested logit: probabilities by hand, the flat logit at μ = 1, sampled shares that
 //! follow the probabilities, draws that are the same every time, and the options.
 
 use openmobisim_core_choice::{ChoiceBatch, ChoiceModel, Logit, NestedLogit, Options, model};

@@ -219,7 +219,7 @@ fn every_route_is_loop_free_connected_and_within_the_limits() {
     assert!(with_alternatives > keys.len() / 2, "a grid offers alternatives for most pairs");
 }
 
-/// **A search tree** (S267) finds, from one origin, a least-cost route to every destination at
+/// **A search tree** finds, from one origin, a least-cost route to every destination at
 /// once, connected and on allowed turns, the same cost as a search per pair; a bound leaves out
 /// exactly the destinations beyond it; and `Shortest` generates by trees the same costs.
 #[test]
@@ -347,7 +347,7 @@ fn tied_diamonds(n: u32) -> (RoadNetwork, Vec<RouteKey>) {
 
 #[test]
 fn an_exact_cost_tie_is_broken_the_same_way_regardless_of_threads_or_key_order() {
-    // `search.rs`'s `Entry` orders by link id once costs tie — checkpoint 8b's adversarial pass
+    // `search.rs`'s `Entry` orders by link id once costs tie — an adversarial review
     // found no test exercising an exact tie at all (`diamond()`'s two roads, 200 m and 240 m,
     // never actually tie), and confirmed this one: 30 independent, geometrically identical tied
     // diamonds give the parallel driver real work to spread across keys and threads, and every
@@ -518,7 +518,7 @@ fn snapping_agrees_with_a_scan_of_every_node() {
 /// Three small, tight clusters of nodes far apart, with wide empty space between them — unlike
 /// `manhattan_grid`'s uniform density, most grid cells here hold nothing at all, so a query in
 /// the empty space genuinely exercises how many *empty* rings the search must cross before
-/// finding a cluster (checkpoint 8b's adversarial pass: the ring early-stop bound, off by one
+/// finding a cluster (an adversarial review: the ring early-stop bound, off by one
 /// cell either way, was not caught by `snapping_agrees_with_a_scan_of_every_node` above, whose
 /// uniform grid structurally can't expose it).
 fn clustered_network() -> RoadNetwork {
@@ -1057,7 +1057,7 @@ fn a_search_over_many_items_returns_its_results_in_the_order_of_the_items() {
     assert!(openmobisim_core_routes::search_map(&ctx, &Vec::<RouteKey>::new(), work).is_empty());
 }
 
-/// One search to many targets (M4) finds, for each, what a search to it alone
+/// One search to many targets finds, for each, what a search to it alone
 /// finds: the same earliest arrival and the same route, nearest first; a target
 /// beyond the bound is not found; the origin, if a target, is found with no links.
 #[test]
@@ -1161,7 +1161,7 @@ fn irregular(n: u32, seed: u64) -> RoadNetwork {
         .expect("buildable")
 }
 
-/// **The goal-directed search is exact** (S209): on an irregular network with mixed
+/// **The goal-directed search is exact**: on an irregular network with mixed
 /// speeds and curved links, every route `Search::shortest` returns costs exactly what an
 /// independent Dijkstra finds, and a pair with no route has none either way. The lower
 /// bound is positive there, so A* is really in play.
@@ -1229,7 +1229,7 @@ fn reference_fastest(
     None
 }
 
-/// **The goal-directed time-dependent search is exact** (S209): with link times that
+/// **The goal-directed time-dependent search is exact**: with link times that
 /// change through the hour, are never below free flow (as a loading's are) and keep FIFO,
 /// the fastest time found agrees with an independent time-dependent Dijkstra, unbounded and
 /// bounded.
@@ -1287,7 +1287,7 @@ fn the_goal_directed_fastest_time_agrees_with_a_plain_time_dependent_search() {
     }
 }
 
-/// **The search after a link (S213, en-route rerouting):** from the end of a link, through its
+/// **The search after a link (en-route rerouting):** from the end of a link, through its
 /// legal turns only. On a grid, a vehicle on `(1,1)→(1,2)` heading back to `(1,1)` may not
 /// U-turn (the turn table allows that only at a dead end), so it goes round a block: four
 /// links, against the one-link reverse a search from the node would find. Elsewhere it agrees

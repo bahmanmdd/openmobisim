@@ -8,16 +8,16 @@
 //! adjacency across the heap in whatever order the allocator felt like. CSR is
 //! two flat arrays: neighbours of `i` are a contiguous slice, the whole
 //! structure is two allocations, and it maps to a file without translation —
-//! which is what makes the route store memory-mappable (S12).
+//! which is what makes the route store memory-mappable.
 //!
 //! # Deterministic by construction
 //!
 //! Edges are sorted by `(source, target)` when the structure is built, never
 //! left in input order and never in hash-map order. Two builds of the same
 //! network therefore produce byte-identical adjacency, which is a precondition
-//! for the artifact fingerprint meaning anything (S65) — and, less obviously,
+//! for the artifact fingerprint meaning anything — and, less obviously,
 //! for sweeps over adjacency to visit in the same order every run, which is
-//! what the determinism guarantee rests on (S60).
+//! what the determinism guarantee rests on.
 
 use core::marker::PhantomData;
 

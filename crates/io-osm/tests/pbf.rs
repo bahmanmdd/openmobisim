@@ -166,7 +166,7 @@ fn imports_a_real_extract_when_one_is_pointed_at() {
     assert!(geometry.street_count() > 0, "no streets were stored");
 }
 
-/// On a real extract, the bike and walk layers (S195) leave the road network
+/// On a real extract, the bike and walk layers leave the road network
 /// exactly as it is without them, and each layer is a usable graph. Prints the
 /// layers' sizes and what building them cost.
 ///

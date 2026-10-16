@@ -5,7 +5,7 @@ use openmobisim_core_types::ids::{EntityId, LinkId};
 use super::{LtmNetwork, MIN_PART, NONE};
 use crate::curves::ROOM_EPSILON;
 
-/// What stands still when a loading ends (S213): where the vehicles that did not finish are,
+/// What stands still when a loading ends: where the vehicles that did not finish are,
 /// and the closed loops of links whose front vehicles wait on one another.
 ///
 /// **The check on the loading's own guarantee** — traffic stops only at jam density — is
@@ -85,7 +85,7 @@ impl LtmNetwork<'_> {
     ///
     /// # Panics
     ///
-    /// Never in practice: counts of links and vehicles fit `u32` (Foundations §1).
+    /// Never in practice: counts of links and vehicles fit `u32`.
     #[must_use]
     pub fn lock_report(&self) -> LockReport {
         let now = self.now;

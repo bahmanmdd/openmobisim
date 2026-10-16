@@ -1,4 +1,4 @@
-"""The package's messages through ``logging`` (C2, P-7): one line per run, shown once."""
+"""The package's messages through ``logging``: one line per run, shown once."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""The minimal outputs for mass runs (C2): ``kpis.csv`` and ``manifest.json``, the same run."""
+"""The minimal outputs for mass runs: ``kpis.csv`` and ``manifest.json``, the same run."""
 
 from __future__ import annotations
 

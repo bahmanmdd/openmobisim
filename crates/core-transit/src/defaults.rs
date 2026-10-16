@@ -1,4 +1,4 @@
-//! The defaults of scheduled public transport (S199): part of the defaults
+//! The defaults of scheduled public transport: part of the defaults
 //! table (they joined it at version 4), so a change is a modelling change and
 //! bumps [`openmobisim_core_graph::DEFAULTS_VERSION`].
 
@@ -11,7 +11,7 @@ pub struct TransitDefaults {
     /// *An assumption: one minute to reach the platform and the door, first boarding and
     /// transfers alike. Routing engines differ — OpenTripPlanner's `boardSlack` defaults to 0
     /// (<https://docs.opentripplanner.org/en/latest/RouteRequest/>) — and no published value
-    /// stands behind it (S259).*
+    /// stands behind it.*
     pub board_slack_s: u32,
     /// The most vehicles one journey takes.
     ///
@@ -22,17 +22,17 @@ pub struct TransitDefaults {
     /// destination, in seconds (at walking speed, 1 800 s is 2.4 km).
     ///
     /// *An assumption: a choice-set limit, not a preference (the walk's minutes are
-    /// weighed by the choice model). 30 minutes (S235; 15 until then, which left
-    /// travellers without a vehicle no way to their destination, S233). In Montréal the 85th
+    /// weighed by the choice model). 30 minutes (15 until then, which left
+    /// travellers without a vehicle no way to their destination). In Montréal the 85th
     /// percentile of the walk to a stop is about 524 m for buses and 1 259 m for commuter rail
     /// (El-Geneidy et al. 2014, *Transportation* 41(1) 193–210,
     /// <https://ideas.repec.org/a/kap/transp/v41y2014i1p193-210.html>): the limit leaves room
     /// for the few who walk further.*
     pub access_walk_max_s: f64,
-    /// The longest a journey with transit may take door to door, in seconds, to be offered
-    /// (S269): a journey that would take longer is no alternative, as a walk past its limit is
+    /// The longest a journey with transit may take door to door, in seconds, to be offered:
+    /// a journey that would take longer is no alternative, as a walk past its limit is
     /// not. Without it, a timetable's late or night service offered a morning traveller a
-    /// journey of 18 hours that ended after midnight (Delft's riders from its stations, S269).
+    /// journey of 18 hours that ended after midnight (Delft's riders from its stations).
     ///
     /// *An assumption: a choice-set limit, not a preference (the journey's minutes are weighed
     /// by the choice model); two hours is more than a city's morning trip by transit takes.*
@@ -53,17 +53,17 @@ pub struct TransitDefaults {
     /// the walk leg's and the margin before boarding is
     /// [`Self::board_slack_s`].
     pub stop_transfer_s: f64,
-    /// How long a bus stays at each stop, in seconds (D5: fixed, S195).
+    /// How long a bus stays at each stop, in seconds (D5: fixed).
     ///
     /// *An assumption: 20 s stands for a typical stop until boarding-dependent dwell arrives;
     /// a bus's dwell depends mostly on its boardings and alightings (Dueker et al. 2004,
     /// *Journal of Public Transportation* 7(1) 21–40, <https://doi.org/10.5038/2375-0901.7.1.2>).*
     pub bus_dwell_s: f64,
-    /// A bus's passenger car units on the roads (design §10.4).
+    /// A bus's passenger car units on the roads.
     pub bus_pcu: f64,
     /// A bus pattern whose free-flow time on the roads, stop to stop, exceeds
     /// its scheduled time by more than this factor is run by the schedule
-    /// instead (the plausibility gate, design §18.5; the interface's
+    /// instead (the plausibility gate; the interface's
     /// `plausibility_ratio`).
     pub bus_plausibility_ratio: f64,
     /// The farthest a bus stop may be from the road network's nearest node, in
@@ -109,7 +109,7 @@ impl std::fmt::Display for TransitOptionError {
 impl std::error::Error for TransitOptionError {}
 
 impl TransitDefaults {
-    /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing).
+    /// Every option's value, by name, in [`Self::NAMES`]' order (the parameter listing).
     #[must_use]
     pub fn values(&self) -> Vec<(&'static str, f64)> {
         vec![
@@ -142,7 +142,7 @@ impl TransitDefaults {
         "bus_stop_snap_m",
     ];
 
-    /// The shipped values with `options` in place of their namesakes (S202: every
+    /// The shipped values with `options` in place of their namesakes (every
     /// parameter overridable by name, for calibration).
     ///
     /// # Errors

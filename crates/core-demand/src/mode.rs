@@ -1,8 +1,8 @@
-//! A trip's mode (S195): the optional `mode` column of `trips.parquet`.
+//! A trip's mode: the optional `mode` column of `trips.parquet`.
 //!
 //! A trip with a mode keeps it; a trip without one is a car trip until mode
-//! choice exists, and then chooses. The values name the mode sequences of
-//! design §22.2 by their main mode; the ones this build cannot simulate yet
+//! choice exists, and then chooses. The values name the mode sequences
+//! by their main mode; the ones this build cannot simulate yet
 //! (transit and the combinations with it) are read, kept and reported as not
 //! available, never silently turned into car trips.
 

@@ -1,12 +1,12 @@
 """Small library defaults and refusals that a user of the package meets (review B5).
 
-What is defended: importing the package leaves the warning filters alone (P-6); a figure shows
-itself in a notebook without a rule registered for every figure (P-43); a hover card escapes the
-run's text (P-44); a table path that does not exist is a missing file, not an empty table (P-23);
-a headway window may be a list (P-24); a run never silently replaces another's files (P-20); a
-mode asked for that the run cannot simulate is refused (CM-22); the old ``class_defaults`` keyword
-is gone (P-8); the summary and the map return a ``Path`` and default into the run's folder
-(P-19); a network option where 0 means off accepts 0 (G-5).
+What is defended: importing the package leaves the warning filters alone; a figure shows
+itself in a notebook without a rule registered for every figure; a hover card escapes the
+run's text; a table path that does not exist is a missing file, not an empty table;
+a headway window may be a list; a run never silently replaces another's files; a
+mode asked for that the run cannot simulate is refused; the old ``class_defaults`` keyword
+is gone; the summary and the map return a ``Path`` and default into the run's folder;
+a network option where 0 means off accepts 0.
 """
 
 import re

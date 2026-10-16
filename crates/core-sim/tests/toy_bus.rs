@@ -1,4 +1,4 @@
-//! The toy bus `B1` on the roads (S199): every number derived by hand.
+//! The toy bus `B1` on the roads: every number derived by hand.
 //!
 //! `B1` calls at `W`, `M` and `D1` on the one-way arterial, scheduled at `+0`,
 //! `+120`, `+240` s, every 600 s from 0. A bus is 2 PCU and dwells 20 s at a

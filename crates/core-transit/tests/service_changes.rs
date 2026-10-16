@@ -1,4 +1,4 @@
-//! Scenario edits of a timetable (S238): a line cancelled, a line at a new headway.
+//! Scenario edits of a timetable: a line cancelled, a line at a new headway.
 
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_transit::{

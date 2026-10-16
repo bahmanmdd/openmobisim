@@ -1,7 +1,7 @@
-"""Every parameter in one table (S230, roadmap I-ae): the place to start a calibration.
+"""Every parameter in one table: the place to start a calibration.
 
 Every number openmobisim assumes has a name, an uncalibrated default and an argument that
-overrides it by name (S202). ``parameters()`` lists them all, at the defaults a ``Scenario`` uses.
+overrides it by name. ``parameters()`` lists them all, at the defaults a ``Scenario`` uses.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from openmobisim.table import Columns
 
 __all__ = ["parameters"]
 
-#: Where a default is a rule of the run's level rather than one number (S280, C1: the core's
+#: Where a default is a rule of the run's level rather than one number (the core's
 #: defaults are the table; a ``Scenario`` sets none of its own).
 _NOTES: dict[tuple[str, str], str] = {
     ("equilibration.msa", "increments"): "1 at flow_level 0 whatever is set",
@@ -39,7 +39,7 @@ _FLAGS = ("priority", "reroute", "biased", "fallback_car")
 
 
 def _unit(name: str) -> str:
-    """The unit, read from the name's suffix (the names carry their units, S202)."""
+    """The unit, read from the name's suffix (the names carry their units)."""
     leaf = name.split(".")[-1]
     suffixes = [
         ("_veh_h_lane", "veh/h per lane"),

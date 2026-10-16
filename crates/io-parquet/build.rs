@@ -1,5 +1,5 @@
 //! Records the target triple so the manifest can report which platform a
-//! run's artifacts were produced on (Foundations §6) — the same pattern
+//! run's artifacts were produced on — the same pattern
 //! `py-bindings/build.rs` uses for the same reason.
 
 fn main() {

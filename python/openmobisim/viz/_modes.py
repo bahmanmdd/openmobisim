@@ -2,8 +2,7 @@
 
 One stacked bar per departure bin with trips, the modes in families from the
 light ones at the bottom to the car at the top; each mode's share of the day at
-the right. The look was put to the user with the first figure (Amsterdam) and
-accepted as drafted (D17).
+the right.
 """
 
 from __future__ import annotations

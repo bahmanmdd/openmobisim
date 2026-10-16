@@ -1,23 +1,23 @@
-//! Parking in a run (M4, S201): the parkings of a scenario as hubs on the
+//! Parking in a run: the parkings of a scenario as hubs on the
 //! layers, how full they are over the day, and what that costs a traveller.
 //!
-//! **Parkings are hubs** (design §3.2): each row of a parking table
+//! **Parkings are hubs**: each row of a parking table
 //! ([`ParkingRow`]) is snapped to its vehicle's layer (the roads for a car, the
 //! bike layer for a bike) and to the walk layer, and becomes a hub with a
 //! [`Parking`] resource; rows sharing a `hub_id` share a hub. **A parking need
-//! not be a stop** (A7): the traveller walks from it to the stops within
+//! not be a stop**: the traveller walks from it to the stops within
 //! [`ParkingDefaults::walk_max_s`], found here once. A parking with no stop
 //! within that walk is left out, since in this version only park-and-ride and
 //! bike-and-ride use parkings (counted in [`ParkingSetupReport`]).
 //!
-//! **Soft capacity** (design §17): the time to park is
+//! **Soft capacity**: the time to park is
 //! `floor + slope × (1 − availability)`, the availability being the share of a
 //! time bin in which the parking had a free space. Nothing is refused: above
 //! capacity the stock simply exceeds it, and the overflow is counted. **Choice
 //! reads the expected availability**, the average over the iterations so far
 //! (the MSA average of the realised ones; empty at the start); **a traveller
 //! pays the realised one**. The difference, per traveller who parked, is the hub
-//! expectation mismatch of design §11.2.
+//! expectation mismatch
 //!
 //! **Cost:** per parking a few dozen bytes and its stops; per time bin 8 bytes
 //! of expected availability; per vehicle parked one event.
@@ -42,7 +42,7 @@ use crate::transit::TransitSetup;
 pub type Options = std::collections::BTreeMap<String, f64>;
 
 /// Parking's defaults: every one an uncalibrated assumption, overridable by
-/// name (S202), part of the defaults table (`DEFAULTS_VERSION` 5; `pr_min_km` 6).
+/// name, part of the defaults table (`DEFAULTS_VERSION` 5; `pr_min_km` 6).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ParkingDefaults {
     /// The longest walk from a parking to a stop, in seconds (300 s is 400 m).
@@ -51,7 +51,7 @@ pub struct ParkingDefaults {
     pub walk_max_s: f64,
     /// The longest drive to a park-and-ride, in seconds.
     ///
-    /// *An assumption: 30 minutes; no published drive-time catchment was found (S259).*
+    /// *An assumption: 30 minutes; no published drive-time catchment was found.*
     pub reach_car_s: f64,
     /// The longest ride to a bike parking, in seconds of the bike layer's cost.
     ///
@@ -75,10 +75,10 @@ pub struct ParkingDefaults {
     /// The time to park a car and walk out of the car park when there is room,
     /// in seconds; also the time to fetch it.
     ///
-    /// *An assumption, with no published source (S259).*
+    /// *An assumption, with no published source.*
     pub floor_car_s: f64,
     /// The time a full car park adds, in seconds, at availability 0 (linear in
-    /// the unavailability, design §17.2).
+    /// the unavailability).
     ///
     /// *An assumption: searching for a space, which studies of cruising for kerb parking put
     /// at several minutes (reviewed by Shoup 2006, *Transport Policy* 13(6) 479–486,
@@ -87,11 +87,11 @@ pub struct ParkingDefaults {
     /// The time to park a bike and walk out when there is room, in seconds; also
     /// the time to fetch it.
     ///
-    /// *An assumption, with no published source (S259).*
+    /// *An assumption, with no published source.*
     pub floor_bike_s: f64,
     /// The time a full bike parking adds, in seconds, at availability 0.
     ///
-    /// *An assumption, with no published source (S259).*
+    /// *An assumption, with no published source.*
     pub slope_bike_s: f64,
     /// The farthest a parking may be from its layers' nearest node, in metres.
     ///
@@ -102,11 +102,11 @@ pub struct ParkingDefaults {
     /// The shortest trip, in km as the crow flies, that mode choice offers park-and-ride
     /// and bike-and-ride to (M5; a trip given one of those modes takes it at any length).
     ///
-    /// *For compute (A18, roadmap I-ag), and an assumption: nobody drives to a car park
+    /// *For compute, and an assumption: nobody drives to a car park
     /// for a 1 km trip. Uncalibrated.*
     pub pr_min_km: f64,
     /// The step, in seconds, by which park-and-ride trips share the search of their drive to
-    /// the car parks (S267): 0 searches each trip's drive at its own departure; above 0, the
+    /// the car parks: 0 searches each trip's drive at its own departure; above 0, the
     /// trips leaving one road node within one step (of the day, from midnight) share one
     /// search, made at the step's middle, and each trip's drive along the routes it found is
     /// timed at the trip's own departure.
@@ -151,7 +151,7 @@ impl ParkingDefaults {
         "reach_car_step_s",
     ];
 
-    /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing).
+    /// Every option's value, by name, in [`Self::NAMES`]' order (the parameter listing).
     #[must_use]
     pub fn values(&self) -> Vec<(&'static str, f64)> {
         let mut copy = *self;
@@ -299,7 +299,7 @@ pub struct ParkingSetup {
     walk_node: Vec<NodeId>,
     position: Vec<LonLat>,
     name: Vec<Option<String>>,
-    /// Per parking: its fee per stay in euros, if its row gave one (S248).
+    /// Per parking: its fee per stay in euros, if its row gave one.
     fee_eur: Vec<Option<f64>>,
     /// Per parking: the stops within walking distance and the walk in seconds, CSR.
     stops_start: Vec<u32>,
@@ -310,13 +310,13 @@ pub struct ParkingSetup {
     target_nodes: [usize; 2],
     at_node: [HashMap<u32, Vec<u32>>; 2],
     report: ParkingSetupReport,
-    /// The free-flow drive to every car park, made on first use (S209): see
+    /// The free-flow drive to every car park, made on first use: see
     /// [`Self::car_free_flow`].
     car_free_flow: OnceLock<CarFreeFlow>,
 }
 
 /// The free-flow time to drive from every road node to each node with a car park, within
-/// the car's reach (S209): what park-and-ride candidates are
+/// the car's reach: what park-and-ride candidates are
 /// picked by, before their routes are found on the congested times. One backward search
 /// per car-park node, once per run; 4 bytes per road node per car-park node (8 MB for
 /// Amsterdam's 16). The search is node-based, without the turn table's U-turn ban, so a
@@ -570,7 +570,7 @@ impl ParkingSetup {
         self.name[parking as usize].as_deref()
     }
 
-    /// A parking's fee per stay in euros, if its row gave one (S248, roadmap I-bb U5); else the
+    /// A parking's fee per stay in euros, if its row gave one; else the
     /// run's price for its kind applies ([`crate::prices::Prices`]).
     #[must_use]
     pub fn fee_eur(&self, parking: u32) -> Option<f64> {
@@ -668,7 +668,7 @@ impl ParkingSetup {
     }
 
     /// The free-flow seconds from every road node to car-park node `node`, within the reach.
-    /// `every` is one `true` per road node, made once for all the car parks (X-49).
+    /// `every` is one `true` per road node, made once for all the car parks.
     fn car_free_flow_to(
         &self,
         reach: &mut openmobisim_core_routes::Reach<'_>,
@@ -695,17 +695,17 @@ impl ParkingSetup {
     }
 }
 
-/// How full the parkings were over one loading, bin by bin (M4).
+/// How full the parkings were over one loading, bin by bin.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParkingBins {
     /// The bin length, in seconds.
     pub bin_s: u32,
     /// How many bins.
     pub bins: usize,
-    /// The window's start, in seconds after midnight (S271): the first bin starts there.
+    /// The window's start, in seconds after midnight: the first bin starts there.
     pub start_s: f64,
     /// The window's end, in seconds after midnight: the last bin ends with it, so it is shorter
-    /// than the others when the window is not a whole number of bins (X-45).
+    /// than the others when the window is not a whole number of bins.
     pub window_s: f64,
     /// Per parking, then bin (`parking * bins + bin`): vehicles arriving to park
     /// (weighted by traveller weight).
@@ -725,7 +725,7 @@ pub struct ParkingBins {
 /// One vehicle parked or fetched: `(second, parking, change)`.
 pub(crate) type ParkingEvent = (f64, u32, f64);
 
-/// What the parkings of one kind did in a run (M4).
+/// What the parkings of one kind did in a run.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ParkingTotals {
     /// Vehicles parked, weighted by traveller weight.
@@ -735,11 +735,11 @@ pub struct ParkingTotals {
     /// The hub expectation mismatch of those who parked, in seconds (`NaN` if none).
     pub mismatch_s: f64,
     /// Vehicles still parked at the end of the window (weighted): left at a hub for
-    /// the day (design §23.5).
+    /// the day.
     pub left_at_end: f64,
 }
 
-/// What the parkings did in a run (M4).
+/// What the parkings did in a run.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParkingResult {
     /// Bin by bin.
@@ -752,7 +752,7 @@ pub struct ParkingResult {
     pub overflow_arrivals: f64,
     /// Per traveller who parked, the mean absolute difference between the parking
     /// time expected at choice and the one paid, in seconds (the hub expectation
-    /// mismatch, design §11.2); NaN if nobody parked.
+    /// mismatch); NaN if nobody parked.
     pub mismatch_s: f64,
 }
 
@@ -856,7 +856,7 @@ pub(crate) fn availability(bins: &ParkingBins) -> Vec<f64> {
 
 impl ParkingBins {
     /// The length of bin `b` inside the window, in seconds: a whole bin, or for the last one
-    /// what is left of the window (X-45). Never 0, so a share of it is always defined.
+    /// what is left of the window. Never 0, so a share of it is always defined.
     #[must_use]
     pub fn bin_len(&self, b: usize) -> f64 {
         let whole = f64::from(self.bin_s);
@@ -878,7 +878,7 @@ pub(crate) fn availability_at(values: &[f64], bins: &ParkingBins, parking: u32, 
 }
 
 /// The expected availability per parking and bin, across iterations: the
-/// average of the realised ones so far (design §11.3), empty at the start except
+/// average of the realised ones so far, empty at the start except
 /// where a parking starts the day full.
 #[derive(Clone, Debug)]
 pub(crate) struct ExpectedAvailability {

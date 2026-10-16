@@ -1,5 +1,5 @@
 //! Equilibration: repeating choice and loading until the pattern settles (design
-//! §5, §11; S170).
+//! §5, §11).
 //!
 //! A run without it (`free_flow`) makes only the free-flow loading (below). With it the run
 //! **iterates** from there: load, read the link times the
@@ -11,9 +11,9 @@
 //! | name | what it does |
 //! |---|---|
 //! | `free_flow` (the default, [`DEFAULT_STRATEGY`]) | The free-flow loading alone (below): one choice, built up in five groups by default, and one loading of everyone |
-//! | `msa` | The method of successive averages **in traveller form** (S86): at iteration `i` (from 1; iteration 0 is everyone's first choice) each traveller chooses again with probability `1/(i + 1)`, decided by a draw keyed on `(traveller, iteration)` from its own stream, so who moves does not depend on thread count or order; the others keep their route. In expectation the route flows are the average of the flows of every iteration so far, which is classical MSA with step `1/(i + 1)` |
+//! | `msa` | The method of successive averages **in traveller form**: at iteration `i` (from 1; iteration 0 is everyone's first choice) each traveller chooses again with probability `1/(i + 1)`, decided by a draw keyed on `(traveller, iteration)` from its own stream, so who moves does not depend on thread count or order; the others keep their route. In expectation the route flows are the average of the flows of every iteration so far, which is classical MSA with step `1/(i + 1)` |
 //!
-//! **The free-flow loading** (iteration 0, S223) is where every run starts, and all
+//! **The free-flow loading** (iteration 0) is where every run starts, and all
 //! `free_flow` does. Two options shape it, for either strategy:
 //! - `increments` ([`Equilibration::increments`]): the travellers are split, by a keyed draw,
 //!   into this many groups of about equal size; the first group chooses on free-flow costs,
@@ -21,10 +21,10 @@
 //!   that loading produced, until every group has chosen and the whole demand is loaded
 //!   (incremental assignment: Sheffi 1985, *Urban Transportation Networks*, §5.2). Each group
 //!   sees the congestion of those before it, so routes spread before the first full loading.
-//!   5 by default (S280, C1: one default table for the core and the Python layer); 1 lets
+//!   5 by default (C1: one default table for the core and the Python layer); 1 lets
 //!   everyone choose at once on free-flow costs; at level 0 the run uses 1 whatever is set.
-//! - `warmup` ([`Equilibration::warmup_iterations`]): with 1 or more (1 by default, S280), the
-//!   free-flow loading, its increments included, uses the point-queue model (S178): queues delay
+//! - `warmup` ([`Equilibration::warmup_iterations`]): with 1 or more (1 by default), the
+//!   free-flow loading, its increments included, uses the point-queue model: queues delay
 //!   but take no space, so nothing spills back and nothing locks.
 //!
 //! **Every iteration is reported** ([`IterationReport`]): the stability of the
@@ -37,7 +37,7 @@
 //! # Extending it
 //!
 //! A new strategy is a type implementing [`Equilibration`], added to a
-//! [`Registry`] to be selected by name. `replanning` (design §5) is reserved,
+//! [`Registry`] to be selected by name. `replanning` is reserved,
 //! not built.
 
 use std::collections::BTreeMap;
@@ -78,7 +78,7 @@ pub struct IterationReport {
     pub total_travel_time_s: f64,
     /// Trips that arrived inside the window.
     pub completed: u32,
-    /// The people those trips stand for: their travellers' weights, summed (S232), so a
+    /// The people those trips stand for: their travellers' weights, summed, so a
     /// mean trip is [`Self::total_travel_time_s`] over it, not over [`Self::completed`].
     pub completed_people: f64,
     /// Trips still under way when the window ended.
@@ -86,23 +86,23 @@ pub struct IterationReport {
     /// How much the link times moved since the last loading, as a share of the
     /// last loading's, weighted by traffic. `NaN` at iteration 0.
     pub time_change: f64,
-    /// **The gap** (S171): how much more travel time the chosen routes cost than the
+    /// **The gap**: how much more travel time the chosen routes cost than the
     /// least-cost route of the same choice set at the times this loading produced,
     /// `Σ w (t_chosen − t_least) / Σ w t_least`, **over the travellers whose trip finished
-    /// inside the window** (S178: the times of trips still under way at the end are lower
+    /// inside the window** (the times of trips still under way at the end are lower
     /// bounds, not measurements; [`Self::incomplete_share`] says how many were left out). The
     /// usual relative gap of traffic assignment, against the shortest congested path among the
     /// alternatives. **A stochastic choice model does not reach 0 by design**: some travellers
     /// take slower routes with the probability the model gives them ([`Self::gap_expected`]);
     /// what says how far a run is from equilibrium is [`Self::gap_excess`].
     pub gap: f64,
-    /// **What the choice model itself expects the gap to be** at these times (S178): the same
+    /// **What the choice model itself expects the gap to be** at these times: the same
     /// sum with each traveller's *expected* travel time under the model's probabilities in
     /// place of the time of the route sampled. It is the gap a perfectly converged run has, by
     /// design (about 7% for a logit at −0.2 per minute). 0 for an all-or-nothing model; `NaN` for
     /// a model that gives no probabilities.
     pub gap_expected: f64,
-    /// **The disequilibrium** (the headline, S178): `gap − gap_expected`, the part of the gap the
+    /// **The disequilibrium** (the headline): `gap − gap_expected`, the part of the gap the
     /// choice model does not explain, over the trips that finished (it also holds the
     /// sampling noise of a finite population). Below [`GAP_GOOD`] is good, below
     /// [`GAP_ACCEPTABLE`] acceptable ([`gap_verdict`]); it is what `gap_tolerance` stops on.
@@ -117,7 +117,7 @@ pub struct IterationReport {
     /// keyed sample of the trips that finished, at the last iteration only; `NaN` elsewhere.
     /// Shows whether the choice set was missing a route that traffic has made worthwhile.
     pub gap_network: f64,
-    /// The disequilibrium against the whole network (S178): `gap_network` less the part the choice
+    /// The disequilibrium against the whole network: `gap_network` less the part the choice
     /// model explains **inside the set** (what a converged run over the same set would still show
     /// by design), so a route the set was missing counts in full. `NaN` where `gap_network` is, or
     /// if the model gives no probabilities.
@@ -134,58 +134,58 @@ pub struct IterationReport {
     /// `gap_flow − gap_flow_floor`: the disequilibrium of the stochastic model left
     /// after noise.
     pub gap_flow_excess: f64,
-    /// How many routes the route update (S176) added to the sets **after this loading**,
+    /// How many routes the route update added to the sets **after this loading**,
     /// for the next iteration to choose among; 0 without an update, at the last
     /// iteration (no choice follows it) and when no route beat the set. **`gap` is measured
     /// against the sets as grown**, the routes the travellers may now choose from. Iteration
-    /// 0's also counts the routes added while the free-flow loading was built up (S223): every
+    /// 0's also counts the routes added while the free-flow loading was built up: every
     /// route found on the times of iteration `i`'s loadings is stamped `i + 1`.
     pub routes_added: u32,
     /// How many searches the route update made to find them.
     pub route_searches: u32,
-    /// **The itinerary trips' gap** (M4), by mode ([`Mode::index`]; `NaN` for a mode
+    /// **The itinerary trips' gap**, by mode ([`Mode::index`]; `NaN` for a mode
     /// without itinerary trips): the same relative gap as [`Self::gap`] for the
     /// transit, park-and-ride and bike-and-ride trips, each alternative kept against
     /// the least door-to-door time in its choice set, at the costs this loading
-    /// produced. With mode choice (M5) also the car, bike and walk trips that chose
+    /// produced. With mode choice also the car, bike and walk trips that chose
     /// their mode, each against the best of the mode it took.
     pub itinerary_gap: [f64; Mode::COUNT],
     /// How many itinerary trips that kept their itinerary out through a parking were
-    /// **re-costed** there rather than re-planned (S210: outside the gap's sample, see
+    /// **re-costed** there rather than re-planned (outside the gap's sample, see
     /// [`Equilibration::itinerary_gap_sample`]); 0 at the last iteration, which plans every
     /// trip in full.
     pub itinerary_recosted: u32,
-    /// How many times vehicles re-routed en route in this loading (S213); 0 without rerouting.
+    /// How many times vehicles re-routed en route in this loading; 0 without rerouting.
     pub reroutes: u32,
-    /// The itinerary disequilibrium (I-al, S227): over every transit, park-and-ride,
+    /// The itinerary disequilibrium: over every transit, park-and-ride,
     /// bike-and-ride and mode-choosing trip, the gap to the best alternative of the mode it kept
     /// less what the choice model itself expects (`Σ_m (paid − expected) / Σ_m least`); the plain
     /// gap if the model gives no probabilities; NaN without such trips. Part of
     /// [`Self::disequilibrium`].
     pub itinerary_gap_excess: f64,
-    /// The floor of [`Self::mode_changed_share`] (I-al, S227): the share whose mode would change
+    /// The floor of [`Self::mode_changed_share`]: the share whose mode would change
     /// by chance alone among those who chose again, from the model's probabilities; NaN where
     /// that share is.
     pub mode_changed_floor: f64,
-    /// How many reroute offers this iteration's loadings made (S223): each is one search for a
+    /// How many reroute offers this iteration's loadings made: each is one search for a
     /// faster route from where a stuck vehicle is, whether or not it re-routed. Iteration 0's
     /// counts the free-flow loading's groups' loadings too. 0 without rerouting.
     pub reroute_searches: u32,
-    /// **The hub expectation mismatch** (design §11.2; M4): per traveller who parked,
+    /// **The hub expectation mismatch**: per traveller who parked,
     /// the mean absolute difference between the parking time expected at the choice
     /// and the one paid, in seconds; `NaN` without parkings.
     pub hub_mismatch_s: f64,
-    /// **Mode choice** (M5): of the trips choosing their mode that had chosen before, the
+    /// **Mode choice**: of the trips choosing their mode that had chosen before, the
     /// share (by traveller weight) whose mode changed on the way to this iteration's
     /// loading; `NaN` at the first, or without mode choice.
     pub mode_changed_share: f64,
 }
 
-/// A disequilibrium below this is good (the user, S171: "perfect"; S178: 5% on the disequilibrium).
+/// A disequilibrium below this is good (5 % on the disequilibrium).
 pub const GAP_GOOD: f64 = 0.05;
 
 /// A disequilibrium below this is acceptable for a stochastic dynamic assignment, which cannot
-/// reach full equilibrium (the user, S171: "anything below 10–15% is acceptable").
+/// reach full equilibrium ("anything below 10–15% is acceptable").
 pub const GAP_ACCEPTABLE: f64 = 0.15;
 
 /// How close to equilibrium a gap says a run is.
@@ -293,7 +293,7 @@ impl PartialEq for IterationReport {
 }
 
 impl IterationReport {
-    /// The number a run is judged by (S178): [`Self::gap_excess`], the disequilibrium, or the
+    /// The number a run is judged by: [`Self::gap_excess`], the disequilibrium, or the
     /// plain [`Self::gap`] where the model gives no probabilities and the two cannot be told apart.
     #[must_use]
     pub fn disequilibrium(&self) -> f64 {
@@ -428,26 +428,26 @@ pub trait Equilibration: Send + Sync {
     }
 
     /// How many itinerary trips, besides those choosing again, plan their whole choice set after
-    /// a loading to measure the itinerary gap (S210); the others that keep an itinerary out
+    /// a loading to measure the itinerary gap; the others that keep an itinerary out
     /// through a parking are re-costed at that parking instead of re-planned. A number at least the run's count of itinerary trips plans every
-    /// trip in full, as before S210 (the default here: a strategy that does not say).
+    /// trip in full, as before (the default here: a strategy that does not say).
     fn itinerary_gap_sample(&self) -> u32 {
         u32::MAX
     }
 
     /// How many of the first loadings the run makes with the **point-queue model** (level 2),
-    /// which cannot gridlock, in place of the full one (S178). The first loading of a narrow
-    /// route set is often in permanent gridlock (S177: 3 215 of 9 619 trips never finish) and every
+    /// which cannot gridlock, in place of the full one. The first loading of a narrow
+    /// route set is often in permanent gridlock (3 215 of 9 619 trips never finish) and every
     /// later iteration inherits its times. At most `max_iterations − 1` are used when the run
     /// iterates, so its last loading, the result, is always at the full level; a run of one
-    /// loading is its free-flow loading, which uses the point queue if this is 1 or more (S223).
+    /// loading is its free-flow loading, which uses the point queue if this is 1 or more.
     /// The free-flow loading's increments use it too. No effect under a loading model that is not
     /// the link transmission model or is already at level 2.
     fn warmup_iterations(&self) -> u32 {
         0
     }
 
-    /// In how many groups the free-flow loading (iteration 0) is built up (S223; 1 to
+    /// In how many groups the free-flow loading (iteration 0) is built up (1 to
     /// [`MAX_INCREMENTS`]). Each traveller is put in one group by a draw keyed on the traveller
     /// alone, from the re-selection stream; group 0 chooses on free-flow costs, and each group
     /// after it on the link times of a loading of the groups before it, after the route update
@@ -465,16 +465,16 @@ pub trait Equilibration: Send + Sync {
     }
 }
 
-/// One free-flow loading: everyone chooses once, in `increments` groups (S223), and the network
+/// One free-flow loading: everyone chooses once, in `increments` groups, and the network
 /// is loaded once with everyone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FreeFlow {
     /// In how many groups the loading is built up (1 to [`MAX_INCREMENTS`]; see
-    /// [`Equilibration::increments`]). 5 by default (S280, C1: the one default table; 1 lets
+    /// [`Equilibration::increments`]). 5 by default (the one default table; 1 lets
     /// everyone choose at once on free flow; at level 0 the run uses 1 whatever is set).
     pub increments: u32,
     /// 1 (or more) loads with the point-queue model, 0 at the run's own level (see
-    /// [`Equilibration::warmup_iterations`]). 1 by default (S280): the single loading of a
+    /// [`Equilibration::warmup_iterations`]). 1 by default: the single loading of a
     /// `free_flow` run at levels 3–4 is then a point-queue loading, which cannot gridlock; 0
     /// loads it at the run's own level.
     pub warmup: u32,
@@ -568,10 +568,10 @@ pub struct Msa {
     /// How many loadings to make at most (1 to [`MAX_ITERATIONS`]).
     pub iterations: u32,
     /// Stop once the **disequilibrium** ([`IterationReport::disequilibrium`]: the gap less what
-    /// the choice model itself expects, S178), averaged over the last three iterations, is below
-    /// this share; 0 means never stop early. 0.05 by default (S229, S280). 0.05 is good, 0.15 acceptable
-    /// ([`GAP_GOOD`], [`GAP_ACCEPTABLE`]). Never while a route update is still adding routes
-    /// (S176): the last update must have added routes for at most
+    /// the choice model itself expects), averaged over the last three iterations, is below
+    /// this share; 0 means never stop early. 0.05 by default. 0.05 is good, 0.15 acceptable
+    /// ([`GAP_GOOD`], [`GAP_ACCEPTABLE`]). Never while a route update is still adding routes:
+    /// the last update must have added routes for at most
     /// [`Self::route_growth_tolerance`] of the pairs it searched.
     pub gap_tolerance: f64,
     /// How many trips are tested against the whole network at the last iteration
@@ -583,7 +583,7 @@ pub struct Msa {
     /// [`Equilibration::itinerary_gap_sample`]): a keyed sample of travellers, drawn again each
     /// iteration. The last assessment plans every trip in full, so the run's last itinerary gap is
     /// exact; an iteration's before it is an estimate. **By default every trip**
-    /// ([`MAX_ITINERARY_GAP_SAMPLE`]): measured on Amsterdam (S210), a sample of 2 000 saved 6%
+    /// ([`MAX_ITINERARY_GAP_SAMPLE`]): measured on Amsterdam, a sample of 2 000 saved 6%
     /// of a run with 10 000 park-and-ride and bike-and-ride trips, and its gaps before the last
     /// iteration read low (2.7–3.9% against 4.3–4.6%: a kept itinerary that has gone stale is
     /// set aside as having to choose again, rather than counted).
@@ -592,14 +592,14 @@ pub struct Msa {
     /// least 1). Shorter follows a queue more closely and costs more memory.
     pub cost_bin_s: u32,
     /// How many of the first loadings use the point-queue model (0 to [`MAX_ITERATIONS`]; see
-    /// [`Equilibration::warmup_iterations`]). 1 by default (S280).
+    /// [`Equilibration::warmup_iterations`]). 1 by default.
     pub warmup: u32,
     /// In how many groups the free-flow loading is built up (1 to [`MAX_INCREMENTS`]; see
-    /// [`Equilibration::increments`]). 5 by default (S280; 1 at level 0 whatever is set).
+    /// [`Equilibration::increments`]). 5 by default (1 at level 0 whatever is set).
     pub increments: u32,
     /// A run may stop at its [`Self::gap_tolerance`] only while the last route update added
-    /// routes for at most this share of the pairs it searched (0 to 1; S229). 1 by default
-    /// (S280): the gap alone decides; 0 stops no run while the update adds any route (S176). A
+    /// routes for at most this share of the pairs it searched (0 to 1). 1 by default:
+    /// the gap alone decides; 0 stops no run while the update adds any route. A
     /// few routes found late barely move the gap.
     pub route_growth_tolerance: f64,
 }

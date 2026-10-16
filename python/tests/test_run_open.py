@@ -1,4 +1,4 @@
-"""A finished run read back from its folder (C2, D-5 a): ``Run.open``."""
+"""A finished run read back from its folder (D-5 a): ``Run.open``."""
 
 from __future__ import annotations
 

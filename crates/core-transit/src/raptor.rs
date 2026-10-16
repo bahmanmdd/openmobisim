@@ -1,12 +1,11 @@
 //! RAPTOR: round-based public transit routing (Delling, Pajor and Werneck,
-//! "Round-Based Public Transit Routing", *Transportation Science* 49(3), 2015;
-//! S22, design §18.3).
+//! "Round-Based Public Transit Routing", *Transportation Science* 49(3), 2015).
 //!
 //! Round `k` finds the earliest arrival at every stop with at most `k` vehicles:
 //! it scans every **pattern** that calls at a stop improved in round `k − 1`,
 //! boarding the earliest run a passenger there can catch, then relaxes the
 //! **walking transfers** from the stops the scan improved. A round is a hub
-//! transition (S22): alight, perhaps walk, board.
+//! transition: alight, perhaps walk, board.
 //!
 //! **Patterns** are a [`Timetable`]'s pattern groups split so that no run of a
 //! pattern overtakes another at any call — RAPTOR's condition for "the earliest
@@ -24,7 +23,7 @@
 //! **The last walk.** A journey may end with a transfer walk (from the stop a ride alights
 //! at to a stop it walks to) and then the egress walk to the destination, two bounded walks
 //! in a row. [`Raptor::pareto_last_walk`] bounds their **sum** by the limit it is given (the
-//! class's or the run's `access_walk_max_s`, S279, CM-7): a destination reached through a
+//! class's or the run's `access_walk_max_s`): a destination reached through a
 //! footpath-reached stop counts only if both walks together fit, else the stop's arrival by
 //! its ride (no transfer) is tried. The access side is asymmetric on purpose: a journey
 //! starts at an access stop, within the limit of the origin, and **never walks a footpath
@@ -34,7 +33,7 @@
 //! times the passenger can be at each access stop and the walk from each egress
 //! stop; among journeys arriving then, the one with fewest vehicles. At least one
 //! vehicle: walking all the way is another mode. [`Raptor::pareto`] returns
-//! every journey of the trade-off instead (M4, S201): for each number of
+//! every journey of the trade-off instead: for each number of
 //! vehicles, the earliest arrival, where it beats every journey with fewer —
 //! round `k` finds exactly that, so the set costs nothing more than the query.
 //!
@@ -139,7 +138,7 @@ pub struct RaptorData {
     arrival: Vec<u32>,
     departure: Vec<u32>,
     /// `departure` again, laid out by position instead of by run: a pattern's departures at
-    /// one stop side by side, for the search for the earliest run there (S267: read run by run,
+    /// one stop side by side, for the search for the earliest run there (read run by run,
     /// that search missed the cache at every step, most of a query's time on Paris).
     departure_by_pos: Vec<u32>,
     stop_patterns_start: Vec<u32>,
@@ -484,7 +483,7 @@ pub struct Raptor<'a> {
     queue_pos: Vec<u32>,
     queue: Vec<u32>,
     ride_improved: Vec<u32>,
-    /// Whether every stop counts as a destination ([`Self::arrivals`], S238): an arrival must
+    /// Whether every stop counts as a destination ([`Self::arrivals`]): an arrival must
     /// then beat the best with a vehicle everywhere.
     every_stop: bool,
 }
@@ -586,7 +585,7 @@ impl<'a> Raptor<'a> {
 
     /// The earliest arrival at **every** stop from the `access` stops (each with the time the
     /// passenger can be there), having taken at least one and at most `max_rides` vehicles, in
-    /// seconds after midnight; [`UNKNOWN_TIME`] where no such journey arrives (S238: one search
+    /// seconds after midnight; [`UNKNOWN_TIME`] where no such journey arrives (one search
     /// per origin for a matrix of travel times, a skim). Nothing is pruned towards a single
     /// destination, so it costs a full search.
     #[must_use]
@@ -610,7 +609,7 @@ impl<'a> Raptor<'a> {
     }
 
     /// [`Self::pareto`], only the journeys that arrive before `bound` (a second of the day):
-    /// the search prunes everything later, so it costs less (S267: a choice set drops the
+    /// the search prunes everything later, so it costs less (a choice set drops the
     /// journeys too slow to be offered anyway).
     #[must_use]
     pub fn pareto_before(
@@ -623,8 +622,8 @@ impl<'a> Raptor<'a> {
     }
 
     /// [`Self::pareto_before`], and a journey that ends through a footpath-reached stop only
-    /// if its transfer walk **plus** its egress walk is at most `walk_max` seconds (S279,
-    /// CM-7; `u32::MAX` for no limit, which is [`Self::pareto_before`]). See the
+    /// if its transfer walk **plus** its egress walk is at most `walk_max` seconds
+    /// (`u32::MAX` for no limit, which is [`Self::pareto_before`]). See the
     /// [module docs](self): the last walk is otherwise the sum of two bounded walks.
     #[must_use]
     pub fn pareto_last_walk(

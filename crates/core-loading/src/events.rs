@@ -1,5 +1,5 @@
 //! The loading's event queue: at most one event per queue, in a binary heap indexed by
-//! queue (S210).
+//! queue.
 //!
 //! Rescheduling a queue moves its event in the heap instead of leaving the old one behind
 //! to be skipped, so the heap holds only live events. The order is the total order of

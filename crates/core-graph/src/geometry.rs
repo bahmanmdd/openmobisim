@@ -1,5 +1,4 @@
-//! Coordinates: WGS84 in, projected metres out — and nothing else (S81,
-//! Foundations §9).
+//! Coordinates: WGS84 in, projected metres out — and nothing else.
 //!
 //! # Why this file exists at all
 //!

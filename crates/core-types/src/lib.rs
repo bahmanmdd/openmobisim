@@ -1,18 +1,18 @@
 //! Foundational types for openmobisim.
 //!
 //! This crate is the one every other crate depends on, and it depends on
-//! almost nothing itself (Foundations §10). It holds the decisions that are
+//! almost nothing itself. It holds the decisions that are
 //! expensive or impossible to change once code exists:
 //!
-//! | Module | Foundations § | What it fixes |
-//! |---|---|---|
-//! | [`ids`] | §1 | Dense `u32` identity spaces, one per entity kind, with a null sentinel |
-//! | [`time`] | §2 | The `u32` seconds clock, the loading step grid, the event-queue total order |
-//! | [`units`] | §9 | SI, per-second internal units as zero-cost newtypes |
-//! | [`reduce`] | §3 | Fixed-order parallel reductions — the determinism guarantee |
-//! | [`rng`] | §4 | Counter-based ChaCha8 streams addressed by entity identity |
-//! | [`diagnostics`] | §6 | Aggregated run diagnostics that cost nothing until something is recorded |
-//! | [`registry`] | §7 | Plugin names resolved once, at build time, never in a loop |
+//! | Module | What it fixes |
+//! |---|---|
+//! | [`ids`] | Dense `u32` identity spaces, one per entity kind, with a null sentinel |
+//! | [`time`] | The `u32` seconds clock, the loading step grid, the event-queue total order |
+//! | [`units`] | SI, per-second internal units as zero-cost newtypes |
+//! | [`reduce`] | Fixed-order parallel reductions — the determinism guarantee |
+//! | [`rng`] | Counter-based ChaCha8 streams addressed by entity identity |
+//! | [`diagnostics`] | Aggregated run diagnostics that cost nothing until something is recorded |
+//! | [`registry`] | Plugin names resolved once, at build time, never in a loop |
 //!
 //! # The three rules a reader should take away
 //!
@@ -69,7 +69,7 @@ pub use units::{Cost, Density, Duration, Flow, Metres, Pcu, Speed};
 
 /// Layout and build-semantics version for every cached artifact.
 ///
-/// Part of the cache fingerprint (Foundations §8):
+/// Part of the cache fingerprint:
 ///
 /// ```text
 /// fingerprint = BLAKE3(input_bytes_hash, build_params, CODE_VERSION, defaults_version)
@@ -86,7 +86,7 @@ pub const CODE_VERSION: u32 = 1;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The git commit this build was made from: twelve hex digits, or `"unknown"` for a build without
-/// a `.git` directory (a source archive, an sdist) or without `git` (T-6, S280). Set when the
+/// a `.git` directory (a source archive, an sdist) or without `git`. Set when the
 /// crate is built (`build.rs`); the environment variable `OPENMOBISIM_GIT_SHA` overrides it.
 /// Reported in `manifest.json` (`git_sha`) and by `build_info()` in Python. Not part of any
 /// fingerprint: two builds of different commits that compute the same numbers stay equal.

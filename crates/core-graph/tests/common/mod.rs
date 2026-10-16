@@ -2,7 +2,7 @@
 //!
 //! Thin wrappers around [`openmobisim_core_graph::examples::manhattan_grid`] —
 //! the fixture itself was promoted out of this module and into the crate's
-//! public API in Phase 1 step 8 (S105), since it needed to be reusable
+//! public API in Phase 1 step 8, since it needed to be reusable
 //! outside tests too. What is kept here is just this test suite's own
 //! historical names (`grid`, `grid_link_count`), so the three test files
 //! that already call them did not need to change.

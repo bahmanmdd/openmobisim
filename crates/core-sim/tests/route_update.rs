@@ -1,4 +1,4 @@
-//! Route updates (S176): growing the choice sets between iterations.
+//! Route updates: growing the choice sets between iterations.
 //!
 //! What is defended, and how each is checked:
 //!
@@ -48,7 +48,7 @@ use openmobisim_core_types::units::Duration;
 
 /// What the tests here assume unless they say otherwise: one loading of everyone on free flow
 /// first, at the run's own level, iterating to `iterations` whatever the gap. The shipped
-/// defaults (S280, C1: one default table) build the free-flow loading in five groups with the
+/// defaults (C1: one default table) build the free-flow loading in five groups with the
 /// point queue and stop when converged, which these tests do not mean to exercise.
 fn strategy(
     name: &str,
@@ -256,7 +256,7 @@ fn a_road_that_only_pays_under_congestion_enters_the_set_and_the_gap_to_the_netw
     assert_eq!(sets.update(), "best_response;max_routes=10;searches=1;slack=0.02");
 }
 
-/// **Search trees** (S267): the same road found by one tree per origin and rounded departure,
+/// **Search trees**: the same road found by one tree per origin and rounded departure,
 /// counted as the pairs searched for, so the stopping rule weighs them alike; the run as good.
 #[test]
 fn search_trees_find_the_road_that_only_pays_under_congestion_too() {
@@ -769,7 +769,7 @@ impl ChoiceModel for Identities {
 
 #[test]
 fn a_route_that_was_in_the_set_keeps_its_identity_when_another_is_added() {
-    // Identity is what a draw is keyed on (design §11.1(4)): the routes travellers already know
+    // Identity is what a draw is keyed on: the routes travellers already know
     // must be drawn as they were. The model is shown each situation's alternatives' identities.
     let spy = Arc::new(Identities { seen: Mutex::new(Vec::new()) });
     let setup = Setup { iterations: 3.0, ..Setup::new(1_500) };
@@ -838,7 +838,7 @@ fn what_is_added_is_a_route_of_the_network_and_new_to_its_set() {
     assert_eq!(sets.stamps().iter().filter(|&&s| s > 0).count(), added);
     let mut checked = 0_usize;
     // `(0.0..=1.0).contains(&view.overlap)` below is a range check a hardcoded 0.0 would also
-    // pass (checkpoint 8b's adversarial pass, S186): a grid has many added routes that genuinely
+    // pass (an adversarial review, S186): a grid has many added routes that genuinely
     // share part of their cost with a route already in their set, so track that at least one
     // checked route actually has a *partial* overlap, not just a legal-looking number.
     let mut saw_partial_overlap = false;
@@ -957,7 +957,7 @@ fn an_adapting_run_is_the_same_at_one_thread_and_at_seven() {
     assert_eq!(one, Setup { seed: 9, ..Setup::new(1_200) }.go());
 }
 
-/// **A full set makes room** (S268): on the jammed grid, with the generator's five routes per
+/// **A full set makes room**: on the jammed grid, with the generator's five routes per
 /// pair and a limit of five, better routes replace routes nobody chose; every set keeps the limit
 /// and its free-flow shortest route, and every trip's route is one of its own pair's.
 #[test]
@@ -1013,7 +1013,7 @@ fn a_full_set_makes_room_for_a_better_route() {
     assert!(on_added > 0, "some trips ride a route that made it in");
 }
 
-/// **At most `choice_max_routes` offered** (S268): with one, every traveller takes the fastest
+/// **At most `choice_max_routes` offered**: with one, every traveller takes the fastest
 /// route of their pair's set; at free flow, the one of least cost.
 #[test]
 fn a_traveller_is_offered_at_most_the_fastest_routes() {

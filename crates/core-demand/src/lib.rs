@@ -1,14 +1,14 @@
-//! Demand for openmobisim: the `trips.parquet`/`persons.parquet` readers (S97),
-//! travellers as structure-of-arrays with integer weights (S86, S94), and
-//! vehicle-location state (S98).
+//! Demand for openmobisim: the `trips.parquet`/`persons.parquet` readers,
+//! travellers as structure-of-arrays with integer weights, and
+//! vehicle-location state.
 //!
 //! | Module | What it owns |
 //! |---|---|
 //! | [`trips`] | Reading `trips.parquet` into unsorted, unvalidated rows |
-//! | [`mode`] | A trip's mode, the optional `mode` column (S195) |
+//! | [`mode`] | A trip's mode, the optional `mode` column |
 //! | [`persons`] | Reading the optional `persons.parquet` |
 //! | [`travellers`] | [`travellers::Travellers`] and [`travellers::Trips`]: the dense, sorted, chain-validated structures everything downstream reads |
-//! | [`vehicles`] | [`vehicles::VehicleLocations`] — per-run mutable state (S98), seeded from S129's rule |
+//! | [`vehicles`] | [`vehicles::VehicleLocations`] — per-run mutable state, seeded from the rule |
 //!
 //! # What this crate does not do
 //!
@@ -19,13 +19,13 @@
 //!
 //! Per-traveller **class ownership defaults** ([`travellers::ClassDefaults`])
 //! are a build parameter, not something this crate invents: the class table
-//! that supplies them is scenario schema (`classes=` in Python, S231). An empty
+//! that supplies them is scenario schema (`classes=` in Python). An empty
 //! [`travellers::ClassDefaults`] — every class owning nothing — is the crate's
 //! own default; the scenario layer gives a class it was not told about a car, a
-//! bike and a pass instead (S243), as that class may use every mode.
+//! bike and a pass instead, as that class may use every mode.
 //!
-//! Per-trip attribute columns beyond the ones S97 names are not read: the
-//! choice models' traveller and trip attributes are a later step (I-bb U6).
+//! Per-trip columns beyond those of the trips table are not read here: values per traveller and
+//! per trip reach the choice models through `core-sim`'s `demand_values`.
 
 pub mod mode;
 pub mod persons;

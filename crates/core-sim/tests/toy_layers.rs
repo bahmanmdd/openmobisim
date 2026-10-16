@@ -1,8 +1,8 @@
-//! The toy network's bike and walk layers (S195): every number derived by hand.
+//! The toy network's bike and walk layers: every number derived by hand.
 //!
 //! Speeds are the shipped defaults: 15 km/h in mixed traffic, 18 km/h on the
 //! cycle track, 4.8 km/h on foot; a trip leaves at 0 s and its time is its
-//! exact time floored once (S88).
+//! exact time floored once.
 //!
 //! | Case | Route | Hand value |
 //! |---|---|---|

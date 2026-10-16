@@ -1,4 +1,4 @@
-//! The choice layer (Phase 2 item 7; design §4).
+//! The choice layer.
 //!
 //! | Module | What it holds |
 //! |---|---|
@@ -16,7 +16,7 @@
 //! called once per batch.
 //!
 //! **Nothing here knows what is being chosen.** Routes today; modes, hubs and
-//! departure times later, behind the same interface (design §11.5).
+//! departure times later, behind the same interface.
 //!
 //! **Draws** are keyed on `(traveller, trip, iteration, alternative identity)`
 //! from the choice stream, so results do not depend on thread count, batch

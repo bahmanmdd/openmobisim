@@ -1,4 +1,4 @@
-"""Every result given as columns is a ``Columns`` (C2, D-5 a): a dict, and a data frame too."""
+"""Every result given as columns is a ``Columns`` (D-5 a): a dict, and a data frame too."""
 
 from __future__ import annotations
 

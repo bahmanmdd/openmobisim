@@ -1,4 +1,4 @@
-"""Scenario edits (S238, roadmap I-az): roads closed or narrowed, bike links upgraded.
+"""Scenario edits: roads closed or narrowed, bike links upgraded.
 
 A changed network, for a study to compare with the original.
 

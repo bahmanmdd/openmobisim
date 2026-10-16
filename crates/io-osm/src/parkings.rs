@@ -1,4 +1,4 @@
-//! Parkings from OpenStreetMap (M4, S201): park-and-ride car parks and bike
+//! Parkings from OpenStreetMap: park-and-ride car parks and bike
 //! parkings, as a parking table ([`ParkingRow`]) a run makes hubs of.
 //!
 //! **What is read** (the zero-calibration default of D11; a user's own table
@@ -38,7 +38,7 @@ use openmobisim_core_graph::hubs::{ParkingKind, ParkingRow};
 use crate::region::Region;
 use crate::source::{OsmError, OsmSource, tag_of};
 
-/// The reader's options: uncalibrated defaults, each overridable (S202).
+/// The reader's options: uncalibrated defaults, each overridable.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ParkingReadOptions {
     /// Parkings of one kind closer than this, in metres, are one site.
@@ -47,17 +47,17 @@ pub struct ParkingReadOptions {
     pub merge_m: f64,
     /// The capacity of a car park mapped as a point without a `capacity` tag.
     ///
-    /// *An assumption, with no published source (S259).*
+    /// *An assumption, with no published source.*
     pub capacity_car: u32,
     /// The capacity of a bike parking mapped as a point without a `capacity`
     /// tag: most are street racks.
     ///
-    /// *An assumption, with no published source (S259).*
+    /// *An assumption, with no published source.*
     pub capacity_bike: u32,
     /// The ground area one car takes in a car park, aisles included, in m².
     ///
     /// *An assumption: a bay and its share of the aisles and circulation; no design guide was
-    /// read for it (S259).*
+    /// read for it.*
     pub area_per_car_m2: f64,
     /// The ground area one bike takes in a bike parking, aisles included, in m².
     ///
@@ -354,7 +354,7 @@ pub fn read_parkings(
 /// not depend on the order the file had.
 ///
 /// The parkings near a seed are looked up in a grid of cells half as wide again as
-/// `merge_m`, so only the nine cells around it are tried (X-47; was every later parking):
+/// `merge_m`, so only the nine cells around it are tried (was every later parking):
 /// the same members in the same order as the scan of all.
 fn merge(mut found: Vec<Found>, merge_m: f64) -> Vec<ParkingRow> {
     found.sort_by(|a, b| b.capacity.cmp(&a.capacity).then_with(|| a.id.cmp(&b.id)));
@@ -411,7 +411,7 @@ fn merge(mut found: Vec<Found>, merge_m: f64) -> Vec<ParkingRow> {
     rows
 }
 
-/// The parkings by cell of a grid in metres (X-47). Any two within `merge_m` of each other
+/// The parkings by cell of a grid in metres. Any two within `merge_m` of each other
 /// by [`ground_distance_metres`] are in the same or neighbouring cells: the grid's metres per
 /// degree are at most that distance's (the smallest meridional radius; the equatorial radius
 /// at the latitude farthest from the equator), and a cell is half as wide again as `merge_m`.

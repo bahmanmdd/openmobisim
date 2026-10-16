@@ -1,5 +1,5 @@
 //! Reading the optional `persons.parquet` — per-traveller ownership and
-//! class overrides (S127).
+//! class overrides.
 
 use std::path::Path;
 
@@ -11,7 +11,7 @@ use crate::columns;
 /// Every field but `traveller_id` is optional at two levels: the *column*
 /// may be absent from the file entirely, or *one row's* value may be null —
 /// either way it means "no override for this traveller", and
-/// [`crate::travellers::build`] falls back to the class default (S127).
+/// [`crate::travellers::build`] falls back to the class default.
 #[derive(Clone, Debug, Default)]
 pub struct RawPerson {
     /// Must match a `traveller_id` in `trips.parquet`.

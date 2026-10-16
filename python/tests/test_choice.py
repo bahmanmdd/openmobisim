@@ -1,4 +1,4 @@
-"""Route choice across the boundary (S169).
+"""Route choice across the boundary.
 
 What is defended: the built-in models do what they say (all-or-nothing takes
 the best route; the logit spreads travellers, follows its seed and its
@@ -17,7 +17,7 @@ CAR = {"commuter": (True, False, False)}
 
 def grid_run(trips=400, seed=5, **kwargs):
     # This file tests the choice layer itself, one loading at a time: pinned to the
-    # library's pre-car-ready-checkpoint defaults (deterministic, no equilibration) as
+    # library's earlier defaults (deterministic, no equilibration) as
     # this *file's own* fixture default, not the library's (which is "logit"/"msa" since
     # 2026-09-23) — individual tests below still override `choice_model` freely.
     net = ms.examples.manhattan_grid(n=8, block_metres=200.0, signals=False)
@@ -151,7 +151,7 @@ class MyLogit:
     """The built-in logit's defaults, written the way a researcher would write them.
 
     On car routes: walking, waiting, transfers and a bike's mixed traffic are 0 there; money
-    weighs -1.2 per euro by default (D-1).
+    weighs -1.2 per euro by default.
     """
 
     name = "my_logit"
@@ -320,7 +320,7 @@ def test_segment_helpers_do_the_per_situation_arithmetic():
 
 
 def test_a_routes_path_size_is_over_the_routes_offered_not_over_the_stored_set():
-    """``ln_path_size`` is over the routes a traveller is offered (S279, CM-3)."""
+    """``ln_path_size`` is over the routes a traveller is offered."""
     seen: dict[str, list[np.ndarray]] = {"ln_path_size": [], "offsets": []}
 
     class Recorder:

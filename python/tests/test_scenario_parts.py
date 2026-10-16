@@ -1,4 +1,4 @@
-"""A scenario's arguments, read back and changed (C2, D-5 a): ``Scenario.parts`` and ``replace``."""
+"""A scenario's arguments, read back and changed (D-5 a): ``Scenario.parts`` and ``replace``."""
 
 from __future__ import annotations
 

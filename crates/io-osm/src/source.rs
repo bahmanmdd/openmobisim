@@ -111,7 +111,7 @@ pub fn tag_of<'a>(tags: &'a [(String, String)], key: &str) -> Option<&'a str> {
 /// These are failures of the *input*, not of the data in it: a missing file, a
 /// corrupt block. Anything that is merely odd about the OSM data — a way with
 /// one node, an unparseable speed limit — is a diagnostic, not an error,
-/// because the simulation never stops (brief §3c).
+/// because the simulation never stops.
 #[derive(Debug)]
 pub enum OsmError {
     /// The file could not be opened or read.

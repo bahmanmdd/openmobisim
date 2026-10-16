@@ -7,7 +7,7 @@
 //! | [`tags`] | Interpreting OSM tags: class, direction, lanes, speed limits |
 //! | [`mod@import`] | Classifying, splitting, contracting, and handing the result to the graph builder |
 //! | [`pbf`] | The `.osm.pbf` adapter — thin, and the only part that knows about a file format |
-//! | [`parkings`] | Park-and-ride car parks and bike parkings, as a parking table (M4) |
+//! | [`parkings`] | Park-and-ride car parks and bike parkings, as a parking table |
 //!
 //! # The shape of an import
 //!
@@ -24,7 +24,7 @@
 //! Nothing here fails because of odd data. A way with an uninterpretable speed
 //! limit, a node referenced but never defined, a way of one node — each has a
 //! documented fallback and a diagnostic, because the simulation never stops
-//! (brief §3c).
+//! .
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

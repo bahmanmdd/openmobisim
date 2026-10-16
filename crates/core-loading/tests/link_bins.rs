@@ -1,4 +1,4 @@
-//! The per-link, per-time-bin results (S163), checked against things that are
+//! The per-link, per-time-bin results, checked against things that are
 //! true independently of how they are recorded: the loading's own cumulative
 //! curves, free-flow times, and the fixture's hand values.
 
@@ -144,7 +144,7 @@ fn vehicles_still_on_their_way_are_counted() {
 }
 
 /// **Property:** recording changes nothing about the run, and the table does
-/// not depend on the loading step (S84: the step is bookkeeping only).
+/// not depend on the loading step (the step is bookkeeping only).
 #[test]
 fn recording_is_free_and_step_independent() {
     let toy = Toy::new();
@@ -376,7 +376,7 @@ fn vehicles_waiting_at_a_stop_line_when_the_window_ends_are_counted() {
     assert_eq!(entered_a1, 20, "every car that entered a1 is in its entry table once");
 }
 
-/// **Property (X-38a):** a vehicle still on a link when the window ends is in the entry table
+/// **Property:** a vehicle still on a link when the window ends is in the entry table
 /// with at least the link's free-flow time. Its time so far is cut off by the window, and no
 /// vehicle crosses a link faster than free flow: filed with less, it would make the link look
 /// faster than anyone can drive it to the next iteration's route search, which reads the mean.

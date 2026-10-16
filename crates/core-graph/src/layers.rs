@@ -1,7 +1,7 @@
 //! The bike and walk layers: static-cost networks over the road network's
-//! geometry (design §20–§21; S193, S195).
+//! geometry.
 //!
-//! A layer is a traversable service context over one network (design §20).
+//! A layer is a traversable service context over one network.
 //! Cars are searched every iteration on the [`RoadNetwork`] itself; **bikes and
 //! pedestrians have static costs** (§21.1), so each gets a [`StaticNetwork`]:
 //! its own directed graph — a bike may ride against a one-way street where
@@ -12,7 +12,7 @@
 //! **The motor-traffic parameters of a static network's links are never read**,
 //! as for footways in the road network.
 //!
-//! # The minimal bike layer (S193)
+//! # The minimal bike layer
 //!
 //! Every car link except motorways is also a bike link; dedicated bike
 //! infrastructure ([`BikeInfrastructure::Lane`], [`BikeInfrastructure::Separated`])
@@ -24,7 +24,7 @@
 //!
 //! [`StaticNetwork::derive`] makes both layers from a road network alone — the
 //! synthetic grid, the toy network, a network read from a link table — by the
-//! fallback rung of design §21.4: bikes on every road link but motorways, in
+//! fallback rung: bikes on every road link but motorways, in
 //! the road's direction; pedestrians on every link but motorways and cycleways,
 //! both ways.
 //!
@@ -41,7 +41,7 @@ use crate::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
 use crate::geometry::ProjectionError;
 use crate::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 
-/// Every layer a traveller can be on (design §20; S198): where a hub's access
+/// Every layer a traveller can be on: where a hub's access
 /// point is, and which network a leg of a trip runs on.
 ///
 /// The discriminant is the layer's id and part of what hubs store: append new
@@ -53,9 +53,9 @@ pub enum Layer {
     Car = 0,
     /// Personal bikes, on the bike layer.
     Bike = 1,
-    /// Walking, on the walk layer: the universal access layer (design §21.2).
+    /// Walking, on the walk layer: the universal access layer.
     Walk = 2,
-    /// Scheduled public transport (M3): a stop's platform.
+    /// Scheduled public transport: a stop's platform.
     Transit = 3,
 }
 
@@ -94,7 +94,7 @@ impl From<StaticLayer> for Layer {
     }
 }
 
-/// The layers whose costs are static (design §21.1).
+/// The layers whose costs are static.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum StaticLayer {
     /// Personal bikes.
@@ -114,7 +114,7 @@ impl StaticLayer {
     }
 }
 
-/// What a bike link offers a cyclist, from the tags (S193).
+/// What a bike link offers a cyclist, from the tags.
 ///
 /// Recorded at three levels because OSM distinguishes them anyway, and later
 /// bikeability link types would otherwise need a re-import; the minimal cost
@@ -153,7 +153,7 @@ impl BikeInfrastructure {
     }
 }
 
-/// How a bike route search costs a link (S193; D4, S195).
+/// How a bike route search costs a link.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum BikeCost {
     /// Travel time only: dedicated infrastructure attracts routes only through
@@ -161,7 +161,7 @@ pub enum BikeCost {
     Time,
     /// Travel time, with [`StaticLayerDefaults::bike_mixed_cost_factor`] on every
     /// link without dedicated infrastructure: cyclists accept a detour to ride on
-    /// it. **The default** (D4).
+    /// it. **The default**.
     #[default]
     Dedicated,
 }
@@ -188,7 +188,7 @@ impl BikeCost {
 }
 
 /// The defaults of the static layers: speeds and the dedicated-infrastructure
-/// preference (S193). Part of the defaults table; a change is a modelling change
+/// preference. Part of the defaults table; a change is a modelling change
 /// and bumps [`crate::DEFAULTS_VERSION`].
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct StaticLayerDefaults {
@@ -219,10 +219,9 @@ pub struct StaticLayerDefaults {
     /// such a model.*
     pub bike_mixed_cost_factor: f64,
     /// The multiplier [`BikeCost::Dedicated`] puts on the travel time of a link with a
-    /// painted lane (or a cycle street), against 1 on a separated track (S236, roadmap I-bb:
-    /// lane against track).
+    /// painted lane (or a cycle street), against 1 on a separated track.
     ///
-    /// *Uncalibrated: 1, a lane counted as a track, as before S236. In Portland painted lanes
+    /// *Uncalibrated: 1, a lane counted as a track, as before. In Portland painted lanes
     /// were no more attractive than a quiet street, while off-street paths were valued highly
     /// (Broach, Dill and Gliebe 2012, above); a value between 1 and
     /// [`Self::bike_mixed_cost_factor`] is to be taken from such a model.*
@@ -235,13 +234,13 @@ pub struct StaticLayerDefaults {
     /// 1538, 1996).
     pub walk_km_h: f64,
     /// A ferry's speed when its way does not say how long the crossing takes
-    /// (no `duration` tag), in km/h (S197).
+    /// (no `duration` tag), in km/h.
     ///
     /// *An assumption: small urban passenger ferries cross at roughly this
     /// speed, docking included.*
     pub ferry_km_h: f64,
-    /// The expected wait for a ferry, in seconds, added to every crossing
-    /// (S197): the static stand-in for a timetable until transit (M3) has the
+    /// The expected wait for a ferry, in seconds, added to every crossing:
+    /// the static stand-in for a timetable until transit has the
     /// ferry's own.
     ///
     /// *An assumption: half of a 10-minute headway. The free IJ ferries in
@@ -265,7 +264,7 @@ impl StaticLayerDefaults {
     /// crossing the whole way takes the expected wait plus the crossing:
     /// `duration_s` if the way states it, else the way at
     /// [`Self::ferry_km_h`]. A static layer's links have a speed and nothing
-    /// else, so the wait is folded into it (S197).
+    /// else, so the wait is folded into it.
     #[must_use]
     pub fn ferry_speed_km_h(self, length_m: f64, duration_s: Option<f64>) -> f64 {
         let crossing = duration_s
@@ -396,7 +395,7 @@ pub struct StaticNetwork {
 }
 
 impl StaticNetwork {
-    /// Both static layers made from a road network alone (design §21.4's
+    /// Both static layers made from a road network alone (the
     /// fallback rung): bikes on every link but motorways, in the road's
     /// direction, [`BikeInfrastructure::Separated`] on cycleways and mixed
     /// elsewhere, never above the road's free-flow speed; pedestrians on every
@@ -496,7 +495,7 @@ impl StaticNetwork {
         builder.build(road.projection(), diagnostics)
     }
 
-    /// The same layer with `changes` made to its links' bike infrastructure (S238, scenario
+    /// The same layer with `changes` made to its links' bike infrastructure (scenario
     /// edits): a street given a painted lane or a separated track, or one taken away. A changed
     /// link rides at its new infrastructure's speed under `defaults` (`bike_dedicated_km_h` for
     /// a lane or a track, `bike_mixed_km_h` in mixed traffic); its costs and the attributes a
@@ -582,8 +581,8 @@ impl StaticNetwork {
 
     /// Every link's cost for a route search, in link order: its travel time,
     /// times `mixed_factor` where [`BikeCost::Dedicated`] applies to a link
-    /// without dedicated infrastructure (a ferry is not mixed traffic, S197), and
-    /// times `lane_factor` on a painted lane (S236; 1 counts a lane as a track).
+    /// without dedicated infrastructure (a ferry is not mixed traffic), and
+    /// times `lane_factor` on a painted lane (1 counts a lane as a track).
     /// On the walk layer the cost is the time.
     #[must_use]
     pub fn link_costs(&self, cost: BikeCost, lane_factor: f64, mixed_factor: f64) -> Vec<f64> {

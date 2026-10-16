@@ -48,7 +48,7 @@ fn a_trip_still_under_way_at_the_window_end_is_counted_on_the_network() {
     }
 }
 
-/// **Property (S271):** a loading whose clock starts at the window's start finishes a trip
+/// **Property:** a loading whose clock starts at the window's start finishes a trip
 /// exactly as one started at midnight, and one still under way at the end stays unfinished.
 #[test]
 fn a_loading_started_at_the_window_start_finishes_trips_as_one_started_at_midnight() {

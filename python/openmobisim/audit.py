@@ -18,7 +18,7 @@ __all__ = ["network_check"]
 
 
 #: Plausible median free-flow speeds (km/h) by road class, on links that do not end at a
-#: signal (a signal's delay is part of a link's free-flow time). Judgement calls (S172).
+#: signal (a signal's delay is part of a link's free-flow time). Judgement calls.
 _ROAD_SPEED = {
     "motorway": (50, 130), "trunk": (35, 110), "primary": (20, 90), "secondary": (18, 80),
     "tertiary": (15, 70), "unclassified": (10, 70), "residential": (8, 50),
@@ -105,12 +105,12 @@ def _signals(
     signal: np.ndarray,
     stopped: np.ndarray,
 ) -> None:
-    """Whether the street signals near a junction stop one direction (S282, H6; DR-129).
+    """Whether the street signals near a junction stop one direction.
 
     A signal on a two-way street (a node with two neighbours) within ``signal_merge_m`` of a
     junction is a stop line: it stops the traffic heading into the junction, not both directions.
-    One that stops both is a direction ignored, the reader bug that S265 fixed and that no check
-    caught for months; a few may be mapped that way. Junctions' own signals and mid-block crossings
+    One that stops both is a direction ignored, as a reader bug once did; a few may be mapped
+    that way. Junctions' own signals and mid-block crossings
     are not counted. The value also gives the signals per drivable kilometre.
     """
     n = net.node_count

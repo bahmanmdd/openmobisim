@@ -1,6 +1,6 @@
 //! Reading a small hand-written feed, as a folder and as a zip: the busiest
 //! weekday, service exceptions, clipping to an area, interpolated times, the
-//! pick-up and drop-off rules, transfers, frequencies (S238), and what is counted as skipped.
+//! pick-up and drop-off rules, transfers, frequencies, and what is counted as skipped.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -274,7 +274,7 @@ fn a_frequency_run_whose_first_stop_has_a_dwell_keeps_its_times() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// **Property (X-48):** a repeated `route_id` is skipped and counted, as a repeated stop or trip
+/// **Property:** a repeated `route_id` is skipped and counted, as a repeated stop or trip
 /// is; the first row of the route is the one kept.
 #[test]
 fn a_repeated_route_is_counted_as_a_skipped_row() {

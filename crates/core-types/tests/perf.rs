@@ -38,7 +38,7 @@ fn budget(release_millis: u64) -> Duration {
 
 /// How many times `check` times its body, keeping the fastest: a busy runner only ever adds
 /// time, so the fastest of a few is the closest to the real cost (two CI flakes on
-/// `macos-latest`, the second in S240, each timed at about ten times the real cost).
+/// `macos-latest`, the second, each timed at about ten times the real cost).
 const REPEATS: u32 = 3;
 
 /// Time `body` (the fastest of [`REPEATS`]), print the rate, and — in a release build — fail
@@ -169,7 +169,7 @@ fn an_unused_diagnostics_report_allocates_nothing() {
 
 #[test]
 fn memory_footprints_match_the_design_estimates() {
-    // Foundations §5 states per-run memory in formulas. These assertions pin
+    // Per-run memory is estimated in formulas. These assertions pin
     // the per-entry sizes those formulas are built on, so that an estimate in
     // the design document and the code cannot drift apart silently.
     let links = 50_000usize;

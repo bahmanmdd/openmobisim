@@ -1,14 +1,12 @@
-//! `diagnostics.parquet` — aggregated counters (Foundations §6):
+//! `diagnostics.parquet` — aggregated counters:
 //! `run_id, category, code, severity, element_kind, element_id, count`.
 //!
 //! One row per `(category, code, severity, element)`, in the deterministic
 //! order [`Diagnostics::rows`] already guarantees — the same order on every
-//! run of the same scenario, which is what lets the run-twice CI gate (S111)
+//! run of the same scenario, which is what lets the run-twice CI gate
 //! compare two runs' `diagnostics.parquet` byte for byte once it exists.
 //!
-//! No `detail` column: Foundations §6 names one, but [`Diagnostics`] does
-//! not carry free-text detail yet (S131 already noted this gap when it was
-//! found). Added when it does.
+//! No `detail` column: [`Diagnostics`] carries no free-text detail yet.
 
 use std::path::Path;
 use std::sync::Arc;

@@ -4,7 +4,7 @@
 //! |---|---|
 //! | `deterministic` (the default, [`DEFAULT_MODEL`](crate::DEFAULT_MODEL)) | Everyone takes the alternative with the least `time_min`: all-or-nothing, for debugging and upper bounds |
 //! | `logit` | A random utility model, linear in named attributes, sampled exactly by the Gumbel-max construction; with the path-size term it is the standard **path-size logit** for routes |
-//! | `nested_logit` | The logit's utility with the alternatives in nests (the attribute `nest`; in mode choice, the mode), scale `mu`; sampled exactly with keyed draws (M5) |
+//! | `nested_logit` | The logit's utility with the alternatives in nests (the attribute `nest`; in mode choice, the mode), scale `mu`; sampled exactly with keyed draws |
 
 use crate::batch::{ChoiceBatch, Choices};
 use crate::model::{
@@ -16,7 +16,7 @@ use openmobisim_core_types::rng::StreamRng;
 /// tie (so, in route choice, the store's best route: cost, then links).
 ///
 /// All-or-nothing assignment: no random draw, no probability but 1. It is the
-/// debugging rung and the upper bound of design §4, and it reproduces the
+/// debugging rung and the upper bound, and it reproduces the
 /// behaviour every run had before the choice layer existed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Deterministic;
@@ -101,11 +101,11 @@ impl ChoiceModel for Deterministic {
 /// |---|---|---|
 /// | `beta_time_min` | −0.2 | travel time, minutes (door to door for an itinerary) |
 /// | `beta_ln_path_size` | 1 | ln of the path-size factor: routes that share links with the others in the set split their share (Ben-Akiva and Bierlaire, 1999), which repairs the logit's blindness to overlap |
-/// | `beta_walk_min` | −0.13 | minutes walking, **on top of** `time_min`: walking weighs about 1.65 times riding (M4, A9) |
-/// | `beta_wait_min` | −0.09 | minutes waiting at stops, on top: about 1.47 times riding (M4, A9) |
-/// | `beta_transfers` | −1 | each change of vehicle: about five minutes (M4, A9) |
-/// | `beta_bike_mixed_km` | −0.16 | each kilometre of a bike leg in mixed traffic, **on top of** its time (S244, D-4) |
-/// | `beta_cost_eur` | −1.2 | what the alternative costs, euros: 10 €/h at −0.2 per minute (D-1); see **Money** below |
+/// | `beta_walk_min` | −0.13 | minutes walking, **on top of** `time_min`: walking weighs about 1.65 times riding |
+/// | `beta_wait_min` | −0.09 | minutes waiting at stops, on top: about 1.47 times riding |
+/// | `beta_transfers` | −1 | each change of vehicle: about five minutes |
+/// | `beta_bike_mixed_km` | −0.16 | each kilometre of a bike leg in mixed traffic, **on top of** its time |
+/// | `beta_cost_eur` | −1.2 | what the alternative costs, euros: 10 €/h at −0.2 per minute; see **Money** below |
 ///
 /// Walking, waiting, changing and riding in mixed traffic are 0 for a car route, so they
 /// change nothing there; for an itinerary (transit, park-and-ride, bike-and-ride) the first
@@ -126,16 +126,16 @@ impl ChoiceModel for Deterministic {
 /// `beta_length_km`, `beta_detour`, `beta_overlap`, `beta_n_links` — and one not on
 /// offer is refused when the run starts, with the list of those that are. Set a
 /// default to `0` to drop its term. **A default whose attribute a batch does not carry
-/// counts it as 0** (S256, C-9): only a coefficient given by name must be on offer. A run
+/// counts it as 0**: only a coefficient given by name must be on offer. A run
 /// offers every default's attribute, so this matters only for a batch made by hand (one
 /// without money, say).
 ///
-/// **Money** (S248): `beta_cost_eur` weighs what an alternative costs in euros: −1.2 by default
-/// since `DEFAULTS_VERSION` 20 (D-1; 0 before, and 0 drops it). A value of time of `V` euros per
+/// **Money**: `beta_cost_eur` weighs what an alternative costs in euros: −1.2 by default
+/// since `DEFAULTS_VERSION` 20 (0 before, and 0 drops it). A value of time of `V` euros per
 /// hour is `beta_cost_eur = beta_time_min · 60 / V`: −1.2 per euro at −0.2 per minute and 10 €/h;
 /// a traveller class's own coefficient is its own value of time.
 ///
-/// **Products** (S249): `beta_<a>*<b>` weighs the product of two attributes, so a value that is
+/// **Products**: `beta_<a>*<b>` weighs the product of two attributes, so a value that is
 /// the same for every alternative of a choice — the traveller's (`person_<name>`), the trip's
 /// (`trip_<name>`, `trip_departure_h`) — can shift one mode (`beta_mode_car*person_age`) or
 /// scale another attribute (`beta_cost_eur*person_income_inv`). The two names may come in
@@ -148,11 +148,11 @@ impl ChoiceModel for Deterministic {
 pub struct Logit {
     /// `(attribute, coefficient)`, sorted by attribute.
     pub betas: Vec<(String, f64)>,
-    /// Per traveller class (S231), by class index: its name and its coefficients (the model's,
+    /// Per traveller class, by class index: its name and its coefficients (the model's,
     /// with the class's overrides), sorted by attribute. Empty: every class weighs alike.
     pub classes: Vec<(String, Vec<(String, f64)>)>,
     /// The attributes whose coefficient was given by name (the model's options or a class's),
-    /// sorted: a batch must carry them. A default's attribute a batch lacks counts as 0 (S256).
+    /// sorted: a batch must carry them. A default's attribute a batch lacks counts as 0.
     pub given: Vec<String>,
 }
 
@@ -174,12 +174,12 @@ impl Default for Logit {
     }
 }
 
-/// The two attributes of a product term `a*b` (S249), if `term` is one.
+/// The two attributes of a product term `a*b`, if `term` is one.
 fn product(term: &str) -> Option<(&str, &str)> {
     term.split_once('*')
 }
 
-/// `attribute` as a model keeps it: a product's two names sorted (S249), so `b*a` is `a*b`.
+/// `attribute` as a model keeps it: a product's two names sorted, so `b*a` is `a*b`.
 fn canonical(attribute: &str) -> String {
     match product(attribute) {
         Some((a, b)) if b < a => format!("{b}*{a}"),
@@ -187,7 +187,7 @@ fn canonical(attribute: &str) -> String {
     }
 }
 
-/// One term of a utility on a batch's columns: a column, or the product of two (S249).
+/// One term of a utility on a batch's columns: a column, or the product of two.
 #[derive(Clone, Copy, Debug)]
 enum Term {
     One(usize),
@@ -204,7 +204,7 @@ impl Term {
 }
 
 /// A class's utility on a batch's columns: a coefficient per column (0 for one it does not
-/// weigh), and its product terms (S249).
+/// weigh), and its product terms.
 type Dense = (Vec<f64>, Vec<(Term, f64)>);
 
 /// The attributes the built-in logit weighs by default (its [`Logit::default`]'s).
@@ -212,7 +212,7 @@ const DEFAULT_ATTRIBUTES: [&str; 7] =
     ["bike_mixed_km", "cost_eur", "ln_path_size", "time_min", "transfers", "wait_min", "walk_min"];
 
 /// The terms `betas` weigh, on `batch`'s columns, with their coefficients (zeros dropped). A
-/// default's attribute the batch lacks, not in `given`, is left out: it counts as 0 (S256, C-9).
+/// default's attribute the batch lacks, not in `given`, is left out: it counts as 0.
 fn terms(
     betas: &[(String, f64)],
     given: &[String],
@@ -292,7 +292,7 @@ impl Logit {
         Ok(m)
     }
 
-    /// The same model with coefficients per traveller class (S231): `classes[c]` is class `c`'s
+    /// The same model with coefficients per traveller class: `classes[c]` is class `c`'s
     /// name and its `beta_<attribute>` overrides of this model's coefficients.
     ///
     /// # Errors
@@ -333,7 +333,7 @@ impl Logit {
     }
 
     /// The classes' coefficients that differ from the model's, as `;class:<name>.beta_<a>=<v>`
-    /// terms in class-name order: what a descriptor adds for them (S231).
+    /// terms in class-name order: what a descriptor adds for them.
     fn class_terms(&self) -> String {
         let mut by_name: Vec<&(String, Vec<(String, f64)>)> = self.classes.iter().collect();
         by_name.sort_by(|a, b| a.0.cmp(&b.0));
@@ -354,7 +354,7 @@ impl Logit {
     /// # Errors
     ///
     /// [`ChoiceError::MissingAttribute`] if a coefficient given by name names an attribute
-    /// the batch does not carry (a default's counts as 0, S256).
+    /// the batch does not carry (a default's counts as 0).
     pub fn utilities(&self, batch: &ChoiceBatch) -> Result<Vec<f64>, ChoiceError> {
         let columns: Vec<&[f64]> =
             (0..batch.attribute_names().len()).map(|k| batch.column(k)).collect();
@@ -468,7 +468,7 @@ impl ChoiceModel for Logit {
 /// nest's draw can never be an alternative's (whose iteration field is the plain iteration).
 const NEST_KEY: u32 = 0x4000_0000;
 
-/// A **nested logit** (design §4; M5): the [`Logit`]'s utility, linear in named
+/// A **nested logit**: the [`Logit`]'s utility, linear in named
 /// attributes with the same coefficients and defaults, and the alternatives grouped
 /// in nests by the attribute **`nest`** (a number: in mode choice, the mode).
 ///
@@ -485,7 +485,7 @@ const NEST_KEY: u32 = 0x4000_0000;
 /// on its identity, as the logit's.
 ///
 /// **Default `mu` = 0.5**: an assumption, with no published range found for route-in-mode
-/// nests (S259); uncalibrated, like the coefficients.
+/// nests; uncalibrated, like the coefficients.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NestedLogit {
     /// The utility.

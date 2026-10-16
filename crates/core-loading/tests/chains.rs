@@ -1,4 +1,4 @@
-//! Chained vehicles in the loading (S199): a bus's next leg departs when the
+//! Chained vehicles in the loading: a bus's next leg departs when the
 //! leg before it arrives, after its dwell and not before its scheduled time,
 //! and a dwelling bus holds no room.
 //!

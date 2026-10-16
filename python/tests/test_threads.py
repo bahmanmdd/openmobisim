@@ -1,6 +1,6 @@
-"""A run's results do not depend on how many threads it uses (S277, roadmap I-bz).
+"""A run's results do not depend on how many threads it uses.
 
-The guarantee (Foundations §3.5): reductions in a fixed order, random draws keyed to the seed,
+The guarantee: reductions in a fixed order, random draws keyed to the seed,
 the traveller and the iteration, never to a thread. Each run below is made with one thread and
 with several, and everything it wrote is compared, bit for bit: the fingerprint, the KPIs, the
 events, the per-link bins of every layer, the transit calls and the parkings.
@@ -84,7 +84,7 @@ def test_threads_must_be_at_least_one() -> None:
 @pytest.mark.skipif(BUNDLE is None, reason="set OPENMOBISIM_TEST_BUNDLE to the bundle's folder")
 @pytest.mark.parametrize("weight", [None, 1], ids=["fast", "complete"])
 def test_delft_is_the_same_at_one_thread_and_at_every_core(tmp_path, weight) -> None:
-    """The user's check (S274): Delft, its fast and its complete run, 1 thread and all."""
+    """The user's check: Delft, its fast and its complete run, 1 thread and all."""
     if (os.cpu_count() or 1) < 2:
         pytest.skip("one core: nothing to compare")
     scenario = ms.examples.case("delft", root=BUNDLE).scenario("base", weight=weight)

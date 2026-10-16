@@ -1,4 +1,4 @@
-//! The bike and walk layers an import builds (S195): each its own graph from
+//! The bike and walk layers an import builds: each its own graph from
 //! the same ways, the road network unchanged by them.
 
 #![allow(clippy::float_cmp, reason = "speeds are set exactly from the defaults table")]

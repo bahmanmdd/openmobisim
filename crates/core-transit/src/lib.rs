@@ -1,5 +1,5 @@
 //! Scheduled public transport: the timetable of one service day and RAPTOR
-//! (design §18; S199).
+//! .
 //!
 //! | Module | What it owns |
 //! |---|---|
@@ -14,7 +14,7 @@
 //! road networks is the run's (`core-sim`): this crate knows stops by position
 //! only.
 //!
-//! **Vehicle-based, always** (S20, design §18.1): a run is one vehicle on the
+//! **Vehicle-based, always**: a run is one vehicle on the
 //! service day. Runs that ride the roads (buses) are loaded among the cars and
 //! their realised times replace the scheduled ones; the others run by the
 //! schedule.

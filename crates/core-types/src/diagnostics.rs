@@ -1,5 +1,5 @@
 //! Run diagnostics: the counters that make "the simulation never stops"
-//! honest (Foundations §6, brief §3c).
+//! honest.
 //!
 //! # The bargain
 //!
@@ -15,7 +15,7 @@
 //!
 //! # Cost
 //!
-//! Instrumentation pays on the exception path only (brief §3e). A
+//! Instrumentation pays on the exception path only. A
 //! [`Diagnostics`] that records nothing allocates nothing: the maps are empty
 //! `HashMap`s, which do not allocate until first insert. Recording is two hash
 //! lookups, and it happens only where the model has already decided to do
@@ -122,7 +122,7 @@ impl core::fmt::Display for DiagCode {
 
 /// The core diagnostic codes.
 ///
-/// Each is carried by a specific mechanism named in Foundations §6. Phase 1
+/// Each is carried by a specific mechanism named Phase 1
 /// only emits a few of them; the rest are declared here so that the vocabulary
 /// is settled in one place and cannot drift as the mechanisms land.
 pub mod codes {
@@ -153,7 +153,7 @@ pub mod codes {
     /// Per-element diagnostic detail was capped; see [`super::MAX_ELEMENTS_PER_CODE`].
     pub const DIAGNOSTIC_DETAIL_TRUNCATED: DiagCode = DiagCode("diagnostic_detail_truncated");
     /// Vehicles stood in a closed loop of links waiting on one another when the loading ended
-    /// (gridlock, S213): one per loop, about the loop's first link.
+    /// (gridlock): one per loop, about the loop's first link.
     pub const GRIDLOCK: DiagCode = DiagCode("gridlock");
 }
 

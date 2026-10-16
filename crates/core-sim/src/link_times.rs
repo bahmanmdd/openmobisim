@@ -1,4 +1,4 @@
-//! What a link costs at a given moment, from the last loading (S170).
+//! What a link costs at a given moment, from the last loading.
 //!
 //! After a loading, the per-link, per-time-bin table ([`LinkBins`]) says how
 //! long traffic took to cross each link in each bin. [`LinkTimes`] reads it back
@@ -6,12 +6,12 @@
 //! time in the bin containing `t`, or the link's free-flow time where nobody
 //! crossed it. A route's expected time for a traveller leaving at `t` is found by
 //! walking it link by link, arriving at each link at the time the last one
-//! ended (design §11.1: time-dependent cost is fine under FIFO).
+//! ended (time-dependent cost is fine under FIFO).
 //!
 //! **The table is by entry time.** A traveller about to enter a link needs the
 //! time taken by those who *entered* when they would, not by those who happened to
 //! *leave* then: in a growing queue the two differ by the queue's length, and
-//! reading the exit-time table would show the queue late (found in S170 on a
+//! reading the exit-time table would show the queue late (found on a
 //! hand-made bottleneck, where it hid a third of the disequilibrium). The loading
 //! records both ([`openmobisim_core_loading::LinkBinRecorder::with_entry_bins`]);
 //! only vehicles that finished the link inside the window count, so in a jam that
@@ -37,7 +37,7 @@ pub struct LinkTimes {
     wait_mean: Vec<f64>,
     /// Per link, its first recorded bin; its times from that bin to its last recorded one
     /// are `span[span_start[l]..span_start[l + 1]]`, a bin with no row holding the free-flow
-    /// time (S259): a lookup is one read instead of a binary search, with the same numbers.
+    /// time: a lookup is one read instead of a binary search, with the same numbers.
     span_first: Vec<u32>,
     span_start: Vec<u32>,
     span: Vec<f64>,
@@ -192,8 +192,7 @@ impl LinkTimes {
 /// over every (link, bin) either loading has a row for, in both tables of
 /// [`EntryTables`] (link times, where a missing row is the link's free-flow time,
 /// and origin waits, where it is zero), `w` being the PCU of the later row (the
-/// earlier if there is none). Zero when nothing moved; the stability number of
-/// design §11.2.
+/// earlier if there is none). Zero when nothing moved.
 ///
 /// Both must have the same bin length.
 ///

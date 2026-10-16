@@ -1,4 +1,4 @@
-"""Every parameter in one table (S230, roadmap I-ae).
+"""Every parameter in one table.
 
 What is defended: ``parameters()`` lists every group, with units read from the names, and every
 row is accepted by the argument it names, at its listed value (so the table cannot drift from

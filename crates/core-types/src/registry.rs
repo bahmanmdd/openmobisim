@@ -1,4 +1,4 @@
-//! The plugin registry: names resolved once, at build time (Foundations §7).
+//! The plugin registry: names resolved once, at build time.
 //!
 //! # The rule
 //!
@@ -7,7 +7,7 @@
 //! string comparison inside a loop. What the simulation holds is the thing
 //! itself, not a way of finding it.
 //!
-//! This is also the mechanism behind "off means absent" (brief §3e): a plugin
+//! This is also the mechanism behind "off means absent": a plugin
 //! that was not selected is not merely skipped at run time, it is not present
 //! at all, so it cannot cost a branch.
 //!

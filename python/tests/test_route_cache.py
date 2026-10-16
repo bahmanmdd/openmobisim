@@ -1,4 +1,4 @@
-"""The route-set cache across the boundary (S178).
+"""The route-set cache across the boundary.
 
 What is defended: a run that takes its route sets from the cache is the run that made them, the
 counters say what happened, other inputs are other entries, and the cache can be cleared.

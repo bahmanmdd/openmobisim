@@ -1,5 +1,5 @@
 //! The choice-model interface, the helpers a new model builds on, and the
-//! by-name registry (design §4).
+//! by-name registry.
 //!
 //! **A model is a [`ChoiceModel`]**: given a [`ChoiceBatch`] and the run's
 //! choice stream, it says which alternative each situation takes. Everything
@@ -41,7 +41,7 @@
 //! # Common random numbers
 //!
 //! Every random draw is keyed on `(traveller, trip, iteration, alternative
-//! identity)` (Foundations §4), never on position, so a design that adds or
+//! identity)`, never on position, so a design that adds or
 //! removes an alternative leaves the noise of every other alternative — and, in
 //! a Gumbel-max model, the choice of everyone who did not prefer the removed
 //! alternative — exactly as it was.
@@ -177,7 +177,7 @@ pub trait ChoiceModel: Send + Sync {
     ///
     /// Optional, and what turns a model that only *samples* into one whose
     /// equilibrium can be measured: the convergence report of an iterated run
-    /// compares the choices made with these probabilities (design §11.2).
+    /// compares the choices made with these probabilities.
     ///
     /// # Errors
     ///
@@ -187,7 +187,7 @@ pub trait ChoiceModel: Send + Sync {
     }
 
     /// The **logsum** of every situation in `batch`, one value per situation, or `None` if the
-    /// model has none to give (S238): the expected utility of the best alternative, up to a
+    /// model has none to give: the expected utility of the best alternative, up to a
     /// constant — the log of the sum of the exponentials of the utilities for a logit. In the
     /// units of the utility; divided by a time coefficient's size it reads in minutes. The
     /// standard utility-based accessibility measure (Ben-Akiva and Lerman, 1985).
@@ -257,7 +257,7 @@ pub fn first_argmax(values: &[f64]) -> usize {
 
 /// The logit probabilities of one situation's `utilities`: `exp(vᵢ) / Σ exp(vⱼ)`,
 /// computed with the largest utility subtracted so it cannot overflow. Exact —
-/// never tabulated (S75).
+/// never tabulated.
 #[must_use]
 pub fn logit_probabilities(utilities: &[f64]) -> Vec<f64> {
     let top = utilities.iter().copied().fold(f64::NEG_INFINITY, f64::max);
@@ -367,7 +367,7 @@ pub fn model(name: &str, options: &Options) -> Result<Box<dyn ChoiceModel>, Choi
     Registry::builtin().create(name, options)
 }
 
-/// A built-in model by name, with coefficients per traveller class (S231): `classes[c]` is class
+/// A built-in model by name, with coefficients per traveller class: `classes[c]` is class
 /// `c`'s name and its `beta_<attribute>` overrides (empty: the model's own). Only the random-utility
 /// models weigh classes: the logit and the nested logit.
 ///

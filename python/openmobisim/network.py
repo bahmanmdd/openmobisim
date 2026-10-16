@@ -27,7 +27,7 @@ __all__ = ["LINK_CLASSES", "network_edit", "network_read_table"]
 
 #: The road classes' names, in the order of their numbers: ``LINK_CLASSES[c]`` names the class
 #: ``Network.link_class()`` gives as ``c`` (``"motorway"`` is 0, ``"ferry"`` 17). On the bike
-#: and walk layers, a ferry crossing is a link of class ``"ferry"`` (S241).
+#: and walk layers, a ferry crossing is a link of class ``"ferry"``.
 LINK_CLASSES: tuple[str, ...] = tuple(_core.link_classes())
 
 #: The number ``Network.link_class()`` gives an unclassified road (X-23: looked up, not repeated).
@@ -206,7 +206,7 @@ def network_read_table(
             column of your own if you have the mapping); ``roundabout``;
             ``signalised`` (``signal``): a signal at the link's end that stops
             it alone (a stop line for one direction; a signalised node stops
-            every approach, S265). A
+            every approach). A
             column not given, for a row that does not state it, defaults from
             the class table exactly as an unstated OSM tag does, with the
             same diagnostics for what was filled in — a two-way street is two
@@ -222,7 +222,7 @@ def network_read_table(
             ``signalised`` (``signal``) — every approach to a signalised node
             gets a control delay and a green-time fraction; ``signal_location``
             — a signal stands at the node but stops only the links whose own
-            ``signalised`` says so (a stop line's, S282).
+            ``signalised`` says so (a stop line's).
         length_unit: The unit of a `links` ``length`` column: ``"m"``
             (the default), ``"km"`` or ``"mi"``.
         speed_unit: The unit of a `links` ``free_flow_speed`` column:
@@ -431,7 +431,7 @@ def network_read_table(
             stacklevel=2,
         )
     # A stated capacity can exceed what the class row's jam density carries at the link's
-    # free-flow speed within the backward wave's bound (design §12.1). The core keeps the
+    # free-flow speed within the backward wave's bound. The core keeps the
     # capacity asked for and raises the link's jam density so the triangle closes (S279;
     # before, it cut the capacity, silently for a caller) — common where `class` fell back to
     # unclassified's single lane and a TNTP corridor's capacity is per link. Nothing surfaces
@@ -463,7 +463,7 @@ def network_read_table(
 
 
 def network_options(network: _core.Network | None = None) -> dict[str, float]:
-    """Every network parameter by name, at its shipped value, or at `network`'s (S225).
+    """Every network parameter by name, at its shipped value, or at `network`'s.
 
     The road-class table (``"<class>.free_flow_km_h"``, ``"<class>.lanes"``,
     ``"<class>.saturation_flow_veh_h_lane"``, ``"<class>.jam_density_veh_km_lane"`` for every
@@ -471,7 +471,7 @@ def network_options(network: _core.Network | None = None) -> dict[str, float]:
     (``capacity_factor``, …), the signal settings (``signal_cycle_s``, ``signal_green_fraction``,
     ``signal_degree_of_saturation``), the most a lane of an at-grade road discharges at a signal,
     by its speed (``street_30.saturation_flow_veh_h_lane`` 1 000, ``street_50.…`` 1 200,
-    ``street_70.…`` 1 500 veh/h per hour of green, S265: CEREMA's values for French signals)
+    ``street_70.…`` 1 500 veh/h per hour of green: CEREMA's values for French signals)
     and the bike and walk layers (``bike_mixed_km_h``, ``walk_km_h``, …). Each is an uncalibrated
     default; the readers' ``network_options`` override them by name.
     """
@@ -486,7 +486,7 @@ def network_edit(
     capacity_factor: Mapping[str | int, float] | None = None,
     bike_facility: Mapping[str | int, str] | None = None,
 ) -> _core.Network:
-    """The same network with a scenario's changes made, for a study to compare (S238).
+    """The same network with a scenario's changes made, for a study to compare.
 
     A new network is returned; ``network`` is left as it was. Links keep their indices, so
     the per-link results of a run on each (``Run.link_bins``) line up link by link, and a

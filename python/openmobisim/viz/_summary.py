@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""A run's summary as one self-contained HTML page (S227, roadmap I-ad; redesigned S281).
+"""A run's summary as one self-contained HTML page.
 
 Headline numbers, the travel statistics (the modes, when people left, the roads' traffic over the
 day and its delay, transit and parking, bikes and walking), the flow map, the convergence, the
@@ -58,7 +58,7 @@ STAGES = {
 }
 
 
-#: The flow map's size on the page, and its resolution: 1 920 x 1 080 pixels (S227: sharper than
+#: The flow map's size on the page, and its resolution: 1 920 x 1 080 pixels (sharper than
 #: the prototype's).
 MAP_SIZE_CM = (30.48, 17.145)
 MAP_DPI = 160
@@ -97,7 +97,7 @@ def _table(head: list[str], rows: list[list[str]], numeric_from: int = 1) -> str
 
 
 def _no_alternative(run: Any, manifest: dict[str, Any]) -> str:
-    """The trips choosing their mode that had none to choose (S233), overall and by class.
+    """The trips choosing their mode that had none to choose, overall and by class.
 
     Counted in people; the walk and bike limits mode choice applies are stated with them.
     """
@@ -227,8 +227,7 @@ def _bars(items: list[tuple[str, float]], unit: str) -> str:
     return '<div class="bars">' + "".join(rows) + "</div>"
 
 
-#: The three parts of the computation time (S281, the user: "a general breakdown of major
-#: computation time components is enough for the summary (reading, run, writing results)").
+#: The three parts of the computation time the summary shows: reading, the run, writing the results.
 WRITING = ("results_assembled", "results_written")
 
 
@@ -517,7 +516,7 @@ def _services(run: Any) -> str:
 
 
 def _layers(run: Any) -> str:
-    """Each layer's size: links, nodes and length, the roads, bike and walk layers and transit (S282).
+    """Each layer's size: links, nodes and length, the roads, bike and walk layers and transit.
 
     Transit's links are its stop-to-stop hops (distinct pairs of consecutive calls), its nodes
     its stops, its length the hops' straight lines.
@@ -555,7 +554,7 @@ def _layers(run: Any) -> str:
 
 
 def _computation(run: Any) -> tuple[str, str]:
-    """The three-part time for the summary, and the stage-by-stage page's body (S281)."""
+    """The three-part time for the summary, and the stage-by-stage page's body."""
     t = run.timings()
     agg: dict[str, float] = {}
     per: dict[int, dict[str, float]] = {}
@@ -626,8 +625,8 @@ def summary(
     when people left, by mode; the roads' traffic over the day, its delay by band and the
     busiest links; transit, parking, bikes and walking in numbers), the convergence by iteration
     with its verdict, the computation time in three parts (reading, running, writing; stage by
-    stage on ``timings.html`` beside it, S281) with each layer's size (links, nodes, length),
-    the settings with the fingerprint, and at the end a map per mode (S282): car traffic,
+    stage on ``timings.html`` beside it) with each layer's size (links, nodes, length),
+    the settings with the fingerprint, and at the end a map per mode: car traffic,
     transit, bike traffic and walking, each where the run has its results (per-link results
     need ``link_bins_s``). Light and dark follow the reader's system. Needs matplotlib for the
     maps.
@@ -796,8 +795,8 @@ def summary(
         '</td><td class="">', '</td><td class="v">'
     )
 
-    # The maps, one per main mode, in both themes swapped by the colour scheme (S282, the user:
-    # "one network figure per mode ... at the end"): cars, transit, bikes, walking.
+    # The maps, one per main mode, in both themes swapped by the colour scheme (S282): cars,
+    # transit, bikes, walking.
     def pair(draw: Any) -> str:
         day = _png(draw("paper"))
         dark = _png(draw("night"))

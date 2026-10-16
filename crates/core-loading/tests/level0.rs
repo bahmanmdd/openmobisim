@@ -99,7 +99,7 @@ fn a_discontinuous_route_is_rejected() {
 
 #[test]
 fn vehicles_do_not_interact_at_level_0() {
-    // S85/design §10: level 0 has no curves, so two vehicles on the same
+    // S85: level 0 has no curves, so two vehicles on the same
     // link at overlapping times must not affect each other's trajectory —
     // each vehicle's result must be identical whether computed alone or
     // alongside another.

@@ -1,5 +1,5 @@
 //! A cold-run benchmark of the level 2–4 loading on a real `.osm.pbf` extract
-//! (S91: every performance number is for a cold run).
+//! (every performance number is for a cold run).
 //!
 //! The demand is a **load fixture, not a forecast**: random origins, each
 //! routed along the shortest free-flow path (respecting the turn table, over

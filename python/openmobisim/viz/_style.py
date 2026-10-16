@@ -1,4 +1,4 @@
-"""The openmobisim look, in one place (S162).
+"""The openmobisim look, in one place.
 
 Every colour, font and mark that makes a figure recognisably openmobisim is
 defined here, so changing the look is a change to this file and nothing else.
@@ -8,24 +8,24 @@ adjacent-step, single-hue and contrast validator: *ion* is a cool azure for
 volume, *ember* a warm coral-crimson for delay and congestion. The pair is also
 the diverging scale for differences between scenarios.
 
-**Delay is a spectrum** (S164): a blue-green for little delay, gold in the
+**Delay is a spectrum**: a blue-green for little delay, gold in the
 middle, and ember for a lot, so more delay is always a deeper red on both
-themes; its last stop is a deep red well apart from the orange-red before it
-(S282). Three hues and no more, to stay clean. The single-hue ember ramp it
-replaced (S162) is kept as ``ramp_delay_ember`` and selectable with
+themes; its last stop is a deep red well apart from the orange-red before it.
+Three hues and no more, to stay clean. The single-hue ember ramp it
+replaced is kept as ``ramp_delay_ember`` and selectable with
 ``map_link(..., ramp="ember")``; its night version ran the other way (lighter =
 more) so that congestion glowed, which read as backwards and was dropped.
 
-The paper theme's greys were darkened in S164 for contrast; the S162 values are
+The paper theme's greys were darkened for contrast; the earlier values are
 noted beside each.
 
-**Kinds of transit service** (S199, V2) are the one categorical set: the data-viz
+**Kinds of transit service** (V2) are the one categorical set: the data-viz
 method's default order, in the service kinds' order (rail, metro, tram, bus,
 ferry, other), validated on each surface (colour-blind separation and the
 normal-vision floor pass; on paper three fall below 3:1 against the surface, so
 the legend always names every kind).
 
-**Modes** (D17, S206) take few hues, in families: car ember and park-and-ride a
+**Modes** take few hues, in families: car ember and park-and-ride a
 lighter ember; bike the delay spectrum's blue-green and bike-and-ride a lighter
 one; walk its gold; transit ion.
 """
@@ -58,13 +58,12 @@ EMBER = {
 #: The middle lamp of the signal glyph.
 AMBER = "#fab219"
 
-#: The low and middle stops of the delay spectrum, per theme (S164). Built with
+#: The low and middle stops of the delay spectrum, per theme. Built with
 #: the same OKLCH generator as the brand ramps; the high end is ember.
 TEAL_PAPER, GOLD_PAPER = "#04938e", "#ce9c0f"  # 3.7:1 and 2.4:1 on the paper surface
 # 9.2:1 and 8.8:1 on the night surface (S282: a gold, not a yellow, like the paper's).
 TEAL_NIGHT, GOLD_NIGHT = "#40c8c1", "#dcaa1e"
-#: The ramp's deep end (S282, the user: the two reds were too alike; the orange-red is kept and
-#: the last stop is much darker).
+#: The ramp's deep end: much darker than the orange-red before it, so the two are told apart.
 DEEP_PAPER, DEEP_NIGHT = "#6b0014", "#a8101f"
 
 _SANS = ("Inter", "Helvetica Neue", "Segoe UI", "DejaVu Sans")
@@ -89,7 +88,7 @@ class Theme:
     #: Delay, low to high: the spectrum (blue-green, gold, ember). More delay is
     #: always a deeper red.
     ramp_delay: tuple[str, ...]
-    #: The single-hue delay ramp of S162, kept for reversal.
+    #: An earlier single-hue delay ramp, kept for reversal.
     ramp_delay_ember: tuple[str, ...]
     #: Volume, low to high.
     ramp_volume: tuple[str, ...]
@@ -98,7 +97,7 @@ class Theme:
     #: Modes, in ``openmobisim.MODES``' order: car, bike, walk, transit,
     #: park-and-ride (``car_transit``), bike-and-ride (``bike_transit``).
     modes: tuple[str, ...]
-    #: The openmobisim mark's colour: the identity's teal, as it reads on this surface (T-2).
+    #: The openmobisim mark's colour: the identity's teal, as it reads on this surface.
     mark: str = TEAL_PAPER
 
 

@@ -1,4 +1,4 @@
-"""A run's summary page (S227, roadmap I-ad).
+"""A run's summary page.
 
 What is defended: one self-contained HTML file with the run's identity and headline numbers, its
 sections, a map per mode at the end when the run recorded its per-link results (and none otherwise),

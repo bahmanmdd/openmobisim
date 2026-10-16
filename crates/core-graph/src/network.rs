@@ -15,7 +15,7 @@
 //! # Identity is assigned here, deterministically
 //!
 //! [`RoadNetworkBuilder`] takes external ids — OSM node and way ids — and
-//! assigns dense `u32` ids **by sorted external id** (Foundations §1). Two
+//! assigns dense `u32` ids **by sorted external id**. Two
 //! builds of the same extract therefore produce the same ids, in the same
 //! order, whatever order the file happened to list them in. Without that, every
 //! cached artifact and every seeded run silently stops being comparable.
@@ -41,7 +41,7 @@ pub mod codes {
     /// treated as `unclassified`.
     pub const UNKNOWN_HIGHWAY_CLASS: DiagCode = DiagCode("unknown_highway_class");
     /// A link's capacity implied a backward wave above its bound, or no triangle at all; jam
-    /// density was raised so the triangle closes with the capacity given (S279).
+    /// density was raised so the triangle closes with the capacity given.
     pub const JAM_DENSITY_RAISED: DiagCode = DiagCode("jam_density_raised_to_fit_capacity");
     /// A link's derived backward wave speed was clamped to its bound.
     pub const WAVE_SPEED_CLAMPED: DiagCode = DiagCode("wave_speed_clamped");
@@ -89,7 +89,7 @@ pub struct LinkSpec {
     pub length_m: Option<f64>,
     /// Whether the link is part of a roundabout's circulating carriageway
     /// (OSM `junction=roundabout`): traffic entering it gives way to traffic
-    /// already circulating (S155).
+    /// already circulating.
     pub roundabout: bool,
     /// The link's capacity across all its lanes, in vehicles per hour, if the
     /// caller already knows it (I-y: a link table that states capacity
@@ -123,10 +123,10 @@ pub struct RoadNetworkBuilder {
     node_ids: ExternalIdTableBuilder,
     nodes: Vec<(String, LonLat)>,
     signalised: Vec<String>,
-    /// Nodes where a signal stands whose links say which approaches it stops (S282).
+    /// Nodes where a signal stands whose links say which approaches it stops.
     signal_locations: Vec<String>,
     links: Vec<(String, String, String, LinkSpec)>,
-    /// The projection to use instead of one chosen from the extent (S195: a
+    /// The projection to use instead of one chosen from the extent (a
     /// bike or walk layer shares the road network's).
     projection: Option<Projection>,
 }
@@ -142,7 +142,7 @@ impl RoadNetworkBuilder {
     ///
     /// Declaring the same external id twice keeps the **last** coordinate: the node is one (its
     /// id is interned once), and the build reads the coordinates in order, so a later one
-    /// overwrites an earlier one (G-4).
+    /// overwrites an earlier one.
     pub fn add_node(&mut self, external_id: impl Into<String>, at: LonLat) {
         let id = external_id.into();
         self.node_ids.insert(id.clone());
@@ -150,21 +150,21 @@ impl RoadNetworkBuilder {
     }
 
     /// Mark a node as signalised, which gives every approach to it a control
-    /// delay and every turn through it a green-time fraction (S90).
+    /// delay and every turn through it a green-time fraction.
     pub fn mark_signalised(&mut self, external_id: impl Into<String>) {
         self.signalised.push(external_id.into());
     }
 
     /// Record that a signal stands at a node without giving its approaches a delay: the links
     /// that it stops say so themselves ([`LinkSpec::signalised`]). For a reader that decides per
-    /// approach (a stop line's direction, a junction's far side; S265, S282), so that
+    /// approach (a stop line's direction, a junction's far side), so that
     /// [`RoadNetwork::is_signalised`] still knows every signal's place.
     pub fn mark_signal_location(&mut self, external_id: impl Into<String>) {
         self.signal_locations.push(external_id.into());
     }
 
     /// Project in `projection` rather than in one chosen from the nodes'
-    /// extent, so that this network shares another's coordinate system (S195).
+    /// extent, so that this network shares another's coordinate system.
     #[must_use]
     pub fn with_projection(mut self, projection: Projection) -> Self {
         self.projection = Some(projection);
@@ -213,7 +213,7 @@ impl RoadNetworkBuilder {
         self.build_with(&defaults, diagnostics)
     }
 
-    /// [`Self::build`] with every network parameter given by name (S225): the road-class table,
+    /// [`Self::build`] with every network parameter given by name: the road-class table,
     /// the multipliers, the signal settings and the layers' speeds ([`NetworkDefaults`]). The
     /// network keeps them ([`RoadNetwork::defaults`]).
     ///
@@ -421,7 +421,7 @@ pub struct RoadNetwork {
     node_y: Vec<f64>,
     node_lonlat: Vec<LonLat>,
     node_signalised: Vec<bool>,
-    /// Whether each link's downstream end is a signal that stops it (S265): its node's signal,
+    /// Whether each link's downstream end is a signal that stops it: its node's signal,
     /// or a signal there for its direction only.
     link_signalised: Vec<bool>,
 
@@ -438,16 +438,16 @@ pub struct RoadNetwork {
     out_links: Csr<NodeId, LinkId>,
     in_links: Csr<NodeId, LinkId>,
 
-    /// Links closed to motor traffic by a scenario edit (S238, [`Self::with_changes`]):
+    /// Links closed to motor traffic by a scenario edit ([`Self::with_changes`]):
     /// empty when none is, else one flag per link. A closed link keeps its index and its
     /// data but is in no node's out- or in-links, so no search, turn or snap ever uses it.
     link_closed: Vec<bool>,
 
-    /// What it was built with besides its data (S225).
+    /// What it was built with besides its data.
     defaults: NetworkDefaults,
 }
 
-/// What a scenario changes in a road network (S238, roadmap I-az: scenario edits), by link
+/// What a scenario changes in a road network, by link
 /// index. See [`RoadNetwork::with_changes`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LinkChanges {
@@ -472,7 +472,7 @@ impl LinkChanges {
 }
 
 impl RoadNetwork {
-    /// The parameters the network was built with besides its data (S225): the road-class table,
+    /// The parameters the network was built with besides its data: the road-class table,
     /// the multipliers, the signal settings and the bike and walk layers' speeds.
     #[must_use]
     pub fn defaults(&self) -> &NetworkDefaults {
@@ -522,15 +522,15 @@ impl RoadNetwork {
     }
 
     /// Whether a signal stands at a node: a junction's, stopping every approach, or one that
-    /// stops some approaches only (a stop line's direction, a junction's far side passed freely;
-    /// S265, S282), whose links say which ([`Self::is_link_signalised`]).
+    /// stops some approaches only (a stop line's direction, a junction's far side passed freely),
+    /// whose links say which ([`Self::is_link_signalised`]).
     #[inline]
     #[must_use]
     pub fn is_signalised(&self, node: NodeId) -> bool {
         self.node_signalised[node.index()]
     }
 
-    /// Whether a link ends at a signal that stops it (S265): its end node's, or one there for its
+    /// Whether a link ends at a signal that stops it: its end node's, or one there for its
     /// direction only (`traffic_signals:direction`). It has the signal's control delay, and its
     /// turns the green fraction.
     #[inline]
@@ -560,7 +560,7 @@ impl RoadNetwork {
         self.link_class[link.index()]
     }
 
-    /// Whether a link is closed to motor traffic by a scenario edit (S238).
+    /// Whether a link is closed to motor traffic by a scenario edit.
     #[inline]
     #[must_use]
     pub fn is_closed(&self, link: LinkId) -> bool {
@@ -574,7 +574,7 @@ impl RoadNetwork {
         self.link_class(link).carries_motor_traffic() && !self.is_closed(link)
     }
 
-    /// The same network with `changes` made (S238): closed links taken out of every node's
+    /// The same network with `changes` made: closed links taken out of every node's
     /// links (their index and data kept, so per-link results line up with the original's),
     /// lanes and capacities changed. Changes add to those the network already has.
     ///
@@ -665,7 +665,7 @@ impl RoadNetwork {
         })
     }
 
-    /// Whether a link is part of a roundabout's circulating carriageway (S155).
+    /// Whether a link is part of a roundabout's circulating carriageway.
     #[inline]
     #[must_use]
     pub fn is_roundabout(&self, link: LinkId) -> bool {

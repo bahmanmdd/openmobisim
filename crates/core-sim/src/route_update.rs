@@ -1,13 +1,13 @@
-//! Route updates: growing the choice sets between iterations (S176).
+//! Route updates: growing the choice sets between iterations.
 //!
 //! Route sets are made once, at free-flow costs. When traffic has rearranged the costs
 //! the network holds routes the sets do not, and an equilibration over the fixed sets
 //! stops short of the network's own equilibrium: the **network gap**
 //! ([`IterationReport::gap_network`](crate::IterationReport::gap_network)) stays large
-//! while the gap against the set looks fine (found in S171). A
+//! while the gap against the set looks fine (found). A
 //! [`RouteUpdate`] closes that: after each loading it may **add routes** to the sets, found on
 //! the link times that loading produced, before travellers choose again. **The set is fixed
-//! *within* an iteration and may grow *between* iterations** (design §11.1(2)); the
+//! *within* an iteration and may grow *between* iterations**; the
 //! equilibrium is then over the set the generator and the update rule produce, which is why
 //! the update is part of the run's description.
 //!
@@ -16,16 +16,16 @@
 //! | name | what it does |
 //! |---|---|
 //! | `none` (the default, [`DEFAULT_UPDATE`]) | Nothing: the sets stay as the generator made them, and the run costs nothing extra |
-//! | `best_response` | For every origin–destination pair, one bounded time-dependent search (at the median departure of the pair's trips) for the fastest route at the congested times; it is **added if it is new and at least as fast as the set's best route**: a tie counts, since an equally good alternative is one more to spread over (S176: without ties, Seoul's grid ended at a network gap of 0.57 instead of 0.12). Column generation, as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
+//! | `best_response` | For every origin–destination pair, one bounded time-dependent search (at the median departure of the pair's trips) for the fastest route at the congested times; it is **added if it is new and at least as fast as the set's best route**: a tie counts, since an equally good alternative is one more to spread over (without ties, Seoul's grid ended at a network gap of 0.57 instead of 0.12). Column generation, as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
 //!
 //! **What `best_response` costs.** One search per pair per iteration (`searches` of them), each
 //! bounded by the best time the set already offers, so it explores what could beat that and no
-//! more: about 0.5 ms of core time on Stockholm's inner city, 1.2 ms on Seoul (S174), in
+//! more: about 0.5 ms of core time on Stockholm's inner city, 1.2 ms on Seoul, in
 //! parallel over pairs, and **not made for a pair whose best route is already within `slack` (2%) of
 //! free flow**, which is most pairs when demand is light or moderate. With demand between zones (a few hundred pairs, not one per trip) an
 //! update is a small part of a loading. Then one copy of the store
 //! ([`RouteSets::extended`]), and a chooser rebuilt on it. **What it adds to the store:** a
-//! pair ends with about four routes (S174); at most `max_routes`. **Light demand adds little,
+//! pair ends with about four routes; at most `max_routes`. **Light demand adds little,
 //! not nothing**: where nothing queues no route beats the set's best, but an equally good one
 //! still counts, and on a grid of equal blocks there are many.
 //!
@@ -52,22 +52,22 @@ use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
 
 use crate::link_times::LinkTimes;
 
-/// The share of free flow within which `best_response` does not search a pair (S178; see
+/// The share of free flow within which `best_response` does not search a pair (see
 /// [`BestResponse::slack`]).
 pub const DEFAULT_SLACK: f64 = 0.02;
 
-/// The step `best_response` rounds departures to for its search trees (S267; see
+/// The step `best_response` rounds departures to for its search trees (see
 /// [`BestResponse::tree_step_s`]).
 pub const DEFAULT_TREE_STEP_S: u32 = 0;
 
-/// The most routes a pair's set holds by default (S176). A traveller is offered at most five of
-/// them (`Run::with_choice_max_routes`, S268): the set remembers more, so that a route that
+/// The most routes a pair's set holds by default. A traveller is offered at most five of
+/// them (`Run::with_choice_max_routes`): the set remembers more, so that a route that
 /// congestion made slow can come back, and a full set does not hold the run back (with five
-/// stored, Lyon's run ended poor instead of acceptable, S268).
+/// stored, Lyon's run ended poor instead of acceptable).
 pub const DEFAULT_MAX_ROUTES: u32 = 10;
 
 /// How much faster than a full set's best a route must be to replace one of its routes, in
-/// seconds (S268): a tie keeps the set as it is.
+/// seconds: a tie keeps the set as it is.
 pub const REPLACE_GAIN_S: f64 = 1.0;
 
 /// The update used unless another is asked for.
@@ -96,9 +96,9 @@ pub struct UpdateContext<'a> {
     /// The times the last loading produced.
     pub times: &'a LinkTimes,
     /// The iteration the routes are for: the one that will choose among them (0 while the
-    /// free-flow loading is built up, S223).
+    /// free-flow loading is built up).
     pub iteration: u32,
-    /// The trips whose pairs are searched, by trip (S223: one group of the free-flow loading's
+    /// The trips whose pairs are searched, by trip (one group of the free-flow loading's
     /// increments); every trip's if `None`.
     pub active: Option<&'a [bool]>,
 }
@@ -144,7 +144,7 @@ pub trait RouteUpdate: Send + Sync {
     fn update(&self, cx: &UpdateContext<'_>) -> Additions;
 
     /// The most routes a set may hold, if the update caps it: a set its additions would take
-    /// past this makes room ([`make_room`], S268).
+    /// past this makes room ([`make_room`]).
     fn max_routes(&self) -> Option<usize> {
         None
     }
@@ -187,25 +187,25 @@ impl NoRouteUpdate {
 pub struct BestResponse {
     /// How many searches per pair per iteration, at evenly spread quantiles of the pair's
     /// departures (1 is the median). More finds routes that only pay at some hours, at the
-    /// cost of more searches and a bigger set, which raises the logit's own gap (S174: 1
+    /// cost of more searches and a bigger set, which raises the logit's own gap (1
     /// measured best).
     pub searches: u32,
     /// The most routes a pair's set may hold (1 to [`MAX_ROUTES_PER_SET`]; [`DEFAULT_MAX_ROUTES`]).
-    /// **A full set is still searched (S268):** a route at least [`REPLACE_GAIN_S`] faster than
+    /// **A full set is still searched:** a route at least [`REPLACE_GAIN_S`] faster than
     /// its best takes the place of a route nobody chose in the last choice (never its free-flow
     /// shortest one, which the slack rests on); if every route is in use, it waits. No trip is
     /// moved. Ties do not replace, so equal routes do not cycle in and out.
     pub max_routes: u32,
     /// A pair is **not searched** while the set's best route at its departure is within this share
-    /// of the route's free-flow time (0 to 1; 0 searches every pair; [`DEFAULT_SLACK`], S178). No
+    /// of the route's free-flow time (0 to 1, 0 searches every pair, [`DEFAULT_SLACK`]). No
     /// route can be faster than free flow, so a pair this close to it has at most this much to gain:
-    /// **the regret left is bounded by `slack`**. Measured (S178, `msa` × 8–10 iterations, the
+    /// **the regret left is bounded by `slack`**. Measured (`msa` × 8–10 iterations, the
     /// disequilibrium unchanged to the third decimal): at 2%, Manhattan's searches fell from 62 877
     /// to 7 569 and the run from 5.9 s to 4.0 s, Singapore's from 27 576 to 313, Stockholm's inner
     /// city (heavy) from 78 512 to 46 205 (−8% of the run); at 5%, 58% of Stockholm's searches.
     /// Assumes the method's routes include a free-flow shortest one, as every built-in method's do.
     pub slack: f64,
-    /// **Search trees** (S267): 0 searches each pair on its own, at its departures; above 0, a
+    /// **Search trees**: 0 searches each pair on its own, at its departures; above 0, a
     /// pair's departures are rounded to this step (in seconds, to its middle) and the pairs of one
     /// origin at one rounded departure share **one search tree**, which finds each one's fastest
     /// route at once ([`openmobisim_core_routes::Search::fastest_routes_to`]). Approximate: the
@@ -389,7 +389,7 @@ struct Tree {
 }
 
 impl BestResponse {
-    /// [`RouteUpdate::update`] with search trees (S267, [`Self::tree_step_s`]): the planned
+    /// [`RouteUpdate::update`] with search trees ([`Self::tree_step_s`]): the planned
     /// departures rounded to the step, the keys grouped by origin and rounded departure, one
     /// [`Search::fastest_routes_to`] per group bounded by the slowest of its keys' best times; a
     /// key's route is kept if it is new and no slower than the key's own best. Then the kept
@@ -524,7 +524,7 @@ impl BestResponse {
         out
     }
 
-    /// The searches to make: for each key with routed trips (full sets too, S268), the
+    /// The searches to make: for each key with routed trips (full sets too), the
     /// departures to search at (evenly spread quantiles of its trips' departures), flat, with
     /// each key's range. Keys ascend.
     fn plan(&self, cx: &UpdateContext<'_>) -> (Vec<u32>, Vec<Job>) {
@@ -568,10 +568,10 @@ impl BestResponse {
     }
 }
 
-/// Room in the sets that `additions` would take past `max_routes` (S268): each such set drops
+/// Room in the sets that `additions` would take past `max_routes`: each such set drops
 /// routes **nobody chose** in the last choice (by `chosen` and `weight` per trip, as
 /// `RouteChoices` hold them, and never a route `kept` names: one a trip choosing its mode drives
-/// as its car alternative, which no route choice names, S280), the highest free-flow cost first,
+/// as its car alternative, which no route choice names), the highest free-flow cost first,
 /// never its free-flow shortest one. Additions that cannot fit are dropped. Returns which of the
 /// store's routes to remove.
 ///

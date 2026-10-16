@@ -1,4 +1,4 @@
-//! Reading one service day of a feed into a [`Timetable`] (S199).
+//! Reading one service day of a feed into a [`Timetable`].
 //!
 //! 1. **Stops** (`stops.txt`): every stop or platform (`location_type` 0 or
 //!    empty) with a position; the caller's `keep` decides which are in the study
@@ -19,7 +19,7 @@
 //!    kept. Rows for particular routes or trips, rows between stations rather
 //!    than stops, and `transfer_type` 0 and 3 are skipped and counted.
 //!
-//! 5. **Frequencies** (`frequencies.txt`, S238): a trip listed there is a
+//! 5. **Frequencies** (`frequencies.txt`): a trip listed there is a
 //!    template, its stop times read relative to its first departure; it runs
 //!    from each row's `start_time`, every `headway_secs`, while before its
 //!    `end_time` (`exact_times` 0 and 1 alike), one run each, named
@@ -85,7 +85,7 @@ pub struct GtfsReport {
     pub transfers_kept: u32,
     /// Transfers skipped (see the [module docs](self)).
     pub transfers_skipped: u32,
-    /// Rows of `frequencies.txt` read for the day's trips (S238).
+    /// Rows of `frequencies.txt` read for the day's trips.
     pub frequency_rows: u32,
     /// Runs made from them: each frequency-based trip once per headway.
     pub runs_from_frequencies: u32,

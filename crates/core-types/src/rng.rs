@@ -1,4 +1,4 @@
-//! Counter-based random draws, addressed by entity identity (Foundations §4).
+//! Counter-based random draws, addressed by entity identity.
 //!
 //! # Why not a sequential RNG
 //!
@@ -78,7 +78,7 @@ pub const RNG_SCHEME_VERSION: u16 = 1;
 /// `mobisim`-prefixed rather than widening the key layout.
 const DOMAIN_TAG: &[u8; 14] = b"mobisim-rng-v1";
 
-/// The independent random streams (Foundations §4).
+/// The independent random streams.
 ///
 /// Separate streams mean that switching a feature on cannot perturb the draws
 /// of an unrelated one. The discriminants are **stable**: they are folded into
@@ -316,7 +316,7 @@ impl DrawAddress {
     /// [`Self::from_triple`]`(a, b, c)` is the first block of `(a, b, c + n)`, and after
     /// [`Self::from_quad`]`(a, b, c, d)` that of `(a, b, c, d + n)`. So it is safe only
     /// where that component is the consumer's own and no other draw uses the values after
-    /// it: advancing alternative 5's address reads alternative 6's draws (X-53).
+    /// it: advancing alternative 5's address reads alternative 6's draws.
     #[inline]
     #[must_use]
     pub const fn advance(self, n: u64) -> Self {

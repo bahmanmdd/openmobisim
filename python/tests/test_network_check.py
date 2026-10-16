@@ -85,7 +85,7 @@ def test_an_osm_import_is_connected_on_every_layer() -> None:
 
 
 def _junction_with_a_stop_line(both_ways: bool):
-    """A four-arm junction J with a stop line S 10 m west of it, on a two-way street (S282, H6)."""
+    """A four-arm junction J with a stop line S 10 m west of it, on a two-way street."""
     step = 10.0 / 111_320.0 / 0.69  # 10 m of longitude at 46° N, in degrees (cos 46° ≈ 0.69)
     nodes = [
         {"id": "J", "x": 4.80, "y": 46.0},

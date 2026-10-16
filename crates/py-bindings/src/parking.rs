@@ -1,4 +1,4 @@
-//! Parkings for Python (M4, S201): reading them from OpenStreetMap or a table,
+//! Parkings for Python: reading them from OpenStreetMap or a table,
 //! the toy network's, and what a run's parkings and itineraries did.
 
 use numpy::IntoPyArray;
@@ -50,7 +50,7 @@ impl PyParkings {
 
     /// Every parking: ``{"parking_id", "name", "hub_id", "lon", "lat", "vehicle",
     /// "capacity", "initial_occupancy", "fee_eur"}``, lists and arrays by parking (``fee_eur``
-    /// ``None`` where the table gave none: the run's price for the kind applies, S248).
+    /// ``None`` where the table gave none: the run's price for the kind applies).
     fn rows<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let d = PyDict::new(py);
         d.set_item(
@@ -381,7 +381,7 @@ pub(crate) fn itinerary_choices<'py>(
     Ok(d)
 }
 
-/// The trips that had no alternative and travelled by car (S271, W-1), as columns: who, when,
+/// The trips that had no alternative and travelled by car, as columns: who, when,
 /// from where to where, and how many people each stands for.
 pub(crate) fn fallback_car<'py>(
     py: Python<'py>,
@@ -426,7 +426,7 @@ pub(crate) fn fallback_car<'py>(
     Ok(d)
 }
 
-/// The trips the last choice left with no alternative (S276, roadmap I-ca), as columns: who,
+/// The trips the last choice left with no alternative, as columns: who,
 /// their class, when, from where to where, how many people each stands for, the mode stated
 /// (`None`: the trip chose its mode), whether it then went by car, and per mode
 /// (`reason_car` … `reason_bike_transit`) why that mode gave it nothing (`""`: not offered).
@@ -490,9 +490,9 @@ pub(crate) fn no_alternative<'py>(
     Ok(d)
 }
 
-/// Every trip's departure and the mode it took: what `Run.trip_modes` returns (D17).
+/// Every trip's departure and the mode it took: what `Run.trip_modes` returns.
 ///
-/// `unstated` is the one mode a run with a single mode gives the trips without one (A24).
+/// `unstated` is the one mode a run with a single mode gives the trips without one.
 pub(crate) fn trip_modes<'py>(
     py: Python<'py>,
     result: Option<&ItineraryResult>,

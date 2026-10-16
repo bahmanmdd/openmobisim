@@ -1,5 +1,5 @@
 //! `Run` with `FlowMotor::Ltm`: the same orchestration as `tests/run.rs`,
-//! loaded by S84/S85's iterative LTM instead of S133/S134's level-0
+//! loaded by the iterative LTM instead of the level-0
 //! placeholder.
 //!
 //! `tests/run.rs` is untouched and still exercises `FlowMotor::Level0` (the

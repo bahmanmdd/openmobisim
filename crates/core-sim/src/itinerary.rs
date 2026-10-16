@@ -1,8 +1,8 @@
-//! Itineraries: a trip routed leg by leg through hubs (S198).
+//! Itineraries: a trip routed leg by leg through hubs.
 //!
 //! A leg runs on one layer, from a node of that layer's graph to another; a
 //! hub joins two legs, its access point on the first layer to its access point
-//! on the second, at the hub's transfer time (design §3.2). Transit's
+//! on the second, at the hub's transfer time. Transit's
 //! walk · transit · walk and the park-and-ride and bike-and-ride trips are
 //! itineraries of this kind.
 //!

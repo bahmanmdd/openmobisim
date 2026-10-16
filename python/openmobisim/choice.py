@@ -51,7 +51,7 @@ situations, one situation being one traveller's one trip):
   (per alternative; stable when other alternatives come and go),
   ``batch.situation_of`` (per alternative), ``batch.iteration``.
 * The user's traveller and trip values (``Scenario.from_parts``' ``person_values`` and
-  ``trip_values``, S249) are attributes too, ``person_<name>`` and ``trip_<name>``: the
+  ``trip_values``) are attributes too, ``person_<name>`` and ``trip_<name>``: the
   same for every alternative of one situation.
 * ``batch.user_class`` — each situation's traveller class, an index into
   ``batch.class_names`` (the demand's ``user_class`` values), so a model may
@@ -64,7 +64,7 @@ probability of **every** alternative (one number per alternative, summing to one
 within each situation): it lets an iterated run (``equilibration="msa"``) measure
 how far the pattern is from equilibrium; without it those measures are ``nan``.
 And it may have a ``logsum(batch)`` method returning one number per situation, the
-expected utility of its best alternative (S238): ``Run.itinerary_choices()["logsum"]``,
+expected utility of its best alternative: ``Run.itinerary_choices()["logsum"]``,
 for accessibility; without it that column is ``nan``.
 Optional attributes of the model: ``name``, ``descriptor`` (both in
 the manifest and part of the run's fingerprint: **change the descriptor when the
@@ -106,20 +106,20 @@ __all__ = [
 #: where an alternative has none (a car route is all ``car_min``);
 #: ``bike_separated_km``, ``bike_lane_km``, ``bike_mixed_km`` (the bike leg's
 #: kilometres on separated tracks, painted lanes and in mixed traffic: what a model
-#: sees of a ride's quality, S236; a ferry crossing counts in none);
+#: sees of a ride's quality; a ferry crossing counts in none);
 #: ``walk_access_min``, ``walk_egress_min``, ``walk_transfer_min`` (the walk to the
 #: first stop, from the last, and between stops: parts of ``walk_min``),
 #: ``wait_first_min``, ``wait_transfer_min`` (parts of ``wait_min``) and
 #: ``ride_rail_min``, ``ride_metro_min``, ``ride_tram_min``, ``ride_bus_min``,
 #: ``ride_ferry_min``, ``ride_other_min`` (minutes on board by kind of service: parts
 #: of ``ride_min``); a part is weighed on top of its total, or instead of it;
-#: ``cost_eur``, what the alternative costs in euros (S248), and its parts
+#: ``cost_eur``, what the alternative costs in euros, and its parts
 #: ``cost_running_eur`` (the car or bike leg's kilometres at the vehicle's price per km),
 #: ``cost_toll_eur`` (the car leg's tolls: a road link value named ``toll_eur``),
 #: ``cost_parking_eur`` (a park-and-ride or bike-and-ride parking's fee, on the trip that
 #: parks, or the trip's destination's for one arriving by car) and ``cost_fare_eur`` (a
 #: transit journey's fare); ``trip_departure_h`` (the trip's departure in hours after
-#: midnight, the same for each alternative of a choice, S249); ``nest``
+#: midnight, the same for each alternative of a choice); ``nest``
 #: (the alternative's mode as a number: the nest of ``"nested_logit"``) and
 #: ``mode_walk``, ``mode_bike``, ``mode_car``, ``mode_transit``, ``mode_car_transit``,
 #: ``mode_bike_transit`` (1 for the alternative's mode, 0 for the rest: a coefficient
@@ -176,12 +176,12 @@ class ChoiceModel(Protocol):
         """The chosen alternative of each situation, as an index within it."""
 
 
-#: The Python models registered by name (C5): name -> factory(options) -> model.
+#: The Python models registered by name: name -> factory(options) -> model.
 _REGISTERED: dict[str, Callable[[dict[str, float]], Any]] = {}
 
 
 def choice_model_register(name: str, factory: Callable[[dict[str, float]], Any]) -> None:
-    """Make a Python choice model usable by name, like the built-in ones (C5).
+    """Make a Python choice model usable by name, like the built-in ones.
 
     After ``choice_model_register("my_model", MyModel)``, ``Scenario.from_parts(...,
     choice_model="my_model", choice_options={...})`` builds the model as

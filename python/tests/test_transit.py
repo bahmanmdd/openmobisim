@@ -1,4 +1,4 @@
-"""Transit (S199): reading a GTFS feed, transit trips in a scenario, buses on the roads.
+"""Transit: reading a GTFS feed, transit trips in a scenario, buses on the roads.
 
 The toy network's timetable (``examples.toy_network_transit``) carries the tram ``T1``
 (``N1`` ↔ ``H`` at ``D2``) and the bus ``B1`` (``W``, ``M``, ``D1``); the hand values are

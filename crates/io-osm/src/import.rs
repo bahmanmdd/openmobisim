@@ -70,15 +70,15 @@ pub mod codes {
     /// A way was dropped because too few of its nodes survived.
     pub const WAY_LOST_TO_MISSING_NODES: DiagCode = DiagCode("osm_way_lost_to_missing_nodes");
     /// A way with missing nodes in its middle was imported as separate pieces
-    /// rather than bridged across the gap (S172).
+    /// rather than bridged across the gap.
     pub const WAY_CUT_INTO_PIECES: DiagCode = DiagCode("osm_way_cut_into_pieces");
     /// A closed way with no junction but its own end could not become a link
-    /// (it would start and end at one node) and was dropped (S172).
+    /// (it would start and end at one node) and was dropped.
     pub const CLOSED_LOOP_DROPPED: DiagCode = DiagCode("osm_closed_loop_dropped");
 }
 
 /// What the importer does about roads the rest of the network cannot reach, or
-/// that cannot reach it (S172).
+/// that cannot reach it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Connectivity {
     /// Import everything that is a road. Trips between some pairs of nodes have
@@ -110,7 +110,7 @@ pub struct ImportOptions {
     /// wasteful otherwise.
     pub contract: bool,
     /// Contract the drivable links as if the links a car may not use were not
-    /// there (S172). Off by default.
+    /// there. Off by default.
     ///
     /// A footway that crosses a street shares a node with it, and so does every
     /// sidewalk that meets a driveway; the importer counts those as junctions
@@ -126,23 +126,23 @@ pub struct ImportOptions {
     pub multipliers: GlobalMultipliers,
     /// The signal defaults handed to the defaults table.
     pub signals: SignalDefaults,
-    /// The road-class table: each class's defaults where the data gives none (S225). The shipped
+    /// The road-class table: each class's defaults where the data gives none. The shipped
     /// one by default.
     pub classes: ClassTable,
-    /// The most a lane of an at-grade road carries, by its speed (S265). The shipped bands by
+    /// The most a lane of an at-grade road carries, by its speed. The shipped bands by
     /// default.
     pub saturation_bands: SaturationBands,
     /// What to do about roads outside the main strongly connected component.
     /// [`Connectivity::Keep`] by default: a default import behaves as it always
     /// has.
     pub connectivity: Connectivity,
-    /// Which static layers to build besides the road network (S195). None by
+    /// Which static layers to build besides the road network. None by
     /// default in Rust; the Python reader builds both.
     pub layers: LayerOptions,
 }
 
 /// Which bike and walk layers an import builds, and with which defaults
-/// (S193, S195).
+/// .
 ///
 /// Each layer is its own graph, read from the same ways in the same pass: its
 /// own junctions, its own strong-connectivity trim (under
@@ -205,19 +205,19 @@ pub struct ImportReport {
     /// Nodes removed by contraction.
     pub nodes_contracted: u64,
     /// Closed ways with no junction but their own end, which cannot be a link
-    /// and were dropped (S172).
+    /// and were dropped.
     pub closed_loops_dropped: u64,
     /// Strongly connected components the split graph had, singletons included;
     /// `0` unless [`Connectivity::Strong`] was asked for.
     pub components_before: u64,
-    /// Links removed for not being in the largest component (S172).
+    /// Links removed for not being in the largest component.
     pub links_disconnected: u64,
     /// Nodes removed with them.
     pub nodes_disconnected: u64,
     /// Their total length, in whole metres.
     pub length_disconnected_m: u64,
     /// Busway links removed for not being in the largest strongly connected part
-    /// of what buses may use (S199): pieces cut off by the study area's edge, so a
+    /// of what buses may use: pieces cut off by the study area's edge, so a
     /// bus stop never snaps to a busway it cannot leave. Part of
     /// [`Connectivity::Strong`].
     pub busway_links_disconnected: u64,
@@ -226,7 +226,7 @@ pub struct ImportReport {
     /// Their total length, in whole metres.
     pub drivable_length_m: u64,
     /// How many of them carry an explicit `maxspeed` (the rest take the class
-    /// default) — the coverage of the defaults table's speeds (S172).
+    /// default) — the coverage of the defaults table's speeds.
     pub drivable_maxspeed_links: u64,
     /// Their length, in whole metres.
     pub drivable_maxspeed_length_m: u64,
@@ -250,7 +250,7 @@ impl ImportReport {
     }
 }
 
-/// Which links the signal at their end stops (S265, S282: A8, G-3), one flag per link of `links`.
+/// Which links the signal at their end stops (A8), one flag per link of `links`.
 ///
 /// A signal with `traffic_signals:direction` stops the links running that way into its node. A
 /// direction-less one at a junction (a node with three or more neighbours on the motor network)
@@ -260,7 +260,7 @@ impl ImportReport {
 /// belongs to the nearest junction within `merge_m` along the street, and stops only the traffic
 /// heading into it: a car just leaving that junction passes the far side's stop line freely. One
 /// with no junction that close (a mid-block crossing) stops both directions. `merge_m` 0: every
-/// direction-less signal stops every approach to its node, as before S282.
+/// direction-less signal stops every approach to its node, as before.
 ///
 /// Cost: one pass over the links and a short walk along the street from each signal node, at
 /// import only; nothing at run time.
@@ -390,13 +390,13 @@ struct ProtoLink {
     /// The bike must be walked here, on the bike layer.
     dismount: bool,
     /// A speed set by the way as a whole, in km/h: a ferry's, its wait folded in
-    /// (S197). `None` for everything else.
+    /// . `None` for everything else.
     speed_km_h: Option<f64>,
-    /// Whether the link's last stretch runs along its way's node order (S265): a signal on its
+    /// Whether the link's last stretch runs along its way's node order: a signal on its
     /// end node with `traffic_signals:direction` stops it only in that direction.
     forward: bool,
     length_m: f64,
-    /// This link's own polyline, `from` to `to` (S125). Carried alongside
+    /// This link's own polyline, `from` to `to`. Carried alongside
     /// `length_m` — computed from the same points, at the same place, and
     /// never re-derived from the other — through splitting and contraction so
     /// the geometry artifact can be built once the network's dense ids exist.
@@ -428,9 +428,9 @@ impl ProtoLink {
 /// Why a road was left out of the network, for the ones that can be drawn.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DropReason {
-    /// A closed way with no junction but its own end (S172).
+    /// A closed way with no junction but its own end.
     ClosedLoop,
-    /// Not in the largest strongly connected component (S172).
+    /// Not in the largest strongly connected component.
     NotStronglyConnected,
 }
 
@@ -454,7 +454,7 @@ pub struct ImportOutput {
     pub network: RoadNetwork,
     /// The counts.
     pub report: ImportReport,
-    /// The street shapes, kept beside the network (S125).
+    /// The street shapes, kept beside the network.
     pub geometry: LinkGeometry,
     /// Roads left out because of what they were (a loop) or where they were (cut
     /// off from the rest), one entry per directed link, in a fixed order.
@@ -465,7 +465,7 @@ pub struct ImportOutput {
     pub walk: Option<LayerImport>,
 }
 
-/// One static layer an import built (S195).
+/// One static layer an import built.
 #[derive(Debug)]
 pub struct LayerImport {
     /// The layer's graph and speeds.
@@ -497,14 +497,14 @@ pub struct LayerReport {
     pub dedicated_length_m: u64,
     /// Links given the minimum length because they had none.
     pub degenerate_links: u64,
-    /// Ferry crossings among the ways kept (S197).
+    /// Ferry crossings among the ways kept.
     pub ferry_ways: u64,
 }
 
 /// Import a road network from an OSM source.
 ///
 /// Returns the network, the import report, and the [`LinkGeometry`] artifact
-/// (S125) — the polyline of every street, kept separately from the network
+/// — the polyline of every street, kept separately from the network
 /// rather than as one of its fields, so that nothing which never reads
 /// geometry pays for it. [`import_detailed`] also returns the roads left out.
 ///
@@ -956,7 +956,7 @@ struct WaySpec {
     class: RoadClass,
     maxspeed_km_h: Option<f64>,
     roundabout: bool,
-    /// A speed for the whole way, in km/h: a ferry's (S197).
+    /// A speed for the whole way, in km/h: a ferry's.
     speed_km_h: Option<f64>,
     forward: Option<LinkAttrs>,
     backward: Option<LinkAttrs>,
@@ -1006,7 +1006,7 @@ fn road_spec(way: &OsmWay, diagnostics: &mut Diagnostics) -> Option<WaySpec> {
 /// way into **pieces**, each a run of consecutive nodes that are present. A
 /// piece is split at its junctions like any way; nothing is bridged across a
 /// gap, because a straight link through territory the extract does not hold is
-/// a street that does not exist (S172; before, such a way was joined up).
+/// a street that does not exist (before, such a way was joined up).
 fn split_way(
     way: &OsmWay,
     spec: &WaySpec,
@@ -1230,7 +1230,7 @@ fn used_nodes(links: &[ProtoLink]) -> Vec<i64> {
     }
     let mut v: Vec<i64> = set.into_iter().collect();
     // Sorted so the order handed to the graph builder is a pure function of the
-    // input, not of hash iteration order (Foundations §1).
+    // input, not of hash iteration order.
     v.sort_unstable();
     v
 }

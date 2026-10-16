@@ -65,7 +65,7 @@ pub(crate) fn required_id(batch: &RecordBatch, name: &str) -> Result<Vec<String>
     )))
 }
 
-/// A required `f64` column (WGS84 coordinates, per Foundations §9).
+/// A required `f64` column (WGS84 coordinates).
 pub(crate) fn required_f64(batch: &RecordBatch, name: &str) -> Result<Vec<f64>, DemandError> {
     let array = column(batch, name)
         .ok_or_else(|| DemandError::Schema(format!("column `{name}` is missing")))?;
@@ -145,7 +145,7 @@ pub(crate) fn optional_u32(
 }
 
 /// An optional boolean column: `None` if the column is absent from the file
-/// (S127: "omit the column to take the class default for everyone"), `Some`
+/// ("omit the column to take the class default for everyone"), `Some`
 /// with one `Option<bool>` per row otherwise (a present column may still hold
 /// a null for one traveller, which falls back the same way).
 pub(crate) fn optional_bool(

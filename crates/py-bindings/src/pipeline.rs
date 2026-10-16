@@ -5,7 +5,7 @@
 //! Deliberately low-level — a network handle, a function, a summary of
 //! plain fields. `python/openmobisim`'s `Scenario`/`Run`/`Table` classes are
 //! where this becomes the ergonomic API the interface doc describes
-//! (behaviour in Python, physics in Rust, Foundations §10); this module's
+//! (behaviour in Python, physics in Rust); this module's
 //! job is only to move data across the boundary correctly.
 //!
 //! # The demand schema Python sees
@@ -16,7 +16,7 @@
 //! shape here, not a "simple" one and a "general" one — a traveller whose
 //! only available mode is a car, at a fixed departure time, is what this
 //! same schema already expresses when `class_defaults` gives their class a
-//! car and nothing else (S127); it is not a different input format.
+//! car and nothing else; it is not a different input format.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -65,7 +65,7 @@ use openmobisim_io_parquet::{
 };
 
 /// One `trips.parquet` row, as a plain tuple in `RawTrip`'s field order; the
-/// last field is the optional `mode` (S195), by name.
+/// last field is the optional `mode`, by name.
 type TripRow = (String, u32, f64, f64, f64, f64, u32, String, Option<u32>, Option<String>);
 
 fn trip_from_row(row: TripRow) -> PyResult<RawTrip> {
@@ -101,10 +101,10 @@ fn person_from_row(row: PersonRow) -> RawPerson {
     RawPerson { traveller_id, owns_car, owns_bike, has_transit_pass, user_class }
 }
 
-/// The user's traveller and trip values (S249) by traveller and trip index: traveller values by
+/// The user's traveller and trip values by traveller and trip index: traveller values by
 /// external id (an id not in the demand ignored, a traveller not given 0); trip values one per
 /// row of the demand as given (`row_keys`, each row's traveller, sequence number and whether it
-/// departs inside the window and is run, S271), or keyed by
+/// departs inside the window and is run), or keyed by
 /// `(traveller id, trip sequence)` (a key not in the demand ignored, a trip not given 0). Names in
 /// sorted order, so the attributes and the fingerprint do not depend on a dict's order.
 fn demand_values(
@@ -185,11 +185,11 @@ fn demand_values(
 }
 
 /// Without a window given, a run lasts this long from the earliest departure, rounded down to
-/// the quarter hour (S271; *an assumption*: the starter mornings' departures span three hours,
+/// the quarter hour (*an assumption*: the starter mornings' departures span three hours,
 /// 06:30–09:30, and a two-hour window would have cut or rescaled them).
 pub(crate) const WINDOW_DEFAULT_S: u32 = 3 * 3600;
 
-/// Trips departing on one side of the simulation window (S271).
+/// Trips departing on one side of the simulation window.
 #[derive(Clone, Copy, Debug, Default)]
 struct Outside {
     trips: u32,
@@ -212,7 +212,7 @@ impl Outside {
     }
 }
 
-/// The run's simulation window (S271, W-2) and what in the demand departs outside it.
+/// The run's simulation window and what in the demand departs outside it.
 #[derive(Clone, Copy, Debug)]
 struct Window {
     start_s: u32,
@@ -293,11 +293,11 @@ impl Window {
     }
 }
 
-/// Trip values keyed by trip, as Python gives them (S249): per name, `(traveller id, trip sequence,
+/// Trip values keyed by trip, as Python gives them: per name, `(traveller id, trip sequence,
 /// value)` each.
 type KeyedTripValues = HashMap<String, Vec<(String, u32, f64)>>;
 
-/// A road disruption as Python gives it (S239): link indices, capacity factor, from and to (s).
+/// A road disruption as Python gives it: link indices, capacity factor, from and to (s).
 type RoadDisruptionRow = (Vec<u32>, f64, f64, f64);
 
 /// What one run produced, as plain fields. `python/openmobisim`'s `Run` class
@@ -305,7 +305,7 @@ type RoadDisruptionRow = (Vec<u32>, f64, f64, f64);
 /// `.manifest()` methods, each reading the corresponding path.
 #[pyclass(name = "RunSummary", module = "openmobisim._core")]
 pub struct PyRunSummary {
-    /// What a skim needs of the run (S238).
+    /// What a skim needs of the run.
     skimmer: Arc<Skimmer>,
     /// The bike cost the run routed by, for a bike layer a skim prepares itself.
     bike_cost: BikeCost,
@@ -370,7 +370,7 @@ pub struct PyRunSummary {
     /// Per-link, per-time-bin results, if the run asked for them.
     #[pyo3(get)]
     pub link_bins: Option<Py<PyLinkBins>>,
-    /// The bike layer's per-link results (S195), if asked for and bikes ran;
+    /// The bike layer's per-link results, if asked for and bikes ran;
     /// `pcu` there counts travellers.
     #[pyo3(get)]
     pub bike_link_bins: Option<Py<PyLinkBins>>,
@@ -383,11 +383,11 @@ pub struct PyRunSummary {
     /// Path to `link_bins_walk.parquet`, if written.
     #[pyo3(get)]
     pub link_bins_walk_path: Option<String>,
-    /// Trips whose mode this run cannot simulate (S195).
+    /// Trips whose mode this run cannot simulate.
     #[pyo3(get)]
     pub mode_not_available: u32,
     /// The outcomes by mode, for each mode that has trips: a dict of the
-    /// completion counts and `total_travel_time_s` (S195).
+    /// completion counts and `total_travel_time_s`.
     #[pyo3(get)]
     pub completion_by_mode: Py<PyDict>,
     /// The route sets the trips were routed from.
@@ -397,68 +397,68 @@ pub struct PyRunSummary {
     #[pyo3(get)]
     pub route_choices: Option<Py<PyRouteChoices>>,
     /// Every call of the run's timetable with its times and passengers, as
-    /// columns (S199); `None` without a timetable.
+    /// columns; `None` without a timetable.
     #[pyo3(get)]
     pub transit_calls: Option<Py<PyDict>>,
-    /// How transit went, as numbers by name (S199); `None` without a timetable.
+    /// How transit went, as numbers by name; `None` without a timetable.
     #[pyo3(get)]
     pub transit_summary: Option<Py<PyDict>>,
     /// Path to the written `transit_calls.parquet`, if the run had a timetable.
     #[pyo3(get)]
     pub transit_calls_path: Option<String>,
-    /// The simulation window (S271) as a dict: `start_s` and `end_s` (seconds after midnight),
+    /// The simulation window as a dict: `start_s` and `end_s` (seconds after midnight),
     /// whether each was given, the demand's trips and people, those departing before and after
     /// it (left out: `before_trips`, `before_people`, `before_first_s`, `before_last_s`, and
     /// `after_*`), and what the timetable's cut took off (`timetable_*`, `None` without one).
     #[pyo3(get)]
     pub window: Py<PyDict>,
-    /// The trips that had no alternative and travelled by car (S271, W-1), as columns
+    /// The trips that had no alternative and travelled by car, as columns
     /// (`traveller_id`, `trip_seq`, `departure_s`, `weight`, `origin_lon`, `origin_lat`,
     /// `destination_lon`, `destination_lat`).
     #[pyo3(get)]
     pub fallback_car: Py<PyDict>,
-    /// The trips the last choice left with no alternative, and why each mode gave them none
-    /// (S276, roadmap I-ca), as columns (`crate::parking::no_alternative`).
+    /// The trips the last choice left with no alternative, and why each mode gave them none,
+    /// as columns (`crate::parking::no_alternative`).
     #[pyo3(get)]
     pub no_alternative: Py<PyDict>,
-    /// How full each parking was, bin by bin, as columns (M4); `None` without parkings.
+    /// How full each parking was, bin by bin, as columns; `None` without parkings.
     #[pyo3(get)]
     pub parking_bins: Option<Py<PyDict>>,
-    /// Where each parking is and what it holds (M4); `None` without parkings.
+    /// Where each parking is and what it holds; `None` without parkings.
     #[pyo3(get)]
     pub parking_places: Option<Py<PyDict>>,
-    /// What the parkings did, as numbers by name (M4); `None` without parkings.
+    /// What the parkings did, as numbers by name; `None` without parkings.
     #[pyo3(get)]
     pub parking_summary: Option<Py<PyDict>>,
     /// Path to the written `parking_bins.parquet`, if the run had parkings.
     #[pyo3(get)]
     pub parking_bins_path: Option<String>,
-    /// Each transit, park-and-ride and bike-and-ride trip's choice, as columns (M4);
+    /// Each transit, park-and-ride and bike-and-ride trip's choice, as columns;
     /// `None` without such trips.
     #[pyo3(get)]
     pub itinerary_choices: Option<Py<PyDict>>,
-    /// Every trip's departure and the mode it took, as columns (D17).
+    /// Every trip's departure and the mode it took, as columns.
     #[pyo3(get)]
     pub trip_modes: Py<PyDict>,
-    /// What stood still when the last loading's window ended (S213), as numbers by name and
+    /// What stood still when the last loading's window ended, as numbers by name and
     /// the loops as lists of link indices; `None` at level 0.
     #[pyo3(get)]
     pub gridlock: Option<Py<PyDict>>,
-    /// Every reroute of the last loading (S213), as columns.
+    /// Every reroute of the last loading, as columns.
     #[pyo3(get)]
     pub route_changes: Py<PyDict>,
-    /// The realised routes of the trips that re-routed and arrived (S213): `trip` and `links`.
+    /// The realised routes of the trips that re-routed and arrived: `trip` and `links`.
     #[pyo3(get)]
     pub route_realised: Py<PyDict>,
     /// Itinerary trips whose chosen line could not be followed, and the mean
     /// difference between expected and realised arrival at the parking of the trips
-    /// back, in seconds (M4).
+    /// back, in seconds.
     #[pyo3(get)]
     pub itinerary_replanned: u32,
     /// See [`Self::itinerary_replanned`].
     #[pyo3(get)]
     pub return_mismatch_s: f64,
-    /// Wall-clock time by stage (S223): `(stage, iteration or None, seconds)`, in the order the
+    /// Wall-clock time by stage: `(stage, iteration or None, seconds)`, in the order the
     /// stages ended; `network_read` first if the network recorded it, `total` last (the run
     /// alone, without the network's reading). Not part of any result: it differs between runs.
     #[pyo3(get)]
@@ -466,7 +466,7 @@ pub struct PyRunSummary {
     /// Path to the written `timings.csv`: the same rows.
     #[pyo3(get)]
     pub timings_path: String,
-    /// The links whose peak occupancy in the last loading exceeded their storage (S229): where a
+    /// The links whose peak occupancy in the last loading exceeded their storage: where a
     /// point queue would have spilled back. `link`, `peak_pcu`, `storage_pcu`, worst first (by the
     /// PCU that did not fit); `None`
     /// at level 0.
@@ -488,7 +488,7 @@ pub struct PyLinkBins {
 impl PyRunSummary {
     /// Seconds from each origin to each destination by `mode` (``"car"``, ``"bike"``,
     /// ``"walk"`` or ``"transit"``), leaving at `departure_s`, as a ``(origins, destinations)``
-    /// float64 array: ``nan`` where nothing arrives within `max_s` (S238, a skim; see
+    /// float64 array: ``nan`` where nothing arrives within `max_s` (a skim; see
     /// ``Run.skim``). `network` is the run's, for a bike or walk layer the run did not prepare.
     #[allow(clippy::too_many_arguments, reason = "the points as columns, and the skim's own")]
     #[pyo3(signature = (network, mode, origin_lon, origin_lat, destination_lon, destination_lat, departure_s, max_s))]
@@ -1485,7 +1485,7 @@ pub fn run_pipeline(
     Ok(Py::new(py, summary)?.into_any())
 }
 
-/// Write the run's time by stage as `stage,iteration,seconds` (S223); an empty iteration is a
+/// Write the run's time by stage as `stage,iteration,seconds`; an empty iteration is a
 /// stage outside the iterations.
 fn write_timings(path: &Path, rows: &[(String, Option<u32>, f64)]) -> std::io::Result<()> {
     use std::fmt::Write as _;
@@ -1540,7 +1540,7 @@ pub fn equilibration_strategies() -> Vec<String> {
     names
 }
 
-/// Every parameter of every group at its shipped value (S230, roadmap I-ae): `(group, argument,
+/// Every parameter of every group at its shipped value: `(group, argument,
 /// name, value)`, where `argument` is the `Scenario` (or reader) argument that overrides it by
 /// name. The registries' groups (equilibration strategies, route methods, route updates, choice
 /// models) come from each built-in's canonical descriptor with every option at its default.

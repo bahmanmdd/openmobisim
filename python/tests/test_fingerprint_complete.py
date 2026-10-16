@@ -1,4 +1,4 @@
-"""Every parameter a run uses is in its fingerprint (S277, roadmap I-bz).
+"""Every parameter a run uses is in its fingerprint.
 
 Two runs given different inputs must not share a fingerprint, or the fingerprint's promise (the
 same fingerprint, the same results) breaks. On a multimodal scenario of the toy network (mode

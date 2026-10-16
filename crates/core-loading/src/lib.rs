@@ -1,26 +1,26 @@
-//! The flow motor: vehicles on the curves (S85).
+//! The flow motor: vehicles on the curves.
 //!
 //! | Module | What it owns |
 //! |---|---|
 //! | [`vehicle`] | [`vehicle::Vehicle`] — a route, a PCU weight, a departure time |
 //! | [`level0`] | Level 0 of the fidelity ladder: free-flow traversal, no curves, no interaction |
 //! | [`curves`] | [`curves::LinkCurves`] — per-link cumulative counts with bounded history; the receiving condition |
-//! | [`node_model`] | S48/S77's node model in aggregate form, the reference statement of the rules [`ltm`] applies per vehicle |
-//! | [`link_bins`] | [`link_bins::LinkBins`] — per-link, per-time-bin results recorded as the loading runs (S163) |
-//! | [`ltm`] | [`ltm::run_ltm`] — levels 2–4: the LTM with vehicles on the curves, processed in time order (S151) |
+//! | [`node_model`] | the node model in aggregate form, the reference statement of the rules [`ltm`] applies per vehicle |
+//! | [`link_bins`] | [`link_bins::LinkBins`] — per-link, per-time-bin results recorded as the loading runs |
+//! | [`ltm`] | [`ltm::run_ltm`] — levels 2–4: the LTM with vehicles on the curves, processed in time order |
 //!
 //! # The fidelity ladder
 //!
-//! Design §10's levels, **nested — the same code with parameters changed**:
+//! the levels, **nested — the same code with parameters changed**:
 //! level 0 is free flow ([`level0`]: no curves, no interaction); levels 2–4 are
 //! [`ltm`], the link transmission model with vehicles on the curves: **2, the
 //! point queue** (capacities at every link and junction, queues that take no
-//! road space; the default since S229), 3 (storage, without the backward
+//! road space; the default), 3 (storage, without the backward
 //! wave's delay) and **4, the full model** (spillback with the backward wave,
 //! turn pockets, en-route rerouting). See [`ltm`]'s module docs for the
 //! mechanism and its recorded biases. Level 1 (volume-delay) is not built.
 //!
-//! **The flow motor never computes a route** (design §10.4): every
+//! **The flow motor never computes a route**: every
 //! [`vehicle::Vehicle`] arrives with one already assigned (a reroute's new
 //! route included, chosen by the rule the run hands in).
 

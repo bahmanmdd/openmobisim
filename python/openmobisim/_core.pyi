@@ -126,7 +126,7 @@ class Network:
         """
 
     def link_ids(self) -> list[str]:
-        """Every link's id as its source gave it, in link order (S236).
+        """Every link's id as its source gave it, in link order.
 
         What ties a link to one's own data (``Scenario(link_values=...)``), and a bike or walk
         link to the road beside it. A network read from OpenStreetMap names a link
@@ -207,12 +207,12 @@ class Network:
         """Whether a signal stands at each node, indexed by node index.
 
         A junction's, stopping every approach, or one that stops some approaches only (a stop
-        line's direction, a junction's far side passed freely; S282): ``link_signalised`` says
+        line's direction, a junction's far side passed freely): ``link_signalised`` says
         which links each signal stops.
         """
 
     def link_signalised(self) -> npt.NDArray[np.bool_]:
-        """Whether each link ends at a signal that stops it (S265).
+        """Whether each link ends at a signal that stops it.
 
         Its end node's signal, or one there for its direction only.
         """
@@ -506,7 +506,7 @@ def network_edit(
     capacity_factor: list[tuple[int, float]] = ...,
     bike_facility: list[tuple[int, str]] = ...,
 ) -> Network:
-    """A changed copy of `network`, links by index (S238); see ``openmobisim.network_edit``."""
+    """A changed copy of `network`, links by index; see ``openmobisim.network_edit``."""
 
 def manhattan_grid(n: int, block_metres: float, signals: bool) -> Network:
     """Build an n x n grid network, block_metres apart.
@@ -562,7 +562,7 @@ class Transit:
     def read_report(self) -> dict[str, int | bool] | None:
         """What reading the feed found, kept and skipped (``None`` if not read from a feed)."""
     def lines(self) -> dict[str, Any]:
-        """Every line: ``{"route_id", "name", "kind", "runs", "first_s", "last_s"}`` (S238)."""
+        """Every line: ``{"route_id", "name", "kind", "runs", "first_s", "last_s"}``."""
 
     def stops(self) -> dict[str, Any]:
         """Every stop: ``stop_id`` and ``name`` (lists), ``lon`` and ``lat`` (arrays)."""
@@ -572,7 +572,7 @@ def transit_edit(
     cancelled: list[int] = ...,
     headways: list[tuple[int, int, int, int]] = ...,
 ) -> tuple[Transit, dict[str, int]]:
-    """A changed copy of a timetable, lines by index (S238); see ``openmobisim.transit_edit``."""
+    """A changed copy of a timetable, lines by index; see ``openmobisim.transit_edit``."""
 
 def transit_read_gtfs(
     path: str, network: Network | None = None, date: str | None = None
@@ -716,11 +716,11 @@ def network_read_osm(
             speeds; ``openmobisim.network_options()`` lists them). An unknown name is refused
             with the list.
         region_stubs: With a ``region``: keep each road's first node outside, so the segment
-            that crosses the edge stays (S230). On by default.
+            that crosses the edge stays. On by default.
         region_buffer_m: With a ``region``: keep motorways, trunk roads and their slip roads
             within this many metres of it, so a ring road just outside the area (Amsterdam's
-            A10, Paris' Périphérique) and the main approaches stay; nothing else outside is kept
-            (S230). 2 000 m by default (uncalibrated); 0 keeps none.
+            A10, Paris' Périphérique) and the main approaches stay; nothing else outside is kept.
+            2 000 m by default (uncalibrated); 0 keeps none.
 
     Returns:
         A :class:`Network` with the defaults table's parameters and the street
@@ -914,23 +914,23 @@ def run_pipeline(
         persons_path: A ``persons.parquet`` path, instead of `persons`.
         class_defaults: ``{class_name: (owns_car, owns_bike,
             has_transit_pass)}`` — what each class owns by default; a class not listed owns
-            a car and a bike and holds no pass (S243, U-42).
+            a car and a bike and holds no pass.
         class_modes: ``{class_name: [mode, ...]}`` — the modes each class's travellers
-            may use (S231); a class not listed may use every mode the run offers.
+            may use; a class not listed may use every mode the run offers.
         class_options: ``{class_name: {beta_name: value}}`` — each class's own
-            coefficients of the choice model (S231), over ``choice_options``.
+            coefficients of the choice model, over ``choice_options``.
         class_limits: ``{class_name: {limit: seconds}}`` — each class's own choice-set
-            limits (S235): ``walk_max_s``, ``bike_max_s`` (over ``mode_options``') and
+            limits: ``walk_max_s``, ``bike_max_s`` (over ``mode_options``') and
             ``access_walk_max_s`` (over ``transit_options``').
         link_values: ``{layer: {name: values}}`` — the user's numbers per link of the
-            ``"road"``, ``"bike"`` or ``"walk"`` layer, one per link in link order (S236),
+            ``"road"``, ``"bike"`` or ``"walk"`` layer, one per link in link order,
             offered to choice models as ``<layer>_<name>_km`` and ``<layer>_<name>_sum``.
         person_values: ``{name: [(traveller_id, value), ...]}`` — the user's numbers per
-            traveller (S249), offered as ``person_<name>``.
-        trip_values: ``{name: values}``, one per row of the demand in its order (S249),
+            traveller, offered as ``person_<name>``.
+        trip_values: ``{name: values}``, one per row of the demand in its order,
             offered as ``trip_<name>``.
         trip_values_keyed: ``{name: [(traveller_id, trip_seq, value), ...]}``, the same keyed.
-        road_disruptions: ``(link indices, capacity factor, from_s, to_s)`` each (S239).
+        road_disruptions: ``(link indices, capacity factor, from_s, to_s)`` each.
         transit_disruptions: ``(line index, delay_s or -1 to cancel, from_s, to_s)`` each.
         disruptions_known: Whether travellers know of the disruptions in advance.
         default_weight: How many people a simulated traveller stands for, for
@@ -985,11 +985,11 @@ def run_pipeline(
             ``Scenario.from_parts``); ``None`` for no mode choice.
         mode_options: Mode choice's parameters by name (see ``Scenario.from_parts``).
         loading_options: The loading's rules by name (see ``Scenario.from_parts``).
-        price_options: The prices by name, in euros (see ``Scenario.from_parts``; S248).
-        threads: How many threads the run's parallel work uses (S277); ``None``, every
+        price_options: The prices by name, in euros (see ``Scenario.from_parts``).
+        threads: How many threads the run's parallel work uses; ``None``, every
             logical core. Recorded in the manifest, not the fingerprint (``Scenario.run``).
         fingerprint_only: If true, prepare the run and return its fingerprint without running
-            it, writing nothing (S277).
+            it, writing nothing.
         design_id: The design written in every row of ``kpis.parquet`` (``"default"``).
         replication: The replication written in every row of ``kpis.parquet`` (0).
         outputs: ``"all"`` (every file), or ``"minimal"``: ``kpis.csv`` and ``manifest.json`` only.

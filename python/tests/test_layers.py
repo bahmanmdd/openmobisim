@@ -1,4 +1,4 @@
-"""Bike and walk trips (S195): the layers of a network, trips with a mode, results by mode."""
+"""Bike and walk trips: the layers of a network, trips with a mode, results by mode."""
 
 from __future__ import annotations
 

@@ -14,7 +14,7 @@ use openmobisim_core_choice::{
 use openmobisim_core_types::rng::{RngKey, Stream, StreamRng};
 
 /// The attributes the tests' alternatives carry: a route's, the four the default logit weighs
-/// for itineraries (M4, S244), which are 0 for a route, and money (D-1), 0 here.
+/// for itineraries, which are 0 for a route, and money, 0 here.
 const ATTRIBUTES: [&str; 8] = [
     "time_min",
     "ln_path_size",
@@ -54,7 +54,7 @@ fn logit() -> Logit {
 }
 
 /// The default logit's `beta_time_min`, read from the model itself, so a change of the default
-/// moves the expected numbers and not the tests (T-10).
+/// moves the expected numbers and not the tests.
 fn default_beta_time() -> f64 {
     Logit::default().betas.iter().find(|(a, _)| a == "time_min").expect("a time coefficient").1
 }
@@ -106,7 +106,7 @@ fn a_huge_gap_cannot_overflow_the_logit() {
 fn a_large_positive_utility_does_not_overflow_the_logit() {
     // The test above only ever drives a huge NEGATIVE utility (time_min = 1e6
     // at beta = -0.2 underflows toward 0 whether or not the exp-stabilisation
-    // guard is there — checkpoint 8b's adversarial pass confirmed removing the
+    // guard is there — an adversarial review confirmed removing the
     // guard changes nothing on that fixture). A large POSITIVE utility is the
     // case the guard actually exists for: unstabilised, exp(u) itself
     // overflows to `inf` past about u = 709.78, and inf/inf is NaN. Very

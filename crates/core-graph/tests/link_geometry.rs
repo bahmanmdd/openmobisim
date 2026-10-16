@@ -17,7 +17,7 @@ fn a_degenerate_links_geometry_does_not_have_to_remeasure_to_its_floored_length(
     // but its real geometry is the two identical, zero-distance points —
     // which cannot remeasure to that floor. `LinkGeometry::build` must not
     // treat that as a bug: it panicked on a real Andorra import at exactly
-    // this combination (checkpoint 8b) before this was a documented
+    // this combination before this was a documented
     // exception in the code, not only in a comment.
     let mut b = RoadNetworkBuilder::new();
     b.add_node("a", LonLat::new(4.80, 45.70));

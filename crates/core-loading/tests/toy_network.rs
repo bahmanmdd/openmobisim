@@ -162,7 +162,7 @@ fn exit(t: &Trajectory, leg: usize) -> u32 {
 /// **T1 · Free flow, and the sub-vehicle chain.** A lone car takes the sum of
 /// the free-flow times, control delay included, at every fidelity level — and
 /// level 0 must agree: it may not lose the sub-second remainders of the three
-/// 4-m pieces (F1).
+/// 4-m pieces.
 #[test]
 fn t1_a_lone_car_takes_free_flow_time_at_every_level() {
     let toy = Toy::new();
@@ -261,11 +261,11 @@ fn t3_a_full_approach_admits_what_left_one_wave_time_earlier() {
 }
 
 /// **T4 · A saturated merge shares the supply in proportion to capacity
-/// (S48).** Both approaches always have a car waiting; the merged link takes
+/// .** Both approaches always have a car waiting; the merged link takes
 /// its own capacity. Approach capacities are 1 : 2 (`a2` one lane, `m1` two),
 /// so `a2` gets a third. The two streams are fed at the same rate (1 : 1, not
 /// the capacities' 1 : 2), so a merge that shared in proportion to demand
-/// would give `a2` a half and fail (T-1, S280).
+/// would give `a2` a half and fail.
 #[test]
 fn t4_a_saturated_merge_shares_in_proportion_to_capacity() {
     let toy = Toy::new();
@@ -328,7 +328,7 @@ fn t5_a_queue_crosses_the_short_chain_at_capacity() {
     }
 }
 
-/// **T6 · Roundabout: entering traffic gives way (S155).** A circulating car
+/// **T6 · Roundabout: entering traffic gives way.** A circulating car
 /// and an entering car meet at `r1`. The entering car arrives while the
 /// circulating one is on `r4`; it waits for `r4` to clear and then for the
 /// inflow headway on `r1`. The circulating car is not delayed at all.
@@ -450,7 +450,7 @@ fn mixed_demand(toy: &Toy) -> Vec<Vehicle> {
 
 /// **T0 · Properties every case has.** Identical on repeat and under reversed
 /// input order (K26), and identical for any loading step: the step is
-/// bookkeeping only (S84, K2).
+/// bookkeeping only (K2).
 #[test]
 fn t0_every_case_is_repeatable_order_free_and_step_free() {
     let toy = Toy::new();

@@ -34,7 +34,7 @@ __all__ = [
     "WindowWarning",
 ]
 
-#: Named settings for speed (C2, D-5 a): ``"fast"`` is what the starter cases set (S267): the
+#: Named settings for speed (D-5 a): ``"fast"`` is what the starter cases set: the
 #: route searches shared by origin and half hour, and the park-and-ride drives likewise;
 #: ``"complete"`` is the core's defaults, every search made on its own.
 PRESETS: dict[str, dict[str, dict[str, float]]] = {
@@ -54,22 +54,22 @@ LEVEL_NAMES = {0: "free flow", 2: "point queue", 3: "spatial queue", 4: "full"}
 
 
 class WindowWarning(UserWarning):
-    """Trips of the demand departed outside the simulation window and were left out (S271).
+    """Trips of the demand departed outside the simulation window and were left out.
 
     They are not simulated and not counted in any result.
     """
 
 
 class FallbackWarning(UserWarning):
-    """Trips with no alternative at all travelled by car instead (S271, W-1).
+    """Trips with no alternative at all travelled by car instead.
 
-    Only with ``mode_options={"fallback_car": 1}`` (experimental; off by default since S276).
+    Only with ``mode_options={"fallback_car": 1}`` (experimental, off by default).
     They are counted under the car; ``Run.fallback_car`` lists them.
     """
 
 
 class NoAlternativeWarning(UserWarning):
-    """Trips had no alternative at all and were not simulated (S276).
+    """Trips had no alternative at all and were not simulated.
 
     No mode they may use reached their destination within the limits. The warning says how
     many, of which classes, why each mode gave them none and what to change;
@@ -78,7 +78,7 @@ class NoAlternativeWarning(UserWarning):
 
 
 def _clock_s(value: str | float, what: str) -> int:
-    """Seconds after midnight from ``"07:30"``, ``"07:30:15"`` or a number of seconds (S271)."""
+    """Seconds after midnight from ``"07:30"``, ``"07:30:15"`` or a number of seconds."""
     if isinstance(value, str):
         parts = value.strip().split(":")
         if 2 <= len(parts) <= 3 and all(p.isdigit() for p in parts):
@@ -116,7 +116,7 @@ BIKE_COSTS = ("dedicated", "time")
 
 
 def _check_modes_can_run(modes: list[str], has_transit: bool, has_parkings: bool) -> None:
-    """Refuse a mode asked for in ``modes=`` that the run has nothing to simulate it with (CM-22).
+    """Refuse a mode asked for in ``modes=`` that the run has nothing to simulate it with.
 
     A mode left out silently would read as a result (its share is 0); the error names the mode and
     what it needs. Modes the classes imply are not checked: a class table may name them for
@@ -136,7 +136,7 @@ def _check_modes_can_run(modes: list[str], has_transit: bool, has_parkings: bool
 def _link_values(
     network: _core.Network, given: dict[str, dict[str, Any]]
 ) -> dict[str, dict[str, list[float]]]:
-    """The user's link values (S236) as the core takes them: per layer and name, a value per link.
+    """The user's link values as the core takes them: per layer and name, a value per link.
 
     Each column is an array in the layer's link order, or a dict from link id to value (a link
     not in it taking 0). Its length, the layer and the ids are checked here; the names and the
@@ -178,7 +178,7 @@ def _link_values(
 
 
 def _person_values(given: Mapping[str, Any]) -> dict[str, list[tuple[str, float]]]:
-    """The user's traveller values (S249) as the core takes them: per name, ``(id, value)`` pairs.
+    """The user's traveller values as the core takes them: per name, ``(id, value)`` pairs.
 
     Each column maps a traveller id to a value: a dict, or anything with ``items()`` (a pandas
     Series indexed by id). A traveller not in it takes 0; an id the demand does not have is
@@ -201,7 +201,7 @@ def _person_values(given: Mapping[str, Any]) -> dict[str, list[tuple[str, float]
 def _trip_values(
     given: Mapping[str, Any],
 ) -> tuple[dict[str, list[float]], dict[str, list[tuple[str, int, float]]]]:
-    """The user's trip values (S249) as the core takes them: ``(aligned, keyed)``.
+    """The user's trip values as the core takes them: ``(aligned, keyed)``.
 
     A column is either a sequence with one value per row of the demand, in its order (a list, an
     array, a Series), or a dict from ``(traveller_id, trip_seq)`` to value, a trip not in it
@@ -231,7 +231,7 @@ def _trip_values(
 def _disruptions(
     network: _core.Network, transit: _core.Transit | None, given: list[dict[str, Any]]
 ) -> tuple[list[tuple], list[tuple]]:
-    """The disruptions (S239) as the core takes them: links and lines by index."""
+    """The disruptions as the core takes them: links and lines by index."""
     from openmobisim.transit import _line_index
 
     road: list[tuple] = []
@@ -525,7 +525,7 @@ class Scenario:
             persons: The ``persons.parquet`` equivalent — an in-memory table,
                 a file path, or ``None`` if every traveller takes their
                 class's default ownership.
-            classes: The traveller classes (S231), ``{class_name: columns}``, a trip's class being
+            classes: The traveller classes, ``{class_name: columns}``, a trip's class being
                 its ``user_class``: ``demand_read_classes`` reads them from a CSV file, or give a
                 dict of the same columns. A class may say ``modes`` (the modes its travellers may
                 use: ``["car", "transit", "car_transit"]``; unsaid: every mode the run offers),
@@ -539,7 +539,7 @@ class Scenario:
                 ``beta_*`` coefficient of the choice model (its own mode
                 constants, ``beta_mode_bike`` …, or its own value of time, ``beta_time_min``;
                 unsaid: ``choice_options``'), for ``"logit"`` and ``"nested_logit"``, and its own
-                choice-set limits in seconds (S235): ``walk_max_s`` and ``bike_max_s``, the longest
+                choice-set limits in seconds: ``walk_max_s`` and ``bike_max_s``, the longest
                 walk and ride offered to its trips choosing their mode, and ``access_walk_max_s``,
                 the longest walk to or from a stop (unsaid: ``mode_options``' and
                 ``transit_options``'; for example a class of keen cyclists riding up to 90 minutes,
@@ -549,22 +549,22 @@ class Scenario:
                 offers every mode a class names**, and a trip without a stated mode chooses among
                 those its class may use. A class not listed (all of them, without ``classes``) may
                 use every mode, with the model's coefficients, and owns a car, a bike and a transit
-                pass unless a ``persons`` row says otherwise (S243). A class with none of the run's
+                pass unless a ``persons`` row says otherwise. A class with none of the run's
                 modes leaves its choosing trips without an itinerary. Every value is the user's, not
                 a calibration.
             default_weight: How many people a simulated traveller stands for,
                 for a trip whose row gives no weight. 1 simulates everyone; a
                 larger number is faster and coarser.
-            window: The simulation window (S271), ``(start, end)`` as clock times
+            window: The simulation window, ``(start, end)`` as clock times
                 (``("07:30", "09:30")``) or seconds after midnight. The run starts at the start
                 and stops at the end: a trip still under way then is unfinished, counted and
-                reported (S57); a timetable keeps only each run's calls inside the window. A trip
+                reported; a timetable keeps only each run's calls inside the window. A trip
                 departing outside it is **left out** — not simulated, not counted in any result
                 — with a ``WindowWarning`` that says how many, when and how to widen the window.
                 Not given (or ``None`` for either end): from the earliest departure, rounded down
                 to the quarter hour, for three hours. Leave each trip time to finish: a demand
                 whose departures end well before the window does (an hour, say) finishes inside it.
-            flow_level: How vehicles load the network. ``2`` (the default, S229) is the
+            flow_level: How vehicles load the network. ``2`` (the default) is the
                 **point queue**: the link transmission model with capacities at every link
                 and junction, where a queue forms behind capacity and delays everyone in it,
                 but takes no road space, so it never blocks the links upstream and nothing
@@ -576,14 +576,14 @@ class Scenario:
                 queues take road space and **spill back** to the links upstream, with turn
                 pockets and en-route rerouting against gridlock — for studies where spillback
                 itself matters (traffic control, incidents, evacuation); under heavy congestion
-                its iterations can drift (S227). ``3`` is a spatial queue. ``0`` is free flow:
+                its iterations can drift. ``3`` is a spatial queue. ``0`` is free flow:
                 no vehicle affects another, so there is no congestion, and a run that iterates
                 has nothing to settle — for debugging, or as a lower bound. Under
                 ``equilibration="free_flow"`` (the free-flow loading alone, no iterations) every
                 level from 2 loads as the point queue (``equilibration_options`` ``warmup``, 1 by
                 default), so levels 2, 3 and 4 differ only in whether stuck vehicles may re-route
                 (``loading_options`` ``reroute``: off at 2, on at 3 and 4); the level sets how
-                ``"msa"``'s iterations after it load (X-25).
+                ``"msa"``'s iterations after it load.
             flow_step_s: The loading step in seconds, for levels 2-4. It is a
                 bookkeeping boundary: results do not depend on it.
             link_bin_s: If given, also record per-link results in time bins of
@@ -661,7 +661,7 @@ class Scenario:
                 measured against the whole set. The ``ln_path_size`` attribute is computed over
                 the whole set.
             choice_max_routes: The most routes a traveller is offered: the fastest at their
-                departure, of those within ``choice_detour_limit`` (S268: people consider a
+                departure, of those within ``choice_detour_limit`` (people consider a
                 handful of routes, Prato 2009, https://doi.org/10.1016/S1755-5345(13)70005-8;
                 uncalibrated). ``None`` (the default) is the library's default, **5**; ``0``
                 offers every route within the limit. A pair's set may hold more (the route
@@ -689,8 +689,8 @@ class Scenario:
                 choose again on those times at iteration ``i``, load again.
                 ``"free_flow"`` makes only the free-flow loading: a quick
                 estimate of the day without iterating.
-                **The free-flow loading** is how every run starts (iteration 0,
-                S223). The travellers are split into groups of about equal size
+                **The free-flow loading** is how every run starts (iteration 0).
+                The travellers are split into groups of about equal size
                 (``increments``, 5 by default); the first group chooses on
                 free-flow costs, then the network is loaded with the groups so
                 far and the next group chooses on the times that produced (its
@@ -713,7 +713,7 @@ class Scenario:
                 the disequilibrium the last iteration ended at.
             equilibration_options: The strategy's options, numbers by name: for
                 ``"msa"``, ``iterations`` (10; the most loadings), ``gap_tolerance``
-                (0.05, S268: stop once the disequilibrium, averaged over the last three
+                (0.05: stop once the disequilibrium, averaged over the last three
                 iterations, is below this, the verdict's "good"; 0.15 is acceptable; 0 never
                 stops early), ``route_growth_tolerance`` (1: and only while the last route update
                 added routes for at most this share of the pairs it searched; 1 lets the gap
@@ -757,7 +757,7 @@ class Scenario:
                 that pay only at some hours and makes bigger sets) and ``max_routes`` (10:
                 the most routes a pair's set may hold; a full set is still searched, and a
                 route at least a second faster than its best replaces a route nobody chose,
-                never its free-flow shortest; if all are in use it waits, S268) and
+                never its free-flow shortest; if all are in use it waits) and
                 ``slack`` (0.02: a pair is not searched while its set's best route is within this
                 share of free flow, since nothing is faster than free flow and so at most that
                 much is left to gain).
@@ -872,24 +872,24 @@ class Scenario:
                 because with them an iterated run under heavy congestion mispriced the waiting
                 movements and trip times rose with the iterations.
                 Uncalibrated defaults; unknown names and values out of range are refused.
-            price_options: What travel costs, in euros, by name (S248): ``car_eur_km``
+            price_options: What travel costs, in euros, by name: ``car_eur_km``
                 (the fuel a driver pays per km), ``bike_eur_km``, a transit
                 journey's fare ``fare_base_eur`` (once) + ``fare_km_eur`` (per km from
                 each boarding stop to its alighting stop as the crow flies) +
                 ``fare_transfer_eur`` (per transfer), and the fee per stay of a car park or
                 bike parking whose table gives none (``parking_car_eur``,
                 ``parking_bike_eur``; a parking table's ``fee_eur`` column gives each its
-                own). **Every one is 0 by default** (S256): having a car, a bike, a pass or
+                own). **Every one is 0 by default**: having a car, a bike, a pass or
                 the means to pay a fare is access, which ``classes`` give, and no money is
                 counted for it; give prices here to weigh them. **A traveller whose class or
                 person has a transit pass pays no fare** (``cost_fare_eur`` is 0), whatever the
-                fare prices (S279). A toll is a road link value
+                fare prices. A toll is a road link value
                 named ``toll_eur`` (``link_values``), paid at each passage. Every alternative
                 carries what it costs: ``cost_eur`` and its
                 parts ``cost_running_eur``, ``cost_toll_eur``, ``cost_parking_eur`` (park-and-ride
                 and bike-and-ride, on the trip that parks) and ``cost_fare_eur``. The built-in
                 models weigh money by ``beta_cost_eur`` (or a part's coefficient), **-1.2 per euro
-                by default** (D-1; 0 drops it): a value of time of ``V`` euros per hour is
+                by default** (0 drops it): a value of time of ``V`` euros per hour is
                 ``beta_cost_eur = beta_time_min * 60 / V``, so -1.2 is 10 €/h at the default
                 -0.2; a class's own ``beta_cost_eur`` (``classes``) is its own value of time.
                 Uncalibrated defaults (a city's own, to weigh fares: a single ticket in Paris
@@ -902,7 +902,7 @@ class Scenario:
                 https://vervoerregio.bestuurlijkeinformatie.nl/Document/View/abddeeb0-be54-4eae-9622-4ac0935df151);
                 unknown names and values below 0 are refused.
                 Recorded in the fingerprint and the manifest when the choice model reads money.
-            link_values: The user's own numbers per link, for choice models (S236):
+            link_values: The user's own numbers per link, for choice models:
                 ``{layer: {name: values}}``, the layer ``"road"``, ``"bike"`` or ``"walk"``,
                 the values either one per link of that layer in link order (an array as long as
                 ``network.layer("bike").link_count``, aligned with its other per-link arrays) or
@@ -920,13 +920,13 @@ class Scenario:
                 previous run's ``link_bins`` (``link_ids()`` ties a bike link to its street's
                 road links).
                 Recorded in the fingerprint, and their names in the manifest.
-            person_values: The user's own numbers per traveller, for choice models (S249):
+            person_values: The user's own numbers per traveller, for choice models:
                 ``{name: {traveller_id: value}}`` (a dict, or a pandas Series indexed by id); a
                 traveller not in it takes 0, and an id the demand does not have is ignored (a
                 sampled demand keeps a share of the people). Each becomes the attribute
                 ``person_<name>`` of every alternative of that traveller's choices: income, age,
                 a household's children.
-            trip_values: The same per trip (S249): ``{name: values}``, the values one per row of
+            trip_values: The same per trip: ``{name: values}``, the values one per row of
                 ``demand`` in its order (a list, an array, a Series), or a dict from
                 ``(traveller_id, trip_seq)`` to value (a trip not in it taking 0); the attribute
                 ``trip_<name>``: a purpose, a time budget. **``parking_eur``** is what parking a car
@@ -940,7 +940,7 @@ class Scenario:
                 less as income grows (give ``income_inv`` as one over the income); a model of one's
                 own reads them from the batch. Names are lower-case letters, digits and ``_``.
                 Recorded in the fingerprint, and their names in the manifest.
-            disruptions: Things that happen at a time of day (S239), a list of dicts: on roads,
+            disruptions: Things that happen at a time of day, a list of dicts: on roads,
                 ``{"links": [...], "capacity_factor": 0.0, "from_s": 8 * 3600, "to_s": 9 * 3600}``
                 — the links (by id, ``network.link_ids()``, or index; each direction of a road
                 is a link) keep that share of their capacity from ``from_s`` to ``to_s``
@@ -1104,7 +1104,7 @@ class Scenario:
         )
 
     def _fingerprint(self) -> str:
-        """The fingerprint a run of this scenario would have, without running it (S277).
+        """The fingerprint a run of this scenario would have, without running it.
 
         Everything a run prepares before it starts is prepared (the layers, the timetable,
         the parkings), so it takes a run's setup time, not its run time.

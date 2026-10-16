@@ -1,4 +1,4 @@
-//! The route-set cache (S178).
+//! The route-set cache.
 //!
 //! What is defended, and how each is checked:
 //!

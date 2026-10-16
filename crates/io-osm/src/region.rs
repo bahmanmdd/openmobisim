@@ -26,7 +26,7 @@
 //! sink, which is what [`Connectivity::Strong`](crate::import::Connectivity)
 //! then removes, and reports.
 //!
-//! # Keeping what can be kept (S230, roadmap I-ac)
+//! # Keeping what can be kept
 //!
 //! [`ClipOptions`] can keep more than the nodes inside:
 //!
@@ -37,7 +37,7 @@
 //!   within [`ClipOptions::main_road_buffer_m`] of the region, so a ring road just outside a
 //!   study area (Amsterdam's A10, Paris' Périphérique) and the main approaches stay, as people
 //!   use them for trips inside the area. Nothing else outside is kept.
-//! * **Turnarounds for main roads (S268):** with a buffer, a one-way motorway or trunk carriageway
+//! * **Turnarounds for main roads:** with a buffer, a one-way motorway or trunk carriageway
 //!   cut at the buffer's edge would end in a sink (or start at a source), and strong connectivity
 //!   would then remove it back to its last interchange — Delft's A13 and A4 vanished 2 km inside
 //!   the study area. Each such cut end is joined to the nearest cut end of the opposite direction
@@ -85,7 +85,7 @@ impl fmt::Display for RegionError {
 
 impl std::error::Error for RegionError {}
 
-/// What a [`ClippedSource`] keeps besides the nodes inside its region (S230). The default keeps
+/// What a [`ClippedSource`] keeps besides the nodes inside its region. The default keeps
 /// nothing else: the plain clip.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ClipOptions {
@@ -103,16 +103,16 @@ const M_PER_DEG_LAT: f64 = 111_320.0;
 const MAIN_ROADS: [&str; 4] = ["motorway", "motorway_link", "trunk", "trunk_link"];
 
 /// The farthest apart two cut ends of a main road's carriageways may be to be joined by a
-/// turnaround (S268): a dual carriageway's two sides are tens of metres apart.
+/// turnaround: a dual carriageway's two sides are tens of metres apart.
 pub const TURNAROUND_MAX_M: f64 = 300.0;
 
-/// The first way id of the turnarounds a clip adds (S268), counting up: far below any id an
+/// The first way id of the turnarounds a clip adds, counting up: far below any id an
 /// extract holds, hand-edited negative ones included.
 const TURNAROUND_FIRST_ID: i64 = i64::MIN / 2;
 
 impl Region {
     /// How far a point is from the region, in metres: 0 inside, otherwise the distance to its
-    /// boundary on a local plane at the point's latitude (S230).
+    /// boundary on a local plane at the point's latitude.
     #[must_use]
     pub fn distance_m(&self, lon: f64, lat: f64) -> f64 {
         if self.contains(lon, lat) {
@@ -253,12 +253,12 @@ struct Kept {
     near: HashMap<i64, (f64, f64)>,
     /// Every node some way keeps.
     all: HashSet<i64>,
-    /// The turnarounds to add (S268): from a carriageway's cut end to the opposite one's, with the
+    /// The turnarounds to add: from a carriageway's cut end to the opposite one's, with the
     /// `highway` value they take.
     turnarounds: Vec<(i64, i64, &'static str)>,
 }
 
-/// A one-way main road's end where the clip cut it (S268).
+/// A one-way main road's end where the clip cut it.
 struct CutEnd {
     node: i64,
     /// Traffic leaves the network here (a sink), else enters (a source).
@@ -274,7 +274,7 @@ impl<'a> ClippedSource<'a> {
         Self::with_options(inner, region, ClipOptions::default())
     }
 
-    /// `inner`, seen through `region`, keeping what `options` say besides (S230).
+    /// `inner`, seen through `region`, keeping what `options` say besides.
     #[must_use]
     pub fn with_options(
         inner: &'a dyn OsmSource,
@@ -327,7 +327,7 @@ impl<'a> ClippedSource<'a> {
         Ok(())
     }
 
-    /// The turnarounds (S268): each cut end that is still a dead end once every kept way is in
+    /// The turnarounds: each cut end that is still a dead end once every kept way is in
     /// (no kept road leaves a sink, none enters a source), joined to the nearest dead cut end of
     /// the other kind within [`TURNAROUND_MAX_M`], one with the same `ref` first. Costs one more
     /// pass over the ways, only where a main road was cut.
@@ -408,7 +408,7 @@ impl<'a> ClippedSource<'a> {
 
     /// Which of a way's nodes it keeps: those inside; a main road's within the buffer; and, with
     /// stubs, the node just outside either end of every run so far (but on a main road under a
-    /// buffer, S268).
+    /// buffer).
     fn positions(
         &self,
         way: &OsmWay,
@@ -441,7 +441,7 @@ impl<'a> ClippedSource<'a> {
     }
 }
 
-/// A one-way main road's cut ends (S268): where a run of kept nodes stops before the way does, or
+/// A one-way main road's cut ends: where a run of kept nodes stops before the way does, or
 /// starts after it began. In traffic order, a run's last node is a sink and its first a source.
 fn cut_ends(way: &OsmWay, keep: &[bool], out: &mut Vec<CutEnd>) {
     let Some(highway) = way.tag("highway") else { return };

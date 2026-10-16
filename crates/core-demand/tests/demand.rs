@@ -1,5 +1,5 @@
 //! `core-demand`: the `trips.parquet`/`persons.parquet` readers, travellers,
-//! and vehicle-location state (Phase 1 step 4).
+//! and vehicle-location state.
 //!
 //! Fixtures are written to real Parquet files with the `arrow`/`parquet`
 //! writer API rather than checked into the repository — the same reasoning

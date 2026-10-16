@@ -1,4 +1,4 @@
-//! Route-set generation behind one interface (design §13.6).
+//! Route-set generation behind one interface.
 //!
 //! **A method is a [`RouteSetGenerator`]**: given a search and an origin and a
 //! destination node, it returns that pair's routes. Everything else — the
@@ -13,7 +13,7 @@
 //! |---|---|
 //! | `penalty` (the default, [`DEFAULT_METHOD`]) | The shortest route, then repeatedly the shortest under penalties on the links already used, keeping routes that stay within a detour bound and an overlap limit |
 //! | `shortest` | The single shortest route |
-//! | `montecarlo` | The shortest route, then the shortest under **random link costs biased towards the links likely to congest** (S176): distinct routes that avoid what the demand will jam |
+//! | `montecarlo` | The shortest route, then the shortest under **random link costs biased towards the links likely to congest**: distinct routes that avoid what the demand will jam |
 //!
 //! A method's **options** are numbers by name ([`Options`]), validated when the
 //! method is made, and its **descriptor** — its name and every option with
@@ -105,7 +105,7 @@ pub trait RouteSetGenerator: Send + Sync {
     fn generate(&self, search: &mut Search<'_>, origin: NodeId, destination: NodeId) -> Vec<Route>;
 
     /// Whether [`Self::generate_from`] finds the routes from one origin in one search, so that
-    /// [`RouteSets::generate`] hands it each origin's pairs together (S267). False by default:
+    /// [`RouteSets::generate`] hands it each origin's pairs together. False by default:
     /// the pairs are then handed out one by one, which spreads the work more evenly.
     fn searches_trees(&self) -> bool {
         false
@@ -129,7 +129,7 @@ pub trait RouteSetGenerator: Send + Sync {
         false
     }
 
-    /// The same method, made aware of the demand it is about to generate for (S176), or
+    /// The same method, made aware of the demand it is about to generate for, or
     /// `None` if it does not read it. Called once, before [`RouteSets::generate`], by whoever
     /// generates for a demand (a run; `route_sets_build`). The Monte Carlo method uses it to
     /// find the links likely to congest ([`congestion_propensity`]).
@@ -165,7 +165,7 @@ pub const PROPENSITY_BIN_SECONDS: u32 = 1800;
 
 /// How likely each link is to congest under `demand`, from 0 to 1, by link id: **the
 /// busiest departure half-hour's load over the link's capacity**, with every trip on
-/// its pair's free-flow shortest route (S176; S174's "static congestion propensity").
+/// its pair's free-flow shortest route (the "static congestion propensity").
 ///
 /// For each link, the persons whose shortest route uses it and who leave in one
 /// [`PROPENSITY_BIN_SECONDS`]-long bin, over what the link can carry in that time
@@ -296,7 +296,7 @@ impl RouteSetGenerator for Shortest {
         true
     }
 
-    /// One search tree for all of them (S267, [`Search::shortest_tree`]).
+    /// One search tree for all of them ([`Search::shortest_tree`]).
     fn generate_from(
         &self,
         search: &mut Search<'_>,
@@ -486,7 +486,7 @@ impl BiasSource {
     }
 }
 
-/// Monte Carlo generation, biased towards the links likely to congest (S176).
+/// Monte Carlo generation, biased towards the links likely to congest.
 ///
 /// The shortest route, then, for each of `draws` draws, the shortest route when **every link's
 /// cost is multiplied by `1 + sigma · u · bias`**, `u` a uniform draw and `bias` the link's
@@ -500,13 +500,13 @@ impl BiasSource {
 ///
 /// **The bias is the point.** Unbiased noise (`biased` 0) gives random routes, which are poor
 /// routes, and a logit spreads travellers over them: on Stockholm's heavy load its network
-/// gap was 0.96, against the penalty method's 0.30 and this method's 0.16 (S174). By default
+/// gap was 0.96, against the penalty method's 0.30 and this method's 0.16. By default
 /// the bias is [`congestion_propensity`] of the demand the run generates for; a caller with a
 /// better idea gives its own ([`Self::with_bias`]).
 ///
 /// **Cost:** at most `draws` bounded searches per pair, each exploring about what the
-/// penalty method's do; about 4 s more than the penalty method for 9 600 pairs at 16 draws
-/// (S174), and one shortest route per distinct pair for the bias.
+/// penalty method's do; about 4 s more than the penalty method for 9 600 pairs at 16 draws,
+/// and one shortest route per distinct pair for the bias.
 /// **Guarantee:** none of optimality or completeness; the first route is always a shortest one.
 #[derive(Clone, Debug)]
 pub struct MonteCarlo {
@@ -547,7 +547,7 @@ impl MonteCarlo {
 
     /// Make the method from its options, defaults for those not given: 16 draws, `sigma` 4,
     /// `max_detour` 2, `max_overlap` 0.9, `max_paths` 10, `seed` 0, `biased` 1 (the bias is
-    /// the demand's congestion propensity; 0 for none). These are the settings S174 measured.
+    /// the demand's congestion propensity; 0 for none).
     ///
     /// # Errors
     ///
@@ -641,7 +641,7 @@ impl MonteCarlo {
     }
 
     /// How the descriptor names the bias: `none`, `demand`, or for a given one `given:` and a
-    /// hash of its values, so two given biases never share a route set's identity (X-39).
+    /// hash of its values, so two given biases never share a route set's identity.
     fn bias_name(&self) -> String {
         match (self.source, &self.bias) {
             (BiasSource::Given, Some(bias)) => {

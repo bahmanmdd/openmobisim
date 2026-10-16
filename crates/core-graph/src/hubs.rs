@@ -1,12 +1,12 @@
-//! Hubs: the only places a traveller changes layer (design §3.2; S198).
+//! Hubs: the only places a traveller changes layer.
 //!
 //! A hub is a place with **access points** — a layer and a node of that layer's
 //! graph — and **transfers** between them. A pavement-to-bus-stop transfer is a
 //! hub with a walk and a transit access point; a park-and-ride is one with a car,
-//! a walk and a transit access point; its **parking** is a resource (M4, S201).
+//! a walk and a transit access point; its **parking** is a resource.
 //! The object is the same, with more fields filled in.
 //!
-//! **Parking** is typed by vehicle, car or bike, from the start (S193): a
+//! **Parking** is typed by vehicle, car or bike, from the start: a
 //! station's bike parking and a park-and-ride garage are the same resource, with
 //! a capacity and an occupancy at the start of the day. How full a parking is
 //! over the day, and what that costs a traveller, is the run's business
@@ -16,11 +16,11 @@
 //! all taking the hub's one transfer time. Explicit per-pair times (GTFS
 //! `transfers.txt`) join when there is a user for them.
 //!
-//! **Identity.** Hubs get dense ids by sorted external id (Foundations §1), and
+//! **Identity.** Hubs get dense ids by sorted external id, and
 //! access points dense ids in hub order, so a rebuilt set has the same ids.
 //!
 //! **Cost:** about 20 bytes per hub plus 8 per access point, in flat arrays: a
-//! city's thousands of automatic stop hubs (M3) are a few hundred kilobytes. A
+//! city's thousands of automatic stop hubs are a few hundred kilobytes. A
 //! parking adds about 16 bytes and its external id.
 
 use openmobisim_core_types::ids::{
@@ -36,10 +36,10 @@ use crate::layers::Layer;
 pub enum HubKind {
     /// Declared by the scenario or a fixture: a park-and-ride, a station.
     Declared = 0,
-    /// A transit stop, made automatically from GTFS (M3, design §18.4).
+    /// A transit stop, made automatically from GTFS.
     Stop = 1,
     /// A kerb hub, made where a car or bike trip leaves or joins the walk layer
-    /// (design §3.2, V5).
+    /// .
     Kerb = 2,
 }
 
@@ -55,7 +55,7 @@ impl HubKind {
     }
 }
 
-/// Which vehicle a parking holds (S193: typed from the start).
+/// Which vehicle a parking holds (typed from the start).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[repr(u8)]
 pub enum ParkingKind {
@@ -100,7 +100,7 @@ impl ParkingKind {
     }
 }
 
-/// A parking: a hub's resource (design §3.2; M4).
+/// A parking: a hub's resource.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Parking {
     /// Its external id (a parking table's `parking_id`, an OSM element).
@@ -113,7 +113,7 @@ pub struct Parking {
     pub initial_occupancy: u32,
 }
 
-/// One row of a parking table (M4, D11): a parking a user declares, or one the
+/// One row of a parking table: a parking a user declares, or one the
 /// OSM reader found. A run snaps it to its vehicle's layer and the walk layer
 /// and makes it a hub (rows sharing a `hub_id` join one hub).
 #[derive(Clone, Debug, PartialEq)]
@@ -133,7 +133,7 @@ pub struct ParkingRow {
     pub capacity: u32,
     /// How many are parked at the start of the day.
     pub initial_occupancy: u32,
-    /// What parking there costs, in euros per stay (S248, roadmap I-bb U5), if the table says;
+    /// What parking there costs, in euros per stay, if the table says;
     /// else the run's price for its kind (`core-sim`'s `Prices`).
     pub fee_eur: Option<f64>,
 }

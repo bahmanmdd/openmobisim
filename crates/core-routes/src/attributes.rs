@@ -1,5 +1,5 @@
 //! What a route is, beyond its links and its cost: the numbers a choice model
-//! reads (S169).
+//! reads.
 //!
 //! Computed for the whole store in one pass, from the routes and the network's
 //! link lengths, and not stored with it: they are a function of both.
@@ -12,7 +12,7 @@
 //! alternatives, which is the standard repair for route choice.
 //!
 //! [`path_sizes`] computes the same number over exactly the routes it is given: a choice
-//! reads the path size over the routes **offered** (S279, CM-3), not over the whole stored
+//! reads the path size over the routes **offered**, not over the whole stored
 //! set, which includes routes nobody is offered. The store's [`RouteAttributes::path_size`]
 //! stays the whole set's (reports, the interactive map's route panel).
 //!

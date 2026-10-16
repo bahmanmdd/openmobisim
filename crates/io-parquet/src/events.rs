@@ -1,4 +1,4 @@
-//! `events.parquet` — sampled per-trip events (Foundations §6):
+//! `events.parquet` — sampled per-trip events:
 //! `run_id, second, event_type, entity_kind, entity_id`.
 //!
 //! No `payload` column: [`EventRow`] does not carry one. Boardings, parking
@@ -15,7 +15,7 @@ use openmobisim_core_sim::EventRow;
 use crate::WriteError;
 use crate::io::write_single_batch;
 
-/// Foundations §6's stated default: "sampled at 1% by default."
+/// the stated default: "sampled at 1% by default."
 pub const DEFAULT_SAMPLE_RATE: f64 = 0.01;
 
 /// Keep every `round(1 / sample_rate)`-th row, by position — a fixed
@@ -44,7 +44,7 @@ fn sample(events: &[EventRow], sample_rate: f64) -> Vec<&EventRow> {
 }
 
 /// Write `events.parquet` for one run, sampling `events` at `sample_rate`
-/// ([`DEFAULT_SAMPLE_RATE`] matches Foundations §6's stated default).
+/// ([`DEFAULT_SAMPLE_RATE`] matches the stated default).
 ///
 /// # Errors
 ///

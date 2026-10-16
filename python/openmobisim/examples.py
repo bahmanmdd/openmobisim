@@ -9,7 +9,7 @@ class a car and nothing else. This helper only saves writing out the
 nine-column table by hand; it does not introduce a second demand shape.
 ``traveller_classes`` is an example class table: four classes by what people
 own, each with the modes its vehicles allow, weighing alike. ``case`` gives a
-**starter case** (S240): Amsterdam, Paris, Lyon, Sioux Falls or Nguyen–Dupuis,
+**starter case**: Amsterdam, Paris, Lyon, Sioux Falls or Nguyen–Dupuis,
 its files fetched once and checked, read in one call each.
 """
 
@@ -75,7 +75,7 @@ def fixed_car_trips(
             tuples. ``weight=None`` takes the scenario's default weight.
         user_class: The class every row is tagged with. A class that
             ``classes`` (passed to ``Scenario.from_parts``, not here) does not
-            list owns a car (S243); one listed without a car reports every trip
+            list owns a car; one listed without a car reports every trip
             in this table as ``no_vehicle_available``.
 
     Returns:
@@ -124,7 +124,7 @@ def trips_random(
     figures can be demonstrated and its cost measured. The same ``seed`` always
     gives the same trips.
 
-    A class that ``classes`` does not list owns a car (S243); one listed
+    A class that ``classes`` does not list owns a car; one listed
     without a car reports every trip as ``no_vehicle_available``.
 
     Args:
@@ -210,7 +210,7 @@ def trips_random(
 def traveller_classes() -> dict[str, dict]:
     """Four example traveller classes by what people own, as ``demand_read_classes`` gives them.
 
-    The classes of S244, their constant fitted in S256 (with no prices, the defaults' since S256):
+    The example classes, their bike constant fitted with no prices (the defaults'):
 
     ================  =====  ==================================
     Class             Share  Modes
@@ -227,7 +227,7 @@ def traveller_classes() -> dict[str, dict]:
     bike constant of 1.23 (every other mode's 0), on top of the default weights, which count each
     kilometre of a ride in mixed traffic (-0.16) and money (-1.2 per euro), though no price is
     charged by default: money plays no part until a study sets prices. The
-    constant was fitted (S282, on the starter case's final recipe and window, a car trip paying its
+    constant was fitted (on the starter case's final recipe and window, a car trip paying its
     access and egress) so that Amsterdam's residents drive as often as the city's survey says they
     do (23 % of their trips, with 38 % by bike); public
     transport's share then follows from who owns no vehicle, and walking, mostly short trips,

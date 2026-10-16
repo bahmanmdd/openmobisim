@@ -1,6 +1,6 @@
-//! `make_room` (S268, S280): a full set drops only routes nobody uses — not one a route choice
+//! `make_room`: a full set drops only routes nobody uses — not one a route choice
 //! names, and not one an itinerary trip drives as its car alternative (`kept`), which no route
-//! choice names (S280, review R-1).
+//! choice names (review R-1).
 
 use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
 use openmobisim_core_graph::geometry::LonLat;

@@ -1,5 +1,5 @@
 //! What kind of service a line is, from GTFS `route_type`, and whether it rides
-//! the roads (design §18.2).
+//! the roads.
 
 /// The kind of service a route runs.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -58,7 +58,7 @@ impl ServiceKind {
     }
 
     /// Whether its vehicles ride the road network, among the cars, in this
-    /// version: buses (design §18.2). Trams are run by the schedule for now,
+    /// version: buses. Trams are run by the schedule for now,
     /// since GTFS does not say which run on the street and which on their own
     /// track; rail, metro and ferries follow the schedule by construction.
     #[must_use]

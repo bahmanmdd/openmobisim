@@ -1,4 +1,4 @@
-//! Every network parameter by name (S225, roadmap I-ae): what the names are, that each one acts,
+//! Every network parameter by name: what the names are, that each one acts,
 //! that bad ones are refused, and that the network keeps what it was built with.
 
 use std::collections::BTreeMap;

@@ -1,4 +1,4 @@
-//! Scenario edits of a road network (S238): closures, lanes, capacity factors.
+//! Scenario edits of a road network: closures, lanes, capacity factors.
 
 use openmobisim_core_graph::network::LinkChanges;
 use openmobisim_core_graph::toy_network;

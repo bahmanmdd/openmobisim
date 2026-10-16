@@ -1,4 +1,4 @@
-"""The flow map's time bins as clock times beside bin numbers (C2, D-5 a)."""
+"""The flow map's time bins as clock times beside bin numbers (D-5 a)."""
 
 from __future__ import annotations
 

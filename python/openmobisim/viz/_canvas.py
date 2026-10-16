@@ -1,4 +1,4 @@
-"""The canvas every map draws on: a network's links projected around one origin (C3, P-14).
+"""The canvas every map draws on: a network's links projected around one origin.
 
 One place for what each map repeated: the links' vertices in metres around an origin, which link
 each vertex belongs to, the links as polylines, and the thin network drawn under everything else.

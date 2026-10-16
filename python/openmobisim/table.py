@@ -1,6 +1,6 @@
 """Results as tables: ``Table`` (a file a run wrote) and ``Columns`` (a result held as columns).
 
-Split from ``scenario.py`` (C3, P-13); ``openmobisim.scenario`` re-exports ``Table``.
+Split from ``scenario.py``; ``openmobisim.scenario`` re-exports ``Table``.
 """
 
 from __future__ import annotations

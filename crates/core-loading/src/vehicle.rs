@@ -1,12 +1,12 @@
-//! A vehicle and the route it carries (S85).
+//! A vehicle and the route it carries.
 //!
-//! "The flow motor never sees routes" (design §10.4) — it receives turning
+//! "The flow motor never sees routes" — it receives turning
 //! demand at each node and returns flows. A [`Vehicle`] is what carries a
 //! route *into* the flow motor: an ordered sequence of directed links, read
 //! link by link as the vehicle advances. At level 0 nothing reads
 //! [`Vehicle::pcu`] — there are no curves to occupy yet — but the field is
-//! part of what a vehicle *is* (S85: "occupying an interval of width = its
-//! PCU × traveller weight", S94's individually-identified vehicles), not
+//! part of what a vehicle *is* ("occupying an interval of width = its
+//! PCU × traveller weight", the individually-identified vehicles), not
 //! something level 1's flow motor would need to add later.
 
 use openmobisim_core_types::ids::LinkId;
@@ -17,7 +17,7 @@ use openmobisim_core_types::units::Pcu;
 /// A single vehicle, carrying its own route.
 ///
 /// Built by whatever assigned the route — a hand-authored test fixture for
-/// now, a real path-finder from `core-sim` onward (S133). Nothing here
+/// now, a real path-finder from `core-sim` onward. Nothing here
 /// computes a route; a [`Vehicle`] already has one.
 #[derive(Clone, Debug)]
 pub struct Vehicle {
@@ -27,7 +27,7 @@ pub struct Vehicle {
     /// with nowhere to go is not a vehicle in the loading at all.
     pub route: Vec<LinkId>,
     /// This vehicle's weight on the curves: its own PCU (1 for a car, 2 by
-    /// default for a bus, design §10.4) times the traveller weight it
+    /// default for a bus) times the traveller weight it
     /// carries, already multiplied in by the caller. Unused at level 0.
     pub pcu: Pcu,
     /// When this vehicle enters the first link of its route.

@@ -1,4 +1,4 @@
-//! Every parameter that shapes a network when it is built, by name (S225, roadmap I-ae).
+//! Every parameter that shapes a network when it is built, by name.
 //!
 //! A network is built from data plus defaults: the road-class table (a speed, lanes, saturation
 //! flow and jam density per class, used where the data says nothing), the global multipliers, the
@@ -18,8 +18,8 @@
 //! | `<class>.saturation_flow_veh_h_lane` | veh/h per lane | the class's capacity per lane |
 //! | `<class>.jam_density_veh_km_lane` | veh/km per lane | storage per lane |
 //! | `free_flow_speed_factor`, `capacity_factor`, `jam_density_factor`, `control_delay_factor`, `green_fraction_factor` | — | the global multipliers ([`GlobalMultipliers`]) |
-//! | `signal_cycle_s`, `signal_green_fraction`, `signal_degree_of_saturation`, `signal_merge_m` | s, —, —, m | the signal settings ([`SignalDefaults`]); `signal_merge_m` is read by the OpenStreetMap reader (S282) |
-//! | `street_30.saturation_flow_veh_h_lane`, `street_50.saturation_flow_veh_h_lane`, `street_70.saturation_flow_veh_h_lane` | veh/h per lane | the most a lane of an at-grade road of that speed discharges at a signal, per hour of green (S265, [`SaturationBands`]) |
+//! | `signal_cycle_s`, `signal_green_fraction`, `signal_degree_of_saturation`, `signal_merge_m` | s, —, —, m | the signal settings ([`SignalDefaults`]); `signal_merge_m` is read by the OpenStreetMap reader |
+//! | `street_30.saturation_flow_veh_h_lane`, `street_50.saturation_flow_veh_h_lane`, `street_70.saturation_flow_veh_h_lane` | veh/h per lane | the most a lane of an at-grade road of that speed discharges at a signal, per hour of green ([`SaturationBands`]) |
 //! | `bike_mixed_km_h`, `bike_dedicated_km_h`, `bike_mixed_cost_factor`, `bike_lane_cost_factor`, `walk_km_h`, `ferry_km_h`, `ferry_wait_s` | km/h, km/h, —, —, km/h, km/h, s | the bike and walk layers ([`StaticLayerDefaults`]) |
 //!
 //! `<class>` is a road class's name as OSM writes it (`motorway`, `primary_link`, `residential`,
@@ -64,7 +64,7 @@ pub struct NetworkDefaults {
     pub signals: SignalDefaults,
     /// The bike and walk layers' speeds and costs.
     pub layers: StaticLayerDefaults,
-    /// The most a lane of an at-grade road carries, by its speed (S265).
+    /// The most a lane of an at-grade road carries, by its speed.
     pub saturation_bands: SaturationBands,
 }
 
@@ -140,7 +140,7 @@ const FIELDS: [Field; 19] = [
 ];
 
 /// The names for which 0 is a meaning (no signal delay, no wait for a ferry), not a mistake; every
-/// other name must be above 0 (G-5).
+/// other name must be above 0.
 const MAY_BE_ZERO: [&str; 3] = ["control_delay_factor", "ferry_wait_s", "signal_merge_m"];
 
 /// The per-class fields, by the name after the class's dot.
@@ -161,8 +161,8 @@ impl NetworkDefaults {
     }
 
     /// The signal settings the network uses: [`Self::signals`] with the green fraction scaled by
-    /// [`GlobalMultipliers::green_fraction`] (S225: the factor had no effect before), kept within
-    /// 0 to 1: a green share cannot pass more than the saturation flow (G-5).
+    /// [`GlobalMultipliers::green_fraction`] (the factor had no effect before), kept within
+    /// 0 to 1: a green share cannot pass more than the saturation flow.
     #[must_use]
     pub fn effective_signals(&self) -> SignalDefaults {
         SignalDefaults {

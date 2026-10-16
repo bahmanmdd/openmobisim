@@ -1,4 +1,4 @@
-"""Plug-ins contributed to openmobisim (C5): extensions written in Python, outside the core.
+"""Plug-ins contributed to openmobisim: extensions written in Python, outside the core.
 
 A contributed choice model lives in a module here and registers itself by name on import
 (``openmobisim.choice_model_register``), so that

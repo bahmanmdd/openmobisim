@@ -5,7 +5,7 @@ use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
 use super::{LtmNetwork, NONE, TIME_EPSILON, queue_u32};
 use crate::events::Event;
 
-/// When a vehicle is offered a new route (S213, [`LtmNetwork::with_rerouting`]).
+/// When a vehicle is offered a new route ([`LtmNetwork::with_rerouting`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RerouteRule {
     /// Seconds a vehicle waits at the front of its link, blocked, before it is offered one;
@@ -15,7 +15,7 @@ pub struct RerouteRule {
     pub max: u8,
 }
 
-/// The loading's estimate of how long a link takes now (S213): what a vehicle that re-routes
+/// The loading's estimate of how long a link takes now: what a vehicle that re-routes
 /// sees of the traffic around it.
 pub trait LiveTimes {
     /// Seconds to cross `link` if entered now: its free-flow time, the time its queue takes to
@@ -23,9 +23,9 @@ pub trait LiveTimes {
     fn live_seconds(&self, link: LinkId) -> f64;
 }
 
-/// Why a vehicle is offered a new route (S213, S215).
+/// Why a vehicle is offered a new route.
 ///
-/// Only [`Self::Stuck`] exists yet. The others planned in S215 join here,
+/// Only [`Self::Stuck`] exists yet. The others planned join here,
 /// so records and rerouters already carry the reason: an **alert** to an informed driver about
 /// congestion or a disruption ahead (navigation apps), a **disruption** on the route (a closure
 /// or a capacity drop), a **new destination** (a taxi dispatched, an electric vehicle sent to
@@ -47,8 +47,8 @@ impl RerouteReason {
     }
 }
 
-/// Who decides a new route for a vehicle stuck at the front of its link (S213). The loading
-/// never routes (design §10.4); it asks.
+/// Who decides a new route for a vehicle stuck at the front of its link. The loading
+/// never routes; it asks.
 pub trait Reroute {
     /// The rest of a new route for `vehicle`, at the end of `current` at second `now` and
     /// planned to go on along `planned` (not empty): links beginning with a legal turn out of
@@ -66,7 +66,7 @@ pub trait Reroute {
     ) -> Option<Vec<LinkId>>;
 }
 
-/// One reroute (S213): who, when, where, and the next link planned and taken instead.
+/// One reroute: who, when, where, and the next link planned and taken instead.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RerouteRecord {
     /// The vehicle.
@@ -102,7 +102,7 @@ pub(super) struct Rerouting {
 
 impl LtmNetwork<'_> {
     /// Offer a vehicle a new route when it has waited `rule.after_s` at the front of its link,
-    /// blocked — for room on its next link, or giving way (S213). The new route comes from the
+    /// blocked — for room on its next link, or giving way. The new route comes from the
     /// [`Reroute`] given to [`Self::step_rerouting`]; a vehicle takes at most `rule.max`, and is
     /// offered again only after waiting as long again. Must be set before vehicles are added.
     ///
@@ -168,7 +168,7 @@ impl LtmNetwork<'_> {
 
     /// Link `i`'s front, held by its next link `j`'s inflow headway, is offered a new route as
     /// one held for room is when that headway alone keeps it waiting the rule's time: a closed
-    /// or narrowed link ahead (S239). A short headway, the common case, offers nothing (X-37).
+    /// or narrowed link ahead. A short headway, the common case, offers nothing.
     pub(super) fn offer_if_inflow_holds_long(
         &mut self,
         i: usize,
@@ -184,7 +184,7 @@ impl LtmNetwork<'_> {
         }
     }
 
-    /// Offer every link front due one a new route, in the order they became due (S213).
+    /// Offer every link front due one a new route, in the order they became due.
     pub(super) fn serve_reroutes(&mut self, t0: f64, rr: &mut dyn Reroute) {
         let Some(pending) = self.rerouting.as_mut().map(|r| std::mem::take(&mut r.pending)) else {
             return;

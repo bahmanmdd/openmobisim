@@ -1,4 +1,4 @@
-//! `link_bins.parquet` — the per-link, per-time-bin results (S168).
+//! `link_bins.parquet` — the per-link, per-time-bin results.
 //!
 //! One row per (bin, link) that saw traffic, sorted by bin then link (`bin` counts from
 //! midnight: `start_s = bin × bin_seconds`):
@@ -10,7 +10,7 @@
 //!   (the way's OSM id, then the link's number within the build). The way id part survives a
 //!   rebuild of the network; the whole id does only if the network is rebuilt with the same
 //!   options and the same extract. `link_index` is the internal id, the row of the network's arrays,
-//!   good only next to this file's `network_fingerprint` (Foundations §1: an
+//!   good only next to this file's `network_fingerprint` (an
 //!   internal id is meaningful only with its network fingerprint).
 //! - `crossings` counts traversals that *finished* in the bin, unweighted;
 //!   `pcu` is the traffic that left the link, traveller weight and vehicle size
@@ -60,7 +60,7 @@ pub fn write_link_bins(
     write(path.as_ref(), run_id, bins, network, description, None)
 }
 
-/// Write a bike or walk layer's per-link results (S195): `link_bins_bike.parquet`
+/// Write a bike or walk layer's per-link results: `link_bins_bike.parquet`
 /// or `link_bins_walk.parquet`, with the road file's columns except that the
 /// weighted count is `travellers` and its time `traveller_seconds` — a bike
 /// is no passenger-car unit. The metadata's network fingerprint is the

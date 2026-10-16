@@ -1,6 +1,6 @@
 //! PyO3 bindings for openmobisim.
 //!
-//! This crate is the **only** one that knows Python exists (Foundations §10).
+//! This crate is the **only** one that knows Python exists.
 //! Everything else is usable, testable and benchmarkable without an
 //! interpreter, which is what keeps the core honest: a physics crate that
 //! cannot be benchmarked without starting Python is a physics crate nobody

@@ -1,4 +1,4 @@
-"""Route updates across the boundary (S176).
+"""Route updates across the boundary.
 
 What is defended: a run without one is what it was (no routes added, sets as the method made them,
 the same fingerprint as a run that names ``"none"``); with ``"best_response"`` on a jammed grid the

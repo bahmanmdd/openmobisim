@@ -1,4 +1,4 @@
-//! The Monte Carlo method and the congestion propensity it is biased by (S176).
+//! The Monte Carlo method and the congestion propensity it is biased by.
 //!
 //! What is defended, and how each is checked:
 //!
@@ -429,7 +429,7 @@ fn monte_carlo_generation_is_fast_enough() {
     assert!(elapsed.as_secs_f64() < 30.0, "1 500 keys on a 3 600-node grid took {elapsed:?}");
 }
 
-/// **Property (X-39):** two given biases name two route sets: the descriptor, which keys the
+/// **Property:** two given biases name two route sets: the descriptor, which keys the
 /// cache and enters the fingerprint, carries the values, not only that a bias was given; the
 /// same values give the same name.
 #[test]
@@ -441,7 +441,7 @@ fn route_sets_made_with_different_given_biases_have_different_names() {
     assert!(MonteCarlo::default().descriptor().contains("bias=demand;"), "the others unchanged");
 }
 
-/// **Property (X-40):** a bias outside 0 to 1 is refused with the link and the value; a bias of
+/// **Property:** a bias outside 0 to 1 is refused with the link and the value; a bias of
 /// the wrong length is caught where it meets the network.
 #[test]
 fn a_bias_out_of_range_or_of_the_wrong_length_is_refused() {

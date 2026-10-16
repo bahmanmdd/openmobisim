@@ -1,12 +1,12 @@
 //! Per-trip event rows — the in-memory shape `io-parquet`'s `events.parquet`
-//! writer reads from (Foundations §6).
+//! writer reads from.
 
 use openmobisim_core_types::ids::{EntityId, EntityKind, TripId};
 use openmobisim_core_types::time::Second;
 
 /// One row of `events.parquet`.
 ///
-/// Foundations §6 also names a `payload` column; it is not included:
+/// No `payload` column:
 /// boardings, parking and reroutes are recorded in files of their own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct EventRow {
@@ -36,14 +36,14 @@ pub enum EventType {
     /// A trip's trajectory finished within the simulation window.
     TripCompleted,
     /// A trip's trajectory was still in progress when the window ended
-    /// (S57).
+    /// .
     TripTruncated,
     /// A trip's stated mode needed a vehicle its traveller did not have at the origin.
     NoVehicleAvailable,
     /// The trip had a vehicle, but no path existed to its destination.
     NoFeasiblePath,
     /// The trip's mode cannot be simulated by this run: what it needs (a
-    /// layer, a timetable, parkings) is not there (S195).
+    /// layer, a timetable, parkings) is not there.
     ModeNotAvailable,
 }
 

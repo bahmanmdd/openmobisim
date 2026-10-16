@@ -1,4 +1,4 @@
-//! En-route rerouting in the loading (S213), with a scripted rerouter.
+//! En-route rerouting in the loading, with a scripted rerouter.
 //!
 //! A diamond: from `a`, link `ab` to `b`, then either `bc`–`cd` (planned; `cd` a one-lane
 //! service road, so its queue fills `bc` and spills back into `ab`) or `be`–`ed` (free). A

@@ -1,6 +1,5 @@
-//! `manifest.json` — the file that makes a run reproducible (Foundations
-//! §6), a subset of it. See the crate docs for exactly which Foundations §6
-//! fields are not here yet, and why.
+//! `manifest.json` — the file that makes a run reproducible. See the crate docs for the
+//! fields not here yet, and why.
 
 use std::fs;
 use std::path::Path;
@@ -16,32 +15,32 @@ use crate::WriteError;
 #[derive(Clone, Debug)]
 pub struct Manifest {
     /// The layout version of this file and of the run's Parquet files
-    /// ([`crate::SCHEMA_VERSION`]), written as `manifest_version` (G-32).
+    /// ([`crate::SCHEMA_VERSION`]), written as `manifest_version`.
     pub manifest_version: u32,
     /// The `openmobisim` crate version (`CARGO_PKG_VERSION`).
     pub openmobisim_version: String,
     /// The git commit the code was built from (`openmobisim_core_types::GIT_SHA`): twelve hex
-    /// digits, or `"unknown"` for a build without a repository (T-6). Not in any fingerprint.
+    /// digits, or `"unknown"` for a build without a repository. Not in any fingerprint.
     pub git_sha: String,
     /// `openmobisim_core_types::CODE_VERSION` — bumped whenever an artifact's
-    /// layout or build semantics change (Foundations §8).
+    /// layout or build semantics change.
     pub code_version: u32,
     /// `openmobisim_core_graph::DEFAULTS_VERSION` — bumped whenever the OSM
     /// defaults table changes.
     pub defaults_version: u32,
-    /// The target triple this binary was built for (`crate::TARGET`). S60's
+    /// The target triple this binary was built for (`crate::TARGET`). The
     /// determinism guarantee is same-platform; this is the platform.
     pub platform: String,
-    /// Trips still in progress after this second are truncated (S57): the window's **end**, in
+    /// Trips still in progress after this second are truncated: the window's **end**, in
     /// seconds after midnight (not its length; written as `window_end_seconds`, G-34).
     pub window_end_seconds: u32,
-    /// The window's start, in seconds after midnight (S271): the run starts there.
+    /// The window's start, in seconds after midnight: the run starts there.
     pub window_start_seconds: u32,
-    /// Trips of the demand departing outside the window, left out of the run (S271).
+    /// Trips of the demand departing outside the window, left out of the run.
     pub trips_outside_window: u32,
     /// The people those trips stand for (traveller weights summed).
     pub people_outside_window: u64,
-    /// The scenario's `traveller_weight` (S89): 1 for `default`, 10 for
+    /// The scenario's `traveller_weight`: 1 for `default`, 10 for
     /// `fast`, for a trip no row gives an explicit weight.
     pub default_weight: u32,
     /// How many travellers this run's demand named.
@@ -58,7 +57,7 @@ pub struct Manifest {
     /// what a number means: should an unweighted form be reported too, this
     /// field is what tells a reader which one a given `kpis.parquet` row is.
     pub kpi_weighting: String,
-    /// The scenario's master seed (S168): the one number that starts every
+    /// The scenario's master seed: the one number that starts every
     /// random stream. Under a sampled choice model it decides who takes which
     /// route; under the all-or-nothing model (`deterministic`) it changes only
     /// `run_fingerprint`.
@@ -70,7 +69,7 @@ pub struct Manifest {
     /// A hash of the network's **ids only** (16 hex digits), not of its content: what an internal
     /// link id in any of this run's files is meaningful next to. Two networks with the same ids
     /// but other lengths or speeds have the same one; the `run_fingerprint` hashes the network's
-    /// content (and the route-set cache keys on that), so it tells those apart (B4).
+    /// content (and the route-set cache keys on that), so it tells those apart.
     pub network_fingerprint: String,
     /// The loading engine's level: 0 for free flow, 2, 3 or 4 for the link
     /// transmission model.
@@ -83,44 +82,44 @@ pub struct Manifest {
     pub route_descriptor: String,
     /// The bin length of `link_bins.parquet`, if the run recorded it.
     pub link_bin_seconds: Option<u32>,
-    /// The choice model's name (S169).
+    /// The choice model's name.
     pub choice_model: String,
     /// The choice model with every option and default, canonical.
     pub choice_descriptor: String,
     /// The random streams the run drew from: `choice` under a sampled choice
     /// model, `msa_reselection` under an equilibration that iterates.
     pub live_streams: Vec<String>,
-    /// The equilibration strategy's name (S170).
+    /// The equilibration strategy's name.
     pub equilibration: String,
     /// The strategy with every option and default, canonical.
     pub equilibration_descriptor: String,
-    /// The route update's name (S176): `none` if the route sets stayed as the
+    /// The route update's name: `none` if the route sets stayed as the
     /// method made them, otherwise what grew them between iterations.
     pub route_update: String,
     /// The update with every option and default, canonical.
     pub route_update_descriptor: String,
     /// How far above the best route's expected time a route may be and still be offered to a
-    /// traveller (S178); 0 offers every route of the pair's set.
+    /// traveller; 0 offers every route of the pair's set.
     pub choice_detour_limit: f64,
-    /// The most routes a traveller is offered, the fastest (S268); 0 offers every route within
+    /// The most routes a traveller is offered, the fastest; 0 offers every route within
     /// the detour limit.
     pub choice_max_routes: u32,
     /// The longest walk and bike ride mode choice offers, in seconds, when trips choose
-    /// their mode (S233); `None` otherwise.
+    /// their mode; `None` otherwise.
     pub walk_bike_max_s: Option<(f64, f64)>,
-    /// The traveller classes' own limits (S235): per class that gives any, the limits it
+    /// The traveller classes' own limits: per class that gives any, the limits it
     /// gives, by name, in seconds; empty if none does.
     pub class_limits: Vec<(String, Vec<(String, f64)>)>,
-    /// The user's link values (S236): each column's layer and name; empty if none.
+    /// The user's link values: each column's layer and name; empty if none.
     pub link_values: Vec<(String, String)>,
-    /// How many threads the run's parallel work used (S277). Not in the fingerprint: results
+    /// How many threads the run's parallel work used. Not in the fingerprint: results
     /// do not depend on it.
     pub threads: usize,
-    /// Disruptions (S239): on roads, on lines, and whether travellers knew; `None` if none.
+    /// Disruptions: on roads, on lines, and whether travellers knew; `None` if none.
     pub disruptions: Option<(usize, usize, bool)>,
-    /// The prices by name (S248), when the choice model reads money; `None` otherwise.
+    /// The prices by name, when the choice model reads money; `None` otherwise.
     pub prices: Option<Vec<(String, f64)>>,
-    /// The user's traveller and trip values' names (S249); empty if none.
+    /// The user's traveller and trip values' names; empty if none.
     pub person_values: Vec<String>,
     /// See [`Self::person_values`].
     pub trip_values: Vec<String>,
@@ -129,7 +128,7 @@ pub struct Manifest {
     /// Whether the strategy stopped before its most iterations because it had
     /// converged.
     pub converged: bool,
-    /// Which files the run wrote (C2): `"all"`, or `"minimal"` (this manifest and `kpis.csv`
+    /// Which files the run wrote: `"all"`, or `"minimal"` (this manifest and `kpis.csv`
     /// only, for mass runs). Results do not depend on it, so it is in no fingerprint.
     pub outputs: String,
 }
@@ -336,7 +335,7 @@ impl Manifest {
 }
 
 /// A limit as JSON can hold it: an infinite one (every walk or ride offered) as the string
-/// `"inf"`, since JSON has no infinity (S235: a bare `inf` made the file unreadable).
+/// `"inf"`, since JSON has no infinity (a bare `inf` made the file unreadable).
 fn number(v: f64) -> String {
     if v.is_finite() {
         v.to_string()
@@ -381,7 +380,7 @@ pub fn write_manifest(path: impl AsRef<Path>, manifest: &Manifest) -> Result<(),
 mod tests {
     use super::{escape, number};
 
-    /// **Property (X-54):** every string and number the manifest writes is valid JSON: control
+    /// **Property:** every string and number the manifest writes is valid JSON: control
     /// characters escaped, NaN as `null`, infinities as strings of their sign.
     #[test]
     fn strings_and_numbers_are_written_as_valid_json() {

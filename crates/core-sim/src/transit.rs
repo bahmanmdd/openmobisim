@@ -1,11 +1,11 @@
-//! Scheduled public transport in a run (S199): stops as hubs, walking to, from
+//! Scheduled public transport in a run: stops as hubs, walking to, from
 //! and between them, and passengers routed by RAPTOR.
 //!
-//! **Stops are hubs** (design §18.4): every stop of the timetable is a `stop`
+//! **Stops are hubs**: every stop of the timetable is a `stop`
 //! hub with a transit access point (the stop), a walk access point (the walk
 //! layer's nearest node, if within [`TransitDefaults::stop_walk_snap_m`]) and a
-//! **bike access point** where the bike layer reaches it likewise (S193), so
-//! bike-and-ride (M4) needs nothing more. A stop no pedestrian can reach is kept
+//! **bike access point** where the bike layer reaches it likewise, so
+//! bike-and-ride needs nothing more. A stop no pedestrian can reach is kept
 //! in the timetable (its runs still run) but boards and alights nobody.
 //!
 //! **Walking** is on the walk layer, by its travel times: to the stops within
@@ -13,7 +13,7 @@
 //! destination, and between stops within [`TransitDefaults::transfer_walk_max_s`]
 //! of each other (`transfers.txt`'s minimum times replace the walk where the
 //! feed gives them). A walk's time is floored to whole seconds once, as a
-//! static-layer trip's is (S88).
+//! static-layer trip's is.
 //!
 //! **A transit trip** (`walk · transit · walk`) leaves at its departure, walks
 //! to a stop, rides one or more runs and walks to its destination, by the
@@ -23,7 +23,7 @@
 //!
 //! **Buses ride the roads** ([`TransitSetup::with_roads`]): every bus pattern is
 //! routed stop to stop at free flow on the roads cars use and on **busways**, which
-//! only buses use (rung 2 of design §18.5), each stop at the nearest node of such a
+//! only buses use (rung 2), each stop at the nearest node of such a
 //! link within
 //! [`TransitDefaults::bus_stop_snap_m`]. A pattern with a stop off the roads, a
 //! stop the roads do not connect to the next, or a free-flow time more than
@@ -115,13 +115,13 @@ pub struct TransitSetup {
     buses: Option<BusPlan>,
     /// How far the access and egress walks are searched, in seconds: the longest any
     /// traveller takes ([`Self::with_access_search_s`]; the defaults' unless a class walks
-    /// further, S235).
+    /// further).
     access_search_s: f64,
     /// Per walk node, filled on first use: the stops a passenger reaches walking from it
     /// (access) and the stops they walk to it from (egress), each with the walk in whole
     /// seconds, as far as [`Self::access_search_s`]. The walk layer is static, so a node's
-    /// lists never change in a run and are searched once, not once per trip and iteration
-    /// (S209); each trip takes those within its own limit. Whichever thread fills an
+    /// lists never change in a run and are searched once, not once per trip and iteration;
+    /// each trip takes those within its own limit. Whichever thread fills an
     /// entry, it fills the same list.
     access_memo: Vec<StopWalks>,
     egress_memo: Vec<StopWalks>,
@@ -146,7 +146,7 @@ struct BusPlan {
     report: BusReport,
 }
 
-/// How the bus patterns were put on the roads (S199).
+/// How the bus patterns were put on the roads.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BusReport {
     /// Bus pattern groups that ride the roads.
@@ -168,7 +168,7 @@ impl BusLoad {
     }
 }
 
-/// A day's bus runs as vehicles for one loading (S199).
+/// A day's bus runs as vehicles for one loading.
 #[derive(Debug)]
 pub(crate) struct BusLoad {
     /// The vehicles, in chain order: a leg after the one it follows.
@@ -330,7 +330,7 @@ impl TransitSetup {
 
     /// The same setup, searching the walks to and from stops as far as `seconds` if that is
     /// further than the defaults' `access_walk_max_s`: the longest a traveller class takes
-    /// (S235, `Run::with_class_limits`). A run whose classes walk further than its setup
+    /// (`Run::with_class_limits`). A run whose classes walk further than its setup
     /// searches is refused.
     #[must_use]
     pub fn with_access_search_s(mut self, seconds: f64) -> Self {
@@ -451,10 +451,10 @@ impl TransitSetup {
     }
 
     /// The day's road-running runs as chained vehicles, their ids from `first_id` up; `effect`
-    /// says which are disrupted (S239): a cancelled run's buses do not run, a delayed run's
+    /// says which are disrupted: a cancelled run's buses do not run, a delayed run's
     /// first leaves its first stop that much later.
     /// `until_s` is the window's end: a run leaving its first stop at or after it is not
-    /// loaded (the timetable reaches past the end for planning, S279; the roads stop at it).
+    /// loaded (the timetable reaches past the end for planning, the roads stop at it).
     pub(crate) fn bus_load(
         &self,
         first_id: u32,
@@ -597,7 +597,7 @@ impl TransitSetup {
         times
     }
 
-    /// The times a traveller plans on after a loading (S279): `times` with every call scheduled
+    /// The times a traveller plans on after a loading: `times` with every call scheduled
     /// after `until_s` (the window's end) that is unknown — a bus still under way when the
     /// window closed, or one never loaded because it leaves after it — filled with the
     /// schedule shifted by the run's last known delay (its last realised call against the
@@ -840,7 +840,7 @@ pub struct TransitResult {
     pub buses: Option<BusSummary>,
 }
 
-/// How the buses that rode the roads kept to their schedule in a run (S199).
+/// How the buses that rode the roads kept to their schedule in a run.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BusSummary {
     /// Runs loaded on the roads.

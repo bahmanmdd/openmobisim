@@ -1,4 +1,4 @@
-//! Route sets, seen from Python (S165): the store as numpy arrays, a builder,
+//! Route sets, seen from Python: the store as numpy arrays, a builder,
 //! and the list of methods.
 //!
 //! Everything is a flat array indexed the way the store is: keys sorted, a key's

@@ -1,4 +1,4 @@
-"""Demand on the map: origin-destination desire lines and the matrix (S162, S163).
+"""Demand on the map: origin-destination desire lines and the matrix.
 
 Demand here is the same trips table a ``Scenario`` takes (rows of
 ``(traveller_id, trip_seq, origin_lon, origin_lat, destination_lon,

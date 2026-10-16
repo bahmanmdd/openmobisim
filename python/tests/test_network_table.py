@@ -173,7 +173,7 @@ def test_a_tntp_style_file_parses_the_same_as_a_plain_csv(tmp_path):
 
 def test_the_round_trip_the_roadmap_asks_for_a_table_in_gives_the_same_links_out():
     # Zero-padded, already-sorted ids: a network's internal order is by
-    # sorted external id (Foundations §1), so giving ids that already sort
+    # sorted external id, so giving ids that already sort
     # in table order lets this compare index i to row i directly, with no
     # id-to-index accessor needed.
     node_ids = ["n0", "n1", "n2", "n3"]

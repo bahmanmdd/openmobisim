@@ -1,4 +1,4 @@
-"""Figures (S162, S163): the geometry that draws them, and that they draw.
+"""Figures: the geometry that draws them, and that they draw.
 
 The geometry is defended as properties: two directions of one street never
 overlap, an offset is the distance asked for and on the right of travel,

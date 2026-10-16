@@ -1,4 +1,4 @@
-"""A Python choice model registered by name (C5): chosen like a built-in one."""
+"""A Python choice model registered by name: chosen like a built-in one."""
 
 from __future__ import annotations
 

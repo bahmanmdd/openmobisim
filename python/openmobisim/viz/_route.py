@@ -1,4 +1,4 @@
-"""``map_route``: the alternative routes of one origin-destination pair (S165).
+"""``map_route``: the alternative routes of one origin-destination pair.
 
 Each route is drawn as a line in its own colour, and each is shifted a little to
 its right of the last, so where routes **coincide** they run side by side

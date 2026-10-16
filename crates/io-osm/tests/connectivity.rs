@@ -1,5 +1,5 @@
 //! Cutting a study area, ways cut by the edge of an extract, and keeping the
-//! strongly connected part (S172).
+//! strongly connected part.
 //!
 //! Each test builds the smallest extract that has the situation in it, so the
 //! right answer can be read off the drawing before the test is run.
@@ -580,7 +580,7 @@ fn contracting_the_car_layer_leaves_a_network_without_footways_as_it_was() {
     assert!((total(&a.network) - total(&b.network)).abs() < 1e-9);
 }
 
-// --- keeping what can be kept (S230, roadmap I-ac) ----------------------------------------------
+// --- keeping what can be kept (S230) ----------------------------------------------
 
 #[test]
 fn a_region_measures_how_far_a_point_is_from_it() {

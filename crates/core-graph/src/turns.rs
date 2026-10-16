@@ -3,7 +3,7 @@
 //! A turn is an **(incoming link, outgoing link) pair at a node**. The node
 //! model reads demand per turn and returns flow per turn; nothing in the
 //! loading reasons about a node as a whole. Giving turns their own dense id
-//! space (Foundations §1) means turn capacity, turn delay and eventually turn
+//! space means turn capacity, turn delay and eventually turn
 //! restrictions are all one array lookup rather than a search through a node's
 //! movements.
 //!

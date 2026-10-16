@@ -1,4 +1,4 @@
-"""The typed option classes (C2, D-5 a), generated from the core's parameter table, and in step.
+"""The typed option classes (D-5 a), generated from the core's parameter table, and in step.
 
 ``openmobisim/options.py`` is written by this file (``python python/tests/test_options.py
 --write``) from ``_core.parameter_rows()``: one class per group, a field per parameter at its

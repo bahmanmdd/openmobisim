@@ -1,11 +1,11 @@
 //! Cumulative counts per link, kept only as far back as the loading ever
-//! reads them (S84, S85; S151, S153).
+//! reads them.
 //!
 //! A [`LinkCurves`] records the two cumulative counts of Newell's simplified
 //! kinematic wave theory for one link — `N_up`, what has entered it, and
 //! `N_dn`, what has left — in PCU, changed **only when a vehicle moves**,
-//! never as free-floating flow (S151). A vehicle straddling two links moves
-//! part of its PCU at a time (S153), so a link's counts always equal the parts
+//! never as free-floating flow. A vehicle straddling two links moves
+//! part of its PCU at a time, so a link's counts always equal the parts
 //! of the vehicles on it.
 //!
 //! The only backward-looking read the loading needs is `N_dn(t − τ_w)`, the
@@ -35,7 +35,7 @@ pub struct LinkCurves {
     exits: VecDeque<(f64, f64)>,
     last_entry: f64,
     last_exit: f64,
-    /// The most PCU on the link at once so far (S229): `N_up − N_dn` at its peak.
+    /// The most PCU on the link at once so far: `N_up − N_dn` at its peak.
     peak: f64,
 }
 
@@ -54,7 +54,7 @@ impl LinkCurves {
         }
     }
 
-    /// The most PCU the link held at once so far (S229): with infinite storage (the point
+    /// The most PCU the link held at once so far: with infinite storage (the point
     /// queue), more than the link's physical storage means the queue would have spilled back.
     #[inline]
     #[must_use]
@@ -171,8 +171,8 @@ impl Default for LinkCurves {
 /// The room a link has at time `t`: its storage, plus what had left it one
 /// backward-wave travel time earlier, minus what has entered.
 ///
-/// This is the LTM receiving condition (S84, Yperman's formulation) in vehicle
-/// form. **S76's nesting is visible in the formula:** infinite `storage` is the
+/// This is the LTM receiving condition (Yperman's formulation) in vehicle
+/// form. **The nesting is visible in the formula:** infinite `storage` is the
 /// point queue (level 2); a zero `wave_lag` is the spatial queue (level 3).
 #[must_use]
 pub fn room_at(curves: &LinkCurves, storage: Pcu, wave_lag: Duration, t: Duration) -> Pcu {
@@ -227,7 +227,7 @@ mod tests {
         assert_eq!(before, after);
     }
 
-    /// S76, first exact assertion, at the formula: **infinite storage is the
+    /// The first exact assertion, at the formula: **infinite storage is the
     /// point queue** — a jammed link with real storage has no room, the same
     /// link with infinite storage always has room.
     #[test]
@@ -238,7 +238,7 @@ mod tests {
         assert_eq!(room_at(&jammed, Pcu::INFINITE, Duration(20.0), at), Pcu::INFINITE);
     }
 
-    /// S76, second exact assertion, at the formula: **zero wave lag is the
+    /// The second exact assertion, at the formula: **zero wave lag is the
     /// spatial queue** — the lagged read misses exactly the PCU that left
     /// during the lag, and nothing else.
     #[test]

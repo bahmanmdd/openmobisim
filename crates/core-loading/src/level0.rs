@@ -1,12 +1,12 @@
-//! Level 0: free-flow traversal — "none; static times" (design §10, the
+//! Level 0: free-flow traversal — "none; static times" (the
 //! debug rung of the fidelity ladder). No curves, no capacity, no
 //! interaction between vehicles: each vehicle's trajectory is computed
-//! independently, purely from the network's free-flow times (S90's control
+//! independently, purely from the network's free-flow times (the control
 //! delay is already folded into [`RoadNetwork::free_flow_time`], so summing
 //! it per link is "free-flow time plus control delay" in one number).
 //!
 //! This is deliberately the trivial case of the nested fidelity ladder
-//! (design §10: "Fidelity levels are nested — the same code with parameters
+//! ("Fidelity levels are nested — the same code with parameters
 //! changed"): what it exercises is the [`Vehicle`]/[`Trajectory`] plumbing
 //! levels 1–4 will reuse, not a numerical method — there isn't one yet.
 
@@ -26,7 +26,7 @@ pub struct LinkTraversal {
     /// When the vehicle entered it.
     pub enter: Second,
     /// When the vehicle left it, floored to a whole second — the same
-    /// convention S88 sets for the curve-interpolated exit times levels 1–4
+    /// convention as the curve-interpolated exit times levels 1–4
     /// will produce, so a caller never needs to know which level produced a
     /// [`Trajectory`].
     pub exit: Second,
@@ -41,7 +41,7 @@ pub struct Trajectory {
     /// later, if it waited at the origin for room (levels 2–4).
     pub departure: Second,
     /// One entry per link of the route the vehicle followed, in order: its route, or, if it
-    /// re-routed on the way (S213), the links it actually took — its **realised route**. Never
+    /// re-routed on the way, the links it actually took — its **realised route**. Never
     /// empty: [`Vehicle::route`] is never empty.
     pub links: Vec<LinkTraversal>,
 }
@@ -81,7 +81,7 @@ pub fn traverse_free_flow(vehicle: &Vehicle, network: &RoadNetwork) -> Trajector
 
 /// [`traverse_free_flow`] at the link times in `seconds` (one per link of
 /// `network`) instead of the network's free-flow times: a bike or walk trip on
-/// its layer, whose times are static (S195).
+/// its layer, whose times are static.
 #[must_use]
 pub fn traverse_timed(vehicle: &Vehicle, network: &RoadNetwork, seconds: &[f64]) -> Trajectory {
     traverse_exact(vehicle, network, |l| seconds[l.index()], |_, _, _| {})
@@ -133,7 +133,7 @@ pub fn load_level_0<'a>(
     vehicles.into_iter().map(|v| traverse_free_flow(v, network)).collect()
 }
 
-/// [`load_level_0`], also returning the per-link, per-time-bin results (S163):
+/// [`load_level_0`], also returning the per-link, per-time-bin results:
 /// every link traversal that finishes inside `window` seconds, in bins of
 /// `bin_seconds`, with each traversal's exact free-flow time.
 ///
@@ -153,7 +153,7 @@ pub fn load_level_0_binned<'a>(
     binned(vehicles, network, free_flow_of(network), window, bin_seconds)
 }
 
-/// [`load_level_0_binned`] at the link times in `seconds` (S195): a bike or
+/// [`load_level_0_binned`] at the link times in `seconds`: a bike or
 /// walk layer's per-link results. Each vehicle's `pcu` is what the bins sum,
 /// which on a static layer is its traveller weight.
 ///
@@ -200,7 +200,7 @@ fn binned<'a>(
 }
 
 /// [`load_level_0_binned`], also returning the traversals filed by the bin they
-/// **entered** their link in (S170), in bins of `entry_bin_seconds` (S232).
+/// **entered** their link in, in bins of `entry_bin_seconds`.
 ///
 /// # Panics
 ///
@@ -246,7 +246,7 @@ fn free_flow_seconds(duration: Duration) -> f64 {
     duration.get()
 }
 
-/// An exact time floored to a whole second (S88's convention).
+/// An exact time floored to a whole second (the convention).
 fn floored(seconds: f64) -> Second {
     #[allow(
         clippy::cast_possible_truncation,

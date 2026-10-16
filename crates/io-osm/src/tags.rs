@@ -10,7 +10,7 @@
 //! Every function here follows the same shape: **interpret what can be
 //! interpreted, say clearly when it could not, and never fail.** A tag nobody
 //! anticipated is a data-quality diagnostic and a fallback, not an error
-//! (brief §3c) — the alternative is an importer that refuses a city because
+//! — the alternative is an importer that refuses a city because
 //! sixteen ways out of two hundred thousand have a speed limit in a format we
 //! had not seen.
 //!
@@ -120,7 +120,7 @@ pub enum Rejection {
     IsAnArea,
     /// `access=no` or `access=private`, or a car-class way closed to cars by
     /// `motorcar`, `motor_vehicle` or `vehicle` set to `no` or `private`
-    /// (G-17).
+    /// .
     AccessDenied,
     /// A `highway=service` way that is a parking aisle, driveway,
     /// drive-through or emergency access (`service=…`, G-18): not part of the
@@ -148,7 +148,7 @@ impl Rejection {
 
 /// The `service=…` values of a `highway=service` way that is not a street cars
 /// are routed on: a parking aisle, a driveway, a drive-through lane, an
-/// emergency access (G-18). `alley` and an untyped `service` stay roads.
+/// emergency access. `alley` and an untyped `service` stay roads.
 const NON_STREET_SERVICES: [&str; 4] =
     ["parking_aisle", "driveway", "drive-through", "emergency_access"];
 
@@ -159,7 +159,7 @@ fn closes(value: &str) -> bool {
 
 /// Decide whether a way is a road this importer models, and which class.
 ///
-/// A way closed to cars is not a car link (G-17): `access=no|private`, or
+/// A way closed to cars is not a car link: `access=no|private`, or
 /// the most specific of `motorcar`, `motor_vehicle`, `vehicle` that the way
 /// carries being `no` or `private` (`motor_vehicle=yes` therefore overrides
 /// `vehicle=no`). Such a way stays in the bike and walk layers by their own
@@ -168,7 +168,7 @@ fn closes(value: &str) -> bool {
 /// stay drivable — a level-0 simplification: the restriction is on through
 /// traffic and belongs to routing, not to the network. `highway=service` ways
 /// that are parking aisles, driveways, drive-throughs or emergency accesses
-/// (`service=…`) are refused with [`Rejection::ServiceNotAStreet`] (G-18).
+/// (`service=…`) are refused with [`Rejection::ServiceNotAStreet`].
 ///
 /// # Errors
 ///
@@ -290,7 +290,7 @@ pub fn lanes(tags: &[(String, String)], direction: Direction) -> Lanes {
 /// `mph` or `knots`; `walk`; `none`; and an implicit country code
 /// (`XX:urban`, `XX:rural`, `XX:motorway`, `XX:trunk`, `XX:living_street`,
 /// `XX:zone30`, `XX:zone20`, with `XX` two capital letters), read from
-/// [`IMPLICIT_SPEED_LIMITS_KM_H`] with the country ignored (G-21), except
+/// [`IMPLICIT_SPEED_LIMITS_KM_H`] with the country ignored, except
 /// `DE:motorway`, which has no limit ([`Maxspeed::Unlimited`]). A
 /// semicolon-separated list takes its first entry. Anything else — other
 /// codes, free text — is [`Maxspeed::Unparsed`].
@@ -350,7 +350,7 @@ pub fn maxspeed(tags: &[(String, String)]) -> Maxspeed {
 }
 
 /// The speed limits that an implicit `maxspeed=XX:<kind>` code stands for, in
-/// km/h, by `<kind>` (G-21). The country prefix `XX` is ignored, except that
+/// km/h, by `<kind>`. The country prefix `XX` is ignored, except that
 /// `DE:motorway` has no limit and is read as [`Maxspeed::Unlimited`].
 ///
 /// *Uncalibrated: the usual limit of the countries that use these codes (NL, FR,
@@ -393,7 +393,7 @@ pub const WALKING_SPEED_KM_H: f64 = 7.0;
 /// no other road uses that node.
 ///
 /// Signals and crossings matter because the control delay attaches to the
-/// approach (S90); barriers matter because they change what can pass. Splitting
+/// approach; barriers matter because they change what can pass. Splitting
 /// at them costs links, which is why the list is short and explicit rather than
 /// "any tagged node".
 #[must_use]
@@ -403,16 +403,16 @@ pub fn node_splits_way(tags: &[(String, String)]) -> bool {
 }
 
 /// Whether a node is a signalised junction, which gives its approaches a
-/// control delay and its turns a green-time fraction (S90).
+/// control delay and its turns a green-time fraction.
 ///
 /// Not an emergency signal (`traffic_signals=emergency`, at a fire station's exit: green for
-/// traffic but when a vehicle turns out, S265).
+/// traffic but when a vehicle turns out).
 #[must_use]
 pub fn node_is_signalised(tags: &[(String, String)]) -> bool {
     node_signal(tags).is_some()
 }
 
-/// Which approaches a signal node governs (S265).
+/// Which approaches a signal node governs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SignalDirection {
     /// Every approach (no `traffic_signals:direction`, or `both`): a junction's signal.
@@ -423,7 +423,7 @@ pub enum SignalDirection {
     Backward,
 }
 
-/// The signal a node carries, if any, and the approaches it governs (S265).
+/// The signal a node carries, if any, and the approaches it governs.
 ///
 /// Mappers often put a signal on each approach's stop line rather than on the junction, with
 /// `traffic_signals:direction=forward|backward` saying which direction it stops: a car passing
@@ -445,7 +445,7 @@ pub fn node_signal(tags: &[(String, String)]) -> Option<SignalDirection> {
     })
 }
 
-/// What a way offers a bike (S193), in each direction it may be ridden.
+/// What a way offers a bike, in each direction it may be ridden.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct BikeWay {
     /// The way's road class (`bridleway` is read as a footway).
@@ -498,7 +498,7 @@ fn lane_runs(tags: &[(String, String)], key: &str) -> Option<Direction> {
 }
 
 /// Whether the tags open a one-way street's contraflow to bikes by naming a
-/// facility, not by `oneway:bicycle` (G-20): `opposite…` in `cycleway` or
+/// facility, not by `oneway:bicycle`: `opposite…` in `cycleway` or
 /// `cycleway:both|left|right`, or a lane or track on a side whose `:oneway`
 /// runs against the street. Always false on a two-way street.
 fn contraflow_opened(tags: &[(String, String)], road_direction: Direction) -> bool {
@@ -521,7 +521,7 @@ fn contraflow_opened(tags: &[(String, String)], road_direction: Direction) -> bo
 }
 
 /// The facility a one-way street offers bikes with the flow and against it,
-/// as `(forward, backward)` in the way's node order (G-20).
+/// as `(forward, backward)` in the way's node order.
 ///
 /// Right-hand traffic: the right side serves the forward direction and the left
 /// the backward one. With the contraflow closed, a lane or track on either side
@@ -567,8 +567,7 @@ fn one_way_infrastructure(
     if forward_road { (with, contra) } else { (contra, with) }
 }
 
-/// Decide whether a way is a bike link, and what it offers in each direction
-/// (the minimal bike layer of S193, S195).
+/// Decide whether a way is a bike link, and what it offers in each direction.
 ///
 /// - **Never:** motorways, `motorroad=yes`, `bicycle=no`, `bicycle=use_sidepath`
 ///   (a parallel cycleway is mapped and used instead), areas, and ways with
@@ -586,13 +585,13 @@ fn one_way_infrastructure(
 ///   `bicycle=yes|permissive|designated|dismount`; shared with pedestrians
 ///   (mixed) unless designated.
 /// - **Walking the bike:** `bicycle=dismount` and steps.
-/// - **Ferries** (`route=ferry`, S197): bikes ride on unless `bicycle=no`.
+/// - **Ferries** (`route=ferry`): bikes ride on unless `bicycle=no`.
 ///
 /// **Direction:** the car rules ([`direction`]), except that `oneway:bicycle`
 /// overrides them and the contraflow is opened by `oneway:bicycle=no`, by
 /// `opposite*` in `cycleway` or `cycleway:both|left|right`, or by a lane or
 /// track whose `cycleway:left:oneway` / `cycleway:right:oneway` runs against
-/// the street (G-20). **Sides:** the right side serves the way's own direction
+/// the street. **Sides:** the right side serves the way's own direction
 /// and the left the reverse — right-hand traffic is assumed, a known
 /// simplification for left-hand-traffic countries. On a one-way street whose
 /// contraflow is closed, a lane or track on either side serves the one
@@ -689,19 +688,19 @@ pub fn bike_way(tags: &[(String, String)], node_count: usize) -> Option<BikeWay>
     })
 }
 
-/// Decide whether a way is a walk link (S193), and its class. Every walk link
+/// Decide whether a way is a walk link, and its class. Every walk link
 /// is walked in both directions.
 ///
 /// - **Never:** motorways, `motorroad=yes`, `foot=no`, `foot=use_sidepath`,
 ///   areas, and ways with `access=no|private` unless
 ///   `foot=yes|designated|permissive`.
-/// - **Cycleways** too, unless `foot=no` (S269): where no footway runs beside it, a
+/// - **Cycleways** too, unless `foot=no`: where no footway runs beside it, a
 ///   pedestrian may use the cycle path (the Netherlands' RVV 1990, art. 4), and the
 ///   mappers of such countries rarely tag `foot`; read as closed to walkers, Amsterdam's
 ///   walk network fell apart into islands (Schiphol's station among them, 11 % of its
 ///   walk nodes outside the largest part).
 /// - **Busways** only with `foot=yes|designated|permissive`.
-/// - **Ferries** (`route=ferry`, S197) unless `foot=no`.
+/// - **Ferries** (`route=ferry`) unless `foot=no`.
 /// - **Everything else**, steps included.
 #[must_use]
 pub fn walk_way(tags: &[(String, String)], node_count: usize) -> Option<RoadClass> {
@@ -728,13 +727,13 @@ pub fn walk_way(tags: &[(String, String)], node_count: usize) -> Option<RoadClas
 }
 
 /// Whether a way is a ferry crossing (`route=ferry` and no `highway`), which
-/// the bike and walk layers carry (S197) and the road network does not.
+/// the bike and walk layers carry and the road network does not.
 #[must_use]
 pub fn is_ferry(tags: &[(String, String)]) -> bool {
     tag_of(tags, "route") == Some("ferry") && tag_of(tags, "highway").is_none()
 }
 
-/// A ferry's crossing time from its `duration` tag, in seconds (S197).
+/// A ferry's crossing time from its `duration` tag, in seconds.
 ///
 /// Accepted forms: `HH:MM`, `HH:MM:SS`, a bare number of minutes, and ISO 8601
 /// `PT…H…M…S`. Anything else is `None`, and the default ferry speed applies.

@@ -1,17 +1,17 @@
-//! The timetable of one service day (S199).
+//! The timetable of one service day.
 //!
 //! What a run of scheduled public transport needs: **stops** (a stop is a node
 //! of the transit layer, so a hub's transit access point is `(Layer::Transit,
 //! stop)`), **routes** (a line and its [`ServiceKind`]), and **runs** — one GTFS
-//! trip on the service day (Foundations §1's "transit trip (run)") — each an
+//! trip on the service day (the "transit trip (run)") — each an
 //! ordered list of **calls**: a stop, an arrival and a departure time, and
 //! whether passengers may board and alight there.
 //!
 //! **Times** are `u32` seconds after the service day's midnight, which is the
-//! run clock's zero (S199). A call's times are held apart from the calls, in a
+//! run clock's zero. A call's times are held apart from the calls, in a
 //! [`CallTimes`]: the timetable's own are the **scheduled** ones; a loading
 //! produces **realised** ones for the runs that ride the roads, with the same
-//! shape, and passengers route on those (design §18.2).
+//! shape, and passengers route on those.
 //!
 //! **Pattern groups.** Runs of the same route that call at the same stops with
 //! the same boarding rules form a group. RAPTOR's patterns are these groups
@@ -19,7 +19,7 @@
 //! on the times, so it is made where the times are known.
 //!
 //! **Identity.** Stops, routes and runs get dense ids by sorted external id
-//! (Foundations §1), so two builds of the same feed have the same ids; groups
+//! , so two builds of the same feed have the same ids; groups
 //! are numbered in the order of their smallest run id.
 //!
 //! **Cost:** per call, a stop id, a flag byte and two times — 13 bytes; per run,
@@ -575,7 +575,7 @@ impl Timetable {
     }
 }
 
-/// A line run at a new headway between two times (S238, scenario edits).
+/// A line run at a new headway between two times (scenario edits).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Headway {
     /// The route (line), by index.
@@ -588,7 +588,7 @@ pub struct Headway {
     pub to_s: u32,
 }
 
-/// What a scenario changes in a timetable (S238). See [`Timetable::with_changes`].
+/// What a scenario changes in a timetable. See [`Timetable::with_changes`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ServiceChanges {
     /// Routes (lines) that do not run that day, by index.
@@ -609,7 +609,7 @@ pub struct ServiceChangeReport {
 }
 
 impl Timetable {
-    /// The same day with `changes` made (S238): the cancelled lines' runs taken out; and for
+    /// The same day with `changes` made: the cancelled lines' runs taken out; and for
     /// each new headway, within its window, each of the line's stop patterns (its runs with
     /// the same stops) run every `headway_s` from its first run's departure in the window,
     /// copying the times of its middle run there (the run halfway through the window's runs,
@@ -704,7 +704,7 @@ impl Timetable {
         Ok((timetable, report))
     }
 
-    /// The part of the day from `from_s` to `to_s` (S271, the simulation window): each run keeps
+    /// The part of the day from `from_s` to `to_s` (the simulation window): each run keeps
     /// the calls it makes within it (arriving at or after `from_s`, leaving at or before `to_s`),
     /// so a run under way when the window opens starts at its first stop inside it, and one
     /// still going when it closes ends at its last. A run left with fewer than two calls is

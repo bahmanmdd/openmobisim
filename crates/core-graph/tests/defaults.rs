@@ -65,7 +65,7 @@ fn no_shipped_row_clamps_its_wave_speed() {
 
 #[test]
 fn derived_wave_speeds_land_where_the_literature_says_they_should() {
-    // 15–20 km/h is the range design §12.1 quotes for urban roads. This checks
+    // 15–20 km/h is the range quoted for urban roads. This checks
     // the *motor traffic* classes; service roads and living streets sit below
     // it, which is expected at 20 km/h free-flow and recorded here rather than
     // discovered later.
@@ -122,7 +122,7 @@ fn the_shipped_numbers_are_what_they_say_they_are() {
 
 #[test]
 fn websters_delay_lands_in_the_documented_band() {
-    // Design §12.2 promises "≈ 12 s at low flow and ≈ 23 s near saturation"
+    // Webster's delay is about 12 s at low flow and about 23 s near saturation
     // with a 90-second cycle at g/C = 0.48.
     let at_zero = SignalDefaults { nominal_degree_of_saturation: 0.0, ..SignalDefaults::SHIPPED };
     let at_saturation =

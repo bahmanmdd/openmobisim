@@ -1,4 +1,4 @@
-"""Auditing a network from Python: connectivity, what an import did, study areas (S172).
+"""Auditing a network from Python: connectivity, what an import did, study areas.
 
 What is defended: the arrays that let a user audit a network agree with each
 other and with the network; the connectivity verdict is right on networks whose

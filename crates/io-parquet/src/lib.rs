@@ -1,19 +1,19 @@
 //! Output writers for openmobisim: `kpis.parquet`, `diagnostics.parquet`, `link_bins.parquet`,
-//! `transit_calls.parquet`, `parking_bins.parquet`, `events.parquet` and `manifest.json` (Foundations §6).
+//! `transit_calls.parquet`, `parking_bins.parquet`, `events.parquet` and `manifest.json`.
 //!
 //! | Module | What it writes |
 //! |---|---|
 //! | [`kpis`] | Long format: `run_id, design_id, replication, iteration, metric, value` |
 //! | [`diagnostics`] | Aggregated counters, from [`openmobisim_core_types::diagnostics::Diagnostics`] |
 //! | [`events`] | Sampled per-trip event rows, from [`openmobisim_core_sim::RunResult::events`] |
-//! | [`link_bins`] | Per-link, per-time-bin results (S168), from [`openmobisim_core_sim::RunResult::link_bins`] |
-//! | [`transit_calls`] | Every call of the timetable with its times and passengers (S199), from [`openmobisim_core_sim::RunResult::transit`] |
-//! | [`parking_bins`] | Every parking's occupancy bin by bin (M4), from [`openmobisim_core_sim::RunResult::parking`] |
+//! | [`link_bins`] | Per-link, per-time-bin results, from [`openmobisim_core_sim::RunResult::link_bins`] |
+//! | [`transit_calls`] | Every call of the timetable with its times and passengers, from [`openmobisim_core_sim::RunResult::transit`] |
+//! | [`parking_bins`] | Every parking's occupancy bin by bin, from [`openmobisim_core_sim::RunResult::parking`] |
 //! | [`manifest`] | [`manifest::Manifest`] — the file that makes a run reproducible |
 //!
-//! # What Foundations §6 asks for that this does not write
+//! # What is not written yet
 //!
-//! Foundations §6 describes the *eventual* schema. This crate writes every field
+//! This crate writes every field
 //! the run has a true value for and no others — a placeholder value would
 //! violate "never present an unvalidated result" as much as a fabricated KPI
 //! would. `kpis.parquet` carries the run's trip metrics (by mode), the
@@ -22,7 +22,7 @@
 //! - **`kpis.parquet`**: no per-design comparison (`DesignSpace` / `run_batch`
 //!   do not exist yet): `design_id` and `replication` are always 0.
 //! - **`diagnostics.parquet`**: no `detail` column — [`Diagnostics`](openmobisim_core_types::diagnostics::Diagnostics)
-//!   does not carry free-text detail (S131).
+//!   does not carry free-text detail.
 //! - **`events.parquet`**: no `payload` column; boardings, parking and
 //!   reroutes have files of their own (`transit_calls.parquet`,
 //!   `parking_bins.parquet`, `Run.route_changes()`).
@@ -100,7 +100,7 @@ impl From<arrow_schema::ArrowError> for WriteError {
     }
 }
 
-/// The version of the output files' layout (G-32, S280): written to every Parquet file as the
+/// The version of the output files' layout: written to every Parquet file as the
 /// key-value `openmobisim.schema_version` ([`SCHEMA_VERSION_KEY`]) and to `manifest.json` as
 /// `manifest_version`. A reader checks it before trusting a column; it is raised when a column
 /// is renamed, removed or changes meaning (the version 1 files are the first versioned ones).
@@ -111,7 +111,7 @@ pub const SCHEMA_VERSION_KEY: &str = "openmobisim.schema_version";
 
 /// The target triple this crate was built for — the manifest's `platform`
 /// field. Recorded at build time (`build.rs`), the same pattern
-/// `py-bindings` uses: S60's determinism guarantee is same-platform, so the
+/// `py-bindings` uses: the determinism guarantee is same-platform, so the
 /// platform a run's artifacts came from is part of what makes them
 /// comparable to another run's.
 pub const TARGET: &str = env!("OPENMOBISIM_TARGET");

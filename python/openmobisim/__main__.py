@@ -1,4 +1,4 @@
-"""The command line (S243): the starter cases.
+"""The command line: the starter cases.
 
     python -m openmobisim cases                  # the starter cases and their scenarios
     python -m openmobisim run amsterdam [base]   # run one case: its numbers, page and map

@@ -1,6 +1,6 @@
-//! Numbers the user gives per traveller and per trip, offered to choice models (S249, roadmap
-//! I-bb U6): a traveller's income or age, a trip's purpose or the parking fee at its
-//! destination — anything a utility may weigh by who travels and why.
+//! Numbers you give per traveller and per trip, offered to choice models: a traveller's income or
+//! age, a trip's purpose or the parking fee at its destination — anything a utility may weigh by
+//! who travels and why.
 //!
 //! A column named `name` becomes an attribute of every alternative of the traveller's (or the
 //! trip's) choices: `person_<name>` or `trip_<name>`, the same value for each alternative of one
@@ -13,7 +13,7 @@
 //! `beta_cost_eur*person_income_inv`, money weighing less as income grows, the user giving
 //! `income_inv` as one over the income). A model of the user's own reads them as it likes.
 //!
-//! **The parking fee at a trip's destination** (S248, U5): a trip column named `parking_eur`
+//! **The parking fee at a trip's destination** (U5): a trip column named `parking_eur`
 //! ([`DESTINATION_PARKING`]) is what parking a car where the trip ends costs, in euros; it is
 //! added to `cost_parking_eur` of every alternative that arrives by car (a car route, or the
 //! drive home from a park-and-ride).

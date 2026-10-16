@@ -1,4 +1,4 @@
-//! Bike and walk trips in a run (S195): routed on their own layer, traversed at
+//! Bike and walk trips in a run: routed on their own layer, traversed at
 //! the layer's speeds, never part of the car's route sets, choice or gap, and
 //! counted by mode.
 
@@ -38,7 +38,7 @@ fn layers(road: &RoadNetwork) -> Arc<StaticLayers> {
 }
 
 /// The range a trip of `blocks` grid blocks can take on `layer`, floored once
-/// as a trip's arrival is (S88): the projected grid's blocks differ by up to a
+/// as a trip's arrival is: the projected grid's blocks differ by up to a
 /// metre, so the time lies between `blocks` of its shortest and of its longest.
 fn seconds_range(road: &RoadNetwork, layer: StaticLayer, blocks: f64) -> (f64, f64) {
     let l = layers(road);

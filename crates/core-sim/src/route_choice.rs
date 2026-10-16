@@ -1,4 +1,4 @@
-//! Route choice: which of its pair's routes each trip takes (S169).
+//! Route choice: which of its pair's routes each trip takes.
 //!
 //! The route sets say which alternatives exist for each origin-destination
 //! pair; a [`ChoiceModel`] says which one each traveller takes. This module is
@@ -19,9 +19,9 @@
 //! | `n_links` | how many links |
 //! | `car_min` | the same as `time_min`: a route is driven all the way |
 //! | `bike_min`, `walk_min`, `wait_min`, `ride_min`, `transfers`, `parking_min` | 0: a route has none |
-//! | `nest`, `mode_car` and the other `mode_*` | the car's nest (its mode index) and 1 for `mode_car`, 0 for the others (M5) |
-//! | `cost_eur`, `cost_running_eur`, `cost_toll_eur`, `cost_parking_eur` | money (S248, [`crate::prices`]): the route's kilometres at the car's price per km, its tolls, and the parking fee at the trip's destination if given (S249); `cost_fare_eur` is 0 |
-//! | `trip_departure_h`, `person_<name>`, `trip_<name>` | the trip's departure in hours, and the user's traveller and trip values (S249, [`crate::demand_values`]) |
+//! | `nest`, `mode_car` and the other `mode_*` | the car's nest (its mode index) and 1 for `mode_car`, 0 for the others |
+//! | `cost_eur`, `cost_running_eur`, `cost_toll_eur`, `cost_parking_eur` | money ([`crate::prices`]): the route's kilometres at the car's price per km, its tolls, and the parking fee at the trip's destination if given; `cost_fare_eur` is 0 |
+//! | `trip_departure_h`, `person_<name>`, `trip_<name>` | the trip's departure in hours, and the user's traveller and trip values ([`crate::demand_values`]) |
 //!
 //! The last seven are the itineraries' vocabulary (M4, A8;
 //! [`crate::itinerary_choice`]): routes carry them too, so one set of
@@ -95,7 +95,7 @@ impl PartialEq for RouteChoices {
 }
 
 impl RouteChoices {
-    /// Renumber after the sets grew (S176): `shift` is what [`RouteSets::extended`] returned
+    /// Renumber after the sets grew: `shift` is what [`RouteSets::extended`] returned
     /// for the store `old`, `grown` is the new store and `trip_keys` each trip's pair. A trip
     /// keeps the route it had (now a different number where routes were added before it), and
     /// its number of alternatives is the size of its pair's grown set. Probabilities are what
@@ -118,7 +118,7 @@ impl RouteChoices {
         }
     }
 
-    /// After a set made room (S268, [`RouteSets::revised`]): each trip's route renumbered by
+    /// After a set made room ([`RouteSets::revised`]): each trip's route renumbered by
     /// `map` (a removed route had no trip; were one on it, it would take its set's last route).
     pub(crate) fn revised(&mut self, map: &[u32], grown: &RouteSets, trip_keys: &[RouteKey]) {
         for t in 0..self.route.len() {
@@ -159,17 +159,17 @@ pub(crate) struct Inputs<'a> {
     pub model: &'a dyn ChoiceModel,
     pub turns: &'a TurnTable,
     /// An alternative is offered only if its expected time is within this share of the best's
-    /// (0: all of them; S178).
+    /// (0: all of them).
     pub detour_limit: f64,
-    /// At most this many of them, the fastest (0: no limit; S268).
+    /// At most this many of them, the fastest (0: no limit).
     pub max_routes: u32,
-    /// The user's link values (S236): a route's `road_<name>_km` and `road_<name>_sum`.
+    /// The user's link values: a route's `road_<name>_km` and `road_<name>_sum`.
     pub link_values: &'a PreparedLinkValues,
     /// The attributes' names of the user's link, traveller and trip values.
     pub link_value_names: &'a [String],
-    /// The run's prices (S248): a route's `cost_eur` and its parts.
+    /// The run's prices: a route's `cost_eur` and its parts.
     pub prices: &'a PreparedPrices,
-    /// The user's traveller and trip values (S249).
+    /// The user's traveller and trip values.
     pub demand_values: &'a DemandValues,
 }
 
@@ -195,8 +195,8 @@ const FLOOR_KEY: u32 = 0x8000_0000;
 pub(crate) struct Assessment {
     pub reselected_share: f64,
     pub changed_share: f64,
-    /// The relative gap to the least-cost route of the choice set (S171), over the trips that
-    /// finished (S178), the gap the model itself expects, and the difference.
+    /// The relative gap to the least-cost route of the choice set, over the trips that
+    /// finished, the gap the model itself expects, and the difference.
     pub gap: f64,
     pub gap_expected: f64,
     pub gap_excess: f64,
@@ -257,7 +257,7 @@ impl Filled {
 
 /// The parts of route choice that do not change from one iteration to the next:
 /// which attributes to fill, the routes' lengths and path sizes, their
-/// identities. **It belongs to one state of the route sets**: when they grow (S176) the
+/// identities. **It belongs to one state of the route sets**: when they grow the
 /// run makes a new one, which costs a pass over the store (~50 ms at 53 000 routes) and is
 /// done only then.
 pub(crate) struct Chooser<'a> {
@@ -322,7 +322,7 @@ impl<'a> Chooser<'a> {
     /// if `None`), only those of the travellers `who` marks if it is given. Each situation offers
     /// the routes of its pair's set **whose expected time is within [`Inputs::detour_limit`] of
     /// the best's** (all of them if the limit is 0: the best route is always offered), **at most
-    /// [`Inputs::max_routes`] of them, the fastest** (S268). What is
+    /// [`Inputs::max_routes`] of them, the fastest**. What is
     /// left besides the batch is in `filled`.
     fn fill(
         &self,
@@ -462,11 +462,11 @@ impl<'a> Chooser<'a> {
         }
     }
 
-    /// The gap against the **whole network** (S171), for a keyed sample of `sample` of the
-    /// routed trips that **finished** (`unfinished[t]` false; S178): `Σ w t_chosen / Σ w t_fastest − 1`,
+    /// The gap against the **whole network**, for a keyed sample of `sample` of the
+    /// routed trips that **finished** (`unfinished[t]` false): `Σ w t_chosen / Σ w t_fastest − 1`,
     /// where `t_fastest` is the least travel time over *any* route at the times `times` gives,
     /// found by a bounded time-dependent search (no worse than the cheapest of the trip's choice
-    /// set). Returns it with the **disequilibrium** version (S178): the same less what the
+    /// set). Returns it with the **disequilibrium** version: the same less what the
     /// model itself expects inside the set, `Σ w (t_chosen − t_expected + t_least_in_set −
     /// t_fastest) / Σ w t_fastest`, where `expected_seconds[t]` is trip `t`'s expected time
     /// under the model (`NaN`: the model gave no probabilities; the second number is then `NaN`).
@@ -603,7 +603,7 @@ impl<'a> Chooser<'a> {
     }
 
     /// The travellers `who` marks (by traveller) choose again on the link `times`, drawing as
-    /// [`Self::choose_all`] does at `iteration`; the others are not asked (S223: one group of
+    /// [`Self::choose_all`] does at `iteration`; the others are not asked (one group of
     /// the free-flow loading's increments). Returns what they chose, to apply as
     /// [`Update::changes`] are. Nothing is assessed.
     ///
@@ -648,9 +648,9 @@ impl<'a> Chooser<'a> {
     /// what they would choose. **Nothing is changed**: the caller applies
     /// [`Update::changes`] if the run goes on (it may stop first, having converged).
     ///
-    /// The assessment (the flow and cost gaps against their floor, design §11.2)
+    /// The assessment (the flow and cost gaps against their floor)
     /// is of `current` as it was loaded. **The cost gaps leave out the trips still under
-    /// way when the window ended** (`unfinished[t]`, S178: their times are lower bounds), and
+    /// way when the window ended** (`unfinished[t]`: their times are lower bounds), and
     /// say how many those are; the expected gap is what the model itself expects of the rest.
     ///
     /// # Errors

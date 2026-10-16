@@ -1,4 +1,4 @@
-"""The loading's rules (S213): the gridlock report, priority at merges, en-route rerouting.
+"""The loading's rules: the gridlock report, priority at merges, en-route rerouting.
 
 On a small grid loaded far beyond its capacity: the report finds what stands and checks the
 loading's guarantee (no front waits for room that is there); the rules are off unless asked for

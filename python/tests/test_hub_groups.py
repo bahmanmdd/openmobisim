@@ -1,4 +1,4 @@
-"""Hub groups (C4, D-6 b): a station's stops and the parkings beside it share one label."""
+"""Hub groups (D-6 b): a station's stops and the parkings beside it share one label."""
 
 from __future__ import annotations
 

@@ -1,12 +1,12 @@
 //! `parking_bins.parquet` — how full every parking was over the day, bin by bin
-//! (M4; the schema ruled by the user, S202, D12).
+//! .
 //!
 //! One row per parking and time bin, parking by parking:
 //! `run_id, bin, start_s, parking, parking_id, hub_id, vehicle, capacity,
 //! arrivals, departures, occupancy_mean, occupancy_max, full_s, overflow_max, hub_group`.
 //! The same table `Run.parking_bins()` returns in Python.
 //!
-//! - `bin` counts from **midnight**, like `link_bins.parquet`'s (G-31, S280): `bin = start_s /
+//! - `bin` counts from **midnight**, like `link_bins.parquet`'s: `bin = start_s /
 //!   bin_s`, so the first row of a window starting at 07:30 with 15-minute bins has `bin` 30 and
 //!   `start_s` 27 000. The file records `bin_s` as `openmobisim.bin_seconds`.
 //! - `parking` is the parking's index in the run, `parking_id` its id in the

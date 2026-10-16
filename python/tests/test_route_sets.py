@@ -1,4 +1,4 @@
-"""Route sets across the boundary (S165).
+"""Route sets across the boundary.
 
 What is defended: the store's arrays are consistent (offsets, ranges, sorted
 costs, the inverted index), methods are selected by name and bad choices say

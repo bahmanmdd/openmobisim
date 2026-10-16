@@ -1,21 +1,21 @@
-//! What the link transmission model does at junctions and for vehicles that are stuck (S213),
+//! What the link transmission model does at junctions and for vehicles that are stuck,
 //! by name: priority by road hierarchy at merges, en-route rerouting, and turn pockets.
 //!
 //! All three are remedies for gridlock: a merge that shares room in a fixed ratio lets traffic on
 //! a closed loop destroy itself, and vehicles that never leave their route cannot get out of it
 //! (Daganzo 1996, *The nature of freeway gridlock and how to prevent it*); priority to the major
-//! stream prevents the first, drivers who change course escape the second. Turn pockets (S217)
+//! stream prevents the first, drivers who change course escape the second. Turn pockets
 //! keep a vehicle waiting to turn into a full street from holding up those turning elsewhere.
 
 use std::collections::BTreeMap;
 
 use openmobisim_core_loading::FidelityLevel;
 
-/// Whether en-route rerouting is on: by the level, or as asked (S280, C1).
+/// Whether en-route rerouting is on: by the level, or as asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RerouteSetting {
     /// On at the levels with spillback (3 and 4), where a vehicle can be held for room; off at
-    /// the point queue (2), where only a closed or narrowed link ahead could hold one (S239) and
+    /// the point queue (2), where only a closed or narrowed link ahead could hold one and
     /// rerouting must be asked for. The shipped setting.
     Auto,
     /// Off at every level.
@@ -24,20 +24,20 @@ pub enum RerouteSetting {
     On,
 }
 
-/// The loading's rules, each with an uncalibrated default (S202).
+/// The loading's rules, each with an uncalibrated default.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LoadingOptions {
     /// Priority by road hierarchy at unsignalised merges
     /// ([`openmobisim_core_loading::LtmNetwork::with_priority`]): a vehicle gives way to a
     /// higher-priority approach's front vehicle bound for the same link, and departures to every
-    /// approach. *Off (S215): with one first-in-first-out queue per link a vehicle giving way
-    /// holds up everything behind it, so priority made locks worse on Amsterdam (S214); it waits
+    /// approach. *Off: with one first-in-first-out queue per link a vehicle giving way
+    /// holds up everything behind it, so priority made locks worse on Amsterdam; it waits
     /// for per-turn queues.*
     pub priority: bool,
     /// En-route rerouting: a vehicle stuck at the front of its link re-routes from where it is.
-    /// *On at levels 3 and 4 ([`RerouteSetting::Auto`]; S215: it removed the locks of
-    /// Amsterdam's morning at 1× and 1.25× and leaves uncongested results as they were, S214);
-    /// off at the point queue, where nothing waits for room (S229), unless asked for.* The
+    /// *On at levels 3 and 4 ([`RerouteSetting::Auto`]: it removed the locks of
+    /// Amsterdam's morning at 1× and 1.25× and leaves uncongested results as they were);
+    /// off at the point queue, where nothing waits for room, unless asked for.* The
     /// option `reroute` is 1 (on) or 0 (off) at every level; [`Self::resolved`] settles the
     /// shipped setting for a run's level.
     pub reroute: RerouteSetting,
@@ -51,7 +51,7 @@ pub struct LoadingOptions {
     /// (<https://svn.vsp.tu-berlin.de/repos/public-svn/matsim/scenarios/countries/us/sioux-falls/output/output_config.xml>);
     /// Olmos et al. (2018, *PNAS* 115(50) 12654–12661,
     /// <https://pmc.ncbi.nlm.nih.gov/articles/PMC6294880>) let a vehicle stopped about two minutes
-    /// (96 steps of 1.2375 s) re-route. No observed diversion delay was found (S259).*
+    /// (96 steps of 1.2375 s) re-route. No observed diversion delay was found.*
     pub reroute_after_s: f64,
     /// The most times one trip re-routes.
     ///
@@ -63,20 +63,20 @@ pub struct LoadingOptions {
     /// *Uncalibrated: 0.1. A relative threshold of this kind is the indifference band of
     /// boundedly rational route switching (Mahmassani and Jayakrishnan 1991, *Transportation
     /// Research Part A* 25(5) 293–307, <https://doi.org/10.1016/0191-2607(91)90145-G>); no
-    /// observed value was taken from it (S259).*
+    /// observed value was taken from it.*
     pub reroute_min_gain: f64,
     /// Turn pockets on approaches of two lanes or more
     /// ([`openmobisim_core_loading::LtmNetwork::with_pockets`]), in metres per lane: a vehicle at
     /// the end of such a link passes those ahead of it waiting for another movement, as long as
     /// they fit in their pockets. 0 turns them off: every link one first-in-first-out queue.
     ///
-    /// **Off by default (0) since S279:** with pockets on, the link times an iterated run
+    /// **Off by default (0):** with pockets on, the link times an iterated run
     /// averages over a link's movements misprice the movements that wait, and trip times rose
-    /// iteration after iteration under heavy congestion (S227); the entry-delay attribution that
-    /// would fix it (roadmap I-au) is not built. `50` turns them on as they were (S218).
+    /// iteration after iteration under heavy congestion; the entry-delay attribution that
+    /// would fix it is not built. `50` turns them on as they were.
     /// *Uncalibrated: 50 m when on, split among a link's movements by lane share; an assumption
-    /// (design guides size a bay from its expected queue, so no single length was found, S259).
-    /// Lanes per movement from OpenStreetMap's `turn:lanes`, where mapped, are for later (S217).*
+    /// (design guides size a bay from its expected queue, so no single length was found).
+    /// Lanes per movement from OpenStreetMap's `turn:lanes`, where mapped, are for later.*
     pub pocket_length_m: f64,
 }
 
@@ -91,7 +91,7 @@ impl LoadingOptions {
         pocket_length_m: 0.0,
     };
 
-    /// Every option's value, by name, in [`Self::NAMES`]' order (S230: the parameter listing);
+    /// Every option's value, by name, in [`Self::NAMES`]' order (the parameter listing);
     /// `priority` and `reroute` as 0 or 1 (`reroute` 1 for [`RerouteSetting::Auto`]: on where
     /// it can act; [`Self::resolved`] gives a run's own).
     #[must_use]
@@ -213,7 +213,7 @@ impl LoadingOptions {
 
     /// These options with the rerouting setting settled for `level` ([`Self::reroutes`]): what
     /// a run hashes and reports, so a point-queue run and a level-4 run of the shipped options
-    /// say what each does (S280, C1).
+    /// say what each does.
     #[must_use]
     pub fn resolved(&self, level: Option<FidelityLevel>) -> Self {
         let reroute = if self.reroutes(level) { RerouteSetting::On } else { RerouteSetting::Off };

@@ -9,7 +9,7 @@ use crate::curves::{ROOM_EPSILON, room_at};
 /// How many waiting-front links [`LtmNetwork::closes_a_waiting_loop`] walks
 /// before giving up. A genuine local lock (a roundabout, a small junction
 /// cluster) closes within a handful of links; a chain this long that has not
-/// closed is not the kind of local lock idea 1 (S157) targets, and is left
+/// closed is not the kind of local lock idea 1 targets, and is left
 /// alone rather than walked further — a bounded, defendable cost per check,
 /// not a claim that no longer chain could ever matter.
 const MAX_LOOP_WALK: usize = 64;
@@ -20,7 +20,7 @@ const MAX_LOOP_WALK: usize = 64;
 pub const PRIORITY_CAPACITY_RATIO: f64 = 1.5;
 
 impl LtmNetwork<'_> {
-    /// Give priority by road hierarchy at unsignalised merges (S213): a vehicle entering a
+    /// Give priority by road hierarchy at unsignalised merges: a vehicle entering a
     /// link gives way while the front vehicle of an approach of **higher priority** to the same
     /// node is bound for that link and ready to go — Daganzo's (1995) priority merge in vehicle
     /// form: the minor stream takes what the major one leaves, and a departure (an origin)
@@ -125,14 +125,14 @@ impl LtmNetwork<'_> {
 
     /// Whether granting `j` the room it has left would close a waiting loop
     /// back to `j` itself, sealed by a vehicle from **outside** that loop —
-    /// idea 1 (S157), generalising S155's roundabout give-way to any local
+    /// idea 1, generalising the roundabout give-way to any local
     /// lock, tagged or not (K30). Walks `j`'s current chain of waiting fronts
     /// ([`Self::front_waits_on`]) forward; if it returns to `j`, this
     /// admission would complete the cycle. A vehicle whose own link (`from`)
     /// is already a member of that chain is circulating within the loop, not
     /// sealing it from outside, and is let through — this is what keeps a
     /// loop's own traffic moving while it still can. Idea 1 does not, on its
-    /// own, guarantee a loop never locks (S156): it can still fill through its
+    /// own, guarantee a loop never locks: it can still fill through its
     /// own circulation; idea 2 (creep) is the guarantee.
     fn closes_a_waiting_loop(&self, j: usize, from: Option<usize>) -> bool {
         let mut at = j;

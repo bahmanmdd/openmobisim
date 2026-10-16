@@ -1,12 +1,12 @@
-//! Disruptions at a time of day (S239, roadmap I-az: timed events; design §25): a road narrowed
+//! Disruptions at a time of day: a road narrowed
 //! or closed for a while, a line's runs delayed or cancelled.
 //!
 //! **Known or not.** Travellers either **know** of the disruptions — every loading has them, so
 //! routes, modes and itineraries adapt over the iterations as to anything that happens every
-//! day — or **do not** (the default, design §25.1's zero-adaptation reading, S78): the run
+//! day — or **do not** (the default): the run
 //! reaches its equilibrium without them, then loads the day **once more with them**, choices
 //! fixed. Only what happens within that day reacts: en-route rerouting of cars stuck at levels
-//! 3–4 (S213), and passengers whose run never comes, who plan again from where they are (M4).
+//! 3–4, and passengers whose run never comes, who plan again from where they are.
 //! That last loading is the run's result; the convergence report stays the undisrupted one's.
 //!
 //! **Roads**: [`CapacityChange`]s the loading makes when its clock reaches them, a link's

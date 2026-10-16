@@ -1,8 +1,8 @@
-//! Itinerary choice (M4, S201): which itinerary a transit, park-and-ride or
+//! Itinerary choice: which itinerary a transit, park-and-ride or
 //! bike-and-ride trip takes, from a choice set of the competitive ones, by the
 //! run's choice model.
 //!
-//! **The rule** (the user, S201, D9): the competitive options are in the choice
+//! **The rule**: the competitive options are in the choice
 //! set, and the choice model selects the whole mode/route combination, legs
 //! through different hubs included, from the attributes that matter. An
 //! **alternative** here is a door-to-door itinerary:
@@ -11,7 +11,7 @@
 //! |---|---|
 //! | `transit` | walk · ride(s) · walk: one of RAPTOR's Pareto journeys (arrival against vehicles) |
 //! | `car_transit` or `bike_transit`, vehicle at the origin (**out**) | drive or ride to a parking, park, walk to a stop, ride(s), walk: parking × route to it × journey from it |
-//! | the same, vehicle at a parking (**back**) | walk, ride(s) to that parking's stops, walk, fetch the vehicle, drive or ride home: journey × route from it. **The hub is fixed: it is where the vehicle is** (design §23.2) |
+//! | the same, vehicle at a parking (**back**) | walk, ride(s) to that parking's stops, walk, fetch the vehicle, drive or ride home: journey × route from it. **The hub is fixed: it is where the vehicle is** |
 //!
 //! **Candidates** (out): the parkings of the vehicle's kind within reach
 //! ([`crate::parking::ParkingDefaults::reach_car_s`],
@@ -20,10 +20,10 @@
 //! [`crate::parking::ParkingDefaults::candidates`]), each with one RAPTOR query; the
 //! alternatives of at most `K` parkings are kept. **Car parks** are picked on the
 //! free-flow drive to each (one backward search per car park, once per run), and only
-//! the picked ones' routes are then searched on the expected times (S209). **Bike
+//! the picked ones' routes are then searched on the expected times. **Bike
 //! parkings** are found by one search from the origin on the bike layer, whose costs
 //! are static, so each trip's are found once per run and kept, pruned to those that can
-//! ever be tried (S209). **The choice-set limit** (the run's `choice_detour_limit`) then
+//! ever be tried. **The choice-set limit** (the run's `choice_detour_limit`) then
 //! drops the alternatives much slower than the best, as it does for car routes.
 //!
 //! **The attributes** — one vocabulary for every alternative, routes included
@@ -33,25 +33,25 @@
 //! vehicle), `ln_path_size` (over the itinerary by time share: the vehicle leg
 //! and each ride are the elements alternatives can share), and, as for routes,
 //! `length_km` (the vehicle leg's), `detour`, `overlap` (0) and `n_links` (the
-//! vehicle leg's); and for mode choice (M5) `nest` (the mode's index) and the 0/1
+//! vehicle leg's); and for mode choice `nest` (the mode's index) and the 0/1
 //! `mode_walk`, `mode_bike`, `mode_car`, `mode_transit`, `mode_car_transit` and
-//! `mode_bike_transit`; and money (S248), `cost_eur` and its parts ([`crate::prices`]).
+//! `mode_bike_transit`; and money, `cost_eur` and its parts ([`crate::prices`]).
 //!
 //! **Identity** is a hash of the parking, the vehicle leg's links and the rides
 //! as (line, boarding stop, alighting stop), **not the runs**, so a bus a
 //! minute late keeps the alternative and its draws.
 //!
-//! **Choosing and executing** (A11): the whole itinerary is chosen on expected
+//! **Choosing and executing**: the whole itinerary is chosen on expected
 //! costs (the last iteration's link times, realised timetable and parking
 //! availability; free flow, the schedule and the start-of-day parkings at first);
 //! a run executes it on the realised times, boarding the first run of each
 //! chosen line that can be caught, and falls back to the earliest journey from
-//! where the traveller is when a line cannot be followed (counted). **Later**
-//! (S202, roadmap I-af): re-check the choice against the realised service.
+//! where the traveller is when a line cannot be followed (counted). **Later**:
+//! re-check the choice against the realised service.
 //!
 //! **Rounds:** a trip back to a parked vehicle depends on where the trip before
 //! it left the vehicle, so each traveller's vehicle itinerary trips are chosen in
-//! order, one round each (A13); plain transit trips in the first round.
+//! order, one round each; plain transit trips in the first round.
 //!
 //! **Cost:** per transit trip one RAPTOR query (its walks to and from stops are searched
 //! once per run, [`crate::transit::TransitSetup`]); per out trip one search, stopped at the
@@ -87,9 +87,9 @@ use crate::prices::{Cost, PreparedPrices};
 use crate::transit::{TransitSetup, par_map};
 
 /// The attributes every alternative carries, routes and itineraries alike, in
-/// the order a batch holds them (A8).
+/// the order a batch holds them.
 ///
-/// After `parking_min` (S236, roadmap I-bb): the bike leg's kilometres by facility
+/// After `parking_min`: the bike leg's kilometres by facility
 /// (`bike_separated_km`, `bike_lane_km`, `bike_mixed_km`), and a transit itinerary's walks,
 /// waits and rides split — the walk to the first stop, from the last and between stops
 /// (`walk_access_min`, `walk_egress_min`, `walk_transfer_min`), the wait for the first
@@ -97,9 +97,9 @@ use crate::transit::{TransitSetup, par_map};
 /// board by kind of service (`ride_rail_min` … `ride_other_min`). Each is a part of a total
 /// above it, so a model weighs the parts on top of the totals, or instead of them.
 ///
-/// After those (S248, roadmap I-bb U5): money, in euros — `cost_eur` and its parts
+/// After those: money, in euros — `cost_eur` and its parts
 /// `cost_running_eur`, `cost_toll_eur`, `cost_parking_eur`, `cost_fare_eur` ([`crate::prices`]);
-/// and the trip's departure in hours after midnight, `trip_departure_h` (S249, U6;
+/// and the trip's departure in hours after midnight, `trip_departure_h` (U6;
 /// [`crate::demand_values`]).
 pub const ATTRIBUTES: [&str; 40] = [
     "time_min",
@@ -253,7 +253,7 @@ pub struct Alternative {
     /// Its path size's natural log.
     pub ln_path_size: f64,
     /// Its bike leg's metres on separated tracks, painted lanes and in mixed traffic, in
-    /// [`BikeInfrastructure`]'s order (S236); zeros without a bike leg. A ferry crossing counts
+    /// [`BikeInfrastructure`]'s order; zeros without a bike leg. A ferry crossing counts
     /// in none.
     pub bike_m: [f64; 3],
     /// The wait for the first vehicle, in seconds (part of [`Self::wait_s`]).
@@ -262,9 +262,9 @@ pub struct Alternative {
     /// [`Self::ride_s`]).
     pub ride_kind_s: [u32; 6],
     /// The rides' metres from each boarding stop to its alighting stop as the crow flies: what a
-    /// distance fare charges (S248).
+    /// distance fare charges.
     pub ride_m: f64,
-    /// A car trip offered only because the trip had no alternative at all (S271, W-1): it
+    /// A car trip offered only because the trip had no alternative at all: it
     /// takes no car of the traveller's (a lift or a taxi for one without), and is counted apart.
     pub fallback: bool,
 }
@@ -316,11 +316,11 @@ pub(crate) struct TripNodes {
     pub road_d: NodeId,
     pub bike_o: NodeId,
     pub bike_d: NodeId,
-    /// The longest walk to or from a stop, in seconds: the class's (S235) or the run's.
+    /// The longest walk to or from a stop, in seconds: the class's or the run's.
     pub access_walk_s: f64,
 }
 
-/// What a trip may choose from (M5): each mode offered to it where it is.
+/// What a trip may choose from: each mode offered to it where it is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Offer {
     /// Whether the trip chooses its mode (its mode was not stated).
@@ -333,7 +333,7 @@ pub(crate) struct Offer {
     pub car_transit: Option<Shape>,
     /// Bike-and-ride, likewise.
     pub bike_transit: Option<Shape>,
-    /// Out through this parking only: a kept itinerary re-costed, not re-planned (S210).
+    /// Out through this parking only: a kept itinerary re-costed, not re-planned.
     pub parking: Option<u32>,
 }
 
@@ -395,11 +395,11 @@ pub(crate) struct Planner<'a> {
     pub detour_limit: f64,
     /// At most this many car routes offered to a trip choosing its mode — the fastest at its
     /// departure, the earlier first among equals (0: every route of the set). The cap stated
-    /// car trips get (`choice_max_routes`, S268), applied here too since S279 (CM-2): under a
+    /// car trips get (`choice_max_routes`), applied here too: under a
     /// flat logit a mode's share grew with how many routes its set held.
     pub max_routes: u32,
     /// A car trip's time before its drive (reaching the car) and after it (parking and walking
-    /// from it), in seconds (`ModeDefaults::car_access_s`, `car_egress_s`; S279): added to a
+    /// from it), in seconds (`ModeDefaults::car_access_s`, `car_egress_s`): added to a
     /// car alternative's door-to-door time, and the access to a park-and-ride drive.
     pub car_access_s: f64,
     /// See [`Self::car_access_s`].
@@ -416,7 +416,7 @@ pub(crate) struct Scratch<'a> {
     /// neither, and each holds a few bytes per link of its whole network.
     car: Option<Search<'a>>,
     bike: Option<Search<'a>>,
-    /// One flag per road node: the car parks a park-and-ride search looks for (S209). Made on
+    /// One flag per road node: the car parks a park-and-ride search looks for. Made on
     /// first use, and left all false between uses.
     car_mask: Vec<bool>,
 }
@@ -439,7 +439,7 @@ impl<'a> Scratch<'a> {
 }
 
 /// A bike parking within a bike-and-ride trip's reach: its node, the ride's seconds and
-/// metres, and the route (S209).
+/// metres, and the route.
 #[derive(Clone, Debug)]
 pub(crate) struct ReachCand {
     node: NodeId,
@@ -451,11 +451,11 @@ pub(crate) struct ReachCand {
 /// One trip's bike parkings in reach, kept once found: see [`Itineraries::bike_reach`].
 pub(crate) type BikeReach = OnceLock<Box<[ReachCand]>>;
 
-/// Park-and-ride's shared drives (S267, [`crate::parking::ParkingDefaults::reach_car_step_s`]),
+/// Park-and-ride's shared drives ([`crate::parking::ParkingDefaults::reach_car_step_s`]),
 /// by road node and step of the day. Searched on one pass's times.
 pub(crate) type CarReach = HashMap<(u32, u64), SharedDrive>;
 
-/// One shared drive (S267): leaving a road node at the middle of a step, to the car parks the
+/// One shared drive: leaving a road node at the middle of a step, to the car parks the
 /// trips leaving there within the step pick.
 pub(crate) struct SharedDrive {
     /// The car-park nodes searched for, ascending.
@@ -498,7 +498,7 @@ impl<'a> Planner<'a> {
     ///
     /// **A vehicle parked at a parking is fetched** when that can be done: the trip is then
     /// offered only the ways back to it (M4's rule, kept for mode choice: nothing yet weighs
-    /// leaving a car at a car park overnight, design §23.4). Only if there is none are the
+    /// leaving a car at a car park overnight). Only if there is none are the
     /// other modes planned.
     #[allow(clippy::too_many_arguments, reason = "a trip's facts and what it is offered")]
     pub(crate) fn plan(
@@ -558,7 +558,7 @@ impl<'a> Planner<'a> {
         finalise(alts, self.detour_limit, k, self.journey_max_s())
     }
 
-    /// The longest journey with transit offered (S269): the timetable's limit, or none.
+    /// The longest journey with transit offered: the timetable's limit, or none.
     fn journey_max_s(&self) -> f64 {
         self.transit.map_or(f64::INFINITY, |(t, _)| t.defaults().journey_max_s)
     }
@@ -574,7 +574,7 @@ impl<'a> Planner<'a> {
     }
 
     /// The step of the day a park-and-ride drive leaving at `dep` shares its search in
-    /// (S267, [`crate::parking::ParkingDefaults::reach_car_step_s`]); `None` when each drive
+    /// ([`crate::parking::ParkingDefaults::reach_car_step_s`]); `None` when each drive
     /// is searched on its own.
     fn car_step(&self, dep: f64) -> Option<u64> {
         let step = self.parking?.defaults().reach_car_step_s;
@@ -599,7 +599,7 @@ impl<'a> Planner<'a> {
         }
     }
 
-    /// The shared drive (S267) a park-and-ride trip of `n` leaving at `dep` would read, and the
+    /// The shared drive a park-and-ride trip of `n` leaving at `dep` would read, and the
     /// car parks it needs from it: `None` when drives are not shared, or the trip drives to none.
     pub(crate) fn car_drive_wanted(
         &self,
@@ -618,7 +618,7 @@ impl<'a> Planner<'a> {
     }
 
     /// Searches the shared drives `wanted` asks for (road node and step, and the car parks
-    /// needed) that `reach` does not hold yet, in parallel (S267): one search per road node and
+    /// needed) that `reach` does not hold yet, in parallel: one search per road node and
     /// step, leaving at the step's middle, to every car park its trips need; a drive held
     /// already but for fewer car parks is searched again for them all.
     pub(crate) fn fill_car_reach(
@@ -693,7 +693,7 @@ impl<'a> Planner<'a> {
     }
 
     /// The bike parkings a ride from bike node `from` reaches within the reach, as
-    /// `(node, seconds, links, metres)` in the order reached: one static search (S209).
+    /// `(node, seconds, links, metres)` in the order reached: one static search.
     fn bike_reach_search(
         &self,
         search: &mut Search<'a>,
@@ -724,8 +724,8 @@ impl<'a> Planner<'a> {
             .collect()
     }
 
-    /// Each bike leg's metres by facility (S236): what a model sees of the route's quality. A
-    /// ferry crossing is ridden on no facility, so it counts in none (S241; its time is in the
+    /// Each bike leg's metres by facility: what a model sees of the route's quality. A
+    /// ferry crossing is ridden on no facility, so it counts in none (its time is in the
     /// leg's).
     fn measure_bike_legs(&self, alts: &mut [Alternative]) {
         let Some((layer, _)) = self.bike else { return };
@@ -740,8 +740,8 @@ impl<'a> Planner<'a> {
     }
 
     /// The car alternatives of a mode-choice trip: its pair's routes, costed on the
-    /// expected times, with the path sizes over the routes offered (by length; S279).
-    /// The car routes of `key` for a trip that had no alternative (S271, W-1), each marked
+    /// expected times, with the path sizes over the routes offered (by length).
+    /// The car routes of `key` for a trip that had no alternative, each marked
     /// [`Alternative::fallback`]; none without route sets for it.
     fn fallback_car(&self, key: RouteKey, departure: u32) -> Vec<Alternative> {
         let Some(routes) = &self.car_routes else { return Vec::new() };
@@ -830,7 +830,7 @@ impl<'a> Planner<'a> {
     }
 
     /// The out itineraries through the candidate parkings, or through `only` alone (a kept
-    /// itinerary re-costed, S210: the same search and query as for that parking among the
+    /// itinerary re-costed: the same search and query as for that parking among the
     /// candidates, so the same numbers).
     #[allow(clippy::too_many_arguments, reason = "a trip's facts and what it is offered")]
     fn plan_out(
@@ -1237,7 +1237,7 @@ impl<'a> Planner<'a> {
 /// Which parkings of `found` (`(node, seconds, links, metres)`, as the bike-and-ride search
 /// returns them) can ever be among the ones [`Planner::plan_out`] tries: the `K`
 /// nearest by riding time, or one of the `K` best by its estimate of the whole trip,
-/// whatever the parkings' availability (S209). Availability moves an estimate only through
+/// whatever the parkings' availability. Availability moves an estimate only through
 /// the time to park, between its floor (all room) and floor plus slope (full), so a
 /// parking whose best estimate is above the `K`-th smallest worst estimate is never among
 /// the `K` best, and one more than `K` others are nearer than is never among the nearest.
@@ -1346,7 +1346,7 @@ fn blank(mode: Mode, shape: Shape) -> Alternative {
     }
 }
 
-/// A bike route or a walk as an alternative (M5).
+/// A bike route or a walk as an alternative.
 fn direct(mode: Mode, leg: &StaticLeg) -> Alternative {
     let mut a = blank(mode, Shape::Direct);
     a.vehicle_links.clone_from(&leg.links);
@@ -1373,7 +1373,7 @@ fn transit_mode(kind: ParkingKind) -> Mode {
 /// alternatives of at most `parkings` parkings per mode, and set the identities and
 /// path sizes.
 ///
-/// The limits are per mode (M5) because the modes' times are not alike: a walk is always
+/// The limits are per mode because the modes' times are not alike: a walk is always
 /// slower than a drive, and whether it is a real alternative is for the model to weigh
 /// (with its mode constants), not for a time limit.
 fn finalise(
@@ -1471,7 +1471,7 @@ fn finalise(
 }
 
 /// The longest last walk of an itinerary, in whole seconds: the traveller's `access_walk_max_s`
-/// bounds the transfer walk and the egress walk **together** (S279, CM-7). A walk limit that is
+/// bounds the transfer walk and the egress walk **together**. A walk limit that is
 /// not finite or not positive leaves the search to its own reach (`u32::MAX`: none).
 fn last_walk_max(access_walk_s: f64) -> u32 {
     if access_walk_s.is_finite() && access_walk_s > 0.0 {
@@ -1509,15 +1509,15 @@ fn leg_layer(mode: Mode) -> Option<ValueLayer> {
 }
 
 /// Whether `a` arrives at its trip's destination by car (a car route, or the drive home from a
-/// park-and-ride), so pays the parking there (S249).
+/// park-and-ride), so pays the parking there.
 fn arrives_by_car(a: &Alternative) -> bool {
     a.mode == Mode::Car || (a.mode == Mode::CarTransit && matches!(a.shape, Shape::Back(_)))
 }
 
-/// What `a`, an alternative of `trip`, costs, by part (S248, [`crate::prices`]): its car or bike
+/// What `a`, an alternative of `trip`, costs, by part ([`crate::prices`]): its car or bike
 /// leg's running cost, its car leg's tolls, the fee of the parking it leaves its vehicle at (out;
 /// a trip back fetches a vehicle already paid for) or, arriving by car, the parking fee at the
-/// trip's destination (S249), and its rides' fare.
+/// trip's destination, and its rides' fare.
 fn cost(a: &Alternative, inputs: &ChooseInputs<'_>, trip: TripId) -> Cost {
     let (values, prices) = (inputs.link_values, inputs.prices);
     let vehicle = vehicle_of(a.mode);
@@ -1546,8 +1546,8 @@ fn cost(a: &Alternative, inputs: &ChooseInputs<'_>, trip: TripId) -> Cost {
 }
 
 /// The value of attribute `name` for `a`, an alternative of `traveller`'s `trip`, the best total
-/// of its mode in its set being `best`; the user's link values (S236), the run's prices (S248) and
-/// the user's traveller and trip values (S249) are `inputs`'.
+/// of its mode in its set being `best`; the user's link values, the run's prices and
+/// the user's traveller and trip values are `inputs`'.
 fn attribute(
     name: &str,
     a: &Alternative,
@@ -1621,7 +1621,7 @@ fn attribute(
 }
 
 /// The attributes a model reads, checked against [`ATTRIBUTES`] and those of the user's link,
-/// traveller and trip values (`extra`, S236, S249), in that order.
+/// traveller and trip values (`extra`), in that order.
 ///
 /// # Errors
 ///
@@ -1658,7 +1658,7 @@ pub struct Chosen {
     /// How many alternatives the trip had when it last chose (a trip that keeps its
     /// alternative is not asked again).
     pub alternatives: Vec<u32>,
-    /// The logsum of its choice set when it was last planned (S238; `NaN` if the model gives
+    /// The logsum of its choice set when it was last planned (`NaN` if the model gives
     /// none): the expected utility of its best alternative, for utility-based accessibility.
     pub logsum: Vec<f64>,
 }
@@ -1676,25 +1676,25 @@ pub(crate) struct Assessment {
     pub w_reselected: f64,
     pub w_changed: f64,
     pub w_forced: f64,
-    /// Mode choice (M5): the weight of the trips choosing their mode that had a choice
+    /// Mode choice: the weight of the trips choosing their mode that had a choice
     /// before, and of those whose mode changed.
     pub w_choosing: f64,
     pub w_mode_changed: f64,
-    /// Kept itineraries re-costed at their parking, not re-planned (S210).
+    /// Kept itineraries re-costed at their parking, not re-planned.
     pub recosted: u32,
     /// Per mode: Σ w · the time the choice model expects of the trip within the mode it kept
-    /// (its probabilities over that mode's alternatives), for the trips in `paid` (I-al, S227).
+    /// (its probabilities over that mode's alternatives), for the trips in `paid`.
     pub expected_paid: [f64; Mode::COUNT],
     /// Whether the model gave probabilities for every batch (else `expected_paid` is not
     /// measured).
     pub expected_measured: bool,
     /// Σ w · (1 − the probability the model gives the mode kept) over the trips choosing their
-    /// mode that chose again: the mode changes chance alone would make (I-al's floor, S227).
+    /// mode that chose again: the mode changes chance alone would make (I-al's floor).
     pub w_mode_floor: f64,
 }
 
 impl Assessment {
-    /// The itinerary disequilibrium over every mode (I-al, S227): the gap less what the choice
+    /// The itinerary disequilibrium over every mode: the gap less what the choice
     /// model itself expects, `Σ_m (paid_m − expected_m) / Σ_m least_m`, each trip against the best
     /// of the mode it kept. The plain pooled gap if the model gave no probabilities; NaN if
     /// nothing was assessed.
@@ -1711,7 +1711,7 @@ impl Assessment {
         }
     }
 
-    /// The floor of [`Self::mode_changed_share`] (I-al, S227): the share whose mode chance alone
+    /// The floor of [`Self::mode_changed_share`]: the share whose mode chance alone
     /// would change among those who chose again; NaN if none chose before.
     pub(crate) fn mode_changed_floor(&self) -> f64 {
         if self.w_choosing > 0.0 && self.expected_measured {
@@ -1735,7 +1735,7 @@ impl Assessment {
 }
 
 /// The itinerary trips of a run: which they are, their nodes, and the rounds
-/// they are chosen in. With mode choice (M5), also every trip that chooses its mode.
+/// they are chosen in. With mode choice, also every trip that chooses its mode.
 pub(crate) struct Itineraries {
     /// The itinerary trips, in trip order.
     pub trips: Vec<TripId>,
@@ -1755,16 +1755,16 @@ pub(crate) struct Itineraries {
     /// or not choosing).
     car_keys: Vec<Option<RouteKey>>,
     /// Per position, its bike parkings in reach, found by the first plan that needs them and
-    /// kept for the run: the bike layer's costs are static (S209).
+    /// kept for the run: the bike layer's costs are static.
     bike_reach: Vec<BikeReach>,
-    /// Set once [`Self::fill_bike_reach`] has run (S259).
+    /// Set once [`Self::fill_bike_reach`] has run.
     bike_reach_filled: OnceLock<()>,
     /// Whether any trip may drive to a car park (stated park-and-ride, or offered it in mode
-    /// choice): the car parks' free-flow table is then searched before planning (S209).
+    /// choice): the car parks' free-flow table is then searched before planning.
     parks_cars: bool,
-    /// The modes each traveller class may use, by class index (S231); empty: every class all.
+    /// The modes each traveller class may use, by class index; empty: every class all.
     class_modes: Vec<[bool; Mode::COUNT]>,
-    /// Whether a trip with no alternative travels by car (S271, W-1): then every trip has its
+    /// Whether a trip with no alternative travels by car: then every trip has its
     /// car pair in `car_keys`, chooser or not.
     fallback_car: bool,
 }
@@ -1802,11 +1802,11 @@ pub(crate) struct ChooseInputs<'a> {
     pub model: &'a dyn ChoiceModel,
     pub rng: &'a StreamRng,
     pub wanted: &'a [String],
-    /// The user's link values (S236).
+    /// The user's link values.
     pub link_values: &'a PreparedLinkValues,
-    /// The run's prices (S248).
+    /// The run's prices.
     pub prices: &'a PreparedPrices,
-    /// The user's traveller and trip values (S249).
+    /// The user's traveller and trip values.
     pub demand_values: &'a DemandValues,
 }
 
@@ -1820,11 +1820,11 @@ pub(crate) struct Simulated<'a> {
     pub choice: Option<&'a [Mode]>,
     /// Every trip's bike and walk routes, a choosing trip's included.
     pub static_routes: &'a StaticRoutes,
-    /// How long a walk or ride mode choice offers (S209).
+    /// How long a walk or ride mode choice offers.
     pub modes: &'a crate::layers::ModeDefaults,
-    /// The modes each traveller class may use, by class index (S231); empty: every class all.
+    /// The modes each traveller class may use, by class index; empty: every class all.
     pub class_modes: &'a [[bool; Mode::COUNT]],
-    /// Each traveller class's own limits, by class index (S235); empty: the run's.
+    /// Each traveller class's own limits, by class index; empty: the run's.
     pub class_limits: &'a [crate::layers::ClassLimits],
     /// The travellers, for each trip's class.
     pub travellers: &'a Travellers,
@@ -1962,7 +1962,7 @@ impl Itineraries {
         (p != u32::MAX).then_some(p as usize)
     }
 
-    /// Whether the trip at `position` chooses its mode (S269), rather than was given it.
+    /// Whether the trip at `position` chooses its mode, rather than was given it.
     pub(crate) fn chooses(&self, position: usize) -> bool {
         self.choosing[position]
     }
@@ -1979,7 +1979,7 @@ impl Itineraries {
     }
 
     /// The trips the last choice (`chosen`) left with no alternative, or with only the car
-    /// they fell back to, and why each mode gave them none (S276, roadmap I-ca). Run once at
+    /// they fell back to, and why each mode gave them none. Run once at
     /// the end, over those trips alone: what they were offered is worked out again from their
     /// day's choices, and a transit trip's stops in reach are the walks its planning searched
     /// and kept (`TransitSetup::access`'s memo), so nothing is searched again.
@@ -2193,8 +2193,8 @@ impl Itineraries {
     }
 
     /// Finds, before the first planning, the bike parkings in reach of every trip that may ride
-    /// out to one: one search per origin node, shared by the trips that start there (S259:
-    /// about four trips per bike node on Amsterdam's morning, which the free-flow loading's
+    /// out to one: one search per origin node, shared by the trips that start there
+    /// (about four trips per bike node on Amsterdam's morning, which the free-flow loading's
     /// groups would otherwise search apart). Exact: a trip's reach depends on its origin node and
     /// destination alone, and a trip not found here is found when first planned, as before.
     fn fill_bike_reach<'a>(&self, planner: &Planner<'a>, trips: &Trips, travellers: &Travellers) {
@@ -2241,7 +2241,7 @@ impl Itineraries {
     /// alternative is no longer on offer, the rest keeping theirs at the new
     /// costs. Returns the choices and what the pass found.
     ///
-    /// **The gap is sampled** (S210, design §11.2): with a `strategy`, the travellers it picks to
+    /// **The gap is sampled**: with a `strategy`, the travellers it picks to
     /// choose again plan their whole choice set, and so does a keyed sample of the others
     /// ([`Equilibration::itinerary_gap_sample`] trips, drawn again each iteration); both are
     /// random samples, and the gap is measured on them. A trip outside both that keeps an
@@ -2249,7 +2249,7 @@ impl Itineraries {
     /// only), and is asked to choose again only if its itinerary is gone there. Without a
     /// `strategy` (the run's last assessment) every trip plans in full: the last gap is exact.
     ///
-    /// **With `only`** (by traveller; S223, a group of the free-flow loading's increments) the
+    /// **With `only`** (by traveller, a group of the free-flow loading's increments) the
     /// marked travellers choose again and the others are neither planned nor assessed: they
     /// keep their alternatives as they are.
     ///
@@ -2559,7 +2559,7 @@ impl Itineraries {
     }
 }
 
-/// Each itinerary trip's choice and how it went, for the results (M4).
+/// Each itinerary trip's choice and how it went, for the results.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ItineraryResult {
     /// The itinerary trips, in trip order.
@@ -2583,16 +2583,16 @@ pub struct ItineraryResult {
     pub return_mismatch_s: f64,
     /// The mode of the alternative taken ([`Mode::index`]; [`NO_MODE`] if none).
     pub mode: Vec<u8>,
-    /// Whether the trip chose its mode (M5), or was given it.
+    /// Whether the trip chose its mode, or was given it.
     pub choosing: Vec<bool>,
-    /// The logsum of its choice set (S238; `NaN` if the model gives none).
+    /// The logsum of its choice set (`NaN` if the model gives none).
     pub logsum: Vec<f64>,
 }
 
 /// No mode: a trip that had no alternative.
 pub const NO_MODE: u8 = u8::MAX;
 
-/// Why a mode gave a trip left with no alternative nothing to choose (S276, roadmap I-ca).
+/// Why a mode gave a trip left with no alternative nothing to choose.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NoAlternativeReason {
     /// Not offered to the trip: not among the run's modes, not one its class may use, or, for
@@ -2638,7 +2638,7 @@ impl NoAlternativeReason {
     }
 }
 
-/// A trip left with no alternative in the run's last choice (S276, roadmap I-ca), and why each
+/// A trip left with no alternative in the run's last choice, and why each
 /// mode gave it none.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NoAlternative {
@@ -2861,7 +2861,7 @@ mod tests {
         assert!(ln(3).abs() < 1e-12, "a drive of its own: {}", ln(3));
     }
 
-    /// **Property (X-28):** duplicates are dropped by their contents, not by their 32-bit identity
+    /// **Property:** duplicates are dropped by their contents, not by their 32-bit identity
     /// alone: two different itineraries whose identities collide are both kept, a true duplicate
     /// once.
     #[test]

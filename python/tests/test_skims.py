@@ -1,4 +1,4 @@
-"""Skims (S238, roadmap I-az): travel-time matrices between points by mode, after a run.
+"""Skims: travel-time matrices between points by mode, after a run.
 
 What is defended: each mode's time is the one its trips would take — the car's expected time
 on the run's link times, the bike's least-cost route, the walk, the tram with its wait — on the

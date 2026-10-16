@@ -1,4 +1,4 @@
-//! Per-link, per-time-bin results, recorded as the loading runs (S163).
+//! Per-link, per-time-bin results, recorded as the loading runs.
 //!
 //! What a map, an emissions estimate or a calibration needs from a run is not
 //! a trajectory per vehicle but **how much traffic left each link in each time
@@ -105,8 +105,8 @@ impl LinkBins {
     }
 }
 
-/// What a loading learned about how long a traveller about to set out would take
-/// (S170): the two tables an iterated run costs its routes from.
+/// What a loading learned about how long a traveller about to set out would take:
+/// the two tables an iterated run costs its routes from.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EntryTables {
     /// Traversals by the bin they **entered** their link in: the time to cross a
@@ -124,7 +124,7 @@ pub struct EntryTables {
 #[derive(Debug)]
 pub struct LinkBinRecorder {
     bin_seconds: f64,
-    /// The entry-time tables' bin length: `bin_seconds` unless set apart (S232).
+    /// The entry-time tables' bin length: `bin_seconds` unless set apart.
     entry_bin_seconds: f64,
     end: f64,
     current: u32,
@@ -134,7 +134,7 @@ pub struct LinkBinRecorder {
     pcu_seconds: Vec<f64>,
     touched: Vec<u32>,
     out: LinkBins,
-    /// If asked for (S170): the same traversals filed under the bin they
+    /// If asked for: the same traversals filed under the bin they
     /// **entered** the link in, which is what a traveller about to enter it needs
     /// to know. Sparse: entries arrive out of order.
     entry: Option<HashMap<u64, EntryCell>>,
@@ -177,7 +177,7 @@ impl LinkBinRecorder {
     }
 
     /// The same recorder, also filing every traversal under the bin it
-    /// **entered** in (S170), for [`Self::finish_with_entry`].
+    /// **entered** in, for [`Self::finish_with_entry`].
     ///
     /// The exit-time table says how much traffic left a link in each bin, which is
     /// what a flow map draws; a traveller about to enter the link needs the time
@@ -192,7 +192,7 @@ impl LinkBinRecorder {
         self
     }
 
-    /// [`Self::with_entry_bins`], with entry-time bins of their own length (S232): the
+    /// [`Self::with_entry_bins`], with entry-time bins of their own length: the
     /// times a traveller chooses on are read at `entry_bin_seconds` whatever bins the
     /// flow map is recorded in.
     ///
@@ -227,11 +227,11 @@ impl LinkBinRecorder {
 
     /// Record a traversal that had **not finished** when the window ended: a
     /// vehicle of `pcu` PCU that entered `link` at `enter` and was still on it, or
-    /// waiting to enter it, at `end` (S170). Only the entry-time table sees it, and
+    /// waiting to enter it, at `end`. Only the entry-time table sees it, and
     /// with the time it had taken so far, a **lower bound** on the time it will
     /// take: without it, a queue that outlasts the window would show only the
     /// vehicles that got through, and read as if it were short. The loading passes
-    /// for `end` at least `enter` plus the link's free-flow time (X-38a), so a
+    /// for `end` at least `enter` plus the link's free-flow time, so a
     /// vehicle cut off soon after it entered does not read as faster than free
     /// flow. Does nothing unless [`Self::with_entry_bins`] was called.
     pub fn record_unfinished(&mut self, link: LinkId, enter: f64, end: f64, pcu: f64) {

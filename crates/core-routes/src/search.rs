@@ -6,9 +6,9 @@
 //! search's; when turn restrictions or turn delays arrive they drop in here
 //! without touching a generator.
 //!
-//! **Costs** are free-flow travel times (control delay included, S90) over
+//! **Costs** are free-flow travel times (control delay included) over
 //! links that carry motor traffic; other links cost infinity. A bike or walk
-//! layer searches its own costs instead ([`SearchContext::with_costs`], S195). A generator can
+//! layer searches its own costs instead ([`SearchContext::with_costs`]). A generator can
 //! multiply any link's cost with [`LinkFactors`] for the next search (the
 //! penalty method does), and asks [`Search::max_overlap`] how much of a route lies
 //! on routes it has [marked](Search::mark).
@@ -18,7 +18,7 @@
 //! finishing it can come back under. The penalty method uses this with its
 //! detour bound; without it, compounding penalties send the search far past
 //! the routes it would accept (a hundredfold cost on a country-sized network,
-//! measured in S165). The bound is a resource limit on a constrained search:
+//! measured). The bound is a resource limit on a constrained search:
 //! it never lets a route past the bound through, and on rare occasions can miss
 //! one that a fuller search would have found.
 //!
@@ -26,9 +26,9 @@
 //! ([`Search::set_noise`]): each link's factor is `1 + sigma · u · bias`, `u` a uniform draw
 //! that is a **pure function of (seed, link)** — a few integer operations, no generator to
 //! carry, no array to fill — so a search is the same for any thread and order. The Monte
-//! Carlo method uses it (S176).
+//! Carlo method uses it.
 //!
-//! **Goal-directed (A\*, S209):** a search towards one destination
+//! **Goal-directed (A\*):** a search towards one destination
 //! ([`Search::shortest_within`]) expands labels in order of their cost plus a
 //! lower bound on the rest of the way: the straight-line distance to the
 //! destination times the least cost per metre of straight line any link of the
@@ -36,7 +36,7 @@
 //! exceeds the true remaining cost and is consistent, so the route found is a
 //! least-cost one, as Dijkstra's is (Hart, Nilsson & Raphael 1968); the search
 //! only explores less (bike and walk routes ≈ 2.4× fewer seconds on Amsterdam,
-//! car routes ≈ 1.7×, S207). Where several routes have the same least cost, the
+//! car routes ≈ 1.7×). Where several routes have the same least cost, the
 //! one returned can differ from plain Dijkstra's: the same cost, another of the
 //! equal routes. It holds because every cost factor is at least 1
 //! ([`LinkFactors::multiply`], the noise of [`Search::set_noise`]).
@@ -47,7 +47,7 @@
 //! cost, the predecessor, the marks and the factors) plus the heap.
 //!
 //! **Determinism:** ties are broken by link id, so a search never depends on
-//! heap insertion order (Foundations §1).
+//! heap insertion order.
 
 use core::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -127,7 +127,7 @@ impl<'a> SearchContext<'a> {
         Self { network, turns, cost, per_metre }
     }
 
-    /// A search over `cost` instead of the car's free-flow times (S195): the
+    /// A search over `cost` instead of the car's free-flow times: the
     /// bike and walk layers' costs, one per link of `network`, infinite for a
     /// link that must not be used.
     ///
@@ -437,7 +437,7 @@ impl<'a> Search<'a> {
 
     /// The least-cost route from `origin` to each of `destinations` (distinct nodes, none of
     /// them `origin`), in their order, if it costs at most `max_true_cost` unpenalised: one
-    /// search for all of them (S267), plain Dijkstra, which stops once it has reached them all.
+    /// search for all of them, plain Dijkstra, which stops once it has reached them all.
     /// Each route is a least-cost one, as [`Self::shortest_within`]'s is; where several routes
     /// have the same least cost, it can be another of them.
     pub fn shortest_tree(
@@ -506,7 +506,7 @@ impl<'a> Search<'a> {
     }
 
     /// The least time to drive from `origin` to `destination` when setting out at
-    /// second `departure`, if a link's time depends on when it is entered (S171): the
+    /// second `departure`, if a link's time depends on when it is entered: the
     /// earliest arrival, found by a search whose labels are arrival times.
     ///
     /// `wait(link, departure)` is the time spent outside the network before the first
@@ -684,7 +684,7 @@ impl<'a> Search<'a> {
 
     /// The route after `link` — beginning with one of its legal turns, at second `departure` —
     /// that reaches `destination` earliest, and that time, in seconds after `departure`: where
-    /// a vehicle at the end of `link` can go from there (S213, en-route rerouting). Same costs,
+    /// a vehicle at the end of `link` can go from there (en-route rerouting). Same costs,
     /// bound, A\* and exactness as [`Self::fastest_route`]. `Some` with no links if `link`
     /// already ends at `destination`.
     pub fn fastest_route_after(

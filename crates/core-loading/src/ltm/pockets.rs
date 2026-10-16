@@ -7,7 +7,7 @@ use super::{Blocked, EXIT, LtmNetwork, NONE, TIME_EPSILON, link_u32};
 use crate::curves::ROOM_EPSILON;
 use crate::level0::Trajectory;
 
-/// Turn pockets (S217), when asked for: their sizes, and where a queue waits for a movement
+/// Turn pockets, when asked for: their sizes, and where a queue waits for a movement
 /// other than its front's.
 #[derive(Debug)]
 pub(super) struct Pockets {
@@ -27,7 +27,7 @@ pub(super) struct Pockets {
 }
 
 /// The vehicles ahead in a queue with turn pockets, by movement — the next link, or [`EXIT`] —
-/// and their PCU (S217). A link has few movements; more than eight bar the way.
+/// and their PCU. A link has few movements; more than eight bar the way.
 #[derive(Default)]
 struct Ahead {
     n: usize,
@@ -59,7 +59,7 @@ impl Ahead {
 }
 
 impl LtmNetwork<'_> {
-    /// Give approaches of two lanes or more **turn pockets** (S217): a vehicle at the end of such a
+    /// Give approaches of two lanes or more **turn pockets**: a vehicle at the end of such a
     /// link may pass vehicles ahead of it that wait for another movement, as long as those fit in
     /// their movements' pockets — they wait in their own lanes — and none ahead of it is bound
     /// the same way. Each movement's pocket is `length_m` metres of its share of the lanes (the
@@ -71,7 +71,7 @@ impl LtmNetwork<'_> {
     /// vehicle behind it, including those turning into free streets — full first-in-first-out
     /// at diverges is a known source of unrealistic gridlock (Wright et al. 2017, *On node
     /// models for high-dimensional road networks*), and it made priority at merges hold up more
-    /// than it let through (S214). Cost: 16 bytes per link and 12 per movement; and per look at
+    /// than it let through. Cost: 16 bytes per link and 12 per movement; and per look at
     /// a link whose front waits, a look at the vehicles behind it as far as the pockets reach.
     #[must_use]
     pub fn with_pockets(mut self, turns: &TurnTable, length_m: f64) -> Self {
@@ -124,7 +124,7 @@ impl LtmNetwork<'_> {
         p.first[i] as usize + k
     }
 
-    /// Link `i`'s queue waits on link `on` for its movement onto `j` (S217), besides whatever
+    /// Link `i`'s queue waits on link `on` for its movement onto `j`, besides whatever
     /// its front waits on: room heard on `on`, or its upstream end clearing, wakes the queue.
     fn park_movement(&mut self, i: usize, j: usize, on: usize) {
         let Some(mut p) = self.pockets.take() else { return };
@@ -169,7 +169,7 @@ impl LtmNetwork<'_> {
 
     /// The vehicle straddling link `i`'s downstream end that holds up its front, if any: the
     /// only one without turn pockets; with them, the one in the front's movement, or one that
-    /// does not fit in its pocket (S217). With no vehicle on the link, any.
+    /// does not fit in its pocket. With no vehicle on the link, any.
     pub(super) fn straddler_ahead(&self, i: usize) -> Option<u32> {
         if self.out_straddlers[i] == 0 {
             return None;
@@ -194,7 +194,7 @@ impl LtmNetwork<'_> {
     }
 
     /// Whether a vehicle at the end of link `b` with its way clear is bound for `j` and ready by
-    /// `t`: the front, or with turn pockets one behind it that no vehicle ahead bars (S217).
+    /// `t`: the front, or with turn pockets one behind it that no vehicle ahead bars.
     pub(super) fn head_bound_for(&self, b: usize, j: usize, t: f64) -> bool {
         let pocket = self.pocket(b);
         let j = link_u32(j);
@@ -215,7 +215,7 @@ impl LtmNetwork<'_> {
         false
     }
 
-    /// Link `i`'s queue at `t`, with turn pockets (S217): the first vehicle at the end of the link
+    /// Link `i`'s queue at `t`, with turn pockets: the first vehicle at the end of the link
     /// that can move does — the front, or one behind it whose way is clear: none ahead of it bound
     /// for its movement, and those ahead bound for each other movement within its pocket. If none
     /// can, the queue waits on what holds up each movement within reach, and looks again at the

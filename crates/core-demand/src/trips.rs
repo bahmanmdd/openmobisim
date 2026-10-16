@@ -1,7 +1,7 @@
-//! Reading `trips.parquet` — the core demand interface (S97).
+//! Reading `trips.parquet` — the core demand interface.
 //!
 //! This module reads the file into [`RawTrip`] rows, in file order,
-//! unsorted and unvalidated against the trip-chain rule (S128) — that
+//! unsorted and unvalidated against the trip-chain rule — that
 //! validation needs every trip of a traveller gathered and ordered first, so
 //! it lives in [`crate::travellers`], the module that does the gathering.
 
@@ -18,26 +18,26 @@ use crate::columns;
 /// Matches the interface's schema table exactly:
 /// `traveller_id, trip_seq, origin_lon, origin_lat, destination_lon,
 /// destination_lat, departure_time_s, user_class, weight`, and the optional
-/// `mode` (S195). Columns beyond
+/// `mode`. Columns beyond
 /// these — "carried as attributes for choice models" — are not read here;
 /// see the crate docs for why.
 #[derive(Clone, Debug)]
 pub struct RawTrip {
     /// External traveller id, string or integer in the file, always a string
-    /// here (Foundations §1: external ids live in a side table, never in a
+    /// here (external ids live in a side table, never in a
     /// hot array).
     pub traveller_id: String,
     /// Order within the traveller's day. Trip *n*+1 starts where trip *n*
     /// ended, enforced by [`crate::travellers::build`], not here.
     pub trip_seq: u32,
-    /// WGS84 origin, as stated in the file — before S128's correction.
+    /// WGS84 origin, as stated in the file — before the correction.
     pub origin: LonLat,
     /// WGS84 destination.
     pub destination: LonLat,
     /// Seconds from `period.start`.
     pub departure_time: Second,
     /// Must match a declared user class; not validated against one here —
-    /// the declared class set is scenario schema (brief §6a), not this
+    /// the declared class set is scenario schema, not this
     /// crate's concern.
     pub user_class: String,
     /// Optional per-traveller weight override. The interface documents this
@@ -46,7 +46,7 @@ pub struct RawTrip {
     /// ([`crate::travellers::codes::INCONSISTENT_TRAVELLER_WEIGHT`]), not a
     /// per-trip value — [`crate::travellers::build`] takes the first row's.
     pub weight: Option<u32>,
-    /// The trip's mode (S195), if the file states one: a trip without one is a
+    /// The trip's mode, if the file states one: a trip without one is a
     /// car trip until mode choice exists.
     pub mode: Option<crate::Mode>,
 }

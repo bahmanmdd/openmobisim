@@ -3,7 +3,7 @@
 //! A [`PyNetwork`] is opaque for *running* (it is passed straight back into
 //! [`crate::pipeline::run_pipeline`]) but it can be *read* as flat numpy
 //! arrays — link geometry, lengths, free-flow times, classes — which is what
-//! figures and any array-shaped analysis need (S163). Every array is indexed
+//! figures and any array-shaped analysis need. Every array is indexed
 //! by the link's internal id, the same index the per-link results use.
 
 use std::collections::HashMap;
@@ -53,13 +53,13 @@ pub struct PyNetwork {
     pub(crate) source: String,
     /// The nearest-drivable-node index, built the first time it is asked for.
     pub(crate) snapper: OnceLock<NodeSnapper>,
-    /// The trip-end index (a street node, a motorway-only node within a distance; U-41), built
+    /// The trip-end index (a street node, a motorway-only node within a distance), built
     /// the first time it is asked for and kept for the last distance asked.
     pub(crate) trip_snapper: Mutex<Option<(u64, Arc<TripSnapper>)>>,
     /// What the import did, for a network read from OSM.
     import: Option<Arc<ImportInfo>>,
     /// Which layer this handle is: `"road"`, or `"bike"` / `"walk"` for a
-    /// handle from `Network.layer` (S195). Python reads it as `layer_name`.
+    /// handle from `Network.layer`. Python reads it as `layer_name`.
     #[pyo3(get, name = "layer_name")]
     pub(crate) layer: String,
     /// The layer's graph and speeds, on a bike or walk handle.
@@ -67,8 +67,8 @@ pub struct PyNetwork {
     /// On the road handle: the bike and walk layers, read from OSM with the
     /// network or derived from it the first time they are asked for.
     layers: [OnceLock<LayerParts>; 2],
-    /// How long reading the network took, in wall-clock seconds, if a reader recorded it
-    /// (S223): printed with a run's times. Python reads and sets it as `read_s`.
+    /// How long reading the network took, in wall-clock seconds, if a reader recorded it:
+    /// printed with a run's times. Python reads and sets it as `read_s`.
     #[pyo3(get, set)]
     pub(crate) read_s: Option<f64>,
 }
@@ -131,7 +131,7 @@ impl PyNetwork {
     }
 
     /// The road handle's bike or walk layer: the one read with the network, or
-    /// one derived from the road network (design §21.4's fallback rung).
+    /// one derived from the road network (the fallback rung).
     fn layer_parts(&self, layer: StaticLayer) -> PyResult<&LayerParts> {
         if let Some(parts) = self.layers[slot(layer)].get() {
             return Ok(parts);
@@ -147,7 +147,7 @@ impl PyNetwork {
         Ok(self.layers[slot(layer)].get_or_init(|| parts))
     }
 
-    /// The same road network with `layer` replaced by `network` (S209: a layer read from
+    /// The same road network with `layer` replaced by `network` (a layer read from
     /// its own table); the other layer is kept as it is.
     fn with_layer(&self, layer: StaticLayer, network: StaticNetwork) -> PyNetwork {
         let layers = [OnceLock::new(), OnceLock::new()];
@@ -172,7 +172,7 @@ impl PyNetwork {
         }
     }
 
-    /// The bike or walk layer a run uses for its trips (S195).
+    /// The bike or walk layer a run uses for its trips.
     pub(crate) fn static_layer(&self, layer: StaticLayer) -> PyResult<Arc<StaticNetwork>> {
         if self.static_network.is_some() {
             return Err(PyValueError::new_err(format!(
@@ -195,7 +195,7 @@ impl PyNetwork {
         })
     }
 
-    /// The trip-end snapper for `car_snap_motorway_m` (U-41), built on first use and kept for
+    /// The trip-end snapper for `car_snap_motorway_m`, built on first use and kept for
     /// the last distance asked.
     pub(crate) fn trip_snapper(&self, car_snap_motorway_m: f64) -> Arc<TripSnapper> {
         let mut cached = self.trip_snapper.lock().expect("no panic holds the lock");
@@ -295,7 +295,7 @@ impl PyNetwork {
         Ok((coordinates, offsets.into_pyarray(py)))
     }
 
-    /// Every link's id as its source gave it, in link order (S236): what ties a link to the
+    /// Every link's id as its source gave it, in link order: what ties a link to the
     /// user's own data, and a bike or walk link to the road beside it. A network read from
     /// OpenStreetMap names a link `<way id>:<n>` on every layer, so a street's road, bike and
     /// walk links share its way id; a table's or GMNS file's links keep their `link_id`; a
@@ -316,7 +316,7 @@ impl PyNetwork {
 
     /// Every link's free-flow traversal time, in seconds, control delay
     /// included (float64). On a bike or walk layer: the layer's own travel
-    /// time, which nothing else changes (S195).
+    /// time, which nothing else changes.
     fn link_free_flow_s<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         if let Some(layer) = &self.static_network {
             return layer.link_seconds().into_pyarray(py);
@@ -326,7 +326,7 @@ impl PyNetwork {
 
     /// Every link's travel speed, in km/h (float64): the free-flow speed on the
     /// road network; the bike's or walker's speed on a bike or walk layer
-    /// (S195).
+    /// .
     fn link_speed_km_h<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         (0..self.inner.link_count())
             .map(|i| {
@@ -342,9 +342,9 @@ impl PyNetwork {
 
     /// Every bike link's infrastructure (uint8): 0 = mixed traffic or a path
     /// shared with pedestrians, 1 = a painted lane or cycle street, 2 = a track
-    /// or cycleway of its own (S193, S195). All 0 on the walk layer. A ferry
+    /// or cycleway of its own. All 0 on the walk layer. A ferry
     /// crossing has no infrastructure and reads 0 too: `link_class` tells it
-    /// apart (S241).
+    /// apart.
     ///
     /// # Errors
     ///
@@ -359,8 +359,8 @@ impl PyNetwork {
         Ok(layer.infrastructures().iter().map(|&i| i as u8).collect::<Vec<_>>().into_pyarray(py))
     }
 
-    /// The bike or walk layer of this road network, as a network of its own
-    /// (S195): its links are the layer's (a one-way street is ridden both ways
+    /// The bike or walk layer of this road network, as a network of its own:
+    /// its links are the layer's (a one-way street is ridden both ways
     /// where contraflow is allowed and walked both ways everywhere), with the
     /// layer's speeds. Read from OSM with the network by `network_read_osm`;
     /// derived from the road network for any other network (bikes on every
@@ -440,7 +440,7 @@ impl PyNetwork {
     }
 
     /// Whether a signal stands at each node (bool), indexed by node index: a junction's, or one that
-    /// stops some approaches only (S282); `link_signalised` says which links each stops.
+    /// stops some approaches only; `link_signalised` says which links each stops.
     fn node_signalised<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
         (0..self.inner.node_count())
             .map(|i| self.inner.is_signalised(NodeId::new(i)))
@@ -448,7 +448,7 @@ impl PyNetwork {
             .into_pyarray(py)
     }
 
-    /// Whether each link ends at a signal that stops it (bool), indexed by link index (S265):
+    /// Whether each link ends at a signal that stops it (bool), indexed by link index:
     /// its end node's signal, or one there for its direction only.
     fn link_signalised<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
         (0..self.inner.link_count())
@@ -687,9 +687,9 @@ pub fn toy_network() -> PyNetwork {
 /// connected part) or `"keep"` (everything that is a road). `contract_drivable`
 /// (on by default) merges car links across nodes that only footways touch (the
 /// crossings and sidewalk joins of a city that maps its sidewalks), leaving the
-/// footways as they were. These two defaults are the Python layer's (S191);
+/// footways as they were. These two defaults are the Python layer's;
 /// `ImportOptions::default()` in `io-osm` keeps both off. `layers` (on by
-/// default, S195) also reads the bike and walk layers from the same ways:
+/// default) also reads the bike and walk layers from the same ways:
 /// `network.layer("bike")` and `network.layer("walk")`.
 ///
 /// # Errors
@@ -917,7 +917,7 @@ pub fn network_from_columns(
 }
 
 /// The road network `network` with its bike or walk layer (`layer`) made from columns of
-/// a link table and a node table (S209: a layer read from a file, as
+/// a link table and a node table (a layer read from a file, as
 /// `openmobisim.network_read_gmns` reads one) instead of derived from the road network.
 ///
 /// `link_class` is a road-class name (`"cycleway"`, `"residential"`, `"ferry"`, …);
@@ -1056,7 +1056,7 @@ pub fn grid_node_lonlat(network: PyRef<'_, PyNetwork>, row: u32, col: u32) -> Py
     Ok((point.lon, point.lat))
 }
 
-/// The network parameters from a Python dict of names to numbers (S225), refused with the list of
+/// The network parameters from a Python dict of names to numbers, refused with the list of
 /// names if one is not known.
 fn network_defaults(options: Option<HashMap<String, f64>>) -> PyResult<NetworkDefaults> {
     let map: std::collections::BTreeMap<String, f64> =
@@ -1065,13 +1065,13 @@ fn network_defaults(options: Option<HashMap<String, f64>>) -> PyResult<NetworkDe
 }
 
 /// The road classes' names, in the order of their numbers (`link_class`): `motorway` is 0
-/// (S241).
+/// .
 #[pyfunction]
 pub fn link_classes() -> Vec<&'static str> {
     RoadClass::ALL.iter().map(|c| c.as_str()).collect()
 }
 
-/// Every network parameter by name (S225): the road-class table (`<class>.free_flow_km_h`,
+/// Every network parameter by name: the road-class table (`<class>.free_flow_km_h`,
 /// `.lanes`, `.saturation_flow_veh_h_lane`, `.jam_density_veh_km_lane`), the multipliers, the
 /// signal settings and the bike and walk layers' speeds, at their shipped values (or `network`'s,
 /// if given). What `network_options` of a reader overrides by name.
@@ -1084,7 +1084,7 @@ pub fn network_options(network: Option<PyRef<'_, PyNetwork>>) -> Vec<(String, f6
     }
 }
 
-/// The same road network with a scenario's changes made (S238): links closed to motor
+/// The same road network with a scenario's changes made: links closed to motor
 /// traffic, lanes changed, capacities multiplied, and bike links given another bike
 /// infrastructure, every link named by its index. Link indices stay as they were, so the
 /// per-link results of the two networks line up. `openmobisim.network_edit` is the Python face.

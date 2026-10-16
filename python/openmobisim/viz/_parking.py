@@ -3,9 +3,8 @@
 Car parks are squares and bike parkings circles, each kind sized by its capacity
 on its own scale (a car park of 500 spaces is large, a bike rack of 500 is not),
 coloured by the peak occupancy on the delay ramp, from empty to full; a parking
-nobody used is a small hollow mark. The look was put to the user with the first
-figure (Amsterdam) and accepted with smaller marks and a legend that tells car
-from bike parking.
+nobody used is a small hollow mark. A legend tells car from bike
+parking.
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 //! Records the target triple so that `build_info()` can report which platform
-//! a wheel was built for. This is a manifest field (Foundations §6), and the
+//! a wheel was built for. This is a manifest field, and the
 //! first thing worth knowing about a wheel that misbehaves.
 
 fn main() {

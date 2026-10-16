@@ -1,4 +1,4 @@
-//! Timed capacity changes (S239, disruptions): a link closed for a while, or narrowed.
+//! Timed capacity changes (disruptions): a link closed for a while, or narrowed.
 //!
 //! The network: `A → B → C`, two residential links of 300 m: 36 s at 30 km/h, capacity
 //! 1400/h, so fronts leave a link end 1/0.3889 = 2.571 s per PCU apart. Cars of 1 PCU leave
@@ -42,7 +42,7 @@ fn line() -> (RoadNetwork, LinkId, LinkId) {
     (net, ab, bc)
 }
 
-/// Each car's arrival at `C`, by car, under `changes`, in whole seconds (floored, S88).
+/// Each car's arrival at `C`, by car, under `changes`, in whole seconds (floored).
 fn arrivals(changes: Vec<CapacityChange>) -> Vec<f64> {
     let (net, ab, bc) = line();
     let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);

@@ -1,7 +1,7 @@
-//! Travellers as structure-of-arrays with integer weights (S86, S94), built
+//! Travellers as structure-of-arrays with integer weights, built
 //! from the raw rows [`crate::trips`] and [`crate::persons`] read.
 //!
-//! [`build`] is where S127 (ownership) and S128 (trip-chain continuity) are
+//! [`build`] is where ownership and trip-chain continuity are
 //! actually enforced — both need every trip of a traveller gathered and
 //! ordered, which is exactly what this module does on the way to producing
 //! [`Travellers`] and [`Trips`].
@@ -25,7 +25,7 @@ pub mod codes {
     use openmobisim_core_types::diagnostics::DiagCode;
 
     /// Trip *n*+1's stated origin disagreed with trip *n*'s destination; the
-    /// chain wins (S128). Counted per traveller.
+    /// chain wins. Counted per traveller.
     pub const TRIP_CHAIN_ORIGIN_OVERRIDDEN: DiagCode = DiagCode("trip_chain_origin_overridden");
     /// Two rows for the same traveller stated different `trip_seq` values
     /// resolving to a duplicate after sorting; all but the first (in file
@@ -37,9 +37,8 @@ pub mod codes {
     /// A traveller's trip rows disagreed on `user_class`; the first stated
     /// value was kept (before any `persons.parquet` override).
     pub const INCONSISTENT_USER_CLASS: DiagCode = DiagCode("inconsistent_user_class");
-    /// `persons.parquet` overrode at least one ownership field, or the user
-    /// class, for this traveller (S127). Counted per traveller — this is the
-    /// figure S127 says the manifest should report.
+    /// `persons.parquet` overrode at least one ownership field, or the
+    /// `user_class`, for this traveller. Counted per traveller.
     pub const OWNERSHIP_OVERRIDDEN: DiagCode = DiagCode("ownership_overridden");
     /// A `persons.parquet` row's `traveller_id` matched no traveller in
     /// `trips.parquet`; the row was ignored.
@@ -49,17 +48,17 @@ pub mod codes {
     pub const DUPLICATE_PERSON_ROW: DiagCode = DiagCode("duplicate_person_row");
 }
 
-/// A traveller's vehicle and pass ownership (S127, §23).
+/// A traveller's vehicle and pass ownership (§23).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Ownership {
     /// Owns a car — a fleet of size one with a restrictive access policy
-    /// (design §23.1).
+    /// .
     pub car: bool,
     /// Owns a bike.
     pub bike: bool,
-    /// Holds a transit pass: a holder pays no fare (A14). A pass is money, never access — who
+    /// Holds a transit pass: a holder pays no fare. A pass is money, never access — who
     /// may take transit is said by the class's modes — and nobody holds one unless their class
-    /// or their `persons.parquet` row says so (U-42, S281).
+    /// or their `persons.parquet` row says so.
     pub transit_pass: bool,
 }
 
@@ -68,8 +67,8 @@ impl Ownership {
     pub const NONE: Ownership = Ownership { car: false, bike: false, transit_pass: false };
     /// Owns a car and a bike and holds a transit pass.
     pub const ALL: Ownership = Ownership { car: true, bike: true, transit_pass: true };
-    /// Owns a car and a bike, and no pass: what a traveller who may use every mode needs
-    /// (S243), since transit needs no pass (a pass only waives the fare; U-42, S281).
+    /// Owns a car and a bike, and no pass: what a traveller who may use every mode needs,
+    /// since transit needs no pass (a pass only waives the fare).
     pub const VEHICLES: Ownership = Ownership { car: true, bike: true, transit_pass: false };
 
     /// Apply a `persons.parquet` row's overrides, field by field — each of
@@ -99,13 +98,13 @@ impl Ownership {
     }
 }
 
-/// Per-user-class default ownership (S127) — a build parameter, not
+/// Per-user-class default ownership — a build parameter, not
 /// something this crate invents. See the crate docs for why: the
 /// `[user_classes]` table that would populate this is scenario schema.
 ///
 /// A class with no declared default takes the fallback: [`Ownership::NONE`]
 /// unless [`ClassDefaults::with_fallback`] says otherwise. The scenario layer
-/// gives every undeclared class [`Ownership::VEHICLES`] (S243: a class not listed
+/// gives every undeclared class [`Ownership::VEHICLES`] (a class not listed
 /// may use every mode, so it owns what they need; no pass, U-42).
 #[derive(Clone, Debug, Default)]
 pub struct ClassDefaults {
@@ -146,7 +145,7 @@ impl ClassDefaults {
 ///
 /// Grouped by traveller and ordered by `trip_seq` within each — the same
 /// order [`Travellers::trips_of`] hands back ranges into. Origins here are
-/// **after** S128's trip-chain correction; [`RawTrip`] keeps what the file
+/// **after** the trip-chain correction; [`RawTrip`] keeps what the file
 /// actually said.
 #[derive(Clone, Debug, Default)]
 pub struct Trips {
@@ -180,13 +179,13 @@ impl Trips {
         self.traveller[trip.index()]
     }
 
-    /// The trip's mode (S195): [`Mode::Car`] where the file stated none.
+    /// The trip's mode: [`Mode::Car`] where the file stated none.
     #[must_use]
     pub fn mode(&self, trip: TripId) -> Mode {
         self.mode[trip.index()]
     }
 
-    /// Whether the trip's mode was stated (M5): a trip without one chooses its mode
+    /// Whether the trip's mode was stated: a trip without one chooses its mode
     /// when the run offers mode choice, and is a car trip otherwise.
     #[must_use]
     pub fn mode_given(&self, trip: TripId) -> bool {
@@ -199,7 +198,7 @@ impl Trips {
         self.departure[trip.index()]
     }
 
-    /// Origin, after S128's trip-chain correction.
+    /// Origin, after the trip-chain correction.
     #[must_use]
     pub fn origin(&self, trip: TripId) -> LonLat {
         self.origin[trip.index()]
@@ -225,11 +224,11 @@ impl Trips {
     }
 }
 
-/// Travellers as structure-of-arrays (S86), the immutable shared input a
+/// Travellers as structure-of-arrays, the immutable shared input a
 /// [`Trips`] table accompanies.
 ///
 /// Per-run mutable state — vehicle locations, choice state — is deliberately
-/// **not** here (Foundations §5); see [`crate::vehicles::VehicleLocations`].
+/// **not** here; see [`crate::vehicles::VehicleLocations`].
 #[derive(Clone, Debug, Default)]
 pub struct Travellers {
     ids: ExternalIdTable,
@@ -268,7 +267,7 @@ impl Travellers {
     }
 
     /// This traveller's weight — the number of people they represent, and
-    /// the PCU their vehicle contributes (S86).
+    /// the PCU their vehicle contributes.
     #[must_use]
     pub fn weight(&self, traveller: TravellerId) -> u32 {
         self.weight[traveller.index()]
@@ -280,7 +279,7 @@ impl Travellers {
         self.user_class[traveller.index()]
     }
 
-    /// This traveller's resolved ownership (S127).
+    /// This traveller's resolved ownership.
     #[must_use]
     pub fn ownership(&self, traveller: TravellerId) -> Ownership {
         self.ownership[traveller.index()]
@@ -305,8 +304,8 @@ impl Travellers {
 /// Build [`Travellers`] and [`Trips`] from the raw rows the two readers
 /// produced.
 ///
-/// `class_defaults` supplies S127's per-class ownership default;
-/// `default_weight` is the scenario's `traveller_weight` (S89: 1 for
+/// `class_defaults` supplies the per-class ownership default;
+/// `default_weight` is the scenario's `traveller_weight` (1 for
 /// `default`, 10 for `fast`) for travellers no row gives an explicit weight.
 ///
 /// # Errors

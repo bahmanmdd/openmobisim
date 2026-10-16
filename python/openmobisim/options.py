@@ -1,4 +1,4 @@
-"""Typed options (C2, D-5 a): every parameter of a group as a keyword with its default.
+"""Typed options (D-5 a): every parameter of a group as a keyword with its default.
 
 Generated from the core's parameter table by ``python/tests/test_options.py --write``; do not edit
 by hand. Each class is a read-only ``dict`` of the options given, so it goes wherever the options

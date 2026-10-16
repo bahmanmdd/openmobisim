@@ -1,4 +1,4 @@
-//! Transit trips on the toy network's tram `T1` (S199): every number derived
+//! Transit trips on the toy network's tram `T1`: every number derived
 //! by hand.
 //!
 //! The tram shuttles between stop `N1` (at the node `N1`) and stop `H` (at

@@ -1,4 +1,4 @@
-//! Static layers made from a road network alone (S195): the grid's and the
+//! Static layers made from a road network alone: the grid's and the
 //! toy network's bike and walk layers, and what their costs are.
 
 use openmobisim_core_graph::defaults::RoadClass;
@@ -139,7 +139,7 @@ fn the_two_bike_costs_are_time_and_time_with_a_premium_on_mixed_traffic() {
 
 #[test]
 fn a_painted_lane_costs_its_own_factor_a_track_none_and_mixed_traffic_its_own() {
-    // S236 (roadmap I-bb U2): lane against track. The street given a painted lane.
+    // S236: lane against track. The street given a painted lane.
     let d = StaticLayerDefaults::SHIPPED;
     let link = |class, infrastructure, km_h, length| StaticLink {
         class,

@@ -1,9 +1,9 @@
-"""Starter cases (S240): found, checked and read; refused when changed or nowhere to be found.
+"""Starter cases: found, checked and read; refused when changed or nowhere to be found.
 
 The loader's logic runs everywhere on a case made up here (two links, two zones). With the bundle at
 hand (``OPENMOBISIM_TEST_BUNDLE``, a folder holding ``<case>/``, as ``OPENMOBISIM_TEST_PBF`` holds
 an extract), the real cases are read and the benchmarks' reference results checked: Sioux Falls at
-base 11.72 min a trip, congested 20.86 min (S225, S229); Nguyen–Dupuis 53.43 min.
+base 11.72 min a trip, congested 20.86 min; Nguyen–Dupuis 53.43 min.
 """
 
 from __future__ import annotations

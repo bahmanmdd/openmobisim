@@ -1,4 +1,4 @@
-//! `manhattan_grid` — the public, shared fixture (S105), promoted out of
+//! `manhattan_grid` — the public, shared fixture, promoted out of
 //! this crate's own private test helper (`tests/common/mod.rs`) in Phase 1
 //! step 8.
 
