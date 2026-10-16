@@ -3,57 +3,58 @@
  "bundle": "v1",
  "cases": {
   "amsterdam/base": {
-   "fingerprint": "34fc0d48ac1ea631",
+   "fingerprint": "8f402af076175011",
    "trips": 57381,
-   "completed": 55906,
-   "mean_trip_s": 1449.9693592816514,
+   "completed": 55996,
+   "mean_trip_s": 1452.2202121580112,
    "mode_share_pct": {
-    "bike": 31.907774350394728,
-    "bike_transit": 0.43394154859622525,
-    "car": 37.01747965354386,
-    "car_transit": 0.14116170857949495,
-    "none": 0.47228176574127323,
-    "transit": 27.85416775587738,
-    "walk": 2.1731932172670394
+    "bike": 33.74636203621408,
+    "bike_transit": 0.37294574859273977,
+    "car": 35.3322528363047,
+    "car_transit": 0.12199160000697094,
+    "none": 0.4792527143131002,
+    "transit": 27.815827538732332,
+    "walk": 2.1313675258360782
    },
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "7f3b3bda4465"
+   "git_sha": "c590ae953276"
   },
   "delft/base": {
-   "fingerprint": "043a580eb5a0cdf6",
+   "fingerprint": "961a8c7dd8a867f6",
    "trips": 33269,
-   "completed": 32852,
-   "mean_trip_s": 1434.1887860708632,
+   "completed": 32870,
+   "mean_trip_s": 1431.4320961362946,
    "mode_share_pct": {
-    "bike": 17.725209654633442,
-    "bike_transit": 0.009017403588926628,
-    "car": 54.377949442423876,
-    "transit": 24.31092007574619,
-    "walk": 3.5769034236075625
+    "bike": 18.608915206348254,
+    "bike_transit": 0.003005801196308876,
+    "car": 53.56938892061679,
+    "transit": 24.331960684120354,
+    "walk": 3.486729387718296
    },
-   "loadings": 8,
+   "loadings": 7,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "7f3b3bda4465"
+   "git_sha": "c590ae953276"
   },
   "lyon/base": {
-   "fingerprint": "376b49cbe8a7860e",
-   "trips": 60767,
-   "completed": 54713,
-   "mean_trip_s": 1621.329866759271,
+   "fingerprint": "09547f3bd0ec3234",
+   "trips": 59536,
+   "completed": 56921,
+   "mean_trip_s": 1539.9466102141564,
    "mode_share_pct": {
-    "bike": 2.996692283640792,
-    "car": 51.42429279049484,
-    "car_transit": 0.5397666496618231,
-    "transit": 36.89831652047987,
-    "walk": 8.14093175572268
+    "bike": 4.644248857833916,
+    "bike_transit": 0.0016796560064498791,
+    "car": 39.245162590701426,
+    "car_transit": 0.2838618650900296,
+    "transit": 46.19557914539102,
+    "walk": 9.629467884977156
    },
    "loadings": 10,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "7f3b3bda4465"
+   "git_sha": "c590ae953276"
   },
   "nguyendupuis/base": {
    "fingerprint": "208bd2b137288090",
@@ -66,25 +67,25 @@
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "7f3b3bda4465"
+   "git_sha": "c590ae953276"
   },
   "paris/base": {
-   "fingerprint": "2ea9e077bc0dd1b5",
-   "trips": 87119,
-   "completed": 83781,
-   "mean_trip_s": 1254.5704515343575,
+   "fingerprint": "3e34f96ba9c01f6b",
+   "trips": 85805,
+   "completed": 84177,
+   "mean_trip_s": 1231.7978782802904,
    "mode_share_pct": {
-    "bike": 14.256361987626121,
-    "bike_transit": 0.08838485290235196,
-    "car": 16.389077009607547,
-    "car_transit": 0.013774262789976928,
-    "transit": 62.15636083977089,
-    "walk": 7.096041047303114
+    "bike": 17.984965911077442,
+    "bike_transit": 0.12470135772973603,
+    "car": 12.719538488433075,
+    "car_transit": 0.015150632247538022,
+    "transit": 62.41943942660684,
+    "walk": 6.736204183905367
    },
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "7f3b3bda4465"
+   "git_sha": "c590ae953276"
   },
   "siouxfalls/base": {
    "fingerprint": "4ae3671336d2d99d",
@@ -97,7 +98,7 @@
    "loadings": 5,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "7f3b3bda4465"
+   "git_sha": "c590ae953276"
   },
   "siouxfalls/congested": {
    "fingerprint": "659ce9cdcd2d11f8",
@@ -110,7 +111,7 @@
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "7f3b3bda4465"
+   "git_sha": "c590ae953276"
   }
  }
 }

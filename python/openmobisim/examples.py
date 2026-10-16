@@ -224,12 +224,12 @@ def traveller_classes() -> dict[str, dict]:
     Each class owns what its modes need (a car for one that may drive or park and ride, a bike
     for one that may cycle; transit needs no pass, and none of the four holds one, so a fare,
     if a study sets one, is paid by all), and **the two that cycle weigh alike**: a
-    bike constant of 0.77 (every other mode's 0), on top of the default weights, which count each
+    bike constant of 1.23 (every other mode's 0), on top of the default weights, which count each
     kilometre of a ride in mixed traffic (-0.16) and money (-1.2 per euro), though no price is
     charged by default: money plays no part until a study sets prices. The
     constant was fitted (S282, on the starter case's final recipe and window, a car trip paying its
-    access and egress) so that Amsterdam's residents keep the city's ratio of cycling to driving
-    (38 : 23); public
+    access and egress) so that Amsterdam's residents drive as often as the city's survey says they
+    do (23 % of their trips, with 38 % by bike); public
     transport's share then follows from who owns no vehicle, and walking, mostly short trips,
     needs a demand that has them. The shares come from the utilities and what people own, which
     is what a study changes. **Illustrative, not calibrated**: a starting point to replace with a
@@ -245,7 +245,7 @@ def traveller_classes() -> dict[str, dict]:
 
     # The bike's constant only where a class can cycle: elsewhere it could never apply. Mixed
     # traffic's weight is the default's (D-4), so the classes leave it to the run (S254).
-    bike = {"beta_mode_bike": 0.77}
+    bike = {"beta_mode_bike": 1.23}
     return _class_table({
         "car_and_bike": {"share": 0.40, "modes": list(MODES), **bike},
         "no_vehicle": {"share": 0.30, "modes": ["walk", "transit"]},
