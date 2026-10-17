@@ -58,6 +58,7 @@ pub mod run;
 pub mod skims;
 pub mod timings;
 pub mod transit;
+pub mod trip_results;
 
 pub use demand_values::{DEPARTURE_ATTRIBUTE, DESTINATION_PARKING, DemandValues};
 pub use disruptions::{Disruptions, RoadDisruption, TransitDisruption, TransitEffect};
@@ -83,3 +84,4 @@ pub use run::{FlowMotor, ModeTotals, Run, RunError, RunResult, TripCompletionSta
 pub use skims::Skimmer;
 pub use timings::{Stage, Timings};
 pub use transit::{BusReport, BusSummary, TransitResult, TransitSetup};
+pub use trip_results::{TripOutcome, TripOutcomes, TripTable};

@@ -1,5 +1,6 @@
 //! Output writers for openmobisim: `kpis.parquet`, `diagnostics.parquet`, `link_bins.parquet`,
-//! `transit_calls.parquet`, `parking_bins.parquet`, `events.parquet` and `manifest.json`.
+//! `transit_calls.parquet`, `parking_bins.parquet`, `trip_results.parquet`, `events.parquet` and
+//! `manifest.json`.
 //!
 //! | Module | What it writes |
 //! |---|---|
@@ -9,6 +10,7 @@
 //! | [`link_bins`] | Per-link, per-time-bin results, from [`openmobisim_core_sim::RunResult::link_bins`] |
 //! | [`transit_calls`] | Every call of the timetable with its times and passengers, from [`openmobisim_core_sim::RunResult::transit`] |
 //! | [`parking_bins`] | Every parking's occupancy bin by bin, from [`openmobisim_core_sim::RunResult::parking`] |
+//! | [`trip_results`] | Every trip and what became of it, from [`openmobisim_core_sim::TripTable`] |
 //! | [`manifest`] | [`manifest::Manifest`] — the file that makes a run reproducible |
 //!
 //! # What is not written yet
@@ -42,6 +44,7 @@ pub mod link_bins;
 pub mod manifest;
 pub mod parking_bins;
 pub mod transit_calls;
+pub mod trip_results;
 
 pub use diagnostics::write_diagnostics;
 pub use events::write_events;
@@ -50,6 +53,7 @@ pub use link_bins::{write_layer_link_bins, write_link_bins};
 pub use manifest::{Manifest, write_manifest};
 pub use parking_bins::write_parking_bins;
 pub use transit_calls::write_transit_calls;
+pub use trip_results::write_trip_results;
 
 /// Something that went wrong writing an output artifact.
 ///

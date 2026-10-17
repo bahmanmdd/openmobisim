@@ -4,7 +4,7 @@
 use std::fs::File;
 use std::path::PathBuf;
 
-use arrow_array::{Array, Float64Array, StringArray, UInt32Array, UInt64Array};
+use arrow_array::{Array, BooleanArray, Float64Array, StringArray, UInt32Array, UInt64Array};
 use openmobisim_core_demand::{ClassDefaults, Mode, Ownership, RawTrip, build_travellers};
 use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
 use openmobisim_core_graph::geometry::LonLat;
@@ -12,7 +12,7 @@ use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder}
 use openmobisim_core_loading::LinkBinRecorder;
 use openmobisim_core_sim::{
     EventRow, EventType, IterationReport, ModeTotals, RunDescription, RunResult,
-    TripCompletionStats,
+    TripCompletionStats, TripOutcomes, TripTable,
 };
 use openmobisim_core_types::diagnostics::{
     Category, DiagKey, Diagnostics, ElementRef, Severity, codes,
@@ -23,6 +23,7 @@ use openmobisim_core_types::units::Duration;
 use openmobisim_io_parquet::manifest::Manifest;
 use openmobisim_io_parquet::{
     write_diagnostics, write_events, write_kpis, write_link_bins, write_manifest,
+    write_trip_results,
 };
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
@@ -117,6 +118,7 @@ fn sample_result() -> RunResult {
         reroutes: Vec::new(),
         routes_realised: Vec::new(),
         link_peak_pcu: None,
+        trip_outcomes: TripOutcomes::default(),
     }
 }
 
@@ -751,4 +753,87 @@ fn every_parquet_file_carries_the_schema_version() {
     write_link_bins(&bins, "r", &recorder.finish(), &network, &sample_description(None, Some(300)))
         .unwrap();
     assert_eq!(version(&bins), expected, "link_bins");
+}
+
+/// `trip_results.parquet`: one row per trip with its outcome; the arrival and travel time only for a
+/// trip that completed, the link only for one still travelling; the run's identity in the
+/// metadata.
+#[test]
+fn trip_results_round_trip_with_their_outcomes_and_nulls() {
+    let raw = |who: &str, seq: u32, departure: u32, class: &str| RawTrip {
+        traveller_id: who.to_string(),
+        trip_seq: seq,
+        origin: LonLat::new(4.80, 45.70),
+        destination: LonLat::new(4.81, 45.71),
+        departure_time: Second(departure),
+        user_class: class.to_string(),
+        weight: Some(2),
+        mode: None,
+    };
+    let raw_trips = vec![
+        raw("alice", 0, 10, "commuter"),
+        raw("alice", 1, 50, "commuter"),
+        raw("bob", 0, 20, "commuter"),
+    ];
+    let class_defaults =
+        ClassDefaults::new().with_default("commuter", Ownership { car: true, ..Ownership::NONE });
+    let (travellers, trips) =
+        build_travellers(raw_trips, Vec::new(), &class_defaults, 1, &mut Diagnostics::new())
+            .expect("buildable");
+    let events = vec![
+        EventRow::trip(Second(100), EventType::TripCompleted, TripId::new(0)),
+        EventRow::trip(Second(3600), EventType::TripTruncated, TripId::new(1)),
+        EventRow::trip(Second(20), EventType::NoFeasiblePath, TripId::new(2)),
+    ];
+    let taken = [Some(Mode::Car); 3];
+    let at_end = [(TripId::new(1), LinkId::new(1))];
+    let result = RunResult {
+        trip_outcomes: TripOutcomes::of(&events, &taken, &at_end),
+        events,
+        ..RunResult::default()
+    };
+    let table = TripTable::new(&result, &trips, &travellers, None);
+    let path = temp_path("trip_results.parquet");
+    write_trip_results(&path, "r", &table, &sample_description(None, None)).unwrap();
+    let batch = read_first_batch(&path);
+    assert_eq!(batch.num_rows(), 3);
+    let text = |name: &str| -> Vec<Option<String>> {
+        let c = batch.column_by_name(name).unwrap().as_any().downcast_ref::<StringArray>().unwrap();
+        (0..c.len()).map(|i| (!c.is_null(i)).then(|| c.value(i).to_string())).collect()
+    };
+    let numbers = |name: &str| -> Vec<Option<u32>> {
+        let c = batch.column_by_name(name).unwrap().as_any().downcast_ref::<UInt32Array>().unwrap();
+        (0..c.len()).map(|i| (!c.is_null(i)).then(|| c.value(i))).collect()
+    };
+    let some =
+        |v: &[&str]| -> Vec<Option<String>> { v.iter().map(|s| Some((*s).to_string())).collect() };
+    assert_eq!(text("traveller_id"), some(&["alice", "alice", "bob"]));
+    assert_eq!(numbers("trip_seq"), vec![Some(0), Some(1), Some(0)]);
+    assert_eq!(numbers("trip"), vec![Some(0), Some(1), Some(2)]);
+    assert_eq!(text("user_class"), some(&["commuter"; 3]));
+    assert_eq!(numbers("weight"), vec![Some(2); 3]);
+    assert_eq!(numbers("departure_s"), vec![Some(10), Some(50), Some(20)]);
+    assert_eq!(text("mode"), some(&["car"; 3]));
+    assert_eq!(text("outcome"), some(&["completed", "truncated", "no_feasible_path"]));
+    assert_eq!(numbers("arrival_s"), vec![Some(100), None, None]);
+    assert_eq!(numbers("travel_time_s"), vec![Some(90), None, None]);
+    assert_eq!(numbers("link_at_end"), vec![None, Some(1), None]);
+    let choice = batch
+        .column_by_name("mode_choice")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<BooleanArray>()
+        .unwrap();
+    assert!((0..3).all(|i| !choice.value(i)));
+    let lat = batch
+        .column_by_name("destination_lat")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
+    assert!((lat.value(0) - 45.71).abs() < 1e-12);
+    let reader = ParquetRecordBatchReaderBuilder::try_new(File::open(&path).unwrap()).unwrap();
+    let kv = reader.metadata().file_metadata().key_value_metadata().cloned().unwrap_or_default();
+    assert!(kv.iter().any(|e| e.key == "openmobisim.run_fingerprint"));
+    assert!(kv.iter().any(|e| e.key == openmobisim_io_parquet::SCHEMA_VERSION_KEY));
 }

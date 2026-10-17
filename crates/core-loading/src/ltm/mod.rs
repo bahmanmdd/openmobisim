@@ -208,7 +208,7 @@ use std::collections::VecDeque;
 
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
-use openmobisim_core_types::ids::{EntityId, LinkId};
+use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::{Duration, Pcu};
 
@@ -377,6 +377,10 @@ pub struct LtmOutput {
     /// Per link, the most PCU it held at once: against the link's physical storage, where
     /// a point queue would have spilled back.
     pub peak_occupancy: Vec<f64>,
+    /// Every vehicle still travelling when the window ended, with the link it was on
+    /// (driving, or waiting at its stop line) or waiting at an origin to enter
+    /// ([`LtmNetwork::unfinished_links`]); in queue order.
+    pub unfinished: Vec<(VehicleId, LinkId)>,
 }
 
 /// The running state of a loading.
@@ -596,6 +600,24 @@ impl<'a> LtmNetwork<'a> {
                 }
             }
         }
+    }
+
+    /// Where each vehicle still travelling is: the link it is on (driving, or waiting at its
+    /// stop line) or waits at an origin to enter, read from the same queues as
+    /// [`Self::record_unfinished`]. Call after the last step. A vehicle not yet departed, or
+    /// waiting in a turn pocket, is not listed. Cost: one entry per vehicle still travelling,
+    /// once per loading.
+    #[must_use]
+    pub fn unfinished_links(&self) -> Vec<(VehicleId, LinkId)> {
+        let n = self.links;
+        let mut out = Vec::new();
+        for queue in 0..3 * n {
+            let link = LinkId::from_index(queue % n);
+            out.extend(
+                self.queues[queue].iter().map(|q| (self.vehicles[q.slot as usize].id, link)),
+            );
+        }
+        out
     }
 
     /// [`Self::take_link_bins`], and the entry-time table if asked for.
@@ -1627,14 +1649,14 @@ pub fn run_ltm_chained(
         Recording::Bins(b) => Some((b, None)),
         Recording::BinsAndEntry(b, e) => Some((b, Some(e))),
     };
-    let (trajectories, bins, lock, reroutes, peak_occupancy) = run_ltm_inner_chained(
+    let (trajectories, bins, lock, reroutes, peak_occupancy, unfinished) = run_ltm_inner_chained(
         network, turns, vehicles, chains, window, step, level, recording, rules, rerouter,
     );
     let (link_bins, entry) = match bins {
         Some((b, e)) => (Some(b), e),
         None => (None, None),
     };
-    LtmOutput { trajectories, link_bins, entry, lock, reroutes, peak_occupancy }
+    LtmOutput { trajectories, link_bins, entry, lock, reroutes, peak_occupancy, unfinished }
 }
 
 fn run_ltm_inner(
@@ -1646,7 +1668,7 @@ fn run_ltm_inner(
     level: FidelityLevel,
     recording: Option<(u32, Option<u32>)>,
 ) -> (Vec<Trajectory>, Option<(LinkBins, Option<EntryTables>)>) {
-    let (done, bins, _, _, _) = run_ltm_inner_chained(
+    let (done, bins, _, _, _, _) = run_ltm_inner_chained(
         network,
         turns,
         vehicles,
@@ -1662,13 +1684,14 @@ fn run_ltm_inner(
 }
 
 /// What a loading leaves: the trajectories, the per-link results, the lock report, the reroutes,
-/// and each link's peak occupancy.
+/// each link's peak occupancy, and where the vehicles still travelling were.
 type Inner = (
     Vec<Trajectory>,
     Option<(LinkBins, Option<EntryTables>)>,
     LockReport,
     Vec<RerouteRecord>,
     Vec<f64>,
+    Vec<(VehicleId, LinkId)>,
 );
 
 #[allow(clippy::too_many_arguments, reason = "the loading's inputs")]
@@ -1767,7 +1790,8 @@ fn run_ltm_inner_chained(
     let lock = sim.lock_report();
     let reroutes = sim.reroutes().to_vec();
     let peaks = sim.curves.iter().map(|c| c.peak_occupancy().get()).collect();
-    (completed, sim.take_link_bins_with_entry(), lock, reroutes, peaks)
+    let unfinished = sim.unfinished_links();
+    (completed, sim.take_link_bins_with_entry(), lock, reroutes, peaks, unfinished)
 }
 
 #[cfg(test)]

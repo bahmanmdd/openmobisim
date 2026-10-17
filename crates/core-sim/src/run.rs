@@ -71,6 +71,7 @@ use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext, make_room};
 use crate::timings::{Stage, Timings};
 use crate::transit::{TransitResult, TransitSetup, par_map};
+use crate::trip_results::TripOutcomes;
 use openmobisim_core_graph::hubs::ParkingKind;
 use openmobisim_core_graph::layers::StaticLayer;
 use openmobisim_core_routes::{Reach, Route, SearchContext};
@@ -295,6 +296,10 @@ pub struct RunResult {
     /// Per link, the most PCU it held at once in the last loading; `None` at level 0.
     /// Above the link's storage under the point queue: where the queue would have spilled back.
     pub link_peak_pcu: Option<Vec<f64>>,
+    /// Every trip's outcome in the last loading, by trip index: what became of it, when it
+    /// arrived, and the road link of a car still travelling at the window's end
+    /// ([`crate::TripTable`] makes the per-trip table of them).
+    pub trip_outcomes: TripOutcomes,
 }
 
 /// How one loading is made besides the routes it follows.
@@ -342,6 +347,8 @@ struct Loaded {
     reroute_searches: u32,
     /// Per link, the most PCU it held at once; `None` at level 0.
     peak_pcu: Option<Vec<f64>>,
+    /// The road link of each car trip still travelling when the window ended.
+    at_end: Vec<(TripId, LinkId)>,
 }
 
 /// How the itinerary trips of a loading went.
@@ -1680,6 +1687,7 @@ impl Run {
             })
             .collect();
         let (by_mode, no_mode) = mode_totals(&loaded.events, &self.trips, &self.travellers, &taken);
+        let trip_outcomes = TripOutcomes::of(&loaded.events, &taken, &loaded.at_end);
         let fallback_car: Vec<TripId> = match itineraries.as_ref().zip(chosen.as_ref()) {
             Some((it, c)) => it
                 .trips
@@ -1742,6 +1750,7 @@ impl Run {
             reroutes: loaded.reroutes,
             routes_realised: loaded.routes_realised,
             link_peak_pcu: loaded.peak_pcu,
+            trip_outcomes,
         })
     }
 
@@ -1804,6 +1813,8 @@ impl Run {
         let mut reroute_searches = 0_u32;
         let mut peak_pcu: Option<Vec<f64>> = None;
         let mut routes_realised: Vec<(TripId, Vec<LinkId>)> = Vec::new();
+        // Where each car trip still travelling at the window's end was (its road link).
+        let mut at_end: Vec<(TripId, LinkId)> = Vec::new();
         // Bike and walk vehicles, kept to be binned per layer when asked.
         let mut layer_vehicles: [Vec<Vehicle>; 2] = [Vec::new(), Vec::new()];
         // Itinerary trips (M4), executed once the loading has made the day's times; the
@@ -2027,6 +2038,12 @@ impl Run {
                                         EventType::TripTruncated,
                                         trip,
                                     ));
+                                    // The link it had not left by the window's end.
+                                    if let Some(t) =
+                                        trajectory.links.iter().find(|t| t.exit > self.window)
+                                    {
+                                        at_end.push((trip, t.link));
+                                    }
                                 }
                             }
                             FlowMotor::Ltm { .. } => {
@@ -2164,6 +2181,14 @@ impl Run {
             reroute_searches = rerouter.as_ref().map_or(0, |r| r.offers);
             peak_pcu = Some(out.peak_occupancy);
             let (trajectories, bins, entry) = (out.trajectories, out.link_bins, out.entry);
+            // Where each vehicle still travelling at the end was (a car's vehicle id is its
+            // trip's index, an itinerary car's likewise; buses are not trips).
+            let unfinished: HashMap<VehicleId, LinkId> = out.unfinished.into_iter().collect();
+            for (i, vehicle) in &itin_cars {
+                if let Some(&link) = unfinished.get(&vehicle.id) {
+                    at_end.push((pending_itin[*i].trip, link));
+                }
+            }
             for cycle in &out.lock.loops {
                 diagnostics.record(DiagKey::new(
                     Category::Modelling,
@@ -2219,6 +2244,9 @@ impl Run {
                             ElementRef::of(trip),
                         ));
                         events.push(EventRow::trip(self.window, EventType::TripTruncated, trip));
+                        if let Some(&link) = unfinished.get(&vehicle.id) {
+                            at_end.push((trip, link));
+                        }
                     }
                 }
             }
@@ -2391,6 +2419,7 @@ impl Run {
             routes_realised,
             reroute_searches,
             peak_pcu,
+            at_end,
         }
     }
 

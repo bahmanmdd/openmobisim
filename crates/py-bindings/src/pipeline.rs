@@ -40,12 +40,13 @@ use openmobisim_core_sim::{
     ClassLimits, DemandValues, Disruptions, FlowMotor, LayerSetup, LinkValues, LoadingOptions,
     ModeDefaults, ParkingDefaults, ParkingSetup, Prices, ROUTE_ATTRIBUTES, RoadDisruption,
     Run as CoreRun, Skimmer, StaticLayers, Timings, TransitDisruption, TransitEffect, TransitSetup,
-    ValueLayer,
+    TripTable, ValueLayer,
 };
 use openmobisim_core_transit::{TransitDefaults, WindowCut};
 
 use crate::parking::{
     PyParkings, itinerary_choices, parking_bins, parking_places, parking_summary, trip_modes,
+    trip_results,
 };
 use crate::transit::{PyTransit, transit_calls, transit_summary};
 use openmobisim_core_types::diagnostics::Diagnostics;
@@ -60,7 +61,7 @@ use openmobisim_core_routes::Registry;
 use openmobisim_io_parquet::manifest::Manifest;
 use openmobisim_io_parquet::{
     write_diagnostics, write_events, write_kpis, write_kpis_csv, write_layer_link_bins,
-    write_link_bins, write_manifest,
+    write_link_bins, write_manifest, write_trip_results,
 };
 
 /// One `trips.parquet` row, as a plain tuple in `RawTrip`'s field order; the
@@ -317,6 +318,10 @@ pub struct PyRunSummary {
     /// Path to the written `events.parquet`.
     #[pyo3(get)]
     pub events_path: String,
+    /// Path to the written `trip_results.parquet` (every trip and what became of it); `None`
+    /// with the minimal outputs.
+    #[pyo3(get)]
+    pub trip_results_path: Option<String>,
     /// Path to the written `manifest.json`.
     #[pyo3(get)]
     pub manifest_path: String,
@@ -439,6 +444,9 @@ pub struct PyRunSummary {
     /// Every trip's departure and the mode it took, as columns.
     #[pyo3(get)]
     pub trip_modes: Py<PyDict>,
+    /// Every trip and what became of it, as columns: `trip_results.parquet`'s, without `run_id`.
+    #[pyo3(get)]
+    pub trip_results: Py<PyDict>,
     /// What stood still when the last loading's window ended, as numbers by name and
     /// the loops as lists of link indices; `None` at level 0.
     #[pyo3(get)]
@@ -1164,6 +1172,14 @@ pub fn run_pipeline(
     let diagnostics_path = dir.join("diagnostics.parquet");
     let events_path = dir.join("events.parquet");
     let manifest_path = dir.join("manifest.json");
+    // Every trip and what became of it (S283): `trip_results.parquet` and `Run.trip_results()`. A trip
+    // without a stated mode counts as the run's one mode, if it has one.
+    let mut distinct = modes.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    let one_mode = if let [one] = distinct.as_slice() { Some(*one) } else { None };
+    let trip_table = TripTable::new(&result, &trips_used, &travellers, one_mode);
+    let mut trip_results_path = None;
 
     // C2: the design and replication a batch names ("default" and 0 for a single run); like the
     // run's id, labels and not inputs, so not in the fingerprint.
@@ -1181,6 +1197,9 @@ pub fn run_pipeline(
             openmobisim_io_parquet::events::DEFAULT_SAMPLE_RATE,
         )
         .map_err(to_value_error)?;
+        let path = dir.join("trip_results.parquet");
+        write_trip_results(&path, run_id, &trip_table, &description).map_err(to_value_error)?;
+        trip_results_path = Some(path.to_string_lossy().into_owned());
     }
     let mut manifest =
         Manifest::for_run(&travellers, &result, Second(window.end_s), default_weight, &description);
@@ -1264,12 +1283,8 @@ pub fn run_pipeline(
         ),
         None => None,
     };
-    let mut distinct = modes.clone();
-    distinct.sort_unstable();
-    distinct.dedup();
-    let one_mode = if let [one] = distinct.as_slice() { Some(*one) } else { None };
-    let trip_modes_table =
-        trip_modes(py, result.itineraries.as_ref(), &trips_used, &travellers, one_mode)?.unbind();
+    let trip_modes_table = trip_modes(py, &trip_table)?.unbind();
+    let trip_results_table = trip_results(py, &trip_table)?.unbind();
     let route_choices_py = match (&result.route_choices, &result.route_sets) {
         (Some(choices), Some(sets)) => Some(PyRouteChoices::new(py, choices, sets)?),
         _ => None,
@@ -1424,6 +1439,7 @@ pub fn run_pipeline(
         parking_bins_path,
         itinerary_choices: itinerary_table,
         trip_modes: trip_modes_table,
+        trip_results: trip_results_table,
         itinerary_replanned,
         return_mismatch_s,
         transit_calls_path,
@@ -1447,6 +1463,7 @@ pub fn run_pipeline(
         kpis_path: kpis_path.to_string_lossy().into_owned(),
         diagnostics_path: diagnostics_path.to_string_lossy().into_owned(),
         events_path: events_path.to_string_lossy().into_owned(),
+        trip_results_path,
         manifest_path: manifest_path.to_string_lossy().into_owned(),
         link_bins_path,
         master_seed,

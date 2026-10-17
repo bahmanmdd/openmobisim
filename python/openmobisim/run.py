@@ -105,7 +105,7 @@ class _Files:
         m = json.loads(manifest_path.read_text())
         self._manifest = m
         self.manifest_path = str(manifest_path)
-        for name in ("kpis", "diagnostics", "events", "link_bins", "parking_bins", "transit_calls"):
+        for name in ("kpis", "diagnostics", "events", "link_bins", "parking_bins", "transit_calls", "trip_results"):
             path = folder / f"{name}.parquet"
             setattr(self, f"{name}_path", str(path) if path.exists() else None)
         if self.kpis_path is None and (folder / "kpis.csv").exists():  # the minimal outputs
@@ -133,6 +133,39 @@ class _Files:
         t = pq.read_table(self.kpis_path, columns=["iteration", "mode", "metric", "value"])
         columns = [t.column(c).to_pylist() for c in ("iteration", "mode", "metric", "value")]
         return list(zip(*columns, strict=True))
+
+    @property
+    def trip_results(self) -> dict[str, Any]:
+        """``trip_results.parquet``'s columns, as the run in memory gives them (a null as ``NaN``)."""
+        if self.trip_results_path is None:
+            raise RuntimeError(
+                "this run's folder holds no trip_results.parquet (outputs='minimal', or a run made "
+                "before the file existed); run the scenario again for it"
+            )
+        import pyarrow.parquet as pq
+
+        table = pq.read_table(self.trip_results_path)
+        text = {"traveller_id", "user_class", "mode", "outcome", "mode_choice"}
+        maybe = {"arrival_s", "travel_time_s", "link_at_end"}
+        out: dict[str, Any] = {}
+        for name in table.column_names:
+            column = table.column(name)
+            if name == "run_id":
+                continue
+            if name in text:
+                out[name] = column.to_pylist()
+            elif name in maybe:
+                out[name] = column.to_numpy(zero_copy_only=False).astype(float)  # null: NaN
+            else:
+                out[name] = column.to_numpy()
+        return out
+
+    @property
+    def trip_modes(self) -> dict[str, Any]:
+        """``trip_modes()``'s columns, from ``trip_results.parquet``."""
+        t = self.trip_results
+        keys = ("traveller_id", "trip_seq", "departure_s", "mode", "mode_choice", "weight")
+        return {k: t[k] for k in keys}
 
     def __getattr__(self, name: str) -> Any:
         raise RuntimeError(
@@ -188,9 +221,10 @@ class Run:
         ``equilibration``, ``route_update``, ``converged`` and ``manifest()`` (from
         ``manifest.json``); ``completion``, ``completion_by_mode``, ``total_travel_time_s``,
         ``mean_travel_time_s``, ``convergence()``, ``convergence_gap`` and
-        ``convergence_verdict`` (from ``kpis.parquet``); ``timings()``; and every table
-        (``kpis()``, ``diagnostics()``, ``events()``, ``link_bins_table()``,
-        ``parking_bins_table()``, ``transit_calls_table()``). What only the run in memory holds
+        ``convergence_verdict`` (from ``kpis.parquet``); ``timings()``; ``trip_results()`` and
+        ``trip_modes()`` (from ``trip_results.parquet``); and every table (``kpis()``,
+        ``diagnostics()``, ``events()``, ``link_bins_table()``, ``parking_bins_table()``,
+        ``transit_calls_table()``). What only the run in memory holds
         (the network, the route sets and choices, the per-link arrays, the itinerary choices)
         raises a ``RuntimeError`` that says so. Needs pyarrow.
 
@@ -1232,6 +1266,38 @@ class Run:
         Every other trip followed its planned route, which nothing stores twice.
         """
         return Columns(self._summary.route_realised)
+
+    def trip_results(self) -> Columns:
+        """Every trip and what became of it, as columns: one row per trip, in trip order.
+
+        The table to find the trips that did not finish, or to follow any trip: filter on
+        ``outcome`` (``t = run.trip_results().to_pandas(); t[t.outcome == "truncated"]``). Also
+        written as ``trip_results.parquet`` (with ``run_id``), which ``Run.open`` reads back.
+        Columns:
+
+        * ``trip`` (its index in the run, as in ``route_changes``), ``traveller_id``,
+          ``trip_seq`` (its place in its traveller's day, from 0), ``user_class``, ``weight``
+          (the people its traveller stands for);
+        * ``origin_lon``, ``origin_lat``, ``destination_lon``, ``destination_lat`` (as given),
+          ``departure_s`` (seconds after midnight);
+        * ``mode`` (the mode taken, as in ``trip_modes``; ``None`` for a trip that chose and
+          had none to choose) and ``mode_choice`` (whether it chose its mode);
+        * ``outcome``: ``"completed"``, ``"truncated"`` (still travelling when the window
+          ended), ``"no_vehicle_available"``, ``"no_feasible_path"``,
+          ``"mode_not_available"`` or ``"no_alternative"`` (the trips whose ``mode`` is
+          ``None``; ``completion`` counts them under the outcome they had, most often
+          ``no_feasible_path``, and ``completion_by_mode`` under ``"none"``);
+        * ``arrival_s`` and ``travel_time_s``: ``NaN`` unless the trip completed;
+        * ``link_at_end``: for a trip still travelling when the window ended whose car was on
+          the roads, the road link it was on (driving, or at the stop line) or waited at its
+          origin to enter, an index into the network's links (as ``link_bins``'); ``NaN`` for
+          every other trip, and for one on foot, on a bike, in a transit vehicle or at a stop
+          at the end.
+
+        The outcomes are the last loading's. Counted by ``outcome``, the trips agree with
+        ``completion``, the no-alternative trips aside.
+        """
+        return Columns(self._summary.trip_results)
 
     def trip_modes(self) -> Columns:
         """Every trip's departure and the mode it took, as columns.

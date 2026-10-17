@@ -759,6 +759,7 @@ class RunSummary:
     kpis_path: str
     diagnostics_path: str
     events_path: str
+    trip_results_path: str | None
     manifest_path: str
     #: The written ``link_bins.parquet``, if the run recorded per-link results.
     link_bins_path: str | None
@@ -824,6 +825,8 @@ class RunSummary:
     itinerary_choices: dict[str, Any] | None
     #: Every trip's departure and the mode it took (see ``Run.trip_modes``).
     trip_modes: dict[str, Any]
+    #: Every trip and what became of it (see ``Run.trip_results``).
+    trip_results: dict[str, Any]
     gridlock: dict[str, Any] | None
     route_changes: dict[str, Any]
     route_realised: dict[str, Any]

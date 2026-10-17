@@ -22,11 +22,11 @@
   "delft": {
    "archive": {
     "name": "delft.zip",
-    "sha256": "2e5c443916cc50fe8263b6a2719241fe54cc35b0dee8461624fcdbeae6ef71b9",
+    "sha256": "bb12c91d5c45cd7455b21de42471c4733e96c0617240643bb259ca3eb13177f8",
     "bytes": 18481724
    },
    "files": {
-    "case.json": "bbd3b5076d2ec318cfb88f1af7c61dfb88ac5305be66ac67ed2f921b38eb98a0",
+    "case.json": "957895edafa15f0ddb94f6105dc2d77043ef9cf3d7cfb48c46edb15c310b9980",
     "demand/classes.csv": "5eef65d870b5f358daac2fdbded0be676649bd66fddc3958bb3d67392df614a4",
     "demand/gateway_counts.csv": "c173b0f8be2ff2dec9d177ed28abd31a79e680bcb89078b6d491a671e1afb588",
     "demand/morning.json": "da2efed1c07e244d0a1d0745625257e2b4b9ffbe6f067e3f16d9518d99220289",

@@ -10,7 +10,7 @@ use openmobisim_core_demand::{Mode, Travellers, Trips};
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::hubs::{ParkingKind, ParkingRow};
 use openmobisim_core_sim::{
-    ItineraryResult, NO_MODE, NO_PARKING, NoAlternative, ParkingResult, ParkingSetup,
+    ItineraryResult, NO_MODE, NO_PARKING, NoAlternative, ParkingResult, ParkingSetup, TripTable,
 };
 use openmobisim_core_types::ids::{EntityId, TripId};
 use openmobisim_io_osm::{ParkingReadOptions, ParkingReadReport, PbfSource, read_parkings};
@@ -490,53 +490,51 @@ pub(crate) fn no_alternative<'py>(
     Ok(d)
 }
 
-/// Every trip's departure and the mode it took: what `Run.trip_modes` returns.
-///
-/// `unstated` is the one mode a run with a single mode gives the trips without one.
-pub(crate) fn trip_modes<'py>(
-    py: Python<'py>,
-    result: Option<&ItineraryResult>,
-    trips: &Trips,
-    travellers: &Travellers,
-    unstated: Option<Mode>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let n = trips.len();
-    // The stated mode (a car without one, or the run's one mode), then the itinerary
-    // trips' mode taken, as `itinerary_choices` gives it.
-    let stated = |trip: TripId| match unstated {
-        Some(one) if !trips.mode_given(trip) => one,
-        _ => trips.mode(trip),
-    };
-    let mut mode: Vec<Option<&str>> =
-        (0..n).map(|t| Some(stated(TripId::new(t)).as_str())).collect();
-    let mut choosing = vec![false; mode.len()];
-    if let Some(result) = result {
-        for (i, &t) in result.trip.iter().enumerate() {
-            let t = t as usize;
-            choosing[t] = result.choosing[i];
-            match (result.mode[i], result.choosing[i]) {
-                (NO_MODE, true) => mode[t] = None,
-                (NO_MODE, false) => {}
-                (m, _) => mode[t] = Some(Mode::ALL[m as usize].as_str()),
-            }
-        }
-    }
-    let (mut who, mut seq, mut departure, mut weight) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for t in 0..n {
-        let trip = TripId::new(t);
-        let traveller = trips.traveller(trip);
-        who.push(travellers.external_ids().external(traveller.raw()).to_string());
-        seq.push(t - travellers.first_trip(traveller).raw());
-        departure.push(trips.departure(trip).get());
-        weight.push(travellers.weight(traveller));
-    }
+/// Every trip's departure and the mode it took: what `Run.trip_modes` returns (columns of
+/// `table`, which `trip_results` gives whole).
+pub(crate) fn trip_modes<'py>(py: Python<'py>, table: &TripTable) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
-    d.set_item("traveller_id", who)?;
-    d.set_item("trip_seq", seq.into_pyarray(py))?;
-    d.set_item("departure_s", departure.into_pyarray(py))?;
-    d.set_item("mode", mode)?;
-    d.set_item("mode_choice", choosing)?;
-    d.set_item("weight", weight.into_pyarray(py))?;
+    d.set_item("traveller_id", table.traveller_id.clone())?;
+    d.set_item("trip_seq", table.trip_seq.clone().into_pyarray(py))?;
+    d.set_item("departure_s", table.departure_s.clone().into_pyarray(py))?;
+    d.set_item("mode", table.mode.iter().map(|m| m.map(Mode::as_str)).collect::<Vec<_>>())?;
+    d.set_item("mode_choice", table.mode_choice.clone())?;
+    d.set_item("weight", table.weight.clone().into_pyarray(py))?;
+    Ok(d)
+}
+
+/// Every trip and what became of it: what `Run.trip_results` returns, `trip_results.parquet`'s
+/// columns without `run_id`. A missing value (an arrival, a travel time or a link where there is
+/// none) is `NaN`; a trip with no mode has `None`.
+pub(crate) fn trip_results<'py>(
+    py: Python<'py>,
+    table: &TripTable,
+) -> PyResult<Bound<'py, PyDict>> {
+    let n = u32::try_from(table.len()).expect("the trips of a run fit u32");
+    let maybe = |v: &[Option<u32>]| -> Vec<f64> {
+        v.iter().map(|x| x.map_or(f64::NAN, f64::from)).collect()
+    };
+    let d = PyDict::new(py);
+    d.set_item("trip", (0..n).collect::<Vec<u32>>().into_pyarray(py))?;
+    d.set_item("traveller_id", table.traveller_id.clone())?;
+    d.set_item("trip_seq", table.trip_seq.clone().into_pyarray(py))?;
+    d.set_item("user_class", table.user_class.clone())?;
+    d.set_item("weight", table.weight.clone().into_pyarray(py))?;
+    let lon_lat = |points: &[LonLat]| -> (Vec<f64>, Vec<f64>) {
+        (points.iter().map(|p| p.lon).collect(), points.iter().map(|p| p.lat).collect())
+    };
+    let (lon, lat) = lon_lat(&table.origin);
+    d.set_item("origin_lon", lon.into_pyarray(py))?;
+    d.set_item("origin_lat", lat.into_pyarray(py))?;
+    let (lon, lat) = lon_lat(&table.destination);
+    d.set_item("destination_lon", lon.into_pyarray(py))?;
+    d.set_item("destination_lat", lat.into_pyarray(py))?;
+    d.set_item("departure_s", table.departure_s.clone().into_pyarray(py))?;
+    d.set_item("mode", table.mode.iter().map(|m| m.map(Mode::as_str)).collect::<Vec<_>>())?;
+    d.set_item("mode_choice", table.mode_choice.clone())?;
+    d.set_item("outcome", table.outcome.iter().map(|o| o.as_str()).collect::<Vec<_>>())?;
+    d.set_item("arrival_s", maybe(&table.arrival_s).into_pyarray(py))?;
+    d.set_item("travel_time_s", maybe(&table.travel_time_s()).into_pyarray(py))?;
+    d.set_item("link_at_end", maybe(&table.link_at_end).into_pyarray(py))?;
     Ok(d)
 }
