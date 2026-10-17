@@ -1687,7 +1687,6 @@ impl Run {
             })
             .collect();
         let (by_mode, no_mode) = mode_totals(&loaded.events, &self.trips, &self.travellers, &taken);
-        let trip_outcomes = TripOutcomes::of(&loaded.events, &taken, &loaded.at_end);
         let fallback_car: Vec<TripId> = match itineraries.as_ref().zip(chosen.as_ref()) {
             Some((it, c)) => it
                 .trips
@@ -1710,6 +1709,8 @@ impl Run {
             ),
             None => Vec::new(),
         };
+        let trip_outcomes =
+            TripOutcomes::of(&loaded.events, &taken, &no_alternative, &loaded.at_end);
         let [bike_link_bins, walk_link_bins] = loaded.layer_bins;
         let transit = loaded.transit;
         let itinerary_result = match (&itineraries, &chosen) {

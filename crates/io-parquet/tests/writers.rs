@@ -788,7 +788,7 @@ fn trip_results_round_trip_with_their_outcomes_and_nulls() {
     let taken = [Some(Mode::Car); 3];
     let at_end = [(TripId::new(1), LinkId::new(1))];
     let result = RunResult {
-        trip_outcomes: TripOutcomes::of(&events, &taken, &at_end),
+        trip_outcomes: TripOutcomes::of(&events, &taken, &[], &at_end),
         events,
         ..RunResult::default()
     };

@@ -111,6 +111,9 @@ def test_walkers_with_nothing_to_choose_are_the_no_alternative_trips() -> None:
     assert collections.Counter(t["outcome"])["no_alternative"] == len(none)
     assert {t["user_class"][i] for i in none} == {"walker"}
     assert len(none) == run.completion_by_mode["none"]["total_trips"]
+    # The same trips the run reports with no alternative (none of them went by car here).
+    assert sorted(i for i, o in enumerate(t["outcome"]) if o == "no_alternative") == none
+    assert len(none) == len(run.report_no_alternative()["traveller_id"])
 
 
 def test_the_minimal_outputs_keep_the_table_in_memory_only(tmp_path) -> None:

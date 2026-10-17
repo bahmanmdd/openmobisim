@@ -1284,9 +1284,10 @@ class Run:
           had none to choose) and ``mode_choice`` (whether it chose its mode);
         * ``outcome``: ``"completed"``, ``"truncated"`` (still travelling when the window
           ended), ``"no_vehicle_available"``, ``"no_feasible_path"``,
-          ``"mode_not_available"`` or ``"no_alternative"`` (the trips whose ``mode`` is
-          ``None``; ``completion`` counts them under the outcome they had, most often
-          ``no_feasible_path``, and ``completion_by_mode`` under ``"none"``);
+          ``"mode_not_available"`` or ``"no_alternative"`` (the trips ``report_no_alternative``
+          lists, but for those that then went by car: a trip that chose its mode has ``mode``
+          ``None``, one given transit, park-and-ride or bike-and-ride keeps it; ``completion``
+          counts them under the outcome they had, most often ``no_feasible_path``);
         * ``arrival_s`` and ``travel_time_s``: ``NaN`` unless the trip completed;
         * ``link_at_end``: for a trip still travelling when the window ended whose car was on
           the roads, the road link it was on (driving, or at the stop line) or waited at its

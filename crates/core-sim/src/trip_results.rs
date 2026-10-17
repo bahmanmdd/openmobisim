@@ -12,7 +12,7 @@ use openmobisim_core_types::ids::{EntityId, LinkId, TripId};
 use openmobisim_core_types::time::Second;
 
 use crate::events::{EventRow, EventType};
-use crate::itinerary_choice::NO_MODE;
+use crate::itinerary_choice::{NO_MODE, NoAlternative};
 use crate::run::RunResult;
 
 /// What became of one trip: the outcomes of [`crate::TripCompletionStats`], and a trip that
@@ -29,9 +29,11 @@ pub enum TripOutcome {
     NoFeasiblePath,
     /// The run lacks what its mode needs (a layer, a timetable, parkings).
     ModeNotAvailable,
-    /// It chose its mode and none reached its destination within the limits: its mode is
-    /// empty. [`crate::TripCompletionStats`] counts it under the event it had (most often
-    /// `no_feasible_path`), [`RunResult::no_mode`] under no mode.
+    /// It had no alternative: no mode it may use reached its destination within the limits
+    /// ([`RunResult::no_alternative`], not counting a trip that then travelled by car). A trip
+    /// that chose its mode has none; one given transit, park-and-ride or bike-and-ride keeps it.
+    /// [`crate::TripCompletionStats`] counts it under the event it had (most often
+    /// `no_feasible_path`).
     #[default]
     NoAlternative,
 }
@@ -67,9 +69,15 @@ pub struct TripOutcomes {
 
 impl TripOutcomes {
     /// From the last loading's events (one per trip), the mode each trip took (`None`: it
-    /// chose and had none) and the road link of each trip still travelling at the end.
+    /// chose and had none), the trips the last choice left with no alternative, and the road
+    /// link of each trip still travelling at the end.
     #[must_use]
-    pub fn of(events: &[EventRow], taken: &[Option<Mode>], at_end: &[(TripId, LinkId)]) -> Self {
+    pub fn of(
+        events: &[EventRow],
+        taken: &[Option<Mode>],
+        no_alternative: &[NoAlternative],
+        at_end: &[(TripId, LinkId)],
+    ) -> Self {
         let n = taken.len();
         let mut out = TripOutcomes {
             outcome: vec![TripOutcome::NoAlternative; n],
@@ -89,11 +97,11 @@ impl TripOutcomes {
                 EventType::ModeNotAvailable => TripOutcome::ModeNotAvailable,
             };
         }
-        for (t, mode) in taken.iter().enumerate() {
-            if mode.is_none() {
-                out.outcome[t] = TripOutcome::NoAlternative;
-                out.arrival[t] = None;
-            }
+        let without = no_alternative.iter().filter(|n| !n.fallback_car).map(|n| n.trip.index());
+        let none = taken.iter().enumerate().filter(|(_, m)| m.is_none()).map(|(t, _)| t);
+        for t in without.chain(none) {
+            out.outcome[t] = TripOutcome::NoAlternative;
+            out.arrival[t] = None;
         }
         for &(trip, link) in at_end {
             if out.outcome[trip.index()] == TripOutcome::Truncated {
@@ -229,9 +237,12 @@ impl TripTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::itinerary_choice::NoAlternativeReason;
 
-    /// Five trips: arrived at 100 s, still travelling (on link 7), no vehicle, no path, and one
-    /// that chose and had nothing to choose (its event says no path; its mode is none).
+    /// Seven trips: arrived at 100 s, still travelling (on link 7), no vehicle, no path, one that
+    /// chose and had nothing to choose (its event says no path; its mode is none), one given
+    /// transit with no journey (listed with no alternative; it keeps its mode), and one listed
+    /// that then went by car and arrived (its car's outcome stands).
     #[test]
     fn each_trip_gets_its_event_s_outcome_and_a_link_only_if_it_was_still_travelling() {
         let trip = TripId::new;
@@ -241,23 +252,21 @@ mod tests {
             EventRow::trip(Second(5), EventType::NoVehicleAvailable, trip(2)),
             EventRow::trip(Second(5), EventType::NoFeasiblePath, trip(3)),
             EventRow::trip(Second(5), EventType::NoFeasiblePath, trip(4)),
+            EventRow::trip(Second(5), EventType::NoFeasiblePath, trip(5)),
+            EventRow::trip(Second(300), EventType::TripCompleted, trip(6)),
         ];
-        let taken = [Some(Mode::Car), Some(Mode::Car), Some(Mode::Car), Some(Mode::Transit), None];
+        let car = Some(Mode::Car);
+        let taken = [car, car, car, Some(Mode::Transit), None, Some(Mode::Transit), car];
+        let listed = |t: u32, choosing: bool, fallback_car: bool| NoAlternative {
+            trip: trip(t),
+            choosing,
+            reasons: [NoAlternativeReason::NotOffered; Mode::COUNT],
+            fallback_car,
+        };
+        let none = [listed(4, true, false), listed(5, false, false), listed(6, true, true)];
         // A link listed for a trip that arrived (its vehicle's leg) is not its end.
         let at_end = [(trip(1), LinkId::new(7)), (trip(0), LinkId::new(3))];
-        let out = TripOutcomes::of(&events, &taken, &at_end);
-        assert_eq!(
-            out.outcome,
-            vec![
-                TripOutcome::Completed,
-                TripOutcome::Truncated,
-                TripOutcome::NoVehicleAvailable,
-                TripOutcome::NoFeasiblePath,
-                TripOutcome::NoAlternative,
-            ]
-        );
-        assert_eq!(out.arrival, vec![Some(Second(100)), None, None, None, None]);
-        assert_eq!(out.link_at_end, vec![None, Some(LinkId::new(7)), None, None, None]);
+        let out = TripOutcomes::of(&events, &taken, &none, &at_end);
         let names: Vec<&str> = out.outcome.iter().map(|o| o.as_str()).collect();
         assert_eq!(
             names,
@@ -266,8 +275,13 @@ mod tests {
                 "truncated",
                 "no_vehicle_available",
                 "no_feasible_path",
-                "no_alternative"
+                "no_alternative",
+                "no_alternative",
+                "completed"
             ]
         );
+        let at = |x| Some(Second(x));
+        assert_eq!(out.arrival, vec![at(100), None, None, None, None, None, at(300)]);
+        assert_eq!(out.link_at_end, vec![None, Some(LinkId::new(7)), None, None, None, None, None]);
     }
 }
