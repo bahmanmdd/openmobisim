@@ -105,7 +105,15 @@ class _Files:
         m = json.loads(manifest_path.read_text())
         self._manifest = m
         self.manifest_path = str(manifest_path)
-        for name in ("kpis", "diagnostics", "events", "link_bins", "parking_bins", "transit_calls", "trip_results"):
+        for name in (
+            "kpis",
+            "diagnostics",
+            "events",
+            "link_bins",
+            "parking_bins",
+            "transit_calls",
+            "trip_results",
+        ):
             path = folder / f"{name}.parquet"
             setattr(self, f"{name}_path", str(path) if path.exists() else None)
         if self.kpis_path is None and (folder / "kpis.csv").exists():  # the minimal outputs
@@ -136,7 +144,7 @@ class _Files:
 
     @property
     def trip_results(self) -> dict[str, Any]:
-        """``trip_results.parquet``'s columns, as the run in memory gives them (a null as ``NaN``)."""
+        """``trip_results.parquet``'s columns, as the run in memory gives them (null: ``NaN``)."""
         if self.trip_results_path is None:
             raise RuntimeError(
                 "this run's folder holds no trip_results.parquet (outputs='minimal', or a run made "

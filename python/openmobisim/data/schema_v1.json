@@ -509,6 +509,117 @@
     "openmobisim.service_date"
    ]
   },
+  "trip_results.parquet": {
+   "columns": [
+    {
+     "name": "run_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "trip",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "index"
+    },
+    {
+     "name": "traveller_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "trip_seq",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "index"
+    },
+    {
+     "name": "user_class",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "weight",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "travellers"
+    },
+    {
+     "name": "origin_lon",
+     "type": "double",
+     "nullable": false,
+     "unit": "degrees"
+    },
+    {
+     "name": "origin_lat",
+     "type": "double",
+     "nullable": false,
+     "unit": "degrees"
+    },
+    {
+     "name": "destination_lon",
+     "type": "double",
+     "nullable": false,
+     "unit": "degrees"
+    },
+    {
+     "name": "destination_lat",
+     "type": "double",
+     "nullable": false,
+     "unit": "degrees"
+    },
+    {
+     "name": "departure_s",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "mode",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "mode_choice",
+     "type": "bool",
+     "nullable": false,
+     "unit": "true or false"
+    },
+    {
+     "name": "outcome",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "arrival_s",
+     "type": "uint32",
+     "nullable": true,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "travel_time_s",
+     "type": "uint32",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
+     "name": "link_at_end",
+     "type": "uint32",
+     "nullable": true,
+     "unit": "index"
+    }
+   ],
+   "metadata": [
+    "openmobisim.master_seed",
+    "openmobisim.run_fingerprint",
+    "openmobisim.schema_version"
+   ]
+  },
   "manifest.json": {
    "keys": [
     "bike_max_s",
