@@ -903,7 +903,7 @@ def run_pipeline(
     Args:
         network: Built by :func:`manhattan_grid`.
         run_id: Recorded in every output row.
-        output_dir: Where the four artifacts are written.
+        output_dir: Where the output files are written.
         trips: An in-memory trips table — rows of
             ``(traveller_id, trip_seq, origin_lon, origin_lat,
             destination_lon, destination_lat, departure_time_s, user_class,

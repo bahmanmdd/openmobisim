@@ -156,7 +156,14 @@ def test_a_check_compares_with_the_reference_and_the_command_line_runs_it(
         "different"
     )
     assert _cases._compare(got, {**got, "fingerprint": "0" * 16})[0] == "different"
-    # The command line: a check passes, then fails against a changed reference; a run prints.
+    # The command line: `cases` lists what a folder holds, and says how to point it at one
+    # when it finds nothing (RC-12); a check passes, then fails against a changed reference; a
+    # run prints.
+    assert main(["cases", "--root", str(made_up)]) == 0
+    listed = capsys.readouterr().out
+    assert listed.startswith("line") and "double" in listed and "No case found" not in listed
+    assert main(["cases", "--root", str(tmp_path / "nothing-here")]) == 0
+    assert "No case found" in capsys.readouterr().out
     assert main(["check", "--root", str(made_up)]) == 0
     reference["cases"]["line/base"]["completed"] = 90
     (tmp_path / "reference_v1.json").write_text(json.dumps(reference))

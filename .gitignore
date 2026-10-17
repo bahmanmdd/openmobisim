@@ -24,7 +24,6 @@ python/openmobisim/*.dylib
 /runs/
 /.openmobisim-cache/
 *.parquet
-!tests/data/**/*.parquet
 
 # Editors and OS
 .idea/

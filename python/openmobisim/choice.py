@@ -1,18 +1,24 @@
 """Choice models: what to write to add your own.
 
-A *choice model* says which alternative each traveller takes. Today the
-alternatives are the routes of the trip's origin-destination pair; the same
-interface will carry modes, hubs and departure times. openmobisim ships two
-models, selected by name (``choice_models()``):
+A *choice model* says which alternative each traveller takes: a route among the
+routes of the trip's origin-destination pair, an itinerary (a transit journey, a
+park-and-ride or bike-and-ride chain), or, with mode choice, a mode together with its
+route or itinerary. The alternatives of every kind carry the same named attributes, so
+one model serves them all. openmobisim ships three models, selected by name
+(``choice_models()``):
 
-* ``"deterministic"``: everyone takes the route with the least travel time.
+* ``"deterministic"``: everyone takes the alternative with the least travel time.
   All-or-nothing; no randomness. Useful for debugging or an upper bound.
-* ``"logit"`` (``Scenario.from_parts``'s default): a random utility model, linear in
-  named attributes and sampled exactly (Gumbel-max). With its defaults it is the standard
-  **path-size logit** for route choice: ``U = -0.2 · time_min + 1 ·
-  ln_path_size``. Set any coefficient with ``choice_options``:
-  ``{"beta_time_min": -0.3, "beta_length_km": -0.1}``. **The defaults are an
-  assumption, not a calibration**; pass estimated coefficients for real work.
+* ``"logit"`` (``Scenario.from_parts``'s default when the run offers one mode): a
+  random utility model, linear in named attributes and sampled exactly (Gumbel-max).
+  With its defaults it is the standard **path-size logit** for route choice:
+  ``U = -0.2 · time_min + 1 · ln_path_size``. Set any coefficient with
+  ``choice_options``: ``{"beta_time_min": -0.3, "beta_length_km": -0.1}``. **The
+  defaults are an assumption, not a calibration**; pass estimated coefficients for
+  real work.
+* ``"nested_logit"`` (the default when the run offers more than one mode): the same
+  utility, with the alternatives of each mode in a nest of their own (``mu``, 0.5), so
+  a mode's share does not grow with the number of its routes or journeys.
 
 **Your own model** is any object with a ``choose(batch)`` method (no base class
 needed), passed as ``Scenario.from_parts(..., choice_model=my_model)``. It is
@@ -212,8 +218,10 @@ def choice_model_register(name: str, factory: Callable[[dict[str, float]], Any])
 def choice_models() -> list[str]:
     """The choice models that can be selected by name.
 
-    The built-in ones, the default (``"deterministic"``) first, then those registered with
-    ``choice_model_register``, in the order registered.
+    The built-in ones (``"deterministic"``, ``"logit"``, ``"nested_logit"``), then those
+    registered with ``choice_model_register``, in the order registered. Which built-in one a
+    ``Scenario`` uses unless told: ``"nested_logit"`` when it offers more than one mode,
+    ``"logit"`` otherwise.
     """
     from openmobisim import _core
 

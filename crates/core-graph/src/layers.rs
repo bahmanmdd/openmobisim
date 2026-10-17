@@ -314,6 +314,10 @@ pub struct StaticLink {
     pub infrastructure: BikeInfrastructure,
     /// Length in metres, measured along the geometry.
     pub length_m: Option<f64>,
+    /// The most a bike may ride here whatever its facility, in km/h: the way's speed limit,
+    /// walking speed where it must be pushed, a ferry's own speed. What a changed facility's
+    /// speed ([`StaticNetwork::with_infrastructure`]) is capped at; `None`: no cap.
+    pub speed_cap_km_h: Option<f64>,
 }
 
 /// Builds a [`StaticNetwork`] from external ids, like [`RoadNetworkBuilder`].
@@ -372,14 +376,22 @@ impl StaticNetworkBuilder {
         let n = network.link_count() as usize;
         let mut speed = vec![0.0f64; n];
         let mut infrastructure = vec![BikeInfrastructure::Mixed; n];
+        let mut speed_cap_km_h = vec![None; n];
         let ids = network.link_external_ids();
         for (external, link) in &self.links {
             if let Some(id) = ids.id_of(external) {
                 speed[id as usize] = link.speed_km_h / 3.6;
                 infrastructure[id as usize] = link.infrastructure;
+                speed_cap_km_h[id as usize] = link.speed_cap_km_h;
             }
         }
-        Ok(StaticNetwork { layer: self.layer, network: Arc::new(network), speed, infrastructure })
+        Ok(StaticNetwork {
+            layer: self.layer,
+            network: Arc::new(network),
+            speed,
+            infrastructure,
+            speed_cap_km_h,
+        })
     }
 }
 
@@ -392,6 +404,8 @@ pub struct StaticNetwork {
     /// Metres per second, per link.
     speed: Vec<f64>,
     infrastructure: Vec<BikeInfrastructure>,
+    /// The cap on a bike's speed per link, km/h ([`StaticLink::speed_cap_km_h`]).
+    speed_cap_km_h: Vec<Option<f64>>,
 }
 
 impl StaticNetwork {
@@ -448,7 +462,13 @@ impl StaticNetwork {
                         external,
                         node_ids.external(from.raw()),
                         node_ids.external(to.raw()),
-                        StaticLink { class, speed_km_h, infrastructure, length_m },
+                        StaticLink {
+                            class,
+                            speed_km_h,
+                            infrastructure,
+                            length_m,
+                            speed_cap_km_h: limit,
+                        },
                     );
                 }
                 StaticLayer::Walk => {
@@ -460,6 +480,7 @@ impl StaticNetwork {
                         speed_km_h: defaults.walk_km_h,
                         infrastructure: BikeInfrastructure::Mixed,
                         length_m,
+                        speed_cap_km_h: None,
                     };
                     builder.add_link(
                         external,
@@ -525,9 +546,17 @@ impl StaticNetwork {
                 return Err(format!("bike link {i} is a ferry crossing; it has no infrastructure"));
             }
             infrastructure[i] = kind;
-            speed[i] = defaults.bike_speed_km_h(kind, false, None) / 3.6;
+            // The new facility's speed, never above the way's cap (its speed limit, walking
+            // speed where the bike is pushed, a ferry's speed): the rule every link was built by.
+            speed[i] = defaults.bike_speed_km_h(kind, false, self.speed_cap_km_h[i]) / 3.6;
         }
-        Ok(Self { layer: self.layer, network: Arc::clone(&self.network), speed, infrastructure })
+        Ok(Self {
+            layer: self.layer,
+            network: Arc::clone(&self.network),
+            speed,
+            infrastructure,
+            speed_cap_km_h: self.speed_cap_km_h.clone(),
+        })
     }
 
     /// Which layer this is.
@@ -609,6 +638,7 @@ impl StaticNetwork {
         self.network.bytes()
             + self.speed.len() * core::mem::size_of::<f64>()
             + self.infrastructure.len()
+            + self.speed_cap_km_h.len() * core::mem::size_of::<Option<f64>>()
     }
 }
 

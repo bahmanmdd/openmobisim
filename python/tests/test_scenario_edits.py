@@ -95,3 +95,22 @@ def test_wrong_edits_are_refused(edit: dict, message: str) -> None:
 def test_a_layer_is_edited_through_its_road_network() -> None:
     with pytest.raises(ValueError, match="road network"):
         ms.network_edit(ms.examples.toy_network().layer("bike"), close=["a1"])
+
+
+def test_a_facility_edit_never_rides_above_the_way_s_speed_limit() -> None:
+    # A layer derived from a link table caps a bike at the road's free-flow speed (RC-13):
+    # a 12 km/h street upgraded to a track stays at 12 km/h; a 50 km/h street rides at 18.
+    rows = [
+        {"id": "slow", "from": "a", "to": "b", "length": 500, "free_flow_speed": 12},
+        {"id": "fast", "from": "b", "to": "c", "length": 500, "free_flow_speed": 50},
+    ]
+    nodes = [{"id": n, "x": i * 500, "y": 0} for i, n in enumerate("abc")]
+    net = ms.network_read_table(rows, nodes, coordinates="xy")
+    bike = net.layer("bike")
+    slow, fast = bike.link_ids().index("slow"), bike.link_ids().index("fast")
+    speed = np.asarray(bike.link_speed_km_h())
+    assert speed[slow] == pytest.approx(12.0) and speed[fast] == pytest.approx(15.0)
+    edited = ms.network_edit(net, bike_facility={"slow": "separated", "fast": "separated"})
+    speed2 = np.asarray(edited.layer("bike").link_speed_km_h())
+    assert speed2[slow] == pytest.approx(12.0), "the way's limit still caps the track"
+    assert speed2[fast] == pytest.approx(ms.network_options()["bike_dedicated_km_h"])

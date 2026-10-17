@@ -1011,7 +1011,13 @@ pub fn network_with_layer(
             link_ids[i].clone(),
             link_from[i].clone(),
             link_to[i].clone(),
-            StaticLink { class, speed_km_h: speed, infrastructure, length_m: link_length_m[i] },
+            StaticLink {
+                class,
+                speed_km_h: speed,
+                infrastructure,
+                length_m: link_length_m[i],
+                speed_cap_km_h: None,
+            },
         );
     }
     let built = builder

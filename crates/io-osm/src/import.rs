@@ -911,6 +911,14 @@ fn build_layer(
                 speed_km_h,
                 infrastructure: link.infrastructure,
                 length_m: Some(link.length_m),
+                // What a changed facility may not exceed: a ferry's own speed, walking speed
+                // where the bike is pushed, else the way's limit (none tagged: none).
+                speed_cap_km_h: match (link.speed_km_h, layer) {
+                    (Some(fixed), _) => Some(fixed),
+                    (None, StaticLayer::Bike) if link.dismount => Some(defaults.walk_km_h),
+                    (None, StaticLayer::Bike) => link.maxspeed_km_h,
+                    (None, StaticLayer::Walk) => None,
+                },
             },
         );
     }

@@ -327,18 +327,18 @@ class Run:
         """The run's master seed (``Scenario`` argument ``master_seed``).
 
         The one number that starts every random stream. Under a sampled choice
-        model (``"logit"``, the default) it decides who takes which route; under
-        ``"deterministic"`` nothing draws from it and it changes only the
+        model (the defaults, ``"nested_logit"`` and ``"logit"``) it decides who takes which
+        route; under ``"deterministic"`` nothing draws from it and it changes only the
         fingerprint.
         """
         return self._summary.master_seed
 
     @property
     def choice_model(self) -> str:
-        """The name of the choice model that picked each trip's route.
+        """The name of the choice model that picked each trip's route, itinerary or mode.
 
-        ``"deterministic"`` or ``"logit"``, or the ``name`` of a model written in
-        Python.
+        ``"nested_logit"``, ``"logit"`` or ``"deterministic"``, or the ``name`` of a model
+        written in Python.
         """
         return self._summary.choice_model
 

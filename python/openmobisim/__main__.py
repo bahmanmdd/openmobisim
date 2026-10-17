@@ -20,15 +20,23 @@ from openmobisim._cases import case, case_check, case_names, case_summary
 from openmobisim._paths import show_path
 
 
-def _cases(_: argparse.Namespace) -> int:
+def _cases(args: argparse.Namespace) -> int:
+    found = 0
     for name in case_names():
         try:
-            c = case(name, check=False)
+            c = case(name, args.root, check=False)
         except FileNotFoundError:
             print(f"{name:14s} (not on this machine)")
             continue
+        found += 1
         scenarios = ", ".join(c.info.get("scenarios", {"base": {}}))
         print(f"{name:14s} {scenarios:16s} {c.info.get('title', '')}")
+    if not found:
+        print(
+            "No case found. A case is downloaded once when first run; a bundle already on this "
+            "machine is found with --root FOLDER or OPENMOBISIM_DATA=FOLDER (the folder holding "
+            "<case>/case.json)."
+        )
     return 0
 
 
@@ -81,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = p.add_subparsers(dest="command", required=True)
     listing = sub.add_parser("cases", help="list the starter cases and their scenarios")
+    listing.add_argument("--root", help="a folder holding the bundle")
     listing.set_defaults(go=_cases)
     r = sub.add_parser("run", help="run one starter case's scenario")
     r.add_argument("case", choices=case_names())

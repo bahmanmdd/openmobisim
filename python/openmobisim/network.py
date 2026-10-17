@@ -448,14 +448,25 @@ def network_read_table(
     length_km = np.maximum(np.asarray(network.link_length_m(), dtype=float) / 1000.0, 1e-9)
     actual_jam = np.asarray(network.link_storage_pcu(), dtype=float) / length_km
     raised = int((actual_jam > expected_jam * 1.001).sum())
-    if raised:
+    # A table that states its lanes has said what it means: a small raise (a benchmark's low
+    # free-flow speeds, as on Sioux Falls, where it is 1–19 %) is the diagram closing on the
+    # numbers given, and nothing to warn about; a large one is still an anomaly worth a look.
+    lanes_stated = any(v is not None for v in link_lanes)
+    raised_large = int((actual_jam > expected_jam * 1.5).sum())
+    if raised and (not lanes_stated or raised_large):
+        advice = (
+            "give a `lanes` value, or a `class` this table recognises, if you know the real ones"
+            if not lanes_stated
+            else "check the capacity against the lanes, or give the class a jam density of your "
+            "own (`network_options`), if you know the real ones"
+        )
         warnings.warn(
             f"{raised} link(s) asked for a capacity above what the class row's jam density "
             "carries at the link's free-flow speed within the backward wave's bound; the "
             "capacity is kept, and the link's jam density (its storage, used by flow levels 3 "
-            "and 4) raised so the diagram closes. Common where `class` fell back to "
-            "unclassified's single modest lane and the capacity is per link, as in TNTP: give "
-            "a `lanes` value, or a `class` this table recognises, if you know the real ones.",
+            f"and 4) raised so the diagram closes ({raised_large} by more than half). Common "
+            "where `class` fell back to unclassified's single modest lane and the capacity is "
+            f"per link, as in TNTP: {advice}.",
             stacklevel=2,
         )
     network.read_s = time.perf_counter() - started

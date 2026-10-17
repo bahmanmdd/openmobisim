@@ -6,10 +6,10 @@ hand. ``manhattan_grid`` is a square grid of two-way streets, optionally signali
 here to there" is not a different demand format from the general one — it
 is what the same trips schema already expresses when ``classes`` give its
 class a car and nothing else. This helper only saves writing out the
-nine-column table by hand; it does not introduce a second demand shape.
+ten-column table by hand; it does not introduce a second demand shape.
 ``traveller_classes`` is an example class table: four classes by what people
 own, each with the modes its vehicles allow, weighing alike. ``case`` gives a
-**starter case**: Amsterdam, Paris, Lyon, Sioux Falls or Nguyen–Dupuis,
+**starter case**: Delft, Amsterdam, Paris, Lyon, Sioux Falls or Nguyen–Dupuis,
 its files fetched once and checked, read in one call each.
 """
 

@@ -264,6 +264,7 @@ pub fn toy_network_layers() -> (crate::layers::StaticNetwork, crate::layers::Sta
         speed_km_h,
         infrastructure: BikeInfrastructure::Mixed,
         length_m: Some(length_m),
+        speed_cap_km_h: None,
     };
 
     let mut bike = StaticNetworkBuilder::new(StaticLayer::Bike);
@@ -292,6 +293,7 @@ pub fn toy_network_layers() -> (crate::layers::StaticNetwork, crate::layers::Sta
         speed_km_h: d.bike_dedicated_km_h,
         infrastructure: BikeInfrastructure::Separated,
         length_m: Some(260.0),
+        speed_cap_km_h: None,
     };
     for (id, from, to) in
         [("t1", "M", "T"), ("t2", "T", "X0"), ("t2:r", "X0", "T"), ("t1:r", "T", "M")]

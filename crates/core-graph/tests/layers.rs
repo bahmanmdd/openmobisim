@@ -87,6 +87,7 @@ fn street_and_track() -> StaticNetwork {
         speed_km_h: km_h,
         infrastructure,
         length_m: Some(length),
+        speed_cap_km_h: None,
     };
     let d = StaticLayerDefaults::SHIPPED;
     b.add_link(
@@ -146,6 +147,7 @@ fn a_painted_lane_costs_its_own_factor_a_track_none_and_mixed_traffic_its_own() 
         speed_km_h: km_h,
         infrastructure,
         length_m: Some(length),
+        speed_cap_km_h: None,
     };
     let mut b = StaticNetworkBuilder::new(StaticLayer::Bike);
     b.add_node("A", LonLat::new(4.80, 52.0));
@@ -178,4 +180,40 @@ fn the_walk_layer_s_cost_is_its_time_whatever_the_bike_cost() {
     let (road, _) = toy_network();
     let walk = derive(&road, StaticLayer::Walk);
     assert_eq!(walk.link_costs(BikeCost::Dedicated, 1.0, 1.2), walk.link_seconds());
+}
+
+#[test]
+fn a_changed_facility_rides_at_its_speed_but_never_above_the_way_s_cap() {
+    // A living street (limit 15 km/h), a path the bike is pushed along (walking speed) and
+    // a 50 km/h street, each in mixed traffic; upgraded to a separated track, the first two
+    // keep their cap and only the third rides at the dedicated speed.
+    let d = StaticLayerDefaults::SHIPPED;
+    let mut b = StaticNetworkBuilder::new(StaticLayer::Bike);
+    for (name, lon) in [("A", 4.80), ("B", 4.81), ("C", 4.82), ("D", 4.83)] {
+        b.add_node(name, LonLat::new(lon, 52.0));
+    }
+    let mixed = |cap: Option<f64>| StaticLink {
+        class: RoadClass::Residential,
+        speed_km_h: d.bike_speed_km_h(BikeInfrastructure::Mixed, cap == Some(d.walk_km_h), cap),
+        infrastructure: BikeInfrastructure::Mixed,
+        length_m: Some(700.0),
+        speed_cap_km_h: cap,
+    };
+    b.add_link("living", "A", "B", mixed(Some(15.0)));
+    b.add_link("pushed", "B", "C", mixed(Some(d.walk_km_h)));
+    b.add_link("street", "C", "D", mixed(Some(50.0)));
+    let layer = b.build(toy_network().0.projection(), &mut Diagnostics::new()).unwrap();
+    let id = |name: &str| LinkId::new(layer.network().link_external_ids().id_of(name).unwrap());
+    let changes: Vec<(LinkId, BikeInfrastructure)> = ["living", "pushed", "street"]
+        .iter()
+        .map(|n| (id(n), BikeInfrastructure::Separated))
+        .collect();
+    let edited = layer.with_infrastructure(&changes, d).unwrap();
+    let km_h = |l: &StaticNetwork, n: &str| l.speed(id(n)) * 3.6;
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    assert!(near(km_h(&layer, "living"), 15.0));
+    assert!(near(km_h(&edited, "living"), 15.0), "the limit caps the track's speed");
+    assert!(near(km_h(&edited, "pushed"), d.walk_km_h), "still pushed");
+    assert!(near(km_h(&edited, "street"), d.bike_dedicated_km_h));
+    assert_eq!(edited.infrastructure(id("living")), BikeInfrastructure::Separated);
 }

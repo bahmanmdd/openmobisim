@@ -618,8 +618,8 @@ class Scenario:
                 bias, which measured worse on the one heavy load it was tried on).
             master_seed: The one number that starts every random stream, so a
                 run is reproduced by giving it the same one. Under a sampled
-                choice model (``"logit"``, the default) it decides who takes
-                which route; under ``"deterministic"`` nothing draws from it
+                choice model (the defaults, ``"nested_logit"`` and ``"logit"``) it decides who
+                takes which route; under ``"deterministic"`` nothing draws from it
                 and it changes only the run's fingerprint. A non-negative
                 integer below 2**64.
             choice_model: How each trip picks a route from its pair's set: a
@@ -659,7 +659,7 @@ class Scenario:
                 slower than a drive is still offered. The best route is always offered; a route
                 left out is still in the set and returns when times change. The gaps are still
                 measured against the whole set. The ``ln_path_size`` attribute is computed over
-                the whole set.
+                the routes offered, so overlap with a route nobody is offered is no overlap.
             choice_max_routes: The most routes a traveller is offered: the fastest at their
                 departure, of those within ``choice_detour_limit`` (people consider a
                 handful of routes, Prato 2009, https://doi.org/10.1016/S1755-5345(13)70005-8;
@@ -1164,7 +1164,7 @@ class Scenario:
                 assumption).
 
         Returns:
-            A ``Run`` with the four artifacts and the completion statistics.
+            A ``Run``: the results in memory, and the output files in ``output_dir``.
 
         Raises:
             FileExistsError: If ``output_dir`` already holds a run and ``overwrite`` is false.

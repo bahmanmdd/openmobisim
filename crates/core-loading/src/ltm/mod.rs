@@ -51,8 +51,8 @@
 //! link before it holds any vehicle bound for the same link: the
 //! priority merge, where circulating traffic that wants the room gets it
 //! first, so entries use only room circulating traffic does not need. Without
-//! this, entries compete equally for room and fill the ring until it locks
-//! . It costs one flag per link and, per entry into a roundabout link, a
+//! this, entries compete equally for room and fill the ring until it locks.
+//! It costs one flag per link and, per entry into a roundabout link, a
 //! look at the few vehicles on the circulating link before it.
 //!
 //! # Any local lock: don't seal it from outside

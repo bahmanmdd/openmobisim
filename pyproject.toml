@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [{ name = "The openmobisim authors" }]
 keywords = ["mobility", "simulation", "transport", "traffic", "multimodal", "optimisation"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "Programming Language :: Rust",
     "Programming Language :: Python :: 3 :: Only",
@@ -32,6 +32,7 @@ openmobisim = "openmobisim.__main__:main"
 
 [project.urls]
 Repository = "https://github.com/bahmanmdd/openmobisim"
+Issues = "https://github.com/bahmanmdd/openmobisim/issues"
 
 [project.optional-dependencies]
 # Minimum versions (S247): the Scientific Python ecosystem's dated support policy
