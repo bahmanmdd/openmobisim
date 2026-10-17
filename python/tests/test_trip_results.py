@@ -10,6 +10,7 @@ the `no_alternative` trips. With the minimal outputs the table is in memory but 
 from __future__ import annotations
 
 import collections
+from pathlib import Path
 
 import numpy as np
 import openmobisim as ms
@@ -32,8 +33,14 @@ def jammed(run_id: str, output_dir: str, outputs: str = "all") -> ms.Run:
     )
 
 
-def test_every_trip_has_a_row_and_the_outcomes_add_up_to_the_run_s_counts(tmp_path) -> None:
-    run = jammed("trips-jammed", output_dir=str(tmp_path / "jammed"))
+@pytest.fixture(scope="module")
+def jammed_run(tmp_path_factory) -> tuple[ms.Run, Path]:
+    folder = tmp_path_factory.mktemp("trips") / "jammed"
+    return jammed("trips-jammed", output_dir=str(folder)), folder
+
+
+def test_every_trip_has_a_row_and_the_outcomes_add_up_to_the_run_s_counts(jammed_run) -> None:
+    run, _ = jammed_run
     t = run.trip_results()
     n = run.completion["total_trips"]
     assert list(t) == [
@@ -66,8 +73,12 @@ def test_every_trip_has_a_row_and_the_outcomes_add_up_to_the_run_s_counts(tmp_pa
     g = run.report_gridlock()
     assert g["vehicles_on_network"] + g["vehicles_outside"] == len(unfinished)
 
-    # The same table, read back from the run's folder, and trip_modes its columns.
-    opened = ms.Run.open(tmp_path / "jammed")
+
+def test_the_table_read_back_from_the_run_s_folder_is_the_same(jammed_run) -> None:
+    pytest.importorskip("pyarrow")  # Run.open reads the Parquet files through it
+    run, folder = jammed_run
+    t = run.trip_results()
+    opened = ms.Run.open(folder)
     back = opened.trip_results()
     for name, column in t.items():
         if isinstance(column, list):
