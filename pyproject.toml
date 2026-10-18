@@ -52,6 +52,8 @@ notebooks = [
 # Figures (`openmobisim.viz`). An extra, not a dependency: a run inside an
 # optimisation loop should not pull in a plotting library.
 viz = ["matplotlib>=3.11"]
+# Everything optional at once (the user, S287): the name people try first.
+all = ["openmobisim[notebooks,viz]"]
 dev = [
     "maturin>=1.9,<2.0",
     "matplotlib>=3.11",

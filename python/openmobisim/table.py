@@ -16,7 +16,7 @@ def _need(module: str, what: str) -> Any:
     try:
         return importlib.import_module(module)
     except ImportError as e:
-        raise ImportError(f"{what} needs {module}: pip install 'openmobisim[notebooks]'") from e
+        raise ImportError(f"{what} needs {module}: pip install 'openmobisim[all]'") from e
 
 
 class Columns(dict):
@@ -37,7 +37,7 @@ class Columns(dict):
         """The columns as a ``pandas.DataFrame``.
 
         Raises:
-            ImportError: If pandas is not installed — install ``openmobisim[notebooks]``.
+            ImportError: If pandas is not installed — install ``openmobisim[all]``.
         """
         return _need("pandas", "to_pandas()").DataFrame(dict(self))
 
@@ -45,7 +45,7 @@ class Columns(dict):
         """The columns as a ``polars.DataFrame``.
 
         Raises:
-            ImportError: If polars is not installed — install ``openmobisim[notebooks]``.
+            ImportError: If polars is not installed — install ``openmobisim[all]``.
         """
         return _need("polars", "to_polars()").DataFrame(dict(self))
 
@@ -53,7 +53,7 @@ class Columns(dict):
         """The columns as a ``pyarrow.Table``.
 
         Raises:
-            ImportError: If pyarrow is not installed — install ``openmobisim[notebooks]``.
+            ImportError: If pyarrow is not installed — install ``openmobisim[all]``.
         """
         return _need("pyarrow", "to_arrow()").table(dict(self))
 
@@ -88,14 +88,12 @@ class Table:
 
         Raises:
             ImportError: If polars is not installed — install
-                ``openmobisim[notebooks]``.
+                ``openmobisim[all]``.
         """
         try:
             import polars as pl
         except ImportError as e:
-            raise ImportError(
-                "reading a Table needs polars: pip install 'openmobisim[notebooks]'"
-            ) from e
+            raise ImportError("reading a Table needs polars: pip install 'openmobisim[all]'") from e
         return pl.read_csv(self.path) if self._csv else pl.read_parquet(self.path)
 
     def to_pandas(self) -> Any:
@@ -103,14 +101,12 @@ class Table:
 
         Raises:
             ImportError: If pandas is not installed — install
-                ``openmobisim[notebooks]``.
+                ``openmobisim[all]``.
         """
         try:
             import pandas as pd
         except ImportError as e:
-            raise ImportError(
-                "reading a Table needs pandas: pip install 'openmobisim[notebooks]'"
-            ) from e
+            raise ImportError("reading a Table needs pandas: pip install 'openmobisim[all]'") from e
         if self._csv:  # exact: the default parser may be one unit off in the last place
             return pd.read_csv(self.path, float_precision="round_trip")
         return pd.read_parquet(self.path)
@@ -120,14 +116,14 @@ class Table:
 
         Raises:
             ImportError: If pyarrow is not installed — install
-                ``openmobisim[notebooks]``.
+                ``openmobisim[all]``.
         """
         try:
             import pyarrow.csv as pc
             import pyarrow.parquet as pq
         except ImportError as e:
             raise ImportError(
-                "reading a Table needs pyarrow: pip install 'openmobisim[notebooks]'"
+                "reading a Table needs pyarrow: pip install 'openmobisim[all]'"
             ) from e
         return pc.read_csv(self.path) if self._csv else pq.read_table(self.path)
 
