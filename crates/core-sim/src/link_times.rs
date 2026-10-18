@@ -3,10 +3,20 @@
 //! After a loading, the per-link, per-time-bin table ([`LinkBins`]) says how
 //! long traffic took to cross each link in each bin. [`LinkTimes`] reads it back
 //! as a **time-dependent cost**: `link_seconds(link, t)` is the mean traversal
-//! time in the bin containing `t`, or the link's free-flow time where nobody
-//! crossed it. A route's expected time for a traveller leaving at `t` is found by
-//! walking it link by link, arriving at each link at the time the last one
-//! ended (time-dependent cost is fine under FIFO).
+//! time in the bin containing `t`; where nobody entered the link in that bin it is
+//! the last recorded bin's time **carried forward**, less the time elapsed since
+//! that bin, down to the link's free-flow time (and free flow where no earlier
+//! entrant can still be on the link). A route's expected time for a traveller
+//! leaving at `t` is found by walking it link by link, arriving at each link at
+//! the time the last one ended (time-dependent cost is fine under FIFO).
+//!
+//! **Why the carry (X-63, S286).** The table records crossings, not states: a link
+//! whose queue stood still through a whole bin, with nothing able to enter, has no
+//! row for that bin, and reading it as free flow priced a standing jam as an empty
+//! link (one in five queued link-bins of a level-4 city run; one in fifty at the
+//! point queue). Under first-in-first-out a vehicle entering now cannot leave before
+//! those that entered a bin earlier and took `m`, so `m − elapsed` is a lower bound
+//! on its time: that is what a bin nobody entered now reads.
 //!
 //! **The table is by entry time.** A traveller about to enter a link needs the
 //! time taken by those who *entered* when they would, not by those who happened to
@@ -35,9 +45,10 @@ pub struct LinkTimes {
     wait_start: Vec<u32>,
     wait_bin: Vec<u32>,
     wait_mean: Vec<f64>,
-    /// Per link, its first recorded bin; its times from that bin to its last recorded one
-    /// are `span[span_start[l]..span_start[l + 1]]`, a bin with no row holding the free-flow
-    /// time: a lookup is one read instead of a binary search, with the same numbers.
+    /// Per link, its first recorded bin; its times from that bin to the last bin a recorded
+    /// time reaches are `span[span_start[l]..span_start[l + 1]]`, a bin with no row holding
+    /// the last recorded time carried forward (see the module docs): a lookup is one read
+    /// instead of a binary search.
     span_first: Vec<u32>,
     span_start: Vec<u32>,
     span: Vec<f64>,
@@ -65,14 +76,29 @@ fn by_link(links: usize, bins: &LinkBins) -> (Vec<u32>, Vec<u32>, Vec<f64>) {
     (start, bin, mean)
 }
 
-/// Each link's times laid out from its first recorded bin to its last, the bins between with
-/// no row holding its free-flow time: `(first bin, offsets, times)` (see [`LinkTimes`]).
+/// How many bins after one in which traffic took `mean` seconds that time, less the bins
+/// elapsed, still exceeds `free_flow`: the bins a recorded time is carried into past the last
+/// recorded bin.
+fn carried_bins(mean: f64, free_flow: f64, bin_seconds: f64) -> usize {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a count of bins, non-negative and bounded by the window"
+    )]
+    let n = (((mean - free_flow) / bin_seconds).ceil() - 1.0).max(0.0) as usize;
+    n
+}
+
+/// Each link's times laid out from its first recorded bin to the last bin a recorded time
+/// reaches; a bin with no row holds the last recorded time carried forward, less the bins
+/// elapsed, floored at the free-flow time: `(first bin, offsets, times)` (see [`LinkTimes`]).
 fn spans(
     links: usize,
     start: &[u32],
     bin: &[u32],
     mean: &[f64],
     free_flow: &[f64],
+    bin_seconds: f64,
 ) -> (Vec<u32>, Vec<u32>, Vec<f64>) {
     let mut first = vec![0_u32; links];
     let mut offsets = vec![0_u32; links + 1];
@@ -82,9 +108,23 @@ fn spans(
         if let (Some(&lo), Some(&hi)) = (bin[rows.clone()].first(), bin[rows.clone()].last()) {
             first[l] = lo;
             let base = span.len();
-            span.resize(base + (hi - lo) as usize + 1, free_flow[l]);
+            let tail = carried_bins(mean[rows.end - 1], free_flow[l], bin_seconds);
+            span.resize(base + (hi - lo) as usize + 1 + tail, f64::NAN);
             for r in rows {
                 span[base + (bin[r] - lo) as usize] = mean[r];
+            }
+            // The carry: a bin with no row reads the last recorded time less the bins elapsed.
+            let mut last: Option<(usize, f64)> = None;
+            for (k, cell) in span.iter_mut().enumerate().skip(base) {
+                if cell.is_nan() {
+                    *cell = match last {
+                        #[allow(clippy::cast_precision_loss, reason = "a bin count far below 2^52")]
+                        Some((k0, m0)) => (m0 - (k - k0) as f64 * bin_seconds).max(free_flow[l]),
+                        None => free_flow[l],
+                    };
+                } else {
+                    last = Some((k, *cell));
+                }
             }
         }
         offsets[l + 1] = u32::try_from(span.len()).expect("fewer than 2^32 link-bin cells");
@@ -98,9 +138,10 @@ fn lookup(bins: &[u32], means: &[f64], rows: core::ops::Range<usize>, wanted: u3
 }
 
 impl LinkTimes {
-    /// Times from a loading's [`EntryTables`]: link times by the bin of entry and
-    /// the wait at an origin by the bin of departure, with free flow (and no wait)
-    /// where nobody was recorded.
+    /// Times from a loading's [`EntryTables`]: link times by the bin of entry (a bin
+    /// nobody entered reading the last recorded time carried forward, down to free
+    /// flow; see the module docs) and the wait at an origin by the bin of departure,
+    /// zero where nobody was recorded.
     #[must_use]
     pub fn from_tables(network: &RoadNetwork, tables: &EntryTables) -> Self {
         let links = network.link_count() as usize;
@@ -109,9 +150,11 @@ impl LinkTimes {
         let free_flow: Vec<f64> = (0..network.link_count())
             .map(|i| network.free_flow_time(LinkId::new(i)).get())
             .collect();
-        let (span_first, span_start, span) = spans(links, &start, &bin, &mean, &free_flow);
+        let bin_seconds = f64::from(tables.entry.bin_seconds());
+        let (span_first, span_start, span) =
+            spans(links, &start, &bin, &mean, &free_flow, bin_seconds);
         Self {
-            bin_seconds: f64::from(tables.entry.bin_seconds()),
+            bin_seconds,
             free_flow,
             wait_start,
             wait_bin,

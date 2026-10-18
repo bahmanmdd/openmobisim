@@ -252,7 +252,9 @@ fn a_route_is_walked_link_by_link_through_the_bins_it_meets() {
 #[test]
 fn a_bin_nobody_crossed_between_two_that_were_recorded_costs_free_flow() {
     // S259: each link's times are laid out from its first recorded bin to its last; a bin
-    // between them with no traffic must read as before, the free-flow time.
+    // between them with no traffic must read as before, the free-flow time — when the recorded
+    // times are shorter than a bin, so that nobody recorded can still be on the link (S286: a
+    // longer time is carried forward, the test below).
     let (net, ab, bc) = line();
     let free = |l: u32| net.free_flow_time(LinkId::new(l)).get();
     let mut r = LinkBinRecorder::new(net.link_count() as usize, 60, 3600.0);
@@ -283,6 +285,47 @@ fn a_bin_nobody_crossed_between_two_that_were_recorded_costs_free_flow() {
     assert!((times.link_seconds(bc, 0.0) - free(bc)).abs() < 1e-12, "before its first bin");
     assert!((times.link_seconds(ab, 1e7) - free(ab)).abs() < 1e-12, "long after its last");
     assert!((times.link_seconds(ab, -5.0) - times.link_seconds(ab, 0.0)).abs() < 1e-12);
+}
+
+#[test]
+fn a_bin_nobody_entered_after_a_slow_one_carries_the_slow_time_forward_down_to_free_flow() {
+    // X-63 (S286): a link whose queue stood still through a bin, with nothing able to enter,
+    // has no row for that bin; it must not read as empty. Under FIFO whoever enters now cannot
+    // leave before those who entered a bin earlier and took `m`, so the bin reads `m` less the
+    // time elapsed, down to free flow, and the carry runs past the last recorded bin too.
+    let (net, ab, bc) = line();
+    let free = |l: u32| net.free_flow_time(LinkId::new(l)).get();
+    assert!(free(ab) < 20.0, "a 100 m link crosses in under 20 s: {}", free(ab));
+    let mut r = LinkBinRecorder::new(net.link_count() as usize, 60, 3600.0).with_entry_bins();
+    // (Exits in time order, as the recorder requires.)
+    r.record(LinkId::new(bc), 125.0, 135.0, 1.0); // entered in bin 2, took 10 s: the queue cleared
+    r.record(LinkId::new(ab), 0.0, 200.0, 1.0); // entered in bin 0, took 200 s
+    r.record(LinkId::new(bc), 0.0, 200.0, 1.0); // entered in bin 0, took 200 s
+    let tables = r.finish_with_entry().1.unwrap();
+    let times = LinkTimes::from_tables(&net, &tables);
+    // ab: bin 0 recorded 200 s; bins 1, 2, 3 nobody entered: 140, 80, 20 s; bin 4: −40 → free.
+    assert!((times.link_seconds(ab, 10.0) - 200.0).abs() < 1e-9);
+    assert!((times.link_seconds(ab, 70.0) - 140.0).abs() < 1e-9, "one bin later");
+    assert!((times.link_seconds(ab, 130.0) - 80.0).abs() < 1e-9, "two bins later");
+    assert!(
+        (times.link_seconds(ab, 190.0) - 20.0).abs() < 1e-9,
+        "three bins later, still above free flow"
+    );
+    assert!(
+        (times.link_seconds(ab, 250.0) - free(ab)).abs() < 1e-12,
+        "nobody recorded can still be on it"
+    );
+    assert!((times.link_seconds(ab, 1e6) - free(ab)).abs() < 1e-12, "long after");
+    // bc: bin 1 between the two recorded bins carries 140 s; bin 2 is the recorded 10 s; bin 3
+    // carries from bin 2 (10 − 60 < free): free flow, not from bin 0.
+    assert!((times.link_seconds(bc, 70.0) - 140.0).abs() < 1e-9, "between two recorded bins");
+    assert!((times.link_seconds(bc, 130.0) - 10.0).abs() < 1e-9, "the recorded bin itself");
+    assert!(
+        (times.link_seconds(bc, 190.0) - free(bc)).abs() < 1e-12,
+        "the carry restarts at each row"
+    );
+    // A route entering ab at 70 s takes 140 s, reaching bc at 210 s (bin 3): free flow.
+    assert!((times.route_seconds(&[ab, bc], 70.0) - (140.0 + free(bc))).abs() < 1e-9);
 }
 
 #[test]
