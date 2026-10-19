@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/openmobisim_lockup_paper.svg" alt="openmobisim" width="420"></p>
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/openmobisim_lockup_night.svg"><img src="assets/openmobisim_lockup_paper.svg" alt="openmobisim" width="420"></picture></p>
 
 **An open-source, agent-based simulator for multimodal dynamic traffic assignment: car, bicycle, pedestrian and
 public-transport trips, with park-and-ride and bike-and-ride, on one supernetwork. A Python interface on a Rust core.**
