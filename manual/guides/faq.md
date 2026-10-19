@@ -13,8 +13,8 @@ compare methods; for a study, bring the city's own demand. See [Starter cases](.
 
 **Which computers does it run on?** Python 3.11 or later, on Linux, macOS and Windows, each tested on every change.
 
-**How large a network can it run?** The starter cities run in about a minute or two on a laptop with one simulated
-traveller for every few people; [Running faster](speed.md) measures each setting on Delft and Amsterdam.
+**How large a network can it run?** The starter cities run in ten seconds (Delft) to a minute (Paris) on a laptop
+(a MacBook Pro with an Apple M2 Pro (8 performance and 4 efficiency cores), 32 GB of memory, macOS 26) with one simulated traveller for every few people; [Running faster](speed.md) measures each setting on Delft and Amsterdam.
 
 **Can I use my own network and demand?** Yes: OpenStreetMap, GMNS, link tables, trip tables and origin–destination
 matrices. See [Bring your own network and demand](own_data.md).

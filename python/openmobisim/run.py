@@ -924,6 +924,12 @@ class Run:
                     f"{v:>{max(len(h), 9)}.2f}" for h, v in zip(header[1:], values, strict=True)
                 ]
                 lines.append("  " + "  ".join(parts))
+        lines.append("")
+        lines.append(
+            f"Run {self.run_id!r}: viz.summary(run) writes a one-page summary (the numbers, the "
+            "modes, the convergence, a map per mode); viz.map_interactive(run, path) an "
+            "interactive map"
+        )
         return "\n".join(lines)
 
     @property

@@ -22,7 +22,7 @@ you have an extract and a feed for. The figure shows the way the data takes: eac
 ```
 
 % src: tested with python/openmobisim at the manual's build, on the Delft case's files:
-% read 3.2 s; run 16.0 s at weight 4 on an Apple M-series laptop; the outputs quoted below are that run's.
+% read 3.2 s; run 16.0 s at weight 4 on an Apple M2 Pro laptop; the outputs quoted below are that run's.
 
 ## 1. The network
 

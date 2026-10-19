@@ -1,6 +1,7 @@
 # Running faster
 
-Before changing anything, look where a run's time goes. Then use the levers below, most effective first.
+Before changing anything, look where a run's time goes. Then use the levers below, most effective first. Every time
+on this page was measured on a MacBook Pro with an Apple M2 Pro (8 performance and 4 efficiency cores), 32 GB of memory, macOS 26, wall-clock, nothing else running; your machine's will differ.
 
 ## Where the time goes
 

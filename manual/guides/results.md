@@ -3,6 +3,67 @@
 A run's results come three ways: as tables in Python, as files on disk, and as figures. What each result means is in
 [Outputs](../concepts/outputs.md), and every column in [Output files](../reference/outputs.md).
 
+**Where to look first.** Two pages show a whole run at once, each one self-contained file to open in a browser:
+`viz.summary(run)` writes the summary page (the headline numbers, the travel statistics by mode, the convergence
+with its verdict, the computation time, and at the end a map per mode: car traffic, transit, cycling and walking),
+and `viz.map_interactive(run, "map.html")` the interactive map (pan and zoom, the time bins, a click on a link for
+its numbers, a pair's routes). Every run ends by saying so; the figures below are the pieces, one by one.
+
+### A run at a glance
+
+Delft's default scenario, its summary page and its interactive map as written by the two calls above (open the
+files themselves from the [starter cases' figures](../concepts/cases.md); every starter case has both).
+
+```{figure} ../_static/figures/guides/gallery-summary-top.png
+:alt: The top of Delft's summary page: seven headline numbers, the modes' table and when people left
+:width: 100%
+
+`viz.summary(run)`: the headline numbers, then the travel statistics by mode and by departure time; below them the
+roads, transit, parking, bikes and walking, the convergence, the computation time and the settings.
+```
+
+```{figure} ../_static/figures/guides/gallery-summary-car.png
+:alt: The summary page's car traffic map: Delft's roads as ribbons, one per direction, coloured by delay
+:width: 100%
+
+The summary page ends with a map per mode. Car traffic: one ribbon per direction, its width the volume, its colour
+the delay over free flow.
+```
+
+```{figure} ../_static/figures/guides/gallery-summary-transit.png
+:alt: The summary page's transit map: Delft's lines by kind, their width the passengers on board
+:width: 100%
+
+Transit: the lines by kind, their width the passengers on board, the stops sized by boardings.
+```
+
+```{figure} ../_static/figures/guides/gallery-summary-bike.png
+:alt: The summary page's bike map: Delft's cycle network, the ribbons' width the cyclists
+:width: 100%
+
+Bike traffic on the bike layer, the width the cyclists on each link.
+```
+
+```{figure} ../_static/figures/guides/gallery-summary-walk.png
+:alt: The summary page's walking map: Delft's footpaths, the ribbons' width the walkers
+:width: 100%
+
+Walking on the walk layer, the width the walkers.
+```
+
+```{figure} ../_static/figures/guides/gallery-interactive.png
+:alt: The interactive map of Delft's run: the traffic ribbons, and a panel with zoom levels, layers, the time bins, route alternatives and the legend
+:width: 100%
+
+`viz.map_interactive(run, "map.html")`: pan and zoom, the layers (roads, transit, parkings, cyclists, walkers), the
+colour by delay or volume, the time bins played through, the links with spillback, a pair's route alternatives, and
+the view exported as PNG or SVG.
+```
+
+**The machine behind every time quoted.** Each run time in this manual and in the tutorials was measured on one
+machine, a MacBook Pro with an Apple M2 Pro (8 performance and 4 efficiency cores), 32 GB of memory, macOS 26, with nothing else running; it is wall-clock time, and the same run takes a different time on
+another machine or another day (times are in no result and not in a run's fingerprint).
+
 The examples on this page are one run of Delft's default scenario, a morning from 07:30, with the outputs it gives:
 
 ```{include} _examples/results-run.md

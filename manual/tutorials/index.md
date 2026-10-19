@@ -2,7 +2,7 @@
 
 # Tutorials
 
-Ten notebooks, from the first run to the applications, shown with the outputs of their last build. Each page has its notebook to download; all ten are in one zip, {download}`openmobisim_notebooks.zip <../_static/notebooks/openmobisim_notebooks.zip>`, without their outputs. `openmobisim notebooks` copies the same ten into a folder (see Installation on any of them).
+Ten notebooks, from the first run to the applications, shown with the outputs of their last build (the run times they show were measured on a MacBook Pro with an Apple M2 Pro (8 performance and 4 efficiency cores), 32 GB of memory, macOS 26, with nothing else running). Each page has its notebook to download; all ten are in one zip, {download}`openmobisim_notebooks.zip <../_static/notebooks/openmobisim_notebooks.zip>`, without their outputs. `openmobisim notebooks` copies the same ten into a folder (see Installation on any of them).
 
 ```{toctree}
 :maxdepth: 1
