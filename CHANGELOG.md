@@ -1,0 +1,61 @@
+# Changelog
+
+Each release lists what changed for a user. Versions follow [semantic versioning](https://semver.org/); before 1.0,
+a minor version may change the interface, and says so here.
+
+## 0.1.0 — unreleased
+
+The first public release: **an alpha, for testing by students and colleagues.** The tests are not complete; please use
+it and [report issues](https://github.com/bahmanmdd/openmobisim/issues).
+
+**Networks and data**
+- Road networks from OpenStreetMap (`network_read_osm`, clipped to a study area with a buffer of main roads), GMNS
+  (`network_read_gmns`, read and written) or link tables (`network_read_table`, TNTP included); foreign units
+  converted once on reading.
+- Bike and walk networks (layers) from the same extract, with cycle tracks, painted lanes and mixed traffic told apart; ferries.
+- Public transport from GTFS (one service day, clipped; `frequencies.txt` expanded); parkings from OpenStreetMap or a
+  table.
+- Demand from trip tables, person tables or origin–destination matrices (`demand_read_*`, `demand_from_od`);
+  user classes (traveller classes) with their own modes, ownership and preferences (`classes=`, `demand_read_classes`,
+  `demand_assign_classes`); `network_check` audits a network before a run.
+
+**Simulation**
+- Six modes: car, bike, walk, transit, park-and-ride, bike-and-ride; mode choice among the modes a class may use.
+- Route sets and route choice for cars; mode chains (itineraries) for the multimodal modes, the transit journey found by RAPTOR and
+  the parking chosen through the choice set.
+- A nested logit by default, one nest per mode (the path-size logit where a run offers one mode), also the logit and
+  a deterministic choice, or any model written in Python, registered by name, seeing
+  times by part, money (no prices by default: give tolls, fees, fares or fuel as you need them), the network along
+  each alternative (your own link values) and the traveller and trip.
+- Dynamic network loading: the link transmission model applied to individual vehicles, event by event in continuous
+  time, as a vertical queue (point queue; the default) or with spillback, turn pockets and en-route rerouting; buses ride the roads they share with cars, busways their own.
+- Dynamic traffic assignment (equilibration) by the method of successive averages, stopping when converged, with a convergence verdict; a single
+  quick loading (`equilibration="free_flow"`).
+- Scenario edits (`network_edit`: closures, lanes, capacity, and cycle tracks or lanes added or taken away), timed
+  disruptions (`disruptions=`), skims (`Run.skim`) and logsums (`Run.logsum_od`).
+
+**Results**
+- Per run: `kpis.parquet`, `trip_results.parquet` (every trip: who, from where to where, when, by which mode, what
+  became of it, and where a car still travelling at the window's end was; `Run.trip_results()`),
+  `diagnostics.parquet`, `events.parquet` (one trip in a hundred), the link bins of the road, bike and walk layers,
+  `transit_calls.parquet`, `parking_bins.parquet`, `manifest.json` and `timings.csv`; or, for
+  mass runs, `kpis.csv` and `manifest.json` alone (`outputs="minimal"`). A fingerprint identifies the inputs and
+  settings; `Run.open` reads a finished run back.
+- Figures in `openmobisim.viz` (link maps of the roads or the bike layer, routes, demand, transit by line, parkings,
+  mode shares, a summary page) and an interactive map (`map_interactive`) with layers and PNG and SVG export.
+- `parameters()` lists every parameter, its default and unit; every one is overridable by name.
+
+**Starter cases and tutorials**
+- Six starter cases (Delft, Amsterdam, Paris, Lyon, Sioux Falls, Nguyen–Dupuis), downloaded once and checked;
+  `openmobisim check` compares an installation with this version's reference results; `openmobisim run <case>` runs
+  one and writes its summary page and interactive map, each linked when written.
+- Ten tutorial notebooks, in `notebooks/`, starting with `00_getting_started` (an overview of the others); in the
+  package too, without outputs: `openmobisim notebooks` copies them into a folder and opens the first in JupyterLab
+  (`openmobisim.notebooks()` from Python). `openmobisim` alone says what to run first.
+
+**Known limitations** (stated with results)
+- Urban free-flow speeds are the posted limits, with delay only at signals.
+- Bikes: no signal delay, no interaction with cars, no gradients, one speed per facility.
+- The vertical (point) queue has no spillback (`Run.report_spillback()` says where it would matter).
+- The starter cases' demand is synthetic.
+- The manual's [limitations](https://openmobisim.github.io/concepts/limitations.html) page lists them all.

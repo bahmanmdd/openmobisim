@@ -38,3 +38,7 @@ Thumbs.db
 
 # What the command line writes in the folder it runs in (S264)
 openmobisim-runs/
+
+# What the command line writes in the folder it runs in
+openmobisim-runs/
+openmobisim-notebooks/

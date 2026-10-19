@@ -32,6 +32,7 @@ openmobisim = "openmobisim.__main__:main"
 
 [project.urls]
 Repository = "https://github.com/bahmanmdd/openmobisim"
+Documentation = "https://openmobisim.github.io"
 Issues = "https://github.com/bahmanmdd/openmobisim/issues"
 
 [project.optional-dependencies]
@@ -75,6 +76,7 @@ addopts = "-q"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["*.ipynb"]  # the tutorials ship executed; their cells are not linted as modules
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "D"]

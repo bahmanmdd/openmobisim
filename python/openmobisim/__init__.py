@@ -10,6 +10,11 @@ Python, physics in Rust.
 Figures live in ``openmobisim.viz`` (``pip install 'openmobisim[viz]'``); it is
 imported on demand, so ``import openmobisim`` never needs matplotlib.
 
+New here? ``openmobisim.notebooks()`` copies the tutorial notebooks into a folder and links the
+first, ``00_getting_started.ipynb``, which lists the others (``openmobisim notebooks`` in a
+terminal also opens it in JupyterLab).
+Documentation: https://openmobisim.github.io
+
 The scenario surface is intentionally narrow: a network, a trips table, one
 run, its output artifacts, route choice among each trip's alternatives
 (``openmobisim.choice`` says how to add your own choice model) and, by default,
@@ -50,6 +55,7 @@ from openmobisim._core import (
     step_of,
     transit_read_gtfs,
 )
+from openmobisim._start import notebooks, pointer_on_import
 from openmobisim.audit import network_check
 from openmobisim.choice import choice_model_register, choice_models
 from openmobisim.demand import (
@@ -151,6 +157,7 @@ __all__ = [
     "network_read_osm",
     "network_read_table",
     "network_write_gmns",
+    "notebooks",
     "options",
     "parameters",
     "parking_read_osm",
@@ -165,3 +172,5 @@ __all__ = [
     "transit_read_gtfs",
     "__version__",
 ]
+
+pointer_on_import()

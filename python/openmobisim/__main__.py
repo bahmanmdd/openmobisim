@@ -1,5 +1,7 @@
-"""The command line: the starter cases.
+"""The command line: the tutorials and the starter cases.
 
+    python -m openmobisim                        # what this is and what to run first
+    python -m openmobisim notebooks [folder]     # the tutorial notebooks, opened in JupyterLab
     python -m openmobisim cases                  # the starter cases and their scenarios
     python -m openmobisim run amsterdam [base]   # run one case: its numbers, page and map
     python -m openmobisim check [siouxfalls ...] # run the default scenarios, compare them
@@ -12,12 +14,37 @@ commands are ``openmobisim cases`` and so on.
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
 from openmobisim import __version__
 from openmobisim._cases import case, case_check, case_names, case_summary
 from openmobisim._paths import show_path
+from openmobisim._start import DOCS_URL, FIRST, FOLDER, notebooks, welcome
+
+
+def _notebooks(args: argparse.Namespace) -> int:
+    try:
+        folder = notebooks(args.folder, overwrite=args.overwrite)
+    except FileNotFoundError as e:
+        print(e)
+        return 1
+    if args.no_open:
+        return 0
+    try:
+        import jupyterlab  # noqa: F401
+    except ImportError:
+        print(
+            'To open them in JupyterLab: pip install "openmobisim[notebooks]", then '
+            f"jupyter lab {FIRST} in that folder; or open the folder in your editor."
+        )
+        return 0
+    print("Opening JupyterLab (Ctrl+C here stops it) …", flush=True)
+    try:
+        return subprocess.call([sys.executable, "-m", "jupyterlab", FIRST], cwd=folder)
+    except KeyboardInterrupt:
+        return 0
 
 
 def _cases(args: argparse.Namespace) -> int:
@@ -85,9 +112,16 @@ def _check(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Run the command line; returns the exit code."""
     p = argparse.ArgumentParser(
-        prog="openmobisim", description=f"openmobisim {__version__}: the starter cases"
+        prog="openmobisim",
+        description=f"openmobisim {__version__}: the tutorials and the starter cases",
+        epilog=f"Documentation: {DOCS_URL}",
     )
-    sub = p.add_subparsers(dest="command", required=True)
+    sub = p.add_subparsers(dest="command")
+    nb = sub.add_parser("notebooks", help="copy the tutorial notebooks and open the first")
+    nb.add_argument("folder", nargs="?", default=FOLDER, help=f"where (default: ./{FOLDER})")
+    nb.add_argument("--no-open", action="store_true", help="copy only; do not start JupyterLab")
+    nb.add_argument("--overwrite", action="store_true", help="replace notebooks already there")
+    nb.set_defaults(go=_notebooks)
     listing = sub.add_parser("cases", help="list the starter cases and their scenarios")
     listing.add_argument("--root", help="a folder holding the bundle")
     listing.set_defaults(go=_cases)
@@ -105,6 +139,9 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--root", help="a folder holding the bundle")
     k.set_defaults(go=_check)
     args = p.parse_args(argv)
+    if args.command is None:
+        print(welcome())
+        return 0
     return args.go(args)
 
 

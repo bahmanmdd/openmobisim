@@ -9,10 +9,10 @@ with its verdict, the computation time, and at the end a map per mode: car traff
 and `viz.map_interactive(run, "map.html")` the interactive map (pan and zoom, the time bins, a click on a link for
 its numbers, a pair's routes). Every run ends by saying so; the figures below are the pieces, one by one.
 
-### A run at a glance
+## A run at a glance
 
-Delft's default scenario, its summary page and its interactive map as written by the two calls above (open the
-files themselves from the [starter cases' figures](../concepts/cases.md); every starter case has both).
+Delft's default scenario ([the starter cases](../reference/cases.md)), its summary page and its interactive map as
+written by the two calls above; any run writes both into its output folder.
 
 ```{figure} ../_static/figures/guides/gallery-summary-top.png
 :alt: The top of Delft's summary page: seven headline numbers, the modes' table and when people left

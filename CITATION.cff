@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: >-
+  If you use openmobisim in work you publish, please cite it as below, and name the version
+  and the run fingerprint of every result you report.
+title: "openmobisim: an open, reproducible multimodal mobility simulator"
+type: software
+authors:
+  - given-names: Bahman
+    family-names: Madadi
+    affiliation: "EMob-Lab (Energy & Mobility Laboratory), Université Gustave Eiffel & ENTPE"
+    orcid: "https://orcid.org/0000-0002-7130-8825"
+  - name: "The openmobisim authors"
+version: 0.1.0
+date-released: "2026-00-00"        # the release day
+license: Apache-2.0
+repository-code: "https://github.com/bahmanmdd/openmobisim"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.0000000"  # minted by Zenodo at the release
+    description: The DOI of this version
+keywords:
+  - dynamic traffic assignment
+  - multimodal
+  - bicycles
+  - transit
+  - park-and-ride
+  - link transmission model
+  - reproducibility
+references:
+  - type: dataset
+    title: "openmobisim starter cases: multimodal networks and synthetic demand for four European cities and two benchmark networks"
+    authors:
+      - given-names: Bahman
+        family-names: Madadi
+        orcid: "https://orcid.org/0000-0002-7130-8825"
+    version: v1
+    doi: "10.5281/zenodo.23472146"
+    publisher:
+      name: Zenodo
+    year: 2026
+    notes: "The starter cases' data bundle, version 1: cite it when you use the cases."
+# preferred-citation: the software paper (I-ao), once published, goes here.
