@@ -856,21 +856,25 @@ class Scenario:
                 must be above 0).
             loading_options: The loading's rules by name, for ``flow_level`` 2–4 (gridlock
                 remedies; at ``flow_level`` 2, where nothing waits for room, ``reroute`` is off
-                unless asked for): ``priority`` (0 or 1, off by default: without per-turn queues a
-                vehicle giving way holds up everything behind it, which made locks worse) —
+                unless asked for, except in a loading with road disruptions, where a closed or
+                narrowed link holds vehicles and it is on): ``priority`` (0 or 1, off by
+                default: without per-turn queues a vehicle giving way holds up everything
+                behind it, which made locks worse) —
                 at an unsignalised merge a vehicle gives way to an approach of higher road
                 class, or of the same class and at least 1.5 times the capacity, whose front
                 vehicle is bound for the same link, and a departing vehicle gives way to every
-                approach; ``reroute`` (0 or 1, **on** by default at levels 3 and 4) — a vehicle
+                approach; ``reroute`` (0 or 1, **on** by default at levels 3 and 4, and at 2
+                under road disruptions) — a vehicle
                 blocked at the front of its link for ``reroute_after_s`` (300) re-routes from
                 where it is, at
                 most ``reroute_max`` (3) times, if the new route is at least
-                ``reroute_min_gain`` (0.1) faster; ``pocket_length_m`` (0: off; 50 turns turn
-                pockets on) — on an approach of two lanes or more, a vehicle passes those ahead
-                of it that wait for another movement while they fit in their turn pockets, this
-                many metres per lane, split among the approach's movements; off by default
-                because with them an iterated run under heavy congestion mispriced the waiting
-                movements and trip times rose with the iterations.
+                ``reroute_min_gain`` (0.1) faster; ``pocket_length_m`` (50 by default; 0 turns
+                turn pockets off) — on an approach of two lanes or more, a vehicle passes those
+                ahead of it that wait for another movement while they fit in their turn pockets,
+                this many metres per lane, split among the approach's movements; on by default,
+                because without them one queue per link locks a dense network in the full model
+                (their known cost: an iterated run under heavy congestion misprices the waiting
+                movements).
                 Uncalibrated defaults; unknown names and values out of range are refused.
             price_options: What travel costs, in euros, by name: ``car_eur_km``
                 (the fuel a driver pays per km), ``bike_eur_km``, a transit

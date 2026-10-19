@@ -14,9 +14,10 @@ use openmobisim_core_loading::FidelityLevel;
 /// Whether en-route rerouting is on: by the level, or as asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RerouteSetting {
-    /// On at the levels with spillback (3 and 4), where a vehicle can be held for room; off at
-    /// the point queue (2), where only a closed or narrowed link ahead could hold one and
-    /// rerouting must be asked for. The shipped setting.
+    /// On at the levels with spillback (3 and 4), where a vehicle can be held for room, and at
+    /// the point queue (2) in a loading with road disruptions, where a closed or narrowed link
+    /// ahead holds one; off at the point queue otherwise, where nothing is ever held. The
+    /// shipped setting.
     Auto,
     /// Off at every level.
     Off,
@@ -36,10 +37,11 @@ pub struct LoadingOptions {
     pub priority: bool,
     /// En-route rerouting: a vehicle stuck at the front of its link re-routes from where it is.
     /// *On at levels 3 and 4 ([`RerouteSetting::Auto`]: it removed the locks of
-    /// Amsterdam's morning at 1× and 1.25× and leaves uncongested results as they were);
-    /// off at the point queue, where nothing waits for room, unless asked for.* The
-    /// option `reroute` is 1 (on) or 0 (off) at every level; [`Self::resolved`] settles the
-    /// shipped setting for a run's level.
+    /// Amsterdam's morning at 1× and 1.25× and leaves uncongested results as they were), and at
+    /// the point queue in a loading with road disruptions (S289: unwarned drivers behind a
+    /// closure otherwise wait for it to reopen); off at the point queue otherwise, where
+    /// nothing waits for room, unless asked for.* The option `reroute` is 1 (on) or 0 (off) at
+    /// every level; [`Self::resolved`] settles the shipped setting for a run.
     pub reroute: RerouteSetting,
     /// How long a vehicle waits at the front of its link, blocked, before it re-routes, in
     /// seconds.
@@ -70,11 +72,13 @@ pub struct LoadingOptions {
     /// the end of such a link passes those ahead of it waiting for another movement, as long as
     /// they fit in their pockets. 0 turns them off: every link one first-in-first-out queue.
     ///
-    /// **Off by default (0):** with pockets on, the link times an iterated run
-    /// averages over a link's movements misprice the movements that wait, and trip times rose
-    /// iteration after iteration under heavy congestion; the entry-delay attribution that
-    /// would fix it is not built. `50` turns them on as they were.
-    /// *Uncalibrated: 50 m when on, split among a link's movements by lane share; an assumption
+    /// **On by default (50 m; S289).** Off (0, the default from S280 to S288) the full model
+    /// locked Sioux Falls at its base demand (58 % of trips finished; every build with pockets
+    /// finishes them all) and a one-lane street closed for an hour in Delft locked a fifth of
+    /// its trips. The known cost of pockets stands: the link times an iterated run averages
+    /// over a link's movements misprice the movements that wait, and the entry-delay
+    /// attribution that would fix it is not built.
+    /// *Uncalibrated: 50 m, split among a link's movements by lane share; an assumption
     /// (design guides size a bay from its expected queue, so no single length was found).
     /// Lanes per movement from OpenStreetMap's `turn:lanes`, where mapped, are for later.*
     pub pocket_length_m: f64,
@@ -88,7 +92,7 @@ impl LoadingOptions {
         reroute_after_s: 300.0,
         reroute_max: 3,
         reroute_min_gain: 0.1,
-        pocket_length_m: 0.0,
+        pocket_length_m: 50.0,
     };
 
     /// Every option's value, by name, in [`Self::NAMES`]' order (the parameter listing);
@@ -201,22 +205,25 @@ impl LoadingOptions {
         self.priority || self.reroute != RerouteSetting::Off || self.pocket_length_m > 0.0
     }
 
-    /// Whether this run re-routes, at `level` (`None`: free flow, where nothing is ever held).
+    /// Whether this run re-routes, at `level` (`None`: free flow, where nothing is ever held);
+    /// `disrupted`: whether the loading has road disruptions, which hold vehicles even at the
+    /// point queue.
     #[must_use]
-    pub fn reroutes(&self, level: Option<FidelityLevel>) -> bool {
+    pub fn reroutes(&self, level: Option<FidelityLevel>, disrupted: bool) -> bool {
         match (self.reroute, level) {
             (_, None) | (RerouteSetting::Off, _) => false,
             (RerouteSetting::On, Some(_)) => true,
-            (RerouteSetting::Auto, Some(level)) => level != FidelityLevel::PointQueue,
+            (RerouteSetting::Auto, Some(level)) => level != FidelityLevel::PointQueue || disrupted,
         }
     }
 
-    /// These options with the rerouting setting settled for `level` ([`Self::reroutes`]): what
-    /// a run hashes and reports, so a point-queue run and a level-4 run of the shipped options
-    /// say what each does.
+    /// These options with the rerouting setting settled for `level` and a run with or without
+    /// road disruptions ([`Self::reroutes`]): what a run hashes and reports, so a point-queue
+    /// run and a level-4 run of the shipped options say what each does.
     #[must_use]
-    pub fn resolved(&self, level: Option<FidelityLevel>) -> Self {
-        let reroute = if self.reroutes(level) { RerouteSetting::On } else { RerouteSetting::Off };
+    pub fn resolved(&self, level: Option<FidelityLevel>, disrupted: bool) -> Self {
+        let reroute =
+            if self.reroutes(level, disrupted) { RerouteSetting::On } else { RerouteSetting::Off };
         Self { reroute, ..*self }
     }
 }

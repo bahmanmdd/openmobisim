@@ -915,7 +915,7 @@ impl Run {
             class_limits: &self.class_limits,
             link_values: &self.link_values,
             disruptions: &self.disruptions,
-            loading: &self.loading.resolved(self.level()),
+            loading: &self.loading.resolved(self.level(), !self.disruptions.road.is_empty()),
             prices: self.reads_money().then_some(&self.prices),
             demand_values: &self.demand_values,
             reads: &reads,
@@ -2148,9 +2148,11 @@ impl Run {
                 None => Recording::Trajectories,
             };
             // The rerouting setting settled for the run's own level (S280, C1): a warm-up
-            // loading of a level-4 run keeps the run's rule, as the fingerprint does.
-            let o = self.loading.resolved(self.level());
-            let rerouting = o.reroutes(self.level());
+            // loading of a level-4 run keeps the run's rule, as the fingerprint does. At the
+            // point queue it is on only in a loading with road disruptions (S289).
+            let road_disrupted = disrupted && !self.disruptions.road.is_empty();
+            let o = self.loading.resolved(self.level(), road_disrupted);
+            let rerouting = o.reroutes(self.level(), road_disrupted);
             let rules = Rules {
                 priority: o.priority,
                 reroute: rerouting.then(|| RerouteRule {

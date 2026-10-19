@@ -80,7 +80,7 @@ with ([Validation](validation.md)). The loading is sequential by construction: o
 | Junctions | the requirements for first-order node models of Tampère et al. {footcite}`tampere2011`, and the merge and diverge their class reduces to | no node model is solved: links are first in, first out, and a full link's room is shared in an order of service by capacity ([Junctions](#junctions)) |
 | Signals | averaged over the cycle, as Tampère et al. {footcite}`tampere2011` also do | capacity times the green share, and a control delay, per approach |
 | Vehicles straddling links, origin queues, give-way at roundabouts, the rule that keeps an outsider from closing a waiting loop, rerouting | none | all, each with its recorded bias ([Limits](#limits)) |
-| Turn pockets (an option, off by default) | the partial first-in-first-out of Wright et al. {footcite}`wright2017` | how it is applied ([Remedies for gridlock](#remedies-for-gridlock-levels-3-and-4)) |
+| Turn pockets (an option, on by default) | the partial first-in-first-out of Wright et al. {footcite}`wright2017` | how it is applied ([Remedies for gridlock](#remedies-for-gridlock-levels-3-and-4)) |
 | Priority at merges (an option, off by default) | none | by road class ([Remedies for gridlock](#remedies-for-gridlock-levels-3-and-4)) |
 
 ## How a vehicle moves (levels 2 to 4)
@@ -196,8 +196,8 @@ only happen where queues take space (levels 3 and 4). Three rules work against i
 
 | Option | Default | What it does |
 |---|---|---|
-| `reroute` | on at levels 3 and 4, off at 2 | **en-route rerouting**: a vehicle blocked at the front of its link for `reroute_after_s` (300 s) is offered a new route from where it is, and takes it if it is at least `reroute_min_gain` (0.1, a tenth) faster than the rest of its own; at most `reroute_max` (3) times per trip. Buses never re-route |
-| `pocket_length_m` | 0 (off; 50 turns them on, metres per lane) | **turn pockets**: on an approach of two lanes or more, a vehicle at the end of the link may pass vehicles ahead waiting for another movement, as long as those fit in their movements' pockets and none ahead is bound for its own movement; 0 turns them off |
+| `reroute` | on at levels 3 and 4, and at 2 in a loading with road disruptions; off at 2 otherwise | **en-route rerouting**: a vehicle blocked at the front of its link for `reroute_after_s` (300 s) is offered a new route from where it is, and takes it if it is at least `reroute_min_gain` (0.1, a tenth) faster than the rest of its own; at most `reroute_max` (3) times per trip. Buses never re-route |
+| `pocket_length_m` | 50 (metres per lane; 0 turns them off) | **turn pockets**: on an approach of two lanes or more, a vehicle at the end of the link may pass vehicles ahead waiting for another movement, as long as those fit in their movements' pockets and none ahead is bound for its own movement; 0 turns them off |
 | `priority` | off | **priority at merges**: at an unsignalised merge a vehicle gives way while the front vehicle of a higher-priority approach (a higher road class, or the same class with at least 1.5 times the capacity) is bound for the same link, and a departure gives way to every approach |
 
 A rerouting vehicle times the rest of its planned route on, for each link, the larger of the time the last loading
@@ -211,9 +211,13 @@ Pockets are a simple form of the partial first-in-first-out of Wright et al. {fo
 for one exit holds back only the part of an approach's lanes that serves it: here that part is set by the pockets'
 length, not by their intervals drawn from the lane geometry.
 
-These rules are applied at whatever level is asked for; `reroute` unsaid is on at levels 3 and 4 and off at level 2,
-where nothing waits for room (a closed or narrowed link ahead is the one thing that could hold a vehicle there:
-ask for `reroute: 1` to re-route around it).
+These rules are applied at whatever level is asked for; `reroute` unsaid is on at levels 3 and 4, and at level 2
+only in a loading with road disruptions, where a closed or narrowed link ahead is the one thing that can hold a
+vehicle (nothing else waits for room there); `reroute: 1` turns it on regardless, `0` off. Pockets are on by
+default at every level: off, one queue per link locked Sioux Falls' morning in the full model at its base demand,
+and a one-lane street closed for an hour in Delft locked a fifth of its trips; at the point queue they make the
+entry queues of a multi-lane approach per movement, so a vehicle waiting for a full link's inflow headway no longer
+holds up those behind it bound elsewhere.
 
 ## Buses on the roads
 

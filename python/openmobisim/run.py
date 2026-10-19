@@ -398,11 +398,27 @@ class Run:
 
         ``None`` if no gap was measured (a ``"free_flow"`` run). Judged on
         ``convergence_gap``, the disequilibrium: what the choice model does not explain.
+
+        **``"poor"`` whatever the gap when more than 5 % of the trips did not finish**
+        (``unfinished_share``): the gap is measured over the trips that finished, so a jammed
+        run's few finishers can read as settled while most of its traffic is still on the road.
         """
         gap = self.convergence_gap
         if gap != gap:  # nan
             return None
+        if self.unfinished_share > 0.05:
+            return "poor"
         return "good" if gap < 0.05 else "acceptable" if gap < 0.15 else "poor"
+
+    @property
+    def unfinished_share(self) -> float:
+        """The share of trips still travelling when the window ended, in the last loading.
+
+        ``truncated`` over ``total_trips`` of ``completion``; 0 without trips. Above 0.05 the
+        ``convergence_verdict`` is ``"poor"`` whatever the gap.
+        """
+        c = self.completion
+        return c["truncated"] / c["total_trips"] if c["total_trips"] else 0.0
 
     def convergence(self) -> Columns:
         """What each iteration showed: how far the run is from an equilibrium.

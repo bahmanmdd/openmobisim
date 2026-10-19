@@ -153,12 +153,25 @@ impl LtmNetwork<'_> {
     pub(super) fn offer_reroute(&mut self, i: usize, t: f64) {
         let Some(front) = self.queues[i].front().copied() else { return };
         let n = self.links;
+        // A link ahead closed by a disruption for at least the rule's time: the front is offered
+        // a route as soon as it gets there (a closure is seen, not waited out), so a queue behind
+        // a closure drains by rerouting vehicle after vehicle instead of one every `after_s`;
+        // a refused vehicle still waits the rule's time for the next offer (S289).
+        let closed_ahead = self
+            .route(front.slot)
+            .get(front.leg as usize + 1)
+            .and_then(|next| self.reopens_at(next.index()))
+            .is_some_and(|opens| {
+                opens - t >= self.rerouting.as_ref().map_or(0.0, |r| r.rule.after_s)
+            });
         let Some(r) = self.rerouting.as_mut() else { return };
         let slot = front.slot as usize;
         if r.count[slot] >= r.rule.max {
             return;
         }
-        let due = front.ready.max(r.last_offer[slot]) + r.rule.after_s;
+        let since =
+            if closed_ahead { r.last_offer[slot] } else { front.ready.max(r.last_offer[slot]) };
+        let due = since + r.rule.after_s;
         if due <= t + TIME_EPSILON {
             r.pending.push(queue_u32(i));
         } else {
@@ -167,8 +180,11 @@ impl LtmNetwork<'_> {
     }
 
     /// Link `i`'s front, held by its next link `j`'s inflow headway, is offered a new route as
-    /// one held for room is when that headway alone keeps it waiting the rule's time: a closed
-    /// or narrowed link ahead. A short headway, the common case, offers nothing.
+    /// one held for room is when that headway alone keeps it waiting the rule's time **and the
+    /// link ahead is closed or narrowed by a disruption** (a capacity change below its own).
+    /// A headway at the link's own capacity, however long the entry queue, offers nothing: it
+    /// is the ordinary queue of a point queue, whose vehicles keep their routes (S289: offers
+    /// at every congested entry made a level-2 run with known disruptions ten times slower).
     pub(super) fn offer_if_inflow_holds_long(
         &mut self,
         i: usize,
@@ -178,6 +194,9 @@ impl LtmNetwork<'_> {
         t: f64,
     ) {
         let Some(r) = self.rerouting.as_ref() else { return };
+        if self.changes.is_empty() || self.inflow_rate[j] >= self.base_rates[j].1 {
+            return;
+        }
         let clear = self.curves[j].last_entry().get() + pcu / self.inflow_rate[j];
         if clear - ready >= r.rule.after_s {
             self.offer_reroute(i, t);
@@ -253,8 +272,13 @@ impl LiveTimes for LtmNetwork<'_> {
     fn live_seconds(&self, link: LinkId) -> f64 {
         let i = link.index();
         let free = self.travel[i] + self.stop_delay[i];
-        let rate = self.discharge_rate[i];
         let on = (self.curves[i].cumulative_in() - self.curves[i].cumulative_out()).get();
+        // A link closed by a disruption costs the wait until it opens, and its queue then
+        // clears at its own rate (S289); an empty closed link read as free before.
+        let (rate, closed) = match self.reopens_at(i) {
+            Some(opens) => (self.base_rates[i].0, (opens - self.clock).max(0.0)),
+            None => (self.discharge_rate[i], 0.0),
+        };
         // What is on the link beyond what moves freely at capacity is queued; it clears at the
         // discharge rate.
         let queued = ((on - rate * self.travel[i]).max(0.0) / rate).max(0.0);
@@ -262,6 +286,6 @@ impl LiveTimes for LtmNetwork<'_> {
             (Some(_), Some(front)) => (self.clock - front.ready).max(0.0),
             _ => 0.0,
         };
-        free + queued + blocked
+        free + closed + queued + blocked
     }
 }

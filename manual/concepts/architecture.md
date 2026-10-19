@@ -135,7 +135,7 @@ the next iteration chooses on (`cost_bin_s`), not of the traffic ([The loading](
 | 0 | free flow | Every vehicle at free-flow speed; no capacity, no queues |
 | 2 | point queue (the default) | Capacities at every link and junction; queues form but take no road space |
 | 3 | spatial queue | Queues take road space and can fill a link, without the delay of the backward wave |
-| 4 | full model | Spillback with the backward wave, turn pockets, rerouting on the way |
+| 4 | full model | Spillback with the backward wave, rerouting on the way (turn pockets at every level) |
 
 Level 1 does not exist. A `Scenario` refuses any other value.
 

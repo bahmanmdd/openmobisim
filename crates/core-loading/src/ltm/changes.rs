@@ -20,7 +20,7 @@ pub struct CapacityChange {
 
 /// What a closed link's rates are multiplied by: next to nothing, but finite, so no headway
 /// becomes infinite and no arithmetic turns into `NaN`.
-const CLOSED_FACTOR: f64 = 1e-9;
+pub(super) const CLOSED_FACTOR: f64 = 1e-9;
 
 impl LtmNetwork<'_> {
     /// The same network with timed capacity changes (disruptions): a road narrowed or
@@ -47,6 +47,23 @@ impl LtmNetwork<'_> {
     /// The time of the next capacity change, if one is left.
     pub(super) fn next_change_time(&self) -> Option<f64> {
         self.changes.get(self.next_change).map(|c| c.time)
+    }
+
+    /// When link `i`, closed now by a capacity change, opens again: the first later change of
+    /// the link with a factor above 0, or never (`INFINITY`); `None` if it is not closed. A scan
+    /// of the changes left, a handful at most, per call (S289: what a stuck vehicle sees of a
+    /// closure ahead, so it re-routes instead of reading the empty link as free).
+    pub(super) fn reopens_at(&self, i: usize) -> Option<f64> {
+        if self.changes.is_empty() || self.discharge_rate[i] > self.base_rates[i].0 * CLOSED_FACTOR
+        {
+            return None;
+        }
+        let link = LinkId::from_index(i);
+        let opens = self.changes[self.next_change..]
+            .iter()
+            .find(|c| c.link == link && c.factor > 0.0)
+            .map_or(f64::INFINITY, |c| c.time);
+        Some(opens)
     }
 
     /// Make the next capacity change, and look again at the queues it touches.

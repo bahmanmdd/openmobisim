@@ -43,7 +43,8 @@ one of the starter cases that come with the simulator.
 - **Choices and congestion together.** Travellers choose a mode, a route and a chain of modes; cars and buses queue
   where the roads are full; the two are repeated until the pattern settles, and the run says how well it settled.
 - **What-if studies.** Change the network, the timetable, the prices or the travellers, and compare the results: the
-  tutorials show transit frequency, accessibility, emissions and disruptions.
+  tutorials show transit frequency, a choice model of your own, accessibility, emissions and a road closed for an
+  hour; the guides, closures and disruptions in general.
 - **Ready to try.** Starter cases for Amsterdam, Delft, Paris and Lyon, the Sioux Falls and Nguyen–Dupuis benchmark
   networks, and ten tutorials.
 - **Python on top, Rust underneath.** You work in Python; the simulation runs in a fast compiled core.

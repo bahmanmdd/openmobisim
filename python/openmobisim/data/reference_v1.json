@@ -3,61 +3,61 @@
  "bundle": "v1",
  "cases": {
   "amsterdam/base": {
-   "fingerprint": "8f402af076175011",
+   "fingerprint": "475eaf7503a81e19",
    "trips": 57381,
-   "completed": 56011,
-   "mean_trip_s": 1452.2543071896591,
+   "completed": 55991,
+   "mean_trip_s": 1441.6761265203336,
    "mode_share_pct": {
-    "bike": 33.73242013907043,
-    "bike_transit": 0.371203011449783,
-    "car": 35.34619473344836,
-    "car_transit": 0.12373433714992768,
-    "none": 0.48273818859901363,
-    "transit": 27.814084801589377,
-    "walk": 2.129624788693121
+    "bike": 33.69233718478242,
+    "bike_transit": 0.36597480002091287,
+    "car": 35.40370505916593,
+    "car_transit": 0.11676338857810077,
+    "none": 0.4443979714539656,
+    "transit": 27.841968595876683,
+    "walk": 2.1348530001219914
    },
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "33de45c17790"
+   "git_sha": "f036acd815fa"
   },
   "delft/base": {
-   "fingerprint": "f49ad77b852a81cb",
+   "fingerprint": "cea0377dfb0bd327",
    "trips": 65956,
-   "completed": 65313,
-   "mean_trip_s": 1422.094085404131,
+   "completed": 65725,
+   "mean_trip_s": 1376.1805401293268,
    "mode_share_pct": {
-    "bike": 18.751895202862514,
-    "bike_transit": 0.009096973740069137,
-    "car": 53.77069561525866,
-    "transit": 24.266177451634423,
-    "walk": 3.202134756504336
+    "bike": 18.848929589423253,
+    "bike_transit": 0.012129298320092182,
+    "car": 53.65546728121778,
+    "transit": 24.32227545636485,
+    "walk": 3.1611983746740253
    },
-   "loadings": 7,
+   "loadings": 9,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "33de45c17790"
+   "git_sha": "f036acd815fa"
   },
   "lyon/base": {
-   "fingerprint": "4586ad26ece801c2",
+   "fingerprint": "14426014e1705b16",
    "trips": 58417,
-   "completed": 57070,
-   "mean_trip_s": 1507.051918696338,
+   "completed": 56962,
+   "mean_trip_s": 1499.5787191460975,
    "mode_share_pct": {
-    "bike": 4.633925056062448,
+    "bike": 4.594552955475289,
     "bike_transit": 0.0017118304603112107,
-    "car": 38.13102350343222,
-    "car_transit": 0.29443483917352825,
-    "transit": 47.1523700292723,
-    "walk": 9.786534741599192
+    "car": 38.27139360117774,
+    "car_transit": 0.29272300871321705,
+    "transit": 47.02569457520927,
+    "walk": 9.813924028964172
    },
    "loadings": 10,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "33de45c17790"
+   "git_sha": "f036acd815fa"
   },
   "nguyendupuis/base": {
-   "fingerprint": "208bd2b137288090",
+   "fingerprint": "042f3eeb7c2dd644",
    "trips": 2000,
    "completed": 2000,
    "mean_trip_s": 3271.1375,
@@ -67,51 +67,51 @@
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "33de45c17790"
+   "git_sha": "f036acd815fa"
   },
   "paris/base": {
-   "fingerprint": "1807e4569ad6c412",
+   "fingerprint": "75032afd13e78a9e",
    "trips": 84878,
-   "completed": 83819,
-   "mean_trip_s": 1215.0245886970736,
+   "completed": 83826,
+   "mean_trip_s": 1215.972132751175,
    "mode_share_pct": {
-    "bike": 18.181389759419403,
+    "bike": 18.12955064916704,
     "bike_transit": 0.12724145243761634,
-    "car": 11.930064327623176,
-    "car_transit": 0.009425292773156766,
-    "transit": 62.91265109922477,
-    "walk": 6.839228068521878
+    "car": 11.96658733711916,
+    "car_transit": 0.004712646386578383,
+    "transit": 62.993944249393245,
+    "walk": 6.777963665496359
    },
-   "loadings": 6,
+   "loadings": 5,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "33de45c17790"
+   "git_sha": "f036acd815fa"
   },
   "siouxfalls/base": {
-   "fingerprint": "4ae3671336d2d99d",
+   "fingerprint": "8969a0e5fa009b35",
    "trips": 180300,
    "completed": 180300,
-   "mean_trip_s": 790.231120354964,
+   "mean_trip_s": 707.2133166943983,
    "mode_share_pct": {
     "car": 100.0
    },
    "loadings": 5,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "33de45c17790"
+   "git_sha": "f036acd815fa"
   },
   "siouxfalls/congested": {
-   "fingerprint": "659ce9cdcd2d11f8",
+   "fingerprint": "02adfbb7ebe4c68c",
    "trips": 270450,
    "completed": 270450,
-   "mean_trip_s": 1546.7960436309854,
+   "mean_trip_s": 1288.9537992235164,
    "mode_share_pct": {
     "car": 100.0
    },
    "loadings": 6,
    "platform": "aarch64-apple-darwin",
    "version": "0.1.0",
-   "git_sha": "33de45c17790"
+   "git_sha": "f036acd815fa"
   }
  }
 }

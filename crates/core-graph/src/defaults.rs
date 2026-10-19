@@ -234,7 +234,16 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// of the signal passages of Amsterdam, Lyon and Paris), and a junction tagged just past a stop
 /// line (or a second signalised junction within the distance) adds no second delay (0.2–4 %).
 /// Every OSM city's results change; the benchmark networks have no such signals.
-pub const DEFAULTS_VERSION: u32 = 30;
+///
+/// Version 31 (S289): **turn pockets on by default again** (`pocket_length_m` 50, as from S217
+/// to S279; 0 from S280 to S288): off, the full model (levels 3 and 4) locked Sioux Falls at its
+/// base demand and a one-lane street closed for an hour in Delft locked a fifth of its trips;
+/// on, both finish. And **en-route rerouting at the point queue in a loading with road
+/// disruptions**: an unwarned driver behind a closure re-routes after `reroute_after_s`
+/// instead of waiting for the link to reopen. Every fingerprint moves (the pockets are hashed);
+/// at the point queue the results of multi-lane approaches at their inflow limits move
+/// (Sioux Falls' mean trip 13.2 → 11.8 min), the cities by under half a minute.
+pub const DEFAULTS_VERSION: u32 = 31;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///
