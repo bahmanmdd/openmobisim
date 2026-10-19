@@ -91,9 +91,13 @@ def test_the_data_folder_variable_is_read_and_a_changed_file_refused(
     assert ms.examples.case("line", check=False).demand()[0][0], "unchecked, on request"
 
 
-def test_an_unknown_or_missing_case_is_refused(made_up: Path, tmp_path: Path) -> None:
+def test_an_unknown_or_missing_case_is_refused(
+    made_up: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with pytest.raises(ValueError, match="no starter case 'atlantis'"):
         ms.examples.case("atlantis")
+    # Nowhere to download from (the package's own sources are the published record, S288).
+    monkeypatch.setattr(_cases, "SOURCES", ())
     with pytest.raises(FileNotFoundError, match="no place to download it from"):
         ms.examples.case("line")  # not in the cache, no root, no folder variable
     with pytest.raises(FileNotFoundError, match="no .*case.json"):

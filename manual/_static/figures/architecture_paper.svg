@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" width="960" height="600" role="img" aria-label="The architecture: the Python package over the Rust crates">
+<title>The architecture: the Python package over the Rust crates</title>
+<rect width="960" height="600" fill="#fbfcfd"/>
+<defs>
+</defs>
+<marker id="m9aa8b8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa8b8"/></marker>
+<marker id="m057da9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#057da9"/></marker>
+<marker id="m04938e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#04938e"/></marker>
+<rect x="20" y="20" width="920" height="150" rx="10" fill="#e3f4f3" stroke="#7cc8c4" stroke-width="1.2"/>
+<text x="36" y="44" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#04938e" letter-spacing="1.2">PYTHON · WHAT YOU USE</text>
+<text x="930" y="44" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="11" font-weight="400" text-anchor="end" fill="#55657a">import openmobisim</text>
+<rect x="36" y="62" width="141" height="94" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="106.5" y="84" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">Scenario</text>
+<text x="106.5" y="99.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the inputs and settings;</text>
+<text x="106.5" y="113.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">.run() starts the core</text>
+<rect x="187" y="62" width="141" height="94" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="257.5" y="84" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">Run</text>
+<text x="257.5" y="99.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">results, convergence,</text>
+<text x="257.5" y="113.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">reports, the files written</text>
+<rect x="338" y="62" width="141" height="94" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="408.5" y="84" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">Readers</text>
+<text x="408.5" y="99.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">network_read_*</text>
+<text x="408.5" y="113.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">demand_*, transit_*</text>
+<text x="408.5" y="126.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">parking_*</text>
+<rect x="489" y="62" width="141" height="94" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="559.5" y="84" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">viz</text>
+<text x="559.5" y="99.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">figures, the summary</text>
+<text x="559.5" y="113.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">page, the interactive map</text>
+<rect x="640" y="62" width="141" height="94" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="710.5" y="84" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">choice</text>
+<text x="710.5" y="99.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">choice models</text>
+<text x="710.5" y="113.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">written in Python</text>
+<rect x="791" y="62" width="141" height="94" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="861.5" y="84" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">examples, parameters()</text>
+<text x="861.5" y="99.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">fixtures to start from;</text>
+<text x="861.5" y="113.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">every default by name</text>
+<path d="M 480 170 L 480 206" fill="none" stroke="#04938e" stroke-width="2" marker-end="url(#m04938e)"/>
+<rect x="20" y="208" width="920" height="56" rx="10" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="36" y="232" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#057da9" letter-spacing="1.2">THE BRIDGE</text>
+<text x="480" y="236" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="13" font-weight="600" text-anchor="middle" fill="#0a1626">openmobisim._core</text>
+<text x="480" y="254" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="400" text-anchor="middle" fill="#3d4c5f">the compiled module (crate py-bindings): private, re-exported by the package; the only place that knows Python exists</text>
+<path d="M 480 264 L 480 300" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<rect x="20" y="302" width="920" height="278" rx="10" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="36" y="326" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#057da9" letter-spacing="1.2">THE SIMULATOR · RUST CRATES</text>
+<text x="930" y="326" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="11" font-weight="400" text-anchor="end" fill="#55657a">cargo build, no Python needed</text>
+<rect x="330" y="340" width="300" height="58" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="480" y="362" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="600" text-anchor="middle" fill="#0a1626">core-sim · the run</text>
+<text x="480" y="378.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">route, itinerary and mode choice · prices · parking ·</text>
+<text x="480" y="391.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the loading · equilibration · disruptions · fingerprint</text>
+<rect x="660" y="340" width="266" height="58" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="793" y="362" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">io-osm · io-gtfs · io-parquet</text>
+<text x="793" y="377.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">read OpenStreetMap and GTFS;</text>
+<text x="793" y="391.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">write the output files</text>
+<path d="M 630 369 L 660 369" fill="none" stroke="#9aa8b8" stroke-width="1.4"/>
+<rect x="36" y="436" width="141" height="66" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="106.5" y="458" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">core-graph</text>
+<text x="106.5" y="473.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the network,</text>
+<text x="106.5" y="487.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">layers, turns, hubs</text>
+<rect x="187" y="436" width="141" height="66" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="257.5" y="458" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">core-demand</text>
+<text x="257.5" y="473.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">travellers,</text>
+<text x="257.5" y="487.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">trips, vehicles</text>
+<rect x="338" y="436" width="141" height="66" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="408.5" y="458" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">core-routes</text>
+<text x="408.5" y="473.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">searches,</text>
+<text x="408.5" y="487.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">route sets</text>
+<rect x="489" y="436" width="141" height="66" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="559.5" y="458" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">core-choice</text>
+<text x="559.5" y="473.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the choice</text>
+<text x="559.5" y="487.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">models</text>
+<rect x="640" y="436" width="141" height="66" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="710.5" y="458" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">core-transit</text>
+<text x="710.5" y="473.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">timetables,</text>
+<text x="710.5" y="487.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">RAPTOR</text>
+<rect x="791" y="436" width="141" height="66" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="861.5" y="458" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">core-loading</text>
+<text x="861.5" y="473.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">vehicles moving:</text>
+<text x="861.5" y="487.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">free flow to LTM</text>
+<path d="M 480 398 L 480 418" fill="none" stroke="#9aa8b8" stroke-width="1.4"/>
+<path d="M 106 418 L 854 418" fill="none" stroke="#9aa8b8" stroke-width="1.4"/>
+<path d="M 106.5 418 L 106.5 434" fill="none" stroke="#9aa8b8" stroke-width="1.4" marker-end="url(#m9aa8b8)"/>
+<path d="M 257.5 418 L 257.5 434" fill="none" stroke="#9aa8b8" stroke-width="1.4" marker-end="url(#m9aa8b8)"/>
+<path d="M 408.5 418 L 408.5 434" fill="none" stroke="#9aa8b8" stroke-width="1.4" marker-end="url(#m9aa8b8)"/>
+<path d="M 559.5 418 L 559.5 434" fill="none" stroke="#9aa8b8" stroke-width="1.4" marker-end="url(#m9aa8b8)"/>
+<path d="M 710.5 418 L 710.5 434" fill="none" stroke="#9aa8b8" stroke-width="1.4" marker-end="url(#m9aa8b8)"/>
+<path d="M 861.5 418 L 861.5 434" fill="none" stroke="#9aa8b8" stroke-width="1.4" marker-end="url(#m9aa8b8)"/>
+<path d="M 793 398 L 793 418" fill="none" stroke="#9aa8b8" stroke-width="1.4"/>
+<rect x="36" y="520" width="890" height="44" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="481" y="540" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">core-types · the foundations every crate uses</text>
+<text x="481" y="555.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">identities, the clock in whole seconds, SI units, fixed-order sums, random streams by identity, diagnostics, registries</text>
+<text x="480" y="592" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="400" text-anchor="middle" fill="#55657a">Everything computed per vehicle, link or trip happens in Rust; Python reads inputs, checks them, sets defaults and shapes results.</text>
+</svg>

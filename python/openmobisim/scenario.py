@@ -565,14 +565,14 @@ class Scenario:
                 to the quarter hour, for three hours. Leave each trip time to finish: a demand
                 whose departures end well before the window does (an hour, say) finishes inside it.
             flow_level: How vehicles load the network. ``2`` (the default) is the
-                **point queue**: the link transmission model with capacities at every link
-                and junction, where a queue forms behind capacity and delays everyone in it,
+                **point queue**: the link transmission model with unlimited storage. A queue
+                forms at the end of a link, behind its capacity or that of the link ahead (a
+                bottleneck in Vickrey's sense), and delays everyone behind it on that link,
                 but takes no road space, so it never blocks the links upstream and nothing
                 gridlocks. Equilibrium iterations converge steadily with it, and it is the
-                cheapest loading with congestion: the right model for planning studies
-                (Vickrey's bottleneck queue with a first-order node model, as in quasi-dynamic
-                assignment). ``Run.report_spillback()`` lists the links whose queue would not
-                have fitted on the road. ``4`` is the full triangular fundamental diagram:
+                cheapest loading with congestion: the right model for planning studies.
+                ``Run.report_spillback()`` lists the links whose queue would not have fitted
+                on the road. ``4`` is the full triangular fundamental diagram:
                 queues take road space and **spill back** to the links upstream, with turn
                 pockets and en-route rerouting against gridlock — for studies where spillback
                 itself matters (traffic control, incidents, evacuation); under heavy congestion

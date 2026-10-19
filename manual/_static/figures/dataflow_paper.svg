@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 470" width="960" height="470" role="img" aria-label="The data flow: input files, the objects they are read into, the run, and the results">
+<title>The data flow: input files, the objects they are read into, the run, and the results</title>
+<rect width="960" height="470" fill="#fbfcfd"/>
+<defs>
+</defs>
+<marker id="m057da9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#057da9"/></marker>
+<marker id="m9aa8b8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa8b8"/></marker>
+<text x="20" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">INPUT FILES</text>
+<text x="330" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">READ INTO</text>
+<text x="560" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">COMBINED AND RUN</text>
+<text x="760" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">RESULTS</text>
+<rect x="20" y="40" width="230" height="48" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="135" y="60" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">OpenStreetMap extract</text>
+<text x="135" y="75.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">.osm.pbf</text>
+<rect x="20" y="100" width="230" height="48" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="135" y="120" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">GMNS folder, or a link table</text>
+<text x="135" y="135.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">node.csv, link.csv</text>
+<rect x="20" y="160" width="230" height="48" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="135" y="180" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">GTFS feed</text>
+<text x="135" y="195.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">a zip or a folder</text>
+<rect x="20" y="220" width="230" height="48" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="135" y="240" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Parking table</text>
+<text x="135" y="255.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">csv</text>
+<rect x="20" y="280" width="230" height="48" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="135" y="300" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Trips, or zones + OD matrix</text>
+<text x="135" y="315.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">trips.csv · zones.csv, od.csv</text>
+<rect x="20" y="340" width="230" height="48" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="135" y="360" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Class table</text>
+<text x="135" y="375.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">classes.csv</text>
+<rect x="330" y="52" width="200" height="60" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="430" y="72" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">Network</text>
+<text x="430" y="87.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">roads + walk and bike layers</text>
+<text x="430" y="100" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="400" text-anchor="middle" fill="#057da9">network_read_osm, _gmns, _table</text>
+<rect x="330" y="154" width="200" height="60" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="430" y="174" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">Transit</text>
+<text x="430" y="189.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">one day's timetable</text>
+<text x="430" y="202" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="400" text-anchor="middle" fill="#057da9">transit_read_gtfs</text>
+<rect x="330" y="214" width="200" height="60" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="430" y="234" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">Parkings</text>
+<text x="430" y="249.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">car and bike, with fees</text>
+<text x="430" y="262" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="400" text-anchor="middle" fill="#057da9">parking_read_osm, _table</text>
+<rect x="330" y="298" width="200" height="72" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="430" y="318" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">Trips</text>
+<text x="430" y="333.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">travellers, classes, weights</text>
+<text x="430" y="346" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="400" text-anchor="middle" fill="#057da9">demand_read_trips, demand_from_od,</text>
+<text x="430" y="358" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="400" text-anchor="middle" fill="#057da9">demand_assign_classes</text>
+<rect x="330" y="390" width="200" height="48" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="430" y="410" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Settings and parameters</text>
+<text x="430" y="425.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">flow level, choice model, …</text>
+<path d="M 250 64 L 290 64 L 290 76 L 328 76" fill="none" stroke="#9aa8b8" stroke-width="1.4" marker-end="url(#m9aa8b8)"/>
+<path d="M 250 124 L 290 124 L 290 90 L 328 90" fill="none" stroke="#9aa8b8" stroke-width="1.4" marker-end="url(#m9aa8b8)"/>
+<path d="M 250 184 L 290 184 L 290 184 L 328 184" fill="none" stroke="#9aa8b8" stroke-width="1.4" marker-end="url(#m9aa8b8)"/>
+<path d="M 250 244 L 290 244 L 290 244 L 328 244" fill="none" stroke="#9aa8b8" stroke-width="1.4" marker-end="url(#m9aa8b8)"/>
+<path d="M 250 72 L 276 72 L 276 238 L 328 238" fill="none" stroke="#9aa8b8" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#m9aa8b8)"/>
+<path d="M 250 304 L 290 304 L 290 324 L 328 324" fill="none" stroke="#9aa8b8" stroke-width="1.4" marker-end="url(#m9aa8b8)"/>
+<path d="M 250 364 L 290 364 L 290 340 L 328 340" fill="none" stroke="#9aa8b8" stroke-width="1.4" marker-end="url(#m9aa8b8)"/>
+<rect x="560" y="150" width="170" height="150" rx="7" fill="#e3f4f3" stroke="#7cc8c4" stroke-width="1.2"/>
+<text x="645" y="176" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="600" text-anchor="middle" fill="#0a1626">Scenario</text>
+<text x="645" y="193" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="400" text-anchor="middle" fill="#3d4c5f">the inputs, checked,</text>
+<text x="645" y="207" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="400" text-anchor="middle" fill="#3d4c5f">with their settings</text>
+<text x="645" y="232" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">run()</text>
+<text x="645" y="250" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">→ the Rust core</text>
+<text x="645" y="286" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">writes the output files</text>
+<path d="M 530 82 L 545 82 L 545 225 L 558 225" fill="none" stroke="#057da9" stroke-width="1.4" marker-end="url(#m057da9)"/>
+<path d="M 530 184 L 545 184 L 545 225 L 558 225" fill="none" stroke="#057da9" stroke-width="1.4" marker-end="url(#m057da9)"/>
+<path d="M 530 244 L 545 244 L 545 225 L 558 225" fill="none" stroke="#057da9" stroke-width="1.4" marker-end="url(#m057da9)"/>
+<path d="M 530 334 L 545 334 L 545 225 L 558 225" fill="none" stroke="#057da9" stroke-width="1.4" marker-end="url(#m057da9)"/>
+<path d="M 530 414 L 545 414 L 545 225" fill="none" stroke="#9aa8b8" stroke-width="1.4" stroke-dasharray="5 4"/>
+<rect x="760" y="60" width="180" height="70" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="850" y="84" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">Run (in Python)</text>
+<text x="850" y="99.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">tables, convergence,</text>
+<text x="850" y="113.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">reports, timings</text>
+<rect x="760" y="170" width="180" height="90" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="850" y="194" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">Output files</text>
+<text x="850" y="209.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">kpis, link_bins, events,</text>
+<text x="850" y="223.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">transit_calls, parking_bins,</text>
+<text x="850" y="236.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">diagnostics, manifest</text>
+<rect x="760" y="300" width="180" height="70" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="850" y="324" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle" fill="#0a1626">openmobisim.viz</text>
+<text x="850" y="339.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">figures, the summary page,</text>
+<text x="850" y="353.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the interactive map</text>
+<path d="M 730 225 L 745 225 L 745 95 L 758 95" fill="none" stroke="#057da9" stroke-width="1.4" marker-end="url(#m057da9)"/>
+<path d="M 730 225 L 745 225 L 745 215 L 758 215" fill="none" stroke="#057da9" stroke-width="1.4" marker-end="url(#m057da9)"/>
+<path d="M 850 130 L 850 168" fill="none" stroke="#9aa8b8" stroke-width="1.4" stroke-dasharray="5 4"/>
+<path d="M 850 260 L 850 298" fill="none" stroke="#9aa8b8" stroke-width="1.4" marker-end="url(#m9aa8b8)"/>
+<text x="862" y="282" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="400" text-anchor="start" fill="#55657a">Run → viz</text>
+<text x="480" y="458" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="400" text-anchor="middle" fill="#55657a">A network can be written back out (network_write_gmns) and trips too (demand_write_trips), so a case built here can be used elsewhere.</text>
+</svg>

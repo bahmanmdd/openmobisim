@@ -37,8 +37,13 @@ if TYPE_CHECKING:
 
 #: The bundle's version: a case's files never change within one.
 BUNDLE_VERSION = "v1"
-#: Where the cases' archives (``<case>.zip``) are published, tried in order. Empty until they are.
-SOURCES: tuple[str, ...] = ()
+#: Where the cases' archives (``<case>.zip``) are published, tried in order: the bundle's
+#: Zenodo record (doi:10.5281/zenodo.23472146), then the v0.1.0 GitHub release, which
+#: carries the same archives (S240).
+SOURCES: tuple[str, ...] = (
+    "https://zenodo.org/records/23472146/files",
+    "https://github.com/bahmanmdd/openmobisim/releases/download/v0.1.0",
+)
 
 _MANIFEST = Path(__file__).with_name("data") / f"bundle_{BUNDLE_VERSION}.json"
 

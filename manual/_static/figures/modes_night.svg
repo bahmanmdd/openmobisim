@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 586" width="960" height="586" role="img" aria-label="The six modes as chains of legs, and the hubs where a trip changes layer">
+<title>The six modes as chains of legs, and the hubs where a trip changes layer</title>
+<rect width="960" height="586" fill="#0a1220"/>
+<defs>
+</defs>
+<text x="20" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#93a2b6" letter-spacing="1.2">MODE</text>
+<text x="190" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#93a2b6" letter-spacing="1.2">THE TRIP, DOOR TO DOOR: EACH LEG ON ITS LAYER, A HUB BETWEEN TWO LAYERS</text>
+<text x="20" y="68" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="600" text-anchor="start" fill="#f2f6fa">walk</text>
+<text x="20" y="84" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10" font-weight="400" text-anchor="start" fill="#93a2b6">mode "walk"</text>
+<circle cx="196" cy="64" r="6" fill="#f2f6fa"/>
+<text x="196" y="86" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">origin</text>
+<path d="M 206 64 L 920.0 64" fill="none" stroke="#dcaa1e" stroke-width="2.4" stroke-dasharray="5 4"/>
+<text x="563.0" y="55" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">on the walk layer</text>
+<circle cx="930" cy="64" r="6" fill="#f2f6fa"/>
+<text x="930" y="86" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">destination</text>
+<text x="20" y="130" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="600" text-anchor="start" fill="#f2f6fa">bike</text>
+<text x="20" y="146" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10" font-weight="400" text-anchor="start" fill="#93a2b6">mode "bike"</text>
+<circle cx="196" cy="126" r="6" fill="#f2f6fa"/>
+<text x="196" y="148" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">origin</text>
+<path d="M 206 126 L 920.0 126" fill="none" stroke="#40c8c1" stroke-width="4"/>
+<text x="563.0" y="117" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">own bike, on the bike layer</text>
+<circle cx="930" cy="126" r="6" fill="#f2f6fa"/>
+<text x="930" y="148" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">destination</text>
+<text x="20" y="192" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="600" text-anchor="start" fill="#f2f6fa">car</text>
+<text x="20" y="208" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10" font-weight="400" text-anchor="start" fill="#93a2b6">mode "car"</text>
+<circle cx="196" cy="188" r="6" fill="#f2f6fa"/>
+<text x="196" y="210" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">origin</text>
+<path d="M 206 188 L 920.0 188" fill="none" stroke="#ff7475" stroke-width="4"/>
+<text x="563.0" y="179" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">own car on the roads, queues where they fill · in the choice, 2 min to the car, 3 to park</text>
+<circle cx="930" cy="188" r="6" fill="#f2f6fa"/>
+<text x="930" y="210" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">destination</text>
+<text x="20" y="254" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="600" text-anchor="start" fill="#f2f6fa">transit</text>
+<text x="20" y="270" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10" font-weight="400" text-anchor="start" fill="#93a2b6">mode "transit"</text>
+<circle cx="196" cy="250" r="6" fill="#f2f6fa"/>
+<text x="196" y="272" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">origin</text>
+<path d="M 206 250 L 360.76190476190476 250" fill="none" stroke="#dcaa1e" stroke-width="2.4" stroke-dasharray="5 4"/>
+<text x="283.3809523809524" y="241" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">walk</text>
+<circle cx="370.76190476190476" cy="250" r="8" fill="#0a1220" stroke="#67cdfe" stroke-width="2.2"/>
+<text x="370.76190476190476" y="274" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">stop</text>
+<path d="M 380.76190476190476 250 L 745.2380952380952 250" fill="none" stroke="#67cdfe" stroke-width="4"/>
+<text x="563.0" y="241" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">wait, ride; change</text>
+<circle cx="755.2380952380952" cy="250" r="8" fill="#0a1220" stroke="#67cdfe" stroke-width="2.2"/>
+<text x="755.2380952380952" y="274" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">stop</text>
+<path d="M 765.2380952380952 250 L 920.0 250" fill="none" stroke="#dcaa1e" stroke-width="2.4" stroke-dasharray="5 4"/>
+<text x="842.6190476190476" y="241" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">walk</text>
+<circle cx="930" cy="250" r="6" fill="#f2f6fa"/>
+<text x="930" y="272" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">destination</text>
+<text x="20" y="316" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="600" text-anchor="start" fill="#f2f6fa">park-and-ride</text>
+<text x="20" y="332" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10" font-weight="400" text-anchor="start" fill="#93a2b6">mode "car_transit"</text>
+<circle cx="196" cy="312" r="6" fill="#f2f6fa"/>
+<text x="196" y="334" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">origin</text>
+<path d="M 206 312 L 438.3125 312" fill="none" stroke="#ff7475" stroke-width="4"/>
+<text x="322.15625" y="303" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">drive</text>
+<rect x="439.3125" y="303" width="18" height="18" rx="4" fill="#0a1220" stroke="#ff7475" stroke-width="2.2"/>
+<text x="448.3125" y="316" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="700" text-anchor="middle" fill="#ff7475">P</text>
+<text x="448.3125" y="336" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">car park</text>
+<path d="M 458.3125 312 L 553.0 312" fill="none" stroke="#dcaa1e" stroke-width="2.4" stroke-dasharray="5 4"/>
+<text x="505.65625" y="303" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">walk</text>
+<circle cx="563.0" cy="312" r="8" fill="#0a1220" stroke="#67cdfe" stroke-width="2.2"/>
+<text x="563.0" y="336" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">stop</text>
+<path d="M 573.0 312 L 805.3125 312" fill="none" stroke="#67cdfe" stroke-width="4"/>
+<text x="689.15625" y="303" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">ride the timetable</text>
+<circle cx="815.3125" cy="312" r="8" fill="#0a1220" stroke="#67cdfe" stroke-width="2.2"/>
+<text x="815.3125" y="336" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">stop</text>
+<path d="M 825.3125 312 L 920.0 312" fill="none" stroke="#dcaa1e" stroke-width="2.4" stroke-dasharray="5 4"/>
+<text x="872.65625" y="303" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">walk</text>
+<circle cx="930" cy="312" r="6" fill="#f2f6fa"/>
+<text x="930" y="334" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">destination</text>
+<text x="20" y="378" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="600" text-anchor="start" fill="#f2f6fa">bike-and-ride</text>
+<text x="20" y="394" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10" font-weight="400" text-anchor="start" fill="#93a2b6">mode "bike_transit"</text>
+<circle cx="196" cy="374" r="6" fill="#f2f6fa"/>
+<text x="196" y="396" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">origin</text>
+<path d="M 206 374 L 438.3125 374" fill="none" stroke="#40c8c1" stroke-width="4"/>
+<text x="322.15625" y="365" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">ride</text>
+<rect x="439.3125" y="365" width="18" height="18" rx="4" fill="#0a1220" stroke="#40c8c1" stroke-width="2.2"/>
+<text x="448.3125" y="378" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="700" text-anchor="middle" fill="#40c8c1">P</text>
+<text x="448.3125" y="398" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">bike parking</text>
+<path d="M 458.3125 374 L 553.0 374" fill="none" stroke="#dcaa1e" stroke-width="2.4" stroke-dasharray="5 4"/>
+<text x="505.65625" y="365" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">walk</text>
+<circle cx="563.0" cy="374" r="8" fill="#0a1220" stroke="#67cdfe" stroke-width="2.2"/>
+<text x="563.0" y="398" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">stop</text>
+<path d="M 573.0 374 L 805.3125 374" fill="none" stroke="#67cdfe" stroke-width="4"/>
+<text x="689.15625" y="365" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">ride the timetable</text>
+<circle cx="815.3125" cy="374" r="8" fill="#0a1220" stroke="#67cdfe" stroke-width="2.2"/>
+<text x="815.3125" y="398" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">stop</text>
+<path d="M 825.3125 374 L 920.0 374" fill="none" stroke="#dcaa1e" stroke-width="2.4" stroke-dasharray="5 4"/>
+<text x="872.65625" y="365" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">walk</text>
+<circle cx="930" cy="374" r="6" fill="#f2f6fa"/>
+<text x="930" y="396" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#93a2b6">destination</text>
+<text x="196" y="414" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="400" text-anchor="start" fill="#93a2b6">park-and-ride and bike-and-ride also run the other way: transit first, then back to where the vehicle waits</text>
+<rect x="20" y="440" width="450" height="112" rx="7" fill="#0d2a3d" stroke="#057da9" stroke-width="1.2"/>
+<text x="36" y="462" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#67cdfe" letter-spacing="1.2">A HUB</text>
+<text x="36" y="482.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#cdd6e1">a place where a trip changes layer: every stop (its transit, walk and</text>
+<text x="36" y="495.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#cdd6e1">bike access), every parking (its car or bike access, linked to the</text>
+<text x="36" y="509.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#cdd6e1">stops within a walk). In the outputs, a station's stops and the</text>
+<text x="36" y="522.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#cdd6e1">parkings within 150 m share one hub_group.</text>
+<rect x="490" y="440" width="450" height="112" rx="7" fill="#131d30" stroke="#364966" stroke-width="1.2"/>
+<text x="506" y="462" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#93a2b6" letter-spacing="1.2">THE LEGS, BY LAYER</text>
+<path d="M 506 478 L 546 478" fill="none" stroke="#ff7475" stroke-width="4"/>
+<text x="556" y="482" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#cdd6e1">the roads: cars, and buses among them</text>
+<path d="M 506 495 L 546 495" fill="none" stroke="#40c8c1" stroke-width="4"/>
+<text x="556" y="499" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#cdd6e1">the bike layer</text>
+<path d="M 506 512 L 546 512" fill="none" stroke="#dcaa1e" stroke-width="2.4" stroke-dasharray="5 4"/>
+<text x="556" y="516" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#cdd6e1">the walk layer</text>
+<path d="M 506 529 L 546 529" fill="none" stroke="#67cdfe" stroke-width="4"/>
+<text x="556" y="533" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#cdd6e1">the timetable: trams, metro, rail, ferries, buses</text>
+<text x="480" y="576" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="400" text-anchor="middle" fill="#93a2b6">A trip's class says which modes it may use; with mode choice, each trip weighs its alternatives by the nested logit, one nest per mode.</text>
+</svg>

@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+ "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="533pt" height="430pt"
+ viewBox="0.00 0.00 532.92 430.40" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(7.2 423.2)">
+<title>Which crate uses which (an arrow points from a crate to one it depends on)</title>
+<g id="node1" class="node">
+<title>core&#45;choice</title>
+<path fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2" d="M118.64,-112C118.64,-112 54.47,-112 54.47,-112 48.47,-112 42.47,-106 42.47,-100 42.47,-100 42.47,-88 42.47,-88 42.47,-82 48.47,-76 54.47,-76 54.47,-76 118.64,-76 118.64,-76 124.64,-76 130.64,-82 130.64,-88 130.64,-88 130.64,-100 130.64,-100 130.64,-106 124.64,-112 118.64,-112"/>
+<text text-anchor="middle" x="86.56" y="-88.97" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.00" fill="#0a1626">core&#45;choice</text>
+</g>
+<g id="node2" class="node">
+<title>core&#45;types</title>
+<path fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2" stroke-dasharray="5,2" d="M170.27,-36C170.27,-36 112.85,-36 112.85,-36 106.85,-36 100.85,-30 100.85,-24 100.85,-24 100.85,-12 100.85,-12 100.85,-6 106.85,0 112.85,0 112.85,0 170.27,0 170.27,0 176.27,0 182.27,-6 182.27,-12 182.27,-12 182.27,-24 182.27,-24 182.27,-30 176.27,-36 170.27,-36"/>
+<text text-anchor="middle" x="141.56" y="-12.97" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.00" fill="#0a1626">core&#45;types</text>
+</g>
+<g id="edge1" class="edge">
+<title>core&#45;choice&#45;&gt;core&#45;types</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M99.31,-75.84C106.55,-66.1 115.72,-53.76 123.67,-43.07"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="125.48,-44.74 127.69,-37.66 121.54,-41.82 125.48,-44.74"/>
+</g>
+<g id="node3" class="node">
+<title>core&#45;demand</title>
+<path fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2" d="M103.77,-188C103.77,-188 31.35,-188 31.35,-188 25.35,-188 19.35,-182 19.35,-176 19.35,-176 19.35,-164 19.35,-164 19.35,-158 25.35,-152 31.35,-152 31.35,-152 103.77,-152 103.77,-152 109.77,-152 115.77,-158 115.77,-164 115.77,-164 115.77,-176 115.77,-176 115.77,-182 109.77,-188 103.77,-188"/>
+<text text-anchor="middle" x="67.56" y="-164.97" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.00" fill="#0a1626">core&#45;demand</text>
+</g>
+<g id="node4" class="node">
+<title>core&#45;graph</title>
+<path fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2" d="M274.39,-112C274.39,-112 214.72,-112 214.72,-112 208.72,-112 202.72,-106 202.72,-100 202.72,-100 202.72,-88 202.72,-88 202.72,-82 208.72,-76 214.72,-76 214.72,-76 274.39,-76 274.39,-76 280.39,-76 286.39,-82 286.39,-88 286.39,-88 286.39,-100 286.39,-100 286.39,-106 280.39,-112 274.39,-112"/>
+<text text-anchor="middle" x="244.56" y="-88.97" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.00" fill="#0a1626">core&#45;graph</text>
+</g>
+<g id="edge2" class="edge">
+<title>core&#45;demand&#45;&gt;core&#45;graph</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M109.05,-151.65C134.72,-140.92 167.82,-127.08 194.88,-115.77"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="195.65,-118.1 201.17,-113.14 193.76,-113.58 195.65,-118.1"/>
+</g>
+<g id="edge3" class="edge">
+<title>core&#45;graph&#45;&gt;core&#45;types</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M220.41,-75.65C206.18,-65.43 188.02,-52.38 172.72,-41.39"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="174.38,-39.56 167.26,-37.47 171.52,-43.54 174.38,-39.56"/>
+</g>
+<g id="node5" class="node">
+<title>core&#45;loading</title>
+<path fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2" d="M221.89,-188C221.89,-188 153.22,-188 153.22,-188 147.22,-188 141.22,-182 141.22,-176 141.22,-176 141.22,-164 141.22,-164 141.22,-158 147.22,-152 153.22,-152 153.22,-152 221.89,-152 221.89,-152 227.89,-152 233.89,-158 233.89,-164 233.89,-164 233.89,-176 233.89,-176 233.89,-182 227.89,-188 221.89,-188"/>
+<text text-anchor="middle" x="187.56" y="-164.97" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.00" fill="#0a1626">core&#45;loading</text>
+</g>
+<g id="edge4" class="edge">
+<title>core&#45;loading&#45;&gt;core&#45;graph</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M200.78,-151.84C208.28,-142.1 217.78,-129.76 226.02,-119.07"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="227.86,-120.69 230.19,-113.65 223.98,-117.7 227.86,-120.69"/>
+</g>
+<g id="node6" class="node">
+<title>core&#45;routes</title>
+<path fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2" d="M332.52,-188C332.52,-188 270.6,-188 270.6,-188 264.6,-188 258.6,-182 258.6,-176 258.6,-176 258.6,-164 258.6,-164 258.6,-158 264.6,-152 270.6,-152 270.6,-152 332.52,-152 332.52,-152 338.52,-152 344.52,-158 344.52,-164 344.52,-164 344.52,-176 344.52,-176 344.52,-182 338.52,-188 332.52,-188"/>
+<text text-anchor="middle" x="301.56" y="-164.97" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.00" fill="#0a1626">core&#45;routes</text>
+</g>
+<g id="edge5" class="edge">
+<title>core&#45;routes&#45;&gt;core&#45;graph</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M288.34,-151.84C280.84,-142.1 271.33,-129.76 263.1,-119.07"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="265.13,-117.7 258.92,-113.65 261.25,-120.69 265.13,-117.7"/>
+</g>
+<g id="node7" class="node">
+<title>core&#45;sim</title>
+<path fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2" d="M244.39,-264C244.39,-264 196.72,-264 196.72,-264 190.72,-264 184.72,-258 184.72,-252 184.72,-252 184.72,-240 184.72,-240 184.72,-234 190.72,-228 196.72,-228 196.72,-228 244.39,-228 244.39,-228 250.39,-228 256.39,-234 256.39,-240 256.39,-240 256.39,-252 256.39,-252 256.39,-258 250.39,-264 244.39,-264"/>
+<text text-anchor="middle" x="220.56" y="-240.97" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.00" fill="#0a1626">core&#45;sim</text>
+</g>
+<g id="edge6" class="edge">
+<title>core&#45;sim&#45;&gt;core&#45;choice</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M184.41,-240.67C129.23,-233.22 28.11,-216.05 6.56,-188 -3.19,-175.31 -0.77,-166.22 6.56,-152 14.07,-137.41 27.24,-125.74 40.75,-116.85"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="41.76,-119.11 46.41,-113.33 39.17,-114.95 41.76,-119.11"/>
+</g>
+<g id="edge7" class="edge">
+<title>core&#45;sim&#45;&gt;core&#45;demand</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M184.68,-227.65C162.78,-217.06 134.62,-203.44 111.4,-192.21"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="112.6,-190.06 105.23,-189.22 110.47,-194.48 112.6,-190.06"/>
+</g>
+<g id="edge8" class="edge">
+<title>core&#45;sim&#45;&gt;core&#45;loading</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M212.9,-227.84C208.68,-218.38 203.37,-206.46 198.7,-195.99"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="201.05,-195.24 195.96,-189.85 196.57,-197.24 201.05,-195.24"/>
+</g>
+<g id="edge9" class="edge">
+<title>core&#45;sim&#45;&gt;core&#45;routes</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M239.34,-227.84C250.3,-217.82 264.28,-205.05 276.21,-194.16"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="277.85,-195.98 281.36,-189.45 274.54,-192.36 277.85,-195.98"/>
+</g>
+<g id="node8" class="node">
+<title>core&#45;transit</title>
+<path fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2" d="M443.14,-188C443.14,-188 381.97,-188 381.97,-188 375.97,-188 369.97,-182 369.97,-176 369.97,-176 369.97,-164 369.97,-164 369.97,-158 375.97,-152 381.97,-152 381.97,-152 443.14,-152 443.14,-152 449.14,-152 455.14,-158 455.14,-164 455.14,-164 455.14,-176 455.14,-176 455.14,-182 449.14,-188 443.14,-188"/>
+<text text-anchor="middle" x="412.56" y="-164.97" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.00" fill="#0a1626">core&#45;transit</text>
+</g>
+<g id="edge10" class="edge">
+<title>core&#45;sim&#45;&gt;core&#45;transit</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M256.67,-231.08C286.34,-219.65 328.71,-203.32 361.79,-190.57"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="362.35,-192.98 368,-188.17 360.59,-188.4 362.35,-192.98"/>
+</g>
+<g id="edge11" class="edge">
+<title>core&#45;transit&#45;&gt;core&#45;graph</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M373.17,-151.65C348.91,-140.97 317.66,-127.2 292.04,-115.91"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="293.2,-113.75 285.8,-113.17 291.22,-118.23 293.2,-113.75"/>
+</g>
+<g id="node9" class="node">
+<title>io&#45;gtfs</title>
+<path fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2" d="M429.64,-340C429.64,-340 395.47,-340 395.47,-340 389.47,-340 383.47,-334 383.47,-328 383.47,-328 383.47,-316 383.47,-316 383.47,-310 389.47,-304 395.47,-304 395.47,-304 429.64,-304 429.64,-304 435.64,-304 441.64,-310 441.64,-316 441.64,-316 441.64,-328 441.64,-328 441.64,-334 435.64,-340 429.64,-340"/>
+<text text-anchor="middle" x="412.56" y="-316.98" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.00" fill="#0a1626">io&#45;gtfs</text>
+</g>
+<g id="edge12" class="edge">
+<title>io&#45;gtfs&#45;&gt;core&#45;transit</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M412.56,-303.79C412.56,-277.6 412.56,-227.54 412.56,-196.92"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="415.01,-197.13 412.56,-190.13 410.11,-197.13 415.01,-197.13"/>
+</g>
+<g id="node10" class="node">
+<title>io&#45;osm</title>
+<path fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2" d="M506.52,-264C506.52,-264 468.6,-264 468.6,-264 462.6,-264 456.6,-258 456.6,-252 456.6,-252 456.6,-240 456.6,-240 456.6,-234 462.6,-228 468.6,-228 468.6,-228 506.52,-228 506.52,-228 512.52,-228 518.52,-234 518.52,-240 518.52,-240 518.52,-252 518.52,-252 518.52,-258 512.52,-264 506.52,-264"/>
+<text text-anchor="middle" x="487.56" y="-240.97" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.00" fill="#0a1626">io&#45;osm</text>
+</g>
+<g id="edge13" class="edge">
+<title>io&#45;osm&#45;&gt;core&#45;graph</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M488.88,-227.78C489.48,-207.01 487.14,-172.35 467.56,-152 443.99,-127.51 353.25,-110.39 295.04,-101.67"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="295.62,-99.28 288.34,-100.69 294.91,-104.13 295.62,-99.28"/>
+</g>
+<g id="node11" class="node">
+<title>io&#45;parquet</title>
+<path fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2" d="M281.52,-340C281.52,-340 225.6,-340 225.6,-340 219.6,-340 213.6,-334 213.6,-328 213.6,-328 213.6,-316 213.6,-316 213.6,-310 219.6,-304 225.6,-304 225.6,-304 281.52,-304 281.52,-304 287.52,-304 293.52,-310 293.52,-316 293.52,-316 293.52,-328 293.52,-328 293.52,-334 287.52,-340 281.52,-340"/>
+<text text-anchor="middle" x="253.56" y="-316.98" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.00" fill="#0a1626">io&#45;parquet</text>
+</g>
+<g id="edge14" class="edge">
+<title>io&#45;parquet&#45;&gt;core&#45;sim</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M245.9,-303.84C241.68,-294.38 236.37,-282.46 231.7,-271.99"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="234.05,-271.24 228.96,-265.85 229.57,-273.24 234.05,-271.24"/>
+</g>
+<g id="node12" class="node">
+<title>py&#45;bindings</title>
+<path fill="#e3f4f3" stroke="#7cc8c4" stroke-width="1.2" d="M444.64,-416C444.64,-416 380.47,-416 380.47,-416 374.47,-416 368.47,-410 368.47,-404 368.47,-404 368.47,-392 368.47,-392 368.47,-386 374.47,-380 380.47,-380 380.47,-380 444.64,-380 444.64,-380 450.64,-380 456.64,-386 456.64,-392 456.64,-392 456.64,-404 456.64,-404 456.64,-410 450.64,-416 444.64,-416"/>
+<text text-anchor="middle" x="412.56" y="-392.98" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12.00" fill="#0a1626">py&#45;bindings</text>
+</g>
+<g id="edge15" class="edge">
+<title>py&#45;bindings&#45;&gt;io&#45;gtfs</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M412.56,-379.84C412.56,-370.66 412.56,-359.16 412.56,-348.92"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="415.01,-348.99 412.56,-341.99 410.11,-348.99 415.01,-348.99"/>
+</g>
+<g id="edge16" class="edge">
+<title>py&#45;bindings&#45;&gt;io&#45;osm</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M427.22,-379.92C436.02,-369.04 446.95,-354.33 454.56,-340 466.05,-318.35 475,-291.85 480.67,-272.68"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="483,-273.44 482.58,-266.03 478.29,-272.09 483,-273.44"/>
+</g>
+<g id="edge17" class="edge">
+<title>py&#45;bindings&#45;&gt;io&#45;parquet</title>
+<path fill="none" stroke="#9aa8b8" stroke-width="1.1" d="M375.28,-379.65C352.42,-369.01 323,-355.32 298.81,-344.06"/>
+<polygon fill="#9aa8b8" stroke="#9aa8b8" stroke-width="1.1" points="300.04,-341.93 292.66,-341.2 297.97,-346.37 300.04,-341.93"/>
+</g>
+</g>
+</svg>

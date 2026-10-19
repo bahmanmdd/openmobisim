@@ -1,0 +1,24 @@
+/* The manual's own sizes. Headings three levels smaller than the theme's: a page's title at the theme's h4, a
+   section at its h5, everything below at the body's size. The page as wide as the window, with narrow sidebars, so
+   the text and its figures take most of the screen. */
+html {
+  --pst-font-size-h1: 1.5rem;
+  --pst-font-size-h2: 1.25rem;
+  --pst-font-size-h3: 1.05rem;
+  --pst-font-size-h4: 1rem;
+  --pst-font-size-h5: 1rem;
+  --pst-font-size-h6: 1rem;
+}
+.bd-page-width { max-width: 100%; }
+.bd-main .bd-content .bd-article-container { max-width: none; }  /* the theme caps it at 60em */
+@media (min-width: 960px) {
+  .bd-sidebar-primary { --pst-sidebar-primary-width: 18rem; }
+  .bd-sidebar-secondary { --pst-sidebar-secondary: 16rem; }
+}
+/* A figure opens at its full size when clicked (custom.js). */
+.bd-article img.zoomable { cursor: zoom-in; }
+/* A download reads as a link, not as code. */
+.bd-article a.download code.download {
+  font-family: inherit; font-size: inherit; font-weight: inherit; color: inherit;
+  background: none; border: none; padding: 0;
+}
