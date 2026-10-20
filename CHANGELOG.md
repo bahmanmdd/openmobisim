@@ -3,7 +3,7 @@
 Each release lists what changed for a user. Versions follow [semantic versioning](https://semver.org/); before 1.0,
 a minor version may change the interface, and says so here.
 
-## 0.1.0 — unreleased
+## 0.1.0 — 2026-10-20
 
 The first public release: **an alpha, for testing by students and colleagues.** The tests are not complete; please use
 it and [report issues](https://github.com/bahmanmdd/openmobisim/issues).

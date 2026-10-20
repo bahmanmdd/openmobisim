@@ -134,7 +134,7 @@ For a study, bring your own network, timetable and demand in the standard format
 ## Cite
 
 If you use openmobisim in work you publish, cite the version you used — GitHub's "Cite this repository" gives the
-reference from [`CITATION.cff`](CITATION.cff) with its DOI ⟨Zenodo DOI at the release⟩ — and keep the run fingerprint
+reference from [`CITATION.cff`](CITATION.cff) with its DOI [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23497688.svg)](https://doi.org/10.5281/zenodo.23497688) — and keep the run fingerprint
 of every result you report. If you use the starter cases, cite their data too [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23472146.svg)](https://doi.org/10.5281/zenodo.23472146): Madadi, B. (2026). *openmobisim starter cases: multimodal networks and synthetic demand for four European cities and two benchmark networks*
 (v1). Zenodo. [https://doi.org/10.5281/zenodo.23472146](https://doi.org/10.5281/zenodo.23472146).
 

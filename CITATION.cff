@@ -11,12 +11,12 @@ authors:
     orcid: "https://orcid.org/0000-0002-7130-8825"
   - name: "The openmobisim authors"
 version: 0.1.0
-date-released: "2026-00-00"        # the release day
+date-released: "2026-10-20"
 license: Apache-2.0
 repository-code: "https://github.com/bahmanmdd/openmobisim"
 identifiers:
   - type: doi
-    value: "10.5281/zenodo.0000000"  # minted by Zenodo at the release
+    value: "10.5281/zenodo.23497688"
     description: The DOI of this version
 keywords:
   - dynamic traffic assignment
