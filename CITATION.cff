@@ -9,7 +9,6 @@ authors:
     family-names: Madadi
     affiliation: "EMob-Lab (Energy & Mobility Laboratory), Université Gustave Eiffel & ENTPE"
     orcid: "https://orcid.org/0000-0002-7130-8825"
-  - name: "The openmobisim authors"
 version: 0.1.0
 date-released: "2026-10-20"
 license: Apache-2.0
