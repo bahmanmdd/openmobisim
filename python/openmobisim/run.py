@@ -519,12 +519,12 @@ class Run:
           ``convergence_gap`` and of what ``gap_tolerance`` stops on.
 
         **The full gaps**, measured at every loading over every trip, in the choice model's
-        own currency. ``g``, an alternative's **generalised minutes**, is its utility under the
-        choice model (without the path-size term, which only corrects for routes that overlap)
-        divided by the traveller's time coefficient: a minute of travel counts one, a euro
-        ``beta_cost_eur / beta_time_min`` minutes. Nothing stops or judges the run on them
-        (``gap_tolerance``, ``convergence_gap`` and ``convergence_verdict`` read the gaps above);
-        ``nan`` for a run of one loading. ``gap_trips()`` gives each trip's numbers.
+        own currency (``gap_currency``). ``g``, an alternative's **generalised minutes**, is its
+        utility under the choice model (without the path-size term, which only corrects for
+        routes that overlap) divided by the traveller's time coefficient: a minute of travel
+        counts one, a euro ``beta_cost_eur / beta_time_min`` minutes. Nothing stops or judges the
+        run on them (``gap_tolerance``, ``convergence_gap`` and ``convergence_verdict`` read the
+        gaps above); ``nan`` for a run of one loading. ``gap_trips()`` gives each trip's numbers.
 
         * ``gap_route`` — **the full route gap**: over every trip that drove a car route in this
           loading (given the car, or choosing its mode and keeping a car alternative), how much
@@ -556,17 +556,24 @@ class Run:
         * ``unfinished_cost_share`` — of what the route gap's trips paid (their ``g``, summed),
           the share that trips still under way at the end had still to pay; 0 when every trip
           arrived.
-        * ``gap_currency`` — what the full gaps are measured in: ``"utility"`` (generalised
-          minutes, as above) or ``"time"`` (door-to-door minutes: a model that gives no
-          utilities, such as ``"deterministic"`` or one written in Python, or a time coefficient
-          that is not below 0). Text, so not in ``kpis.parquet``, and not in a run read back with
-          ``Run.open``.
 
         The numbers up to ``gap_flow_excess`` are also in ``kpis.parquet``, a row per metric
         per iteration, and so are the itinerary gaps (under their modes, as ``gap``),
-        ``hub_mismatch_s``, ``mode_changed_share`` and the full gaps but ``gap_currency``.
+        ``hub_mismatch_s``, ``mode_changed_share`` and the full gaps.
         """
         return Columns(self._summary.convergence)
+
+    @property
+    def gap_currency(self) -> str:
+        """What the full gaps of ``convergence()`` and ``gap_trips()`` are measured in.
+
+        ``"utility"``: generalised minutes, each alternative's utility under the choice model
+        (without the path-size term) over the traveller's time coefficient. ``"time"``:
+        door-to-door minutes, for a model that gives no utilities (``"deterministic"``, or one
+        written in Python) or a time coefficient that is not below 0. Not in the run's files, so
+        a run read back with ``Run.open`` has none.
+        """
+        return self._summary.gap_currency
 
     def gap_trips(self) -> Columns | None:
         """Each trip's numbers in the full gaps of the last loading, in generalised minutes.
@@ -580,9 +587,8 @@ class Run:
         better); ``g_expected_min`` what the choice model expects of it (over every mode for a
         trip choosing its mode, over its car routes for the others); ``g_best_all_min`` the best
         of its whole choice set, every mode (``nan`` for a trip given its mode); ``unfinished``
-        whether it was still under way at the end. The units are
-        ``convergence()["gap_currency"]``; the sums are ``convergence()``'s ``gap_route`` and
-        ``gap_mode``, at its last row.
+        whether it was still under way at the end. The units are ``gap_currency``'s; the sums
+        are ``convergence()``'s ``gap_route`` and ``gap_mode``, at its last row.
 
         In memory, from the run that produced it: ``None`` for a run of one loading, and a run
         read back with ``Run.open`` has none.

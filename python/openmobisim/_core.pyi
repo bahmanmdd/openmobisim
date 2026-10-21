@@ -772,7 +772,7 @@ class RunSummary:
     #: The route update's name: ``"none"`` if the route sets stayed as the method made them.
     route_update: str
     #: What each iteration showed, as arrays by name (see ``Run.convergence``).
-    convergence: dict[str, npt.NDArray[np.float64] | npt.NDArray[np.uint32] | list[str]]
+    convergence: dict[str, npt.NDArray[np.float64] | npt.NDArray[np.uint32]]
     #: Whether the strategy stopped before its most iterations, having converged.
     converged: bool
     #: The run's fingerprint: 16 hex digits of a hash of every input that decides its results.
@@ -803,6 +803,8 @@ class RunSummary:
     route_choices: RouteChoices
     #: The full gaps' per-trip numbers of the last loading (``Run.gap_trips``), or ``None``.
     gap_trips: dict[str, npt.NDArray[Any]] | None
+    #: What the full gaps are measured in: ``"utility"`` or ``"time"`` (``Run.gap_currency``).
+    gap_currency: str
     #: Every call of the timetable with its times and passengers (see ``Run.transit_calls``).
     transit_calls: dict[str, Any] | None
     #: How transit went, by name (see ``Run.transit_summary``).

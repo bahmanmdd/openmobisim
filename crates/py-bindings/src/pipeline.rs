@@ -458,6 +458,9 @@ pub struct PyRunSummary {
     /// one loading.
     #[pyo3(get)]
     pub gap_trips: Option<Py<PyDict>>,
+    /// What the full gaps are measured in: `"utility"` or `"time"` (S293).
+    #[pyo3(get)]
+    pub gap_currency: String,
     /// The realised routes of the trips that re-routed and arrived: `trip` and `links`.
     #[pyo3(get)]
     pub route_realised: Py<PyDict>,
@@ -656,7 +659,7 @@ fn convergence_arrays(
     dict.set_item("mode_changed_share", floats(|r| r.mode_changed_share).into_pyarray(py))?;
     dict.set_item("mode_changed_floor", floats(|r| r.mode_changed_floor).into_pyarray(py))?;
     dict.set_item("itinerary_gap_excess", floats(|r| r.itinerary_gap_excess).into_pyarray(py))?;
-    // The full gaps (S293), and what they are measured in.
+    // The full gaps (S293); what they are measured in is the run's `gap_currency`.
     dict.set_item("gap_route", floats(|r| r.gap_route).into_pyarray(py))?;
     dict.set_item("gap_route_expected", floats(|r| r.gap_route_expected).into_pyarray(py))?;
     dict.set_item("gap_route_excess", floats(|r| r.gap_route_excess).into_pyarray(py))?;
@@ -671,7 +674,6 @@ fn convergence_arrays(
     dict.set_item("excess_min_route", floats(|r| r.excess_min_route).into_pyarray(py))?;
     dict.set_item("excess_min_mode", floats(|r| r.excess_min_mode).into_pyarray(py))?;
     dict.set_item("unfinished_cost_share", floats(|r| r.unfinished_cost_share).into_pyarray(py))?;
-    dict.set_item("gap_currency", reports.iter().map(|r| r.gap_currency).collect::<Vec<_>>())?;
     dict.set_item(
         "routes_added",
         reports.iter().map(|r| r.routes_added).collect::<Vec<_>>().into_pyarray(py),
@@ -1492,6 +1494,7 @@ pub fn run_pipeline(
         gridlock,
         route_changes,
         gap_trips,
+        gap_currency: result.iterations.last().map_or("time", |r| r.gap_currency).to_string(),
         route_realised,
         parking_bins: parking_bins_table,
         parking_places: parking_places_table,
