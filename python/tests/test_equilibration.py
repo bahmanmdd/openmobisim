@@ -23,7 +23,14 @@ FIELDS = [
     "gap_network_excess", "incomplete_share", "gap_transit", "gap_car_transit",
     "gap_bike_transit", "hub_mismatch_s", "gap_car", "gap_bike", "gap_walk", "mode_changed_share",
     "itinerary_recosted", "reroutes", "reroute_searches", "mode_changed_floor",
-    "itinerary_gap_excess", "completed_people",
+    "itinerary_gap_excess", "completed_people", "gap_route", "gap_route_expected",
+    "gap_route_excess", "gap_route_network", "gap_route_network_excess", "gap_mode",
+    "gap_mode_expected", "gap_mode_excess", "excess_min_route", "excess_min_mode",
+    "unfinished_cost_share",
+]  # fmt: skip
+GAP_TRIPS = [
+    "trip", "g_chosen_min", "g_best_set_min", "g_best_network_min", "g_expected_min",
+    "g_best_all_min", "unfinished",
 ]  # fmt: skip
 
 
@@ -471,3 +478,65 @@ def test_a_run_where_trips_choose_their_mode_gets_a_verdict():
     floor, share = c["mode_changed_floor"][1:], c["mode_changed_share"][1:]
     assert np.isfinite(floor).all() and ((floor >= 0) & (floor <= 1)).all()
     assert np.isfinite(share).all()
+
+
+def test_the_full_mode_gap_covers_every_trip_choosing_its_mode():
+    # S293: every trip that chose its mode and travelled is measured against the best of its whole
+    # choice set, every mode, at every loading; none took better than the best. With walking made
+    # much worse, the choosers settle and what the model does not explain is small.
+    run = scenario(
+        trips=500,
+        classes={"commuter": (True, True, False)},
+        modes=("car", "bike", "walk"),
+        equilibration_options={"iterations": 8},
+        choice_model="logit",
+        choice_options={"beta_mode_walk": -10.0},
+        master_seed=3,
+    ).run("eq-mode-gap", quiet=True)
+    c = run.convergence()
+    assert run.gap_currency == "utility"
+    assert np.isfinite(c["gap_mode"]).all() and np.isfinite(c["gap_mode_expected"]).all()
+    g, m = run.gap_trips(), run.trip_modes()
+    assert list(g) == GAP_TRIPS
+    pairs = zip(m["mode_choice"], m["mode"], strict=True)
+    chose = [t for t, (choosing, mode) in enumerate(pairs) if choosing and mode is not None]
+    measured = np.isfinite(g["g_best_all_min"])
+    assert sorted(g["trip"][measured].tolist()) == chose
+    assert (g["g_best_all_min"][measured] <= g["g_chosen_min"][measured]).all()
+    assert abs(c["gap_mode_excess"][-1]) < 0.05, c["gap_mode_excess"]
+
+
+def test_a_model_without_utilities_measures_the_full_gaps_in_time(tmp_path):
+    # S293: a Python model with probabilities and no utilities. The full gaps are then in
+    # door-to-door minutes, and with every trip finished they are the time gaps.
+    class Knowing:
+        name = "knowing"
+        sampled = False
+        attributes = ["time_min"]
+
+        def choose(self, batch):
+            return np.zeros(len(batch), dtype=np.int64)
+
+        def probabilities(self, batch):
+            one_hot = np.zeros(len(batch.identity))
+            one_hot[batch.offsets[:-1]] = 1.0
+            return one_hot
+
+    run = scenario(
+        choice_model=Knowing(), equilibration="msa", equilibration_options={"iterations": 3}
+    ).run("eq-time", output_dir=str(tmp_path / "eq-time"), quiet=True)
+    c = run.convergence()
+    assert run.gap_currency == "time"
+    assert (c["incomplete_share"] == 0).all(), "every trip finished"
+    assert np.allclose(c["gap_route"], c["gap"], rtol=0, atol=1e-9)
+    assert np.allclose(c["gap_route_expected"], c["gap_expected"], rtol=0, atol=1e-9)
+    assert np.isnan(c["gap_mode"]).all(), "no trip chooses its mode"
+    g = run.gap_trips()
+    assert len(g["trip"]) == run.completion["total_trips"], "every car trip, each its row"
+    assert (g["g_best_network_min"] <= g["g_best_set_min"]).all() and not g["unfinished"].any()
+    # Kept in memory only: a run read back from its folder has neither.
+    back = ms.Run.open(tmp_path / "eq-time")
+    with pytest.raises(RuntimeError, match="gap_trips"):
+        back.gap_trips()
+    with pytest.raises(RuntimeError, match="gap_currency"):
+        back.gap_currency  # noqa: B018

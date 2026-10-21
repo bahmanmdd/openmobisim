@@ -32,10 +32,11 @@ use openmobisim_core_sim::equilibration::{
     GAP_ACCEPTABLE, GAP_GOOD, GapVerdict, Options, Registry, gap_verdict,
 };
 use openmobisim_core_sim::{
-    Equilibration, FlowMotor, IterationReport, LinkTimes, Run, RunResult, relative_time_change,
+    Equilibration, FlowMotor, IterationReport, LinkTimes, LinkValues, Run, RunResult, ValueLayer,
+    relative_time_change,
 };
 use openmobisim_core_types::diagnostics::Diagnostics;
-use openmobisim_core_types::ids::{EntityId, LinkId};
+use openmobisim_core_types::ids::{EntityId, LinkId, TripId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 
@@ -99,10 +100,19 @@ fn trips(n: u32, spread_s: u32) -> Vec<RawTrip> {
         .collect()
 }
 
+/// Each trip's departure in seconds, by trip index, as a run of `trips(n, spread_s)` holds them.
+fn departures(n: u32, spread_s: u32) -> Vec<f64> {
+    let (_, raw) =
+        build_travellers(trips(n, spread_s), Vec::new(), &car_owning(), 1, &mut Diagnostics::new())
+            .expect("buildable");
+    (0..raw.len()).map(|t| f64::from(raw.departure(TripId::new(t)).get())).collect()
+}
+
 fn car_owning() -> ClassDefaults {
     ClassDefaults::new().with_default("commuter", Ownership { car: true, ..Ownership::NONE })
 }
 
+#[derive(Clone)]
 struct Setup {
     network: Arc<RoadNetwork>,
     level: Option<FidelityLevel>,
@@ -113,6 +123,8 @@ struct Setup {
     seed: u64,
     /// A route-set method by name; the default (`penalty`) if `None`.
     generator: Option<&'static str>,
+    /// The window's end, in seconds.
+    window: u32,
 }
 
 impl Setup {
@@ -126,6 +138,7 @@ impl Setup {
             equilibration: ("msa", vec![("iterations", 8.0)]),
             seed: 1,
             generator: None,
+            window: 3600,
         }
     }
 
@@ -138,9 +151,13 @@ impl Setup {
             &mut Diagnostics::new(),
         )
         .expect("buildable");
-        let mut run =
-            Run::new(self.network.clone(), Arc::new(travellers), Arc::new(raw), Second(3600))
-                .with_master_seed(self.seed);
+        let mut run = Run::new(
+            self.network.clone(),
+            Arc::new(travellers),
+            Arc::new(raw),
+            Second(self.window),
+        )
+        .with_master_seed(self.seed);
         if let Some(level) = self.level {
             let turns = Arc::new(TurnTable::build(&self.network, SignalDefaults::SHIPPED));
             run = run.with_flow_motor(FlowMotor::Ltm { turns, step: Duration(60.0), level });
@@ -326,6 +343,15 @@ fn a_bin_nobody_entered_after_a_slow_one_carries_the_slow_time_forward_down_to_f
     );
     // A route entering ab at 70 s takes 140 s, reaching bc at 210 s (bin 3): free flow.
     assert!((times.route_seconds(&[ab, bc], 70.0) - (140.0 + free(bc))).abs() < 1e-9);
+    // Held (S293, what costs a trip still under way at the end): the same up to a link's last
+    // recorded bin, that bin's time after it, however long after; between recorded bins the carry.
+    assert!((times.link_seconds_held(ab, 10.0) - 200.0).abs() < 1e-9);
+    assert!((times.link_seconds_held(ab, 70.0) - 200.0).abs() < 1e-9, "after the last: held");
+    assert!((times.link_seconds_held(ab, 1e6) - 200.0).abs() < 1e-9, "long after");
+    assert!((times.link_seconds_held(bc, 70.0) - 140.0).abs() < 1e-9, "between: carried");
+    assert!((times.link_seconds_held(bc, 190.0) - 10.0).abs() < 1e-9, "the last recorded bin's");
+    let none = LinkTimes::free_flow(&net);
+    assert!((none.link_seconds_held(ab, 500.0) - free(ab)).abs() < 1e-12, "nothing recorded");
 }
 
 #[test]
@@ -650,6 +676,217 @@ fn a_tolerance_stops_the_run_only_once_the_disequilibrium_has_stayed_below_it() 
     }
     .go();
     assert!(loose.converged && loose.iterations.len() < 12, "{}", loose.iterations.len());
+}
+
+// --- the full gap, in the choice model's currency (S293) -----------------------------------
+
+#[test]
+fn on_time_alone_the_full_route_gap_is_the_gap() {
+    // Level 0 (every trip finishes), both roads offered, the default logit with no money: an
+    // alternative's generalised minutes are its minutes, so the full route gap is the gap and the
+    // model's expectation of it the expected gap, from the first loading on.
+    let result = setup_level0(6_000, "logit", &[("beta_cost_eur", 0.0)]).go();
+    assert_eq!(result.iterations.len(), 4);
+    for it in &result.iterations {
+        assert_eq!(it.gap_currency, "utility");
+        assert!(it.incomplete_share.abs() < 1e-12, "every trip finished");
+        assert!(
+            (it.gap_route - it.gap).abs() < 1e-9,
+            "iteration {}: {} against {}",
+            it.iteration,
+            it.gap_route,
+            it.gap
+        );
+        assert!(
+            (it.gap_route_expected - it.gap_expected).abs() < 1e-9,
+            "iteration {}: {} against {}",
+            it.iteration,
+            it.gap_route_expected,
+            it.gap_expected
+        );
+        assert!(it.unfinished_cost_share.abs() < 1e-12);
+        assert!(it.gap_mode.is_nan(), "no trip chooses its mode");
+    }
+}
+
+#[test]
+fn money_moves_the_generalised_minutes_and_not_the_time() {
+    // Two cents of toll on the fast road and the default logit (-0.2 per minute, -1.2 per euro):
+    // the fast road is still the best (its time plus 0.12 minutes against the slow road's time),
+    // and its generalised minutes are its time plus the toll at 1.2 / 0.2 = 6 minutes a euro.
+    let toll = 0.02;
+    let network = Arc::new(bottleneck());
+    let id = |n: &str| network.link_external_ids().typed_id_of::<LinkId>(n).expect("link").raw();
+    let (fast, slow1, slow2) = (id("fast"), id("slow1"), id("slow2"));
+    let values = (0..network.link_count()).map(|l| if l == fast { toll } else { 0.0 }).collect();
+    let tolls = LinkValues::new()
+        .with_column(ValueLayer::Road, "toll_eur", values, &[])
+        .expect("a toll column");
+    let (n, spread_s) = (500, 900);
+    let setup = Setup { network: network.clone(), ..setup_level0(n, "logit", &[]) };
+    let mut run = setup.run().with_link_values(tolls);
+    let result = run.execute(&mut Diagnostics::new());
+    let times = run.final_link_times().expect("an iterated run keeps its times");
+    let gap = result.gap_trips.as_ref().expect("measured");
+    let departure = departures(n, spread_s);
+    let mut measured = 0;
+    for t in (0..gap.len()).filter(|&t| !gap.g_best_set[t].is_nan()) {
+        measured += 1;
+        let departure = departure[t];
+        let fast_min = times.route_seconds(&[fast], departure) / 60.0;
+        let slow_min = times.route_seconds(&[slow1, slow2], departure) / 60.0;
+        assert!(fast_min + 6.0 * toll < slow_min, "the tolled road stays the best");
+        let above = gap.g_best_set[t] - fast_min;
+        assert!((above - toll * -1.2 / -0.2).abs() < 1e-9, "trip {t}: {above} minutes above");
+    }
+    assert_eq!(measured, n, "every trip is measured");
+}
+
+/// Three ways from `o` to `d`, each of three 200 m residential links: two share their first link
+/// (`oa`), the third shares none.
+fn three_ways() -> RoadNetwork {
+    let mut b = RoadNetworkBuilder::new();
+    for (n, x, y) in [
+        ("o", 4.8000, 45.7000),
+        ("a", 4.8005, 45.7003),
+        ("p", 4.8010, 45.7006),
+        ("q", 4.8010, 45.7001),
+        ("r", 4.8005, 45.6995),
+        ("s", 4.8010, 45.6994),
+        ("d", 4.8015, 45.7000),
+    ] {
+        b.add_node(n, LonLat::new(x, y));
+    }
+    let mut spec = LinkSpec::new(RoadClass::Residential);
+    spec.length_m = Some(200.0);
+    for (from, to) in [("o", "a"), ("a", "p"), ("p", "d"), ("a", "q"), ("q", "d")] {
+        b.add_link(format!("{from}{to}"), from, to, spec);
+    }
+    for (from, to) in [("o", "r"), ("r", "s"), ("s", "d")] {
+        b.add_link(format!("{from}{to}"), from, to, spec);
+    }
+    b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable")
+}
+
+#[test]
+fn the_overlap_term_is_out_of_the_generalised_minutes() {
+    // The three ways take the same time and cost nothing. The two that share a link have a path
+    // size below 1, so the logit, with its overlap term, takes the third more often; but the term
+    // corrects the errors of overlapping routes, it is no value of a route, so whichever way a trip
+    // took it took the best.
+    let network = Arc::new(three_ways());
+    let setup = Setup {
+        network: network.clone(),
+        ..setup_level0(3_000, "logit", &[("beta_cost_eur", 0.0)])
+    };
+    let result = setup.go();
+    let sets = result.route_sets.as_ref().expect("sets");
+    assert_eq!(sets.route_range(0).len(), 3, "the three ways");
+    let path_size = sets.attributes(&network).path_size;
+    let separate = (0..3).find(|&k| (path_size[k] - 1.0).abs() < 1e-12).expect("one shares none");
+    assert!((0..3).filter(|&k| k != separate).all(|k| path_size[k] < 0.9), "{path_size:?}");
+    let counts: Vec<usize> = (0..3).map(|k| took(&result, k)).collect();
+    assert!(
+        (0..3).filter(|&k| k != separate).all(|k| counts[k] > 0 && counts[k] < counts[separate]),
+        "the overlap term weighs in the choice: {counts:?}"
+    );
+    let gap = result.gap_trips.as_ref().expect("measured");
+    for t in 0..gap.len() {
+        assert!((gap.g_chosen[t] - gap.g_best_set[t]).abs() < 1e-12, "trip {t}");
+    }
+    assert!(result.iterations.iter().all(|it| it.gap_route.abs() < 1e-12));
+}
+
+#[test]
+fn a_trip_still_under_way_costs_more_not_nothing() {
+    // The bottleneck's jam, cut at 20 minutes, after the last departure (15 minutes) while its
+    // queue clears, against the same run with the window long enough for every trip to finish:
+    // the first loading is the same until the cut, and the trips still on the road at it count as
+    // what they paid plus what they still had to drive, the link they stood on in full, at the
+    // last recorded times held. They cost more than leaving them out, and here more than they
+    // did. (Cut while the queue still grows, the last recorded time is below what those behind
+    // it take, and the cut run can read below the long one.)
+    let (n, spread_s, end) = (800, 900, 1_200);
+    let cut = Setup {
+        equilibration: ("msa", vec![("iterations", 3.0)]),
+        window: end,
+        ..Setup::bottleneck(n)
+    };
+    let long = Setup { window: 7_200, ..cut.clone() };
+    let (cut_result, long_result) = (cut.go(), long.go());
+    let (c0, l0) = (cut_result.iterations[0], long_result.iterations[0]);
+    assert!(c0.incomplete_share > 0.03 && l0.incomplete_share.abs() < 1e-12);
+    assert!(c0.gap_route > c0.gap, "not nothing: {} against {}", c0.gap_route, c0.gap);
+    assert!(c0.gap_route > l0.gap_route, "more: {} against {}", c0.gap_route, l0.gap_route);
+    assert!(c0.unfinished_cost_share > 0.0 && l0.unfinished_cost_share.abs() < 1e-12);
+    // Every trip still under way at the end paid at least what it had travelled by then: here at
+    // the last loading of a jam nobody can leave (the fast road alone in the set).
+    let (n, end) = (1_500, 1_200);
+    let jam = Setup {
+        generator: Some("shortest"),
+        equilibration: ("msa", vec![("iterations", 2.0)]),
+        window: end,
+        ..Setup::bottleneck(n)
+    }
+    .go();
+    let gap = jam.gap_trips.as_ref().expect("measured");
+    let unfinished: Vec<usize> = (0..gap.len()).filter(|&t| gap.unfinished[t]).collect();
+    assert!(!unfinished.is_empty());
+    let departure = departures(n, spread_s);
+    for &t in &unfinished {
+        let departure = departure[t];
+        assert!(gap.g_chosen[t] >= (f64::from(end) - departure) / 60.0, "trip {t}");
+        assert!(gap.g_remaining[t] > 0.0, "trip {t}: something left to drive");
+    }
+    assert!(jam.iterations.last().unwrap().unfinished_cost_share > 0.0);
+}
+
+#[test]
+fn the_best_over_the_network_is_never_above_the_best_of_the_set() {
+    // Only the fast road is in the set ("shortest"): the slow road, several times faster once the
+    // fast one jams, is found by the search for every trip at every loading, not a sample at the
+    // last; the network's best is never above the set's. A window in which every trip finishes,
+    // so the gap against the one-route set is nothing.
+    let result = Setup {
+        generator: Some("shortest"),
+        equilibration: ("msa", vec![("iterations", 3.0)]),
+        window: 21_600,
+        ..Setup::bottleneck(1_500)
+    }
+    .go();
+    let gap = result.gap_trips.as_ref().expect("measured");
+    let measured: Vec<usize> = (0..gap.len()).filter(|&t| !gap.g_best_set[t].is_nan()).collect();
+    assert_eq!(measured.len(), 1_500);
+    assert!(measured.iter().all(|&t| gap.g_best_network[t] <= gap.g_best_set[t]));
+    for it in &result.iterations {
+        assert!(it.gap_route.abs() < 1e-12, "against the set: {}", it.gap_route);
+        assert!(it.gap_route_network >= it.gap_route, "iteration {}", it.iteration);
+    }
+    assert!(result.iterations.last().unwrap().gap_route_network > 1.0, "the hidden road");
+}
+
+#[test]
+fn the_full_gap_is_the_same_on_one_thread_as_on_seven() {
+    // The searches over the network run in parallel and are summed in trip order: one thread and
+    // seven give every number to the bit, and the run's own results with them.
+    let setup = Setup {
+        equilibration: ("msa", vec![("iterations", 3.0)]),
+        window: 1_200,
+        ..Setup::bottleneck(800)
+    };
+    let on = |threads: usize| {
+        setup
+            .run()
+            .with_threads(std::num::NonZeroUsize::new(threads))
+            .execute(&mut Diagnostics::new())
+    };
+    let (one, seven) = (on(1), on(7));
+    assert_eq!(one.iterations, seven.iterations);
+    assert_eq!(one.gap_trips, seven.gap_trips);
+    assert_eq!(one.route_choices, seven.route_choices);
+    assert_eq!(one.events, seven.events);
+    assert!(one.iterations.iter().all(|it| it.gap_route_network.is_finite()));
 }
 
 // --- what the model is told, and how a strategy is chosen ----------------------------------
