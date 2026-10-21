@@ -1450,6 +1450,7 @@ impl Run {
             );
             clock = timings.lap("loading", Some(iteration), clock);
             let mut report = IterationReport::unmeasured(iteration);
+            report.gap_currency = currency.label();
             report.reselected_share = arrived_by.0;
             report.changed_share = arrived_by.1;
             report.mode_changed_share = mode_changed_by;
@@ -1613,6 +1614,7 @@ impl Run {
                     }
                     // The full gap (S293): every car trip of the route choice, at every loading.
                     chooser.gap(&route_choices, &times, next, &ended, &currency, &mut gap_trips)?;
+                    gap_trips.report_into(&mut report);
                     clock = timings.lap("gap", Some(iteration), clock);
                     last_gap = Some(gap_trips);
                     times_now = Some(times);

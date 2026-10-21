@@ -179,6 +179,51 @@ pub struct IterationReport {
     /// share (by traveller weight) whose mode changed on the way to this iteration's
     /// loading; `NaN` at the first, or without mode choice.
     pub mode_changed_share: f64,
+    /// **The full route gap** (S293, [`crate::gap`]): over **every** trip that drove a car route
+    /// in this loading (given the car, or choosing its mode and keeping a car alternative), how
+    /// much more the routes taken cost than the best route each trip was offered, in the choice
+    /// model's own currency ([`Self::gap_currency`]), `Σ w (g_chosen − g_best) / Σ w g_best`,
+    /// both at the trip's departure on this loading's link times. **A trip still under way at
+    /// the end counts**, as what it paid plus what it still had to pay ([`crate::gap::Ended`]).
+    /// Measured at every loading; `NaN` where nothing was (a run of one loading). Read by
+    /// nothing that stops or judges the run.
+    pub gap_route: f64,
+    /// What the choice model itself expects [`Self::gap_route`] to be: the same sum with each
+    /// trip's expected `g` under the model's probabilities over the routes it was offered in
+    /// place of the route's; `NaN` for a model that gives no probabilities.
+    pub gap_route_expected: f64,
+    /// `gap_route − gap_route_expected`: the route gap the model does not explain.
+    pub gap_route_excess: f64,
+    /// [`Self::gap_route`] against the **whole network**: the best of the routes offered and
+    /// the route a bounded time-dependent search finds for the trip (the fastest; where money
+    /// weighs, a route cheaper in `g` may exist, so this gap is a lower bound). Every trip.
+    pub gap_route_network: f64,
+    /// Its disequilibrium: [`Self::gap_route_network`] less what the model expects **inside the
+    /// set**, `Σ w (g_chosen − g_expected + g_best − g_best_network) / Σ w g_best_network`, so a
+    /// route the set was missing counts in full.
+    pub gap_route_network_excess: f64,
+    /// **The full mode gap**: over every trip choosing its mode, how much more the alternative
+    /// taken costs than the best of its whole choice set, every mode (as planned on this
+    /// loading's costs), `Σ w (g_chosen − g_best_all) / Σ w g_best_all`; `NaN` without mode
+    /// choice.
+    pub gap_mode: f64,
+    /// What the choice model itself expects [`Self::gap_mode`] to be, from its probabilities over
+    /// the whole choice set.
+    pub gap_mode_expected: f64,
+    /// `gap_mode − gap_mode_expected`.
+    pub gap_mode_excess: f64,
+    /// The route gap's excess as a cost per traveller: `Σ w (g_chosen − g_expected) / Σ w`,
+    /// in generalised minutes (the average excess cost less what the model expects).
+    pub excess_min_route: f64,
+    /// The same for the trips choosing their mode, over their whole choice sets.
+    pub excess_min_mode: f64,
+    /// Of what the route gap's trips paid (`Σ w g_chosen`), the share that is what trips still
+    /// under way at the end had still to pay; 0 when every trip arrived.
+    pub unfinished_cost_share: f64,
+    /// What the full gaps are measured in: `"utility"` (generalised minutes from the choice
+    /// model's utilities) or `"time"` (door-to-door minutes: a model without utilities, or a time
+    /// coefficient not below 0).
+    pub gap_currency: &'static str,
 }
 
 /// A disequilibrium below this is good (5 % on the disequilibrium).
@@ -258,6 +303,18 @@ impl PartialEq for IterationReport {
             reroute_searches,
             hub_mismatch_s,
             mode_changed_share,
+            gap_route,
+            gap_route_expected,
+            gap_route_excess,
+            gap_route_network,
+            gap_route_network_excess,
+            gap_mode,
+            gap_mode_expected,
+            gap_mode_excess,
+            excess_min_route,
+            excess_min_mode,
+            unfinished_cost_share,
+            gap_currency,
         } = self;
         let floats = [
             (*reselected_share, other.reselected_share),
@@ -278,6 +335,17 @@ impl PartialEq for IterationReport {
             (*mode_changed_floor, other.mode_changed_floor),
             (*hub_mismatch_s, other.hub_mismatch_s),
             (*mode_changed_share, other.mode_changed_share),
+            (*gap_route, other.gap_route),
+            (*gap_route_expected, other.gap_route_expected),
+            (*gap_route_excess, other.gap_route_excess),
+            (*gap_route_network, other.gap_route_network),
+            (*gap_route_network_excess, other.gap_route_network_excess),
+            (*gap_mode, other.gap_mode),
+            (*gap_mode_expected, other.gap_mode_expected),
+            (*gap_mode_excess, other.gap_mode_excess),
+            (*excess_min_route, other.excess_min_route),
+            (*excess_min_mode, other.excess_min_mode),
+            (*unfinished_cost_share, other.unfinished_cost_share),
         ];
         *iteration == other.iteration
             && *completed == other.completed
@@ -287,6 +355,7 @@ impl PartialEq for IterationReport {
             && *itinerary_recosted == other.itinerary_recosted
             && *reroutes == other.reroutes
             && *reroute_searches == other.reroute_searches
+            && *gap_currency == other.gap_currency
             && floats.iter().all(|(a, b)| a.to_bits() == b.to_bits())
             && itinerary_gap.map(f64::to_bits) == other.itinerary_gap.map(f64::to_bits)
     }
@@ -306,7 +375,8 @@ impl IterationReport {
         }
     }
 
-    /// A report with the run's numbers and nothing else measured.
+    /// A report with the run's numbers and nothing else measured (its [`Self::gap_currency`]
+    /// `"time"` until a run says what its gaps are measured in).
     #[must_use]
     pub fn unmeasured(iteration: u32) -> Self {
         Self {
@@ -337,6 +407,18 @@ impl IterationReport {
             mode_changed_floor: f64::NAN,
             hub_mismatch_s: f64::NAN,
             mode_changed_share: f64::NAN,
+            gap_route: f64::NAN,
+            gap_route_expected: f64::NAN,
+            gap_route_excess: f64::NAN,
+            gap_route_network: f64::NAN,
+            gap_route_network_excess: f64::NAN,
+            gap_mode: f64::NAN,
+            gap_mode_expected: f64::NAN,
+            gap_mode_excess: f64::NAN,
+            excess_min_route: f64::NAN,
+            excess_min_mode: f64::NAN,
+            unfinished_cost_share: f64::NAN,
+            gap_currency: "time",
         }
     }
 }

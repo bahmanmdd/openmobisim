@@ -29,6 +29,7 @@ use openmobisim_core_choice::{ChoiceBatch, ChoiceError, ChoiceModel};
 use openmobisim_core_demand::{Travellers, Trips};
 use openmobisim_core_types::ids::{EntityId, TripId};
 
+use crate::equilibration::IterationReport;
 use crate::link_times::LinkTimes;
 
 /// How a run's gaps are costed: in generalised minutes, from the choice model's utilities, or
@@ -63,6 +64,12 @@ impl Currency {
             .all(|b| b.is_some_and(|b| b.is_finite() && b < 0.0))
             .then(|| coefficients.iter().map(|b| b.unwrap_or(f64::NAN)).collect());
         Ok(Self { by_class })
+    }
+
+    /// `"utility"` or `"time"`: what the gaps are measured in
+    /// ([`IterationReport::gap_currency`]).
+    pub(crate) fn label(&self) -> &'static str {
+        if self.by_class.is_some() { "utility" } else { "time" }
     }
 
     /// The generalised minutes of every alternative of `batch`, whose door-to-door seconds are
@@ -233,5 +240,51 @@ impl GapTrips {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.g_chosen.is_empty()
+    }
+
+    /// The loading's full gaps, summed over the trips in trip order into `report`'s
+    /// [`IterationReport::gap_route`] to [`IterationReport::unfinished_cost_share`]: the route gap
+    /// over every trip with a [`Self::g_best_set`], the mode gap over every trip with a
+    /// [`Self::g_best_all`], each weighted by its people. `NaN` where no trip is measured.
+    pub(crate) fn report_into(&self, report: &mut IterationReport) {
+        let ratio = |a: f64, b: f64| if b > 0.0 { a / b } else { f64::NAN };
+        // The route gap.
+        let (mut people, mut chosen, mut best, mut expected) = (0.0, 0.0, 0.0, 0.0);
+        let (mut network, mut network_excess, mut excess, mut remaining) = (0.0, 0.0, 0.0, 0.0);
+        for t in (0..self.len()).filter(|&t| !self.g_best_set[t].is_nan()) {
+            let w = self.weight[t];
+            people += w;
+            chosen += w * self.g_chosen[t];
+            best += w * self.g_best_set[t];
+            expected += w * self.g_expected_set[t];
+            network += w * self.g_best_network[t];
+            network_excess += w
+                * (self.g_chosen[t] - self.g_expected_set[t] + self.g_best_set[t]
+                    - self.g_best_network[t]);
+            excess += w * (self.g_chosen[t] - self.g_expected_set[t]);
+            remaining += w * self.g_remaining[t];
+        }
+        report.gap_route = ratio(chosen - best, best);
+        report.gap_route_expected = ratio(expected - best, best);
+        report.gap_route_excess = report.gap_route - report.gap_route_expected;
+        report.gap_route_network = ratio(chosen - network, network);
+        report.gap_route_network_excess = ratio(network_excess, network);
+        report.excess_min_route = ratio(excess, people);
+        report.unfinished_cost_share = ratio(remaining, chosen);
+        // The mode gap.
+        let (mut people, mut chosen, mut best, mut expected, mut excess) =
+            (0.0, 0.0, 0.0, 0.0, 0.0);
+        for t in (0..self.len()).filter(|&t| !self.g_best_all[t].is_nan()) {
+            let w = self.weight[t];
+            people += w;
+            chosen += w * self.g_chosen[t];
+            best += w * self.g_best_all[t];
+            expected += w * self.g_expected_all[t];
+            excess += w * (self.g_chosen[t] - self.g_expected_all[t]);
+        }
+        report.gap_mode = ratio(chosen - best, best);
+        report.gap_mode_expected = ratio(expected - best, best);
+        report.gap_mode_excess = report.gap_mode - report.gap_mode_expected;
+        report.excess_min_mode = ratio(excess, people);
     }
 }

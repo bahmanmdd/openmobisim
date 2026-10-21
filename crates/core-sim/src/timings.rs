@@ -42,8 +42,9 @@ impl Timings {
     /// it; iteration 0's are everyone's first), `partial_loading`, `route_update` (iteration 0's
     /// increments: the loadings of part of the demand and what follows each), `loading`,
     /// then, after a loading, `route_update`, `route_choice`, `itinerary_choice` for the next
-    /// iteration (recorded under the loading's) and `network_gap` after the last; and
-    /// `results_assembled` at the end.
+    /// iteration (recorded under the loading's), `gap` (the full gap of the loading, S293: after
+    /// the itinerary choice for its trips and after it for the car routes) and `network_gap`
+    /// after the last; and `results_assembled` at the end.
     pub fn lap(&mut self, name: &'static str, iteration: Option<u32>, start: Instant) -> Instant {
         let now = Instant::now();
         self.stages.push(Stage { name, iteration, seconds: (now - start).as_secs_f64() });

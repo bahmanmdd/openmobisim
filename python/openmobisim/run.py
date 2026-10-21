@@ -69,7 +69,10 @@ _FILE_CONVERGENCE = (
     "reselected_share", "changed_share", "total_travel_time_s", "completed_trips",
     "completed_people", "truncated_trips", "time_change", "gap", "gap_network", "gap_expected",
     "gap_excess", "gap_network_excess", "incomplete_share", "gap_flow", "gap_flow_floor",
-    "gap_flow_excess", "mode_changed_share", "itinerary_gap_excess",
+    "gap_flow_excess", "mode_changed_share", "itinerary_gap_excess", "gap_route",
+    "gap_route_expected", "gap_route_excess", "gap_route_network", "gap_route_network_excess",
+    "gap_mode", "gap_mode_expected", "gap_mode_excess", "excess_min_route", "excess_min_mode",
+    "unfinished_cost_share",
 )  # fmt: skip
 #: ``completion``'s keys and the ``kpis.parquet`` metrics they are.
 _FILE_COMPLETION = {
@@ -515,11 +518,77 @@ class Run:
           of the mode each kept, less what the choice model itself expects. Part of
           ``convergence_gap`` and of what ``gap_tolerance`` stops on.
 
+        **The full gaps**, measured at every loading over every trip, in the choice model's
+        own currency. ``g``, an alternative's **generalised minutes**, is its utility under the
+        choice model (without the path-size term, which only corrects for routes that overlap)
+        divided by the traveller's time coefficient: a minute of travel counts one, a euro
+        ``beta_cost_eur / beta_time_min`` minutes. Nothing stops or judges the run on them
+        (``gap_tolerance``, ``convergence_gap`` and ``convergence_verdict`` read the gaps above);
+        ``nan`` for a run of one loading. ``gap_trips()`` gives each trip's numbers.
+
+        * ``gap_route`` — **the full route gap**: over every trip that drove a car route in this
+          loading (given the car, or choosing its mode and keeping a car alternative), how much
+          more the route taken costs than the best route the trip was offered, ``Σ w (g_chosen −
+          g_best) / Σ w g_best``. **A trip still under way when the window ended counts**: as the
+          time it had travelled plus the time of the links it had not yet left, at their last
+          recorded times held, so a run that leaves many trips on the road reads a high gap.
+        * ``gap_route_expected`` — what the choice model itself expects ``gap_route`` to be at
+          these costs: the same sum with each trip's expected ``g`` under the model's
+          probabilities over the routes it was offered; ``nan`` without probabilities.
+        * ``gap_route_excess`` — ``gap_route − gap_route_expected``: what the model does not
+          explain.
+        * ``gap_route_network`` — ``gap_route`` against the **whole network**: the best of the
+          routes offered or the fastest route a time-dependent search finds for the trip, every
+          trip at every loading (``gap_network`` is a sample at the last). The search looks for
+          the fastest route, not the cheapest in ``g``, so where money weighs this gap can read
+          low.
+        * ``gap_route_network_excess`` — its disequilibrium: ``gap_route_network`` less what the
+          model expects inside the set, so a route the set was missing counts in full.
+        * ``gap_mode`` — **the full mode gap**: over every trip choosing its mode (``modes``),
+          how much more the alternative taken costs than the best of its whole choice set, every
+          mode, planned on this loading's costs; ``nan`` without mode choice.
+        * ``gap_mode_expected`` — what the choice model expects ``gap_mode`` to be, from its
+          probabilities over the whole choice set.
+        * ``gap_mode_excess`` — ``gap_mode − gap_mode_expected``.
+        * ``excess_min_route`` — the route gap's excess as minutes per traveller: what the
+          average traveller pays, in ``g``, above what the model expects of them.
+        * ``excess_min_mode`` — the same over the trips choosing their mode.
+        * ``unfinished_cost_share`` — of what the route gap's trips paid (their ``g``, summed),
+          the share that trips still under way at the end had still to pay; 0 when every trip
+          arrived.
+        * ``gap_currency`` — what the full gaps are measured in: ``"utility"`` (generalised
+          minutes, as above) or ``"time"`` (door-to-door minutes: a model that gives no
+          utilities, such as ``"deterministic"`` or one written in Python, or a time coefficient
+          that is not below 0). Text, so not in ``kpis.parquet``, and not in a run read back with
+          ``Run.open``.
+
         The numbers up to ``gap_flow_excess`` are also in ``kpis.parquet``, a row per metric
         per iteration, and so are the itinerary gaps (under their modes, as ``gap``),
-        ``hub_mismatch_s`` and ``mode_changed_share``.
+        ``hub_mismatch_s``, ``mode_changed_share`` and the full gaps but ``gap_currency``.
         """
         return Columns(self._summary.convergence)
+
+    def gap_trips(self) -> Columns | None:
+        """Each trip's numbers in the full gaps of the last loading, in generalised minutes.
+
+        One row per trip measured, in the order of the demand: a trip that drove a car route,
+        and a trip choosing its mode. ``trip`` is its index in the demand; ``g_chosen_min`` the
+        alternative it took, at the last loading's costs (a car trip still under way when the
+        window ended: the time it had travelled plus what it still had to drive);
+        ``g_best_set_min`` the best of the car routes it was offered; ``g_best_network_min`` the
+        best over the whole network (the fastest route a time-dependent search finds, if
+        better); ``g_expected_min`` what the choice model expects of it (over every mode for a
+        trip choosing its mode, over its car routes for the others); ``g_best_all_min`` the best
+        of its whole choice set, every mode (``nan`` for a trip given its mode); ``unfinished``
+        whether it was still under way at the end. The units are
+        ``convergence()["gap_currency"]``; the sums are ``convergence()``'s ``gap_route`` and
+        ``gap_mode``, at its last row.
+
+        In memory, from the run that produced it: ``None`` for a run of one loading, and a run
+        read back with ``Run.open`` has none.
+        """
+        gap = self._summary.gap_trips
+        return None if gap is None else Columns(gap)
 
     def route_sets(self) -> _core.RouteSets:
         """The route sets the trips were routed from.
@@ -640,7 +709,8 @@ class Run:
         ``route_choice`` and ``itinerary_choice``, ``partial_loading`` and ``route_update``
         (iteration 0's: the free-flow loading's groups, one row each), ``loading``, then after a
         loading what prepares the next (``route_update``, ``route_choice``,
-        ``itinerary_choice``) and ``network_gap`` after the last. After them:
+        ``itinerary_choice``), ``gap`` (the full gaps of ``convergence()``, after each) and
+        ``network_gap`` after the last. After them:
         ``results_assembled``, ``results_written`` and ``total`` (the run alone). Also in
         ``timings.csv`` next to the other files. Times differ between runs, so they are in no
         result and not in the fingerprint.
@@ -884,6 +954,7 @@ class Run:
             ("route_update", "route update"),
             ("route_choice", "route choice"),
             ("itinerary_choice", "itinerary choice"),
+            ("gap", "gap"),
             ("network_gap", "network gap"),
         ]
         rows = self._summary.timings

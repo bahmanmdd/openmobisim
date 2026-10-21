@@ -576,6 +576,19 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
         mode_changed_floor: f64::NAN,
         hub_mismatch_s: f64::NAN,
         mode_changed_share: f64::NAN,
+        // The full gaps (S293): measured from the second iteration on, the mode gap never.
+        gap_route: if iteration == 0 { f64::NAN } else { gap / 3.0 },
+        gap_route_expected: if iteration == 0 { f64::NAN } else { gap / 6.0 },
+        gap_route_excess: if iteration == 0 { f64::NAN } else { gap / 3.0 - gap / 6.0 },
+        gap_route_network: if iteration == 0 { f64::NAN } else { gap / 2.0 },
+        gap_route_network_excess: if iteration == 0 { f64::NAN } else { gap / 2.0 - gap / 6.0 },
+        gap_mode: f64::NAN,
+        gap_mode_expected: f64::NAN,
+        gap_mode_excess: f64::NAN,
+        excess_min_route: if iteration == 0 { f64::NAN } else { 0.5 },
+        excess_min_mode: f64::NAN,
+        unfinished_cost_share: if iteration == 0 { f64::NAN } else { 0.0 },
+        gap_currency: "utility",
     };
     result.iterations = vec![report(0, 0.3), report(1, 0.1), report(2, 0.05)];
     let path = temp_path("kpis_iterated.parquet");
@@ -606,6 +619,15 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
     assert_eq!(get(2, "gap_network_excess"), Some(0.03));
     assert_eq!(get(1, "gap_network_excess"), None);
     assert_eq!(get(0, "gap_excess"), None);
+    // The full gaps (S293), from the second iteration on; the mode gap, never measured, has none.
+    assert_eq!(get(1, "gap_route"), Some(0.1 / 3.0));
+    assert_eq!(get(2, "gap_route_network_excess"), Some(0.05 / 2.0 - 0.05 / 6.0));
+    assert_eq!(get(1, "excess_min_route"), Some(0.5));
+    assert_eq!(get(1, "unfinished_cost_share"), Some(0.0), "0 is measured: it has a row");
+    assert_eq!(
+        (get(0, "gap_route"), get(2, "gap_mode"), get(2, "excess_min_mode")),
+        (None, None, None)
+    );
     // A number that was not measured has no row.
     assert_eq!(get(0, "changed_share"), None);
     assert_eq!(get(0, "time_change"), None);

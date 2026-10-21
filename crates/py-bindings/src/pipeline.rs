@@ -454,6 +454,10 @@ pub struct PyRunSummary {
     /// Every reroute of the last loading, as columns.
     #[pyo3(get)]
     pub route_changes: Py<PyDict>,
+    /// The full gap's per-trip numbers of the last loading (S293), as columns; `None` for a run of
+    /// one loading.
+    #[pyo3(get)]
+    pub gap_trips: Option<Py<PyDict>>,
     /// The realised routes of the trips that re-routed and arrived: `trip` and `links`.
     #[pyo3(get)]
     pub route_realised: Py<PyDict>,
@@ -652,6 +656,22 @@ fn convergence_arrays(
     dict.set_item("mode_changed_share", floats(|r| r.mode_changed_share).into_pyarray(py))?;
     dict.set_item("mode_changed_floor", floats(|r| r.mode_changed_floor).into_pyarray(py))?;
     dict.set_item("itinerary_gap_excess", floats(|r| r.itinerary_gap_excess).into_pyarray(py))?;
+    // The full gaps (S293), and what they are measured in.
+    dict.set_item("gap_route", floats(|r| r.gap_route).into_pyarray(py))?;
+    dict.set_item("gap_route_expected", floats(|r| r.gap_route_expected).into_pyarray(py))?;
+    dict.set_item("gap_route_excess", floats(|r| r.gap_route_excess).into_pyarray(py))?;
+    dict.set_item("gap_route_network", floats(|r| r.gap_route_network).into_pyarray(py))?;
+    dict.set_item(
+        "gap_route_network_excess",
+        floats(|r| r.gap_route_network_excess).into_pyarray(py),
+    )?;
+    dict.set_item("gap_mode", floats(|r| r.gap_mode).into_pyarray(py))?;
+    dict.set_item("gap_mode_expected", floats(|r| r.gap_mode_expected).into_pyarray(py))?;
+    dict.set_item("gap_mode_excess", floats(|r| r.gap_mode_excess).into_pyarray(py))?;
+    dict.set_item("excess_min_route", floats(|r| r.excess_min_route).into_pyarray(py))?;
+    dict.set_item("excess_min_mode", floats(|r| r.excess_min_mode).into_pyarray(py))?;
+    dict.set_item("unfinished_cost_share", floats(|r| r.unfinished_cost_share).into_pyarray(py))?;
+    dict.set_item("gap_currency", reports.iter().map(|r| r.gap_currency).collect::<Vec<_>>())?;
     dict.set_item(
         "routes_added",
         reports.iter().map(|r| r.routes_added).collect::<Vec<_>>().into_pyarray(py),
@@ -669,6 +689,44 @@ fn convergence_arrays(
         reports.iter().map(|r| r.reroute_searches).collect::<Vec<_>>().into_pyarray(py),
     )?;
     Ok(dict.unbind())
+}
+
+/// The full gap's per-trip numbers of the last loading (S293), as columns: one row per trip
+/// measured, in trip order (`trip`, its index in the demand), its generalised minutes in the
+/// alternative taken, the best car route offered, the best over the network, what the model
+/// expects (over every mode for a trip choosing its mode, over its car routes for the others) and
+/// the best over every mode (`NaN` for a trip given its mode), and whether it was unfinished.
+fn gap_trip_columns(py: Python<'_>, gap: &openmobisim_core_sim::GapTrips) -> PyResult<Py<PyDict>> {
+    let rows: Vec<usize> = (0..gap.len()).filter(|&t| !gap.g_chosen[t].is_nan()).collect();
+    let column = |v: &[f64]| rows.iter().map(|&t| v[t]).collect::<Vec<f64>>();
+    let expected: Vec<f64> =
+        rows.iter()
+            .map(|&t| {
+                if gap.g_best_all[t].is_nan() {
+                    gap.g_expected_set[t]
+                } else {
+                    gap.g_expected_all[t]
+                }
+            })
+            .collect();
+    let d = PyDict::new(py);
+    d.set_item(
+        "trip",
+        rows.iter()
+            .map(|&t| u32::try_from(t).expect("trip ids fit in 32 bits"))
+            .collect::<Vec<u32>>()
+            .into_pyarray(py),
+    )?;
+    d.set_item("g_chosen_min", column(&gap.g_chosen).into_pyarray(py))?;
+    d.set_item("g_best_set_min", column(&gap.g_best_set).into_pyarray(py))?;
+    d.set_item("g_best_network_min", column(&gap.g_best_network).into_pyarray(py))?;
+    d.set_item("g_expected_min", expected.into_pyarray(py))?;
+    d.set_item("g_best_all_min", column(&gap.g_best_all).into_pyarray(py))?;
+    d.set_item(
+        "unfinished",
+        rows.iter().map(|&t| gap.unfinished[t]).collect::<Vec<bool>>().into_pyarray(py),
+    )?;
+    Ok(d.unbind())
 }
 
 /// Run the whole pipeline — demand, route sets, route choice, loading and,
@@ -1285,6 +1343,7 @@ pub fn run_pipeline(
     };
     let trip_modes_table = trip_modes(py, &trip_table)?.unbind();
     let trip_results_table = trip_results(py, &trip_table)?.unbind();
+    let gap_trips = result.gap_trips.as_ref().map(|g| gap_trip_columns(py, g)).transpose()?;
     let route_choices_py = match (&result.route_choices, &result.route_sets) {
         (Some(choices), Some(sets)) => Some(PyRouteChoices::new(py, choices, sets)?),
         _ => None,
@@ -1432,6 +1491,7 @@ pub fn run_pipeline(
         timings_path: timings_path.to_string_lossy().into_owned(),
         gridlock,
         route_changes,
+        gap_trips,
         route_realised,
         parking_bins: parking_bins_table,
         parking_places: parking_places_table,
