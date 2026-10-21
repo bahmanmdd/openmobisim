@@ -40,10 +40,11 @@ use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::{RouteAttributes, RouteKey, RouteSets, Search, SearchContext};
 use openmobisim_core_types::hash::Fnv1a;
-use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
+use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TravellerId, TripId};
 
 use crate::demand_values::DemandValues;
 use crate::equilibration::Equilibration;
+use crate::gap::{Currency, Ended, GapTrips};
 use crate::link_times::LinkTimes;
 use crate::link_values::{PreparedLinkValues, ValueLayer};
 use crate::prices::PreparedPrices;
@@ -255,6 +256,20 @@ impl Filled {
     }
 }
 
+/// What a route's attributes are made from ([`Chooser::route_row`]).
+struct RouteRow<'r> {
+    links: &'r [u32],
+    /// Its length in metres (0 if the model reads neither a length nor money).
+    length_m: f64,
+    overlap: f64,
+    /// Its expected seconds, and the least of its set's.
+    seconds: f64,
+    best: f64,
+    /// The natural log of its path size over the routes offered (read only if the model reads
+    /// it).
+    ln_path_size: f64,
+}
+
 /// The parts of route choice that do not change from one iteration to the next:
 /// which attributes to fill, the routes' lengths and path sizes, their
 /// identities. **It belongs to one state of the route sets**: when they grow the
@@ -273,7 +288,7 @@ pub(crate) struct Chooser<'a> {
 
 impl<'a> Chooser<'a> {
     /// The attributes filled, as a batch names them.
-    fn wanted_names(&self) -> Vec<&str> {
+    pub(crate) fn wanted_names(&self) -> Vec<&str> {
         self.wanted.iter().map(String::as_str).collect()
     }
 
@@ -316,6 +331,64 @@ impl<'a> Chooser<'a> {
             .map(|i| travellers.weight(trips.traveller(TripId::from_index(i as usize))))
             .collect();
         Ok(Self { inputs, route_sets, wanted, attributes, wants_path_size, identity, weight })
+    }
+
+    /// Route `r`'s length in metres, if the model reads a length or money; 0 otherwise.
+    fn length_m(&self, r: usize) -> f64 {
+        self.attributes.as_ref().map_or(0.0, |x| x.length_m[r])
+    }
+
+    /// Fill `row` with the attributes of `route` for `traveller`'s `trip`, in the order the
+    /// batch holds them ([`Chooser::wanted`]).
+    fn route_row(
+        &self,
+        row: &mut [f64],
+        route: &RouteRow<'_>,
+        trip: TripId,
+        traveller: TravellerId,
+    ) {
+        let trips = self.inputs.trips;
+        for (slot, name) in row.iter_mut().zip(&self.wanted) {
+            if let Some(source) = self.inputs.demand_values.lookup(name) {
+                *slot = self.inputs.demand_values.value(source, trips, traveller, trip);
+                continue;
+            }
+            if let Some((column, aggregate)) = self.inputs.link_values.lookup(name) {
+                *slot = if self.inputs.link_values.layer(column) == ValueLayer::Road {
+                    self.inputs.link_values.total(
+                        column,
+                        aggregate,
+                        route.links.iter().map(|&l| l as usize),
+                    )
+                } else {
+                    0.0
+                };
+                continue;
+            }
+            *slot = match name.as_str() {
+                "time_min" => route.seconds / 60.0,
+                "cost_eur" | "cost_running_eur" | "cost_toll_eur" | "cost_parking_eur" => {
+                    let prices = self.inputs.prices;
+                    let running = prices.running(Some(ParkingKind::Car), route.length_m);
+                    let toll = || prices.toll_raw(self.inputs.link_values, route.links);
+                    // The car arrives: the parking fee at the destination (S249).
+                    let parking = || self.inputs.demand_values.destination_parking(trip);
+                    match name.as_str() {
+                        "cost_running_eur" => running,
+                        "cost_toll_eur" => toll(),
+                        "cost_parking_eur" => parking(),
+                        _ => running + toll() + parking(),
+                    }
+                }
+                "length_km" => route.length_m / 1000.0,
+                "detour" => (route.seconds / route.best - 1.0).max(0.0),
+                "overlap" => route.overlap,
+                "ln_path_size" => route.ln_path_size,
+                "n_links" => f64::from(u32::try_from(route.links.len()).unwrap_or(u32::MAX)),
+                "car_min" => route.seconds / 60.0,
+                other => crate::itinerary_choice::mode_attribute(other, Mode::Car).unwrap_or(0.0),
+            };
+        }
     }
 
     /// Put trips `from..to` that have a set into `batch`, with `times` as their cost (free flow
@@ -404,52 +477,20 @@ impl<'a> Chooser<'a> {
                     continue;
                 }
                 let view = route_sets.route(r);
-                for (slot, name) in row.iter_mut().zip(&self.wanted) {
-                    if let Some(source) = self.inputs.demand_values.lookup(name) {
-                        *slot = self.inputs.demand_values.value(source, trips, traveller, trip);
-                        continue;
-                    }
-                    if let Some((column, aggregate)) = self.inputs.link_values.lookup(name) {
-                        *slot = if self.inputs.link_values.layer(column) == ValueLayer::Road {
-                            self.inputs.link_values.total(
-                                column,
-                                aggregate,
-                                view.links.iter().map(|&l| l as usize),
-                            )
-                        } else {
-                            0.0
-                        };
-                        continue;
-                    }
-                    *slot = match name.as_str() {
-                        "time_min" => seconds[a] / 60.0,
-                        "cost_eur" | "cost_running_eur" | "cost_toll_eur" | "cost_parking_eur" => {
-                            let prices = self.inputs.prices;
-                            let length = self.attributes.as_ref().map_or(0.0, |x| x.length_m[r]);
-                            let running = prices.running(Some(ParkingKind::Car), length);
-                            let toll = || prices.toll_raw(self.inputs.link_values, view.links);
-                            // The car arrives: the parking fee at the destination (S249).
-                            let parking = || self.inputs.demand_values.destination_parking(trip);
-                            match name.as_str() {
-                                "cost_running_eur" => running,
-                                "cost_toll_eur" => toll(),
-                                "cost_parking_eur" => parking(),
-                                _ => running + toll() + parking(),
-                            }
-                        }
-                        "length_km" => {
-                            self.attributes.as_ref().map_or(0.0, |x| x.length_m[r]) / 1000.0
-                        }
-                        "detour" => (seconds[a] / best - 1.0).max(0.0),
-                        "overlap" => f64::from(view.overlap),
-                        "ln_path_size" => path_size[offered_so_far].ln(),
-                        "n_links" => f64::from(u32::try_from(view.links.len()).unwrap_or(u32::MAX)),
-                        "car_min" => seconds[a] / 60.0,
-                        other => {
-                            crate::itinerary_choice::mode_attribute(other, Mode::Car).unwrap_or(0.0)
-                        }
-                    };
-                }
+                let route = RouteRow {
+                    links: view.links,
+                    length_m: self.length_m(r),
+                    overlap: f64::from(view.overlap),
+                    seconds: seconds[a],
+                    best,
+                    // Read only if the model reads the path size, which is then computed.
+                    ln_path_size: if self.wants_path_size {
+                        path_size[offered_so_far].ln()
+                    } else {
+                        0.0
+                    },
+                };
+                self.route_row(&mut row, &route, trip, traveller);
                 batch.push_alternative(self.identity[r], &row);
                 filled.alt_route.push(u32::try_from(r).expect("route ids fit in 32 bits"));
                 filled.alt_seconds.push(seconds[a]);
@@ -554,6 +595,173 @@ impl<'a> Chooser<'a> {
         } else {
             (f64::NAN, f64::NAN)
         }
+    }
+
+    /// **The full gap's car routes** (S293, [`crate::gap`]): for every trip that drives a car
+    /// route of the sets, at this loading's link `times`, the generalised minutes of the route
+    /// `current` gives it, of the best of the routes it is offered (the batch [`Self::fill`]
+    /// builds), what the model expects of it among them, and of the best over the whole network
+    /// (the route a bounded time-dependent search finds, no slower than the set's best, costed as
+    /// any route), into `out`. A trip still under way at the end is costed as what it paid and
+    /// still had to pay ([`Ended::car_seconds`]); a route taken but no longer offered, at its
+    /// time on these times. Every trip, every call; nothing is drawn, nothing changed.
+    ///
+    /// Costs the batches built once more, and one bounded search per trip (in parallel, the
+    /// results summed in trip order).
+    ///
+    /// # Errors
+    ///
+    /// [`ChoiceError`] as for [`Self::choose_all`].
+    pub(crate) fn gap(
+        &self,
+        current: &RouteChoices,
+        times: &LinkTimes,
+        iteration: u32,
+        ended: &Ended<'_>,
+        currency: &Currency,
+        out: &mut GapTrips,
+    ) -> Result<(), ChoiceError> {
+        let Inputs { network, trips, trip_keys, turns, model, .. } = *self.inputs;
+        let sets = &*self.route_sets;
+        let total = trips.len() as usize;
+        let names = self.wanted_names();
+        let mut batch = ChoiceBatch::new(iteration, &names);
+        let mut filled = Filled::default();
+        // One situation per route costed on its own: a route taken and no longer offered, a trip
+        // still under way, a route the network search found.
+        let mut single = ChoiceBatch::new(iteration, &names);
+        let mut row = vec![0.0; self.wanted.len()];
+        // Each trip measured, and the least expected seconds of its set: the search's bound.
+        let mut measured: Vec<(usize, f64)> = Vec::new();
+        let mut i = 0;
+        while i < total {
+            let end = (i + CHUNK).min(total);
+            self.fill(&mut batch, &mut filled, i..end, Some(times), None);
+            i = end;
+            if filled.trip_of.is_empty() {
+                continue;
+            }
+            batch.validate()?;
+            let probabilities = model.probabilities(&batch)?;
+            let g = currency.minutes(model, &batch, &filled.alt_seconds)?;
+            single.clear();
+            // (trip, minutes still to pay) and the seconds of each situation of `single`.
+            let mut pending: Vec<(usize, f64)> = Vec::new();
+            let mut pending_seconds: Vec<f64> = Vec::new();
+            for (s, &t) in filled.trip_of.iter().enumerate() {
+                let range = batch.range(s);
+                let set_seconds = &filled.set_seconds[filled.set_at[s]..][..filled.set_len[s]];
+                let least = set_seconds.iter().copied().fold(f64::INFINITY, f64::min);
+                out.g_best_set[t] = g[range.clone()].iter().copied().fold(f64::INFINITY, f64::min);
+                out.g_expected_set[t] = probabilities
+                    .as_ref()
+                    .map_or(f64::NAN, |p| range.clone().map(|a| p[a] * g[a]).sum());
+                let taken = current.route[t] as usize;
+                let offered = range.clone().find(|&a| filled.alt_route[a] as usize == taken);
+                match offered {
+                    Some(a) if !ended.unfinished[t] => {
+                        out.g_chosen[t] = g[a];
+                        out.g_remaining[t] = 0.0;
+                    }
+                    _ => {
+                        let trip = TripId::from_index(t);
+                        let traveller = trips.traveller(trip);
+                        let view = sets.route(taken);
+                        let (seconds, remaining) = if ended.unfinished[t] {
+                            let departure = f64::from(trips.departure(trip).get());
+                            let (paid, rest) = ended.car_seconds(t, view.links, departure, times);
+                            (paid + rest, rest)
+                        } else {
+                            (set_seconds[taken - filled.set_first[s]], 0.0)
+                        };
+                        let route = RouteRow {
+                            links: view.links,
+                            length_m: self.length_m(taken),
+                            overlap: f64::from(view.overlap),
+                            seconds,
+                            best: least,
+                            ln_path_size: 0.0,
+                        };
+                        single.begin_situation_in(traveller.raw(), trip.raw(), batch.classes()[s]);
+                        self.route_row(&mut row, &route, trip, traveller);
+                        single.push_alternative(self.identity[taken], &row);
+                        pending.push((t, remaining / 60.0));
+                        pending_seconds.push(seconds);
+                    }
+                }
+                measured.push((t, least));
+            }
+            if !pending.is_empty() {
+                single.validate()?;
+                let g = currency.minutes(model, &single, &pending_seconds)?;
+                for ((t, remaining), g) in pending.into_iter().zip(g) {
+                    out.g_chosen[t] = g;
+                    out.g_remaining[t] = remaining;
+                }
+            }
+        }
+        // The whole network: one bounded search per trip, in parallel; each route found is
+        // costed as any route of the sets.
+        let ctx = SearchContext::new(network, turns);
+        for chunk in measured.chunks(CHUNK) {
+            let found = crate::transit::par_map(
+                chunk,
+                GAP_CHUNK,
+                || Search::new(&ctx),
+                |search, &(t, least)| {
+                    let wait =
+                        |link: u32, departure: f64| times.origin_wait_seconds(link, departure);
+                    let seconds = |link: u32, at: f64| times.link_seconds(link, at);
+                    let key = trip_keys[t];
+                    let departure = f64::from(trips.departure(TripId::from_index(t)).get());
+                    search.fastest_route(
+                        NodeId::new(key.origin),
+                        NodeId::new(key.destination),
+                        departure,
+                        least,
+                        &wait,
+                        &seconds,
+                    )
+                },
+            );
+            single.clear();
+            let mut pending: Vec<usize> = Vec::new();
+            let mut pending_seconds: Vec<f64> = Vec::new();
+            for (&(t, least), found) in chunk.iter().zip(found) {
+                out.g_best_network[t] = out.g_best_set[t];
+                let Some((seconds, links)) = found else { continue };
+                let links: Vec<u32> = links.iter().map(|l| l.raw()).collect();
+                let length_m = if self.attributes.is_some() {
+                    links.iter().map(|&l| network.link_length(LinkId::new(l)).get()).sum()
+                } else {
+                    0.0
+                };
+                let route = RouteRow {
+                    links: &links,
+                    length_m,
+                    overlap: 0.0,
+                    seconds,
+                    best: least,
+                    ln_path_size: 0.0,
+                };
+                let trip = TripId::from_index(t);
+                let traveller = trips.traveller(trip);
+                let class = self.inputs.travellers.user_class(traveller).raw();
+                single.begin_situation_in(traveller.raw(), trip.raw(), class);
+                self.route_row(&mut row, &route, trip, traveller);
+                single.push_alternative(route_identity(&links), &row);
+                pending.push(t);
+                pending_seconds.push(seconds);
+            }
+            if !pending.is_empty() {
+                single.validate()?;
+                let g = currency.minutes(model, &single, &pending_seconds)?;
+                for (t, g) in pending.into_iter().zip(g) {
+                    out.g_best_network[t] = out.g_best_network[t].min(g);
+                }
+            }
+        }
+        Ok(())
     }
 
     fn empty_choices(&self) -> RouteChoices {

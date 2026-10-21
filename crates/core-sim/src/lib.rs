@@ -20,6 +20,7 @@
 //! | [`disruptions`] | [`disruptions::Disruptions`] — roads closed and transit stopped at a time of day, known or not in advance |
 //! | [`skims`] | [`skims::Skimmer`] — door-to-door times between points by mode, after a run |
 //! | [`events`] | [`events::EventRow`] — one row per trip outcome, what `io-parquet`'s `events.parquet` writer reads from |
+//! | [`gap`] | [`gap::GapTrips`] — the full gap: every trip's choice against the best alternative, at every loading, in the choice model's currency |
 //! | [`identity`] | [`identity::RunDescription`] — a run's master seed and fingerprint, made before it executes |
 //! | [`timings`] | [`timings::Timings`] — wall-clock time by stage, kept apart from the results |
 //!
@@ -40,6 +41,7 @@ pub mod demand_values;
 pub mod disruptions;
 pub mod equilibration;
 pub mod events;
+pub mod gap;
 pub mod hub_groups;
 pub mod identity;
 pub mod itinerary;
@@ -64,6 +66,7 @@ pub use demand_values::{DEPARTURE_ATTRIBUTE, DESTINATION_PARKING, DemandValues};
 pub use disruptions::{Disruptions, RoadDisruption, TransitDisruption, TransitEffect};
 pub use equilibration::{Equilibration, FreeFlow, IterationReport, Msa};
 pub use events::{EventRow, EventType};
+pub use gap::GapTrips;
 pub use identity::RunDescription;
 pub use itinerary::{Itinerary, LegRoute, Networks};
 pub use itinerary_choice::{

@@ -49,6 +49,7 @@ use crate::demand_values::DemandValues;
 use crate::disruptions::Disruptions;
 use crate::equilibration::{Equilibration, FreeFlow, IterationReport};
 use crate::events::{EventRow, EventType};
+use crate::gap::{Currency, Ended, GapTrips, NO_LINK};
 use crate::identity::{Inputs, RunDescription, describe};
 use crate::itinerary_choice::{
     self, CarRoutes, ChooseInputs, Chosen, Followed, Itineraries, ItineraryResult, NoAlternative,
@@ -300,6 +301,9 @@ pub struct RunResult {
     /// arrived, and the road link of a car still travelling at the window's end
     /// ([`crate::TripTable`] makes the per-trip table of them).
     pub trip_outcomes: TripOutcomes,
+    /// The full gap's numbers of every trip (S293, [`crate::gap`]) at the last loading a report
+    /// describes; `None` for a run of one loading, which measures no gap.
+    pub gap_trips: Option<GapTrips>,
 }
 
 /// How one loading is made besides the routes it follows.
@@ -1205,6 +1209,8 @@ impl Run {
             demand_values: &demand_values,
         };
         let mut chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
+        // What the full gap is measured in (S293): the model's utility, or time.
+        let currency = Currency::new(model.as_ref(), &travellers, &chooser.wanted_names())?;
         let mut route_choices = chooser.choose_all(&choice_rng, 0)?;
         clock = timings.lap("route_choice", Some(0), clock);
         let route_update = self.route_update.clone();
@@ -1297,6 +1303,8 @@ impl Run {
         let mut mode_floor_by = f64::NAN;
         let mut converged = false;
         let mut last: Option<(Loaded, Diagnostics)> = None;
+        // The full gap's per-trip numbers of the latest loading assessed (S293).
+        let mut last_gap: Option<GapTrips> = None;
 
         // The first loadings may be made with the point-queue model, which cannot gridlock (S178);
         // the last of an iterating run, its result, never is. A run of one loading is its
@@ -1514,6 +1522,17 @@ impl Run {
                             unfinished[e.entity_id as usize] = true;
                         }
                     }
+                    // The full gap (S293) costs them instead: where each car still under way stood.
+                    let mut link_at_end = vec![NO_LINK; total_trips as usize];
+                    for &(trip, link) in &loaded.at_end {
+                        link_at_end[trip.index()] = link.raw();
+                    }
+                    let ended = Ended {
+                        unfinished: &unfinished,
+                        link_at_end: &link_at_end,
+                        window_end: window_s,
+                    };
+                    let mut gap_trips = GapTrips::new(&trips, &travellers, &unfinished);
                     let update = chooser.update(
                         &route_choices,
                         &times,
@@ -1580,6 +1599,10 @@ impl Run {
                         mode_floor_by = found.mode_changed_floor();
                         pending_chosen = Some(next_chosen);
                     }
+                    // The full gap (S293): every car trip of the route choice, at every loading.
+                    chooser.gap(&route_choices, &times, next, &ended, &currency, &mut gap_trips)?;
+                    clock = timings.lap("gap", Some(iteration), clock);
+                    last_gap = Some(gap_trips);
                     times_now = Some(times);
                     arrived_by =
                         (update.assessment.reselected_share, update.assessment.changed_share);
@@ -1752,6 +1775,7 @@ impl Run {
             routes_realised: loaded.routes_realised,
             link_peak_pcu: loaded.peak_pcu,
             trip_outcomes,
+            gap_trips: last_gap,
         })
     }
 

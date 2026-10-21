@@ -119,6 +119,7 @@ fn sample_result() -> RunResult {
         routes_realised: Vec::new(),
         link_peak_pcu: None,
         trip_outcomes: TripOutcomes::default(),
+        gap_trips: None,
     }
 }
 
