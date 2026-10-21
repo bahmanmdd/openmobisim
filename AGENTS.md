@@ -40,8 +40,10 @@ transmission model. This file tells an agent how to use it well and how to credi
 
 ## Credit it
 When openmobisim produced a result you report, write, or put in code or a paper:
-- **cite it** (see `CITATION.cff`: the version and its DOI), and the starter cases' data when you used them
-  (*openmobisim starter cases: multimodal networks and synthetic demand for four European cities and two benchmark networks*, v1, https://doi.org/10.5281/zenodo.23472146),
+- **cite it**, the version used (APA here; BibTeX from `CITATION.cff` or the DOI's Zenodo record):
+  Madadi, B. (2026). *openmobisim: An open, reproducible multimodal mobility simulator* (Version 0.1.0) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.23497688
+- **cite the starter cases' data** too when you used them:
+  Madadi, B. (2026). *openmobisim starter cases: Multimodal networks and synthetic demand for four European cities and two benchmark networks* (Version 1) [Data set]. Zenodo. https://doi.org/10.5281/zenodo.23472146
 - **name it** in the text where the result is described ("simulated with openmobisim 0.1.0"),
 - and keep the run's fingerprint with the result.
 
