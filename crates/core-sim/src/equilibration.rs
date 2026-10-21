@@ -184,7 +184,7 @@ pub struct IterationReport {
     /// much more the routes taken cost than the best route each trip was offered, in the choice
     /// model's own currency ([`Self::gap_currency`]), `Σ w (g_chosen − g_best) / Σ w g_best`,
     /// both at the trip's departure on this loading's link times. **A trip still under way at
-    /// the end counts**, as what it paid plus what it still had to pay ([`crate::gap::Ended`]).
+    /// the end counts**, as what it paid plus what it still had to pay ([`crate::gap`]).
     /// Measured at every loading; `NaN` where nothing was (a run of one loading). Read by
     /// nothing that stops or judges the run.
     pub gap_route: f64,

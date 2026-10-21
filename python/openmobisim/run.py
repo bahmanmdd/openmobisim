@@ -531,7 +531,9 @@ class Run:
           more the route taken costs than the best route the trip was offered, ``Σ w (g_chosen −
           g_best) / Σ w g_best``. **A trip still under way when the window ended counts**: as the
           time it had travelled plus the time of the links it had not yet left, at their last
-          recorded times held, so a run that leaves many trips on the road reads a high gap.
+          recorded times held, so trips left on the road weigh in the gap instead of being left
+          out of it. (Where the queue is still growing at the end, those times are below what the
+          rest of it will take.)
         * ``gap_route_expected`` — what the choice model itself expects ``gap_route`` to be at
           these costs: the same sum with each trip's expected ``g`` under the model's
           probabilities over the routes it was offered; ``nan`` without probabilities.

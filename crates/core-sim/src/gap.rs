@@ -8,7 +8,7 @@
 //! larger is worse, and for a car route that costs no money its travel time. A model that gives
 //! no utilities (a choice model written in Python, `deterministic`), or a time coefficient that
 //! is not below 0, measures in **door-to-door minutes** instead: the gaps' currency
-//! ([`Currency::label`]) is then `"time"`, else `"utility"`.
+//! ([`IterationReport::gap_currency`]) is then `"time"`, else `"utility"`.
 //!
 //! [`GapTrips`] holds each trip's numbers for one loading: the route gap's (every trip that drives
 //! a car route: given the car, or choosing its mode and keeping a car alternative), filled by
@@ -17,9 +17,11 @@
 //!
 //! **A trip still under way when the window ended is costed, not left out**: by car, what it paid
 //! by the end plus the time of the links it had not yet left, read at each link's last recorded
-//! time held ([`LinkTimes::link_seconds_held`]), the link it stood on counted in full
-//! ([`Ended::car_seconds`]). On purpose an overestimate: a run with many unfinished trips must
-//! read a bad gap. A trip by another mode keeps its planned cost.
+//! time held ([`LinkTimes::link_seconds_held`]), the link it stood on counted in full, so a run
+//! with many unfinished trips reads a worse gap than one that left them out. Where the queue is
+//! clearing at the end this overestimates what is left; where it is still growing, the last
+//! recorded time (of those who entered before and have left) is below what those behind them
+//! will take, and it can underestimate. A trip by another mode keeps its planned cost.
 //!
 //! **Cost:** per loading, the route choice's batches built once more and each trip's car routes
 //! costed in the model's utility; one bounded time-dependent search per car trip, in parallel; and

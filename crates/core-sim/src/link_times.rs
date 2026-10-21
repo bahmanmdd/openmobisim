@@ -219,9 +219,10 @@ impl LinkTimes {
     /// The time to cross `link` when entering it at second `at`, as [`Self::link_seconds`]
     /// reads it up to the link's **last recorded bin**, and that bin's time **held** for any
     /// `at` after it, where [`Self::link_seconds`] carries it down to free flow. What costs the
-    /// rest of a trip still under way when the window ended: on purpose not optimistic, so a run
-    /// that leaves trips on the road does not read as settled. Free flow on a link with no
-    /// recorded time, and before its first recorded bin.
+    /// rest of a trip still under way when the window ended ([`crate::gap`]): not the free flow
+    /// the carry decays to, though in a queue still growing at the end the last recorded time
+    /// is below what those behind it will take. Free flow on a link with no recorded time, and
+    /// before its first recorded bin.
     #[must_use]
     pub fn link_seconds_held(&self, link: u32, at: f64) -> f64 {
         let l = link as usize;
