@@ -27,7 +27,7 @@
 //! only vehicles that finished the link inside the window count, so in a jam that
 //! never clears the last stretch is optimistic.
 //!
-//! **Cost:** 12 bytes per recorded (link, bin) row plus 8 bytes per link; a lookup
+//! **Cost:** 12 bytes per recorded (link, bin) row plus 12 bytes per link; a lookup
 //! is one binary search over that link's few bins, about 30 ns; a route of 150
 //! links costs about 5 µs.
 
@@ -52,6 +52,9 @@ pub struct LinkTimes {
     span_first: Vec<u32>,
     span_start: Vec<u32>,
     span: Vec<f64>,
+    /// Per link, where its last recorded bin is in its span, counted from its first: what
+    /// [`LinkTimes::link_seconds_held`] holds after it.
+    span_last: Vec<u32>,
 }
 
 /// One table's rows, by link then bin.
@@ -91,7 +94,8 @@ fn carried_bins(mean: f64, free_flow: f64, bin_seconds: f64) -> usize {
 
 /// Each link's times laid out from its first recorded bin to the last bin a recorded time
 /// reaches; a bin with no row holds the last recorded time carried forward, less the bins
-/// elapsed, floored at the free-flow time: `(first bin, offsets, times)` (see [`LinkTimes`]).
+/// elapsed, floored at the free-flow time: `(first bin, offsets, times, last recorded bin)`, the
+/// last counted from the first (see [`LinkTimes`]).
 fn spans(
     links: usize,
     start: &[u32],
@@ -99,14 +103,16 @@ fn spans(
     mean: &[f64],
     free_flow: &[f64],
     bin_seconds: f64,
-) -> (Vec<u32>, Vec<u32>, Vec<f64>) {
+) -> (Vec<u32>, Vec<u32>, Vec<f64>, Vec<u32>) {
     let mut first = vec![0_u32; links];
     let mut offsets = vec![0_u32; links + 1];
     let mut span = Vec::new();
+    let mut last_recorded = vec![0_u32; links];
     for l in 0..links {
         let rows = start[l] as usize..start[l + 1] as usize;
         if let (Some(&lo), Some(&hi)) = (bin[rows.clone()].first(), bin[rows.clone()].last()) {
             first[l] = lo;
+            last_recorded[l] = hi - lo;
             let base = span.len();
             let tail = carried_bins(mean[rows.end - 1], free_flow[l], bin_seconds);
             span.resize(base + (hi - lo) as usize + 1 + tail, f64::NAN);
@@ -129,7 +135,7 @@ fn spans(
         }
         offsets[l + 1] = u32::try_from(span.len()).expect("fewer than 2^32 link-bin cells");
     }
-    (first, offsets, span)
+    (first, offsets, span, last_recorded)
 }
 
 /// The mean in `bin` of a link's rows `rows` of `(bins, means)`, if it has one.
@@ -151,7 +157,7 @@ impl LinkTimes {
             .map(|i| network.free_flow_time(LinkId::new(i)).get())
             .collect();
         let bin_seconds = f64::from(tables.entry.bin_seconds());
-        let (span_first, span_start, span) =
+        let (span_first, span_start, span, span_last) =
             spans(links, &start, &bin, &mean, &free_flow, bin_seconds);
         Self {
             bin_seconds,
@@ -162,6 +168,7 @@ impl LinkTimes {
             span_first,
             span_start,
             span,
+            span_last,
         }
     }
 
@@ -180,6 +187,7 @@ impl LinkTimes {
             span_first: vec![0; links],
             span_start: vec![0; links + 1],
             span: Vec::new(),
+            span_last: vec![0; links],
         }
     }
 
@@ -206,6 +214,24 @@ impl LinkTimes {
         let (a, z) = (self.span_start[l] as usize, self.span_start[l + 1] as usize);
         let k = self.bin_of(at).wrapping_sub(self.span_first[l]) as usize;
         if k < z - a { self.span[a + k] } else { self.free_flow[l] }
+    }
+
+    /// The time to cross `link` when entering it at second `at`, as [`Self::link_seconds`]
+    /// reads it up to the link's **last recorded bin**, and that bin's time **held** for any
+    /// `at` after it, where [`Self::link_seconds`] carries it down to free flow. What costs the
+    /// rest of a trip still under way when the window ended: on purpose not optimistic, so a run
+    /// that leaves trips on the road does not read as settled. Free flow on a link with no
+    /// recorded time, and before its first recorded bin.
+    #[must_use]
+    pub fn link_seconds_held(&self, link: u32, at: f64) -> f64 {
+        let l = link as usize;
+        let (a, z) = (self.span_start[l] as usize, self.span_start[l + 1] as usize);
+        let bin = self.bin_of(at);
+        if a == z || bin < self.span_first[l] {
+            return self.free_flow[l];
+        }
+        let k = ((bin - self.span_first[l]) as usize).min(self.span_last[l] as usize);
+        self.span[a + k]
     }
 
     /// The wait outside the network of someone who sets out at second `departure`
