@@ -1588,6 +1588,18 @@ impl Run {
                             None,
                         )?;
                         clock = timings.lap("itinerary_choice", Some(iteration), clock);
+                        // The full gap (S293): every trip choosing its mode and every car
+                        // itinerary, on the same costs.
+                        itin.gap(
+                            &planner,
+                            &choose_inputs,
+                            current,
+                            next,
+                            &ended,
+                            &currency,
+                            &mut gap_trips,
+                        )?;
+                        clock = timings.lap("gap", Some(iteration), clock);
                         // Every mode's: a trip choosing its mode is measured against the best
                         // of the mode it took (M5).
                         for mode in Mode::ALL {

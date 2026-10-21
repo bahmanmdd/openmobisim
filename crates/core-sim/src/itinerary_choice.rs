@@ -79,6 +79,7 @@ use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
 use crate::demand_values::DemandValues;
 use crate::equilibration::Equilibration;
+use crate::gap::{Currency, Ended, GapTrips};
 use crate::layers::{LayerSetup, StaticLayers, StaticRoutes};
 use crate::link_times::LinkTimes;
 use crate::link_values::{PreparedLinkValues, ValueLayer};
@@ -2192,6 +2193,67 @@ impl Itineraries {
         }
     }
 
+    /// The choice set of the trip at `position` for `offer`, planned on `planner`'s costs with
+    /// the shared drives `car_reach`: what it is offered, or, with nothing at all, the car
+    /// (S271, W-1) if it has a road path.
+    fn plan_trip<'a>(
+        &self,
+        planner: &Planner<'a>,
+        trips: &Trips,
+        s: &mut Scratch<'a>,
+        position: usize,
+        offer: Offer,
+        car_reach: &CarReach,
+    ) -> Vec<Alternative> {
+        let p = position;
+        let trip = self.trips[p];
+        let [bike, walk] = &self.legs[p];
+        let set = if offer.is_empty() {
+            Vec::new()
+        } else {
+            planner.plan(
+                s,
+                &self.nodes[p],
+                trips.departure(trip).get(),
+                trips.origin(trip),
+                trips.destination(trip),
+                offer,
+                (bike.as_ref(), walk.as_ref()),
+                self.car_keys[p],
+                self.bike_reach.get(p),
+                car_reach,
+            )
+        };
+        // No alternative at all: the car (S271, W-1), if it has a road path.
+        match (set.is_empty() && self.fallback_car, self.car_keys[p]) {
+            (true, Some(key)) => planner.fallback_car(key, trips.departure(trip).get()),
+            _ => set,
+        }
+    }
+
+    /// The shared drives the trips `jobs` (position and offer) would read when planned:
+    /// those going out through a car park.
+    fn drives_wanted(
+        &self,
+        planner: &Planner<'_>,
+        trips: &Trips,
+        jobs: &[(usize, Offer)],
+    ) -> Vec<((u32, u64), Vec<NodeId>)> {
+        jobs.iter()
+            .filter_map(|&(p, offer)| {
+                let trip = self.trips[p];
+                let (origin, destination) = (trips.origin(trip), trips.destination(trip));
+                let out = matches!(offer.car_transit, Some(Shape::Out))
+                    && planner.far_enough(&offer, origin, destination);
+                if !out {
+                    return None;
+                }
+                let dep = f64::from(trips.departure(trip).get());
+                planner.car_drive_wanted(&self.nodes[p], dep, destination, offer.parking)
+            })
+            .collect()
+    }
+
     /// Finds, before the first planning, the bike parkings in reach of every trip that may ride
     /// out to one: one search per origin node, shared by the trips that start there
     /// (about four trips per bike node on Amsterdam's morning, which the free-flow loading's
@@ -2308,47 +2370,13 @@ impl Itineraries {
                 })
         };
         let plan = |s: &mut Scratch<'a>, p: usize, offer: Offer, car_reach: &CarReach| {
-            let trip = self.trips[p];
-            let [bike, walk] = &self.legs[p];
-            let set = if offer.is_empty() {
-                Vec::new()
-            } else {
-                planner.plan(
-                    s,
-                    &self.nodes[p],
-                    trips.departure(trip).get(),
-                    trips.origin(trip),
-                    trips.destination(trip),
-                    offer,
-                    (bike.as_ref(), walk.as_ref()),
-                    self.car_keys[p],
-                    self.bike_reach.get(p),
-                    car_reach,
-                )
-            };
-            // No alternative at all: the car (S271, W-1), if it has a road path.
-            match (set.is_empty() && self.fallback_car, self.car_keys[p]) {
-                (true, Some(key)) => planner.fallback_car(key, trips.departure(trip).get()),
-                _ => set,
-            }
+            self.plan_trip(planner, trips, s, p, offer, car_reach)
         };
         // The drives park-and-ride trips share (S267), searched on this pass's times as the
         // trips that need them come up, outside the parallel planning.
         let mut car_reach = CarReach::new();
         let car_reach_keys = |jobs: &[(usize, Offer)]| -> Vec<((u32, u64), Vec<NodeId>)> {
-            jobs.iter()
-                .filter_map(|&(p, offer)| {
-                    let trip = self.trips[p];
-                    let (origin, destination) = (trips.origin(trip), trips.destination(trip));
-                    let out = matches!(offer.car_transit, Some(Shape::Out))
-                        && planner.far_enough(&offer, origin, destination);
-                    if !out {
-                        return None;
-                    }
-                    let dep = f64::from(trips.departure(trip).get());
-                    planner.car_drive_wanted(&self.nodes[p], dep, destination, offer.parking)
-                })
-                .collect()
+            self.drives_wanted(planner, trips, jobs)
         };
         for round in &self.rounds {
             // What each trip is offered, from the choices before it. A trip that keeps its
@@ -2556,6 +2584,239 @@ impl Itineraries {
             }
         }
         Ok((next, assessment))
+    }
+
+    /// **The full gap's itinerary trips** (S293, [`crate::gap`]), on `planner`'s costs (this
+    /// loading's): every trip choosing its mode and every trip that drove a car alternative
+    /// (keeping one, or with no alternative but the car) has its **whole choice set** planned,
+    /// every mode it is offered where the choices `current` (those loaded) leave its
+    /// traveller's vehicles, and costed in generalised minutes. Into `out`: the alternative
+    /// `current` gives it; for a trip choosing its mode the best of the set and what the model
+    /// expects over it; for one that drove a car alternative the best car route, what the model
+    /// expects among the car routes (its probabilities renormalised over them) and the best over
+    /// the whole network (the route a bounded time-dependent search finds, costed as a car
+    /// alternative). A car trip still under way at the end is costed as what it paid and still
+    /// had to pay ([`Ended::car_seconds`]) plus its walk and parking; any other keeps its cost
+    /// on these costs. An alternative no longer in the set is costed as it was planned, a car
+    /// route re-timed on these times. Every trip, every call; nothing is drawn, nothing changed:
+    /// the shared drives are searched apart from the choice's.
+    ///
+    /// Costs one more planning of every such trip's whole set (in parallel), and one bounded
+    /// search per car trip.
+    ///
+    /// # Errors
+    ///
+    /// [`ChoiceError`] if the model fails or answers wrongly.
+    #[allow(clippy::too_many_lines, reason = "one pass: plan, cost, search")]
+    #[allow(clippy::too_many_arguments, reason = "the costs, the choices and what the end left")]
+    pub(crate) fn gap<'a>(
+        &self,
+        planner: &Planner<'a>,
+        inputs: &ChooseInputs<'_>,
+        current: &Chosen,
+        iteration: u32,
+        ended: &Ended<'_>,
+        currency: &Currency,
+        out: &mut GapTrips,
+    ) -> Result<(), ChoiceError> {
+        let (trips, travellers, model) = (inputs.trips, inputs.travellers, inputs.model);
+        if let (true, Some(parking)) = (self.parks_cars, planner.parking) {
+            parking.prepare_car_free_flow();
+        }
+        if self.bike_reach_filled.get().is_none() {
+            self.fill_bike_reach(planner, trips, travellers);
+            let _ = self.bike_reach_filled.set(());
+        }
+        // Who is measured: a trip choosing its mode that travelled, and one that drove a car.
+        let jobs: Vec<(usize, Offer)> = (0..self.trips.len())
+            .filter(|&p| {
+                current.alt[p].as_ref().is_some_and(|old| self.choosing[p] || old.mode == Mode::Car)
+            })
+            .map(|p| (p, self.offer_of(trips, travellers, p, &current.alt)))
+            .collect();
+        let names: Vec<&str> = inputs.wanted.iter().map(String::as_str).collect();
+        let mut row = vec![0.0; inputs.wanted.len()];
+        let fill = |row: &mut [f64], a: &Alternative, best: f64, traveller, trip| {
+            for (slot, name) in row.iter_mut().zip(inputs.wanted) {
+                *slot = attribute(name, a, best, inputs, traveller, trip);
+            }
+        };
+        // The drives park-and-ride trips share, searched for these plans alone.
+        let mut car_reach = CarReach::new();
+        for jobs in jobs.chunks(CHUNK) {
+            planner.fill_car_reach(self.drives_wanted(planner, trips, jobs), &mut car_reach);
+            let sets: Vec<Vec<Alternative>> = par_map(
+                jobs,
+                SCRATCH_CHUNK,
+                || planner.scratch(),
+                |s, &(p, offer)| self.plan_trip(planner, trips, s, p, offer, &car_reach),
+            );
+            let mut batch = ChoiceBatch::new(iteration, &names);
+            let mut seconds: Vec<f64> = Vec::new();
+            // Per situation: its job, and the best door-to-door seconds of each mode in its set.
+            let mut situation_of: Vec<(usize, [f64; Mode::COUNT])> = Vec::new();
+            for (j, &(p, _)) in jobs.iter().enumerate() {
+                if sets[j].is_empty() {
+                    continue;
+                }
+                let trip = self.trips[p];
+                let traveller = trips.traveller(trip);
+                let best = best_by_mode(&sets[j]);
+                batch.begin_situation_in(
+                    traveller.raw(),
+                    trip.raw(),
+                    travellers.user_class(traveller).raw(),
+                );
+                for a in &sets[j] {
+                    fill(&mut row, a, best[a.mode.index()], traveller, trip);
+                    batch.push_alternative(a.identity, &row);
+                    seconds.push(a.total_s);
+                }
+                situation_of.push((j, best));
+            }
+            if situation_of.is_empty() {
+                continue;
+            }
+            batch.validate()?;
+            let probabilities = model.probabilities(&batch)?;
+            let g = currency.minutes(model, &batch, &seconds)?;
+            // One situation per alternative costed on its own: a car trip still under way, an
+            // alternative no longer in the set, a route the network search found.
+            let mut single = ChoiceBatch::new(iteration, &names);
+            let mut single_seconds: Vec<f64> = Vec::new();
+            let mut pending: Vec<(usize, f64)> = Vec::new();
+            // The car trips to search for: trip, its pair, departure, the best car drive's
+            // seconds (the search's bound) and the best car alternative's door to door.
+            let mut searches: Vec<(usize, RouteKey, f64, f64, f64)> = Vec::new();
+            for (s, &(j, best)) in situation_of.iter().enumerate() {
+                let (p, _) = jobs[j];
+                let set = &sets[j];
+                let range = batch.range(s);
+                let start = range.start;
+                let gs = &g[range.clone()];
+                let trip = self.trips[p];
+                let t = trip.index();
+                let traveller = trips.traveller(trip);
+                let old = current.alt[p].as_ref().expect("a measured trip travelled");
+                if self.choosing[p] {
+                    out.g_best_all[t] = gs.iter().copied().fold(f64::INFINITY, f64::min);
+                    out.g_expected_all[t] = probabilities
+                        .as_ref()
+                        .map_or(f64::NAN, |pr| range.clone().map(|a| pr[a] * g[a]).sum());
+                }
+                let car: Vec<usize> =
+                    (0..set.len()).filter(|&i| set[i].mode == Mode::Car).collect();
+                let drove = old.mode == Mode::Car;
+                if drove && !car.is_empty() {
+                    out.g_best_set[t] = car.iter().map(|&i| gs[i]).fold(f64::INFINITY, f64::min);
+                    out.g_expected_set[t] = probabilities.as_ref().map_or(f64::NAN, |pr| {
+                        let (p_car, g_car) = car.iter().fold((0.0, 0.0), |(pc, gc), &i| {
+                            (pc + pr[start + i], gc + pr[start + i] * gs[i])
+                        });
+                        if p_car > 0.0 { g_car / p_car } else { f64::NAN }
+                    });
+                    out.g_best_network[t] = out.g_best_set[t];
+                    if let Some(key) = self.car_keys[p] {
+                        let bound =
+                            car.iter().map(|&i| set[i].vehicle_s).fold(f64::INFINITY, f64::min);
+                        let departure = f64::from(trips.departure(trip).get());
+                        searches.push((t, key, departure, bound, best[Mode::Car.index()]));
+                    }
+                }
+                let kept = set.iter().position(|a| a.identity == old.identity);
+                let unfinished_car = drove && ended.unfinished[t];
+                match kept {
+                    Some(i) if !unfinished_car => {
+                        out.g_chosen[t] = gs[i];
+                        out.g_remaining[t] = 0.0;
+                    }
+                    _ => {
+                        let mut a = kept.map_or_else(|| old.clone(), |i| set[i].clone());
+                        let mut remaining = 0.0;
+                        if drove {
+                            let links: Vec<u32> = a.vehicle_links.iter().map(|l| l.raw()).collect();
+                            let departure = f64::from(trips.departure(trip).get());
+                            if unfinished_car {
+                                let (paid, rest) =
+                                    ended.car_seconds(t, &links, departure, planner.times);
+                                a.vehicle_s = paid + rest;
+                                remaining = rest + a.walk_s + a.parking_s;
+                            } else {
+                                a.vehicle_s = planner.times.route_seconds(&links, departure);
+                            }
+                            a.total_s = a.vehicle_s + a.walk_s + a.parking_s;
+                        }
+                        single.begin_situation_in(traveller.raw(), trip.raw(), batch.classes()[s]);
+                        fill(&mut row, &a, best[a.mode.index()], traveller, trip);
+                        single.push_alternative(a.identity, &row);
+                        single_seconds.push(a.total_s);
+                        pending.push((t, remaining / 60.0));
+                    }
+                }
+            }
+            if !pending.is_empty() {
+                single.validate()?;
+                let g = currency.minutes(model, &single, &single_seconds)?;
+                for ((t, remaining), g) in pending.into_iter().zip(g) {
+                    out.g_chosen[t] = g;
+                    out.g_remaining[t] = remaining;
+                }
+            }
+            // The whole network for the car trips: one bounded search each, in parallel; each
+            // route found costed as a car alternative.
+            let times = planner.times;
+            let found = par_map(
+                &searches,
+                crate::route_choice::GAP_CHUNK,
+                || Search::new(planner.car),
+                |search, &(_, key, departure, bound, _)| {
+                    let wait = |link: u32, at: f64| times.origin_wait_seconds(link, at);
+                    let link_seconds = |link: u32, at: f64| times.link_seconds(link, at);
+                    search.fastest_route(
+                        NodeId::new(key.origin),
+                        NodeId::new(key.destination),
+                        departure,
+                        bound,
+                        &wait,
+                        &link_seconds,
+                    )
+                },
+            );
+            single.clear();
+            single_seconds.clear();
+            let mut pending: Vec<usize> = Vec::new();
+            let road = planner.car.network;
+            for (&(t, _, _, _, best_car), found) in searches.iter().zip(found) {
+                let Some((drive_s, links)) = found else { continue };
+                let trip = TripId::from_index(t);
+                let traveller = trips.traveller(trip);
+                let mut a = blank(Mode::Car, Shape::Direct);
+                a.vehicle_m = links.iter().map(|&l| road.link_length(l).get()).sum();
+                a.vehicle_links = links;
+                a.vehicle_s = drive_s;
+                a.walk_s = planner.car_access_s;
+                a.parking_s = planner.car_egress_s;
+                a.total_s = drive_s + planner.car_access_s + planner.car_egress_s;
+                a.identity = a.identity_hash();
+                single.begin_situation_in(
+                    traveller.raw(),
+                    trip.raw(),
+                    travellers.user_class(traveller).raw(),
+                );
+                fill(&mut row, &a, best_car, traveller, trip);
+                single.push_alternative(a.identity, &row);
+                single_seconds.push(a.total_s);
+                pending.push(t);
+            }
+            if !pending.is_empty() {
+                single.validate()?;
+                let g = currency.minutes(model, &single, &single_seconds)?;
+                for (t, g) in pending.into_iter().zip(g) {
+                    out.g_best_network[t] = out.g_best_network[t].min(g);
+                }
+            }
+        }
+        Ok(())
     }
 }
 

@@ -53,7 +53,7 @@ use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
 /// Sampled trips per search scratch in the whole-network gap: a scratch holds a few bytes
 /// per link of the network, so a thread makes one per chunk it takes. Results do not depend on it.
-const GAP_CHUNK: usize = 16;
+pub(crate) const GAP_CHUNK: usize = 16;
 
 /// The attributes a route carries, in the order a batch holds them: the same
 /// names as every itinerary's ([`crate::itinerary_choice::ATTRIBUTES`], A8).
