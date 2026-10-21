@@ -23,9 +23,9 @@ means in practice.
    nothing — not a branch, not a counter, not a byte. This is why plugin names
    are resolved into concrete callables once, at build time, and never looked
    up in a loop.
-4. **Every addition documents its defaults and where they come from**, with a
-   row in the references table. "It looked about right" is not a default; it
-   is an unrecorded assumption.
+4. **Every addition documents its defaults and where they come from**, next to
+   the value in the code: the source, or the words *uncalibrated* and *assumed*.
+   "It looked about right" is not a default; it is an unrecorded assumption.
 
 ---
 
@@ -54,15 +54,17 @@ you need, add it there rather than working around it.
 The run-twice bit-identity check in CI is what catches violations. Do not
 disable it.
 
-### 2.2 Sweeps are Jacobi, not Gauss–Seidel
+### 2.2 Every queue is ordered by a total order
 
-Every node update within a sweep reads **the previous sweep's state**, never
-the state another node just wrote in the same sweep. Reading a neighbour's
-freshly written value makes the result depend on the order nodes were visited,
-which makes it depend on how the work was parallelised — the same failure mode
-as above, arriving by a different road.
+Anything processed in sequence — the loading's events, a search's labels, the
+travellers of a choice batch — is ordered by a key that never ties: time, then
+a tag, then an id. Ordering by time alone lets two equal times fall to
+whatever order the data happened to arrive in, which depends on input order or
+on how work was parallelised: the same failure mode as above, arriving by a
+different road.
 
-Write the new state into a separate buffer and swap at the end of the sweep.
+If you add a queue or a sort, give it a total order and say in a comment what
+breaks the ties.
 
 ---
 
@@ -78,6 +80,12 @@ revision:
 - **The clock is `u32` seconds.** Never a float clock.
 - **Internal units are SI and per-second**, converted exactly once at the
   scenario build boundary. Never convert inside a loop.
+- **Metric units everywhere a user sees them**: parameters, outputs, figures,
+  docstrings and examples use metres, kilometres, seconds, minutes, km/h and,
+  for figure sizes, centimetres (`size_cm`). A reader may accept a file in other
+  units (TNTP lengths in miles, GMNS `mi`/`ft`/`mph`, OSM `maxspeed=30 mph`) and
+  converts them once, on reading; nothing else takes or shows a US customary
+  unit. (Image resolution keeps the file convention, dots per inch.)
 - **A random draw is a pure function of its key**, never of a sequence
   position. No shared mutable generator, no thread-local, anywhere.
 - **`core-types` depends on nothing**, and **`py-bindings` is the only crate
@@ -105,19 +113,39 @@ first, not a pull request to write.
   is the pattern: a loose floor that catches an order-of-magnitude regression
   without flaking on a busy CI runner.
 
+### 4.1 Reporting a bug
+
+A bug is where the code does not do what its documentation says, or fails where it should not. **Report one with a
+reproduction**: ideally a short notebook that shows it from scratch — what is expected, the smallest input that shows
+it (the toy network, a grid, a few rows; no private data), what happens, and one check that fails now and will pass
+once it is fixed. That check becomes the regression test that lands with the fix. Each report moves through
+**reported → confirmed → fix planned → fixed** (or **dismissed**, with the reason), and its state is kept with it.
+
 ---
 
 ## 5. Running the checks
 
+Run what CI runs before you push; a change that passes only part of it can
+still be red on CI.
+
 ```bash
-cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo test --workspace
 cargo test --workspace --release     # performance floors are enforced here only
-maturin develop && pytest
+cargo test -p openmobisim-core-types --no-default-features
+cargo test -p openmobisim-core-routes --no-default-features
+cargo test --workspace --all-features
+cargo +1.85.0 check --workspace --all-targets   # the minimum supported Rust
+ruff check python && ruff format --check python
+pip install -e . && pytest
 ```
 
-CI runs all of these on Linux, macOS and Windows, and builds a wheel on each.
+The determinism checks (the same run twice, and at several thread counts, must
+give identical output) are the `determinism` job in `.github/workflows/ci.yml`;
+run its steps as written there. CI runs all of this on Linux, macOS and
+Windows, and builds a wheel on each.
 
 ---
 

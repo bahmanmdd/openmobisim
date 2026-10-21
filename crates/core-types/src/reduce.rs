@@ -35,7 +35,7 @@
 //! `par_iter().fold()` over floating-point state.** If this module does not
 //! have the shape you need, add it here rather than working around it. This is
 //! one of the two rules `CONTRIBUTING.md` states outright; the other is that
-//! sweeps are Jacobi.
+//! every queue is ordered by a total order.
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
