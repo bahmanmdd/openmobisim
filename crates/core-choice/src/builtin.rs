@@ -399,6 +399,24 @@ impl Logit {
         Ok(utility)
     }
 
+    /// The same model without its overlap term: the coefficient of `ln_path_size` set to 0, the
+    /// model's own and every class's.
+    fn without_overlap(&self) -> Self {
+        let zero = |betas: &mut Vec<(String, f64)>| {
+            for (attribute, beta) in betas.iter_mut() {
+                if attribute == "ln_path_size" {
+                    *beta = 0.0;
+                }
+            }
+        };
+        let mut m = self.clone();
+        zero(&mut m.betas);
+        for (_, betas) in &mut m.classes {
+            zero(betas);
+        }
+        m
+    }
+
     /// The logit probability of every alternative, for inspection and tests:
     /// one vector per situation.
     ///
@@ -461,6 +479,20 @@ impl ChoiceModel for Logit {
                 .map(|s| crate::model::log_sum_exp(utility[batch.range(s)].iter().copied()))
                 .collect(),
         ))
+    }
+
+    /// [`Logit::utilities`] with the overlap term left out: computed with the coefficient of
+    /// `ln_path_size` set to 0 (the model's and every class's), so exactly the other terms.
+    fn utilities(&self, batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
+        Ok(Some(Logit::utilities(&self.without_overlap(), batch)?))
+    }
+
+    /// The class's `beta_time_min` if the class is one of the model's (it carries the model's
+    /// coefficient unless it overrides it), else the model's.
+    fn time_coefficient(&self, class: &str) -> Option<f64> {
+        let betas =
+            self.classes.iter().find(|(name, _)| name == class).map_or(&self.betas, |c| &c.1);
+        betas.iter().find(|(attribute, _)| attribute == "time_min").map(|(_, beta)| *beta)
     }
 }
 
@@ -671,6 +703,17 @@ impl ChoiceModel for NestedLogit {
             out.push(crate::model::log_sum_exp(tops));
         }
         Ok(Some(out))
+    }
+
+    /// The logit's ([`ChoiceModel::utilities`] of [`Logit`]): the nests change the errors,
+    /// not the systematic utility.
+    fn utilities(&self, batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
+        ChoiceModel::utilities(&self.logit, batch)
+    }
+
+    /// The logit's.
+    fn time_coefficient(&self, class: &str) -> Option<f64> {
+        ChoiceModel::time_coefficient(&self.logit, class)
     }
 }
 

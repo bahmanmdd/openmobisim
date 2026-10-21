@@ -200,6 +200,31 @@ pub trait ChoiceModel: Send + Sync {
     fn logsums(&self, _batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
         Ok(None)
     }
+
+    /// The **systematic utility** of every alternative in `batch`, one value per alternative,
+    /// as a value of the alternative itself: the model's utility **without any term that only
+    /// corrects how the alternatives' errors are correlated** (for the logit, its overlap term
+    /// `beta_ln_path_size × ln_path_size`, which has no value for an alternative outside the
+    /// set it was computed over); or `None` if the model has none to give (the default).
+    ///
+    /// Optional, like [`Self::probabilities`]: what lets an iterated run measure its gaps in
+    /// the model's own currency. Divided by [`Self::time_coefficient`] it reads in minutes of
+    /// travel time (larger is worse); without it the gaps are measured in time.
+    ///
+    /// # Errors
+    ///
+    /// [`ChoiceError`] if an attribute is missing or the model fails.
+    fn utilities(&self, _batch: &ChoiceBatch) -> Result<Option<Vec<f64>>, ChoiceError> {
+        Ok(None)
+    }
+
+    /// The coefficient of travel time in minutes (`beta_time_min`) in the utility of a
+    /// traveller of class `class` (the class's own if it sets one, else the model's), or `None`
+    /// if the model has none (the default). What [`Self::utilities`] is divided by to read in
+    /// minutes.
+    fn time_coefficient(&self, _class: &str) -> Option<f64> {
+        None
+    }
 }
 
 /// `ln Σ exp(v)` over `values`, computed stably; `−∞` for none.
