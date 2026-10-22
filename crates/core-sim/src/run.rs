@@ -2198,6 +2198,8 @@ impl Run {
                     max: u8::try_from(o.reroute_max).unwrap_or(u8::MAX),
                 }),
                 pocket_length_m: o.pocket_length_m,
+                node_inflow: o.node_inflow,
+                origin_inflow: o.origin_inflow,
                 start_s: f64::from(self.window_start.get()),
                 capacity_changes: if disrupted {
                     self.disruptions.capacity_changes()

@@ -278,9 +278,13 @@ impl LtmNetwork<'_> {
             let room = match next {
                 None => Some(f64::INFINITY),
                 Some(j) => {
-                    // On a signalised approach the inflow headway applies at the stop line.
+                    // On a signalised approach the inflow headway applies at the stop line;
+                    // at the classic point queue, nowhere (`with_node_inflow`).
                     let clear = self.curves[j].last_entry().get() + pcu / self.inflow_rate[j];
-                    if self.stop_delay[i] <= 0.0 && clear > t + TIME_EPSILON {
+                    if self.stop_delay[i] <= 0.0
+                        && self.node_inflow_applies()
+                        && clear > t + TIME_EPSILON
+                    {
                         look_again = look_again.min(clear);
                         if k == 0 {
                             self.offer_if_inflow_holds_long(i, j, pcu, q.ready, t);

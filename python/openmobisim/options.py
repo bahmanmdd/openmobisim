@@ -257,6 +257,8 @@ class LoadingOptions(_Options):
     """The loading's parameters: ``loading_options``.
 
     Attributes:
+        node_inflow: 0 or 1; ``1``.
+        origin_inflow: 0 or 1; ``0``.
         pocket_length_m: m; ``50.0``.
         priority: 0 or 1; ``0``.
         reroute: 0 or 1; by default ``None``: on at flow_level 3 and 4, and at 2 in a loading
@@ -268,6 +270,8 @@ class LoadingOptions(_Options):
 
     _argument: ClassVar[str] = "loading_options"
     _defaults: ClassVar[dict[str, Any]] = {
+        "node_inflow": 1,
+        "origin_inflow": 0,
         "pocket_length_m": 50.0,
         "priority": 0,
         "reroute": None,
@@ -279,6 +283,8 @@ class LoadingOptions(_Options):
     def __init__(
         self,
         *,
+        node_inflow: int = 1,
+        origin_inflow: int = 0,
         pocket_length_m: float = 50.0,
         priority: int = 0,
         reroute: int | None = None,

@@ -243,7 +243,15 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// instead of waiting for the link to reopen. Every fingerprint moves (the pockets are hashed);
 /// at the point queue the results of multi-lane approaches at their inflow limits move
 /// (Sioux Falls' mean trip 13.2 → 11.8 min), the cities by under half a minute.
-pub const DEFAULTS_VERSION: u32 = 31;
+///
+/// Version 32 (S293): **two rules of entry in the loading** (`core-sim`'s `LoadingOptions`),
+/// each uncalibrated and shipped as the loading was before it: `node_inflow` (1; at the point
+/// queue only, 0 drops the inflow headway at nodes: the classic point queue of Vickrey 1969 and
+/// Han, Friesz and Yao 2013, where a bottleneck's queue sits at its own exit) and
+/// `origin_inflow` (0; 1 lets a departure enter its first link no faster than the link's inflow
+/// headway, the origin as a centroid connector with the first link's capacity). No result and
+/// no fingerprint moves at the shipped values.
+pub const DEFAULTS_VERSION: u32 = 32;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

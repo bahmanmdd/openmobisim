@@ -59,7 +59,14 @@ def test_every_parameter_the_run_uses_changes_its_fingerprint() -> None:
             continue
         # A flag's listed value may be another level's default (``reroute``: 0 at level 2, 1
         # here), so both of its values are tried: one of them must change the fingerprint.
-        flag = name in ("priority", "reroute", "fallback_car", "biased")
+        flag = name in (
+            "priority",
+            "reroute",
+            "node_inflow",
+            "origin_inflow",
+            "fallback_car",
+            "biased",
+        )
         values = (0.0, 1.0) if flag else (_changed(float(value)),)
         got = set()
         for new in values:

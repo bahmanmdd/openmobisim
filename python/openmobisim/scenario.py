@@ -874,7 +874,17 @@ class Scenario:
                 this many metres per lane, split among the approach's movements; on by default,
                 because without them one queue per link locks a dense network in the full model
                 (their known cost: an iterated run under heavy congestion misprices the waiting
-                movements).
+                movements); ``node_inflow`` (0 or 1, 1 by default; ``flow_level`` 2 only) —
+                at 1 a vehicle enters the next link no sooner than that link's inflow headway
+                after the one before, and one held so holds up those behind it on its link, so
+                a bottleneck's queue forms at the end of the links feeding it; at 0, the classic
+                point queue, the next link takes every vehicle at once, a link's exit is bounded
+                by its own capacity alone, and a bottleneck's queue sits at its own exit (a road
+                closed by a disruption then takes the vehicles bound onto it, which wait at its
+                end); ``origin_inflow`` (0 or 1, 0 by default; every level) — at 1 a departing
+                vehicle enters its first link no faster than the link's inflow headway allows,
+                as from an upstream link, at 0 at any rate (departures of the same second enter
+                together).
                 Uncalibrated defaults; unknown names and values out of range are refused.
             price_options: What travel costs, in euros, by name: ``car_eur_km``
                 (the fuel a driver pays per km), ``bike_eur_km``, a transit

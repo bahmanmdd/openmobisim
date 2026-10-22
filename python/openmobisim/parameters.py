@@ -35,7 +35,7 @@ _SCENARIO = [
 _COUNTS = ("iterations", "max_paths", "max_attempts", "max_routes", "searches", "candidates",
            "lanes", "increments", "max_rides", "reroute_max", "draws", "gap_sample",
            "itinerary_gap_sample", "warmup", "seed")  # fmt: skip
-_FLAGS = ("priority", "reroute", "biased", "fallback_car")
+_FLAGS = ("priority", "reroute", "node_inflow", "origin_inflow", "biased", "fallback_car")
 
 
 def _unit(name: str) -> str:

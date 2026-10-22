@@ -1,11 +1,13 @@
 //! What the link transmission model does at junctions and for vehicles that are stuck,
-//! by name: priority by road hierarchy at merges, en-route rerouting, and turn pockets.
+//! by name: priority by road hierarchy at merges, en-route rerouting, and turn pockets; and two
+//! rules of entry: the inflow headway at nodes at the point queue, and at origins.
 //!
-//! All three are remedies for gridlock: a merge that shares room in a fixed ratio lets traffic on
-//! a closed loop destroy itself, and vehicles that never leave their route cannot get out of it
-//! (Daganzo 1996, *The nature of freeway gridlock and how to prevent it*); priority to the major
-//! stream prevents the first, drivers who change course escape the second. Turn pockets
-//! keep a vehicle waiting to turn into a full street from holding up those turning elsewhere.
+//! The first three are remedies for gridlock: a merge that shares room in a fixed ratio lets
+//! traffic on a closed loop destroy itself, and vehicles that never leave their route cannot get
+//! out of it (Daganzo 1996, *The nature of freeway gridlock and how to prevent it*); priority to
+//! the major stream prevents the first, drivers who change course escape the second. Turn
+//! pockets keep a vehicle waiting to turn into a full street from holding up those turning
+//! elsewhere.
 
 use std::collections::BTreeMap;
 
@@ -82,6 +84,31 @@ pub struct LoadingOptions {
     /// (design guides size a bay from its expected queue, so no single length was found).
     /// Lanes per movement from OpenStreetMap's `turn:lanes`, where mapped, are for later.*
     pub pocket_length_m: f64,
+    /// At the point queue (`flow_level` 2) only, whether a vehicle's entry onto the next link
+    /// waits for that link's inflow headway
+    /// ([`openmobisim_core_loading::LtmNetwork::with_node_inflow`]): on (1), a vehicle held so
+    /// at the end of its link holds up those behind it bound elsewhere, and a bottleneck's queue
+    /// forms at the end of the links feeding it; off (0), **the classic point queue**: the next
+    /// link takes every vehicle at once, a link's exit is bounded by its own discharge capacity
+    /// alone, and a bottleneck's queue sits at its own exit. No effect at levels 3 and 4, where
+    /// the headway is part of the receiving condition.
+    ///
+    /// *Uncalibrated: on, the loading as it was before the option. Off is the point queue of
+    /// Vickrey (1969, *Congestion theory and transport investment*, *American Economic Review*
+    /// 59(2) 251–260) and of Han, Friesz and Yao (2013, *A partial differential equation
+    /// formulation of Vickrey's bottleneck model*, *Transportation Research Part B* 49). Off, a
+    /// link closed by a road disruption takes the vehicles bound onto it, which wait at its end,
+    /// where no reroute is offered.*
+    pub node_inflow: bool,
+    /// Whether a departing vehicle enters its first link no faster than the link's inflow
+    /// headway allows ([`openmobisim_core_loading::LtmNetwork::with_origin_inflow`]), at every
+    /// level: on (1), the origin feeds its first link at the link's capacity at most, as an
+    /// upstream link would; off (0), departures enter at any rate, so those given the same
+    /// second (demand in departure bins) enter as one platoon.
+    ///
+    /// *Uncalibrated: off, the loading as it was before the option. On treats the origin as a
+    /// centroid connector with the first link's capacity, an assumption.*
+    pub origin_inflow: bool,
 }
 
 impl LoadingOptions {
@@ -93,11 +120,13 @@ impl LoadingOptions {
         reroute_max: 3,
         reroute_min_gain: 0.1,
         pocket_length_m: 50.0,
+        node_inflow: true,
+        origin_inflow: false,
     };
 
     /// Every option's value, by name, in [`Self::NAMES`]' order (the parameter listing);
-    /// `priority` and `reroute` as 0 or 1 (`reroute` 1 for [`RerouteSetting::Auto`]: on where
-    /// it can act; [`Self::resolved`] gives a run's own).
+    /// `priority`, `reroute`, `node_inflow` and `origin_inflow` as 0 or 1 (`reroute` 1 for
+    /// [`RerouteSetting::Auto`]: on where it can act; [`Self::resolved`] gives a run's own).
     #[must_use]
     pub fn values(&self) -> Vec<(&'static str, f64)> {
         let flag = |b: bool| if b { 1.0 } else { 0.0 };
@@ -108,21 +137,25 @@ impl LoadingOptions {
             ("reroute_max", f64::from(self.reroute_max)),
             ("reroute_min_gain", self.reroute_min_gain),
             ("pocket_length_m", self.pocket_length_m),
+            ("node_inflow", flag(self.node_inflow)),
+            ("origin_inflow", flag(self.origin_inflow)),
         ]
     }
 
     /// The names of the options.
-    pub const NAMES: [&'static str; 6] = [
+    pub const NAMES: [&'static str; 8] = [
         "priority",
         "reroute",
         "reroute_after_s",
         "reroute_max",
         "reroute_min_gain",
         "pocket_length_m",
+        "node_inflow",
+        "origin_inflow",
     ];
 
-    /// The shipped values with `options` in place of their namesakes. `priority` and `reroute`
-    /// are 0 or 1.
+    /// The shipped values with `options` in place of their namesakes. `priority`, `reroute`,
+    /// `node_inflow` and `origin_inflow` are 0 or 1.
     ///
     /// # Errors
     ///
@@ -141,6 +174,8 @@ impl LoadingOptions {
         for (name, &v) in options {
             match name.as_str() {
                 "priority" => d.priority = flag(name, v)?,
+                "node_inflow" => d.node_inflow = flag(name, v)?,
+                "origin_inflow" => d.origin_inflow = flag(name, v)?,
                 "reroute" => {
                     d.reroute =
                         if flag(name, v)? { RerouteSetting::On } else { RerouteSetting::Off };
@@ -231,5 +266,41 @@ impl LoadingOptions {
 impl Default for LoadingOptions {
     fn default() -> Self {
         Self::SHIPPED
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read(pairs: &[(&str, f64)]) -> Result<LoadingOptions, String> {
+        LoadingOptions::from_options(&pairs.iter().map(|&(n, v)| (n.to_string(), v)).collect())
+    }
+
+    /// **Property:** the two rules of entry (S293) are flags, shipped as the loading was before
+    /// them (the headway at nodes kept, departures at any rate), read by name, listed with the
+    /// others, and refused, with the reason or the list of names, when the value or the name is
+    /// wrong.
+    #[test]
+    fn the_rules_of_entry_are_flags_read_by_name() {
+        let shipped = LoadingOptions::SHIPPED;
+        assert!(shipped.node_inflow && !shipped.origin_inflow);
+        let values = shipped.values();
+        assert_eq!(values.iter().map(|v| v.0).collect::<Vec<_>>(), LoadingOptions::NAMES);
+        assert!(values.contains(&("node_inflow", 1.0)) && values.contains(&("origin_inflow", 0.0)));
+        let read_back = read(&[("node_inflow", 0.0), ("origin_inflow", 1.0)]).expect("valid");
+        assert!(!read_back.node_inflow && read_back.origin_inflow);
+        assert_eq!(read(&[("node_inflow", 1.0), ("origin_inflow", 0.0)]), Ok(shipped));
+        for name in ["node_inflow", "origin_inflow"] {
+            let refused = read(&[(name, 2.0)]).expect_err("2 is not a flag");
+            assert_eq!(refused, format!("loading_options \"{name}\" must be 0 or 1, got 2"));
+        }
+        let unknown = read(&[("node_inflows", 0.0)]).expect_err("not an option");
+        assert_eq!(
+            unknown,
+            "loading_options has no \"node_inflows\"; the options are: priority, reroute, \
+             reroute_after_s, reroute_max, reroute_min_gain, pocket_length_m, node_inflow, \
+             origin_inflow"
+        );
     }
 }

@@ -103,6 +103,19 @@
 //! The pocket is a capacity, not a place; the link's discharge capacity stays shared by its
 //! movements. A link of one lane, or with one movement, keeps one first-in-first-out queue.
 //!
+//! # The classic point queue (when asked for)
+//!
+//! At level 2 storage is infinite, but a vehicle's front still enters the next link no closer
+//! behind the previous entrant than that link's inflow headway, `PCU / capacity`, and a vehicle
+//! held by it holds up those behind it on its link, whatever their next link: a bottleneck's queue
+//! forms at the end of the links feeding it and spreads upstream through every movement.
+//! [`LtmNetwork::with_node_inflow`]`(false)` drops the headway at nodes at level 2 only: the next
+//! link takes every vehicle at once, a link's exit is bounded by its own discharge capacity alone,
+//! and a bottleneck's queue sits at its own exit — the point queue of Vickrey (1969) and of Han,
+//! Friesz and Yao (2013). A link closed by a capacity change then takes the vehicles bound onto
+//! it, which wait at its end (where no reroute is offered) rather than before it. Levels 3 and 4
+//! keep the headway: there it is part of the receiving condition.
+//!
 //! # When traffic stops
 //!
 //! A vehicle waits for exactly two things: room on the link ahead, or the rear
@@ -118,7 +131,11 @@
 //! # Origins
 //!
 //! A departing vehicle waits outside the network, in its first link's origin
-//! queue, until the link has room. It does not use the link's inflow capacity.
+//! queue, until the link has room. It does not use the link's inflow capacity,
+//! unless [`LtmNetwork::with_origin_inflow`] asks it to (at every level, whatever
+//! [`LtmNetwork::with_node_inflow`] says): then it enters no sooner than the link's
+//! inflow headway after the previous entrant, as from an upstream link, so an origin
+//! feeds its first link at the link's capacity at most.
 //! The wait is part of its travel time: a [`Trajectory`] keeps the scheduled
 //! departure.
 //!
@@ -345,7 +362,7 @@ pub enum Recording {
 }
 
 /// Rules a loading applies beyond the link transmission model itself.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Rules {
     /// Priority by road hierarchy at unsignalised merges ([`LtmNetwork::with_priority`]).
     pub priority: bool,
@@ -359,6 +376,28 @@ pub struct Rules {
     /// The simulation window's start, in seconds after midnight: the loading's clock
     /// starts there ([`LtmNetwork::starting_at`]); 0 by default.
     pub start_s: f64,
+    /// At the point queue, whether an entry onto the next link waits for that link's inflow
+    /// headway ([`LtmNetwork::with_node_inflow`]); true by default.
+    pub node_inflow: bool,
+    /// Whether a departure enters its first link no faster than the link's inflow headway
+    /// ([`LtmNetwork::with_origin_inflow`]); false by default.
+    pub origin_inflow: bool,
+}
+
+impl Default for Rules {
+    /// Every rule off, the inflow headway at nodes kept and departures entering at any rate:
+    /// the loading as [`run_ltm`] makes it.
+    fn default() -> Self {
+        Self {
+            priority: false,
+            reroute: None,
+            pocket_length_m: 0.0,
+            capacity_changes: Vec::new(),
+            start_s: 0.0,
+            node_inflow: true,
+            origin_inflow: false,
+        }
+    }
 }
 
 /// What [`run_ltm_chained`] returns.
@@ -387,6 +426,12 @@ pub struct LtmOutput {
 pub struct LtmNetwork<'a> {
     network: &'a RoadNetwork,
     level: FidelityLevel,
+    /// At the point queue, whether an entry onto the next link waits for its inflow headway
+    /// ([`Self::with_node_inflow`]).
+    node_inflow: bool,
+    /// Whether a departure waits for its first link's inflow headway
+    /// ([`Self::with_origin_inflow`]).
+    origin_inflow: bool,
     now: f64,
     /// The time of the movement being processed: nothing is scheduled before it.
     clock: f64,
@@ -502,6 +547,8 @@ impl<'a> LtmNetwork<'a> {
         let mut sim = Self {
             network,
             level: FidelityLevel::Full,
+            node_inflow: true,
+            origin_inflow: false,
             now: 0.0,
             clock: 0.0,
             links: n,
@@ -639,6 +686,43 @@ impl<'a> LtmNetwork<'a> {
         self.level = level;
         self.apply_level();
         self
+    }
+
+    /// Whether, at the point queue, a vehicle's entry onto the next link waits for that link's
+    /// inflow headway (`true`, as built) or not (`false`): **the classic point queue**, where the
+    /// next link takes every vehicle at once, a link's exit is bounded by its own discharge
+    /// capacity alone and a bottleneck's queue sits at its own exit (see the
+    /// [module docs](self)). No effect at levels 3 and 4, whose receiving condition the headway
+    /// is part of, nor on departures ([`Self::with_origin_inflow`]).
+    ///
+    /// Why: with the headway, a vehicle held at the end of its link by a slow next link holds
+    /// up every vehicle behind it bound elsewhere, so a bottleneck's queue forms upstream of it
+    /// and spreads through every movement there; the point queue of Vickrey (1969) and of Han,
+    /// Friesz and Yao (2013) bounds a link's exit by its own capacity only. Cost: one flag, and
+    /// one comparison per node passage.
+    #[must_use]
+    pub fn with_node_inflow(mut self, on: bool) -> Self {
+        self.node_inflow = on;
+        self
+    }
+
+    /// Whether a departing vehicle enters its first link no sooner than the link's inflow
+    /// headway after the previous entrant (`true`), as from an upstream link, or at any rate
+    /// (`false`, as built). At every level, whatever [`Self::with_node_inflow`] says.
+    ///
+    /// Why: a departure enters from a centroid connector, which carries at most the first
+    /// link's capacity; without the headway, departures given the same second (demand in
+    /// departure bins) enter as one platoon. Cost: one flag, and per departure one comparison.
+    #[must_use]
+    pub fn with_origin_inflow(mut self, on: bool) -> Self {
+        self.origin_inflow = on;
+        self
+    }
+
+    /// Whether the inflow headway applies at nodes: always, except at the point queue when
+    /// [`Self::with_node_inflow`] turned it off.
+    fn node_inflow_applies(&self) -> bool {
+        self.node_inflow || self.level != FidelityLevel::PointQueue
     }
 
     fn apply_level(&mut self) {
@@ -1080,10 +1164,14 @@ impl<'a> LtmNetwork<'a> {
             }
             Place::Origin => {
                 let first = vehicle.route[0].index();
+                // Under `with_origin_inflow`, the first link's inflow headway, as from a link.
+                if self.origin_inflow && self.headway_blocks(first, pcu, queue, t, t0) {
+                    return;
+                }
                 match self.admissible(first, pcu, t, None) {
                     Ok(room) => {
                         self.pop_front(queue, t0);
-                        self.enter_from_outside(front.slot, 0, t, room, false, t0);
+                        self.enter_from_outside(front.slot, 0, t, room, self.origin_inflow, t0);
                     }
                     Err(blocked) => self.block(queue, blocked, t, t0),
                 }
@@ -1114,9 +1202,19 @@ impl<'a> LtmNetwork<'a> {
         }
     }
 
-    /// Whether the next link's inflow headway holds the vehicle back; if so,
-    /// the queue is rescheduled for when it will not.
+    /// Whether the next link's inflow headway holds the vehicle back at a node; if so,
+    /// the queue is rescheduled for when it will not. Never at the classic point queue
+    /// ([`Self::with_node_inflow`]).
     fn inflow_blocks(&mut self, j: usize, pcu: f64, queue: usize, t: f64, t0: f64) -> bool {
+        if !self.node_inflow_applies() {
+            return false;
+        }
+        self.headway_blocks(j, pcu, queue, t, t0)
+    }
+
+    /// Whether link `j`'s inflow headway holds back a vehicle of `pcu` at `t`, wherever it
+    /// comes from; if so, the queue is rescheduled for when it will not.
+    fn headway_blocks(&mut self, j: usize, pcu: f64, queue: usize, t: f64, t0: f64) -> bool {
         let clear = self.curves[j].last_entry().get() + pcu / self.inflow_rate[j];
         if clear > t + TIME_EPSILON {
             self.schedule_front(queue, t0, clear);
@@ -1716,7 +1814,11 @@ fn run_ltm_inner_chained(
     )]
     let n_steps = ((window.get() - start) / step.get()).ceil().max(0.0) as usize;
 
-    let mut sim = LtmNetwork::new(network, turns).with_level(level).starting_at(Duration(start));
+    let mut sim = LtmNetwork::new(network, turns)
+        .with_level(level)
+        .with_node_inflow(rules.node_inflow)
+        .with_origin_inflow(rules.origin_inflow)
+        .starting_at(Duration(start));
     if rules.priority {
         sim = sim.with_priority();
     }
@@ -2016,5 +2118,204 @@ mod tests {
             assert!(sim.rerouting.as_ref().expect("on").pending.is_empty());
         }
         assert!(sim.queue_len(link(&network, "ab")) > 0, "the fixture needs a queue that waits");
+    }
+
+    /// A network of the nodes given, `(id, lon, lat)`, and links of 500 m of primary road
+    /// between them, `(from, to, capacity)`, each with its capacity stated in PCU per hour.
+    fn primary_links(nodes: &[(&str, f64, f64)], links: &[(&str, &str, f64)]) -> RoadNetwork {
+        let mut b = RoadNetworkBuilder::new();
+        for &(id, lon, lat) in nodes {
+            b.add_node(id, LonLat::new(lon, lat));
+        }
+        for &(from, to, capacity) in links {
+            let mut spec = LinkSpec::new(RoadClass::Primary);
+            spec.capacity_veh_h = Some(capacity);
+            spec.length_m = Some(500.0);
+            b.add_link(format!("{from}{to}"), from, to, spec);
+        }
+        let network = b
+            .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+            .expect("buildable");
+        for &(from, to, capacity) in links {
+            let per_hour = network.link_parameters(link(&network, &format!("{from}{to}"))).capacity;
+            assert!((per_hour.get() * 3600.0 - capacity).abs() < 1e-6, "the fixture's capacities");
+        }
+        network
+    }
+
+    /// **Property (the classic point queue, S293):** at a diverge whose minor exit is a
+    /// bottleneck — `ab` (2 000 PCU/h) feeding `bc` (1 000) and `bd` (200), 900 vehicles an hour
+    /// bound for `c` and 400 for `d`, for an hour, at level 2 — the headway at nodes holds those
+    /// bound for `d` at the end of `ab`, where they hold up those bound for `c` (first in, first
+    /// out). Without it ([`LtmNetwork::with_node_inflow`]`(false)`) those bound for `c` pass at
+    /// free flow, `ab` never discharges above its own capacity, and the bottleneck's queue sits
+    /// at `bd`'s own exit as the deterministic queue: fed at 400/h with a capacity of 200/h, the
+    /// vehicle departing at τ waits τ, 30 minutes on average. Building with the headway kept
+    /// changes nothing: the same trajectories as a loading that never heard of the option.
+    #[test]
+    fn without_the_headway_at_nodes_a_bottleneck_queues_at_its_own_exit() {
+        let network = primary_links(
+            &[
+                ("a", 4.8000, 45.700),
+                ("b", 4.8064, 45.700),
+                ("c", 4.8128, 45.701),
+                ("d", 4.8128, 45.699),
+            ],
+            &[("a", "b", 2000.0), ("b", "c", 1000.0), ("b", "d", 200.0)],
+        );
+        let turns = TurnTable::build(&network, SignalDefaults::SHIPPED);
+        let (ab, bc, bd) = (link(&network, "ab"), link(&network, "bc"), link(&network, "bd"));
+        // Bound for c: one every 4 s (900 an hour); for d: one every 9 s (400 an hour).
+        let mut vehicles: Vec<Vehicle> = (0..900u32)
+            .map(|k| Vehicle::new(VehicleId::new(k), vec![ab, bc], Pcu(1.0), Second(4 * k)))
+            .collect();
+        vehicles.extend(
+            (0..400u32).map(|k| {
+                Vehicle::new(VehicleId::new(900 + k), vec![ab, bd], Pcu(1.0), Second(9 * k))
+            }),
+        );
+        let to_c = |t: &Trajectory| t.vehicle.raw() < 900;
+        let free_flow = |route: &[LinkId]| -> f64 {
+            route.iter().map(|&l| network.free_flow_time(l).get()).sum()
+        };
+        let (free_c, free_d) = (free_flow(&[ab, bc]), free_flow(&[ab, bd]));
+        // Three hours in steps of 10 s; `ab`'s discharged PCU at the end of each.
+        let load = |node_inflow: Option<bool>| {
+            let mut sim = LtmNetwork::new(&network, &turns).with_level(FidelityLevel::PointQueue);
+            if let Some(on) = node_inflow {
+                sim = sim.with_node_inflow(on);
+            }
+            vehicles.iter().for_each(|v| sim.depart(v));
+            let (mut done, mut discharged) = (Vec::new(), Vec::new());
+            for _ in 0..1080 {
+                done.extend(sim.step(Duration(10.0)));
+                discharged.push(sim.discharged_pcu(ab).get());
+            }
+            (done, discharged)
+        };
+        // The mean delay, in seconds, of the trips bound for c (or d), over their whole route.
+        let mean_delay = |done: &[Trajectory], bound_for_c: bool| -> (usize, f64) {
+            let delays: Vec<f64> = done
+                .iter()
+                .filter(|t| to_c(t) == bound_for_c)
+                .map(|t| t.total_travel_time().get() - if bound_for_c { free_c } else { free_d })
+                .collect();
+            #[allow(clippy::cast_precision_loss, reason = "a few hundred trips")]
+            let mean = delays.iter().sum::<f64>() / delays.len() as f64;
+            (delays.len(), mean)
+        };
+        let key = |done: &[Trajectory]| -> Vec<(u32, Second, Vec<LinkTraversal>)> {
+            let mut k: Vec<_> =
+                done.iter().map(|t| (t.vehicle.raw(), t.departure, t.links.clone())).collect();
+            k.sort_unstable_by_key(|x| x.0);
+            k
+        };
+
+        let (unset, _) = load(None);
+        let (kept, _) = load(Some(true));
+        assert_eq!(kept.len(), unset.len(), "keeping the headway changes no completion");
+        assert!(key(&kept) == key(&unset), "keeping the headway changes no trajectory");
+        let (n_c_kept, delay_c_kept) = mean_delay(&kept, true);
+        assert!(
+            delay_c_kept > 60.0,
+            "with the headway, those bound for c wait behind those bound for d: {delay_c_kept:.1} s"
+        );
+
+        let (classic, discharged) = load(Some(false));
+        let (n_c, delay_c) = mean_delay(&classic, true);
+        let (n_d, delay_d) = mean_delay(&classic, false);
+        assert_eq!((n_c, n_d), (900, 400), "every trip finishes in three hours");
+        assert!(delay_c < 5.0, "without it, those bound for c pass at free flow: {delay_c:.2} s");
+        assert!(
+            (delay_d - 1800.0).abs() <= 180.0,
+            "the queue at bd's exit is the deterministic queue's, 30 min on average: {delay_d:.1} s"
+        );
+        // `ab` never discharges above its own capacity, over any span of whole steps, to within
+        // one vehicle.
+        let capacity = network.link_parameters(ab).capacity.get();
+        for (a, &before) in discharged.iter().enumerate() {
+            for (b, &after) in discharged.iter().enumerate().skip(a + 1) {
+                #[allow(clippy::cast_precision_loss, reason = "a thousand steps")]
+                let span = 10.0 * (b - a) as f64;
+                assert!(
+                    after - before <= span * capacity + 1.0 + 1e-6,
+                    "ab discharged {:.1} PCU in {span} s, its capacity allows {:.1}",
+                    after - before,
+                    span * capacity + 1.0
+                );
+            }
+        }
+        println!(
+            "diverge, level 2: with the headway at nodes, {n_c_kept} trips to c, mean delay \
+             {delay_c_kept:.1} s; without it, {n_c} to c, mean delay {delay_c:.2} s, and {n_d} to \
+             d, mean delay {delay_d:.1} s ({:.2} min)",
+            delay_d / 60.0
+        );
+    }
+
+    /// **Property (the origin as a link, S293):** 500 vehicles departing onto one link of
+    /// 1 000 PCU/h at the same second enter it together, within the first step, when departures
+    /// enter at any rate (as built); under [`LtmNetwork::with_origin_inflow`] they enter one
+    /// inflow headway (3.6 s) apart, the 500th about 1 800 s after the first — whether or not the
+    /// headway at nodes is kept, since the origin's rule is not a node's.
+    #[test]
+    fn under_the_origin_headway_departures_enter_at_the_link_s_capacity() {
+        let network =
+            primary_links(&[("a", 4.8000, 45.700), ("b", 4.8064, 45.700)], &[("a", "b", 1000.0)]);
+        let turns = TurnTable::build(&network, SignalDefaults::SHIPPED);
+        let ab = link(&network, "ab");
+        let vehicles: Vec<Vehicle> = (0..500u32)
+            .map(|k| Vehicle::new(VehicleId::new(k), vec![ab], Pcu(1.0), Second(0)))
+            .collect();
+
+        let mut sim = LtmNetwork::new(&network, &turns).with_level(FidelityLevel::PointQueue);
+        vehicles.iter().for_each(|v| sim.depart(v));
+        let _ = sim.step(Duration(60.0));
+        assert!(
+            (sim.cumulative_in(ab).get() - 500.0).abs() < 1e-9,
+            "at any rate, all 500 are on the link within the first step"
+        );
+
+        for node_inflow in [true, false] {
+            let mut sim = LtmNetwork::new(&network, &turns)
+                .with_level(FidelityLevel::PointQueue)
+                .with_node_inflow(node_inflow)
+                .with_origin_inflow(true);
+            vehicles.iter().for_each(|v| sim.depart(v));
+            let mut done = Vec::new();
+            for _ in 0..40 {
+                done.extend(sim.step(Duration(60.0)));
+            }
+            assert_eq!(done.len(), 500, "every vehicle finishes");
+            let mut entries: Vec<u32> = done.iter().map(|t| t.links[0].enter.get()).collect();
+            entries.sort_unstable();
+            let span = f64::from(entries[499] - entries[0]);
+            assert!(
+                (span - 1800.0).abs() <= 60.0,
+                "node_inflow {node_inflow}: the 500th entered {span} s after the first"
+            );
+            // Entries are floored to the second: 3.6 s apart, they are 3 or 4 s apart as read,
+            // and the k-th no sooner than floor(3.6 k) after the first.
+            for (k, w) in entries.windows(2).enumerate() {
+                assert!(
+                    w[1] - w[0] >= 3,
+                    "node_inflow {node_inflow}: entries {k} and {} closer \
+                                            than the headway: {w:?}",
+                    k + 1
+                );
+            }
+            for (k, &e) in entries.iter().enumerate() {
+                #[allow(clippy::cast_precision_loss, reason = "500 vehicles")]
+                let earliest = (3.6 * k as f64 - 1e-6).floor();
+                assert!(
+                    f64::from(e - entries[0]) >= earliest,
+                    "node_inflow {node_inflow}: entry {k} at {e} s, the headway allows {earliest} s"
+                );
+            }
+            println!(
+                "origin, node_inflow {node_inflow}: 500 departures at one second entered over \
+                 {span} s"
+            );
+        }
     }
 }

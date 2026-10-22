@@ -3,16 +3,21 @@
 On a small grid loaded far beyond its capacity: the report finds what stands and checks the
 loading's guarantee (no front waits for room that is there); the rules are off unless asked for
 and then enter the run's fingerprint; vehicles that re-route are recorded, and their realised
-routes are whole, continuous, and turn where the record says.
+routes are whole, continuous, and turn where the record says. The rules of entry (``node_inflow``,
+``origin_inflow``) hash only when they differ from the shipped ones, and change the results of a
+point-queue run of Nguyen–Dupuis when they do.
 """
 
 from __future__ import annotations
+
+import os
 
 import numpy as np
 import openmobisim as ms
 import pytest
 
 CAR = {"commuter": (True, False, False)}
+BUNDLE = os.environ.get("OPENMOBISIM_TEST_BUNDLE")
 
 
 def jammed(**kwargs: object) -> ms.Run:
@@ -112,3 +117,44 @@ def test_priority_and_rerouting_keep_the_guarantee() -> None:
     for opts in ({"reroute": 0}, {"priority": 1}, {"reroute_after_s": 60}, {"priority": 0}):
         g = jammed(loading_options=opts).report_gridlock()
         assert g["room_waits_with_room"] == 0, opts
+
+
+def test_the_rules_of_entry_hash_only_when_asked_for_and_refuse_what_is_not_a_flag() -> None:
+    net = ms.examples.manhattan_grid(n=4, block_metres=150.0, signals=False)
+    rows = ms.examples.trips_random(net, 200, seed=3, min_m=300.0, max_m=900.0, spread_s=600)
+
+    def fingerprint(**loading: float) -> str:
+        scenario = ms.Scenario.from_parts(net, rows, classes=CAR, loading_options=loading)
+        return scenario._fingerprint()
+
+    plain = fingerprint()
+    assert fingerprint(node_inflow=1, origin_inflow=0) == plain
+    classic, origin = fingerprint(node_inflow=0), fingerprint(origin_inflow=1)
+    assert len({plain, classic, origin, fingerprint(node_inflow=0, origin_inflow=1)}) == 4
+    for bad, match in (
+        ({"node_inflow": 2}, "must be 0 or 1"),
+        ({"origin_inflow": 0.5}, "must be 0 or 1"),
+        ({"node_inflows": 0}, "node_inflow, origin_inflow"),
+    ):
+        with pytest.raises(ValueError, match=match):
+            fingerprint(**bad)
+
+
+@pytest.mark.skipif(BUNDLE is None, reason="set OPENMOBISIM_TEST_BUNDLE to the bundle's folder")
+def test_the_classic_point_queue_runs_on_nguyen_dupuis_and_changes_the_run() -> None:
+    case = ms.examples.case("nguyendupuis", root=BUNDLE)
+
+    def run(**loading: float) -> ms.Run:
+        scenario = case.scenario(
+            "base", equilibration_options={"iterations": 3}, loading_options=loading
+        )
+        return scenario.run("nd-entry", quiet=True, overwrite=True)
+
+    plain = run()
+    shipped = run(node_inflow=1, origin_inflow=0)
+    assert shipped.fingerprint == plain.fingerprint
+    assert shipped.total_travel_time_s == plain.total_travel_time_s
+    classic = run(node_inflow=0)
+    assert classic.fingerprint != plain.fingerprint
+    assert classic.completion["completed"] == classic.completion["total_trips"]
+    assert classic.total_travel_time_s != plain.total_travel_time_s
