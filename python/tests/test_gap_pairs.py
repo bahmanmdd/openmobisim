@@ -6,14 +6,20 @@ people are the demand's, a group's best is what its best-off trip paid, and a bi
 window gives one group per pair. Where a group's trips are the same trip (one second of
 departure), its best is no lower than the best route each was offered, so the gap read per group
 is at most the run's `gap_route`; with departures spread over a bin it need not be, and is not
-asserted. A run of one loading has no gap to read; a run read back from its folder neither.
+asserted. A run of one loading has no gap to read; a run read back from its folder neither. A
+starter case's `one_point_per_zone` puts every trip end at its zone's point and leaves the
+departures as drawn.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 import numpy as np
 import openmobisim as ms
 import pytest
+from openmobisim import _cases
 
 CAR = {"default": (True, False, False)}
 CORNERS = {"a": "n_000_000", "b": "n_005_005", "c": "n_000_005", "d": "n_005_000"}
@@ -159,3 +165,53 @@ def test_no_gap_to_read_without_iterations_or_from_the_files(grid, spread) -> No
     for bad in (0, -300, 2.5):
         with pytest.raises(ValueError, match="departure_bin_s"):
             run.gap_pairs(bad)
+
+
+def test_one_point_per_zone_moves_the_trip_ends_and_not_the_departures(tmp_path, monkeypatch):
+    # A made-up starter case (the loader's own test builds the same): two zones 2 km apart whose
+    # trips spread 300 m around them.
+    folder = tmp_path / "bundle" / "line"
+    (folder / "network").mkdir(parents=True)
+    (folder / "demand").mkdir()
+    files = {
+        "network/links.csv": "from,to,length,free_flow_time,capacity,lanes\n"
+        "A,B,1000,1,1800,1\nB,C,1000,1,1800,1\n",
+        "network/nodes.csv": "id,lon,lat\nA,4.90,52.37\nB,4.915,52.37\nC,4.93,52.37\n",
+        "demand/zones.csv": "zone,lon,lat\nA,4.90,52.37\nC,4.93,52.37\n",
+        "demand/od.csv": "origin,destination,trips\nA,C,100\n",
+        "demand/classes.csv": "class,share,modes\ndefault,1,car\n",
+    }
+    for name, text in files.items():
+        (folder / name).write_text(text)
+    info = {
+        "case": "line", "title": "A line", "kind": "table", "transit": None, "parkings": False,
+        "network": {"links": "network/links.csv", "nodes": "network/nodes.csv",
+                    "read": {"length_unit": "m", "time_unit": "min"}},
+        "demand": {"od": "demand/od.csv", "zones": "demand/zones.csv",
+                   "classes": "demand/classes.csv",
+                   "from_od": {"start_s": 25200, "end_s": 28800, "spread_m": 300.0}},
+        "scenarios": {"base": {}},
+    }  # fmt: skip
+    (folder / "case.json").write_text(json.dumps(info))
+    sums = {
+        p.relative_to(folder).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in folder.rglob("*")
+        if p.is_file()
+    }
+    manifest = tmp_path / "bundle_v1.json"
+    archive = {"name": "line.zip", "sha256": "0" * 64, "bytes": 0}
+    cases = {"line": {"archive": archive, "files": sums}}
+    manifest.write_text(json.dumps({"bundle": "v1", "cases": cases}))
+    monkeypatch.setattr(_cases, "_MANIFEST", manifest)
+    monkeypatch.delenv("OPENMOBISIM_DATA", raising=False)
+    case = ms.examples.case("line", root=tmp_path / "bundle")
+    spread, one = case.demand(), case.demand(one_point_per_zone=True)
+    assert len({(t[2], t[3]) for t in spread}) == len(spread), "spread: every origin its own"
+    assert {(t[2], t[3]) for t in one} == {(4.90, 52.37)}
+    assert {(t[4], t[5]) for t in one} == {(4.93, 52.37)}
+    assert [t[6] for t in one] == [t[6] for t in spread], "the departures as drawn"
+    assert len(set(t[6] for t in one)) > 90, "not moved to bins"
+    run = case.scenario(one_point_per_zone=True, equilibration_options={"iterations": 2}).run(
+        "case-one-point", quiet=True
+    )
+    assert run.gap_pairs(3600).row_count == 1, "one pair, one bin of the hour"
