@@ -185,6 +185,8 @@ class Case:
         seed: int = 0,
         weight: int | None = None,
         departures: tuple[str | float, str | float] | str | None = None,
+        one_point_per_zone: bool = False,
+        departure_bin_s: int | None = None,
     ) -> list[tuple]:
         """The trips: the OD matrix times ``multiple``, each traveller given a class by share.
 
@@ -204,6 +206,13 @@ class Case:
         after midnight; start included, end not), at their own times, the rest left out; the
         case's own ``departures`` (``case.json``) by default; ``"all"`` keeps every trip of the
         matrix (the bundle's demand stays whole, the selection is made here).
+
+        The two aggregations (``demand_from_od``): ``one_point_per_zone`` puts every trip end at
+        its zone's own point instead of the zone's points or its spread (a gateway is one point
+        already); ``departure_bin_s`` moves every departure to the middle of its bin of that
+        many seconds. Either makes the trips of one zone pair, or one zone pair and one bin, the
+        same trip repeated: comparable trips, for a gap read per zone pair and bin. The trips of
+        a bin then enter the network together, as a platoon, which has its own travel times.
         """
         from openmobisim.demand import (
             demand_assign_classes,
@@ -221,8 +230,12 @@ class Case:
         spreads = _zone_spreads(self.path(d["zones"]))
         if spreads:
             options["spread_m_by_zone"] = spreads
-        if d.get("zone_points"):  # S282: trip ends where the zone's buildings are
+        if d.get("zone_points") and not one_point_per_zone:  # S282: where the buildings are
             options["zone_points"] = demand_read_zone_points(self.path(d["zone_points"]))
+        if one_point_per_zone:
+            options["points_per_zone"] = 1
+        if departure_bin_s is not None:
+            options["departure_bin_s"] = departure_bin_s
         trips = demand_from_od(od, self.zones(), seed=seed, user_class=_DRAWN, **options)
         drawn = [t for t in trips if t[7] == _DRAWN]
         classes = demand_assign_classes(drawn, self.classes(), seed=seed) if drawn else []
@@ -244,13 +257,17 @@ class Case:
         seed: int = 0,
         weight: int | None = None,
         departures: tuple[str | float, str | float] | str | None = None,
+        one_point_per_zone: bool = False,
+        departure_bin_s: int | None = None,
         **options: Any,
     ) -> Scenario:
         """The case's scenario ``scenario`` (its ``case.json``), with ``options`` added.
 
         ``weight``: people per simulated traveller (``demand``'s); the case's own by default.
-        ``departures``: which trips run (``demand``'s); the case's own by default. The case's
-        ``window`` (``case.json``) is the scenario's unless ``options`` give one.
+        ``departures``: which trips run (``demand``'s); the case's own by default.
+        ``one_point_per_zone`` and ``departure_bin_s``: the demand aggregated over zones or over
+        departure bins (``demand``'s). The case's ``window`` (``case.json``) is the scenario's
+        unless ``options`` give one.
         """
         from openmobisim.scenario import Scenario
 
@@ -274,7 +291,9 @@ class Case:
         if transit is not None:
             parts.setdefault("parkings", self.parkings())
         return Scenario.from_parts(
-            network, self.demand(multiple, seed, weight, departures), **parts
+            network,
+            self.demand(multiple, seed, weight, departures, one_point_per_zone, departure_bin_s),
+            **parts,
         )
 
 
