@@ -3,7 +3,8 @@
 //! A diamond: from `a`, link `ab` to `b`, then either `bc`–`cd` (planned; `cd` a one-lane
 //! service road, so its queue fills `bc` and spills back into `ab`) or `be`–`ed` (free). A
 //! vehicle blocked at the front of `ab` long enough is offered a new route; the script sends it
-//! by `e`.
+//! by `e`. At the point queue, where no queue spills back, a vehicle at the end of `ab` that can
+//! see a queue on `bc` longer than `bc` holds is offered one too (X-69).
 
 use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
 use openmobisim_core_graph::geometry::LonLat;
@@ -76,7 +77,7 @@ impl Reroute for ByE {
         live: &dyn LiveTimes,
         reason: RerouteReason,
     ) -> Option<Vec<LinkId>> {
-        assert_eq!(reason, RerouteReason::Stuck);
+        assert!(matches!(reason, RerouteReason::Stuck | RerouteReason::QueueAhead));
         self.calls += 1;
         // The live estimate of a blocked link includes how long its front has waited.
         assert!(live.live_seconds(current) > 0.0);
@@ -263,6 +264,37 @@ fn at_the_point_queue_a_closed_link_refuses_entry_and_its_traffic_re_routes() {
         assert_eq!(done.len(), 10, "node_inflow {node_inflow}: all arrive, `bc` never opening");
         assert!(done.iter().all(|t| t.links.iter().all(|x| x.link != d.bc)), "none entered `bc`");
     }
+}
+
+/// **Property (X-69, S294):** at the point queue a queue has no length, so a closure whose node
+/// has no other exit held its traffic for good: only the vehicle at the end of `bc` was ever
+/// offered a route, and from `c` there is none. Now a vehicle at the end of `ab` is offered one
+/// when the queue on `bc` is longer than `bc` holds (where its back would stand with spillback),
+/// and the script sends it by `e`; the vehicles that fill `bc` before that stay, as they would.
+#[test]
+fn at_the_point_queue_a_queue_longer_than_its_link_is_seen_from_the_junction_upstream() {
+    let d = diamond();
+    let cars = demand(&d); // one a second for twenty minutes, all by `c`
+    let closed = vec![CapacityChange { time: 0.0, link: d.cd, factor: 0.0 }];
+    let mut rr = ByE { ab: d.ab, bc: d.bc, detour: vec![d.be, d.ed], calls: 0, decline: false };
+    let (done, records) =
+        load_changed_at(&d, &cars, closed, 3.0 * 3600.0, &mut rr, FidelityLevel::PointQueue, false);
+    let storage = d.net.storage(d.bc).get();
+    let ahead: Vec<_> = records.iter().filter(|r| r.reason == RerouteReason::QueueAhead).collect();
+    assert!(!ahead.is_empty(), "nobody saw the queue; bc holds {storage}");
+    assert!(ahead.iter().all(|r| (r.link, r.planned_next, r.new_next) == (d.ab, d.bc, d.be)));
+    assert_eq!(records.len(), ahead.len(), "no other reroute: from `c` there is no way round");
+    // The first offer comes once `bc` holds more than its storage, not before; after it, every
+    // vehicle reaching `b` is offered the way round, takes it, and arrives.
+    let first = ahead.iter().map(|r| r.second).fold(f64::INFINITY, f64::min);
+    assert!(first >= storage, "the first offer at {first} s, bc holds {storage} PCU");
+    assert_eq!(done.len(), ahead.len(), "those offered the way round arrived; the rest wait");
+    assert!(done.iter().all(|t| t.links.iter().any(|x| x.link == d.be)));
+    let stuck = u32::try_from(cars.len() - done.len()).expect("few cars");
+    assert!(
+        f64::from(stuck) >= storage && f64::from(stuck) < storage + 60.0,
+        "{stuck} stuck on `bc`, which holds {storage} PCU plus what crosses it freely"
+    );
 }
 
 /// **Property (X-37 #11):** a new route is taken only if it joins on where the vehicle is and

@@ -1487,13 +1487,15 @@ class Run:
     def route_changes(self) -> Columns:
         """Every reroute of the last loading, as columns (empty without rerouting).
 
-        A vehicle blocked at the front of its link for ``reroute_after_s`` re-routes from where
-        it is (``loading_options``). One row per reroute, in the order they happened: ``trip``
-        (its index in the run), ``traveller_id``, ``trip_seq``, ``second``, ``link`` (the link
-        at whose end it re-routed), ``next_planned`` (the next link of its route until then),
-        ``next_taken`` (of its new route) and ``reason`` (``"stuck"``: blocked for
-        ``reroute_after_s``; other reasons, such as alerts and disruptions, are to come). Its
-        planned route is its route choice
+        A vehicle blocked at the downstream end of its link for ``reroute_after_s`` re-routes
+        from where it is (``loading_options``); at the point queue, so does one that can see a
+        queue ahead on its route longer than the links before it would hold. One row per
+        reroute, in the order they happened: ``trip`` (its index in the run), ``traveller_id``,
+        ``trip_seq``, ``second``, ``link`` (the link at whose downstream end it re-routed),
+        ``next_planned`` (the next link of its route until then), ``next_taken`` (of its new
+        route) and ``reason`` (``"stuck"``: blocked for ``reroute_after_s``; ``"queue_ahead"``:
+        the queue seen from upstream, at the point queue; other reasons, such as alerts and
+        disruptions, are to come). Its planned route is its route choice
         (``route_choices``); what it actually took is in ``route_realised``.
         """
         return Columns(self._summary.route_changes)

@@ -874,11 +874,16 @@ class Scenario:
                 class, or of the same class and at least 1.5 times the capacity, whose front
                 vehicle is bound for the same link, and a departing vehicle gives way to every
                 approach; ``reroute`` (0 or 1, **on** by default at levels 3 and 4) — a vehicle
-                blocked at the front of its link for ``reroute_after_s`` (300) re-routes from
-                where it is, at
-                most ``reroute_max`` (3) times, if the new route is at least
-                ``reroute_min_gain`` (0.1) faster (at ``flow_level`` 2 only behind a road closed
-                by a disruption, or one narrowed by it when ``node_inflow`` is 1);
+                blocked at the downstream end of its link for ``reroute_after_s`` (300)
+                re-routes from where it is, at most ``reroute_max`` (3) times, if the new route
+                is at least ``reroute_min_gain`` (0.1) faster; at ``flow_level`` 2 a vehicle
+                waits so only behind a road closed by a disruption (or narrowed by it when
+                ``node_inflow`` is 1), and since a point queue has no length to spill back, a
+                vehicle at the downstream end of its link is also offered a route, at once and
+                once per link, when a queue ahead on its route is longer than its link and the
+                links before it would hold: the offer reaches every junction upstream of where
+                the queue's back would stand, so the last one with a way round takes the
+                traffic;
                 ``pocket_length_m`` (50 by default; 0 turns
                 turn pockets off) — on an approach of two lanes or more, a vehicle passes those
                 ahead of it that wait for another movement while they fit in their turn pockets,

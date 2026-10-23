@@ -916,6 +916,7 @@ impl<'a> LtmNetwork<'a> {
             r.route_of.push(NONE);
             r.count.push(0);
             r.last_offer.push(f64::NEG_INFINITY);
+            r.offered_leg.push(NONE);
         }
         self.traversals.push(Vec::with_capacity(vehicle.route.len()));
         self.parts.push(VecDeque::new());
@@ -1146,6 +1147,11 @@ impl<'a> LtmNetwork<'a> {
 
         match self.place(queue) {
             Place::Link(i) => {
+                // A queue ahead that a point queue cannot show (X-69): the offer first, the move
+                // once it is answered.
+                if next.is_some() && self.offer_if_queue_ahead(i, front) {
+                    return;
+                }
                 if self.pocket(i) > 0.0 {
                     return self.process_pockets(i, t, tag, t0, completed);
                 }

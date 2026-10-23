@@ -1,9 +1,25 @@
 //! En-route rerouting: the rule, who decides, what is recorded, and the offers a front is due.
+//!
+//! **Two offers.** A vehicle **stuck** at the downstream end of its link for the rule's time is
+//! offered a new route ([`RerouteReason::Stuck`]). At the point queue a queue has no length, so
+//! nothing upstream of the link that holds it is ever stuck: a closure whose node has no other
+//! exit re-routed nobody (X-69). So at the point queue a vehicle is also offered a route at the
+//! downstream end of its link when it can **see a queue ahead** ([`RerouteReason::QueueAhead`]):
+//! a link on its route holds more waiting vehicles than its storage and the links between would
+//! hold, which is where the back of that queue would stand if the point queue had spillback.
+//! The offer comes at once (the vehicle is not held), once per link of the route, and the vehicle
+//! drives on if it is refused; it reaches every junction upstream of the queue's virtual back, so
+//! the last one with a way round takes the traffic (S294).
 
 use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
 
-use super::{LtmNetwork, NONE, TIME_EPSILON, queue_u32};
+use super::{FidelityLevel, LtmNetwork, NONE, Queued, TIME_EPSILON, queue_u32};
+use crate::curves::ROOM_EPSILON;
 use crate::events::Event;
+
+/// How many links ahead a vehicle looks for a queue ([`RerouteReason::QueueAhead`]): the walk
+/// stops once the links between would hold any queue in the network, long before this on most.
+const QUEUE_LOOKAHEAD: usize = 16;
 
 /// When a vehicle is offered a new route ([`LtmNetwork::with_rerouting`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -25,7 +41,7 @@ pub trait LiveTimes {
 
 /// Why a vehicle is offered a new route.
 ///
-/// Only [`Self::Stuck`] exists yet. The others planned join here,
+/// [`Self::Stuck`] and [`Self::QueueAhead`] exist. The others planned join here,
 /// so records and rerouters already carry the reason: an **alert** to an informed driver about
 /// congestion or a disruption ahead (navigation apps), a **disruption** on the route (a closure
 /// or a capacity drop), a **new destination** (a taxi dispatched, an electric vehicle sent to
@@ -33,16 +49,21 @@ pub trait LiveTimes {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum RerouteReason {
-    /// Blocked at the front of its link for the rule's time ([`RerouteRule::after_s`]).
+    /// Blocked at the downstream end of its link for the rule's time ([`RerouteRule::after_s`]).
     Stuck,
+    /// At the point queue, at the downstream end of its link with a queue ahead on its route
+    /// longer than the links before it would hold: where the back of that queue would stand
+    /// if the point queue had spillback (S294).
+    QueueAhead,
 }
 
 impl RerouteReason {
-    /// The reason as written in results: `"stuck"`.
+    /// The reason as written in results: `"stuck"` or `"queue_ahead"`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Stuck => "stuck",
+            Self::QueueAhead => "queue_ahead",
         }
     }
 }
@@ -93,10 +114,13 @@ pub(super) struct Rerouting {
     pub(super) count: Vec<u8>,
     /// Per slot: when it was last offered a route (−∞: never).
     pub(super) last_offer: Vec<f64>,
+    /// Per slot: the leg of its route at which it was last offered a route for a queue ahead
+    /// (`NONE`: never), so that each junction asks once.
+    pub(super) offered_leg: Vec<u32>,
     /// The routes of vehicles that re-routed, whole (the links already taken, then the new rest).
     pub(super) routes: Vec<Box<[LinkId]>>,
-    /// Links whose front is due an offer, in the order they became due.
-    pub(super) pending: Vec<u32>,
+    /// Links whose front is due an offer, with the reason, in the order they became due.
+    pub(super) pending: Vec<(u32, RerouteReason)>,
     pub(super) records: Vec<RerouteRecord>,
 }
 
@@ -120,6 +144,7 @@ impl LtmNetwork<'_> {
             route_of: Vec::new(),
             count: Vec::new(),
             last_offer: Vec::new(),
+            offered_leg: Vec::new(),
             routes: Vec::new(),
             pending: Vec::new(),
             records: Vec::new(),
@@ -173,10 +198,51 @@ impl LtmNetwork<'_> {
             if closed_ahead { r.last_offer[slot] } else { front.ready.max(r.last_offer[slot]) };
         let due = since + r.rule.after_s;
         if due <= t + TIME_EPSILON {
-            r.pending.push(queue_u32(i));
+            r.pending.push((queue_u32(i), RerouteReason::Stuck));
         } else {
             self.events.schedule(Event { time: due, tag: due, queue: queue_u32(4 * n + i) });
         }
+    }
+
+    /// At the point queue, whether link `i`'s `front`, about to leave, can see a queue
+    /// ahead on its route: a link ahead holds more waiting vehicles (what is on it beyond what
+    /// crosses it freely at its discharge rate) than its own storage and the storage of the
+    /// links between would hold, which is where the back of that queue would stand with
+    /// spillback. If so, and the vehicle may still re-route and was not asked at this leg, it is
+    /// due an offer ([`RerouteReason::QueueAhead`]), served right after the event being processed,
+    /// and `true` is returned: the caller lets the offer be served before the vehicle moves.
+    /// Costs a few lookups per link ahead, at most [`QUEUE_LOOKAHEAD`], for each vehicle leaving
+    /// a link; nothing at the other levels, where the queue itself reaches upstream.
+    pub(super) fn offer_if_queue_ahead(&mut self, i: usize, front: Queued) -> bool {
+        if !matches!(self.level, FidelityLevel::PointQueue) {
+            return false;
+        }
+        let Some(r) = self.rerouting.as_ref() else { return false };
+        let slot = front.slot as usize;
+        if r.count[slot] >= r.rule.max || r.offered_leg[slot] == front.leg {
+            return false;
+        }
+        let leg = front.leg as usize;
+        let mut behind = 0.0;
+        let mut seen = false;
+        for &m in self.route(front.slot).iter().skip(leg + 1).take(QUEUE_LOOKAHEAD) {
+            let m = m.index();
+            let on = (self.curves[m].cumulative_in() - self.curves[m].cumulative_out()).get();
+            let waiting = (on - self.discharge_rate[m] * self.travel[m]).max(0.0);
+            let storage = self.network.storage(LinkId::from_index(m)).get();
+            if waiting - storage > behind + ROOM_EPSILON {
+                seen = true;
+                break;
+            }
+            behind += storage;
+        }
+        if !seen {
+            return false;
+        }
+        let r = self.rerouting.as_mut().expect("checked above");
+        r.offered_leg[slot] = front.leg;
+        r.pending.push((queue_u32(i), RerouteReason::QueueAhead));
+        true
     }
 
     /// Link `i`'s front, held by its next link `j`'s inflow headway, is offered a new route as
@@ -212,7 +278,7 @@ impl LtmNetwork<'_> {
             return;
         };
         let t = self.clock;
-        for i in pending {
+        for (i, reason) in pending {
             let i = i as usize;
             let Some(front) = self.queues[i].front().copied() else { continue };
             let slot = front.slot as usize;
@@ -222,7 +288,6 @@ impl LtmNetwork<'_> {
                 continue;
             }
             let vehicle = self.vehicles[slot].id;
-            let reason = RerouteReason::Stuck;
             let answer = rr.reroute(vehicle, LinkId::from_index(i), &planned, t, &*self, reason);
             let net = self.network;
             let end = net.link_to(*planned.last().expect("not empty"));
@@ -237,9 +302,20 @@ impl LtmNetwork<'_> {
             let r = self.rerouting.as_mut().expect("rerouting is on");
             r.last_offer[slot] = t;
             let Some(rest) = accepted else {
-                let due = t + r.rule.after_s;
-                let n = self.links;
-                self.events.schedule(Event { time: due, tag: due, queue: queue_u32(4 * n + i) });
+                match reason {
+                    // Still blocked: the next offer after the rule's time.
+                    RerouteReason::Stuck => {
+                        let due = t + r.rule.after_s;
+                        let n = self.links;
+                        self.events.schedule(Event {
+                            time: due,
+                            tag: due,
+                            queue: queue_u32(4 * n + i),
+                        });
+                    }
+                    // Free to go: it drives on towards the queue.
+                    RerouteReason::QueueAhead => self.schedule_front(i, t0, t),
+                }
                 continue;
             };
             let mut whole: Vec<LinkId> = Vec::with_capacity(leg + 1 + rest.len());
