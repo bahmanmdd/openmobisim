@@ -1285,6 +1285,10 @@ impl Run {
 
         let strategy = self.equilibration.clone();
         let max_iterations = strategy.max_iterations().max(1);
+        // The departure bin of the shared search trees (S294): the route update's, so that it
+        // and the gaps read the same trees; the cost bin where the update reads none.
+        let tree_step_s =
+            route_update.tree_step_s().unwrap_or_else(|| strategy.cost_bin_seconds()).max(1);
         // Link times are recorded whenever there is a next iteration to cost: the flow map at
         // the user's bin length if they asked for one, the times the next choice reads at the
         // strategy's (S232).
@@ -1365,7 +1369,7 @@ impl Run {
                         &car_keys,
                         &route_sets,
                         Some(&trip_choosing),
-                        f64::from(strategy.cost_bin_seconds()),
+                        f64::from(tree_step_s),
                     );
                     clock = timings.lap("trees", Some(0), clock);
                     let found = route_update.update(&UpdateContext {
@@ -1504,7 +1508,7 @@ impl Run {
                         &car_keys,
                         &route_sets,
                         None,
-                        f64::from(strategy.cost_bin_seconds()),
+                        f64::from(tree_step_s),
                     );
                     clock = timings.lap("trees", Some(iteration), clock);
                     // The sets grow between loadings (S176): routes the congested times of
