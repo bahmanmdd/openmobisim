@@ -27,10 +27,6 @@ pub mod codes {
     /// Trip *n*+1's stated origin disagreed with trip *n*'s destination; the
     /// chain wins. Counted per traveller.
     pub const TRIP_CHAIN_ORIGIN_OVERRIDDEN: DiagCode = DiagCode("trip_chain_origin_overridden");
-    /// Two rows for the same traveller stated different `trip_seq` values
-    /// resolving to a duplicate after sorting; all but the first (in file
-    /// order) were dropped.
-    pub const DUPLICATE_TRIP_SEQ: DiagCode = DiagCode("duplicate_trip_seq");
     /// A traveller's trip rows disagreed on `weight`; the first stated value
     /// was kept.
     pub const INCONSISTENT_TRAVELLER_WEIGHT: DiagCode = DiagCode("inconsistent_traveller_weight");
@@ -329,6 +325,10 @@ pub fn build(
         return Err(DemandError::Schema("trips.parquet has no rows".to_string()));
     }
 
+    // A repeated (traveller_id, trip_seq) is refused, not dropped (X-68): the pipeline checks
+    // the rows as given, so that the row named is the user's; this is the check for every
+    // other caller.
+    crate::trips::check_distinct_keys(&trips)?;
     let mut by_traveller: HashMap<String, Vec<RawTrip>> = HashMap::new();
     for trip in trips {
         by_traveller.entry(trip.traveller_id.clone()).or_default().push(trip);
@@ -372,20 +372,6 @@ pub fn build(
         let traveller = TravellerId::new(raw_id);
 
         group.sort_by_key(|trip| trip.trip_seq);
-        let before = group.len();
-        group.dedup_by_key(|trip| trip.trip_seq);
-        let dropped = before - group.len();
-        if dropped > 0 {
-            diagnostics.record_n(
-                DiagKey::new(
-                    Category::DataQuality,
-                    codes::DUPLICATE_TRIP_SEQ,
-                    Severity::Warning,
-                    ElementRef::of(traveller),
-                ),
-                dropped as u64,
-            );
-        }
 
         let stated_weight = group.iter().find_map(|trip| trip.weight);
         if group.iter().filter_map(|trip| trip.weight).any(|w| Some(w) != stated_weight) {

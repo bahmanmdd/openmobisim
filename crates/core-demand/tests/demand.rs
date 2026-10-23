@@ -260,28 +260,28 @@ fn a_persons_row_for_an_unknown_traveller_is_recorded_and_ignored() {
 }
 
 #[test]
-fn duplicate_trip_seq_keeps_the_first_and_is_diagnosed() {
+fn a_repeated_traveller_id_and_trip_seq_is_refused_with_the_rows_named() {
+    // X-68: a second row with the same (traveller_id, trip_seq) used to be dropped with a
+    // warning, so a run simulated fewer trips than the demand given and nothing said so.
     let path = temp_path("duplicate_seq.parquet");
     write_trips(
         &path,
         &[
             trip("frank", 0, (4.80, 45.70), (4.81, 45.70)),
-            // A second row also claiming trip_seq = 0.
+            trip("erin", 0, (4.80, 45.70), (4.81, 45.70)),
+            // A second row also claiming frank's trip_seq = 0.
             trip("frank", 0, (4.99, 45.99), (4.98, 45.98)),
+            trip("erin", 1, (4.81, 45.70), (4.80, 45.70)),
         ],
     );
     let raw = read_trips_parquet(&path).expect("readable");
 
     let mut diagnostics = Diagnostics::new();
-    let (travellers, trips) =
-        build_travellers(raw, Vec::new(), &ClassDefaults::new(), 1, &mut diagnostics)
-            .expect("buildable");
-
-    let frank = TravellerId::new(0);
-    assert_eq!(travellers.trips_of(frank).count(), 1, "the duplicate row was dropped");
-    let kept = travellers.first_trip(frank);
-    assert_eq!(trips.origin(kept), LonLat::new(4.80, 45.70), "the first row in file order wins");
-    assert_eq!(diagnostics.count_of(codes::DUPLICATE_TRIP_SEQ), 1);
+    let error = build_travellers(raw, Vec::new(), &ClassDefaults::new(), 1, &mut diagnostics)
+        .expect_err("a repeated key is refused");
+    let message = error.to_string();
+    assert!(message.contains("trip row 2 (from 0) repeats row 0's"), "{message}");
+    assert!(message.contains("(\"frank\", 0)") && message.contains("1 row(s)"), "{message}");
 }
 
 #[test]

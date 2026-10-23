@@ -511,7 +511,9 @@ class Scenario:
                 data frame with those columns (``weight`` and ``mode`` optional), or a path to a
                 ``trips.parquet`` file or a ``trips.csv`` (read by ``demand_read_trips``). Every
                 row in memory is checked first, and a bad one is refused with its number and the
-                field (a latitude outside ±90, a departure that is not whole seconds …). A row
+                field (a latitude outside ±90, a departure that is not whole seconds …); so is a
+                second row with a ``(traveller_id, trip_seq)`` already given, since a trip is
+                keyed by the pair (a file read by its path is checked the same way). A row
                 may end with
                 a **mode** (the ``mode`` column of ``trips.parquet``): ``"car"``,
                 ``"bike"``, ``"walk"``, ``"transit"``, ``"car_transit"`` (park-and-ride)

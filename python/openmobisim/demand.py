@@ -166,7 +166,35 @@ def _trips_checked(demand: Any) -> list[Trip]:
         count = lengths.pop() if lengths else 0
         columns = [list(demand[n]) if n in demand else [None] * count for n in Trip._fields]
         demand = list(zip(*columns, strict=True))
-    return [_trip_checked(i, row) for i, row in enumerate(demand)]
+    rows = [_trip_checked(i, row) for i, row in enumerate(demand)]
+    _trips_keyed_once(rows)
+    return rows
+
+
+def _trips_keyed_once(rows: list[Trip]) -> None:
+    """Refuse a second row with a ``(traveller_id, trip_seq)`` already given (X-68).
+
+    A trip is keyed by the pair: a repeated key would replace or drop a trip, and every total of
+    the run would be of a smaller demand than the one given, with nothing to say so.
+    """
+    first: dict[tuple[str, int], int] = {}
+    repeats = 0
+    named: tuple[int, int, str, int] | None = None
+    for i, row in enumerate(rows):
+        key = (row.traveller_id, row.trip_seq)
+        earlier = first.setdefault(key, i)
+        if earlier != i:
+            repeats += 1
+            if named is None:
+                named = (i, earlier, row.traveller_id, row.trip_seq)
+    if named is not None:
+        i, earlier, traveller, seq = named
+        raise ValueError(
+            f"demand row {i} (from 0) repeats row {earlier}'s (traveller_id, trip_seq) = "
+            f"({traveller!r}, {seq}); {repeats} row(s) repeat a key already given. A traveller's "
+            "trips take distinct trip_seq values (0, 1, 2, … in the order of their day), and "
+            "another traveller takes another traveller_id."
+        )
 
 
 def _draw(seed: int, traveller: object) -> bytes:

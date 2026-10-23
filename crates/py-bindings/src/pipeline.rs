@@ -29,8 +29,8 @@ use pyo3::types::PyDict;
 use numpy::{IntoPyArray, PyArray1, PyArrayMethods};
 
 use openmobisim_core_demand::{
-    ClassDefaults, Mode, Ownership, RawPerson, RawTrip, build_travellers, read_persons_parquet,
-    read_trips_parquet,
+    ClassDefaults, Mode, Ownership, RawPerson, RawTrip, build_travellers, check_distinct_keys,
+    read_persons_parquet, read_trips_parquet,
 };
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::layers::{BikeCost, StaticLayer};
@@ -967,6 +967,9 @@ pub fn run_pipeline(
         (None, Some(path)) => read_trips_parquet(path).map_err(to_value_error)?,
         _ => return Err(PyValueError::new_err("give exactly one of trips or trips_path")),
     };
+    // A repeated (traveller_id, trip_seq) is refused with the row named (X-68), on the rows as
+    // given, before the window leaves any out, so the row number is the user's.
+    check_distinct_keys(&raw_trips).map_err(to_value_error)?;
     let raw_persons = match (persons, persons_path) {
         (Some(rows), None) => rows.into_iter().map(person_from_row).collect(),
         (None, Some(path)) => read_persons_parquet(path).map_err(to_value_error)?,

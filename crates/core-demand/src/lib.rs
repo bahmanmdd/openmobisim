@@ -38,7 +38,7 @@ pub(crate) mod columns;
 pub use mode::Mode;
 pub use persons::{RawPerson, read_persons_parquet};
 pub use travellers::{ClassDefaults, Ownership, Travellers, Trips, build as build_travellers};
-pub use trips::{RawTrip, read_trips_parquet};
+pub use trips::{RawTrip, check_distinct_keys, read_trips_parquet};
 pub use vehicles::{VehicleKind, VehicleLocations};
 
 use core::fmt;
