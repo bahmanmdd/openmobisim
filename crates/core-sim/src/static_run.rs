@@ -194,7 +194,7 @@ pub(crate) fn solve(inputs: &Inputs<'_>) -> StaticSolution {
             (key, routes)
         })
         .collect();
-    let descriptor = format!("static;solver={solver:?}");
+    let descriptor = format!("static;solver={}", inputs.strategy.name());
     let route_sets = RouteSets::from_routes(network, "static", &descriptor, sets);
 
     // Each driver's route, by its route's share of the pair's flow, in trip order.

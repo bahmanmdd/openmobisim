@@ -109,6 +109,8 @@ def test_the_helpers_make_the_demand_static_and_change_nothing_on_a_static_one()
     assert [t.departure_time_s for t in ms.demand_aggregate_time(near, "07:30")] == [27_000] * 2
     with pytest.raises(ValueError, match="zone"):
         ms.demand_aggregate_space(near, {"z": (200.0, 0.0)})
+    with pytest.raises(ValueError, match="start 'noon'"):
+        ms.demand_aggregate_time(near, "noon")
     # A run at level 1 does the same itself: the scenario's zones move the trip ends.
     net = one_link()
     rows = [(f"p{i}", 0, A[0] + 0.0004, A[1], B[0] - 0.0004, B[1], 25_200 + 7 * i, "commuter",
@@ -213,6 +215,9 @@ def test_sioux_falls_matches_tntp_s_best_known_equilibrium() -> None:
     case = ms.examples.case("siouxfalls")
     # The bundle's demand is half TNTP's over one hour: twice it is TNTP's.
     trips = case.demand(multiple=2.0)
+    # One point per zone: aggregating in space moves nothing.
+    as_rows = [ms.Trip(*t, *([None] * (10 - len(t)))) for t in trips]
+    assert ms.demand_aggregate_space(trips, case.zones(), quiet=True) == as_rows
     run = ms.Scenario.from_parts(
         case.network(),
         trips,
@@ -233,3 +238,15 @@ def test_sioux_falls_matches_tntp_s_best_known_equilibrium() -> None:
     tntp = np.asarray(TNTP_FLOWS)
     assert np.abs(flows - tntp).sum() / tntp.sum() < 0.01, "within 1 % over the links"
     assert math.isclose(len(trips), run.completion["completed"])
+    # One hour of departures: their times within it change nothing at level 1.
+    instant = ms.Scenario.from_parts(
+        case.network(),
+        ms.demand_aggregate_time(trips, "07:00"),
+        classes=case.classes(),
+        zones=case.zones(),
+        flow_level=1,
+        equilibration="frank_wolfe",
+        equilibration_options={"gap_tolerance": 1e-4, "iterations": 100_000},
+        loading_options={"period_s": 3600},
+    ).run("sf-instant", quiet=True)
+    assert instant.mean_travel_time_s == run.mean_travel_time_s

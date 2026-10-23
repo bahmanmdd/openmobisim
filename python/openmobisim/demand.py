@@ -286,7 +286,12 @@ def demand_aggregate_time(trips: Any, start: str | float | None = None) -> list[
     if start is not None:
         from openmobisim.scenario import _clock_s
 
-        start = int(_clock_s(start, "start"))
+        try:
+            start = int(_clock_s(start, "start"))
+        except ValueError:
+            raise ValueError(
+                f"start {start!r}: give a clock time such as '07:30' or seconds after midnight"
+            ) from None
     out = _core.demand_aggregate_time([tuple(r) for r in rows], start)
     return [Trip(*r) for r in out]
 
