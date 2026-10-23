@@ -298,8 +298,8 @@ impl RouteSets {
 
     /// These sets with some routes **removed** and routes added (a full set making room for
     /// a better route, see `core-sim`'s `BestResponse::max_routes`). `additions` as for
-    /// [`Self::extended`]; `removed[r]` drops route `r` of this store. Every key keeps at least
-    /// one route.
+    /// [`Self::extended`]; `removed[r]` drops route `r` of this store. Every key that has routes
+    /// keeps at least one; a key with none (no route exists for its pair) stays empty.
     ///
     /// Returns the new store and, for each route of this store, its index in the new one, or
     /// `u32::MAX` if it was removed.
@@ -307,7 +307,7 @@ impl RouteSets {
     /// # Panics
     ///
     /// As [`Self::extended`]; and if `removed` is not one flag per route, or would leave a key
-    /// with no route.
+    /// that had routes with none.
     #[must_use]
     pub fn revised(
         &self,
@@ -371,7 +371,14 @@ impl RouteSets {
                     out.stamp.push(stamp);
                 }
             }
-            assert!(out.cost.len() > first, "a key keeps at least one route");
+            // A key that had routes keeps at least one; a key that never had one (no route
+            // exists for its pair) stays empty, and its trips stay without a route (S294, X-70:
+            // the assertion held for every key and panicked at the first revision of a store
+            // with an empty set).
+            assert!(
+                out.cost.len() > first || self.route_range(k).is_empty(),
+                "a key keeps at least one route"
+            );
             out.set_start.push(u32::try_from(out.cost.len()).expect("routes fit u32"));
         }
         (out, map)

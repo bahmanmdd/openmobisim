@@ -1322,3 +1322,39 @@ fn the_search_after_a_link_turns_only_where_the_link_allows() {
     // Bounded: nothing within half the time.
     assert!(search.fastest_route_after(east, far, 0.0, t_node / 2.0, &free).is_none());
 }
+
+/// **Property (X-70, S294):** a key whose pair has no route (its destination cannot be reached)
+/// has an empty set, and a revision of the store, a full set making room elsewhere, leaves it
+/// empty instead of panicking: before, "a key keeps at least one route" held for every key, so
+/// the first revision of a store with an empty set brought a run down.
+#[test]
+fn a_revised_store_leaves_a_key_without_routes_empty() {
+    // a -> b and c -> b: from a, c cannot be reached.
+    let mut b = RoadNetworkBuilder::new();
+    b.add_node("a", LonLat::new(4.800, 45.700));
+    b.add_node("b", LonLat::new(4.805, 45.700));
+    b.add_node("c", LonLat::new(4.810, 45.700));
+    b.add_link("ab", "a", "b", LinkSpec::new(RoadClass::Primary));
+    b.add_link("cb", "c", "b", LinkSpec::new(RoadClass::Primary));
+    let net = b
+        .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable");
+    let turns = turns_of(&net);
+    let node = |n: &str| net.node_external_ids().typed_id_of::<NodeId>(n).unwrap();
+    let reachable = RouteKey::new(node("a"), node("b"));
+    let unreachable = RouteKey::new(node("a"), node("c"));
+    let sets = RouteSets::generate(&net, &turns, &[reachable, unreachable], &Shortest);
+    let k = sets.key_index(unreachable).expect("the key is kept");
+    assert!(sets.route_range(k).is_empty(), "no route for a pair that cannot be reached");
+    let other = sets.key_index(reachable).expect("the other key");
+    assert_eq!(sets.route_range(other).len(), 1);
+    // A revision that drops the other key's route for a new one: the empty key stays empty.
+    let mut removed = vec![false; sets.route_count()];
+    removed[sets.route_range(other).start] = true;
+    let ab = net.link_external_ids().typed_id_of::<LinkId>("ab").unwrap().raw();
+    let additions = vec![(other, vec![added(&[ab], 50.0)])];
+    let (revised, map) = sets.revised(&additions, &removed, 3, "best_response;test");
+    assert!(revised.route_range(k).is_empty());
+    assert_eq!(revised.route_count(), sets.route_count());
+    assert_eq!(map[sets.route_range(other).start], u32::MAX, "the dropped route is gone");
+}
