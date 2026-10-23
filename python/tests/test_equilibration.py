@@ -58,7 +58,7 @@ MSA = {
 
 
 def test_the_strategies_are_listed_with_the_default_first():
-    assert ms.equilibration_strategies() == ["free_flow", "msa"]
+    assert ms.equilibration_strategies() == ["free_flow", "msa", "sra"]
 
 
 def test_without_equilibration_there_is_one_iteration_and_no_gap():
@@ -174,7 +174,7 @@ def test_bad_settings_are_refused_before_any_work():
         return ms.Scenario.from_parts(net, rows, classes=CAR, **kwargs).run("eq-bad")
 
     with pytest.raises(
-        ValueError, match='no equilibration strategy called "replanning".*free_flow, msa'
+        ValueError, match='no equilibration strategy called "replanning".*free_flow, msa, sra'
     ):
         build(equilibration="replanning")
     with pytest.raises(
@@ -193,6 +193,33 @@ def test_bad_settings_are_refused_before_any_work():
             build(equilibration="msa", equilibration_options={"iterations": bad})
     with pytest.raises(ValueError, match="from 0 to 1"):
         build(equilibration="msa", equilibration_options={"gap_tolerance": 1.5})
+    for name, bad, message in (
+        ("eta_fell", 1.5, "from 0 to 1"),
+        ("eta_rose", 0.5, "from 1 to 10"),
+        ("eta", 1.0, "cost_bin_s, eta_fell, eta_rose, gap_sample"),
+    ):
+        with pytest.raises(ValueError, match=f'"sra".*{message}'):
+            build(equilibration="sra", equilibration_options={name: bad})
+    with pytest.raises(ValueError, match='"msa" has no option "eta_fell"'):
+        build(equilibration="msa", equilibration_options={"eta_fell": 0.2})
+
+
+def test_sra_with_both_growths_one_is_msa_and_at_its_defaults_another_run():
+    # Self-regulated averaging (S293): with eta_fell = eta_rose = 1 its share is msa's 1/(k + 1),
+    # so the run is msa's to the bit under another fingerprint; at its defaults it is another run.
+    options = {"iterations": 6, "gap_tolerance": 0.0}
+    msa = go("eq-sra-msa", **{**MSA, "equilibration_options": options})
+    ones = {**options, "eta_fell": 1.0, "eta_rose": 1.0}
+    same = go("eq-sra-ones", **{**MSA, "equilibration": "sra", "equilibration_options": ones})
+    assert same.equilibration == "sra" and same.fingerprint != msa.fingerprint
+    a, b = msa.convergence(), same.convergence()
+    for name in FIELDS:
+        assert np.array_equal(a[name], b[name], equal_nan=True), name
+    assert same.total_travel_time_s == msa.total_travel_time_s
+    sra = go("eq-sra", **{**MSA, "equilibration": "sra", "equilibration_options": options})
+    assert sra.fingerprint not in (msa.fingerprint, same.fingerprint)
+    shares = sra.convergence()["reselected_share"]
+    assert len(shares) == 6 and abs(shares[1] - 0.5) < 0.1, "η_1 = 2: half choose again"
 
 
 def test_a_tolerance_stops_a_run_that_has_nothing_left_to_equilibrate():

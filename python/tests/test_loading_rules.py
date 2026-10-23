@@ -4,8 +4,10 @@ On a small grid loaded far beyond its capacity: the report finds what stands and
 loading's guarantee (no front waits for room that is there); the rules are off unless asked for
 and then enter the run's fingerprint; vehicles that re-route are recorded, and their realised
 routes are whole, continuous, and turn where the record says. The rules of entry (``node_inflow``,
-``origin_inflow``) hash only when they differ from the shipped ones, and change the results of a
-point-queue run of Nguyen–Dupuis when they do.
+``origin_inflow``) are in the fingerprint (``node_inflow`` whatever its value, ``origin_inflow``
+when it differs from the shipped one), and the headway at nodes changes the results of a
+point-queue run of Nguyen–Dupuis. At the point queue a road closed by a disruption
+re-routes nobody unless ``reroute`` is asked for, and then the trips behind it re-route.
 """
 
 from __future__ import annotations
@@ -119,7 +121,7 @@ def test_priority_and_rerouting_keep_the_guarantee() -> None:
         assert g["room_waits_with_room"] == 0, opts
 
 
-def test_the_rules_of_entry_hash_only_when_asked_for_and_refuse_what_is_not_a_flag() -> None:
+def test_the_rules_of_entry_are_in_the_fingerprint_and_refuse_what_is_not_a_flag() -> None:
     net = ms.examples.manhattan_grid(n=4, block_metres=150.0, signals=False)
     rows = ms.examples.trips_random(net, 200, seed=3, min_m=300.0, max_m=900.0, spread_s=600)
 
@@ -128,9 +130,9 @@ def test_the_rules_of_entry_hash_only_when_asked_for_and_refuse_what_is_not_a_fl
         return scenario._fingerprint()
 
     plain = fingerprint()
-    assert fingerprint(node_inflow=1, origin_inflow=0) == plain
-    classic, origin = fingerprint(node_inflow=0), fingerprint(origin_inflow=1)
-    assert len({plain, classic, origin, fingerprint(node_inflow=0, origin_inflow=1)}) == 4
+    assert fingerprint(node_inflow=0, origin_inflow=0) == plain
+    headway, origin = fingerprint(node_inflow=1), fingerprint(origin_inflow=1)
+    assert len({plain, headway, origin, fingerprint(node_inflow=1, origin_inflow=1)}) == 4
     for bad, match in (
         ({"node_inflow": 2}, "must be 0 or 1"),
         ({"origin_inflow": 0.5}, "must be 0 or 1"),
@@ -141,7 +143,7 @@ def test_the_rules_of_entry_hash_only_when_asked_for_and_refuse_what_is_not_a_fl
 
 
 @pytest.mark.skipif(BUNDLE is None, reason="set OPENMOBISIM_TEST_BUNDLE to the bundle's folder")
-def test_the_classic_point_queue_runs_on_nguyen_dupuis_and_changes_the_run() -> None:
+def test_the_headway_at_nodes_changes_a_point_queue_run_of_nguyen_dupuis() -> None:
     case = ms.examples.case("nguyendupuis", root=BUNDLE)
 
     def run(**loading: float) -> ms.Run:
@@ -151,10 +153,44 @@ def test_the_classic_point_queue_runs_on_nguyen_dupuis_and_changes_the_run() -> 
         return scenario.run("nd-entry", quiet=True, overwrite=True)
 
     plain = run()
-    shipped = run(node_inflow=1, origin_inflow=0)
+    assert plain.completion["completed"] == plain.completion["total_trips"]
+    shipped = run(node_inflow=0, origin_inflow=0)
     assert shipped.fingerprint == plain.fingerprint
     assert shipped.total_travel_time_s == plain.total_travel_time_s
-    classic = run(node_inflow=0)
-    assert classic.fingerprint != plain.fingerprint
-    assert classic.completion["completed"] == classic.completion["total_trips"]
-    assert classic.total_travel_time_s != plain.total_travel_time_s
+    headway = run(node_inflow=1)
+    assert headway.fingerprint != plain.fingerprint
+    assert headway.completion["completed"] == headway.completion["total_trips"]
+    assert headway.total_travel_time_s != plain.total_travel_time_s
+
+
+def test_at_the_point_queue_a_closure_re_routes_only_when_asked_for() -> None:
+    # S293: ``reroute`` unsaid is off at flow_level 2, with or without road disruptions (from S289
+    # it was on there under them), so a run and the same run with a closure are the same model;
+    # asked for, the trips behind a closed street re-route round it.
+    net = ms.examples.manhattan_grid(n=5, block_metres=200.0, signals=False)
+    rows = ms.examples.trips_random(net, 600, seed=4, min_m=500.0, max_m=1200.0, spread_s=900)
+    common = {
+        "classes": CAR,
+        "equilibration": "free_flow",
+        "equilibration_options": {"increments": 1, "warmup": 0},
+    }
+    base = ms.Scenario.from_parts(net, rows, link_bin_s=900, **common)
+    bins = base.run("pq-closure-base", quiet=True, overwrite=True).link_bins()
+    crossings = np.bincount(
+        np.asarray(bins.links()), weights=np.asarray(bins.crossings()), minlength=net.link_count
+    )
+    busiest = net.link_ids()[int(np.argmax(crossings))]
+    closed = [{"links": [busiest], "capacity_factor": 0.0, "from_s": 0, "to_s": 86_400}]
+
+    def run(**loading: float) -> ms.Run:
+        scenario = ms.Scenario.from_parts(
+            net, rows, disruptions=closed, loading_options=loading, **common
+        )
+        return scenario.run("pq-closure", quiet=True, overwrite=True)
+
+    unasked, asked = run(), run(reroute=1)
+    assert len(unasked.route_changes()["trip"]) == 0, "nobody re-routes unless asked for"
+    assert unasked.completion["completed"] < unasked.completion["total_trips"], "they wait"
+    assert len(asked.route_changes()["trip"]) > 0
+    assert asked.completion["completed"] > unasked.completion["completed"]
+    assert asked.fingerprint != unasked.fingerprint

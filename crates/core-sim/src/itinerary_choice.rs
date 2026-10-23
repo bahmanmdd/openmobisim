@@ -2325,7 +2325,7 @@ impl Itineraries {
         inputs: &ChooseInputs<'_>,
         current: Option<&Chosen>,
         iteration: u32,
-        strategy: Option<(&dyn Equilibration, &StreamRng)>,
+        strategy: Option<(&dyn Equilibration, &StreamRng, f64)>,
         only: Option<&[bool]>,
     ) -> Result<(Chosen, Assessment), ChoiceError> {
         let n = self.trips.len();
@@ -2353,18 +2353,19 @@ impl Itineraries {
         let reselects = |p: usize| {
             let traveller = trips.traveller(self.trips[p]).raw();
             only.is_some_and(|_| marked(p))
-                || strategy
-                    .is_some_and(|(strategy, msa)| strategy.reselects(msa, traveller, iteration))
+                || strategy.is_some_and(|(strategy, msa, share)| {
+                    strategy.reselects(msa, traveller, iteration, share)
+                })
         };
         // Who plans in full to measure the gap: everyone without a strategy, else a keyed
         // sample of travellers (its own draw address, apart from the reselection's).
         #[allow(clippy::cast_precision_loss, reason = "a share")]
-        let share = strategy.map_or(1.0, |(strategy, _)| {
+        let share = strategy.map_or(1.0, |(strategy, _, _)| {
             f64::from(strategy.itinerary_gap_sample()) / n.max(1) as f64
         });
         let in_sample = |p: usize| {
             share >= 1.0
-                || strategy.is_some_and(|(_, rng)| {
+                || strategy.is_some_and(|(_, rng, _)| {
                     let traveller = trips.traveller(self.trips[p]).raw();
                     rng.unit(DrawAddress::from_pair(traveller, iteration | GAP_SAMPLE_SALT)) < share
                 })
@@ -2493,8 +2494,8 @@ impl Itineraries {
                         assessment.recosted += 1;
                     }
                     assessment.w_all += weight;
-                    let reselect = strategy.is_some_and(|(strategy, msa)| {
-                        strategy.reselects(msa, traveller.raw(), iteration)
+                    let reselect = strategy.is_some_and(|(strategy, msa, share)| {
+                        strategy.reselects(msa, traveller.raw(), iteration, share)
                     });
                     if reselect {
                         assessment.w_reselected += weight;

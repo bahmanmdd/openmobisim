@@ -28,6 +28,7 @@ CLASSES = [
     ("parking", "ParkingOptions", "parking_options", "the parkings' parameters"),
     ("prices", "PriceOptions", "price_options", "the prices"),
     ("equilibration.msa", "MsaOptions", "equilibration_options", '``equilibration="msa"``'),
+    ("equilibration.sra", "SraOptions", "equilibration_options", '``equilibration="sra"``'),
     (
         "equilibration.free_flow",
         "FreeFlowOptions",

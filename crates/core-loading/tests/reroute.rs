@@ -185,6 +185,19 @@ fn load_changed(
     window_s: f64,
     rr: &mut ByE,
 ) -> (Vec<Trajectory>, Vec<openmobisim_core_loading::RerouteRecord>) {
+    load_changed_at(d, vehicles, changes, window_s, rr, FidelityLevel::Full, false)
+}
+
+/// [`load_changed`] at `level`, with the inflow headway at nodes kept at the point queue or not.
+fn load_changed_at(
+    d: &Diamond,
+    vehicles: &[Vehicle],
+    changes: Vec<CapacityChange>,
+    window_s: f64,
+    rr: &mut ByE,
+    level: FidelityLevel,
+    node_inflow: bool,
+) -> (Vec<Trajectory>, Vec<openmobisim_core_loading::RerouteRecord>) {
     let turns = TurnTable::build(&d.net, SignalDefaults::SHIPPED);
     let out = run_ltm_chained(
         &d.net,
@@ -193,11 +206,12 @@ fn load_changed(
         &[],
         Duration(window_s),
         Duration(60.0),
-        FidelityLevel::Full,
+        level,
         Recording::Trajectories,
         Rules {
             reroute: Some(RerouteRule { after_s: 120.0, max: 3 }),
             capacity_changes: changes,
+            node_inflow,
             ..Rules::default()
         },
         Some(rr as &mut dyn Reroute),
@@ -220,6 +234,35 @@ fn a_vehicle_held_by_a_closure_ahead_is_offered_a_new_route() {
     assert_eq!(records.len(), 10, "each vehicle is offered the way round and takes it");
     assert_eq!(done.len(), 10, "and arrives inside the hour although `bc` never opens");
     assert!(done.iter().all(|t| t.links.iter().any(|x| x.link == d.be)));
+}
+
+/// **Property (S293):** at the point queue a closed link refuses entry whether or not the inflow
+/// headway applies at nodes, so a vehicle bound onto it waits at the end of its own link and is
+/// offered a new route there, as at level 4. Under the classic point queue (no headway at
+/// nodes) it drove onto the closed link before, and waited at its end, where no offer comes.
+#[test]
+fn at_the_point_queue_a_closed_link_refuses_entry_and_its_traffic_re_routes() {
+    let d = diamond();
+    let cars: Vec<Vehicle> = (0..10u32)
+        .map(|n| Vehicle::new(VehicleId::new(n), vec![d.ab, d.bc, d.cd], Pcu(1.0), Second(n)))
+        .collect();
+    for node_inflow in [false, true] {
+        let closed = vec![CapacityChange { time: 0.0, link: d.bc, factor: 0.0 }];
+        let mut rr = ByE { ab: d.ab, bc: d.bc, detour: vec![d.be, d.ed], calls: 0, decline: false };
+        let (done, records) = load_changed_at(
+            &d,
+            &cars,
+            closed,
+            3600.0,
+            &mut rr,
+            FidelityLevel::PointQueue,
+            node_inflow,
+        );
+        assert_eq!(records.len(), 10, "node_inflow {node_inflow}: each is offered the way round");
+        assert!(records.iter().all(|r| (r.link, r.planned_next) == (d.ab, d.bc)));
+        assert_eq!(done.len(), 10, "node_inflow {node_inflow}: all arrive, `bc` never opening");
+        assert!(done.iter().all(|t| t.links.iter().all(|x| x.link != d.bc)), "none entered `bc`");
+    }
 }
 
 /// **Property (X-37 #11):** a new route is taken only if it joins on where the vehicle is and

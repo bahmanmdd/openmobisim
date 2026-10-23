@@ -175,8 +175,9 @@ pub(crate) struct Inputs<'a> {
     /// Disruptions at a time of day.
     pub disruptions: &'a crate::disruptions::Disruptions,
     /// The loading's rules; hashed only when one is on and the run has junctions to
-    /// apply them at (the link transmission model), the rules of entry (`node_inflow`,
-    /// `origin_inflow`) only when they differ from the shipped ones.
+    /// apply them at (the link transmission model); of the rules of entry, `node_inflow` always
+    /// under the link transmission model and `origin_inflow` only when it differs from the
+    /// shipped one.
     pub loading: &'a crate::loading_rules::LoadingOptions,
     /// The prices, when the choice model reads money; `None` otherwise.
     pub prices: Option<&'a crate::prices::Prices>,
@@ -244,14 +245,15 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             h.write_f64(o.pocket_length_m);
         }
     }
-    // The rules of entry (S293), only where they differ from the shipped ones: at their shipped
-    // values a run hashes as it did before them.
+    // The rules of entry (S293). The headway at nodes always, either value: its shipped value
+    // changed (1 to 0), so a fingerprint made before then must not stand for a result of the
+    // new default. It acts at the point queue, which also makes the warm-up loadings of
+    // levels 3 and 4, so it is hashed at every level of the link transmission model. The
+    // origin's rule only where it differs from the shipped one: there a run hashes as before it.
     let shipped = crate::loading_rules::LoadingOptions::SHIPPED;
     if matches!(inputs.flow_motor, FlowMotor::Ltm { .. }) {
-        if inputs.loading.node_inflow != shipped.node_inflow {
-            h.write_str("node-inflow");
-            h.write_bool(inputs.loading.node_inflow);
-        }
+        h.write_str("node-inflow");
+        h.write_bool(inputs.loading.node_inflow);
         if inputs.loading.origin_inflow != shipped.origin_inflow {
             h.write_str("origin-inflow");
             h.write_bool(inputs.loading.origin_inflow);

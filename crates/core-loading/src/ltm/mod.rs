@@ -103,18 +103,20 @@
 //! The pocket is a capacity, not a place; the link's discharge capacity stays shared by its
 //! movements. A link of one lane, or with one movement, keeps one first-in-first-out queue.
 //!
-//! # The classic point queue (when asked for)
+//! # The classic point queue
 //!
-//! At level 2 storage is infinite, but a vehicle's front still enters the next link no closer
-//! behind the previous entrant than that link's inflow headway, `PCU / capacity`, and a vehicle
-//! held by it holds up those behind it on its link, whatever their next link: a bottleneck's queue
-//! forms at the end of the links feeding it and spreads upstream through every movement.
-//! [`LtmNetwork::with_node_inflow`]`(false)` drops the headway at nodes at level 2 only: the next
-//! link takes every vehicle at once, a link's exit is bounded by its own discharge capacity alone,
-//! and a bottleneck's queue sits at its own exit — the point queue of Vickrey (1969) and of Han,
-//! Friesz and Yao (2013). A link closed by a capacity change then takes the vehicles bound onto
-//! it, which wait at its end (where no reroute is offered) rather than before it. Levels 3 and 4
-//! keep the headway: there it is part of the receiving condition.
+//! At level 2 storage is infinite and, as built, the next link takes every vehicle at once: a
+//! link's exit is bounded by its own discharge capacity alone, and a bottleneck's queue sits at
+//! its own exit — the point queue of Vickrey (1969) and of Han, Friesz and Yao (2013). A link
+//! closed by a capacity change is the exception: it refuses entry, so the vehicles bound onto it
+//! wait at the end of the link before it, where a vehicle that may re-route is offered a new
+//! route; a narrowed link takes them and queues them at its own exit.
+//! [`LtmNetwork::with_node_inflow`]`(true)` keeps the inflow headway at nodes at level 2 too: a
+//! vehicle's front enters the next link no closer behind the previous entrant than that link's
+//! inflow headway, `PCU / capacity`, and a vehicle held by it holds up those behind it on its
+//! link, whatever their next link, so a bottleneck's queue forms at the end of the links feeding
+//! it and spreads upstream through every movement. Levels 3 and 4 always keep the headway: there
+//! it is part of the receiving condition.
 //!
 //! # When traffic stops
 //!
@@ -377,7 +379,7 @@ pub struct Rules {
     /// starts there ([`LtmNetwork::starting_at`]); 0 by default.
     pub start_s: f64,
     /// At the point queue, whether an entry onto the next link waits for that link's inflow
-    /// headway ([`LtmNetwork::with_node_inflow`]); true by default.
+    /// headway ([`LtmNetwork::with_node_inflow`]); false by default (the classic point queue).
     pub node_inflow: bool,
     /// Whether a departure enters its first link no faster than the link's inflow headway
     /// ([`LtmNetwork::with_origin_inflow`]); false by default.
@@ -385,8 +387,8 @@ pub struct Rules {
 }
 
 impl Default for Rules {
-    /// Every rule off, the inflow headway at nodes kept and departures entering at any rate:
-    /// the loading as [`run_ltm`] makes it.
+    /// Every rule off, the classic point queue at level 2 (no inflow headway at nodes) and
+    /// departures entering at any rate: the loading as [`run_ltm`] makes it.
     fn default() -> Self {
         Self {
             priority: false,
@@ -394,7 +396,7 @@ impl Default for Rules {
             pocket_length_m: 0.0,
             capacity_changes: Vec::new(),
             start_s: 0.0,
-            node_inflow: true,
+            node_inflow: false,
             origin_inflow: false,
         }
     }
@@ -547,7 +549,7 @@ impl<'a> LtmNetwork<'a> {
         let mut sim = Self {
             network,
             level: FidelityLevel::Full,
-            node_inflow: true,
+            node_inflow: false,
             origin_inflow: false,
             now: 0.0,
             clock: 0.0,
@@ -689,17 +691,18 @@ impl<'a> LtmNetwork<'a> {
     }
 
     /// Whether, at the point queue, a vehicle's entry onto the next link waits for that link's
-    /// inflow headway (`true`, as built) or not (`false`): **the classic point queue**, where the
+    /// inflow headway (`true`) or not (`false`, as built): **the classic point queue**, where the
     /// next link takes every vehicle at once, a link's exit is bounded by its own discharge
     /// capacity alone and a bottleneck's queue sits at its own exit (see the
-    /// [module docs](self)). No effect at levels 3 and 4, whose receiving condition the headway
-    /// is part of, nor on departures ([`Self::with_origin_inflow`]).
+    /// [module docs](self)). Either way a link closed by a capacity change refuses entry
+    /// ([`Self::with_capacity_changes`]). No effect at levels 3 and 4, whose receiving condition
+    /// the headway is part of, nor on departures ([`Self::with_origin_inflow`]).
     ///
     /// Why: with the headway, a vehicle held at the end of its link by a slow next link holds
     /// up every vehicle behind it bound elsewhere, so a bottleneck's queue forms upstream of it
     /// and spreads through every movement there; the point queue of Vickrey (1969) and of Han,
     /// Friesz and Yao (2013) bounds a link's exit by its own capacity only. Cost: one flag, and
-    /// one comparison per node passage.
+    /// one comparison per node passage (two, with capacity changes).
     #[must_use]
     pub fn with_node_inflow(mut self, on: bool) -> Self {
         self.node_inflow = on;
@@ -719,10 +722,19 @@ impl<'a> LtmNetwork<'a> {
         self
     }
 
-    /// Whether the inflow headway applies at nodes: always, except at the point queue when
-    /// [`Self::with_node_inflow`] turned it off.
+    /// Whether the inflow headway applies at nodes: always, except at the classic point queue
+    /// (the point queue without [`Self::with_node_inflow`]).
     fn node_inflow_applies(&self) -> bool {
         self.node_inflow || self.level != FidelityLevel::PointQueue
+    }
+
+    /// Whether link `j`'s inflow headway holds back the vehicles entering it at a node: wherever
+    /// the headway applies at nodes ([`Self::node_inflow_applies`]), and at the classic point
+    /// queue while `j` is closed by a capacity change, which refuses entry under either rule
+    /// (nobody drives onto a closed road: the queue, and the offer of a new route, stay on the
+    /// approach).
+    fn headway_applies(&self, j: usize) -> bool {
+        self.node_inflow_applies() || self.is_closed(j)
     }
 
     fn apply_level(&mut self) {
@@ -1203,10 +1215,10 @@ impl<'a> LtmNetwork<'a> {
     }
 
     /// Whether the next link's inflow headway holds the vehicle back at a node; if so,
-    /// the queue is rescheduled for when it will not. Never at the classic point queue
-    /// ([`Self::with_node_inflow`]).
+    /// the queue is rescheduled for when it will not. At the classic point queue
+    /// ([`Self::with_node_inflow`]) only while that link is closed ([`Self::headway_applies`]).
     fn inflow_blocks(&mut self, j: usize, pcu: f64, queue: usize, t: f64, t0: f64) -> bool {
-        if !self.node_inflow_applies() {
+        if !self.headway_applies(j) {
             return false;
         }
         self.headway_blocks(j, pcu, queue, t, t0)
@@ -2147,11 +2159,12 @@ mod tests {
     /// bottleneck — `ab` (2 000 PCU/h) feeding `bc` (1 000) and `bd` (200), 900 vehicles an hour
     /// bound for `c` and 400 for `d`, for an hour, at level 2 — the headway at nodes holds those
     /// bound for `d` at the end of `ab`, where they hold up those bound for `c` (first in, first
-    /// out). Without it ([`LtmNetwork::with_node_inflow`]`(false)`) those bound for `c` pass at
-    /// free flow, `ab` never discharges above its own capacity, and the bottleneck's queue sits
-    /// at `bd`'s own exit as the deterministic queue: fed at 400/h with a capacity of 200/h, the
-    /// vehicle departing at τ waits τ, 30 minutes on average. Building with the headway kept
-    /// changes nothing: the same trajectories as a loading that never heard of the option.
+    /// out). Without it ([`LtmNetwork::with_node_inflow`]`(false)`, as built) those bound for `c`
+    /// pass at free flow, `ab` never discharges above its own capacity, and the bottleneck's
+    /// queue sits at `bd`'s own exit as the deterministic queue: fed at 400/h with a capacity of
+    /// 200/h, the vehicle departing at τ waits τ, 30 minutes on average. Building without the
+    /// headway changes nothing: the same trajectories as a loading that never heard of the
+    /// option.
     #[test]
     fn without_the_headway_at_nodes_a_bottleneck_queues_at_its_own_exit() {
         let network = primary_links(
@@ -2213,8 +2226,6 @@ mod tests {
 
         let (unset, _) = load(None);
         let (kept, _) = load(Some(true));
-        assert_eq!(kept.len(), unset.len(), "keeping the headway changes no completion");
-        assert!(key(&kept) == key(&unset), "keeping the headway changes no trajectory");
         let (n_c_kept, delay_c_kept) = mean_delay(&kept, true);
         assert!(
             delay_c_kept > 60.0,
@@ -2222,6 +2233,8 @@ mod tests {
         );
 
         let (classic, discharged) = load(Some(false));
+        assert_eq!(classic.len(), unset.len(), "saying false, as built, changes no completion");
+        assert!(key(&classic) == key(&unset), "saying false, as built, changes no trajectory");
         let (n_c, delay_c) = mean_delay(&classic, true);
         let (n_d, delay_d) = mean_delay(&classic, false);
         assert_eq!((n_c, n_d), (900, 400), "every trip finishes in three hours");

@@ -869,7 +869,7 @@ impl<'a> Chooser<'a> {
         current: &RouteChoices,
         times: &LinkTimes,
         iteration: u32,
-        strategy: Option<(&dyn Equilibration, &StreamRng)>,
+        strategy: Option<(&dyn Equilibration, &StreamRng, f64)>,
         rng: &StreamRng,
         unfinished: &[bool],
     ) -> Result<Update, ChoiceError> {
@@ -934,8 +934,8 @@ impl<'a> Chooser<'a> {
                         expected_paid += w * expected_here;
                     }
                 }
-                if let Some((strategy, msa_rng)) = strategy {
-                    if strategy.reselects(msa_rng, batch.travellers()[s], iteration) {
+                if let Some((strategy, msa_rng, share)) = strategy {
+                    if strategy.reselects(msa_rng, batch.travellers()[s], iteration, share) {
                         moving.push(s);
                     }
                 }

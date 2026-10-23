@@ -86,6 +86,7 @@ from openmobisim.options import (
     ParkingOptions,
     PenaltyOptions,
     PriceOptions,
+    SraOptions,
     TransitOptions,
 )
 from openmobisim.parameters import parameters
@@ -128,6 +129,7 @@ __all__ = [
     "PriceOptions",
     "Run",
     "Scenario",
+    "SraOptions",
     "Table",
     "Transit",
     "TransitOptions",

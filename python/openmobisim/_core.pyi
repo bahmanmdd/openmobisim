@@ -965,10 +965,12 @@ def run_pipeline(
             ``"logit"``, ``beta_<attribute>`` coefficients).
         equilibration: How choice and loading are repeated: a name from
             :func:`equilibration_strategies` (``"free_flow"``, the default, is the
-            free-flow loading alone; ``"msa"`` iterates from it).
-        equilibration_options: The strategy's options, numbers by name (for both:
-            ``increments``, ``warmup``; for ``"msa"`` also ``iterations``, ``gap_tolerance``,
-            ``gap_sample``, ``itinerary_gap_sample``, ``cost_bin_s``).
+            free-flow loading alone; ``"msa"`` iterates from it, and ``"sra"`` with a share
+            choosing again that regulates itself).
+        equilibration_options: The strategy's options, numbers by name (for all three:
+            ``increments``, ``warmup``; for ``"msa"`` and ``"sra"`` also ``iterations``,
+            ``gap_tolerance``, ``gap_sample``, ``itinerary_gap_sample``, ``cost_bin_s``; for
+            ``"sra"`` also ``eta_fell``, ``eta_rose``).
         route_update: How the route sets grow between iterations: a name from
             :func:`route_update_methods` (``"none"``, the default, leaves them as the method made
             them; ``"best_response"`` adds each pair's fastest route at the congested times).

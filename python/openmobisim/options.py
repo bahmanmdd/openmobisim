@@ -27,6 +27,7 @@ __all__ = [
     "ParkingOptions",
     "PenaltyOptions",
     "PriceOptions",
+    "SraOptions",
     "TransitOptions",
 ]
 
@@ -257,12 +258,12 @@ class LoadingOptions(_Options):
     """The loading's parameters: ``loading_options``.
 
     Attributes:
-        node_inflow: 0 or 1; ``1``.
+        node_inflow: 0 or 1; ``0``.
         origin_inflow: 0 or 1; ``0``.
         pocket_length_m: m; ``50.0``.
         priority: 0 or 1; ``0``.
-        reroute: 0 or 1; by default ``None``: on at flow_level 3 and 4, and at 2 in a loading
-            with road disruptions; off at 2 otherwise unless asked for (1).
+        reroute: 0 or 1; by default ``None``: on at flow_level 3 and 4; off at 2 unless asked for
+            (1).
         reroute_after_s: s; ``300.0``.
         reroute_max: count; ``3``.
         reroute_min_gain: —; ``0.1``.
@@ -270,7 +271,7 @@ class LoadingOptions(_Options):
 
     _argument: ClassVar[str] = "loading_options"
     _defaults: ClassVar[dict[str, Any]] = {
-        "node_inflow": 1,
+        "node_inflow": 0,
         "origin_inflow": 0,
         "pocket_length_m": 50.0,
         "priority": 0,
@@ -283,7 +284,7 @@ class LoadingOptions(_Options):
     def __init__(
         self,
         *,
-        node_inflow: int = 1,
+        node_inflow: int = 0,
         origin_inflow: int = 0,
         pocket_length_m: float = 50.0,
         priority: int = 0,
@@ -519,6 +520,56 @@ class MsaOptions(_Options):
         self,
         *,
         cost_bin_s: float = 300.0,
+        gap_sample: int = 300,
+        gap_tolerance: float = 0.05,
+        increments: int | None = None,
+        iterations: int = 10,
+        itinerary_gap_sample: int = 100000000,
+        route_growth_tolerance: float = 1.0,
+        warmup: int = 1,
+    ) -> None:
+        """Keep the options given that differ from their defaults."""
+        given = dict(locals())
+        del given["self"]
+        self._keep(given)
+
+
+class SraOptions(_Options):
+    """``equilibration="sra"``: ``equilibration_options``.
+
+    Attributes:
+        cost_bin_s: s; ``300.0``.
+        eta_fell: —; ``0.2``.
+        eta_rose: —; ``1.5``.
+        gap_sample: count; ``300``.
+        gap_tolerance: —; ``0.05``.
+        increments: count; by default ``None``: 1 at flow_level 0 whatever is set.
+        iterations: count; ``10``.
+        itinerary_gap_sample: count; ``100000000``.
+        route_growth_tolerance: —; ``1.0``.
+        warmup: count; ``1``.
+    """
+
+    _argument: ClassVar[str] = "equilibration_options"
+    _defaults: ClassVar[dict[str, Any]] = {
+        "cost_bin_s": 300.0,
+        "eta_fell": 0.2,
+        "eta_rose": 1.5,
+        "gap_sample": 300,
+        "gap_tolerance": 0.05,
+        "increments": None,
+        "iterations": 10,
+        "itinerary_gap_sample": 100000000,
+        "route_growth_tolerance": 1.0,
+        "warmup": 1,
+    }
+
+    def __init__(
+        self,
+        *,
+        cost_bin_s: float = 300.0,
+        eta_fell: float = 0.2,
+        eta_rose: float = 1.5,
         gap_sample: int = 300,
         gap_tolerance: float = 0.05,
         increments: int | None = None,

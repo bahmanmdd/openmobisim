@@ -448,7 +448,7 @@ class Scenario:
         self._modes = modes
         self._mode_options = mode_options
         # ``reroute`` unsaid is the core's rule: on at levels 3 and 4, off at the point queue,
-        # where nothing waits for room (S229, S280).
+        # where nothing waits for room, with or without road disruptions (S229, S280, S293).
         self._loading_options = dict(loading_options or {}) or None
         self._price_options = price_options
         self._link_values = _link_values(network, link_values) if link_values else None
@@ -687,6 +687,13 @@ class Scenario:
                 averages in traveller form: load the network, read the link
                 times it produced, let a share ``1/(i + 1)`` of travellers
                 choose again on those times at iteration ``i``, load again.
+                ``"sra"`` is self-regulated averaging: ``"msa"`` with a share that
+                regulates itself, ``1/η`` at each iteration, where η is 2 at the first
+                and grows by ``eta_fell`` after a loading whose disequilibrium fell and by
+                ``eta_rose`` after one where it rose, so the share shrinks slowly while the
+                run improves and fast when it does not (with both 1 it is ``"msa"``); the share
+                at iteration ``i`` reacts to the loadings up to ``i - 2``, the last assessed when
+                its travellers choose.
                 ``"free_flow"`` makes only the free-flow loading: a quick
                 estimate of the day without iterating.
                 **The free-flow loading** is how every run starts (iteration 0).
@@ -726,8 +733,11 @@ class Scenario:
                 itinerary out through a parking are re-costed at that parking, which is faster
                 but makes the gap before the last iteration read low; the last iteration always
                 plans every trip) and ``cost_bin_s`` (300: the
-                length of the time bins the link times are read in). For both ``"msa"`` and
-                ``"free_flow"``: ``increments`` (5 at ``flow_level`` 2 to 4, else 1: in how many
+                length of the time bins the link times are read in); for ``"sra"``, all of
+                ``"msa"``'s and ``eta_fell`` (0.2, from 0 to 1: how much η grows after a loading
+                whose disequilibrium fell) and ``eta_rose`` (1.5, from 1 to 10: after one where
+                it rose or stayed). For all three: ``increments`` (5 at ``flow_level`` 2 to 4,
+                else 1: in how many
                 groups the free-flow loading is built up; 1 lets everyone choose at once on
                 free-flow costs) and ``warmup`` (1 at ``flow_level`` 2 to 4 or for a run that
                 iterates, else 0: how many of the first loadings, the free-flow loading's groups
@@ -856,32 +866,34 @@ class Scenario:
                 must be above 0).
             loading_options: The loading's rules by name, for ``flow_level`` 2–4 (gridlock
                 remedies; at ``flow_level`` 2, where nothing waits for room, ``reroute`` is off
-                unless asked for, except in a loading with road disruptions, where a closed or
-                narrowed link holds vehicles and it is on): ``priority`` (0 or 1, off by
+                unless asked for, with or without road disruptions): ``priority`` (0 or 1, off by
                 default: without per-turn queues a vehicle giving way holds up everything
                 behind it, which made locks worse) —
                 at an unsignalised merge a vehicle gives way to an approach of higher road
                 class, or of the same class and at least 1.5 times the capacity, whose front
                 vehicle is bound for the same link, and a departing vehicle gives way to every
-                approach; ``reroute`` (0 or 1, **on** by default at levels 3 and 4, and at 2
-                under road disruptions) — a vehicle
+                approach; ``reroute`` (0 or 1, **on** by default at levels 3 and 4) — a vehicle
                 blocked at the front of its link for ``reroute_after_s`` (300) re-routes from
                 where it is, at
                 most ``reroute_max`` (3) times, if the new route is at least
-                ``reroute_min_gain`` (0.1) faster; ``pocket_length_m`` (50 by default; 0 turns
+                ``reroute_min_gain`` (0.1) faster (at ``flow_level`` 2 only behind a road closed
+                by a disruption, or one narrowed by it when ``node_inflow`` is 1);
+                ``pocket_length_m`` (50 by default; 0 turns
                 turn pockets off) — on an approach of two lanes or more, a vehicle passes those
                 ahead of it that wait for another movement while they fit in their turn pockets,
                 this many metres per lane, split among the approach's movements; on by default,
                 because without them one queue per link locks a dense network in the full model
                 (their known cost: an iterated run under heavy congestion misprices the waiting
-                movements); ``node_inflow`` (0 or 1, 1 by default; ``flow_level`` 2 only) —
-                at 1 a vehicle enters the next link no sooner than that link's inflow headway
-                after the one before, and one held so holds up those behind it on its link, so
-                a bottleneck's queue forms at the end of the links feeding it; at 0, the classic
-                point queue, the next link takes every vehicle at once, a link's exit is bounded
-                by its own capacity alone, and a bottleneck's queue sits at its own exit (a road
-                closed by a disruption then takes the vehicles bound onto it, which wait at its
-                end); ``origin_inflow`` (0 or 1, 0 by default; every level) — at 1 a departing
+                movements); ``node_inflow`` (0 or 1, 0 by default; the point queue only:
+                ``flow_level`` 2, and the point-queue warm-up loadings of levels 3 and 4) —
+                at 0, the classic point queue, the next link takes every vehicle at once, a
+                link's exit is bounded by its own capacity alone, and a bottleneck's queue sits
+                at its own exit; at 1 a vehicle enters the next link no sooner than that link's
+                inflow headway after the one before, and one held so holds up those behind it
+                on its link, so a bottleneck's queue forms at the end of the links feeding it;
+                either way a road closed by a disruption takes no vehicle, and those bound onto
+                it wait at the end of the road before it; ``origin_inflow`` (0 or 1, 0 by
+                default; every level) — at 1 a departing
                 vehicle enters its first link no faster than the link's inflow headway allows,
                 as from an upstream link, at 0 at any rate (departures of the same second enter
                 together).

@@ -185,6 +185,9 @@ impl LtmNetwork<'_> {
     /// A headway at the link's own capacity, however long the entry queue, offers nothing: it
     /// is the ordinary queue of a point queue, whose vehicles keep their routes (S289: offers
     /// at every congested entry made a level-2 run with known disruptions ten times slower).
+    /// At the classic point queue ([`Self::with_node_inflow`]) only a closed link holds a
+    /// vehicle so: a narrowed one takes it, and its queue waits at the narrowed link's own exit,
+    /// where nothing offers a new route (S293).
     pub(super) fn offer_if_inflow_holds_long(
         &mut self,
         i: usize,

@@ -12,6 +12,7 @@
 //! |---|---|
 //! | `free_flow` (the default, [`DEFAULT_STRATEGY`]) | The free-flow loading alone (below): one choice, built up in five groups by default, and one loading of everyone |
 //! | `msa` | The method of successive averages **in traveller form**: at iteration `i` (from 1; iteration 0 is everyone's first choice) each traveller chooses again with probability `1/(i + 1)`, decided by a draw keyed on `(traveller, iteration)` from its own stream, so who moves does not depend on thread count or order; the others keep their route. In expectation the route flows are the average of the flows of every iteration so far, which is classical MSA with step `1/(i + 1)` |
+//! | `sra` | Self-regulated averaging ([`Sra`]), `msa` with a step that regulates itself: at iteration `i` each traveller chooses again with probability `1/η_i`, where `η_1 = 2` and η grows by `eta_fell` for a loading whose disequilibrium fell and by `eta_rose` for one where it rose, so the step shrinks slowly while the run improves and fast when it does not; the share for loading `i` reacts to the loadings up to `i − 2`. The same draws as `msa`'s; with both options 1 it is `msa` |
 //!
 //! **The free-flow loading** (iteration 0) is where every run starts, and all
 //! `free_flow` does. Two options shape it, for either strategy:
@@ -498,10 +499,19 @@ pub trait Equilibration: Send + Sync {
     /// records the stream as live exactly then).
     fn draws_reselection(&self) -> bool;
 
-    /// Whether `traveller` chooses again at `iteration` (1 or more). Must be a
-    /// pure function of its arguments and `rng`'s key, so that it does not depend
-    /// on order or threads.
-    fn reselects(&self, rng: &StreamRng, traveller: u32, iteration: u32) -> bool;
+    /// The share of travellers who choose again at `iteration` (1 or more), given `reports`,
+    /// those of the loadings already assessed when the travellers of `iteration` choose (the
+    /// run passes every report made so far). The run asks once per iteration and gives the
+    /// answer to [`Self::reselects`], so a share that reads the reports is still the same for
+    /// every traveller, thread and order. `1/(iteration + 1)` unless a strategy says otherwise.
+    fn reselect_share(&self, iteration: u32, _reports: &[IterationReport]) -> f64 {
+        1.0 / (f64::from(iteration) + 1.0)
+    }
+
+    /// Whether `traveller` chooses again at `iteration` (1 or more), when the run has settled
+    /// that `share` of the travellers do ([`Self::reselect_share`]). Must be a pure function of
+    /// its arguments and `rng`'s key, so that it does not depend on order or threads.
+    fn reselects(&self, rng: &StreamRng, traveller: u32, iteration: u32, share: f64) -> bool;
 
     /// How many trips to test against the whole network at the last iteration
     /// ([`IterationReport::gap_network`]); 0 means none.
@@ -586,7 +596,7 @@ impl Equilibration for FreeFlow {
     fn draws_reselection(&self) -> bool {
         self.increments > 1
     }
-    fn reselects(&self, _rng: &StreamRng, _traveller: u32, _iteration: u32) -> bool {
+    fn reselects(&self, _rng: &StreamRng, _traveller: u32, _iteration: u32, _share: f64) -> bool {
         false
     }
     fn warmup_iterations(&self) -> u32 {
@@ -721,13 +731,19 @@ impl Msa {
     /// [`EquilibrationError::BadOption`] for a value out of range.
     pub fn from_options(options: &Options) -> Result<Self, EquilibrationError> {
         check_known("msa", options, &Self::OPTIONS)?;
+        Self::read("msa", options)
+    }
+
+    /// `msa`'s options among `options`, defaults for those not given, the others passed over;
+    /// errors name `strategy`, the strategy they were given to.
+    fn read(strategy: &str, options: &Options) -> Result<Self, EquilibrationError> {
         let mut m = Self::default();
         let bad = |option: &str, reason: &str| EquilibrationError::BadOption {
-            strategy: "msa".to_string(),
+            strategy: strategy.to_string(),
             option: option.to_string(),
             reason: reason.to_string(),
         };
-        let whole = |option: &str, v: f64, lo: u32, hi: u32| whole("msa", option, v, lo, hi);
+        let whole = |option: &str, v: f64, lo: u32, hi: u32| whole(strategy, option, v, lo, hi);
         for (option, &v) in options {
             match option.as_str() {
                 "iterations" => m.iterations = whole(option, v, 1, MAX_ITERATIONS)?,
@@ -744,12 +760,13 @@ impl Msa {
                     }
                     m.route_growth_tolerance = v;
                 }
-                _ => {
+                "gap_tolerance" => {
                     if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
                         return Err(bad(option, &format!("must be from 0 to 1, got {v}")));
                     }
                     m.gap_tolerance = v;
                 }
+                _ => {}
             }
         }
         Ok(m)
@@ -795,8 +812,8 @@ impl Equilibration for Msa {
     fn increments(&self) -> u32 {
         self.increments
     }
-    fn reselects(&self, rng: &StreamRng, traveller: u32, iteration: u32) -> bool {
-        rng.unit(DrawAddress::from_pair(traveller, iteration)) < 1.0 / (f64::from(iteration) + 1.0)
+    fn reselects(&self, rng: &StreamRng, traveller: u32, iteration: u32, share: f64) -> bool {
+        rng.unit(DrawAddress::from_pair(traveller, iteration)) < share
     }
     fn is_converged(&self, reports: &[IterationReport]) -> bool {
         // The mean of the last three, not the last: with sampled choice and a queue that
@@ -815,6 +832,181 @@ impl Equilibration for Msa {
         }
         let last = &reports[reports.len() - 3..];
         last.iter().map(IterationReport::disequilibrium).sum::<f64>() / 3.0 < self.gap_tolerance
+    }
+}
+
+/// **Self-regulated averaging** in traveller form (Liu, He and He 2009, *Method of successive
+/// weighted averages (MSWA) and self-regulated averaging schemes for solving stochastic user
+/// equilibrium problem*, *Networks and Spatial Economics* 9, 485–503,
+/// <https://doi.org/10.1007/s11067-009-9108-9>; in a dynamic model, Ma and He 2024; as a share
+/// of travellers, Taale and Pel 2015): [`Msa`], every option of it with its meaning and default,
+/// with the share of travellers who choose again at iteration `k` set to `1/η_k` instead of
+/// `1/(k + 1)`, by the same keyed draws. `η_1 = 2`; after it, η grows once per iteration, by
+/// [`Self::eta_fell`] for a loading whose disequilibrium ([`IterationReport::disequilibrium`])
+/// fell below the loading's before it, and by [`Self::eta_rose`] for one where it rose or stayed
+/// (or either is not a number): the step shrinks slowly while the run improves, fast when it does
+/// not. With both at 1, `η_k = k + 1`: exactly `msa`.
+///
+/// **Which loadings decide** ([`Self::eta`]): the run measures a loading's disequilibrium in the
+/// same pass that draws who chooses again after it, so when the travellers of loading `k` choose,
+/// the last loading assessed is `k − 2`: **the share for loading `k` reacts to the disequilibrium
+/// measured up to loading `k − 2`**, one loading later than in Liu, He and He. The growth to `η_k`
+/// is decided by loading `k − 2` against `k − 3`, and the growth to `η_2`, with one report only,
+/// counts as a rise. Cost: one comparison per earlier report, once per iteration.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sra {
+    /// The loadings, the stopping rule, the samples, the cost bins, the warm-up and the
+    /// increments, as [`Msa`]'s, with its defaults.
+    pub msa: Msa,
+    /// γ: how much η grows for a loading whose disequilibrium fell (0 to 1).
+    ///
+    /// *Uncalibrated: 0.2, after Ma and He (2024), who used 0.2; Liu, He and He (2009) tried 0.01
+    /// to 0.5.*
+    pub eta_fell: f64,
+    /// Γ: how much η grows for a loading whose disequilibrium rose or stayed (1 to 10).
+    ///
+    /// *Uncalibrated: 1.5, within the 1.5 to 2 Liu, He and He (2009) tried; Ma and He (2024)
+    /// used 1.1.*
+    pub eta_rose: f64,
+}
+
+impl Default for Sra {
+    fn default() -> Self {
+        Self { msa: Msa::default(), eta_fell: 0.2, eta_rose: 1.5 }
+    }
+}
+
+impl Sra {
+    const OPTIONS: [&'static str; 10] = [
+        "cost_bin_s",
+        "eta_fell",
+        "eta_rose",
+        "gap_sample",
+        "gap_tolerance",
+        "increments",
+        "itinerary_gap_sample",
+        "iterations",
+        "route_growth_tolerance",
+        "warmup",
+    ];
+
+    /// Make the strategy from its options, defaults for those not given.
+    ///
+    /// # Errors
+    ///
+    /// [`EquilibrationError::UnknownOption`] for a name it does not have,
+    /// [`EquilibrationError::BadOption`] for a value out of range.
+    pub fn from_options(options: &Options) -> Result<Self, EquilibrationError> {
+        check_known("sra", options, &Self::OPTIONS)?;
+        let mut s = Self { msa: Msa::read("sra", options)?, ..Self::default() };
+        let within = |option: &str, v: f64, lo: f64, hi: f64| {
+            if v.is_finite() && (lo..=hi).contains(&v) {
+                Ok(v)
+            } else {
+                Err(EquilibrationError::BadOption {
+                    strategy: "sra".to_string(),
+                    option: option.to_string(),
+                    reason: format!("must be from {lo} to {hi}, got {v}"),
+                })
+            }
+        };
+        for (option, &v) in options {
+            match option.as_str() {
+                "eta_fell" => s.eta_fell = within(option, v, 0.0, 1.0)?,
+                "eta_rose" => s.eta_rose = within(option, v, 1.0, 10.0)?,
+                _ => {}
+            }
+        }
+        Ok(s)
+    }
+
+    /// `η_k` at `iteration` `k` (1 or more; 1 at 0) given `reports`: 2, plus one growth for
+    /// each of the iterations 2 to `k`. The growths are read from the comparisons of
+    /// consecutive reports, the last comparison deciding the last growth: [`Self::eta_fell`]
+    /// where the later report's disequilibrium is below the earlier's, [`Self::eta_rose`] where
+    /// it is not or either is not a number, and [`Self::eta_rose`] for each growth with no
+    /// comparison left. Given every report up to loading `k − 1`, the growth to `η_k` reads
+    /// `k − 1` against `k − 2`; the run gives those up to `k − 2` (see the type's docs).
+    #[must_use]
+    pub fn eta(&self, iteration: u32, reports: &[IterationReport]) -> f64 {
+        if iteration == 0 {
+            return 1.0;
+        }
+        let growths = (iteration - 1) as usize;
+        let comparisons: Vec<f64> = reports
+            .windows(2)
+            .map(|w| {
+                if w[1].disequilibrium() < w[0].disequilibrium() {
+                    self.eta_fell
+                } else {
+                    self.eta_rose
+                }
+            })
+            .collect();
+        let read = comparisons.len().min(growths);
+        let mut eta = 2.0;
+        for _ in read..growths {
+            eta += self.eta_rose;
+        }
+        for &g in &comparisons[comparisons.len() - read..] {
+            eta += g;
+        }
+        eta
+    }
+}
+
+impl Equilibration for Sra {
+    fn name(&self) -> &str {
+        "sra"
+    }
+    fn descriptor(&self) -> String {
+        // `msa`'s options in its order, with the two of its own in their alphabetical places.
+        let m = &self.msa;
+        format!(
+            "sra;cost_bin_s={};eta_fell={};eta_rose={};gap_sample={};gap_tolerance={};\
+             increments={};itinerary_gap_sample={};iterations={};route_growth_tolerance={};\
+             warmup={}",
+            m.cost_bin_s,
+            self.eta_fell,
+            self.eta_rose,
+            m.gap_sample,
+            m.gap_tolerance,
+            m.increments,
+            m.itinerary_gap_sample,
+            m.iterations,
+            m.route_growth_tolerance,
+            m.warmup
+        )
+    }
+    fn max_iterations(&self) -> u32 {
+        self.msa.max_iterations()
+    }
+    fn cost_bin_seconds(&self) -> u32 {
+        self.msa.cost_bin_seconds()
+    }
+    fn draws_reselection(&self) -> bool {
+        self.msa.draws_reselection()
+    }
+    fn network_gap_sample(&self) -> u32 {
+        self.msa.network_gap_sample()
+    }
+    fn itinerary_gap_sample(&self) -> u32 {
+        self.msa.itinerary_gap_sample()
+    }
+    fn warmup_iterations(&self) -> u32 {
+        self.msa.warmup_iterations()
+    }
+    fn increments(&self) -> u32 {
+        self.msa.increments()
+    }
+    fn reselect_share(&self, iteration: u32, reports: &[IterationReport]) -> f64 {
+        1.0 / self.eta(iteration, reports)
+    }
+    fn reselects(&self, rng: &StreamRng, traveller: u32, iteration: u32, share: f64) -> bool {
+        self.msa.reselects(rng, traveller, iteration, share)
+    }
+    fn is_converged(&self, reports: &[IterationReport]) -> bool {
+        self.msa.is_converged(reports)
     }
 }
 
@@ -845,12 +1037,13 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// The built-in strategies: `free_flow` and `msa`.
+    /// The built-in strategies: `free_flow`, `msa` and `sra`.
     #[must_use]
     pub fn builtin() -> Self {
         let mut r = Self { strategies: Vec::new() };
         r.register("free_flow", |o| Ok(Box::new(FreeFlow::from_options(o)?)));
         r.register("msa", |o| Ok(Box::new(Msa::from_options(o)?)));
+        r.register("sra", |o| Ok(Box::new(Sra::from_options(o)?)));
         r
     }
 

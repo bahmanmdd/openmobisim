@@ -919,7 +919,7 @@ impl Run {
             class_limits: &self.class_limits,
             link_values: &self.link_values,
             disruptions: &self.disruptions,
-            loading: &self.loading.resolved(self.level(), !self.disruptions.road.is_empty()),
+            loading: &self.loading.resolved(self.level()),
             prices: self.reads_money().then_some(&self.prices),
             demand_values: &self.demand_values,
             reads: &reads,
@@ -1513,8 +1513,15 @@ impl Run {
                         }
                         clock = timings.lap("route_update", Some(iteration), clock);
                     }
-                    let strategy_for_next =
-                        (next < max_iterations).then_some((strategy.as_ref(), &reselect_rng));
+                    // The share who choose again for the next loading, settled once from the
+                    // reports so far (this loading's is not made yet) and the same for every
+                    // traveller, thread and order.
+                    let share = strategy.reselect_share(next, &reports);
+                    let strategy_for_next = (next < max_iterations).then_some((
+                        strategy.as_ref(),
+                        &reselect_rng,
+                        share,
+                    ));
                     // The trips still under way at the end have no measured time: the gaps leave
                     // them out (S178).
                     let mut unfinished = vec![false; total_trips as usize];
@@ -2187,10 +2194,9 @@ impl Run {
             };
             // The rerouting setting settled for the run's own level (S280, C1): a warm-up
             // loading of a level-4 run keeps the run's rule, as the fingerprint does. At the
-            // point queue it is on only in a loading with road disruptions (S289).
-            let road_disrupted = disrupted && !self.disruptions.road.is_empty();
-            let o = self.loading.resolved(self.level(), road_disrupted);
-            let rerouting = o.reroutes(self.level(), road_disrupted);
+            // point queue it is off unless asked for, with or without road disruptions (S293).
+            let o = self.loading.resolved(self.level());
+            let rerouting = o.reroutes(self.level());
             let rules = Rules {
                 priority: o.priority,
                 reroute: rerouting.then(|| RerouteRule {

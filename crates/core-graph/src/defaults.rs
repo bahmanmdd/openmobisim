@@ -251,7 +251,19 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// `origin_inflow` (0; 1 lets a departure enter its first link no faster than the link's inflow
 /// headway, the origin as a centroid connector with the first link's capacity). No result and
 /// no fingerprint moves at the shipped values.
-pub const DEFAULTS_VERSION: u32 = 32;
+///
+/// Version 33 (S293): **the classic point queue at level 2** (`node_inflow` 0; 1 before): the
+/// next link takes every vehicle at once, a link's exit is bounded by its own capacity, and a
+/// bottleneck's queue sits at its own exit instead of at the end of the links feeding it, where
+/// it held up every movement behind it. A link closed by a road disruption still refuses entry,
+/// under either setting. And **no en-route rerouting at the point queue unless asked for**
+/// (`LoadingOptions::reroute` unsaid: on at levels 3 and 4 only; from S289 it was on at the point
+/// queue in a loading with road disruptions too), so a run with a disruption is the same model
+/// as the run without it. Every result at flow level 2 moves, and at levels 3 and 4 those of runs
+/// whose first loadings are point-queue warm-ups (`warmup` 1 by default). `node_inflow` is now
+/// hashed whatever its value, so every fingerprint of the link transmission model moves with
+/// them.
+pub const DEFAULTS_VERSION: u32 = 33;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

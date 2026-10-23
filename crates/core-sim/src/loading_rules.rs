@@ -16,10 +16,15 @@ use openmobisim_core_loading::FidelityLevel;
 /// Whether en-route rerouting is on: by the level, or as asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RerouteSetting {
-    /// On at the levels with spillback (3 and 4), where a vehicle can be held for room, and at
-    /// the point queue (2) in a loading with road disruptions, where a closed or narrowed link
-    /// ahead holds one; off at the point queue otherwise, where nothing is ever held. The
-    /// shipped setting.
+    /// On at the levels with spillback (3 and 4), where a vehicle can be held for room; off at
+    /// the point queue (2), with or without road disruptions. The shipped setting.
+    ///
+    /// From S289 to S293 it was on at the point queue in a loading with road disruptions too.
+    /// That made the model itself depend on the disruption: a run with a disruption re-routed
+    /// and the same run without it did not, so the two were not compared on equal terms; and
+    /// iterated with it on, a run of Delft at 80 % of its capacity never converged, where with
+    /// it off it converged steadily (S293). A driver who does not know of a closure now waits
+    /// for it to reopen; [`Self::On`] lets them re-route.
     Auto,
     /// Off at every level.
     Off,
@@ -39,11 +44,10 @@ pub struct LoadingOptions {
     pub priority: bool,
     /// En-route rerouting: a vehicle stuck at the front of its link re-routes from where it is.
     /// *On at levels 3 and 4 ([`RerouteSetting::Auto`]: it removed the locks of
-    /// Amsterdam's morning at 1× and 1.25× and leaves uncongested results as they were), and at
-    /// the point queue in a loading with road disruptions (S289: unwarned drivers behind a
-    /// closure otherwise wait for it to reopen); off at the point queue otherwise, where
-    /// nothing waits for room, unless asked for.* The option `reroute` is 1 (on) or 0 (off) at
-    /// every level; [`Self::resolved`] settles the shipped setting for a run.
+    /// Amsterdam's morning at 1× and 1.25× and leaves uncongested results as they were); off at
+    /// the point queue, where nothing waits for room, with or without road disruptions, unless
+    /// asked for (S293; why: [`RerouteSetting::Auto`]).* The option `reroute` is 1 (on) or 0
+    /// (off) at every level; [`Self::resolved`] settles the shipped setting for a run.
     pub reroute: RerouteSetting,
     /// How long a vehicle waits at the front of its link, blocked, before it re-routes, in
     /// seconds.
@@ -84,21 +88,22 @@ pub struct LoadingOptions {
     /// (design guides size a bay from its expected queue, so no single length was found).
     /// Lanes per movement from OpenStreetMap's `turn:lanes`, where mapped, are for later.*
     pub pocket_length_m: f64,
-    /// At the point queue (`flow_level` 2) only, whether a vehicle's entry onto the next link
-    /// waits for that link's inflow headway
-    /// ([`openmobisim_core_loading::LtmNetwork::with_node_inflow`]): on (1), a vehicle held so
-    /// at the end of its link holds up those behind it bound elsewhere, and a bottleneck's queue
-    /// forms at the end of the links feeding it; off (0), **the classic point queue**: the next
-    /// link takes every vehicle at once, a link's exit is bounded by its own discharge capacity
-    /// alone, and a bottleneck's queue sits at its own exit. No effect at levels 3 and 4, where
-    /// the headway is part of the receiving condition.
+    /// At the point queue only (`flow_level` 2, and the point-queue warm-up loadings of levels 3
+    /// and 4), whether a vehicle's entry onto the next link waits for that link's inflow headway
+    /// ([`openmobisim_core_loading::LtmNetwork::with_node_inflow`]): off (0), **the classic
+    /// point queue**: the next link takes every vehicle at once, a link's exit is bounded by its
+    /// own discharge capacity alone, and a bottleneck's queue sits at its own exit; on (1), a
+    /// vehicle held so at the end of its link holds up those behind it bound elsewhere, and a
+    /// bottleneck's queue forms at the end of the links feeding it. Either way a link closed by
+    /// a road disruption refuses entry: the vehicles bound onto it wait at the end of the link
+    /// before it, where one that may re-route is offered a new route; a narrowed link takes them
+    /// and queues them at its own exit. No effect on a loading at level 3 or 4, where the
+    /// headway is part of the receiving condition.
     ///
-    /// *Uncalibrated: on, the loading as it was before the option. Off is the point queue of
-    /// Vickrey (1969, *Congestion theory and transport investment*, *American Economic Review*
-    /// 59(2) 251–260) and of Han, Friesz and Yao (2013, *A partial differential equation
-    /// formulation of Vickrey's bottleneck model*, *Transportation Research Part B* 49). Off, a
-    /// link closed by a road disruption takes the vehicles bound onto it, which wait at its end,
-    /// where no reroute is offered.*
+    /// *Uncalibrated: off since S293, the point queue of Vickrey (1969, *Congestion theory and
+    /// transport investment*, *American Economic Review* 59(2) 251–260) and of Han, Friesz and
+    /// Yao (2013, *A partial differential equation formulation of Vickrey's bottleneck model*,
+    /// *Transportation Research Part B* 49); on, the loading as it was until then.*
     pub node_inflow: bool,
     /// Whether a departing vehicle enters its first link no faster than the link's inflow
     /// headway allows ([`openmobisim_core_loading::LtmNetwork::with_origin_inflow`]), at every
@@ -120,7 +125,7 @@ impl LoadingOptions {
         reroute_max: 3,
         reroute_min_gain: 0.1,
         pocket_length_m: 50.0,
-        node_inflow: true,
+        node_inflow: false,
         origin_inflow: false,
     };
 
@@ -240,25 +245,23 @@ impl LoadingOptions {
         self.priority || self.reroute != RerouteSetting::Off || self.pocket_length_m > 0.0
     }
 
-    /// Whether this run re-routes, at `level` (`None`: free flow, where nothing is ever held);
-    /// `disrupted`: whether the loading has road disruptions, which hold vehicles even at the
-    /// point queue.
+    /// Whether this run re-routes, at `level` (`None`: free flow, where nothing is ever held).
+    /// The same with or without road disruptions (S293).
     #[must_use]
-    pub fn reroutes(&self, level: Option<FidelityLevel>, disrupted: bool) -> bool {
+    pub fn reroutes(&self, level: Option<FidelityLevel>) -> bool {
         match (self.reroute, level) {
             (_, None) | (RerouteSetting::Off, _) => false,
             (RerouteSetting::On, Some(_)) => true,
-            (RerouteSetting::Auto, Some(level)) => level != FidelityLevel::PointQueue || disrupted,
+            (RerouteSetting::Auto, Some(level)) => level != FidelityLevel::PointQueue,
         }
     }
 
-    /// These options with the rerouting setting settled for `level` and a run with or without
-    /// road disruptions ([`Self::reroutes`]): what a run hashes and reports, so a point-queue
-    /// run and a level-4 run of the shipped options say what each does.
+    /// These options with the rerouting setting settled for `level` ([`Self::reroutes`]): what a
+    /// run hashes and reports, so a point-queue run and a level-4 run of the shipped options say
+    /// what each does.
     #[must_use]
-    pub fn resolved(&self, level: Option<FidelityLevel>, disrupted: bool) -> Self {
-        let reroute =
-            if self.reroutes(level, disrupted) { RerouteSetting::On } else { RerouteSetting::Off };
+    pub fn resolved(&self, level: Option<FidelityLevel>) -> Self {
+        let reroute = if self.reroutes(level) { RerouteSetting::On } else { RerouteSetting::Off };
         Self { reroute, ..*self }
     }
 }
@@ -277,20 +280,19 @@ mod tests {
         LoadingOptions::from_options(&pairs.iter().map(|&(n, v)| (n.to_string(), v)).collect())
     }
 
-    /// **Property:** the two rules of entry (S293) are flags, shipped as the loading was before
-    /// them (the headway at nodes kept, departures at any rate), read by name, listed with the
-    /// others, and refused, with the reason or the list of names, when the value or the name is
-    /// wrong.
+    /// **Property:** the two rules of entry (S293) are flags, shipped as the classic point queue
+    /// (no headway at nodes) with departures at any rate, read by name, listed with the others,
+    /// and refused, with the reason or the list of names, when the value or the name is wrong.
     #[test]
     fn the_rules_of_entry_are_flags_read_by_name() {
         let shipped = LoadingOptions::SHIPPED;
-        assert!(shipped.node_inflow && !shipped.origin_inflow);
+        assert!(!shipped.node_inflow && !shipped.origin_inflow);
         let values = shipped.values();
         assert_eq!(values.iter().map(|v| v.0).collect::<Vec<_>>(), LoadingOptions::NAMES);
-        assert!(values.contains(&("node_inflow", 1.0)) && values.contains(&("origin_inflow", 0.0)));
-        let read_back = read(&[("node_inflow", 0.0), ("origin_inflow", 1.0)]).expect("valid");
-        assert!(!read_back.node_inflow && read_back.origin_inflow);
-        assert_eq!(read(&[("node_inflow", 1.0), ("origin_inflow", 0.0)]), Ok(shipped));
+        assert!(values.contains(&("node_inflow", 0.0)) && values.contains(&("origin_inflow", 0.0)));
+        let read_back = read(&[("node_inflow", 1.0), ("origin_inflow", 1.0)]).expect("valid");
+        assert!(read_back.node_inflow && read_back.origin_inflow);
+        assert_eq!(read(&[("node_inflow", 0.0), ("origin_inflow", 0.0)]), Ok(shipped));
         for name in ["node_inflow", "origin_inflow"] {
             let refused = read(&[(name, 2.0)]).expect_err("2 is not a flag");
             assert_eq!(refused, format!("loading_options \"{name}\" must be 0 or 1, got 2"));
@@ -302,5 +304,40 @@ mod tests {
              reroute_after_s, reroute_max, reroute_min_gain, pocket_length_m, node_inflow, \
              origin_inflow"
         );
+    }
+
+    /// **Property (S293):** rerouting is settled by the setting and the level alone: `Auto` is
+    /// on at levels 3 and 4 and off at the point queue and at free flow, `On` on and `Off` off at
+    /// every level that loads, and nothing re-routes at free flow; the settled options say the
+    /// same, and keep every other option.
+    #[test]
+    fn rerouting_is_settled_by_the_setting_and_the_level_alone() {
+        let levels = [
+            None,
+            Some(FidelityLevel::PointQueue),
+            Some(FidelityLevel::SpatialQueue),
+            Some(FidelityLevel::Full),
+        ];
+        for setting in [RerouteSetting::Auto, RerouteSetting::Off, RerouteSetting::On] {
+            let o = LoadingOptions { reroute: setting, ..LoadingOptions::SHIPPED };
+            for level in levels {
+                let expected = match (setting, level) {
+                    (_, None) | (RerouteSetting::Off, _) => false,
+                    (RerouteSetting::On, Some(_)) => true,
+                    (RerouteSetting::Auto, Some(l)) => {
+                        matches!(l, FidelityLevel::SpatialQueue | FidelityLevel::Full)
+                    }
+                };
+                assert_eq!(o.reroutes(level), expected, "{setting:?} at {level:?}");
+                let settled = o.resolved(level);
+                let want = if expected { RerouteSetting::On } else { RerouteSetting::Off };
+                assert_eq!(
+                    settled,
+                    LoadingOptions { reroute: want, ..o },
+                    "{setting:?} at {level:?}"
+                );
+                assert_eq!(settled.reroutes(level), expected, "settled once, settled for good");
+            }
+        }
     }
 }

@@ -64,7 +64,7 @@ pub mod trip_results;
 
 pub use demand_values::{DEPARTURE_ATTRIBUTE, DESTINATION_PARKING, DemandValues};
 pub use disruptions::{Disruptions, RoadDisruption, TransitDisruption, TransitEffect};
-pub use equilibration::{Equilibration, FreeFlow, IterationReport, Msa};
+pub use equilibration::{Equilibration, FreeFlow, IterationReport, Msa, Sra};
 pub use events::{EventRow, EventType};
 pub use gap::GapTrips;
 pub use identity::RunDescription;

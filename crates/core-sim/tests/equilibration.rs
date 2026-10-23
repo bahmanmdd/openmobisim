@@ -32,8 +32,8 @@ use openmobisim_core_sim::equilibration::{
     GAP_ACCEPTABLE, GAP_GOOD, GapVerdict, Options, Registry, gap_verdict,
 };
 use openmobisim_core_sim::{
-    Equilibration, FlowMotor, IterationReport, LinkTimes, LinkValues, Run, RunResult, ValueLayer,
-    relative_time_change,
+    Equilibration, FlowMotor, IterationReport, LinkTimes, LinkValues, Msa, Run, RunResult, Sra,
+    ValueLayer, relative_time_change,
 };
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId, TripId};
@@ -53,7 +53,7 @@ fn strategy(
 > {
     let mut options = given.clone();
     let mut plain = vec![("increments", 1.0), ("warmup", 0.0)];
-    if name == "msa" {
+    if name == "msa" || name == "sra" {
         plain.extend([("gap_tolerance", 0.0), ("route_growth_tolerance", 0.0)]);
     }
     for (k, v) in plain {
@@ -1014,14 +1014,14 @@ fn the_description_names_the_strategy_and_the_streams_it_draws_from() {
 
 #[test]
 fn strategies_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
-    assert_eq!(Registry::builtin().names(), ["free_flow", "msa"]);
+    assert_eq!(Registry::builtin().names(), ["free_flow", "msa", "sra"]);
     let opts = |pairs: &[(&str, f64)]| -> Options {
         pairs.iter().map(|&(k, v)| (k.to_string(), v)).collect()
     };
     let err = |name: &str, o: &[(&str, f64)]| {
         strategy(name, &opts(o)).err().expect("refused").to_string()
     };
-    assert!(err("replanning", &[]).contains("free_flow, msa"));
+    assert!(err("replanning", &[]).contains("free_flow, msa, sra"));
     assert!(err("free_flow", &[("iterations", 3.0)]).contains("increments, warmup"));
     assert!(err("free_flow", &[("increments", 0.0)]).contains("whole number from 1 to 20"));
     assert!(err("msa", &[("increments", 21.0)]).contains("whole number from 1 to 20"));
@@ -1039,6 +1039,217 @@ fn strategies_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
     assert!(err("msa", &[("gap_sample", -1.0)]).contains("gap_sample"));
     assert!(err("msa", &[("gap_sample", 100_001.0)]).contains("whole number from 0 to 100000"));
     assert!(strategy("msa", &opts(&[("iterations", 1000.0)])).is_ok());
+}
+
+// --- self-regulated averaging (S293) -------------------------------------------------------
+
+/// A report of iteration `iteration` whose disequilibrium is `d` (its plain gap: the model gives
+/// no expectation, and there are no itineraries).
+fn disequilibrium_of(iteration: u32, d: f64) -> IterationReport {
+    IterationReport { gap: d, ..IterationReport::unmeasured(iteration) }
+}
+
+/// **Property:** `sra` takes every option of `msa`, with its defaults, and two of its own,
+/// `eta_fell` (0.2, from 0 to 1) and `eta_rose` (1.5, from 1 to 10); its descriptor lists all ten
+/// in canonical order; anything else, or out of range, is refused with the reason, naming `sra`.
+#[test]
+fn sra_takes_msa_s_options_and_two_of_its_own_within_their_ranges() {
+    let opts = |pairs: &[(&str, f64)]| -> Options {
+        pairs.iter().map(|&(k, v)| (k.to_string(), v)).collect()
+    };
+    let shipped = Sra::from_options(&Options::new()).expect("the defaults");
+    assert_eq!(shipped, Sra::default());
+    assert_eq!(shipped.msa, Msa::default());
+    assert!((shipped.eta_fell - 0.2).abs() < 1e-15 && (shipped.eta_rose - 1.5).abs() < 1e-15);
+    assert_eq!(
+        shipped.descriptor(),
+        "sra;cost_bin_s=300;eta_fell=0.2;eta_rose=1.5;gap_sample=300;gap_tolerance=0.05;\
+         increments=5;itinerary_gap_sample=100000000;iterations=10;route_growth_tolerance=1;warmup=1"
+    );
+    let given = Sra::from_options(&opts(&[
+        ("eta_fell", 0.0),
+        ("eta_rose", 10.0),
+        ("iterations", 30.0),
+        ("gap_tolerance", 0.0),
+    ]))
+    .expect("in range");
+    assert_eq!((given.eta_fell, given.eta_rose), (0.0, 10.0));
+    assert_eq!((given.msa.iterations, given.msa.gap_tolerance), (30, 0.0));
+    assert_eq!(given.max_iterations(), 30);
+    assert!(Sra::from_options(&opts(&[("eta_fell", 1.0), ("eta_rose", 1.0)])).is_ok());
+    let err = |o: &[(&str, f64)]| Sra::from_options(&opts(o)).expect_err("refused").to_string();
+    for bad in [-0.1, 1.5, f64::NAN, f64::INFINITY] {
+        assert_eq!(
+            err(&[("eta_fell", bad)]),
+            format!("equilibration \"sra\", option \"eta_fell\": must be from 0 to 1, got {bad}")
+        );
+    }
+    for bad in [0.5, 10.5, f64::NAN] {
+        assert_eq!(
+            err(&[("eta_rose", bad)]),
+            format!("equilibration \"sra\", option \"eta_rose\": must be from 1 to 10, got {bad}")
+        );
+    }
+    assert_eq!(
+        err(&[("iterations", 0.0)]),
+        "equilibration \"sra\", option \"iterations\": must be a whole number from 1 to 1000, got 0"
+    );
+    assert_eq!(
+        err(&[("eta", 1.0)]),
+        "equilibration \"sra\" has no option \"eta\"; its options are: cost_bin_s, eta_fell, \
+         eta_rose, gap_sample, gap_tolerance, increments, itinerary_gap_sample, iterations, \
+         route_growth_tolerance, warmup"
+    );
+    assert!(Msa::from_options(&opts(&[("eta_fell", 0.2)])).is_err(), "msa has no eta");
+}
+
+/// **Property:** η starts at 2 and grows once per iteration after the first, by `eta_fell` where
+/// a loading's disequilibrium fell below the one before and by `eta_rose` where it rose, stayed,
+/// or either was not measured, the last comparison deciding the last growth; a growth with no
+/// comparison left counts as a rise (as for the run's second iteration, which holds one report).
+/// With both at 1 the share is `msa`'s, to the bit, whatever the reports.
+#[test]
+fn eta_grows_slowly_after_a_fall_and_fast_after_a_rise_or_a_number_not_measured() {
+    let s = Sra::default();
+    let (fell, rose) = (s.eta_fell, s.eta_rose);
+    let r = [
+        disequilibrium_of(0, 1.0),
+        disequilibrium_of(1, 0.5),      // fell
+        disequilibrium_of(2, 0.6),      // rose
+        disequilibrium_of(3, f64::NAN), // not measured
+        disequilibrium_of(4, 0.4),      // against one not measured
+        disequilibrium_of(5, 0.4),      // stayed
+        disequilibrium_of(6, 0.3),      // fell
+    ];
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-12;
+    assert!(close(s.eta(1, &[]), 2.0) && close(s.eta(1, &r), 2.0), "η_1 = 2, whatever is known");
+    // Given every report up to loading k − 1: the growth to η_k reads k − 1 against k − 2.
+    let mut expected = 2.0;
+    for (k, growth) in (2u32..).zip([fell, rose, rose, rose, rose, fell]) {
+        expected += growth;
+        let eta = s.eta(k, &r[..k as usize]);
+        assert!(close(eta, expected), "η_{k}: {eta} against {expected}");
+        assert!(close(s.reselect_share(k, &r[..k as usize]), 1.0 / expected));
+    }
+    // As the run gives them, up to loading k − 2: the growth to η_2 has nothing to compare (a
+    // rise), and then the same growths one iteration later.
+    let mut expected = 2.0 + rose;
+    assert!(close(s.eta(2, &r[..1]), expected));
+    for (k, growth) in (3u32..).zip([fell, rose, rose, rose, rose, fell]) {
+        expected += growth;
+        let eta = s.eta(k, &r[..k as usize - 1]);
+        assert!(close(eta, expected), "η_{k} one loading behind: {eta} against {expected}");
+    }
+    // With nothing known at all, every growth is a rise.
+    assert!(close(s.eta(5, &[]), 2.0 + 4.0 * rose));
+    // At 1 and 1, msa's share 1/(k + 1) to the bit, however many reports are known.
+    let ones = Sra { eta_fell: 1.0, eta_rose: 1.0, ..Sra::default() };
+    let msa = Msa::default();
+    for k in 1..=7u32 {
+        for known in 0..=r.len() {
+            assert_eq!(
+                ones.reselect_share(k, &r[..known]).to_bits(),
+                msa.reselect_share(k, &r[..known]).to_bits(),
+                "k {k}, {known} reports"
+            );
+        }
+    }
+}
+
+/// The bottleneck at the point queue, iterated `iterations` times under `strategy`.
+fn bottleneck_at_level_2(strategy: (&'static str, Vec<(&'static str, f64)>)) -> Setup {
+    Setup {
+        level: Some(FidelityLevel::PointQueue),
+        equilibration: strategy,
+        ..Setup::bottleneck(1_500)
+    }
+}
+
+/// **Property:** with `eta_fell` and `eta_rose` both 1, `sra` is `msa` to the bit: the same
+/// reports, the same routes and the same events, under another fingerprint (its descriptor), from
+/// the same streams.
+#[test]
+fn sra_with_both_growths_one_is_msa_to_the_bit() {
+    let msa = bottleneck_at_level_2(("msa", vec![("iterations", 8.0)]));
+    let sra = bottleneck_at_level_2((
+        "sra",
+        vec![("iterations", 8.0), ("eta_fell", 1.0), ("eta_rose", 1.0)],
+    ));
+    let (a, b) = (msa.go(), sra.go());
+    assert_eq!(a.iterations.len(), 8);
+    assert_eq!(a.iterations, b.iterations, "every report, to the bit");
+    assert_eq!(a.route_choices, b.route_choices);
+    assert_eq!(a.events, b.events);
+    assert_eq!(a.total_travel_time, b.total_travel_time);
+    let (da, db) = (msa.run().description(), sra.run().description());
+    assert_eq!((da.equilibration.as_str(), db.equilibration.as_str()), ("msa", "sra"));
+    assert_eq!((da.max_iterations, &da.live_streams), (db.max_iterations, &db.live_streams));
+    assert_ne!(da.fingerprint, db.fingerprint, "the strategy and its descriptor are inputs");
+    let shipped = bottleneck_at_level_2(("sra", vec![("iterations", 8.0)])).run().description();
+    assert_ne!(shipped.fingerprint, db.fingerprint, "its two options are inputs");
+}
+
+/// **Property:** under `sra` the share of travellers who choose again at iteration `k` is the
+/// share planned from the reports the run held when they chose (those up to loading `k − 2`),
+/// within sampling noise, and the share falls as η grows.
+#[test]
+fn under_sra_the_share_who_choose_again_is_the_one_planned_from_the_reports() {
+    let n = 8_000;
+    let setup = Setup {
+        equilibration: ("sra", vec![("iterations", 6.0)]),
+        ..setup_level0(n, "logit", &[("beta_time_min", 0.0), ("beta_ln_path_size", 0.0)])
+    };
+    let result = setup.go();
+    let sra = Sra::from_options(
+        &[("iterations", 6.0), ("increments", 1.0), ("warmup", 0.0)]
+            .iter()
+            .map(|&(k, v)| (k.to_string(), v))
+            .collect(),
+    )
+    .expect("valid");
+    let it = &result.iterations;
+    assert_eq!(it.len(), 6);
+    for k in 1..it.len() {
+        let p = sra.reselect_share(it[k].iteration, &it[..k - 1]);
+        let sigma = (p * (1.0 - p) / f64::from(n)).sqrt();
+        assert!(
+            (it[k].reselected_share - p).abs() < 5.0 * sigma,
+            "iteration {k}: {} against the planned {p}",
+            it[k].reselected_share
+        );
+    }
+    assert!((sra.reselect_share(1, &[]) - 0.5).abs() < 1e-15, "η_1 = 2");
+    assert!(it[5].reselected_share < it[1].reselected_share);
+}
+
+/// **Property:** on the bottleneck at the point queue, `sra` at its defaults settles as `msa`
+/// does: after twenty loadings its verdict (on the disequilibrium of the last three) is no worse
+/// than `msa`'s, and both move travellers off the road that jams.
+#[test]
+fn sra_settles_on_the_bottleneck_no_worse_than_msa() {
+    let mean_last_three = |r: &RunResult| {
+        r.iterations[r.iterations.len() - 3..]
+            .iter()
+            .map(IterationReport::disequilibrium)
+            .sum::<f64>()
+            / 3.0
+    };
+    let rank = |v: Option<GapVerdict>| match v {
+        Some(GapVerdict::Good) => 0,
+        Some(GapVerdict::Acceptable) => 1,
+        Some(GapVerdict::Poor) | None => 2,
+    };
+    let msa = bottleneck_at_level_2(("msa", vec![("iterations", 20.0)])).go();
+    let sra = bottleneck_at_level_2(("sra", vec![("iterations", 20.0)])).go();
+    let (m, s) = (mean_last_three(&msa), mean_last_three(&sra));
+    assert!(rank(gap_verdict(s)) <= rank(gap_verdict(m)), "sra {s:.4}, msa {m:.4}");
+    assert!(s < GAP_ACCEPTABLE, "sra {s:.4}");
+    assert!(sra.iterations[19].total_travel_time_s < 0.6 * sra.iterations[0].total_travel_time_s);
+    println!(
+        "bottleneck at level 2, 20 loadings: disequilibrium over the last three, msa {m:.4}, sra \
+         {s:.4}; sra's last share {:.4}",
+        sra.iterations[19].reselected_share
+    );
 }
 
 /// A strategy written outside the crate: everybody chooses again at every iteration, three times.
@@ -1060,7 +1271,7 @@ impl Equilibration for Everyone {
     fn draws_reselection(&self) -> bool {
         false
     }
-    fn reselects(&self, _rng: &StreamRng, _traveller: u32, _iteration: u32) -> bool {
+    fn reselects(&self, _rng: &StreamRng, _traveller: u32, _iteration: u32, _share: f64) -> bool {
         true
     }
 }

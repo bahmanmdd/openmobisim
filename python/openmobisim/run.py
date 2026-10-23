@@ -347,7 +347,7 @@ class Run:
 
     @property
     def equilibration(self) -> str:
-        """The name of the equilibration strategy: ``"free_flow"`` or ``"msa"``."""
+        """The name of the equilibration strategy: ``"free_flow"``, ``"msa"`` or ``"sra"``."""
         return self._summary.equilibration
 
     @property
@@ -362,9 +362,9 @@ class Run:
     def converged(self) -> bool:
         """Whether the run met its stopping rule by its last loading.
 
-        Under ``"msa"``: the disequilibrium, averaged over the last three iterations, under
-        ``gap_tolerance`` with the route sets no longer growing, whether that stopped the run
-        early or held at its last allowed iteration. Always ``False`` with a
+        Under ``"msa"`` and ``"sra"``: the disequilibrium, averaged over the last three
+        iterations, under ``gap_tolerance`` with the route sets no longer growing, whether that
+        stopped the run early or held at its last allowed iteration. Always ``False`` with a
         ``gap_tolerance`` of 0, or under ``"free_flow"``.
         """
         return self._summary.converged

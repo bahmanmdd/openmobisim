@@ -16,6 +16,7 @@ __all__ = ["parameters"]
 #: defaults are the table; a ``Scenario`` sets none of its own).
 _NOTES: dict[tuple[str, str], str] = {
     ("equilibration.msa", "increments"): "1 at flow_level 0 whatever is set",
+    ("equilibration.sra", "increments"): "1 at flow_level 0 whatever is set",
     ("equilibration.free_flow", "increments"): "1 at flow_level 0 whatever is set",
     ("loading", "reroute"): "on at flow_level 3 and 4; off at 2 unless asked for (1)",
 }

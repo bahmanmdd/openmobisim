@@ -279,10 +279,10 @@ impl LtmNetwork<'_> {
                 None => Some(f64::INFINITY),
                 Some(j) => {
                     // On a signalised approach the inflow headway applies at the stop line;
-                    // at the classic point queue, nowhere (`with_node_inflow`).
+                    // at the classic point queue only onto a closed link (`headway_applies`).
                     let clear = self.curves[j].last_entry().get() + pcu / self.inflow_rate[j];
                     if self.stop_delay[i] <= 0.0
-                        && self.node_inflow_applies()
+                        && self.headway_applies(j)
                         && clear > t + TIME_EPSILON
                     {
                         look_again = look_again.min(clear);

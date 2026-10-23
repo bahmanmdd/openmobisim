@@ -15,9 +15,9 @@ import openmobisim as ms
 CAR = {"commuter": (True, False, False)}
 
 
-def jam(name, **kwargs):
+def jam(name, spread_s=600, **kwargs):
     net = ms.examples.manhattan_grid(n=6, block_metres=150.0, signals=False)
-    rows = ms.examples.trips_random(net, 4000, seed=3, min_m=300.0, max_m=900.0, spread_s=600)
+    rows = ms.examples.trips_random(net, 4000, seed=3, min_m=300.0, max_m=900.0, spread_s=spread_s)
     settings = {"classes": CAR, "window": (0, 10_800)}
     settings.update(kwargs)
     return ms.Scenario.from_parts(net, rows, **settings).run(name, quiet=True)
@@ -36,8 +36,11 @@ def test_a_default_run_is_a_point_queue_run_that_stops_when_converged():
     assert (c["reroute_searches"] == 0).all() and run.completion["truncated"] == 0
 
 
+# The spillback tests leave in five minutes what the others spread over ten: at the classic point
+# queue (S293) a queue grows only on a link fed above its capacity, which over ten minutes this
+# grid's demand is not; before, the headway at nodes queued vehicles on the links upstream.
 def test_spillback_links_are_listed_and_none_at_free_flow():
-    point = jam("pd-pq", equilibration="free_flow")
+    point = jam("pd-pq", spread_s=300, equilibration="free_flow")
     s = point.report_spillback()
     assert s is not None and len(s["link"]) > 0, "a jammed grid's queues outgrow some links"
     excess = s["peak_pcu"] - s["storage_pcu"]
@@ -45,13 +48,14 @@ def test_spillback_links_are_listed_and_none_at_free_flow():
     assert (np.diff(excess) <= 1e-9).all(), "worst first"
     every = point.report_spillback(min_excess_pcu=0.0)
     assert len(every["link"]) >= len(s["link"])
-    assert jam("pd-free", equilibration="free_flow", flow_level=0).report_spillback() is None
+    free = jam("pd-free", spread_s=300, equilibration="free_flow", flow_level=0)
+    assert free.report_spillback() is None
 
 
 def test_the_interactive_map_offers_them_as_one_layer(tmp_path):
     from openmobisim import viz
 
-    run = jam("pd-map", equilibration="free_flow", link_bin_s=900)
+    run = jam("pd-map", spread_s=300, equilibration="free_flow", link_bin_s=900)
     text = Path(viz.map_interactive(run, str(tmp_path / "m.html"))).read_text(encoding="utf-8")
     n = len(run.report_spillback()["link"])
     assert f'"n_spillback":{n}' in text and 'id="spill"' in text and '"n":"sb"' in text

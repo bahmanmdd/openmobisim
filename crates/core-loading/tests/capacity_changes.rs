@@ -108,6 +108,17 @@ fn a_narrowed_link_discharges_at_its_share_of_capacity() {
 
 /// One car leaving `A` for `C` at `depart` seconds, under `changes`: its arrival, whole seconds.
 fn one_car(depart: u32, changes: Vec<CapacityChange>) -> f64 {
+    one_car_at(depart, changes, FidelityLevel::Full, false).0
+}
+
+/// [`one_car`] at `level`, with the inflow headway at nodes kept at the point queue or not: its
+/// arrival and when it entered `BC`, whole seconds.
+fn one_car_at(
+    depart: u32,
+    changes: Vec<CapacityChange>,
+    level: FidelityLevel,
+    node_inflow: bool,
+) -> (f64, f64) {
     let (net, ab, bc) = line();
     let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
     let car = [Vehicle::new(VehicleId::new(0), vec![ab, bc], Pcu(1.0), Second(depart))];
@@ -118,12 +129,13 @@ fn one_car(depart: u32, changes: Vec<CapacityChange>) -> f64 {
         &[],
         Duration(3600.0),
         Duration(300.0),
-        FidelityLevel::Full,
+        level,
         Recording::Trajectories,
-        Rules { capacity_changes: changes, ..Rules::default() },
+        Rules { capacity_changes: changes, node_inflow, ..Rules::default() },
         None,
     );
-    f64::from(out.trajectories[0].arrival().get())
+    let t = &out.trajectories[0];
+    (f64::from(t.arrival().get()), f64::from(t.links[1].enter.get()))
 }
 
 #[test]
@@ -144,4 +156,28 @@ fn a_closed_link_holds_even_a_first_vehicle() {
     // On `BC` (it entered at 36 s) when `BC` closes at 50 s: it leaves when it opens.
     let held_on_bc = one_car(0, closed(50.0));
     assert!((held_on_bc - 400.0).abs() < 1e-6, "leaving a closed link: {held_on_bc}");
+}
+
+/// **Property (S293):** at the point queue a closed link refuses entry under either rule of entry
+/// at nodes: the car waits at `B`, at the end of `AB`, enters `BC` when it opens and arrives
+/// 36 s later. Under the classic point queue (no inflow headway at nodes) it entered the closed
+/// link at 46 s before, crossed it while it was closed and left it the second it opened.
+#[test]
+fn at_the_point_queue_a_closed_link_refuses_entry_too() {
+    let (_, _, bc) = line();
+    let closed = vec![
+        CapacityChange { time: 0.0, link: bc, factor: 0.0 },
+        CapacityChange { time: 400.0, link: bc, factor: 1.0 },
+    ];
+    for node_inflow in [false, true] {
+        let (arrival, entered) =
+            one_car_at(10, closed.clone(), FidelityLevel::PointQueue, node_inflow);
+        assert!((entered - 400.0).abs() < 1e-6, "node_inflow {node_inflow}: entered at {entered}");
+        assert!((arrival - 436.0).abs() < 1e-6, "node_inflow {node_inflow}: arrived at {arrival}");
+    }
+    // Narrowed, not closed: at the classic point queue the car enters at once and waits at the
+    // narrowed link's own exit.
+    let narrowed = vec![CapacityChange { time: 0.0, link: bc, factor: 0.5 }];
+    let (_, entered) = one_car_at(10, narrowed, FidelityLevel::PointQueue, false);
+    assert!((entered - 46.0).abs() < 1e-6, "a narrowed link takes it at 10 + 36 s: {entered}");
 }

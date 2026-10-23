@@ -28,7 +28,9 @@ impl LtmNetwork<'_> {
     /// reaches it — before any movement at that second — and the queues it touches (the link's
     /// own, those feeding it, the departures onto it) are looked at again, so a reopened link
     /// moves at once. A vehicle on a closed link waits there; behind it, the queue grows as it
-    /// would behind any bottleneck.
+    /// would behind any bottleneck. A closed link refuses entry at every level, the classic
+    /// point queue's included ([`Self::with_node_inflow`]): the vehicles bound onto it wait at
+    /// the end of the link before it.
     ///
     /// Costs nothing per movement when there is no change; one comparison per movement when
     /// there are.
@@ -44,6 +46,12 @@ impl LtmNetwork<'_> {
         self
     }
 
+    /// Whether link `i` is closed now by a capacity change (its rates at the closed factor of its
+    /// own, or below). One comparison, after one when there is no change at all.
+    pub(super) fn is_closed(&self, i: usize) -> bool {
+        !self.changes.is_empty() && self.discharge_rate[i] <= self.base_rates[i].0 * CLOSED_FACTOR
+    }
+
     /// The time of the next capacity change, if one is left.
     pub(super) fn next_change_time(&self) -> Option<f64> {
         self.changes.get(self.next_change).map(|c| c.time)
@@ -54,8 +62,7 @@ impl LtmNetwork<'_> {
     /// of the changes left, a handful at most, per call (S289: what a stuck vehicle sees of a
     /// closure ahead, so it re-routes instead of reading the empty link as free).
     pub(super) fn reopens_at(&self, i: usize) -> Option<f64> {
-        if self.changes.is_empty() || self.discharge_rate[i] > self.base_rates[i].0 * CLOSED_FACTOR
-        {
+        if !self.is_closed(i) {
             return None;
         }
         let link = LinkId::from_index(i);
