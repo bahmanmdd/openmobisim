@@ -20,7 +20,7 @@ from typing import Any
 
 from openmobisim import _core, choice
 from openmobisim._log import logger
-from openmobisim.demand import _class_table, _trips_checked, demand_read_trips
+from openmobisim.demand import _class_table, _trips_checked, _zone_points, demand_read_trips
 from openmobisim.run import MODES, Run
 from openmobisim.table import Table
 
@@ -46,11 +46,14 @@ PRESETS: dict[str, dict[str, dict[str, float]]] = {
 }
 
 #: The flow levels ``Scenario`` accepts: 0 is free flow
-#: with no interaction between vehicles; 2, 3 and 4 are the link transmission
+#: with no interaction between vehicles; 1 the static assignment (one hour of flow per link,
+#: volume-delay times); 2, 3 and 4 are the link transmission
 #: model as a point queue, a spatial queue and the full triangular diagram.
-FLOW_LEVELS = (0, 2, 3, 4)
+FLOW_LEVELS = (0, 1, 2, 3, 4)
 #: Each flow level's name, as figures and pages write it (C3, P-14: one place).
-LEVEL_NAMES = {0: "free flow", 2: "point queue", 3: "spatial queue", 4: "full"}
+LEVEL_NAMES = {0: "free flow", 1: "static", 2: "point queue", 3: "spatial queue", 4: "full"}
+#: The equilibration strategies of the static assignment alone (S294).
+_STATIC_ONLY = ("frank_wolfe",)
 
 
 class WindowWarning(UserWarning):
@@ -92,6 +95,43 @@ def _clock_s(value: str | float, what: str) -> int:
     if not (seconds >= 0 and seconds < float("inf")):
         raise ValueError(f"window {what} {value!r}: seconds after midnight, 0 or more")
     return round(seconds)
+
+
+def _check_level(
+    flow_level: int, equilibration: str, transit: Any, parkings: Any, modes: list[str] | None
+) -> None:
+    """Refuse what a flow level cannot run (S294).
+
+    A strategy of the static assignment at another level, ``"sra"`` at level 1, and at level 1
+    anything but car, bike and walk trips.
+    """
+    if equilibration in _STATIC_ONLY and flow_level != 1:
+        raise ValueError(
+            f"equilibration {equilibration!r} is the static assignment's solver: give "
+            f"flow_level=1, or another strategy at flow_level {flow_level}"
+        )
+    if flow_level != 1:
+        return
+    if equilibration == "sra":
+        raise ValueError(
+            "equilibration 'sra' does not apply at flow_level=1: the static assignment is solved "
+            "by 'frank_wolfe' or 'msa' (the method of successive averages)"
+        )
+    what = (
+        "a timetable (transit)"
+        if transit is not None
+        else "parkings (park-and-ride, bike-and-ride)"
+        if parkings is not None
+        else "mode choice (modes, or classes that name more than one)"
+        if modes and len(set(modes)) > 1
+        else None
+    )
+    if what is not None:
+        raise ValueError(
+            "flow_level=1 (the static assignment) loads car trips on one period's flows, with "
+            f"bike and walk trips on their layers; it cannot simulate {what}. Run it at "
+            "flow_level 0, 2, 3 or 4."
+        )
 
 
 def _window(window: Any) -> tuple[int | None, int | None]:
@@ -327,6 +367,7 @@ class Scenario:
         trip_values: dict[str, Any] | None = None,
         disruptions: list[dict[str, Any]] | None = None,
         disruptions_known: bool = False,
+        zones: Mapping[str, tuple[float, float]] | str | Path | None = None,
         preset: str | None = None,
     ) -> None:
         """Store the parts; prefer `from_parts` to calling this directly."""
@@ -460,6 +501,10 @@ class Scenario:
             network, transit, disruptions or []
         )
         self._disruptions_known = bool(disruptions_known)
+        # The zones' points (S294): read at flow level 1 alone, which moves every trip end to
+        # its zone's point before it routes; checked whatever the level.
+        self._zones = _zone_points(zones) if zones is not None else None
+        _check_level(flow_level, equilibration, transit, parkings, modes)
 
     @classmethod
     def from_parts(
@@ -499,6 +544,7 @@ class Scenario:
         trip_values: dict[str, Any] | None = None,
         disruptions: list[dict[str, Any]] | None = None,
         disruptions_known: bool = False,
+        zones: Mapping[str, tuple[float, float]] | str | Path | None = None,
         preset: str | None = None,
     ) -> Scenario:
         """Build a scenario from a network and demand.
@@ -580,7 +626,23 @@ class Scenario:
                 itself matters (traffic control, incidents, evacuation); under heavy congestion
                 its iterations can drift. ``3`` is a spatial queue. ``0`` is free flow:
                 no vehicle affects another, so there is no congestion, and a run that iterates
-                has nothing to settle — for debugging, or as a lower bound. Under
+                has nothing to settle — for debugging, or as a lower bound. ``1`` is the
+                **static assignment** of planning practice, the rung between free flow and the
+                point queue: no time inside the period, one hourly flow per link, a link's time
+                from its flow by the volume-delay function of the Bureau of Public Roads
+                (``loading_options`` ``bpr_alpha``, ``bpr_beta``), and the deterministic user
+                equilibrium (every used route of a pair as fast as its fastest) solved by
+                ``equilibration`` ``"frank_wolfe"`` or ``"msa"``. Before it routes, the run moves
+                every trip end to its zone's point (``zones``; ``demand_aggregate_space``) and
+                every departure to the window's start (``demand_aggregate_time``); a link's flow
+                is the cars routed over it over the period the departures span, in hours
+                (``loading_options`` ``period_s``: a demand departing over one hour is one hour
+                of flow, whatever the window). Each trip is then given one of its pair's
+                equilibrium routes, by the routes' shares, and takes that route's time: every
+                trip arrives. Bike and walk trips travel on their layers as at every level;
+                transit, parkings, mode choice and disruptions the travellers do not know of
+                are refused (a road disruption they know of narrows or closes its links for the
+                whole period). Under
                 ``equilibration="free_flow"`` (the free-flow loading alone, no iterations) every
                 level from 2 loads as the point queue (``equilibration_options`` ``warmup``, 1 by
                 default), so levels 2, 3 and 4 differ only in whether stuck vehicles may re-route
@@ -698,6 +760,19 @@ class Scenario:
                 its travellers choose.
                 ``"free_flow"`` makes only the free-flow loading: a quick
                 estimate of the day without iterating.
+                **At ``flow_level=1``** (the static assignment) the strategy is its solver,
+                iterating inside the run's one loading: ``"frank_wolfe"`` (only there), the step
+                that minimises the Beckmann objective; ``"msa"``, the method of successive
+                averages, step ``1/(k + 1)``; ``"free_flow"``, one all-or-nothing assignment on
+                free-flow times; ``"sra"`` is refused. Each stops at its ``iterations`` or once the
+                relative gap of the flows (how much more they cost than everyone on the fastest
+                route, as a share of that) is below its ``gap_tolerance``; ``convergence()``
+                has one row per solver iteration (``reselected_share`` the step, ``gap`` the
+                relative gap). At ``msa``'s defaults (10 iterations, a gap of 0.05) the
+                equilibrium is coarse: raise ``iterations`` and lower ``gap_tolerance``, or use
+                ``"frank_wolfe"``. The choice model, ``master_seed``, ``route_method``,
+                ``route_update`` and ``link_values`` shape nothing at level 1 (they stay in the
+                fingerprint as given).
                 **The free-flow loading** is how every run starts (iteration 0).
                 The travellers are split into groups of about equal size
                 (``increments``, 5 by default); the first group chooses on
@@ -738,7 +813,10 @@ class Scenario:
                 length of the time bins the link times are read in); for ``"sra"``, all of
                 ``"msa"``'s and ``eta_fell`` (0.2, from 0 to 1: how much η grows after a loading
                 whose disequilibrium fell) and ``eta_rose`` (1.5, from 1 to 10: after one where
-                it rose or stayed). For all three: ``increments`` (5 at ``flow_level`` 2 to 4,
+                it rose or stayed); for ``"frank_wolfe"`` (``flow_level=1`` only) ``iterations``
+                (1000, up to 100 000) and ``gap_tolerance`` (0.0001: stop once the relative gap of
+                the flows is below this; 0 never stops early). For the first three:
+                ``increments`` (5 at ``flow_level`` 2 to 4,
                 else 1: in how many
                 groups the free-flow loading is built up; 1 lets everyone choose at once on
                 free-flow costs) and ``warmup`` (1 at ``flow_level`` 2 to 4 or for a run that
@@ -898,7 +976,15 @@ class Scenario:
                 default; every level) — at 1 a departing
                 vehicle enters its first link no faster than the link's inflow headway allows,
                 as from an upstream link, at 0 at any rate (departures of the same second enter
-                together).
+                together). **At ``flow_level=1`` only**: ``bpr_alpha`` (0.15) and ``bpr_beta``
+                (4), the volume-delay function ``t = t0 · (1 + alpha · (v/c)^beta)`` of every
+                road class (``t0`` the link's free-flow time, ``v`` its hourly flow, ``c`` its
+                hourly capacity), the Bureau of Public Roads' (1964) values that TNTP's benchmark
+                networks use; ``<class>.bpr_alpha`` and ``<class>.bpr_beta`` set one class's
+                (``motorway.bpr_beta``, ``residential.bpr_alpha`` …; the classes cars use), which
+                wins over the one for every class; ``period_s`` (0: read from the departures,
+                from the earliest rounded down to the quarter hour to the end of the quarter hour
+                of the latest), the period in seconds the demand's hourly flows are of.
                 Uncalibrated defaults; unknown names and values out of range are refused.
             price_options: What travel costs, in euros, by name: ``car_eur_km``
                 (the fuel a driver pays per km), ``bike_eur_km``, a transit
@@ -991,6 +1077,13 @@ class Scenario:
                 **zero-adaptation** one. ``True`` (works announced, a strike): every loading has
                 them and choices adapt over the iterations. Both are in the fingerprint and the
                 manifest (``disruptions``).
+            zones: The demand's zones, ``{zone_id: (lon, lat)}`` (``Case.zones()``,
+                ``demand_read_zones``) or a path to a ``zones.csv``; read at ``flow_level=1``
+                only, which moves every trip end to the point of the zone whose point is nearest
+                it before it routes (``demand_aggregate_space``), so the trips of a zone pair
+                share one origin-destination pair. ``None`` (the default): no move, every street
+                node a trip starts or ends at is a zone of its own (a valid assignment, slower on
+                a large network). ``Case.scenario()`` gives the case's zones.
             preset: Named settings for speed (``PRESETS``). ``"fast"`` is what the starter cases
                 use: the route update's searches shared by origin and half hour
                 (``route_update_options`` ``tree_step_s`` 1 800) and the park-and-ride drives
@@ -1048,6 +1141,7 @@ class Scenario:
             trip_values=trip_values,
             disruptions=disruptions,
             disruptions_known=disruptions_known,
+            zones=zones,
             preset=preset,
         )
 
@@ -1128,6 +1222,7 @@ class Scenario:
             road_disruptions=self._road_disruptions,
             transit_disruptions=self._transit_disruptions,
             disruptions_known=self._disruptions_known,
+            zones=self._zones if self._flow_level == 1 else None,
             **extra,
         )
 

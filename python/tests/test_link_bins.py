@@ -114,7 +114,7 @@ def test_bad_flow_settings_are_rejected():
     net = ms.examples.toy_network()
     rows = toy_rows(net, [("W", "D1", 1, 1)])
     with pytest.raises(ValueError, match="flow_level"):
-        ms.Scenario.from_parts(net, rows, flow_level=1)
+        ms.Scenario.from_parts(net, rows, flow_level=5)
     with pytest.raises(ValueError, match="flow_step_s"):
         ms.Scenario.from_parts(net, rows, flow_level=4, flow_step_s=0)
     with pytest.raises(ValueError, match="link_bin_s"):

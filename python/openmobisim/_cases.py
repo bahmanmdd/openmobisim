@@ -261,7 +261,8 @@ class Case:
         ``weight``: people per simulated traveller (``demand``'s); the case's own by default.
         ``departures``: which trips run (``demand``'s); the case's own by default.
         ``one_point_per_zone``: every trip end at its zone's own point (``demand``'s). The case's
-        ``window`` (``case.json``) is the scenario's unless ``options`` give one.
+        ``window`` (``case.json``) is the scenario's unless ``options`` give one, and so are its
+        ``zones`` (``zones()``, read at ``flow_level=1`` alone).
         """
         from openmobisim.scenario import Scenario
 
@@ -277,6 +278,7 @@ class Case:
         parts: dict[str, Any] = {
             "classes": self.classes(),
             "transit": transit,
+            "zones": self.zones(),
             **settings,
             **options,
         }

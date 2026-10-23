@@ -16,6 +16,10 @@ every traveller a class, drawn by the classes' shares; ``Scenario(classes=...)``
 ``weight`` people, the rest of the table unchanged. Fewer travellers cost proportionally
 less to choose for, route and load, at the price of sampling noise, which replications
 (different ``seed`` values) measure.
+
+**Aggregations**: ``demand_aggregate_space`` moves every trip end to its zone's point and
+``demand_aggregate_time`` every departure to one instant; together they make a dynamic demand the
+static one the static assignment (``flow_level=1``) loads, which applies both itself.
 """
 
 from __future__ import annotations
@@ -30,6 +34,8 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import numpy as np
+
+from openmobisim import _core, _log
 
 __all__ = [
     "Trip",
@@ -195,6 +201,94 @@ def _trips_keyed_once(rows: list[Trip]) -> None:
             "trips take distinct trip_seq values (0, 1, 2, … in the order of their day), and "
             "another traveller takes another traveller_id."
         )
+
+
+def _zone_points(zones: Mapping[str, tuple[float, float]] | str | Path) -> list[tuple]:
+    """Zones as ``{zone_id: (lon, lat)}`` or a ``zones.csv`` path, as their points in order."""
+    if isinstance(zones, str | Path):
+        zones = demand_read_zones(zones)
+    if not isinstance(zones, Mapping):
+        raise ValueError(
+            "zones must be {zone_id: (lon, lat)} (Case.zones(), demand_read_zones) or a zones.csv "
+            f"path, got {type(zones).__name__}"
+        )
+    points = []
+    for zone, point in zones.items():
+        lon, lat = point
+        if not (math.isfinite(lon) and math.isfinite(lat) and abs(lon) <= 180 and abs(lat) <= 90):
+            raise ValueError(f"zone {zone!r}: a point is (lon, lat) in degrees, got {point!r}")
+        points.append((float(lon), float(lat)))
+    return points
+
+
+def demand_aggregate_space(
+    trips: Any, zones: Mapping[str, tuple[float, float]] | str | Path, quiet: bool = False
+) -> list[Trip]:
+    """Every trip end moved to its zone's point: the demand aggregated over space.
+
+    A trips table carries no zone, so a trip end's zone is **the zone whose point is nearest
+    it** (by the ground distance at the city's scale; of equally near ones, the first listed); a
+    gateway, a zone of one point, keeps its trips there. The trips of one zone pair then share
+    their two points, and so their routes. Nothing else about a trip changes. On a demand made
+    with one point per zone (``Case.demand(one_point_per_zone=True)``, ``demand_from_od``'s
+    ``points_per_zone=1``) nothing moves; a trip end drawn near the edge of its zone (a
+    ``spread_m``, a ``zone_points`` table) may be nearer a neighbour's point and go there.
+    The static assignment (``flow_level=1``) applies it before it routes, with the scenario's
+    ``zones``. **Cost:** one comparison per trip end and zone.
+
+    Args:
+        trips: In any form ``Scenario.from_parts`` takes (rows, columns, a data frame); checked.
+        zones: ``{zone_id: (lon, lat)}`` (``Case.zones()``, ``demand_read_zones``) or a path to a
+            ``zones.csv``.
+        quiet: If ``False`` (the default), log one line: how many trip ends moved and how many
+            were at their zone's point already.
+
+    Returns:
+        The trips as ``Trip`` rows, in the order given.
+
+    Raises:
+        ValueError: If a row is refused (as ``Scenario.from_parts`` refuses it) or a zone's point
+            is not (lon, lat) in degrees.
+    """
+    rows = _trips_checked(trips)
+    out, moved, kept = _core.demand_aggregate_space([tuple(r) for r in rows], _zone_points(zones))
+    if not quiet:
+        _log.logger.info(
+            "demand_aggregate_space: %d of %d trip ends moved to their zone's point "
+            "(%d there already)",
+            moved,
+            2 * len(rows),
+            kept,
+        )
+    return [Trip(*r) for r in out]
+
+
+def demand_aggregate_time(trips: Any, start: str | float | None = None) -> list[Trip]:
+    """Every departure set to one instant, ``start``: the demand aggregated in time to one bin.
+
+    The static assignment (``flow_level=1``) applies it before it routes, with the window's start;
+    the hour of flow it loads is read from the departures before they move (``loading_options``
+    ``period_s``). Nothing else about a trip changes.
+
+    Args:
+        trips: In any form ``Scenario.from_parts`` takes; checked.
+        start: The instant, a clock time (``"07:30"``) or seconds after midnight; ``None`` (the
+            default), the earliest departure rounded down to the quarter hour, the window's
+            start by default.
+
+    Returns:
+        The trips as ``Trip`` rows, in the order given.
+
+    Raises:
+        ValueError: If a row is refused, or ``start`` is not a time of day.
+    """
+    rows = _trips_checked(trips)
+    if start is not None:
+        from openmobisim.scenario import _clock_s
+
+        start = int(_clock_s(start, "start"))
+    out = _core.demand_aggregate_time([tuple(r) for r in rows], start)
+    return [Trip(*r) for r in out]
 
 
 def _draw(seed: int, traveller: object) -> bytes:

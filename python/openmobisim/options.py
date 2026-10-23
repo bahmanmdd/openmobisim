@@ -15,6 +15,7 @@ from typing import Any, ClassVar
 
 __all__ = [
     "BestResponseOptions",
+    "FrankWolfeOptions",
     "FreeFlowOptions",
     "LinkClassOptions",
     "LoadingOptions",
@@ -258,8 +259,11 @@ class LoadingOptions(_Options):
     """The loading's parameters: ``loading_options``.
 
     Attributes:
+        bpr_alpha: —; ``0.15``.
+        bpr_beta: —; ``4.0``.
         node_inflow: 0 or 1; ``0``.
         origin_inflow: 0 or 1; ``0``.
+        period_s: s; ``0.0``.
         pocket_length_m: m; ``50.0``.
         priority: 0 or 1; ``0``.
         reroute: 0 or 1; by default ``None``: on at flow_level 3 and 4; off at 2 unless asked for
@@ -271,8 +275,11 @@ class LoadingOptions(_Options):
 
     _argument: ClassVar[str] = "loading_options"
     _defaults: ClassVar[dict[str, Any]] = {
+        "bpr_alpha": 0.15,
+        "bpr_beta": 4.0,
         "node_inflow": 0,
         "origin_inflow": 0,
+        "period_s": 0.0,
         "pocket_length_m": 50.0,
         "priority": 0,
         "reroute": None,
@@ -284,8 +291,11 @@ class LoadingOptions(_Options):
     def __init__(
         self,
         *,
+        bpr_alpha: float = 0.15,
+        bpr_beta: float = 4.0,
         node_inflow: int = 0,
         origin_inflow: int = 0,
+        period_s: float = 0.0,
         pocket_length_m: float = 50.0,
         priority: int = 0,
         reroute: int | None = None,
@@ -600,6 +610,29 @@ class FreeFlowOptions(_Options):
         *,
         increments: int | None = None,
         warmup: int = 1,
+    ) -> None:
+        """Keep the options given that differ from their defaults."""
+        given = dict(locals())
+        del given["self"]
+        self._keep(given)
+
+
+class FrankWolfeOptions(_Options):
+    """``equilibration="frank_wolfe"`` (``flow_level=1`` only): ``equilibration_options``.
+
+    Attributes:
+        gap_tolerance: —; ``0.0001``.
+        iterations: count; ``1000``.
+    """
+
+    _argument: ClassVar[str] = "equilibration_options"
+    _defaults: ClassVar[dict[str, Any]] = {"gap_tolerance": 0.0001, "iterations": 1000}
+
+    def __init__(
+        self,
+        *,
+        gap_tolerance: float = 0.0001,
+        iterations: int = 1000,
     ) -> None:
         """Keep the options given that differ from their defaults."""
         given = dict(locals())

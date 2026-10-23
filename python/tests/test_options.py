@@ -35,6 +35,12 @@ CLASSES = [
         "equilibration_options",
         '``equilibration="free_flow"``',
     ),
+    (
+        "equilibration.frank_wolfe",
+        "FrankWolfeOptions",
+        "equilibration_options",
+        '``equilibration="frank_wolfe"`` (``flow_level=1`` only)',
+    ),
     ("route_method.penalty", "PenaltyOptions", "route_options", '``route_method="penalty"``'),
     (
         "route_method.montecarlo",

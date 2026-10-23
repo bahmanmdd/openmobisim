@@ -60,6 +60,8 @@ from openmobisim.audit import network_check
 from openmobisim.choice import choice_model_register, choice_models
 from openmobisim.demand import (
     Trip,
+    demand_aggregate_space,
+    demand_aggregate_time,
     demand_assign_classes,
     demand_from_od,
     demand_read_classes,
@@ -74,6 +76,7 @@ from openmobisim.gmns import network_read_gmns, network_write_gmns
 from openmobisim.network import LINK_CLASSES, network_edit, network_options, network_read_table
 from openmobisim.options import (
     BestResponseOptions,
+    FrankWolfeOptions,
     FreeFlowOptions,
     LinkClassOptions,
     LoadingOptions,
@@ -110,6 +113,7 @@ __all__ = [
     "BestResponseOptions",
     "Columns",
     "FallbackWarning",
+    "FrankWolfeOptions",
     "FreeFlowOptions",
     "LINK_CLASSES",
     "LinkClassOptions",
@@ -140,6 +144,8 @@ __all__ = [
     "choice_draw",
     "choice_model_register",
     "choice_models",
+    "demand_aggregate_space",
+    "demand_aggregate_time",
     "demand_assign_classes",
     "demand_from_od",
     "demand_read_classes",

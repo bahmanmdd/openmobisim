@@ -11,6 +11,18 @@ use openmobisim_core_types::time::Second;
 
 use crate::trips::RawTrip;
 
+/// The diagnostic codes a run that aggregates its demand records, run-level counts (the static
+/// assignment records both, at `Info`).
+pub mod codes {
+    use openmobisim_core_types::diagnostics::DiagCode;
+
+    /// Trip ends moved to their zone's point ([`super::aggregate_space`]), counted.
+    pub const TRIP_END_MOVED_TO_ZONE_POINT: DiagCode = DiagCode("trip_end_moved_to_zone_point");
+    /// Departures moved to the window's start ([`super::aggregate_time`]), counted.
+    pub const DEPARTURE_MOVED_TO_WINDOW_START: DiagCode =
+        DiagCode("departure_moved_to_window_start");
+}
+
 /// The length of the quarter hour the default start is rounded down to, in seconds.
 pub const QUARTER_HOUR_S: u32 = 900;
 

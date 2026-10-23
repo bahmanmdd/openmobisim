@@ -151,12 +151,12 @@ impl LoadingOptions {
         period_s: 0,
     };
 
-    /// Every option's value, by name: [`Self::NAMES`]' options in their order (but the two that
-    /// set every class's BPR pair at once), then each class's `<class>.bpr_alpha` and
-    /// `<class>.bpr_beta`, in [`RoadClass::ALL`]'s order, for the classes cars use (the
-    /// parameter listing); `priority`, `reroute`, `node_inflow` and `origin_inflow` as 0 or 1
-    /// (`reroute` 1 for [`RerouteSetting::Auto`]: on where it can act; [`Self::resolved`] gives
-    /// a run's own).
+    /// Every option's value, by name, in [`Self::NAMES`]' order (the parameter listing): the
+    /// BPR pair as `bpr_alpha` and `bpr_beta` while every class has the same (as shipped),
+    /// otherwise each class's `<class>.bpr_alpha` and `<class>.bpr_beta`, in [`RoadClass::ALL`]'s
+    /// order, for the classes cars use; `priority`, `reroute`, `node_inflow` and
+    /// `origin_inflow` as 0 or 1 (`reroute` 1 for [`RerouteSetting::Auto`]: on where it can act;
+    /// [`Self::resolved`] gives a run's own).
     #[must_use]
     pub fn values(&self) -> Vec<(String, f64)> {
         let flag = |b: bool| if b { 1.0 } else { 0.0 };
@@ -174,10 +174,21 @@ impl LoadingOptions {
         .into_iter()
         .map(|(n, v)| (n.to_string(), v))
         .collect();
-        for class in BPR_CLASSES {
-            let i = class as usize;
-            out.push((format!("{}.bpr_alpha", class.as_str()), self.bpr.alpha[i]));
-            out.push((format!("{}.bpr_beta", class.as_str()), self.bpr.beta[i]));
+        let uniform = BPR_CLASSES.iter().all(|&c| {
+            let (i, j) = (c as usize, BPR_CLASSES[0] as usize);
+            self.bpr.alpha[i].to_bits() == self.bpr.alpha[j].to_bits()
+                && self.bpr.beta[i].to_bits() == self.bpr.beta[j].to_bits()
+        });
+        if uniform {
+            let first = BPR_CLASSES[0] as usize;
+            out.push(("bpr_alpha".to_string(), self.bpr.alpha[first]));
+            out.push(("bpr_beta".to_string(), self.bpr.beta[first]));
+        } else {
+            for class in BPR_CLASSES {
+                let i = class as usize;
+                out.push((format!("{}.bpr_alpha", class.as_str()), self.bpr.alpha[i]));
+                out.push((format!("{}.bpr_beta", class.as_str()), self.bpr.beta[i]));
+            }
         }
         out
     }
@@ -440,11 +451,16 @@ mod tests {
         assert_eq!(shipped.bpr, Bpr::SHIPPED);
         assert_eq!(shipped.period_s, 0);
         let values = shipped.values();
-        assert!(values.contains(&("motorway.bpr_alpha".to_string(), 0.15)));
-        assert!(values.contains(&("service.bpr_beta".to_string(), 4.0)));
-        assert!(!values.iter().any(|(n, _)| n.starts_with("cycleway.")));
+        let names: Vec<&str> = values.iter().map(|v| v.0.as_str()).collect();
+        assert_eq!(names, LoadingOptions::NAMES[..11], "one pair for every class, as shipped");
+        assert!(values.contains(&("bpr_alpha".to_string(), 0.15)));
+        assert!(values.contains(&("bpr_beta".to_string(), 4.0)));
         let o = read(&[("bpr_alpha", 0.5), ("motorway.bpr_alpha", 0.8), ("bpr_beta", 5.0)])
             .expect("valid");
+        let listed = o.values();
+        assert!(listed.contains(&("motorway.bpr_alpha".to_string(), 0.8)), "each class listed");
+        assert!(listed.contains(&("service.bpr_beta".to_string(), 5.0)));
+        assert!(!listed.iter().any(|(n, _)| n.starts_with("cycleway.")));
         assert!((o.bpr.alpha[RoadClass::Motorway as usize] - 0.8).abs() < f64::EPSILON);
         assert!((o.bpr.alpha[RoadClass::Primary as usize] - 0.5).abs() < f64::EPSILON);
         assert!((o.bpr.beta[RoadClass::Residential as usize] - 5.0).abs() < f64::EPSILON);
