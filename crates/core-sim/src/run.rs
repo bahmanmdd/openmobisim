@@ -615,7 +615,8 @@ impl Run {
     /// The link times of the last loading of the last execution: what a car took on
     /// each link, by time bin, for travel-time matrices after the run
     /// ([`crate::skims::Skimmer`]). `None` before an execution, or after one of a single
-    /// loading, which records none (free-flow times stand in).
+    /// loading, which records none (free-flow times stand in); at level 1 the equilibrium's
+    /// times, the same all day.
     #[must_use]
     pub fn final_link_times(&self) -> Option<Arc<LinkTimes>> {
         self.final_times.clone()
@@ -1767,6 +1768,9 @@ impl Run {
             let people = completed_people(&loaded.events, &self.trips, &self.travellers);
             reports = solution.reports(loaded.completion.completed, people);
             converged = solution.result.converged;
+            // What a skim reads after the run: the equilibrium's times, the same all day.
+            self.final_times =
+                Some(Arc::new(LinkTimes::constant(&self.network, solution.times_s().to_vec())));
         }
         diagnostics.merge(&iteration_diagnostics);
         // The chooser holds the other handle on the sets; without it they are ours.

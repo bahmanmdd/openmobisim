@@ -191,6 +191,19 @@ impl LinkTimes {
         }
     }
 
+    /// The same time at every moment: `seconds` per link (level 1's equilibrium times, S294,
+    /// none below the link's free-flow time), no wait at any origin.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `seconds` is not one time per link of `network`.
+    #[must_use]
+    pub fn constant(network: &RoadNetwork, seconds: Vec<f64>) -> Self {
+        let links = network.link_count() as usize;
+        assert_eq!(seconds.len(), links, "one time per link");
+        Self { free_flow: seconds, ..Self::free_flow(network) }
+    }
+
     /// The bin length the table was recorded with, in seconds.
     #[must_use]
     pub fn bin_seconds(&self) -> f64 {

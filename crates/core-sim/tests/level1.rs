@@ -135,6 +135,11 @@ fn one_link_carries_the_whole_hour_at_its_bpr_time() {
     assert!((bins.mean_seconds(0) - expected).abs() < 1e-9);
     let sets = result.route_sets.as_ref().expect("the run's sets");
     assert_eq!(sets.route_count(), 1);
+    // A skim after the run reads the equilibrium's time, the same all day.
+    let times = run.final_link_times().expect("level 1 leaves its times");
+    for at in [0.0, 25_200.0, 50_000.0] {
+        assert!((times.link_seconds(od.raw(), at) - expected).abs() < 1e-9);
+    }
 }
 
 /// The flow on `fast` at which both routes take the same time, by bisection.

@@ -70,6 +70,10 @@ def test_one_link_takes_the_whole_hour_at_its_bpr_time() -> None:
     assert bins.bins().tolist() == [28, 29, 30, 31], "07:00 to 08:00 in quarter hours"
     trips = run.trip_results()
     assert set(trips["departure_s"].tolist()) == {25_200}, "everyone departs at the window's start"
+    # A skim after the run reads the equilibrium's times, the same at any hour.
+    for hour in (7, 12):
+        skim = run.skim("car", [A], [B], departure_s=hour * 3600)
+        assert skim[0, 0] == pytest.approx(expected, rel=1e-9)
     # Half the demand over the same hour: half the flow, its own BPR time.
     half = ms.Scenario.from_parts(
         net, trips_over_the_hour(750), classes=CAR, flow_level=1, equilibration="frank_wolfe"
