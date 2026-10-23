@@ -1,6 +1,6 @@
 [package]
 name = "openmobisim-core-loading"
-description = "The flow motor for openmobisim: free-flow traversal (level 0) and the link transmission model with vehicles on the curves (levels 2–4)."
+description = "The flow motor for openmobisim: free-flow traversal (level 0), the static user-equilibrium assignment (level 1) and the link transmission model with vehicles on the curves (levels 2–4)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,6 +16,10 @@ workspace = true
 [dependencies]
 openmobisim-core-types = { workspace = true }
 openmobisim-core-graph = { workspace = true }
+# Level 1 searches its shortest-path trees with `core-routes` (in parallel over origins under its
+# `parallel` feature, on by default; identical results either way: fixed chunks, the flows summed
+# in origin order).
+openmobisim-core-routes = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

@@ -58,7 +58,7 @@ MSA = {
 
 
 def test_the_strategies_are_listed_with_the_default_first():
-    assert ms.equilibration_strategies() == ["free_flow", "msa", "sra"]
+    assert ms.equilibration_strategies() == ["free_flow", "frank_wolfe", "msa", "sra"]
 
 
 def test_without_equilibration_there_is_one_iteration_and_no_gap():

@@ -28,9 +28,10 @@ use pyo3::types::PyDict;
 
 use numpy::{IntoPyArray, PyArray1, PyArrayMethods};
 
+use openmobisim_core_demand::aggregate;
 use openmobisim_core_demand::{
-    ClassDefaults, Mode, Ownership, RawPerson, RawTrip, build_travellers, read_persons_parquet,
-    read_trips_parquet,
+    ClassDefaults, Mode, Ownership, RawPerson, RawTrip, build_travellers, check_distinct_keys,
+    read_persons_parquet, read_trips_parquet,
 };
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::layers::{BikeCost, StaticLayer};
@@ -49,7 +50,7 @@ use crate::parking::{
     trip_results,
 };
 use crate::transit::{PyTransit, transit_calls, transit_summary};
-use openmobisim_core_types::diagnostics::Diagnostics;
+use openmobisim_core_types::diagnostics::{Category, DiagKey, Diagnostics, Severity};
 use openmobisim_core_types::ids::{EntityId, LinkId, TravellerId, TripId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
@@ -91,6 +92,54 @@ fn trip_from_row(row: TripRow) -> PyResult<RawTrip> {
         weight,
         mode: mode.map(|m| Mode::from_name(&m)).transpose().map_err(to_value_error)?,
     })
+}
+
+/// A `RawTrip` as the plain tuple [`trip_from_row`] reads.
+fn row_from_trip(t: RawTrip) -> TripRow {
+    (
+        t.traveller_id,
+        t.trip_seq,
+        t.origin.lon,
+        t.origin.lat,
+        t.destination.lon,
+        t.destination.lat,
+        t.departure_time.get(),
+        t.user_class,
+        t.weight,
+        t.mode.map(|m| m.as_str().to_string()),
+    )
+}
+
+/// `demand_aggregate_space`'s core (S294): every trip end of `trips` moved to the nearest of
+/// `zones` (lon, lat); the trips, how many ends moved and how many were at their zone's point.
+///
+/// # Errors
+///
+/// `ValueError` for a row with an unknown mode.
+#[pyfunction]
+pub fn demand_aggregate_space(
+    trips: Vec<TripRow>,
+    zones: Vec<(f64, f64)>,
+) -> PyResult<(Vec<TripRow>, u64, u64)> {
+    let mut raw: Vec<RawTrip> = trips.into_iter().map(trip_from_row).collect::<PyResult<_>>()?;
+    let zones: Vec<LonLat> = zones.into_iter().map(|(lon, lat)| LonLat::new(lon, lat)).collect();
+    let report = aggregate::aggregate_space(&mut raw, &zones);
+    Ok((raw.into_iter().map(row_from_trip).collect(), report.moved, report.at_zone_point))
+}
+
+/// `demand_aggregate_time`'s core (S294): every departure of `trips` set to `start` (seconds
+/// after midnight; the earliest departure rounded down to the quarter hour if `None`).
+///
+/// # Errors
+///
+/// `ValueError` for a row with an unknown mode.
+#[pyfunction]
+#[pyo3(signature = (trips, start=None))]
+pub fn demand_aggregate_time(trips: Vec<TripRow>, start: Option<u32>) -> PyResult<Vec<TripRow>> {
+    let mut raw: Vec<RawTrip> = trips.into_iter().map(trip_from_row).collect::<PyResult<_>>()?;
+    let start = start.map_or_else(|| aggregate::default_start(&raw), Second);
+    aggregate::aggregate_time(&mut raw, start);
+    Ok(raw.into_iter().map(row_from_trip).collect())
 }
 
 /// One `persons.parquet` row, as a plain tuple in `RawPerson`'s field order.
@@ -753,7 +802,7 @@ fn gap_trip_columns(py: Python<'_>, gap: &openmobisim_core_sim::GapTrips) -> PyR
     persons=None, persons_path=None,
     class_defaults=None, class_modes=None, class_options=None, class_limits=None,
     link_values=None, person_values=None, trip_values=None, trip_values_keyed=None,
-    road_disruptions=None, transit_disruptions=None, disruptions_known=false,
+    road_disruptions=None, transit_disruptions=None, disruptions_known=false, zones=None,
     default_weight=1, window_start_s=None, window_end_s=None,
     flow_level=0, flow_step_s=300, link_bin_s=None,
     route_method=None, route_options=None, master_seed=0,
@@ -789,6 +838,7 @@ pub fn run_pipeline(
     road_disruptions: Option<Vec<RoadDisruptionRow>>,
     transit_disruptions: Option<Vec<(u32, i64, u32, u32)>>,
     disruptions_known: bool,
+    zones: Option<Vec<(f64, f64)>>,
     default_weight: u32,
     window_start_s: Option<u32>,
     window_end_s: Option<u32>,
@@ -938,6 +988,20 @@ pub fn run_pipeline(
         &to_options(equilibration_options),
     )
     .map_err(to_value_error)?;
+    // The static assignment's solver at level 1 alone, and no self-regulated averaging there
+    // (S294).
+    if equilibration == "frank_wolfe" && flow_level != 1 {
+        return Err(PyValueError::new_err(format!(
+            "equilibration \"frank_wolfe\" is the static assignment's solver: give flow_level 1, \
+             or another strategy at flow_level {flow_level}"
+        )));
+    }
+    if equilibration == "sra" && flow_level == 1 {
+        return Err(PyValueError::new_err(
+            "equilibration \"sra\" does not apply at flow_level 1: the static assignment is \
+             solved by \"frank_wolfe\" or \"msa\" (the method of successive averages)",
+        ));
+    }
     // The route method and the route update unless named (S179, S223; here since S280, C1 —
     // one default table): a run that loads more than once (iterations, or the free-flow
     // loading's groups at a level with queues) starts from one route per pair and lets the
@@ -967,6 +1031,9 @@ pub fn run_pipeline(
         (None, Some(path)) => read_trips_parquet(path).map_err(to_value_error)?,
         _ => return Err(PyValueError::new_err("give exactly one of trips or trips_path")),
     };
+    // A repeated (traveller_id, trip_seq) is refused with the row named (X-68), on the rows as
+    // given, before the window leaves any out, so the row number is the user's.
+    check_distinct_keys(&raw_trips).map_err(to_value_error)?;
     let raw_persons = match (persons, persons_path) {
         (Some(rows), None) => rows.into_iter().map(person_from_row).collect(),
         (None, Some(path)) => read_persons_parquet(path).map_err(to_value_error)?,
@@ -1003,6 +1070,30 @@ pub fn run_pipeline(
     };
     raw_trips.retain(|t| window.contains(t.departure_time));
     let mut build_diagnostics = Diagnostics::new();
+    // Level 1 (S294): the period the hourly flows are of, read from the departures before
+    // they move (unless given); then every departure at the window's start and every trip end
+    // at its zone's point.
+    let mut static_period_s = 0;
+    if flow_level == 1 {
+        static_period_s = if loading.period_s > 0 {
+            loading.period_s
+        } else {
+            aggregate::departure_period_s(&raw_trips).max(aggregate::QUARTER_HOUR_S)
+        };
+        let moved = aggregate::aggregate_time(&mut raw_trips, Second(window.start_s));
+        let zone_points: Vec<LonLat> =
+            zones.unwrap_or_default().into_iter().map(|(lon, lat)| LonLat::new(lon, lat)).collect();
+        let space = aggregate::aggregate_space(&mut raw_trips, &zone_points);
+        for (code, n) in [
+            (aggregate::codes::DEPARTURE_MOVED_TO_WINDOW_START, moved),
+            (aggregate::codes::TRIP_END_MOVED_TO_ZONE_POINT, space.moved),
+        ] {
+            if n > 0 {
+                build_diagnostics
+                    .record_n(DiagKey::run_level(Category::Modelling, code, Severity::Info), n);
+            }
+        }
+    }
     let (travellers, trips_table) = build_travellers(
         raw_trips,
         raw_persons,
@@ -1048,17 +1139,22 @@ pub fn run_pipeline(
         CoreRun::new(network.inner.clone(), travellers.clone(), trips_table, Second(window.end_s))
             .with_window_start(Second(window.start_s));
     let level = match flow_level {
-        0 => None,
+        0 | 1 => None,
         2 => Some(FidelityLevel::PointQueue),
         3 => Some(FidelityLevel::SpatialQueue),
         4 => Some(FidelityLevel::Full),
         other => {
             return Err(PyValueError::new_err(format!(
-                "flow_level must be 0 (free flow), 2, 3 or 4, got {other}"
+                "flow_level must be 0 (free flow), 1 (static), 2, 3 or 4, got {other}"
             )));
         }
     };
     let mut run_turns: Option<Arc<TurnTable>> = None;
+    if flow_level == 1 {
+        let turns = Arc::new(TurnTable::build(&network.inner, network.inner.signals()));
+        run_turns = Some(turns.clone());
+        run = run.with_flow_motor(FlowMotor::Static { turns, period_s: static_period_s });
+    }
     if let Some(level) = level {
         if flow_step_s == 0 {
             return Err(PyValueError::new_err("flow_step_s must be positive"));
@@ -1638,7 +1734,7 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
         "network_options",
         openmobisim_core_graph::network_options::NetworkDefaults::shipped().values(),
     );
-    push("loading", "loading_options", owned(LoadingOptions::SHIPPED.values()));
+    push("loading", "loading_options", LoadingOptions::SHIPPED.values());
     push("modes", "mode_options", owned(ModeDefaults::SHIPPED.values()));
     push("transit", "transit_options", owned(TransitDefaults::SHIPPED.values()));
     push("parking", "parking_options", owned(ParkingDefaults::SHIPPED.values()));

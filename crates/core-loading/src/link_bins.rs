@@ -103,6 +103,32 @@ impl LinkBins {
     pub fn bytes(&self) -> usize {
         self.len() * (3 * size_of::<u32>() + 2 * size_of::<f64>())
     }
+
+    /// A table from its columns, for a loading that knows its rows without recording crossings
+    /// (level 1's one period of flow). `rows` are `(bin, link, crossings, pcu, pcu_seconds)`,
+    /// put in the table's order (bin, then link) here.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bin_seconds` is 0 or two rows name the same bin and link.
+    #[must_use]
+    pub fn from_rows(bin_seconds: u32, mut rows: Vec<(u32, u32, u32, f64, f64)>) -> Self {
+        assert!(bin_seconds > 0, "a bin has a length");
+        rows.sort_by_key(|r| (r.0, r.1));
+        assert!(
+            rows.windows(2).all(|w| (w[0].0, w[0].1) != (w[1].0, w[1].1)),
+            "one row per bin and link"
+        );
+        let mut out = Self { bin_seconds, ..Self::default() };
+        for (bin, link, crossings, pcu, pcu_seconds) in rows {
+            out.bin.push(bin);
+            out.link.push(link);
+            out.crossings.push(crossings);
+            out.pcu.push(pcu);
+            out.pcu_seconds.push(pcu_seconds);
+        }
+        out
+    }
 }
 
 /// What a loading learned about how long a traveller about to set out would take:

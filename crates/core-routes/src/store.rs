@@ -210,6 +210,53 @@ impl RouteSets {
         sets
     }
 
+    /// A store of routes found elsewhere: `sets` are `(key, routes)`, one entry per key in
+    /// **strictly ascending key order**, a key's routes in the order given (a key may have
+    /// none), each stamped 0 and costed as given; `method` and `descriptor` name what found
+    /// them. The static assignment's equilibrium routes (`core-sim`, flow level 1, S294) reach a
+    /// run's results this way, each costed at its time at the equilibrium.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `sets` is not in strictly ascending key order, or if the links or routes exceed
+    /// the `u32` id space.
+    #[must_use]
+    pub fn from_routes(
+        network: &RoadNetwork,
+        method: &str,
+        descriptor: &str,
+        sets: Vec<(RouteKey, Vec<Route>)>,
+    ) -> Self {
+        assert!(sets.windows(2).all(|w| w[0].0 < w[1].0), "keys in strictly ascending order");
+        let mut out = Self {
+            network: NetworkFingerprint::of(network),
+            method: method.to_string(),
+            descriptor: descriptor.to_string(),
+            update: String::new(),
+            keys: sets.iter().map(|(k, _)| *k).collect(),
+            set_start: vec![0],
+            route_start: vec![0],
+            links: Vec::new(),
+            cost: Vec::new(),
+            overlap: Vec::new(),
+            stamp: Vec::new(),
+        };
+        for (_, routes) in sets {
+            for route in routes {
+                out.links.extend(route.links.iter().map(|l| l.raw()));
+                out.route_start.push(u32::try_from(out.links.len()).expect("links fit u32"));
+                #[allow(clippy::cast_possible_truncation, reason = "f32 costs are the stored form")]
+                {
+                    out.cost.push(route.cost as f32);
+                    out.overlap.push(route.overlap as f32);
+                }
+                out.stamp.push(0);
+            }
+            out.set_start.push(u32::try_from(out.cost.len()).expect("routes fit u32"));
+        }
+        out
+    }
+
     /// These sets with routes added to some keys (the routes a run finds between
     /// iterations, see `core-sim`'s `RouteUpdate`).
     ///

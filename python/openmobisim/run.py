@@ -1404,7 +1404,8 @@ class Run:
 
         The door-to-door time leaving at ``departure_s`` (seconds after midnight), by
         ``"car"`` — the earliest arrival on the **last loading's link times**, congestion by
-        time bin included (free flow after a run of one loading), nearest drivable node to
+        time bin included (free flow after a run of one loading; at ``flow_level=1`` the static
+        equilibrium's times, the same all day), nearest drivable node to
         nearest — ``"bike"`` or ``"walk"`` — the time of the least-cost route on the layer, as
         the trips ride or walk — or ``"transit"`` — the earliest arrival with at least one
         vehicle, on the times the runs kept, walking to and from stops within

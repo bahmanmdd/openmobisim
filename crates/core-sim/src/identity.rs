@@ -61,8 +61,8 @@ pub struct RunDescription {
     /// A hash of the network's ids, as stored in every artifact's header
     /// (`NetworkFingerprint`): an internal id means something only next to it.
     pub network_fingerprint: u64,
-    /// The loading engine's level: 0 for free flow, 2, 3 or 4 for the link
-    /// transmission model.
+    /// The loading engine's level: 0 for free flow, 1 for the static assignment, 2, 3 or 4 for
+    /// the link transmission model.
     pub flow_level: u32,
     /// The loading step in seconds, under the link transmission model.
     pub flow_step_seconds: Option<f64>,
@@ -193,6 +193,7 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     let network_fingerprint = NetworkFingerprint::of(inputs.network).value();
     let (flow_level, flow_step_seconds) = match inputs.flow_motor {
         FlowMotor::Level0 => (0, None),
+        FlowMotor::Static { .. } => (1, None),
         FlowMotor::Ltm { step, level, .. } => (level.number(), Some(step.get())),
     };
 
@@ -257,6 +258,16 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         if inputs.loading.origin_inflow != shipped.origin_inflow {
             h.write_str("origin-inflow");
             h.write_bool(inputs.loading.origin_inflow);
+        }
+    }
+    // Level 1 (S294): the period its hourly flows are of and the volume-delay table, every
+    // class's pair. Off means absent: no other level reads them.
+    if let FlowMotor::Static { period_s, .. } = inputs.flow_motor {
+        h.write_str("static");
+        h.write_u32(*period_s);
+        for (alpha, beta) in inputs.loading.bpr.alpha.iter().zip(&inputs.loading.bpr.beta) {
+            h.write_f64(*alpha);
+            h.write_f64(*beta);
         }
     }
     // Where a trip's end joins the roads (U-41): read by every car trip, so always hashed.

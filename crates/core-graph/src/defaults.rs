@@ -274,7 +274,14 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// the update moves (its descriptor names the step); the results of runs with the update move
 /// within the aggregation (a pair's routes are read at its bins' middles); the gaps against the
 /// network move with it.
-pub const DEFAULTS_VERSION: u32 = 34;
+///
+/// Version 35 (S294): **flow level 1, the static assignment**, with its own defaults, each
+/// uncalibrated: the volume-delay function per road class (`core-sim`'s
+/// `LoadingOptions::bpr`, α 0.15 and β 4 for every class, the Bureau of Public Roads' 1964
+/// values), the period its hourly flows are of (`period_s`, 0: read from the departures), and
+/// the Frank–Wolfe solver's `iterations` (1000) and `gap_tolerance` (0.0001). No result and no
+/// fingerprint of levels 0, 2, 3 and 4 moves.
+pub const DEFAULTS_VERSION: u32 = 35;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

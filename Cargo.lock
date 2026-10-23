@@ -690,6 +690,7 @@ name = "openmobisim-core-loading"
 version = "0.1.0"
 dependencies = [
  "openmobisim-core-graph",
+ "openmobisim-core-routes",
  "openmobisim-core-types",
  "openmobisim-io-osm",
  "proptest",

@@ -452,6 +452,16 @@ class RouteChoices:
 
     def __len__(self) -> int: ...
 
+def demand_aggregate_space(
+    trips: list[tuple], zones: list[tuple[float, float]]
+) -> tuple[list[tuple], int, int]:
+    """Every trip end moved to the nearest zone point: the trips, ends moved, ends already there."""
+    ...
+
+def demand_aggregate_time(trips: list[tuple], start: int | None = None) -> list[tuple]:
+    """Every departure set to ``start`` (the earliest rounded down to the quarter hour if None)."""
+    ...
+
 def equilibration_strategies() -> list[str]:
     """The equilibration strategies that can be selected by name, the default first.
 
@@ -864,6 +874,7 @@ def run_pipeline(
     road_disruptions: list[tuple[list[int], float, float, float]] | None = None,
     transit_disruptions: list[tuple[int, int, int, int]] | None = None,
     disruptions_known: bool = False,
+    zones: list[tuple[float, float]] | None = None,
     default_weight: int = 1,
     window_start_s: int | None = None,
     window_end_s: int | None = None,
@@ -940,6 +951,8 @@ def run_pipeline(
         road_disruptions: ``(link indices, capacity factor, from_s, to_s)`` each.
         transit_disruptions: ``(line index, delay_s or -1 to cancel, from_s, to_s)`` each.
         disruptions_known: Whether travellers know of the disruptions in advance.
+        zones: The zones' points, ``(lon, lat)`` each: at ``flow_level`` 1 every trip end is moved
+            to the nearest before the run routes; read at no other level.
         default_weight: How many people a simulated traveller stands for, for
             a trip whose row gives none.
         window_start_s: The simulation window's start, in seconds after midnight; ``None``:

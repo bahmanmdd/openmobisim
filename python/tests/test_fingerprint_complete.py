@@ -23,7 +23,11 @@ GROUPS = {
     "equilibration.msa": "equilibration_options",
     "route_update.best_response": "route_update_options",
     "choice_model.logit": "choice_options",
+    "equilibration.frank_wolfe": "equilibration_options",
 }
+
+#: What only the static assignment reads (S294): changed on a car-only run at ``flow_level=1``.
+STATIC = {"bpr_alpha", "bpr_beta", "period_s"}
 
 
 def _scenario(**options: object) -> ms.Scenario:
@@ -42,6 +46,13 @@ def _scenario(**options: object) -> ms.Scenario:
     )
 
 
+def _static(**options: object) -> ms.Scenario:
+    """A car-only run of the toy network at flow level 1, solved by Frank-Wolfe."""
+    net = ms.examples.toy_network()
+    rows = ms.examples.trips_random(net, 60, seed=3, min_m=100.0, max_m=2000.0, spread_s=1800)
+    return ms.Scenario.from_parts(net, rows, flow_level=1, equilibration="frank_wolfe", **options)
+
+
 def _changed(value: float) -> float:
     """Another valid value: a whole number raised by one (counts, seconds), anything else scaled."""
     if value == int(value):
@@ -51,6 +62,7 @@ def _changed(value: float) -> float:
 
 def test_every_parameter_the_run_uses_changes_its_fingerprint() -> None:
     base = _scenario()._fingerprint()
+    static_base = _static()._fingerprint()
     table = ms.parameters()
     missed = []
     for group, name, value in zip(table["group"], table["name"], table["value"], strict=True):
@@ -68,12 +80,14 @@ def test_every_parameter_the_run_uses_changes_its_fingerprint() -> None:
             "biased",
         )
         values = (0.0, 1.0) if flag else (_changed(float(value)),)
+        static = group == "equilibration.frank_wolfe" or name in STATIC
+        make, against = (_static, static_base) if static else (_scenario, base)
         got = set()
         for new in values:
             try:
-                got.add(_scenario(**{argument: {name: new}})._fingerprint())
+                got.add(make(**{argument: {name: new}})._fingerprint())
             except ValueError:
                 continue  # a value the option refuses: not a run this test can make
-        if got == {base}:
+        if got == {against}:
             missed.append(f"{group} {name}")
     assert not missed, f"parameters not in the fingerprint: {missed}"

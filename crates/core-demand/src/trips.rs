@@ -5,6 +5,7 @@
 //! validation needs every trip of a traveller gathered and ordered first, so
 //! it lives in [`crate::travellers`], the module that does the gathering.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use openmobisim_core_graph::geometry::LonLat;
@@ -93,4 +94,39 @@ pub fn read_trips_parquet(path: impl AsRef<Path>) -> Result<Vec<RawTrip>, Demand
         }
     }
     Ok(trips)
+}
+
+/// Check that no two rows share a `(traveller_id, trip_seq)` (X-68).
+///
+/// A trip is keyed by the pair, so a second row with the same key would replace or drop the
+/// first, and every total of the run (travel time, mode shares, completion) would be of a
+/// smaller demand than the user gave, with nothing to say so. **Cost:** one hash set over the
+/// rows, once; nothing in a loading.
+///
+/// # Errors
+///
+/// [`DemandError::Schema`] naming the first row (from 0, in the order given) that repeats a key,
+/// the row it repeats, the key, and how many rows repeat a key in all.
+pub fn check_distinct_keys(trips: &[RawTrip]) -> Result<(), DemandError> {
+    // Each key's first row, so the message can name the row a repeat repeats.
+    let mut first: HashMap<(&str, u32), usize> = HashMap::with_capacity(trips.len());
+    let mut named: Option<(usize, usize)> = None;
+    let mut repeats = 0_usize;
+    for (i, t) in trips.iter().enumerate() {
+        if let Some(&earlier) = first.get(&(t.traveller_id.as_str(), t.trip_seq)) {
+            repeats += 1;
+            named.get_or_insert((i, earlier));
+        } else {
+            first.insert((t.traveller_id.as_str(), t.trip_seq), i);
+        }
+    }
+    let Some((i, earlier)) = named else { return Ok(()) };
+    let t = &trips[i];
+    Err(DemandError::Schema(format!(
+        "trip row {i} (from 0) repeats row {earlier}'s (traveller_id, trip_seq) = ({:?}, {}); \
+         {repeats} row(s) repeat a key already given. A traveller's trips take distinct trip_seq \
+         values (0, 1, 2, … in the order of their day), and another traveller takes another \
+         traveller_id.",
+        t.traveller_id, t.trip_seq
+    )))
 }

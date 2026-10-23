@@ -12,6 +12,7 @@
 //! |---|---|
 //! | `free_flow` (the default, [`DEFAULT_STRATEGY`]) | The free-flow loading alone (below): one choice, built up in five groups by default, and one loading of everyone |
 //! | `msa` | The method of successive averages **in traveller form**: at iteration `i` (from 1; iteration 0 is everyone's first choice) each traveller chooses again with probability `1/(i + 1)`, decided by a draw keyed on `(traveller, iteration)` from its own stream, so who moves does not depend on thread count or order; the others keep their route. In expectation the route flows are the average of the flows of every iteration so far, which is classical MSA with step `1/(i + 1)` |
+//! | `frank_wolfe` | **Level 1 only** ([`FrankWolfe`]): the static assignment's Frank–Wolfe solver, the step that minimises the Beckmann objective; at level 1 `msa` is the static method of successive averages and `free_flow` one all-or-nothing assignment on free-flow times (`core_loading::level1`) |
 //! | `sra` | Self-regulated averaging ([`Sra`]), `msa` with a step that regulates itself: at iteration `i` each traveller chooses again with probability `1/η_i`, where `η_1 = 2` and η grows by `eta_fell` for a loading whose disequilibrium fell and by `eta_rose` for one where it rose, so the step shrinks slowly while the run improves and fast when it does not; the share for loading `i` reacts to the loadings up to `i − 2`. The same draws as `msa`'s; with both options 1 it is `msa` |
 //!
 //! **The free-flow loading** (iteration 0) is where every run starts, and all
@@ -559,6 +560,12 @@ pub trait Equilibration: Send + Sync {
     fn is_converged(&self, _reports: &[IterationReport]) -> bool {
         false
     }
+
+    /// The gap below which the run stops: what the static assignment (flow level 1) stops its
+    /// solver on, the relative gap of the flows (S294). 0, never early, unless a strategy says.
+    fn gap_tolerance(&self) -> f64 {
+        0.0
+    }
 }
 
 /// One free-flow loading: everyone chooses once, in `increments` groups, and the network
@@ -820,6 +827,9 @@ impl Equilibration for Msa {
     fn reselects(&self, rng: &StreamRng, traveller: u32, iteration: u32, share: f64) -> bool {
         rng.unit(DrawAddress::from_pair(traveller, iteration)) < share
     }
+    fn gap_tolerance(&self) -> f64 {
+        self.gap_tolerance
+    }
     fn is_converged(&self, reports: &[IterationReport]) -> bool {
         // The mean of the last three, not the last: with sampled choice and a queue that
         // reacts to it, the gap is noisy (one dip below the tolerance is not a settled
@@ -1013,6 +1023,97 @@ impl Equilibration for Sra {
     fn is_converged(&self, reports: &[IterationReport]) -> bool {
         self.msa.is_converged(reports)
     }
+    fn gap_tolerance(&self) -> f64 {
+        self.msa.gap_tolerance
+    }
+}
+
+/// The most iterations [`FrankWolfe`] may make: a static assignment's iteration is one
+/// shortest-path tree per origin, far cheaper than a loading.
+pub const MAX_STATIC_ITERATIONS: u32 = 100_000;
+
+/// **Frank–Wolfe**, the static assignment's solver at flow level 1 (S294; Frank and Wolfe 1956,
+/// *An algorithm for quadratic programming*, *Naval Research Logistics Quarterly* 3; LeBlanc,
+/// Morlok and Pierskalla 1975, *Transportation Research* 9): from the all-or-nothing assignment
+/// on free-flow times, each iteration moves the link flows towards the all-or-nothing flows on
+/// the current times by the step that minimises the Beckmann objective along that direction.
+/// It makes no loading of its own: at level 1 the run makes one loading, and the solver iterates
+/// inside it (`core_loading::level1`). **Refused at every other level** (the pipeline says so),
+/// where there is nothing for it to solve.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FrankWolfe {
+    /// The most iterations (1 to [`MAX_STATIC_ITERATIONS`]); 1000 by default. *An assumption:
+    /// about what Sioux Falls at TNTP's demand takes to reach the default tolerance (the Python
+    /// tests run it).*
+    pub iterations: u32,
+    /// Stop once the relative gap of the flows, `(Σ x t − Σ d t_min) / Σ d t_min`, is below this
+    /// (0 to 1; 0 never stops early); 1e-4 by default. *An assumption: a common target of
+    /// static assignment (Boyce, Ralevic-Dekic and Bar-Gera 2004, *Journal of Transportation
+    /// Engineering* 130(1), argue for 1e-4 or below).*
+    pub gap_tolerance: f64,
+}
+
+impl Default for FrankWolfe {
+    fn default() -> Self {
+        Self { iterations: 1000, gap_tolerance: 1e-4 }
+    }
+}
+
+impl FrankWolfe {
+    const OPTIONS: [&'static str; 2] = ["gap_tolerance", "iterations"];
+
+    /// Make the strategy from its options, defaults for those not given.
+    ///
+    /// # Errors
+    ///
+    /// [`EquilibrationError::UnknownOption`] for a name it does not have,
+    /// [`EquilibrationError::BadOption`] for a value out of range.
+    pub fn from_options(options: &Options) -> Result<Self, EquilibrationError> {
+        check_known("frank_wolfe", options, &Self::OPTIONS)?;
+        let mut m = Self::default();
+        for (option, &v) in options {
+            match option.as_str() {
+                "iterations" => {
+                    m.iterations = whole("frank_wolfe", option, v, 1, MAX_STATIC_ITERATIONS)?;
+                }
+                _ => {
+                    if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
+                        return Err(EquilibrationError::BadOption {
+                            strategy: "frank_wolfe".to_string(),
+                            option: option.clone(),
+                            reason: format!("must be from 0 to 1, got {v}"),
+                        });
+                    }
+                    m.gap_tolerance = v;
+                }
+            }
+        }
+        Ok(m)
+    }
+}
+
+impl Equilibration for FrankWolfe {
+    fn name(&self) -> &str {
+        "frank_wolfe"
+    }
+    fn descriptor(&self) -> String {
+        format!("frank_wolfe;gap_tolerance={};iterations={}", self.gap_tolerance, self.iterations)
+    }
+    fn max_iterations(&self) -> u32 {
+        self.iterations
+    }
+    fn cost_bin_seconds(&self) -> u32 {
+        300
+    }
+    fn draws_reselection(&self) -> bool {
+        false
+    }
+    fn reselects(&self, _rng: &StreamRng, _traveller: u32, _iteration: u32, _share: f64) -> bool {
+        false
+    }
+    fn gap_tolerance(&self) -> f64 {
+        self.gap_tolerance
+    }
 }
 
 fn check_known(
@@ -1042,13 +1143,14 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// The built-in strategies: `free_flow`, `msa` and `sra`.
+    /// The built-in strategies: `free_flow`, `msa`, `sra` and `frank_wolfe` (level 1 only).
     #[must_use]
     pub fn builtin() -> Self {
         let mut r = Self { strategies: Vec::new() };
         r.register("free_flow", |o| Ok(Box::new(FreeFlow::from_options(o)?)));
         r.register("msa", |o| Ok(Box::new(Msa::from_options(o)?)));
         r.register("sra", |o| Ok(Box::new(Sra::from_options(o)?)));
+        r.register("frank_wolfe", |o| Ok(Box::new(FrankWolfe::from_options(o)?)));
         r
     }
 

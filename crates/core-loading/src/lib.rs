@@ -4,6 +4,7 @@
 //! |---|---|
 //! | [`vehicle`] | [`vehicle::Vehicle`] — a route, a PCU weight, a departure time |
 //! | [`level0`] | Level 0 of the fidelity ladder: free-flow traversal, no curves, no interaction |
+//! | [`level1`] | Level 1: the static user-equilibrium assignment, one flow per link for the whole period, BPR times, msa or Frank–Wolfe |
 //! | [`curves`] | [`curves::LinkCurves`] — per-link cumulative counts with bounded history; the receiving condition |
 //! | [`node_model`] | the node model in aggregate form, the reference statement of the rules [`ltm`] applies per vehicle |
 //! | [`link_bins`] | [`link_bins::LinkBins`] — per-link, per-time-bin results recorded as the loading runs |
@@ -18,7 +19,9 @@
 //! road space; the default), 3 (storage, without the backward
 //! wave's delay) and **4, the full model** (spillback with the backward wave,
 //! turn pockets, en-route rerouting). See [`ltm`]'s module docs for the
-//! mechanism and its recorded biases. Level 1 (volume-delay) is not built.
+//! mechanism and its recorded biases. **Level 1** ([`level1`]) stands apart: no time inside
+//! the period, one hourly flow per link and a volume-delay function in place of the curves —
+//! the static assignment of planning practice, the rung between free flow and the point queue.
 //!
 //! **The flow motor never computes a route**: every
 //! [`vehicle::Vehicle`] arrives with one already assigned (a reroute's new
@@ -27,6 +30,7 @@
 pub mod curves;
 mod events;
 pub mod level0;
+pub mod level1;
 pub mod link_bins;
 pub mod ltm;
 pub mod node_model;
@@ -36,6 +40,10 @@ pub use curves::LinkCurves;
 pub use level0::{
     LinkTraversal, Trajectory, load_level_0, load_level_0_binned, load_level_0_recorded,
     load_timed_binned, traverse_free_flow, traverse_timed,
+};
+pub use level1::{
+    Bpr, StaticDemand, StaticIteration, StaticOptions, StaticResult, StaticSolver, apportion,
+    solve_static,
 };
 pub use link_bins::{EntryTables, LinkBinRecorder, LinkBins};
 pub use ltm::{
