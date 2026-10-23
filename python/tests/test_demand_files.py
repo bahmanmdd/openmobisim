@@ -157,25 +157,6 @@ def test_trip_ends_may_share_a_few_points_per_zone() -> None:
         ms.demand_from_od(od_rows(), ZONES, points_per_zone=0)
 
 
-def test_departures_may_be_moved_to_the_middle_of_their_bins() -> None:
-    # S293: the aggregation over time. Every departure sits at the middle of a bin counted from
-    # the window's start, the bins keep their counts, the last bin's middle stays in the window,
-    # and nothing else about the trips changes.
-    window = {"start_s": 25200, "end_s": 28800, "seed": 3}
-    plain = ms.demand_from_od(od_rows(40.0), ZONES, **window)
-    binned = ms.demand_from_od(od_rows(40.0), ZONES, departure_bin_s=300, **window)
-    assert len(binned) == len(plain)
-    assert {t[6] for t in binned} <= {25200 + 300 * k + 150 for k in range(12)}
-    for a, b in zip(plain, binned, strict=True):
-        assert (a[6] - 25200) // 300 == (b[6] - 25200) // 300
-        assert a[:6] == b[:6] and a[7:] == b[7:]
-    odd = ms.demand_from_od(od_rows(40.0), ZONES, start_s=25200, end_s=25500, departure_bin_s=900)
-    assert {t[6] for t in odd} == {25499}, "a bin wider than the window: capped at the end"
-    for bad in (0, -300, 2.5):
-        with pytest.raises(ValueError, match="departure_bin_s"):
-            ms.demand_from_od(od_rows(), ZONES, departure_bin_s=bad)
-
-
 def test_trip_ends_may_be_drawn_from_a_zones_weighted_points(tmp_path: Path) -> None:
     """A zone with points places its trips on them, by weight; a zone without keeps the disc.
 

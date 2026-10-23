@@ -626,7 +626,6 @@ def demand_from_od(
     spread_m_by_zone: Mapping[str, float] | None = None,
     points_per_zone: int | None = None,
     zone_points: Mapping[str, list[tuple[float, float, float, float]]] | None = None,
-    departure_bin_s: int | None = None,
 ) -> list[tuple]:
     """Turn an OD matrix into the trips a ``Scenario`` runs (the deterministic integerisation).
 
@@ -653,14 +652,6 @@ def demand_from_od(
        where people live and end where they work; a trip within such a zone ends at a point
        other than its origin's when the zone has more than one (with one point, both ends are
        that point). A zone without points keeps the rule above.
-    5. **Aggregated, if asked:** with ``departure_bin_s``, every departure is moved to the middle
-       of its bin of that many seconds, counted from the row's window start (the last bin's
-       middle capped at the window's end), so that the trips of one zone pair and one bin are
-       the same trip repeated: comparable trips, for a gap read per zone pair and departure
-       bin. ``points_per_zone=1`` is the same aggregation over space (every trip end at its
-       zone's point). Note what it does to the loading: the trips of a bin then enter the
-       network together, as a platoon, and queue at their first links where spread departures
-       would not; the travel times of an aggregated demand are those of its platoons.
 
     The draws (steps 3 and 4) come from one NumPy generator seeded by ``seed``, consumed in the
     sorted order of the cells, so the same inputs and seed give the same trips on any machine for
@@ -683,8 +674,6 @@ def demand_from_od(
             anywhere in its disc (at least 1; ``None``: anywhere).
         zone_points: ``{zone_id: [(lon, lat, weight_origin, weight_destination), …]}``, the
             places a zone's trips start and end, drawn by weight; the other zones as above.
-        departure_bin_s: Move every departure to the middle of its bin of this many seconds
-            from the row's window start (at least 1; ``None``: the departures as drawn).
 
     Returns:
         Trips rows (``traveller_id, trip_seq, origin_lon, origin_lat, destination_lon,
@@ -692,15 +681,11 @@ def demand_from_od(
 
     Raises:
         ValueError: For an unknown profile, a window that is empty, a zone the matrix names but
-            ``zones`` does not have, a negative spread, a zone in ``zone_points`` that
-            ``zones`` does not have or whose points have a negative weight, or a
-            ``departure_bin_s`` that is not a whole number of at least 1.
+            ``zones`` does not have, a negative spread, or a zone in ``zone_points`` that
+            ``zones`` does not have or whose points have a negative weight.
     """
     if profile not in _PROFILES:
         raise ValueError(f"profile must be one of {_PROFILES}, got {profile!r}")
-    bin_s = departure_bin_s
-    if bin_s is not None and (int(bin_s) != bin_s or bin_s < 1):
-        raise ValueError(f"departure_bin_s must be a whole number of at least 1, got {bin_s}")
     spreads = dict(spread_m_by_zone or {})
     ppz = points_per_zone
     if ppz is not None and (int(ppz) != ppz or ppz < 1):
@@ -751,9 +736,6 @@ def demand_from_od(
             o, d = points[cell[0]], points[cell[1]]
             u = rng.beta(3.0, 3.0, n) if profile == "am_peak" else rng.random(n)
             departures = lo + np.floor(u * (hi - lo)).astype(np.int64)
-            if bin_s is not None:  # the middle of each departure's bin (S293)
-                b = int(bin_s)
-                departures = np.minimum(lo + ((departures - lo) // b) * b + b // 2, hi - 1)
             ends = []
             chosen: list[np.ndarray] = []  # each end's point, for a trip within a zone with points
             for at, zone, which in ((o, cell[0], 1), (d, cell[1], 2)):

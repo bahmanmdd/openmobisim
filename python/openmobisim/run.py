@@ -598,6 +598,135 @@ class Run:
         gap = self._summary.gap_trips
         return None if gap is None else Columns(gap)
 
+    def gap_pairs(self, departure_bin_s: int = 300) -> Columns | None:
+        """The gap per origin, destination and departure bin, on the costs the trips paid.
+
+        The trips of ``gap_trips()`` (the last loading's) grouped by their origin point, their
+        destination point (their coordinates as given, rounded to 1e-6 degrees so that equal
+        points group) and their departure bin, ``floor((departure_s − start_s) /
+        departure_bin_s)`` counted from the window's start (``window["start_s"]``). A group's
+        best, ``g_best_min``, is the least ``g_chosen_min`` of its trips: the best cost a trip of
+        the group paid, at the last loading's costs. Every trip of the group is measured against
+        it. This is the literature's dynamic relative gap per origin, destination and departure
+        interval, read on the costs paid rather than against a shortest route (Boyles, Lownes &
+        Unnikrishnan 2025, *Transportation Network Analysis*, the dynamic relative gap): at a
+        dynamic user equilibrium the trips that leave one
+        place for another at about the same time pay the same, and what a trip paid above the
+        best of its group is what it could have saved by doing as that one did. It needs no
+        search.
+
+        It is meaningful when the trips of a pair share their two points: the benchmark networks'
+        nodes, ``demand_from_od``'s ``points_per_zone``, ``Case.demand``'s
+        ``one_point_per_zone``. With trip ends spread over their zones nearly every group holds
+        one trip, and the gap reads 0. Within a bin the trips leave at different seconds, so
+        where the costs move within it (a queue growing) a trip leaving late reads a gap it could
+        not have closed: the wider the bin, the more it overstates. Trips choosing their mode are
+        grouped the same way, their ``g_chosen_min`` the alternative they took, so a group may
+        hold them beside trips given the car, and travellers of other classes, whose generalised
+        minutes count money differently. The units are ``gap_currency``'s. Under a stochastic
+        choice model (the logit) it holds the model's own spread over routes as well as the
+        disequilibrium, so it compares with ``convergence()``'s ``gap_route``, not with
+        ``gap_route_excess``.
+
+        One row per group, sorted by origin, destination and bin: ``origin_lon``,
+        ``origin_lat``, ``destination_lon``, ``destination_lat`` (the rounded points),
+        ``bin_start_s`` (the bin's start, seconds after midnight), ``trips``, ``people`` (their
+        weights summed), ``g_best_min``, ``g_mean_min`` (the mean of ``g_chosen_min`` over the
+        group's people), ``excess_min`` (``Σ w (g_chosen − g_best)``, minutes summed over the
+        group's people), ``gap`` (``excess_min / Σ w g_best``; ``nan`` where that is 0) and
+        ``unfinished`` (the group's trips still under way when the window ended).
+        ``gap_pairs_relative`` sums it over every group.
+
+        Args:
+            departure_bin_s: The bins' width, in seconds: a whole number of at least 1. A bin
+                as wide as the window gives one group per pair.
+
+        Returns:
+            The columns, or ``None`` for a run of one loading (``gap_trips()`` is ``None``).
+
+        Raises:
+            ValueError: If ``departure_bin_s`` is not a whole number of at least 1.
+            RuntimeError: For a run read back with ``Run.open``, which has no ``gap_trips()``.
+        """
+        bin_s = departure_bin_s
+        if isinstance(bin_s, bool) or int(bin_s) != bin_s or bin_s < 1:
+            raise ValueError(f"departure_bin_s must be a whole number of at least 1, got {bin_s}")
+        gap = self.gap_trips()
+        if gap is None:
+            return None
+        trips = self.trip_results()
+        trip = np.asarray(gap["trip"], dtype=np.int64)
+        g = np.asarray(gap["g_chosen_min"], dtype=float)
+        keep = np.isfinite(g)
+        trip, g = trip[keep], g[keep]
+        unfinished = np.asarray(gap["unfinished"], dtype=bool)[keep]
+        w = np.asarray(trips["weight"], dtype=float)[trip]
+        start_s = int(self.window["start_s"])
+        departure = np.asarray(trips["departure_s"], dtype=np.int64)[trip]
+        bins = np.floor_divide(departure - start_s, int(bin_s))
+        micro = [
+            np.rint(np.asarray(trips[name], dtype=float)[trip] * 1e6).astype(np.int64)
+            for name in ("origin_lon", "origin_lat", "destination_lon", "destination_lat")
+        ]
+        keys = np.column_stack([*micro, bins]) if len(trip) else np.empty((0, 5), np.int64)
+        groups, of = np.unique(keys, axis=0, return_inverse=True)
+        of = np.asarray(of).reshape(-1)
+        n = len(groups)
+        best = np.full(n, np.inf)
+        np.minimum.at(best, of, g)
+        count = np.bincount(of, minlength=n)
+        people = np.bincount(of, weights=w, minlength=n)
+        paid = np.bincount(of, weights=w * g, minlength=n)
+        excess = np.bincount(of, weights=w * (g - best[of]), minlength=n)
+        late = np.bincount(of, weights=unfinished.astype(float), minlength=n)
+        reference = people * best
+        with np.errstate(divide="ignore", invalid="ignore"):
+            mean = np.where(people > 0, paid / people, np.nan)
+            ratio = np.where(reference != 0, excess / reference, np.nan)
+        return Columns(
+            {
+                "origin_lon": groups[:, 0] / 1e6,
+                "origin_lat": groups[:, 1] / 1e6,
+                "destination_lon": groups[:, 2] / 1e6,
+                "destination_lat": groups[:, 3] / 1e6,
+                "bin_start_s": start_s + groups[:, 4] * int(bin_s),
+                "trips": count.astype(np.int64),
+                "people": people,
+                "g_best_min": best,
+                "g_mean_min": mean,
+                "excess_min": excess,
+                "gap": ratio,
+                "unfinished": late.astype(np.int64),
+            }
+        )
+
+    def gap_pairs_relative(self, departure_bin_s: int = 300) -> float:
+        """The gap per origin, destination and departure bin, as one number for the run.
+
+        ``gap_pairs``' excess summed over every group, over what the groups' people would have
+        paid at their groups' best: ``Σ excess_min / Σ people × g_best_min``, a share like the
+        run's other gaps (0.01 is 1 %). Where every group's trips are the same trip (one point
+        each end, one second of departure, one class, each given the car and arrived), each
+        group's best is no lower than the best route its trips were offered, so this is at most
+        ``gap_route``; trips leaving at other seconds of a bin can make it read higher.
+
+        Args:
+            departure_bin_s: The bins' width, in seconds (``gap_pairs``').
+
+        Returns:
+            The share, or ``nan`` for a run of one loading (``gap_trips()`` is ``None``).
+
+        Raises:
+            ValueError: If ``departure_bin_s`` is not a whole number of at least 1.
+            RuntimeError: For a run read back with ``Run.open``, which has no ``gap_trips()``.
+        """
+        pairs = self.gap_pairs(departure_bin_s)
+        if pairs is None:
+            return float("nan")
+        reference = float(np.sum(pairs["people"] * pairs["g_best_min"]))
+        excess = float(np.sum(pairs["excess_min"]))
+        return excess / reference if reference != 0 else float("nan")
+
     def route_sets(self) -> _core.RouteSets:
         """The route sets the trips were routed from.
 
