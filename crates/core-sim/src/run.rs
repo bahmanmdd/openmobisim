@@ -102,6 +102,18 @@ pub enum FlowMotor {
         /// Which term of the triangular diagram is in force.
         level: FidelityLevel,
     },
+    /// Level 1 (S294): the static user-equilibrium assignment, one flow per link for the whole
+    /// period, link times by the volume-delay function ([`crate::LoadingOptions::bpr`]), the
+    /// solver by the run's equilibration strategy (`frank_wolfe`, else the method of successive
+    /// averages); see [`crate::static_run`]. Car trips only: transit, parkings, mode choice
+    /// and disruptions the travellers do not know of are refused.
+    Static {
+        /// The network's turn table, as for [`FlowMotor::Ltm`].
+        turns: Arc<TurnTable>,
+        /// The period the demand's hourly flows are of, in seconds (at least 1): a link's flow
+        /// is the PCU routed over it over this period in hours.
+        period_s: u32,
+    },
 }
 
 /// Diagnostic codes this module records, beyond the core codes it reuses
@@ -495,6 +507,9 @@ pub struct Run {
     /// the walk layer is static, so each is searched once per execution, not once per
     /// loading. `None`: no walk within the bound.
     walk_paths: WalkPaths,
+    /// Level 1's equilibrium for the execution under way (S294): what its one loading drives
+    /// on. `None` at every other level.
+    static_solution: Option<Arc<crate::static_run::StaticSolution>>,
 }
 
 /// Walk paths by (from, to) walk node: see [`Run`]'s `walk_paths`.
@@ -584,6 +599,7 @@ impl Run {
             prices: Prices::SHIPPED,
             demand_values: DemandValues::new(),
             walk_paths: WalkPaths::new(),
+            static_solution: None,
         }
     }
 
@@ -876,7 +892,7 @@ impl Run {
     fn level(&self) -> Option<FidelityLevel> {
         match &self.flow_motor {
             FlowMotor::Ltm { level, .. } => Some(*level),
-            FlowMotor::Level0 => None,
+            FlowMotor::Level0 | FlowMotor::Static { .. } => None,
         }
     }
 
@@ -1039,6 +1055,18 @@ impl Run {
             .check(&self.network, self.transit.as_ref().map(|t| t.timetable().route_count()))
             .map_err(RunError::Input)?;
         let known_disruptions = self.disruptions.known && !self.disruptions.is_empty();
+        // Level 1 (S294) loads car trips on one period's flows, and refuses what it cannot run.
+        if let FlowMotor::Static { .. } = self.flow_motor {
+            let refused = crate::static_run::refusal(
+                self.transit.is_some(),
+                self.parking.is_some(),
+                self.mode_choice.as_ref().is_some_and(|m| !m.is_empty()),
+                &self.disruptions,
+            );
+            if let Some(why) = refused {
+                return Err(RunError::Input(why));
+            }
+        }
         let mut timings = Timings::new();
         let mut clock = Instant::now();
 
@@ -1136,9 +1164,29 @@ impl Run {
             _ => trip_keys.clone(),
         };
         let turns = match &self.flow_motor {
-            FlowMotor::Ltm { turns, .. } => turns.clone(),
+            FlowMotor::Ltm { turns, .. } | FlowMotor::Static { turns, .. } => turns.clone(),
             FlowMotor::Level0 => Arc::new(TurnTable::build(&self.network, self.network.signals())),
         };
+        // Level 1 (S294): the equilibrium, where the other levels make their route sets; its
+        // routes are the run's sets and its apportionment the trips' choices.
+        self.static_solution = match &self.flow_motor {
+            FlowMotor::Static { period_s, .. } => {
+                Some(Arc::new(crate::static_run::solve(&crate::static_run::Inputs {
+                    network: &self.network,
+                    turns: &turns,
+                    travellers: &self.travellers,
+                    trips: &self.trips,
+                    keys: &car_keys,
+                    bpr: self.loading.bpr,
+                    strategy: self.equilibration.as_ref(),
+                    disruptions: &self.disruptions,
+                    period_s: *period_s,
+                    start_s: self.window_start.get(),
+                })))
+            }
+            _ => None,
+        };
+        let static_solution = self.static_solution.clone();
         // A method that reads the demand (the Monte Carlo method's bias, S176) is told it
         // first; one that does not costs nothing here.
         let demand_rows: Option<Vec<TripDemand>> = self.route_generator.reads_demand().then(|| {
@@ -1170,8 +1218,9 @@ impl Run {
             RouteSets::generate(&self.network, &turns, &car_keys, generator.as_ref())
         };
         // Sets already generated for these inputs are handed back, if the run has a cache (S178).
-        let mut route_sets = match &self.route_cache {
-            Some(cache) => {
+        let mut route_sets = match (&static_solution, &self.route_cache) {
+            (Some(solution), _) => Arc::new(solution.route_sets.clone()),
+            (None, Some(cache)) => {
                 let key = generation_key(
                     &self.network,
                     self.route_generator.as_ref(),
@@ -1180,9 +1229,13 @@ impl Run {
                 );
                 cache.get_or_generate(key, generate)
             }
-            None => Arc::new(generate()),
+            (None, None) => Arc::new(generate()),
         };
-        clock = timings.lap("route_sets", None, clock);
+        clock = timings.lap(
+            if static_solution.is_some() { "static_assignment" } else { "route_sets" },
+            None,
+            clock,
+        );
 
         // Choice and equilibration (S169, S170): every trip chooses a route on
         // free-flow costs; then, under an equilibration strategy, the network is
@@ -1211,7 +1264,10 @@ impl Run {
         let mut chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
         // What the full gap is measured in (S293): the model's utility, or time.
         let currency = Currency::new(model.as_ref(), &travellers, &chooser.wanted_names())?;
-        let mut route_choices = chooser.choose_all(&choice_rng, 0)?;
+        let mut route_choices = match &static_solution {
+            Some(solution) => solution.route_choices.clone(),
+            None => chooser.choose_all(&choice_rng, 0)?,
+        };
         clock = timings.lap("route_choice", Some(0), clock);
         let route_update = self.route_update.clone();
 
@@ -1248,7 +1304,7 @@ impl Run {
         // is planned here (S267: the others' free-flow choices were never loaded).
         let increments = match self.flow_motor {
             FlowMotor::Ltm { .. } => self.equilibration.increments().max(1),
-            FlowMotor::Level0 => 1,
+            FlowMotor::Level0 | FlowMotor::Static { .. } => 1,
         };
         let group: Vec<u32> = if increments > 1 {
             (0..travellers.len()).map(|t| increment_of(&reselect_rng, t, increments)).collect()
@@ -1284,7 +1340,9 @@ impl Run {
         }
 
         let strategy = self.equilibration.clone();
-        let max_iterations = strategy.max_iterations().max(1);
+        // Level 1's solver iterated inside the one loading it makes (S294).
+        let max_iterations =
+            if static_solution.is_some() { 1 } else { strategy.max_iterations().max(1) };
         // Link times are recorded whenever there is a next iteration to cost: the flow map at
         // the user's bin length if they asked for one, the times the next choice reads at the
         // strategy's (S232).
@@ -1704,6 +1762,12 @@ impl Run {
         }
 
         let (loaded, iteration_diagnostics) = last.expect("at least one iteration ran");
+        // Level 1 (S294): the solver's iterations are the run's reports, its gap the verdict's.
+        if let Some(solution) = &static_solution {
+            let people = completed_people(&loaded.events, &self.trips, &self.travellers);
+            reports = solution.reports(loaded.completion.completed, people);
+            converged = solution.result.converged;
+        }
         diagnostics.merge(&iteration_diagnostics);
         // The chooser holds the other handle on the sets; without it they are ours.
         drop(chooser);
@@ -2110,6 +2174,30 @@ impl Run {
                                 );
                                 pending_ltm.push((trip, vehicle, weight));
                             }
+                            FlowMotor::Static { .. } => {
+                                // Level 1 (S294): on its route at the equilibrium's times. A
+                                // static model has no end of the day: every trip arrives.
+                                let vehicle = Vehicle::new(
+                                    VehicleId::new(trip.raw()),
+                                    path,
+                                    Pcu(f64::from(weight)),
+                                    departure,
+                                );
+                                let times = self.static_solution.as_ref().map(|s| s.times_s());
+                                let trajectory = traverse_timed(
+                                    &vehicle,
+                                    &self.network,
+                                    times.expect("level 1 solves before it loads"),
+                                );
+                                completion.completed += 1;
+                                total_travel_time +=
+                                    trajectory.total_travel_time() * f64::from(weight);
+                                events.push(EventRow::trip(
+                                    trajectory.arrival(),
+                                    EventType::TripCompleted,
+                                    trip,
+                                ));
+                            }
                         }
                     }
                 }
@@ -2301,6 +2389,11 @@ impl Run {
             }
         }
 
+        // Level 1 (S294): the equilibrium's flows over the period, not the traversals (everyone
+        // sets off at the period's start, which would draw a wave through the network).
+        if let (Some(solution), Some(bin_seconds)) = (&self.static_solution, record_bins) {
+            link_bins = Some(solution.link_bins(bin_seconds, self.window_start.get()));
+        }
         if let (FlowMotor::Level0, Some(bin_seconds)) = (&self.flow_motor, record_bins) {
             let window = f64::from(self.window.get());
             if want_entry {
@@ -2584,7 +2677,7 @@ impl Run {
         );
         match kind {
             ParkingKind::Car => match &self.flow_motor {
-                FlowMotor::Level0 => {
+                FlowMotor::Level0 | FlowMotor::Static { .. } => {
                     let trajectory = traverse_free_flow(&vehicle, &self.network);
                     if want_bins {
                         out.level0_vehicles.push(vehicle);

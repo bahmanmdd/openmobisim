@@ -1014,7 +1014,7 @@ fn the_description_names_the_strategy_and_the_streams_it_draws_from() {
 
 #[test]
 fn strategies_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
-    assert_eq!(Registry::builtin().names(), ["free_flow", "msa", "sra"]);
+    assert_eq!(Registry::builtin().names(), ["free_flow", "msa", "sra", "frank_wolfe"]);
     let opts = |pairs: &[(&str, f64)]| -> Options {
         pairs.iter().map(|&(k, v)| (k.to_string(), v)).collect()
     };

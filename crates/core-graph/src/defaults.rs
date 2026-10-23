@@ -263,7 +263,14 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// whose first loadings are point-queue warm-ups (`warmup` 1 by default). `node_inflow` is now
 /// hashed whatever its value, so every fingerprint of the link transmission model moves with
 /// them.
-pub const DEFAULTS_VERSION: u32 = 33;
+///
+/// Version 34 (S294): **flow level 1, the static assignment**, with its own defaults, each
+/// uncalibrated: the volume-delay function per road class (`core-sim`'s
+/// `LoadingOptions::bpr`, α 0.15 and β 4 for every class, the Bureau of Public Roads' 1964
+/// values), the period its hourly flows are of (`period_s`, 0: read from the departures), and
+/// the Frank–Wolfe solver's `iterations` (1000) and `gap_tolerance` (0.0001). No result and no
+/// fingerprint of levels 0, 2, 3 and 4 moves.
+pub const DEFAULTS_VERSION: u32 = 34;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

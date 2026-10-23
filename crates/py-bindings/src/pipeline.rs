@@ -1641,7 +1641,7 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
         "network_options",
         openmobisim_core_graph::network_options::NetworkDefaults::shipped().values(),
     );
-    push("loading", "loading_options", owned(LoadingOptions::SHIPPED.values()));
+    push("loading", "loading_options", LoadingOptions::SHIPPED.values());
     push("modes", "mode_options", owned(ModeDefaults::SHIPPED.values()));
     push("transit", "transit_options", owned(TransitDefaults::SHIPPED.values()));
     push("parking", "parking_options", owned(ParkingDefaults::SHIPPED.values()));

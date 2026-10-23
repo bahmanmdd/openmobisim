@@ -15,7 +15,8 @@
 //! | [`link_times`] | [`link_times::LinkTimes`] — link travel times by time of day from the last loading, and the change between two loadings |
 //! | [`link_values`] | [`link_values::LinkValues`] — values a user gives per link, summed along each alternative for the choice models |
 //! | [`prices`] | [`prices::Prices`] — what an alternative costs in euros (running cost, tolls, parking fees, fares), offered to the choice models |
-//! | [`loading_rules`] | [`loading_rules::LoadingOptions`] — the loading's rules by name: turn pockets, en-route rerouting, priority at merges |
+//! | [`loading_rules`] | [`loading_rules::LoadingOptions`] — the loading's rules by name: turn pockets, en-route rerouting, priority at merges; level 1's volume-delay function and period |
+//! | [`static_run`] | Flow level 1 in a run: the static user-equilibrium assignment where the other levels make their route sets, its results in the run's shape |
 //! | [`demand_values`] | [`demand_values::DemandValues`] — values a user gives per traveller and per trip, offered to the choice models |
 //! | [`disruptions`] | [`disruptions::Disruptions`] — roads closed and transit stopped at a time of day, known or not in advance |
 //! | [`skims`] | [`skims::Skimmer`] — door-to-door times between points by mode, after a run |
@@ -58,13 +59,14 @@ pub mod route_choice;
 pub mod route_update;
 pub mod run;
 pub mod skims;
+pub mod static_run;
 pub mod timings;
 pub mod transit;
 pub mod trip_results;
 
 pub use demand_values::{DEPARTURE_ATTRIBUTE, DESTINATION_PARKING, DemandValues};
 pub use disruptions::{Disruptions, RoadDisruption, TransitDisruption, TransitEffect};
-pub use equilibration::{Equilibration, FreeFlow, IterationReport, Msa, Sra};
+pub use equilibration::{Equilibration, FrankWolfe, FreeFlow, IterationReport, Msa, Sra};
 pub use events::{EventRow, EventType};
 pub use gap::GapTrips;
 pub use identity::RunDescription;
