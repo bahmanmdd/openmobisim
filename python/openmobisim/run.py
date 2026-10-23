@@ -609,8 +609,8 @@ class Run:
         the group paid, at the last loading's costs. Every trip of the group is measured against
         it. This is the literature's dynamic relative gap per origin, destination and departure
         interval, read on the costs paid rather than against a shortest route (Boyles, Lownes &
-        Unnikrishnan 2025, *Transportation Network Analysis*, the dynamic relative gap; DTALite
-        reads it in 5-minute intervals): at a dynamic user equilibrium the trips that leave one
+        Unnikrishnan 2025, *Transportation Network Analysis*, the dynamic relative gap): at a
+        dynamic user equilibrium the trips that leave one
         place for another at about the same time pay the same, and what a trip paid above the
         best of its group is what it could have saved by doing as that one did. It needs no
         search.
@@ -623,7 +623,10 @@ class Run:
         not have closed: the wider the bin, the more it overstates. Trips choosing their mode are
         grouped the same way, their ``g_chosen_min`` the alternative they took, so a group may
         hold them beside trips given the car, and travellers of other classes, whose generalised
-        minutes count money differently. The units are ``gap_currency``'s.
+        minutes count money differently. The units are ``gap_currency``'s. Under a stochastic
+        choice model (the logit) it holds the model's own spread over routes as well as the
+        disequilibrium, so it compares with ``convergence()``'s ``gap_route``, not with
+        ``gap_route_excess``.
 
         One row per group, sorted by origin, destination and bin: ``origin_lon``,
         ``origin_lat``, ``destination_lon``, ``destination_lat`` (the rounded points),
