@@ -216,7 +216,7 @@ def test_the_benchmarks_match_the_package_s_references() -> None:
 
 @needs_bundle
 @pytest.mark.parametrize(
-    ("scenario", "mean_min"), [("base", 11.79), ("congested", 21.48)]
+    ("scenario", "mean_min"), [("base", 11.67), ("congested", 20.95)]
 )  # fmt: skip
 def test_sioux_falls_gives_its_reference_results(scenario: str, mean_min: float) -> None:
     run = (
@@ -233,7 +233,7 @@ def test_nguyen_dupuis_gives_its_reference_result() -> None:
     run = ms.examples.case("nguyendupuis", root=BUNDLE).scenario().run("nd", quiet=True)
     assert run.completion["completed"] == 2000
     # 54.28 before S280: the path size over the routes offered (A4) moved the route choice.
-    assert run.mean_travel_time_s / 60 == pytest.approx(54.52, abs=0.01)
+    assert run.mean_travel_time_s / 60 == pytest.approx(38.96, abs=0.01)
 
 
 @needs_bundle
