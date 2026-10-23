@@ -690,7 +690,7 @@ class BestResponseOptions(_Options):
         max_routes: count; ``10``.
         searches: count; ``1``.
         slack: —; ``0.02``.
-        tree_step_s: s; ``0.0``.
+        tree_step_s: s; ``300.0``.
     """
 
     _argument: ClassVar[str] = "route_update_options"
@@ -698,7 +698,7 @@ class BestResponseOptions(_Options):
         "max_routes": 10,
         "searches": 1,
         "slack": 0.02,
-        "tree_step_s": 0.0,
+        "tree_step_s": 300.0,
     }
 
     def __init__(
@@ -707,7 +707,7 @@ class BestResponseOptions(_Options):
         max_routes: int = 10,
         searches: int = 1,
         slack: float = 0.02,
-        tree_step_s: float = 0.0,
+        tree_step_s: float = 300.0,
     ) -> None:
         """Keep the options given that differ from their defaults."""
         given = dict(locals())

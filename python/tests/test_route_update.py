@@ -14,7 +14,7 @@ import openmobisim as ms
 import pytest
 
 CAR = {"commuter": (True, False, False)}
-UPDATE = "best_response;max_routes=10;searches=1;slack=0.02"
+UPDATE = "best_response;max_routes=10;searches=1;slack=0.02;tree_step_s=300"
 
 
 def scenario(trips=1_800, **kwargs):
@@ -165,9 +165,18 @@ def test_the_options_change_what_it_does():
     # A limit of one route per pair: the set's free-flow shortest never makes room (S268), so
     # nothing is added (the full set is still searched).
     assert (capped.convergence()["routes_added"] == 0).all()
-    three = go("ru-3", route_update="best_response", route_update_options={"searches": 3})
-    assert three.route_sets().update == "best_response;max_routes=10;searches=3;slack=0.02"
-    assert three.convergence()["route_searches"][0] > one.convergence()["route_searches"][0]
+    # Several searches a pair: with the shared trees every departure bin is read anyway, so the
+    # count plays a part only when each pair is searched on its own (tree_step_s 0).
+    per_pair = {"searches": 1, "tree_step_s": 0}
+    one_own = go("ru-one-own", route_update="best_response", route_update_options=per_pair)
+    three = go(
+        "ru-3", route_update="best_response", route_update_options={**per_pair, "searches": 3}
+    )
+    assert three.route_sets().update == UPDATE.replace("searches=1", "searches=3").replace(
+        "tree_step_s=300", "tree_step_s=0"
+    )
+    assert three.convergence()["route_searches"][0] > one_own.convergence()["route_searches"][0]
+    assert one.route_sets().update == UPDATE
 
 
 def test_an_update_needs_a_later_loading_to_do_anything():

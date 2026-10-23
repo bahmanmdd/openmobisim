@@ -37,10 +37,9 @@ use std::sync::Arc;
 use openmobisim_core_choice::{ChoiceBatch, ChoiceError, ChoiceModel};
 use openmobisim_core_demand::{Mode, Travellers, Trips};
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_graph::turns::TurnTable;
-use openmobisim_core_routes::{RouteAttributes, RouteKey, RouteSets, Search, SearchContext};
+use openmobisim_core_routes::{RouteAttributes, RouteKey, RouteSets};
 use openmobisim_core_types::hash::Fnv1a;
-use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TravellerId, TripId};
+use openmobisim_core_types::ids::{EntityId, LinkId, TravellerId, TripId};
 
 use crate::demand_values::DemandValues;
 use crate::equilibration::Equilibration;
@@ -48,6 +47,7 @@ use crate::gap::{Currency, Ended, GapTrips};
 use crate::link_times::LinkTimes;
 use crate::link_values::{PreparedLinkValues, ValueLayer};
 use crate::prices::PreparedPrices;
+use crate::trees::SearchTrees;
 use openmobisim_core_graph::hubs::ParkingKind;
 use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
@@ -158,7 +158,6 @@ pub(crate) struct Inputs<'a> {
     pub trips: &'a Trips,
     pub trip_keys: &'a [RouteKey],
     pub model: &'a dyn ChoiceModel,
-    pub turns: &'a TurnTable,
     /// An alternative is offered only if its expected time is within this share of the best's
     /// (0: all of them).
     pub detour_limit: f64,
@@ -182,9 +181,6 @@ fn route_identity(links: &[u32]) -> u32 {
     }
     h.finish32()
 }
-
-/// The key that marks a draw made to pick the trips for the network-wide gap.
-const GAP_SAMPLE_KEY: u32 = u32::MAX;
 
 /// The first bit of every random key that marks a **floor** draw (below): a
 /// fresh sample from the model's probabilities, independent of every draw the
@@ -503,59 +499,39 @@ impl<'a> Chooser<'a> {
         }
     }
 
-    /// The gap against the **whole network**, for a keyed sample of `sample` of the
-    /// routed trips that **finished** (`unfinished[t]` false): `Σ w t_chosen / Σ w t_fastest − 1`,
-    /// where `t_fastest` is the least travel time over *any* route at the times `times` gives,
-    /// found by a bounded time-dependent search (no worse than the cheapest of the trip's choice
-    /// set). Returns it with the **disequilibrium** version: the same less what the
+    /// The gap against the **whole network**, over the routed trips that **finished**
+    /// (`unfinished[t]` false): `Σ w t_chosen / Σ w t_fastest − 1`, where `t_fastest` is the
+    /// least of the set's best and the route the run's shared search `trees` found for the
+    /// trip's origin and departure bin ([`crate::trees`]), re-costed at the trip's own departure
+    /// on `times`. Returns it with the **disequilibrium** version: the same less what the
     /// model itself expects inside the set, `Σ w (t_chosen − t_expected + t_least_in_set −
     /// t_fastest) / Σ w t_fastest`, where `expected_seconds[t]` is trip `t`'s expected time
     /// under the model (`NaN`: the model gave no probabilities; the second number is then `NaN`).
     ///
-    /// The sample is the `sample` trips with the smallest keyed draws (a draw on the trip
-    /// alone, from the re-selection stream), so it is the same for any thread count and
-    /// does not change when others are added. `NaN` if nothing is routed. Costs one
-    /// bounded search per sampled trip: about the work of a shortest path, once.
+    /// Every finished trip counts (S294: a sample was needed while each trip cost a search; the
+    /// trees cost none), summed in trip order, so the result is the same for any thread count.
+    /// `NaN` if nothing is routed.
     pub(crate) fn network_gap(
         &self,
         current: &RouteChoices,
         times: &LinkTimes,
-        sample: u32,
-        rng: &StreamRng,
+        trees: &SearchTrees,
         unfinished: &[bool],
         expected_seconds: &[f64],
     ) -> (f64, f64) {
-        let Inputs { network, trips, trip_keys, turns, .. } = *self.inputs;
+        let Inputs { trips, trip_keys, .. } = *self.inputs;
         let route_sets = &*self.route_sets;
-        let mut keyed: Vec<(f64, usize)> = (0..current.route.len())
+        let chosen: Vec<usize> = (0..current.route.len())
             .filter(|&t| current.route[t] != NO_ROUTE && !unfinished[t])
-            .map(|t| {
-                let key = rng.unit(DrawAddress::from_pair(
-                    u32::try_from(t).expect("trip ids fit in 32 bits"),
-                    GAP_SAMPLE_KEY,
-                ));
-                (key, t)
-            })
             .collect();
-        let take = (sample as usize).min(keyed.len());
-        if take == 0 {
+        if chosen.is_empty() {
             return (f64::NAN, f64::NAN);
         }
-        keyed.select_nth_unstable_by(take - 1, |a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let mut chosen: Vec<usize> = keyed[..take].iter().map(|&(_, t)| t).collect();
-        chosen.sort_unstable();
-
-        let ctx = SearchContext::new(network, turns);
-        // One bounded search per sampled trip, in parallel (S209: the serial loop was 8% of a
-        // car run); the sums below run in the sample's order, so the result is the same for
-        // any thread count.
         let per_trip: Vec<(f64, f64, f64, f64)> = crate::transit::par_map(
             &chosen,
             GAP_CHUNK,
-            || Search::new(&ctx),
-            |search, &t| {
-                let wait = |link: u32, departure: f64| times.origin_wait_seconds(link, departure);
-                let seconds = |link: u32, at: f64| times.link_seconds(link, at);
+            || (),
+            |(), &t: &usize| {
                 let key = trip_keys[t];
                 let departure = f64::from(trips.departure(TripId::from_index(t)).get());
                 let k = route_sets.key_index(key).expect("a routed trip has a set");
@@ -568,14 +544,9 @@ impl<'a> Chooser<'a> {
                         taken = time;
                     }
                 }
-                let found = search.fastest_time(
-                    NodeId::new(key.origin),
-                    NodeId::new(key.destination),
-                    departure,
-                    in_set,
-                    &wait,
-                    &seconds,
-                );
+                let found = trees
+                    .route(key.origin, key.destination, departure)
+                    .map(|found| times.route_seconds(&found.links, departure));
                 (
                     f64::from(current.weight[t]),
                     taken,
@@ -601,27 +572,34 @@ impl<'a> Chooser<'a> {
     /// route of the sets, at this loading's link `times`, the generalised minutes of the route
     /// `current` gives it, of the best of the routes it is offered (the batch [`Self::fill`]
     /// builds), what the model expects of it among them, and of the best over the whole network
-    /// (the route a bounded time-dependent search finds, no slower than the set's best, costed as
-    /// any route), into `out`. A trip still under way at the end is costed as what it paid and
-    /// still had to pay ([`Ended::car_seconds`]); a route taken but no longer offered, at its
-    /// time on these times. Every trip, every call; nothing is drawn, nothing changed.
+    /// (the route the run's shared search `trees` found for the trip's origin and departure bin,
+    /// [`crate::trees`], re-costed at the trip's own departure and costed as any route where it
+    /// is no slower than the set's best), into `out`. A trip still under way at the end is costed
+    /// as what it paid and still had to pay ([`Ended::car_seconds`]); a route taken but no longer
+    /// offered, at its time on these times. Every trip, every call; nothing is drawn, nothing
+    /// changed.
     ///
-    /// Costs the batches built once more, and one bounded search per trip (in parallel, the
-    /// results summed in trip order).
+    /// Costs the batches built once more and a route costing per trip; no search (S294: before,
+    /// one bounded search per trip, 82 % of the gap's time on a city).
     ///
     /// # Errors
     ///
     /// [`ChoiceError`] as for [`Self::choose_all`].
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the loading's times and trees, the ended trips, the currency and the output"
+    )]
     pub(crate) fn gap(
         &self,
         current: &RouteChoices,
         times: &LinkTimes,
+        trees: &SearchTrees,
         iteration: u32,
         ended: &Ended<'_>,
         currency: &Currency,
         out: &mut GapTrips,
     ) -> Result<(), ChoiceError> {
-        let Inputs { network, trips, trip_keys, turns, model, .. } = *self.inputs;
+        let Inputs { network, trips, trip_keys, model, .. } = *self.inputs;
         let sets = &*self.route_sets;
         let total = trips.len() as usize;
         let names = self.wanted_names();
@@ -700,56 +678,44 @@ impl<'a> Chooser<'a> {
                 }
             }
         }
-        // The whole network: one bounded search per trip, in parallel; each route found is
-        // costed as any route of the sets.
-        let ctx = SearchContext::new(network, turns);
+        // The whole network (S294): each trip's route read off the shared trees, re-costed at
+        // the trip's own departure, and costed as any route of the sets where it is no slower than
+        // the set's best.
         for chunk in measured.chunks(CHUNK) {
-            let found = crate::transit::par_map(
-                chunk,
-                GAP_CHUNK,
-                || Search::new(&ctx),
-                |search, &(t, least)| {
-                    let wait =
-                        |link: u32, departure: f64| times.origin_wait_seconds(link, departure);
-                    let seconds = |link: u32, at: f64| times.link_seconds(link, at);
-                    let key = trip_keys[t];
-                    let departure = f64::from(trips.departure(TripId::from_index(t)).get());
-                    search.fastest_route(
-                        NodeId::new(key.origin),
-                        NodeId::new(key.destination),
-                        departure,
-                        least,
-                        &wait,
-                        &seconds,
-                    )
-                },
-            );
             single.clear();
             let mut pending: Vec<usize> = Vec::new();
             let mut pending_seconds: Vec<f64> = Vec::new();
-            for (&(t, least), found) in chunk.iter().zip(found) {
+            for &(t, least) in chunk {
                 out.g_best_network[t] = out.g_best_set[t];
-                let Some((seconds, links)) = found else { continue };
-                let links: Vec<u32> = links.iter().map(|l| l.raw()).collect();
+                let key = trip_keys[t];
+                let trip = TripId::from_index(t);
+                let departure = f64::from(trips.departure(trip).get());
+                let Some(found) = trees.route(key.origin, key.destination, departure) else {
+                    continue;
+                };
+                let seconds = times.route_seconds(&found.links, departure);
+                if seconds > least {
+                    continue;
+                }
+                let links = &found.links;
                 let length_m = if self.attributes.is_some() {
                     links.iter().map(|&l| network.link_length(LinkId::new(l)).get()).sum()
                 } else {
                     0.0
                 };
                 let route = RouteRow {
-                    links: &links,
+                    links,
                     length_m,
                     overlap: 0.0,
                     seconds,
                     best: least,
                     ln_path_size: 0.0,
                 };
-                let trip = TripId::from_index(t);
                 let traveller = trips.traveller(trip);
                 let class = self.inputs.travellers.user_class(traveller).raw();
                 single.begin_situation_in(traveller.raw(), trip.raw(), class);
                 self.route_row(&mut row, &route, trip, traveller);
-                single.push_alternative(route_identity(&links), &row);
+                single.push_alternative(route_identity(links), &row);
                 pending.push(t);
                 pending_seconds.push(seconds);
             }

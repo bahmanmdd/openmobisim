@@ -263,7 +263,18 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// whose first loadings are point-queue warm-ups (`warmup` 1 by default). `node_inflow` is now
 /// hashed whatever its value, so every fingerprint of the link transmission model moves with
 /// them.
-pub const DEFAULTS_VERSION: u32 = 33;
+///
+/// Version 34 (S294): **the route update's search trees by default** (`core-sim`'s
+/// `BestResponse::tree_step_s` 300, the equilibration's cost bin; 0 before, one search per
+/// pair): the run builds one bounded time-dependent search tree per origin node and departure
+/// bin after every loading, the route update reads each pair's route off it, and the gaps read
+/// the network's best off the same trees instead of searching per trip (`core-sim`'s `trees`);
+/// `gap_sample` is now on or off, every finished trip measured. The routes found are the fastest
+/// at the bin's middle, re-costed at each trip's own departure. Every fingerprint of a run with
+/// the update moves (its descriptor names the step); the results of runs with the update move
+/// within the aggregation (a pair's routes are read at its bins' middles); the gaps against the
+/// network move with it.
+pub const DEFAULTS_VERSION: u32 = 34;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

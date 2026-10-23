@@ -16,14 +16,15 @@
 //! | name | what it does |
 //! |---|---|
 //! | `none` (the default, [`DEFAULT_UPDATE`]) | Nothing: the sets stay as the generator made them, and the run costs nothing extra |
-//! | `best_response` | For every origin–destination pair, one bounded time-dependent search (at the median departure of the pair's trips) for the fastest route at the congested times; it is **added if it is new and at least as fast as the set's best route**: a tie counts, since an equally good alternative is one more to spread over (without ties, Seoul's grid ended at a network gap of 0.57 instead of 0.12). Column generation, as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
+//! | `best_response` | For every origin–destination pair, the fastest route at the congested times, read from the run's **shared search trees** (one bounded time-dependent search per origin and departure bin, [`crate::trees`]; S294) or, with `tree_step_s` 0, found by one bounded search per pair at the median departure of the pair's trips; it is **added if it is new and at least as fast as the set's best route**: a tie counts, since an equally good alternative is one more to spread over (without ties, Seoul's grid ended at a network gap of 0.57 instead of 0.12). Column generation, as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
 //!
-//! **What `best_response` costs.** One search per pair per iteration (`searches` of them), each
+//! **What `best_response` costs.** With the shared trees (the default) nothing is searched: the
+//! run builds the trees for its gap and the update reads each pair's route off its tree. With
+//! `tree_step_s` 0, one search per pair per iteration (`searches` of them), each
 //! bounded by the best time the set already offers, so it explores what could beat that and no
 //! more: about 0.5 ms of core time on Stockholm's inner city, 1.2 ms on Seoul, in
-//! parallel over pairs, and **not made for a pair whose best route is already within `slack` (2%) of
-//! free flow**, which is most pairs when demand is light or moderate. With demand between zones (a few hundred pairs, not one per trip) an
-//! update is a small part of a loading. Then one copy of the store
+//! parallel over pairs. Either way a pair is **not searched or read while its best route is
+//! within `slack` (2%) of free flow**, which is most pairs when demand is light or moderate. Then one copy of the store
 //! ([`RouteSets::extended`]), and a chooser rebuilt on it. **What it adds to the store:** a
 //! pair ends with about four routes; at most `max_routes`. **Light demand adds little,
 //! not nothing**: where nothing queues no route beats the set's best, but an equally good one
@@ -51,14 +52,17 @@ use openmobisim_core_routes::{
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
 
 use crate::link_times::LinkTimes;
+use crate::trees::SearchTrees;
 
 /// The share of free flow within which `best_response` does not search a pair (see
 /// [`BestResponse::slack`]).
 pub const DEFAULT_SLACK: f64 = 0.02;
 
-/// The step `best_response` rounds departures to for its search trees (see
-/// [`BestResponse::tree_step_s`]).
-pub const DEFAULT_TREE_STEP_S: u32 = 0;
+/// The departure bin of `best_response`'s search trees, in seconds (see
+/// [`BestResponse::tree_step_s`]): the equilibration's default cost bin, so that the update reads
+/// the run's shared trees ([`crate::trees`]) and searches nothing of its own (S294; 0 before,
+/// a search per pair).
+pub const DEFAULT_TREE_STEP_S: u32 = 300;
 
 /// The most routes a pair's set holds by default. A traveller is offered at most five of
 /// them (`Run::with_choice_max_routes`): the set remembers more, so that a route that
@@ -101,6 +105,10 @@ pub struct UpdateContext<'a> {
     /// The trips whose pairs are searched, by trip (one group of the free-flow loading's
     /// increments); every trip's if `None`.
     pub active: Option<&'a [bool]>,
+    /// The run's shared search trees on `times` ([`crate::trees`]), for the same trips: an
+    /// update with search trees reads them instead of searching, when their bin is the one it
+    /// asks for. `None` where the run built none.
+    pub trees: Option<&'a SearchTrees>,
 }
 
 /// The routes an update found.
@@ -111,8 +119,8 @@ pub struct Additions {
     /// destination, and carry their free-flow cost and their overlap with the set.
     pub routes: Vec<(usize, Vec<Route>)>,
     /// How many searches it took; with search trees ([`BestResponse::tree_step_s`]), how many
-    /// pairs the trees searched for (one tree answers many), so that the routes added per search
-    /// mean the same either way.
+    /// pairs the trees were read for, each once (one tree answers many, and a pair's trips may
+    /// span several bins), so that the routes added per search mean the same either way.
     pub searches: u32,
 }
 
@@ -186,9 +194,10 @@ impl NoRouteUpdate {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BestResponse {
     /// How many searches per pair per iteration, at evenly spread quantiles of the pair's
-    /// departures (1 is the median). More finds routes that only pay at some hours, at the
-    /// cost of more searches and a bigger set, which raises the logit's own gap (1
-    /// measured best).
+    /// departures (1 is the median), **when [`Self::tree_step_s`] is 0**. More finds routes that
+    /// only pay at some hours, at the cost of more searches and a bigger set, which raises the
+    /// logit's own gap (1 measured best). With search trees every departure bin with a trip is
+    /// searched and this plays no part.
     pub searches: u32,
     /// The most routes a pair's set may hold (1 to [`MAX_ROUTES_PER_SET`]; [`DEFAULT_MAX_ROUTES`]).
     /// **A full set is still searched:** a route at least [`REPLACE_GAIN_S`] faster than
@@ -205,12 +214,15 @@ pub struct BestResponse {
     /// city (heavy) from 78 512 to 46 205 (−8% of the run); at 5%, 58% of Stockholm's searches.
     /// Assumes the method's routes include a free-flow shortest one, as every built-in method's do.
     pub slack: f64,
-    /// **Search trees**: 0 searches each pair on its own, at its departures; above 0, a
-    /// pair's departures are rounded to this step (in seconds, to its middle) and the pairs of one
-    /// origin at one rounded departure share **one search tree**, which finds each one's fastest
-    /// route at once ([`openmobisim_core_routes::Search::fastest_routes_to`]). Approximate: the
-    /// routes are the fastest at the rounded departure. Worth it when trips start at a few points
-    /// per zone (`demand_from_od`'s `points_per_zone`), so that many pairs share an origin.
+    /// **Search trees** ([`DEFAULT_TREE_STEP_S`], the run's cost bin): above 0, the trips'
+    /// departures are binned in steps of this many seconds and the pairs of one origin in one bin
+    /// share **one search tree**, which finds each one's fastest route at the bin's middle at
+    /// once ([`crate::trees`]); every bin with a trip is searched, so [`Self::searches`] plays no
+    /// part. When the step is the run's cost bin (the default) the update reads the trees the
+    /// run builds for its gap and searches nothing of its own; another step builds its own trees.
+    /// Approximate: the routes are the fastest at the bin's middle. 0 searches each pair on its
+    /// own, at the departures [`Self::searches`] picks (exact at those seconds; one search per
+    /// pair per iteration, which costs more than the trees wherever pairs share origins).
     pub tree_step_s: u32,
 }
 
@@ -293,20 +305,35 @@ impl RouteUpdate for BestResponse {
     }
 
     fn descriptor(&self) -> String {
-        let trees = if self.tree_step_s > 0 {
-            format!(";tree_step_s={}", self.tree_step_s)
-        } else {
-            String::new()
-        };
         format!(
-            "best_response;max_routes={};searches={};slack={}{trees}",
-            self.max_routes, self.searches, self.slack
+            "best_response;max_routes={};searches={};slack={};tree_step_s={}",
+            self.max_routes, self.searches, self.slack, self.tree_step_s
         )
     }
 
     fn update(&self, cx: &UpdateContext<'_>) -> Additions {
         if self.tree_step_s > 0 {
-            return self.update_by_trees(cx);
+            let step = f64::from(self.tree_step_s);
+            // The run's shared trees when they are binned as asked (the default); the update's
+            // own otherwise.
+            return match cx.trees {
+                Some(trees) if trees.step_s().to_bits() == step.to_bits() => {
+                    self.update_from_trees(cx, trees)
+                }
+                _ => {
+                    let own = SearchTrees::build(
+                        cx.network,
+                        cx.turns,
+                        cx.times,
+                        cx.trips,
+                        cx.trip_keys,
+                        cx.route_sets,
+                        cx.active,
+                        step,
+                    );
+                    self.update_from_trees(cx, &own)
+                }
+            };
         }
         let sets = cx.route_sets;
         let (departures, jobs) = self.plan(cx);
@@ -378,68 +405,22 @@ impl RouteUpdate for BestResponse {
     }
 }
 
-/// Routes a search tree kept, by key index, and how many pairs it searched for.
-type TreeFound = (Vec<(usize, Vec<LinkId>)>, u32);
-
-/// One search tree: an origin, a rounded departure, and the keys it serves.
-struct Tree {
-    origin: u32,
-    departure: f64,
-    keys: Vec<usize>,
-}
-
 impl BestResponse {
-    /// [`RouteUpdate::update`] with search trees ([`Self::tree_step_s`]): the planned
-    /// departures rounded to the step, the keys grouped by origin and rounded departure, one
-    /// [`Search::fastest_routes_to`] per group bounded by the slowest of its keys' best times; a
-    /// key's route is kept if it is new and no slower than the key's own best. Then the kept
-    /// routes are made routes of their sets (their overlap), key by key.
-    fn update_by_trees(&self, cx: &UpdateContext<'_>) -> Additions {
+    /// [`RouteUpdate::update`] from search trees ([`Self::tree_step_s`]): for each pair a tree
+    /// serves, the tree's route to the pair's destination is kept if the pair is worth searching
+    /// (past the slack) and the route is new and no slower than the pair's own best at the
+    /// tree's departure (a full set: faster by [`REPLACE_GAIN_S`]). Then the kept routes are
+    /// made routes of their sets (their overlap), key by key.
+    fn update_from_trees(&self, cx: &UpdateContext<'_>, trees: &SearchTrees) -> Additions {
         let sets = cx.route_sets;
         let max_routes = self.max_routes as usize;
-        let step = f64::from(self.tree_step_s);
-        let (departures, jobs) = self.plan(cx);
-        // (origin, rounded departure in steps, key), sorted: the trees in a fixed order.
-        let mut items: Vec<(u32, u64, usize)> = Vec::new();
-        for job in &jobs {
-            let key = sets.keys()[job.key];
-            if key.origin == key.destination {
-                continue;
-            }
-            let mut seen: Vec<u64> = Vec::new();
-            for &second in &departures[job.departures.clone()] {
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    clippy::cast_sign_loss,
-                    reason = "a step count"
-                )]
-                let slot = (f64::from(second) / step).floor() as u64;
-                if !seen.contains(&slot) {
-                    seen.push(slot);
-                    items.push((key.origin, slot, job.key));
-                }
-            }
-        }
-        items.sort_unstable();
-        let mut trees: Vec<Tree> = Vec::new();
-        for (origin, slot, key) in items {
-            #[allow(clippy::cast_precision_loss, reason = "a step count")]
-            let departure = (slot as f64 + 0.5) * step;
-            match trees.last_mut() {
-                Some(t) if t.origin == origin && t.departure.to_bits() == departure.to_bits() => {
-                    t.keys.push(key);
-                }
-                _ => trees.push(Tree { origin, departure, keys: vec![key] }),
-            }
-        }
-        let ctx = SearchContext::new(cx.network, cx.turns);
-        let node_count = cx.network.node_count() as usize;
-        let wait = |link: u32, at: f64| cx.times.origin_wait_seconds(link, at);
-        let seconds = |link: u32, at: f64| cx.times.link_seconds(link, at);
-        let found: Vec<TreeFound> = search_map(&ctx, &trees, |search, tree| {
-            // Each key's best at the rounded departure, and whether it is worth searching.
-            let mut wanted: Vec<(usize, f64)> = Vec::new();
-            for &k in &tree.keys {
+        // The pairs read, each once however many bins its trips span: what a search per pair
+        // would have counted, which the stopping rule weighs the routes added against
+        // (`route_growth_tolerance`).
+        let mut read = vec![false; sets.keys().len()];
+        let mut by_key: BTreeMap<usize, Vec<Vec<LinkId>>> = BTreeMap::new();
+        for tree in trees.trees() {
+            for &(k, best) in &tree.keys {
                 let set = sets.route_range(k);
                 if set.is_empty() {
                     continue;
@@ -449,58 +430,31 @@ impl BestResponse {
                     .clone()
                     .map(|r| f64::from(sets.route(r).cost))
                     .fold(f64::INFINITY, f64::min);
-                let best = set
-                    .map(|r| cx.times.route_seconds(sets.route(r).links, tree.departure))
-                    .fold(f64::INFINITY, f64::min);
+                // At most `slack` left to gain here: nothing beats free flow.
                 if self.slack > 0.0 && best <= free_flow * (1.0 + self.slack) {
                     continue;
                 }
-                // A full set takes only a route that beats its best (S268): the bound to beat.
-                wanted.push((k, if full { best - REPLACE_GAIN_S } else { best }));
-            }
-            if wanted.is_empty() {
-                return (Vec::new(), 0);
-            }
-            let mut targets = vec![false; node_count];
-            for &(k, _) in &wanted {
-                targets[sets.keys()[k].destination as usize] = true;
-            }
-            let bound = wanted.iter().map(|&(_, b)| b).fold(0.0, f64::max);
-            let routes = search.fastest_routes_to(
-                NodeId::new(tree.origin),
-                &targets,
-                wanted.len(),
-                tree.departure,
-                bound,
-                &wait,
-                &seconds,
-            );
-            let mut kept = Vec::new();
-            for (node, time, links) in routes {
-                for &(k, best) in &wanted {
-                    // At least as fast as the set's best: a tie counts (S176), but for a full
-                    // set, whose bound is below its best (S268).
-                    if sets.keys()[k].destination == node.raw()
-                        && time <= best + 1e-9
-                        && !links.is_empty()
-                        && !is_known(sets, k, &[], &links)
-                    {
-                        kept.push((k, links.clone()));
-                    }
+                read[k] = true;
+                let Some(found) = tree.route_to(sets.keys()[k].destination) else {
+                    continue;
+                };
+                // At least as fast as the set's best: a tie counts (S176), but for a full set,
+                // which takes only a route that beats its best (S268).
+                let good = if full {
+                    found.seconds < best - REPLACE_GAIN_S
+                } else {
+                    found.seconds <= best + 1e-9
+                };
+                if !good {
+                    continue;
+                }
+                let links: Vec<LinkId> = found.links.iter().map(|&l| LinkId::new(l)).collect();
+                if !is_known(sets, k, &[], &links) {
+                    by_key.entry(k).or_default().push(links);
                 }
             }
-            // Counted as the pairs searched for, as a search per pair would be: what the
-            // stopping rule weighs the routes added against (`route_growth_tolerance`).
-            (kept, u32::try_from(wanted.len()).expect("few keys per tree"))
-        });
-        let mut searches = 0_u32;
-        let mut by_key: BTreeMap<usize, Vec<Vec<LinkId>>> = BTreeMap::new();
-        for (kept, n) in found {
-            searches += n;
-            for (k, links) in kept {
-                by_key.entry(k).or_default().push(links);
-            }
         }
+        let ctx = SearchContext::new(cx.network, cx.turns);
         let groups: Vec<(usize, Vec<Vec<LinkId>>)> = by_key.into_iter().collect();
         let routes: Vec<Vec<Route>> = search_map(&ctx, &groups, |search, (k, candidates)| {
             let mut added: Vec<Route> = Vec::new();
@@ -515,6 +469,7 @@ impl BestResponse {
             }
             added
         });
+        let searches = u32::try_from(read.iter().filter(|&&r| r).count()).unwrap_or(u32::MAX);
         let mut out = Additions { searches, ..Additions::default() };
         for ((k, _), added) in groups.iter().zip(routes) {
             if !added.is_empty() {

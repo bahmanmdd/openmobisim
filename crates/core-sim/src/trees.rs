@@ -1,0 +1,254 @@
+//! Shared search trees (S294): **one bounded time-dependent search per origin node and
+//! departure bin**, on one loading's link times, read by the route update and by the gap alike.
+//!
+//! The route update ([`crate::route_update`]) asks, for every origin–destination pair, whether
+//! the network holds a route faster than the pair's set at the congested times; the gap
+//! ([`crate::gap`]) asks, for every trip, how much better than the route it took the network's
+//! best would have been. Searched trip by trip, the second question cost more than the loading
+//! itself on a city (66 000 searches per loading on Delft). Both questions are answered at once
+//! by one search tree per origin node and departure bin: the trips of one origin whose
+//! departures fall in one bin share one [`openmobisim_core_routes::Search::fastest_routes_to`], which finds the fastest
+//! route to each of their destinations at the bin's middle, bounded by the slowest of their
+//! sets' best times (nothing beyond it can beat a set). The number of searches is then bounded by
+//! the origins and bins with trips, not by the trips.
+//!
+//! **The aggregation.** A tree's routes are the fastest at the bin's middle, not at each trip's own
+//! second; a route read for a trip is then re-costed at the trip's own departure before it is
+//! compared with the trip's set. The error is the route choice's, not the time's: a route that is
+//! fastest at the bin's middle may be second at a trip's own second. The bin is the equilibration's
+//! cost bin (`cost_bin_s`, 300 s by default), the unit the whole run costs routes in.
+//!
+//! **Determinism.** The trees are built in a fixed order (origin, then bin), searched in parallel
+//! in fixed chunks ([`search_map`]) and read by position, so the result is the same for any thread
+//! count and any order of trips.
+
+use openmobisim_core_demand::Trips;
+use openmobisim_core_graph::network::RoadNetwork;
+use openmobisim_core_graph::turns::TurnTable;
+use openmobisim_core_routes::{RouteKey, RouteSets, SearchContext, search_map};
+use openmobisim_core_types::ids::{EntityId, NodeId, TripId};
+
+use crate::link_times::LinkTimes;
+
+/// A route one tree found: the fastest from the tree's origin to `destination` at the tree's
+/// departure.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FoundRoute {
+    /// The destination node, raw.
+    pub destination: u32,
+    /// Its travel time at the tree's departure, in seconds.
+    pub seconds: f64,
+    /// Its links, raw, in driving order.
+    pub links: Vec<u32>,
+}
+
+/// One tree: an origin node and a departure bin, the pairs it serves and the routes it found.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Tree {
+    /// The origin node, raw.
+    pub origin: u32,
+    /// The departure the tree was searched at: the middle of its bin, in seconds.
+    pub departure: f64,
+    /// The pairs served: each key's index in the sets and the best time its set offers at
+    /// [`Self::departure`], ascending by key.
+    pub keys: Vec<(usize, f64)>,
+    /// The routes found, ascending by destination; at most one per destination.
+    pub routes: Vec<FoundRoute>,
+}
+
+impl Tree {
+    /// The route found to `destination`, if any.
+    #[must_use]
+    pub fn route_to(&self, destination: u32) -> Option<&FoundRoute> {
+        self.routes
+            .binary_search_by_key(&destination, |r| r.destination)
+            .ok()
+            .map(|i| &self.routes[i])
+    }
+}
+
+/// What one tree's search returns: the keys served with their best times, and the routes found.
+type Searched = (Vec<(usize, f64)>, Vec<FoundRoute>);
+
+/// The trees of one loading: see the [module docs](self).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SearchTrees {
+    step_s: f64,
+    /// Each tree's (origin, bin), ascending, in step with [`Self::trees`].
+    heads: Vec<(u32, u64)>,
+    trees: Vec<Tree>,
+    /// How many pairs the trees searched for, in all.
+    pairs: u32,
+}
+
+impl SearchTrees {
+    /// No trees: what a run with no next choice builds.
+    #[must_use]
+    pub fn empty(step_s: f64) -> Self {
+        Self { step_s, heads: Vec::new(), trees: Vec::new(), pairs: 0 }
+    }
+
+    /// The trees for the trips of `trips` whose pair (`trip_keys`, by trip) has routes in `sets`
+    /// and whose origin is not its destination, those `active` says if given, at the `times` of
+    /// the last loading, with departures binned in steps of `step_s` seconds (at least 1).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `step_s` is not positive.
+    #[must_use]
+    #[allow(clippy::too_many_arguments, reason = "the loading's inputs, the trips and the bin")]
+    pub fn build(
+        network: &RoadNetwork,
+        turns: &TurnTable,
+        times: &LinkTimes,
+        trips: &Trips,
+        trip_keys: &[RouteKey],
+        sets: &RouteSets,
+        active: Option<&[bool]>,
+        step_s: f64,
+    ) -> Self {
+        assert!(step_s > 0.0, "a departure bin has a positive length");
+        // (origin, bin, key), sorted and deduplicated: the trees in a fixed order, each key once.
+        let mut items: Vec<(u32, u64, usize)> = (0..trips.len())
+            .filter(|&i| active.is_none_or(|a| a[i as usize]))
+            .filter_map(|i| {
+                let key = trip_keys[i as usize];
+                if key.origin == key.destination {
+                    return None;
+                }
+                let k = sets.key_index(key)?;
+                if sets.route_range(k).is_empty() {
+                    return None;
+                }
+                let departure = f64::from(trips.departure(TripId::new(i)).get());
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "a bin count"
+                )]
+                let slot = (departure / step_s).floor() as u64;
+                Some((key.origin, slot, k))
+            })
+            .collect();
+        items.sort_unstable();
+        items.dedup();
+        let mut heads: Vec<(u32, u64)> = Vec::new();
+        let mut groups: Vec<(f64, Vec<usize>)> = Vec::new();
+        for (origin, slot, k) in items {
+            if heads.last() == Some(&(origin, slot)) {
+                groups.last_mut().expect("a head has a group").1.push(k);
+            } else {
+                heads.push((origin, slot));
+                #[allow(clippy::cast_precision_loss, reason = "a bin count")]
+                let departure = (slot as f64 + 0.5) * step_s;
+                groups.push((departure, vec![k]));
+            }
+        }
+        let ctx = SearchContext::new(network, turns);
+        let node_count = network.node_count() as usize;
+        let wait = |link: u32, at: f64| times.origin_wait_seconds(link, at);
+        let seconds = |link: u32, at: f64| times.link_seconds(link, at);
+        let searched: Vec<Searched> =
+            search_map(&ctx, &heads.iter().zip(&groups).collect::<Vec<_>>(), |search, item| {
+                let (&(origin, _), (departure, keys)) = *item;
+                // Each key's best at the tree's departure: the search's bound is the slowest.
+                let keys: Vec<(usize, f64)> = keys
+                    .iter()
+                    .map(|&k| {
+                        let best = sets
+                            .route_range(k)
+                            .map(|r| times.route_seconds(sets.route(r).links, *departure))
+                            .fold(f64::INFINITY, f64::min);
+                        (k, best)
+                    })
+                    .collect();
+                let bound = keys.iter().map(|&(_, b)| b).fold(0.0, f64::max);
+                let mut targets = vec![false; node_count];
+                let mut wanted = 0;
+                for &(k, _) in &keys {
+                    let d = sets.keys()[k].destination as usize;
+                    if !targets[d] {
+                        targets[d] = true;
+                        wanted += 1;
+                    }
+                }
+                let mut routes: Vec<FoundRoute> = search
+                    .fastest_routes_to(
+                        NodeId::new(origin),
+                        &targets,
+                        wanted,
+                        *departure,
+                        bound,
+                        &wait,
+                        &seconds,
+                    )
+                    .into_iter()
+                    .filter(|(_, _, links)| !links.is_empty())
+                    .map(|(node, seconds, links)| FoundRoute {
+                        destination: node.raw(),
+                        seconds,
+                        links: links.iter().map(|l| l.raw()).collect(),
+                    })
+                    .collect();
+                routes.sort_unstable_by_key(|r| r.destination);
+                (keys, routes)
+            });
+        let mut pairs = 0_u32;
+        let trees: Vec<Tree> = heads
+            .iter()
+            .zip(groups)
+            .zip(searched)
+            .map(|((&(origin, _), (departure, _)), (keys, routes))| {
+                pairs += u32::try_from(keys.len()).expect("few keys per tree");
+                Tree { origin, departure, keys, routes }
+            })
+            .collect();
+        Self { step_s, heads, trees, pairs }
+    }
+
+    /// The length of a departure bin, in seconds.
+    #[must_use]
+    pub fn step_s(&self) -> f64 {
+        self.step_s
+    }
+
+    /// The trees, in their fixed order (origin, then bin).
+    #[must_use]
+    pub fn trees(&self) -> &[Tree] {
+        &self.trees
+    }
+
+    /// How many trees there are: the searches made.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.trees.len()
+    }
+
+    /// Whether no tree was built.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.trees.is_empty()
+    }
+
+    /// How many pairs the trees searched for, in all: what a search per pair would have
+    /// counted, so that routes added per search mean the same either way.
+    #[must_use]
+    pub fn pairs(&self) -> u32 {
+        self.pairs
+    }
+
+    /// The tree of `origin` for a trip departing at `departure` seconds, if one was built.
+    #[must_use]
+    pub fn tree(&self, origin: u32, departure: f64) -> Option<&Tree> {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin count")]
+        let slot = (departure / self.step_s).floor() as u64;
+        self.heads.binary_search(&(origin, slot)).ok().map(|i| &self.trees[i])
+    }
+
+    /// The route the tree of `origin` and `departure` found to `destination`, if any: the
+    /// fastest at the bin's middle, to be re-costed at the trip's own departure.
+    #[must_use]
+    pub fn route(&self, origin: u32, destination: u32, departure: f64) -> Option<&FoundRoute> {
+        self.tree(origin, departure)?.route_to(destination)
+    }
+}

@@ -114,9 +114,11 @@ pub struct IterationReport {
     /// who are therefore left out of the gaps.
     pub incomplete_share: f64,
     /// The same measure against the **whole network**: the least travel time over
-    /// *any* route at the current times (found by a time-dependent search), for a
-    /// keyed sample of the trips that finished, at the last iteration only; `NaN` elsewhere.
-    /// Shows whether the choice set was missing a route that traffic has made worthwhile.
+    /// *any* route at the current times (read off the run's shared search trees, one
+    /// time-dependent search per origin and departure bin, [`crate::trees`]), for every trip
+    /// that finished, at the last iteration only; `NaN` elsewhere. Shows whether the choice set
+    /// was missing a route that traffic has made worthwhile. (Before S294: a keyed sample of
+    /// the trips, each searched on its own.)
     pub gap_network: f64,
     /// The disequilibrium against the whole network: `gap_network` less the part the choice
     /// model explains **inside the set** (what a converged run over the same set would still show
@@ -513,8 +515,10 @@ pub trait Equilibration: Send + Sync {
     /// its arguments and `rng`'s key, so that it does not depend on order or threads.
     fn reselects(&self, rng: &StreamRng, traveller: u32, iteration: u32, share: f64) -> bool;
 
-    /// How many trips to test against the whole network at the last iteration
-    /// ([`IterationReport::gap_network`]); 0 means none.
+    /// Whether to test the trips against the whole network at the last iteration
+    /// ([`IterationReport::gap_network`]): 0 means none, any other value every finished trip
+    /// (S294: the count was a sample while each trip cost a search; read off the shared search
+    /// trees, the test costs no search, so no sample is taken).
     fn network_gap_sample(&self) -> u32 {
         0
     }
@@ -666,9 +670,10 @@ pub struct Msa {
     /// the last update must have added routes for at most
     /// [`Self::route_growth_tolerance`] of the pairs it searched.
     pub gap_tolerance: f64,
-    /// How many trips are tested against the whole network at the last iteration
-    /// (0 to 100 000; 0 means none): the sample that
-    /// [`IterationReport::gap_network`] is measured on.
+    /// Whether the trips are tested against the whole network at the last iteration
+    /// (0 to 100 000; 0 means none, any other value every finished trip):
+    /// [`IterationReport::gap_network`]. (A sample's size until S294, when each trip cost a
+    /// search; the shared search trees cost none, so none is taken.)
     pub gap_sample: u32,
     /// How many itinerary trips, besides those choosing again, plan their whole choice set in an
     /// iteration to measure the itinerary gap (0 to [`MAX_ITINERARY_GAP_SAMPLE`]; see

@@ -71,9 +71,7 @@ def test_the_fast_preset_is_the_cases_speed_settings_under_options_given() -> No
     base = _base()
     parts = base.parts
     fast = base.replace(preset="fast")
-    explicit = base.replace(
-        route_update_options={"tree_step_s": 1800}, parking_options={"reach_car_step_s": 1800}
-    )
+    explicit = base.replace(parking_options={"reach_car_step_s": 1800})
     assert fast._fingerprint() == explicit._fingerprint() != base._fingerprint()
     assert base.replace(preset="complete")._fingerprint() == base._fingerprint()
     mine = base.replace(preset="fast", route_update_options={"tree_step_s": 600})
@@ -82,6 +80,6 @@ def test_the_fast_preset_is_the_cases_speed_settings_under_options_given() -> No
     )
     assert mine._fingerprint() == both._fingerprint(), "an option given by name wins"
     assert fast.parts["route_update_options"] is parts["route_update_options"], "kept as given"
-    assert ms.PRESETS["fast"]["route_update_options"] == {"tree_step_s": 1800}
+    assert ms.PRESETS["fast"] == {"parking_options": {"reach_car_step_s": 1800}}
     with pytest.raises(ValueError, match="preset"):
         base.replace(preset="quick")

@@ -72,6 +72,7 @@ use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext, make_room};
 use crate::timings::{Stage, Timings};
 use crate::transit::{TransitResult, TransitSetup, par_map};
+use crate::trees::SearchTrees;
 use crate::trip_results::TripOutcomes;
 use openmobisim_core_graph::hubs::ParkingKind;
 use openmobisim_core_graph::layers::StaticLayer;
@@ -1200,7 +1201,6 @@ impl Run {
             trips: &trips,
             trip_keys: &trip_keys,
             model: model.as_ref(),
-            turns: &turns,
             detour_limit: self.choice_detour_limit,
             max_routes: self.choice_max_routes,
             link_values: &link_values,
@@ -1356,6 +1356,18 @@ impl Run {
                     let trip_choosing: Vec<bool> = (0..total_trips)
                         .map(|i| choosing[trips.traveller(TripId::new(i)).index()])
                         .collect();
+                    // The group's shared search trees (S294), on these times.
+                    let trees = SearchTrees::build(
+                        &network,
+                        &turns,
+                        &times,
+                        &trips,
+                        &car_keys,
+                        &route_sets,
+                        Some(&trip_choosing),
+                        f64::from(strategy.cost_bin_seconds()),
+                    );
+                    clock = timings.lap("trees", Some(0), clock);
                     let found = route_update.update(&UpdateContext {
                         network: &network,
                         turns: &turns,
@@ -1365,6 +1377,7 @@ impl Run {
                         times: &times,
                         iteration: 0,
                         active: Some(&trip_choosing),
+                        trees: Some(&trees),
                     });
                     increment_searches += found.searches;
                     if !found.routes.is_empty() {
@@ -1470,6 +1483,9 @@ impl Run {
 
             let mut changes = Vec::new();
             let mut times_now: Option<LinkTimes> = None;
+            // The shared search trees on this loading's times (S294): what the route update and
+            // the gaps read instead of searching.
+            let mut trees_now: Option<SearchTrees> = None;
             // What the assessment left for the whole-network gap: who was left out, and what the
             // model expected of each trip.
             let mut assessed: Option<(Vec<bool>, Vec<f64>)> = None;
@@ -1477,6 +1493,20 @@ impl Run {
                 if let Some(bins) = &loaded.entry_bins {
                     let times = LinkTimes::from_tables(&self.network, bins);
                     let next = iteration + 1;
+                    // One search per origin and departure bin (S294), for every pair with a set:
+                    // the route update reads them for the routes worth adding, the gaps for the
+                    // network's best.
+                    let trees = SearchTrees::build(
+                        &network,
+                        &turns,
+                        &times,
+                        &trips,
+                        &car_keys,
+                        &route_sets,
+                        None,
+                        f64::from(strategy.cost_bin_seconds()),
+                    );
+                    clock = timings.lap("trees", Some(iteration), clock);
                     // The sets grow between loadings (S176): routes the congested times of
                     // this one show to be worth having, for the next to choose among. Not
                     // after the last loading, which no choice follows.
@@ -1490,6 +1520,7 @@ impl Run {
                             times: &times,
                             iteration: next,
                             active: None,
+                            trees: Some(&trees),
                         });
                         report.route_searches = found.searches;
                         if !found.routes.is_empty() {
@@ -1620,11 +1651,20 @@ impl Run {
                         pending_chosen = Some(next_chosen);
                     }
                     // The full gap (S293): every car trip of the route choice, at every loading.
-                    chooser.gap(&route_choices, &times, next, &ended, &currency, &mut gap_trips)?;
+                    chooser.gap(
+                        &route_choices,
+                        &times,
+                        &trees,
+                        next,
+                        &ended,
+                        &currency,
+                        &mut gap_trips,
+                    )?;
                     gap_trips.report_into(&mut report);
                     clock = timings.lap("gap", Some(iteration), clock);
                     last_gap = Some(gap_trips);
                     times_now = Some(times);
+                    trees_now = Some(trees);
                     arrived_by =
                         (update.assessment.reselected_share, update.assessment.changed_share);
                     changes = update.changes;
@@ -1643,17 +1683,11 @@ impl Run {
             let stop = iteration + 1 == max_iterations || strategy.is_converged(&reports);
             if stop {
                 // The last iteration is also tested against the whole network (S171).
-                if let (Some(times), Some((unfinished, expected)), true) =
-                    (&times_now, &assessed, strategy.network_gap_sample() > 0)
+                if let (Some(times), Some(trees), Some((unfinished, expected)), true) =
+                    (&times_now, &trees_now, &assessed, strategy.network_gap_sample() > 0)
                 {
-                    let (gap, excess) = chooser.network_gap(
-                        &route_choices,
-                        times,
-                        strategy.network_gap_sample(),
-                        &reselect_rng,
-                        unfinished,
-                        expected,
-                    );
+                    let (gap, excess) =
+                        chooser.network_gap(&route_choices, times, trees, unfinished, expected);
                     if let Some(last_report) = reports.last_mut() {
                         last_report.gap_network = gap;
                         last_report.gap_network_excess = excess;

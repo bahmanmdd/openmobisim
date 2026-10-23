@@ -459,10 +459,11 @@ class Run:
         * ``incomplete_share`` — the share of travellers (by weight) whose trip had not finished
           when the window ended, who are left out of the gaps.
         * ``gap_network`` — the same measure against the **whole network**: the least
-          time over *any* route at the current times (a time-dependent search), for a
-          sample of the trips that finished (the ``gap_sample`` option) at the **last**
-          iteration only, ``nan`` elsewhere. It shows whether the choice set was missing a
-          route that traffic has made worthwhile.
+          time over *any* route at the current times (read off the run's shared search
+          trees, one time-dependent search per origin and departure bin), for every trip
+          that finished, at the **last** iteration only, ``nan`` elsewhere (``gap_sample`` 0
+          switches it off). It shows whether the choice set was missing a route that traffic
+          has made worthwhile.
         * ``gap_network_excess`` — its disequilibrium: ``gap_network`` less what the model
           explains *inside the set*, so a route the set was missing counts in full.
         * ``gap_flow``, ``gap_flow_floor``, ``gap_flow_excess`` — a check of the

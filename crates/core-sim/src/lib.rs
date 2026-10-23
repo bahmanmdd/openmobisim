@@ -60,6 +60,7 @@ pub mod run;
 pub mod skims;
 pub mod timings;
 pub mod transit;
+pub mod trees;
 pub mod trip_results;
 
 pub use demand_values::{DEPARTURE_ATTRIBUTE, DESTINATION_PARKING, DemandValues};

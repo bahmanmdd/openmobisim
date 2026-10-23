@@ -35,11 +35,11 @@ __all__ = [
 ]
 
 #: Named settings for speed (D-5 a): ``"fast"`` is what the starter cases set: the
-#: route searches shared by origin and half hour, and the park-and-ride drives likewise;
-#: ``"complete"`` is the core's defaults, every search made on its own.
+#: park-and-ride drives shared by origin and half hour; ``"complete"`` is the core's defaults.
+#: (The route update's searches are shared by origin and departure bin by default since S294,
+#: so the preset no longer sets ``tree_step_s``.)
 PRESETS: dict[str, dict[str, dict[str, float]]] = {
     "fast": {
-        "route_update_options": {"tree_step_s": 1800},
         "parking_options": {"reach_car_step_s": 1800},
     },
     "complete": {},
@@ -725,8 +725,9 @@ class Scenario:
                 stops early), ``route_growth_tolerance`` (1: and only while the last route update
                 added routes for at most this share of the pairs it searched; 1 lets the gap
                 alone decide, since it is measured against the sets as grown),
-                ``gap_sample`` (300; how many trips are tested against the whole
-                network at the last iteration, 0 for none), ``itinerary_gap_sample``
+                ``gap_sample`` (300; whether the trips are tested against the whole
+                network at the last iteration: 0 for none, any other value every finished trip,
+                read off the run's shared search trees), ``itinerary_gap_sample``
                 (100 000 000, that is every trip: how many transit, park-and-ride and
                 bike-and-ride trips, besides those choosing again, plan their whole choice set
                 after each loading to measure their gap; with fewer, the others that keep an
@@ -990,12 +991,13 @@ class Scenario:
                 them and choices adapt over the iterations. Both are in the fingerprint and the
                 manifest (``disruptions``).
             preset: Named settings for speed (``PRESETS``). ``"fast"`` is what the starter cases
-                use: the route update's searches shared by origin and half hour
-                (``route_update_options`` ``tree_step_s`` 1 800) and the park-and-ride drives
-                likewise (``parking_options`` ``reach_car_step_s`` 1 800), slightly approximate
-                and several times faster on a city. ``"complete"`` or ``None`` (the default): the
-                core's defaults, every search made on its own. An option given by name wins over
-                the preset's; the run's options, not the preset's name, are in the fingerprint.
+                use: the park-and-ride drives shared by origin and half hour
+                (``parking_options`` ``reach_car_step_s`` 1 800), slightly approximate and faster
+                on a city. ``"complete"`` or ``None`` (the default): the core's defaults, every
+                park-and-ride drive searched on its own. (The route update's searches are shared
+                by origin and departure bin by default, ``route_update_options`` ``tree_step_s``
+                300.) An option given by name wins over the preset's; the run's options, not the
+                preset's name, are in the fingerprint.
 
         Returns:
             A ``Scenario``, ready to ``.run()``.

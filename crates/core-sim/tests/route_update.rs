@@ -253,7 +253,7 @@ fn a_road_that_only_pays_under_congestion_enters_the_set_and_the_gap_to_the_netw
     let rc = with.route_choices.as_ref().unwrap();
     assert!(rc.alternatives.iter().all(|&a| a == 2), "alternatives follow the grown set");
     assert!(rc.route.iter().all(|&r| r != NO_ROUTE && r < 2));
-    assert_eq!(sets.update(), "best_response;max_routes=10;searches=1;slack=0.02");
+    assert_eq!(sets.update(), "best_response;max_routes=10;searches=1;slack=0.02;tree_step_s=300");
 }
 
 /// **Search trees**: the same road found by one tree per origin and rounded departure,
@@ -328,7 +328,10 @@ fn an_update_is_part_of_what_a_run_was() {
     assert_ne!(base.fingerprint, one.fingerprint);
     assert_ne!(one.fingerprint, two.fingerprint, "its options too");
     assert_eq!(one.route_update, "best_response");
-    assert_eq!(one.route_update_descriptor, "best_response;max_routes=10;searches=1;slack=0.02");
+    assert_eq!(
+        one.route_update_descriptor,
+        "best_response;max_routes=10;searches=1;slack=0.02;tree_step_s=300"
+    );
     assert_eq!(base.route_update_descriptor, "none");
 }
 
@@ -386,14 +389,14 @@ fn a_full_set_keeps_its_limit_and_its_free_flow_shortest_route() {
 fn several_searches_a_pair_are_spread_over_its_departures() {
     // (A slack of 0, so that every departure is searched; the early ones are at free flow.)
     let three = Setup {
-        update: ("best_response", vec![("searches", 3.0), ("slack", 0.0)]),
+        update: ("best_response", vec![("searches", 3.0), ("slack", 0.0), ("tree_step_s", 0.0)]),
         ..Setup::new(1_500)
     }
     .go();
     assert_eq!(three.iterations[0].route_searches, 3, "three quantiles of the pair's departures");
     // Fewer trips than searches: one search each, at most.
     let few = Setup {
-        update: ("best_response", vec![("searches", 16.0), ("slack", 0.0)]),
+        update: ("best_response", vec![("searches", 16.0), ("slack", 0.0), ("tree_step_s", 0.0)]),
         ..Setup::new(4)
     }
     .go();
@@ -438,7 +441,10 @@ fn updates_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
         &options(&[("searches", 16.0), ("max_routes", 32.0)]),
     )
     .unwrap();
-    assert_eq!(ok.descriptor(), "best_response;max_routes=32;searches=16;slack=0.02");
+    assert_eq!(
+        ok.descriptor(),
+        "best_response;max_routes=32;searches=16;slack=0.02;tree_step_s=300"
+    );
 }
 
 // --- the stopping rule --------------------------------------------------------------------------
@@ -717,6 +723,7 @@ fn a_pair_within_the_slack_of_free_flow_is_not_searched_and_one_beyond_it_is() {
             times: &times,
             iteration: 1,
             active: None,
+            trees: None,
         });
         (found.searches, found.route_count())
     };
