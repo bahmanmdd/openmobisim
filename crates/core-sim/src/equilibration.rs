@@ -1038,8 +1038,8 @@ pub const MAX_STATIC_ITERATIONS: u32 = 100_000;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrankWolfe {
     /// The most iterations (1 to [`MAX_STATIC_ITERATIONS`]); 1000 by default. *An assumption:
-    /// the reference solved Sioux Falls at the TNTP demand to a relative gap of 1e-4 in about
-    /// 1 200 iterations.*
+    /// about what Sioux Falls at TNTP's demand takes to reach the default tolerance (the Python
+    /// tests run it).*
     pub iterations: u32,
     /// Stop once the relative gap of the flows, `(Σ x t − Σ d t_min) / Σ d t_min`, is below this
     /// (0 to 1; 0 never stops early); 1e-4 by default. *An assumption: a common target of
