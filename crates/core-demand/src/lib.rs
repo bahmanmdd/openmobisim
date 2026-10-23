@@ -5,6 +5,7 @@
 //! | Module | What it owns |
 //! |---|---|
 //! | [`trips`] | Reading `trips.parquet` into unsorted, unvalidated rows |
+//! | [`aggregate`] | Two aggregations of a trips table: every trip end at its zone's point, every departure at one instant |
 //! | [`mode`] | A trip's mode, the optional `mode` column |
 //! | [`persons`] | Reading the optional `persons.parquet` |
 //! | [`travellers`] | [`travellers::Travellers`] and [`travellers::Trips`]: the dense, sorted, chain-validated structures everything downstream reads |
@@ -27,6 +28,7 @@
 //! Per-trip columns beyond those of the trips table are not read here: values per traveller and
 //! per trip reach the choice models through `core-sim`'s `demand_values`.
 
+pub mod aggregate;
 pub mod mode;
 pub mod persons;
 pub mod travellers;
