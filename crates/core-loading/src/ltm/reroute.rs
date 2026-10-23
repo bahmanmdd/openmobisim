@@ -5,11 +5,13 @@
 //! nothing upstream of the link that holds it is ever stuck: a closure whose node has no other
 //! exit re-routed nobody (X-69). So at the point queue a vehicle is also offered a route at the
 //! downstream end of its link when it can **see a queue ahead** ([`RerouteReason::QueueAhead`]):
-//! a link on its route holds more waiting vehicles than its storage and the links between would
-//! hold, which is where the back of that queue would stand if the point queue had spillback.
-//! The offer comes at once (the vehicle is not held), once per link of the route, and the vehicle
-//! drives on if it is refused; it reaches every junction upstream of the queue's virtual back, so
-//! the last one with a way round takes the traffic (S294).
+//! a link on its route, **narrowed or closed by a disruption or feeding a closed one**, holds more
+//! waiting vehicles than its storage and the links between would hold, which is where the back of
+//! that queue would stand if the point queue had spillback. The offer comes at once (the vehicle
+//! is not held), once per link of the route, and the vehicle drives on if it is refused; it
+//! reaches every junction upstream of the queue's virtual back, so the last one with a way round
+//! takes the traffic. Ordinary congestion offers nothing at the point queue (the equilibration
+//! settles it; offered on, Delft's base ran forty times slower) (S294).
 
 use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
 
@@ -205,7 +207,8 @@ impl LtmNetwork<'_> {
     }
 
     /// At the point queue, whether link `i`'s `front`, about to leave, can see a queue
-    /// ahead on its route: a link ahead holds more waiting vehicles (what is on it beyond what
+    /// ahead on its route behind a disruption: a link ahead, narrowed or closed by a capacity
+    /// change or feeding a closed one, holds more waiting vehicles (what is on it beyond what
     /// crosses it freely at its discharge rate) than its own storage and the storage of the
     /// links between would hold, which is where the back of that queue would stand with
     /// spillback. If so, and the vehicle may still re-route and was not asked at this leg, it is
@@ -222,17 +225,30 @@ impl LtmNetwork<'_> {
         if r.count[slot] >= r.rule.max || r.offered_leg[slot] == front.leg {
             return false;
         }
+        // Only a queue behind a disruption counts (S289, S293: offers at every congested entry
+        // made a level-2 run ten times slower, and ordinary congestion is the equilibrium's to
+        // settle, not the day's): a link narrowed or closed by a capacity change queues at its
+        // own downstream end, and the link before a closed one holds the traffic it refuses.
+        if self.changes.is_empty() {
+            return false;
+        }
+        let route = self.route(front.slot);
         let leg = front.leg as usize;
+        let disrupted = |m: usize| self.discharge_rate[m] < self.base_rates[m].0;
         let mut behind = 0.0;
         let mut seen = false;
-        for &m in self.route(front.slot).iter().skip(leg + 1).take(QUEUE_LOOKAHEAD) {
+        for (p, &m) in route.iter().enumerate().skip(leg + 1).take(QUEUE_LOOKAHEAD) {
             let m = m.index();
-            let on = (self.curves[m].cumulative_in() - self.curves[m].cumulative_out()).get();
-            let waiting = (on - self.discharge_rate[m] * self.travel[m]).max(0.0);
             let storage = self.network.storage(LinkId::from_index(m)).get();
-            if waiting - storage > behind + ROOM_EPSILON {
-                seen = true;
-                break;
+            let behind_a_disruption =
+                disrupted(m) || route.get(p + 1).is_some_and(|&n| self.is_closed(n.index()));
+            if behind_a_disruption {
+                let on = (self.curves[m].cumulative_in() - self.curves[m].cumulative_out()).get();
+                let waiting = (on - self.discharge_rate[m] * self.travel[m]).max(0.0);
+                if waiting - storage > behind + ROOM_EPSILON {
+                    seen = true;
+                    break;
+                }
             }
             behind += storage;
         }
