@@ -27,7 +27,7 @@ pub mod search;
 pub mod snap;
 pub mod store;
 
-pub use attributes::{RouteAttributes, path_sizes};
+pub use attributes::{RouteAttributes, path_sizes, path_sizes_counted};
 pub use generate::{
     DEFAULT_METHOD, Demand, MonteCarlo, Options, PROPENSITY_BIN_SECONDS, Penalty, Registry,
     RouteError, RouteSetGenerator, Shortest, TripDemand, congestion_propensity, default_generator,

@@ -238,6 +238,9 @@ struct Filled {
     /// Per alternative offered, as the batch holds them: its route's store index, and its expected seconds.
     alt_route: Vec<u32>,
     alt_seconds: Vec<f64>,
+    /// A scratch per link for the path sizes, all zeros between situations
+    /// ([`openmobisim_core_routes::path_sizes_counted`]).
+    link_users: Vec<u32>,
 }
 
 impl Filled {
@@ -461,9 +464,11 @@ impl<'a> Chooser<'a> {
                     .map(|(_, r)| route_sets.route(r).links)
                     .collect();
                 let network = self.inputs.network;
-                openmobisim_core_routes::path_sizes(&links, |l| {
-                    network.link_length(LinkId::new(l)).get()
-                })
+                openmobisim_core_routes::path_sizes_counted(
+                    &links,
+                    |l| network.link_length(LinkId::new(l)).get(),
+                    &mut filled.link_users,
+                )
             } else {
                 Vec::new()
             };

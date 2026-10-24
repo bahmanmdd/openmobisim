@@ -133,3 +133,48 @@ pub fn path_sizes(routes: &[&[u32]], link_length: impl Fn(u32) -> f64) -> Vec<f6
     }
     size
 }
+
+/// [`path_sizes`], counting each link's users in `users`, a scratch indexed by link that grows
+/// as needed and is left all zeros: the same numbers to the last bit (each link's count is the
+/// same integer, and the sums run in the same order), without the sort. For a caller costing
+/// many sets in a row (a route choice, S294).
+///
+/// **Cost:** two passes over the routes' links; `users` holds 4 bytes per link up to the
+/// largest seen.
+#[must_use]
+pub fn path_sizes_counted(
+    routes: &[&[u32]],
+    link_length: impl Fn(u32) -> f64,
+    users: &mut Vec<u32>,
+) -> Vec<f64> {
+    let mut size = vec![1.0; routes.len()];
+    if routes.len() < 2 {
+        return size;
+    }
+    for r in routes {
+        for &l in *r {
+            let l = l as usize;
+            if l >= users.len() {
+                users.resize(l + 1, 0);
+            }
+            users[l] += 1;
+        }
+    }
+    for (i, r) in routes.iter().enumerate() {
+        let (mut sum, mut shared) = (0.0, 0.0);
+        for &l in *r {
+            let length = link_length(l);
+            sum += length;
+            shared += length / f64::from(users[l as usize]);
+        }
+        if sum > 0.0 {
+            size[i] = shared / sum;
+        }
+    }
+    for r in routes {
+        for &l in *r {
+            users[l as usize] = 0;
+        }
+    }
+    size
+}
