@@ -118,8 +118,7 @@ pub struct IterationReport {
     /// *any* route at the current times (read off the run's shared search trees, one
     /// time-dependent search per origin and departure bin, [`crate::trees`]), for every trip
     /// that finished, at the last iteration only; `NaN` elsewhere. Shows whether the choice set
-    /// was missing a route that traffic has made worthwhile. (Before S294: a keyed sample of
-    /// the trips, each searched on its own.)
+    /// was missing a route that traffic has made worthwhile.
     pub gap_network: f64,
     /// The disequilibrium against the whole network: `gap_network` less the part the choice
     /// model explains **inside the set** (what a converged run over the same set would still show
@@ -189,14 +188,16 @@ pub struct IterationReport {
     /// model's own currency ([`Self::gap_currency`]), `Σ w (g_chosen − g_best) / Σ w g_best`,
     /// both at the trip's departure on this loading's link times. **A trip still under way at
     /// the end counts**, as what it paid plus what it still had to pay ([`crate::gap`]).
-    /// Measured at every loading; `NaN` where nothing was (a run of one loading). Read by
-    /// nothing that stops or judges the run.
+    /// Measured after the last loading, or after every loading with
+    /// [`Equilibration::full_gap_every_loading`]; `NaN` where nothing was (a loading not
+    /// measured, a run of one loading). Read by nothing that stops or judges the run.
     pub gap_route: f64,
     /// What the choice model itself expects [`Self::gap_route`] to be: the same sum with each
     /// trip's expected `g` under the model's probabilities over the routes it was offered in
     /// place of the route's; `NaN` for a model that gives no probabilities.
     pub gap_route_expected: f64,
-    /// `gap_route − gap_route_expected`: the route gap the model does not explain.
+    /// `gap_route − gap_route_expected`: the deterministic part of the duality gap (the relative
+    /// duality gap of the route choice less the part the logit's own dispersion produces).
     pub gap_route_excess: f64,
     /// [`Self::gap_route`] against the **whole network**: the best of the routes offered and
     /// the route a bounded time-dependent search finds for the trip (the fastest; where money
@@ -216,7 +217,8 @@ pub struct IterationReport {
     pub gap_mode_expected: f64,
     /// `gap_mode − gap_mode_expected`.
     pub gap_mode_excess: f64,
-    /// The route gap's excess as a cost per traveller: `Σ w (g_chosen − g_expected) / Σ w`,
+    /// The deterministic part of the route gap as a cost per traveller:
+    /// `Σ w (g_chosen − g_expected) / Σ w`,
     /// in generalised minutes (the average excess cost less what the model expects).
     pub excess_min_route: f64,
     /// The same for the trips choosing their mode, over their whole choice sets.
@@ -518,16 +520,16 @@ pub trait Equilibration: Send + Sync {
 
     /// Whether to test the trips against the whole network at the last iteration
     /// ([`IterationReport::gap_network`]): 0 means none, any other value every finished trip
-    /// (S294: the count was a sample while each trip cost a search; read off the shared search
-    /// trees, the test costs no search, so no sample is taken).
+    /// (S294: read off the shared search trees, the test costs no search, so no sample is
+    /// taken).
     fn network_gap_sample(&self) -> u32 {
         0
     }
 
-    /// Whether the full gap in the choice model's currency ([`IterationReport::gap_route`] and
-    /// the rest of it) is measured after every loading, or after the last one alone (the
-    /// default: it costs the choice sets' costing once more per loading, a third of a Delft run,
-    /// and the stopping rule reads the in-set disequilibrium the choice measures anyway; S294).
+    /// Whether the full gap in the choice model's currency ([`IterationReport::gap_route`] and the
+    /// rest of it) is measured after every loading, or after the last one alone (the default: it
+    /// costs the choice sets' costing once more per loading, and the stopping rule reads the in-set
+    /// disequilibrium the choice measures anyway; S294).
     fn full_gap_every_loading(&self) -> bool {
         false
     }
@@ -687,8 +689,8 @@ pub struct Msa {
     pub gap_tolerance: f64,
     /// Whether the trips are tested against the whole network at the last iteration
     /// (0 to 100 000; 0 means none, any other value every finished trip):
-    /// [`IterationReport::gap_network`]. (A sample's size until S294, when each trip cost a
-    /// search; the shared search trees cost none, so none is taken.)
+    /// [`IterationReport::gap_network`]. The shared search trees cost no search, so no sample is
+    /// taken.
     pub gap_sample: u32,
     /// How many itinerary trips, besides those choosing again, plan their whole choice set in an
     /// iteration to measure the itinerary gap (0 to [`MAX_ITINERARY_GAP_SAMPLE`]; see

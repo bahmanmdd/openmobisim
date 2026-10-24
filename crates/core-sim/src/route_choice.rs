@@ -542,9 +542,8 @@ impl<'a> Chooser<'a> {
     /// t_fastest) / Σ w t_fastest`, where `expected_seconds[t]` is trip `t`'s expected time
     /// under the model (`NaN`: the model gave no probabilities; the second number is then `NaN`).
     ///
-    /// Every finished trip counts (S294: a sample was needed while each trip cost a search; the
-    /// trees cost none), summed in trip order, so the result is the same for any thread count.
-    /// `NaN` if nothing is routed.
+    /// Every finished trip counts (the shared trees cost no search; S294), summed in trip order,
+    /// so the result is the same for any thread count. `NaN` if nothing is routed.
     pub(crate) fn network_gap(
         &self,
         current: &RouteChoices,
@@ -613,8 +612,7 @@ impl<'a> Chooser<'a> {
     /// offered, at its time on these times. Every trip, every call; nothing is drawn, nothing
     /// changed.
     ///
-    /// Costs the batches built once more and a route costing per trip; no search (S294: before,
-    /// one bounded search per trip, 82 % of the gap's time on a city).
+    /// Costs the batches built once more and a route costing per trip; no search (S294).
     ///
     /// # Errors
     ///

@@ -12,11 +12,10 @@
 //!
 //! **Why the carry (X-63, S286).** The table records crossings, not states: a link
 //! whose queue stood still through a whole bin, with nothing able to enter, has no
-//! row for that bin, and reading it as free flow priced a standing jam as an empty
-//! link (one in five queued link-bins of a level-4 city run; one in fifty at the
-//! point queue). Under first-in-first-out a vehicle entering now cannot leave before
+//! row for that bin, and reading it as free flow would price a standing jam as an
+//! empty link. Under first-in-first-out a vehicle entering now cannot leave before
 //! those that entered a bin earlier and took `m`, so `m − elapsed` is a lower bound
-//! on its time: that is what a bin nobody entered now reads.
+//! on its time: that is what a bin nobody entered reads.
 //!
 //! **The table is by entry time.** A traveller about to enter a link needs the
 //! time taken by those who *entered* when they would, not by those who happened to

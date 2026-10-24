@@ -30,7 +30,7 @@ impl LtmNetwork<'_> {
     /// moves at once. A vehicle on a closed link waits there; behind it, the queue grows as it
     /// would behind any bottleneck. A closed link refuses entry at every level, the classic
     /// point queue's included ([`Self::with_node_inflow`]): the vehicles bound onto it wait at
-    /// the end of the link before it.
+    /// the downstream end of the link before it.
     ///
     /// Costs nothing per movement when there is no change; one comparison per movement when
     /// there are.

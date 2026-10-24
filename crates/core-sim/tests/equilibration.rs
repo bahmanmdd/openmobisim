@@ -269,7 +269,7 @@ fn a_route_is_walked_link_by_link_through_the_bins_it_meets() {
 #[test]
 fn a_bin_nobody_crossed_between_two_that_were_recorded_costs_free_flow() {
     // S259: each link's times are laid out from its first recorded bin to its last; a bin
-    // between them with no traffic must read as before, the free-flow time — when the recorded
+    // between them with no traffic reads the free-flow time — when the recorded
     // times are shorter than a bin, so that nobody recorded can still be on the link (S286: a
     // longer time is carried forward, the test below).
     let (net, ab, bc) = line();
@@ -801,12 +801,12 @@ fn the_overlap_term_is_out_of_the_generalised_minutes() {
 #[test]
 fn a_trip_still_under_way_costs_more_not_nothing() {
     // The bottleneck's jam, cut at 20 minutes, after the last departure (15 minutes) while its
-    // queue clears, against the same run with the window long enough for every trip to finish:
-    // the first loading is the same until the cut, and the trips still on the road at it count as
-    // what they paid plus what they still had to drive, the link they stood on in full, at the
-    // last recorded times held. They cost more than leaving them out, and here more than they
-    // did. (Cut while the queue still grows, the last recorded time is below what those behind
-    // it take, and the cut run can read below the long one.)
+    // queue clears, against the same run with the window long enough for every trip to finish: the
+    // first loading is the same until the cut, and the trips still on the road at it count as what
+    // they paid plus what they still had to drive, the link they stood on in full, at the last
+    // recorded times held. They cost more than leaving them out, and here more than they paid in
+    // the long run. (Cut while the queue still grows, the last recorded time is below what those
+    // behind it take, and the cut run can read below the long one.)
     let (n, spread_s, end) = (800, 900, 1_200);
     let cut = Setup {
         equilibration: ("msa", vec![("iterations", 3.0), ("gap_every", 1.0)]),
@@ -845,9 +845,9 @@ fn a_trip_still_under_way_costs_more_not_nothing() {
 #[test]
 fn the_best_over_the_network_is_never_above_the_best_of_the_set() {
     // Only the fast road is in the set ("shortest"): the slow road, several times faster once the
-    // fast one jams, is found by the search for every trip at every loading, not a sample at the
-    // last; the network's best is never above the set's. A window in which every trip finishes,
-    // so the gap against the one-route set is nothing.
+    // fast one jams, is found by the search for every trip at every loading; the network's best
+    // is never above the set's. A window in which every trip finishes, so the gap against the
+    // one-route set is nothing.
     let result = Setup {
         generator: Some("shortest"),
         equilibration: ("msa", vec![("iterations", 3.0), ("gap_every", 1.0)]),

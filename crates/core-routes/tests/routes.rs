@@ -1355,8 +1355,7 @@ fn the_search_after_a_link_turns_only_where_the_link_allows() {
 
 /// **Property (X-70, S294):** a key whose pair has no route (its destination cannot be reached)
 /// has an empty set, and a revision of the store, a full set making room elsewhere, leaves it
-/// empty instead of panicking: before, "a key keeps at least one route" held for every key, so
-/// the first revision of a store with an empty set brought a run down.
+/// empty.
 #[test]
 fn a_revised_store_leaves_a_key_without_routes_empty() {
     // a -> b and c -> b: from a, c cannot be reached.

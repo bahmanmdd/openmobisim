@@ -1,5 +1,5 @@
-//! The full gap (S293): how far every trip's choice is from the best alternative, at every
-//! loading, over every trip, in the choice model's own currency.
+//! The full gap (S293): how far every trip's choice is from the best alternative, after the
+//! last loading (or after every one), over every trip, in the choice model's own currency.
 //!
 //! **Generalised minutes `g`** of an alternative: its systematic utility from the run's choice
 //! model ([`ChoiceModel::utilities`]: the overlap term left out, since it has no value for an

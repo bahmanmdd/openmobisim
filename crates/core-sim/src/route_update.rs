@@ -16,7 +16,7 @@
 //! | name | what it does |
 //! |---|---|
 //! | `none` (the default, [`DEFAULT_UPDATE`]) | Nothing: the sets stay as the generator made them, and the run costs nothing extra |
-//! | `best_response` | For every origin–destination pair, the fastest route at the congested times, read from the run's **shared search trees** (one bounded time-dependent search per origin and departure bin, [`crate::trees`]; S294) or, with `tree_step_s` 0, found by one bounded search per pair at the median departure of the pair's trips; it is **added if it is new and at least as fast as the set's best route**: a tie counts, since an equally good alternative is one more to spread over (without ties, Seoul's grid ended at a network gap of 0.57 instead of 0.12). Column generation, as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
+//! | `best_response` | For every origin–destination pair, the fastest route at the congested times, read from the run's **shared search trees** (one bounded time-dependent search per origin and departure bin, [`crate::trees`]; S294) or, with `tree_step_s` 0, found by one bounded search per pair at the median departure of the pair's trips; it is **added if it is new and at least as fast as the set's best route**: a tie counts, since an equally good alternative is one more to spread over. Column generation, as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
 //!
 //! **What `best_response` costs.** With the shared trees (the default) nothing is searched: the
 //! run builds the trees for its gap and the update reads each pair's route off its tree, at the
@@ -60,8 +60,8 @@ use crate::trees::SearchTrees;
 pub const DEFAULT_SLACK: f64 = 0.02;
 
 /// The departure bin of `best_response`'s search trees, in seconds (see
-/// [`BestResponse::tree_step_s`]): the equilibration's default cost bin (S294; 0 before, a
-/// search per pair). The run's shared trees ([`crate::trees`]) are binned by it.
+/// [`BestResponse::tree_step_s`]): the equilibration's default cost bin (S294; 0: a search per
+/// pair). The run's shared trees ([`crate::trees`]) are binned by it.
 pub const DEFAULT_TREE_STEP_S: u32 = 300;
 
 /// The most routes a pair's set holds by default. A traveller is offered at most five of
@@ -427,9 +427,8 @@ impl BestResponse {
     /// [`RouteUpdate::update`] from search trees ([`Self::tree_step_s`]): each pair is read at
     /// the bins of the departures [`Self::plan`] picks for it (its [`Self::searches`] quantiles;
     /// the median with 1), as a search per pair would search at those departures, so the sets
-    /// grow by the same rule either way (read at every bin with a trip, Delft at twice its demand
-    /// ended with 1.9 times the unfinished trips, S294). The tree's route to the pair's
-    /// destination is kept if the pair is worth searching (past the slack) and the route is new
+    /// grow by the same rule either way (S294). The tree's route to the pair's destination is
+    /// kept if the pair is worth searching (past the slack) and the route is new
     /// and no slower than the pair's own best at the tree's departure (a full set: faster by
     /// [`REPLACE_GAIN_S`]). Then the kept routes are made routes of their sets (their overlap),
     /// key by key.

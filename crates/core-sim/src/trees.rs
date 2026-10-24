@@ -4,8 +4,8 @@
 //! The route update ([`crate::route_update`]) asks, for every origin–destination pair, whether
 //! the network holds a route faster than the pair's set at the congested times; the gap
 //! ([`crate::gap`]) asks, for every trip, how much better than the route it took the network's
-//! best would have been. Searched trip by trip, the second question cost more than the loading
-//! itself on a city (66 000 searches per loading on Delft). Both questions are answered at once
+//! best would have been. Searched trip by trip, the second question would cost more than the
+//! loading itself on a city. Both questions are answered at once
 //! by one search tree per origin node and departure bin: the trips of one origin whose
 //! departures fall in one bin share one [`openmobisim_core_routes::Search::fastest_routes_to`], which finds the fastest
 //! route to each of their destinations at the bin's middle, bounded by the slowest of their
