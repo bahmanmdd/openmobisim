@@ -1,12 +1,15 @@
 //! The binary form of a built network (a network cache file's content): what is written comes
 //! back equal, field for field and byte for byte, for every kind of network the crate builds,
-//! and a file of another network, version or a damaged one is refused.
+//! and a file of another network, version or a damaged one is refused. Parkings (a parkings
+//! cache file's content) the same way.
 
 use std::collections::{BTreeMap, HashMap};
 
-use openmobisim_core_graph::binary::{FormatError, Header, Reader, Writer};
+use openmobisim_core_graph::binary::{Content, FormatError, Header, Reader, Writer};
 use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
+use openmobisim_core_graph::examples::toy_network_parkings;
 use openmobisim_core_graph::geometry::{LonLat, polyline_length_metres};
+use openmobisim_core_graph::hubs::{ParkingKind, ParkingRow};
 use openmobisim_core_graph::layers::StaticNetwork;
 use openmobisim_core_graph::link_geometry::{LinkGeometry, NetworkFingerprint};
 use openmobisim_core_graph::network::{LinkChanges, LinkSpec, RoadNetwork, RoadNetworkBuilder};
@@ -199,6 +202,67 @@ fn a_file_cut_short_or_damaged_is_refused_never_read() {
     let short = short.finish();
     let err = RoadNetwork::read_binary(&mut Reader::new(&short).unwrap()).unwrap_err();
     assert!(matches!(err, FormatError::Invalid(_)), "{err}");
+}
+
+fn parking_bytes(rows: &[ParkingRow]) -> Vec<u8> {
+    let mut w = Writer::of(Content::Parkings);
+    w.len(rows.len());
+    for row in rows {
+        row.write_binary(&mut w);
+    }
+    w.finish()
+}
+
+#[test]
+fn parkings_come_back_equal_field_for_field_and_byte_for_byte() {
+    let mut rows = toy_network_parkings();
+    // Every field filled, and the values a table may give: a name beyond ASCII, no hub, a
+    // fee of nothing and one of some euros, cars parked at the start of the day.
+    rows.push(ParkingRow {
+        parking_id: "osm:way/123456789".to_string(),
+        name: Some("P+R Delft Zuid — Station".to_string()),
+        hub_id: None,
+        position: LonLat::new(4.372_456_789_012_345, 51.990_123_456_789_01),
+        kind: ParkingKind::Car,
+        capacity: u32::MAX,
+        initial_occupancy: 7,
+        fee_eur: Some(2.5),
+    });
+    rows.push(ParkingRow {
+        parking_id: String::new(),
+        name: Some(String::new()),
+        hub_id: Some("H".to_string()),
+        position: LonLat::new(-0.0, -33.9),
+        kind: ParkingKind::Bike,
+        capacity: 0,
+        initial_occupancy: 0,
+        fee_eur: Some(0.0),
+    });
+    let bytes = parking_bytes(&rows);
+    let mut r = Reader::of(&bytes, Content::Parkings).unwrap();
+    let n = r.len(36).unwrap();
+    let back: Vec<ParkingRow> = (0..n).map(|_| ParkingRow::read_binary(&mut r).unwrap()).collect();
+    r.finish().unwrap();
+    assert_eq!(back, rows);
+    assert_eq!(parking_bytes(&back), bytes, "the rows read back write other bytes");
+    assert_eq!(back[4].position.lon.to_bits(), (-0.0f64).to_bits());
+
+    // A vehicle that is not one is refused; so is a parkings file read as a network.
+    let mut w = Writer::of(Content::Parkings);
+    rows[0].write_binary(&mut w);
+    let mut bad = w.finish();
+    let at = 8 + (8 + "H-car".len()) + 1 + (1 + 8 + 1) + 16;
+    assert_eq!(bad[at], 0, "the car's vehicle code");
+    bad[at] = 2;
+    let body = bad[8..bad.len() - 8].to_vec();
+    let mut w = Writer::of(Content::Parkings);
+    for b in body {
+        w.u8(b);
+    }
+    let bad = w.finish();
+    let err = ParkingRow::read_binary(&mut Reader::of(&bad, Content::Parkings).unwrap());
+    assert!(matches!(err, Err(FormatError::Invalid(m)) if m == "parking vehicle 2"));
+    assert_eq!(Reader::new(&bytes).unwrap_err(), FormatError::NotA(Content::Network));
 }
 
 #[test]

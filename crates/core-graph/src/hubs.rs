@@ -27,6 +27,7 @@ use openmobisim_core_types::ids::{
     AccessPointId, EntityId, ExternalIdTable, ExternalIdTableBuilder, HubId, NodeId, ResourceId,
 };
 
+use crate::binary::{self, Reader, Writer, invalid};
 use crate::geometry::LonLat;
 use crate::layers::Layer;
 
@@ -374,6 +375,70 @@ impl HubSet {
             + self.parking_start.len() * 4
             + self.parking_hub.len() * 13
             + self.parking_external.iter().map(|e| e.len() + 24).sum::<usize>()
+    }
+}
+
+// --- The binary form (S294, I-as) -------------------------------------------------------------
+
+impl ParkingRow {
+    /// Write every field of the row into `w` as it is held ([`crate::binary`]):
+    /// [`Self::read_binary`] gives back a row equal to this one, bit for bit. A row takes at
+    /// least 36 bytes.
+    pub fn write_binary(&self, w: &mut Writer) {
+        // Destructured without `..`: a field added to the row does not compile until it is
+        // written here (and read below).
+        let ParkingRow {
+            parking_id,
+            name,
+            hub_id,
+            position,
+            kind,
+            capacity,
+            initial_occupancy,
+            fee_eur,
+        } = self;
+        let LonLat { lon, lat } = *position;
+        w.str(parking_id);
+        w.opt_str(name.as_deref());
+        w.opt_str(hub_id.as_deref());
+        w.f64(lon);
+        w.f64(lat);
+        w.u8(*kind as u8);
+        w.u32(*capacity);
+        w.u32(*initial_occupancy);
+        w.opt_f64(*fee_eur);
+    }
+
+    /// Read a row [`Self::write_binary`] wrote.
+    ///
+    /// # Errors
+    ///
+    /// [`binary::FormatError`] for bytes that are not such a row: past the end, a string that
+    /// is not UTF-8, a vehicle that is not one.
+    pub fn read_binary(r: &mut Reader<'_>) -> binary::Result<Self> {
+        let parking_id = r.str()?.to_string();
+        let name = r.opt_str()?.map(str::to_string);
+        let hub_id = r.opt_str()?.map(str::to_string);
+        let lon = r.f64()?;
+        let lat = r.f64()?;
+        let code = r.u8()?;
+        // `ALL` is in discriminant order, the order written.
+        let Some(&kind) = ParkingKind::ALL.get(usize::from(code)) else {
+            return invalid(format!("parking vehicle {code}"));
+        };
+        let capacity = r.u32()?;
+        let initial_occupancy = r.u32()?;
+        let fee_eur = r.opt_f64()?;
+        Ok(Self {
+            parking_id,
+            name,
+            hub_id,
+            position: LonLat::new(lon, lat),
+            kind,
+            capacity,
+            initial_occupancy,
+            fee_eur,
+        })
     }
 }
 

@@ -1,4 +1,4 @@
-//! The binary form of a built network: what a network cache file holds.
+//! The binary form of a built network, and of a scenario's parkings: what a cache file holds.
 //!
 //! Importing a city from OpenStreetMap takes seconds; the network it builds is a few flat
 //! arrays. A [`Writer`] puts those arrays into bytes and a [`Reader`] takes them back **bit for
@@ -7,7 +7,10 @@
 //! ([`RoadNetwork::write_binary`](crate::RoadNetwork::write_binary); a
 //! [`LinkGeometry`](crate::link_geometry::LinkGeometry) and a
 //! [`StaticNetwork`](crate::layers::StaticNetwork) the same way), and a run on it has the same
-//! fingerprint and the same results as a run on the import.
+//! fingerprint and the same results as a run on the import. The parkings read from an extract
+//! are kept the same way ([`ParkingRow::write_binary`](crate::hubs::ParkingRow::write_binary)),
+//! in a file of their own: a file's first bytes say what it holds ([`Content`]), so that one is
+//! never read as the other.
 //!
 //! # A cache, not an exchange format
 //!
@@ -20,12 +23,13 @@
 //!
 //! # Layout
 //!
-//! The magic bytes `OMSNET\r\n`, the header, the body (each type's fields in a fixed order; a
-//! sequence is its length, a `u64`, then its elements; a string is its byte length then its
-//! UTF-8 bytes), and a checksum of everything before it (FNV-1a over 8-byte words). On reading,
-//! the checksum is checked first, then every length against the count it must equal and every
-//! index against the range it points into, so a damaged or foreign file is refused with a
-//! [`FormatError`], never read into a network that fails later.
+//! The magic bytes (`OMSNET\r\n` for a network, `OMSPRK\r\n` for parkings), the header, the
+//! body (each type's fields in a fixed order; a sequence is its length, a `u64`, then its
+//! elements; a string is its byte length then its UTF-8 bytes), and a checksum of everything
+//! before it (FNV-1a over 8-byte words). On reading, the magic bytes are checked first, then the
+//! checksum, then every length against the count it must equal and every index against the
+//! range it points into, so a damaged or foreign file is refused with a [`FormatError`], never
+//! read into a network that fails later.
 //!
 //! **Adding a field** to a type stored here breaks the build until its binary form writes and
 //! reads it (each one destructures its type without `..`), and the change bumps
@@ -44,9 +48,42 @@ use openmobisim_core_types::ids::{ExternalIdTable, ExternalIdTableBuilder};
 /// encoding of one changes. A file of another version is refused.
 pub const FORMAT_VERSION: u32 = 1;
 
-/// The first eight bytes of every file: a name, then a carriage return and a line feed, which a
-/// transfer that rewrites line endings would damage visibly.
+/// The first eight bytes of every network file: a name, then a carriage return and a line feed,
+/// which a transfer that rewrites line endings would damage visibly.
 pub const MAGIC: [u8; 8] = *b"OMSNET\r\n";
+
+/// The first eight bytes of every parkings file, made as [`MAGIC`] is.
+pub const PARKINGS_MAGIC: [u8; 8] = *b"OMSPRK\r\n";
+
+/// What a file holds, said by its first eight bytes: a [`Reader`] of one refuses a file of the
+/// other before reading anything else of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Content {
+    /// A network: [`MAGIC`].
+    Network,
+    /// A scenario's parkings: [`PARKINGS_MAGIC`].
+    Parkings,
+}
+
+impl Content {
+    /// The first eight bytes of a file holding this.
+    #[must_use]
+    pub const fn magic(self) -> [u8; 8] {
+        match self {
+            Content::Network => MAGIC,
+            Content::Parkings => PARKINGS_MAGIC,
+        }
+    }
+
+    /// Its name in a message: `"network"`, `"parkings"`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Content::Network => "network",
+            Content::Parkings => "parkings",
+        }
+    }
+}
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -70,11 +107,12 @@ pub fn checksum(bytes: &[u8]) -> u64 {
     (h ^ bytes.len() as u64).wrapping_mul(FNV_PRIME)
 }
 
-/// Why bytes could not be read as a network.
+/// Why bytes could not be read as a network or parkings.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FormatError {
-    /// The bytes do not start with [`MAGIC`]: not a network file.
-    NotANetworkFile,
+    /// The bytes do not start with the magic bytes of what was to be read ([`Content::magic`]):
+    /// not a network file, or not a parkings file.
+    NotA(Content),
     /// The checksum does not match: the file was damaged or cut short.
     Damaged,
     /// The checksum matches but the content is not what this version reads: a length that is
@@ -85,7 +123,7 @@ pub enum FormatError {
 impl fmt::Display for FormatError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FormatError::NotANetworkFile => f.write_str("not a network file"),
+            FormatError::NotA(content) => write!(f, "not a {} file", content.as_str()),
             FormatError::Damaged => f.write_str("the file is damaged or incomplete"),
             FormatError::Invalid(what) => write!(f, "the file's content is not valid: {what}"),
         }
@@ -119,11 +157,17 @@ impl Default for Writer {
 }
 
 impl Writer {
-    /// A writer holding the magic bytes.
+    /// A writer of a network: holding the network's magic bytes.
     #[must_use]
     pub fn new() -> Self {
+        Self::of(Content::Network)
+    }
+
+    /// A writer of `content`: holding its magic bytes.
+    #[must_use]
+    pub fn of(content: Content) -> Self {
         let mut buf = Vec::with_capacity(1 << 20);
-        buf.extend_from_slice(&MAGIC);
+        buf.extend_from_slice(&content.magic());
         Self { buf }
     }
 
@@ -173,6 +217,14 @@ impl Writer {
         self.bool(v.is_some());
         if let Some(v) = v {
             self.f64(v);
+        }
+    }
+
+    /// An optional string: a flag, then the string if there is one.
+    pub fn opt_str(&mut self, s: Option<&str>) {
+        self.bool(s.is_some());
+        if let Some(s) = s {
+            self.str(s);
         }
     }
 
@@ -232,26 +284,36 @@ pub struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-    /// A reader of `bytes`, once the magic and the checksum are checked.
+    /// A reader of a network's `bytes`, once the magic and the checksum are checked.
     ///
     /// # Errors
     ///
-    /// [`FormatError::NotANetworkFile`] without the magic bytes, [`FormatError::Damaged`] if
+    /// [`FormatError::NotA`] without the network's magic bytes, [`FormatError::Damaged`] if
     /// the checksum does not match.
     pub fn new(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < MAGIC.len() || bytes[..MAGIC.len()] != MAGIC {
-            return Err(FormatError::NotANetworkFile);
+        Self::of(bytes, Content::Network)
+    }
+
+    /// A reader of `bytes` holding `content`, once its magic and the checksum are checked.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::NotA`] without `content`'s magic bytes, [`FormatError::Damaged`] if the
+    /// checksum does not match.
+    pub fn of(bytes: &'a [u8], content: Content) -> Result<Self> {
+        if bytes.len() < MAGIC.len() || bytes[..MAGIC.len()] != content.magic() {
+            return Err(FormatError::NotA(content));
         }
         if bytes.len() < MAGIC.len() + 8 {
             return Err(FormatError::Damaged);
         }
-        let (content, sum) = bytes.split_at(bytes.len() - 8);
+        let (summed, sum) = bytes.split_at(bytes.len() - 8);
         let mut stored = [0u8; 8];
         stored.copy_from_slice(sum);
-        if checksum(content) != u64::from_le_bytes(stored) {
+        if checksum(summed) != u64::from_le_bytes(stored) {
             return Err(FormatError::Damaged);
         }
-        Ok(Self { body: &content[MAGIC.len()..], at: 0 })
+        Ok(Self { body: &summed[MAGIC.len()..], at: 0 })
     }
 
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
@@ -358,6 +420,15 @@ impl<'a> Reader<'a> {
     /// Past the end, or a bad flag.
     pub fn opt_f64(&mut self) -> Result<Option<f64>> {
         Ok(if self.bool()? { Some(self.f64()?) } else { None })
+    }
+
+    /// An optional string.
+    ///
+    /// # Errors
+    ///
+    /// Past the end, a bad flag, or bytes that are not UTF-8.
+    pub fn opt_str(&mut self) -> Result<Option<&'a str>> {
+        Ok(if self.bool()? { Some(self.str()?) } else { None })
     }
 
     /// A sequence of `f64`.
@@ -541,17 +612,27 @@ impl Header {
         })
     }
 
-    /// The header of a file from its first bytes alone (`bytes` may be the whole file or only
-    /// its beginning), **without checking the file**: to decide whether to read it at all.
-    /// Reading the file ([`Reader::new`], then [`Self::read`]) checks it.
+    /// The header of a network file from its first bytes alone (`bytes` may be the whole file
+    /// or only its beginning), **without checking the file**: to decide whether to read it at
+    /// all. Reading the file ([`Reader::new`], then [`Self::read`]) checks it.
     ///
     /// # Errors
     ///
-    /// [`FormatError::NotANetworkFile`] without the magic bytes; [`FormatError::Invalid`] for
+    /// [`FormatError::NotA`] without the network's magic bytes; [`FormatError::Invalid`] for
     /// another format version, or bytes that end inside the header.
     pub fn peek(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < MAGIC.len() || bytes[..MAGIC.len()] != MAGIC {
-            return Err(FormatError::NotANetworkFile);
+        Self::peek_of(bytes, Content::Network)
+    }
+
+    /// The header of a file holding `content`, as [`Self::peek`] reads a network's.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::NotA`] without `content`'s magic bytes; [`FormatError::Invalid`] for
+    /// another format version, or bytes that end inside the header.
+    pub fn peek_of(bytes: &[u8], content: Content) -> Result<Self> {
+        if bytes.len() < MAGIC.len() || bytes[..MAGIC.len()] != content.magic() {
+            return Err(FormatError::NotA(content));
         }
         Self::read(&mut Reader { body: &bytes[MAGIC.len()..], at: 0 })
     }
@@ -597,6 +678,8 @@ mod tests {
         w.str("way/7:1");
         w.opt_f64(None);
         w.opt_f64(Some(2.5));
+        w.opt_str(None);
+        w.opt_str(Some("P+R Delft"));
         w.f64s([1.5, -2.0].into_iter());
         w.u32s([3, 4, 5].into_iter());
         w.bools(&[true, false]);
@@ -613,6 +696,8 @@ mod tests {
         assert_eq!(r.str().unwrap(), "way/7:1");
         assert_eq!(r.opt_f64().unwrap(), None);
         assert_eq!(r.opt_f64().unwrap(), Some(2.5));
+        assert_eq!(r.opt_str().unwrap(), None);
+        assert_eq!(r.opt_str().unwrap(), Some("P+R Delft"));
         assert_eq!(r.f64s().unwrap(), vec![1.5, -2.0]);
         assert_eq!(r.u32s().unwrap(), vec![3, 4, 5]);
         assert_eq!(r.bools().unwrap(), vec![true, false]);
@@ -633,7 +718,32 @@ mod tests {
         // Cut short.
         assert_eq!(Reader::new(&bytes[..bytes.len() - 3]).unwrap_err(), FormatError::Damaged);
         // Not a network file at all.
-        assert_eq!(Reader::new(b"PAR1....").unwrap_err(), FormatError::NotANetworkFile);
+        let not_a_network = FormatError::NotA(Content::Network);
+        assert_eq!(Reader::new(b"PAR1....").unwrap_err(), not_a_network);
+        assert_eq!(not_a_network.to_string(), "not a network file");
+    }
+
+    #[test]
+    fn a_network_file_is_not_read_as_parkings_nor_parkings_as_a_network() {
+        let mut w = Writer::of(Content::Parkings);
+        Header::current("abc", "source", 0.5).write(&mut w);
+        let parkings = w.finish();
+        let mut w = Writer::new();
+        Header::current("abc", "source", 0.5).write(&mut w);
+        let network = w.finish();
+        assert_eq!(&parkings[..8], b"OMSPRK\r\n");
+        assert_eq!(&network[..8], b"OMSNET\r\n");
+        let not_parkings = FormatError::NotA(Content::Parkings);
+        assert_eq!(Reader::of(&network, Content::Parkings).unwrap_err(), not_parkings);
+        assert_eq!(not_parkings.to_string(), "not a parkings file");
+        let not_a_network = FormatError::NotA(Content::Network);
+        assert_eq!(Reader::new(&parkings).unwrap_err(), not_a_network);
+        assert_eq!(Header::peek(&parkings).unwrap_err(), not_a_network);
+        assert_eq!(Header::peek_of(&network, Content::Parkings).unwrap_err(), not_parkings);
+        // Each read as what it holds: the same header.
+        let header = Header::read(&mut Reader::of(&parkings, Content::Parkings).unwrap()).unwrap();
+        assert_eq!(header, Header::peek_of(&parkings, Content::Parkings).unwrap());
+        assert_eq!(header, Header::peek(&network).unwrap());
     }
 
     #[test]
@@ -663,7 +773,7 @@ mod tests {
 
         // Peeked from the file's first bytes alone, the checksum not read.
         assert_eq!(Header::peek(&bytes[..bytes.len() - 8]).unwrap(), here);
-        assert_eq!(Header::peek(b"PAR1").unwrap_err(), FormatError::NotANetworkFile);
+        assert_eq!(Header::peek(b"PAR1").unwrap_err(), FormatError::NotA(Content::Network));
         assert!(matches!(Header::peek(&bytes[..12]), Err(FormatError::Invalid(_))));
 
         let mut w = Writer::new();
