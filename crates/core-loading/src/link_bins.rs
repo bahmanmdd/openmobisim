@@ -21,6 +21,7 @@
 //! A traversal is filed under the bin of its **exit** time.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use openmobisim_core_types::ids::{EntityId, LinkId};
 
@@ -146,6 +147,35 @@ pub struct EntryTables {
     pub origin_wait: LinkBins,
 }
 
+/// The hasher of the entry-time cells' keys, `(bin << 32) | link`: splitmix64's finaliser, two
+/// multiplies where the standard library's SipHash costs a few times more per traversal (S294).
+/// Only how fast a cell is found depends on it: the tables are sorted by key when finished, and
+/// each cell adds its traversals in the order they are recorded, whatever the hasher.
+#[derive(Clone, Copy, Debug, Default)]
+struct CellHasher(u64);
+
+impl Hasher for CellHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+
+    fn write_u64(&mut self, key: u64) {
+        let mut z = (self.0 ^ key).wrapping_add(0x9e37_79b9_7f4a_7c15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        self.0 = z ^ (z >> 31);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// The entry-time cells by key, `(bin << 32) | link`.
+type CellMap = HashMap<u64, EntryCell, BuildHasherDefault<CellHasher>>;
+
 /// Builds a [`LinkBins`] from traversals fed **in exit-time order**.
 #[derive(Debug)]
 pub struct LinkBinRecorder {
@@ -163,9 +193,9 @@ pub struct LinkBinRecorder {
     /// If asked for: the same traversals filed under the bin they
     /// **entered** the link in, which is what a traveller about to enter it needs
     /// to know. Sparse: entries arrive out of order.
-    entry: Option<HashMap<u64, EntryCell>>,
+    entry: Option<CellMap>,
     /// The waits at origins, by departure bin, when `entry` is on.
-    origin_wait: Option<HashMap<u64, EntryCell>>,
+    origin_wait: Option<CellMap>,
 }
 
 /// What one (entry bin, link) cell has seen so far.
@@ -208,13 +238,13 @@ impl LinkBinRecorder {
     /// The exit-time table says how much traffic left a link in each bin, which is
     /// what a flow map draws; a traveller about to enter the link needs the time
     /// taken by those who *entered* when they would, and in a growing queue the two
-    /// differ by the queue's length. Costs a hash-map insert per traversal (about
-    /// 30 ns) and 40 bytes per (link, bin) cell that saw traffic. It also files the
+    /// differ by the queue's length. Costs a hash-map insert per traversal (by a
+    /// fixed fast hash, `CellHasher`) and 40 bytes per (link, bin) cell that saw traffic. It also files the
     /// wait of every vehicle at its origin ([`Self::record_origin_wait`]).
     #[must_use]
     pub fn with_entry_bins(mut self) -> Self {
-        self.entry = Some(HashMap::new());
-        self.origin_wait = Some(HashMap::new());
+        self.entry = Some(CellMap::default());
+        self.origin_wait = Some(CellMap::default());
         self
     }
 
@@ -348,7 +378,7 @@ impl LinkBinRecorder {
             reason = "set from a u32"
         )]
         let bin_seconds = self.entry_bin_seconds as u32;
-        let table = |cells: HashMap<u64, EntryCell>| {
+        let table = |cells: CellMap| {
             let mut keys: Vec<u64> = cells.keys().copied().collect();
             keys.sort_unstable();
             let mut table = LinkBins { bin_seconds, ..LinkBins::default() };
