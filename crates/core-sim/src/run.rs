@@ -2320,9 +2320,25 @@ impl Run {
 
         if let FlowMotor::Ltm { turns, step, level } = &self.flow_motor {
             let level = &level_override.unwrap_or(*level);
+            // The vehicles move into the loading, their ids stay (S294: they were cloned).
             let mut vehicles: Vec<Vehicle> =
-                pending_ltm.iter().map(|(_, vehicle, _)| vehicle.clone()).collect();
-            vehicles.extend(itin_cars.iter().map(|(_, v)| v.clone()));
+                Vec::with_capacity(pending_ltm.len() + itin_cars.len());
+            let pending_ltm: Vec<(TripId, VehicleId, u32)> = pending_ltm
+                .into_iter()
+                .map(|(trip, vehicle, weight)| {
+                    let id = vehicle.id;
+                    vehicles.push(vehicle);
+                    (trip, id, weight)
+                })
+                .collect();
+            let itin_cars: Vec<(usize, VehicleId)> = std::mem::take(&mut itin_cars)
+                .into_iter()
+                .map(|(i, vehicle)| {
+                    let id = vehicle.id;
+                    vehicles.push(vehicle);
+                    (i, id)
+                })
+                .collect();
             let window = Duration::from_clock(self.window);
             // Buses (S199) ride chained from stop to stop; cars alone have no chains. One loading
             // either way (the same loading as `run_ltm_recorded` and its kin when there are none).
@@ -2392,9 +2408,9 @@ impl Run {
             // Where each vehicle still travelling at the end was (a car's vehicle id is its
             // trip's index, an itinerary car's likewise; buses are not trips).
             let unfinished: HashMap<VehicleId, LinkId> = out.unfinished.into_iter().collect();
-            for (i, vehicle) in &itin_cars {
-                if let Some(&link) = unfinished.get(&vehicle.id) {
-                    at_end.push((pending_itin[*i].trip, link));
+            for &(i, id) in &itin_cars {
+                if let Some(&link) = unfinished.get(&id) {
+                    at_end.push((pending_itin[i].trip, link));
                 }
             }
             for cycle in &out.lock.loops {
@@ -2421,9 +2437,9 @@ impl Run {
                     routes_realised.push((TripId::new(v.raw()), links));
                 }
             }
-            for (i, vehicle) in &itin_cars {
-                pending_itin[*i].vehicle_arrival =
-                    by_vehicle.get(&vehicle.id).map(|t| f64::from(t.arrival().get()));
+            for &(i, id) in &itin_cars {
+                pending_itin[i].vehicle_arrival =
+                    by_vehicle.get(&id).map(|t| f64::from(t.arrival().get()));
             }
             if let (Some(load), Some(transit)) = (&bus_load, &transit) {
                 let id = |i: usize| {
@@ -2432,8 +2448,8 @@ impl Run {
                 bus_times = Some(transit.realised(load, |i| by_vehicle.get(&id(i))));
             }
 
-            for (trip, vehicle, weight) in pending_ltm {
-                match by_vehicle.get(&vehicle.id) {
+            for (trip, id, weight) in pending_ltm {
+                match by_vehicle.get(&id) {
                     Some(trajectory) => {
                         completion.completed += 1;
                         total_travel_time += trajectory.total_travel_time() * f64::from(weight);
@@ -2452,7 +2468,7 @@ impl Run {
                             ElementRef::of(trip),
                         ));
                         events.push(EventRow::trip(self.window, EventType::TripTruncated, trip));
-                        if let Some(&link) = unfinished.get(&vehicle.id) {
+                        if let Some(&link) = unfinished.get(&id) {
                             at_end.push((trip, link));
                         }
                     }
