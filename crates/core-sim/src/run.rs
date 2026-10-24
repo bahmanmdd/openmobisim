@@ -346,8 +346,10 @@ struct Loaded {
     /// Link times by the bin of entry and waits at origins by the bin of departure:
     /// what costs the next iteration's routes (only recorded when there is one).
     entry_bins: Option<EntryTables>,
-    /// The bike and walk layers' per-link results, if asked for.
-    layer_bins: [Option<LinkBins>; 2],
+    /// The bike and walk layers' vehicles and the bin length, if per-link results were asked
+    /// for: binned only for the loading whose results the run keeps ([`Run::layer_bins`]), not
+    /// after every loading (S294).
+    layer_vehicles: Option<(u32, [Vec<Vehicle>; 2])>,
     /// What transit did, if the run has a timetable.
     transit: Option<TransitResult>,
     /// What the parkings did, and their realised availability per parking and bin.
@@ -1879,7 +1881,7 @@ impl Run {
         };
         let trip_outcomes =
             TripOutcomes::of(&loaded.events, &taken, &no_alternative, &loaded.at_end);
-        let [bike_link_bins, walk_link_bins] = loaded.layer_bins;
+        let [bike_link_bins, walk_link_bins] = self.layer_bins(loaded.layer_vehicles);
         let transit = loaded.transit;
         let itinerary_result = match (&itineraries, &chosen) {
             (Some(itin), Some(c)) => Some(ItineraryResult::of(
@@ -2598,9 +2600,35 @@ impl Run {
             transit_result = Some(result);
         }
 
-        // The bike and walk layers' per-link results, from their own vehicles.
+        // The bike and walk layers' vehicles, binned once the run knows which loading it keeps.
+        let layer_vehicles = record_bins.map(|b| (b, layer_vehicles));
+
+        Loaded {
+            total_travel_time,
+            completion,
+            events,
+            link_bins,
+            entry_bins,
+            layer_vehicles,
+            transit: transit_result,
+            parking: parking_result,
+            availability: availability_real,
+            itinerary,
+            gridlock,
+            reroutes,
+            routes_realised,
+            reroute_searches,
+            peak_pcu,
+            at_end,
+        }
+    }
+
+    /// The bike and walk layers' per-link results, from the vehicles a loading kept and the bin
+    /// length (`None`: none asked for): binned for the loading whose results the run keeps
+    /// alone, the same tables as when every loading binned its own (S294).
+    fn layer_bins(&self, vehicles: Option<(u32, [Vec<Vehicle>; 2])>) -> [Option<LinkBins>; 2] {
         let mut layer_bins: [Option<LinkBins>; 2] = [None, None];
-        if let Some(bin_seconds) = record_bins {
+        if let Some((bin_seconds, layer_vehicles)) = vehicles {
             let window = f64::from(self.window.get());
             for (slot, vehicles) in layer_vehicles.iter().enumerate() {
                 let layer =
@@ -2613,25 +2641,7 @@ impl Run {
                 }
             }
         }
-
-        Loaded {
-            total_travel_time,
-            completion,
-            events,
-            link_bins,
-            entry_bins,
-            layer_bins,
-            transit: transit_result,
-            parking: parking_result,
-            availability: availability_real,
-            itinerary,
-            gridlock,
-            reroutes,
-            routes_realised,
-            reroute_searches,
-            peak_pcu,
-            at_end,
-        }
+        layer_bins
     }
 
     /// Decide and make one bike or walk trip: whether its mode can run, whether
