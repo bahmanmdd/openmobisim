@@ -38,7 +38,7 @@ def test_a_default_run_is_a_point_queue_run_that_stops_when_converged():
 
 # The spillback tests leave in five minutes what the others spread over ten: at the classic point
 # queue (S293) a queue grows only on a link fed above its capacity, which over ten minutes this
-# grid's demand is not; before, the headway at nodes queued vehicles on the links upstream.
+# grid's demand is not.
 def test_spillback_links_are_listed_and_none_at_free_flow():
     point = jam("pd-pq", spread_s=300, equilibration="free_flow")
     s = point.report_spillback()

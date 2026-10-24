@@ -128,7 +128,7 @@ def test_a_table_that_states_its_lanes_is_quiet_about_a_small_storage_raise():
     # A benchmark's low free-flow speed (Sioux Falls: 18 km/h, 3 lanes, 5 050 veh/h) puts the
     # wave speed past its bound and raises the storage by a sixth: the diagram closing on the
     # numbers the table gave, so nothing to warn about when the lanes are stated (RC-11). The
-    # same row without lanes fell back to one lane, and warns; a raise past half warns anyway.
+    # same row without lanes falls back to one lane, and warns; a raise past half warns anyway.
     row = {"from": "a", "to": "b", "length": 1000, "free_flow_speed": 18, "capacity": 5050}
     _, quiet = read([{**row, "lanes": 3}])
     assert not [s for s in quiet if "jam density" in s], quiet

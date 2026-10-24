@@ -1,7 +1,7 @@
 """A trip is keyed by ``(traveller_id, trip_seq)``: a repeated key is refused, never dropped (X-68).
 
-Before the fix a second row with the same key was dropped with a warning, so a run simulated fewer
-trips than the demand given and every total was of a smaller demand than the user thought.
+Dropped, a second row with the same key would make a run simulate fewer trips than the demand
+given, and every total would be of a smaller demand than the one given.
 """
 
 from __future__ import annotations

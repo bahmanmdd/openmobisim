@@ -519,13 +519,14 @@ class Run:
           of the mode each kept, less what the choice model itself expects. Part of
           ``convergence_gap`` and of what ``gap_tolerance`` stops on.
 
-        **The full gaps**, measured at every loading over every trip, in the choice model's
-        own currency (``gap_currency``). ``g``, an alternative's **generalised minutes**, is its
-        utility under the choice model (without the path-size term, which only corrects for
-        routes that overlap) divided by the traveller's time coefficient: a minute of travel
-        counts one, a euro ``beta_cost_eur / beta_time_min`` minutes. Nothing stops or judges the
-        run on them (``gap_tolerance``, ``convergence_gap`` and ``convergence_verdict`` read the
-        gaps above); ``nan`` for a run of one loading. ``gap_trips()`` gives each trip's numbers.
+        **The full gaps**, measured over every trip after the last loading (after every loading with
+        ``equilibration_options`` ``gap_every`` 1, else ``nan`` before the last), in the choice
+        model's own currency (``gap_currency``). ``g``, an alternative's **generalised minutes**, is
+        its utility under the choice model (without the path-size term, which only corrects for
+        routes that overlap) divided by the traveller's time coefficient: a minute of travel counts
+        one, a euro ``beta_cost_eur / beta_time_min`` minutes. Nothing stops or judges the run on
+        them (``gap_tolerance``, ``convergence_gap`` and ``convergence_verdict`` read the gaps
+        above); ``nan`` for a run of one loading. ``gap_trips()`` gives each trip's numbers.
 
         * ``gap_route`` — **the full route gap**: over every trip that drove a car route in this
           loading (given the car, or choosing its mode and keeping a car alternative), how much
@@ -538,13 +539,13 @@ class Run:
         * ``gap_route_expected`` — what the choice model itself expects ``gap_route`` to be at
           these costs: the same sum with each trip's expected ``g`` under the model's
           probabilities over the routes it was offered; ``nan`` without probabilities.
-        * ``gap_route_excess`` — ``gap_route − gap_route_expected``: what the model does not
-          explain.
+        * ``gap_route_excess`` — ``gap_route − gap_route_expected``: the deterministic part of
+          the duality gap (the relative duality gap of the route choice less the part the logit's
+          own dispersion produces), what the model does not explain.
         * ``gap_route_network`` — ``gap_route`` against the **whole network**: the best of the
           routes offered or the fastest route a time-dependent search finds for the trip, every
-          trip at every loading (``gap_network`` is a sample at the last). The search looks for
-          the fastest route, not the cheapest in ``g``, so where money weighs this gap can read
-          low.
+          trip (``gap_network``: the trips that finished). The search looks for the fastest
+          route, not the cheapest in ``g``, so where money weighs this gap can read low.
         * ``gap_route_network_excess`` — its disequilibrium: ``gap_route_network`` less what the
           model expects inside the set, so a route the set was missing counts in full.
         * ``gap_mode`` — **the full mode gap**: over every trip choosing its mode (``modes``),
@@ -553,8 +554,9 @@ class Run:
         * ``gap_mode_expected`` — what the choice model expects ``gap_mode`` to be, from its
           probabilities over the whole choice set.
         * ``gap_mode_excess`` — ``gap_mode − gap_mode_expected``.
-        * ``excess_min_route`` — the route gap's excess as minutes per traveller: what the
-          average traveller pays, in ``g``, above what the model expects of them.
+        * ``excess_min_route`` — the deterministic part of the route gap as minutes per
+          traveller: what the average traveller pays, in ``g``, above what the model expects of
+          them.
         * ``excess_min_mode`` — the same over the trips choosing their mode.
         * ``unfinished_cost_share`` — of what the route gap's trips paid (their ``g``, summed),
           the share that trips still under way at the end had still to pay; 0 when every trip
@@ -847,7 +849,8 @@ class Run:
         ``route_choice`` and ``itinerary_choice``, ``partial_loading`` and ``route_update``
         (iteration 0's: the free-flow loading's groups, one row each), ``loading``, then after a
         loading what prepares the next (``route_update``, ``route_choice``,
-        ``itinerary_choice``), ``gap`` (the full gaps of ``convergence()``, after each) and
+        ``itinerary_choice``), ``gap`` (the full gaps of ``convergence()``, after the last, or
+        after each with ``gap_every`` 1) and
         ``network_gap`` after the last. After them:
         ``results_assembled``, ``results_written`` and ``total`` (the run alone). Also in
         ``timings.csv`` next to the other files. Times differ between runs, so they are in no
@@ -1495,8 +1498,7 @@ class Run:
         ``trip_seq``, ``second``, ``link`` (the link at whose downstream end it re-routed),
         ``next_planned`` (the next link of its route until then), ``next_taken`` (of its new
         route) and ``reason`` (``"stuck"``: blocked for ``reroute_after_s``; ``"queue_ahead"``:
-        the queue seen from upstream, at the point queue; other reasons, such as alerts and
-        disruptions, are to come). Its planned route is its route choice
+        the queue seen from upstream, at the point queue). Its planned route is its route choice
         (``route_choices``); what it actually took is in ``route_realised``.
         """
         return Columns(self._summary.route_changes)

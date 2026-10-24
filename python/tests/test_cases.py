@@ -161,8 +161,8 @@ def test_a_check_compares_with_the_reference_and_the_command_line_runs_it(
     )
     assert _cases._compare(got, {**got, "fingerprint": "0" * 16})[0] == "different"
     # The command line: `cases` lists what a folder holds, and says how to point it at one
-    # when it finds nothing (RC-12); a check passes, then fails against a changed reference; a
-    # run prints.
+    # when it finds nothing (RC-12); a check passes, then fails against a changed stored result
+    # summary; a run prints.
     assert main(["cases", "--root", str(made_up)]) == 0
     listed = capsys.readouterr().out
     assert listed.startswith("line") and "double" in listed and "No case found" not in listed
