@@ -16,6 +16,7 @@ from openmobisim.viz._figure import (
     SIZE_CM,
     Page,
     draw_furniture,
+    figure_for_pyplot,
     font_mono_name,
     load_matplotlib,
     save_figure,
@@ -187,4 +188,4 @@ def chart_mode_share(
     )
     if path is not None:
         save_figure(page.fig, path, th.surface)
-    return page.fig
+    return figure_for_pyplot(page.fig)

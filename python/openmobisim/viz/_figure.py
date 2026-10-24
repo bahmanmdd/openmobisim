@@ -12,6 +12,7 @@ ribbon's width in points and its offset in metres always agree.
 from __future__ import annotations
 
 import io
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +24,7 @@ from openmobisim.viz._style import Theme, font_mono, font_sans
 __all__ = [
     "Page",
     "draw_furniture",
+    "figure_for_pyplot",
     "font_mono_name",
     "load_matplotlib",
     "nice_number",
@@ -82,6 +84,32 @@ def figure_class() -> Any:
 
         _FIGURE_CLASS = OpenmobisimFigure
     return _FIGURE_CLASS
+
+
+def figure_for_pyplot(fig: Any) -> Any:
+    """``fig``, handed to pyplot when pyplot can show it, so that ``plt.show()`` shows it.
+
+    That is in a script or a console that has imported pyplot and whose backend shows figures
+    (a window, an IDE's plot pane). A Jupyter kernel shows the figure through ``_repr_png_``
+    instead, and a backend that only writes files (Agg, PDF, SVG …) has nothing to show, so there
+    the figure stays outside pyplot, which then keeps none of them in memory. Called on a
+    finished figure, after any file is saved: nothing in its look changes.
+    """
+    pyplot = sys.modules.get("matplotlib.pyplot")
+    if pyplot is None or _in_jupyter_kernel():
+        return fig
+    from matplotlib.backends import BackendFilter, backend_registry
+
+    if pyplot.get_backend().lower() in backend_registry.list_builtin(BackendFilter.NON_INTERACTIVE):
+        return fig
+    return pyplot.figure(fig)
+
+
+def _in_jupyter_kernel() -> bool:
+    """Whether this runs in a Jupyter kernel (a notebook, a qtconsole), not a terminal."""
+    ipython = sys.modules.get("IPython")
+    shell = ipython.get_ipython() if ipython is not None else None
+    return getattr(shell, "kernel", None) is not None
 
 
 def font_mono_name() -> str:

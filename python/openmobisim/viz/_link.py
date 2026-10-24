@@ -20,6 +20,7 @@ from openmobisim.viz._figure import (
     SIZE_CM,
     Page,
     draw_furniture,
+    figure_for_pyplot,
     load_matplotlib,
     nice_number,
     ramp_rgb,
@@ -498,4 +499,4 @@ def map_link(
     )
     if path is not None:
         save_figure(page.fig, path, th.surface)
-    return page.fig
+    return figure_for_pyplot(page.fig)

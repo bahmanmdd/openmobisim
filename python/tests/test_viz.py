@@ -157,6 +157,35 @@ def test_a_notebook_shows_a_figure_that_ends_a_cell_without_touching_other_figur
     assert not hasattr(Figure(), "_repr_png_"), "a user's own figure is left alone"
 
 
+def test_plt_show_gets_a_figure_only_where_pyplot_can_show_it(monkeypatch):
+    # A backend that shows figures (a window, an IDE's pane) is handed each one once; Agg, which
+    # cannot show, and a Jupyter kernel, which shows it through _repr_png_, leave it outside
+    # pyplot: no figure kept alive, none shown twice.
+    import sys
+    import types
+
+    plt = pytest.importorskip("matplotlib.pyplot")
+    plt.switch_backend("agg")
+    run, _ = toy_run()
+
+    def draw():
+        return viz.map_link(run, size_cm=(20.32, 11.43), dpi=80)
+
+    draw()
+    assert plt.get_fignums() == []
+    monkeypatch.setattr(plt, "get_backend", lambda: "module://a_screen")
+    kernel = types.SimpleNamespace(kernel=object())
+    monkeypatch.setitem(sys.modules, "IPython", types.SimpleNamespace(get_ipython=lambda: kernel))
+    draw()
+    assert plt.get_fignums() == []
+    monkeypatch.delitem(sys.modules, "IPython")
+    fig = draw()
+    try:
+        assert len(plt.get_fignums()) == 1 and plt.gcf() is fig
+    finally:
+        plt.close("all")
+
+
 def test_the_same_run_draws_the_same_picture():
     run, _ = toy_run()
     a = png_bytes(viz.map_link(run, size_cm=(20.32, 11.43), dpi=80))

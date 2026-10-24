@@ -22,6 +22,9 @@ so related ones sort and complete together: ``map_*`` draws on a map,
 
 matplotlib is imported when a figure is drawn, not when this package is, so
 ``import openmobisim.viz`` works without it.
+
+A figure that ends a notebook cell shows there. In a script or an IDE's console, ``plt.show()``
+shows the figures drawn after ``import matplotlib.pyplot as plt``; ``path=`` saves one to a file.
 """
 
 from openmobisim.viz._demand import chart_demand_matrix, map_demand

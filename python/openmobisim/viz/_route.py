@@ -15,7 +15,15 @@ import numpy as np
 from openmobisim import __version__
 from openmobisim.viz import _geometry as geo
 from openmobisim.viz._canvas import Canvas
-from openmobisim.viz._figure import SIZE_CM, Page, draw_furniture, load_matplotlib, rgb, save_figure
+from openmobisim.viz._figure import (
+    SIZE_CM,
+    Page,
+    draw_furniture,
+    figure_for_pyplot,
+    load_matplotlib,
+    rgb,
+    save_figure,
+)
 from openmobisim.viz._provenance import network_source
 from openmobisim.viz._style import Theme, get_theme
 
@@ -213,7 +221,7 @@ def map_route(
     )
     if path is not None:
         save_figure(page.fig, path, th.surface)
-    return page.fig
+    return figure_for_pyplot(page.fig)
 
 
 def _route_path(
