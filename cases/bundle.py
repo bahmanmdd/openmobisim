@@ -40,14 +40,11 @@ from cases import CASES, DATA, raw_path  # noqa: E402
 VERSION = "v1"
 # The benchmarks' prices (S254): none, so money (at its default weight) changes nothing in them.
 NO_PRICES = {"car_eur_km": 0.0}
-# The benchmarks record their link times by 15 minutes (S269): their summaries had no maps and their
-# interactive maps no traffic.
+# The benchmarks record their link times by 15 minutes (S269), so that their summaries and interactive maps show
+# the traffic.
 BENCH_BINS = {"link_bin_s": 900}
-# A city's own scenario settings. None since S256 (no prices by default, every city at the package's, all 0;
-# Amsterdam's fares of S255, GVB's 1.16 EUR a journey plus 0.217 EUR a km, dropped).
-#: A city's own scenario settings over `BASE_CITY_2`. S282: Paris stops at
-#: a gap of 4 %: at the gateway share 0.35 its run stopped after five loadings on the in-set gap, while the verdict's
-#: worst gap ended at 0.0502 ("acceptable"); at 0.04 it takes one more loading (0.045, "good"), about 7 s more.
+#: A city's own scenario settings over `BASE_CITY_2` (S282): Paris stops at a gap of 4 %, so that its run, which stops
+#: on the in-set gap, also ends with the verdict "good".
 CITY_BASE: dict[str, dict] = {"paris": {"equilibration_options": {"gap_tolerance": 0.04}}}
 OUT = DATA / "bundle" / VERSION
 MARGIN_M = 3000.0
@@ -57,7 +54,7 @@ MARGIN_M = 3000.0
 MARGIN_SOUTH_M = {"delft": 300.0}
 
 #: The cities' study areas, by the case's region key; the box a clip keeps is their bounding box, widened.
-# Paris with its ring road since S268 (inside it before: the Portes' junctions were cut off).
+# Paris with its ring road (S268), so that the Portes' junctions are not cut off.
 AREAS = {"delft": "municipality", "amsterdam": "wide", "paris": "with_peripherique", "lyon": "centre"}
 
 
@@ -151,8 +148,7 @@ def services_on(z: zipfile.ZipFile, day: str) -> set[str]:
 
 #: The service a city's timetable keeps (S269): the runs with
 #: a stop time from 05:00 to 12:00. The mornings depart 06:30-09:30 and a journey with transit is offered up to two hours
-#: (`journey_max_s`), so every rider is served; before, the day's buses drove the roads until midnight, in every map's
-#: bins and in every run's loading.
+#: (`journey_max_s`), so every rider is served; the day's later buses stay off the roads of every run.
 SERVICE_WINDOW_S = (5 * 3600, 12 * 3600)
 
 
@@ -388,16 +384,14 @@ FEEDS = {
 FROM_OD_CITY = {"start_s": 7 * 3600, "end_s": 9 * 3600, "profile": "am_peak", "spread_m": 500.0}
 # S265: the second morning recipe (`morning2.py`): 06:30-09:30 with the same bell (16 % of the day's trips in 07:00-09:00,
 # 10 % in 07:30-08:30), each simulated traveller standing for WEIGHT people, the base scenario's per-link results in
-# 15-minute bins (the summary page and the map show the traffic; `openmobisim run` then matches the reference).
-# Trip ends at fixed points per zone (S265): a few locations (at most 4) per zone, permanent for all runs and
-# scenarios, so that travellers between the same zones share their route searches. Two since S267 (much fewer
-# distinct OD pairs: one or two specific locations per zone): 5 % more run time than one.
-# Since S282 the trip ends are the zone's own points (`zone_points.csv`, by residents and workplaces), so
-# `points_per_zone` is gone; `spread_m` still places a zone without points (none in the cities).
+# 15-minute bins (the summary page and the map show the traffic; `openmobisim run` then matches the case's stored
+# result summary). Trip ends at the zone's own points (`zone_points.csv`, by residents and workplaces; S282), the same
+# for all runs and scenarios, so that travellers between the same zones share their route searches; `spread_m` places
+# a zone without points (none in the cities).
 FROM_OD_CITY_2 = {"start_s": 6 * 3600 + 1800, "end_s": 9 * 3600 + 1800, "profile": "am_peak", "spread_m": 500.0}
 WEIGHT = {"delft": 1, "amsterdam": 5, "lyon": 5, "paris": 10}  # Delft, the smallest: every traveller simulated
 # S267: the searches shared by origin and half hour (the route update's search trees, the park-and-ride drives), and
-# the run stopping once its gap is good (5 %, the verdict's threshold) rather than at 2 %.
+# the run stopping once its gap is good (5 %, the verdict's threshold).
 BASE_CITY_2 = {"link_bin_s": 900, "route_update_options": {"tree_step_s": 1800},
                "parking_options": {"reach_car_step_s": 1800}, "equilibration_options": {"gap_tolerance": 0.05}}
 GHSL_LICENCE = ("CC BY 4.0, (c) European Union, 1995-2026 (https://creativecommons.org/licenses/by/4.0/); changed: "
@@ -456,8 +450,7 @@ def pack_city(case: str) -> None:
                              "gdr/inweva/ows, layer ochtendspits_intensiteiten_2025)",
                      "licence": "CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/)"}]
                    if case in ("delft", "amsterdam") else []),
-                 # S282: the French gateways by a share of capacity again; the national TMJA counts wait
-                 # for the gateways' metering (a later version). The share is 0.35, tuned to TomTom.
+                 # S282: the French gateways by a share of capacity, 0.35, tuned to TomTom's congestion.
                  *([{"what": "the motorway gateways' morning flows (demand/gateway_counts.csv), from which the "
                              "through traffic is sized: 0.35 of each carriageway's capacity, an assumption tuned "
                              "so that the morning's congestion stays slightly below TomTom's (the median of "

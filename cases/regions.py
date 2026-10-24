@@ -28,14 +28,14 @@ STOCKHOLM_INNER_CITY = [
     (18.0250, 59.3110), (18.0050, 59.3200),
 ]  # fmt: skip
 
-#: Amsterdam inside the A10 ring road (S195: the multimodal work's city). Drawn by hand
+#: Amsterdam inside the A10 ring road (S195). Drawn by hand
 #: along the ring from the map; approximate. The extract is Geofabrik's Noord-Holland.
 AMSTERDAM_A10 = [
     (4.842, 52.336), (4.842, 52.392), (4.868, 52.404), (4.930, 52.403),
     (4.966, 52.378), (4.957, 52.345), (4.915, 52.335),
 ]  # fmt: skip
 
-#: Paris inside the Boulevard Périphérique (S204: a case study candidate): the
+#: Paris inside the Boulevard Périphérique (S204): the
 #: twenty arrondissements without the two woods, drawn by hand along the ring road from the
 #: map, the Portes in order from Porte Maillot clockwise; approximate.
 PARIS_INSIDE_PERIPHERIQUE = [
@@ -46,9 +46,9 @@ PARIS_INSIDE_PERIPHERIQUE = [
     (2.2750, 48.8730),
 ]
 
-#: Paris with its Boulevard Périphérique and the Portes' junctions (S268): inside, the ring
-#: met the city's streets at 16 on-ramps and 18 off-ramps, since most Portes' junctions lay just
-#: outside and were cut, so routes between places near it never took it. Drawn from the ring itself
+#: Paris with its Boulevard Périphérique and the Portes' junctions (S268): the polygon above leaves
+#: most Portes' junctions just outside, cut, so that the ring meets the city's streets at only 16
+#: on-ramps and 18 off-ramps and routes between places near it never take it. Drawn from the ring itself
 #: (the trunk road within 1 km outside the polygon above): every 6 degrees around Paris's centre, the
 #: ring's farthest point plus 350 m; the woods' edges near the ring come in, the woods do not.
 PARIS_WITH_PERIPHERIQUE = [
@@ -66,7 +66,7 @@ PARIS_WITH_PERIPHERIQUE = [
     (2.4059, 48.8273), (2.4148, 48.8318), (2.4185, 48.8381), (2.4194, 48.8450), (2.4204, 48.8516),
 ]  # fmt: skip
 
-#: Lyon and Villeurbanne (S204: a case study candidate): the Presqu'île, Part-Dieu,
+#: Lyon and Villeurbanne (S204): the Presqu'île, Part-Dieu,
 #: the Croix-Rousse, Confluence, the 7th and 8th arrondissements and Villeurbanne, as a box.
 LYON_CENTRE = (4.772, 45.707, 4.923, 45.808)
 

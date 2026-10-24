@@ -2,11 +2,9 @@
 
     python morning2.py paris [--model radiation|gravity] [--weight W] [--out DIR]
 
-**Why**: the first recipe tuned its totals for "mild congestion" with every
-trip a car; with mode choice only 9-47 % drive, and the starter cases' mornings were uncongested (travel-time index
-1.001-1.009). This recipe takes its totals from the cities' travel
-surveys and its geography from open grids, and adds what enters from outside: cars at the roads that cross the study
-area's edge, transit riders at its rail stations, through traffic, and goods vehicles.
+**Why**: with mode choice, a morning's totals cannot assume that every trip is a car. This recipe takes its totals from
+the cities' travel surveys and its geography from open grids, and adds what enters from outside: cars at the roads that
+cross the study area's edge, transit riders at its rail stations, through traffic, and goods vehicles.
 
 **Synthetic, not a forecast**: for starter cases and benchmarks. Every number below is from a source (with its URL) or
 stated as an assumption.
@@ -23,12 +21,12 @@ stated as an assumption.
    Metz's 7:30-8:30 alone holds 10 %, EDGT, https://www.aguram.org/wp-content/uploads/2019/07/Amplitude_horaire_PDU_document_CommissionMobilite.pdf).
    **Productions** are residents; **attractions** 60 % non-residential volume (work and study) and 40 % residents
    (shops, schools, escorting) — *an assumption* (the morning peak's trips are mostly to work and study). Trips within
-   a zone (mostly walks under a kilometre) are kept (an earlier version left them out), between the zone's points.
+   a zone (mostly walks under a kilometre) are kept, between the zone's points.
    **2b. Zone points**: each 1 km zone is split into `SPLIT` × `SPLIT` blocks (500 m); a block with
    residents or non-residential volume is a point (the volume-weighted mean of its GHSL cells) with its residents as
    the origin weight and the attraction rule's share (60 % volume, 40 % residents) as the destination weight, written
    to `zone_points.csv`, so a trip starts where people live and ends where they work, never at a zone's centre beside
-   a motorway, and no single point stands for a zone's hundreds of trips (as found on Delft).
+   a motorway, and no single point stands for a zone's hundreds of trips.
 4. **Distribution**: the **radiation model** (Simini, González, Maritan, Barabási 2012, *Nature* 484, 96-100,
    https://doi.org/10.1038/nature10856), parameter-free, normalised for a finite area (Masucci, Serras, Johansson,
    Batty 2013, *Phys. Rev. E* 88, 022812, https://doi.org/10.1103/PhysRevE.88.022812), then balanced to the attractions
@@ -52,7 +50,7 @@ stated as an assumption.
    road the national file does not hold (the declassified M6, M7 and Laurent Bonnevay in Lyon, the Périphérique in
    Paris) takes the median share of capacity of the city's counted gateways (*an assumption*); its through
    traffic is the count less its exchange cars. The counts go with the demand as `gateway_counts.csv`. *The French
-   cities use the Dutch ratio again* (`TRANSFER_RATIO`; the TMJA kept, switched off, for a later version).
+   cities use the Dutch ratio* (`TRANSFER_RATIO`); the TMJA reading is the option `counts` "tmja".
 6. **Weight**: each simulated traveller stands for `weight` people (the case's `demand.weight`), so a run's totals are
    the whole morning's and its time a sample's.
 """
@@ -102,17 +100,11 @@ THROUGH = 0.3  # the default share; a city may give its own (`through`)
 SHARE_07_09 = 0.929
 #: Motorway and trunk gateways take their flows from counts (S268, step 5b).
 COUNTED = {"motorway", "trunk"}
-#: Where a city has no open counts here (`counts` "transfer", used S268-S281 for Lyon and Paris): a motorway or trunk
-#: carriageway at a gateway carries this share of its own capacity in 07:00-09:00 on average: the median of
-#: Amsterdam's 11 counted gateways (0.29-1.14), a large city's ring and radials like Lyon's and Paris's (S268;
-#: `morning.json`, `counted_gateways`). Delft's 8 (0.63-0.88) are busy intercity corridors; the median of all 19 (0.66)
-#: put Lyon's 07-09 travel-time index at 2.13 and Paris's at 2.16 against TomTom's 1.80 and 1.66, Amsterdam's put them
-#: at 1.85 and 1.78. *An assumption*: Dutch urban motorways for a French city's. The French cities take it again since
-#: S282 (`counts` "transfer"): their TMJA (below) brought 42 % (Paris) and 20 % (Lyon) more through
-#: traffic, queuing at the first interchanges inside; it waits for the gateways' metering (a later version).
-#: S282: 0.35, *a tuned assumption*. At 0.45 Lyon's and Paris's 07:00-09:00 index were 1.86 and 1.75,
-#: 3 % and 5 % above TomTom's 1.80 and 1.66, against the rule of slightly below (S266); at 0.35 they are 1.76 and
-#: 1.54. To be replaced in a later version.
+#: Where a city has no open counts here (`counts` "transfer": Lyon and Paris): a motorway or trunk carriageway at a
+#: gateway carries this share of its own capacity in 07:00-09:00 on average. *A tuned assumption* (S282): Dutch urban
+#: motorways for a French city's (Amsterdam's 11 counted gateways carry 0.29-1.14; `morning.json`,
+#: `counted_gateways`), set so that Lyon's and Paris's 07:00-09:00 travel-time index stays slightly below TomTom's
+#: (S266).
 TRANSFER_RATIO = 0.35
 INWEVA = ("Rijkswaterstaat, INWEVA 2025, morning peak (ochtendspits_intensiteiten_2025): mean workday vehicles per "
           "carriageway in the morning peak, all vehicles (al_os_wr), CC0 1.0, "
@@ -136,11 +128,9 @@ PEAK_SHARE_OF_DAY = 0.137
 TMJA_MATCH_M = 100.0
 ATTRACT_NRES = 0.6
 CELL_M = 1000.0
-#: Zone points (S282): a zone's side is split into this many blocks, each with buildings a point. 2 (500 m blocks, at
-#: most four points a zone): 4 (250 m, up to sixteen) placed the trips more finely but doubled Amsterdam's run (27.6 s
-#: with two fixed points a zone, 64.1 s with sixteen, 46.4 s with four; the mode shares the same to 0.1 point), the
-#: route update and the itinerary choice growing with the distinct trip ends (the rule of S220: measured, and the
-#: cheaper form taken).
+#: Zone points (S282): a zone's side is split into this many blocks, each with buildings a point. 2: 500 m blocks, at
+#: most four points a zone. Finer blocks place the trips more finely at a higher run time, the route update and the
+#: itinerary choice growing with the distinct trip ends, for the same mode shares (S220).
 SPLIT = 2
 MIN_NODES = 5
 LAT_M = 110_574.0
@@ -158,11 +148,8 @@ CITY = {
         # Utility vehicles 18 % of Paris's traffic, taxis 5 %: Plan local de mobilité, diagnostic (2024), part 1,
         # https://cdn.paris.fr/paris/2024/03/29/partie-1-diagnostic-vf-web-qwWQ.pdf
         goods_share=0.18, taxi_share=0.05,
-        # S268: the study area holds the Périphérique (the Portes' junctions were cut off before, when through
-        # traffic was 0 here); its motorway gateways' flows by the Dutch ratio, the rest the default share.
-        # S282: the Dutch ratio again; "tmja" (the national counts) brought 42 % more through traffic,
-        # queuing at the first interchanges inside, and waits for the gateways' metering (a later version).
-        # The share is 0.35 (TRANSFER_RATIO).
+        # S268: the study area holds the Périphérique; its motorway gateways' flows by the Dutch ratio (0.35,
+        # TRANSFER_RATIO; S282), the rest the default share.
         counts="transfer",
         # The window's share of the day: 12 % (S265: capped at 12 %; *an assumption*: no
         # Paris figure was found; Metz's 07:30-08:30 alone holds 10 %). Paris's trips inside the city include many
@@ -185,7 +172,7 @@ CITY = {
         # assumption*: 3.0 km).
         mean_km=3.0,
         model="gravity",
-        counts="transfer",  # S282: a share of capacity, 0.35; "tmja" waits for a later version
+        counts="transfer",  # S282: a share of capacity, 0.35 (TRANSFER_RATIO)
     ),
     "delft": dict(
         # The Dutch travel survey (ODiN 2023, CBS): 2.718 trips a person a day (6 and over) over all days,
@@ -754,7 +741,7 @@ def main() -> None:
         return {"mean_km_all": float((t * d).sum() / t.sum()), "within_zone_share": within / float(t.sum()),
                 "share_under_3km": float(t[d < 3].sum() / t.sum())}
     rad_stats, grav_stats = stats(rad), stats(grav)
-    chosen = (rad if model == "radiation" else grav).copy()  # trips within a zone kept (S282; left out before)
+    chosen = (rad if model == "radiation" else grav).copy()  # trips within a zone kept (S282)
     # From outside.
     exchange = cfg["exchange_daily"] * window_share
     cars = exchange * cfg["exchange_car"] * CAR_FACTOR / OCCUPANCY
@@ -796,7 +783,7 @@ def main() -> None:
         return got, left
     # Exchange cars by gateway capacity (metered); through traffic per gateway (S268): a motorway or trunk gateway's
     # count less its exchange cars (the count holds both), from INWEVA where it has one, else the Dutch ratio where the
-    # city has no counts (`counts` "transfer"); any other gateway the share `through` of its exchange, as before.
+    # city has no counts (`counts` "transfer"); any other gateway the share `through` of its exchange.
     in_ex, in_left = meter([g[3] for _, g in gin], cars * INBOUND)
     out_ex, out_left = meter([g[3] for _, g in gout], cars * (1 - INBOUND))
     counted = inweva_counts(case, net, gin + gout) if cfg.get("counts") == "inweva" else {}
