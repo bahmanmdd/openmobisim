@@ -20,8 +20,9 @@ def build_info() -> dict[str, object]:
         A dict with keys ``version`` (str), ``git_sha`` (str: the 12 hex digits of the
         commit the build is from, or ``"unknown"`` without a repository), ``code_version`` (int),
         ``defaults_version`` (int: the defaults table's), ``network_format_version`` (int: the
-        network cache file's layout), ``rng_scheme_version`` (int), ``parallel`` (bool),
-        ``target`` (str) and ``profile`` (str). These are the fields a bug report should quote.
+        layout of the network and parkings cache files), ``rng_scheme_version`` (int),
+        ``parallel`` (bool), ``target`` (str) and ``profile`` (str). These are the fields a bug
+        report should quote.
     """
 
 def fixed_order_sum_f64(values: list[float]) -> float:
@@ -614,6 +615,10 @@ class Parkings:
 
     #: How many parkings.
     count: int
+    #: How long reading these parkings took, in seconds: from an extract
+    #: (:func:`parking_read_osm`) or from a cache file (:func:`parking_read_cache`); ``None``
+    #: for parkings from a table or the toy network's.
+    read_s: float | None
     def by_vehicle(self) -> dict[str, tuple[int, int]]:
         """Parkings and spaces by vehicle: ``{"car": (parkings, spaces), "bike": ...}``."""
     def rows(self) -> dict[str, Any]:
@@ -646,6 +651,62 @@ def parking_read_osm(
 
     Raises:
         ValueError: If the file cannot be read or the region is not valid.
+    """
+
+def parking_write_cache(parkings: Parkings, path: str | os.PathLike[str], source: str = "") -> None:
+    """Write parkings to a cache file, read back by ``parking_read_cache``.
+
+    The file holds the parkings as read, with the report of the read that found them, and
+    :func:`parking_read_cache` reads them back as the same parkings, bit for bit (the same
+    fingerprint, the same results), in a fraction of the time reading them from an extract
+    takes. A starter case's parkings are cached this way by themselves (``Case.parkings()``).
+
+    The file is valid for this build of openmobisim only: another version, or another build of
+    this one, refuses it, and the parkings are then read again. It is a cache, not a way to keep
+    or share parkings: keep their source (an extract, a table). It is written beside its final
+    name and then renamed, so a reader never sees half of it.
+
+    Args:
+        parkings: The parkings.
+        path: The file to write.
+        source: What the parkings were made from (a checksum of the extract and the reading
+            options, say), kept in the file for :func:`parking_read_cache` to compare.
+
+    Raises:
+        OSError: If the file cannot be written.
+    """
+
+def parking_read_cache(path: str | os.PathLike[str], source: str | None = None) -> Parkings:
+    """Read parkings ``parking_write_cache`` wrote: the same parkings, bit for bit.
+
+    With the report of the read that found them. Their ``read_s`` is the time this read took.
+
+    Args:
+        path: The file.
+        source: If given, what the file must have been written with (``parking_write_cache``'s
+            ``source``), so that parkings made from other data are never taken for these.
+
+    Returns:
+        The :class:`Parkings`.
+
+    Raises:
+        ValueError: For a file that is not a parkings cache, is damaged, was written by another
+            version or build of openmobisim, or from another ``source``.
+        OSError: If the file cannot be read.
+    """
+
+def parking_cache_header(path: str | os.PathLike[str]) -> dict[str, object]:
+    """The header of a parkings cache file, from its first bytes, the rest not read or checked.
+
+    Returns:
+        ``format_version``, ``code_version``, ``defaults_version`` (int), ``version``,
+        ``build``, ``source`` (str), ``made_s`` (float: how long reading the parkings took when
+        they were written; NaN if not known) and ``current`` (bool: whether this build reads the
+        file).
+
+    Raises:
+        ValueError: For a file that is not a parkings cache of this format.
+        OSError: If the file cannot be read.
     """
 
 def _parking_from_rows(

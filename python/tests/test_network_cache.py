@@ -1,12 +1,14 @@
-"""The network cache (S294, I-as): what is written is read back the same, and runs the same.
+"""The network and parkings cache (S294, I-as): what is written is read back, and runs, the same.
 
 A network written and read back is the same network, bit for bit, and a run on it has the same
 fingerprint and the same results; a case reads its network from the cache after the first import,
 imports again when the file is not its own, and caches nothing with
-``OPENMOBISIM_NO_NETWORK_CACHE=1``.
+``OPENMOBISIM_NO_NETWORK_CACHE=1``. Parkings the same way: written and read back the same, a run
+with them the same, a case's read from its extract once and then from the cache.
 
-The logic runs everywhere on the toy network, a grid and a case made up here; with the bundle at
-hand (``OPENMOBISIM_DATA`` or ``OPENMOBISIM_TEST_BUNDLE``), on Delft as well.
+The logic runs everywhere on the toy network, a grid and cases made up here; with an extract at
+hand (``OPENMOBISIM_TEST_PBF``), on its parkings; with the bundle (``OPENMOBISIM_DATA`` or
+``OPENMOBISIM_TEST_BUNDLE``), on Delft as well.
 """
 
 from __future__ import annotations
@@ -300,3 +302,271 @@ def test_delft_s_network_comes_back_the_same_and_runs_the_same(
         for name, net in (("import", imported), ("cache", back))
     ]
     assert_same_run(*runs)
+
+
+# --- parkings ------------------------------------------------------------------------------------
+
+
+def assert_same_columns(a: dict, b: dict) -> None:
+    """Two tables of columns, the same names in the same order and every value bit for bit."""
+    assert list(a) == list(b)
+    for column in a:
+        x, y = a[column], b[column]
+        if isinstance(x, np.ndarray):
+            assert same_bytes(x, y), column
+        else:
+            # A list of strings, or of floats and None (a float compared by its bits).
+            bits = [v if not isinstance(v, float) else np.float64(v).tobytes() for v in x]
+            assert bits == [v if not isinstance(v, float) else np.float64(v).tobytes() for v in y]
+
+
+def assert_same_parkings(a: ms.Parkings, b: ms.Parkings) -> None:
+    """Every column, count and report of two sets of parkings."""
+    assert (a.count, repr(a), a.by_vehicle(), a.read_report()) == (
+        b.count,
+        repr(b),
+        b.by_vehicle(),
+        b.read_report(),
+    )
+    assert_same_columns(a.rows(), b.rows())
+
+
+def parkings_round_trip(parkings: ms.Parkings, path: Path) -> ms.Parkings:
+    ms.parking_write_cache(parkings, path)
+    back = ms.parking_read_cache(path)
+    assert back.read_s is not None and back.read_s >= 0.0
+    assert_same_parkings(parkings, back)
+    return back
+
+
+def park_and_ride(parkings: ms.Parkings, run_id: str) -> ms.Run:
+    """Seven cars for the toy network's six-space hub and three bikes, then the tram."""
+    toy = ms.examples.toy_network()
+    w, s, n1 = toy.node_lonlat("W"), toy.node_lonlat("S"), toy.node_lonlat("N1")
+    rows = [(f"c{i}", 0, *w, *n1, 60 * i, "everyone", None, "car_transit") for i in range(7)]
+    rows += [(f"b{i}", 0, *s, *n1, 60 * i, "everyone", None, "bike_transit") for i in range(3)]
+    return ms.Scenario.from_parts(
+        network=toy,
+        demand=rows,
+        classes={"everyone": (True, True, False)},
+        transit=ms.examples.toy_network_transit(),
+        parkings=parkings,
+        link_bin_s=300,
+    ).run(run_id=run_id, quiet=True)
+
+
+def test_the_toy_network_s_parkings_come_back_the_same_and_run_the_same(tmp_path: Path) -> None:
+    parkings = ms.examples.toy_network_parkings()
+    assert parkings.read_s is None
+    back = parkings_round_trip(parkings, tmp_path / "toy.parkings")
+    a, b = park_and_ride(parkings, "parkings-given"), park_and_ride(back, "parkings-cached")
+    assert_same_run(a, b)
+    assert a.parking_summary == b.parking_summary
+    assert a.parking_summary["car_arrivals"] == 7
+    for part in ("parking_bins", "parking_places", "itinerary_choices"):
+        assert_same_columns(getattr(a, part)(), getattr(b, part)())
+
+
+def test_a_table_s_parkings_come_back_with_every_field(tmp_path: Path) -> None:
+    parkings = ms.parking_read_table([
+        {"parking_id": "a", "lon": 4.9, "lat": 52.37, "vehicle": "car", "capacity": 400,
+         "name": "P+R Zuid — Station", "fee_eur": 2.5, "initial_occupancy": 12},
+        {"parking_id": "b", "lon": 4.91, "lat": 52.371, "vehicle": "bike", "capacity": 80,
+         "hub_id": "st", "fee_eur": 0.0},
+        {"parking_id": "c", "lon": -0.0, "lat": -33.9, "vehicle": "bike", "capacity": 0},
+    ])  # fmt: skip
+    back = parkings_round_trip(parkings, tmp_path / "table.parkings")
+    assert back.rows()["name"] == ["P+R Zuid — Station", None, None]
+    assert back.rows()["fee_eur"] == [2.5, 0.0, None]
+    assert np.signbit(back.rows()["lon"][2])
+
+
+@pytest.mark.skipif(
+    not os.environ.get("OPENMOBISIM_TEST_PBF"), reason="set OPENMOBISIM_TEST_PBF to a real extract"
+)
+def test_an_extract_s_parkings_come_back_with_their_report(tmp_path: Path) -> None:
+    parkings = ms.parking_read_osm(os.environ["OPENMOBISIM_TEST_PBF"])
+    assert parkings.read_s > 0.0 and parkings.read_report() is not None
+    back = parkings_round_trip(parkings, tmp_path / "extract.parkings")
+    assert _core.parking_cache_header(tmp_path / "extract.parkings")["made_s"] == parkings.read_s
+    assert back.read_s < parkings.read_s
+
+
+def test_a_parkings_file_names_what_is_wrong_and_is_never_read_as_a_network(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "toy.parkings"
+    ms.parking_write_cache(ms.examples.toy_network_parkings(), path, source="made from these")
+    header = _core.parking_cache_header(path)
+    assert header["source"] == "made from these" and header["current"]
+    assert np.isnan(header["made_s"])
+    ms.parking_read_cache(path, source="made from these")
+    with pytest.raises(ValueError, match="parkings made from another source"):
+        ms.parking_read_cache(path, source="made from others")
+    # A network file is not parkings, and parkings are not a network.
+    network = tmp_path / "toy.network"
+    ms.network_write_cache(ms.examples.toy_network(), network)
+    with pytest.raises(ValueError, match="not a parkings file"):
+        ms.parking_read_cache(network)
+    with pytest.raises(ValueError, match="not a parkings file"):
+        _core.parking_cache_header(network)
+    with pytest.raises(ValueError, match="not a network file"):
+        ms.network_read_cache(path)
+    with pytest.raises(ValueError, match="not a network file"):
+        _core.network_cache_header(path)
+    data = bytearray(path.read_bytes())
+    data[len(data) // 2] ^= 1
+    path.write_bytes(bytes(data))
+    with pytest.raises(ValueError, match="damaged"):
+        ms.parking_read_cache(path)
+    with pytest.raises(OSError):
+        ms.parking_read_cache(tmp_path / "missing.parkings")
+
+
+# --- a case's parkings ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def park(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """A case ``park`` with an extract and parkings, its manifest, a cache of its own.
+
+    Reading its parkings from the extract is a table's read here, and each read is counted: the
+    list returned gets the extract's path at each.
+    """
+    folder = tmp_path / "bundle" / "park"
+    folder.mkdir(parents=True)
+    (folder / "network.osm.pbf").write_bytes(b"the extract's bytes")
+    (folder / "case.json").write_text(json.dumps({
+        "case": "park", "title": "Parkings", "kind": "osm",
+        "network": {"pbf": "network.osm.pbf", "region": [4.89, 52.36, 4.93, 52.38]},
+        "transit": None, "parkings": True, "demand": {}, "scenarios": {"base": {}},
+    }))  # fmt: skip
+    files = {
+        p.relative_to(folder).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted(folder.rglob("*"))
+        if p.is_file()
+    }
+    manifest = tmp_path / "bundle_v1.json"
+    manifest.write_text(json.dumps({"bundle": "v1", "cases": {"park": {
+        "archive": {"name": "park.zip", "sha256": "0" * 64, "bytes": 0},
+        "files": files}}}))  # fmt: skip
+    monkeypatch.setattr(_cases, "_MANIFEST", manifest)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.delenv(_network_cache.NO_CACHE_VARIABLE, raising=False)
+    monkeypatch.delenv("OPENMOBISIM_DATA", raising=False)
+    reads: list[str] = []
+
+    def read(path: str, region: object = None) -> ms.Parkings:
+        reads.append(path)
+        west, south, east, north = region
+        return ms.parking_read_table([
+            {"parking_id": "p", "lon": west, "lat": south, "vehicle": "car", "capacity": 50},
+            {"parking_id": "q", "lon": east, "lat": north, "vehicle": "bike", "capacity": 9},
+        ])  # fmt: skip
+
+    monkeypatch.setattr(_core, "parking_read_osm", read)
+    return reads
+
+
+def parkings_files(tmp_path: Path) -> list[Path]:
+    return sorted((tmp_path / "cache" / "openmobisim" / "parkings" / "park").glob("*.parkings"))
+
+
+def test_a_case_reads_its_parkings_once_then_from_the_cache(
+    park: list[str], tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    case = ms.examples.case("park", root=tmp_path / "bundle")
+    with caplog.at_level(logging.INFO, logger="openmobisim"):
+        first = case.parkings()
+    assert "parkings read from the extract" in caplog.text
+    assert "cached for the next time" in caplog.text
+    (path,) = parkings_files(tmp_path)
+    assert len(park) == 1 and park[0].endswith("network.osm.pbf")
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="openmobisim"):
+        again = ms.examples.case("park", root=tmp_path / "bundle").parkings()
+    assert "parkings read from the cache" in caplog.text and str(path) in caplog.text
+    assert len(park) == 1, "not read from the extract again"
+    assert_same_parkings(first, again)
+    # The network's cache is another folder: nothing of the parkings in it.
+    assert not (tmp_path / "cache" / "openmobisim" / "networks").exists()
+
+
+def test_a_case_s_parkings_file_of_other_data_another_build_or_damaged_is_read_again(
+    park: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = ms.examples.case("park", root=tmp_path / "bundle")
+    case.parkings()
+    (path,) = parkings_files(tmp_path)
+    # The same name, another source in its header (other data, another state of the code).
+    ms.parking_write_cache(case.parkings(), path, source="another source")
+    case.parkings()
+    assert len(park) == 2 and _core.parking_cache_header(path)["source"] != "another source"
+    path.write_bytes(path.read_bytes()[:-5])  # cut short
+    assert case.parkings().count == 2 and len(park) == 3
+    ms.parking_read_cache(path)  # written anew, whole
+    real = _core.parking_cache_header
+    # What the header says of a file of another version or build of openmobisim.
+    monkeypatch.setattr(_core, "parking_cache_header", lambda p: {**real(p), "current": False})
+    case.parkings()
+    assert len(park) == 4
+    monkeypatch.setattr(_core, "parking_cache_header", real)
+    # Another region is other reading options: another file, the old one kept among the last three.
+    info = json.loads(case.path("case.json").read_text())
+    info["network"]["region"] = [4.88, 52.35, 4.93, 52.38]
+    case.path("case.json").write_text(json.dumps(info))
+    moved = ms.examples.case("park", root=tmp_path / "bundle", check=False).parkings()
+    assert len(parkings_files(tmp_path)) == 2 and len(park) == 5
+    assert moved.rows()["lon"][0] == 4.88
+
+
+def test_the_variable_turns_the_parkings_cache_off_too(
+    park: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(_network_cache.NO_CACHE_VARIABLE, "1")
+    case = ms.examples.case("park", root=tmp_path / "bundle")
+    case.parkings()
+    case.parkings()
+    assert parkings_files(tmp_path) == [] and len(park) == 2
+    monkeypatch.setenv(_network_cache.NO_CACHE_VARIABLE, "0")  # "0" is on
+    case.parkings()
+    case.parkings()
+    assert len(parkings_files(tmp_path)) == 1 and len(park) == 3
+
+
+@pytest.mark.skipif(BUNDLE is None, reason="set OPENMOBISIM_DATA to the bundle's folder")
+def test_delft_s_parkings_come_back_the_same_and_run_the_same(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.delenv(_network_cache.NO_CACHE_VARIABLE, raising=False)
+    case = ms.examples.case("delft", root=BUNDLE)
+    read = case.parkings()  # from the extract, then written
+    cached = ms.examples.case("delft", root=BUNDLE).parkings()  # from the cache
+    assert read.read_report() is not None and cached.read_s < read.read_s
+    assert_same_parkings(read, cached)
+    # A small morning on both: park-and-ride and bike-and-ride between the case's zones.
+    network = case.network()
+    transit = case.transit(network)
+    zones = list(case.zones().values())
+    rows = []
+    for i in range(80):
+        o, d = zones[i % len(zones)], zones[(7 * i + 3) % len(zones)]
+        mode = ("car_transit", "bike_transit")[i % 2]
+        rows.append((f"t{i}", 0, *o, *d, 8 * 3600 + 15 * i, "everyone", None, mode))
+    runs = [
+        ms.Scenario.from_parts(
+            network=network,
+            demand=rows,
+            classes={"everyone": (True, True, False)},
+            transit=transit,
+            parkings=parkings,
+            link_bin_s=900,
+        ).run(run_id=f"delft-parkings-{name}", quiet=True)
+        for name, parkings in (("read", read), ("cached", cached))
+    ]
+    assert_same_run(*runs)
+    assert runs[0].parking_summary == runs[1].parking_summary
+    assert runs[0].parking_summary["car_arrivals"] > 0 < runs[0].parking_summary["bike_arrivals"]
+    for part in ("parking_bins", "parking_places", "itinerary_choices"):
+        assert_same_columns(getattr(runs[0], part)(), getattr(runs[1], part)())

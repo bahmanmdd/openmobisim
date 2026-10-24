@@ -1,6 +1,8 @@
 //! Parkings for Python: reading them from OpenStreetMap or a table,
 //! the toy network's, and what a run's parkings and itineraries did.
 
+use std::time::Instant;
+
 use numpy::IntoPyArray;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -17,6 +19,9 @@ use openmobisim_io_osm::{ParkingReadOptions, ParkingReadReport, PbfSource, read_
 
 use crate::network::parse_region;
 
+mod cache;
+pub use cache::{parking_cache_header, parking_read_cache, parking_write_cache};
+
 /// A scenario's parkings: park-and-ride car parks and bike parkings, each with
 /// a place, a vehicle (``"car"`` or ``"bike"``) and a capacity.
 ///
@@ -27,6 +32,8 @@ use crate::network::parse_region;
 pub struct PyParkings {
     pub(crate) rows: Vec<ParkingRow>,
     report: Option<ParkingReadReport>,
+    /// How long reading them took, in seconds: from an extract or a cache file (S294, I-as).
+    read_s: Option<f64>,
 }
 
 #[pymethods]
@@ -35,6 +42,14 @@ impl PyParkings {
     #[getter]
     fn count(&self) -> usize {
         self.rows.len()
+    }
+
+    /// How long reading these parkings took, in seconds: from an extract
+    /// (``parking_read_osm``) or from a cache file (``parking_read_cache``); ``None`` for
+    /// parkings from a table or the toy network's.
+    #[getter]
+    fn read_s(&self) -> Option<f64> {
+        self.read_s
     }
 
     /// Parkings and spaces by vehicle: ``{"car": (parkings, spaces), "bike": …}``.
@@ -144,6 +159,7 @@ pub fn parking_read_osm(
             )));
         }
     }
+    let started = Instant::now();
     let region = region.map(parse_region).transpose()?;
     let options = ParkingReadOptions {
         merge_m,
@@ -155,7 +171,7 @@ pub fn parking_read_osm(
     let source = PbfSource::new(path);
     let (rows, report) = read_parkings(&source, region.as_ref(), options)
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    Ok(PyParkings { rows, report: Some(report) })
+    Ok(PyParkings { rows, report: Some(report), read_s: Some(started.elapsed().as_secs_f64()) })
 }
 
 /// One row of a parking table: ``(parking_id, lon, lat, vehicle, capacity, name,
@@ -206,7 +222,7 @@ pub fn parking_from_rows(rows: Vec<Row>) -> PyResult<PyParkings> {
             fee_eur,
         });
     }
-    Ok(PyParkings { rows: out, report: None })
+    Ok(PyParkings { rows: out, report: None, read_s: None })
 }
 
 /// The toy network's parkings: hub ``H`` at ``D2`` with 6 car and 3 bike
@@ -215,7 +231,11 @@ pub fn parking_from_rows(rows: Vec<Row>) -> PyResult<PyParkings> {
 /// bike-and-ride cases.
 #[pyfunction]
 pub fn toy_network_parkings() -> PyParkings {
-    PyParkings { rows: openmobisim_core_graph::examples::toy_network_parkings(), report: None }
+    PyParkings {
+        rows: openmobisim_core_graph::examples::toy_network_parkings(),
+        report: None,
+        read_s: None,
+    }
 }
 
 /// How full each parking was, bin by bin: what `Run.parking_bins` returns.

@@ -34,6 +34,7 @@ use openmobisim_core_types::{
     time::{Second, StepGrid},
 };
 
+mod cache_file;
 mod choice;
 mod network;
 mod parking;
@@ -45,7 +46,10 @@ use network::{
     network_from_columns, network_options, network_read_cache, network_read_osm,
     network_with_layer, network_write_cache, toy_network,
 };
-use parking::{PyParkings, parking_from_rows, parking_read_osm, toy_network_parkings};
+use parking::{
+    PyParkings, parking_cache_header, parking_from_rows, parking_read_cache, parking_read_osm,
+    parking_write_cache, toy_network_parkings,
+};
 use pipeline::{PyLinkBins, PyRunSummary, run_pipeline};
 use routes::{PyRouteSets, route_methods, route_sets_build};
 use transit::{PyTransit, toy_network_transit, transit_edit, transit_read_gtfs};
@@ -61,7 +65,7 @@ use transit::{PyTransit, toy_network_transit, transit_edit, transit_read_gtfs};
 /// | `git_sha` | The git commit the build is from: 12 hex digits, or `unknown` without a repository |
 /// | `code_version` | Artifact layout and build-semantics version |
 /// | `defaults_version` | The defaults table's version (`DEFAULTS_VERSION`) |
-/// | `network_format_version` | The network cache file's layout version |
+/// | `network_format_version` | The layout version of the network and parkings cache files |
 /// | `rng_scheme_version` | Seed-derivation scheme version |
 /// | `parallel` | Whether this build reduces in parallel |
 /// | `target` | The platform triple the wheel was built for |
@@ -170,6 +174,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(transit_read_gtfs, m)?)?;
     m.add_function(wrap_pyfunction!(transit_edit, m)?)?;
     m.add_function(wrap_pyfunction!(parking_read_osm, m)?)?;
+    m.add_function(wrap_pyfunction!(parking_write_cache, m)?)?;
+    m.add_function(wrap_pyfunction!(parking_read_cache, m)?)?;
+    m.add_function(wrap_pyfunction!(parking_cache_header, m)?)?;
     m.add_function(wrap_pyfunction!(parking_from_rows, m)?)?;
     m.add_function(wrap_pyfunction!(toy_network_parkings, m)?)?;
     m.add_function(wrap_pyfunction!(toy_network_transit, m)?)?;

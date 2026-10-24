@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from openmobisim import _core
 from openmobisim._log import logger
-from openmobisim._network_cache import network_cached
+from openmobisim._network_cache import network_cached, parkings_cached
 
 if TYPE_CHECKING:
     from openmobisim.scenario import Scenario
@@ -183,10 +183,26 @@ class Case:
         )
 
     def parkings(self) -> _core.Parkings | None:
-        """The parkings of the study area, from OpenStreetMap."""
+        """The parkings of the study area, from OpenStreetMap.
+
+        Read from the case's extract the first time they are asked for, and from then on from a
+        cache of the parkings read (``~/.cache/openmobisim/parkings/<case>/``): the same
+        parkings, bit for bit, in a fraction of the time. ``OPENMOBISIM_NO_NETWORK_CACHE=1``
+        reads them from the extract every time.
+        """
         n = self.info["network"]
         if not self.info.get("parkings") or "pbf" not in n:
             return None
+        made_from = {
+            "case": self.name,
+            "parkings": {"pbf": n["pbf"], "region": n["region"]},
+            "files": {n["pbf"]: self._digest(n["pbf"])},
+        }
+        return parkings_cached(self.name, made_from, self._parkings_read)
+
+    def _parkings_read(self) -> _core.Parkings:
+        """The parkings, read from the case's extract."""
+        n = self.info["network"]
         return _core.parking_read_osm(str(self.path(n["pbf"])), region=_region(n["region"]))
 
     def zones(self) -> dict[str, tuple[float, float]]:
