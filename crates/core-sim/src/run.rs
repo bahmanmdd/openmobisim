@@ -28,9 +28,9 @@ use openmobisim_core_demand::{Mode, Travellers, Trips, VehicleKind, VehicleLocat
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    Chain, EntryTables, FidelityLevel, LinkBins, LockReport, Recording, Reroute, RerouteRecord,
-    RerouteRule, Rules, Trajectory, Vehicle, load_level_0_binned, load_level_0_recorded,
-    load_timed_binned, run_ltm_chained, traverse_free_flow, traverse_timed,
+    Chain, EntryTables, FidelityLevel, LinkBins, LockReport, QueueAhead, Recording, Reroute,
+    RerouteRecord, RerouteRule, Rules, Trajectory, Vehicle, load_level_0_binned,
+    load_level_0_recorded, load_timed_binned, run_ltm_chained, traverse_free_flow, traverse_timed,
 };
 use openmobisim_core_routes::{
     Demand, RouteKey, RouteSetGenerator, RouteSets, TripDemand, TripSnapper, default_generator,
@@ -1635,6 +1635,18 @@ impl Run {
                         window_end: window_s,
                     };
                     let mut gap_trips = GapTrips::new(&trips, &travellers, &unfinished);
+                    // The full gap after every loading, or after the last alone (S294): whether
+                    // this loading is the last is read from the stopping rule on the reports so
+                    // far with this one's in-set measures, before the gap is made.
+                    let gap_every = strategy.full_gap_every_loading();
+                    let is_last = |report: &IterationReport| {
+                        gap_every || next == max_iterations || {
+                            let mut so_far = reports.clone();
+                            so_far.push(*report);
+                            strategy.is_converged(&so_far)
+                        }
+                    };
+                    let mut gap_made = false;
                     let update = chooser.update(
                         &route_choices,
                         &times,
@@ -1690,18 +1702,6 @@ impl Run {
                             None,
                         )?;
                         clock = timings.lap("itinerary_choice", Some(iteration), clock);
-                        // The full gap (S293): every trip choosing its mode and every car
-                        // itinerary, on the same costs.
-                        itin.gap(
-                            &planner,
-                            &choose_inputs,
-                            current,
-                            next,
-                            &ended,
-                            &currency,
-                            &mut gap_trips,
-                        )?;
-                        clock = timings.lap("gap", Some(iteration), clock);
                         // Every mode's: a trip choosing its mode is measured against the best
                         // of the mode it took (M5).
                         for mode in Mode::ALL {
@@ -1709,23 +1709,41 @@ impl Run {
                         }
                         report.itinerary_recosted = found.recosted;
                         report.itinerary_gap_excess = found.gap_excess_pooled();
+                        // The full gap (S293): every trip choosing its mode and every car
+                        // itinerary, on the same costs; after the last loading, or every one.
+                        if is_last(&report) {
+                            itin.gap(
+                                &planner,
+                                &choose_inputs,
+                                current,
+                                next,
+                                &ended,
+                                &currency,
+                                &mut gap_trips,
+                            )?;
+                            gap_made = true;
+                            clock = timings.lap("gap", Some(iteration), clock);
+                        }
                         mode_changed_by = found.mode_changed_share();
                         mode_floor_by = found.mode_changed_floor();
                         pending_chosen = Some(next_chosen);
                     }
-                    // The full gap (S293): every car trip of the route choice, at every loading.
-                    chooser.gap(
-                        &route_choices,
-                        &times,
-                        &trees,
-                        next,
-                        &ended,
-                        &currency,
-                        &mut gap_trips,
-                    )?;
-                    gap_trips.report_into(&mut report);
-                    clock = timings.lap("gap", Some(iteration), clock);
-                    last_gap = Some(gap_trips);
+                    // The full gap (S293): every car trip of the route choice; after the last
+                    // loading, or every one (S294).
+                    if gap_made || is_last(&report) {
+                        chooser.gap(
+                            &route_choices,
+                            &times,
+                            &trees,
+                            next,
+                            &ended,
+                            &currency,
+                            &mut gap_trips,
+                        )?;
+                        gap_trips.report_into(&mut report);
+                        clock = timings.lap("gap", Some(iteration), clock);
+                        last_gap = Some(gap_trips);
+                    }
                     times_now = Some(times);
                     trees_now = Some(trees);
                     arrived_by =
@@ -2336,6 +2354,15 @@ impl Run {
                 pocket_length_m: o.pocket_length_m,
                 node_inflow: o.node_inflow,
                 origin_inflow: o.origin_inflow,
+                // The queue-ahead offer (X-69): by default only where the day holds what the
+                // travellers did not plan on.
+                queue_ahead: match o.reroute_queue_ahead {
+                    0 => QueueAhead::Off,
+                    1 if disrupted && !self.disruptions.known => QueueAhead::BehindDisruption,
+                    1 => QueueAhead::Off,
+                    2 => QueueAhead::BehindDisruption,
+                    _ => QueueAhead::AnyQueue,
+                },
                 start_s: f64::from(self.window_start.get()),
                 capacity_changes: if disrupted {
                     self.disruptions.capacity_changes()

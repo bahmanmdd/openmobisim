@@ -11,8 +11,8 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    CapacityChange, FidelityLevel, LiveTimes, Recording, Reroute, RerouteReason, RerouteRule,
-    Rules, Trajectory, Vehicle, run_ltm_chained,
+    CapacityChange, FidelityLevel, LiveTimes, QueueAhead, Recording, Reroute, RerouteReason,
+    RerouteRule, Rules, Trajectory, Vehicle, run_ltm_chained,
 };
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
@@ -213,6 +213,7 @@ fn load_changed_at(
             reroute: Some(RerouteRule { after_s: 120.0, max: 3 }),
             capacity_changes: changes,
             node_inflow,
+            queue_ahead: QueueAhead::BehindDisruption,
             ..Rules::default()
         },
         Some(rr as &mut dyn Reroute),

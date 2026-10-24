@@ -524,6 +524,14 @@ pub trait Equilibration: Send + Sync {
         0
     }
 
+    /// Whether the full gap in the choice model's currency ([`IterationReport::gap_route`] and
+    /// the rest of it) is measured after every loading, or after the last one alone (the
+    /// default: it costs the choice sets' costing once more per loading, a third of a Delft run,
+    /// and the stopping rule reads the in-set disequilibrium the choice measures anyway; S294).
+    fn full_gap_every_loading(&self) -> bool {
+        false
+    }
+
     /// How many itinerary trips, besides those choosing again, plan their whole choice set after
     /// a loading to measure the itinerary gap; the others that keep an itinerary out
     /// through a parking are re-costed at that parking instead of re-planned. A number at least the run's count of itinerary trips plans every
@@ -706,6 +714,10 @@ pub struct Msa {
     /// the gap alone decides; 0 stops no run while the update adds any route. A
     /// few routes found late barely move the gap.
     pub route_growth_tolerance: f64,
+    /// Whether the full gap in the choice model's currency is measured after every loading (1)
+    /// or after the last loading alone (0, the default; see
+    /// [`Equilibration::full_gap_every_loading`]).
+    pub gap_every: u32,
 }
 
 impl Default for Msa {
@@ -719,13 +731,15 @@ impl Default for Msa {
             warmup: 1,
             increments: 5,
             route_growth_tolerance: 1.0,
+            gap_every: 0,
         }
     }
 }
 
 impl Msa {
-    const OPTIONS: [&'static str; 8] = [
+    const OPTIONS: [&'static str; 9] = [
         "cost_bin_s",
+        "gap_every",
         "gap_sample",
         "gap_tolerance",
         "increments",
@@ -761,6 +775,7 @@ impl Msa {
                 "iterations" => m.iterations = whole(option, v, 1, MAX_ITERATIONS)?,
                 "cost_bin_s" => m.cost_bin_s = whole(option, v, 1, 86_400)?,
                 "gap_sample" => m.gap_sample = whole(option, v, 0, 100_000)?,
+                "gap_every" => m.gap_every = whole(option, v, 0, 1)?,
                 "itinerary_gap_sample" => {
                     m.itinerary_gap_sample = whole(option, v, 0, MAX_ITINERARY_GAP_SAMPLE)?;
                 }
@@ -791,9 +806,10 @@ impl Equilibration for Msa {
     }
     fn descriptor(&self) -> String {
         format!(
-            "msa;cost_bin_s={};gap_sample={};gap_tolerance={};increments={};\
+            "msa;cost_bin_s={};gap_every={};gap_sample={};gap_tolerance={};increments={};\
              itinerary_gap_sample={};iterations={};route_growth_tolerance={};warmup={}",
             self.cost_bin_s,
+            self.gap_every,
             self.gap_sample,
             self.gap_tolerance,
             self.increments,
@@ -814,6 +830,9 @@ impl Equilibration for Msa {
     }
     fn network_gap_sample(&self) -> u32 {
         self.gap_sample
+    }
+    fn full_gap_every_loading(&self) -> bool {
+        self.gap_every == 1
     }
     fn itinerary_gap_sample(&self) -> u32 {
         self.itinerary_gap_sample
@@ -892,10 +911,11 @@ impl Default for Sra {
 }
 
 impl Sra {
-    const OPTIONS: [&'static str; 10] = [
+    const OPTIONS: [&'static str; 11] = [
         "cost_bin_s",
         "eta_fell",
         "eta_rose",
+        "gap_every",
         "gap_sample",
         "gap_tolerance",
         "increments",
@@ -978,12 +998,13 @@ impl Equilibration for Sra {
         // `msa`'s options in its order, with the two of its own in their alphabetical places.
         let m = &self.msa;
         format!(
-            "sra;cost_bin_s={};eta_fell={};eta_rose={};gap_sample={};gap_tolerance={};\
-             increments={};itinerary_gap_sample={};iterations={};route_growth_tolerance={};\
-             warmup={}",
+            "sra;cost_bin_s={};eta_fell={};eta_rose={};gap_every={};gap_sample={};\
+             gap_tolerance={};increments={};itinerary_gap_sample={};iterations={};\
+             route_growth_tolerance={};warmup={}",
             m.cost_bin_s,
             self.eta_fell,
             self.eta_rose,
+            m.gap_every,
             m.gap_sample,
             m.gap_tolerance,
             m.increments,
@@ -1004,6 +1025,9 @@ impl Equilibration for Sra {
     }
     fn network_gap_sample(&self) -> u32 {
         self.msa.network_gap_sample()
+    }
+    fn full_gap_every_loading(&self) -> bool {
+        self.msa.full_gap_every_loading()
     }
     fn itinerary_gap_sample(&self) -> u32 {
         self.msa.itinerary_gap_sample()

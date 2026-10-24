@@ -384,6 +384,23 @@ pub struct Rules {
     /// Whether a departure enters its first link no faster than the link's inflow headway
     /// ([`LtmNetwork::with_origin_inflow`]); false by default.
     pub origin_inflow: bool,
+    /// At the point queue, when a vehicle is offered a route for a queue ahead on its route
+    /// ([`LtmNetwork::with_queue_ahead`]); [`QueueAhead::Off`] by default.
+    pub queue_ahead: QueueAhead,
+}
+
+/// When, at the point queue, a vehicle at the downstream end of its link is offered a new
+/// route for a **queue ahead** on its route longer than its link and the links before it would
+/// hold ([`RerouteReason::QueueAhead`]; X-69, S294).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum QueueAhead {
+    /// Never.
+    #[default]
+    Off,
+    /// Only behind a link narrowed or closed by a capacity change, or feeding a closed one.
+    BehindDisruption,
+    /// Behind any queue (measured on Delft: a run with rerouting on 73 times slower, and worse).
+    AnyQueue,
 }
 
 impl Default for Rules {
@@ -398,6 +415,7 @@ impl Default for Rules {
             start_s: 0.0,
             node_inflow: false,
             origin_inflow: false,
+            queue_ahead: QueueAhead::Off,
         }
     }
 }
@@ -496,6 +514,8 @@ pub struct LtmNetwork<'a> {
 
     /// En-route rerouting, when asked for.
     rerouting: Option<Rerouting>,
+    /// When a queue ahead earns an offer ([`Self::with_queue_ahead`]).
+    queue_ahead: QueueAhead,
 
     /// Turn pockets, when asked for.
     pockets: Option<Pockets>,
@@ -580,6 +600,7 @@ impl<'a> LtmNetwork<'a> {
             priority_major: Vec::new(),
             events: EventQueue::new(queues + 2 * n),
             rerouting: None,
+            queue_ahead: QueueAhead::Off,
             pockets: None,
             recorder: None,
             changes: Vec::new(),
@@ -706,6 +727,15 @@ impl<'a> LtmNetwork<'a> {
     #[must_use]
     pub fn with_node_inflow(mut self, on: bool) -> Self {
         self.node_inflow = on;
+        self
+    }
+
+    /// When, at the point queue, a vehicle at the downstream end of its link is offered a
+    /// route for a queue ahead on its route ([`QueueAhead`]); acts with [`Self::with_rerouting`]
+    /// alone. [`QueueAhead::Off`] unless set.
+    #[must_use]
+    pub fn with_queue_ahead(mut self, rule: QueueAhead) -> Self {
+        self.queue_ahead = rule;
         self
     }
 
@@ -1836,6 +1866,7 @@ fn run_ltm_inner_chained(
         .with_level(level)
         .with_node_inflow(rules.node_inflow)
         .with_origin_inflow(rules.origin_inflow)
+        .with_queue_ahead(rules.queue_ahead)
         .starting_at(Duration(start));
     if rules.priority {
         sim = sim.with_priority();

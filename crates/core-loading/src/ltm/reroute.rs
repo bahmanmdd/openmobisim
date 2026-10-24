@@ -15,7 +15,7 @@
 
 use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
 
-use super::{FidelityLevel, LtmNetwork, NONE, Queued, TIME_EPSILON, queue_u32};
+use super::{FidelityLevel, LtmNetwork, NONE, QueueAhead, Queued, TIME_EPSILON, queue_u32};
 use crate::curves::ROOM_EPSILON;
 use crate::events::Event;
 
@@ -217,7 +217,7 @@ impl LtmNetwork<'_> {
     /// Costs a few lookups per link ahead, at most [`QUEUE_LOOKAHEAD`], for each vehicle leaving
     /// a link; nothing at the other levels, where the queue itself reaches upstream.
     pub(super) fn offer_if_queue_ahead(&mut self, i: usize, front: Queued) -> bool {
-        if !matches!(self.level, FidelityLevel::PointQueue) {
+        if !matches!(self.level, FidelityLevel::PointQueue) || self.queue_ahead == QueueAhead::Off {
             return false;
         }
         let Some(r) = self.rerouting.as_ref() else { return false };
@@ -225,16 +225,18 @@ impl LtmNetwork<'_> {
         if r.count[slot] >= r.rule.max || r.offered_leg[slot] == front.leg {
             return false;
         }
-        // Only a queue behind a disruption counts (S289, S293: offers at every congested entry
-        // made a level-2 run ten times slower, and ordinary congestion is the equilibrium's to
-        // settle, not the day's): a link narrowed or closed by a capacity change queues at its
-        // own downstream end, and the link before a closed one holds the traffic it refuses.
-        if self.changes.is_empty() {
+        // By default only a queue behind a disruption counts (S289, S293: offers at every
+        // congested entry made a level-2 run ten times slower, and ordinary congestion is the
+        // equilibrium's to settle, not the day's): a link narrowed or closed by a capacity
+        // change queues at its own downstream end, and the link before a closed one holds the
+        // traffic it refuses. `QueueAhead::AnyQueue` counts every queue.
+        let any_queue = self.queue_ahead == QueueAhead::AnyQueue;
+        if self.changes.is_empty() && !any_queue {
             return false;
         }
         let route = self.route(front.slot);
         let leg = front.leg as usize;
-        let disrupted = |m: usize| self.discharge_rate[m] < self.base_rates[m].0;
+        let disrupted = |m: usize| any_queue || self.discharge_rate[m] < self.base_rates[m].0;
         let mut behind = 0.0;
         let mut seen = false;
         for (p, &m) in route.iter().enumerate().skip(leg + 1).take(QUEUE_LOOKAHEAD) {

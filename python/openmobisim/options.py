@@ -1,4 +1,4 @@
-"""Typed options (D-5 a): every parameter of a group as a keyword with its default.
+"""Typed options (C2, D-5 a): every parameter of a group as a keyword with its default.
 
 Generated from the core's parameter table by ``python/tests/test_options.py --write``; do not edit
 by hand. Each class is a read-only ``dict`` of the options given, so it goes wherever the options
@@ -271,6 +271,7 @@ class LoadingOptions(_Options):
         reroute_after_s: s; ``300.0``.
         reroute_max: count; ``3``.
         reroute_min_gain: —; ``0.1``.
+        reroute_queue_ahead: —; ``1.0``.
     """
 
     _argument: ClassVar[str] = "loading_options"
@@ -286,6 +287,7 @@ class LoadingOptions(_Options):
         "reroute_after_s": 300.0,
         "reroute_max": 3,
         "reroute_min_gain": 0.1,
+        "reroute_queue_ahead": 1.0,
     }
 
     def __init__(
@@ -302,6 +304,7 @@ class LoadingOptions(_Options):
         reroute_after_s: float = 300.0,
         reroute_max: int = 3,
         reroute_min_gain: float = 0.1,
+        reroute_queue_ahead: float = 1.0,
     ) -> None:
         """Keep the options given that differ from their defaults."""
         given = dict(locals())
@@ -505,6 +508,7 @@ class MsaOptions(_Options):
 
     Attributes:
         cost_bin_s: s; ``300.0``.
+        gap_every: —; ``0.0``.
         gap_sample: count; ``300``.
         gap_tolerance: —; ``0.05``.
         increments: count; by default ``None``: 1 at flow_level 0 whatever is set.
@@ -517,6 +521,7 @@ class MsaOptions(_Options):
     _argument: ClassVar[str] = "equilibration_options"
     _defaults: ClassVar[dict[str, Any]] = {
         "cost_bin_s": 300.0,
+        "gap_every": 0.0,
         "gap_sample": 300,
         "gap_tolerance": 0.05,
         "increments": None,
@@ -530,6 +535,7 @@ class MsaOptions(_Options):
         self,
         *,
         cost_bin_s: float = 300.0,
+        gap_every: float = 0.0,
         gap_sample: int = 300,
         gap_tolerance: float = 0.05,
         increments: int | None = None,
@@ -551,6 +557,7 @@ class SraOptions(_Options):
         cost_bin_s: s; ``300.0``.
         eta_fell: —; ``0.2``.
         eta_rose: —; ``1.5``.
+        gap_every: —; ``0.0``.
         gap_sample: count; ``300``.
         gap_tolerance: —; ``0.05``.
         increments: count; by default ``None``: 1 at flow_level 0 whatever is set.
@@ -565,6 +572,7 @@ class SraOptions(_Options):
         "cost_bin_s": 300.0,
         "eta_fell": 0.2,
         "eta_rose": 1.5,
+        "gap_every": 0.0,
         "gap_sample": 300,
         "gap_tolerance": 0.05,
         "increments": None,
@@ -580,6 +588,7 @@ class SraOptions(_Options):
         cost_bin_s: float = 300.0,
         eta_fell: float = 0.2,
         eta_rose: float = 1.5,
+        gap_every: float = 0.0,
         gap_sample: int = 300,
         gap_tolerance: float = 0.05,
         increments: int | None = None,

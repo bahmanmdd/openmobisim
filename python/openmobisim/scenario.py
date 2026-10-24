@@ -346,7 +346,7 @@ class Scenario:
         master_seed: int = 0,
         choice_model: str | Any | None = None,
         choice_options: dict[str, float] | None = None,
-        equilibration: str = "msa",
+        equilibration: str | None = None,
         equilibration_options: dict[str, float] | None = None,
         route_update: str | None = None,
         route_update_options: dict[str, float] | None = None,
@@ -467,6 +467,10 @@ class Scenario:
                         "other classes only.",
                         stacklevel=2,
                     )
+        # Unsaid, the strategy is the level's own (S294): the static assignment's solver at
+        # level 1, the method of successive averages elsewhere.
+        if equilibration is None:
+            equilibration = "frank_wolfe" if flow_level == 1 else "msa"
         self._equilibration = equilibration
         self._equilibration_options = equilibration_options
         self._route_update = route_update
@@ -523,7 +527,7 @@ class Scenario:
         master_seed: int = 0,
         choice_model: str | Any | None = None,
         choice_options: dict[str, float] | None = None,
-        equilibration: str = "msa",
+        equilibration: str | None = None,
         equilibration_options: dict[str, float] | None = None,
         route_update: str | None = None,
         route_update_options: dict[str, float] | None = None,

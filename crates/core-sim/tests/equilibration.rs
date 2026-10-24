@@ -204,7 +204,7 @@ fn setup_level0(n: u32, model_name: &'static str, options: &[(&'static str, f64)
     Setup {
         level: None,
         choice: (model_name, options.to_vec()),
-        equilibration: ("msa", vec![("iterations", 4.0)]),
+        equilibration: ("msa", vec![("iterations", 4.0), ("gap_every", 1.0)]),
         ..Setup::bottleneck(n)
     }
 }
@@ -511,7 +511,7 @@ fn the_gap_is_the_relative_excess_over_the_cheapest_route_and_has_a_closed_form(
 fn all_or_nothing_on_a_jammed_road_is_far_from_equilibrium_and_the_gap_says_so() {
     let setup = Setup {
         choice: ("deterministic", vec![]),
-        equilibration: ("msa", vec![("iterations", 3.0)]),
+        equilibration: ("msa", vec![("iterations", 3.0), ("gap_every", 1.0)]),
         ..Setup::bottleneck(1_500)
     };
     let result = setup.go();
@@ -809,7 +809,7 @@ fn a_trip_still_under_way_costs_more_not_nothing() {
     // it take, and the cut run can read below the long one.)
     let (n, spread_s, end) = (800, 900, 1_200);
     let cut = Setup {
-        equilibration: ("msa", vec![("iterations", 3.0)]),
+        equilibration: ("msa", vec![("iterations", 3.0), ("gap_every", 1.0)]),
         window: end,
         ..Setup::bottleneck(n)
     };
@@ -850,7 +850,7 @@ fn the_best_over_the_network_is_never_above_the_best_of_the_set() {
     // so the gap against the one-route set is nothing.
     let result = Setup {
         generator: Some("shortest"),
-        equilibration: ("msa", vec![("iterations", 3.0)]),
+        equilibration: ("msa", vec![("iterations", 3.0), ("gap_every", 1.0)]),
         window: 21_600,
         ..Setup::bottleneck(1_500)
     }
@@ -871,7 +871,7 @@ fn the_full_gap_is_the_same_on_one_thread_as_on_seven() {
     // The searches over the network run in parallel and are summed in trip order: one thread and
     // seven give every number to the bit, and the run's own results with them.
     let setup = Setup {
-        equilibration: ("msa", vec![("iterations", 3.0)]),
+        equilibration: ("msa", vec![("iterations", 3.0), ("gap_every", 1.0)]),
         window: 1_200,
         ..Setup::bottleneck(800)
     };
@@ -984,7 +984,7 @@ fn the_description_names_the_strategy_and_the_streams_it_draws_from() {
     assert_eq!(msa.live_streams, ["msa_reselection"]);
     assert_eq!(
         msa.equilibration_descriptor,
-        "msa;cost_bin_s=300;gap_sample=300;gap_tolerance=0;increments=1;\
+        "msa;cost_bin_s=300;gap_every=0;gap_sample=300;gap_tolerance=0;increments=1;\
          itinerary_gap_sample=100000000;iterations=10;route_growth_tolerance=0;warmup=0"
     );
     assert_eq!(run(("msa", vec![]), "logit").live_streams, ["choice", "msa_reselection"]);
@@ -1026,7 +1026,8 @@ fn strategies_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
     assert!(err("free_flow", &[("increments", 0.0)]).contains("whole number from 1 to 20"));
     assert!(err("msa", &[("increments", 21.0)]).contains("whole number from 1 to 20"));
     assert!(err("msa", &[("steps", 3.0)]).contains(
-        "cost_bin_s, gap_sample, gap_tolerance, increments, itinerary_gap_sample, iterations"
+        "cost_bin_s, gap_every, gap_sample, gap_tolerance, increments, itinerary_gap_sample, \
+         iterations"
     ));
     for bad in [0.0, 1001.0, 2.5, f64::NAN] {
         assert!(
@@ -1063,7 +1064,7 @@ fn sra_takes_msa_s_options_and_two_of_its_own_within_their_ranges() {
     assert!((shipped.eta_fell - 0.2).abs() < 1e-15 && (shipped.eta_rose - 1.5).abs() < 1e-15);
     assert_eq!(
         shipped.descriptor(),
-        "sra;cost_bin_s=300;eta_fell=0.2;eta_rose=1.5;gap_sample=300;gap_tolerance=0.05;\
+        "sra;cost_bin_s=300;eta_fell=0.2;eta_rose=1.5;gap_every=0;gap_sample=300;gap_tolerance=0.05;\
          increments=5;itinerary_gap_sample=100000000;iterations=10;route_growth_tolerance=1;warmup=1"
     );
     let given = Sra::from_options(&opts(&[
@@ -1097,8 +1098,8 @@ fn sra_takes_msa_s_options_and_two_of_its_own_within_their_ranges() {
     assert_eq!(
         err(&[("eta", 1.0)]),
         "equilibration \"sra\" has no option \"eta\"; its options are: cost_bin_s, eta_fell, \
-         eta_rose, gap_sample, gap_tolerance, increments, itinerary_gap_sample, iterations, \
-         route_growth_tolerance, warmup"
+         eta_rose, gap_every, gap_sample, gap_tolerance, increments, itinerary_gap_sample, \
+         iterations, route_growth_tolerance, warmup"
     );
     assert!(Msa::from_options(&opts(&[("eta_fell", 0.2)])).is_err(), "msa has no eta");
 }

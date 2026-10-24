@@ -119,6 +119,20 @@ pub struct LoadingOptions {
     /// *Uncalibrated: off, the loading as it was before the option. On treats the origin as a
     /// centroid connector with the first link's capacity, an assumption.*
     pub origin_inflow: bool,
+    /// At the point queue, when a vehicle at the downstream end of its link is offered a new
+    /// route for a **queue ahead** on its route longer than its link and the links before it
+    /// would hold ([`openmobisim_core_loading::QueueAhead`]; X-69): 0 never; 1 (the default)
+    /// only in a loading with road disruptions the travellers did not know of, behind a link
+    /// those disruptions narrowed or closed; 2 behind such a link in any loading with
+    /// disruptions, known or not; 3 behind any queue. Acts only with `reroute` on.
+    ///
+    /// *Uncalibrated: 1. Measured on Delft (S294): 3 made a run with rerouting on 73 times
+    /// slower and worse (offers at every congested entry, as S289 found); 2 in a run whose
+    /// travellers knew every link narrowed to 0.8 of its capacity, 78 times slower and 812
+    /// trips unfinished against 212, the diverted traffic jamming the alternatives; 1 costs
+    /// nothing where nothing is unexpected and gets 507 more trips through an hour-long closure
+    /// of the busiest motorway link.*
+    pub reroute_queue_ahead: u32,
     /// **Level 1 only:** the volume-delay function, `t = t0 · (1 + α (v/c)^β)`, one `(α, β)` per
     /// road class, by name `bpr_alpha` and `bpr_beta` for every class and `<class>.bpr_alpha`,
     /// `<class>.bpr_beta` for one (`<class>` as OpenStreetMap writes it: `motorway`,
@@ -149,6 +163,7 @@ impl LoadingOptions {
         origin_inflow: false,
         bpr: Bpr::SHIPPED,
         period_s: 0,
+        reroute_queue_ahead: 1,
     };
 
     /// Every option's value, by name, in [`Self::NAMES`]' order (the parameter listing): the
@@ -169,6 +184,7 @@ impl LoadingOptions {
             ("pocket_length_m", self.pocket_length_m),
             ("node_inflow", flag(self.node_inflow)),
             ("origin_inflow", flag(self.origin_inflow)),
+            ("reroute_queue_ahead", f64::from(self.reroute_queue_ahead)),
             ("period_s", f64::from(self.period_s)),
         ]
         .into_iter()
@@ -194,7 +210,7 @@ impl LoadingOptions {
     }
 
     /// The names of the options (`<class>` standing for a road class's name).
-    pub const NAMES: [&'static str; 13] = [
+    pub const NAMES: [&'static str; 14] = [
         "priority",
         "reroute",
         "reroute_after_s",
@@ -203,6 +219,7 @@ impl LoadingOptions {
         "pocket_length_m",
         "node_inflow",
         "origin_inflow",
+        "reroute_queue_ahead",
         "period_s",
         "bpr_alpha",
         "bpr_beta",
@@ -232,6 +249,20 @@ impl LoadingOptions {
                 "priority" => d.priority = flag(name, v)?,
                 "node_inflow" => d.node_inflow = flag(name, v)?,
                 "origin_inflow" => d.origin_inflow = flag(name, v)?,
+                "reroute_queue_ahead" => {
+                    if !(v.fract() == 0.0 && (0.0..=3.0).contains(&v)) {
+                        return Err(format!(
+                            "loading_options \"reroute_queue_ahead\" must be 0, 1, 2 or 3, got {v}"
+                        ));
+                    }
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        reason = "checked to be 0 to 3"
+                    )]
+                    let n = v as u32;
+                    d.reroute_queue_ahead = n;
+                }
                 "reroute" => {
                     d.reroute =
                         if flag(name, v)? { RerouteSetting::On } else { RerouteSetting::Off };
@@ -434,8 +465,8 @@ mod tests {
             unknown.starts_with(
                 "loading_options has no \"node_inflows\"; the options are: priority, reroute, \
                  reroute_after_s, reroute_max, reroute_min_gain, pocket_length_m, node_inflow, \
-                 origin_inflow, period_s, bpr_alpha, bpr_beta, <class>.bpr_alpha, \
-                 <class>.bpr_beta (<class> one of motorway, motorway_link,"
+                 origin_inflow, reroute_queue_ahead, period_s, bpr_alpha, bpr_beta, \
+                 <class>.bpr_alpha, <class>.bpr_beta (<class> one of motorway, motorway_link,"
             ),
             "{unknown}"
         );
@@ -452,7 +483,7 @@ mod tests {
         assert_eq!(shipped.period_s, 0);
         let values = shipped.values();
         let names: Vec<&str> = values.iter().map(|v| v.0.as_str()).collect();
-        assert_eq!(names, LoadingOptions::NAMES[..11], "one pair for every class, as shipped");
+        assert_eq!(names, LoadingOptions::NAMES[..12], "one pair for every class, as shipped");
         assert!(values.contains(&("bpr_alpha".to_string(), 0.15)));
         assert!(values.contains(&("bpr_beta".to_string(), 4.0)));
         let o = read(&[("bpr_alpha", 0.5), ("motorway.bpr_alpha", 0.8), ("bpr_beta", 5.0)])

@@ -179,7 +179,7 @@ def test_bad_settings_are_refused_before_any_work():
         build(equilibration="replanning")
     with pytest.raises(
         ValueError,
-        match="cost_bin_s, gap_sample, gap_tolerance, increments, itinerary_gap_sample, iterations",
+        match="cost_bin_s, gap_every, gap_sample, gap_tolerance, increments, itinerary_gap_sample",
     ):
         build(equilibration="msa", equilibration_options={"steps": 3})
     with pytest.raises(ValueError, match="increments, warmup"):
@@ -196,7 +196,7 @@ def test_bad_settings_are_refused_before_any_work():
     for name, bad, message in (
         ("eta_fell", 1.5, "from 0 to 1"),
         ("eta_rose", 0.5, "from 1 to 10"),
-        ("eta", 1.0, "cost_bin_s, eta_fell, eta_rose, gap_sample"),
+        ("eta", 1.0, "cost_bin_s, eta_fell, eta_rose, gap_every, gap_sample"),
     ):
         with pytest.raises(ValueError, match=f'"sra".*{message}'):
             build(equilibration="sra", equilibration_options={name: bad})
@@ -515,7 +515,7 @@ def test_the_full_mode_gap_covers_every_trip_choosing_its_mode():
         trips=500,
         classes={"commuter": (True, True, False)},
         modes=("car", "bike", "walk"),
-        equilibration_options={"iterations": 8},
+        equilibration_options={"iterations": 8, "gap_every": 1},
         choice_model="logit",
         choice_options={"beta_mode_walk": -10.0},
         master_seed=3,
@@ -550,7 +550,9 @@ def test_a_model_without_utilities_measures_the_full_gaps_in_time(tmp_path):
             return one_hot
 
     run = scenario(
-        choice_model=Knowing(), equilibration="msa", equilibration_options={"iterations": 3}
+        choice_model=Knowing(),
+        equilibration="msa",
+        equilibration_options={"iterations": 3, "gap_every": 1},
     ).run("eq-time", output_dir=str(tmp_path / "eq-time"), quiet=True)
     c = run.convergence()
     assert run.gap_currency == "time"
