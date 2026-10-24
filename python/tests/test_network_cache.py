@@ -250,6 +250,19 @@ def test_a_file_of_other_data_or_a_damaged_one_is_imported_again(line: Path) -> 
     assert changed.link_length_m()[0] == 2000.0
 
 
+def test_a_file_another_build_wrote_is_imported_again(
+    line: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = ms.examples.case("line", root=line / "bundle")
+    case.network()
+    real = _core.network_cache_header
+    # What the header says of a file of another version or build of openmobisim.
+    monkeypatch.setattr(_core, "network_cache_header", lambda p: {**real(p), "current": False})
+    with caplog.at_level(logging.INFO, logger="openmobisim"):
+        case.network()
+    assert "network imported" in caplog.text and "read from the cache" not in caplog.text
+
+
 def test_the_variable_turns_the_cache_off(line: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(_network_cache.NO_CACHE_VARIABLE, "1")
     case = ms.examples.case("line", root=line / "bundle")
