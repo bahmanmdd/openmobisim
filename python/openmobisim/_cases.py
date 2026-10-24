@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from openmobisim import _core
 from openmobisim._log import logger
+from openmobisim._network_cache import network_cached
 
 if TYPE_CHECKING:
     from openmobisim.scenario import Scenario
@@ -130,6 +131,8 @@ class Case:
         self.name = name
         self.folder = folder
         self.info: dict[str, Any] = json.loads((folder / "case.json").read_text(encoding="utf-8"))
+        #: Each file's SHA-256, as checked when the case was found (``case(check=True)``).
+        self._digests: dict[str, str] = {}
 
     def __repr__(self) -> str:
         return f"Case({self.name!r}, {self.info.get('title', '')!r}, {str(self.folder)!r})"
@@ -138,8 +141,27 @@ class Case:
         """A file of the case."""
         return self.folder / relative
 
+    def _digest(self, relative: str) -> str:
+        """A file's SHA-256: the one checked when the case was found, else computed now."""
+        if relative not in self._digests:
+            self._digests[relative] = _sha256(self.path(relative))
+        return self._digests[relative]
+
     def network(self) -> _core.Network:
-        """The road network, with its bike and walk layers."""
+        """The road network, with its bike and walk layers.
+
+        Imported from the case's files the first time it is opened, and from then on read from a
+        cache of the built network (``~/.cache/openmobisim/networks/<case>/``): the same network,
+        bit for bit, in a fraction of the import's time. ``OPENMOBISIM_NO_NETWORK_CACHE=1``
+        imports it every time.
+        """
+        n = self.info["network"]
+        files = [n["pbf"]] if "pbf" in n else [n["links"], n["nodes"]]
+        made_from = {"case": self.name, "network": n, "files": {f: self._digest(f) for f in files}}
+        return network_cached(self.name, made_from, self._network_import)
+
+    def _network_import(self) -> _core.Network:
+        """The road network, read from the case's files."""
         n = self.info["network"]
         if "pbf" in n:
             return _core.network_read_osm(str(self.path(n["pbf"])), region=_region(n["region"]))
@@ -343,7 +365,10 @@ def case(name: str, root: str | Path | None = None, *, check: bool = True) -> Ca
                 raise ValueError(
                     f"case {name!r}: {relative} in {folder} is not the bundle's ({BUNDLE_VERSION})"
                 )
-    return Case(name, folder)
+    found = Case(name, folder)
+    if check:  # what the network cache keys on, without reading the files again
+        found._digests.update(entry["files"])
+    return found
 
 
 _REFERENCE = Path(__file__).with_name("data") / f"reference_{BUNDLE_VERSION}.json"

@@ -24,8 +24,9 @@ use openmobisim_core_types::diagnostics::{Category, DiagKey, Diagnostics, Elemen
 use openmobisim_core_types::ids::{
     EntityId, ExternalIdTable, ExternalIdTableBuilder, LinkId, NodeId,
 };
-use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Pcu};
+use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Pcu, Speed};
 
+use crate::binary::{self, Reader, Writer, invalid};
 use crate::csr::Csr;
 use crate::defaults::{
     DefaultRow, GlobalMultipliers, LinkParameters, ParameterNote, RoadClass, SignalDefaults,
@@ -793,4 +794,370 @@ impl RoadNetwork {
             + self.node_ids.arena_bytes()
             + self.link_ids.arena_bytes()
     }
+}
+
+// --- The binary form (S294, I-as) -------------------------------------------------------------
+
+impl RoadNetwork {
+    /// Write every field of the network into `w` as it is held: the arrays as stored, the
+    /// adjacency, the closures and the defaults it was built with ([`crate::binary`]).
+    /// [`Self::read_binary`] gives back a network equal to this one, bit for bit.
+    pub fn write_binary(&self, w: &mut Writer) {
+        // Destructured without `..`: a field added to the network does not compile until it
+        // is written here (and read below).
+        let RoadNetwork {
+            projection,
+            node_ids,
+            link_ids,
+            node_x,
+            node_y,
+            node_lonlat,
+            node_signalised,
+            link_signalised,
+            link_from,
+            link_to,
+            link_class,
+            link_roundabout,
+            link_lanes,
+            link_length,
+            link_params,
+            link_free_flow_time,
+            link_storage,
+            out_links,
+            in_links,
+            link_closed,
+            defaults,
+        } = self;
+        let zone = projection.zone();
+        w.u8(zone.number());
+        w.u8(match zone.hemisphere() {
+            crate::geometry::Hemisphere::North => 0,
+            crate::geometry::Hemisphere::South => 1,
+        });
+        w.ids(node_ids);
+        w.ids(link_ids);
+        w.f64s(node_x.iter().copied());
+        w.f64s(node_y.iter().copied());
+        w.f64s(node_lonlat.iter().map(|p| p.lon));
+        w.f64s(node_lonlat.iter().map(|p| p.lat));
+        w.bools(node_signalised);
+        w.bools(link_signalised);
+        w.u32s(link_from.iter().map(|n| n.raw()));
+        w.u32s(link_to.iter().map(|n| n.raw()));
+        w.u8s(link_class.iter().map(|&c| c as u8));
+        w.bools(link_roundabout);
+        w.u8s(link_lanes.iter().copied());
+        w.f64s(link_length.iter().map(|m| m.0));
+        w.len(link_params.len());
+        for p in link_params {
+            let LinkParameters {
+                free_flow_speed,
+                capacity,
+                jam_density,
+                wave_speed,
+                control_delay,
+            } = p;
+            for v in [free_flow_speed.0, capacity.0, jam_density.0, wave_speed.0, control_delay.0] {
+                w.f64(v);
+            }
+        }
+        w.f64s(link_free_flow_time.iter().map(|d| d.0));
+        w.f64s(link_storage.iter().map(|p| p.0));
+        write_adjacency(w, out_links);
+        write_adjacency(w, in_links);
+        w.bools(link_closed);
+        write_defaults(w, defaults);
+    }
+
+    /// Read a network [`Self::write_binary`] wrote, checking every length against the node and
+    /// link counts and every index against its range.
+    ///
+    /// # Errors
+    ///
+    /// [`binary::FormatError`] for bytes that are not such a network.
+    pub fn read_binary(r: &mut Reader<'_>) -> binary::Result<Self> {
+        let number = r.u8()?;
+        let hemisphere = match r.u8()? {
+            0 => crate::geometry::Hemisphere::North,
+            1 => crate::geometry::Hemisphere::South,
+            other => return invalid(format!("hemisphere {other}")),
+        };
+        if !(1..=60).contains(&number) {
+            return invalid(format!("UTM zone {number}"));
+        }
+        let projection = Projection::wgs84(crate::geometry::UtmZone::new(number, hemisphere));
+        let node_ids = r.ids()?;
+        let link_ids = r.ids()?;
+        let (nodes, links) = (node_ids.len(), link_ids.len());
+        let node_x = sized(r.f64s()?, nodes, "node x")?;
+        let node_y = sized(r.f64s()?, nodes, "node y")?;
+        let lon = sized(r.f64s()?, nodes, "node longitudes")?;
+        let lat = sized(r.f64s()?, nodes, "node latitudes")?;
+        let node_lonlat =
+            lon.into_iter().zip(lat).map(|(lon, lat)| LonLat::new(lon, lat)).collect();
+        let node_signalised = sized(r.bools()?, nodes, "node signals")?;
+        let link_signalised = sized(r.bools()?, links, "link signals")?;
+        let link_from = node_refs(sized(r.u32s()?, links, "link upstream nodes")?, nodes)?;
+        let link_to = node_refs(sized(r.u32s()?, links, "link downstream nodes")?, nodes)?;
+        let link_class = sized(r.u8s()?.to_vec(), links, "link classes")?
+            .into_iter()
+            .map(|c| match RoadClass::ALL.get(usize::from(c)) {
+                Some(&class) => Ok(class),
+                None => invalid(format!("road class {c}")),
+            })
+            .collect::<binary::Result<Vec<_>>>()?;
+        let link_roundabout = sized(r.bools()?, links, "link roundabouts")?;
+        let link_lanes = sized(r.u8s()?.to_vec(), links, "link lanes")?;
+        let link_length =
+            sized(r.f64s()?, links, "link lengths")?.into_iter().map(Metres).collect();
+        let params = r.len(40)?;
+        if params != links {
+            return invalid(format!("{params} link diagrams for {links} links"));
+        }
+        let mut link_params = Vec::with_capacity(links);
+        for _ in 0..links {
+            link_params.push(LinkParameters {
+                free_flow_speed: Speed(r.f64()?),
+                capacity: Flow(r.f64()?),
+                jam_density: Density(r.f64()?),
+                wave_speed: Speed(r.f64()?),
+                control_delay: Duration(r.f64()?),
+            });
+        }
+        let link_free_flow_time =
+            sized(r.f64s()?, links, "free-flow times")?.into_iter().map(Duration).collect();
+        let link_storage = sized(r.f64s()?, links, "storages")?.into_iter().map(Pcu).collect();
+        let out_links = read_adjacency(r, nodes, links)?;
+        let in_links = read_adjacency(r, nodes, links)?;
+        let link_closed = r.bools()?;
+        if !(link_closed.is_empty() || link_closed.len() == links) {
+            return invalid(format!("{} closure flags for {links} links", link_closed.len()));
+        }
+        let defaults = read_defaults(r)?;
+        Ok(RoadNetwork {
+            projection,
+            node_ids,
+            link_ids,
+            node_x,
+            node_y,
+            node_lonlat,
+            node_signalised,
+            link_signalised,
+            link_from,
+            link_to,
+            link_class,
+            link_roundabout,
+            link_lanes,
+            link_length,
+            link_params,
+            link_free_flow_time,
+            link_storage,
+            out_links,
+            in_links,
+            link_closed,
+            defaults,
+        })
+    }
+}
+
+/// Field for field, every number by `==` (the binary form's tests also compare the bytes, which
+/// tells a NaN from another), the id tables by their ids and the adjacency by its pairs.
+impl PartialEq for RoadNetwork {
+    fn eq(&self, other: &Self) -> bool {
+        let RoadNetwork {
+            projection,
+            node_ids,
+            link_ids,
+            node_x,
+            node_y,
+            node_lonlat,
+            node_signalised,
+            link_signalised,
+            link_from,
+            link_to,
+            link_class,
+            link_roundabout,
+            link_lanes,
+            link_length,
+            link_params,
+            link_free_flow_time,
+            link_storage,
+            out_links,
+            in_links,
+            link_closed,
+            defaults,
+        } = self;
+        let same_csr = |a: &Csr<NodeId, LinkId>, b: &Csr<NodeId, LinkId>| {
+            a.len() == b.len() && a.edge_count() == b.edge_count() && a.iter().eq(b.iter())
+        };
+        *projection == other.projection
+            && node_ids.len() == other.node_ids.len()
+            && node_ids.iter().eq(other.node_ids.iter())
+            && link_ids.len() == other.link_ids.len()
+            && link_ids.iter().eq(other.link_ids.iter())
+            && *node_x == other.node_x
+            && *node_y == other.node_y
+            && *node_lonlat == other.node_lonlat
+            && *node_signalised == other.node_signalised
+            && *link_signalised == other.link_signalised
+            && *link_from == other.link_from
+            && *link_to == other.link_to
+            && *link_class == other.link_class
+            && *link_roundabout == other.link_roundabout
+            && *link_lanes == other.link_lanes
+            && *link_length == other.link_length
+            && *link_params == other.link_params
+            && *link_free_flow_time == other.link_free_flow_time
+            && *link_storage == other.link_storage
+            && same_csr(out_links, &other.out_links)
+            && same_csr(in_links, &other.in_links)
+            && *link_closed == other.link_closed
+            && *defaults == other.defaults
+    }
+}
+
+fn sized<T>(values: Vec<T>, n: usize, what: &str) -> binary::Result<Vec<T>> {
+    if values.len() == n { Ok(values) } else { invalid(format!("{} {what} for {n}", values.len())) }
+}
+
+fn node_refs(raw: Vec<u32>, nodes: usize) -> binary::Result<Vec<NodeId>> {
+    if let Some(&bad) = raw.iter().find(|&&n| n as usize >= nodes) {
+        return invalid(format!("node {bad} in a network of {nodes} nodes"));
+    }
+    Ok(raw.into_iter().map(NodeId::new).collect())
+}
+
+/// An adjacency: each source's degree, then every target, sources in order.
+fn write_adjacency(w: &mut Writer, csr: &Csr<NodeId, LinkId>) {
+    w.u32s(
+        (0..csr.len())
+            .map(|s| u32::try_from(csr.degree(NodeId::from_index(s))).expect("a degree fits u32")),
+    );
+    w.len(csr.edge_count());
+    for (_, target) in csr.iter() {
+        w.u32(target.raw());
+    }
+}
+
+fn read_adjacency(
+    r: &mut Reader<'_>,
+    nodes: usize,
+    links: usize,
+) -> binary::Result<Csr<NodeId, LinkId>> {
+    let degrees = sized(r.u32s()?, nodes, "node degrees")?;
+    let targets = r.u32s()?;
+    let total: u64 = degrees.iter().map(|&d| u64::from(d)).sum();
+    if total != targets.len() as u64 {
+        return invalid(format!("degrees adding to {total} for {} targets", targets.len()));
+    }
+    if let Some(&bad) = targets.iter().find(|&&t| t as usize >= links) {
+        return invalid(format!("link {bad} in a network of {links} links"));
+    }
+    let mut pairs = Vec::with_capacity(targets.len());
+    let mut next = targets.into_iter();
+    for (source, &degree) in degrees.iter().enumerate() {
+        for target in next.by_ref().take(degree as usize) {
+            pairs.push((NodeId::from_index(source), LinkId::new(target)));
+        }
+    }
+    let count = u32::try_from(nodes).or_else(|_| invalid("more nodes than u32 holds"))?;
+    // The targets were written sorted within each source, so this sort keeps them in place.
+    Ok(Csr::from_pairs(count, pairs))
+}
+
+fn write_defaults(w: &mut Writer, defaults: &NetworkDefaults) {
+    let NetworkDefaults { classes, multipliers, signals, layers, saturation_bands } = defaults;
+    for class in RoadClass::ALL {
+        let DefaultRow {
+            free_flow_km_h,
+            lanes_per_direction,
+            saturation_flow_veh_h_lane,
+            jam_density_veh_km_lane,
+        } = classes.row(class);
+        w.f64(free_flow_km_h);
+        w.u8(lanes_per_direction);
+        w.f64(saturation_flow_veh_h_lane);
+        w.f64(jam_density_veh_km_lane);
+    }
+    let GlobalMultipliers { free_flow_speed, capacity, jam_density, control_delay, green_fraction } =
+        *multipliers;
+    for v in [free_flow_speed, capacity, jam_density, control_delay, green_fraction] {
+        w.f64(v);
+    }
+    let SignalDefaults { cycle_seconds, green_fraction, nominal_degree_of_saturation, merge_m } =
+        *signals;
+    for v in [cycle_seconds, green_fraction, nominal_degree_of_saturation, merge_m] {
+        w.f64(v);
+    }
+    let crate::layers::StaticLayerDefaults {
+        bike_mixed_km_h,
+        bike_dedicated_km_h,
+        bike_mixed_cost_factor,
+        bike_lane_cost_factor,
+        walk_km_h,
+        ferry_km_h,
+        ferry_wait_s,
+    } = *layers;
+    for v in [
+        bike_mixed_km_h,
+        bike_dedicated_km_h,
+        bike_mixed_cost_factor,
+        bike_lane_cost_factor,
+        walk_km_h,
+        ferry_km_h,
+        ferry_wait_s,
+    ] {
+        w.f64(v);
+    }
+    let crate::defaults::SaturationBands { at_30_km_h, at_50_km_h, at_70_km_h } = *saturation_bands;
+    for v in [at_30_km_h, at_50_km_h, at_70_km_h] {
+        w.f64(v);
+    }
+}
+
+fn read_defaults(r: &mut Reader<'_>) -> binary::Result<NetworkDefaults> {
+    let mut rows = [DefaultRow {
+        free_flow_km_h: 0.0,
+        lanes_per_direction: 0,
+        saturation_flow_veh_h_lane: 0.0,
+        jam_density_veh_km_lane: 0.0,
+    }; RoadClass::ALL.len()];
+    for row in &mut rows {
+        *row = DefaultRow {
+            free_flow_km_h: r.f64()?,
+            lanes_per_direction: r.u8()?,
+            saturation_flow_veh_h_lane: r.f64()?,
+            jam_density_veh_km_lane: r.f64()?,
+        };
+    }
+    Ok(NetworkDefaults {
+        classes: ClassTable::from_rows(rows),
+        multipliers: GlobalMultipliers {
+            free_flow_speed: r.f64()?,
+            capacity: r.f64()?,
+            jam_density: r.f64()?,
+            control_delay: r.f64()?,
+            green_fraction: r.f64()?,
+        },
+        signals: SignalDefaults {
+            cycle_seconds: r.f64()?,
+            green_fraction: r.f64()?,
+            nominal_degree_of_saturation: r.f64()?,
+            merge_m: r.f64()?,
+        },
+        layers: crate::layers::StaticLayerDefaults {
+            bike_mixed_km_h: r.f64()?,
+            bike_dedicated_km_h: r.f64()?,
+            bike_mixed_cost_factor: r.f64()?,
+            bike_lane_cost_factor: r.f64()?,
+            walk_km_h: r.f64()?,
+            ferry_km_h: r.f64()?,
+            ferry_wait_s: r.f64()?,
+        },
+        saturation_bands: crate::defaults::SaturationBands {
+            at_30_km_h: r.f64()?,
+            at_50_km_h: r.f64()?,
+            at_70_km_h: r.f64()?,
+        },
+    })
 }

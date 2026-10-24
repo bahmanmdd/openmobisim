@@ -50,6 +50,12 @@ impl ClassTable {
     pub fn row(&self, class: RoadClass) -> DefaultRow {
         self.rows[class as usize]
     }
+
+    /// The table of these rows, in [`RoadClass::ALL`]'s order: a table read back from a
+    /// network's binary form ([`crate::binary`]).
+    pub(crate) fn from_rows(rows: [DefaultRow; RoadClass::ALL.len()]) -> Self {
+        Self { rows }
+    }
 }
 
 /// Everything a network is built with besides its data. See the [module docs](self).

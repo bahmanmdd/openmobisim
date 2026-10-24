@@ -5,6 +5,7 @@ Rust and Python, and writing them out is how that contract stays visible on
 the Python side.
 """
 
+import os
 from typing import Any
 
 import numpy as np
@@ -18,8 +19,9 @@ def build_info() -> dict[str, object]:
     Returns:
         A dict with keys ``version`` (str), ``git_sha`` (str: the 12 hex digits of the
         commit the build is from, or ``"unknown"`` without a repository), ``code_version`` (int),
-        ``rng_scheme_version`` (int), ``parallel`` (bool), ``target`` (str) and
-        ``profile`` (str). These are the fields a bug report should quote.
+        ``defaults_version`` (int: the defaults table's), ``network_format_version`` (int: the
+        network cache file's layout), ``rng_scheme_version`` (int), ``parallel`` (bool),
+        ``target`` (str) and ``profile`` (str). These are the fields a bug report should quote.
     """
 
 def fixed_order_sum_f64(values: list[float]) -> float:
@@ -739,6 +741,64 @@ def network_read_osm(
     Raises:
         ValueError: If the file cannot be read, ``region`` or ``connectivity`` is
             not valid, or the result holds no usable road network.
+    """
+
+def network_write_cache(network: Network, path: str | os.PathLike[str], source: str = "") -> None:
+    """Write a road network to a cache file, read back by ``network_read_cache``.
+
+    The file holds the network as built, with its street geometry, its bike and walk layers and
+    the report of its import, and :func:`network_read_cache` reads it back as the same network,
+    bit for bit (the same fingerprint, the same results), in a fraction of an import's time. A
+    starter case's network is cached this way by itself (``Case.network()``).
+
+    The file is valid for this build of openmobisim only: another version, or another build of
+    this one, refuses it, and the network is then imported again. It is a cache, not a way to keep
+    or share a network: keep its source files. It is written beside its final name and then
+    renamed, so a reader never sees half of it.
+
+    Args:
+        network: The road network's handle (not a layer's: the road network holds its layers).
+        path: The file to write.
+        source: What the network was made from (a checksum of its files and reading options,
+            say), kept in the file for :func:`network_read_cache` to compare.
+
+    Raises:
+        ValueError: For a bike or walk layer's handle.
+        OSError: If the file cannot be written.
+    """
+
+def network_read_cache(path: str | os.PathLike[str], source: str | None = None) -> Network:
+    """Read a road network ``network_write_cache`` wrote: the same network, bit for bit.
+
+    With its street geometry, its bike and walk layers and the report of its import. Its
+    ``read_s`` is the time this read took.
+
+    Args:
+        path: The file.
+        source: If given, what the file must have been written with (``network_write_cache``'s
+            ``source``), so that a network made from other data is never taken for this one.
+
+    Returns:
+        The :class:`Network`.
+
+    Raises:
+        ValueError: For a file that is not a network cache, is damaged, was written by another
+            version or build of openmobisim, or from another ``source``.
+        OSError: If the file cannot be read.
+    """
+
+def network_cache_header(path: str | os.PathLike[str]) -> dict[str, object]:
+    """The header of a network cache file, from its first bytes, the rest not read or checked.
+
+    Returns:
+        ``format_version``, ``code_version``, ``defaults_version`` (int), ``version``,
+        ``build``, ``source`` (str), ``made_s`` (float: how long reading the network took when
+        it was written, its import's seconds; NaN if not known) and ``current`` (bool: whether
+        this build reads the file).
+
+    Raises:
+        ValueError: For a file that is not a network cache of this format.
+        OSError: If the file cannot be read.
     """
 
 def grid_node_lonlat(network: Network, row: int, col: int) -> tuple[float, float]:

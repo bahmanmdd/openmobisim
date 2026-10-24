@@ -8,6 +8,7 @@
 //! | [`csr`] | The compressed-sparse-row adjacency every structure here is built from |
 //! | [`defaults`] | The versioned, cited, overridable table that turns OSM tags into a fundamental diagram |
 //! | [`network`] | The road network itself: structure of arrays, built once, then immutable |
+//! | [`binary`] | The binary form of a built network, read back bit for bit: a network cache file |
 //! | [`turns`] | (incoming link, outgoing link) pairs — the node model's unit of work |
 //! | [`link_geometry`] | The shape of each street, kept outside `RoadNetwork` |
 //! | [`layers`] | The bike and walk layers: static-cost networks over the same geometry |
@@ -24,6 +25,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+pub mod binary;
 pub mod connectivity;
 pub mod csr;
 pub mod defaults;

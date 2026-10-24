@@ -36,6 +36,9 @@ use openmobisim_io_osm::{
     LayerImport, LayerOptions, LayerReport, PbfSource, Region, import_detailed,
 };
 
+mod cache;
+pub use cache::{network_cache_header, network_read_cache, network_write_cache};
+
 /// A link polyline array and its per-link offsets, as numpy arrays.
 type GeometryArrays<'py> = (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray1<u32>>);
 

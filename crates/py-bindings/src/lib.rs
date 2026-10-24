@@ -41,8 +41,9 @@ mod pipeline;
 mod routes;
 mod transit;
 use network::{
-    PyNetwork, grid_node_lonlat, link_classes, manhattan_grid, network_edit, network_from_columns,
-    network_options, network_read_osm, network_with_layer, toy_network,
+    PyNetwork, grid_node_lonlat, link_classes, manhattan_grid, network_cache_header, network_edit,
+    network_from_columns, network_options, network_read_cache, network_read_osm,
+    network_with_layer, network_write_cache, toy_network,
 };
 use parking::{PyParkings, parking_from_rows, parking_read_osm, toy_network_parkings};
 use pipeline::{PyLinkBins, PyRunSummary, run_pipeline};
@@ -59,6 +60,8 @@ use transit::{PyTransit, toy_network_transit, transit_edit, transit_read_gtfs};
 /// | `version` | The crate version |
 /// | `git_sha` | The git commit the build is from: 12 hex digits, or `unknown` without a repository |
 /// | `code_version` | Artifact layout and build-semantics version |
+/// | `defaults_version` | The defaults table's version (`DEFAULTS_VERSION`) |
+/// | `network_format_version` | The network cache file's layout version |
 /// | `rng_scheme_version` | Seed-derivation scheme version |
 /// | `parallel` | Whether this build reduces in parallel |
 /// | `target` | The platform triple the wheel was built for |
@@ -69,6 +72,8 @@ fn build_info(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     d.set_item("version", VERSION)?;
     d.set_item("git_sha", GIT_SHA)?;
     d.set_item("code_version", CODE_VERSION)?;
+    d.set_item("defaults_version", openmobisim_core_graph::DEFAULTS_VERSION)?;
+    d.set_item("network_format_version", openmobisim_core_graph::binary::FORMAT_VERSION)?;
     d.set_item("rng_scheme_version", RNG_SCHEME_VERSION)?;
     d.set_item("parallel", is_parallel_build())?;
     d.set_item("target", env!("OPENMOBISIM_TARGET"))?;
@@ -176,6 +181,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(manhattan_grid, m)?)?;
     m.add_function(wrap_pyfunction!(toy_network, m)?)?;
     m.add_function(wrap_pyfunction!(network_read_osm, m)?)?;
+    m.add_function(wrap_pyfunction!(network_write_cache, m)?)?;
+    m.add_function(wrap_pyfunction!(network_read_cache, m)?)?;
+    m.add_function(wrap_pyfunction!(network_cache_header, m)?)?;
     m.add_function(wrap_pyfunction!(network_options, m)?)?;
     m.add_function(wrap_pyfunction!(link_classes, m)?)?;
     m.add_function(wrap_pyfunction!(network_from_columns, m)?)?;
