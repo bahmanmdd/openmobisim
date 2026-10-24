@@ -37,6 +37,7 @@ use std::sync::Arc;
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
+use crate::binary::{self, Reader, Writer, invalid};
 use crate::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
 use crate::geometry::ProjectionError;
 use crate::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
@@ -397,7 +398,7 @@ impl StaticNetworkBuilder {
 
 /// A bike or walk layer: a directed graph and a speed per link (see the
 /// [module docs](self)).
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct StaticNetwork {
     layer: StaticLayer,
     network: Arc<RoadNetwork>,
@@ -639,6 +640,64 @@ impl StaticNetwork {
             + self.speed.len() * core::mem::size_of::<f64>()
             + self.infrastructure.len()
             + self.speed_cap_km_h.len() * core::mem::size_of::<Option<f64>>()
+    }
+}
+
+// --- The binary form (S294, I-as) -------------------------------------------------------------
+
+impl StaticNetwork {
+    /// Write the layer into `w` as it is held: which layer, its graph
+    /// ([`RoadNetwork::write_binary`]), and every link's speed, infrastructure and speed cap
+    /// ([`crate::binary`]).
+    pub fn write_binary(&self, w: &mut Writer) {
+        let StaticNetwork { layer, network, speed, infrastructure, speed_cap_km_h } = self;
+        w.u8(match layer {
+            StaticLayer::Bike => 0,
+            StaticLayer::Walk => 1,
+        });
+        network.write_binary(w);
+        w.f64s(speed.iter().copied());
+        w.u8s(infrastructure.iter().map(|&i| i as u8));
+        w.len(speed_cap_km_h.len());
+        for &cap in speed_cap_km_h {
+            w.opt_f64(cap);
+        }
+    }
+
+    /// Read a layer [`Self::write_binary`] wrote.
+    ///
+    /// # Errors
+    ///
+    /// [`binary::FormatError`] for bytes that are not such a layer.
+    pub fn read_binary(r: &mut Reader<'_>) -> binary::Result<Self> {
+        let layer = match r.u8()? {
+            0 => StaticLayer::Bike,
+            1 => StaticLayer::Walk,
+            other => return invalid(format!("static layer {other}")),
+        };
+        let network = RoadNetwork::read_binary(r)?;
+        let links = network.link_count() as usize;
+        let speed = r.f64s()?;
+        let infrastructure = r
+            .u8s()?
+            .iter()
+            .map(|&i| match i {
+                0 => Ok(BikeInfrastructure::Mixed),
+                1 => Ok(BikeInfrastructure::Lane),
+                2 => Ok(BikeInfrastructure::Separated),
+                other => invalid(format!("bike infrastructure {other}")),
+            })
+            .collect::<binary::Result<Vec<_>>>()?;
+        let caps = r.len(1)?;
+        let mut speed_cap_km_h = Vec::with_capacity(caps);
+        for _ in 0..caps {
+            speed_cap_km_h.push(r.opt_f64()?);
+        }
+        if speed.len() != links || infrastructure.len() != links || caps != links {
+            let name = layer.as_str();
+            return invalid(format!("a {name} layer's speeds of another size than its graph"));
+        }
+        Ok(Self { layer, network: Arc::new(network), speed, infrastructure, speed_cap_km_h })
     }
 }
 

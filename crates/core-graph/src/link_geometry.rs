@@ -35,6 +35,7 @@ use std::collections::HashMap;
 use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, LinkId};
 
+use crate::binary::{self, Reader, Writer, invalid};
 use crate::geometry::{LonLat, polyline_length_metres};
 use crate::network::{MIN_LINK_LENGTH_M, RoadNetwork};
 
@@ -100,7 +101,7 @@ impl NetworkFingerprint {
 /// See the [module docs](self) for what is stored and why. Built by
 /// [`LinkGeometry::build`] from the same per-link points an importer already
 /// has at hand; read back per directed link with [`LinkGeometry::points`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LinkGeometry {
     fingerprint: NetworkFingerprint,
     /// `street_count() + 1` entries; street `s`'s points are
@@ -257,6 +258,53 @@ impl LinkGeometry {
             + self.points.len() * size_of::<LonLat>()
             + self.street_of.len() * size_of::<u32>()
             + self.reversed.len()
+    }
+}
+
+// --- The binary form (S294, I-as) -------------------------------------------------------------
+
+impl LinkGeometry {
+    /// Write the artifact into `w` as it is held ([`crate::binary`]).
+    pub fn write_binary(&self, w: &mut Writer) {
+        let LinkGeometry { fingerprint, offsets, points, street_of, reversed } = self;
+        w.u64(fingerprint.0);
+        w.u32s(offsets.iter().copied());
+        w.f64s(points.iter().map(|p| p.lon));
+        w.f64s(points.iter().map(|p| p.lat));
+        w.u32s(street_of.iter().copied());
+        w.bools(reversed);
+    }
+
+    /// Read an artifact [`Self::write_binary`] wrote for `network`.
+    ///
+    /// # Errors
+    ///
+    /// [`binary::FormatError`] for bytes that are not such an artifact, or one built from
+    /// another network (its fingerprint, [`Self::matches`]).
+    pub fn read_binary(r: &mut Reader<'_>, network: &RoadNetwork) -> binary::Result<Self> {
+        let fingerprint = NetworkFingerprint(r.u64()?);
+        if fingerprint != NetworkFingerprint::of(network) {
+            return invalid("street geometry of another network");
+        }
+        let offsets = r.u32s()?;
+        let lon = r.f64s()?;
+        let lat = r.f64s()?;
+        let street_of = r.u32s()?;
+        let reversed = r.bools()?;
+        let links = network.link_count() as usize;
+        let increasing = offsets.first() == Some(&0) && offsets.windows(2).all(|w| w[0] <= w[1]);
+        if !increasing || offsets.last().map(|&o| o as usize) != Some(lon.len()) {
+            return invalid("street geometry offsets that do not bracket its points");
+        }
+        let streets = offsets.len() - 1;
+        if lat.len() != lon.len() || street_of.len() != links || reversed.len() != links {
+            return invalid("street geometry of another size than its network");
+        }
+        if street_of.iter().any(|&s| s != NO_STREET && s as usize >= streets) {
+            return invalid("a link reading a street the geometry does not have");
+        }
+        let points = lon.into_iter().zip(lat).map(|(lon, lat)| LonLat::new(lon, lat)).collect();
+        Ok(Self { fingerprint, offsets, points, street_of, reversed })
     }
 }
 
