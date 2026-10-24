@@ -885,8 +885,29 @@ impl<'a> Chooser<'a> {
             batch.validate()?;
             let probabilities = self.inputs.model.probabilities(&batch)?;
             measured &= probabilities.is_some();
+            // Each situation's draws, pure functions of their keys, drawn in parallel and read in
+            // situation order below (S294): the floor sample's, and whether its traveller chooses
+            // again.
+            let situations: Vec<usize> = (0..filled.trip_of.len()).collect();
+            let draws: Vec<(f64, bool)> = crate::transit::par_map(
+                &situations,
+                COSTING_CHUNK,
+                || (),
+                |(), &s| {
+                    let u = if probabilities.is_some() {
+                        floor_draw(rng, &batch, s, iteration)
+                    } else {
+                        f64::NAN
+                    };
+                    let again = strategy.is_some_and(|(strategy, msa_rng, share)| {
+                        strategy.reselects(msa_rng, batch.travellers()[s], iteration, share)
+                    });
+                    (u, again)
+                },
+            );
             let mut moving: Vec<usize> = Vec::new();
             for (s, &t) in filled.trip_of.iter().enumerate() {
+                let (u, again) = draws[s];
                 let w = f64::from(current.weight[t]);
                 w_all += w;
                 let range = batch.range(s);
@@ -904,7 +925,6 @@ impl<'a> Chooser<'a> {
                 }
                 if let Some(p) = &probabilities {
                     observed[taken] += w;
-                    let u = floor_draw(rng, &batch, s, iteration);
                     let mut cumulative = 0.0;
                     let mut drawn = false;
                     let mut expected_here = 0.0;
@@ -923,10 +943,8 @@ impl<'a> Chooser<'a> {
                         expected_paid += w * expected_here;
                     }
                 }
-                if let Some((strategy, msa_rng, share)) = strategy {
-                    if strategy.reselects(msa_rng, batch.travellers()[s], iteration, share) {
-                        moving.push(s);
-                    }
+                if again {
+                    moving.push(s);
                 }
             }
             if !moving.is_empty() {
