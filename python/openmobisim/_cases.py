@@ -302,8 +302,9 @@ class Case:
         ``window`` (``case.json``) is the scenario's unless ``options`` give one, and so are its
         ``zones`` (``zones()``, read at ``flow_level=1`` alone).
         """
-        from openmobisim.scenario import Scenario
+        from openmobisim.scenario import Scenario, _refuse_run_arguments
 
+        _refuse_run_arguments("Case.scenario", options)
         settings = dict(self.info.get("scenarios", {}).get(scenario, {}))
         if scenario not in self.info.get("scenarios", {"base": {}}):
             raise ValueError(

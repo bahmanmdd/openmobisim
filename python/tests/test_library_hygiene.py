@@ -3,7 +3,8 @@
 What is defended: importing the package leaves the warning filters alone; a figure shows
 itself in a notebook without a rule registered for every figure; a hover card escapes the
 run's text; a table path that does not exist is a missing file, not an empty table;
-a headway window may be a list; a run never silently replaces another's files; a
+a headway window may be a list; a run never silently replaces another's files, and the
+refusal's remedies work as written; an argument of ``run`` given to a scenario points to it; a
 mode asked for that the run cannot simulate is refused; the old ``class_defaults`` keyword
 is gone; the summary and the map return a ``Path`` and default into the run's folder;
 a network option where 0 means off accepts 0.
@@ -103,6 +104,30 @@ def test_a_run_writes_to_a_folder_of_its_own_and_never_replaces_another(tmp_path
     assert again.fingerprint == first.fingerprint
     elsewhere = scenario.run("hyg-twice", str(tmp_path / "other"), quiet=True)
     assert (Path(elsewhere.timings_path).parent / "manifest.json").exists()
+
+
+@pytest.mark.parametrize("folder", [None, "runs/hyg-given"])
+def test_every_remedy_the_refusal_names_works_as_written(folder) -> None:
+    scenario = grid_scenario()
+    scenario.run("hyg-remedy", folder, quiet=True)
+    with pytest.raises(FileExistsError) as refused:
+        scenario.run("hyg-remedy", folder, quiet=True)
+    remedies = re.findall(r"(\.run\(.*?\))[.]", str(refused.value))
+    assert len(remedies) == 2
+    for remedy in remedies:
+        assert eval("scenario" + remedy[:-1] + ", quiet=True)").fingerprint
+
+
+def test_a_run_argument_given_to_the_scenario_points_to_run() -> None:
+    net = ms.examples.manhattan_grid(n=4, block_metres=200.0, signals=False)
+    with pytest.raises(
+        TypeError, match=r"Scenario.from_parts\(\).*\.run\(\.\.\., overwrite=True\)"
+    ):
+        ms.Scenario.from_parts(net, [], overwrite=True)
+    with pytest.raises(TypeError, match=r"^Scenario\(\).*Did you mean"):
+        ms.Scenario(net, overwrite=True)
+    with pytest.raises(TypeError, match=r"Scenario.replace\(\).*quiet=True"):
+        grid_scenario().replace(quiet=True)
 
 
 def test_the_summary_and_the_map_default_into_the_runs_folder_and_return_a_path() -> None:

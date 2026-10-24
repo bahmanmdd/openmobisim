@@ -12,11 +12,13 @@ transit (``parkings=``). Roads and lines can be disrupted at a time of day
 
 from __future__ import annotations
 
+import functools
+import inspect
 import tempfile
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar, cast
 
 from openmobisim import _core, choice
 from openmobisim._log import logger
@@ -321,12 +323,38 @@ def _disruptions(
     return road, lines_of
 
 
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def _refuse_run_arguments(where: str, given: Mapping[str, Any]) -> None:
+    """Refuse an argument of ``Scenario.run`` given to ``where``, naming the call it belongs in."""
+    for name in given:
+        if name in _RUN_ARGUMENTS:
+            raise TypeError(
+                f"{where}() got an unexpected keyword argument {name!r}: it is an argument of "
+                f"the run, not of the scenario. Did you mean .run(..., {name}={given[name]!r})?"
+            )
+
+
+def _run_arguments_refused(method: _F) -> _F:
+    """``method``, refusing an argument of ``Scenario.run`` with the call it belongs in."""
+    where = method.__qualname__.removesuffix(".__init__")
+
+    @functools.wraps(method)
+    def checked(*args: Any, **kwargs: Any) -> Any:
+        _refuse_run_arguments(where, kwargs)
+        return method(*args, **kwargs)
+
+    return cast(_F, checked)
+
+
 class Scenario:
     """A network, demand, and the settings of a run.
 
     Build with ``from_parts`` rather than the constructor directly.
     """
 
+    @_run_arguments_refused
     def __init__(
         self,
         network: _core.Network,
@@ -511,6 +539,7 @@ class Scenario:
         _check_level(flow_level, equilibration, transit, parkings, modes)
 
     @classmethod
+    @_run_arguments_refused
     def from_parts(
         cls,
         network: _core.Network,
@@ -1184,6 +1213,7 @@ class Scenario:
         Raises:
             TypeError: If a name is not an argument of ``from_parts``, with the list of them.
         """
+        _refuse_run_arguments("Scenario.replace", changes)
         unknown = sorted(set(changes) - set(self._parts))
         if unknown:
             raise TypeError(
@@ -1310,12 +1340,19 @@ class Scenario:
         Raises:
             FileExistsError: If ``output_dir`` already holds a run and ``overwrite`` is false.
         """
+        default_dir = output_dir is None
         if output_dir is None:
             output_dir = str(Path.cwd() / "openmobisim-runs" / run_id)
         if not overwrite and (Path(output_dir) / "manifest.json").exists():
+            # Another run_id moves the run only when output_dir is the default.
+            folder = str(output_dir).rstrip("/\\")
+            same = f"{run_id!r}" if default_dir else f"{run_id!r}, output_dir={folder!r}"
+            new = (
+                f"{run_id + '-2'!r}" if default_dir else f"{run_id!r}, output_dir={folder + '-2'!r}"
+            )
             raise FileExistsError(
-                f"{output_dir!r} already holds a run (manifest.json); give another run_id or "
-                "output_dir, or run(..., overwrite=True) to replace its files"
+                f"{folder!r} already holds a run (its manifest.json). To keep it, write the new "
+                f"run elsewhere: .run({new}). To replace its files: .run({same}, overwrite=True)."
             )
         if not isinstance(design_id, str) or not design_id:
             raise ValueError(f"design_id must be a non-empty string, got {design_id!r}")
@@ -1356,3 +1393,7 @@ class Scenario:
         if stranded is not None:
             warnings.warn(stranded, NoAlternativeWarning, stacklevel=2)
         return run
+
+
+#: The arguments of ``Scenario.run``, refused with a pointer to it when a scenario is built.
+_RUN_ARGUMENTS = frozenset(inspect.signature(Scenario.run).parameters) - {"self"}
