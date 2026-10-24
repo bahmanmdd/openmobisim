@@ -66,6 +66,10 @@ pub const NO_ROUTE: u32 = u32::MAX;
 /// granularity of a Python model's call; results do not depend on it.
 const CHUNK: usize = 32_768;
 
+/// Trips per piece of work when their routes are costed in parallel ([`Chooser::fill`]):
+/// results do not depend on it.
+const COSTING_CHUNK: usize = 256;
+
 /// Each trip's route choice, indexed by trip.
 #[derive(Clone, Debug, Default)]
 pub struct RouteChoices {
@@ -238,6 +242,9 @@ struct Filled {
     /// Per alternative offered, as the batch holds them: its route's store index, and its expected seconds.
     alt_route: Vec<u32>,
     alt_seconds: Vec<f64>,
+    /// A scratch per link for the path sizes, all zeros between situations
+    /// ([`openmobisim_core_routes::path_sizes_counted`]).
+    link_users: Vec<u32>,
 }
 
 impl Filled {
@@ -406,34 +413,48 @@ impl<'a> Chooser<'a> {
         batch.clear();
         filled.clear();
         let mut row = vec![0.0; self.wanted.len()];
-        for i in range {
-            let key = trip_keys[i];
-            if key.origin == key.destination {
-                continue;
-            }
+        // The trips asked, each with its pair's set of routes.
+        let asked: Vec<(usize, core::ops::Range<usize>)> = range
+            .filter_map(|i| {
+                let key = trip_keys[i];
+                if key.origin == key.destination {
+                    return None;
+                }
+                let trip = TripId::from_index(i);
+                if who.is_some_and(|w| !w[trips.traveller(trip).index()]) {
+                    return None;
+                }
+                let set = route_sets.route_range(route_sets.key_index(key)?);
+                (!set.is_empty()).then_some((i, set))
+            })
+            .collect();
+        // Each route's expected time: at free flow the store's, later the link times of the
+        // last loading walked from the trip's departure. Each trip's alone, so they are worked
+        // out in parallel and the batch is the same for any number of threads (S294).
+        let costed: Vec<Vec<f64>> = match times {
+            Some(t) => crate::transit::par_map(
+                &asked,
+                COSTING_CHUNK,
+                || (),
+                |(), (i, set)| {
+                    let departure = f64::from(trips.departure(TripId::from_index(*i)).get());
+                    set.clone()
+                        .map(|r| t.route_seconds(route_sets.route(r).links, departure))
+                        .collect()
+                },
+            ),
+            None => asked
+                .iter()
+                .map(|(_, set)| set.clone().map(|r| f64::from(route_sets.route(r).cost)).collect())
+                .collect(),
+        };
+        for ((i, set), set_seconds) in asked.into_iter().zip(costed) {
             let trip = TripId::from_index(i);
-            if who.is_some_and(|w| !w[trips.traveller(trip).index()]) {
-                continue;
-            }
-            let Some(k) = route_sets.key_index(key) else { continue };
-            let set = route_sets.route_range(k);
-            if set.is_empty() {
-                continue;
-            }
             let traveller = trips.traveller(trip);
             let class = self.inputs.travellers.user_class(traveller).raw();
             batch.begin_situation_in(traveller.raw(), trip.raw(), class);
-            let departure = f64::from(trips.departure(trip).get());
-            // Each route's expected time: at free flow the store's, later the link
-            // times of the last loading walked from this trip's departure.
             let at = filled.set_seconds.len();
-            filled.set_seconds.extend(set.clone().map(|r| {
-                let view = route_sets.route(r);
-                times.map_or_else(
-                    || f64::from(view.cost),
-                    |t| t.route_seconds(view.links, departure),
-                )
-            }));
+            filled.set_seconds.extend(set_seconds);
             let seconds = &filled.set_seconds[at..];
             let best = seconds.iter().copied().fold(f64::INFINITY, f64::min);
             let reach =
@@ -461,9 +482,11 @@ impl<'a> Chooser<'a> {
                     .map(|(_, r)| route_sets.route(r).links)
                     .collect();
                 let network = self.inputs.network;
-                openmobisim_core_routes::path_sizes(&links, |l| {
-                    network.link_length(LinkId::new(l)).get()
-                })
+                openmobisim_core_routes::path_sizes_counted(
+                    &links,
+                    |l| network.link_length(LinkId::new(l)).get(),
+                    &mut filled.link_users,
+                )
             } else {
                 Vec::new()
             };
@@ -862,8 +885,29 @@ impl<'a> Chooser<'a> {
             batch.validate()?;
             let probabilities = self.inputs.model.probabilities(&batch)?;
             measured &= probabilities.is_some();
+            // Each situation's draws, pure functions of their keys, drawn in parallel and read in
+            // situation order below (S294): the floor sample's, and whether its traveller chooses
+            // again.
+            let situations: Vec<usize> = (0..filled.trip_of.len()).collect();
+            let draws: Vec<(f64, bool)> = crate::transit::par_map(
+                &situations,
+                COSTING_CHUNK,
+                || (),
+                |(), &s| {
+                    let u = if probabilities.is_some() {
+                        floor_draw(rng, &batch, s, iteration)
+                    } else {
+                        f64::NAN
+                    };
+                    let again = strategy.is_some_and(|(strategy, msa_rng, share)| {
+                        strategy.reselects(msa_rng, batch.travellers()[s], iteration, share)
+                    });
+                    (u, again)
+                },
+            );
             let mut moving: Vec<usize> = Vec::new();
             for (s, &t) in filled.trip_of.iter().enumerate() {
+                let (u, again) = draws[s];
                 let w = f64::from(current.weight[t]);
                 w_all += w;
                 let range = batch.range(s);
@@ -881,7 +925,6 @@ impl<'a> Chooser<'a> {
                 }
                 if let Some(p) = &probabilities {
                     observed[taken] += w;
-                    let u = floor_draw(rng, &batch, s, iteration);
                     let mut cumulative = 0.0;
                     let mut drawn = false;
                     let mut expected_here = 0.0;
@@ -900,10 +943,8 @@ impl<'a> Chooser<'a> {
                         expected_paid += w * expected_here;
                     }
                 }
-                if let Some((strategy, msa_rng, share)) = strategy {
-                    if strategy.reselects(msa_rng, batch.travellers()[s], iteration, share) {
-                        moving.push(s);
-                    }
+                if again {
+                    moving.push(s);
                 }
             }
             if !moving.is_empty() {

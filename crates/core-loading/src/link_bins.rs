@@ -21,6 +21,7 @@
 //! A traversal is filed under the bin of its **exit** time.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use openmobisim_core_types::ids::{EntityId, LinkId};
 
@@ -146,6 +147,91 @@ pub struct EntryTables {
     pub origin_wait: LinkBins,
 }
 
+/// The hasher of the entry-time cells' keys, `(bin << 32) | link`: splitmix64's finaliser, two
+/// multiplies where the standard library's SipHash costs a few times more per traversal (S294).
+/// Only how fast a cell is found depends on it: the tables are sorted by key when finished, and
+/// each cell adds its traversals in the order they are recorded, whatever the hasher.
+#[derive(Clone, Copy, Debug, Default)]
+struct CellHasher(u64);
+
+impl Hasher for CellHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+
+    fn write_u64(&mut self, key: u64) {
+        let mut z = (self.0 ^ key).wrapping_add(0x9e37_79b9_7f4a_7c15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        self.0 = z ^ (z >> 31);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// The entry-time cells (or the waits at origins), each (bin, link) cell that saw traffic: found
+/// by key, `(bin << 32) | link`, or, if it is the link's last one, by a note per link — the
+/// traversals of a link arrive in nearly the order they entered it, so most find their cell there
+/// without a hash (S294). Each cell adds its traversals in the order they are recorded, however
+/// it is found.
+#[derive(Debug)]
+struct EntryCells {
+    cells: Vec<EntryCell>,
+    /// Each cell's place in `cells`, by key.
+    index: HashMap<u64, u32, BuildHasherDefault<CellHasher>>,
+    /// Per link, the bin and place of its last cell found ([`NO_CELL`]: none yet).
+    last: Vec<(u32, u32)>,
+}
+
+/// No cell yet: a link's note in [`EntryCells::last`].
+const NO_CELL: u32 = u32::MAX;
+
+impl EntryCells {
+    fn new(link_count: usize) -> Self {
+        Self { cells: Vec::new(), index: HashMap::default(), last: vec![(0, NO_CELL); link_count] }
+    }
+
+    /// The cell of `bin` and `link`, made empty if it is new.
+    fn cell(&mut self, bin: u32, link: u32) -> &mut EntryCell {
+        let l = link as usize;
+        let (last_bin, last_at) = self.last[l];
+        let at = if last_at != NO_CELL && last_bin == bin {
+            last_at
+        } else {
+            let next = u32::try_from(self.cells.len()).expect("fewer than 2^32 cells");
+            let at = *self.index.entry((u64::from(bin) << 32) | u64::from(link)).or_insert(next);
+            if at == next {
+                self.cells.push(EntryCell::default());
+            }
+            self.last[l] = (bin, at);
+            at
+        };
+        &mut self.cells[at as usize]
+    }
+
+    /// The cells as a table of `bin_seconds` bins, sorted by bin then link.
+    fn into_table(self, bin_seconds: u32) -> LinkBins {
+        let mut keys: Vec<(u64, u32)> = self.index.into_iter().collect();
+        keys.sort_unstable();
+        let mut table = LinkBins { bin_seconds, ..LinkBins::default() };
+        for (key, at) in keys {
+            let c = self.cells[at as usize];
+            #[allow(clippy::cast_possible_truncation, reason = "the two halves of the key")]
+            let (bin, link) = ((key >> 32) as u32, key as u32);
+            table.bin.push(bin);
+            table.link.push(link);
+            table.crossings.push(c.crossings);
+            table.pcu.push(c.pcu);
+            table.pcu_seconds.push(c.pcu_seconds);
+        }
+        table
+    }
+}
+
 /// Builds a [`LinkBins`] from traversals fed **in exit-time order**.
 #[derive(Debug)]
 pub struct LinkBinRecorder {
@@ -163,9 +249,9 @@ pub struct LinkBinRecorder {
     /// If asked for: the same traversals filed under the bin they
     /// **entered** the link in, which is what a traveller about to enter it needs
     /// to know. Sparse: entries arrive out of order.
-    entry: Option<HashMap<u64, EntryCell>>,
+    entry: Option<EntryCells>,
     /// The waits at origins, by departure bin, when `entry` is on.
-    origin_wait: Option<HashMap<u64, EntryCell>>,
+    origin_wait: Option<EntryCells>,
 }
 
 /// What one (entry bin, link) cell has seen so far.
@@ -208,13 +294,15 @@ impl LinkBinRecorder {
     /// The exit-time table says how much traffic left a link in each bin, which is
     /// what a flow map draws; a traveller about to enter the link needs the time
     /// taken by those who *entered* when they would, and in a growing queue the two
-    /// differ by the queue's length. Costs a hash-map insert per traversal (about
-    /// 30 ns) and 40 bytes per (link, bin) cell that saw traffic. It also files the
+    /// differ by the queue's length. Costs per traversal a look at its link's last cell, and a
+    /// hash-map insert when that is not it; 48 bytes per (link, bin) cell that saw traffic and 16
+    /// per link. It also files the
     /// wait of every vehicle at its origin ([`Self::record_origin_wait`]).
     #[must_use]
     pub fn with_entry_bins(mut self) -> Self {
-        self.entry = Some(HashMap::new());
-        self.origin_wait = Some(HashMap::new());
+        let links = self.crossings.len();
+        self.entry = Some(EntryCells::new(links));
+        self.origin_wait = Some(EntryCells::new(links));
         self
     }
 
@@ -244,7 +332,7 @@ impl LinkBinRecorder {
                 reason = "a non-negative time in seconds over a bin length; within the u32 clock"
             )]
             let bin = (departure.max(0.0) / self.entry_bin_seconds) as u32;
-            let cell = waits.entry((u64::from(bin) << 32) | u64::from(link.raw())).or_default();
+            let cell = waits.cell(bin, link.raw());
             cell.crossings += 1;
             cell.pcu += pcu;
             cell.pcu_seconds += pcu * (until - departure).max(0.0);
@@ -268,8 +356,7 @@ impl LinkBinRecorder {
                 reason = "a non-negative time in seconds over a bin length; within the u32 clock"
             )]
             let entry_bin = (enter.max(0.0) / self.entry_bin_seconds) as u32;
-            let cell =
-                entry.entry((u64::from(entry_bin) << 32) | u64::from(link.raw())).or_default();
+            let cell = entry.cell(entry_bin, link.raw());
             cell.crossings += 1;
             cell.pcu += pcu;
             cell.pcu_seconds += pcu * (end - enter).max(0.0);
@@ -307,8 +394,7 @@ impl LinkBinRecorder {
                 reason = "a non-negative time in seconds over a bin length; within the u32 clock"
             )]
             let entry_bin = (enter.max(0.0) / self.entry_bin_seconds) as u32;
-            let cell =
-                entry.entry((u64::from(entry_bin) << 32) | u64::from(link.raw())).or_default();
+            let cell = entry.cell(entry_bin, link.raw());
             cell.crossings += 1;
             cell.pcu += pcu;
             cell.pcu_seconds += pcu * (exit - enter);
@@ -348,26 +434,11 @@ impl LinkBinRecorder {
             reason = "set from a u32"
         )]
         let bin_seconds = self.entry_bin_seconds as u32;
-        let table = |cells: HashMap<u64, EntryCell>| {
-            let mut keys: Vec<u64> = cells.keys().copied().collect();
-            keys.sort_unstable();
-            let mut table = LinkBins { bin_seconds, ..LinkBins::default() };
-            for key in keys {
-                let c = cells[&key];
-                #[allow(clippy::cast_possible_truncation, reason = "the two halves of the key")]
-                let (bin, link) = ((key >> 32) as u32, key as u32);
-                table.bin.push(bin);
-                table.link.push(link);
-                table.crossings.push(c.crossings);
-                table.pcu.push(c.pcu);
-                table.pcu_seconds.push(c.pcu_seconds);
-            }
-            table
-        };
         let tables = match (self.entry.take(), self.origin_wait.take()) {
-            (Some(entry), Some(waits)) => {
-                Some(EntryTables { entry: table(entry), origin_wait: table(waits) })
-            }
+            (Some(entry), Some(waits)) => Some(EntryTables {
+                entry: entry.into_table(bin_seconds),
+                origin_wait: waits.into_table(bin_seconds),
+            }),
             _ => None,
         };
         (self.out, tables)

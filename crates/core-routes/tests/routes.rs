@@ -821,6 +821,36 @@ fn path_sizes_over_given_routes_equal_the_stores_over_the_whole_set_and_ignore_t
     assert!(openmobisim_core_routes::path_sizes(&[], length).is_empty());
 }
 
+/// The counted path sizes are the sorted ones to the last bit, on sets with shared links, links
+/// a route uses twice and links of no length, and leave their scratch all zeros (S294).
+#[test]
+fn counted_path_sizes_equal_the_sorted_ones_to_the_bit() {
+    let mut state = 5_u64;
+    let mut next = || {
+        state =
+            state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        state >> 33
+    };
+    #[allow(clippy::cast_precision_loss, reason = "small numbers")]
+    let length = |l: u32| if l % 7 == 0 { 0.0 } else { 3.0 + f64::from(l % 13) * 17.25 };
+    let mut users = Vec::new();
+    for _ in 0..500 {
+        let n = 1 + usize::try_from(next() % 6).unwrap();
+        let routes: Vec<Vec<u32>> = (0..n)
+            .map(|_| {
+                let len = 1 + next() % 40;
+                (0..len).map(|_| u32::try_from(next() % 60).unwrap()).collect()
+            })
+            .collect();
+        let refs: Vec<&[u32]> = routes.iter().map(Vec::as_slice).collect();
+        let sorted = openmobisim_core_routes::path_sizes(&refs, length);
+        let counted = openmobisim_core_routes::path_sizes_counted(&refs, length, &mut users);
+        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&sorted), bits(&counted));
+        assert!(users.iter().all(|&u| u == 0), "the scratch is left all zeros");
+    }
+}
+
 // --- the fastest way when times depend on when a link is entered (S171) ------------------
 
 #[test]
