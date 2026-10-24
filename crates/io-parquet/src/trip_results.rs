@@ -16,6 +16,12 @@
 //! - `link_at_end` is, for a trip still travelling when the window ended whose car was on the
 //!   roads, the road link it was on or waited at its origin to enter, as an index into the
 //!   network's links (as `link_bins.parquet`'s `link`); **null** otherwise.
+//! - `travel_time_s` is door to door in a run that compares modes or has a timetable: the
+//!   fixed times of the trip's own vehicle, its walks, waits and rides included; the drive alone
+//!   in a run of stated car trips. `vehicle_s` is the completed trip's seconds in a vehicle of
+//!   its own (the car's drive, the bike's ride; 0 without one) and `access_egress_s` its fixed
+//!   seconds around it (reaching it, leaving it, its parking's time; 0 without one); both
+//!   **null** unless the trip completed.
 //! - The outcomes are those of the last loading. The key-value metadata carries
 //!   `openmobisim.run_fingerprint` and `openmobisim.master_seed`.
 //!
@@ -73,6 +79,8 @@ pub fn write_trip_results(
         Arc::new(UInt32Array::from(table.arrival_s.clone())),
         Arc::new(UInt32Array::from(table.travel_time_s())),
         Arc::new(UInt32Array::from(table.link_at_end.clone())),
+        Arc::new(UInt32Array::from(table.vehicle_s.clone())),
+        Arc::new(UInt32Array::from(table.access_egress_s.clone())),
     ];
     let metadata = vec![
         ("openmobisim.run_fingerprint".to_string(), description.fingerprint_hex()),
@@ -98,6 +106,8 @@ pub fn write_trip_results(
             field("arrival_s", DataType::UInt32, true),
             field("travel_time_s", DataType::UInt32, true),
             field("link_at_end", DataType::UInt32, true),
+            field("vehicle_s", DataType::UInt32, true),
+            field("access_egress_s", DataType::UInt32, true),
         ])
         .with_metadata(metadata.iter().cloned().collect::<HashMap<_, _>>()),
     );

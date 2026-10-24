@@ -175,6 +175,16 @@ pub(crate) struct Inputs<'a> {
     pub prices: &'a PreparedPrices,
     /// The user's traveller and trip values.
     pub demand_values: &'a DemandValues,
+    /// The whole seconds after a car trip's departure its car enters the roads (S295):
+    /// `car_access_s` in a run whose trips pay the fixed times, else 0. Every reading of a car
+    /// route's time-dependent cost starts there ([`car_departure`]), as the loading does.
+    pub car_start_s: u32,
+}
+
+/// When trip `trip`'s car enters the roads: its departure plus `car_start_s`
+/// ([`Inputs::car_start_s`]), in seconds.
+fn car_departure(trips: &Trips, trip: TripId, car_start_s: u32) -> f64 {
+    f64::from(trips.departure(trip).get() + car_start_s)
 }
 
 /// The identity of a route: a 32-bit hash of its links.
@@ -431,13 +441,14 @@ impl<'a> Chooser<'a> {
         // Each route's expected time: at free flow the store's, later the link times of the
         // last loading walked from the trip's departure. Each trip's alone, so they are worked
         // out in parallel and the batch is the same for any number of threads (S294).
+        let car_start_s = self.inputs.car_start_s;
         let costed: Vec<Vec<f64>> = match times {
             Some(t) => crate::transit::par_map(
                 &asked,
                 COSTING_CHUNK,
                 || (),
                 |(), (i, set)| {
-                    let departure = f64::from(trips.departure(TripId::from_index(*i)).get());
+                    let departure = car_departure(trips, TripId::from_index(*i), car_start_s);
                     set.clone()
                         .map(|r| t.route_seconds(route_sets.route(r).links, departure))
                         .collect()
@@ -542,7 +553,7 @@ impl<'a> Chooser<'a> {
         unfinished: &[bool],
         expected_seconds: &[f64],
     ) -> (f64, f64) {
-        let Inputs { trips, trip_keys, .. } = *self.inputs;
+        let Inputs { trips, trip_keys, car_start_s, .. } = *self.inputs;
         let route_sets = &*self.route_sets;
         let chosen: Vec<usize> = (0..current.route.len())
             .filter(|&t| current.route[t] != NO_ROUTE && !unfinished[t])
@@ -556,7 +567,7 @@ impl<'a> Chooser<'a> {
             || (),
             |(), &t: &usize| {
                 let key = trip_keys[t];
-                let departure = f64::from(trips.departure(TripId::from_index(t)).get());
+                let departure = car_departure(trips, TripId::from_index(t), car_start_s);
                 let k = route_sets.key_index(key).expect("a routed trip has a set");
                 let mut in_set = f64::INFINITY;
                 let mut taken = 0.0;
@@ -669,7 +680,7 @@ impl<'a> Chooser<'a> {
                         let traveller = trips.traveller(trip);
                         let view = sets.route(taken);
                         let (seconds, remaining) = if ended.unfinished[t] {
-                            let departure = f64::from(trips.departure(trip).get());
+                            let departure = car_departure(trips, trip, self.inputs.car_start_s);
                             let (paid, rest) = ended.car_seconds(t, view.links, departure, times);
                             (paid + rest, rest)
                         } else {
@@ -712,7 +723,7 @@ impl<'a> Chooser<'a> {
                 out.g_best_network[t] = out.g_best_set[t];
                 let key = trip_keys[t];
                 let trip = TripId::from_index(t);
-                let departure = f64::from(trips.departure(trip).get());
+                let departure = car_departure(trips, trip, self.inputs.car_start_s);
                 let Some(found) = trees.route(key.origin, key.destination, departure) else {
                     continue;
                 };

@@ -239,6 +239,9 @@ pub struct RunResult {
     /// traveller weight (a simulated traveller represents *w* people).
     /// **An assumption, not a settled decision** — see the crate docs.
     pub total_travel_time: Duration,
+    /// The completed trips' time in their own vehicles (the drives and the bike rides), weighted
+    /// likewise: `total_travel_time` less the fixed times, the walks, the waits and the rides.
+    pub total_vehicle_time: Duration,
     /// The completion statistics.
     pub completion: TripCompletionStats,
     /// One row per trip outcome, unsampled — `io-parquet`'s writer applies
@@ -339,6 +342,10 @@ struct LoadPlan<'a> {
 /// One loading of the demand.
 struct Loaded {
     total_travel_time: Duration,
+    /// The completed trips' seconds in their own vehicles (drives and bike rides), weighted.
+    total_vehicle_time: Duration,
+    /// Per completed trip with a vehicle of its own: its seconds in it and its fixed seconds.
+    trip_parts: Vec<(TripId, u32, u32)>,
     completion: TripCompletionStats,
     events: Vec<EventRow>,
     /// Traffic by the bin it left each link in: what a flow map draws.
@@ -406,6 +413,9 @@ struct Executed {
     mismatch: Option<f64>,
     /// Walk legs to bin: links and the second they start.
     walks: Vec<(Vec<LinkId>, u32)>,
+    /// The seconds in the trip's own vehicle (the drive or the ride), and its fixed seconds
+    /// (reaching the vehicle, leaving it, the parking's time); 0 and 0 without one.
+    parts: (u32, u32),
 }
 
 /// Where [`Run::start_itinerary`] puts what it starts.
@@ -417,6 +427,29 @@ struct ItinStart<'a> {
     bike_vehicles: &'a mut Vec<Vehicle>,
     completion: &'a mut TripCompletionStats,
     events: &'a mut Vec<EventRow>,
+}
+
+impl Run {
+    /// Whether the run's car and bike trips pay the fixed times of reaching and leaving their
+    /// vehicle (S295): a run with itineraries (modes compared, or a timetable), whose times are
+    /// door to door; not a run of stated car trips alone, whose times are the drives.
+    fn pays_fixed_times(&self) -> bool {
+        self.transit.is_some() || self.mode_choice.is_some()
+    }
+
+    /// The whole seconds after a car trip's departure its car enters the roads: `car_access_s`
+    /// when the fixed times are paid, else 0. The loading starts the car there, and every
+    /// reading of a car route's cost at its departure (the route choice, the search trees, the
+    /// route update, the itinerary planner, the gap) starts there too.
+    fn car_start_s(&self) -> u32 {
+        if self.pays_fixed_times() { whole_seconds(self.mode_defaults.car_access_s) } else { 0 }
+    }
+}
+
+/// `x` seconds as the loading's whole seconds (0 for a negative or absent value).
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "whole seconds")]
+fn whole_seconds(x: f64) -> u32 {
+    x.max(0.0).round() as u32
 }
 
 /// The vehicle kind of a parking kind.
@@ -1263,6 +1296,7 @@ impl Run {
             link_value_names: &link_value_names,
             prices: &prices,
             demand_values: &demand_values,
+            car_start_s: self.car_start_s(),
         };
         let mut chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
         // What the full gap is measured in (S293): the model's utility, or time.
@@ -1332,6 +1366,8 @@ impl Run {
                 max_routes: self.choice_max_routes,
                 car_access_s: self.mode_defaults.car_access_s,
                 car_egress_s: self.mode_defaults.car_egress_s,
+                bike_access_s: self.mode_defaults.bike_access_s,
+                bike_egress_s: self.mode_defaults.bike_egress_s,
                 car_routes: attributes
                     .as_ref()
                     .map(|attributes| CarRoutes { sets: &route_sets, attributes }),
@@ -1430,6 +1466,7 @@ impl Run {
                         &car_keys,
                         &route_sets,
                         Some(&trip_choosing),
+                        self.car_start_s(),
                         f64::from(tree_step_s),
                     );
                     clock = timings.lap("trees", Some(0), clock);
@@ -1440,6 +1477,7 @@ impl Run {
                         trip_keys: &car_keys,
                         route_sets: &route_sets,
                         times: &times,
+                        car_start_s: self.car_start_s(),
                         iteration: 0,
                         active: Some(&trip_choosing),
                         trees: Some(&trees),
@@ -1490,6 +1528,8 @@ impl Run {
                         max_routes: self.choice_max_routes,
                         car_access_s: self.mode_defaults.car_access_s,
                         car_egress_s: self.mode_defaults.car_egress_s,
+                        bike_access_s: self.mode_defaults.bike_access_s,
+                        bike_egress_s: self.mode_defaults.bike_egress_s,
                         car_routes: attributes
                             .as_ref()
                             .map(|attributes| CarRoutes { sets: &route_sets, attributes }),
@@ -1569,6 +1609,7 @@ impl Run {
                         &car_keys,
                         &route_sets,
                         None,
+                        self.car_start_s(),
                         f64::from(tree_step_s),
                     );
                     clock = timings.lap("trees", Some(iteration), clock);
@@ -1583,6 +1624,7 @@ impl Run {
                             trip_keys: &car_keys,
                             route_sets: &route_sets,
                             times: &times,
+                            car_start_s: self.car_start_s(),
                             iteration: next,
                             active: None,
                             trees: Some(&trees),
@@ -1691,6 +1733,8 @@ impl Run {
                             max_routes: self.choice_max_routes,
                             car_access_s: self.mode_defaults.car_access_s,
                             car_egress_s: self.mode_defaults.car_egress_s,
+                            bike_access_s: self.mode_defaults.bike_access_s,
+                            bike_egress_s: self.mode_defaults.bike_egress_s,
                             car_routes: attributes
                                 .as_ref()
                                 .map(|attributes| CarRoutes { sets: &route_sets, attributes }),
@@ -1879,8 +1923,13 @@ impl Run {
             ),
             None => Vec::new(),
         };
-        let trip_outcomes =
-            TripOutcomes::of(&loaded.events, &taken, &no_alternative, &loaded.at_end);
+        let trip_outcomes = TripOutcomes::of(
+            &loaded.events,
+            &taken,
+            &no_alternative,
+            &loaded.at_end,
+            &loaded.trip_parts,
+        );
         let [bike_link_bins, walk_link_bins] = self.layer_bins(loaded.layer_vehicles);
         let transit = loaded.transit;
         let itinerary_result = match (&itineraries, &chosen) {
@@ -1901,6 +1950,7 @@ impl Run {
         self.timings = timings;
         Ok(RunResult {
             total_travel_time: loaded.total_travel_time,
+            total_vehicle_time: loaded.total_vehicle_time,
             completion: loaded.completion,
             events: loaded.events,
             link_bins,
@@ -1941,6 +1991,20 @@ impl Run {
         diagnostics: &mut Diagnostics,
     ) -> Loaded {
         let LoadPlan { record_bins, want_entry, level_override, active, disrupted } = plan;
+        // The fixed times of reaching and leaving a vehicle (S295): paid by every car and bike
+        // trip of a run with itineraries (modes compared, or a timetable), whose times are door
+        // to door; none in a run of stated car trips alone, a car assignment whose times are
+        // the drives. Whole seconds, the loading's clock; the car's start is what every reading
+        // of its route's cost starts from (`Self::car_start_s`).
+        let fixed = |x: f64| if self.pays_fixed_times() { whole_seconds(x) } else { 0 };
+        let car_access_s = fixed(self.mode_defaults.car_access_s);
+        let car_egress_s = fixed(self.mode_defaults.car_egress_s);
+        let bike_access_s = fixed(self.mode_defaults.bike_access_s);
+        let bike_egress_s = fixed(self.mode_defaults.bike_egress_s);
+        // Per completed trip with a vehicle of its own: the trip, its seconds in the vehicle
+        // and its fixed seconds (access, egress and parking).
+        let mut trip_parts: Vec<(TripId, u32, u32)> = Vec::new();
+        let mut total_vehicle_time = Duration::default();
         // The times the next choice reads are binned at the strategy's length, whatever bins
         // the flow map is recorded in (S232).
         let entry_bin_seconds = self.equilibration.cost_bin_seconds();
@@ -2051,7 +2115,7 @@ impl Run {
                 }
             }
             if mode != Mode::Car {
-                match self.static_outcome(trip, mode, static_routes) {
+                match self.static_outcome(trip, mode, static_routes, bike_access_s) {
                     StaticOutcome::NotAvailable => {
                         diagnostics.record(DiagKey::new(
                             Category::Modelling,
@@ -2088,14 +2152,25 @@ impl Run {
                     }
                     StaticOutcome::Travelled { vehicle, trajectory, slot } => {
                         let weight = self.travellers.weight(traveller);
-                        if trajectory.arrival() <= self.window {
+                        // A bike trip ends when the bike is parked and locked; a walk at its end.
+                        let (access_s, egress_s) =
+                            if slot == 0 { (bike_access_s, bike_egress_s) } else { (0, 0) };
+                        let end = Second(trajectory.arrival().get() + egress_s);
+                        if end <= self.window {
                             completion.completed += 1;
-                            total_travel_time += trajectory.total_travel_time() * f64::from(weight);
-                            events.push(EventRow::trip(
-                                trajectory.arrival(),
-                                EventType::TripCompleted,
-                                trip,
-                            ));
+                            let ride = trajectory.total_travel_time();
+                            total_travel_time += ride * f64::from(weight);
+                            total_travel_time += Duration::from_clock(Second(access_s + egress_s))
+                                * f64::from(weight);
+                            if slot == 0 {
+                                total_vehicle_time += ride * f64::from(weight);
+                                trip_parts.push((
+                                    trip,
+                                    whole_seconds(ride.get()),
+                                    access_s + egress_s,
+                                ));
+                            }
+                            events.push(EventRow::trip(end, EventType::TripCompleted, trip));
                         } else {
                             completion.truncated += 1;
                             diagnostics.record(DiagKey::new(
@@ -2182,18 +2257,29 @@ impl Run {
                                     VehicleId::new(traveller.raw()),
                                     path,
                                     Pcu(f64::from(weight)),
-                                    departure,
+                                    Second(departure.get() + car_access_s),
                                 );
                                 let trajectory = traverse_free_flow(&vehicle, &self.network);
                                 if record_bins.is_some() {
                                     level0_vehicles.push(vehicle);
                                 }
-                                if trajectory.arrival() <= self.window {
+                                // The trip ends when the traveller has left the car.
+                                let end = Second(trajectory.arrival().get() + car_egress_s);
+                                if end <= self.window {
                                     completion.completed += 1;
+                                    let drive = trajectory.total_travel_time();
+                                    total_travel_time += drive * f64::from(weight);
                                     total_travel_time +=
-                                        trajectory.total_travel_time() * f64::from(weight);
+                                        Duration::from_clock(Second(car_access_s + car_egress_s))
+                                            * f64::from(weight);
+                                    total_vehicle_time += drive * f64::from(weight);
+                                    trip_parts.push((
+                                        trip,
+                                        whole_seconds(drive.get()),
+                                        car_access_s + car_egress_s,
+                                    ));
                                     events.push(EventRow::trip(
-                                        trajectory.arrival(),
+                                        end,
                                         EventType::TripCompleted,
                                         trip,
                                     ));
@@ -2232,7 +2318,7 @@ impl Run {
                                     VehicleId::new(trip.raw()),
                                     path,
                                     Pcu(f64::from(weight)),
-                                    departure,
+                                    Second(departure.get() + car_access_s),
                                 );
                                 pending_ltm.push((trip, vehicle, weight));
                             }
@@ -2243,7 +2329,7 @@ impl Run {
                                     VehicleId::new(trip.raw()),
                                     path,
                                     Pcu(f64::from(weight)),
-                                    departure,
+                                    Second(departure.get() + car_access_s),
                                 );
                                 let times = self.static_solution.as_ref().map(|s| s.times_s());
                                 let trajectory = traverse_timed(
@@ -2252,10 +2338,19 @@ impl Run {
                                     times.expect("level 1 solves before it loads"),
                                 );
                                 completion.completed += 1;
+                                let drive = trajectory.total_travel_time();
+                                total_travel_time += drive * f64::from(weight);
                                 total_travel_time +=
-                                    trajectory.total_travel_time() * f64::from(weight);
+                                    Duration::from_clock(Second(car_access_s + car_egress_s))
+                                        * f64::from(weight);
+                                total_vehicle_time += drive * f64::from(weight);
+                                trip_parts.push((
+                                    trip,
+                                    whole_seconds(drive.get()),
+                                    car_access_s + car_egress_s,
+                                ));
                                 events.push(EventRow::trip(
-                                    trajectory.arrival(),
+                                    Second(trajectory.arrival().get() + car_egress_s),
                                     EventType::TripCompleted,
                                     trip,
                                 ));
@@ -2449,12 +2544,27 @@ impl Run {
             }
 
             for (trip, id, weight) in pending_ltm {
-                match by_vehicle.get(&id) {
+                // The trip ends when the traveller has left the car: a car that arrived too
+                // late for that before the window's end leaves its trip truncated, off the roads.
+                match by_vehicle
+                    .get(&id)
+                    .filter(|t| Second(t.arrival().get() + car_egress_s) <= self.window)
+                {
                     Some(trajectory) => {
                         completion.completed += 1;
-                        total_travel_time += trajectory.total_travel_time() * f64::from(weight);
+                        let drive = trajectory.total_travel_time();
+                        total_travel_time += drive * f64::from(weight);
+                        total_travel_time +=
+                            Duration::from_clock(Second(car_access_s + car_egress_s))
+                                * f64::from(weight);
+                        total_vehicle_time += drive * f64::from(weight);
+                        trip_parts.push((
+                            trip,
+                            whole_seconds(drive.get()),
+                            car_access_s + car_egress_s,
+                        ));
                         events.push(EventRow::trip(
-                            trajectory.arrival(),
+                            Second(trajectory.arrival().get() + car_egress_s),
                             EventType::TripCompleted,
                             trip,
                         ));
@@ -2583,6 +2693,11 @@ impl Run {
                             total_travel_time += (Duration::from_clock(Second(at))
                                 - Duration::from_clock(departure))
                                 * weight;
+                            if done.parts != (0, 0) {
+                                total_vehicle_time +=
+                                    Duration::from_clock(Second(done.parts.0)) * weight;
+                                trip_parts.push((trip, done.parts.0, done.parts.1));
+                            }
                             events.push(EventRow::trip(Second(at), EventType::TripCompleted, trip));
                         }
                         ItinOutcome::Arrived(_) | ItinOutcome::Truncated => {
@@ -2630,6 +2745,8 @@ impl Run {
             parking: parking_result,
             availability: availability_real,
             itinerary,
+            total_vehicle_time,
+            trip_parts,
             gridlock,
             reroutes,
             routes_realised,
@@ -2724,7 +2841,9 @@ impl Run {
                     return;
                 }
                 self.vehicles.park(traveller, vk, alt.parking, parking.position(alt.parking));
-                self.drive(trip, alt, k, f64::from(departure.get()), weight, index, want_bins, out)
+                // The drive starts once the vehicle is reached (the choice counted the same).
+                let start = f64::from(departure.get()) + self.mode_defaults.access_s(k);
+                self.drive(trip, alt, k, start, weight, index, want_bins, out)
             }
             (Shape::Back(p), Some(k)) => {
                 let vk = vehicle_kind(k);
@@ -2835,6 +2954,7 @@ impl Run {
             let paid = parking.defaults().parking_seconds(
                 parking.kind(p),
                 parking_mod::availability_at(&avail, &bins, p, t),
+                self.mode_defaults.egress_s(parking.kind(p)),
             );
             mismatch += w * (paid - alt.parking_s).abs();
             kind_mismatch[k] += w * (paid - alt.parking_s).abs();
@@ -2914,9 +3034,11 @@ impl Run {
                         followed: None,
                         mismatch: None,
                         walks: Vec::new(),
+                        parts: (0, 0),
                     };
                     (e, Vec::new())
                 };
+                let mut paid_at_parking: Option<f64> = None;
                 let (at_first, start, end) = match alt.shape {
                     // (A direct leg is never pending: the loop runs it as a trip of its mode.)
                     Shape::Transit | Shape::Direct => {
@@ -2932,7 +3054,12 @@ impl Run {
                             }
                             _ => 1.0,
                         };
-                        let paid = p.defaults().parking_seconds(p.kind(alt.parking), a);
+                        let paid = p.defaults().parking_seconds(
+                            p.kind(alt.parking),
+                            a,
+                            self.mode_defaults.egress_s(p.kind(alt.parking)),
+                        );
+                        paid_at_parking = Some(paid);
                         #[allow(
                             clippy::cast_possible_truncation,
                             clippy::cast_sign_loss,
@@ -2983,17 +3110,20 @@ impl Run {
                 }
                 let (outcome, mismatch) = match alt.shape {
                     Shape::Back(_) => {
-                        let fetch = alt.parking_s;
+                        let kind = parking_kind_of(alt.mode).expect("a back leg has a vehicle");
+                        let fetch = self.mode_defaults.access_s(kind);
+                        let egress = self.mode_defaults.egress_s(kind);
                         let mismatch = followed
                             .as_ref()
                             .map(|f| (f64::from(f.end) - (alt.vehicle_departure - fetch)).abs());
+                        // The trip ends when the vehicle has been left at the destination.
                         #[allow(
                             clippy::cast_possible_truncation,
                             clippy::cast_sign_loss,
                             reason = "a second"
                         )]
                         let outcome = pend.vehicle_arrival.map_or(ItinOutcome::Truncated, |t| {
-                            ItinOutcome::Arrived(t.max(0.0).floor() as u32)
+                            ItinOutcome::Arrived((t + egress).max(0.0).floor() as u32)
                         });
                         (outcome, mismatch)
                     }
@@ -3004,7 +3134,28 @@ impl Run {
                         None,
                     ),
                 };
-                (Executed { outcome, followed, mismatch, walks: Vec::new() }, walks)
+                // The vehicle's own seconds and the fixed ones (S295), for the trip's row.
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "whole seconds"
+                )]
+                let parts = match (alt.shape, parking_kind_of(alt.mode), pend.vehicle_arrival) {
+                    (Shape::Out, Some(kind), Some(t)) => {
+                        let access = self.mode_defaults.access_s(kind);
+                        let drive = (t - f64::from(departure) - access).max(0.0);
+                        let paid = paid_at_parking.unwrap_or(0.0);
+                        (drive.round() as u32, (access + paid).round() as u32)
+                    }
+                    (Shape::Back(_), Some(kind), Some(t)) => {
+                        let drive = (t - alt.vehicle_departure).max(0.0);
+                        let fixed =
+                            self.mode_defaults.access_s(kind) + self.mode_defaults.egress_s(kind);
+                        (drive.round() as u32, fixed.round() as u32)
+                    }
+                    _ => (0, 0),
+                };
+                (Executed { outcome, followed, mismatch, walks: Vec::new(), parts }, walks)
             },
         );
         // The walks not searched yet in this execution, each once, in parallel.
@@ -3045,6 +3196,7 @@ impl Run {
         trip: TripId,
         mode: Mode,
         static_routes: &StaticRoutes,
+        bike_access_s: u32,
     ) -> StaticOutcome {
         let (Some(layer), Some(setup)) = (static_layer_of(mode), self.layers.for_mode(mode)) else {
             return StaticOutcome::NotAvailable;
@@ -3071,14 +3223,16 @@ impl Run {
             self.vehicles.relocate(traveller, kind, destination);
         }
         let weight = self.travellers.weight(traveller);
+        let slot = usize::from(layer == openmobisim_core_graph::layers::StaticLayer::Walk);
+        // A bike sets off once reached and unlocked; a walk at the departure.
+        let access_s = if slot == 0 { bike_access_s } else { 0 };
         let vehicle = Vehicle::new(
             VehicleId::new(trip.raw()),
             static_routes.links(layer, index),
             Pcu(f64::from(weight)),
-            self.trips.departure(trip),
+            Second(self.trips.departure(trip).get() + access_s),
         );
         let trajectory = traverse_timed(&vehicle, setup.network().network(), setup.seconds());
-        let slot = usize::from(layer == openmobisim_core_graph::layers::StaticLayer::Walk);
         StaticOutcome::Travelled { vehicle, trajectory, slot }
     }
 

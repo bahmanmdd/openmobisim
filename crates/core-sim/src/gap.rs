@@ -126,7 +126,8 @@ pub(crate) struct Ended<'a> {
 }
 
 impl Ended<'_> {
-    /// What trip `t`, still under way at the end and driving `links` from `departure`, paid by
+    /// What trip `t`, still under way at the end and driving `links` from `departure` (when its
+    /// car entered the roads), paid by
     /// then (`window_end − departure`) and what it still had to pay: the links from the one it
     /// stood on to the last, that one counted in full, walked from the window's end at each
     /// link's last recorded time held ([`LinkTimes::link_seconds_held`]). All of `links` if it

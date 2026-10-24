@@ -93,6 +93,9 @@ pub struct UpdateContext<'a> {
     pub turns: &'a TurnTable,
     /// The trips.
     pub trips: &'a Trips,
+    /// The whole seconds after a car trip's departure its car enters the roads (S295): the
+    /// departures searched and costed start there, as the loading does.
+    pub car_start_s: u32,
     /// Each trip's origin-destination pair, snapped to nodes, indexed by trip.
     pub trip_keys: &'a [RouteKey],
     /// The sets as they are now.
@@ -343,6 +346,7 @@ impl RouteUpdate for BestResponse {
                         cx.trip_keys,
                         cx.route_sets,
                         cx.active,
+                        cx.car_start_s,
                         step,
                     );
                     self.update_from_trees(cx, &own)
@@ -515,7 +519,7 @@ impl BestResponse {
                 let k = sets.key_index(cx.trip_keys[i as usize])?;
                 // A full set is searched too: a better route replaces one of its own (S268).
                 (!sets.route_range(k).is_empty()).then(|| {
-                    let departure = cx.trips.departure(TripId::new(i)).get();
+                    let departure = cx.trips.departure(TripId::new(i)).get() + cx.car_start_s;
                     (k as u64) << 32 | u64::from(departure)
                 })
             })

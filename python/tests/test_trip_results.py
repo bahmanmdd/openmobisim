@@ -46,7 +46,7 @@ def test_every_trip_has_a_row_and_the_outcomes_add_up_to_the_run_s_counts(jammed
     assert list(t) == [
         "trip", "traveller_id", "trip_seq", "user_class", "weight", "origin_lon", "origin_lat",
         "destination_lon", "destination_lat", "departure_s", "mode", "mode_choice", "outcome",
-        "arrival_s", "travel_time_s", "link_at_end",
+        "arrival_s", "travel_time_s", "link_at_end", "vehicle_s", "access_egress_s",
     ]  # fmt: skip
     assert all(len(v) == n for v in t.values())
     assert list(t["trip"]) == list(range(n))
@@ -59,6 +59,12 @@ def test_every_trip_has_a_row_and_the_outcomes_add_up_to_the_run_s_counts(jammed
     arrival, departure = t["arrival_s"], t["departure_s"].astype(float)
     assert np.all(np.isnan(arrival[~done])) and not np.any(np.isnan(arrival[done]))
     assert np.array_equal(t["travel_time_s"][done], arrival[done] - departure[done])
+    # A stated car trip in a run without mode choice or a timetable pays no access or egress:
+    # its time is its vehicle's; neither is known for a trip that did not finish.
+    vehicle, fixed = t["vehicle_s"], t["access_egress_s"]
+    assert np.array_equal(fixed[done], np.zeros(done.sum()))
+    assert np.array_equal(vehicle[done] + fixed[done], t["travel_time_s"][done])
+    assert np.all(np.isnan(vehicle[~done])) and np.all(np.isnan(fixed[~done]))
     assert np.all(arrival[done] <= 600)
     weight = t["weight"].astype(float)
     mean = np.sum(t["travel_time_s"][done] * weight[done]) / weight[done].sum()

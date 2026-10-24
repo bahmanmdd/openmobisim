@@ -556,5 +556,7 @@ pub(crate) fn trip_results<'py>(
     d.set_item("arrival_s", maybe(&table.arrival_s).into_pyarray(py))?;
     d.set_item("travel_time_s", maybe(&table.travel_time_s()).into_pyarray(py))?;
     d.set_item("link_at_end", maybe(&table.link_at_end).into_pyarray(py))?;
+    d.set_item("vehicle_s", maybe(&table.vehicle_s).into_pyarray(py))?;
+    d.set_item("access_egress_s", maybe(&table.access_egress_s).into_pyarray(py))?;
     Ok(d)
 }

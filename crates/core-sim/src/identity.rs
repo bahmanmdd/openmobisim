@@ -280,8 +280,6 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         hash_mode_choice(&mut h, inputs.trips, inputs.layers, modes);
         h.write_f64(inputs.mode_defaults.walk_max_s);
         h.write_f64(inputs.mode_defaults.bike_max_s);
-        h.write_f64(inputs.mode_defaults.car_access_s);
-        h.write_f64(inputs.mode_defaults.car_egress_s);
         // The classes' modes (S231): nothing when every class may use all, so such a run's
         // fingerprint is what it was.
         if inputs.class_modes.iter().any(|modes| modes.contains(&false)) {
@@ -291,6 +289,20 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
                     h.write_bool(allowed);
                 }
             }
+        }
+    }
+    // The fixed times of reaching and leaving a car or a bike, wherever they are paid: a run
+    // with itinerary trips (modes compared, or a timetable). Absent elsewhere: a run of stated
+    // car trips alone pays none and hashes as before.
+    if inputs.mode_choice.is_some() || inputs.transit.is_some() {
+        h.write_str("fixed-times");
+        for v in [
+            inputs.mode_defaults.car_access_s,
+            inputs.mode_defaults.car_egress_s,
+            inputs.mode_defaults.bike_access_s,
+            inputs.mode_defaults.bike_egress_s,
+        ] {
+            h.write_f64(v);
         }
     }
     // The car fallback (S271), wherever it can act: a run with itinerary trips. Off means
@@ -679,9 +691,7 @@ fn hash_parking(h: &mut Fnv1a, parking: &ParkingSetup) {
         d.reach_bike_s,
         d.candidates,
         d.rank_speed_km_h,
-        d.floor_car_s,
         d.slope_car_s,
-        d.floor_bike_s,
         d.slope_bike_s,
         d.snap_m,
         d.bin_s,

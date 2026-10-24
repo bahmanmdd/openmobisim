@@ -105,6 +105,7 @@ impl SearchTrees {
         trip_keys: &[RouteKey],
         sets: &RouteSets,
         active: Option<&[bool]>,
+        car_start_s: u32,
         step_s: f64,
     ) -> Self {
         assert!(step_s > 0.0, "a departure bin has a positive length");
@@ -120,7 +121,8 @@ impl SearchTrees {
                 if sets.route_range(k).is_empty() {
                     return None;
                 }
-                let departure = f64::from(trips.departure(TripId::new(i)).get());
+                // When the car enters the roads (S295): `car_start_s` after the departure.
+                let departure = f64::from(trips.departure(TripId::new(i)).get() + car_start_s);
                 #[allow(
                     clippy::cast_possible_truncation,
                     clippy::cast_sign_loss,

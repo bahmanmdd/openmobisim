@@ -57,6 +57,7 @@ fn count_rows(path: &std::path::Path) -> usize {
 fn sample_result() -> RunResult {
     RunResult {
         total_travel_time: Duration(725.0),
+        total_vehicle_time: Duration(725.0),
         completion: TripCompletionStats {
             total_trips: 5,
             no_vehicle_available: 1,
@@ -811,7 +812,7 @@ fn trip_results_round_trip_with_their_outcomes_and_nulls() {
     let taken = [Some(Mode::Car); 3];
     let at_end = [(TripId::new(1), LinkId::new(1))];
     let result = RunResult {
-        trip_outcomes: TripOutcomes::of(&events, &taken, &[], &at_end),
+        trip_outcomes: TripOutcomes::of(&events, &taken, &[], &at_end, &[]),
         events,
         ..RunResult::default()
     };

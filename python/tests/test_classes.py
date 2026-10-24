@@ -41,7 +41,7 @@ def toy_trips(n: int, cls: str = "everyone", frm: str = "W", to: str = "M") -> l
 
 
 # The hand values are the drives and rides alone: the car's access and egress (S279) are off.
-NO_ACCESS = {"car_access_s": 0, "car_egress_s": 0}
+NO_ACCESS = {"car_access_s": 0, "car_egress_s": 0, "bike_access_s": 0, "bike_egress_s": 0}
 
 
 def toy_run(rows: list[tuple], run_id: str, classes: dict, **kwargs: object) -> ms.Run:

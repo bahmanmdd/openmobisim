@@ -901,9 +901,10 @@ class Scenario:
                 ``reach_car_s`` (1800) and ``reach_bike_s`` (1200: the longest drive or ride
                 to a parking), ``candidates`` (3: the most parkings a trip chooses among),
                 ``rank_speed_km_h`` (30: ranks candidates before they are tried),
-                ``floor_car_s`` (120) and ``floor_bike_s`` (30: the time to park when there
-                is room, and to fetch), ``slope_car_s`` (600) and ``slope_bike_s`` (180: what
-                a parking full for a whole time bin adds), ``snap_m`` (300), ``bin_s``
+                ``slope_car_s`` (600) and ``slope_bike_s`` (180: what a parking full for a
+                whole time bin adds to the time to leave the vehicle, ``mode_options``
+                ``car_egress_s`` and ``bike_egress_s``; fetching it costs ``car_access_s`` or
+                ``bike_access_s``), ``snap_m`` (300), ``bin_s``
                 (900) and ``pr_min_km`` (3: the shortest trip, as the crow flies, that mode
                 choice offers park-and-ride and bike-and-ride to). Uncalibrated defaults.
                 For compute, ``reach_car_step_s`` (0: each park-and-ride trip searches its
@@ -936,12 +937,18 @@ class Scenario:
                 traveller without one), counted under the car and listed by
                 ``Run.fallback_car``; at 0 such a trip is not simulated, and the run warns
                 (``NoAlternativeWarning``) and lists it (``Run.report_no_alternative()``).
-                ``car_access_s`` (120) and ``car_egress_s`` (180): what a car trip takes before
-                its drive (reaching the car) and after it (parking and walking from it), counted
-                in a car alternative's door-to-door time, walk and parking time in mode choice
-                and in the drive to a park-and-ride car park — every other mode pays its walks
-                and waits; uncalibrated, 0 switches either off. The loading moves the car from
-                the trip's departure. ``car_snap_motorway_m`` (50): a trip's end joins the roads
+                ``car_access_s`` (120) and ``car_egress_s`` (300): what a car trip takes before
+                its drive (reaching the car) and after it (parking and walking from it), and
+                ``bike_access_s`` (60) and ``bike_egress_s`` (60): the same for a bike (reaching
+                and unlocking it; parking and locking it). In a run that compares modes or has a
+                timetable every trip's time is door to door: the choice counts them (as walk and
+                parking time) and the loading pays them (the vehicle sets off that much after the
+                departure, the trip ends that much after it arrives), at home and at a parking
+                alike (a parking adds its occupancy's time, ``parking_options``); the results say
+                what a time holds (``trip_results`` ``vehicle_s``, ``access_egress_s``). A run of
+                stated car trips alone, with no timetable, pays none: it is a car assignment and
+                its times are the drives, as the benchmarks count them. Uncalibrated, 0 switches
+                any of them off. ``car_snap_motorway_m`` (50): a trip's end joins the roads
                 at the nearest street node (one with a road a car can enter from; motorways,
                 trunk roads and their ramps are not), unless it lies within this distance of a
                 node that has only such roads, which it then takes (through traffic placed on

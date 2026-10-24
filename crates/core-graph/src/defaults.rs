@@ -281,7 +281,7 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// values), the period its hourly flows are of (`period_s`, 0: read from the departures), and
 /// the Frank–Wolfe solver's `iterations` (1000) and `gap_tolerance` (0.0001). No result and no
 /// fingerprint of levels 0, 2, 3 and 4 moves.
-pub const DEFAULTS_VERSION: u32 = 35;
+pub const DEFAULTS_VERSION: u32 = 36;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

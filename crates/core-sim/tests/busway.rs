@@ -5,7 +5,8 @@
 //! passes a link end 5.143 s after the car before it). A bus scheduled from stop `A`
 //! at 0 to stop `B` at 120 arrives at **21**. A car leaving `A` at 0 goes round: **96 s**
 //! either way. Without the busway the bus goes round too, behind the car: out of `AC`
-//! at 48 + 5.143, at `B` at 101.14 → **101**.
+//! at 48 + 5.143, at `B` at 101.14 → **101**. The run sets the fixed access and egress
+//! times to 0, so the car leaving at 0 is on the road at 0 and its time is its drive.
 
 #![allow(clippy::float_cmp, reason = "whole seconds")]
 
@@ -18,7 +19,9 @@ use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults,
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::FidelityLevel;
-use openmobisim_core_sim::{FlowMotor, LayerSetup, Run, RunResult, StaticLayers, TransitSetup};
+use openmobisim_core_sim::{
+    FlowMotor, LayerSetup, ModeDefaults, Run, RunResult, StaticLayers, TransitSetup,
+};
 use openmobisim_core_transit::{
     ALIGHT, BOARD, CallSpec, RouteSpec, ServiceDate, StopSpec, TimetableBuilder, TransitDefaults,
 };
@@ -109,6 +112,14 @@ fn run(busway: bool) -> (RunResult, Arc<TransitSetup>) {
         })
         .with_layers(layers)
         .with_transit(transit.clone())
+        // No access or egress: the car enters the road at 0, ahead of the bus.
+        .with_mode_defaults(ModeDefaults {
+            car_access_s: 0.0,
+            car_egress_s: 0.0,
+            bike_access_s: 0.0,
+            bike_egress_s: 0.0,
+            ..ModeDefaults::SHIPPED
+        })
         .execute(&mut Diagnostics::new());
     (result, transit)
 }

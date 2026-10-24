@@ -8,20 +8,21 @@
 //! passenger boards only if at the stop 60 s before. Cars at free flow: `W → D2`
 //! **180.394 s** (a1's Webster delay 20.554 s included), `W → R2` **144.394 s**
 //! (without `e2`, 36 s), `R2 → D2` **36 s**. The bike `S → D2` **248.48 s**.
-//! Arrivals are floored to whole seconds when recorded. Parking takes **120 s**
-//! for a car and **30 s** for a bike when there is room, plus **600 s** and
-//! **180 s** times the share of the time bin (900 s) the parking was full;
-//! fetching takes the floor alone.
+//! Arrivals are floored to whole seconds when recorded. The fixed times are the
+//! shipped ones: a car is reached in **120 s** and left in **300 s**, a bike in
+//! **60 s** and **60 s**, wherever the vehicle is left; at a parking the leaving
+//! time grows by **600 s** (car) and **180 s** (bike) times the share of the time
+//! bin (900 s) the parking was full; fetching a vehicle takes the time to reach it.
 //!
 //! | Case | Trip | Hand value |
 //! |---|---|---|
-//! | PR1 | car `W → H`, park, tram to `N1`, leaving 0 | car at 180, parked 300 (0 + 180.394 + 120, floored), ready 360 > 300: the 900 tram, `N1` at **1200** |
-//! | PR2 | seven cars `W → H` at 0 | the seventh finds 6 spaces taken: overflow 1; full from 180 to the end: availability 0.2 in bin 0, so everyone pays 120 + 600 · 0.8 = **600 s** (expected 120: mismatch **480 s**), parked at 780, the 900 tram, **1200** |
-//! | PR3 | `W → N1`, parkings `H` and `P2` | `H`: parked 300, waits 600 for the 900 tram; `P2`: parked 264, walks 225, at the stop 489, waits 411; both **1200**. Deterministic: `H` (the tie goes to the lower parking). Logit: ΔU = −0.09·(600 − 411)/60 + 0.13·225/60 = **0.204**, P(H) = 1/(1 + e^−0.204) |
-//! | PR4 | out via `P2` (`P2` only), back `N1 → D2` at 1800 | out: **1200** as PR3's `P2`; back: at `N1` 1800, the 2400 tram, `H` 2700, walk 225 to `P2` 2925, fetch 120, drive 36: **3081** |
+//! | PR1 | car `W → H`, park, tram to `N1`, leaving 0 | the car leaves at 120, at `H` 300 (120 + 180.394, floored), parked 600 > 300: the 900 tram, `N1` at **1200** |
+//! | PR2 | seven cars `W → H` at 0 | all at `H` at 300; the seventh finds 6 spaces taken: overflow 1; full from 300 to the end: availability 1/3 in bin 0, so everyone pays 300 + 600 · 2/3 = **700 s** (expected 300: mismatch **400 s**), parked at 1000, the 1500 tram, **1800** |
+//! | PR3 | `W → N1`, parkings `H` and `P2` | `H`: parked 600, waits 300 for the 900 tram; `P2`: at `R2` 264, parked 564, walks 225, at the stop 789, waits 111; both **1200**. Deterministic: `H` (the tie goes to the lower parking). Logit: ΔU = −0.09·(300 − 111)/60 + 0.13·225/60 = **0.204**, P(H) = 1/(1 + e^−0.204) |
+//! | PR4 | out via `P2` (`P2` only), back `N1 → D2` at 1800 | out: **1200** as PR3's `P2`; back: at `N1` 1800, the 2400 tram, `H` 2700, walk 225 to `P2` 2925, fetch 120, drive 36: 3081, leave the car 300: **3381** |
 //! | PR5 | out via `H`, then a car trip `N1 → W` | the car is at `H`: **no vehicle available** |
-//! | BR1 | bike `S → H`, park, tram to `N1` | bike at 248, parked 278, ready 338 > 300: the 900 tram, **1200** |
-//! | BR2 | four bikes `S → H` at 0 | the fourth finds 3 spaces taken; full from 248: availability 1 − 652/900, parking 30 + 180 · 652/900 = **160.4 s**, parked 408, the 900 tram, **1200** |
+//! | BR1 | bike `S → H`, park, tram to `N1` | the bike leaves at 60, at `H` 308 (60 + 248.48, floored), parked 368 > 300: the 900 tram, **1200** |
+//! | BR2 | four bikes `S → H` at 0 | the fourth finds 3 spaces taken; full from 308: availability 1 − 592/900, parking 60 + 180 · 592/900 = **178.4 s**, parked 486, the 900 tram, **1200** |
 
 #![allow(clippy::float_cmp, reason = "travel times here are whole seconds")]
 
@@ -200,13 +201,13 @@ fn pr2_the_seventh_car_parks_anyway_and_everyone_pays_the_bins_availability() {
     let rows =
         (0..7).map(|i| t.trip(&format!("c{i}"), 0, "W", "N1", 0, Mode::CarTransit)).collect();
     let r = t.run_with(rows, &only(&["H-car"]), false);
-    assert_eq!(outcomes(&r), vec![(EventType::TripCompleted, 1200); 7]);
+    assert_eq!(outcomes(&r), vec![(EventType::TripCompleted, 1800); 7]);
     let p = r.parking.as_ref().expect("parking");
     assert_eq!((p.arrivals, p.overflow_arrivals), (7.0, 1.0));
-    assert!((p.mismatch_s - 480.0).abs() < 1e-9, "{}", p.mismatch_s);
+    assert!((p.mismatch_s - 400.0).abs() < 1e-9, "{}", p.mismatch_s);
     let b = &p.bins;
     assert_eq!((b.bin_s, b.occupancy_max[0], b.overflow_max[0]), (900, 7.0, 1.0));
-    assert!((b.full_s[0] - 720.0).abs() < 1e-9);
+    assert!((b.full_s[0] - 600.0).abs() < 1e-9);
     assert_eq!(b.full_s[1], 900.0, "full for the rest of the day");
     assert_eq!(b.arrivals[0], 7.0);
 }
@@ -220,10 +221,10 @@ fn pr3_the_station_is_chosen_deterministically_and_by_the_logits_closed_form() {
     let p = t.parking(&toy_network_parkings());
     assert_eq!(p.external_id(it.parking[0]), "H-car", "a tie on time goes to the lower parking");
     assert_eq!(it.expected_s, [1200.0]);
-    // Logit: H waits 600 s, P2 walks 225 s and waits 411 s.
+    // Logit: H waits 300 s, P2 walks 225 s and waits 111 s.
     let r = t.run_with(rows(), &toy_network_parkings(), true);
     let it = r.itineraries.as_ref().expect("itineraries");
-    let du: f64 = -0.09 * (600.0 - 411.0) / 60.0 + 0.13 * 225.0 / 60.0;
+    let du: f64 = -0.09 * (300.0 - 111.0) / 60.0 + 0.13 * 225.0 / 60.0;
     let p_h = 1.0 / (1.0 + (-du).exp());
     let taken = p.external_id(it.parking[0]);
     let expected = if taken == "H-car" { p_h } else { 1.0 - p_h };
@@ -243,7 +244,7 @@ fn pr4_the_trip_back_rides_to_the_parking_fetches_the_car_and_drives_home() {
         t.trip("a", 1, "N1", "D2", 1800, Mode::CarTransit),
     ];
     let r = t.run_with(rows, &only(&["P2"]), false);
-    assert_eq!(outcomes(&r), [(EventType::TripCompleted, 1200), (EventType::TripCompleted, 3081)]);
+    assert_eq!(outcomes(&r), [(EventType::TripCompleted, 1200), (EventType::TripCompleted, 3381)]);
     let it = r.itineraries.as_ref().expect("itineraries");
     assert_eq!(it.direction, [1, 2], "out, then back");
     assert_eq!(it.parking[0], it.parking[1]);
@@ -292,8 +293,8 @@ fn br2_the_fourth_bike_finds_the_rack_full() {
     assert_eq!(outcomes(&r), vec![(EventType::TripCompleted, 1200); 4]);
     let p = r.parking.as_ref().expect("parking");
     assert_eq!((p.arrivals, p.overflow_arrivals), (4.0, 1.0));
-    let paid = 30.0 + 180.0 * 652.0 / 900.0;
-    assert!((p.mismatch_s - (paid - 30.0)).abs() < 1e-9, "{}", p.mismatch_s);
+    let paid = 60.0 + 180.0 * 592.0 / 900.0;
+    assert!((p.mismatch_s - (paid - 60.0)).abs() < 1e-9, "{}", p.mismatch_s);
 }
 
 #[test]

@@ -2,7 +2,8 @@
 //!
 //! `B1` calls at `W`, `M` and `D1` on the one-way arterial, scheduled at `+0`,
 //! `+120`, `+240` s, every 600 s from 0. A bus is 2 PCU and dwells 20 s at a
-//! stop; a leg leaves its stop no earlier than its scheduled departure. Roads:
+//! stop; a leg leaves its stop no earlier than its scheduled departure. The runs set the
+//! fixed access and egress times to 0, so a car trip leaving at 0 is on the road at 0. Roads:
 //! residential 30 km/h, capacity 1400/h; `a1` approaches the signal at `S`
 //! (discharge `q · g/C` = 0.18667/s: 5.357 s per PCU; Webster's delay
 //! 20.554 s). Free flow `W → M` (a1, the signal, a2): 36 + 20.554 + 24 =
@@ -28,7 +29,7 @@ use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_graph::{LonLat, toy_network, toy_network_layers};
 use openmobisim_core_loading::FidelityLevel;
 use openmobisim_core_sim::{
-    EventType, FlowMotor, LayerSetup, Run, RunResult, StaticLayers, TransitSetup,
+    EventType, FlowMotor, LayerSetup, ModeDefaults, Run, RunResult, StaticLayers, TransitSetup,
 };
 use openmobisim_core_transit::TransitDefaults;
 use openmobisim_core_transit::examples::toy_bus;
@@ -91,7 +92,15 @@ impl Toy {
             Run::new(self.road.clone(), Arc::new(travellers), Arc::new(trips), Second(86_400))
                 .with_layers(self.layers.clone())
                 .with_transit(transit)
-                .with_link_bins(300);
+                .with_link_bins(300)
+                // No access or egress: the cars enter the road at 0, with the bus (B2).
+                .with_mode_defaults(ModeDefaults {
+                    car_access_s: 0.0,
+                    car_egress_s: 0.0,
+                    bike_access_s: 0.0,
+                    bike_egress_s: 0.0,
+                    ..ModeDefaults::SHIPPED
+                });
         if ltm {
             run = run.with_flow_motor(FlowMotor::Ltm {
                 turns: Arc::new(TurnTable::build(&self.road, SignalDefaults::SHIPPED)),

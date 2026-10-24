@@ -119,7 +119,9 @@ def test_b2_a_bus_behind_cars_is_late_and_so_is_its_passenger() -> None:
     net = ms.examples.toy_network()
     rows = [toy_trip(net, f"c{i}", "W", "M", 0, "car") for i in range(10)]
     rows.append(toy_trip(net, "p", "M", "D1", 0, "transit"))
-    run = toy_run(rows, "b2", network=net, choice_model="deterministic")
+    # No access or egress: the cars enter the road at 0, with the bus (the Rust B2).
+    no_access = {"car_access_s": 0, "car_egress_s": 0}
+    run = toy_run(rows, "b2", network=net, choice_model="deterministic", mode_options=no_access)
     calls = run.transit_calls()
     i = calls["run"].index("B1:00")
     assert calls["stop_id"][i : i + 3] == ["W", "M", "D1"]

@@ -721,6 +721,7 @@ fn a_pair_within_the_slack_of_free_flow_is_not_searched_and_one_beyond_it_is() {
             trip_keys: &trip_keys,
             route_sets: &sets,
             times: &times,
+            car_start_s: 0,
             iteration: 1,
             active: None,
             trees: None,

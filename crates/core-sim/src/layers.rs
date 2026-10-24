@@ -14,6 +14,7 @@
 use std::sync::Arc;
 
 use openmobisim_core_demand::{Mode, Trips};
+use openmobisim_core_graph::hubs::ParkingKind;
 use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults, StaticNetwork};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::generate::RouteSetGenerator;
@@ -142,21 +143,37 @@ pub struct ModeDefaults {
     /// such trips stay unsimulated, and the run reports each with why every mode gave
     /// it none (`RunResult::no_alternative`); `1` turns the fallback on.
     pub fallback_car: bool,
-    /// The time a car trip takes before its drive — reaching the car and setting off — in
-    /// seconds: added to a car alternative's door-to-door time and its walk in mode
-    /// choice, and to the drive to a park-and-ride car park. Without it a car trip would start
-    /// and end at its road node at no cost while every other mode pays its walks and waits,
-    /// which biases mode choice toward the car. *Uncalibrated: 120 s, an assumption with
-    /// no published source; 0 switches it off.*
+    /// The time a car trip takes before its drive, reaching the car and setting off, in
+    /// seconds. **Where the fixed times apply:** in a run that compares modes or has a
+    /// timetable, every trip's time is door to door, so every car trip pays this time at its
+    /// departure, at home and when the car is fetched from a car park on the way back: the
+    /// choice counts it (as walk time) and the loading enters the car on the roads this long
+    /// after the departure. A run of stated car trips alone, with no timetable, is a car
+    /// assignment: its times are the drives and it pays none of the fixed times, so it compares
+    /// with the benchmarks as they count. *Uncalibrated: 120 s, an assumption with no published
+    /// source; 0 switches it off.*
     pub car_access_s: f64,
-    /// The time a car trip takes after its drive — finding a place and walking from it — in
-    /// seconds: added to a car alternative's door-to-door time and its parking time in
-    /// mode choice; a park-and-ride drive pays its car park's own time instead. *Uncalibrated:
-    /// 180 s, an assumption; cruising for parking alone averaged 8 minutes in sixteen downtown
-    /// studies (Shoup 2006, *Cruising for parking*, Transport Policy 13(6), 479–486,
+    /// The time a car trip takes after its drive, finding a place and walking from it, in
+    /// seconds: paid wherever a car is left, at the destination and at a car park alike (a car
+    /// park adds its occupancy's time on top, `parking_options` `slope_car_s`), in the choice
+    /// (as parking time) and in the loading (the trip ends this long after the car arrives),
+    /// under the rule of [`Self::car_access_s`]. *Uncalibrated: 300 s, an assumption; cruising
+    /// for parking alone averaged 8 minutes in sixteen downtown studies (Shoup 2006, *Cruising
+    /// for parking*, Transport Policy 13(6), 479–486,
     /// <https://doi.org/10.1016/j.tranpol.2006.05.005>), far above a city-wide mean that counts
     /// home and workplace parking; 0 switches it off.*
     pub car_egress_s: f64,
+    /// The time a bike trip takes before its ride, reaching and unlocking the bike, in seconds:
+    /// paid as [`Self::car_access_s`] is, at the departure and when the bike is fetched from a
+    /// bike parking, in the choice (as walk time) and in the loading. *Uncalibrated: 60 s, an
+    /// assumption with no published source; 0 switches it off.*
+    pub bike_access_s: f64,
+    /// The time a bike trip takes after its ride, parking and locking the bike, in seconds: paid
+    /// wherever a bike is left, at the destination and at a bike parking alike (a bike parking
+    /// adds its occupancy's time on top, `parking_options` `slope_bike_s`), in the choice (as
+    /// parking time) and in the loading. *Uncalibrated: 60 s, an assumption with no published
+    /// source; 0 switches it off.*
+    pub bike_egress_s: f64,
     /// How close to a motorway-only node a trip's end must lie to join the roads there, in
     /// metres. A trip's end snaps to the nearest **street** node — one with a road
     /// a car can enter from; motorways, trunk roads and their ramps are not — unless it lies
@@ -170,23 +187,47 @@ pub struct ModeDefaults {
 }
 
 impl ModeDefaults {
+    /// The time to reach a vehicle of `kind` before its leg ([`Self::car_access_s`],
+    /// [`Self::bike_access_s`]).
+    #[must_use]
+    pub fn access_s(&self, kind: ParkingKind) -> f64 {
+        match kind {
+            ParkingKind::Car => self.car_access_s,
+            ParkingKind::Bike => self.bike_access_s,
+        }
+    }
+
+    /// The time to leave a vehicle of `kind` after its leg ([`Self::car_egress_s`],
+    /// [`Self::bike_egress_s`]).
+    #[must_use]
+    pub fn egress_s(&self, kind: ParkingKind) -> f64 {
+        match kind {
+            ParkingKind::Car => self.car_egress_s,
+            ParkingKind::Bike => self.bike_egress_s,
+        }
+    }
+
     /// The shipped values.
     pub const SHIPPED: ModeDefaults = ModeDefaults {
         walk_max_s: 1800.0,
         bike_max_s: 3600.0,
         fallback_car: false,
         car_access_s: 120.0,
-        car_egress_s: 180.0,
+        car_egress_s: 300.0,
+        bike_access_s: 60.0,
+        bike_egress_s: 60.0,
         car_snap_motorway_m: 50.0,
     };
 
     /// The names of the options.
-    pub const NAMES: [&'static str; 6] = [
+    pub const NAMES: [&'static str; 8] = [
         "walk_max_s",
         "bike_max_s",
         "fallback_car",
         "car_access_s",
         "car_egress_s",
+        "bike_access_s",
+        "bike_egress_s",
         "car_snap_motorway_m",
     ];
 
@@ -199,6 +240,8 @@ impl ModeDefaults {
             ("fallback_car", f64::from(u8::from(self.fallback_car))),
             ("car_access_s", self.car_access_s),
             ("car_egress_s", self.car_egress_s),
+            ("bike_access_s", self.bike_access_s),
+            ("bike_egress_s", self.bike_egress_s),
             ("car_snap_motorway_m", self.car_snap_motorway_m),
         ]
     }
@@ -232,6 +275,8 @@ impl ModeDefaults {
                 "bike_max_s" => (&mut d.bike_max_s, false),
                 "car_access_s" => (&mut d.car_access_s, true),
                 "car_egress_s" => (&mut d.car_egress_s, true),
+                "bike_access_s" => (&mut d.bike_access_s, true),
+                "bike_egress_s" => (&mut d.bike_egress_s, true),
                 "car_snap_motorway_m" => (&mut d.car_snap_motorway_m, true),
                 _ => {
                     return Err(format!(

@@ -2,16 +2,20 @@
 //!
 //! **The pieces** are the toy's (`toy_parking.rs`, `toy_layers.rs`, `toy_transit.rs`). A trip
 //! without a stated mode chooses among the modes the run offers, each where the traveller can
-//! use it. The one choice set of `W → N1` at 0, with park-and-ride and bike-and-ride offered at
-//! any length (`pr_min_km` 0), has five alternatives:
+//! use it. The runs here set every access and egress time to 0 (`NO_ACCESS`), so the hand values
+//! are the drives, rides and walks alone and a car park takes no time to leave while it has
+//! room, and keep a park-and-ride up to 1.5 times slower than the best one (the choice set's
+//! detour limit), so `P2`'s stays in the set beside `H`'s. The one choice set of `W → N1` at 0,
+//! with park-and-ride and bike-and-ride offered at any length (`pr_min_km` 0), has five
+//! alternatives:
 //!
 //! | Alternative | Door to door | Walk, wait | Path size |
 //! |---|---|---|---|
 //! | bike `a1`, contraflow `s1:c`, 600 m mixed | 600 / (15/3.6) = **144 s** | 0, 0 | 1 |
 //! | walk `w1`, 300√2 m | 424.26 / (4/3) = **318.198 s** | 318.198 s, 0 | 1 |
-//! | park-and-ride at `H` (PR3) | **1200 s** | 0, 600 s | 1000/1200: the tram ride is shared by three |
-//! | park-and-ride at `P2` (PR3) | **1200 s** | 225 s, 411 s | 1000/1200 |
-//! | bike-and-ride at `H`: the bike `W → S → H` 72 + 248.48 = 320.48 s, parked 350, the 900 tram | **1200 s** | 0, 550 s | 1000/1200 |
+//! | park-and-ride at `H`: the drive 180.394 s, parked 180 (floored), the 300 tram | **600 s** | 0, 120 s | 2/3: the tram ride `H → N1`, half of this time, is shared by three |
+//! | park-and-ride at `P2`: the drive 144.394 s, parked 144, 225 s on foot, at the stop 369, the 900 tram | **1200 s** | 225 s, 531 s | 1000/1200: the ride is a quarter of this time |
+//! | bike-and-ride at `H`: the bike `W → S → H` 72 + 248.48 = 320.48 s, parked 320, the 900 tram | **1200 s** | 0, 580 s | 1000/1200 |
 //!
 //! There is no car alternative (`s1` runs one way, into `S`: a car cannot reach `N1`), and no
 //! transit one: `N1` is a stop, and the only journey RAPTOR has rides out to `H` and back,
@@ -74,15 +78,18 @@ fn strategy(
     openmobisim_core_sim::equilibration::strategy(name, &options)
 }
 
-/// The shipped mode defaults without the car's access and egress: the hand values here are
-/// the drives and rides alone (`W → M`: the car's 80 s against the bike's 120 s); the access and
-/// egress are tested in the Python suite (`test_modes.py`).
+/// The shipped mode defaults without any access or egress, the car's or the bike's: the hand
+/// values here are the drives and rides alone (`W → M`: the car's 80 s against the bike's 120 s),
+/// and a car park with room takes no time to leave; the access and egress are tested in the
+/// Python suite (`test_modes.py`).
 const NO_ACCESS: ModeDefaults = ModeDefaults {
     walk_max_s: 1800.0,
     bike_max_s: 3600.0,
     fallback_car: false,
     car_access_s: 0.0,
     car_egress_s: 0.0,
+    bike_access_s: 0.0,
+    bike_egress_s: 0.0,
     car_snap_motorway_m: 50.0,
 };
 
@@ -183,6 +190,8 @@ impl Toy {
             Run::new(self.road.clone(), Arc::new(travellers), Arc::new(trips), Second(20_000))
                 .with_layers(self.layers.clone())
                 .with_mode_defaults(NO_ACCESS)
+                // `P2`'s park-and-ride (1200 s) stays in the set beside `H`'s (600 s).
+                .with_choice_detour_limit(1.5)
                 .with_mode_choice(&setup.modes);
         if setup.transit {
             run = run
@@ -231,15 +240,17 @@ fn outcomes(result: &RunResult) -> Vec<(EventType, u32)> {
 /// model sets both to 0: D-1, D-4), plus `constant` on park-and-ride.
 fn w_n1(constant: f64) -> Vec<(Mode, &'static str, f64)> {
     let walk_s = 300.0 * 2f64.sqrt() / (4.8 / 3.6);
-    let ln_ps = (1000.0_f64 / 1200.0).ln();
+    // The tram ride `H → N1` is one element shared by the three transit alternatives: half
+    // of `H`'s 600 s, a quarter of the others' 1200 s.
+    let (ln_ps_h, ln_ps) = ((2.0_f64 / 3.0).ln(), (1000.0_f64 / 1200.0).ln());
     let v =
         |t: f64, w: f64, q: f64, ps: f64| -0.2 * t / 60.0 - 0.13 * w / 60.0 - 0.09 * q / 60.0 + ps;
     vec![
         (Mode::Bike, "", v(144.0, 0.0, 0.0, 0.0)),
         (Mode::Walk, "", v(walk_s, walk_s, 0.0, 0.0)),
-        (Mode::CarTransit, "H-car", v(1200.0, 0.0, 600.0, ln_ps) + constant),
-        (Mode::CarTransit, "P2", v(1200.0, 225.0, 411.0, ln_ps) + constant),
-        (Mode::BikeTransit, "H-bike", v(1200.0, 0.0, 550.0, ln_ps)),
+        (Mode::CarTransit, "H-car", v(600.0, 0.0, 120.0, ln_ps_h) + constant),
+        (Mode::CarTransit, "P2", v(1200.0, 225.0, 531.0, ln_ps) + constant),
+        (Mode::BikeTransit, "H-bike", v(1200.0, 0.0, 580.0, ln_ps)),
     ]
 }
 
@@ -357,9 +368,9 @@ fn mc1_the_logit_and_the_nested_logit_match_their_closed_forms() {
             );
         }
     }
-    // The constant moves the choice into park-and-ride's nest: from 1% to 35% at mu 0.5.
+    // The constant moves the choice into park-and-ride's nest: from 9% to 84% at mu 0.5.
     let nest = |c: f64| -> f64 { (2..4).map(|i| nested_probability(&w_n1(c), i, 0.5)).sum() };
-    assert!((nest(0.0) - 0.0099).abs() < 1e-3 && (nest(4.0) - 0.3536).abs() < 1e-3);
+    assert!((nest(0.0) - 0.0863).abs() < 1e-3 && (nest(4.0) - 0.8376).abs() < 1e-3);
     let alts = w_n1(4.0);
     // At mu 1 the nest is two logit alternatives; at 0.5 the stations compete more within it.
     let (h1, h5) = (nested_probability(&alts, 2, 1.0), nested_probability(&alts, 2, 0.5));

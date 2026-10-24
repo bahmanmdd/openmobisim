@@ -914,6 +914,9 @@ class RunSummary:
     no_vehicle_available: int
     no_feasible_path: int
     total_travel_time_s: float
+    #: The completed trips' time in their own vehicles (the drives and the bike rides),
+    #: traveller-weight-scaled: the total travel time less the fixed times, walks, waits and rides.
+    total_vehicle_time_s: float
     #: Per-link, per-time-bin results, if the run asked for them.
     link_bins: LinkBins | None
     #: The bike layer's per-link results, if asked for and some bike trip ran.

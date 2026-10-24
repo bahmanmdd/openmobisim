@@ -316,9 +316,11 @@ class ModeOptions(_Options):
     """The modes' parameters: ``mode_options``.
 
     Attributes:
+        bike_access_s: s; ``60.0``.
+        bike_egress_s: s; ``60.0``.
         bike_max_s: s; ``3600.0``.
         car_access_s: s; ``120.0``.
-        car_egress_s: s; ``180.0``.
+        car_egress_s: s; ``300.0``.
         car_snap_motorway_m: m; ``50.0``.
         fallback_car: 0 or 1; ``0``.
         walk_max_s: s; ``1800.0``.
@@ -326,9 +328,11 @@ class ModeOptions(_Options):
 
     _argument: ClassVar[str] = "mode_options"
     _defaults: ClassVar[dict[str, Any]] = {
+        "bike_access_s": 60.0,
+        "bike_egress_s": 60.0,
         "bike_max_s": 3600.0,
         "car_access_s": 120.0,
-        "car_egress_s": 180.0,
+        "car_egress_s": 300.0,
         "car_snap_motorway_m": 50.0,
         "fallback_car": 0,
         "walk_max_s": 1800.0,
@@ -337,9 +341,11 @@ class ModeOptions(_Options):
     def __init__(
         self,
         *,
+        bike_access_s: float = 60.0,
+        bike_egress_s: float = 60.0,
         bike_max_s: float = 3600.0,
         car_access_s: float = 120.0,
-        car_egress_s: float = 180.0,
+        car_egress_s: float = 300.0,
         car_snap_motorway_m: float = 50.0,
         fallback_car: int = 0,
         walk_max_s: float = 1800.0,
@@ -409,8 +415,6 @@ class ParkingOptions(_Options):
     Attributes:
         bin_s: s; ``900.0``.
         candidates: count; ``3``.
-        floor_bike_s: s; ``30.0``.
-        floor_car_s: s; ``120.0``.
         pr_min_km: km; ``3.0``.
         rank_speed_km_h: km/h; ``30.0``.
         reach_bike_s: s; ``1200.0``.
@@ -426,8 +430,6 @@ class ParkingOptions(_Options):
     _defaults: ClassVar[dict[str, Any]] = {
         "bin_s": 900.0,
         "candidates": 3,
-        "floor_bike_s": 30.0,
-        "floor_car_s": 120.0,
         "pr_min_km": 3.0,
         "rank_speed_km_h": 30.0,
         "reach_bike_s": 1200.0,
@@ -444,8 +446,6 @@ class ParkingOptions(_Options):
         *,
         bin_s: float = 900.0,
         candidates: int = 3,
-        floor_bike_s: float = 30.0,
-        floor_car_s: float = 120.0,
         pr_min_km: float = 3.0,
         rank_speed_km_h: float = 30.0,
         reach_bike_s: float = 1200.0,

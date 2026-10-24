@@ -612,6 +612,18 @@
      "type": "uint32",
      "nullable": true,
      "unit": "index"
+    },
+    {
+     "name": "vehicle_s",
+     "type": "uint32",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
+     "name": "access_egress_s",
+     "type": "uint32",
+     "nullable": true,
+     "unit": "s"
     }
    ],
    "metadata": [

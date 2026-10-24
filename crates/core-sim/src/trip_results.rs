@@ -65,30 +65,45 @@ pub struct TripOutcomes {
     /// `None` for every other trip, and for one travelling by another means at the end (on
     /// foot, by bike, in a transit vehicle or waiting at a stop).
     pub link_at_end: Vec<Option<LinkId>>,
+    /// For a completed trip, its seconds in a vehicle of its own: the car's drive or the bike's
+    /// ride, in a direct trip or a trip through a parking; 0 for a walk or a transit trip
+    /// without one. `None` for a trip that did not complete.
+    pub vehicle_s: Vec<Option<u32>>,
+    /// For a completed trip, its fixed seconds around that vehicle: reaching it, leaving it and
+    /// its parking's time (`mode_options` `car_access_s`, `car_egress_s`, `bike_access_s`,
+    /// `bike_egress_s`; `parking_options` the slopes); 0 without a vehicle of its own, and in a
+    /// run of stated car trips alone. `None` for a trip that did not complete.
+    pub access_egress_s: Vec<Option<u32>>,
 }
 
 impl TripOutcomes {
     /// From the last loading's events (one per trip), the mode each trip took (`None`: it
-    /// chose and had none), the trips the last choice left with no alternative, and the road
-    /// link of each trip still travelling at the end.
+    /// chose and had none), the trips the last choice left with no alternative, the road
+    /// link of each trip still travelling at the end, and each completed trip's seconds in its
+    /// own vehicle and around it (`parts`, for the trips with a vehicle of their own).
     #[must_use]
     pub fn of(
         events: &[EventRow],
         taken: &[Option<Mode>],
         no_alternative: &[NoAlternative],
         at_end: &[(TripId, LinkId)],
+        parts: &[(TripId, u32, u32)],
     ) -> Self {
         let n = taken.len();
         let mut out = TripOutcomes {
             outcome: vec![TripOutcome::NoAlternative; n],
             arrival: vec![None; n],
             link_at_end: vec![None; n],
+            vehicle_s: vec![None; n],
+            access_egress_s: vec![None; n],
         };
         for e in events {
             let t = e.entity_id as usize;
             out.outcome[t] = match e.event_type {
                 EventType::TripCompleted => {
                     out.arrival[t] = Some(e.second);
+                    out.vehicle_s[t] = Some(0);
+                    out.access_egress_s[t] = Some(0);
                     TripOutcome::Completed
                 }
                 EventType::TripTruncated => TripOutcome::Truncated,
@@ -106,6 +121,12 @@ impl TripOutcomes {
         for &(trip, link) in at_end {
             if out.outcome[trip.index()] == TripOutcome::Truncated {
                 out.link_at_end[trip.index()] = Some(link);
+            }
+        }
+        for &(trip, vehicle_s, fixed_s) in parts {
+            if out.outcome[trip.index()] == TripOutcome::Completed {
+                out.vehicle_s[trip.index()] = Some(vehicle_s);
+                out.access_egress_s[trip.index()] = Some(fixed_s);
             }
         }
         out
@@ -143,6 +164,11 @@ pub struct TripTable {
     /// The road link where it was at the window's end ([`TripOutcomes::link_at_end`]), as an
     /// index into the network's links.
     pub link_at_end: Vec<Option<u32>>,
+    /// Its seconds in a vehicle of its own, if it completed ([`TripOutcomes::vehicle_s`]).
+    pub vehicle_s: Vec<Option<u32>>,
+    /// Its fixed seconds around that vehicle, if it completed
+    /// ([`TripOutcomes::access_egress_s`]).
+    pub access_egress_s: Vec<Option<u32>>,
 }
 
 impl TripTable {
@@ -193,6 +219,8 @@ impl TripTable {
             outcome: outcomes.outcome.clone(),
             arrival_s: outcomes.arrival.iter().map(|a| a.map(Second::get)).collect(),
             link_at_end: outcomes.link_at_end.iter().map(|l| l.map(LinkId::raw)).collect(),
+            vehicle_s: outcomes.vehicle_s.clone(),
+            access_egress_s: outcomes.access_egress_s.clone(),
         };
         for t in 0..trips.len() {
             let trip = TripId::new(t);
@@ -223,7 +251,9 @@ impl TripTable {
         self.outcome.is_empty()
     }
 
-    /// Each trip's travel time in seconds, if it completed: its arrival less its departure.
+    /// Each trip's travel time in seconds, if it completed: its arrival less its departure, door
+    /// to door in a run that compares modes or has a timetable (the fixed times of its vehicle,
+    /// its walks, waits and rides included); the drive alone in a run of stated car trips.
     #[must_use]
     pub fn travel_time_s(&self) -> Vec<Option<u32>> {
         self.arrival_s
@@ -266,7 +296,7 @@ mod tests {
         let none = [listed(4, true, false), listed(5, false, false), listed(6, true, true)];
         // A link listed for a trip that arrived (its vehicle's leg) is not its end.
         let at_end = [(trip(1), LinkId::new(7)), (trip(0), LinkId::new(3))];
-        let out = TripOutcomes::of(&events, &taken, &none, &at_end);
+        let out = TripOutcomes::of(&events, &taken, &none, &at_end, &[]);
         let names: Vec<&str> = out.outcome.iter().map(|o| o.as_str()).collect();
         assert_eq!(
             names,

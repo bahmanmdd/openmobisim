@@ -185,7 +185,7 @@ def test_pr2_the_seventh_car_parks_anyway_and_is_counted() -> None:
     assert run.completion["completed"] == 7
     s = run.parking_summary
     assert (s["car_arrivals"], s["car_overflow_arrivals"]) == (7.0, 1.0)
-    assert s["car_mismatch_s"] == pytest.approx(480.0)
+    assert s["car_mismatch_s"] == pytest.approx(400.0)
     bins = run.parking_bins()
     assert max(bins["overflow_max"]) == 1.0
 
@@ -201,8 +201,8 @@ def test_br1_bike_and_ride() -> None:
 def test_options_replace_the_defaults_and_bad_ones_are_refused() -> None:
     net = ms.examples.toy_network()
     rows = [toy_trip(net, "a", "W", "N1", 0, "car_transit")]
-    # Parking in no time: parked at 180, the 300 tram, N1 at 600.
-    quick = toy_run(rows, "pr1-quick", parking_options={"floor_car_s": 0})
+    # Reaching and leaving the car in no time: parked at 180, the 300 tram, N1 at 600.
+    quick = toy_run(rows, "pr1-quick", mode_options={"car_access_s": 0, "car_egress_s": 0})
     assert quick.completion_by_mode["car_transit"]["total_travel_time_s"] == 600.0
     # A boarding slack of 0 makes no difference here (the car parks at 300.39: the 300 tram
     # has gone either way); a missing name and a bad value are refused.
@@ -254,9 +254,10 @@ def test_the_trip_back_and_an_iterating_run_under_the_loading_model() -> None:
     # Out 1200, as the Rust PR4. Back: planned on the schedule at first (the tram to H, 225 s
     # on foot to P2: 2925), then on the times the run made, where the bus B1 reaches D1 35 s
     # early (the Rust B1 case): walk N1 to W (318 s), the 2400 bus, D1 at 2605, 292 s on foot to
-    # P2: 2897, 28 s sooner. Fetch 120 s, drive R2 to D2 36 s: 3053, 1253 s.
+    # P2: 2897, 28 s sooner. Fetch 120 s, drive R2 to D2 36 s: 3053, leave the car 300 s: 3353,
+    # 1553 s.
     assert run.completion_by_mode["car_transit"]["total_travel_time_s"] == pytest.approx(
-        1200.0 + 1253.0
+        1200.0 + 1553.0
     )
 
 

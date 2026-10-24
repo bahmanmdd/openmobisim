@@ -3,6 +3,22 @@
 Each release lists what changed for a user. Versions follow [semantic versioning](https://semver.org/); before 1.0,
 a minor version may change the interface, and says so here.
 
+## Unreleased
+
+**Door-to-door times for every mode.** In a run that compares modes or has a timetable, a car or bike trip pays the
+fixed times of its own vehicle in the loading as mode choice counts them: reaching it before the leg and leaving it
+after (`mode_options` `car_access_s` 120 s, `car_egress_s` 300 s, `bike_access_s` 60 s, `bike_egress_s` 60 s). The
+egress is also the time to park at a car or bike park with room; a full parking adds its slope on top. A run of
+stated car trips alone pays none of them.
+- `trip_results` has two new columns: `vehicle_s`, the completed trip's seconds in a vehicle of its own, and
+  `access_egress_s`, its fixed seconds. `Run.total_vehicle_time_s` and `Run.mean_vehicle_time_s` sum and average
+  the first.
+- `parking_options` `floor_car_s` and `floor_bike_s` are gone (a scenario naming them is refused with the list of
+  options); `slope_car_s` and `slope_bike_s` stay.
+- Before this change the loading started a car at the trip's departure and added no egress, so a car trip's travel
+  time was its drive while mode choice weighed the door-to-door time: the mean trip by mode of a multimodal run is
+  longer now, by the fixed times.
+
 ## 0.1.0 — 2026-10-20
 
 The first public release: **an alpha, for testing by students and colleagues.** The tests are not complete; please use

@@ -15,9 +15,9 @@ def toy_trip(net: object, who: str, frm: str, to: str, depart: int, mode: str | 
     return (who, 0, o[0], o[1], d[0], d[1], depart, "everyone", None, mode)
 
 
-# The hand values are the drives and rides alone: the car's access and egress (S279, 120 and 180 s
-# by default) are switched off here and tested on their own below.
-NO_ACCESS = {"car_access_s": 0, "car_egress_s": 0}
+# The hand values are the drives and rides alone: the fixed times of reaching and leaving a car or a
+# bike (120 and 300 s, 60 and 60 s by default) are switched off here and tested on their own below.
+NO_ACCESS = {"car_access_s": 0, "car_egress_s": 0, "bike_access_s": 0, "bike_egress_s": 0}
 
 
 def toy_run(rows: list[tuple], run_id: str, **kwargs: object) -> ms.Run:
@@ -697,5 +697,56 @@ def test_a_car_trip_pays_its_access_and_egress_in_mode_choice() -> None:
     expected = float(little.itinerary_choices()["expected_s"][0])
     assert expected == pytest.approx(drive + 30.0), "the drive and its access and egress"
     assert bare.fingerprint != paid.fingerprint, "a named default, in the fingerprint"
+    # The loading pays what the choice counted (S295): the trip's time is door to door, its
+    # row says how much of it was the drive and how much the fixed times.
+    t = little.trip_results()
+    assert float(t["travel_time_s"][0]) == pytest.approx(drive + 30.0, abs=1.0)
+    assert float(t["vehicle_s"][0]) == pytest.approx(drive, abs=1.0)
+    assert float(t["access_egress_s"][0]) == 30.0
+    assert little.total_travel_time_s == pytest.approx(drive + 30.0, abs=1.0)
+    assert little.mean_vehicle_time_s == pytest.approx(drive, abs=1.0)
+    bare_t = bare.trip_results()
+    assert float(bare_t["travel_time_s"][0]) == pytest.approx(drive, abs=1.0)
+    assert float(bare_t["access_egress_s"][0]) == 0.0
     with pytest.raises(ValueError, match="car_access_s"):
         run("access-bad", -1, 0)
+
+
+def test_a_bike_trip_pays_its_access_and_egress_in_choice_and_loading() -> None:
+    # W → M: the drive takes 80 s, the ride 120 s. With the defaults' fixed times (car 120 + 300 s,
+    # bike 60 + 60 s) the bike wins door to door, 240 s against 500; the loading then pays the
+    # bike's 120 s around its ride, and the trip's row splits the two (S295).
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, "b", "W", "M", 0, None)]
+    run = toy_run(
+        rows, "bike-access", modes=("car", "bike"), transit=None, parkings=None,
+        mode_options={
+            "car_access_s": 120, "car_egress_s": 300, "bike_access_s": 60, "bike_egress_s": 60
+        },
+    )  # fmt: skip
+    ch = run.itinerary_choices()
+    assert list(ch["mode"]) == ["bike"]
+    assert float(ch["expected_s"][0]) == pytest.approx(240.0, abs=1.0)
+    t = run.trip_results()
+    assert float(t["travel_time_s"][0]) == pytest.approx(240.0, abs=1.0)
+    assert float(t["vehicle_s"][0]) == pytest.approx(120.0, abs=1.0)
+    assert float(t["access_egress_s"][0]) == 120.0
+    assert run.total_vehicle_time_s == pytest.approx(120.0, abs=1.0)
+    with pytest.raises(ValueError, match="bike_egress_s"):
+        toy_run(rows, "bike-bad", modes=("car", "bike"), transit=None, parkings=None,
+                mode_options={"bike_egress_s": -1})  # fmt: skip
+
+
+def test_a_run_of_stated_car_trips_alone_pays_no_fixed_times() -> None:
+    # A car assignment, as the benchmarks count: no mode compared, no timetable, so the trip's
+    # time is its drive whatever the fixed times say, and its row says so (S295).
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, "a", "W", "M", 0, "car")]
+    run = toy_run(rows, "car-alone", transit=None, parkings=None,
+                  mode_options={"car_access_s": 120, "car_egress_s": 300})  # fmt: skip
+    assert run.itinerary_choices() is None
+    t = run.trip_results()
+    assert float(t["travel_time_s"][0]) == pytest.approx(80.0, abs=1.0)
+    assert float(t["vehicle_s"][0]) == pytest.approx(80.0, abs=1.0)
+    assert float(t["access_egress_s"][0]) == 0.0
+    assert run.total_travel_time_s == run.total_vehicle_time_s

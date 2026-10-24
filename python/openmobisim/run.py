@@ -157,7 +157,7 @@ class _Files:
 
         table = pq.read_table(self.trip_results_path)
         text = {"traveller_id", "user_class", "mode", "outcome", "mode_choice"}
-        maybe = {"arrival_s", "travel_time_s", "link_at_end"}
+        maybe = {"arrival_s", "travel_time_s", "link_at_end", "vehicle_s", "access_egress_s"}
         out: dict[str, Any] = {}
         for name in table.column_names:
             column = table.column(name)
@@ -1530,7 +1530,17 @@ class Run:
           lists, but for those that then went by car: a trip that chose its mode has ``mode``
           ``None``, one given transit, park-and-ride or bike-and-ride keeps it; ``completion``
           counts them under the outcome they had, most often ``no_feasible_path``);
-        * ``arrival_s`` and ``travel_time_s``: ``NaN`` unless the trip completed;
+        * ``arrival_s`` and ``travel_time_s``: ``NaN`` unless the trip completed.
+          ``travel_time_s`` is door to door in a run that compares modes or has a timetable:
+          the fixed times of the trip's own vehicle (``mode_options`` ``car_access_s``,
+          ``car_egress_s``, ``bike_access_s``, ``bike_egress_s``), its walks, waits and rides
+          included; in a run of stated car trips alone it is the drive;
+        * ``vehicle_s``: the completed trip's seconds in a vehicle of its own (the car's drive,
+          the bike's ride, in a direct trip or one through a parking; 0 without one), and
+          ``access_egress_s``: its fixed seconds around that vehicle (reaching it, leaving it,
+          its parking's time; 0 without one). ``NaN`` unless the trip completed; so
+          ``travel_time_s - vehicle_s - access_egress_s`` is the trip's walking, waiting and
+          riding in transit;
         * ``link_at_end``: for a trip still travelling when the window ended whose car was on
           the roads, the road link it was on (driving, or at the stop line) or waited at its
           origin to enter, an index into the network's links (as ``link_bins``'); ``NaN`` for
@@ -1571,10 +1581,35 @@ class Run:
         ``total_travel_time_s`` over the people the completed trips stand for (their travellers'
         weights). Dividing by ``completion["completed"]`` instead counts simulated trips, which
         differs from people when travellers stand for more than one (``default_weight``,
-        ``demand_sample``). ``nan`` if no trip completed.
+        ``demand_sample``). ``nan`` if no trip completed. Door to door in a run that compares
+        modes or has a timetable (every trip's fixed times, walks, waits and rides included);
+        the drives alone in a run of stated car trips; ``mean_vehicle_time_s`` is the part spent
+        in the trips' own vehicles either way.
         """
         people = sum(row["completed_people"] for row in self.completion_by_mode.values())
         return self.total_travel_time_s / people if people > 0 else float("nan")
+
+    @property
+    def total_vehicle_time_s(self) -> float:
+        """The completed trips' time in their own vehicles, in seconds, scaled by traveller weight.
+
+        The car's drive and the bike's ride, in a direct trip or one through a parking: what
+        ``total_travel_time_s`` holds less the fixed times (``mode_options`` ``car_access_s`` and
+        the like, the parkings' times), the walks, the waits and the transit rides. In a run of
+        stated car trips alone the two are equal.
+        """
+        return self._summary.total_vehicle_time_s
+
+    @property
+    def mean_vehicle_time_s(self) -> float:
+        """The mean time in their own vehicles of the completed trips, in seconds, per person.
+
+        ``total_vehicle_time_s`` over the people the completed trips stand for, as
+        ``mean_travel_time_s``; the trips without a vehicle of their own count with 0. ``nan``
+        if no trip completed.
+        """
+        people = sum(row["completed_people"] for row in self.completion_by_mode.values())
+        return self.total_vehicle_time_s / people if people > 0 else float("nan")
 
     def __repr__(self) -> str:
         """The completion counts, as a one-line summary."""

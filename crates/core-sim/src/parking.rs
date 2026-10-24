@@ -72,24 +72,17 @@ pub struct ParkingDefaults {
     /// *A ranking device, not behaviour: about a tram's or a train's average
     /// speed.*
     pub rank_speed_km_h: f64,
-    /// The time to park a car and walk out of the car park when there is room,
-    /// in seconds; also the time to fetch it.
-    ///
-    /// *An assumption, with no published source.*
-    pub floor_car_s: f64,
-    /// The time a full car park adds, in seconds, at availability 0 (linear in
-    /// the unavailability).
+    /// The time a full car park adds, in seconds, at availability 0 (linear in the
+    /// unavailability), on top of the time to leave a car anywhere (`mode_options`
+    /// `car_egress_s`); fetching the car costs `car_access_s`.
     ///
     /// *An assumption: searching for a space, which studies of cruising for kerb parking put
     /// at several minutes (reviewed by Shoup 2006, *Transport Policy* 13(6) 479–486,
     /// <https://doi.org/10.1016/j.tranpol.2006.05.005>).*
     pub slope_car_s: f64,
-    /// The time to park a bike and walk out when there is room, in seconds; also
-    /// the time to fetch it.
-    ///
-    /// *An assumption, with no published source.*
-    pub floor_bike_s: f64,
-    /// The time a full bike parking adds, in seconds, at availability 0.
+    /// The time a full bike parking adds, in seconds, at availability 0, on top of the time to
+    /// leave a bike anywhere (`mode_options` `bike_egress_s`); fetching the bike costs
+    /// `bike_access_s`.
     ///
     /// *An assumption, with no published source.*
     pub slope_bike_s: f64,
@@ -124,9 +117,7 @@ impl ParkingDefaults {
         reach_bike_s: 1200.0,
         candidates: 3.0,
         rank_speed_km_h: 30.0,
-        floor_car_s: 120.0,
         slope_car_s: 600.0,
-        floor_bike_s: 30.0,
         slope_bike_s: 180.0,
         snap_m: 300.0,
         bin_s: 900.0,
@@ -135,15 +126,13 @@ impl ParkingDefaults {
     };
 
     /// The names of the options, in the order [`Self::from_options`] reads them.
-    pub const NAMES: [&'static str; 13] = [
+    pub const NAMES: [&'static str; 11] = [
         "walk_max_s",
         "reach_car_s",
         "reach_bike_s",
         "candidates",
         "rank_speed_km_h",
-        "floor_car_s",
         "slope_car_s",
-        "floor_bike_s",
         "slope_bike_s",
         "snap_m",
         "bin_s",
@@ -165,9 +154,7 @@ impl ParkingDefaults {
             "reach_bike_s" => &mut self.reach_bike_s,
             "candidates" => &mut self.candidates,
             "rank_speed_km_h" => &mut self.rank_speed_km_h,
-            "floor_car_s" => &mut self.floor_car_s,
             "slope_car_s" => &mut self.slope_car_s,
-            "floor_bike_s" => &mut self.floor_bike_s,
             "slope_bike_s" => &mut self.slope_bike_s,
             "snap_m" => &mut self.snap_m,
             "bin_s" => &mut self.bin_s,
@@ -210,23 +197,16 @@ impl ParkingDefaults {
         n
     }
 
-    /// The time to park (or fetch) a vehicle of `kind` at `availability` (0 to 1).
+    /// The time to leave a vehicle of `kind` at a parking with `availability` (1: all room, 0:
+    /// full): `egress_s`, the time to leave it anywhere (`mode_options` `car_egress_s` or
+    /// `bike_egress_s`), plus the parking's slope times the unavailability.
     #[must_use]
-    pub fn parking_seconds(&self, kind: ParkingKind, availability: f64) -> f64 {
-        let (floor, slope) = match kind {
-            ParkingKind::Car => (self.floor_car_s, self.slope_car_s),
-            ParkingKind::Bike => (self.floor_bike_s, self.slope_bike_s),
+    pub fn parking_seconds(&self, kind: ParkingKind, availability: f64, egress_s: f64) -> f64 {
+        let slope = match kind {
+            ParkingKind::Car => self.slope_car_s,
+            ParkingKind::Bike => self.slope_bike_s,
         };
-        floor + slope * (1.0 - availability.clamp(0.0, 1.0))
-    }
-
-    /// The time to fetch a parked vehicle of `kind`: the floor alone.
-    #[must_use]
-    pub fn fetch_seconds(&self, kind: ParkingKind) -> f64 {
-        match kind {
-            ParkingKind::Car => self.floor_car_s,
-            ParkingKind::Bike => self.floor_bike_s,
-        }
+        egress_s + slope * (1.0 - availability.clamp(0.0, 1.0))
     }
 }
 

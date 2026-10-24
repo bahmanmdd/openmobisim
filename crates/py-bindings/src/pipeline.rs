@@ -420,6 +420,11 @@ pub struct PyRunSummary {
     /// Total travel time, traveller-weight-scaled.
     #[pyo3(get)]
     pub total_travel_time_s: f64,
+    /// The completed trips' time in their own vehicles (the drives and the bike rides),
+    /// traveller-weight-scaled: the total travel time less the fixed times, walks, waits and
+    /// rides.
+    #[pyo3(get)]
+    pub total_vehicle_time_s: f64,
     /// Per-link, per-time-bin results, if the run asked for them.
     #[pyo3(get)]
     pub link_bins: Option<Py<PyLinkBins>>,
@@ -1638,6 +1643,7 @@ pub fn run_pipeline(
         no_vehicle_available: result.completion.no_vehicle_available,
         no_feasible_path: result.completion.no_feasible_path,
         total_travel_time_s: result.total_travel_time.get(),
+        total_vehicle_time_s: result.total_vehicle_time.get(),
         link_bins: result.link_bins.map(|inner| Py::new(py, PyLinkBins { inner })).transpose()?,
         bike_link_bins: result
             .bike_link_bins

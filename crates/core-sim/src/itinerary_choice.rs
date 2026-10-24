@@ -400,11 +400,17 @@ pub(crate) struct Planner<'a> {
     /// flat logit a mode's share grew with how many routes its set held.
     pub max_routes: u32,
     /// A car trip's time before its drive (reaching the car) and after it (parking and walking
-    /// from it), in seconds (`ModeDefaults::car_access_s`, `car_egress_s`): added to a
-    /// car alternative's door-to-door time, and the access to a park-and-ride drive.
+    /// from it), in seconds (`ModeDefaults::car_access_s`, `car_egress_s`): in a car
+    /// alternative's door-to-door time, before a park-and-ride drive and when the car is
+    /// fetched, and wherever the car is left (a car park adds its occupancy's time on top).
     pub car_access_s: f64,
     /// See [`Self::car_access_s`].
     pub car_egress_s: f64,
+    /// A bike trip's time before its ride and after it, likewise (`ModeDefaults::bike_access_s`,
+    /// `bike_egress_s`).
+    pub bike_access_s: f64,
+    /// See [`Self::bike_access_s`].
+    pub bike_egress_s: f64,
     /// The car's route sets, when the run offers mode choice.
     pub car_routes: Option<CarRoutes<'a>>,
 }
@@ -530,10 +536,10 @@ impl<'a> Planner<'a> {
         }
         let (bike_leg, walk_leg) = legs;
         if let (true, Some(leg)) = (offer.walk, walk_leg) {
-            alts.push(direct(Mode::Walk, leg));
+            alts.push(direct(Mode::Walk, leg, 0.0, 0.0));
         }
         if let (true, Some(leg)) = (offer.bike, bike_leg) {
-            alts.push(direct(Mode::Bike, leg));
+            alts.push(direct(Mode::Bike, leg, self.bike_access_s, self.bike_egress_s));
         }
         if let (true, Some(key), Some(routes)) = (offer.car, car_key, &self.car_routes) {
             alts.extend(self.plan_car(routes, key, departure));
@@ -755,18 +761,43 @@ impl<'a> Planner<'a> {
         finalise(alts, self.detour_limit, k, self.journey_max_s())
     }
 
+    /// The seconds after a car trip's departure its car enters the roads: the loading's whole
+    /// seconds of `car_access_s`. Every car route is costed from there.
+    fn car_start_s(&self) -> f64 {
+        self.car_access_s.max(0.0).round()
+    }
+
+    /// The time to reach a vehicle of `kind` before its leg.
+    fn access_s(&self, kind: ParkingKind) -> f64 {
+        match kind {
+            ParkingKind::Car => self.car_access_s,
+            ParkingKind::Bike => self.bike_access_s,
+        }
+    }
+
+    /// The time to leave a vehicle of `kind` after its leg, anywhere.
+    fn egress_s(&self, kind: ParkingKind) -> f64 {
+        match kind {
+            ParkingKind::Car => self.car_egress_s,
+            ParkingKind::Bike => self.bike_egress_s,
+        }
+    }
+
     fn plan_car(&self, routes: &CarRoutes<'_>, key: RouteKey, departure: u32) -> Vec<Alternative> {
         let Some(k) = routes.sets.key_index(key) else { return Vec::new() };
+        // The car enters the roads once it is reached: its route is costed from there (S295).
+        let at = f64::from(departure) + self.car_start_s();
         let mut alts: Vec<Alternative> = routes
             .sets
             .route_range(k)
             .map(|r| {
                 let view = routes.sets.route(r);
-                let seconds = self.times.route_seconds(view.links, f64::from(departure));
+                let seconds = self.times.route_seconds(view.links, at);
                 let mut a = blank(Mode::Car, Shape::Direct);
                 a.vehicle_links = view.links.iter().map(|&l| LinkId::new(l)).collect();
                 a.vehicle_s = seconds;
                 a.vehicle_m = routes.attributes.length_m[r];
+                a.vehicle_departure = at;
                 // Reaching the car; parking and walking from it (S279).
                 a.walk_s = self.car_access_s;
                 a.parking_s = self.car_egress_s;
@@ -847,6 +878,9 @@ impl<'a> Planner<'a> {
         let Some(parking) = self.parking else { return Vec::new() };
         let d = parking.defaults();
         let dep = f64::from(departure);
+        // The vehicle leaves once it is reached: its drive or ride is costed from there, and
+        // the car park's room read when it arrives (S295).
+        let leave = dep + self.access_s(kind);
         // The vehicle's reach: `(node, seconds, links, metres)`.
         let found: Vec<(NodeId, f64, Vec<LinkId>, f64)> = match kind {
             ParkingKind::Car => {
@@ -856,7 +890,7 @@ impl<'a> Planner<'a> {
                 // The candidates are picked on free-flow times to every car park, searched once
                 // per run (S209); only their routes are searched on the expected times,
                 // by one search that stops once it has reached them all.
-                let picked = self.car_picked(parking, n.road_o, dep, destination, only);
+                let picked = self.car_picked(parking, n.road_o, leave, destination, only);
                 if picked.is_empty() {
                     return Vec::new();
                 }
@@ -865,7 +899,7 @@ impl<'a> Planner<'a> {
                 // searched for every car park picked here: its routes to them, each timed at
                 // this trip's departure.
                 let shared = self
-                    .car_step(dep)
+                    .car_step(leave)
                     .and_then(|slot| car_reach.get(&(n.road_o.raw(), slot)))
                     .filter(|drive| {
                         picked.iter().all(|node| drive.sought.binary_search(&node.raw()).is_ok())
@@ -877,7 +911,7 @@ impl<'a> Planner<'a> {
                         .filter_map(|node| {
                             let i = routes.binary_search_by_key(&node.raw(), |r| r.0).ok()?;
                             let links = &routes[i].1;
-                            let t = drive_seconds(self.times, links, dep);
+                            let t = drive_seconds(self.times, links, leave);
                             let m = links.iter().map(|&l| road.link_length(l).get()).sum();
                             (t <= d.reach_car_s).then(|| (*node, t, links.to_vec(), m))
                         })
@@ -897,7 +931,7 @@ impl<'a> Planner<'a> {
                             n.road_o,
                             &mask,
                             picked.len(),
-                            dep,
+                            leave,
                             d.reach_car_s,
                             &wait,
                             &secs,
@@ -930,7 +964,7 @@ impl<'a> Planner<'a> {
                     Some(cell) => cell
                         .get_or_init(|| {
                             let found = self.bike_reach_search(s.bike(ctx), n.bike_o);
-                            reach_cands(&found, parking, destination)
+                            reach_cands(&found, parking, destination, self.bike_egress_s)
                         })
                         .iter()
                         .map(|c| (c.node, c.seconds, c.links.to_vec(), c.metres))
@@ -951,9 +985,9 @@ impl<'a> Planner<'a> {
         let mut cands: Vec<Cand> = Vec::new();
         for (node, t, links, metres) in found {
             for &p in parking.at(kind, node) {
-                let arrive = dep + t;
+                let arrive = leave + t;
                 let availability = self.availability.map_or(1.0, |a| a.at(p, arrive));
-                let ps = d.parking_seconds(kind, availability);
+                let ps = d.parking_seconds(kind, availability, self.egress_s(kind));
                 let walk = parking.stops(p).iter().map(|x| x.1).min().unwrap_or(0);
                 let est = t
                     + ps
@@ -1002,8 +1036,8 @@ impl<'a> Planner<'a> {
             return Vec::new();
         }
         let transfer = transit.transfer_s();
-        // Reaching the car before the drive (S279); a bike is at hand.
-        let access_s = if kind == ParkingKind::Car { self.car_access_s } else { 0.0 };
+        // Reaching the vehicle before its leg.
+        let access_s = self.access_s(kind);
         let mut alts: Vec<Alternative> = Vec::new();
         // The fastest so far, in seconds door to door: the choice set drops any itinerary of
         // this mode more than the detour limit slower than its best ([`finalise`]), so each
@@ -1027,7 +1061,7 @@ impl<'a> Planner<'a> {
                 clippy::cast_sign_loss,
                 reason = "a second of the day"
             )]
-            let parked = (dep + access_s + c.vehicle_s + c.parking_s).floor() as u32;
+            let parked = (leave + c.vehicle_s + c.parking_s).floor() as u32;
             let access: Vec<(NodeId, u32)> = parking
                 .stops(c.parking)
                 .iter()
@@ -1048,7 +1082,7 @@ impl<'a> Planner<'a> {
                 a.vehicle_m = c.metres;
                 a.parking_s = c.parking_s;
                 a.walk_s += access_s;
-                a.vehicle_departure = dep;
+                a.vehicle_departure = leave;
                 a.total_s = f64::from(j.arrival) - dep;
                 best = best.min(a.total_s);
                 alts.push(a);
@@ -1085,7 +1119,7 @@ impl<'a> Planner<'a> {
                 let availability = self.availability.map_or(1.0, |a| a.at(p, dep + t));
                 let walk = parking.stops(p).iter().map(|x| x.1).min().unwrap_or(0);
                 let est = t
-                    + d.parking_seconds(ParkingKind::Car, availability)
+                    + d.parking_seconds(ParkingKind::Car, availability, self.car_egress_s)
                     + f64::from(walk)
                     + ground_distance_metres(parking.position(p), destination) / speed;
                 each.push((t, est, p, node));
@@ -1124,7 +1158,8 @@ impl<'a> Planner<'a> {
         if access.is_empty() || egress.is_empty() {
             return Vec::new();
         }
-        let fetch = parking.defaults().fetch_seconds(kind);
+        // Fetching the vehicle at its parking, and leaving it at the destination.
+        let (fetch, leave_s) = (self.access_s(kind), self.egress_s(kind));
         let dep = f64::from(departure);
         let from = parking.node(p);
         let journeys: Vec<Journey> =
@@ -1168,9 +1203,9 @@ impl<'a> Planner<'a> {
             a.vehicle_links = links;
             a.vehicle_s = t;
             a.vehicle_m = metres;
-            a.parking_s = fetch;
+            a.parking_s = fetch + leave_s;
             a.vehicle_departure = leave;
-            a.total_s = leave + t - dep;
+            a.total_s = leave + t + leave_s - dep;
             alts.push(a);
         }
         alts
@@ -1248,11 +1283,13 @@ fn prune_reach(
     parking: &ParkingSetup,
     kind: ParkingKind,
     destination: LonLat,
+    egress_s: f64,
 ) -> Vec<bool> {
     let d = parking.defaults();
     let k = d.candidate_count();
     let speed = (d.rank_speed_km_h / 3.6).max(0.1);
-    let (all_room, full) = (d.parking_seconds(kind, 1.0), d.parking_seconds(kind, 0.0));
+    let (all_room, full) =
+        (d.parking_seconds(kind, 1.0, egress_s), d.parking_seconds(kind, 0.0, egress_s));
     // Per parking: (its node's index in `found`, riding seconds, best estimate, worst estimate).
     let mut each: Vec<(usize, f64, f64, f64)> = Vec::new();
     for (i, (node, t, _, _)) in found.iter().enumerate() {
@@ -1286,8 +1323,9 @@ fn reach_cands(
     found: &[(NodeId, f64, Vec<LinkId>, f64)],
     parking: &ParkingSetup,
     destination: LonLat,
+    bike_egress_s: f64,
 ) -> Box<[ReachCand]> {
-    let keep = prune_reach(found, parking, ParkingKind::Bike, destination);
+    let keep = prune_reach(found, parking, ParkingKind::Bike, destination, bike_egress_s);
     found
         .iter()
         .zip(keep)
@@ -1347,16 +1385,20 @@ fn blank(mode: Mode, shape: Shape) -> Alternative {
     }
 }
 
-/// A bike route or a walk as an alternative.
-fn direct(mode: Mode, leg: &StaticLeg) -> Alternative {
+/// A bike route or a walk as an alternative: a bike pays `access_s` before its ride (as walk
+/// time) and `egress_s` after it (as parking time); a walk pays neither.
+fn direct(mode: Mode, leg: &StaticLeg, access_s: f64, egress_s: f64) -> Alternative {
     let mut a = blank(mode, Shape::Direct);
     a.vehicle_links.clone_from(&leg.links);
     a.vehicle_m = leg.metres;
-    a.total_s = leg.seconds;
     if mode == Mode::Walk {
         a.walk_s = leg.seconds;
+        a.total_s = leg.seconds;
     } else {
         a.vehicle_s = leg.seconds;
+        a.walk_s = access_s;
+        a.parking_s = egress_s;
+        a.total_s = leg.seconds + access_s + egress_s;
     }
     a
 }
@@ -2248,7 +2290,7 @@ impl Itineraries {
                 if !out {
                     return None;
                 }
-                let dep = f64::from(trips.departure(trip).get());
+                let dep = f64::from(trips.departure(trip).get()) + planner.car_start_s();
                 planner.car_drive_wanted(&self.nodes[p], dep, destination, offer.parking)
             })
             .collect()
@@ -2292,7 +2334,12 @@ impl Itineraries {
                 let found = planner.bike_reach_search(search, NodeId::new(group[0].0));
                 for &(_, p) in *group {
                     let destination = trips.destination(self.trips[p]);
-                    let _ = self.bike_reach[p].set(reach_cands(&found, parking, destination));
+                    let _ = self.bike_reach[p].set(reach_cands(
+                        &found,
+                        parking,
+                        destination,
+                        planner.bike_egress_s,
+                    ));
                 }
             },
         );
@@ -2720,7 +2767,8 @@ impl Itineraries {
                     if let Some(key) = self.car_keys[p] {
                         let bound =
                             car.iter().map(|&i| set[i].vehicle_s).fold(f64::INFINITY, f64::min);
-                        let departure = f64::from(trips.departure(trip).get());
+                        let departure =
+                            f64::from(trips.departure(trip).get()) + planner.car_start_s();
                         searches.push((t, key, departure, bound, best[Mode::Car.index()]));
                     }
                 }
@@ -2736,7 +2784,8 @@ impl Itineraries {
                         let mut remaining = 0.0;
                         if drove {
                             let links: Vec<u32> = a.vehicle_links.iter().map(|l| l.raw()).collect();
-                            let departure = f64::from(trips.departure(trip).get());
+                            let departure =
+                                f64::from(trips.departure(trip).get()) + planner.car_start_s();
                             if unfinished_car {
                                 let (paid, rest) =
                                     ended.car_seconds(t, &links, departure, planner.times);
