@@ -73,8 +73,7 @@ def test_rerouting_and_pockets_on_priority_off_by_default_and_changes_enter_the_
     assert with_priority.fingerprint not in (plain.fingerprint, off.fingerprint)
     sooner = jammed(loading_options={"reroute_after_s": 60})
     assert sooner.fingerprint not in (plain.fingerprint, off.fingerprint, with_priority.fingerprint)
-    # Turn pockets are on by default (50 m; S289: off from S279 to S288, on since S217 before);
-    # off, the rules hash without them.
+    # Turn pockets are on by default (50 m; S289); off, the rules hash without them.
     without_pockets = jammed(loading_options={"pocket_length_m": 0})
     assert without_pockets.fingerprint != plain.fingerprint
     assert jammed(loading_options={"pocket_length_m": 50}).fingerprint == plain.fingerprint
@@ -164,9 +163,9 @@ def test_the_headway_at_nodes_changes_a_point_queue_run_of_nguyen_dupuis() -> No
 
 
 def test_at_the_point_queue_a_closure_re_routes_only_when_asked_for() -> None:
-    # S293: ``reroute`` unsaid is off at flow_level 2, with or without road disruptions (from S289
-    # it was on there under them), so a run and the same run with a closure are the same model;
-    # asked for, the trips behind a closed street re-route round it.
+    # S293: ``reroute`` unsaid is off at flow_level 2, with or without road disruptions, so a run
+    # and the same run with a closure are the same model; asked for, the trips behind a closed
+    # street re-route round it.
     net = ms.examples.manhattan_grid(n=5, block_metres=200.0, signals=False)
     rows = ms.examples.trips_random(net, 600, seed=4, min_m=500.0, max_m=1200.0, spread_s=900)
     common = {

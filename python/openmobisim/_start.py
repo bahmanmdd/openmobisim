@@ -25,7 +25,7 @@ from pathlib import Path
 
 #: The code repository: the notebooks with their outputs, and the place to report a problem.
 REPOSITORY = "https://github.com/bahmanmdd/openmobisim"
-#: The documentation (the manual's site). Check that it opens once the site is published.
+#: The documentation (the manual's site).
 DOCS_URL = "https://openmobisim.github.io"
 NOTEBOOKS_URL = f"{REPOSITORY}/tree/main/notebooks"
 ISSUES_URL = f"{REPOSITORY}/issues"

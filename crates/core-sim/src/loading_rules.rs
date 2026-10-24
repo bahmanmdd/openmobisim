@@ -24,12 +24,10 @@ pub enum RerouteSetting {
     /// On at the levels with spillback (3 and 4), where a vehicle can be held for room; off at
     /// the point queue (2), with or without road disruptions. The shipped setting.
     ///
-    /// From S289 to S293 it was on at the point queue in a loading with road disruptions too.
-    /// That made the model itself depend on the disruption: a run with a disruption re-routed
-    /// and the same run without it did not, so the two were not compared on equal terms; and
-    /// iterated with it on, a run of Delft at 80 % of its capacity never converged, where with
-    /// it off it converged steadily (S293). A driver who does not know of a closure now waits
-    /// for it to reopen; [`Self::On`] lets them re-route.
+    /// Off at the point queue whatever the disruptions, so that the model does not depend on
+    /// them: a run with a disruption and the same run without it are the same model, compared on
+    /// equal terms (S293). A driver who does not know of a closure waits for it to reopen;
+    /// [`Self::On`] lets them re-route.
     Auto,
     /// Off at every level.
     Off,
@@ -47,12 +45,12 @@ pub struct LoadingOptions {
     /// holds up everything behind it, so priority made locks worse on Amsterdam; it waits
     /// for per-turn queues.*
     pub priority: bool,
-    /// En-route rerouting: a vehicle stuck at the front of its link re-routes from where it is.
-    /// *On at levels 3 and 4 ([`RerouteSetting::Auto`]: it removed the locks of
-    /// Amsterdam's morning at 1× and 1.25× and leaves uncongested results as they were); off at
-    /// the point queue, where nothing waits for room, with or without road disruptions, unless
-    /// asked for (S293; why: [`RerouteSetting::Auto`]).* The option `reroute` is 1 (on) or 0
-    /// (off) at every level; [`Self::resolved`] settles the shipped setting for a run.
+    /// En-route rerouting: a vehicle stuck at the downstream end of its link re-routes from where
+    /// it is. *On at levels 3 and 4 ([`RerouteSetting::Auto`]: it lets vehicles out of locks and
+    /// leaves uncongested results as they are); off at the point queue, where nothing waits for
+    /// room, with or without road disruptions, unless asked for (S293; why:
+    /// [`RerouteSetting::Auto`]).* The option `reroute` is 1 (on) or 0 (off) at every level;
+    /// [`Self::resolved`] settles the shipped setting for a run.
     pub reroute: RerouteSetting,
     /// How long a vehicle waits at the front of its link, blocked, before it re-routes, in
     /// seconds.
@@ -80,35 +78,32 @@ pub struct LoadingOptions {
     pub reroute_min_gain: f64,
     /// Turn pockets on approaches of two lanes or more
     /// ([`openmobisim_core_loading::LtmNetwork::with_pockets`]), in metres per lane: a vehicle at
-    /// the end of such a link passes those ahead of it waiting for another movement, as long as
-    /// they fit in their pockets. 0 turns them off: every link one first-in-first-out queue.
+    /// the downstream end of such a link passes those ahead of it waiting for another movement,
+    /// as long as they fit in their pockets. 0 turns them off: every link one first-in-first-out
+    /// queue.
     ///
-    /// **On by default (50 m; S289).** Off (0, the default from S280 to S288) the full model
-    /// locked Sioux Falls at its base demand (58 % of trips finished; every build with pockets
-    /// finishes them all) and a one-lane street closed for an hour in Delft locked a fifth of
-    /// its trips. The known cost of pockets stands: the link times an iterated run averages
-    /// over a link's movements misprice the movements that wait, and the entry-delay
-    /// attribution that would fix it is not built.
+    /// **On by default (50 m; S289)**: without them the full model can lock up behind vehicles
+    /// waiting to turn. Their known cost: the link times an iterated run averages over a link's
+    /// movements misprice the movements that wait.
     /// *Uncalibrated: 50 m, split among a link's movements by lane share; an assumption
-    /// (design guides size a bay from its expected queue, so no single length was found).
-    /// Lanes per movement from OpenStreetMap's `turn:lanes`, where mapped, are for later.*
+    /// (design guides size a bay from its expected queue, so no single length was found).*
     pub pocket_length_m: f64,
     /// At the point queue only (`flow_level` 2, and the point-queue warm-up loadings of levels 3
     /// and 4), whether a vehicle's entry onto the next link waits for that link's inflow headway
-    /// ([`openmobisim_core_loading::LtmNetwork::with_node_inflow`]): off (0), **the classic
-    /// point queue**: the next link takes every vehicle at once, a link's exit is bounded by its
-    /// own discharge capacity alone, and a bottleneck's queue sits at its own exit; on (1), a
-    /// vehicle held so at the end of its link holds up those behind it bound elsewhere, and a
-    /// bottleneck's queue forms at the end of the links feeding it. Either way a link closed by
-    /// a road disruption refuses entry: the vehicles bound onto it wait at the end of the link
-    /// before it, where one that may re-route is offered a new route; a narrowed link takes them
-    /// and queues them at its own exit. No effect on a loading at level 3 or 4, where the
-    /// headway is part of the receiving condition.
+    /// ([`openmobisim_core_loading::LtmNetwork::with_node_inflow`]): off (0), **the classic point
+    /// queue**: the next link takes every vehicle at once, a link's outflow is bounded by its own
+    /// discharge capacity alone, and a bottleneck's queue sits at its own downstream end; on (1), a
+    /// vehicle held so at the downstream end of its link holds up those behind it bound elsewhere,
+    /// and a bottleneck's queue forms at the downstream end of the links feeding it. Either way a
+    /// link closed by a road disruption refuses entry: the vehicles bound onto it wait at the
+    /// downstream end of the link before it, where one that may re-route is offered a new route; a
+    /// narrowed link takes them and queues them at its own downstream end. No effect on a loading
+    /// at level 3 or 4, where the headway is part of the receiving condition.
     ///
-    /// *Uncalibrated: off since S293, the point queue of Vickrey (1969, *Congestion theory and
+    /// *Uncalibrated: off (S293), the point queue of Vickrey (1969, *Congestion theory and
     /// transport investment*, *American Economic Review* 59(2) 251–260) and of Han, Friesz and
     /// Yao (2013, *A partial differential equation formulation of Vickrey's bottleneck model*,
-    /// *Transportation Research Part B* 49); on, the loading as it was until then.*
+    /// *Transportation Research Part B* 49); on, an inflow headway at every node.*
     pub node_inflow: bool,
     /// Whether a departing vehicle enters its first link no faster than the link's inflow
     /// headway allows ([`openmobisim_core_loading::LtmNetwork::with_origin_inflow`]), at every
@@ -116,8 +111,8 @@ pub struct LoadingOptions {
     /// upstream link would; off (0), departures enter at any rate, so those given the same
     /// second (demand in departure bins) enter as one platoon.
     ///
-    /// *Uncalibrated: off, the loading as it was before the option. On treats the origin as a
-    /// centroid connector with the first link's capacity, an assumption.*
+    /// *Uncalibrated: off. On treats the origin as a centroid connector with the first link's
+    /// capacity, an assumption.*
     pub origin_inflow: bool,
     /// At the point queue, when a vehicle at the downstream end of its link is offered a new
     /// route for a **queue ahead** on its route longer than its link and the links before it
@@ -126,12 +121,10 @@ pub struct LoadingOptions {
     /// those disruptions narrowed or closed; 2 behind such a link in any loading with
     /// disruptions, known or not; 3 behind any queue. Acts only with `reroute` on.
     ///
-    /// *Uncalibrated: 1. Measured on Delft (S294): 3 made a run with rerouting on 73 times
-    /// slower and worse (offers at every congested entry, as S289 found); 2 in a run whose
-    /// travellers knew every link narrowed to 0.8 of its capacity, 78 times slower and 812
-    /// trips unfinished against 212, the diverted traffic jamming the alternatives; 1 costs
-    /// nothing where nothing is unexpected and gets 507 more trips through an hour-long closure
-    /// of the busiest motorway link.*
+    /// *Uncalibrated: 1 (S294). 3 offers a route at every congested entry, which makes a run
+    /// many times slower; 2 can send the traffic of known disruptions onto the alternatives and
+    /// jam them; 1 costs nothing where nothing is unexpected and lets traffic round an
+    /// unexpected closure.*
     pub reroute_queue_ahead: u32,
     /// **Level 1 only:** the volume-delay function, `t = t0 · (1 + α (v/c)^β)`, one `(α, β)` per
     /// road class, by name `bpr_alpha` and `bpr_beta` for every class and `<class>.bpr_alpha`,

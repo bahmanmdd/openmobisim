@@ -3,7 +3,8 @@
 //! One row per trip, in trip order (by traveller, then by the order of their day):
 //! `run_id, trip, traveller_id, trip_seq, user_class, weight, origin_lon, origin_lat,
 //! destination_lon, destination_lat, departure_s, mode, mode_choice, outcome, arrival_s,
-//! travel_time_s, link_at_end`. The same table `Run.trip_results()` returns in Python.
+//! travel_time_s, link_at_end, vehicle_s, access_egress_s`. The same table
+//! `Run.trip_results()` returns in Python.
 //!
 //! - `trip` is the trip's index in the run (as in `Run.route_changes()`), `trip_seq` its place
 //!   in its traveller's day from 0, `weight` the people its traveller stands for.

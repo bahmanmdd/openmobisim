@@ -2,16 +2,16 @@
 //!
 //! **Two offers.** A vehicle **stuck** at the downstream end of its link for the rule's time is
 //! offered a new route ([`RerouteReason::Stuck`]). At the point queue a queue has no length, so
-//! nothing upstream of the link that holds it is ever stuck: a closure whose node has no other
-//! exit re-routed nobody (X-69). So at the point queue a vehicle is also offered a route at the
-//! downstream end of its link when it can **see a queue ahead** ([`RerouteReason::QueueAhead`]):
-//! a link on its route, **narrowed or closed by a disruption or feeding a closed one**, holds more
-//! waiting vehicles than its storage and the links between would hold, which is where the back of
-//! that queue would stand if the point queue had spillback. The offer comes at once (the vehicle
-//! is not held), once per link of the route, and the vehicle drives on if it is refused; it
-//! reaches every junction upstream of the queue's virtual back, so the last one with a way round
-//! takes the traffic. Ordinary congestion offers nothing at the point queue (the equilibration
-//! settles it; offered on, Delft's base ran forty times slower) (S294).
+//! nothing upstream of the link that holds it is ever stuck: on that rule alone, a closure whose
+//! node has no other way out would re-route nobody (X-69). So at the point queue a vehicle is also
+//! offered a route at the downstream end of its link when it can **see a queue ahead**
+//! ([`RerouteReason::QueueAhead`]): a link on its route, **narrowed or closed by a disruption or
+//! feeding a closed one**, holds more waiting vehicles than its storage and the links between would
+//! hold, which is where the back of that queue would stand if the point queue had spillback. The
+//! offer comes at once (the vehicle is not held), once per link of the route, and the vehicle
+//! drives on if it is refused; it reaches every junction upstream of the queue's virtual back, so
+//! the last one with a way round takes the traffic. Ordinary congestion offers nothing at the point
+//! queue: the equilibration settles it (S294).
 
 use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
 
@@ -41,13 +41,7 @@ pub trait LiveTimes {
     fn live_seconds(&self, link: LinkId) -> f64;
 }
 
-/// Why a vehicle is offered a new route.
-///
-/// [`Self::Stuck`] and [`Self::QueueAhead`] exist. The others planned join here,
-/// so records and rerouters already carry the reason: an **alert** to an informed driver about
-/// congestion or a disruption ahead (navigation apps), a **disruption** on the route (a closure
-/// or a capacity drop), a **new destination** (a taxi dispatched, an electric vehicle sent to
-/// charge).
+/// Why a vehicle is offered a new route; records and rerouters carry the reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum RerouteReason {
@@ -225,11 +219,11 @@ impl LtmNetwork<'_> {
         if r.count[slot] >= r.rule.max || r.offered_leg[slot] == front.leg {
             return false;
         }
-        // By default only a queue behind a disruption counts (S289, S293: offers at every
-        // congested entry made a level-2 run ten times slower, and ordinary congestion is the
-        // equilibrium's to settle, not the day's): a link narrowed or closed by a capacity
-        // change queues at its own downstream end, and the link before a closed one holds the
-        // traffic it refuses. `QueueAhead::AnyQueue` counts every queue.
+        // By default only a queue behind a disruption counts (S289, S293): ordinary congestion is
+        // the equilibrium's to settle, and offers at every congested entry are costly. A link
+        // narrowed or closed by a capacity change queues at its own downstream end, and the link
+        // before a closed one holds the traffic it refuses. `QueueAhead::AnyQueue` counts every
+        // queue.
         let any_queue = self.queue_ahead == QueueAhead::AnyQueue;
         if self.changes.is_empty() && !any_queue {
             return false;
@@ -267,11 +261,10 @@ impl LtmNetwork<'_> {
     /// one held for room is when that headway alone keeps it waiting the rule's time **and the
     /// link ahead is closed or narrowed by a disruption** (a capacity change below its own).
     /// A headway at the link's own capacity, however long the entry queue, offers nothing: it
-    /// is the ordinary queue of a point queue, whose vehicles keep their routes (S289: offers
-    /// at every congested entry made a level-2 run with known disruptions ten times slower).
+    /// is the ordinary queue of a point queue, whose vehicles keep their routes (S289).
     /// At the classic point queue ([`Self::with_node_inflow`]) only a closed link holds a
-    /// vehicle so: a narrowed one takes it, and its queue waits at the narrowed link's own exit,
-    /// where nothing offers a new route (S293).
+    /// vehicle so: a narrowed one takes it, and its queue waits at the narrowed link's own
+    /// downstream end, where nothing offers a new route (S293).
     pub(super) fn offer_if_inflow_holds_long(
         &mut self,
         i: usize,
@@ -371,7 +364,7 @@ impl LiveTimes for LtmNetwork<'_> {
         let free = self.travel[i] + self.stop_delay[i];
         let on = (self.curves[i].cumulative_in() - self.curves[i].cumulative_out()).get();
         // A link closed by a disruption costs the wait until it opens, and its queue then
-        // clears at its own rate (S289); an empty closed link read as free before.
+        // clears at its own rate (S289), not read as free when it is empty.
         let (rate, closed) = match self.reopens_at(i) {
             Some(opens) => (self.base_rates[i].0, (opens - self.clock).max(0.0)),
             None => (self.discharge_rate[i], 0.0),

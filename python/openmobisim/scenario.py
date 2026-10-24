@@ -38,8 +38,8 @@ __all__ = [
 
 #: Named settings for speed (D-5 a): ``"fast"`` is what the starter cases set: the
 #: park-and-ride drives shared by origin and half hour; ``"complete"`` is the core's defaults.
-#: (The route update's searches are shared by origin and departure bin by default since S294,
-#: so the preset no longer sets ``tree_step_s``.)
+#: (The route update's searches are shared by origin and departure bin by default,
+#: ``tree_step_s``; the presets leave it.)
 PRESETS: dict[str, dict[str, dict[str, float]]] = {
     "fast": {
         "parking_options": {"reach_car_step_s": 1800},
@@ -647,8 +647,8 @@ class Scenario:
                 whose departures end well before the window does (an hour, say) finishes inside it.
             flow_level: How vehicles load the network. ``2`` (the default) is the
                 **point queue**: the link transmission model with unlimited storage. A queue
-                forms at the end of a link, behind its capacity or that of the link ahead (a
-                bottleneck in Vickrey's sense), and delays everyone behind it on that link,
+                forms at the downstream end of a link, behind its capacity or that of the link
+                ahead (a bottleneck in Vickrey's sense), and delays everyone behind it on that link,
                 but takes no road space, so it never blocks the links upstream and nothing
                 gridlocks. Equilibrium iterations converge steadily with it, and it is the
                 cheapest loading with congestion: the right model for planning studies.
@@ -989,7 +989,7 @@ class Scenario:
                 remedies; at ``flow_level`` 2, where nothing waits for room, ``reroute`` is off
                 unless asked for, with or without road disruptions): ``priority`` (0 or 1, off by
                 default: without per-turn queues a vehicle giving way holds up everything
-                behind it, which made locks worse) —
+                behind it, which can make locks worse) —
                 at an unsignalised merge a vehicle gives way to an approach of higher road
                 class, or of the same class and at least 1.5 times the capacity, whose front
                 vehicle is bound for the same link, and a departing vehicle gives way to every
@@ -1011,26 +1011,26 @@ class Scenario:
                 because without them one queue per link locks a dense network in the full model
                 (their known cost: an iterated run under heavy congestion misprices the waiting
                 movements); ``node_inflow`` (0 or 1, 0 by default; the point queue only:
-                ``flow_level`` 2, and the point-queue warm-up loadings of levels 3 and 4) —
-                at 0, the classic point queue, the next link takes every vehicle at once, a
-                link's exit is bounded by its own capacity alone, and a bottleneck's queue sits
-                at its own exit; at 1 a vehicle enters the next link no sooner than that link's
-                inflow headway after the one before, and one held so holds up those behind it
-                on its link, so a bottleneck's queue forms at the end of the links feeding it;
-                either way a road closed by a disruption takes no vehicle, and those bound onto
-                it wait at the end of the road before it; ``origin_inflow`` (0 or 1, 0 by
-                default; every level) — at 1 a departing
-                vehicle enters its first link no faster than the link's inflow headway allows,
-                as from an upstream link, at 0 at any rate (departures of the same second enter
-                together). **At ``flow_level=1`` only**: ``bpr_alpha`` (0.15) and ``bpr_beta``
-                (4), the volume-delay function ``t = t0 · (1 + alpha · (v/c)^beta)`` of every
-                road class (``t0`` the link's free-flow time, ``v`` its hourly flow, ``c`` its
-                hourly capacity), the Bureau of Public Roads' (1964) values that TNTP's benchmark
-                networks use; ``<class>.bpr_alpha`` and ``<class>.bpr_beta`` set one class's
+                ``flow_level`` 2, and the point-queue warm-up loadings of levels 3 and 4) — at 0,
+                the classic point queue, the next link takes every vehicle at once, a link's outflow
+                is bounded by its own capacity alone, and a bottleneck's queue sits at its own
+                downstream end; at 1 a vehicle enters the next link no sooner than that link's
+                inflow headway after the one before, and one held so holds up those behind it on its
+                link, so a bottleneck's queue forms at the downstream end of the links feeding it;
+                either way a road closed by a disruption takes no vehicle, and those bound onto it
+                wait at the downstream end of the road before it; ``origin_inflow`` (0 or 1, 0 by
+                default; every level) — at 1 a departing vehicle enters its first link no faster
+                than the link's inflow headway allows, as from an upstream link, at 0 at any rate
+                (departures of the same second enter together). **At ``flow_level=1`` only**:
+                ``bpr_alpha`` (0.15) and ``bpr_beta`` (4), the volume-delay function
+                ``t = t0 · (1 + alpha · (v/c)^beta)`` of every road class (``t0`` the link's
+                free-flow time, ``v`` its hourly flow, ``c`` its hourly capacity), the Bureau of
+                Public Roads' (1964) values that TNTP's benchmark networks use;
+                ``<class>.bpr_alpha`` and ``<class>.bpr_beta`` set one class's
                 (``motorway.bpr_beta``, ``residential.bpr_alpha`` …; the classes cars use), which
-                wins over the one for every class; ``period_s`` (0: read from the departures,
-                from the earliest rounded down to the quarter hour to the end of the quarter hour
-                of the latest), the period in seconds the demand's hourly flows are of.
+                wins over the one for every class; ``period_s`` (0: read from the departures, from
+                the earliest rounded down to the quarter hour to the end of the quarter hour of the
+                latest), the period in seconds the demand's hourly flows are of.
                 Uncalibrated defaults; unknown names and values out of range are refused.
             price_options: What travel costs, in euros, by name: ``car_eur_km``
                 (the fuel a driver pays per km), ``bike_eur_km``, a transit

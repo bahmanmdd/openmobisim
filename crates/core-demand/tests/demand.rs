@@ -261,8 +261,8 @@ fn a_persons_row_for_an_unknown_traveller_is_recorded_and_ignored() {
 
 #[test]
 fn a_repeated_traveller_id_and_trip_seq_is_refused_with_the_rows_named() {
-    // X-68: a second row with the same (traveller_id, trip_seq) used to be dropped with a
-    // warning, so a run simulated fewer trips than the demand given and nothing said so.
+    // X-68: a second row with the same (traveller_id, trip_seq) is refused, not dropped: a run
+    // would otherwise simulate fewer trips than the demand given.
     let path = temp_path("duplicate_seq.parquet");
     write_trips(
         &path,

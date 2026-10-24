@@ -248,11 +248,11 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             h.write_f64(o.pocket_length_m);
         }
     }
-    // The rules of entry (S293). The headway at nodes always, either value: its shipped value
-    // changed (1 to 0), so a fingerprint made before then must not stand for a result of the
-    // new default. It acts at the point queue, which also makes the warm-up loadings of
-    // levels 3 and 4, so it is hashed at every level of the link transmission model. The
-    // origin's rule only where it differs from the shipped one: there a run hashes as before it.
+    // The rules of entry (S293). The headway at nodes always, either value, so that no
+    // fingerprint made under another shipped value stands for a result of this one. It acts at
+    // the point queue, which also makes the warm-up loadings of levels 3 and 4, so it is hashed
+    // at every level of the link transmission model. The origin's rule only where it differs
+    // from the shipped one, so a run at the shipped value hashes as without the rule.
     let shipped = crate::loading_rules::LoadingOptions::SHIPPED;
     if matches!(inputs.flow_motor, FlowMotor::Ltm { .. }) {
         h.write_str("node-inflow");
@@ -293,7 +293,7 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     }
     // The fixed times of reaching and leaving a car or a bike, wherever they are paid: a run
     // with itinerary trips (modes compared, or a timetable). Absent elsewhere: a run of stated
-    // car trips alone pays none and hashes as before.
+    // car trips alone pays none and hashes without them.
     if inputs.mode_choice.is_some() || inputs.transit.is_some() {
         h.write_str("fixed-times");
         for v in [

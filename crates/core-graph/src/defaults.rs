@@ -235,45 +235,40 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// line (or a second signalised junction within the distance) adds no second delay (0.2–4 %).
 /// Every OSM city's results change; the benchmark networks have no such signals.
 ///
-/// Version 31 (S289): **turn pockets on by default again** (`pocket_length_m` 50, as from S217
-/// to S279; 0 from S280 to S288): off, the full model (levels 3 and 4) locked Sioux Falls at its
-/// base demand and a one-lane street closed for an hour in Delft locked a fifth of its trips;
-/// on, both finish. And **en-route rerouting at the point queue in a loading with road
-/// disruptions**: an unwarned driver behind a closure re-routes after `reroute_after_s`
-/// instead of waiting for the link to reopen. Every fingerprint moves (the pockets are hashed);
-/// at the point queue the results of multi-lane approaches at their inflow limits move
-/// (Sioux Falls' mean trip 13.2 → 11.8 min), the cities by under half a minute.
+/// Version 31 (S289): **turn pockets on by default** (`pocket_length_m` 50): without them the
+/// full model (levels 3 and 4) can lock up behind vehicles waiting to turn. And **en-route
+/// rerouting at the point queue in a loading with road disruptions**: an unwarned driver behind
+/// a closure re-routes after `reroute_after_s` instead of waiting for the link to reopen. Every
+/// fingerprint moves (the pockets are hashed); at the point queue the results of multi-lane
+/// approaches at their inflow limits move.
 ///
 /// Version 32 (S293): **two rules of entry in the loading** (`core-sim`'s `LoadingOptions`),
-/// each uncalibrated and shipped as the loading was before it: `node_inflow` (1; at the point
-/// queue only, 0 drops the inflow headway at nodes: the classic point queue of Vickrey 1969 and
-/// Han, Friesz and Yao 2013, where a bottleneck's queue sits at its own exit) and
-/// `origin_inflow` (0; 1 lets a departure enter its first link no faster than the link's inflow
-/// headway, the origin as a centroid connector with the first link's capacity). No result and
-/// no fingerprint moves at the shipped values.
+/// each uncalibrated: `node_inflow` (1; at the point queue only, 0 drops the inflow headway at
+/// nodes: the classic point queue of Vickrey 1969 and Han, Friesz and Yao 2013, where a
+/// bottleneck's queue sits at its own downstream end) and `origin_inflow` (0; 1 lets a departure
+/// enter its first link no faster than the link's inflow headway, the origin as a centroid
+/// connector with the first link's capacity). No result and no fingerprint moves at these values.
 ///
-/// Version 33 (S293): **the classic point queue at level 2** (`node_inflow` 0; 1 before): the
-/// next link takes every vehicle at once, a link's exit is bounded by its own capacity, and a
-/// bottleneck's queue sits at its own exit instead of at the end of the links feeding it, where
-/// it held up every movement behind it. A link closed by a road disruption still refuses entry,
-/// under either setting. And **no en-route rerouting at the point queue unless asked for**
-/// (`LoadingOptions::reroute` unsaid: on at levels 3 and 4 only; from S289 it was on at the point
-/// queue in a loading with road disruptions too), so a run with a disruption is the same model
-/// as the run without it. Every result at flow level 2 moves, and at levels 3 and 4 those of runs
-/// whose first loadings are point-queue warm-ups (`warmup` 1 by default). `node_inflow` is now
-/// hashed whatever its value, so every fingerprint of the link transmission model moves with
-/// them.
+/// Version 33 (S293): **the classic point queue at level 2** (`node_inflow` 0): the next link
+/// takes every vehicle at once, a link's outflow is bounded by its own capacity, and a
+/// bottleneck's queue sits at its own downstream end, not at the downstream end of the links
+/// feeding it, where it would hold up every movement behind it. A link closed by a road
+/// disruption refuses entry under either setting. And **no en-route rerouting at the point queue
+/// unless asked for** (`LoadingOptions::reroute` unsaid: on at levels 3 and 4 only), so a run
+/// with a disruption is the same model as the run without it. Every result at flow level 2
+/// moves, and at levels 3 and 4 those of runs whose first loadings are point-queue warm-ups
+/// (`warmup` 1 by default). `node_inflow` is hashed whatever its value, so every fingerprint of
+/// the link transmission model moves.
 ///
 /// Version 34 (S294): **the route update's search trees by default** (`core-sim`'s
-/// `BestResponse::tree_step_s` 300, the equilibration's cost bin; 0 before, one search per
-/// pair): the run builds one bounded time-dependent search tree per origin node and departure
-/// bin after every loading, the route update reads each pair's route off it, and the gaps read
-/// the network's best off the same trees instead of searching per trip (`core-sim`'s `trees`);
-/// `gap_sample` is now on or off, every finished trip measured. The routes found are the fastest
-/// at the bin's middle, re-costed at each trip's own departure. Every fingerprint of a run with
-/// the update moves (its descriptor names the step); the results of runs with the update move
-/// within the aggregation (a pair's routes are read at its bins' middles); the gaps against the
-/// network move with it.
+/// `BestResponse::tree_step_s` 300, the equilibration's cost bin; 0: one search per pair): the
+/// run builds one bounded time-dependent search tree per origin node and departure bin after
+/// every loading, the route update reads each pair's route off it, and the gaps read the
+/// network's best off the same trees (`core-sim`'s `trees`); `gap_sample` is on or off, every
+/// finished trip measured. The routes found are the fastest at the bin's middle, re-costed at
+/// each trip's own departure. Every fingerprint of a run with the update moves (its descriptor
+/// names the step); the results of runs with the update move within the aggregation (a pair's
+/// routes are read at its bins' middles), and the gaps against the network with them.
 ///
 /// Version 35 (S294): **flow level 1, the static assignment**, with its own defaults, each
 /// uncalibrated: the volume-delay function per road class (`core-sim`'s
@@ -281,6 +276,12 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// values), the period its hourly flows are of (`period_s`, 0: read from the departures), and
 /// the Frank–Wolfe solver's `iterations` (1000) and `gap_tolerance` (0.0001). No result and no
 /// fingerprint of levels 0, 2, 3 and 4 moves.
+///
+/// Version 36 (S295): **door-to-door times for every mode in the loading**: in a run that
+/// compares modes or has a timetable, a car enters the roads `car_access_s` (120 s) after the
+/// departure and its trip ends `car_egress_s` (300 s) after it arrives, and a bike trip pays
+/// `bike_access_s` and `bike_egress_s` (60 s each) (`core-sim`'s `ModeDefaults`), as mode choice
+/// counts them. A run of stated car trips alone is unchanged.
 pub const DEFAULTS_VERSION: u32 = 36;
 
 /// The range a derived backward wave speed is allowed to fall in.

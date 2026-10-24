@@ -3,8 +3,8 @@
 //! A diamond: from `a`, link `ab` to `b`, then either `bc`–`cd` (planned; `cd` a one-lane
 //! service road, so its queue fills `bc` and spills back into `ab`) or `be`–`ed` (free). A
 //! vehicle blocked at the front of `ab` long enough is offered a new route; the script sends it
-//! by `e`. At the point queue, where no queue spills back, a vehicle at the end of `ab` that can
-//! see a queue on `bc` longer than `bc` holds is offered one too (X-69).
+//! by `e`. At the point queue, where no queue spills back, a vehicle at the downstream end of `ab`
+//! that can see a queue on `bc` longer than `bc` holds is offered one too (X-69).
 
 use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
 use openmobisim_core_graph::geometry::LonLat;
@@ -239,9 +239,8 @@ fn a_vehicle_held_by_a_closure_ahead_is_offered_a_new_route() {
 }
 
 /// **Property (S293):** at the point queue a closed link refuses entry whether or not the inflow
-/// headway applies at nodes, so a vehicle bound onto it waits at the end of its own link and is
-/// offered a new route there, as at level 4. Under the classic point queue (no headway at
-/// nodes) it drove onto the closed link before, and waited at its end, where no offer comes.
+/// headway applies at nodes, so a vehicle bound onto it waits at the downstream end of its own
+/// link and is offered a new route there, as at level 4.
 #[test]
 fn at_the_point_queue_a_closed_link_refuses_entry_and_its_traffic_re_routes() {
     let d = diamond();
@@ -267,9 +266,9 @@ fn at_the_point_queue_a_closed_link_refuses_entry_and_its_traffic_re_routes() {
     }
 }
 
-/// **Property (X-69, S294):** at the point queue a queue has no length, so a closure whose node
-/// has no other exit held its traffic for good: only the vehicle at the end of `bc` was ever
-/// offered a route, and from `c` there is none. Now a vehicle at the end of `ab` is offered one
+/// **Property (X-69, S294):** at the point queue a queue has no length, so behind a closure
+/// whose node has no other way out only the vehicle at the downstream end of `bc` is stuck, and
+/// from `c` there is no other route. A vehicle at the downstream end of `ab` is offered one
 /// when the queue on `bc` is longer than `bc` holds (where its back would stand with spillback),
 /// and the script sends it by `e`; the vehicles that fill `bc` before that stay, as they would.
 #[test]

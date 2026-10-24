@@ -2415,7 +2415,7 @@ impl Run {
 
         if let FlowMotor::Ltm { turns, step, level } = &self.flow_motor {
             let level = &level_override.unwrap_or(*level);
-            // The vehicles move into the loading, their ids stay (S294: they were cloned).
+            // The vehicles move into the loading, their ids stay (S294).
             let mut vehicles: Vec<Vehicle> =
                 Vec::with_capacity(pending_ltm.len() + itin_cars.len());
             let pending_ltm: Vec<(TripId, VehicleId, u32)> = pending_ltm
@@ -2758,7 +2758,7 @@ impl Run {
 
     /// The bike and walk layers' per-link results, from the vehicles a loading kept and the bin
     /// length (`None`: none asked for): binned for the loading whose results the run keeps
-    /// alone, the same tables as when every loading binned its own (S294).
+    /// alone (S294).
     fn layer_bins(&self, vehicles: Option<(u32, [Vec<Vehicle>; 2])>) -> [Option<LinkBins>; 2] {
         let mut layer_bins: [Option<LinkBins>; 2] = [None, None];
         if let Some((bin_seconds, layer_vehicles)) = vehicles {

@@ -159,9 +159,8 @@ fn a_closed_link_holds_even_a_first_vehicle() {
 }
 
 /// **Property (S293):** at the point queue a closed link refuses entry under either rule of entry
-/// at nodes: the car waits at `B`, at the end of `AB`, enters `BC` when it opens and arrives
-/// 36 s later. Under the classic point queue (no inflow headway at nodes) it entered the closed
-/// link at 46 s before, crossed it while it was closed and left it the second it opened.
+/// at nodes: the car waits at `B`, at the downstream end of `AB`, enters `BC` when it opens and
+/// arrives 36 s later.
 #[test]
 fn at_the_point_queue_a_closed_link_refuses_entry_too() {
     let (_, _, bc) = line();
@@ -176,7 +175,7 @@ fn at_the_point_queue_a_closed_link_refuses_entry_too() {
         assert!((arrival - 436.0).abs() < 1e-6, "node_inflow {node_inflow}: arrived at {arrival}");
     }
     // Narrowed, not closed: at the classic point queue the car enters at once and waits at the
-    // narrowed link's own exit.
+    // narrowed link's own downstream end.
     let narrowed = vec![CapacityChange { time: 0.0, link: bc, factor: 0.5 }];
     let (_, entered) = one_car_at(10, narrowed, FidelityLevel::PointQueue, false);
     assert!((entered - 46.0).abs() < 1e-6, "a narrowed link takes it at 10 + 36 s: {entered}");

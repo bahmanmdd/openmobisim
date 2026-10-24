@@ -127,7 +127,7 @@ def test_trips_leaving_together_read_at_most_the_route_gap(grid, spread, tmp_pat
     # In principle: the trips of a group that leave at one second with one point each end are the
     # same trip, offered the same routes at the same costs, so each one's best offered route is
     # the same, and no trip of the group paid less than it. The group's best is then at least each
-    # trip's best offered: a smaller excess over a larger reference. A bin of one second groups
+    # trip's best offered: a smaller excess over a larger best. A bin of one second groups
     # only such trips, whatever the demand; 5-minute bins do too when the demand leaves in them.
     run, _, _ = spread
     route_gap = float(run.convergence()["gap_route"][-1])

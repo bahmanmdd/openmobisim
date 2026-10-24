@@ -419,9 +419,7 @@ impl RouteSets {
                 }
             }
             // A key that had routes keeps at least one; a key that never had one (no route
-            // exists for its pair) stays empty, and its trips stay without a route (S294, X-70:
-            // the assertion held for every key and panicked at the first revision of a store
-            // with an empty set).
+            // exists for its pair) stays empty, and its trips stay without a route (S294, X-70).
             assert!(
                 out.cost.len() > first || self.route_range(k).is_empty(),
                 "a key keeps at least one route"

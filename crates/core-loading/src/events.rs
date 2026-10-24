@@ -7,14 +7,12 @@
 //! superseded ones stayed in the heap: results are unchanged.
 //!
 //! **Why four-ary, on integer keys (S294).** A loading serves millions of events from a heap
-//! of about a thousand (Delft: 2.2 million per loading, 1 100 live on average), so the time
-//! goes on comparisons whose outcome no branch predictor can guess. The heap holds each
-//! event's time and tag as integers that sort as [`f64::total_cmp`] sorts the floats, compares
-//! them branching only on a tie of times (rare, so predicted), and has four children per node,
-//! half the levels of a binary heap: replaying a Delft loading's events, 100 ms where the binary
-//! heap on floats took 174 ms. The
-//! events served are the same, in the same order: the order is total and no two events share
-//! a queue, so the earliest live event is the same whatever the heap's shape.
+//! of about a thousand, so the time goes on comparisons whose outcome no branch predictor can
+//! guess. The heap holds each event's time and tag as integers that sort as [`f64::total_cmp`]
+//! sorts the floats, compares them branching only on a tie of times (rare, so predicted), and
+//! has four children per node, half the levels of a binary heap. Any heap serves the same
+//! events in the same order: the order is total and no two events share a queue, so the
+//! earliest live event is the same whatever the heap's shape.
 
 /// "The vehicle at the front of queue `queue` is due at `time`."
 #[derive(Clone, Copy, Debug)]
@@ -275,7 +273,7 @@ mod tests {
         let mut indexed = EventQueue::new(queues);
         let mut skipping: BinaryHeap<Reverse<(u64, u64, u32, u32)>> = BinaryHeap::new();
         let mut generation = vec![0_u32; queues];
-        // The reference's live event per queue.
+        // The skipping heap's live event per queue.
         let mut live: Vec<Option<(u64, u64)>> = vec![None; queues];
         let (mut a, mut b) = (Vec::new(), Vec::new());
         for _ in 0..40_000 {

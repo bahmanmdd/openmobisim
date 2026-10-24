@@ -21,7 +21,7 @@
 //! | [`disruptions`] | [`disruptions::Disruptions`] — roads closed and transit stopped at a time of day, known or not in advance |
 //! | [`skims`] | [`skims::Skimmer`] — door-to-door times between points by mode, after a run |
 //! | [`events`] | [`events::EventRow`] — one row per trip outcome, what `io-parquet`'s `events.parquet` writer reads from |
-//! | [`gap`] | [`gap::GapTrips`] — the full gap: every trip's choice against the best alternative, at every loading, in the choice model's currency |
+//! | [`gap`] | [`gap::GapTrips`] — the full gap: every trip's choice against the best alternative, after the last loading or every one, in the choice model's currency |
 //! | [`identity`] | [`identity::RunDescription`] — a run's master seed and fingerprint, made before it executes |
 //! | [`timings`] | [`timings::Timings`] — wall-clock time by stage, kept apart from the results |
 //!
