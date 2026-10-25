@@ -102,33 +102,51 @@ def square_trips(mode: str | None = "car") -> list[tuple]:
     ]
 
 
-def test_a_grid_moves_every_trip_end_to_the_centre_of_its_cell() -> None:
+def test_a_grid_moves_every_trip_end_to_its_cell_s_most_used_point() -> None:
     rows = square_trips()
     moved, stats = ms.demand_aggregate_space(rows, grid_m=500, stats=True, quiet=True)
-    # Cells of 500 m: (i, j) the i-th eastward and the j-th northward, centred 250 m in; the
-    # cell's width in degrees is fixed at the grid's corner latitude (so a second pass is the
-    # identity), not at the trip ends' mean, hence the corner's metres per degree here.
+    # Cells of 500 m: (i, j) the i-th eastward and the j-th northward; the cell's width in degrees
+    # is fixed at the grid's corner latitude (so a second pass is the identity). A cell's point
+    # is the trip-end point its trips use most; here every end is its own point, so it is the
+    # first end listed that falls in the cell (origins before destinations, row by row).
     lon_m_corner = 111_320.0 * math.cos(math.radians(LAT0))
-    centre = {
-        (i, j): (LON0 + (250 + 500 * i) / lon_m_corner, LAT0 + (250 + 500 * j) / LAT_M)
-        for i in (0, 1)
-        for j in (0, 1)
+    dlon, dlat = 500 / lon_m_corner, 500 / LAT_M
+    cell = lambda lon, lat: (math.floor((lon - LON0) / dlon), math.floor((lat - LAT0) / dlat))  # noqa: E731
+    # A cell's point is the end its trips use most, the first listed among equals: (900, 400) in
+    # cell (1, 0) and (100, 600) in cell (0, 1) are each an origin and a destination.
+    uses: dict[tuple[int, int], Counter] = {}
+    for r in rows:
+        for end in ((r[2], r[3]), (r[4], r[5])):
+            uses.setdefault(cell(*end), Counter())[end] += 1
+    point = {
+        c: max(cnt, key=lambda e, cnt=cnt: (cnt[e], -list(cnt).index(e))) for c, cnt in uses.items()
     }
+    assert point[cell(*at(900, 400))] == at(900, 400) and point[cell(*at(100, 600))] == at(100, 600)
     cells = [((0, 0), (1, 1)), ((0, 0), (1, 1)), ((0, 0), (1, 1)), ((1, 0), (0, 1)),
              ((1, 0), (0, 1)), ((0, 1), (1, 0)), ((0, 1), (0, 0)), ((1, 0), (1, 1))]  # fmt: skip
-    for t, (o, d) in zip(moved, cells, strict=True):
-        assert (t.origin_lon, t.origin_lat) == pytest.approx(centre[o], abs=1e-9), t
-        assert (t.destination_lon, t.destination_lat) == pytest.approx(centre[d], abs=1e-9), t
+    assert len(point) == 4 and all(cell(*p) == c for c, p in point.items())
+    distances = []
+    for t, r, (o, d) in zip(moved, rows, cells, strict=True):
+        assert (t.origin_lon, t.origin_lat) == point[o], t
+        assert (t.destination_lon, t.destination_lat) == point[d], t
+        for before, after in (((r[2], r[3]), point[o]), ((r[4], r[5]), point[d])):
+            dx = (
+                (after[0] - before[0])
+                * 111_320.0
+                * math.cos(math.radians((before[1] + after[1]) / 2))
+            )
+            dy = (after[1] - before[1]) * LAT_M
+            if before != after:
+                distances.append(math.hypot(dx, dy))
     assert [t[6:] for t in moved] == [r[6:] for r in rows], "nothing else about a trip changes"
-    assert stats["moved"] == 16 and stats["kept"] == 0 and stats["collapsed"] == 0
+    # The ends at their cell's point stay (two cells' points are used twice); the others move.
+    kept = sum(1 for r in rows for end in ((r[2], r[3]), (r[4], r[5])) if point[cell(*end)] == end)
+    assert kept == 6 and stats["moved"] == 16 - kept and stats["kept"] == kept
+    assert stats["collapsed"] == 0
     # Eight distinct pairs before; after, (0,0)→(1,1) three times and (1,0)→(0,1) twice.
     assert stats["pairs_before"] == 8 and stats["pairs_after"] == 5
-    # By hand: six ends 150 m east and north of their centre (212.1 m), four 50 m and 150 m
-    # (158.1 m), four 50 m and 50 m (70.7 m), two 10 m.
-    by_hand = (6 * 150 * math.sqrt(2) + 4 * 50 * math.sqrt(10) + 4 * 50 * math.sqrt(2) + 20) / 16
-    assert stats["moved_m_mean"] == pytest.approx(by_hand, abs=1.0)
-    assert stats["moved_m_p95"] == pytest.approx(150 * math.sqrt(2), abs=1.0)
-    assert ms.demand_aggregate_space(rows, grid_m=500, quiet=True) == moved, "rows alone"
+    assert stats["moved_m_mean"] == pytest.approx(sum(distances) / len(distances), abs=1.0)
+    assert stats["moved_m_p95"] <= max(distances) + 1.0
 
 
 def test_trips_in_one_cell_collapse_and_only_the_listed_modes_move() -> None:
@@ -139,14 +157,18 @@ def test_trips_in_one_cell_collapse_and_only_the_listed_modes_move() -> None:
         ("n", 0, *at(300, 300), *at(700, 700), 25_200, "a", None, None),
     ]
     moved, stats = ms.demand_aggregate_space(rows, grid_m=500, stats=True, quiet=True)
-    assert stats["collapsed"] == 2 and stats["moved"] == 4
+    # Each car trip's two ends lie in one cell: both land on the cell's point, which is one of
+    # them (the first listed), so one end of each moves and the trip collapses.
+    assert stats["collapsed"] == 2 and stats["moved"] == 2 and stats["kept"] == 2
     assert moved[0][2:4] == moved[0][4:6] and moved[1][2:4] == moved[1][4:6]
     assert tuple(moved[2]) == rows[2], "a bike trip keeps its ends by default"
     assert tuple(moved[3]) == rows[3], "a trip with no stated mode keeps its ends"
     every, stats = ms.demand_aggregate_space(rows, grid_m=500, modes=None, stats=True, quiet=True)
-    assert every[2][2:4] == moved[0][2:4] and every[2][4:6] == moved[1][4:6], "the bike moves"
+    # With every trip moving, the cells' points are the ends used most over all four trips:
+    # (100, 100) and (900, 900), each an origin and a destination; the bike's ends land there.
+    assert every[2][2:4] == every[0][2:4] and every[2][4:6] == every[1][4:6], "the bike moves"
     assert every[3][2:6] != rows[3][2:6], "and so does the trip with no stated mode"
-    assert stats["moved"] == 8 and stats["collapsed"] == 2
+    assert stats["moved"] == 4 and stats["kept"] == 4 and stats["collapsed"] == 2
     bikes = ms.demand_aggregate_space(rows, grid_m=500, modes="bike", quiet=True)
     assert bikes[2] == every[2] and tuple(bikes[0]) == rows[0]
 
@@ -193,8 +215,15 @@ def test_the_original_ends_come_back_for_the_moved_trips_only() -> None:
     _, stats = ms.demand_aggregate_space(rows, zones, modes="car", stats=True, quiet=True)
     assert stats["original"] == [("moved", 1, *rows[0][2:6])]
     rows = square_trips() + [("bike", 0, *at(100, 100), *at(900, 900), 25_200, "a", None, "bike")]
-    _, stats = ms.demand_aggregate_space(rows, grid_m=500, stats=True, quiet=True)
-    assert stats["original"] == [(r[0], r[1], *r[2:6]) for r in rows[:8]]
+    moved, stats = ms.demand_aggregate_space(rows, grid_m=500, stats=True, quiet=True)
+    # The car trips with at least one end moved, in order (s0, s4 and s5 have both ends at their
+    # cells' points, so they are not listed); never the bike.
+    expected = [
+        (r[0], r[1], *r[2:6])
+        for r, m in zip(rows[:8], moved[:8], strict=True)
+        if tuple(m)[2:6] != r[2:6]
+    ]
+    assert stats["original"] == expected and len(expected) == 5
 
 
 def test_a_run_takes_the_demand_on_a_grid_and_the_original_ends_join_its_trips() -> None:

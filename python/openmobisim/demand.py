@@ -20,7 +20,8 @@ less to choose for, route and load, at the price of sampling noise, which replic
 **Aggregations**: ``demand_aggregate_space`` moves every trip end to its zone's point and
 ``demand_aggregate_time`` every departure to one instant; together they make a dynamic demand the
 static one the static assignment (``flow_level=1``) loads, which applies both itself. With
-``grid_m`` instead of zones, ``demand_aggregate_space`` moves every trip end to the centre of its
+``grid_m`` instead of zones, ``demand_aggregate_space`` moves every trip end to the most used
+trip-end point of its
 square grid cell of that many metres, so the trips of one pair of cells share one route set in a
 run; its ``modes`` names the modes whose trips move (cars by default with a grid).
 """
@@ -31,7 +32,7 @@ import csv
 import hashlib
 import math
 import numbers
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -261,7 +262,7 @@ def demand_aggregate_space(
     stats: bool = False,
     quiet: bool = False,
 ) -> list[Trip] | tuple[list[Trip], dict[str, Any]]:
-    """Trip ends moved to their zone's point or grid cell's centre: demand aggregated over space.
+    """Trip ends moved to their zone's or their grid cell's point: the demand aggregated over space.
 
     Give exactly one of ``zones`` and ``grid_m``.
 
@@ -275,7 +276,9 @@ def demand_aggregate_space(
     applies it before it routes, with the scenario's ``zones``, to every trip. **Cost:** one
     comparison per trip end and zone.
 
-    **Grid**: square cells of ``grid_m`` metres a side, every trip end moved to the centre of its
+    **Grid**: square cells of ``grid_m`` metres a side, every trip end moved to the **most used
+    trip-end point** of its cell (an existing origin or destination, never a new place, so that no
+    trip is sent to a spot the network cannot serve; the first listed among equals), the cell being
     cell. The grid starts at the whole degree of longitude and of latitude at or below the
     demand's westernmost and southernmost trip end; cell ``(i, j)`` is the ``i``-th ``grid_m``
     eastward and the ``j``-th ``grid_m`` northward, metres converted to degrees once for the whole
@@ -326,7 +329,7 @@ def demand_aggregate_space(
     if (zones is None) == (grid_m is None):
         raise ValueError(
             "demand_aggregate_space: give exactly one of zones (each trip end to its zone's "
-            "point) and grid_m (each trip end to the centre of its grid cell, in metres)"
+            "point) and grid_m (each trip end to its grid cell's most used point, in metres)"
         )
     if grid_m is not None:
         ok = isinstance(grid_m, numbers.Real) and not isinstance(grid_m, bool)
@@ -359,16 +362,28 @@ def demand_aggregate_space(
             # with the ends).
             dlon, dlat = grid_m / _metres_per_degree_lon(lat0), grid_m / lat_m
 
-            def centre(lon: float, lat: float) -> tuple[float, float]:
-                i, j = math.floor((lon - lon0) / dlon), math.floor((lat - lat0) / dlat)
-                return lon0 + (i + 0.5) * dlon, lat0 + (j + 0.5) * dlat
+            def cell(lon: float, lat: float) -> tuple[int, int]:
+                return math.floor((lon - lon0) / dlon), math.floor((lat - lat0) / dlat)
 
+            # A cell's point is the trip-end point its moving trips use most (the first listed
+            # among equals): a place the demand already starts or ends at, so that the
+            # aggregation never invents a point the network cannot serve (a cell's centre could
+            # fall on a street with no way out; S298). Every end of the cell goes there.
+            uses: dict[tuple[int, int], Counter] = {}
             for i in chosen:
                 r = rows[i]
-                o, d = (
-                    centre(r.origin_lon, r.origin_lat),
-                    centre(r.destination_lon, r.destination_lat),
-                )
+                for lon, lat in (
+                    (r.origin_lon, r.origin_lat),
+                    (r.destination_lon, r.destination_lat),
+                ):
+                    uses.setdefault(cell(lon, lat), Counter())[(lon, lat)] += 1
+            point = {
+                c: max(cnt, key=lambda p: (cnt[p], -list(cnt).index(p))) for c, cnt in uses.items()
+            }
+            for i in chosen:
+                r = rows[i]
+                o = point[cell(r.origin_lon, r.origin_lat)]
+                d = point[cell(r.destination_lon, r.destination_lat)]
                 out[i] = r._replace(
                     origin_lon=o[0], origin_lat=o[1], destination_lon=d[0], destination_lat=d[1]
                 )
@@ -406,7 +421,7 @@ def demand_aggregate_space(
             "before, %d after",
             report["moved"],
             2 * len(chosen),
-            "zone's point" if grid_m is None else "grid cell's centre",
+            "zone's point" if grid_m is None else "grid cell's point",
             kept,
             collapsed,
             report["pairs_before"],
