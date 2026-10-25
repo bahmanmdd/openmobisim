@@ -279,3 +279,18 @@ fn an_iterating_run_routes_bikes_once_and_leaves_them_out_of_the_gap() {
     let chosen = choices.route.iter().filter(|&&r| r != openmobisim_core_sim::NO_ROUTE).count();
     assert_eq!(chosen, 15);
 }
+
+#[test]
+fn bike_routing_names_how_bike_routes_are_made() {
+    use openmobisim_core_routes::{RouteSetGenerator, Sampled};
+    use openmobisim_core_sim::layers::BikeRouting;
+    assert_eq!(BikeRouting::Shortest.descriptor(), "shortest");
+    let sampled =
+        |extras| BikeRouting::Sampled { generator: Sampled::default(), extras }.descriptor();
+    let time_alone = sampled(vec![vec![None; 5]]);
+    let valued = sampled(vec![vec![Some(Arc::from(vec![30.0; 4])), None, None, None, None]]);
+    assert!(time_alone.starts_with("sampled;"), "{time_alone}");
+    assert!(time_alone.contains(";extras=given:"), "the extras are named: {time_alone}");
+    assert_ne!(time_alone, valued, "other extras, another descriptor");
+    assert_ne!(time_alone, Sampled::default().descriptor(), "given extras differ from none");
+}

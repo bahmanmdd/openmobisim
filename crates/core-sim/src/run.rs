@@ -62,7 +62,7 @@ use crate::layers::{
     static_layer_of,
 };
 use crate::link_times::{LinkTimes, relative_time_change};
-use crate::link_values::LinkValues;
+use crate::link_values::{LinkValues, PreparedLinkValues};
 use crate::loading_rules::LoadingOptions;
 use crate::parking::{
     self as parking_mod, ExpectedAvailability, ParkingEvent, ParkingResult, ParkingSetup,
@@ -935,12 +935,50 @@ impl Run {
         }
     }
 
+    /// Extra seconds per link by user class and preference draw (S298), as a method or update
+    /// that searches by generalised cost asks for them: composed from the choice model's
+    /// coefficients, the prices and the user's `link_values`, floored on the road's free-flow
+    /// times. Cheap, and made only when asked.
+    fn compose_extras(
+        &self,
+        request: ExtrasRequest,
+        link_values: &PreparedLinkValues,
+    ) -> ClassExtras {
+        let terms = LinkTerms::road(&self.network, &self.prices, link_values);
+        class_extras(
+            request,
+            self.choice_model.as_ref(),
+            &self.travellers,
+            &terms,
+            &road_seconds(&self.network),
+        )
+    }
+
+    /// The route method with the extras it asked for, if any (S298): its descriptor, and so the
+    /// run's fingerprint and the route cache's key, then name them.
+    fn keyed_generator(&self, link_values: &PreparedLinkValues) -> Arc<dyn RouteSetGenerator> {
+        match self.route_generator.extras_wanted().map(|r| self.compose_extras(r, link_values)) {
+            Some(extras) => self
+                .route_generator
+                .with_extras(extras)
+                .map_or_else(|| self.route_generator.clone(), Arc::from),
+            None => self.route_generator.clone(),
+        }
+    }
+
     /// What went into this run: its seed and its fingerprint. Take it
     /// before [`Self::execute`]; it depends only on the inputs.
     #[must_use]
     pub fn description(&self) -> RunDescription {
         let read = self.choice_model.required_attributes();
         let reads = |name: &str| read.as_ref().is_none_or(|names| names.iter().any(|n| n == name));
+        // The method as the run will use it, its extras named (S298): the fingerprint and the
+        // manifest say what the sets were made with. Link values that the run would refuse give
+        // the method without extras; the run then fails on them before anything else.
+        let generator = match self.link_values.prepare(&self.network, &self.layers) {
+            Ok(values) => self.keyed_generator(&values),
+            Err(_) => self.route_generator.clone(),
+        };
         describe(&Inputs {
             threads: self.threads(),
             network: &self.network,
@@ -950,8 +988,8 @@ impl Run {
             window_start: self.window_start,
             flow_motor: &self.flow_motor,
             link_bin_seconds: self.link_bin_seconds,
-            route_method: self.route_generator.name(),
-            route_descriptor: &self.route_generator.descriptor(),
+            route_method: generator.name(),
+            route_descriptor: &generator.descriptor(),
             master_seed: self.master_seed,
             choice_model: self.choice_model.name(),
             choice_descriptor: &self.choice_model.descriptor(),
@@ -1162,6 +1200,7 @@ impl Run {
                     .modes(&self.mode_defaults)
                     .max_seconds(layer)
             },
+            &crate::layers::BikeRouting::Shortest,
         );
         clock = timings.lap("static_routes", None, clock);
         // Shared handles, so the loading (which moves vehicles about in `self`) and the
@@ -1254,28 +1293,11 @@ impl Run {
         // Extras (S298): a method or update that searches by generalised cost asks for extra
         // seconds per link, per user class and preference draw, composed from the choice
         // model's coefficients, the prices and the link values. Cheap, and only when asked.
-        let compose_extras = |request: ExtrasRequest| -> ClassExtras {
-            let terms = LinkTerms::road(&self.network, &self.prices, &link_values);
-            class_extras(
-                request,
-                self.choice_model.as_ref(),
-                &self.travellers,
-                &terms,
-                &road_seconds(&self.network),
-            )
-        };
         let update_extras: Option<ClassExtras> =
-            self.route_update.extras_wanted().map(compose_extras);
+            self.route_update.extras_wanted().map(|r| self.compose_extras(r, &link_values));
         // The method with its extras, if it asked for them: its descriptor (and so the cache's
-        // key) then names them.
-        let keyed_generator: Arc<dyn RouteSetGenerator> =
-            match self.route_generator.extras_wanted().map(compose_extras) {
-                Some(extras) => self
-                    .route_generator
-                    .with_extras(extras)
-                    .map_or_else(|| self.route_generator.clone(), Arc::from),
-                None => self.route_generator.clone(),
-            };
+        // key and the manifest) names them.
+        let keyed_generator = self.keyed_generator(&link_values);
         let generate = || {
             let generator: Arc<dyn RouteSetGenerator> = match &demand_rows {
                 Some(rows) => {

@@ -7,9 +7,24 @@
 //! and the same in every iteration. **Nothing here runs for a scenario with
 //! no bike or walk trips** — a car-only run is what it was.
 //!
+//! **Bike route sets, an option (S298).** Given [`BikeRouting::Sampled`], the
+//! bike layer holds a **route set** per origin-destination pair instead of one
+//! route: the `sampled` generator of `openmobisim_core_routes` searches the
+//! layer under its bike cost, first the least-cost route, then the cheapest
+//! route under each user class's generalised cost (the extra seconds per link
+//! the run composed from the choice model, per class and preference draw) with
+//! random link costs, keeping the routes within a detour of the first and under
+//! an overlap limit. Each trip rides the first route of its pair's set, the
+//! least-cost one, until a choice among them records another; a ride longer
+//! than mode choice offers is left out when the leg is read, as before. The
+//! walk layer always has one route per pair, and [`BikeRouting::Shortest`]
+//! (what a run uses) routes bikes exactly as above.
+//!
 //! **Cost:** a turn table and two cost vectors per layer (built with the
 //! run), one shortest-path search per distinct origin-destination pair of the
 //! layer's trips (once per run), and O(route links) per trip per loading.
+//! Sampled bike sets search one tree per origin for the least-cost routes and
+//! one per class and draw, and store every kept route.
 
 use std::sync::Arc;
 
@@ -398,6 +413,41 @@ pub(crate) fn class_limits(classes: &[ClassLimits], class: usize) -> ClassLimits
     classes.get(class).copied().unwrap_or_default()
 }
 
+/// How bike routes are made (S298): one shortest route per pair, or sampled sets.
+#[derive(Clone, Debug)]
+pub enum BikeRouting {
+    /// One least-cost route per pair under the layer's bike cost: today's behaviour.
+    Shortest,
+    /// Sampled sets: the `sampled` generator on the bike layer, with the extras per class and
+    /// draw the run composed from the choice model (`extras[class][draw]`, `None`: time alone).
+    Sampled {
+        /// The generator, with its options (draws, noise, detour, overlap, size, seed).
+        generator: openmobisim_core_routes::Sampled,
+        /// Extra seconds per bike-layer link, by user class and preference draw.
+        extras: openmobisim_core_routes::ClassExtras,
+    },
+}
+
+impl BikeRouting {
+    /// The generator with its extras, ready for the bike layer; `None` for
+    /// [`Self::Shortest`].
+    fn generator(&self) -> Option<Box<dyn RouteSetGenerator>> {
+        match self {
+            Self::Shortest => None,
+            Self::Sampled { generator, extras } => Some(
+                generator.with_extras(extras.clone()).expect("the sampled method takes extras"),
+            ),
+        }
+    }
+
+    /// How bike routes are made, as a canonical string: `shortest`, or the sampled
+    /// generator's descriptor, whose `extras=given:<hash>` field names the extras.
+    #[must_use]
+    pub fn descriptor(&self) -> String {
+        self.generator().map_or_else(|| "shortest".to_owned(), |g| g.descriptor())
+    }
+}
+
 /// Shortest routes, searched only as far as a bound for the keys only mode-choice trips use
 /// (their walk or ride is offered only up to [`ModeDefaults`]' times, or their class's), in
 /// full for the rest (a trip given the mode takes it at any length).
@@ -498,12 +548,16 @@ impl StaticRoutes {
     /// Route every trip whose mode has a static layer the run has, and every trip
     /// `also` names for a layer: snap its ends to the layer's nodes and take the shortest
     /// route between them. `max_seconds` is the longest leg mode choice offers a trip on a
-    /// layer (its class's limit or the run's).
+    /// layer (its class's limit or the run's). `bike` says how the bike layer's routes are
+    /// made: with [`BikeRouting::Sampled`] each pair has a set, generated in full (the
+    /// mode-choice bound is applied when a leg is read), and each trip points at the first
+    /// route of its pair's set.
     pub(crate) fn build(
         layers: &StaticLayers,
         trips: &Trips,
         also: &dyn Fn(TripId, StaticLayer) -> bool,
         max_seconds: &dyn Fn(TripId, StaticLayer) -> f64,
+        bike: &BikeRouting,
     ) -> Self {
         let total = trips.len() as usize;
         let mut route = [vec![StaticRoute::None; total], vec![StaticRoute::None; total]];
@@ -532,33 +586,43 @@ impl StaticRoutes {
                     )
                 })
                 .collect();
-            // Keys only mode-choice trips use are searched no further than the longest leg
-            // mode choice offers any of them, in cost: a leg of that many seconds costs at
-            // most that times the layer's largest cost per second (the dedicated-bike
-            // multiplier).
-            let mut full: Vec<RouteKey> = wanted
-                .iter()
-                .zip(&keys)
-                .filter(|&(&i, _)| stated(TripId::from_index(i)))
-                .map(|(_, &k)| k)
-                .collect();
-            full.sort_unstable();
-            let per_second = setup
-                .costs
-                .iter()
-                .zip(&setup.seconds)
-                .filter(|&(c, t)| c.is_finite() && *t > 0.0)
-                .fold(1.0_f64, |m, (c, t)| m.max(c / t));
-            let mut bounded: Vec<(RouteKey, f64)> = wanted
-                .iter()
-                .zip(&keys)
-                .filter(|&(_, k)| full.binary_search(k).is_err())
-                .map(|(&i, &k)| (k, max_seconds(TripId::from_index(i), layer) * per_second))
-                .collect();
-            bounded.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)));
-            bounded.dedup_by_key(|&mut (k, _)| k);
             let ctx = SearchContext::with_costs(graph, &setup.turns, setup.costs.clone());
-            let layer_sets = RouteSets::generate_in(&ctx, &keys, &ShortestFor { bounded });
+            let sampled = match layer {
+                StaticLayer::Bike => bike.generator(),
+                StaticLayer::Walk => None,
+            };
+            let layer_sets = if let Some(generator) = sampled {
+                // Sampled bike sets (S298), searched in full: a ride longer than mode choice
+                // offers is left out when its leg is read (`leg`).
+                RouteSets::generate_in(&ctx, &keys, generator.as_ref())
+            } else {
+                // Keys only mode-choice trips use are searched no further than the longest leg
+                // mode choice offers any of them, in cost: a leg of that many seconds costs at
+                // most that times the layer's largest cost per second (the dedicated-bike
+                // multiplier).
+                let mut full: Vec<RouteKey> = wanted
+                    .iter()
+                    .zip(&keys)
+                    .filter(|&(&i, _)| stated(TripId::from_index(i)))
+                    .map(|(_, &k)| k)
+                    .collect();
+                full.sort_unstable();
+                let per_second = setup
+                    .costs
+                    .iter()
+                    .zip(&setup.seconds)
+                    .filter(|&(c, t)| c.is_finite() && *t > 0.0)
+                    .fold(1.0_f64, |m, (c, t)| m.max(c / t));
+                let mut bounded: Vec<(RouteKey, f64)> = wanted
+                    .iter()
+                    .zip(&keys)
+                    .filter(|&(_, k)| full.binary_search(k).is_err())
+                    .map(|(&i, &k)| (k, max_seconds(TripId::from_index(i), layer) * per_second))
+                    .collect();
+                bounded.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)));
+                bounded.dedup_by_key(|&mut (k, _)| k);
+                RouteSets::generate_in(&ctx, &keys, &ShortestFor { bounded })
+            };
             for (&i, key) in wanted.iter().zip(&keys) {
                 route[slot(layer)][i] = if key.origin == key.destination {
                     StaticRoute::Here
@@ -579,6 +643,43 @@ impl StaticRoutes {
     /// The trip's route on `layer`.
     pub(crate) fn of(&self, trip: TripId, layer: StaticLayer) -> StaticRoute {
         self.route[slot(layer)].get(trip.index()).copied().unwrap_or(StaticRoute::None)
+    }
+
+    /// The route sets of `layer`, if the run routed any trip on it.
+    #[allow(dead_code, reason = "read by the bike route choice (S298)")]
+    pub(crate) fn sets(&self, layer: StaticLayer) -> Option<&RouteSets> {
+        self.sets[slot(layer)].as_ref()
+    }
+
+    /// The range of route indices of the trip's pair in `layer`'s sets: one route, or a
+    /// sampled bike set. `None` where the trip has no route there (not routed on the layer,
+    /// unreachable, or origin and destination one node).
+    #[allow(dead_code, reason = "read by the bike route choice (S298)")]
+    pub(crate) fn routes_of(
+        &self,
+        trip: TripId,
+        layer: StaticLayer,
+    ) -> Option<core::ops::Range<usize>> {
+        let StaticRoute::Route(index) = self.of(trip, layer) else { return None };
+        let sets = self.sets[slot(layer)].as_ref()?;
+        Some(sets.route_range(sets.key_of_route(index as usize)))
+    }
+
+    /// Record route `index` of the trip's pair as its route on `layer` (a choice among its
+    /// set).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the trip has no route on `layer`, or if `index` is not in its pair's range
+    /// ([`Self::routes_of`]).
+    #[allow(dead_code, reason = "called by the bike route choice (S298)")]
+    pub(crate) fn set_route(&mut self, trip: TripId, layer: StaticLayer, index: u32) {
+        let range = self.routes_of(trip, layer).expect("the trip has a route on the layer");
+        assert!(
+            range.contains(&(index as usize)),
+            "route {index} is not one of the trip's routes {range:?}"
+        );
+        self.route[slot(layer)][trip.index()] = StaticRoute::Route(index);
     }
 
     /// The trip's route on `layer` as a leg to choose: its links, seconds and metres.
@@ -623,4 +724,289 @@ impl StaticRoutes {
 #[must_use]
 pub fn static_layer_of(mode: Mode) -> Option<StaticLayer> {
     layer_of(mode)
+}
+
+#[cfg(test)]
+mod tests {
+    //! Bike route sets (S298): the shortest option as before, sampled sets that hold more
+    //! than one route, extras that move them, determinism, and recording a chosen route.
+
+    use std::collections::BTreeMap;
+
+    use openmobisim_core_demand::{ClassDefaults, Ownership, RawTrip, build_travellers};
+    use openmobisim_core_graph::LonLat;
+    use openmobisim_core_graph::examples::node_name;
+    use openmobisim_core_graph::network::RoadNetwork;
+    use openmobisim_core_routes::{ClassExtras, Sampled, Shortest};
+    use openmobisim_core_types::diagnostics::Diagnostics;
+    use openmobisim_core_types::time::Second;
+
+    use super::*;
+
+    /// A 5 × 5 two-way grid of 200 m blocks, unsignalised.
+    fn grid() -> RoadNetwork {
+        openmobisim_core_graph::manhattan_grid(5, 200.0, false).0
+    }
+
+    fn layers(road: &RoadNetwork) -> StaticLayers {
+        let d = StaticLayerDefaults::SHIPPED;
+        let derive = |layer| {
+            Arc::new(
+                StaticNetwork::derive(road, layer, d, &mut Diagnostics::new()).expect("derives"),
+            )
+        };
+        StaticLayers {
+            bike: Some(LayerSetup::new(derive(StaticLayer::Bike), BikeCost::Dedicated, d)),
+            walk: Some(LayerSetup::new(derive(StaticLayer::Walk), BikeCost::Dedicated, d)),
+        }
+    }
+
+    /// Grid node `(row, col)`'s id in `network` (a road or a layer: they share node names).
+    fn node(network: &RoadNetwork, row: u32, col: u32) -> NodeId {
+        NodeId::new(network.node_external_ids().id_of(&node_name(row, col)).expect("a grid node"))
+    }
+
+    fn at(road: &RoadNetwork, row: u32, col: u32) -> LonLat {
+        road.node_lonlat(node(road, row, col))
+    }
+
+    type Cell = (u32, u32);
+
+    /// One trip per `(from, to, mode)`, each by its own traveller.
+    fn trips(road: &RoadNetwork, rows: &[(Cell, Cell, Mode)]) -> Trips {
+        let raw: Vec<RawTrip> = rows
+            .iter()
+            .enumerate()
+            .map(|(i, &(from, to, mode))| RawTrip {
+                traveller_id: format!("t{i:02}"),
+                trip_seq: 0,
+                origin: at(road, from.0, from.1),
+                destination: at(road, to.0, to.1),
+                departure_time: Second(0),
+                user_class: "everyone".to_string(),
+                weight: None,
+                mode: Some(mode),
+            })
+            .collect();
+        let owning = ClassDefaults::new()
+            .with_default("everyone", Ownership { car: true, bike: true, transit_pass: false });
+        build_travellers(raw, Vec::new(), &owning, 1, &mut Diagnostics::new()).expect("builds").1
+    }
+
+    /// Bike pairs across the grid, a walk and a car trip.
+    fn mixed_rows() -> Vec<(Cell, Cell, Mode)> {
+        vec![
+            ((0, 0), (4, 4), Mode::Bike),
+            ((4, 0), (0, 4), Mode::Bike),
+            ((0, 0), (4, 4), Mode::Bike),
+            ((1, 0), (3, 4), Mode::Bike),
+            ((0, 2), (4, 2), Mode::Bike),
+            ((2, 2), (2, 2), Mode::Bike),
+            ((0, 0), (0, 2), Mode::Walk),
+            ((0, 0), (4, 4), Mode::Car),
+        ]
+    }
+
+    fn build(layers: &StaticLayers, trips: &Trips, bike: &BikeRouting) -> StaticRoutes {
+        StaticRoutes::build(layers, trips, &|_, _| false, &|_, _| f64::INFINITY, bike)
+    }
+
+    fn sampled(generator: Sampled, extras: ClassExtras) -> BikeRouting {
+        BikeRouting::Sampled { generator, extras }
+    }
+
+    fn four_draws() -> Sampled {
+        let mut g = Sampled::default();
+        g.draws = 4;
+        g
+    }
+
+    fn bike_trips(trips: &Trips) -> impl Iterator<Item = TripId> + '_ {
+        (0..trips.len()).map(TripId::new).filter(|&t| trips.mode(t) == Mode::Bike)
+    }
+
+    /// The links of each route of the trip's pair on the bike layer, in the set's order.
+    fn routes(r: &StaticRoutes, trip: TripId) -> Vec<Vec<u32>> {
+        let sets = r.sets(StaticLayer::Bike).expect("bike sets");
+        r.routes_of(trip, StaticLayer::Bike)
+            .map(|range| range.map(|i| sets.route(i).links.to_vec()).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn the_shortest_option_routes_as_before() {
+        let road = grid();
+        let layers = layers(&road);
+        let trips = trips(&road, &mixed_rows());
+        let shortest = build(&layers, &trips, &BikeRouting::Shortest);
+        for trip in bike_trips(&trips) {
+            match shortest.of(trip, StaticLayer::Bike) {
+                StaticRoute::Here => assert!(shortest.routes_of(trip, StaticLayer::Bike).is_none()),
+                route => {
+                    let range = shortest.routes_of(trip, StaticLayer::Bike).expect("routed");
+                    assert_eq!(range.len(), 1, "one route per pair");
+                    let start = u32::try_from(range.start).expect("fits");
+                    assert_eq!(route, StaticRoute::Route(start));
+                }
+            }
+        }
+        // The bike sets are the plain shortest generator's, searched under the bike cost.
+        let setup = layers.bike.as_ref().expect("a bike layer");
+        let graph = setup.network.network();
+        let ctx = SearchContext::with_costs(graph, &setup.turns, setup.costs.clone());
+        let keys: Vec<RouteKey> = bike_trips(&trips)
+            .map(|t| {
+                let snapper = NodeSnapper::every_node(graph);
+                RouteKey::new(
+                    snapper.nearest(graph, trips.origin(t)),
+                    snapper.nearest(graph, trips.destination(t)),
+                )
+            })
+            .collect();
+        let plain = RouteSets::generate_in(&ctx, &keys, &Shortest);
+        assert_eq!(shortest.sets(StaticLayer::Bike), Some(&plain));
+        // Sampled bike sets leave the walk layer exactly as it was.
+        let with_sets = build(&layers, &trips, &sampled(four_draws(), vec![vec![None; 5]]));
+        assert_eq!(shortest.sets(StaticLayer::Walk), with_sets.sets(StaticLayer::Walk));
+        for trip in (0..trips.len()).map(TripId::new) {
+            assert_eq!(shortest.of(trip, StaticLayer::Walk), with_sets.of(trip, StaticLayer::Walk));
+        }
+    }
+
+    #[test]
+    fn sampled_sets_hold_several_connected_loop_free_routes_within_the_detour() {
+        let road = grid();
+        let layers = layers(&road);
+        let trips = trips(&road, &mixed_rows());
+        let generator = four_draws();
+        let detour = generator.max_detour;
+        let shortest = build(&layers, &trips, &BikeRouting::Shortest);
+        let sets = build(&layers, &trips, &sampled(generator, vec![vec![None; 5]]));
+        let setup = layers.bike.as_ref().expect("a bike layer");
+        let graph = setup.network.network();
+        let cost = |links: &[u32]| -> f64 { links.iter().map(|&l| setup.costs[l as usize]).sum() };
+        let mut several = 0;
+        for trip in bike_trips(&trips) {
+            let StaticRoute::Route(first) = sets.of(trip, StaticLayer::Bike) else { continue };
+            let range = sets.routes_of(trip, StaticLayer::Bike).expect("routed");
+            assert_eq!(first as usize, range.start, "a trip rides the first route of its set");
+            let found = routes(&sets, trip);
+            several += usize::from(found.len() >= 2);
+            // The first is a least-cost route: it costs what the shortest option's does.
+            let best = cost(&routes(&shortest, trip)[0]);
+            assert!((cost(&found[0]) - best).abs() <= 1e-9 * best, "the first is least-cost");
+            for links in &found {
+                let ids: Vec<LinkId> = links.iter().map(|&l| LinkId::new(l)).collect();
+                for pair in ids.windows(2) {
+                    assert_eq!(graph.link_to(pair[0]), graph.link_from(pair[1]), "connected");
+                }
+                let mut nodes: Vec<NodeId> = std::iter::once(graph.link_from(ids[0]))
+                    .chain(ids.iter().map(|&l| graph.link_to(l)))
+                    .collect();
+                let visited = nodes.len();
+                nodes.sort_unstable();
+                nodes.dedup();
+                assert_eq!(nodes.len(), visited, "loop-free");
+                assert!(cost(links) <= detour * best * (1.0 + 1e-9), "within the detour");
+            }
+        }
+        assert!(several >= 1, "at least one bike pair has two routes or more");
+    }
+
+    #[test]
+    fn extras_move_the_sets_off_a_costly_row() {
+        let road = grid();
+        let layers = layers(&road);
+        // Along row 2, corner to corner: the shortest route takes the row's four links.
+        let trips = trips(&road, &[((2, 0), (2, 4), Mode::Bike)]);
+        let setup = layers.bike.as_ref().expect("a bike layer");
+        let graph = setup.network.network();
+        let row: Vec<NodeId> = (0..5).map(|c| node(graph, 2, c)).collect();
+        let on_row = |l: u32| {
+            let l = LinkId::new(l);
+            row.contains(&graph.link_from(l)) && row.contains(&graph.link_to(l))
+        };
+        let extra: Vec<f64> =
+            (0..graph.link_count()).map(|l| if on_row(l) { 300.0 } else { 0.0 }).collect();
+        // Draw 0 only, no noise; a detour of six blocks against four needs `max_detour` 2.
+        let mut generator = Sampled::default();
+        generator.draws = 0;
+        generator.max_detour = 2.0;
+        let avoids = |r: &StaticRoutes| {
+            routes(r, TripId::new(0)).iter().any(|links| !links.iter().any(|&l| on_row(l)))
+        };
+        let shortest = build(&layers, &trips, &BikeRouting::Shortest);
+        let with_extras =
+            build(&layers, &trips, &sampled(generator.clone(), vec![vec![Some(extra.into())]]));
+        let time_alone = build(&layers, &trips, &sampled(generator, vec![vec![None]]));
+        assert!(!avoids(&shortest), "the shortest route runs along the row");
+        assert!(!avoids(&time_alone), "without extras the set is the shortest route alone");
+        assert!(avoids(&with_extras), "the extras add a route off the row");
+        assert_eq!(routes(&with_extras, TripId::new(0))[0], routes(&shortest, TripId::new(0))[0]);
+    }
+
+    #[test]
+    fn sampled_sets_are_deterministic_and_do_not_depend_on_the_trips_order() {
+        let road = grid();
+        let layers = layers(&road);
+        let rows = mixed_rows();
+        let routing = sampled(four_draws(), vec![vec![None; 5]]);
+        let trips_a = trips(&road, &rows);
+        let a = build(&layers, &trips_a, &routing);
+        let again = build(&layers, &trips_a, &routing);
+        assert_eq!(a.sets(StaticLayer::Bike), again.sets(StaticLayer::Bike));
+        // The same trips in another order.
+        let mut shuffled = rows.clone();
+        shuffled.reverse();
+        shuffled.rotate_left(3);
+        assert_ne!(shuffled, rows);
+        let trips_b = trips(&road, &shuffled);
+        let b = build(&layers, &trips_b, &routing);
+        assert_eq!(a.sets(StaticLayer::Bike), b.sets(StaticLayer::Bike));
+        // Trip by trip, mapped back by its ends: the same routes.
+        let by_pair = |r: &StaticRoutes, trips: &Trips| -> BTreeMap<[u64; 4], Vec<Vec<u32>>> {
+            bike_trips(trips)
+                .map(|t| {
+                    let (o, d) = (trips.origin(t), trips.destination(t));
+                    (
+                        [o.lon.to_bits(), o.lat.to_bits(), d.lon.to_bits(), d.lat.to_bits()],
+                        routes(r, t),
+                    )
+                })
+                .collect()
+        };
+        let pairs = by_pair(&a, &trips_a);
+        assert!(pairs.values().any(|r| r.len() >= 2), "sets to compare");
+        assert_eq!(pairs, by_pair(&b, &trips_b));
+    }
+
+    /// The sampled build and a trip whose pair has two routes or more.
+    fn with_a_set() -> (StaticRoutes, TripId) {
+        let road = grid();
+        let layers = layers(&road);
+        let trips = trips(&road, &mixed_rows());
+        let r = build(&layers, &trips, &sampled(four_draws(), vec![vec![None; 5]]));
+        let trip = bike_trips(&trips)
+            .find(|&t| r.routes_of(t, StaticLayer::Bike).is_some_and(|range| range.len() >= 2))
+            .expect("a pair with a set");
+        (r, trip)
+    }
+
+    #[test]
+    fn set_route_records_a_route_of_the_trip_s_set() {
+        let (mut r, trip) = with_a_set();
+        let range = r.routes_of(trip, StaticLayer::Bike).expect("routed");
+        let second = u32::try_from(range.start + 1).expect("fits");
+        r.set_route(trip, StaticLayer::Bike, second);
+        assert_eq!(r.of(trip, StaticLayer::Bike), StaticRoute::Route(second));
+        assert_eq!(r.routes_of(trip, StaticLayer::Bike), Some(range), "the same set");
+    }
+
+    #[test]
+    #[should_panic(expected = "is not one of the trip's routes")]
+    fn set_route_refuses_a_route_outside_the_trip_s_set() {
+        let (mut r, trip) = with_a_set();
+        let range = r.routes_of(trip, StaticLayer::Bike).expect("routed");
+        r.set_route(trip, StaticLayer::Bike, u32::try_from(range.end).expect("fits"));
+    }
 }

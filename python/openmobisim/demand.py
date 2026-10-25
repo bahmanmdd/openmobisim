@@ -19,7 +19,10 @@ less to choose for, route and load, at the price of sampling noise, which replic
 
 **Aggregations**: ``demand_aggregate_space`` moves every trip end to its zone's point and
 ``demand_aggregate_time`` every departure to one instant; together they make a dynamic demand the
-static one the static assignment (``flow_level=1``) loads, which applies both itself.
+static one the static assignment (``flow_level=1``) loads, which applies both itself. With
+``grid_m`` instead of zones, ``demand_aggregate_space`` moves every trip end to the centre of its
+square grid cell of that many metres, so the trips of one pair of cells share one route set in a
+run; its ``modes`` names the modes whose trips move (cars by default with a grid).
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ from typing import Any, NamedTuple
 import numpy as np
 
 from openmobisim import _core, _log
+from openmobisim.network import _METRES_PER_DEGREE_LAT, _metres_per_degree_lon
 
 __all__ = [
     "Trip",
@@ -221,46 +225,194 @@ def _zone_points(zones: Mapping[str, tuple[float, float]] | str | Path) -> list[
     return points
 
 
-def demand_aggregate_space(
-    trips: Any, zones: Mapping[str, tuple[float, float]] | str | Path, quiet: bool = False
-) -> list[Trip]:
-    """Every trip end moved to its zone's point: the demand aggregated over space.
+class _FormDefault:
+    """The default of ``demand_aggregate_space``'s ``modes``, which depends on the form (S298)."""
 
-    A trips table carries no zone, so a trip end's zone is **the zone whose point is nearest
-    it** (by the ground distance at the city's scale; of equally near ones, the first listed); a
-    gateway, a zone of one point, keeps its trips there. The trips of one zone pair then share
-    their two points, and so their routes. Nothing else about a trip changes. On a demand made
-    with one point per zone (``Case.demand(one_point_per_zone=True)``, ``demand_from_od``'s
-    ``points_per_zone=1``) nothing moves; a trip end drawn near the edge of its zone (a
-    ``spread_m``, a ``zone_points`` table) may be nearer a neighbour's point and go there.
-    The static assignment (``flow_level=1``) applies it before it routes, with the scenario's
-    ``zones``. **Cost:** one comparison per trip end and zone.
+    def __repr__(self) -> str:
+        return "('car',) with grid_m, every trip with zones"
+
+
+_FORM_DEFAULT: Any = _FormDefault()
+
+
+def _modes_moved(modes: Any, grid: bool) -> frozenset[str] | None:
+    """The modes whose trips move (``None``: every trip), checked."""
+    if modes is _FORM_DEFAULT:
+        return frozenset({"car"}) if grid else None
+    if modes is None:
+        return None
+    if isinstance(modes, str):
+        modes = (modes,)
+    chosen = frozenset(modes)
+    unknown = sorted(m for m in chosen if m not in _MODES)
+    if unknown:
+        raise ValueError(
+            f"modes: each one of {_MODES}, or modes=None for every trip; got {unknown}"
+        )
+    return chosen
+
+
+def demand_aggregate_space(
+    trips: Any,
+    zones: Mapping[str, tuple[float, float]] | str | Path | None = None,
+    *,
+    grid_m: float | None = None,
+    modes: Iterable[str] | str | None = _FORM_DEFAULT,
+    stats: bool = False,
+    quiet: bool = False,
+) -> list[Trip] | tuple[list[Trip], dict[str, Any]]:
+    """Trip ends moved to their zone's point or grid cell's centre: demand aggregated over space.
+
+    Give exactly one of ``zones`` and ``grid_m``.
+
+    **Zones**: a trips table carries no zone, so a trip end's zone is **the zone whose point is
+    nearest it** (by the ground distance at the city's scale; of equally near ones, the first
+    listed); a gateway, a zone of one point, keeps its trips there. The trips of one zone pair
+    then share their two points, and so their routes. On a demand made with one point per zone
+    (``Case.demand(one_point_per_zone=True)``, ``demand_from_od``'s ``points_per_zone=1``) nothing
+    moves; a trip end drawn near the edge of its zone (a ``spread_m``, a ``zone_points`` table)
+    may be nearer a neighbour's point and go there. The static assignment (``flow_level=1``)
+    applies it before it routes, with the scenario's ``zones``, to every trip. **Cost:** one
+    comparison per trip end and zone.
+
+    **Grid**: square cells of ``grid_m`` metres a side, every trip end moved to the centre of its
+    cell. The grid starts at the whole degree of longitude and of latitude at or below the
+    demand's westernmost and southernmost trip end; cell ``(i, j)`` is the ``i``-th ``grid_m``
+    eastward and the ``j``-th ``grid_m`` northward, metres converted to degrees once for the whole
+    table, at the latitude of the grid's corner (110 574 m per degree of latitude,
+    111 320 m × cos(latitude) per degree of longitude, as elsewhere in the package; the corner's
+    latitude and not the trip ends' mean, so that applying the grid again moves nothing). A trip end
+    moves at most half a cell's diagonal, ``0.71 × grid_m``. **Cost:** one division per trip end.
+
+    Either way the trips of one pair of cells or zones share one origin and one destination
+    point, so a run routes them on one route set and one search tree per origin instead of one
+    per trip; the price is the distance each end moves, which ``stats`` measures. A trip whose
+    two ends land on one point is complete at once in a run. Nothing else about a trip changes.
 
     Args:
         trips: In any form ``Scenario.from_parts`` takes (rows, columns, a data frame); checked.
         zones: ``{zone_id: (lon, lat)}`` (``Case.zones()``, ``demand_read_zones``) or a path to a
             ``zones.csv``.
+        grid_m: The side of a grid cell, in metres, above 0.
+        modes: The stated modes whose trips move (a mode name or several, ``Trip.mode``); a
+            trip of another mode, or with no stated mode (``None``: a car trip, or one that
+            chooses its mode in a run with ``modes``), keeps its ends. ``None`` moves every trip.
+            By default ``("car",)`` with ``grid_m``, the trips whose route sets a shared point
+            saves the most, and every trip with ``zones``, as the static assignment moves them.
+        stats: If ``True``, also return a dict of what the move did (see Returns).
         quiet: If ``False`` (the default), log one line: how many trip ends moved and how many
-            were at their zone's point already.
+            were at their point already, how many trips have both ends on one point, and the
+            number of distinct origin–destination point pairs before and after.
 
     Returns:
-        The trips as ``Trip`` rows, in the order given.
+        The trips as ``Trip`` rows, in the order given; with ``stats=True``, ``(rows, stats)``.
+        Over the trips of the modes that move: ``moved``, the trip ends moved; ``kept``, those
+        at their point already; ``moved_m_mean`` and ``moved_m_p95``, the mean and 95th
+        percentile of the distance a moved end moved, in metres (by the conversion above, at the
+        mean latitude; 0 if none moved); ``collapsed``, the trips whose two ends land on one
+        point; ``pairs_before`` and ``pairs_after``, the distinct (origin point, destination
+        point) pairs, points compared by their exact coordinates; and ``original``, one tuple
+        ``(traveller_id, trip_seq, origin_lon, origin_lat, destination_lon, destination_lat)``
+        per trip with an end moved, its ends before the move. A ``Trip`` row has no place for
+        them and a run does not write them, so a study joins ``original`` to the run's
+        ``trip_results`` by ``(traveller_id, trip_seq)`` to read where each trip really began
+        and ended.
 
     Raises:
-        ValueError: If a row is refused (as ``Scenario.from_parts`` refuses it) or a zone's point
-            is not (lon, lat) in degrees.
+        ValueError: If a row is refused (as ``Scenario.from_parts`` refuses it), not exactly one
+            of ``zones`` and ``grid_m`` is given, ``grid_m`` is not a number of metres above 0, a
+            mode is unknown, or a zone's point is not (lon, lat) in degrees.
     """
+    if (zones is None) == (grid_m is None):
+        raise ValueError(
+            "demand_aggregate_space: give exactly one of zones (each trip end to its zone's "
+            "point) and grid_m (each trip end to the centre of its grid cell, in metres)"
+        )
+    if grid_m is not None:
+        ok = isinstance(grid_m, numbers.Real) and not isinstance(grid_m, bool)
+        if not ok or not math.isfinite(grid_m) or grid_m <= 0:
+            raise ValueError(f"grid_m: a cell's side in metres, above 0; got {grid_m!r}")
+    moving = _modes_moved(modes, grid_m is not None)
     rows = _trips_checked(trips)
-    out, moved, kept = _core.demand_aggregate_space([tuple(r) for r in rows], _zone_points(zones))
+    chosen = [i for i, r in enumerate(rows) if moving is None or r.mode in moving]
+    lat_mean = (
+        sum(r.origin_lat + r.destination_lat for r in rows) / (2 * len(rows)) if rows else 0.0
+    )
+    lat_m, lon_m = _METRES_PER_DEGREE_LAT, _metres_per_degree_lon(lat_mean)
+    if grid_m is None:
+        points = _zone_points(zones)
+        if len(chosen) == len(rows):
+            out, _, _ = _core.demand_aggregate_space([tuple(r) for r in rows], points)
+            out = [Trip(*r) for r in out]
+        else:
+            done, _, _ = _core.demand_aggregate_space([tuple(rows[i]) for i in chosen], points)
+            out = list(rows)
+            for i, r in zip(chosen, done, strict=True):
+                out[i] = Trip(*r)
+    else:
+        out = list(rows)
+        if rows:
+            lon0 = math.floor(min(min(r.origin_lon, r.destination_lon) for r in rows))
+            lat0 = math.floor(min(min(r.origin_lat, r.destination_lat) for r in rows))
+            # The cell's width in degrees of longitude is fixed at the corner's latitude, not the
+            # trip ends' mean, so that applying the grid again moves nothing (the mean would shift
+            # with the ends).
+            dlon, dlat = grid_m / _metres_per_degree_lon(lat0), grid_m / lat_m
+
+            def centre(lon: float, lat: float) -> tuple[float, float]:
+                i, j = math.floor((lon - lon0) / dlon), math.floor((lat - lat0) / dlat)
+                return lon0 + (i + 0.5) * dlon, lat0 + (j + 0.5) * dlat
+
+            for i in chosen:
+                r = rows[i]
+                o, d = (
+                    centre(r.origin_lon, r.origin_lat),
+                    centre(r.destination_lon, r.destination_lat),
+                )
+                out[i] = r._replace(
+                    origin_lon=o[0], origin_lat=o[1], destination_lon=d[0], destination_lat=d[1]
+                )
+    moved_m: list[float] = []
+    kept = collapsed = 0
+    original = []
+    before, after = set(), set()
+    for i in chosen:
+        a, b = rows[i], out[i]
+        ends = ((a[2], a[3], b[2], b[3]), (a[4], a[5], b[4], b[5]))
+        for lon, lat, lon1, lat1 in ends:
+            if lon == lon1 and lat == lat1:
+                kept += 1
+            else:
+                moved_m.append(math.hypot((lon1 - lon) * lon_m, (lat1 - lat) * lat_m))
+        if a[2:6] != b[2:6]:
+            original.append((a.traveller_id, a.trip_seq, *a[2:6]))
+        collapsed += b[2:4] == b[4:6]
+        before.add(a[2:6])
+        after.add(b[2:6])
+    report: dict[str, Any] = {
+        "moved": len(moved_m),
+        "kept": kept,
+        "moved_m_mean": float(np.mean(moved_m)) if moved_m else 0.0,
+        "moved_m_p95": float(np.percentile(moved_m, 95)) if moved_m else 0.0,
+        "collapsed": collapsed,
+        "pairs_before": len(before),
+        "pairs_after": len(after),
+        "original": original,
+    }
     if not quiet:
         _log.logger.info(
-            "demand_aggregate_space: %d of %d trip ends moved to their zone's point "
-            "(%d there already)",
-            moved,
-            2 * len(rows),
+            "demand_aggregate_space: %d of %d trip ends moved to their %s (%d there already); "
+            "%d trips with both ends on one point; %d distinct origin-destination point pairs "
+            "before, %d after",
+            report["moved"],
+            2 * len(chosen),
+            "zone's point" if grid_m is None else "grid cell's centre",
             kept,
+            collapsed,
+            report["pairs_before"],
+            report["pairs_after"],
         )
-    return [Trip(*r) for r in out]
+    return (out, report) if stats else out
 
 
 def demand_aggregate_time(trips: Any, start: str | float | None = None) -> list[Trip]:

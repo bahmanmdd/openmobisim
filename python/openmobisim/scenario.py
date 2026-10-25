@@ -703,7 +703,21 @@ class Scenario:
                 routes over each link's capacity, from this scenario's trips and their
                 weights): routes that go round what the demand will jam. It has been
                 measured on few networks: better alternatives than ``"penalty"`` on one
-                city's heavy load, worse on another's. Which route a trip takes among its
+                city's heavy load, worse on another's. ``"sampled"`` (an option, never a
+                default) finds routes that differ in **what travellers value**: first the
+                free-flow shortest route; then, for each user class and each preference
+                draw, the cheapest route by that class's **generalised cost** (travel time plus
+                extra seconds per link for its length, its money and the user's link values,
+                weighed by the choice model's coefficients on ``time_min``, ``length_km``,
+                ``cost_eur`` and its parts ``cost_running_eur`` and ``cost_toll_eur``,
+                ``bike_mixed_km`` and ``link_values`` columns named ``<layer>_<name>_km`` or
+                ``<layer>_<name>_sum``; a choice model written in Python gives travel time
+                only). Draw 0 is the class's own coefficients; each further draw multiplies
+                every coefficient but time's by ``1 + tau·v``, ``v`` uniform in [-1, 1), and
+                every link's cost by ``1 + sigma·u``, ``u`` uniform in [0, 1). A route is kept
+                if it is new, its travel time is at most ``max_detour`` times the shortest's,
+                and it shares at most ``max_overlap`` of its travel time with each route kept
+                before it, up to ``max_paths`` routes. Which route a trip takes among its
                 alternatives is ``choice_model``'s business.
             route_options: The method's options, numbers by name; unknown names
                 and out-of-range values are refused. For ``"penalty"``: ``max_paths``
@@ -713,6 +727,11 @@ class Scenario:
                 ``max_detour`` (2), ``max_overlap`` (0.9), ``max_paths`` (10), ``seed``
                 (0: another seed is another set of draws) and ``biased`` (1; 0 for no
                 bias, which measured worse on the one heavy load it was tried on).
+                For ``"sampled"``: ``draws`` (4: preference draws per user class beside
+                its own coefficients; 0 searches each class's own generalised cost only),
+                ``sigma`` (0.5), ``tau`` (0.3), ``max_detour`` (1.5), ``max_overlap`` (0.9),
+                ``max_paths`` (10) and ``seed`` (0: another seed is another set of draws).
+                Every value is an assumption, not a calibration.
             master_seed: The one number that starts every random stream, so a
                 run is reproduced by giving it the same one. Under a sampled
                 choice model (the defaults, ``"nested_logit"`` and ``"logit"``) it decides who
@@ -875,6 +894,16 @@ class Scenario:
                 gridlock it can make a run worse. **The equilibrium is then over the sets the
                 route method and the update produce**, which the run's fingerprint and
                 manifest say.
+                ``"sampled"`` (an option, never a default) makes the same best response as
+                ``"best_response"`` and, beside it, after each loading, ``draws`` perturbed
+                searches per origin, departure bin and user class at the congested times, by
+                the class's generalised cost (as ``route_method="sampled"`` describes, its
+                coefficients drawn again each iteration) with every link's cost multiplied by
+                ``1 + sigma·u``, ``u`` uniform in [0, 1). The route each finds to a pair is
+                added if it is new and its travel time at the middle of the departure bin is
+                at most ``max_detour`` times the set's best route there; never to a full set.
+                The sets then hold routes that are competitive, not only ones that were once
+                the fastest.
             route_update_options: The update's options, numbers by name: for
                 ``"best_response"``, ``searches`` (1: how many searches per pair per
                 iteration, at spread quantiles of the pair's departures; more finds routes
@@ -885,6 +914,12 @@ class Scenario:
                 ``slack`` (0.02: a pair is not searched while its set's best route is within this
                 share of free flow, since nothing is faster than free flow and so at most that
                 much is left to gain).
+                For ``"sampled"``: those three, ``tree_step_s`` (300: the length in seconds
+                of the departure bins its searches are shared by; it must be above 0 here),
+                and ``draws`` (1: perturbed searches per origin,
+                departure bin and user class each iteration), ``sigma`` (0.5), ``tau`` (0.3),
+                ``max_detour`` (1.5) and ``seed`` (0: another seed is another set of draws).
+                Every value is an assumption, not a calibration.
                 Unknown names and out-of-range values are refused.
             transit: The timetable of a service day (``openmobisim.transit_read_gtfs``),
                 for the ``"transit"`` trips. A transit trip walks (4.8 km/h, at most 30

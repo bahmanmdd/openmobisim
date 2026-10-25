@@ -354,7 +354,8 @@ class Run:
     def route_update(self) -> str:
         """The name of the route update that grew the route sets between iterations.
 
-        ``"none"`` (the sets stayed as the route method made them) or ``"best_response"``.
+        ``"none"`` (the sets stayed as the route method made them), ``"best_response"`` or
+        ``"sampled"``.
         """
         return self._summary.route_update
 
@@ -1217,6 +1218,63 @@ class Run:
         """
         summary = self._summary.transit_summary
         return None if summary is None else dict(summary)
+
+    def route_set_summary(self) -> dict[str, float] | None:
+        """What the car route sets held and how they were used; ``None`` without car route sets.
+
+        Read from ``route_sets()``, ``route_choices()`` and ``convergence()``; every number is a
+        ``float``, ``nan`` where it has nothing to count. A share is weighted by the people a trip
+        stands for (``weight``) where it is about trips, and unweighted where it is about routes.
+
+        * ``pairs`` — how many origin-destination pairs have a route set.
+        * ``routes`` — how many routes the sets hold in all, the route update's included.
+        * ``routes_per_pair_mean``, ``routes_per_pair_max`` — the mean and the largest number of
+          routes in one pair's set.
+        * ``routes_added`` — how many routes the route update added over the run (the sum of
+          ``convergence()["routes_added"]``); 0 without one. A route added to a full set takes
+          the place of one nobody chose, so ``routes`` can grow by less.
+        * ``route_searches`` — how many searches the route update made over the run (the sum of
+          ``convergence()["route_searches"]``).
+        * ``share_on_best`` — of the car trips with a route, the share whose route is its pair's
+          free-flow shortest (the first route of the set, ``route_choices().rank`` 0).
+        * ``share_routes_unchosen`` — the share of the routes held that no trip took at the
+          last choice.
+        * ``alternatives_mean``, ``alternatives_p95`` — the mean and the 95th percentile of the
+          number of routes a car trip could choose from (``route_choices().alternatives``),
+          over the trips with a route, each trip counted once.
+        """
+        sets = self.route_sets()
+        if sets.key_count == 0:
+            return None
+        nan = float("nan")
+        sizes = np.diff(sets.set_offsets().astype(np.int64))
+        rc = self.route_choices()
+        routed = rc.route >= 0
+        weight = rc.weight[routed].astype(np.float64)
+        alternatives = rc.alternatives[routed].astype(np.float64)
+        # The method's routes come best first and the update's after them, so the position in
+        # the set (rank) 0 is the pair's free-flow shortest route (S298).
+        on_best = rc.rank[routed] == 0
+        taken = np.unique(rc.route[routed]).size
+        c = self.convergence()
+        return {
+            "pairs": float(sets.key_count),
+            "routes": float(sets.route_count),
+            "routes_per_pair_mean": float(sizes.mean()),
+            "routes_per_pair_max": float(sizes.max()),
+            "routes_added": float(np.sum(c["routes_added"])),
+            "route_searches": float(np.sum(c["route_searches"])),
+            "share_on_best": (
+                float(np.sum(weight[on_best]) / np.sum(weight)) if weight.sum() > 0 else nan
+            ),
+            "share_routes_unchosen": (
+                float(1.0 - taken / sets.route_count) if sets.route_count > 0 else nan
+            ),
+            "alternatives_mean": float(alternatives.mean()) if alternatives.size else nan,
+            "alternatives_p95": (
+                float(np.percentile(alternatives, 95)) if alternatives.size else nan
+            ),
+        }
 
     def parking_bins(self) -> Columns | None:
         """How full each parking was over the day, bin by bin; ``None`` without parkings.

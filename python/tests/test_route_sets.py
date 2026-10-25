@@ -269,3 +269,136 @@ def test_montecarlo_options_are_refused_before_any_work():
     for name, value in [("draws", 1001), ("max_paths", 0), ("sigma", 0), ("max_detour", 0.5)]:
         with pytest.raises(ValueError, match=name):
             ms.route_sets_build(net, pairs, method="montecarlo", options={name: value})
+
+
+# --- the sampled method: generalised cost, preference draws and attribute noise (S298) ----------
+
+SAMPLED_OPTIONS = ("draws", "max_detour", "max_overlap", "max_paths", "seed", "sigma", "tau")
+
+
+def one_loading(net, rows, name, **kwargs):
+    # One loading of everyone at once, the sets as the method made them (no route update).
+    settings = {
+        "classes": CAR,
+        "window": (0, 3_600),
+        "flow_level": 4,
+        "choice_model": "logit",
+        "equilibration": "free_flow",
+        "equilibration_options": {"increments": 1, "warmup": 0},
+        "route_update": "none",
+        "master_seed": 3,
+    }
+    settings.update(kwargs)
+    return ms.Scenario.from_parts(net, rows, **settings).run(name, overwrite=True)
+
+
+def test_sampled_is_a_method_and_an_update_that_can_be_selected():
+    assert "sampled" in ms.route_methods()
+    assert "sampled" in ms.route_update_methods()
+
+
+def test_a_sampled_run_routes_and_names_the_method_with_every_option():
+    net = grid()
+    rows = ms.examples.trips_random(net, 60, seed=5, min_m=300.0, max_m=900.0)
+    run = one_loading(net, rows, "sampled-run", route_method="sampled")
+    shortest = one_loading(net, rows, "sampled-short", route_method="shortest")
+    assert run.completion == shortest.completion
+    sets = run.route_sets()
+    assert sets.method == "sampled" and sets.descriptor.startswith("sampled;")
+    descriptor = run.manifest()["route_descriptor"]
+    assert descriptor.startswith("sampled;")
+    for name in SAMPLED_OPTIONS:
+        assert f"{name}=" in descriptor, name
+    assert "draws=4;" in descriptor and "seed=0;" in descriptor, "the defaults are filled in"
+    # The manifest names the method as the sets were made: the extras included (the logit's
+    # coefficients on money and mixed-traffic kilometres give every class extras).
+    assert descriptor == sets.descriptor, (descriptor, sets.descriptor)
+    assert "extras=given:" in descriptor
+    # Its draws find alternatives the shortest method does not hold.
+    assert sets.route_count > shortest.route_sets().route_count
+    assert run.fingerprint != shortest.fingerprint
+
+
+def test_sampled_without_draws_is_the_shortest_route_of_each_pair():
+    net = grid()
+    rows = ms.examples.trips_random(net, 60, seed=5, min_m=300.0, max_m=900.0)
+    none = one_loading(net, rows, "sampled-0", route_method="sampled", route_options={"draws": 0})
+    shortest = one_loading(net, rows, "sampled-0-short", route_method="shortest")
+    a, b = none.route_sets(), shortest.route_sets()
+    assert "draws=0;" in a.descriptor
+    assert a.key_count == b.key_count and a.route_count == b.route_count == a.key_count
+    assert (a.set_offsets() == b.set_offsets()).all()
+    assert (a.route_offsets() == b.route_offsets()).all() and (a.links() == b.links()).all()
+
+
+def test_sampled_options_are_refused_with_the_known_ones():
+    net = grid()
+    rows = ms.examples.trips_random(net, 20, seed=5, min_m=300.0, max_m=900.0)
+    known = '"draws", "max_detour", "max_overlap", "max_paths", "seed", "sigma", "tau"'
+    with pytest.raises(ValueError, match=known):
+        one_loading(net, rows, "sampled-bad", route_method="sampled", route_options={"draw": 1})
+    for name, value in [("draws", 65), ("max_paths", 0), ("sigma", -1), ("max_detour", 0.5)]:
+        with pytest.raises(ValueError, match=name):
+            one_loading(
+                net, rows, "sampled-bad", route_method="sampled", route_options={name: value}
+            )
+
+
+# --- Run.route_set_summary (S298) -------------------------------------------------------------
+
+
+def test_the_route_set_summary_counts_what_the_sets_and_choices_hold():
+    net = grid()
+    rows = ms.examples.trips_random(net, 60, seed=5, min_m=300.0, max_m=900.0)
+    run = one_loading(net, rows, "summary-sampled", route_method="sampled")
+    s = run.route_set_summary()
+    assert s is not None and all(type(v) is float for v in s.values())
+    assert set(s) == {
+        "pairs",
+        "routes",
+        "routes_per_pair_mean",
+        "routes_per_pair_max",
+        "routes_added",
+        "route_searches",
+        "share_on_best",
+        "share_routes_unchosen",
+        "alternatives_mean",
+        "alternatives_p95",
+    }
+    # The counts, by hand from the sets themselves.
+    sets = run.route_sets()
+    sizes = [len(sets.routes(k)) for k in range(sets.key_count)]
+    assert s["pairs"] == len(sizes) == len(set(zip(*sets.keys(), strict=True)))
+    assert s["routes"] == sum(sizes)
+    assert s["routes_per_pair_max"] == max(sizes) > 1
+    assert s["routes_per_pair_mean"] == pytest.approx(sum(sizes) / len(sizes))
+    assert s["routes_added"] == 0 and s["route_searches"] == 0, "no route update"
+    rc = run.route_choices()
+    routed = rc.route >= 0
+    assert 0 <= s["share_on_best"] <= 1
+    assert s["share_on_best"] == pytest.approx(
+        rc.weight[routed & (rc.rank == 0)].sum() / rc.weight[routed].sum()
+    )
+    taken = {int(r) for r in rc.route[routed]}
+    assert s["share_routes_unchosen"] == pytest.approx(1 - len(taken) / sum(sizes))
+    # Each trip is offered its pair's whole set.
+    offered = np.array([sizes[int(k)] for k in rc.pair[routed]], dtype=float)
+    assert s["alternatives_mean"] == pytest.approx(offered.mean()) and s["alternatives_mean"] >= 1
+    assert s["alternatives_p95"] == pytest.approx(np.percentile(offered, 95))
+    # Rank 0 is the pair's free-flow shortest route: the route the shortest method makes for it.
+    shortest = one_loading(net, rows, "summary-short-ref", route_method="shortest").route_sets()
+    origins, destinations = sets.keys()
+    for k in range(sets.key_count):
+        same = shortest.find(int(origins[k]), int(destinations[k]))
+        assert (sets.routes(k)[0] == shortest.routes(same)[0]).all()
+
+
+def test_the_route_set_summary_of_one_route_per_pair():
+    net = grid()
+    rows = ms.examples.trips_random(net, 60, seed=5, min_m=300.0, max_m=900.0)
+    run = one_loading(net, rows, "summary-short", route_method="shortest", route_update="none")
+    s = run.route_set_summary()
+    assert s["routes_per_pair_max"] == 1 and s["routes_per_pair_mean"] == 1
+    assert s["share_on_best"] == 1 and s["share_routes_unchosen"] == 0
+    assert s["alternatives_mean"] == 1 and s["alternatives_p95"] == 1
+    assert s["pairs"] == s["routes"] == run.route_sets().key_count

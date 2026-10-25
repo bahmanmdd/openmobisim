@@ -51,7 +51,7 @@ def go(name, **kwargs):
 
 
 def test_the_updates_are_listed_with_the_default_first():
-    assert ms.route_update_methods() == ["none", "best_response"]
+    assert ms.route_update_methods() == ["none", "best_response", "sampled"]
 
 
 def test_without_an_update_nothing_is_added_and_the_sets_are_the_methods():
@@ -230,3 +230,63 @@ def test_bad_settings_are_refused_before_any_work():
             build(route_update="best_response", route_update_options={"slack": value})
     with pytest.raises(ValueError, match="no options"):
         build(route_update="none", route_update_options={"searches": 1})
+
+
+# --- the sampled update: best response and sampled candidates (S298) -----------------------------
+
+SAMPLED = (
+    "sampled;draws=1;max_detour=1.5;max_routes=10;searches=1;seed=0;sigma=0.5;slack=0.02;tau=0.3;"
+    "tree_step_s=300"
+)
+
+
+def test_the_sampled_update_grows_the_sets_and_says_so_everywhere():
+    best = go("ru-s-best", route_update="best_response")
+    run = go("ru-sampled", route_update="sampled", route_update_options={"draws": 1})
+    c, sets = run.convergence(), run.route_sets()
+    assert run.route_update == "sampled"
+    assert run.manifest()["route_update"] == "sampled"
+    assert run.manifest()["route_update_descriptor"] == SAMPLED == sets.update
+    assert run.fingerprint != best.fingerprint
+    # Beside the best response it adds sampled candidates, so it adds more than the best
+    # response alone on the jammed grid.
+    added = int(c["routes_added"].sum())
+    assert added > int(best.convergence()["routes_added"].sum()) > 0
+    assert c["routes_added"][-1] == 0 and c["route_searches"][-1] == 0
+    # A route added to a full set (max_routes 10) takes the place of one nobody chose, so the sets
+    # hold at most what was added; with room for every addition they hold exactly that.
+    assert (sets.stamps() > 0).sum() <= added
+    assert sets.route_count <= go("ru-s-plain").route_sets().route_count + added
+    roomy = go(
+        "ru-sampled-32",
+        route_update="sampled",
+        route_update_options={"draws": 1, "max_routes": 32},
+    )
+    stamps = roomy.route_sets().stamps()
+    for i in range(1, 6):
+        assert (stamps == i).sum() == roomy.convergence()["routes_added"][i - 1], i
+    # The summary reads the same numbers.
+    s = run.route_set_summary()
+    assert s["routes_added"] == added and s["route_searches"] == c["route_searches"].sum()
+    assert s["routes"] == sets.route_count and s["pairs"] == sets.key_count
+    assert 0 <= s["share_on_best"] <= 1 and s["alternatives_mean"] >= 1
+    assert s["routes_per_pair_max"] <= 10, "max_routes"
+
+
+def test_the_sampled_update_refuses_bad_settings_naming_the_known_ones():
+    net = ms.examples.toy_network()
+    rows = [("t0", 0, *net.node_lonlat("W"), *net.node_lonlat("D1"), 0, "commuter", None)]
+
+    def build(**options):
+        return ms.Scenario.from_parts(
+            net, rows, classes=CAR, route_update="sampled", route_update_options=options
+        ).run("ru-s-bad")
+
+    known = "draws, max_detour, max_routes, searches, seed, sigma, slack, tau, tree_step_s"
+    with pytest.raises(ValueError, match=f'no option "draw".*{known}'):
+        build(draw=1)
+    with pytest.raises(ValueError, match="tree_step_s.*above 0"):
+        build(tree_step_s=0)
+    for name, value in [("draws", 17), ("sigma", -1), ("max_detour", 0.5), ("searches", 0)]:
+        with pytest.raises(ValueError, match=name):
+            build(**{name: value})
