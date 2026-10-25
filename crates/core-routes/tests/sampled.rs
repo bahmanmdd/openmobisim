@@ -452,3 +452,29 @@ fn the_method_is_chosen_by_name_and_bad_options_say_what_is_wrong() {
         }
     }
 }
+
+/// **The search bound allows for the extras** (S298): on the diamond, a class whose extras make
+/// the bottom road's generalised cost 3.2 times the top's time still gets the bottom road when a
+/// draw's noise makes the top dearer, since the bottom's *travel time* (1.2 times the top's) is
+/// within the detour. A bound in generalised cost at the detour alone would cut it off forever.
+#[test]
+fn the_bound_lets_a_route_within_the_detour_in_time_through_whatever_its_extras() {
+    let net = diamond();
+    let turns = turns_of(&net);
+    let ctx = SearchContext::new(&net, &turns);
+    let top_time =
+        net.free_flow_time(link(&net, "ab")).get() + net.free_flow_time(link(&net, "bd")).get();
+    let mut extra = vec![0.0; net.link_count() as usize];
+    extra[link(&net, "ac").index()] = top_time;
+    extra[link(&net, "cd").index()] = top_time;
+    let generator = Sampled::from_options(&opts(&[("draws", 16.0), ("sigma", 20.0)]))
+        .expect("valid")
+        .with_extras(vec![vec![Some(extra.into()); 17]])
+        .expect("takes extras");
+    let sets = RouteSets::generate_in(
+        &ctx,
+        &[RouteKey::new(node(&net, "A"), node(&net, "D"))],
+        generator.as_ref(),
+    );
+    assert_eq!(sets.route_count(), 2, "the top road (the anchor) and the bottom road");
+}

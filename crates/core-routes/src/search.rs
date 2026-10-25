@@ -184,7 +184,14 @@ impl<'a> SearchContext<'a> {
             })
             .collect();
         let per_metre = lower_bound_per_metre(self.network, &combined);
-        Extras { seconds: seconds.into(), per_metre }
+        let max_ratio = self
+            .cost
+            .iter()
+            .zip(&seconds)
+            .filter(|(c, _)| c.is_finite() && **c > 0.0)
+            .map(|(c, e)| e / c)
+            .fold(0.0_f64, f64::max);
+        Extras { seconds: seconds.into(), per_metre, max_ratio }
     }
 
     /// A link's cost in seconds, infinite if a car cannot use it.
@@ -282,6 +289,9 @@ pub struct Extras {
     seconds: Arc<[f64]>,
     /// The least generalised cost per metre of straight line over every usable link.
     per_metre: f64,
+    /// The largest extra over any usable link's time: a route's generalised cost is at most
+    /// `1 + max_ratio` times its time.
+    max_ratio: f64,
 }
 
 impl Extras {
@@ -296,6 +306,14 @@ impl Extras {
     #[must_use]
     pub fn per_metre(&self) -> f64 {
         self.per_metre
+    }
+
+    /// The largest extra over any usable link's time (0 or more): a route's generalised cost
+    /// is at most `1 + max_ratio` times its travel time, which bounds a search by generalised
+    /// cost for routes within a detour in time.
+    #[must_use]
+    pub fn max_ratio(&self) -> f64 {
+        self.max_ratio
     }
 }
 

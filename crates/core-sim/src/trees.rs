@@ -363,33 +363,27 @@ impl DrawTrees {
             search_map(&ctx, &heads.iter().zip(&groups).collect::<Vec<_>>(), |search, item| {
                 let (&(origin, slot, class), (departure, keys)) = *item;
                 let extra = prepared.get(class as usize).cloned().flatten();
+                let ratio = extra.as_ref().map_or(0.0, Extras::max_ratio);
                 search.clear_route_state();
                 search.set_extras(extra);
                 search.set_noise(draw_seed(origin, slot, class, draw, seed), sigma, None);
-                // Each key's best travel time at the tree's departure (what the update compares
-                // a candidate's time with) and best generalised cost (what bounds the search).
-                let mut bound = 0.0_f64;
+                // Each key's best travel time at the tree's departure, what the update compares a
+                // candidate's time with. The search is bounded in generalised cost: a candidate
+                // within the detour in time carries at most `1 + max_ratio` times its time, so
+                // the bound is the slowest best time, times the detour, times that.
+                let mut slowest = 0.0_f64;
                 let keys: Vec<(usize, f64)> = keys
                     .iter()
                     .map(|&k| {
-                        let (mut best_time, mut best_cost) = (f64::INFINITY, f64::INFINITY);
-                        for r in sets.route_range(k) {
-                            let links = sets.route(r).links;
-                            let t = times.route_seconds(links, *departure);
-                            let typed: Vec<openmobisim_core_types::ids::LinkId> = links
-                                .iter()
-                                .map(|&l| openmobisim_core_types::ids::LinkId::new(l))
-                                .collect();
-                            let extra: f64 =
-                                search.generalised(&typed) - search.context().route_cost(&typed);
-                            best_time = best_time.min(t);
-                            best_cost = best_cost.min(t + extra);
-                        }
-                        bound = bound.max(best_cost);
+                        let best_time = sets
+                            .route_range(k)
+                            .map(|r| times.route_seconds(sets.route(r).links, *departure))
+                            .fold(f64::INFINITY, f64::min);
+                        slowest = slowest.max(best_time);
                         (k, best_time)
                     })
                     .collect();
-                let bound = max_detour * bound;
+                let bound = max_detour * (1.0 + ratio) * slowest;
                 let mut targets = vec![false; node_count];
                 let mut wanted = 0;
                 for &(k, _) in &keys {

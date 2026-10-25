@@ -1060,11 +1060,16 @@ impl RouteSetGenerator for Sampled {
                 } else {
                     search.set_noise(self.seed_of(origin, class, draw), self.sigma, None);
                 }
+                // The bound is on the generalised cost; a route within the detour in time may
+                // carry up to `1 + max_ratio` times its time in generalised cost, so the bound
+                // allows for that: the longest anchor's time, times the detour, times that.
+                let ratio = extras.as_ref().map_or(0.0, Extras::max_ratio);
                 let bound = self.max_detour
+                    * (1.0 + ratio)
                     * anchored
                         .iter()
                         .filter_map(|&i| anchors[i].as_ref())
-                        .map(|a| search.generalised(&a.links))
+                        .map(|a| a.cost)
                         .fold(0.0, f64::max);
                 let targets: Vec<NodeId> = active.iter().map(|&i| destinations[i]).collect();
                 let found = search.shortest_tree(origin, &targets, bound);
