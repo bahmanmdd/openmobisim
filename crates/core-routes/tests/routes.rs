@@ -435,11 +435,11 @@ fn a_store_knows_what_made_it() {
 #[test]
 fn methods_are_selected_by_name_and_bad_choices_say_what_is_wrong() {
     let names = Registry::builtin().names().into_iter().map(str::to_string).collect::<Vec<_>>();
-    assert_eq!(names, ["penalty", "shortest", "montecarlo"]);
+    assert_eq!(names, ["penalty", "shortest", "montecarlo", "sampled"]);
     assert_eq!(DEFAULT_METHOD, "penalty");
     match generator("teleport", &no_options()).err() {
         Some(RouteError::UnknownMethod { name, known }) => {
-            assert!(name == "teleport" && known.len() == 3)
+            assert!(name == "teleport" && known.len() == 4)
         }
         other => panic!("{other:?}"),
     }
@@ -478,7 +478,7 @@ fn methods_are_selected_by_name_and_bad_choices_say_what_is_wrong() {
 fn a_new_method_plugs_in_without_changing_anything_else() {
     let mut registry = Registry::builtin();
     registry.register("my_method", |options| Ok(Box::new(Shortest::from_options(options)?)));
-    assert_eq!(registry.names(), ["penalty", "shortest", "montecarlo", "my_method"]);
+    assert_eq!(registry.names(), ["penalty", "shortest", "montecarlo", "sampled", "my_method"]);
     let net = diamond();
     let turns = turns_of(&net);
     let key = RouteKey::new(node(&net, "A"), node(&net, "D"));

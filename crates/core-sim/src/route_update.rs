@@ -16,6 +16,7 @@
 //! | name | what it does |
 //! |---|---|
 //! | `none` (the default, [`DEFAULT_UPDATE`]) | Nothing: the sets stay as the generator made them, and the run costs nothing extra |
+//! | `sampled` | `best_response` and, beside it, **sampled candidates** (S298): for each of `draws` preference draws per iteration, one perturbed generalised-cost tree per origin, departure bin and user class (the class's extra seconds per link for length, money and user values, drawn around its coefficients; every link's cost times a random factor), whose route to a pair is added if it is new and its travel time at the bin's middle is within `max_detour` of the set's best there; never to a full set. The set then holds competitive routes, not only ones that were once the fastest |
 //! | `best_response` | For every origin–destination pair, the fastest route at the congested times, read from the run's **shared search trees** (one bounded time-dependent search per origin and departure bin, [`crate::trees`]; S294) or, with `tree_step_s` 0, found by one bounded search per pair at the median departure of the pair's trips; it is **added if it is new and at least as fast as the set's best route**: a tie counts, since an equally good alternative is one more to spread over. Column generation, as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
 //!
 //! **What `best_response` costs.** With the shared trees (the default) nothing is searched: the
@@ -48,12 +49,13 @@ use openmobisim_core_demand::Trips;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::{
-    MAX_ROUTES_PER_SET, Route, RouteKey, RouteSets, Search, SearchContext, search_map,
+    ClassExtras, ExtrasRequest, MAX_ROUTES_PER_SET, Route, RouteKey, RouteSets, Search,
+    SearchContext, search_map,
 };
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
 
 use crate::link_times::LinkTimes;
-use crate::trees::SearchTrees;
+use crate::trees::{DrawTrees, SearchTrees};
 
 /// The share of free flow within which `best_response` does not search a pair (see
 /// [`BestResponse::slack`]).
@@ -112,6 +114,12 @@ pub struct UpdateContext<'a> {
     /// update with search trees reads them instead of searching, when their bin is the one it
     /// asks for. `None` where the run built none.
     pub trees: Option<&'a SearchTrees>,
+    /// Each trip's user class index, by trip (the `sampled` update's per-class draws); may be
+    /// empty for an update that reads no class.
+    pub trip_class: &'a [u32],
+    /// The extra seconds per link by class and preference draw an update asked for
+    /// ([`RouteUpdate::extras_wanted`]), composed by the run; `None` where none asked.
+    pub extras: Option<&'a ClassExtras>,
 }
 
 /// The routes an update found.
@@ -165,6 +173,13 @@ pub trait RouteUpdate: Send + Sync {
     /// The most routes a set may hold, if the update caps it: a set its additions would take
     /// past this makes room ([`make_room`]).
     fn max_routes(&self) -> Option<usize> {
+        None
+    }
+
+    /// The extra costs the update wants, if it searches by generalised cost (S298): `None`
+    /// (the default) for one that searches by time. The run composes them and passes them in
+    /// [`UpdateContext::extras`].
+    fn extras_wanted(&self) -> Option<ExtrasRequest> {
         None
     }
 }
@@ -433,6 +448,19 @@ impl BestResponse {
     /// [`REPLACE_GAIN_S`]). Then the kept routes are made routes of their sets (their overlap),
     /// key by key.
     fn update_from_trees(&self, cx: &UpdateContext<'_>, trees: &SearchTrees) -> Additions {
+        let (by_key, searches) = self.candidates_from_trees(cx, trees);
+        let mut out = cost_candidates(cx, by_key, self.max_routes as usize);
+        out.searches = searches;
+        out
+    }
+
+    /// The routes the trees offer each key, by key index, in the order read, and how many pairs
+    /// were read: the first half of [`Self::update_from_trees`].
+    fn candidates_from_trees(
+        &self,
+        cx: &UpdateContext<'_>,
+        trees: &SearchTrees,
+    ) -> (BTreeMap<usize, Vec<Vec<LinkId>>>, u32) {
         let sets = cx.route_sets;
         let max_routes = self.max_routes as usize;
         let (departures, jobs) = self.plan(cx);
@@ -482,28 +510,7 @@ impl BestResponse {
                 searches += 1;
             }
         }
-        let ctx = SearchContext::new(cx.network, cx.turns);
-        let groups: Vec<(usize, Vec<Vec<LinkId>>)> = by_key.into_iter().collect();
-        let routes: Vec<Vec<Route>> = search_map(&ctx, &groups, |search, (k, candidates)| {
-            let mut added: Vec<Route> = Vec::new();
-            for links in candidates {
-                if added.len() >= max_routes.saturating_sub(sets.route_range(*k).len()).max(1) {
-                    break;
-                }
-                if !is_known(sets, *k, &added, links) {
-                    let route = with_overlap(search, sets, *k, &added, links.clone());
-                    added.push(route);
-                }
-            }
-            added
-        });
-        let mut out = Additions { searches, ..Additions::default() };
-        for ((k, _), added) in groups.iter().zip(routes) {
-            if !added.is_empty() {
-                out.routes.push((*k, added));
-            }
-        }
-        out
+        (by_key, searches)
     }
 
     /// The searches to make: for each key with routed trips (full sets too), the
@@ -547,6 +554,305 @@ impl BestResponse {
             from += len;
         }
         (departures, jobs)
+    }
+}
+
+/// The candidates of each key made routes of their sets (their free-flow cost and their overlap
+/// with the set and with the candidates before them), as many as the set has room for under
+/// `max_routes` (a full set takes one); keys ascend. `searches` is left 0 for the caller to set.
+fn cost_candidates(
+    cx: &UpdateContext<'_>,
+    by_key: BTreeMap<usize, Vec<Vec<LinkId>>>,
+    max_routes: usize,
+) -> Additions {
+    let sets = cx.route_sets;
+    let ctx = SearchContext::new(cx.network, cx.turns);
+    let groups: Vec<(usize, Vec<Vec<LinkId>>)> = by_key.into_iter().collect();
+    let routes: Vec<Vec<Route>> = search_map(&ctx, &groups, |search, (k, candidates)| {
+        let mut added: Vec<Route> = Vec::new();
+        for links in candidates {
+            if added.len() >= max_routes.saturating_sub(sets.route_range(*k).len()).max(1) {
+                break;
+            }
+            if !is_known(sets, *k, &added, links) {
+                let route = with_overlap(search, sets, *k, &added, links.clone());
+                added.push(route);
+            }
+        }
+        added
+    });
+    let mut out = Additions::default();
+    for ((k, _), added) in groups.iter().zip(routes) {
+        if !added.is_empty() {
+            out.routes.push((*k, added));
+        }
+    }
+    out
+}
+
+/// The sampled update (S298): the best response, and beside it candidates drawn on the
+/// congested **generalised** costs. See the [module docs](self).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sampled {
+    /// The best-response part: its `searches`, `max_routes`, `slack` and `tree_step_s` (above 0:
+    /// the sampled update reads trees only).
+    pub inner: BestResponse,
+    /// Perturbed preference draws per iteration (0 to 16; 1 by default): each one perturbed tree
+    /// per origin, departure bin and user class.
+    pub draws: u32,
+    /// Attribute noise: a link's cost times `1 + sigma · u`, `u` uniform in [0, 1) (0.5 by
+    /// default; at least 0).
+    pub sigma: f64,
+    /// The preference draws' spread: each coefficient but time's times `1 + tau · v`, `v` uniform
+    /// in [−1, 1) (0.3 by default; at least 0).
+    pub tau: f64,
+    /// A sampled candidate's travel time at the bin's middle is at most this times the set's
+    /// best there (1.5 by default; at least 1).
+    pub max_detour: f64,
+    /// The seed of the draws (0 by default); each iteration draws afresh from it.
+    pub seed: u64,
+}
+
+impl Default for Sampled {
+    fn default() -> Self {
+        Self {
+            inner: BestResponse::default(),
+            draws: 1,
+            sigma: 0.5,
+            tau: 0.3,
+            max_detour: 1.5,
+            seed: 0,
+        }
+    }
+}
+
+impl Sampled {
+    const OPTIONS: [&'static str; 9] = [
+        "draws",
+        "max_detour",
+        "max_routes",
+        "searches",
+        "seed",
+        "sigma",
+        "slack",
+        "tau",
+        "tree_step_s",
+    ];
+
+    /// Make the update from its options, defaults for those not given.
+    ///
+    /// # Errors
+    ///
+    /// [`RouteUpdateError::UnknownOption`] for a name it does not have,
+    /// [`RouteUpdateError::BadOption`] for a value out of range (`tree_step_s` 0 among them:
+    /// the sampled update reads trees).
+    pub fn from_options(options: &Options) -> Result<Self, RouteUpdateError> {
+        check_known("sampled", options, &Self::OPTIONS)?;
+        let bad = |option: &str, reason: String| RouteUpdateError::BadOption {
+            update: "sampled".to_string(),
+            option: option.to_string(),
+            reason,
+        };
+        let mut inner_options = Options::new();
+        let mut m = Self::default();
+        for (option, &v) in options {
+            match option.as_str() {
+                "draws" => {
+                    if !(v.is_finite() && v.fract() == 0.0 && (0.0..=16.0).contains(&v)) {
+                        return Err(bad(
+                            option,
+                            format!("must be a whole number from 0 to 16, got {v}"),
+                        ));
+                    }
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        reason = "checked to be a whole number from 0 to 16"
+                    )]
+                    {
+                        m.draws = v as u32;
+                    }
+                }
+                "sigma" | "tau" => {
+                    if !(v.is_finite() && v >= 0.0) {
+                        return Err(bad(option, format!("must be at least 0, got {v}")));
+                    }
+                    if option == "sigma" {
+                        m.sigma = v;
+                    } else {
+                        m.tau = v;
+                    }
+                }
+                "max_detour" => {
+                    if !(v.is_finite() && v >= 1.0) {
+                        return Err(bad(option, format!("must be at least 1, got {v}")));
+                    }
+                    m.max_detour = v;
+                }
+                "seed" => {
+                    if !(v.is_finite()
+                        && v >= 0.0
+                        && v.fract() == 0.0
+                        && v <= 9_007_199_254_740_992.0)
+                    {
+                        return Err(bad(
+                            option,
+                            format!("must be a whole number from 0 to 2^53, got {v}"),
+                        ));
+                    }
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        reason = "checked to be a whole number within range"
+                    )]
+                    {
+                        m.seed = v as u64;
+                    }
+                }
+                _ => {
+                    inner_options.insert(option.clone(), v);
+                }
+            }
+        }
+        m.inner = BestResponse::from_options(&inner_options).map_err(|e| match e {
+            RouteUpdateError::BadOption { option, reason, .. } => {
+                RouteUpdateError::BadOption { update: "sampled".to_string(), option, reason }
+            }
+            other => other,
+        })?;
+        if m.inner.tree_step_s == 0 {
+            return Err(bad(
+                "tree_step_s",
+                "must be above 0: the sampled update reads search trees".to_string(),
+            ));
+        }
+        Ok(m)
+    }
+}
+
+impl RouteUpdate for Sampled {
+    fn max_routes(&self) -> Option<usize> {
+        Some(self.inner.max_routes as usize)
+    }
+
+    fn tree_step_s(&self) -> Option<u32> {
+        Some(self.inner.tree_step_s)
+    }
+
+    fn name(&self) -> &str {
+        "sampled"
+    }
+
+    fn descriptor(&self) -> String {
+        format!(
+            "sampled;draws={};max_detour={};max_routes={};searches={};seed={};sigma={};slack={};tau={};tree_step_s={}",
+            self.draws,
+            self.max_detour,
+            self.inner.max_routes,
+            self.inner.searches,
+            self.seed,
+            self.sigma,
+            self.inner.slack,
+            self.tau,
+            self.inner.tree_step_s
+        )
+    }
+
+    fn extras_wanted(&self) -> Option<ExtrasRequest> {
+        Some(ExtrasRequest { draws: self.draws, tau: self.tau, seed: self.seed })
+    }
+
+    fn update(&self, cx: &UpdateContext<'_>) -> Additions {
+        let step = f64::from(self.inner.tree_step_s);
+        // Draw 0: the best response, read from the run's trees (or the update's own).
+        let own;
+        let trees = match cx.trees {
+            Some(trees) if trees.step_s().to_bits() == step.to_bits() => trees,
+            _ => {
+                own = SearchTrees::build(
+                    cx.network,
+                    cx.turns,
+                    cx.times,
+                    cx.trips,
+                    cx.trip_keys,
+                    cx.route_sets,
+                    cx.active,
+                    cx.car_start_s,
+                    step,
+                );
+                &own
+            }
+        };
+        let (mut by_key, searches) = self.inner.candidates_from_trees(cx, trees);
+        // Draws 1…: perturbed trees per class; a candidate within the detour of the set's best
+        // at the bin enters a set with room.
+        let sets = cx.route_sets;
+        let max_routes = self.inner.max_routes as usize;
+        let time_only: ClassExtras = vec![vec![None; self.draws as usize + 1]];
+        let extras: &ClassExtras = cx.extras.filter(|e| !e.is_empty()).unwrap_or(&time_only);
+        let (departures, jobs) = self.inner.plan(cx);
+        let iteration_seed =
+            self.seed ^ u64::from(cx.iteration).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        for draw in 1..=self.draws as usize {
+            let drawn = DrawTrees::build(
+                cx.network,
+                cx.turns,
+                cx.times,
+                cx.trips,
+                cx.trip_keys,
+                cx.trip_class,
+                sets,
+                cx.active,
+                cx.car_start_s,
+                step,
+                extras,
+                draw,
+                iteration_seed,
+                self.sigma,
+                self.max_detour,
+            );
+            for job in &jobs {
+                let k = job.key;
+                let key = sets.keys()[k];
+                let set = sets.route_range(k);
+                if key.origin == key.destination || set.is_empty() || set.len() >= max_routes {
+                    continue;
+                }
+                let free_flow = set
+                    .clone()
+                    .map(|r| f64::from(sets.route(r).cost))
+                    .fold(f64::INFINITY, f64::min);
+                for &second in &departures[job.departures.clone()] {
+                    for class in 0..extras.len() {
+                        #[allow(clippy::cast_possible_truncation, reason = "a handful of classes")]
+                        let Some(tree) = drawn.tree(key.origin, class as u32, f64::from(second))
+                        else {
+                            continue;
+                        };
+                        let Ok(at) = tree.keys.binary_search_by_key(&k, |&(k, _)| k) else {
+                            continue;
+                        };
+                        let best = tree.keys[at].1;
+                        if self.inner.slack > 0.0 && best <= free_flow * (1.0 + self.inner.slack) {
+                            continue;
+                        }
+                        let Some(found) = tree.route_to(key.destination) else { continue };
+                        if found.seconds > self.max_detour * best + 1e-9 {
+                            continue;
+                        }
+                        let links: Vec<LinkId> =
+                            found.links.iter().map(|&l| LinkId::new(l)).collect();
+                        let known = by_key.get(&k).is_some_and(|added| added.contains(&links));
+                        if !known && !is_known(sets, k, &[], &links) {
+                            by_key.entry(k).or_default().push(links);
+                        }
+                    }
+                }
+            }
+        }
+        let mut out = cost_candidates(cx, by_key, max_routes);
+        out.searches = searches;
+        out
     }
 }
 
@@ -725,12 +1031,13 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// The built-in updates: `none` and `best_response`.
+    /// The built-in updates: `none`, `best_response` and `sampled`.
     #[must_use]
     pub fn builtin() -> Self {
         let mut r = Self { updates: Vec::new() };
         r.register("none", |o| Ok(Box::new(NoRouteUpdate::from_options(o)?)));
         r.register("best_response", |o| Ok(Box::new(BestResponse::from_options(o)?)));
+        r.register("sampled", |o| Ok(Box::new(Sampled::from_options(o)?)));
         r
     }
 

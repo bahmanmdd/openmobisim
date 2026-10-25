@@ -33,7 +33,8 @@ use openmobisim_core_loading::{
     load_level_0_recorded, load_timed_binned, run_ltm_chained, traverse_free_flow, traverse_timed,
 };
 use openmobisim_core_routes::{
-    Demand, RouteKey, RouteSetGenerator, RouteSets, TripDemand, TripSnapper, default_generator,
+    ClassExtras, Demand, ExtrasRequest, RouteKey, RouteSetGenerator, RouteSets, TripDemand,
+    TripSnapper, default_generator,
 };
 use openmobisim_core_types::diagnostics::{
     Category, DiagKey, Diagnostics, ElementRef, Severity, codes,
@@ -50,6 +51,7 @@ use crate::disruptions::Disruptions;
 use crate::equilibration::{Equilibration, FreeFlow, IterationReport};
 use crate::events::{EventRow, EventType};
 use crate::gap::{Currency, Ended, GapTrips, NO_LINK};
+use crate::generalised_cost::{LinkTerms, class_extras, road_seconds};
 use crate::identity::{Inputs, RunDescription, describe};
 use crate::itinerary_choice::{
     self, CarRoutes, ChooseInputs, Chosen, Followed, Itineraries, ItineraryResult, NoAlternative,
@@ -1135,6 +1137,13 @@ impl Run {
                 }
             })
             .collect();
+        // Each trip's user class, for the per-class draws of a sampled route update (S298).
+        let trip_class: Vec<u32> = (0..total_trips)
+            .map(|i| {
+                let class = self.travellers.user_class(self.trips.traveller(TripId::new(i)));
+                u32::try_from(class.index()).expect("few classes")
+            })
+            .collect();
         // Bike and walk trips' routes on their layers: once per run, since their
         // costs are static. A trip choosing its mode gets its route on each layer offered.
         let static_routes = StaticRoutes::build(
@@ -1242,15 +1251,40 @@ impl Run {
                 })
                 .collect()
         });
+        // Extras (S298): a method or update that searches by generalised cost asks for extra
+        // seconds per link, per user class and preference draw, composed from the choice
+        // model's coefficients, the prices and the link values. Cheap, and only when asked.
+        let compose_extras = |request: ExtrasRequest| -> ClassExtras {
+            let terms = LinkTerms::road(&self.network, &self.prices, &link_values);
+            class_extras(
+                request,
+                self.choice_model.as_ref(),
+                &self.travellers,
+                &terms,
+                &road_seconds(&self.network),
+            )
+        };
+        let update_extras: Option<ClassExtras> =
+            self.route_update.extras_wanted().map(compose_extras);
+        // The method with its extras, if it asked for them: its descriptor (and so the cache's
+        // key) then names them.
+        let keyed_generator: Arc<dyn RouteSetGenerator> =
+            match self.route_generator.extras_wanted().map(compose_extras) {
+                Some(extras) => self
+                    .route_generator
+                    .with_extras(extras)
+                    .map_or_else(|| self.route_generator.clone(), Arc::from),
+                None => self.route_generator.clone(),
+            };
         let generate = || {
             let generator: Arc<dyn RouteSetGenerator> = match &demand_rows {
                 Some(rows) => {
                     let demand = Demand { network: &self.network, turns: &turns, trips: rows };
-                    self.route_generator
+                    keyed_generator
                         .with_demand(&demand)
-                        .map_or_else(|| self.route_generator.clone(), Arc::from)
+                        .map_or_else(|| keyed_generator.clone(), Arc::from)
                 }
-                None => self.route_generator.clone(),
+                None => keyed_generator.clone(),
             };
             RouteSets::generate(&self.network, &turns, &car_keys, generator.as_ref())
         };
@@ -1260,7 +1294,7 @@ impl Run {
             (None, Some(cache)) => {
                 let key = generation_key(
                     &self.network,
-                    self.route_generator.as_ref(),
+                    keyed_generator.as_ref(),
                     &car_keys,
                     demand_rows.as_deref(),
                 );
@@ -1481,6 +1515,8 @@ impl Run {
                         iteration: 0,
                         active: Some(&trip_choosing),
                         trees: Some(&trees),
+                        trip_class: &trip_class,
+                        extras: update_extras.as_ref(),
                     });
                     increment_searches += found.searches;
                     if !found.routes.is_empty() {
@@ -1628,6 +1664,8 @@ impl Run {
                             iteration: next,
                             active: None,
                             trees: Some(&trees),
+                            trip_class: &trip_class,
+                            extras: update_extras.as_ref(),
                         });
                         report.route_searches = found.searches;
                         if !found.routes.is_empty() {

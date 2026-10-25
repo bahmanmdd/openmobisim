@@ -14,6 +14,7 @@
 //! | `penalty` (the default, [`DEFAULT_METHOD`]) | The shortest route, then repeatedly the shortest under penalties on the links already used, keeping routes that stay within a detour bound and an overlap limit |
 //! | `shortest` | The single shortest route |
 //! | `montecarlo` | The shortest route, then the shortest under **random link costs biased towards the links likely to congest**: distinct routes that avoid what the demand will jam |
+//! | `sampled` | The shortest route, then the cheapest by each user class's **generalised cost** (travel time plus extras per link), in preference draws and under random link costs: distinct routes that differ in what travellers value |
 //!
 //! A method's **options** are numbers by name ([`Options`]), validated when the
 //! method is made, and its **descriptor** — its name and every option with
@@ -29,7 +30,7 @@ use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
-use crate::search::{MAX_ROUTES_PER_SET, Route, Search};
+use crate::search::{Extras, MAX_ROUTES_PER_SET, Route, Search, SearchContext};
 use crate::store::{RouteKey, RouteSets};
 
 /// The method used unless another is asked for.
@@ -782,6 +783,336 @@ impl RouteSetGenerator for MonteCarlo {
     }
 }
 
+// --- sampled ----------------------------------------------------------------------
+
+/// Extras prepared for one context: by user class, then by draw; `None` is travel time alone.
+type PreparedExtras = Vec<Vec<Option<Extras>>>;
+
+/// Sampled generation by **generalised cost**: routes drawn with attribute noise and with
+/// preference draws per user class (S298).
+///
+/// First the **anchor**, the travel-time shortest route. Then, for each user class and each of
+/// its draws (draw 0 the class's unperturbed generalised cost, draws 1 to `draws` with its
+/// coefficients perturbed), the cheapest route under that generalised cost, with every link's
+/// cost also multiplied by `1 + sigma · u` from draw 1 on, `u` a uniform draw in `[0, 1)` that is
+/// a pure function of the origin, the class, the draw, the link and `seed`. The generalised
+/// cost is each link's travel time plus **extras**, extra seconds per link that stand for what
+/// the class values beyond time (length, money, bike infrastructure); the run composes them
+/// from the choice model and hands them over with [`RouteSetGenerator::with_extras`], asked for
+/// by [`RouteSetGenerator::extras_wanted`]. Without extras every draw searches by travel time,
+/// and only the noise varies the routes.
+///
+/// A route is kept if the set holds fewer than `max_paths`, it is new, its **travel time** is at
+/// most `max_detour` times the anchor's, and it shares at most `max_overlap` of its travel time
+/// with each route kept before. Its `cost` is its travel time, unperturbed, like every
+/// method's.
+///
+/// **Cost:** one search tree per origin for the anchor, and one per class and draw for all the
+/// origin's destinations together, each bounded at `max_detour` times the largest generalised
+/// cost of the destinations' anchors; the extras are 8 bytes per link per class and draw,
+/// shared by every thread. **Guarantee:** none of optimality or completeness; the first route
+/// is a travel-time shortest one.
+#[derive(Clone, Debug)]
+pub struct Sampled {
+    /// Perturbed preference draws per user class, besides draw 0 (0 to 64).
+    pub draws: u32,
+    /// The attribute noise: from draw 1 on, a link's cost is multiplied by `1 + sigma · u`, `u`
+    /// uniform in `[0, 1)` (at least 0).
+    pub sigma: f64,
+    /// The spread of the preference draws, used by the run that composes the extras: each
+    /// coefficient times `1 + tau · v`, `v` in `[−1, 1)` (at least 0).
+    pub tau: f64,
+    /// A kept route's travel time is at most this multiple of the anchor's (at least 1).
+    pub max_detour: f64,
+    /// A kept route shares at most this share of its travel time with any route kept before it
+    /// (above 0, at most 1).
+    pub max_overlap: f64,
+    /// How many routes to keep at most (1 to 32).
+    pub max_paths: usize,
+    /// Which draws: changes the noise of every draw and the run's preference draws (0 by
+    /// default).
+    pub seed: u64,
+    /// The extras the run gave ([`RouteSetGenerator::with_extras`]), by class and draw.
+    extras: Option<ClassExtras>,
+    /// The same, prepared for a context ([`RouteSetGenerator::with_context`]).
+    prepared: Option<PreparedExtras>,
+}
+
+impl Default for Sampled {
+    fn default() -> Self {
+        Self {
+            draws: 4,
+            sigma: 0.5,
+            tau: 0.3,
+            max_detour: 1.5,
+            max_overlap: 0.9,
+            max_paths: 10,
+            seed: 0,
+            extras: None,
+            prepared: None,
+        }
+    }
+}
+
+impl Sampled {
+    const OPTIONS: [&'static str; 7] =
+        ["draws", "max_detour", "max_overlap", "max_paths", "seed", "sigma", "tau"];
+
+    /// The most perturbed draws per class.
+    const MAX_DRAWS: f64 = 64.0;
+
+    /// Make the method from its options, defaults for those not given: 4 draws, `sigma` 0.5,
+    /// `tau` 0.3, `max_detour` 1.5, `max_overlap` 0.9, `max_paths` 10, `seed` 0.
+    ///
+    /// # Errors
+    ///
+    /// [`RouteError::UnknownOption`] for a name it does not have,
+    /// [`RouteError::BadOption`] for a value out of range.
+    pub fn from_options(options: &Options) -> Result<Self, RouteError> {
+        check_known("sampled", options, &Self::OPTIONS)?;
+        let mut m = Self::default();
+        let bad = |option: &str, reason: String| RouteError::BadOption {
+            method: "sampled".to_string(),
+            option: option.to_string(),
+            reason,
+        };
+        let whole = |option: &str, v: f64, lo: f64, hi: f64| -> Result<u64, RouteError> {
+            if v.is_finite() && v.fract() == 0.0 && v >= lo && v <= hi {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "checked to be a non-negative whole number within range"
+                )]
+                Ok(v as u64)
+            } else {
+                Err(bad(option, format!("must be a whole number from {lo} to {hi}, got {v}")))
+            }
+        };
+        let at_least = |option: &str, v: f64, lo: f64| -> Result<f64, RouteError> {
+            if v.is_finite() && v >= lo {
+                Ok(v)
+            } else {
+                Err(bad(option, format!("must be at least {lo}, got {v}")))
+            }
+        };
+        for (option, &v) in options {
+            #[allow(clippy::cast_possible_truncation, reason = "bounded by the checks in `whole`")]
+            match option.as_str() {
+                "draws" => m.draws = whole(option, v, 0.0, Self::MAX_DRAWS)? as u32,
+                "max_paths" => m.max_paths = whole(option, v, 1.0, MAX_PATHS_BOUND)? as usize,
+                "seed" => m.seed = whole(option, v, 0.0, 9_007_199_254_740_992.0)?,
+                "sigma" => m.sigma = at_least(option, v, 0.0)?,
+                "tau" => m.tau = at_least(option, v, 0.0)?,
+                "max_detour" => m.max_detour = at_least(option, v, 1.0)?,
+                _ => {
+                    if !(v > 0.0 && v <= 1.0) {
+                        return Err(bad(option, format!("must be above 0 and at most 1, got {v}")));
+                    }
+                    m.max_overlap = v;
+                }
+            }
+        }
+        Ok(m)
+    }
+
+    /// How the descriptor names the extras: `none`, or `given:` and a hash of every value of
+    /// every class and draw, so two sets of extras never share a route set's identity.
+    fn extras_name(&self) -> String {
+        let Some(rows) = &self.extras else {
+            return "none".to_owned();
+        };
+        let mut h = Fnv1a::new();
+        h.write_u64(rows.len() as u64);
+        for row in rows {
+            h.write_u64(row.len() as u64);
+            for draw in row {
+                match draw {
+                    None => h.write_bool(false),
+                    Some(seconds) => {
+                        h.write_bool(true);
+                        h.write_u64(seconds.len() as u64);
+                        seconds.iter().for_each(|&s| h.write_u64(s.to_bits()));
+                    }
+                }
+            }
+        }
+        format!("given:{:016x}", h.finish())
+    }
+
+    /// The extras prepared for `ctx`: the given ones, or, without them, one class of
+    /// `draws + 1` draws by travel time alone.
+    fn prepare(&self, ctx: &SearchContext<'_>) -> PreparedExtras {
+        match &self.extras {
+            Some(rows) => rows
+                .iter()
+                .map(|row| row.iter().map(|e| e.as_ref().map(|v| ctx.extras(v.to_vec()))).collect())
+                .collect(),
+            None => vec![vec![None; self.draws as usize + 1]],
+        }
+    }
+
+    /// The noise seed of one class and draw from one origin: a pure function of the three and
+    /// the method's `seed`.
+    fn seed_of(&self, origin: NodeId, class: usize, draw: usize) -> u64 {
+        (u64::from(origin.raw()) << 32 | (class as u64) << 8 | draw as u64)
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ self.seed.wrapping_mul(0xA24B_AED4_963E_E407)
+    }
+}
+
+/// The largest share of `candidate`'s cost in `ctx` that lies on links of any one of `kept`
+/// (each given as its links, sorted); 0 for a route of no cost.
+fn overlap_with(ctx: &SearchContext<'_>, candidate: &[LinkId], kept: &[Vec<LinkId>]) -> f64 {
+    let total: f64 = candidate.iter().map(|&l| ctx.link_cost(l)).sum();
+    if total <= 0.0 {
+        return 0.0;
+    }
+    kept.iter()
+        .map(|sorted| {
+            candidate
+                .iter()
+                .filter(|l| sorted.binary_search(l).is_ok())
+                .map(|&l| ctx.link_cost(l))
+                .sum::<f64>()
+                / total
+        })
+        .fold(0.0, f64::max)
+}
+
+impl RouteSetGenerator for Sampled {
+    fn name(&self) -> &str {
+        "sampled"
+    }
+
+    fn descriptor(&self) -> String {
+        format!(
+            "sampled;draws={};extras={};max_detour={};max_overlap={};max_paths={};seed={};sigma={};tau={}",
+            self.draws,
+            self.extras_name(),
+            self.max_detour,
+            self.max_overlap,
+            self.max_paths,
+            self.seed,
+            self.sigma,
+            self.tau
+        )
+    }
+
+    fn generate(&self, search: &mut Search<'_>, origin: NodeId, destination: NodeId) -> Vec<Route> {
+        self.generate_from(search, origin, &[destination]).pop().unwrap_or_default()
+    }
+
+    fn searches_trees(&self) -> bool {
+        true
+    }
+
+    /// One search tree for the anchors, then one per user class and draw, each for every
+    /// destination whose set is not yet full.
+    fn generate_from(
+        &self,
+        search: &mut Search<'_>,
+        origin: NodeId,
+        destinations: &[NodeId],
+    ) -> Vec<Vec<Route>> {
+        let ctx = search.context();
+        let owned;
+        let prepared: &PreparedExtras = if let Some(p) = &self.prepared {
+            p
+        } else {
+            owned = self.prepare(ctx);
+            &owned
+        };
+
+        // The anchors: the travel-time shortest routes, no extras, no noise.
+        search.clear_route_state();
+        let anchors = search.shortest_tree(origin, destinations, f64::INFINITY);
+        let mut sets: Vec<Vec<Route>> =
+            anchors.iter().map(|a| a.iter().cloned().collect()).collect();
+        // Each kept route's links, sorted, for the overlap.
+        let mut sorted: Vec<Vec<Vec<LinkId>>> = sets
+            .iter()
+            .map(|set| {
+                set.iter()
+                    .map(|r| {
+                        let mut links = r.links.clone();
+                        links.sort_unstable();
+                        links
+                    })
+                    .collect()
+            })
+            .collect();
+        let anchored: Vec<usize> =
+            (0..destinations.len()).filter(|&i| anchors[i].is_some()).collect();
+
+        'classes: for (class, row) in prepared.iter().enumerate() {
+            for (draw, extras) in row.iter().enumerate().take(self.draws as usize + 1) {
+                if draw == 0 && extras.is_none() {
+                    continue; // time alone, unperturbed: the anchor again
+                }
+                let active: Vec<usize> =
+                    anchored.iter().copied().filter(|&i| sets[i].len() < self.max_paths).collect();
+                if active.is_empty() {
+                    break 'classes;
+                }
+                search.set_extras(extras.clone());
+                if draw == 0 {
+                    search.clear_noise();
+                } else {
+                    search.set_noise(self.seed_of(origin, class, draw), self.sigma, None);
+                }
+                let bound = self.max_detour
+                    * anchored
+                        .iter()
+                        .filter_map(|&i| anchors[i].as_ref())
+                        .map(|a| search.generalised(&a.links))
+                        .fold(0.0, f64::max);
+                let targets: Vec<NodeId> = active.iter().map(|&i| destinations[i]).collect();
+                let found = search.shortest_tree(origin, &targets, bound);
+                for (&i, candidate) in active.iter().zip(found) {
+                    let Some(mut candidate) = candidate else { continue };
+                    let Some(anchor) = &anchors[i] else { continue };
+                    if candidate.cost > self.max_detour * anchor.cost
+                        || sets[i].iter().any(|k| k.links == candidate.links)
+                    {
+                        continue;
+                    }
+                    let overlap = overlap_with(ctx, &candidate.links, &sorted[i]);
+                    if overlap > self.max_overlap {
+                        continue;
+                    }
+                    candidate.overlap = overlap;
+                    let mut links = candidate.links.clone();
+                    links.sort_unstable();
+                    sorted[i].push(links);
+                    sets[i].push(candidate);
+                }
+            }
+        }
+        search.clear_route_state();
+        for set in &mut sets {
+            sort_best_first(set);
+        }
+        sets
+    }
+
+    fn extras_wanted(&self) -> Option<ExtrasRequest> {
+        Some(ExtrasRequest { draws: self.draws, tau: self.tau, seed: self.seed })
+    }
+
+    fn with_extras(&self, extras: ClassExtras) -> Option<Box<dyn RouteSetGenerator>> {
+        let mut given = self.clone();
+        given.extras = Some(extras);
+        given.prepared = None;
+        Some(Box::new(given))
+    }
+
+    fn with_context(&self, ctx: &SearchContext<'_>) -> Option<Box<dyn RouteSetGenerator>> {
+        let mut prepared = self.clone();
+        prepared.prepared = Some(self.prepare(ctx));
+        Some(Box::new(prepared))
+    }
+}
+
 fn check_known(method: &str, options: &Options, known: &[&'static str]) -> Result<(), RouteError> {
     for name in options.keys() {
         if !known.contains(&name.as_str()) {
@@ -809,13 +1140,14 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// The built-in methods: `penalty`, `shortest` and `montecarlo`.
+    /// The built-in methods: `penalty`, `shortest`, `montecarlo` and `sampled`.
     #[must_use]
     pub fn builtin() -> Self {
         let mut r = Self { methods: Vec::new() };
         r.register("penalty", |o| Ok(Box::new(Penalty::from_options(o)?)));
         r.register("shortest", |o| Ok(Box::new(Shortest::from_options(o)?)));
         r.register("montecarlo", |o| Ok(Box::new(MonteCarlo::from_options(o)?)));
+        r.register("sampled", |o| Ok(Box::new(Sampled::from_options(o)?)));
         r
     }
 

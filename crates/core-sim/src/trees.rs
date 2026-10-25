@@ -25,7 +25,9 @@
 use openmobisim_core_demand::Trips;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
-use openmobisim_core_routes::{RouteKey, RouteSets, SearchContext, search_map};
+use openmobisim_core_routes::{
+    ClassExtras, Extras, RouteKey, RouteSets, SearchContext, search_map,
+};
 use openmobisim_core_types::ids::{EntityId, NodeId, TripId};
 
 use crate::link_times::LinkTimes;
@@ -253,4 +255,223 @@ impl SearchTrees {
     pub fn route(&self, origin: u32, destination: u32, departure: f64) -> Option<&FoundRoute> {
         self.tree(origin, departure)?.route_to(destination)
     }
+}
+
+/// Perturbed trees (S298): one bounded time-dependent **generalised-cost** search per origin node,
+/// departure bin and user class, under one preference draw's extras and attribute noise, on one
+/// loading's link times. The `sampled` route update reads them for the candidates it adds beside
+/// the best response: routes that are competitive under what a class values, not only the fastest.
+///
+/// Built like [`SearchTrees`] (a fixed order of (origin, bin, class), `search_map` in fixed chunks,
+/// read by position), so the result is the same for any thread count and order of trips. A tree's
+/// noise is a pure function of its (origin, bin, class), the draw and the seed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrawTrees {
+    step_s: f64,
+    /// Each tree's (origin, bin, class), ascending, in step with [`Self::trees`].
+    heads: Vec<(u32, u64, u32)>,
+    trees: Vec<Tree>,
+}
+
+impl DrawTrees {
+    /// The trees of preference draw `draw` (1 or more) for the trips of `trips` whose pair has
+    /// routes in `sets` (those `active` says, if given), each trip under its class
+    /// (`trip_class`, by trip): the search of a tree minimises each link's time at the moment it
+    /// is entered plus the class's extra seconds for the draw (`extras[class][draw]`, time alone
+    /// where `None`), every link's cost times `1 + sigma · u` (`u` uniform, from `seed`, the
+    /// tree and the draw), and is bounded by `max_detour` times the largest, over the pairs it
+    /// serves, of the set's best generalised cost at the bin's middle. Each tree's `keys` carry
+    /// the set's best **travel time** at the bin's middle, as [`SearchTrees`]' do, and each route
+    /// found its travel time.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `step_s` is not positive, or if `extras` has a row without entry `draw`.
+    #[must_use]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the loading's inputs, the trips, the bin and the draw's parameters"
+    )]
+    pub fn build(
+        network: &RoadNetwork,
+        turns: &TurnTable,
+        times: &LinkTimes,
+        trips: &Trips,
+        trip_keys: &[RouteKey],
+        trip_class: &[u32],
+        sets: &RouteSets,
+        active: Option<&[bool]>,
+        car_start_s: u32,
+        step_s: f64,
+        extras: &ClassExtras,
+        draw: usize,
+        seed: u64,
+        sigma: f64,
+        max_detour: f64,
+    ) -> Self {
+        assert!(step_s > 0.0, "a departure bin has a positive length");
+        let mut items: Vec<(u32, u64, u32, usize)> = (0..trips.len())
+            .filter(|&i| active.is_none_or(|a| a[i as usize]))
+            .filter_map(|i| {
+                let key = trip_keys[i as usize];
+                if key.origin == key.destination {
+                    return None;
+                }
+                let k = sets.key_index(key)?;
+                if sets.route_range(k).is_empty() {
+                    return None;
+                }
+                let departure = f64::from(trips.departure(TripId::new(i)).get() + car_start_s);
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "a bin count"
+                )]
+                let slot = (departure / step_s).floor() as u64;
+                Some((key.origin, slot, trip_class.get(i as usize).copied().unwrap_or(0), k))
+            })
+            .collect();
+        items.sort_unstable();
+        items.dedup();
+        let mut heads: Vec<(u32, u64, u32)> = Vec::new();
+        let mut groups: Vec<(f64, Vec<usize>)> = Vec::new();
+        for (origin, slot, class, k) in items {
+            if heads.last() == Some(&(origin, slot, class)) {
+                groups.last_mut().expect("a head has a group").1.push(k);
+            } else {
+                heads.push((origin, slot, class));
+                #[allow(clippy::cast_precision_loss, reason = "a bin count")]
+                let departure = (slot as f64 + 0.5) * step_s;
+                groups.push((departure, vec![k]));
+            }
+        }
+        let ctx = SearchContext::new(network, turns);
+        // The draw's extras per class, prepared for this context (their A* bounds).
+        let prepared: Vec<Option<Extras>> = extras
+            .iter()
+            .map(|row| {
+                row.get(draw)
+                    .unwrap_or_else(|| panic!("extras have no entry for draw {draw}"))
+                    .as_ref()
+                    .map(|v| ctx.extras(v.to_vec()))
+            })
+            .collect();
+        let node_count = network.node_count() as usize;
+        let wait = |link: u32, at: f64| times.origin_wait_seconds(link, at);
+        let seconds = |link: u32, at: f64| times.link_seconds(link, at);
+        let searched: Vec<Searched> =
+            search_map(&ctx, &heads.iter().zip(&groups).collect::<Vec<_>>(), |search, item| {
+                let (&(origin, slot, class), (departure, keys)) = *item;
+                let extra = prepared.get(class as usize).cloned().flatten();
+                search.clear_route_state();
+                search.set_extras(extra);
+                search.set_noise(draw_seed(origin, slot, class, draw, seed), sigma, None);
+                // Each key's best travel time at the tree's departure (what the update compares
+                // a candidate's time with) and best generalised cost (what bounds the search).
+                let mut bound = 0.0_f64;
+                let keys: Vec<(usize, f64)> = keys
+                    .iter()
+                    .map(|&k| {
+                        let (mut best_time, mut best_cost) = (f64::INFINITY, f64::INFINITY);
+                        for r in sets.route_range(k) {
+                            let links = sets.route(r).links;
+                            let t = times.route_seconds(links, *departure);
+                            let typed: Vec<openmobisim_core_types::ids::LinkId> = links
+                                .iter()
+                                .map(|&l| openmobisim_core_types::ids::LinkId::new(l))
+                                .collect();
+                            let extra: f64 =
+                                search.generalised(&typed) - search.context().route_cost(&typed);
+                            best_time = best_time.min(t);
+                            best_cost = best_cost.min(t + extra);
+                        }
+                        bound = bound.max(best_cost);
+                        (k, best_time)
+                    })
+                    .collect();
+                let bound = max_detour * bound;
+                let mut targets = vec![false; node_count];
+                let mut wanted = 0;
+                for &(k, _) in &keys {
+                    let d = sets.keys()[k].destination as usize;
+                    if !targets[d] {
+                        targets[d] = true;
+                        wanted += 1;
+                    }
+                }
+                let mut routes: Vec<FoundRoute> = search
+                    .cheapest_routes_to(
+                        NodeId::new(origin),
+                        &targets,
+                        wanted,
+                        *departure,
+                        bound,
+                        &wait,
+                        &seconds,
+                    )
+                    .into_iter()
+                    .filter(|(_, _, _, links)| !links.is_empty())
+                    .map(|(node, _, seconds, links)| FoundRoute {
+                        destination: node.raw(),
+                        seconds,
+                        links: links.iter().map(|l| l.raw()).collect(),
+                    })
+                    .collect();
+                routes.sort_unstable_by_key(|r| r.destination);
+                search.clear_route_state();
+                (keys, routes)
+            });
+        let trees: Vec<Tree> = heads
+            .iter()
+            .zip(groups)
+            .zip(searched)
+            .map(|((&(origin, _, _), (departure, _)), (keys, routes))| Tree {
+                origin,
+                departure,
+                keys,
+                routes,
+            })
+            .collect();
+        Self { step_s, heads, trees }
+    }
+
+    /// The length of a departure bin, in seconds.
+    #[must_use]
+    pub fn step_s(&self) -> f64 {
+        self.step_s
+    }
+
+    /// The trees, in their fixed order (origin, bin, class).
+    #[must_use]
+    pub fn trees(&self) -> &[Tree] {
+        &self.trees
+    }
+
+    /// How many trees there are: the searches made.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.trees.len()
+    }
+
+    /// Whether no tree was built.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.trees.is_empty()
+    }
+
+    /// The tree of `origin` and `class` for a trip departing at `departure` seconds, if built.
+    #[must_use]
+    pub fn tree(&self, origin: u32, class: u32, departure: f64) -> Option<&Tree> {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin count")]
+        let slot = (departure / self.step_s).floor() as u64;
+        self.heads.binary_search(&(origin, slot, class)).ok().map(|i| &self.trees[i])
+    }
+}
+
+/// The noise seed of one perturbed tree: a pure function of the tree, the draw and the seed.
+fn draw_seed(origin: u32, slot: u64, class: u32, draw: usize, seed: u64) -> u64 {
+    (u64::from(origin) << 32 | (slot & 0xFF_FFFF) << 8 | u64::from(class & 0xFF))
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ (draw as u64 + 1).wrapping_mul(0xD6E8_FEB8_6659_FD93)
+        ^ seed.wrapping_mul(0xA24B_AED4_963E_E407)
 }

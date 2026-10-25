@@ -26,8 +26,13 @@
 //! **Cost.** One pass over the links per class and draw: a vector of 8 bytes per link each.
 //! Nothing here runs for a run whose method does not ask for extras.
 
+use std::sync::Arc;
+
+use openmobisim_core_choice::ChoiceModel;
+use openmobisim_core_demand::Travellers;
 use openmobisim_core_graph::layers::{BikeInfrastructure, StaticNetwork};
 use openmobisim_core_graph::network::RoadNetwork;
+use openmobisim_core_routes::{ClassExtras, ExtrasRequest};
 use openmobisim_core_types::ids::{EntityId, LinkId};
 
 use crate::link_values::{PreparedLinkValues, ValueLayer};
@@ -43,7 +48,6 @@ pub struct LinkTerms {
     pub terms: Vec<(String, Vec<f64>)>,
 }
 
-#[allow(dead_code, reason = "wired by the sampled generator and update (S298 P4, P7a)")]
 impl LinkTerms {
     /// The road's terms for car routes: `length_km`, `cost_running_eur` (at the car's price per
     /// kilometre), `cost_toll_eur` (the `toll_eur` column, 0 without one) and the user's road
@@ -79,6 +83,7 @@ impl LinkTerms {
     /// price per kilometre), `bike_mixed_km` (the link's kilometres if it is in mixed traffic)
     /// and the user's bike columns.
     #[must_use]
+    #[allow(dead_code, reason = "wired by the bike route sets (S298 P7a)")]
     pub(crate) fn bike(
         layer: &StaticNetwork,
         prices: &Prices,
@@ -202,6 +207,56 @@ pub fn extra_seconds(
         }
     }
     Some(extra)
+}
+
+/// The road's search cost per link as a car search has it: the free-flow time, infinite where no
+/// car may go ([`openmobisim_core_routes::SearchContext::new`]); what the extras are floored on.
+#[must_use]
+pub fn road_seconds(network: &RoadNetwork) -> Vec<f64> {
+    (0..network.link_count())
+        .map(|i| {
+            let link = LinkId::new(i);
+            if network.link_class(link).carries_motor_traffic() {
+                network.free_flow_time(link).get()
+            } else {
+                f64::INFINITY
+            }
+        })
+        .collect()
+}
+
+/// `extras[class][draw]` for every user class of `travellers`, as a method or update that asked
+/// for them wants them ([`ExtrasRequest`]): the class's coefficients from `model`
+/// ([`ChoiceModel::coefficients`]; a model without them gives a row of `None`: time alone), drawn
+/// per [`drawn_coefficients`] for draws `1..=request.draws` (draw 0 unperturbed), composed over
+/// `terms` and floored on `seconds` by [`extra_seconds`].
+#[must_use]
+pub fn class_extras(
+    request: ExtrasRequest,
+    model: &dyn ChoiceModel,
+    travellers: &Travellers,
+    terms: &LinkTerms,
+    seconds: &[f64],
+) -> ClassExtras {
+    let classes = travellers.class_external_ids();
+    (0..classes.count().max(1))
+        .map(|c| {
+            let coefficients =
+                if c < classes.count() { model.coefficients(classes.external(c)) } else { None };
+            (0..=request.draws)
+                .map(|d| {
+                    let drawn = drawn_coefficients(
+                        coefficients.as_deref()?,
+                        request.seed,
+                        c,
+                        d,
+                        request.tau,
+                    );
+                    extra_seconds(&drawn, terms, seconds).map(Arc::from)
+                })
+                .collect()
+        })
+        .collect()
 }
 
 #[cfg(test)]

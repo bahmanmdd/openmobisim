@@ -406,13 +406,13 @@ fn several_searches_a_pair_are_spread_over_its_departures() {
 #[test]
 fn updates_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
     let none = Default::default();
-    assert_eq!(route_update::Registry::builtin().names(), vec!["none", "best_response"]);
+    assert_eq!(route_update::Registry::builtin().names(), vec!["none", "best_response", "sampled"]);
     assert_eq!(route_update::DEFAULT_UPDATE, "none");
     assert!(!route_update::update("none", &none).unwrap().is_active());
     assert!(route_update::update("best_response", &none).unwrap().is_active());
     let e = route_update::update("nope", &none).err().expect("unknown");
     assert!(matches!(e, RouteUpdateError::UnknownUpdate { .. }));
-    assert!(e.to_string().contains("none, best_response"), "{e}");
+    assert!(e.to_string().contains("none, best_response, sampled"), "{e}");
     let e = route_update::update("best_response", &options(&[("nope", 1.0)])).err().unwrap();
     assert!(e.to_string().contains("max_routes, searches"), "{e}");
     let e = route_update::update("none", &options(&[("searches", 1.0)])).err().unwrap();
@@ -714,6 +714,7 @@ fn a_pair_within_the_slack_of_free_flow_is_not_searched_and_one_beyond_it_is() {
             &EntryTables { entry: recorder.finish(), origin_wait: empty },
         );
         let update = BestResponse { searches: 1, max_routes: 10, slack, tree_step_s: 0 };
+        let trip_class = vec![0_u32; raw.len() as usize];
         let found = update.update(&UpdateContext {
             network: &network,
             turns: &turns,
@@ -725,6 +726,8 @@ fn a_pair_within_the_slack_of_free_flow_is_not_searched_and_one_beyond_it_is() {
             iteration: 1,
             active: None,
             trees: None,
+            trip_class: &trip_class,
+            extras: None,
         });
         (found.searches, found.route_count())
     };
@@ -1078,4 +1081,156 @@ fn the_run_s_thread_count_is_its_own_and_not_in_the_fingerprint() {
     let (one, all) = (run(Some(1)).description(), run(None).description());
     assert_eq!((one.threads, all.threads), (1, every), "recorded");
     assert_eq!(one.fingerprint, all.fingerprint, "and not hashed");
+}
+
+// --- the sampled update (S298) ----------------------------------------------------------------------
+
+/// **A competitive route that is never the fastest enters only with sampled draws.** Hand-made
+/// times on the bottleneck: the fast road took 78 s (8% over its 72 s at free flow, past the
+/// slack), the slow road's 84 s is never faster, so the best response adds nothing; the sampled
+/// update, whose perturbed tree finds the slow road for some seeds, adds it (within the detour),
+/// and nothing else; with no draws it is the best response.
+#[test]
+fn a_competitive_route_that_is_never_the_fastest_enters_only_with_sampled_draws() {
+    use openmobisim_core_loading::{EntryTables, LinkBinRecorder};
+    use openmobisim_core_routes::{RouteKey, RouteSets};
+    use openmobisim_core_sim::LinkTimes;
+    use openmobisim_core_sim::route_update::{BestResponse, RouteUpdate, Sampled, UpdateContext};
+
+    let network = bottleneck();
+    let turns = TurnTable::build(&network, SignalDefaults::SHIPPED);
+    let node = |n: &str| network.node_external_ids().typed_id_of::<NodeId>(n).unwrap();
+    let link = |n: &str| network.link_external_ids().typed_id_of::<LinkId>(n).unwrap();
+    let key = RouteKey::new(node("o"), node("d"));
+    let sets = RouteSets::generate(&network, &turns, &[key], &openmobisim_core_routes::Shortest);
+    let free = f64::from(sets.route(0).cost);
+    let (_travellers, raw) =
+        build_travellers(trips(40, 900), Vec::new(), &car_owning(), 1, &mut Diagnostics::new())
+            .unwrap();
+    let trip_keys = vec![key; raw.len() as usize];
+    let trip_class = vec![0_u32; raw.len() as usize];
+    let mut recorder = LinkBinRecorder::new(network.link_count() as usize, 3_600, 3_600.0);
+    recorder.record(link("fast"), 0.0, 1.08 * free, 1.0);
+    let empty = LinkBinRecorder::new(network.link_count() as usize, 3_600, 3_600.0).finish();
+    let times = LinkTimes::from_tables(
+        &network,
+        &EntryTables { entry: recorder.finish(), origin_wait: empty },
+    );
+    let inner = BestResponse { searches: 1, max_routes: 10, slack: 0.02, tree_step_s: 3_600 };
+    let run = |update: &dyn RouteUpdate| {
+        update.update(&UpdateContext {
+            network: &network,
+            turns: &turns,
+            trips: &raw,
+            trip_keys: &trip_keys,
+            route_sets: &sets,
+            times: &times,
+            car_start_s: 0,
+            iteration: 1,
+            active: None,
+            trees: None,
+            trip_class: &trip_class,
+            extras: None,
+        })
+    };
+    let best = run(&inner);
+    assert_eq!((best.searches, best.route_count()), (1, 0), "the slow road is never faster");
+    let none = run(&Sampled { inner, draws: 0, sigma: 5.0, tau: 0.3, max_detour: 1.5, seed: 0 });
+    assert_eq!(none.routes, best.routes, "no draws: the best response");
+    let slow: Vec<LinkId> = vec![link("slow1"), link("slow2")];
+    let mut added_for = 0;
+    for seed in 0..20 {
+        let found = run(&Sampled { inner, draws: 1, sigma: 5.0, tau: 0.3, max_detour: 1.5, seed });
+        assert_eq!(found.searches, 1, "the pair is read once");
+        assert!(found.route_count() <= 1, "at most the slow road");
+        if let Some((k, routes)) = found.routes.first() {
+            assert_eq!(*k, 0);
+            assert_eq!(routes[0].links, slow, "what enters is the slow road");
+            assert!((routes[0].cost - 84.0).abs() < 1.0, "costed at free flow: {}", routes[0].cost);
+            added_for += 1;
+        }
+        // The same seed, the same answer.
+        let again = run(&Sampled { inner, draws: 1, sigma: 5.0, tau: 0.3, max_detour: 1.5, seed });
+        assert_eq!(again.routes, found.routes);
+    }
+    assert!(added_for > 0, "some draw finds the slow road");
+    assert!(added_for < 20, "and not every draw: the noise decides");
+    // Too tight a detour: the slow road (84 s against 78 s) is cut, whatever the draw.
+    for seed in 0..20 {
+        let found = run(&Sampled { inner, draws: 1, sigma: 5.0, tau: 0.3, max_detour: 1.05, seed });
+        assert_eq!(found.route_count(), 0);
+    }
+}
+
+/// **The sampled update with no draws is the best response**, in a run: the same sets, the same
+/// choices and the same travel times; and a run with it is the same at one thread and at seven.
+#[test]
+fn the_sampled_update_without_draws_is_the_best_response_and_with_them_is_thread_independent() {
+    let best = Setup::new(1_500).go();
+    let mut setup = Setup::new(1_500);
+    setup.update = ("sampled", vec![("draws", 0.0)]);
+    let sampled = setup.go();
+    assert_eq!(sampled.total_travel_time, best.total_travel_time);
+    assert_eq!(sampled.route_choices, best.route_choices);
+    assert_eq!(
+        sampled.route_sets.as_ref().unwrap().route_count(),
+        best.route_sets.as_ref().unwrap().route_count()
+    );
+    assert_eq!(
+        sampled.route_sets.as_ref().unwrap().update(),
+        "sampled;draws=0;max_detour=1.5;max_routes=10;searches=1;seed=0;sigma=0.5;slack=0.02;tau=0.3;tree_step_s=300"
+    );
+    let at = |threads: usize| {
+        let mut setup = Setup { seed: 9, ..Setup::new(1_200) };
+        setup.update = ("sampled", vec![("draws", 2.0), ("sigma", 2.0)]);
+        setup
+            .run()
+            .with_threads(std::num::NonZeroUsize::new(threads))
+            .execute(&mut Diagnostics::new())
+    };
+    let (one, seven) = (at(1), at(7));
+    assert!(one.iterations.iter().map(|it| it.routes_added).sum::<u32>() > 0, "it adapted");
+    assert_eq!(one, seven, "results");
+    assert_eq!(one.route_sets, seven.route_sets, "sets");
+}
+
+/// **The sampled update's options**: chosen by name, refusals name the option, trees required.
+#[test]
+fn the_sampled_update_is_chosen_by_name_and_refuses_bad_options() {
+    let none = Default::default();
+    let ok = route_update::update("sampled", &none).unwrap();
+    assert!(ok.is_active());
+    assert_eq!(
+        ok.descriptor(),
+        "sampled;draws=1;max_detour=1.5;max_routes=10;searches=1;seed=0;sigma=0.5;slack=0.02;tau=0.3;tree_step_s=300"
+    );
+    assert!(ok.extras_wanted().is_some(), "it searches by generalised cost");
+    let e = route_update::update("sampled", &options(&[("nope", 1.0)])).err().unwrap();
+    assert!(e.to_string().contains("draws, max_detour, max_routes"), "{e}");
+    for (name, bad) in [
+        ("draws", 17.0),
+        ("draws", -1.0),
+        ("draws", 1.5),
+        ("sigma", -0.1),
+        ("tau", f64::NAN),
+        ("max_detour", 0.9),
+        ("seed", -1.0),
+        ("tree_step_s", 0.0),
+        ("max_routes", 33.0),
+        ("slack", 2.0),
+    ] {
+        let e = route_update::update("sampled", &options(&[(name, bad)])).err().expect("refused");
+        assert!(matches!(e, RouteUpdateError::BadOption { .. }), "{name}={bad}: {e}");
+        assert!(e.to_string().contains(name), "{e}");
+        assert!(e.to_string().contains("sampled"), "{e}");
+    }
+    let ok = route_update::update(
+        "sampled",
+        &options(&[("draws", 3.0), ("tree_step_s", 900.0), ("max_routes", 6.0), ("tau", 0.0)]),
+    )
+    .unwrap();
+    assert_eq!(
+        ok.descriptor(),
+        "sampled;draws=3;max_detour=1.5;max_routes=6;searches=1;seed=0;sigma=0.5;slack=0.02;tau=0;tree_step_s=900"
+    );
 }
