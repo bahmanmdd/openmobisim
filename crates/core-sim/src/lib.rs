@@ -43,6 +43,7 @@ pub mod disruptions;
 pub mod equilibration;
 pub mod events;
 pub mod gap;
+pub mod generalised_cost;
 pub mod hub_groups;
 pub mod identity;
 pub mod itinerary;

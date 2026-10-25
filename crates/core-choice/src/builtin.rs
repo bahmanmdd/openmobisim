@@ -494,6 +494,22 @@ impl ChoiceModel for Logit {
             self.classes.iter().find(|(name, _)| name == class).map_or(&self.betas, |c| &c.1);
         betas.iter().find(|(attribute, _)| attribute == "time_min").map(|(_, beta)| *beta)
     }
+
+    /// The class's coefficients (the model's with the class's overrides), without the overlap
+    /// term and without product terms; already sorted by attribute.
+    fn coefficients(&self, class: &str) -> Option<Vec<(String, f64)>> {
+        let betas =
+            self.classes.iter().find(|(name, _)| name == class).map_or(&self.betas, |c| &c.1);
+        Some(
+            betas
+                .iter()
+                .filter(|(attribute, _)| {
+                    attribute != "ln_path_size" && product(attribute).is_none()
+                })
+                .cloned()
+                .collect(),
+        )
+    }
 }
 
 /// The draw space of the nests: the iteration field of their draws carries this bit, so a
@@ -714,6 +730,11 @@ impl ChoiceModel for NestedLogit {
     /// The logit's.
     fn time_coefficient(&self, class: &str) -> Option<f64> {
         ChoiceModel::time_coefficient(&self.logit, class)
+    }
+
+    /// The logit's.
+    fn coefficients(&self, class: &str) -> Option<Vec<(String, f64)>> {
+        ChoiceModel::coefficients(&self.logit, class)
     }
 }
 

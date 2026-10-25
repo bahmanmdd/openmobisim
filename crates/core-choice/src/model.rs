@@ -225,6 +225,17 @@ pub trait ChoiceModel: Send + Sync {
     fn time_coefficient(&self, _class: &str) -> Option<f64> {
         None
     }
+
+    /// The coefficients of a traveller of class `class`'s **linear** utility, by attribute
+    /// name, sorted (the class's own where it sets them, else the model's): what a component
+    /// composing a cost from the utility reads (the sampled route-set generation's generalised
+    /// cost, which weighs a link's time, length, money and user values by them; S298). Without
+    /// correction terms (the overlap term) and without product terms, which have no value for
+    /// one link. `None` if the model has no such coefficients (the default): costs are then
+    /// travel time alone.
+    fn coefficients(&self, _class: &str) -> Option<Vec<(String, f64)>> {
+        None
+    }
 }
 
 /// `ln Σ exp(v)` over `values`, computed stably; `−∞` for none.

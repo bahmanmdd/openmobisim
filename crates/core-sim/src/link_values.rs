@@ -236,6 +236,22 @@ impl PreparedLinkValues {
         self.columns.iter().position(|c| c.layer == layer && c.name == name)
     }
 
+    /// Every column on `layer` with values: its attribute names (`<layer>_<name>_km`,
+    /// `<layer>_<name>_sum`) and its per-link values for each, by link index of the layer
+    /// (the generalised cost's terms, [`crate::generalised_cost`]).
+    #[allow(
+        dead_code,
+        reason = "read by the generalised cost's terms once the sampled method is wired (S298 P4, P7a)"
+    )]
+    pub(crate) fn columns_on(&self, layer: ValueLayer) -> Vec<(String, &[f64])> {
+        let mut out = Vec::new();
+        for c in self.columns.iter().filter(|c| c.layer == layer && !c.sum.is_empty()) {
+            out.push((format!("{}_{}_km", layer.as_str(), c.name), c.km.as_slice()));
+            out.push((format!("{}_{}_sum", layer.as_str(), c.name), c.sum.as_slice()));
+        }
+        out
+    }
+
     /// The layer of column `column`.
     pub(crate) fn layer(&self, column: usize) -> ValueLayer {
         self.columns[column].layer
