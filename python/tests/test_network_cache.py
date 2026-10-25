@@ -285,6 +285,7 @@ def test_the_variable_turns_the_cache_off(line: Path, monkeypatch: pytest.Monkey
 def test_delft_s_network_comes_back_the_same_and_runs_the_same(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    pytest.importorskip("pandas")  # the two runs' KPIs compared as frames
     monkeypatch.setenv(_network_cache.NO_CACHE_VARIABLE, "1")
     case = ms.examples.case("delft", root=BUNDLE)
     imported = case.network()
@@ -541,6 +542,7 @@ def test_the_variable_turns_the_parkings_cache_off_too(
 def test_delft_s_parkings_come_back_the_same_and_run_the_same(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    pytest.importorskip("pandas")  # the two runs' KPIs compared as frames
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.delenv(_network_cache.NO_CACHE_VARIABLE, raising=False)
     case = ms.examples.case("delft", root=BUNDLE)
