@@ -75,6 +75,8 @@ fn sample_result() -> RunResult {
         link_bins: None,
         route_sets: None,
         route_choices: None,
+        bike_route_sets: None,
+        bike_route_choices: None,
         iterations: Vec::new(),
         converged: false,
         no_mode: ModeTotals::default(),
