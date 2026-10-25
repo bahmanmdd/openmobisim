@@ -6,7 +6,7 @@ transmission model. This file tells an agent how to use it well and how to credi
 
 ## Use it
 - Documentation: https://openmobisim.github.io (tutorials, guides, the models, and the reference of every function, parameter and file).
-- Install: `pip install openmobisim` (Python ≥ 3.11; `openmobisim[all]` adds JupyterLab, the tables' and the figures' packages; `[viz]` matplotlib alone).
+- Install: `pip install openmobisim` (Python ≥ 3.13; `openmobisim[all]` adds JupyterLab, the tables' and the figures' packages; `[viz]` matplotlib alone).
 - First steps: `openmobisim` (no command) prints them; `openmobisim notebooks` / `openmobisim.notebooks()` copy the ten
   tutorials, `00_getting_started.ipynb` first. 0.1 is an alpha: report problems as issues.
 - A run: build a `Network` (`network_read_osm`, `network_read_gmns`, `network_read_table`), trips

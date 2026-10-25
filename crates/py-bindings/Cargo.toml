@@ -36,7 +36,7 @@ openmobisim-io-osm = { workspace = true }
 openmobisim-io-parquet = { workspace = true }
 openmobisim-core-transit = { workspace = true }
 openmobisim-io-gtfs = { workspace = true }
-# abi3-py311: one wheel per platform covers Python 3.11 and every later
+# abi3-py313: one wheel per platform covers Python 3.13 and every later
 # version, which is the whole reason installation is a plain `pip install`.
-pyo3 = { workspace = true, features = ["abi3-py311"] }
+pyo3 = { workspace = true, features = ["abi3-py313"] }
 numpy = { workspace = true }

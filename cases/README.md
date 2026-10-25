@@ -20,7 +20,7 @@ The scripts are deterministic: on the same inputs and the same openmobisim relea
 
 ## What they need
 
-- Python 3.11 or newer, with `openmobisim` and `numpy` installed. `morning2.py` uses a helper of openmobisim's
+- Python 3.13 or newer, with `openmobisim` and `numpy` installed. `morning2.py` uses a helper of openmobisim's
   internals (`openmobisim._cases`), so use the openmobisim release these scripts were published with.
 - `osmium` (pyosmium, `pip install osmium`) for `bundle.py clip`.
 - `tifffile` and `imagecodecs` (`pip install tifffile imagecodecs`) for `ghsl.py`.

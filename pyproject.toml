@@ -8,7 +8,7 @@ description = "An agent-based multimodal mobility simulator for infrastructure p
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 authors = [{ name = "The openmobisim authors" }]
 keywords = ["mobility", "simulation", "transport", "traffic", "multimodal", "optimisation"]
 classifiers = [
@@ -38,8 +38,8 @@ Issues = "https://github.com/bahmanmdd/openmobisim/issues"
 [project.optional-dependencies]
 # Minimum versions (S247): the Scientific Python ecosystem's dated support policy
 # (SPEC 0) for the release, 2026-Q4 — versions released in the last two years —
-# tested in CI by the `python-minimum` job. Python itself stays at 3.11: the wheel
-# is abi3 and the core Rust, so older interpreters cost nothing. The exact versions
+# tested in CI by the `python-minimum` job. Python itself: 3.13 and later (S297), the
+# same policy; the wheel is abi3, so one file serves every later version. The exact versions
 # the notebooks and reference results were made with: requirements/notebooks.txt.
 # The notebook stack is an extra, not a dependency: a user running openmobisim
 # inside an optimisation loop should not be made to install Jupyter.

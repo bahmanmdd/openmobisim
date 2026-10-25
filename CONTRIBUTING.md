@@ -139,7 +139,7 @@ cargo test -p openmobisim-core-routes --no-default-features
 cargo test --workspace --all-features
 cargo +1.85.0 check --workspace --all-targets   # the minimum supported Rust
 ruff check python && ruff format --check python
-pip install -e . && pytest
+pip install -e . && pytest                # Python 3.13 or newer
 ```
 
 The determinism checks (the same run twice, and at several thread counts, must

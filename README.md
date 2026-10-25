@@ -21,7 +21,7 @@ overridable. Built for research on multimodal urban mobility and the infrastruct
 
 1. **Read the first tutorial**, [`notebooks/00_getting_started.ipynb`](notebooks/00_getting_started.ipynb), here on
    GitHub, before installing anything: it lists the ten tutorials and the order to read them in.
-2. **Install and open the tutorials** (Python 3.11 or newer). Copy the block for your system, in order. One install
+2. **Install and open the tutorials** (Python 3.13 or newer). Copy the block for your system, in order. One install
    is all there is: `openmobisim[all]` brings everything the tutorials use (JupyterLab, matplotlib, pandas,
    polars, pyarrow); the last command copies the ten notebooks into `./openmobisim-notebooks` and opens the first in
    JupyterLab.
@@ -29,7 +29,7 @@ overridable. Built for research on multimodal urban mobility and the infrastruct
    **conda** (any system):
 
    ```bash
-   conda create -y -n openmobisim python=3.12
+   conda create -y -n openmobisim python=3.13
    conda activate openmobisim
    pip install "openmobisim[all]"
    openmobisim notebooks
@@ -38,7 +38,7 @@ overridable. Built for research on multimodal urban mobility and the infrastruct
    **macOS or Linux** (venv, in a terminal):
 
    ```bash
-   python3 -m venv openmobisim
+   python3 -m venv openmobisim   # Python 3.13 or newer: python3 --version shows yours
    source openmobisim/bin/activate
    pip install "openmobisim[all]"
    openmobisim notebooks
@@ -47,6 +47,7 @@ overridable. Built for research on multimodal urban mobility and the infrastruct
    **Windows** (venv, in the Command Prompt):
 
    ```bat
+   rem Python 3.13 or newer: py --version shows yours
    py -m venv openmobisim
    openmobisim\Scripts\activate
    pip install "openmobisim[all]"
@@ -80,7 +81,8 @@ overridable. Built for research on multimodal urban mobility and the infrastruct
 ## Install
 
 ```bash
-pip install openmobisim                  # the simulator alone (Python 3.11 or later; macOS, Linux, Windows)
+# each line needs Python 3.13 or newer, on macOS, Linux or Windows
+pip install openmobisim                  # the simulator alone
 pip install "openmobisim[viz]"           # with matplotlib: the figures, without Jupyter
 pip install "openmobisim[all]"           # everything: JupyterLab, matplotlib, pandas, polars, pyarrow; the tutorial
                                          # notebooks (openmobisim notebooks) and the starter cases, ready to explore
