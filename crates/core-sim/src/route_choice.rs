@@ -179,6 +179,13 @@ pub(crate) struct Inputs<'a> {
     /// `car_access_s` in a run whose trips pay the fixed times, else 0. Every reading of a car
     /// route's time-dependent cost starts there ([`car_departure`]), as the loading does.
     pub car_start_s: u32,
+    /// The mode whose routes these are (S298): the car's by default (the road layer's link
+    /// values, the car's running cost, `car_min`), or the bike's (the bike layer's values,
+    /// `bike_min`, `bike_mixed_km`, no toll or parking fee).
+    pub mode: Mode,
+    /// The bike layer, when `mode` is the bike's: its infrastructure per link, for
+    /// `bike_mixed_km`.
+    pub bike_layer: Option<&'a openmobisim_core_graph::layers::StaticNetwork>,
 }
 
 /// When trip `trip`'s car enters the roads: its departure plus `car_start_s`
@@ -367,7 +374,12 @@ impl<'a> Chooser<'a> {
                 continue;
             }
             if let Some((column, aggregate)) = self.inputs.link_values.lookup(name) {
-                *slot = if self.inputs.link_values.layer(column) == ValueLayer::Road {
+                let layer = match self.inputs.mode {
+                    Mode::Bike => ValueLayer::Bike,
+                    Mode::Walk => ValueLayer::Walk,
+                    _ => ValueLayer::Road,
+                };
+                *slot = if self.inputs.link_values.layer(column) == layer {
                     self.inputs.link_values.total(
                         column,
                         aggregate,
@@ -382,10 +394,24 @@ impl<'a> Chooser<'a> {
                 "time_min" => route.seconds / 60.0,
                 "cost_eur" | "cost_running_eur" | "cost_toll_eur" | "cost_parking_eur" => {
                     let prices = self.inputs.prices;
-                    let running = prices.running(Some(ParkingKind::Car), route.length_m);
-                    let toll = || prices.toll_raw(self.inputs.link_values, route.links);
-                    // The car arrives: the parking fee at the destination (S249).
-                    let parking = || self.inputs.demand_values.destination_parking(trip);
+                    let car = self.inputs.mode == Mode::Car;
+                    let kind = if self.inputs.mode == Mode::Bike {
+                        ParkingKind::Bike
+                    } else {
+                        ParkingKind::Car
+                    };
+                    let running = prices.running(Some(kind), route.length_m);
+                    // Tolls and the parking fee at the destination (S249) are the car's.
+                    let toll = || {
+                        if car {
+                            prices.toll_raw(self.inputs.link_values, route.links)
+                        } else {
+                            0.0
+                        }
+                    };
+                    let parking = || {
+                        if car { self.inputs.demand_values.destination_parking(trip) } else { 0.0 }
+                    };
                     match name.as_str() {
                         "cost_running_eur" => running,
                         "cost_toll_eur" => toll(),
@@ -398,8 +424,28 @@ impl<'a> Chooser<'a> {
                 "overlap" => route.overlap,
                 "ln_path_size" => route.ln_path_size,
                 "n_links" => f64::from(u32::try_from(route.links.len()).unwrap_or(u32::MAX)),
-                "car_min" => route.seconds / 60.0,
-                other => crate::itinerary_choice::mode_attribute(other, Mode::Car).unwrap_or(0.0),
+                "car_min" if self.inputs.mode == Mode::Car => route.seconds / 60.0,
+                "bike_min" if self.inputs.mode == Mode::Bike => route.seconds / 60.0,
+                "bike_mixed_km" => match (self.inputs.mode, self.inputs.bike_layer) {
+                    (Mode::Bike, Some(layer)) => {
+                        let graph = layer.network();
+                        route
+                            .links
+                            .iter()
+                            .map(|&l| LinkId::new(l))
+                            .filter(|&l| {
+                                layer.infrastructure(l)
+                                    == openmobisim_core_graph::layers::BikeInfrastructure::Mixed
+                            })
+                            .map(|l| graph.link_length(l).get())
+                            .sum::<f64>()
+                            / 1000.0
+                    }
+                    _ => 0.0,
+                },
+                other => {
+                    crate::itinerary_choice::mode_attribute(other, self.inputs.mode).unwrap_or(0.0)
+                }
             };
         }
     }
@@ -782,6 +828,7 @@ impl<'a> Chooser<'a> {
         &self,
         rng: &StreamRng,
         iteration: u32,
+        times: Option<&LinkTimes>,
     ) -> Result<RouteChoices, ChoiceError> {
         let total = self.inputs.trips.len() as usize;
         let mut out = self.empty_choices();
@@ -790,7 +837,7 @@ impl<'a> Chooser<'a> {
         let mut i = 0;
         while i < total {
             let end = (i + CHUNK).min(total);
-            self.fill(&mut batch, &mut filled, i..end, None, None);
+            self.fill(&mut batch, &mut filled, i..end, times, None);
             i = end;
             if filled.trip_of.is_empty() {
                 continue;

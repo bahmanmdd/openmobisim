@@ -646,7 +646,6 @@ impl StaticRoutes {
     }
 
     /// The route sets of `layer`, if the run routed any trip on it.
-    #[allow(dead_code, reason = "read by the bike route choice (S298)")]
     pub(crate) fn sets(&self, layer: StaticLayer) -> Option<&RouteSets> {
         self.sets[slot(layer)].as_ref()
     }
@@ -654,7 +653,6 @@ impl StaticRoutes {
     /// The range of route indices of the trip's pair in `layer`'s sets: one route, or a
     /// sampled bike set. `None` where the trip has no route there (not routed on the layer,
     /// unreachable, or origin and destination one node).
-    #[allow(dead_code, reason = "read by the bike route choice (S298)")]
     pub(crate) fn routes_of(
         &self,
         trip: TripId,
@@ -672,7 +670,6 @@ impl StaticRoutes {
     ///
     /// Panics if the trip has no route on `layer`, or if `index` is not in its pair's range
     /// ([`Self::routes_of`]).
-    #[allow(dead_code, reason = "called by the bike route choice (S298)")]
     pub(crate) fn set_route(&mut self, trip: TripId, layer: StaticLayer, index: u32) {
         let range = self.routes_of(trip, layer).expect("the trip has a route on the layer");
         assert!(
@@ -709,6 +706,43 @@ impl StaticRoutes {
                     metres: links.iter().map(|&l| graph.link_length(l).get()).sum(),
                     links,
                 })
+            }
+        }
+    }
+
+    /// Every route of the trip's pair on `layer` as a leg to choose (S298), in the set's order
+    /// (the shortest first), those taking at most `max_seconds`: several with bike route sets,
+    /// one where the layer routes by the shortest route alone, one empty leg where the trip's
+    /// ends are one node, none where it has no route there.
+    pub(crate) fn legs(
+        &self,
+        layers: &StaticLayers,
+        trip: TripId,
+        layer: StaticLayer,
+        max_seconds: f64,
+    ) -> Vec<crate::itinerary_choice::StaticLeg> {
+        let Some(setup) = layers.get(layer) else { return Vec::new() };
+        match self.of(trip, layer) {
+            StaticRoute::None | StaticRoute::Unreachable => Vec::new(),
+            StaticRoute::Here => vec![crate::itinerary_choice::StaticLeg {
+                links: Vec::new(),
+                seconds: 0.0,
+                metres: 0.0,
+            }],
+            StaticRoute::Route(_) => {
+                let graph = setup.network.network();
+                let range = self.routes_of(trip, layer).expect("a routed trip has a range");
+                range
+                    .filter_map(|r| {
+                        let links = self.links(layer, u32::try_from(r).expect("routes fit u32"));
+                        let seconds: f64 = links.iter().map(|l| setup.seconds[l.index()]).sum();
+                        (seconds <= max_seconds).then(|| crate::itinerary_choice::StaticLeg {
+                            seconds,
+                            metres: links.iter().map(|&l| graph.link_length(l).get()).sum(),
+                            links,
+                        })
+                    })
+                    .collect()
             }
         }
     }

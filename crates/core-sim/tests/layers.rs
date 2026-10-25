@@ -294,3 +294,139 @@ fn bike_routing_names_how_bike_routes_are_made() {
     assert_ne!(time_alone, valued, "other extras, another descriptor");
     assert_ne!(time_alone, Sampled::default().descriptor(), "given extras differ from none");
 }
+
+// --- bike route sets and the bike route choice (S298) --------------------------------------------
+
+/// The links the bike layer's flows touched, as a set.
+fn bike_links_used(result: &RunResult) -> std::collections::BTreeSet<u32> {
+    result.bike_link_bins.as_ref().map(|b| b.links().iter().copied().collect()).unwrap_or_default()
+}
+
+/// **Bike route sets spread bike trips over several routes and leave the car alone.** Forty bike
+/// trips and twenty car trips across the grid, a logit: without the option every bike takes the
+/// one shortest route; with it the pair has several routes, the bikes split over at least two
+/// of them (the bike layer's flows touch more links), every bike still arrives, the car trips'
+/// routes, choices and totals are the same to the bit, and the fingerprint names the option.
+#[test]
+fn bike_route_sets_spread_bike_trips_over_several_routes_and_leave_the_car_alone() {
+    use openmobisim_core_choice::{Options as ChoiceOptions, model};
+    use openmobisim_core_routes::Sampled;
+    let road = grid();
+    let mut rows = Vec::new();
+    for i in 0..60 {
+        let mode = if i % 3 == 0 { Mode::Car } else { Mode::Bike };
+        rows.push(trip(
+            &format!("t{i}"),
+            0,
+            at(&road, 0, 0),
+            at(&road, 4, 4),
+            7 * 3600 + i * 20,
+            mode,
+        ));
+    }
+    let make = |sampled: bool| {
+        let (travellers, trips) = demand(rows.clone(), &owning(true, true));
+        let mut run = Run::new(road.clone(), travellers, trips, Second(86_400))
+            .with_flow_motor(ltm(&road))
+            .with_layers(layers(&road))
+            .with_link_bins(300)
+            .with_choice_model(Arc::from(
+                model("logit", &ChoiceOptions::default()).expect("built in"),
+            ));
+        if sampled {
+            run = run.with_bike_sampled(Sampled::default());
+        }
+        let fingerprint = run.description().fingerprint_hex();
+        (fingerprint, run.execute(&mut Diagnostics::new()))
+    };
+    let (plain_print, plain) = make(false);
+    let (sets_print, with_sets) = make(true);
+    assert_ne!(plain_print, sets_print, "the option is part of what the run was");
+    assert_eq!(make(true).0, sets_print, "and a pure function of the inputs");
+    assert!(plain.bike_route_sets.is_none() && plain.bike_route_choices.is_none());
+    let sets = with_sets.bike_route_sets.as_ref().expect("bike route sets");
+    assert_eq!(sets.keys().len(), 1, "one bike pair");
+    assert!(sets.route_count() >= 2, "several routes: {}", sets.route_count());
+    let choices = with_sets.bike_route_choices.as_ref().expect("bike choices");
+    let taken: std::collections::BTreeSet<u32> = choices
+        .route
+        .iter()
+        .copied()
+        .filter(|&r| r != openmobisim_core_sim::route_choice::NO_ROUTE)
+        .collect();
+    assert_eq!(
+        choices
+            .route
+            .iter()
+            .filter(|&&r| r != openmobisim_core_sim::route_choice::NO_ROUTE)
+            .count(),
+        40,
+        "every bike trip chose"
+    );
+    assert!(taken.len() >= 2, "the logit spreads the riders: {taken:?}");
+    assert!(bike_links_used(&with_sets).len() > bike_links_used(&plain).len());
+    for r in [&plain, &with_sets] {
+        assert_eq!(r.by_mode[Mode::Bike.index()].completion.completed, 40);
+    }
+    assert_eq!(plain.by_mode[Mode::Car.index()], with_sets.by_mode[Mode::Car.index()]);
+    assert_eq!(plain.route_choices, with_sets.route_choices, "the car's choices");
+    assert_eq!(plain.route_sets, with_sets.route_sets, "the car's sets");
+    // A run with one bike route hashes and runs as before the option existed: its bike totals
+    // are those of the single-route run, and the sets' descriptor names the method.
+    assert!(sets.descriptor().starts_with("sampled;"), "{}", sets.descriptor());
+}
+
+/// **Mode choice offers every bike route and rides the one chosen:** trips choosing between the
+/// bike and walking are offered more alternatives with bike route sets than without, and the
+/// bike layer's flows touch more links, since each rider takes the route of their alternative.
+#[test]
+fn mode_choice_offers_every_bike_route_and_rides_the_one_chosen() {
+    use openmobisim_core_choice::{Options as ChoiceOptions, model};
+    use openmobisim_core_routes::Sampled;
+    let road = grid();
+    let rows: Vec<RawTrip> = (0..40)
+        .map(|i| {
+            let mut t = trip(
+                &format!("m{i}"),
+                0,
+                at(&road, 0, 0),
+                at(&road, 4, 4),
+                7 * 3600 + i * 20,
+                Mode::Bike,
+            );
+            t.mode = None;
+            t
+        })
+        .collect();
+    let make = |sampled: bool| {
+        let (travellers, trips) = demand(rows.clone(), &owning(false, true));
+        let mut run = Run::new(road.clone(), travellers, trips, Second(86_400))
+            .with_flow_motor(ltm(&road))
+            .with_layers(layers(&road))
+            .with_link_bins(300)
+            .with_mode_choice(&[Mode::Bike, Mode::Walk])
+            .with_choice_model(Arc::from(
+                model("logit", &ChoiceOptions::default()).expect("built in"),
+            ));
+        if sampled {
+            run = run.with_bike_sampled(Sampled::default());
+        }
+        run.execute(&mut Diagnostics::new())
+    };
+    let (plain, with_sets) = (make(false), make(true));
+    let alternatives = |r: &RunResult| {
+        r.itineraries.as_ref().expect("mode choice").alternatives.iter().copied().max().unwrap_or(0)
+    };
+    assert_eq!(alternatives(&plain), 2, "one bike route and the walk");
+    assert!(
+        alternatives(&with_sets) > 2,
+        "several bike routes and the walk: {}",
+        alternatives(&with_sets)
+    );
+    let bikes = |r: &RunResult| r.by_mode[Mode::Bike.index()].completion.completed;
+    assert!(bikes(&with_sets) > 0 && bikes(&plain) > 0, "some chose the bike");
+    assert!(
+        bike_links_used(&with_sets).len() > bike_links_used(&plain).len(),
+        "ridden on more links"
+    );
+}

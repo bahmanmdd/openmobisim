@@ -263,6 +263,11 @@ pub struct RunResult {
     /// Which route each trip took, out of how many, and how likely the model
     /// found it.
     pub route_choices: Option<RouteChoices>,
+    /// The bike route sets (S298), with [`Run::with_bike_sampled`]; `None` otherwise.
+    pub bike_route_sets: Option<RouteSets>,
+    /// Each stated bike trip's route among its set (S298), with [`Run::with_bike_sampled`];
+    /// `None` otherwise.
+    pub bike_route_choices: Option<RouteChoices>,
     /// What each iteration showed: one report for a run without
     /// equilibration, one per loading under `msa`. `route_choices`, `events`,
     /// `link_bins`, the completion counts and the total travel time are those of
@@ -503,6 +508,10 @@ pub struct Run {
     equilibration: Arc<dyn Equilibration>,
     /// How the route sets grow between iterations: not at all, by default.
     route_update: Arc<dyn RouteUpdate>,
+    /// Bike route sets (S298): the sampled generator that makes them on the bike layer, with
+    /// each class's extras for the bike's attributes; `None` (the default) routes every bike trip
+    /// by one shortest route under the bike cost, as before.
+    bike_sampled: Option<openmobisim_core_routes::Sampled>,
     /// A traveller is offered only the routes whose expected time is within this share of the
     /// best's; 0 offers them all. [`DEFAULT_CHOICE_DETOUR_LIMIT`] by default.
     choice_detour_limit: f64,
@@ -618,6 +627,7 @@ impl Run {
             choice_model: Arc::new(Deterministic),
             equilibration: Arc::new(FreeFlow::default()),
             route_update: Arc::new(NoRouteUpdate),
+            bike_sampled: None,
             choice_detour_limit: DEFAULT_CHOICE_DETOUR_LIMIT,
             choice_max_routes: DEFAULT_CHOICE_MAX_ROUTES,
             route_cache: None,
@@ -853,6 +863,42 @@ impl Run {
         self
     }
 
+    /// The same run with **bike route sets** (S298): `generator`, the sampled method, makes a set
+    /// of routes per pair on the bike layer (its extras composed from the choice model's
+    /// coefficients on the bike's attributes), every stated bike trip chooses its route once
+    /// through the choice model on the layer's static times, and a trip choosing its mode is
+    /// offered the routes as bike alternatives. Without it every bike trip takes its one
+    /// shortest route under the bike cost, as before, and the run hashes as it did.
+    #[must_use]
+    pub fn with_bike_sampled(mut self, generator: openmobisim_core_routes::Sampled) -> Self {
+        self.bike_sampled = Some(generator);
+        self
+    }
+
+    /// How bike routes are made (S298), with the extras composed for the bike layer; `Shortest`
+    /// without [`Self::with_bike_sampled`] or without a bike layer.
+    fn bike_routing(&self, link_values: &PreparedLinkValues) -> crate::layers::BikeRouting {
+        match (&self.bike_sampled, self.layers.get(StaticLayer::Bike)) {
+            (Some(generator), Some(setup)) => {
+                let extras = match generator.extras_wanted() {
+                    Some(request) => {
+                        let terms = LinkTerms::bike(setup.network(), &self.prices, link_values);
+                        class_extras(
+                            request,
+                            self.choice_model.as_ref(),
+                            &self.travellers,
+                            &terms,
+                            setup.seconds(),
+                        )
+                    }
+                    None => Vec::new(),
+                };
+                crate::layers::BikeRouting::Sampled { generator: generator.clone(), extras }
+            }
+            _ => crate::layers::BikeRouting::Shortest,
+        }
+    }
+
     /// The same run, offering each traveller only the routes of the pair's set whose expected time
     /// (at the times of the last loading; at free flow for the first choice) is within `limit`
     /// of the best route's: **a time-dependent choice set**. A route far slower than
@@ -975,9 +1021,10 @@ impl Run {
         // The method as the run will use it, its extras named (S298): the fingerprint and the
         // manifest say what the sets were made with. Link values that the run would refuse give
         // the method without extras; the run then fails on them before anything else.
-        let generator = match self.link_values.prepare(&self.network, &self.layers) {
-            Ok(values) => self.keyed_generator(&values),
-            Err(_) => self.route_generator.clone(),
+        let (generator, bike_routing) = match self.link_values.prepare(&self.network, &self.layers)
+        {
+            Ok(values) => (self.keyed_generator(&values), self.bike_routing(&values).descriptor()),
+            Err(_) => (self.route_generator.clone(), "shortest".to_string()),
         };
         describe(&Inputs {
             threads: self.threads(),
@@ -1001,6 +1048,7 @@ impl Run {
             route_update: self.route_update.name(),
             route_update_descriptor: &self.route_update.descriptor(),
             route_update_active: self.route_update.is_active(),
+            bike_routing: &bike_routing,
             choice_detour_limit: self.choice_detour_limit,
             choice_max_routes: self.choice_max_routes,
             layers: &self.layers,
@@ -1184,7 +1232,8 @@ impl Run {
             .collect();
         // Bike and walk trips' routes on their layers: once per run, since their
         // costs are static. A trip choosing its mode gets its route on each layer offered.
-        let static_routes = StaticRoutes::build(
+        let bike_routing = self.bike_routing(&link_values);
+        let mut static_routes = StaticRoutes::build(
             &self.layers,
             &self.trips,
             &|trip, layer| {
@@ -1200,7 +1249,7 @@ impl Run {
                     .modes(&self.mode_defaults)
                     .max_seconds(layer)
             },
-            &crate::layers::BikeRouting::Shortest,
+            &bike_routing,
         );
         clock = timings.lap("static_routes", None, clock);
         // Shared handles, so the loading (which moves vehicles about in `self`) and the
@@ -1353,13 +1402,73 @@ impl Run {
             prices: &prices,
             demand_values: &demand_values,
             car_start_s: self.car_start_s(),
+            mode: Mode::Car,
+            bike_layer: None,
         };
         let mut chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
+        // The bike route choice (S298): with bike route sets, every stated bike trip chooses its
+        // route once, on the layer's static times, through the run's choice model; a trip
+        // choosing its mode is offered the routes as bike alternatives instead.
+        let mut bike_route_choices: Option<RouteChoices> = None;
+        let bike_sets: Option<Arc<RouteSets>> =
+            match (&bike_routing, self.layers.get(StaticLayer::Bike)) {
+                (crate::layers::BikeRouting::Sampled { .. }, Some(setup)) => static_routes
+                    .sets(StaticLayer::Bike)
+                    .map(|sets| (setup, Arc::new(sets.clone()))),
+                _ => None,
+            }
+            .map(|(setup, sets)| {
+                let graph = setup.network().network();
+                let none = RouteKey::new(NodeId::new(0), NodeId::new(0));
+                let bike_keys: Vec<RouteKey> = (0..total_trips)
+                    .map(|i| {
+                        let trip = TripId::new(i);
+                        if self.trips.mode(trip) != Mode::Bike {
+                            return none;
+                        }
+                        static_routes
+                            .routes_of(trip, StaticLayer::Bike)
+                            .map_or(none, |range| sets.keys()[sets.key_of_route(range.start)])
+                    })
+                    .collect();
+                let bike_inputs = route_choice::Inputs {
+                    network: graph,
+                    travellers: &travellers,
+                    trips: &trips,
+                    trip_keys: &bike_keys,
+                    model: model.as_ref(),
+                    detour_limit: self.choice_detour_limit,
+                    max_routes: self.choice_max_routes,
+                    link_values: &link_values,
+                    link_value_names: &link_value_names,
+                    prices: &prices,
+                    demand_values: &demand_values,
+                    car_start_s: if self.pays_fixed_times() {
+                        whole_seconds(self.mode_defaults.bike_access_s)
+                    } else {
+                        0
+                    },
+                    mode: Mode::Bike,
+                    bike_layer: Some(setup.network()),
+                };
+                let bike_chooser = route_choice::Chooser::new(&bike_inputs, sets.clone())?;
+                let times = LinkTimes::constant(graph, setup.seconds().to_vec());
+                let choices = bike_chooser.choose_all(&choice_rng, 0, Some(&times))?;
+                for (i, &route) in choices.route.iter().enumerate() {
+                    if route != NO_ROUTE {
+                        static_routes.set_route(TripId::from_index(i), StaticLayer::Bike, route);
+                    }
+                }
+                bike_route_choices = Some(choices);
+                Ok::<_, ChoiceError>(sets)
+            })
+            .transpose()?;
+        clock = timings.lap("bike_route_choice", None, clock);
         // What the full gap is measured in (S293): the model's utility, or time.
         let currency = Currency::new(model.as_ref(), &travellers, &chooser.wanted_names())?;
         let mut route_choices = match &static_solution {
             Some(solution) => solution.route_choices.clone(),
-            None => chooser.choose_all(&choice_rng, 0)?,
+            None => chooser.choose_all(&choice_rng, 0, None)?,
         };
         clock = timings.lap("route_choice", Some(0), clock);
         let route_update = self.route_update.clone();
@@ -2016,6 +2125,8 @@ impl Run {
             link_bins,
             route_sets: Some(route_sets),
             route_choices: Some(route_choices),
+            bike_route_sets: bike_sets.map(|s| (*s).clone()),
+            bike_route_choices,
             iterations: reports,
             converged,
             by_mode,
@@ -2134,8 +2245,9 @@ impl Run {
             // from. Stranding propagates by itself; nothing here needs to
             // decide to stop early.
             let mut mode = self.trips.mode(trip);
-            // A trip that chose a direct leg (M5) runs as a trip of that mode, on the car
-            // route it chose (a bike or walk route is its layer's one).
+            // A trip that chose a direct leg (M5) runs as a trip of that mode, on the route it
+            // chose (a walk route is its layer's one; a bike route its own, among several with
+            // bike route sets).
             let mut chosen_route: Option<Vec<LinkId>> = None;
             // A car trip for want of any alternative (S271, W-1): no car of the traveller's.
             let mut fallback = false;
@@ -2175,7 +2287,13 @@ impl Run {
                 }
             }
             if mode != Mode::Car {
-                match self.static_outcome(trip, mode, static_routes, bike_access_s) {
+                match self.static_outcome(
+                    trip,
+                    mode,
+                    static_routes,
+                    bike_access_s,
+                    chosen_route.as_deref(),
+                ) {
                     StaticOutcome::NotAvailable => {
                         diagnostics.record(DiagKey::new(
                             Category::Modelling,
@@ -3257,6 +3375,7 @@ impl Run {
         mode: Mode,
         static_routes: &StaticRoutes,
         bike_access_s: u32,
+        chosen: Option<&[LinkId]>,
     ) -> StaticOutcome {
         let (Some(layer), Some(setup)) = (static_layer_of(mode), self.layers.for_mode(mode)) else {
             return StaticOutcome::NotAvailable;
@@ -3286,9 +3405,12 @@ impl Run {
         let slot = usize::from(layer == openmobisim_core_graph::layers::StaticLayer::Walk);
         // A bike sets off once reached and unlocked; a walk at the departure.
         let access_s = if slot == 0 { bike_access_s } else { 0 };
+        // A trip that chose a bike route among several in mode choice (S298) rides the one it
+        // chose; its layer's route otherwise.
+        let links = chosen.map_or_else(|| static_routes.links(layer, index), <[LinkId]>::to_vec);
         let vehicle = Vehicle::new(
             VehicleId::new(trip.raw()),
-            static_routes.links(layer, index),
+            links,
             Pcu(f64::from(weight)),
             Second(self.trips.departure(trip).get() + access_s),
         );

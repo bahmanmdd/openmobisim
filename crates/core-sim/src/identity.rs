@@ -157,6 +157,9 @@ pub(crate) struct Inputs<'a> {
     pub route_update: &'a str,
     pub route_update_descriptor: &'a str,
     pub route_update_active: bool,
+    /// How bike routes are made (S298): `shortest` (the one route per pair of every run before
+    /// bike route sets; hashed as absent) or the sampled generator's descriptor.
+    pub bike_routing: &'a str,
     pub choice_detour_limit: f64,
     pub choice_max_routes: u32,
     pub layers: &'a StaticLayers,
@@ -223,6 +226,11 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     h.write_f64(inputs.choice_detour_limit);
     h.write_u32(inputs.choice_max_routes);
     // Off means absent (S176): a run without an update hashes as it did before there was one.
+    // Off means absent (S298): a run with one bike route per pair hashes as before bike sets.
+    if inputs.bike_routing != "shortest" {
+        h.write_str("bike-routes");
+        h.write_str(inputs.bike_routing);
+    }
     if inputs.route_update_active {
         h.write_str("route-update");
         h.write_str(inputs.route_update);

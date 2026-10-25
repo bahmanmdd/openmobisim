@@ -516,7 +516,7 @@ impl<'a> Planner<'a> {
         origin: LonLat,
         destination: LonLat,
         offer: Offer,
-        legs: (Option<&StaticLeg>, Option<&StaticLeg>),
+        legs: (&[StaticLeg], Option<&StaticLeg>),
         car_key: Option<RouteKey>,
         bike_reach: Option<&BikeReach>,
         car_reach: &CarReach,
@@ -534,12 +534,29 @@ impl<'a> Planner<'a> {
             self.measure_bike_legs(&mut alts);
             return finalise(alts, self.detour_limit, k, self.journey_max_s());
         }
-        let (bike_leg, walk_leg) = legs;
+        let (bike_legs, walk_leg) = legs;
         if let (true, Some(leg)) = (offer.walk, walk_leg) {
             alts.push(direct(Mode::Walk, leg, 0.0, 0.0));
         }
-        if let (true, Some(leg)) = (offer.bike, bike_leg) {
-            alts.push(direct(Mode::Bike, leg, self.bike_access_s, self.bike_egress_s));
+        if offer.bike && !bike_legs.is_empty() {
+            // Several bike routes (S298): each an alternative, with the path size over them by
+            // length, as the car's routes have theirs, so overlapping routes do not count twice.
+            let from = alts.len();
+            for leg in bike_legs {
+                alts.push(direct(Mode::Bike, leg, self.bike_access_s, self.bike_egress_s));
+            }
+            if let (true, Some((layer, _))) = (bike_legs.len() > 1, self.bike) {
+                let graph = layer.network().network();
+                let links: Vec<Vec<u32>> =
+                    bike_legs.iter().map(|l| l.links.iter().map(|l| l.raw()).collect()).collect();
+                let refs: Vec<&[u32]> = links.iter().map(Vec::as_slice).collect();
+                let sizes = openmobisim_core_routes::path_sizes(&refs, |l| {
+                    graph.link_length(LinkId::new(l)).get()
+                });
+                for (a, size) in alts[from..].iter_mut().zip(sizes) {
+                    a.fixed_ln_path_size = Some(size.max(1e-9).ln());
+                }
+            }
         }
         if let (true, Some(key), Some(routes)) = (offer.car, car_key, &self.car_routes) {
             alts.extend(self.plan_car(routes, key, departure));
@@ -1793,7 +1810,9 @@ pub(crate) struct Itineraries {
     /// and can simulate.
     offered: [bool; Mode::COUNT],
     /// Per position, a choosing trip's bike and walk routes.
-    legs: Vec<[Option<StaticLeg>; 2]>,
+    /// Per itinerary trip: its bike routes as legs (several with bike route sets, S298) and its
+    /// walk leg, for mode choice.
+    legs: Vec<(Vec<StaticLeg>, Option<StaticLeg>)>,
     /// Per position, a choosing trip's car pair (`None`: origin and destination on one node,
     /// or not choosing).
     car_keys: Vec<Option<RouteKey>>,
@@ -1954,11 +1973,22 @@ impl Itineraries {
             let car_key = key.then(|| RouteKey::new(nodes.road_o, nodes.road_d));
             let legs = if choosing {
                 let max = limits.modes(sim.modes);
-                let leg =
-                    |layer| sim.static_routes.leg(sim.layers, trip, layer, max.max_seconds(layer));
-                [leg(StaticLayer::Bike), leg(StaticLayer::Walk)]
+                (
+                    sim.static_routes.legs(
+                        sim.layers,
+                        trip,
+                        StaticLayer::Bike,
+                        max.max_seconds(StaticLayer::Bike),
+                    ),
+                    sim.static_routes.leg(
+                        sim.layers,
+                        trip,
+                        StaticLayer::Walk,
+                        max.max_seconds(StaticLayer::Walk),
+                    ),
+                )
             } else {
-                [None, None]
+                (Vec::new(), None)
             };
             out.pos[i] = u32::try_from(out.trips.len()).expect("trips fit u32");
             out.trips.push(trip);
@@ -2069,17 +2099,18 @@ impl Itineraries {
                     self.offered[m.index()]
                         && self.class_modes.get(class).is_none_or(|c| c[m.index()])
                 };
-                let [bike_leg, walk_leg] = &self.legs[p];
+                let (bike_legs, walk_leg) = &self.legs[p];
                 if on(Mode::Walk) {
                     reasons[Mode::Walk.index()] =
                         if walk_leg.is_none() { R::WalkTooLong } else { R::Unexplained };
                 }
                 if on(Mode::Bike) {
-                    reasons[Mode::Bike.index()] = match (shape(ParkingKind::Bike), bike_leg) {
-                        (Some(Shape::Out), None) => R::RideTooLong,
-                        (Some(Shape::Out), Some(_)) => R::Unexplained,
-                        _ => R::NoVehicle,
-                    };
+                    reasons[Mode::Bike.index()] =
+                        match (shape(ParkingKind::Bike), bike_legs.is_empty()) {
+                            (Some(Shape::Out), true) => R::RideTooLong,
+                            (Some(Shape::Out), false) => R::Unexplained,
+                            _ => R::NoVehicle,
+                        };
                 }
                 if on(Mode::Car) {
                     let routes = |key: RouteKey| {
@@ -2222,11 +2253,11 @@ impl Itineraries {
             Some(Shape::Out) if on(m) => Some(Shape::Out),
             _ => None,
         };
-        let [bike_leg, walk_leg] = &self.legs[position];
+        let (bike_legs, walk_leg) = &self.legs[position];
         Offer {
             choosing: true,
             walk: on(Mode::Walk) && walk_leg.is_some(),
-            bike: on(Mode::Bike) && bike == Some(Shape::Out) && bike_leg.is_some(),
+            bike: on(Mode::Bike) && bike == Some(Shape::Out) && !bike_legs.is_empty(),
             car: on(Mode::Car) && car == Some(Shape::Out) && self.car_keys[position].is_some(),
             transit: on(Mode::Transit),
             car_transit: via(car, Mode::CarTransit),
@@ -2249,7 +2280,7 @@ impl Itineraries {
     ) -> Vec<Alternative> {
         let p = position;
         let trip = self.trips[p];
-        let [bike, walk] = &self.legs[p];
+        let (bike, walk) = &self.legs[p];
         let set = if offer.is_empty() {
             Vec::new()
         } else {
@@ -2260,7 +2291,7 @@ impl Itineraries {
                 trips.origin(trip),
                 trips.destination(trip),
                 offer,
-                (bike.as_ref(), walk.as_ref()),
+                (bike.as_slice(), walk.as_ref()),
                 self.car_keys[p],
                 self.bike_reach.get(p),
                 car_reach,
