@@ -121,6 +121,7 @@ def toy_run(network: ms._core.Network, run_id: str) -> ms.Run:
 
 
 def test_the_toy_network_comes_back_the_same_and_runs_the_same(tmp_path: Path) -> None:
+    pytest.importorskip("pandas")  # the two runs' KPIs compared as frames
     toy = ms.examples.toy_network()
     back = round_trip(toy, tmp_path / "toy.network")
     assert_same_run(toy_run(toy, "from-import"), toy_run(back, "from-cache"))
@@ -216,6 +217,7 @@ def cached_files(root: Path) -> list[Path]:
 def test_a_case_imports_its_network_once_then_reads_it_from_the_cache(
     line: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    pytest.importorskip("pandas")  # the two runs' KPIs compared as frames
     case = ms.examples.case("line", root=line / "bundle")
     with caplog.at_level(logging.INFO, logger="openmobisim"):
         first = case.network()
@@ -356,6 +358,7 @@ def park_and_ride(parkings: ms.Parkings, run_id: str) -> ms.Run:
 
 
 def test_the_toy_network_s_parkings_come_back_the_same_and_run_the_same(tmp_path: Path) -> None:
+    pytest.importorskip("pandas")  # the two runs' KPIs compared as frames
     parkings = ms.examples.toy_network_parkings()
     assert parkings.read_s is None
     back = parkings_round_trip(parkings, tmp_path / "toy.parkings")

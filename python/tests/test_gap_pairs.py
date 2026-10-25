@@ -154,6 +154,7 @@ def test_trips_choosing_their_mode_are_grouped_by_the_alternative_they_took(grid
 
 
 def test_no_gap_to_read_without_iterations_or_from_the_files(grid, spread) -> None:
+    pytest.importorskip("pyarrow")  # the run read back from its files
     run, rows, folder = spread
     single = run_on(
         rows, grid, folder.parent / "single", equilibration="free_flow", equilibration_options={}

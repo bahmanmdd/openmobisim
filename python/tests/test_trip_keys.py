@@ -42,8 +42,8 @@ def test_distinct_rows_are_all_simulated() -> None:
 
 
 def test_a_file_read_by_its_path_is_checked_the_same_way(tmp_path) -> None:
-    import pyarrow as pa
-    import pyarrow.parquet as pq
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
 
     net = ms.examples.toy_network()
     rows = trips(net)

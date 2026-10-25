@@ -534,6 +534,8 @@ def test_the_full_mode_gap_covers_every_trip_choosing_its_mode():
 
 
 def test_a_model_without_utilities_measures_the_full_gaps_in_time(tmp_path):
+    pytest.importorskip("pyarrow")  # the run read back from its files
+
     # S293: a Python model with probabilities and no utilities. The full gaps are then in
     # door-to-door minutes, and with every trip finished they are the time gaps.
     class Knowing:
