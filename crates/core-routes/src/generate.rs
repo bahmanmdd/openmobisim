@@ -943,10 +943,30 @@ impl Sampled {
     /// `draws + 1` draws by travel time alone.
     fn prepare(&self, ctx: &SearchContext<'_>) -> PreparedExtras {
         match &self.extras {
-            Some(rows) => rows
-                .iter()
-                .map(|row| row.iter().map(|e| e.as_ref().map(|v| ctx.extras(v.to_vec()))).collect())
-                .collect(),
+            Some(rows) => {
+                // Classes whose extras are the same in every draw (every class without prices,
+                // say) search alike: one row serves them all.
+                let mut distinct: Vec<&Vec<Option<Arc<[f64]>>>> = Vec::new();
+                for row in rows {
+                    let seen = distinct.iter().any(|d| {
+                        d.len() == row.len()
+                            && d.iter().zip(row.iter()).all(|(a, b)| match (a, b) {
+                                (None, None) => true,
+                                (Some(a), Some(b)) => a[..] == b[..],
+                                _ => false,
+                            })
+                    });
+                    if !seen {
+                        distinct.push(row);
+                    }
+                }
+                distinct
+                    .into_iter()
+                    .map(|row| {
+                        row.iter().map(|e| e.as_ref().map(|v| ctx.extras(v.to_vec()))).collect()
+                    })
+                    .collect()
+            }
             None => vec![vec![None; self.draws as usize + 1]],
         }
     }

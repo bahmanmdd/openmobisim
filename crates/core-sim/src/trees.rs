@@ -22,6 +22,8 @@
 //! in fixed chunks ([`search_map`]) and read by position, so the result is the same for any thread
 //! count and any order of trips.
 
+use std::sync::Arc;
+
 use openmobisim_core_demand::Trips;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
@@ -268,9 +270,12 @@ impl SearchTrees {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DrawTrees {
     step_s: f64,
-    /// Each tree's (origin, bin, class), ascending, in step with [`Self::trees`].
+    /// Each tree's (origin, bin, class), ascending, in step with [`Self::trees`]; the class is
+    /// the representative of every class with the same extras.
     heads: Vec<(u32, u64, u32)>,
     trees: Vec<Tree>,
+    /// Each class's representative: the first class whose extras for the draw are the same.
+    representative: Vec<u32>,
 }
 
 impl DrawTrees {
@@ -310,6 +315,22 @@ impl DrawTrees {
         max_detour: f64,
     ) -> Self {
         assert!(step_s > 0.0, "a departure bin has a positive length");
+        // Classes whose extras for this draw are the same (every class without prices, say)
+        // share one tree: each class is mapped to the first with the same extras.
+        let same = |a: &Option<Arc<[f64]>>, b: &Option<Arc<[f64]>>| match (a, b) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a[..] == b[..],
+            _ => false,
+        };
+        let representative: Vec<u32> = (0..extras.len())
+            .map(|c| {
+                let mine = extras[c]
+                    .get(draw)
+                    .unwrap_or_else(|| panic!("extras have no entry for draw {draw}"));
+                let first = (0..c).find(|&d| same(&extras[d][draw], mine)).unwrap_or(c);
+                u32::try_from(first).expect("few classes")
+            })
+            .collect();
         let mut items: Vec<(u32, u64, u32, usize)> = (0..trips.len())
             .filter(|&i| active.is_none_or(|a| a[i as usize]))
             .filter_map(|i| {
@@ -328,7 +349,13 @@ impl DrawTrees {
                     reason = "a bin count"
                 )]
                 let slot = (departure / step_s).floor() as u64;
-                Some((key.origin, slot, trip_class.get(i as usize).copied().unwrap_or(0), k))
+                let class = trip_class.get(i as usize).copied().unwrap_or(0);
+                Some((
+                    key.origin,
+                    slot,
+                    representative.get(class as usize).copied().unwrap_or(0),
+                    k,
+                ))
             })
             .collect();
         items.sort_unstable();
@@ -426,7 +453,7 @@ impl DrawTrees {
                 routes,
             })
             .collect();
-        Self { step_s, heads, trees }
+        Self { step_s, heads, trees, representative }
     }
 
     /// The length of a departure bin, in seconds.
@@ -458,6 +485,7 @@ impl DrawTrees {
     pub fn tree(&self, origin: u32, class: u32, departure: f64) -> Option<&Tree> {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin count")]
         let slot = (departure / self.step_s).floor() as u64;
+        let class = self.representative.get(class as usize).copied().unwrap_or(class);
         self.heads.binary_search(&(origin, slot, class)).ok().map(|i| &self.trees[i])
     }
 }
