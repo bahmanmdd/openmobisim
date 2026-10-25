@@ -29,9 +29,9 @@ pub mod store;
 
 pub use attributes::{RouteAttributes, path_sizes, path_sizes_counted};
 pub use generate::{
-    DEFAULT_METHOD, Demand, MonteCarlo, Options, PROPENSITY_BIN_SECONDS, Penalty, Registry,
-    RouteError, RouteSetGenerator, Shortest, TripDemand, congestion_propensity, default_generator,
-    generator,
+    ClassExtras, DEFAULT_METHOD, Demand, ExtrasRequest, MonteCarlo, Options,
+    PROPENSITY_BIN_SECONDS, Penalty, Registry, RouteError, RouteSetGenerator, Shortest, TripDemand,
+    congestion_propensity, default_generator, generator,
 };
 pub use reach::Reach;
 pub use search::{Extras, LinkFactors, MAX_ROUTES_PER_SET, Route, Search, SearchContext};

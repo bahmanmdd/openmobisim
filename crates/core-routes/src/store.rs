@@ -163,6 +163,9 @@ impl RouteSets {
             keys.iter().copied().filter(|k| k.origin != k.destination).collect();
         keys.sort_unstable();
         keys.dedup();
+        // A method that prepares for the context (S298) is used in its prepared form.
+        let prepared = generator.with_context(ctx);
+        let generator: &dyn RouteSetGenerator = prepared.as_deref().unwrap_or(generator);
 
         let per_key: Vec<Vec<Route>> = if generator.searches_trees() {
             // Each origin's pairs together, for one search tree (S267); keys sort by origin.

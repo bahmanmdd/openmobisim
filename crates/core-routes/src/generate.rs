@@ -136,7 +136,49 @@ pub trait RouteSetGenerator: Send + Sync {
     fn with_demand(&self, _demand: &Demand<'_>) -> Option<Box<dyn RouteSetGenerator>> {
         None
     }
+
+    /// The extra costs the method wants, if it searches by generalised cost (S298): `None`
+    /// (the default) for a method that searches by time. A run that gets `Some` composes the
+    /// extras and calls [`Self::with_extras`] before generating.
+    fn extras_wanted(&self) -> Option<ExtrasRequest> {
+        None
+    }
+
+    /// The same method, given the extras it asked for ([`Self::extras_wanted`]), or `None` if
+    /// it does not take them. Called once, before [`RouteSets::generate`].
+    fn with_extras(&self, _extras: ClassExtras) -> Option<Box<dyn RouteSetGenerator>> {
+        None
+    }
+
+    /// The same method, prepared for the context it is about to search in (what needs the
+    /// context's costs: the A\* bounds of its extras), or `None` if it needs no preparation.
+    /// Called once by [`RouteSets::generate_in`], before the searches.
+    fn with_context(
+        &self,
+        _ctx: &crate::search::SearchContext<'_>,
+    ) -> Option<Box<dyn RouteSetGenerator>> {
+        None
+    }
 }
+
+/// What a method that searches by **generalised cost** asks the run for (S298): extra seconds
+/// per link for every user class, in `draws` preference draws each (draw 0 unperturbed), the
+/// coefficients drawn with spread `tau` from `seed`. The run composes them from the choice
+/// model's coefficients, the prices and the link values (`core-sim`'s `generalised_cost`) and
+/// hands them back with [`RouteSetGenerator::with_extras`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExtrasRequest {
+    /// How many perturbed preference draws, besides draw 0.
+    pub draws: u32,
+    /// The spread of a preference draw: each coefficient times `1 + tau · v`, `v` in [−1, 1).
+    pub tau: f64,
+    /// The seed of the draws.
+    pub seed: u64,
+}
+
+/// Extra seconds per link by user class and draw: `extras[class][draw]` has one value per link
+/// of the network, or is `None` where the class's cost is travel time alone.
+pub type ClassExtras = Vec<Vec<Option<Arc<[f64]>>>>;
 
 /// One trip as a method that reads the demand sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
