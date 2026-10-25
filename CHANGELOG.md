@@ -5,6 +5,10 @@ a minor version may change the interface, and says so here.
 
 ## Unreleased
 
+**Python 3.13 or newer.** openmobisim now needs Python 3.13 or later, following the scientific Python ecosystem's
+support policy ([SPEC 0](https://scientific-python.org/specs/spec-0000/)); one wheel per platform serves 3.13 and
+every later version, tested on 3.13 and 3.14. 0.1.0 accepted Python 3.11 and 3.12; on those, pip installs 0.1.0.
+
 **Door-to-door times for every mode.** In a run that compares modes or has a timetable, a car or bike trip pays the
 fixed times of its own vehicle in the loading as mode choice counts them: reaching it before the leg and leaving it
 after (`mode_options` `car_access_s` 120 s, `car_egress_s` 300 s, `bike_access_s` 60 s, `bike_egress_s` 60 s). The
