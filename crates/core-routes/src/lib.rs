@@ -34,6 +34,6 @@ pub use generate::{
     generator,
 };
 pub use reach::Reach;
-pub use search::{LinkFactors, MAX_ROUTES_PER_SET, Route, Search, SearchContext};
+pub use search::{Extras, LinkFactors, MAX_ROUTES_PER_SET, Route, Search, SearchContext};
 pub use snap::{NodeSnapper, TripSnapper};
 pub use store::{LinkIndex, RouteKey, RouteSets, RouteView, search_map};

@@ -28,6 +28,13 @@
 //! carry, no array to fill — so a search is the same for any thread and order. The Monte
 //! Carlo method uses it.
 //!
+//! A generator can also give a search **extras** ([`Search::set_extras`], made by
+//! [`SearchContext::extras`]): a static extra cost per link, in seconds, that a user class
+//! values beyond travel time (length, money, user link values), so that the search minimises
+//! a **generalised cost**, time plus extras. The route's reported `cost` stays its travel time;
+//! [`Search::generalised`] gives the generalised cost of any route. A bound is then on the
+//! unperturbed generalised cost, and the A\* bound below is rebuilt from the extras.
+//!
 //! **Goal-directed (A\*):** a search towards one destination
 //! ([`Search::shortest_within`]) expands labels in order of their cost plus a
 //! lower bound on the rest of the way: the straight-line distance to the
@@ -149,6 +156,37 @@ impl<'a> SearchContext<'a> {
         self.per_metre
     }
 
+    /// Extras for searches over this context: `seconds[l]` is what link `l` costs beyond its
+    /// travel time, in seconds, by link id. A link's generalised cost, time plus extra, must not
+    /// be negative (the composer floors it): a negative cost breaks every shortest-path search.
+    /// Works out the A\* bound over the generalised costs.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `seconds` does not have one entry per link, or if a usable link's time plus
+    /// extra is negative or not a number.
+    #[must_use]
+    pub fn extras(&self, seconds: Vec<f64>) -> Extras {
+        assert_eq!(seconds.len(), self.cost.len(), "one extra per link");
+        let combined: Vec<f64> = self
+            .cost
+            .iter()
+            .zip(&seconds)
+            .enumerate()
+            .map(|(i, (&c, &e))| {
+                if c.is_finite() {
+                    let g = c + e;
+                    assert!(g.is_finite() && g >= 0.0, "link {i}: time {c} plus extra {e} is {g}");
+                    g
+                } else {
+                    f64::INFINITY
+                }
+            })
+            .collect();
+        let per_metre = lower_bound_per_metre(self.network, &combined);
+        Extras { seconds: seconds.into(), per_metre }
+    }
+
     /// A link's cost in seconds, infinite if a car cannot use it.
     #[inline]
     #[must_use]
@@ -235,6 +273,32 @@ impl Noise {
     }
 }
 
+/// Static extra cost per link, in seconds: what a user class values beyond travel time
+/// (length, money, user link values), unperturbed. Made by [`SearchContext::extras`], which
+/// checks it and works out the A\* bound a search with it needs; set on a search with
+/// [`Search::set_extras`]. Shared by handle: 8 bytes per link once, however many searches.
+#[derive(Clone, Debug)]
+pub struct Extras {
+    seconds: Arc<[f64]>,
+    /// The least generalised cost per metre of straight line over every usable link.
+    per_metre: f64,
+}
+
+impl Extras {
+    /// The extra seconds of each link, by link id.
+    #[must_use]
+    pub fn seconds(&self) -> &[f64] {
+        &self.seconds
+    }
+
+    /// The least generalised cost (time plus extra) per metre of straight-line distance, the
+    /// A\* bound's factor; 0 where no bound holds.
+    #[must_use]
+    pub fn per_metre(&self) -> f64 {
+        self.per_metre
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Entry {
     cost: f64,
@@ -283,6 +347,10 @@ pub struct Search<'a> {
     pub factors: LinkFactors,
     /// Random cost factors for the next searches, if a generator asked for them.
     noise: Option<Noise>,
+    /// Extra cost per link for the next searches, if a generator gave them.
+    extras: Option<Extras>,
+    /// The clock time at each label, for the time-dependent generalised-cost tree.
+    time: Vec<f64>,
     marks: Vec<u32>,
     marked: Vec<u32>,
 }
@@ -301,6 +369,8 @@ impl<'a> Search<'a> {
             heap: BinaryHeap::new(),
             factors: LinkFactors::new(n),
             noise: None,
+            extras: None,
+            time: vec![0.0; n],
             marks: vec![0; n],
             marked: Vec::new(),
         }
@@ -332,6 +402,54 @@ impl<'a> Search<'a> {
         self.noise = None;
     }
 
+    /// Search the next routes by generalised cost: each link's time plus `extras`' seconds for
+    /// it (see [`SearchContext::extras`]). Bounds ([`Self::shortest_within`],
+    /// [`Self::shortest_tree`], [`Self::cheapest_routes_to`]) are then on the unperturbed
+    /// generalised cost; a route's reported `cost` stays its travel time. Stays until
+    /// [`Self::clear_extras`] or [`Self::clear_route_state`]. The earliest-arrival searches
+    /// ([`Self::fastest_time`] and its kin) ignore extras: they are searches for time.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the extras do not have one value per link of the network.
+    pub fn set_extras(&mut self, extras: Option<Extras>) {
+        if let Some(e) = &extras {
+            let links = self.ctx.network.link_count() as usize;
+            assert_eq!(e.seconds.len(), links, "extras have one value per link of the network");
+        }
+        self.extras = extras;
+    }
+
+    /// Search by time alone again.
+    pub fn clear_extras(&mut self) {
+        self.extras = None;
+    }
+
+    /// The generalised cost of `links` under the extras set: their time plus their extras,
+    /// unperturbed; their time alone if none are set.
+    #[must_use]
+    pub fn generalised(&self, links: &[LinkId]) -> f64 {
+        links.iter().map(|&l| self.raw(l)).sum()
+    }
+
+    /// A link's extra seconds under the extras set, 0 if none are.
+    #[inline]
+    fn extra(&self, link: LinkId) -> f64 {
+        self.extras.as_ref().map_or(0.0, |e| e.seconds[link.index()])
+    }
+
+    /// A link's unperturbed generalised cost: its time plus its extra.
+    #[inline]
+    fn raw(&self, link: LinkId) -> f64 {
+        self.ctx.link_cost(link) + self.extra(link)
+    }
+
+    /// The A\* bound's factor for the costs searched now: the extras' if set, the context's.
+    #[inline]
+    fn per_metre(&self) -> f64 {
+        self.extras.as_ref().map_or(self.ctx.per_metre, |e| e.per_metre)
+    }
+
     /// A link's cost multiplier for the search now: the factors set, and the noise if any.
     #[inline]
     fn factor(&self, link: LinkId) -> f64 {
@@ -357,7 +475,8 @@ impl<'a> Search<'a> {
 
     /// [`Self::shortest`], dropping every label whose unpenalised cost exceeds
     /// `max_true_cost`: the route returned, if any, costs at most that. See the
-    /// module docs for what the bound trades.
+    /// module docs for what the bound trades. Under extras ([`Self::set_extras`]) the cost
+    /// searched and bounded is the generalised one; the route's `cost` is still its time.
     pub fn shortest_within(
         &mut self,
         origin: NodeId,
@@ -371,7 +490,7 @@ impl<'a> Search<'a> {
         // A*: the heap holds cost so far plus a lower bound on the rest (S209); with no
         // bound (0) it is Dijkstra exactly.
         let target = ctx.network.node_position(destination);
-        let k = ctx.per_metre;
+        let k = self.per_metre();
         let rest = |l: LinkId| {
             if k > 0.0 {
                 let p = ctx.network.node_position(ctx.network.link_to(l));
@@ -381,7 +500,7 @@ impl<'a> Search<'a> {
             }
         };
         for &l in ctx.network.out_links(origin) {
-            let raw = ctx.link_cost(l);
+            let raw = self.raw(l);
             let c = raw * self.factor(l);
             let h = rest(l);
             if c.is_finite() && raw + h <= max_true_cost && c < self.dist[l.index()] {
@@ -403,7 +522,7 @@ impl<'a> Search<'a> {
             let true_cost = self.true_dist[l.index()];
             for &t in ctx.turns.turns_from(l) {
                 let m = ctx.turns.outgoing(t);
-                let raw = ctx.link_cost(m);
+                let raw = self.raw(m);
                 if !raw.is_finite() {
                     continue;
                 }
@@ -455,7 +574,7 @@ impl<'a> Search<'a> {
         let mut last: std::collections::HashMap<u32, u32> =
             std::collections::HashMap::with_capacity(destinations.len());
         for &l in ctx.network.out_links(origin) {
-            let raw = ctx.link_cost(l);
+            let raw = self.raw(l);
             let c = raw * self.factor(l);
             if c.is_finite() && raw <= max_true_cost && c < self.dist[l.index()] {
                 self.set(l.index(), c, raw, NONE);
@@ -475,7 +594,7 @@ impl<'a> Search<'a> {
             let true_cost = self.true_dist[l.index()];
             for &t in ctx.turns.turns_from(l) {
                 let m = ctx.turns.outgoing(t);
-                let raw = ctx.link_cost(m);
+                let raw = self.raw(m);
                 if !raw.is_finite() || true_cost + raw > max_true_cost {
                     continue;
                 }
@@ -653,6 +772,117 @@ impl<'a> Search<'a> {
                 }
                 links.reverse();
                 (node, time, links)
+            })
+            .collect();
+        self.clean();
+        out
+    }
+
+    /// [`Self::fastest_routes_to`] by **generalised cost**: every node marked in `targets`
+    /// reachable from `origin` leaving at `departure`, with its unperturbed generalised cost
+    /// (the seconds driven, the wait before the first link included, plus the extras of its
+    /// links), its travel time in seconds after `departure`, and its route, in the order found
+    /// (cheapest first by the perturbed cost). The search minimises
+    /// `factor(l) · (seconds(l, entered) + extra(l))` over the links, each link's time read at
+    /// the clock time its label reaches it, under the factors, noise and extras set
+    /// ([`Self::set_noise`], [`Self::set_extras`]); with none of them set it is
+    /// [`Self::fastest_routes_to`] in all but the rounding of sums. **Bounded** on the
+    /// unperturbed generalised cost: a label past `bound` is dropped. `origin` itself, if
+    /// marked, comes first at no cost. Stops once `wanted` targets are found.
+    ///
+    /// Exact when every link's generalised cost is non-negative ([`SearchContext::extras`]
+    /// checks that) and a later entry never means an earlier exit (FIFO), as a loading's times
+    /// are; the clock time at a node is that of its least-cost label, the usual approximation
+    /// of time-dependent generalised-cost routing.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `targets` has fewer entries than the network has nodes.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the time-dependent search's own arguments, plus the targets"
+    )]
+    pub fn cheapest_routes_to(
+        &mut self,
+        origin: NodeId,
+        targets: &[bool],
+        wanted: usize,
+        departure: f64,
+        bound: f64,
+        wait: &dyn Fn(u32, f64) -> f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Vec<(NodeId, f64, f64, Vec<LinkId>)> {
+        let ctx = self.ctx;
+        let mut found: Vec<(NodeId, f64, f64, u32)> = Vec::new();
+        let mut seen: Vec<u32> = Vec::new();
+        if targets[origin.index()] {
+            found.push((origin, 0.0, 0.0, NONE));
+            seen.push(origin.raw());
+        }
+        if found.len() < wanted {
+            for &l in ctx.network.out_links(origin) {
+                if !ctx.link_cost(l).is_finite() {
+                    continue;
+                }
+                let waited = wait(l.raw(), departure);
+                let entered = departure + waited;
+                let s = seconds(l.raw(), entered);
+                let step = s + self.extra(l);
+                // The wait is spent outside the network: unperturbed, in time and in cost.
+                let true_cost = waited + step;
+                if true_cost > bound {
+                    continue;
+                }
+                let cost = waited + step * self.factor(l);
+                if cost < self.dist[l.index()] {
+                    self.set(l.index(), cost, true_cost, NONE);
+                    self.time[l.index()] = entered + s;
+                    self.heap.push(Entry { cost, link: l.raw() });
+                }
+            }
+        }
+        while found.len() < wanted {
+            let Some(Entry { cost, link }) = self.heap.pop() else { break };
+            let l = LinkId::new(link);
+            if cost > self.dist[l.index()] {
+                continue;
+            }
+            let to = ctx.network.link_to(l);
+            let (at, true_so_far) = (self.time[l.index()], self.true_dist[l.index()]);
+            if targets[to.index()] && !seen.contains(&to.raw()) {
+                seen.push(to.raw());
+                found.push((to, true_so_far, at - departure, link));
+            }
+            for &t in ctx.turns.turns_from(l) {
+                let m = ctx.turns.outgoing(t);
+                if !ctx.link_cost(m).is_finite() {
+                    continue;
+                }
+                let s = seconds(m.raw(), at);
+                let step = s + self.extra(m);
+                let true_cost = true_so_far + step;
+                if true_cost > bound {
+                    continue;
+                }
+                let nd = cost + step * self.factor(m);
+                if nd < self.dist[m.index()] {
+                    self.set(m.index(), nd, true_cost, link);
+                    self.time[m.index()] = at + s;
+                    self.heap.push(Entry { cost: nd, link: m.raw() });
+                }
+            }
+        }
+        let out = found
+            .into_iter()
+            .map(|(node, generalised, time, last)| {
+                let mut links = Vec::new();
+                let mut at = last;
+                while at != NONE {
+                    links.push(LinkId::new(at));
+                    at = self.pred[at as usize];
+                }
+                links.reverse();
+                (node, generalised, time, links)
             })
             .collect();
         self.clean();
@@ -856,6 +1086,7 @@ impl<'a> Search<'a> {
     /// Forget every mark, every factor and any noise, ready for the next key.
     pub fn clear_route_state(&mut self) {
         self.noise = None;
+        self.extras = None;
         for &l in &self.marked {
             self.marks[l as usize] = 0;
         }

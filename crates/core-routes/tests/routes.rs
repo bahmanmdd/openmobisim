@@ -1387,3 +1387,274 @@ fn a_revised_store_leaves_a_key_without_routes_empty() {
     assert_eq!(revised.route_count(), sets.route_count());
     assert_eq!(map[sets.route_range(other).start], u32::MAX, "the dropped route is gone");
 }
+
+// --- extras: generalised cost (S298) ---------------------------------------------------------------
+
+/// A per-link extra in seconds from a hash: 0 to 30 s, a pure function of the link.
+fn hashed_extras(net: &RoadNetwork, seed: u64) -> Vec<f64> {
+    (0..net.link_count())
+        .map(|l| {
+            let mut x = seed ^ u64::from(l).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            x ^= x >> 29;
+            x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            30.0 * ((x >> 11) as f64 / (1u64 << 53) as f64)
+        })
+        .collect()
+}
+
+/// **Extras move the search and leave the route's time alone**: on the diamond an extra of
+/// 60 s on the top road's first link makes the bottom road the cheapest, both for a pair and in
+/// a tree; the route's `cost` is still its travel time; `generalised` adds the extra; extras of
+/// nothing give the search without them, to the bit.
+#[test]
+fn extras_move_the_search_and_leave_the_route_s_time_alone() {
+    let net = diamond();
+    let turns = turns_of(&net);
+    let ctx = SearchContext::new(&net, &turns);
+    let mut search = Search::new(&ctx);
+    let id = |n: &str| net.link_external_ids().typed_id_of::<LinkId>(n).expect("link");
+    let (ab, bd, ac, cd) = (id("ab"), id("bd"), id("ac"), id("cd"));
+    let (a, d) = (node(&net, "A"), node(&net, "D"));
+    let top = search.shortest(a, d).expect("a route");
+    assert_eq!(top.links, vec![ab, bd]);
+    let bottom_time = net.free_flow_time(ac).get() + net.free_flow_time(cd).get();
+    let mut extra = vec![0.0; net.link_count() as usize];
+    extra[ab.index()] = 60.0;
+    search.set_extras(Some(ctx.extras(extra)));
+    let found = search.shortest(a, d).expect("a route");
+    assert_eq!(found.links, vec![ac, cd], "the bottom road is the cheapest with the extra");
+    assert!((found.cost - bottom_time).abs() < 1e-9, "cost is the travel time: {}", found.cost);
+    assert!((search.generalised(&found.links) - bottom_time).abs() < 1e-9);
+    assert!((search.generalised(&top.links) - (top.cost + 60.0)).abs() < 1e-9);
+    // In a tree too.
+    let tree = search.shortest_tree(a, &[d], f64::INFINITY);
+    assert_eq!(tree[0].as_ref().map(|r| r.links.clone()), Some(vec![ac, cd]));
+    // A bound in generalised cost: just under the bottom's cost there is nothing (the top costs
+    // more once its extra counts); at it, the bottom.
+    assert!(search.shortest_within(a, d, bottom_time * (1.0 - 1e-6)).is_none());
+    assert!(search.shortest_within(a, d, bottom_time * (1.0 + 1e-9)).is_some());
+    // Extras of nothing: the search as it was, to the bit.
+    search.set_extras(Some(ctx.extras(vec![0.0; net.link_count() as usize])));
+    let same = search.shortest(a, d).expect("a route");
+    assert_eq!((same.links.clone(), same.cost.to_bits()), (top.links.clone(), top.cost.to_bits()));
+    // Cleared with the rest of the route state.
+    search.clear_route_state();
+    assert_eq!(search.shortest(a, d).expect("a route").links, vec![ab, bd]);
+}
+
+/// **A bounded search under extras never passes its bound, in generalised cost**: on a grid with
+/// hashed extras, for many pairs, a bound at the cheapest route's generalised cost finds it and
+/// one just under finds nothing; the route found is the cheapest (against an enumeration-free
+/// check: no tree route is cheaper).
+#[test]
+fn a_bounded_search_with_extras_never_passes_its_bound_in_generalised_cost() {
+    let (net, _) = manhattan_grid(7, 200.0, true);
+    let turns = turns_of(&net);
+    let ctx = SearchContext::new(&net, &turns);
+    let mut search = Search::new(&ctx);
+    search.set_extras(Some(ctx.extras(hashed_extras(&net, 11))));
+    for key in grid_keys(&net, 7, 60, 9) {
+        let (o, d) = (NodeId::new(key.origin), NodeId::new(key.destination));
+        let route = search.shortest(o, d).expect("a grid is connected");
+        let g = search.generalised(&route.links);
+        let at = search.shortest_within(o, d, g * (1.0 + 1e-9)).expect("at the bound: found");
+        assert!((search.generalised(&at.links) - g).abs() < 1e-9);
+        assert!(search.shortest_within(o, d, g * (1.0 - 1e-6)).is_none(), "under it: nothing");
+        let tree = search.shortest_tree(o, &[d], f64::INFINITY);
+        let t = tree[0].as_ref().expect("connected");
+        assert!((search.generalised(&t.links) - g).abs() < 1e-9, "the tree agrees");
+    }
+}
+
+/// **With nothing set, the cheapest tree is the fastest tree**: the same targets, the same
+/// routes, the generalised cost equal to the time, on time-dependent costs with a wait.
+#[test]
+fn the_cheapest_tree_with_nothing_set_finds_the_fastest_routes() {
+    let (net, _) = manhattan_grid(7, 200.0, true);
+    let turns = turns_of(&net);
+    let ctx = SearchContext::new(&net, &turns);
+    let mut search = Search::new(&ctx);
+    let seconds = |l: u32, at: f64| {
+        let base = net.free_flow_time(LinkId::new(l)).get();
+        if at > 100.0 { base * 1.1 } else { base }
+    };
+    let wait = |_l: u32, _t: f64| 3.0;
+    let origin = node(&net, &node_name(0, 0));
+    let names =
+        [node_name(0, 0), node_name(3, 4), node_name(6, 6), node_name(2, 1), node_name(5, 0)];
+    let mut targets = vec![false; net.node_count() as usize];
+    for n in &names {
+        targets[node(&net, n).index()] = true;
+    }
+    let fastest =
+        search.fastest_routes_to(origin, &targets, names.len(), 50.0, 1e9, &wait, &seconds);
+    let cheapest =
+        search.cheapest_routes_to(origin, &targets, names.len(), 50.0, 1e9, &wait, &seconds);
+    assert_eq!(cheapest.len(), fastest.len());
+    assert_eq!((cheapest[0].0, cheapest[0].1, cheapest[0].2), (origin, 0.0, 0.0));
+    for (c, f) in cheapest.iter().zip(&fastest) {
+        assert_eq!(c.0, f.0, "the same target in the same order");
+        assert!((c.2 - f.1).abs() < 1e-9, "the same time: {} against {}", c.2, f.1);
+        assert!((c.1 - f.1).abs() < 1e-9, "generalised cost equals time without extras");
+        assert_eq!(c.3, f.2, "the same route");
+    }
+    // Bounded under the farthest target's cost: it is left out.
+    let farthest = cheapest.last().expect("found").1;
+    let near = search.cheapest_routes_to(
+        origin,
+        &targets,
+        names.len(),
+        50.0,
+        farthest - 1.0,
+        &wait,
+        &seconds,
+    );
+    assert_eq!(near.len(), names.len() - 1);
+}
+
+/// Every simple path from `from` to `to` over motor links, its generalised cost (static
+/// seconds plus extras), the least kept: the brute-force reference for a small grid.
+fn cheapest_simple_path(net: &RoadNetwork, from: NodeId, to: NodeId, extra: &[f64]) -> Option<f64> {
+    fn go(
+        net: &RoadNetwork,
+        at: NodeId,
+        to: NodeId,
+        cost: f64,
+        seen: &mut Vec<bool>,
+        extra: &[f64],
+        best: &mut f64,
+    ) {
+        if at == to {
+            *best = best.min(cost);
+            return;
+        }
+        for &l in net.out_links(at) {
+            if !net.link_class(l).carries_motor_traffic() {
+                continue;
+            }
+            let m = net.link_to(l);
+            if seen[m.index()] {
+                continue;
+            }
+            seen[m.index()] = true;
+            go(
+                net,
+                m,
+                to,
+                cost + net.free_flow_time(l).get() + extra[l.index()],
+                seen,
+                extra,
+                best,
+            );
+            seen[m.index()] = false;
+        }
+    }
+    let mut seen = vec![false; net.node_count() as usize];
+    seen[from.index()] = true;
+    let mut best = f64::INFINITY;
+    go(net, from, to, 0.0, &mut seen, extra, &mut best);
+    best.is_finite().then_some(best)
+}
+
+/// **The cheapest tree agrees with an enumeration of every simple path** on a 3×3 grid (no
+/// signals, so a link's time is its length over its speed), with hashed extras: for every
+/// destination, the generalised cost found is the least over all simple paths.
+#[test]
+fn the_cheapest_tree_agrees_with_an_enumeration_of_every_simple_path() {
+    let (net, _) = manhattan_grid(3, 200.0, false);
+    let turns = turns_of(&net);
+    let ctx = SearchContext::new(&net, &turns);
+    let mut search = Search::new(&ctx);
+    let extra = hashed_extras(&net, 5);
+    search.set_extras(Some(ctx.extras(extra.clone())));
+    let seconds = |l: u32, _at: f64| net.free_flow_time(LinkId::new(l)).get();
+    let none = |_: u32, _: f64| 0.0;
+    for o in 0..net.node_count() {
+        let origin = NodeId::new(o);
+        let targets: Vec<bool> = (0..net.node_count()).map(|n| n != o).collect();
+        let found = search.cheapest_routes_to(
+            origin,
+            &targets,
+            net.node_count() as usize - 1,
+            0.0,
+            f64::INFINITY,
+            &none,
+            &seconds,
+        );
+        assert_eq!(found.len(), net.node_count() as usize - 1, "a grid is connected");
+        for (target, generalised, time, links) in &found {
+            let reference = cheapest_simple_path(&net, origin, *target, &extra).expect("connected");
+            assert!(
+                (generalised - reference).abs() < 1e-9,
+                "{o}→{}: {generalised} against {reference}",
+                target.raw()
+            );
+            let walked: f64 = links.iter().map(|&l| net.free_flow_time(l).get()).sum();
+            assert!((time - walked).abs() < 1e-9, "the time is the route's");
+            assert!((search.generalised(links) - generalised).abs() < 1e-9);
+        }
+        // The static tree finds the same costs.
+        let destinations: Vec<NodeId> = found.iter().map(|f| f.0).collect();
+        let tree = search.shortest_tree(origin, &destinations, f64::INFINITY);
+        for (f, t) in found.iter().zip(&tree) {
+            let t = t.as_ref().expect("connected");
+            assert!((search.generalised(&t.links) - f.1).abs() < 1e-9);
+        }
+    }
+}
+
+/// **Noise and extras in the cheapest tree are deterministic and bounded**: two calls agree; a
+/// perturbed route's unperturbed generalised cost is never below the unperturbed cheapest's and
+/// never past the bound; another seed may find another route.
+#[test]
+fn noise_and_extras_in_the_cheapest_tree_are_deterministic_and_bounded() {
+    let (net, _) = manhattan_grid(7, 200.0, true);
+    let turns = turns_of(&net);
+    let ctx = SearchContext::new(&net, &turns);
+    let mut search = Search::new(&ctx);
+    let extras = ctx.extras(hashed_extras(&net, 2));
+    let seconds = |l: u32, at: f64| {
+        let base = net.free_flow_time(LinkId::new(l)).get();
+        if at > 300.0 { base * 1.3 } else { base }
+    };
+    let none = |_: u32, _: f64| 0.0;
+    let origin = node(&net, &node_name(0, 0));
+    let targets: Vec<bool> = (0..net.node_count()).map(|n| NodeId::new(n) != origin).collect();
+    let wanted = net.node_count() as usize - 1;
+    search.set_extras(Some(extras.clone()));
+    let plain =
+        search.cheapest_routes_to(origin, &targets, wanted, 0.0, f64::INFINITY, &none, &seconds);
+    let by_target = |found: &[(NodeId, f64, f64, Vec<LinkId>)]| {
+        let mut v: Vec<(u32, f64, Vec<LinkId>)> =
+            found.iter().map(|f| (f.0.raw(), f.1, f.3.clone())).collect();
+        v.sort_by_key(|f| f.0);
+        v
+    };
+    let plain = by_target(&plain);
+    let bound = plain.iter().map(|f| f.1).fold(0.0, f64::max) * 1.5;
+    let mut different = 0;
+    for seed in [1_u64, 2, 3] {
+        search.set_noise(seed, 0.5, None);
+        search.set_extras(Some(extras.clone()));
+        let a = by_target(
+            &search.cheapest_routes_to(origin, &targets, wanted, 0.0, bound, &none, &seconds),
+        );
+        search.set_noise(seed, 0.5, None);
+        search.set_extras(Some(extras.clone()));
+        let b = by_target(
+            &search.cheapest_routes_to(origin, &targets, wanted, 0.0, bound, &none, &seconds),
+        );
+        assert_eq!(a, b, "the same seed gives the same routes");
+        for (p, n) in plain.iter().zip(&a) {
+            assert_eq!(p.0, n.0);
+            assert!(n.1 >= p.1 - 1e-9, "never cheaper than the unperturbed cheapest");
+            assert!(n.1 <= bound + 1e-9, "never past the bound");
+            if n.2 != p.2 {
+                different += 1;
+            }
+        }
+        search.clear_noise();
+    }
+    assert!(different > 0, "noise finds other routes");
+    search.clear_route_state();
+}
