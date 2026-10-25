@@ -453,8 +453,7 @@ def pack_city(case: str) -> None:
                  # S282: the French gateways by a share of capacity, 0.35, tuned to TomTom's congestion.
                  *([{"what": "the motorway gateways' morning flows (demand/gateway_counts.csv), from which the "
                              "through traffic is sized: 0.35 of each carriageway's capacity, an assumption tuned "
-                             "so that the morning's congestion stays slightly below TomTom's (the median of "
-                             "Amsterdam's counted gateways, 0.45, put it above)",
+                             "so that the morning's congestion stays slightly below TomTom's",
                      "from": "synthetic: openmobisim's morning recipe (cases/morning2.py), from Rijkswaterstaat's "
                              "INWEVA 2025 morning counts at Amsterdam's gateways",
                      "licence": "CC BY 4.0"}]

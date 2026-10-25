@@ -150,8 +150,8 @@ class _Files:
         """``trip_results.parquet``'s columns, as the run in memory gives them (null: ``NaN``)."""
         if self.trip_results_path is None:
             raise RuntimeError(
-                "this run's folder holds no trip_results.parquet (outputs='minimal', or a run made "
-                "before the file existed); run the scenario again for it"
+                "this run's folder holds no trip_results.parquet (a run with outputs='minimal' "
+                "writes none); run the scenario again with outputs='all' for it"
             )
         import pyarrow.parquet as pq
 
