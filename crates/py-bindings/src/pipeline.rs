@@ -454,6 +454,12 @@ pub struct PyRunSummary {
     /// Which route each trip took, out of how many.
     #[pyo3(get)]
     pub route_choices: Option<Py<PyRouteChoices>>,
+    /// The bike route sets (S298), with `bike_route_choice="sampled"`; `None` otherwise.
+    #[pyo3(get)]
+    pub bike_route_sets: Option<Py<PyRouteSets>>,
+    /// Each stated bike trip's route among its set (S298); `None` without bike route sets.
+    #[pyo3(get)]
+    pub bike_route_choices: Option<Py<PyRouteChoices>>,
     /// Every call of the run's timetable with its times and passengers, as
     /// columns; `None` without a timetable.
     #[pyo3(get)]
@@ -814,7 +820,8 @@ fn gap_trip_columns(py: Python<'_>, gap: &openmobisim_core_sim::GapTrips) -> PyR
     choice_model=None, choice_options=None,
     equilibration="free_flow", equilibration_options=None,
     route_update=None, route_update_options=None,
-    choice_detour_limit=None, choice_max_routes=None, route_cache=false, bike_cost="dedicated", transit=None,
+    choice_detour_limit=None, choice_max_routes=None, route_cache=false, bike_cost="dedicated",
+    bike_route_choice="shortest", bike_route_options=None, transit=None,
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
     loading_options=None, price_options=None, threads=None, fingerprint_only=false,
     design_id="default", replication=0, outputs="all", hub_group_m=150.0,
@@ -863,6 +870,8 @@ pub fn run_pipeline(
     choice_max_routes: Option<u32>,
     route_cache: bool,
     bike_cost: &str,
+    bike_route_choice: &str,
+    bike_route_options: Option<HashMap<String, f64>>,
     transit: Option<PyRef<'_, PyTransit>>,
     parkings: Option<PyRef<'_, PyParkings>>,
     parking_options: Option<HashMap<String, f64>>,
@@ -1190,6 +1199,27 @@ pub fn run_pipeline(
     if let Some(n) = choice_max_routes {
         run = run.with_choice_max_routes(n);
     }
+    // Bike route sets (S298): an option; "shortest" is every run's one route per pair.
+    match bike_route_choice {
+        "shortest" => {
+            if bike_route_options.is_some() {
+                return Err(PyValueError::new_err(
+                    "bike_route_options are the sampled method's: give bike_route_choice=\"sampled\"",
+                ));
+            }
+        }
+        "sampled" => {
+            let generator =
+                openmobisim_core_routes::Sampled::from_options(&to_options(bike_route_options))
+                    .map_err(to_value_error)?;
+            run = run.with_bike_sampled(generator);
+        }
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "bike_route_choice must be \"shortest\" or \"sampled\", got {other:?}"
+            )));
+        }
+    }
     if route_cache {
         run = run.with_route_cache(route_cache_handle().clone());
     }
@@ -1254,6 +1284,9 @@ pub fn run_pipeline(
         _ => None,
     };
     let layers = Arc::new(layers);
+    // The bike layer's link count, for its route sets' Python view (S298).
+    let bike_link_count =
+        layers.get(StaticLayer::Bike).map_or(0, |s| s.network().network().link_count());
     run = run.with_layers(layers.clone());
     if let Some(t) = &transit_setup {
         run = run.with_transit(t.clone());
@@ -1451,6 +1484,11 @@ pub fn run_pipeline(
         (Some(choices), Some(sets)) => Some(PyRouteChoices::new(py, choices, sets)?),
         _ => None,
     };
+    let bike_route_choices_py = match (&result.bike_route_choices, &result.bike_route_sets) {
+        (Some(choices), Some(sets)) => Some(PyRouteChoices::new(py, choices, sets)?),
+        _ => None,
+    };
+
     let (itinerary_replanned, return_mismatch_s) = result
         .itineraries
         .as_ref()
@@ -1661,6 +1699,11 @@ pub fn run_pipeline(
         route_sets: result
             .route_sets
             .map(|sets| Py::new(py, PyRouteSets::new(Arc::new(sets), network.inner.link_count())))
+            .transpose()?,
+        bike_route_choices: bike_route_choices_py,
+        bike_route_sets: result
+            .bike_route_sets
+            .map(|sets| Py::new(py, PyRouteSets::new(Arc::new(sets), bike_link_count)))
             .transpose()?,
     };
     Ok(Py::new(py, summary)?.into_any())

@@ -935,6 +935,10 @@ class RunSummary:
     route_sets: RouteSets
     #: Which route each trip took, out of how many.
     route_choices: RouteChoices
+    #: The bike route sets, with ``bike_route_choice="sampled"``; ``None`` otherwise.
+    bike_route_sets: RouteSets | None
+    #: Each stated bike trip's route among its set; ``None`` without bike route sets.
+    bike_route_choices: RouteChoices | None
     #: The full gaps' per-trip numbers of the last loading (``Run.gap_trips``), or ``None``.
     gap_trips: dict[str, npt.NDArray[Any]] | None
     #: What the full gaps are measured in: ``"utility"`` or ``"time"`` (``Run.gap_currency``).
@@ -1018,6 +1022,8 @@ def run_pipeline(
     choice_max_routes: int | None = None,
     route_cache: bool = False,
     bike_cost: str = "dedicated",
+    bike_route_choice: str = "shortest",
+    bike_route_options: dict[str, float] | None = None,
     transit: Transit | None = None,
     parkings: Parkings | None = None,
     parking_options: dict[str, float] | None = None,
@@ -1121,6 +1127,9 @@ def run_pipeline(
             limit, ``None`` the library's default, 5).
         bike_cost: ``"dedicated"`` (the default) or ``"time"``: how bike trips
             choose their route on the bike layer.
+        bike_route_choice: ``"shortest"`` (one route per pair, as before) or ``"sampled"``
+            (bike route sets by the sampled method, chosen through the choice model).
+        bike_route_options: The sampled method's options for the bike layer, numbers by name.
         transit: The timetable for the ``"transit"`` trips; its buses ride this
             network's roads.
         parkings: The parkings for the ``"car_transit"`` and ``"bike_transit"`` trips;

@@ -52,6 +52,9 @@ PRESETS: dict[str, dict[str, dict[str, float]]] = {
 #: volume-delay times); 2, 3 and 4 are the link transmission
 #: model as a point queue, a spatial queue and the full triangular diagram.
 FLOW_LEVELS = (0, 1, 2, 3, 4)
+#: How a bike trip gets its route (S298): one shortest route per pair, or a sampled set it
+#: chooses from.
+BIKE_ROUTE_CHOICES = ("shortest", "sampled")
 #: Each flow level's name, as figures and pages write it (C3, P-14: one place).
 LEVEL_NAMES = {0: "free flow", 1: "static", 2: "point queue", 3: "spatial queue", 4: "full"}
 #: The equilibration strategies of the static assignment alone (S294).
@@ -382,6 +385,8 @@ class Scenario:
         choice_max_routes: int | None = None,
         route_cache: bool = False,
         bike_cost: str = "dedicated",
+        bike_route_choice: str = "shortest",
+        bike_route_options: dict[str, float] | None = None,
         transit: _core.Transit | None = None,
         transit_options: dict[str, float] | None = None,
         parkings: _core.Parkings | None = None,
@@ -425,6 +430,14 @@ class Scenario:
             } or None
         if bike_cost not in BIKE_COSTS:
             raise ValueError(f"bike_cost must be one of {BIKE_COSTS}, got {bike_cost!r}")
+        if bike_route_choice not in BIKE_ROUTE_CHOICES:
+            raise ValueError(
+                f"bike_route_choice must be one of {BIKE_ROUTE_CHOICES}, got {bike_route_choice!r}"
+            )
+        if bike_route_options is not None and bike_route_choice != "sampled":
+            raise ValueError(
+                'bike_route_options are the sampled method\'s: give bike_route_choice="sampled"'
+            )
         if trips is not None:
             trips = _trips_checked(trips)
         if flow_level not in FLOW_LEVELS:
@@ -507,6 +520,8 @@ class Scenario:
         self._choice_max_routes = choice_max_routes
         self._route_cache = route_cache
         self._bike_cost = bike_cost
+        self._bike_route_choice = bike_route_choice
+        self._bike_route_options = bike_route_options
         self._transit = transit
         self._transit_options = transit_options
         self._parkings = parkings
@@ -564,6 +579,8 @@ class Scenario:
         choice_max_routes: int | None = None,
         route_cache: bool = False,
         bike_cost: str = "dedicated",
+        bike_route_choice: str = "shortest",
+        bike_route_options: dict[str, float] | None = None,
         transit: _core.Transit | None = None,
         transit_options: dict[str, float] | None = None,
         parkings: _core.Parkings | None = None,
@@ -788,6 +805,22 @@ class Scenario:
                 for a cycle track or lane; ``"time"`` is the fastest route. Bikes ride at 15
                 km/h in mixed traffic and 18 km/h on dedicated infrastructure; these values
                 and the 1.2 are defaults, not a calibration.
+            bike_route_choice: Whether a bike trip has a **choice of routes** (an option, never
+                a default). ``"shortest"`` (the default): one route per pair, the least-cost
+                route under ``bike_cost``, as before. ``"sampled"``: the ``"sampled"`` route
+                method (see ``route_method``) makes a set of routes per pair on the bike layer,
+                the generalised cost of each class including its coefficients on
+                ``bike_mixed_km``, ``length_km`` and money; every bike trip with a stated mode
+                then chooses its route once, on the layer's times, through ``choice_model``
+                (with the path size over the routes offered, ``choice_detour_limit`` and
+                ``choice_max_routes`` as for car routes), and a trip choosing its mode is
+                offered every bike route as an alternative. The run's fingerprint names the
+                option; ``Run.bike_route_sets()`` and ``Run.bike_route_choices()`` show the
+                sets and the choices.
+            bike_route_options: The ``"sampled"`` method's options for the bike layer, numbers by
+                name (``draws``, ``sigma``, ``tau``, ``max_detour``, ``max_overlap``,
+                ``max_paths``, ``seed``; the same defaults as for car routes). Only with
+                ``bike_route_choice="sampled"``.
             route_cache: Keep the generated route sets in memory for the next run **of this
                 process** that asks for the same: the same network, the same origin-destination
                 pairs, the same route method and options and, for a method that reads the demand
@@ -1210,6 +1243,8 @@ class Scenario:
             choice_max_routes=choice_max_routes,
             route_cache=route_cache,
             bike_cost=bike_cost,
+            bike_route_choice=bike_route_choice,
+            bike_route_options=bike_route_options,
             transit=transit,
             transit_options=transit_options,
             parkings=parkings,
@@ -1290,6 +1325,8 @@ class Scenario:
             choice_max_routes=self._choice_max_routes,
             route_cache=self._route_cache,
             bike_cost=self._bike_cost,
+            bike_route_choice=self._bike_route_choice,
+            bike_route_options=self._bike_route_options,
             transit=self._transit,
             parkings=self._parkings,
             parking_options=self._parking_options,

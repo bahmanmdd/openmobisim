@@ -754,6 +754,23 @@ class Run:
         """
         return self._summary.route_choices
 
+    def bike_route_sets(self) -> _core.RouteSets | None:
+        """The bike route sets, with ``Scenario(bike_route_choice="sampled")``; ``None`` otherwise.
+
+        One set per pair of bike-layer nodes, made once per run on the layer's static costs
+        by the sampled method; the first route of a set is the least-cost one.
+        """
+        return self._summary.bike_route_sets
+
+    def bike_route_choices(self) -> _core.RouteChoices | None:
+        """Which route each stated bike trip took among its set; ``None`` without bike sets.
+
+        The same arrays as ``route_choices()``, one entry per trip of the demand; ``-1`` marks
+        a trip that is not a stated bike trip or has no bike route. A trip that chose its mode
+        and took the bike is in ``itinerary_choices()`` instead.
+        """
+        return self._summary.bike_route_choices
+
     def link_bins(self, layer: str = "road") -> _core.LinkBins | None:
         """Per-link, per-time-bin results, or ``None`` if the run did not ask.
 
