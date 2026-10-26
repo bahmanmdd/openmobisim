@@ -10,8 +10,9 @@
 //! for car trips; **bike and walk trips** travel on their own static layer
 //! ([`crate::layers`]), routed once and never part of the car's choice or
 //! gap; **transit, park-and-ride and bike-and-ride trips** choose an itinerary
-//! ([`crate::itinerary_choice`], M4) on expected costs before each loading and
-//! execute it on the loading's times after it: the car of a park-and-ride trip is
+//! ([`crate::itinerary_choice`], M4) on expected costs before each loading (transit on
+//! the timetable, always) and execute it on the loading's times after it: the car of a
+//! park-and-ride trip is
 //! in the loading with every other car, and parks at the hub it chose
 //! ([`crate::parking`]); none of them is part of the car routes' choice or gap.
 //!
@@ -1250,9 +1251,9 @@ impl Run {
         let (network, travellers, trips) =
             (self.network.clone(), self.travellers.clone(), self.trips.clone());
         // Itinerary trips (M4, S201): transit, park-and-ride and bike-and-ride choose an
-        // itinerary on expected costs — free flow, the schedule and the parkings as the day
-        // starts at first, the last loading's after; and, with mode choice (M5), every trip
-        // whose mode was not stated.
+        // itinerary on expected costs — free flow and the parkings as the day starts at first,
+        // the last loading's after, and transit on the timetable throughout; and, with mode
+        // choice (M5), every trip whose mode was not stated.
         let (transit_arc, parking_arc, layers_arc) =
             (self.transit.clone(), self.parking.clone(), self.layers.clone());
         let itineraries: Option<Itineraries> = (transit_arc.is_some() || mode_choice.is_some())
@@ -1476,8 +1477,20 @@ impl Run {
         });
         let bike_planner = layers_arc.bike.as_ref().zip(bike_ctx.as_ref());
         let window_s = f64::from(self.window.get());
-        let window_end = self.window.get();
         let start_s = f64::from(self.window_start.get());
+        // The timetable travellers plan transit on, every choice and gap of the run (S299): the
+        // schedule, with the disruptions they know of (a delayed run late, a cancelled one gone).
+        // Never the times a loading made: nobody knows a bus's delay before the day.
+        let planned_times = transit_arc.as_deref().filter(|_| known_disruptions).and_then(|t| {
+            (!self.disruptions.transit.is_empty()).then(|| {
+                let mut times = t.timetable().scheduled().clone();
+                self.disruptions.apply_to_times(t.timetable(), &mut times, &|_| false);
+                t.on_times(&times)
+            })
+        });
+        let planned = transit_arc
+            .as_deref()
+            .map(|t| (t, planned_times.as_ref().unwrap_or_else(|| t.scheduled())));
         let mut availability =
             parking_arc.as_deref().map(|p| ExpectedAvailability::initial(p, start_s, window_s));
         let choose_inputs = ChooseInputs {
@@ -1508,7 +1521,7 @@ impl Run {
         if let Some(itin) = &itineraries {
             let free = LinkTimes::free_flow(&network);
             let planner = Planner {
-                transit: transit_arc.as_deref().map(|t| (t, t.scheduled())),
+                transit: planned,
                 parking: parking_arc.as_deref(),
                 car: &car_ctx,
                 bike: bike_planner,
@@ -1710,13 +1723,8 @@ impl Run {
                 }
                 clock = timings.lap("route_choice", Some(0), clock);
                 if let (Some(itin), Some(current)) = (&itineraries, &chosen) {
-                    let transit = transit_arc.as_deref();
-                    let realised = transit.zip(loaded.transit.as_ref()).map(|(transit, t)| {
-                        transit.on_times(&transit.expected(&t.times, window_end))
-                    });
                     let planner = Planner {
-                        transit: transit
-                            .map(|t| (t, realised.as_ref().unwrap_or_else(|| t.scheduled()))),
+                        transit: planned,
                         parking: parking_arc.as_deref(),
                         car: &car_ctx,
                         bike: bike_planner,
@@ -1947,13 +1955,8 @@ impl Run {
                         update.assessment.gap_flow - update.assessment.gap_flow_floor;
                     // The itineraries, on the costs this loading produced (M4).
                     if let (Some(itin), Some(current)) = (&itineraries, &chosen) {
-                        let transit = transit_arc.as_deref();
-                        let realised = transit.zip(loaded.transit.as_ref()).map(|(transit, t)| {
-                            transit.on_times(&transit.expected(&t.times, window_end))
-                        });
                         let planner = Planner {
-                            transit: transit
-                                .map(|t| (t, realised.as_ref().unwrap_or_else(|| t.scheduled()))),
+                            transit: planned,
                             car_routes: (mode_choice.is_some() || fallback_car)
                                 .then(|| CarRoutes { sets: &route_sets }),
                             ..base_planner

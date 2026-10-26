@@ -290,7 +290,8 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// Version 38 (S299): **buses keep to the timetable**: `core-transit`'s
 /// `TransitDefaults::buses_on_roads` (0 by default) leaves every bus out of the loading, so it
 /// takes no road capacity and runs exactly on its timetable; 1 puts the buses on the roads among
-/// the cars.
+/// the cars. Travellers plan transit on the timetable (with the disruptions they know of) in
+/// every choice and gap, with buses on the roads too, never on the times a loading made.
 pub const DEFAULTS_VERSION: u32 = 38;
 
 /// The range a derived backward wave speed is allowed to fall in.

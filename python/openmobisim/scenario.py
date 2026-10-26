@@ -962,10 +962,10 @@ class Scenario:
                 5 minutes. **Its journey is chosen by** ``choice_model`` among the
                 competitive ones: for each number of vehicles, the earliest arrival that beats
                 every journey with fewer (the attributes ``walk_min``, ``wait_min``,
-                ``ride_min`` and ``transfers`` say what it costs). It is chosen on the times
-                expected — the schedule at first, the last iteration's after — and ridden on
-                the times the run makes: the traveller boards the first vehicle of each line
-                chosen they can catch. The run's clock counts seconds after the service day's
+                ``ride_min`` and ``transfers`` say what it costs). It is chosen on the
+                **timetable**, in every iteration (no traveller knows a bus's delay in
+                advance), and ridden on the times the run makes: the traveller boards the
+                first vehicle of each line chosen they can catch. The run's clock counts seconds after the service day's
                 midnight and starts at the window.
                 **Every vehicle keeps exactly to its timetable** by default: buses are not
                 vehicles of the loading, take no road capacity and are never delayed by

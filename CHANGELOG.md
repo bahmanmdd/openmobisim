@@ -25,7 +25,9 @@ bike park with room; a full parking adds its slope on top.
 
 **Buses keep to their timetable.** By default every bus runs exactly on its timetable and is not a vehicle of the
 loading: it takes no road capacity and traffic does not delay it. `transit_options` `buses_on_roads` 1 puts the buses
-on the roads among the cars, where congestion makes them late, as 0.1.0 did.
+on the roads among the cars, where congestion makes them late, as 0.1.0 did. Travellers plan transit on the
+timetable in every iteration, with buses on the roads too, and ride the vehicles that come; 0.1.0 planned on the
+bus times of the last iteration.
 
 ## 0.1.0 — 2026-10-20
 

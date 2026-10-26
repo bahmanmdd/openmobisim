@@ -16,6 +16,7 @@
 //! | B3: B1 at free flow (level 0) | the same as B1: **80, 120, 205** |
 //! | B4: the plausibility ratio at 0.5 | 80.554 + 20 + 85.44 = 185.99 s > 0.5 · 240: run by the schedule; the passenger arrives at **240** |
 //! | B5: a timetable not put on the roads | by the schedule: **240** |
+//! | B6: B1 as in B1, three loadings | the passenger rides the bus that comes, at `D1` at **205** in every loading, but plans on the timetable: **240** expected, never 205 |
 
 #![allow(clippy::float_cmp, reason = "counts and whole seconds")]
 
@@ -29,7 +30,7 @@ use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_graph::{LonLat, toy_network, toy_network_layers};
 use openmobisim_core_loading::FidelityLevel;
 use openmobisim_core_sim::{
-    EventType, FlowMotor, LayerSetup, ModeDefaults, Run, RunResult, StaticLayers, TransitSetup,
+    EventType, FlowMotor, LayerSetup, ModeDefaults, Msa, Run, RunResult, StaticLayers, TransitSetup,
 };
 use openmobisim_core_transit::TransitDefaults;
 use openmobisim_core_transit::examples::toy_bus;
@@ -84,6 +85,17 @@ impl Toy {
     }
 
     fn run(&self, rows: Vec<RawTrip>, transit: Arc<TransitSetup>, ltm: bool) -> RunResult {
+        self.run_loadings(rows, transit, ltm, 1)
+    }
+
+    /// [`Self::run`], iterated by `msa` for `loadings` loadings (1: a single loading).
+    fn run_loadings(
+        &self,
+        rows: Vec<RawTrip>,
+        transit: Arc<TransitSetup>,
+        ltm: bool,
+        loadings: u32,
+    ) -> RunResult {
         let defaults = ClassDefaults::new()
             .with_default("everyone", Ownership { car: true, bike: false, transit_pass: false });
         let (travellers, trips) =
@@ -101,6 +113,10 @@ impl Toy {
                     bike_egress_s: 0.0,
                     ..ModeDefaults::SHIPPED
                 });
+        if loadings > 1 {
+            let options = [("iterations".to_string(), f64::from(loadings))].into_iter().collect();
+            run = run.with_equilibration(Arc::new(Msa::from_options(&options).unwrap()));
+        }
         if ltm {
             run = run.with_flow_motor(FlowMotor::Ltm {
                 turns: Arc::new(TurnTable::build(&self.road, SignalDefaults::SHIPPED)),
@@ -188,4 +204,17 @@ fn b5_a_timetable_not_put_on_the_roads_runs_by_the_schedule() {
     assert!(transit.bus_report().is_none());
     let result = t.run(vec![t.trip("p", "M", "D1", Mode::Transit)], transit.clone(), true);
     assert_eq!(passenger(&result), (EventType::TripCompleted, 240));
+}
+
+#[test]
+fn b6_over_loadings_the_passenger_rides_the_bus_that_comes_but_plans_on_the_timetable() {
+    let t = toy();
+    let transit = t.transit(TransitDefaults::SHIPPED, true);
+    let result =
+        t.run_loadings(vec![t.trip("p", "M", "D1", Mode::Transit)], transit.clone(), true, 3);
+    assert_eq!(result.iterations.len(), 3);
+    assert_eq!(bus_times(&result, &transit, 0), [(0, 0), (80, 120), (205, 205)]);
+    assert_eq!(passenger(&result), (EventType::TripCompleted, 205));
+    let it = result.itineraries.as_ref().expect("itineraries");
+    assert_eq!(it.expected_s, [240.0], "planned on the timetable, not on the bus that came early");
 }

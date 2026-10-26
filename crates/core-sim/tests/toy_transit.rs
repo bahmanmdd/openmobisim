@@ -217,35 +217,3 @@ fn tr6_without_a_timetable_transit_is_not_available() {
     assert_eq!(outcomes(&result), [(EventType::ModeNotAvailable, 0)]);
     assert!(result.transit.is_none());
 }
-
-#[test]
-fn tr7_a_traveller_plans_on_the_schedule_shifted_by_the_last_known_delay_past_the_window() {
-    // S279: a bus still under way when the window closed has unknown calls from there on;
-    // for planning they read as the schedule plus the run's last known delay, so a journey
-    // that ends after the window's end is offered (and judged unfinished if taken).
-    let t = toy();
-    let timetable = t.transit.timetable();
-    let sched = timetable.scheduled();
-    let mut times = sched.clone();
-    let run = TransitRunId::new(0);
-    let calls: Vec<usize> = timetable.run_calls(run).collect();
-    let (first, last) = (calls[0], *calls.last().unwrap());
-    times.departure[first] = sched.departure[first] + 30;
-    times.arrival[last] = openmobisim_core_transit::timetable::UNKNOWN_TIME;
-    times.departure[last] = openmobisim_core_transit::timetable::UNKNOWN_TIME;
-    // The window closes at 100: the last call (scheduled at 300) lies past it.
-    let expected = t.transit.expected(&times, 100);
-    assert_eq!(expected.departure[first], sched.departure[first] + 30, "a known call stays");
-    assert_eq!(expected.arrival[last], sched.arrival[last] + 30, "unknown: schedule + delay");
-    assert_eq!(expected.departure[last], sched.departure[last] + 30);
-    // An unknown call inside the window stays unknown: a cancelled run is not planned on.
-    let inside = t.transit.expected(&times, 1000);
-    assert_eq!(inside.arrival[last], openmobisim_core_transit::timetable::UNKNOWN_TIME);
-    // A run with every call known is untouched.
-    for c in timetable.run_calls(TransitRunId::new(1)) {
-        assert_eq!(
-            (expected.arrival[c], expected.departure[c]),
-            (sched.arrival[c], sched.departure[c])
-        );
-    }
-}

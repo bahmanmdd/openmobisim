@@ -16,10 +16,13 @@
 //! static-layer trip's is.
 //!
 //! **A transit trip** (`walk · transit · walk`) leaves at its departure, walks
-//! to a stop, rides one or more runs and walks to its destination, by the
-//! earliest-arriving journey RAPTOR finds on the times of the day — the
-//! schedule, or the loading's realised times for the runs that ride the roads —
-//! with the fewest vehicles among the earliest. It takes at least one vehicle.
+//! to a stop, rides one or more runs and walks to its destination. It is planned on
+//! the **timetable** (with the disruptions travellers know of), by the journeys RAPTOR
+//! finds — for each number of vehicles, the earliest arrival that beats every journey
+//! with fewer — whatever a loading made of the buses: nobody knows a bus's delay before
+//! the day. It is ridden on the times of the day: the first run of each planned line
+//! the passenger can catch, which with buses on the roads is the loading's. It takes at
+//! least one vehicle.
 //!
 //! **Buses keep to the timetable** unless they are put on the roads: then
 //! ([`TransitDefaults::buses_on_roads`], [`TransitSetup::with_roads`]) every bus pattern is
@@ -35,7 +38,7 @@
 //! arrives, and not before its scheduled departure (`core-loading`'s chained
 //! vehicles), so a bus that falls behind stays behind and one that is early waits.
 //! The loading's times replace the schedule's for those runs, and passengers
-//! route on them.
+//! ride them as they came.
 //!
 //! **Cost:** per stop, a hub (about 40 bytes) and its footpaths; per bus pattern,
 //! a shortest-path search per pair of stops (once); per trip, two bounded walks
@@ -597,42 +600,6 @@ impl TransitSetup {
             times.departure[last] = times.arrival[last];
         }
         times
-    }
-
-    /// The times a traveller plans on after a loading: `times` with every call scheduled
-    /// after `until_s` (the window's end) that is unknown — a bus still under way when the
-    /// window closed, or one never loaded because it leaves after it — filled with the
-    /// schedule shifted by the run's last known delay (its last realised call against the
-    /// schedule; none known: the schedule). A journey that ends after the window's end is then
-    /// offered like the car trip that would, and is unfinished if taken. A call scheduled
-    /// inside the window stays unknown when it is: a cancelled run, or a bus that never came,
-    /// is not planned on; execution keeps the realised times throughout, so nobody boards a
-    /// bus the loading never brought.
-    #[must_use]
-    pub fn expected(&self, times: &CallTimes, until_s: u32) -> CallTimes {
-        let t = &self.timetable;
-        let sched = t.scheduled();
-        let mut out = times.clone();
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "clamped")]
-        let shifted = |s: u32, delay: i64| -> u32 {
-            (i64::from(s) + delay).clamp(0, i64::from(UNKNOWN_TIME - 1)) as u32
-        };
-        for r in 0..t.run_count() {
-            let mut delay: i64 = 0;
-            for c in t.run_calls(TransitRunId::new(r)) {
-                if times.arrival[c] != UNKNOWN_TIME {
-                    delay = i64::from(times.arrival[c]) - i64::from(sched.arrival[c]);
-                } else if sched.arrival[c] > until_s {
-                    out.arrival[c] = shifted(sched.arrival[c], delay);
-                }
-                if times.departure[c] != UNKNOWN_TIME {
-                    delay = i64::from(times.departure[c]) - i64::from(sched.departure[c]);
-                } else if sched.departure[c] > until_s {
-                    out.departure[c] = shifted(sched.departure[c], delay);
-                }
-            }
-        }
-        out
     }
 
     /// The timetable.
