@@ -594,3 +594,49 @@ def test_the_generalised_gap_is_a_column_where_the_route_cost_is_not_time_alone(
     assert np.isnan(go("eq-time-only", **loadings).convergence()["gap_generalised_excess"]).all()
     back = ms.Run.open(tmp_path / "eq-generalised").convergence()["gap_generalised_excess"]
     assert np.array_equal(back, gap)
+
+
+class _Doctored:
+    """A run's summary with some convergence columns replaced (the rest read through)."""
+
+    def __init__(self, summary, **columns):
+        self._summary, self._columns = summary, {**summary.convergence, **columns}
+
+    @property
+    def convergence(self):
+        return self._columns
+
+    def __getattr__(self, name):
+        return getattr(self._summary, name)
+
+
+def test_the_verdict_reads_the_gap_the_stopping_rule_reads(tmp_path):
+    # S299: a run whose choice model weighs more than time on a car route stops on the in-set gap
+    # in generalised minutes, so convergence_gap and the verdict read it too; a run whose route
+    # cost is time alone reads gap_excess as before.
+    loadings = {**MSA, "equilibration_options": {"iterations": 4, "gap_tolerance": 0.0}}
+    priced = scenario(price_options={"car_eur_km": 0.2}, **loadings).run(
+        "eq-verdict-priced", output_dir=str(tmp_path / "priced"), quiet=True
+    )
+    c = priced.convergence()
+    assert np.isfinite(c["gap_generalised_excess"][-1]) and np.isnan(c["itinerary_gap_excess"][-1])
+    worst = max(c["gap_generalised_excess"][-1], c["gap_network_excess"][-1])
+    assert priced.convergence_gap == pytest.approx(worst, rel=0, abs=0)
+    # The verdict follows the generalised gap, not gap_excess: one far from equilibrium in
+    # generalised minutes is judged so while its time gap reads settled.
+    far = c["gap_generalised_excess"].copy()
+    far[-1] = 0.10
+    priced._summary = _Doctored(priced._summary, gap_generalised_excess=far)
+    assert c["gap_excess"][-1] < 0.05
+    assert priced.convergence_gap == pytest.approx(0.10, rel=0, abs=0)
+    assert priced.convergence_verdict == "acceptable"
+    # Not measured (nan): gap_excess, as a time-only run.
+    nan = np.full_like(far, np.nan)
+    priced._summary = _Doctored(priced._summary._summary, gap_generalised_excess=nan)
+    assert priced.convergence_gap == max(c["gap_excess"][-1], c["gap_network_excess"][-1])
+
+    timed = go("eq-verdict-time", **loadings)
+    t = timed.convergence()
+    assert np.isnan(t["gap_generalised_excess"]).all()
+    assert timed.convergence_gap == max(t["gap_excess"][-1], t["gap_network_excess"][-1])
+    assert timed.convergence_verdict == "good"

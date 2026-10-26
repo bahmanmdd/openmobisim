@@ -64,8 +64,8 @@ values), each user class by its own coefficients. With the defaults, which weigh
 `Scenario` argument `max_cost_vectors` (2); beyond it a class is searched by the nearest by value of time, recorded
 as a `cost_vectors_grouped` diagnostic. Where a class weighs more than time, the stopping rule reads the gap within
 the choice set in generalised minutes (utility over the time coefficient), shown in the new `convergence()` column
-`gap_generalised_excess` (also in `kpis.parquet`; `nan` where the route cost is time alone); the gaps in time are
-still reported.
+`gap_generalised_excess` (also in `kpis.parquet`; `nan` where the route cost is time alone), and so do
+`Run.convergence_gap` and `Run.convergence_verdict`; the gaps in time are still reported.
 - **Bike routes from the utility**: `bike_cost="utility"` is the new default (travel time plus 48 s per kilometre in
   mixed traffic at the default coefficients; a ferry is not mixed traffic); `"dedicated"` (the 1.2 factor) and
   `"time"` stay. The bike route choice now fills `bike_lane_km` and `bike_separated_km`.

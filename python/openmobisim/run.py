@@ -376,7 +376,9 @@ class Run:
         """How far the run ended from equilibrium.
 
         **The worst of** the last iteration's disequilibrium against the choice set
-        (``convergence()["gap_excess"][-1]``), against the whole network
+        (``convergence()["gap_excess"][-1]``; ``gap_generalised_excess`` where it is measured, a
+        run whose choice model weighs more than time on a car route, as its stopping rule
+        does), against the whole network
         (``convergence()["gap_network_excess"][-1]``, a sample), so a route the choice set
         was missing cannot hide behind a small in-set number, and of the itineraries
         (``convergence()["itinerary_gap_excess"][-1]``: transit, park-and-ride, bike-and-ride
@@ -393,6 +395,9 @@ class Run:
         for excess, plain in (("gap_excess", "gap"), ("gap_network_excess", "gap_network")):
             value = float(c[excess][-1])
             values.append(value if value == value else float(c[plain][-1]))
+        generalised = c.get("gap_generalised_excess")
+        if generalised is not None and len(generalised) and generalised[-1] == generalised[-1]:
+            values[0] = float(generalised[-1])  # the in-set gap the stopping rule reads
         values.append(float(c["itinerary_gap_excess"][-1]))
         finite = [v for v in values if v == v]  # not nan
         return max(finite) if finite else float("nan")
@@ -457,7 +462,8 @@ class Run:
         * ``gap_excess`` — **the disequilibrium**, ``gap − gap_expected``: what the choice
           model does not explain (it also holds the sampling noise of a finite population).
           **Below 0.05 is good, below 0.15 acceptable**; it is what ``gap_tolerance`` stops on
-          and what ``convergence_verdict`` judges. Equal to ``gap`` for ``"deterministic"``.
+          and what ``convergence_verdict`` judges (``gap_generalised_excess`` instead where that
+          is measured). Equal to ``gap`` for ``"deterministic"``.
         * ``incomplete_share`` — the share of travellers (by weight) whose trip had not finished
           when the window ended, who are left out of the gaps.
         * ``gap_network`` — the same measure against the **whole network**: the least
@@ -543,7 +549,8 @@ class Run:
           values counted beside time. A ratio, not minutes. Where the choice model weighs more
           than time on a car route (a price per kilometre, a toll, a user link value), it is
           what ``gap_tolerance`` stops on in place of ``gap_excess``, together with
-          ``itinerary_gap_excess``. ``nan`` where the route cost is travel time alone (the
+          ``itinerary_gap_excess``, and what ``convergence_gap`` and ``convergence_verdict``
+          read. ``nan`` where the route cost is travel time alone (the
           defaults: ``gap_excess`` is then its counterpart in travel time), for a model that
           gives no probabilities, and for a run of one loading.
 
