@@ -75,7 +75,7 @@ use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext, make_room, make_room_by};
 use crate::timings::{Stage, Timings};
 use crate::transit::{TransitResult, TransitSetup, par_map};
-use crate::trees::SearchTrees;
+use crate::trees::{SearchTrees, TreeCost};
 use crate::trip_results::TripOutcomes;
 use openmobisim_core_graph::hubs::ParkingKind;
 use openmobisim_core_graph::layers::StaticLayer;
@@ -1479,6 +1479,7 @@ impl Run {
             car_start_s: self.car_start_s(),
             mode: Mode::Car,
             bike_layer: None,
+            cost: Some(&road_cost),
         };
         let mut chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
         // The bike route choice (S298): with bike route sets, every stated bike trip chooses its
@@ -1521,6 +1522,7 @@ impl Run {
                     car_start_s: whole_seconds(self.mode_defaults.bike_access_s),
                     mode: Mode::Bike,
                     bike_layer: Some(setup.network()),
+                    cost: None,
                 };
                 let bike_chooser = route_choice::Chooser::new(&bike_inputs, sets.clone())?;
                 let times = LinkTimes::constant(graph, setup.seconds().to_vec());
@@ -1758,6 +1760,7 @@ impl Run {
                         drives_ahead
                             .as_deref()
                             .zip(parking_arc.as_deref().map(|p| p.defaults().reach_car_s)),
+                        Some(TreeCost { cost: &road_cost, trip_class: &trip_class }),
                     );
                     car_reach = itinerary_choice::car_reach_of(drives);
                     clock = timings.lap("trees", Some(0), clock);
@@ -1774,6 +1777,7 @@ impl Run {
                         trees: Some(&trees),
                         trip_class: &trip_class,
                         extras: update_extras.as_ref(),
+                        route_cost: Some(&road_cost),
                     });
                     increment_searches += found.searches;
                     if !found.routes.is_empty() {
@@ -1940,6 +1944,7 @@ impl Run {
                         drives_ahead
                             .as_deref()
                             .zip(parking_arc.as_deref().map(|p| p.defaults().reach_car_s)),
+                        Some(TreeCost { cost: &road_cost, trip_class: &trip_class }),
                     );
                     let mut car_reach = itinerary_choice::car_reach_of(drives);
                     clock = timings.lap("trees", Some(iteration), clock);
@@ -1960,6 +1965,7 @@ impl Run {
                             trees: Some(&trees),
                             trip_class: &trip_class,
                             extras: update_extras.as_ref(),
+                            route_cost: Some(&road_cost),
                         });
                         report.route_searches = found.searches;
                         if !found.routes.is_empty() {

@@ -732,6 +732,7 @@ fn a_pair_within_the_slack_of_free_flow_is_not_searched_and_one_beyond_it_is() {
             trees: None,
             trip_class: &trip_class,
             extras: None,
+            route_cost: None,
         });
         (found.searches, found.route_count())
     };
@@ -1138,6 +1139,7 @@ fn a_competitive_route_that_is_never_the_fastest_enters_only_with_sampled_draws(
             trees: None,
             trip_class: &trip_class,
             extras: None,
+            route_cost: None,
         })
     };
     let best = run(&inner);
@@ -1189,6 +1191,7 @@ fn a_competitive_route_that_is_never_the_fastest_enters_only_with_sampled_draws(
             trees: None,
             trip_class: &trip_class,
             extras: Some(&extras),
+            route_cost: None,
         });
         if let Some((_, routes)) = found.routes.first() {
             assert_eq!(routes[0].links, slow, "what enters is the slow road");
@@ -1269,4 +1272,129 @@ fn the_sampled_update_is_chosen_by_name_and_refuses_bad_options() {
         ok.descriptor(),
         "sampled;draws=3;max_detour=1.5;max_routes=6;searches=1;seed=0;sigma=0.5;slack=0.02;tau=0;tree_step_s=900"
     );
+}
+
+/// **Column generation by the route cost** (S299): hand-made times on the bottleneck, the fast
+/// road 8% over free flow and still the faster. Two classes: `tolled` pays a toll on the fast road
+/// (worth 360 s at its value of time), `free` weighs no money. The route cost has two vectors
+/// and the trees one per vector: the `tolled` tree's route to `d` is the slow road, costed in its
+/// generalised cost, the `free` tree's is the fast road. The column generation adds the slow
+/// road, found in the `tolled` vector's tree, which the update by time never adds; with the
+/// route cost of time alone it is the update by time, to the bit.
+#[test]
+fn a_toll_makes_the_column_generation_add_the_route_cheapest_in_its_class_s_cost() {
+    use openmobisim_core_loading::{EntryTables, LinkBinRecorder};
+    use openmobisim_core_routes::{RouteKey, RouteSets};
+    use openmobisim_core_sim::LinkTimes;
+    use openmobisim_core_sim::generalised_cost::{LinkTerms, RouteCost};
+    use openmobisim_core_sim::route_update::{BestResponse, RouteUpdate, UpdateContext};
+    use openmobisim_core_sim::trees::{SearchTrees, TreeCost};
+
+    let network = bottleneck();
+    let turns = TurnTable::build(&network, SignalDefaults::SHIPPED);
+    let node = |n: &str| network.node_external_ids().typed_id_of::<NodeId>(n).unwrap();
+    let link = |n: &str| network.link_external_ids().typed_id_of::<LinkId>(n).unwrap();
+    let key = RouteKey::new(node("o"), node("d"));
+    let sets = RouteSets::generate(&network, &turns, &[key], &Shortest);
+    let free = f64::from(sets.route(0).cost);
+    // Twenty trips of each class.
+    let rows: Vec<RawTrip> = trips(40, 900)
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut t)| {
+            t.user_class = if i % 2 == 0 { "tolled" } else { "free" }.to_string();
+            t
+        })
+        .collect();
+    let owning = ClassDefaults::new()
+        .with_default("tolled", Ownership { car: true, ..Ownership::NONE })
+        .with_default("free", Ownership { car: true, ..Ownership::NONE });
+    let (travellers, raw) =
+        build_travellers(rows, Vec::new(), &owning, 1, &mut Diagnostics::new()).unwrap();
+    let trip_keys = vec![key; raw.len() as usize];
+    let trip_class: Vec<u32> = (0..raw.len())
+        .map(|i| {
+            let traveller = raw.traveller(openmobisim_core_types::ids::TripId::new(i));
+            u32::try_from(travellers.user_class(traveller).index()).unwrap()
+        })
+        .collect();
+    let mut toll = vec![0.0; network.link_count() as usize];
+    toll[link("fast").index()] = 1.0;
+    let terms = LinkTerms { terms: vec![("cost_toll_eur".to_string(), toll)] };
+    let class = |name: &str, beta: f64| -> (String, ChoiceOptions) {
+        (name.to_string(), [("beta_cost_eur".to_string(), beta)].into_iter().collect())
+    };
+    let logit = openmobisim_core_choice::Logit::default()
+        .with_classes(&[class("tolled", -1.2), class("free", 0.0)])
+        .unwrap();
+    let seconds = openmobisim_core_sim::generalised_cost::road_seconds(&network);
+    let cost = RouteCost::compose(&logit, &travellers, &terms, &seconds, 2);
+    assert_eq!(cost.vector_count(), 2, "one vector per class");
+    let tolled_vector = cost.vector_of_class(trip_class[0] as usize);
+    let free_vector = cost.vector_of_class(trip_class[1] as usize);
+    assert!(cost.extras(tolled_vector).is_some() && cost.extras(free_vector).is_none());
+
+    let mut recorder = LinkBinRecorder::new(network.link_count() as usize, 3_600, 3_600.0);
+    recorder.record(link("fast"), 0.0, 1.08 * free, 1.0);
+    let empty = LinkBinRecorder::new(network.link_count() as usize, 3_600, 3_600.0).finish();
+    let times = LinkTimes::from_tables(
+        &network,
+        &EntryTables { entry: recorder.finish(), origin_wait: empty },
+    );
+    let tree_cost = TreeCost { cost: &cost, trip_class: &trip_class };
+    let trees = SearchTrees::build(
+        &network,
+        &turns,
+        &times,
+        &raw,
+        &trip_keys,
+        &sets,
+        None,
+        0,
+        3_600.0,
+        Some(tree_cost),
+    );
+    let slow: Vec<u32> = vec![link("slow1").raw(), link("slow2").raw()];
+    let at = 1_800.0;
+    let tolled = trees.route_of(key.origin, tolled_vector, key.destination, at).expect("a route");
+    assert_eq!(tolled.links, slow, "the toll makes the slow road the tolled class's cheapest");
+    assert!((tolled.cost - tolled.seconds).abs() < 1e-6, "no toll on the slow road: cost is time");
+    let tree = trees.tree_of(key.origin, tolled_vector, at).expect("the tolled class's tree");
+    // The set holds the fast road alone: its best in the class's cost is its time plus 360 s.
+    assert!((tree.keys[0].1 - (1.08 * free + 360.0)).abs() < 1.0, "{}", tree.keys[0].1);
+    assert!(tolled.cost < tree.keys[0].1, "the slow road beats the set's best in that cost");
+    let untolled = trees.route_of(key.origin, free_vector, key.destination, at).expect("a route");
+    assert_eq!(untolled.links, vec![link("fast").raw()], "by time, the fast road");
+
+    // No slack: it rests on the set holding each vector's free-flow cheapest route, as a run's
+    // sets generated by the route cost do; this set was made by time alone.
+    let update = BestResponse { searches: 1, max_routes: 10, slack: 0.0, tree_step_s: 3_600 };
+    let run = |route_cost: Option<&RouteCost>, step: u32| {
+        let update = BestResponse { tree_step_s: step, ..update };
+        update.update(&UpdateContext {
+            network: &network,
+            turns: &turns,
+            trips: &raw,
+            trip_keys: &trip_keys,
+            route_sets: &sets,
+            times: &times,
+            car_start_s: 0,
+            iteration: 1,
+            active: None,
+            trees: None,
+            trip_class: &trip_class,
+            extras: None,
+            route_cost,
+        })
+    };
+    assert_eq!(run(None, 3_600).route_count(), 0, "by time the slow road never pays");
+    let time_only = RouteCost::time_only();
+    assert_eq!(run(Some(&time_only), 3_600), run(None, 3_600), "time alone: the update by time");
+    for step in [3_600, 0] {
+        let by_cost = run(Some(&cost), step);
+        assert_eq!(by_cost.route_count(), 1, "step {step}: the slow road enters");
+        let routes = &by_cost.routes[0].1;
+        let raw_links: Vec<u32> = routes[0].links.iter().map(|l| l.raw()).collect();
+        assert_eq!(raw_links, slow, "step {step}");
+    }
 }

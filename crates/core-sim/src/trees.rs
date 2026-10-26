@@ -1,5 +1,9 @@
-//! Shared search trees (S294): **one bounded time-dependent search per origin node and
-//! departure bin**, on one loading's link times, read by the route update and by the gap alike.
+//! Shared search trees (S294): **one bounded time-dependent search per origin node, departure
+//! bin and coefficient vector**, on one loading's link times, read by the route update and by
+//! the gap alike. A tree of a vector with extras (the run's route cost, S299,
+//! [`crate::generalised_cost::RouteCost`]) finds least-cost routes by that vector's generalised
+//! cost; a run whose utility weighs time alone has one vector, by time, and the trees below are
+//! by time.
 //!
 //! The route update ([`crate::route_update`]) asks, for every origin–destination pair, whether
 //! the network holds a route faster than the pair's set at the congested times; the gap
@@ -32,6 +36,7 @@ use openmobisim_core_routes::{
 };
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
 
+use crate::generalised_cost::RouteCost;
 use crate::link_times::LinkTimes;
 
 /// A route one tree found: the cheapest from the tree's origin to `destination` at the tree's
@@ -91,12 +96,22 @@ pub type TreeDrive = ((u32, u64), Box<[u32]>, Box<[(u32, Box<[LinkId]>)]>);
 /// every drive in seconds ([`SearchTrees::build_with_drives`]).
 pub type DrivesWanted<'w> = (&'w [((u32, u64), Vec<NodeId>)], f64);
 
+/// What the trees' searches minimise (S299): the run's route cost, and each trip's user class
+/// index by trip (its vector is its class's).
+#[derive(Clone, Copy, Debug)]
+pub struct TreeCost<'a> {
+    /// The run's route cost.
+    pub cost: &'a RouteCost,
+    /// Each trip's user class index, by trip.
+    pub trip_class: &'a [u32],
+}
+
 /// The trees of one loading: see the [module docs](self).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SearchTrees {
     step_s: f64,
-    /// Each tree's (origin, bin), ascending, in step with [`Self::trees`].
-    heads: Vec<(u32, u64)>,
+    /// Each tree's (origin, bin, coefficient vector), ascending, in step with [`Self::trees`].
+    heads: Vec<(u32, u64, u32)>,
     trees: Vec<Tree>,
     /// How many pairs the trees searched for, in all.
     pairs: u32,
@@ -128,9 +143,21 @@ impl SearchTrees {
         active: Option<&[bool]>,
         car_start_s: u32,
         step_s: f64,
+        cost: Option<TreeCost<'_>>,
     ) -> Self {
         let inputs = (network, turns, times);
-        Self::build_with_drives(inputs, trips, trip_keys, sets, active, car_start_s, step_s, None).0
+        Self::build_with_drives(
+            inputs,
+            trips,
+            trip_keys,
+            sets,
+            active,
+            car_start_s,
+            step_s,
+            None,
+            cost,
+        )
+        .0
     }
 
     /// [`Self::build`], each tree also answering the **drives** `drives` asks for at its origin
@@ -143,6 +170,14 @@ impl SearchTrees {
     /// ([`openmobisim_core_routes::Search::fastest_arrivals_to`]). A drive at an origin and bin
     /// without a tree is not searched here. Returns the trees, the same as [`Self::build`]'s, and
     /// the drives answered, ascending by (origin, bin).
+    ///
+    /// **By the route cost** (S299): with `cost` given and not time alone, each tree is also of
+    /// one coefficient vector, the trips of a class searching by its class's vector
+    /// ([`RouteCost::vector_of_class`]): a tree of a vector with extras minimises the travel time
+    /// plus the extras ([`openmobisim_core_routes::Search::cheapest_routes_to`]), its keys' best
+    /// and its routes' [`FoundRoute::cost`] are in that generalised cost, and it answers no
+    /// drive (a drive is a search by time). Without, every tree is of vector 0 and searched by
+    /// time, as above, to the bit.
     ///
     /// # Panics
     ///
@@ -159,10 +194,18 @@ impl SearchTrees {
         car_start_s: u32,
         step_s: f64,
         drives: Option<DrivesWanted<'_>>,
+        cost: Option<TreeCost<'_>>,
     ) -> (Self, Vec<TreeDrive>) {
         assert!(step_s > 0.0, "a departure bin has a positive length");
-        // (origin, bin, key), sorted and deduplicated: the trees in a fixed order, each key once.
-        let mut items: Vec<(u32, u64, usize)> = (0..trips.len())
+        let cost = cost.filter(|c| !c.cost.is_time_only());
+        let vector_of = |i: usize| {
+            cost.map_or(0, |c| {
+                c.cost.vector_of_class(c.trip_class.get(i).copied().unwrap_or(0) as usize)
+            })
+        };
+        // (origin, bin, vector, key), sorted and deduplicated: the trees in a fixed order, each
+        // key once per vector.
+        let mut items: Vec<(u32, u64, u32, usize)> = (0..trips.len())
             .filter(|&i| active.is_none_or(|a| a[i as usize]))
             .filter_map(|i| {
                 let key = trip_keys[i as usize];
@@ -181,18 +224,18 @@ impl SearchTrees {
                     reason = "a bin count"
                 )]
                 let slot = (departure / step_s).floor() as u64;
-                Some((key.origin, slot, k))
+                Some((key.origin, slot, vector_of(i as usize), k))
             })
             .collect();
         items.sort_unstable();
         items.dedup();
-        let mut heads: Vec<(u32, u64)> = Vec::new();
+        let mut heads: Vec<(u32, u64, u32)> = Vec::new();
         let mut groups: Vec<(f64, Vec<usize>)> = Vec::new();
-        for (origin, slot, k) in items {
-            if heads.last() == Some(&(origin, slot)) {
+        for (origin, slot, vector, k) in items {
+            if heads.last() == Some(&(origin, slot, vector)) {
                 groups.last_mut().expect("a head has a group").1.push(k);
             } else {
-                heads.push((origin, slot));
+                heads.push((origin, slot, vector));
                 #[allow(clippy::cast_precision_loss, reason = "a bin count")]
                 let departure = (slot as f64 + 0.5) * step_s;
                 groups.push((departure, vec![k]));
@@ -201,11 +244,12 @@ impl SearchTrees {
         // Each tree's drive, if one is wanted at its origin and bin: the nodes sought, ascending.
         let mut sought: Vec<Option<Box<[u32]>>> = vec![None; heads.len()];
         let drive_bound = drives.map_or(0.0, |(_, bound)| bound);
-        if let Some((wanted, _)) = drives {
+        // Drives are searches by time: only trees by time answer them, all of them without a cost.
+        if let (Some((wanted, _)), None) = (drives, cost) {
             let mut by_head: std::collections::BTreeMap<usize, Vec<u32>> =
                 std::collections::BTreeMap::new();
             for (head, nodes) in wanted {
-                if let Ok(i) = heads.binary_search(head) {
+                if let Ok(i) = heads.binary_search(&(head.0, head.1, 0)) {
                     by_head.entry(i).or_default().extend(nodes.iter().map(|n| n.raw()));
                 }
             }
@@ -216,19 +260,33 @@ impl SearchTrees {
             }
         }
         let ctx = SearchContext::new(network, turns);
+        // Each vector's extras, prepared for this context (their A* bounds); none by time.
+        let prepared: Vec<Option<Extras>> = cost.map_or_else(Vec::new, |c| {
+            c.cost.vectors().iter().map(|v| v.as_ref().map(|e| ctx.extras(e.to_vec()))).collect()
+        });
         let node_count = network.node_count() as usize;
         let wait = |link: u32, at: f64| times.origin_wait_seconds(link, at);
         let seconds = |link: u32, at: f64| times.link_seconds(link, at);
         let items: Vec<_> = heads.iter().zip(&groups).zip(&sought).collect();
         let searched: Vec<SearchedWithDrive> = search_map(&ctx, &items, |search, item| {
-            let ((&(origin, slot), (departure, keys)), drive) = *item;
+            let ((&(origin, slot, vector), (departure, keys)), drive) = *item;
+            let extras = prepared.get(vector as usize).and_then(Option::as_ref);
+            // A route's cost in the tree's currency: its time at the tree's departure, plus its
+            // extras under the tree's vector where it has some.
+            let cost_of = |links: &[u32]| {
+                let time = times.route_seconds(links, *departure);
+                match extras {
+                    None => time,
+                    Some(e) => time + links.iter().map(|&l| e.seconds()[l as usize]).sum::<f64>(),
+                }
+            };
             // Each key's best at the tree's departure: the search's bound is the slowest.
             let keys: Vec<(usize, f64)> = keys
                 .iter()
                 .map(|&k| {
                     let best = sets
                         .route_range(k)
-                        .map(|r| times.route_seconds(sets.route(r).links, *departure))
+                        .map(|r| cost_of(sets.route(r).links))
                         .fold(f64::INFINITY, f64::min);
                     (k, best)
                 })
@@ -242,6 +300,32 @@ impl SearchTrees {
                     targets[d] = true;
                     wanted += 1;
                 }
+            }
+            if let Some(e) = extras {
+                search.clear_route_state();
+                search.set_extras(Some(e.clone()));
+                let mut routes: Vec<FoundRoute> = search
+                    .cheapest_routes_to(
+                        NodeId::new(origin),
+                        &targets,
+                        wanted,
+                        *departure,
+                        bound,
+                        &wait,
+                        &seconds,
+                    )
+                    .into_iter()
+                    .filter(|(_, _, _, links)| !links.is_empty())
+                    .map(|(node, generalised, seconds, links)| FoundRoute {
+                        destination: node.raw(),
+                        seconds,
+                        cost: generalised,
+                        links: links.iter().map(|l| l.raw()).collect(),
+                    })
+                    .collect();
+                search.clear_route_state();
+                routes.sort_unstable_by_key(|r| r.destination);
+                return (keys, routes, None);
             }
             let Some(drive) = drive else {
                 let mut routes: Vec<FoundRoute> = search
@@ -312,7 +396,7 @@ impl SearchTrees {
             .iter()
             .zip(groups)
             .zip(searched)
-            .map(|((&(origin, _), (departure, _)), (keys, routes, drive))| {
+            .map(|((&(origin, _, _), (departure, _)), (keys, routes, drive))| {
                 pairs += u32::try_from(keys.len()).expect("few keys per tree");
                 answered.extend(drive);
                 Tree { origin, departure, keys, routes }
@@ -352,12 +436,20 @@ impl SearchTrees {
         self.pairs
     }
 
-    /// The tree of `origin` for a trip departing at `departure` seconds, if one was built.
+    /// The tree of `origin` for a trip departing at `departure` seconds, if one was built: of
+    /// coefficient vector 0 (every tree of a run whose cost is time alone).
     #[must_use]
     pub fn tree(&self, origin: u32, departure: f64) -> Option<&Tree> {
+        self.tree_of(origin, 0, departure)
+    }
+
+    /// The tree of `origin` and coefficient vector `vector` for a trip departing at `departure`
+    /// seconds, if one was built.
+    #[must_use]
+    pub fn tree_of(&self, origin: u32, vector: u32, departure: f64) -> Option<&Tree> {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin count")]
         let slot = (departure / self.step_s).floor() as u64;
-        self.heads.binary_search(&(origin, slot)).ok().map(|i| &self.trees[i])
+        self.heads.binary_search(&(origin, slot, vector)).ok().map(|i| &self.trees[i])
     }
 
     /// The route the tree of `origin` and `departure` found to `destination`, if any: the
@@ -365,6 +457,19 @@ impl SearchTrees {
     #[must_use]
     pub fn route(&self, origin: u32, destination: u32, departure: f64) -> Option<&FoundRoute> {
         self.tree(origin, departure)?.route_to(destination)
+    }
+
+    /// [`Self::route`] in the tree of coefficient vector `vector`: the cheapest at the bin's
+    /// middle in that vector's generalised cost.
+    #[must_use]
+    pub fn route_of(
+        &self,
+        origin: u32,
+        vector: u32,
+        destination: u32,
+        departure: f64,
+    ) -> Option<&FoundRoute> {
+        self.tree_of(origin, vector, departure)?.route_to(destination)
     }
 }
 

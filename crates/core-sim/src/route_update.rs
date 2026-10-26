@@ -17,7 +17,7 @@
 //! |---|---|
 //! | `none` (the default, [`DEFAULT_UPDATE`]) | Nothing: the sets stay as the generator made them, and the run costs nothing extra |
 //! | `sampled` | `best_response` and, beside it, **sampled candidates** (S298): for each of `draws` preference draws per iteration, one perturbed generalised-cost tree per origin, departure bin and user class (the class's extra seconds per link for length, money and user values, drawn around its coefficients; every link's cost times a random factor), whose route to a pair is added if it is new and its cost at the bin's middle, in the class's generalised cost for the draw (its travel time where the class has no extras), is within `max_detour` of the set's best in that cost; never to a full set. The set then holds competitive routes, not only ones that were once the fastest |
-//! | `best_response` | For every origin–destination pair, the fastest route at the congested times, read from the run's **shared search trees** (one bounded time-dependent search per origin and departure bin, [`crate::trees`]; S294) or, with `tree_step_s` 0, found by one bounded search per pair at the median departure of the pair's trips; it is **added if it is new and at least as fast as the set's best route**: a tie counts, since an equally good alternative is one more to spread over. Column generation, as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
+//! | `best_response` | **Column generation**: for every origin–destination pair, the least-cost route at the congested times (the time-dependent least-cost route by each user class's generalised cost, its travel time plus the seconds-equivalent of every per-link term its utility weighs; the fastest route where the utility weighs only time), read from the run's **shared search trees** (one bounded time-dependent search per origin, departure bin and coefficient vector, [`crate::trees`]; S294, S299) or, with `tree_step_s` 0, found by one bounded search per pair at the median departure of the pair's trips; it is **added if it is new and costs no more than the set's best route** in that cost: a tie counts, since an equally good alternative is one more to spread over. A route is a "column" of the route-flow problem; as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
 //!
 //! **What `best_response` costs.** With the shared trees (the default) nothing is searched: the
 //! run builds the trees for its gap and the update reads each pair's route off its tree, at the
@@ -54,8 +54,9 @@ use openmobisim_core_routes::{
 };
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
 
+use crate::generalised_cost::RouteCost;
 use crate::link_times::LinkTimes;
-use crate::trees::{DrawTrees, SearchTrees};
+use crate::trees::{DrawTrees, SearchTrees, TreeCost};
 
 /// The share of free flow within which `best_response` does not search a pair (see
 /// [`BestResponse::slack`]).
@@ -120,6 +121,19 @@ pub struct UpdateContext<'a> {
     /// The extra seconds per link by class and preference draw an update asked for
     /// ([`RouteUpdate::extras_wanted`]), composed by the run; `None` where none asked.
     pub extras: Option<&'a ClassExtras>,
+    /// The run's route cost (S299): what the column generation's search minimises, per
+    /// coefficient vector, a trip's vector its class's (`trip_class`). `None`, or a cost of
+    /// time alone, searches by time.
+    pub route_cost: Option<&'a RouteCost>,
+}
+
+impl UpdateContext<'_> {
+    /// The route cost as the trees take it, `None` where it is time alone.
+    fn tree_cost(&self) -> Option<TreeCost<'_>> {
+        self.route_cost
+            .filter(|c| !c.is_time_only())
+            .map(|cost| TreeCost { cost, trip_class: self.trip_class })
+    }
 }
 
 /// The routes an update found.
@@ -215,8 +229,9 @@ impl NoRouteUpdate {
     }
 }
 
-/// Add each pair's fastest route at the congested times, if it is new and no slower than the
-/// set's best.
+/// **Column generation**: add each pair's least-cost route at the congested times (by each
+/// coefficient vector's generalised cost; the fastest where the utility weighs only time), if
+/// it is new and costs no more than the set's best in that cost.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BestResponse {
     /// How many searches per pair per iteration, at evenly spread quantiles of the pair's
@@ -238,7 +253,9 @@ pub struct BestResponse {
     /// disequilibrium unchanged to the third decimal): at 2%, Manhattan's searches fell from 62 877
     /// to 7 569 and the run from 5.9 s to 4.0 s, Singapore's from 27 576 to 313, Stockholm's inner
     /// city (heavy) from 78 512 to 46 205 (−8% of the run); at 5%, 58% of Stockholm's searches.
-    /// Assumes the method's routes include a free-flow shortest one, as every built-in method's do.
+    /// Assumes the method's routes include a free-flow least-cost one under each coefficient
+    /// vector of the run's route cost, as every built-in method's do (S299; with the utility
+    /// weighing time alone, a free-flow shortest one). Read in each vector's cost.
     pub slack: f64,
     /// **Search trees** ([`DEFAULT_TREE_STEP_S`], the equilibration's default cost bin): above
     /// 0, the trips' departures are binned in steps of this many seconds and the pairs of one
@@ -363,10 +380,14 @@ impl RouteUpdate for BestResponse {
                         cx.active,
                         cx.car_start_s,
                         step,
+                        cx.tree_cost(),
                     );
                     self.update_from_trees(cx, &own)
                 }
             };
+        }
+        if let Some(cost) = cx.route_cost.filter(|c| !c.is_time_only()) {
+            return self.update_per_pair_by_cost(cx, cost);
         }
         let sets = cx.route_sets;
         let (departures, jobs) = self.plan(cx);
@@ -422,7 +443,7 @@ impl RouteUpdate for BestResponse {
                 if is_known(sets, job.key, &added, &links) {
                     continue;
                 }
-                let route = with_overlap(search, sets, job.key, &added, links);
+                let route = with_overlap(search, sets, job.key, &added, links, None);
                 added.push(route);
             }
             (added, searches)
@@ -439,6 +460,118 @@ impl RouteUpdate for BestResponse {
 }
 
 impl BestResponse {
+    /// [`RouteUpdate::update`] with `tree_step_s` 0 by the run's route cost (S299): each pair
+    /// searched at its departures once per coefficient vector its trips have, for the least-cost
+    /// route in that vector's generalised cost (time plus its extras), bounded by the set's best
+    /// in that cost, and added by the same rule as by time.
+    fn update_per_pair_by_cost(&self, cx: &UpdateContext<'_>, cost: &RouteCost) -> Additions {
+        let sets = cx.route_sets;
+        let (departures, jobs) = self.plan(cx);
+        // The vectors of each key's trips.
+        let mut of_key: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
+        for i in (0..cx.trips.len()).filter(|&i| cx.active.is_none_or(|a| a[i as usize])) {
+            let Some(k) = sets.key_index(cx.trip_keys[i as usize]) else { continue };
+            let class = cx.trip_class.get(i as usize).copied().unwrap_or(0);
+            of_key.entry(k).or_default().push(cost.vector_of_class(class as usize));
+        }
+        for vectors in of_key.values_mut() {
+            vectors.sort_unstable();
+            vectors.dedup();
+        }
+        let ctx = SearchContext::new(cx.network, cx.turns);
+        let prepared: Vec<Option<openmobisim_core_routes::Extras>> =
+            cost.vectors().iter().map(|v| v.as_ref().map(|e| ctx.extras(e.to_vec()))).collect();
+        let node_count = cx.network.node_count() as usize;
+        let max_routes = self.max_routes as usize;
+        let found: Vec<(Vec<Route>, u32)> = search_map(&ctx, &jobs, |search, job| {
+            let set = sets.route_range(job.key);
+            let key = sets.keys()[job.key];
+            let wait = |link: u32, at: f64| cx.times.origin_wait_seconds(link, at);
+            let seconds = |link: u32, at: f64| cx.times.link_seconds(link, at);
+            let mut added: Vec<Route> = Vec::new();
+            let mut searches = 0_u32;
+            let full = set.len() >= max_routes;
+            let room = max_routes.saturating_sub(set.len()).max(1);
+            let vectors = of_key.get(&job.key).map_or(&[0_u32][..], Vec::as_slice);
+            for &vector in vectors {
+                let extras = prepared.get(vector as usize).and_then(Option::as_ref);
+                let cost_of = |links: &[u32], at: f64| {
+                    cx.times.route_seconds(links, at) + cost.route_extra(vector, links)
+                };
+                let free_flow = set
+                    .clone()
+                    .map(|r| {
+                        let view = sets.route(r);
+                        f64::from(view.cost) + cost.route_extra(vector, view.links)
+                    })
+                    .fold(f64::INFINITY, f64::min);
+                for &second in &departures[job.departures.clone()] {
+                    let departure = f64::from(second);
+                    if added.len() >= room {
+                        break;
+                    }
+                    let best = set
+                        .clone()
+                        .map(|r| cost_of(sets.route(r).links, departure))
+                        .chain(added.iter().map(|r| {
+                            let raw: Vec<u32> = r.links.iter().map(|l| l.raw()).collect();
+                            cost_of(&raw, departure)
+                        }))
+                        .fold(f64::INFINITY, f64::min);
+                    if self.slack > 0.0 && best <= free_flow * (1.0 + self.slack) {
+                        continue;
+                    }
+                    searches += 1;
+                    let (origin, destination) =
+                        (NodeId::new(key.origin), NodeId::new(key.destination));
+                    let found = match extras {
+                        None => search.fastest_route(
+                            origin,
+                            destination,
+                            departure,
+                            best,
+                            &wait,
+                            &seconds,
+                        ),
+                        Some(e) => {
+                            search.clear_route_state();
+                            search.set_extras(Some(e.clone()));
+                            let mut target = vec![false; node_count];
+                            target[destination.index()] = true;
+                            let one = search
+                                .cheapest_routes_to(
+                                    origin, &target, 1, departure, best, &wait, &seconds,
+                                )
+                                .into_iter()
+                                .next()
+                                .map(|(_, generalised, _, links)| (generalised, links));
+                            search.clear_route_state();
+                            one
+                        }
+                    };
+                    let Some((found_cost, links)) = found else { continue };
+                    if links.is_empty() || (full && found_cost >= best - REPLACE_GAIN_S) {
+                        continue;
+                    }
+                    if is_known(sets, job.key, &added, &links) {
+                        continue;
+                    }
+                    let route = with_overlap(search, sets, job.key, &added, links, extras);
+                    added.push(route);
+                }
+            }
+            (added, searches)
+        });
+        let mut out = Additions::default();
+        for (job, (routes, searches)) in jobs.iter().zip(found) {
+            out.searches += searches;
+            if !routes.is_empty() {
+                out.routes.push((job.key, routes));
+            }
+        }
+        out
+    }
+
     /// [`RouteUpdate::update`] from search trees ([`Self::tree_step_s`]): each pair is read at
     /// the bins of the departures [`Self::plan`] picks for it (its [`Self::searches`] quantiles;
     /// the median with 1), as a search per pair would search at those departures, so the sets
@@ -464,6 +597,9 @@ impl BestResponse {
         let sets = cx.route_sets;
         let max_routes = self.max_routes as usize;
         let (departures, jobs) = self.plan(cx);
+        let cost = cx.route_cost.filter(|c| !c.is_time_only());
+        #[allow(clippy::cast_possible_truncation, reason = "few vectors")]
+        let vectors = cost.map_or(1, RouteCost::vector_count) as u32;
         // The pairs read, each once however many departures it is read at: what a search per
         // pair would have counted, which the stopping rule weighs the routes added against
         // (`route_growth_tolerance`).
@@ -477,33 +613,49 @@ impl BestResponse {
                 continue;
             }
             let full = set.len() >= max_routes;
-            let free_flow =
-                set.clone().map(|r| f64::from(sets.route(r).cost)).fold(f64::INFINITY, f64::min);
             let mut read = false;
-            for &second in &departures[job.departures.clone()] {
-                let Some(tree) = trees.tree(key.origin, f64::from(second)) else { continue };
-                let Ok(at) = tree.keys.binary_search_by_key(&k, |&(k, _)| k) else { continue };
-                let best = tree.keys[at].1;
-                // At most `slack` left to gain here: nothing beats free flow.
-                if self.slack > 0.0 && best <= free_flow * (1.0 + self.slack) {
-                    continue;
-                }
-                read = true;
-                let Some(found) = tree.route_to(key.destination) else { continue };
-                // At least as fast as the set's best: a tie counts (S176), but for a full set,
-                // which takes only a route that beats its best (S268).
-                let good = if full {
-                    found.seconds < best - REPLACE_GAIN_S
-                } else {
-                    found.seconds <= best + 1e-9
-                };
-                if !good {
-                    continue;
-                }
-                let links: Vec<LinkId> = found.links.iter().map(|&l| LinkId::new(l)).collect();
-                let known = by_key.get(&k).is_some_and(|added| added.contains(&links));
-                if !known && !is_known(sets, k, &[], &links) {
-                    by_key.entry(k).or_default().push(links);
+            // Each coefficient vector's trees (one, vector 0, where the cost is time alone): the
+            // set's best, its free flow and the route found, all in the vector's cost (S299).
+            for vector in 0..vectors {
+                let free_flow = set
+                    .clone()
+                    .map(|r| {
+                        let view = sets.route(r);
+                        match cost {
+                            None => f64::from(view.cost),
+                            Some(c) => f64::from(view.cost) + c.route_extra(vector, view.links),
+                        }
+                    })
+                    .fold(f64::INFINITY, f64::min);
+                for &second in &departures[job.departures.clone()] {
+                    let Some(tree) = trees.tree_of(key.origin, vector, f64::from(second)) else {
+                        continue;
+                    };
+                    let Ok(at) = tree.keys.binary_search_by_key(&k, |&(k, _)| k) else {
+                        continue;
+                    };
+                    let best = tree.keys[at].1;
+                    // At most `slack` left to gain here: nothing beats free flow.
+                    if self.slack > 0.0 && best <= free_flow * (1.0 + self.slack) {
+                        continue;
+                    }
+                    read = true;
+                    let Some(found) = tree.route_to(key.destination) else { continue };
+                    // At least as good as the set's best: a tie counts (S176), but for a full
+                    // set, which takes only a route that beats its best (S268).
+                    let good = if full {
+                        found.cost < best - REPLACE_GAIN_S
+                    } else {
+                        found.cost <= best + 1e-9
+                    };
+                    if !good {
+                        continue;
+                    }
+                    let links: Vec<LinkId> = found.links.iter().map(|&l| LinkId::new(l)).collect();
+                    let known = by_key.get(&k).is_some_and(|added| added.contains(&links));
+                    if !known && !is_known(sets, k, &[], &links) {
+                        by_key.entry(k).or_default().push(links);
+                    }
                 }
             }
             if read {
@@ -567,6 +719,12 @@ fn cost_candidates(
 ) -> Additions {
     let sets = cx.route_sets;
     let ctx = SearchContext::new(cx.network, cx.turns);
+    // The overlap in the first coefficient vector's cost, where the cost is not time alone.
+    let first = cx
+        .route_cost
+        .filter(|c| !c.is_time_only())
+        .and_then(|c| c.extras(0))
+        .map(|e| ctx.extras(e.to_vec()));
     let groups: Vec<(usize, Vec<Vec<LinkId>>)> = by_key.into_iter().collect();
     let routes: Vec<Vec<Route>> = search_map(&ctx, &groups, |search, (k, candidates)| {
         let mut added: Vec<Route> = Vec::new();
@@ -575,7 +733,7 @@ fn cost_candidates(
                 break;
             }
             if !is_known(sets, *k, &added, links) {
-                let route = with_overlap(search, sets, *k, &added, links.clone());
+                let route = with_overlap(search, sets, *k, &added, links.clone(), first.as_ref());
                 added.push(route);
             }
         }
@@ -780,6 +938,7 @@ impl RouteUpdate for Sampled {
                     cx.active,
                     cx.car_start_s,
                     step,
+                    cx.tree_cost(),
                 );
                 &own
             }
@@ -974,15 +1133,20 @@ fn is_known(sets: &RouteSets, key: usize, added: &[Route], links: &[LinkId]) -> 
 
 /// A route of `links` with its free-flow cost and its overlap with the routes the key already
 /// holds and the `added` ones before it (the share of its cost it has in common with the one
-/// it shares most with, as for every route of a set).
+/// it shares most with, as for every route of a set): of its free-flow generalised cost under
+/// `extras` where given (S299), of its free-flow time without.
 fn with_overlap(
     search: &mut Search<'_>,
     sets: &RouteSets,
     key: usize,
     added: &[Route],
     links: Vec<LinkId>,
+    extras: Option<&openmobisim_core_routes::Extras>,
 ) -> Route {
     search.clear_route_state();
+    if let Some(e) = extras {
+        search.set_extras(Some(e.clone()));
+    }
     let mut index = 0;
     for r in sets.routes(key) {
         let raw: Vec<LinkId> = r.links.iter().map(|&l| LinkId::new(l)).collect();

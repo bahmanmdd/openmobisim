@@ -45,6 +45,7 @@ use openmobisim_core_types::ids::{EntityId, LinkId, TravellerId, TripId};
 use crate::demand_values::DemandValues;
 use crate::equilibration::Equilibration;
 use crate::gap::{Currency, Ended, GapTrips};
+use crate::generalised_cost::RouteCost;
 use crate::link_times::LinkTimes;
 use crate::link_values::{PreparedLinkValues, ValueLayer};
 use crate::prices::PreparedPrices;
@@ -187,6 +188,10 @@ pub(crate) struct Inputs<'a> {
     /// The bike layer, when `mode` is the bike's: its infrastructure per link, for
     /// `bike_mixed_km`.
     pub bike_layer: Option<&'a openmobisim_core_graph::layers::StaticNetwork>,
+    /// The run's route cost for these routes (S299): what the offered set and the gaps compare
+    /// routes in, per coefficient vector, a trip's vector its class's. `None` (or a cost of time
+    /// alone): travel time.
+    pub cost: Option<&'a RouteCost>,
 }
 
 /// When trip `trip`'s car enters the roads: its departure plus `car_start_s`
@@ -309,6 +314,19 @@ pub(crate) struct Chooser<'a> {
 }
 
 impl<'a> Chooser<'a> {
+    /// The route cost, where it is not time alone.
+    fn route_cost(&self) -> Option<&'a RouteCost> {
+        self.inputs.cost.filter(|c| !c.is_time_only())
+    }
+
+    /// Trip `trip`'s coefficient vector under the route cost: 0 where it is time alone.
+    fn vector_of(&self, trip: TripId) -> u32 {
+        self.route_cost().map_or(0, |c| {
+            let traveller = self.inputs.trips.traveller(trip);
+            c.vector_of_class(self.inputs.travellers.user_class(traveller).index())
+        })
+    }
+
     /// The attributes filled, as a batch names them.
     pub(crate) fn wanted_names(&self) -> Vec<&str> {
         self.wanted.iter().map(String::as_str).collect()
@@ -638,8 +656,9 @@ impl<'a> Chooser<'a> {
                         taken = time;
                     }
                 }
+                let vector = self.vector_of(TripId::from_index(t));
                 let found = trees
-                    .route(key.origin, key.destination, departure)
+                    .route_of(key.origin, vector, key.destination, departure)
                     .map(|found| times.route_seconds(&found.links, departure));
                 (
                     f64::from(current.weight[t]),
@@ -783,7 +802,9 @@ impl<'a> Chooser<'a> {
                 let key = trip_keys[t];
                 let trip = TripId::from_index(t);
                 let departure = car_departure(trips, trip, self.inputs.car_start_s);
-                let Some(found) = trees.route(key.origin, key.destination, departure) else {
+                let vector = self.vector_of(trip);
+                let Some(found) = trees.route_of(key.origin, vector, key.destination, departure)
+                else {
                     continue;
                 };
                 let seconds = times.route_seconds(&found.links, departure);
