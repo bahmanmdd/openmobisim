@@ -37,7 +37,7 @@ use std::sync::Arc;
 use openmobisim_core_choice::{ChoiceBatch, ChoiceError, ChoiceModel};
 use openmobisim_core_demand::{Mode, Travellers, Trips};
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_routes::{RouteAttributes, RouteKey, RouteSets};
+use openmobisim_core_routes::{RouteKey, RouteSets};
 use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, LinkId, TravellerId, TripId};
 
@@ -291,15 +291,16 @@ struct RouteRow<'r> {
 }
 
 /// The parts of route choice that do not change from one iteration to the next:
-/// which attributes to fill, the routes' lengths and path sizes, their
-/// identities. **It belongs to one state of the route sets**: when they grow the
+/// which attributes to fill and the routes' identities (their lengths are the
+/// store's). **It belongs to one state of the route sets**: when they grow the
 /// run makes a new one, which costs a pass over the store (~50 ms at 53 000 routes) and is
 /// done only then.
 pub(crate) struct Chooser<'a> {
     inputs: &'a Inputs<'a>,
     route_sets: Arc<RouteSets>,
     wanted: Vec<String>,
-    attributes: Option<RouteAttributes>,
+    /// Whether the model reads a length or money, so that routes carry their lengths.
+    wants_length: bool,
     /// Whether the model reads `ln_path_size`, computed per situation over the offered routes.
     wants_path_size: bool,
     identity: Vec<u32>,
@@ -322,7 +323,7 @@ impl<'a> Chooser<'a> {
         inputs: &'a Inputs<'a>,
         route_sets: Arc<RouteSets>,
     ) -> Result<Self, ChoiceError> {
-        let (trips, travellers, network) = (inputs.trips, inputs.travellers, inputs.network);
+        let (trips, travellers) = (inputs.trips, inputs.travellers);
         // The attributes to fill: what the model reads, or all of them.
         let wanted = crate::itinerary_choice::wanted(
             inputs.model,
@@ -333,8 +334,7 @@ impl<'a> Chooser<'a> {
         // Lengths for `length_km` and a route's running cost (S248); the path size is taken
         // per situation over the routes offered (S279, CM-3), not from the store.
         let wants_path_size = needs("ln_path_size");
-        let attributes = (needs("length_km") || needs("cost_eur") || needs("cost_running_eur"))
-            .then(|| route_sets.attributes(network));
+        let wants_length = needs("length_km") || needs("cost_eur") || needs("cost_running_eur");
         let mut identity: Vec<u32> = (0..route_sets.route_count())
             .map(|r| route_identity(route_sets.route(r).links))
             .collect();
@@ -350,12 +350,12 @@ impl<'a> Chooser<'a> {
         let weight = (0..trips.len())
             .map(|i| travellers.weight(trips.traveller(TripId::from_index(i as usize))))
             .collect();
-        Ok(Self { inputs, route_sets, wanted, attributes, wants_path_size, identity, weight })
+        Ok(Self { inputs, route_sets, wanted, wants_length, wants_path_size, identity, weight })
     }
 
     /// Route `r`'s length in metres, if the model reads a length or money; 0 otherwise.
     fn length_m(&self, r: usize) -> f64 {
-        self.attributes.as_ref().map_or(0.0, |x| x.length_m[r])
+        if self.wants_length { self.route_sets.lengths_m()[r] } else { 0.0 }
     }
 
     /// Fill `row` with the attributes of `route` for `traveller`'s `trip`, in the order the
@@ -776,7 +776,7 @@ impl<'a> Chooser<'a> {
                     continue;
                 }
                 let links = &found.links;
-                let length_m = if self.attributes.is_some() {
+                let length_m = if self.wants_length {
                     links.iter().map(|&l| network.link_length(LinkId::new(l)).get()).sum()
                 } else {
                     0.0

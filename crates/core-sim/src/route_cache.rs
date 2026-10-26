@@ -14,7 +14,7 @@
 //! have made, bit for bit; nothing about a run's results depends on whether the cache was used.
 //!
 //! **Cost:** a lookup is a hash and a lock; a store kept costs its size (4 bytes per link of every
-//! route and 12 per route, about 17 MB at country-network scale), at most `capacity` of them, the
+//! route and 20 per route, about 17 MB at country-network scale), at most `capacity` of them, the
 //! least recently used evicted first. A run without a cache pays nothing.
 
 use std::sync::{Arc, Mutex};

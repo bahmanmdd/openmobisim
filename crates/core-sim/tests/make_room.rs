@@ -40,6 +40,7 @@ fn sets() -> RouteSets {
     // The other route, added as a route update would (its cost above the shortest's).
     let fast = network.link_external_ids().typed_id_of::<LinkId>("fast").unwrap();
     let (sets, _) = base.extended(
+        &network,
         &[(0, vec![Route { links: vec![fast], cost: 100.0, overlap: 0.0 }])],
         1,
         "test",

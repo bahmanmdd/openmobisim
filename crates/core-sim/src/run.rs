@@ -1507,8 +1507,6 @@ impl Run {
         let mut chosen: Option<Chosen> = None;
         if let Some(itin) = &itineraries {
             let free = LinkTimes::free_flow(&network);
-            let attributes =
-                (mode_choice.is_some() || fallback_car).then(|| route_sets.attributes(&network));
             let planner = Planner {
                 transit: transit_arc.as_deref().map(|t| (t, t.scheduled())),
                 parking: parking_arc.as_deref(),
@@ -1522,9 +1520,8 @@ impl Run {
                 car_egress_s: self.mode_defaults.car_egress_s,
                 bike_access_s: self.mode_defaults.bike_access_s,
                 bike_egress_s: self.mode_defaults.bike_egress_s,
-                car_routes: attributes
-                    .as_ref()
-                    .map(|attributes| CarRoutes { sets: &route_sets, attributes }),
+                car_routes: (mode_choice.is_some() || fallback_car)
+                    .then(|| CarRoutes { sets: &route_sets }),
             };
             chosen = Some(
                 itin.choose(&planner, &choose_inputs, None, 0, None, first_group.as_deref())?.0,
@@ -1646,6 +1643,7 @@ impl Run {
                             itineraries.as_ref().zip(chosen.as_ref()),
                         );
                         let (grown, added) = grow_sets(
+                            &network,
                             &route_sets,
                             found.routes,
                             route_update.as_ref(),
@@ -1670,8 +1668,6 @@ impl Run {
                     let realised = transit.zip(loaded.transit.as_ref()).map(|(transit, t)| {
                         transit.on_times(&transit.expected(&t.times, window_end))
                     });
-                    let attributes = (mode_choice.is_some() || fallback_car)
-                        .then(|| route_sets.attributes(&network));
                     let planner = Planner {
                         transit: transit
                             .map(|t| (t, realised.as_ref().unwrap_or_else(|| t.scheduled()))),
@@ -1686,9 +1682,8 @@ impl Run {
                         car_egress_s: self.mode_defaults.car_egress_s,
                         bike_access_s: self.mode_defaults.bike_access_s,
                         bike_egress_s: self.mode_defaults.bike_egress_s,
-                        car_routes: attributes
-                            .as_ref()
-                            .map(|attributes| CarRoutes { sets: &route_sets, attributes }),
+                        car_routes: (mode_choice.is_some() || fallback_car)
+                            .then(|| CarRoutes { sets: &route_sets }),
                     };
                     let (next_chosen, _) = itin.choose(
                         &planner,
@@ -1795,6 +1790,7 @@ impl Run {
                                 itineraries.as_ref().zip(chosen.as_ref()),
                             );
                             let (grown, added) = grow_sets(
+                                &network,
                                 &route_sets,
                                 found.routes,
                                 route_update.as_ref(),
@@ -1877,8 +1873,6 @@ impl Run {
                         let realised = transit.zip(loaded.transit.as_ref()).map(|(transit, t)| {
                             transit.on_times(&transit.expected(&t.times, window_end))
                         });
-                        let attributes = (mode_choice.is_some() || fallback_car)
-                            .then(|| route_sets.attributes(&network));
                         let planner = Planner {
                             transit: transit
                                 .map(|t| (t, realised.as_ref().unwrap_or_else(|| t.scheduled()))),
@@ -1893,9 +1887,8 @@ impl Run {
                             car_egress_s: self.mode_defaults.car_egress_s,
                             bike_access_s: self.mode_defaults.bike_access_s,
                             bike_egress_s: self.mode_defaults.bike_egress_s,
-                            car_routes: attributes
-                                .as_ref()
-                                .map(|attributes| CarRoutes { sets: &route_sets, attributes }),
+                            car_routes: (mode_choice.is_some() || fallback_car)
+                                .then(|| CarRoutes { sets: &route_sets }),
                         };
                         let (next_chosen, found) = itin.choose(
                             &planner,
@@ -3524,7 +3517,9 @@ fn itinerary_routes_kept(
     kept
 }
 
+#[allow(clippy::too_many_arguments, reason = "the sets, what grows them and what it changes")]
 fn grow_sets(
+    network: &RoadNetwork,
     sets: &RouteSets,
     mut additions: Vec<(usize, Vec<Route>)>,
     update: &dyn RouteUpdate,
@@ -3544,13 +3539,14 @@ fn grow_sets(
             let removed =
                 make_room(sets, &mut additions, &choices.route, &choices.weight, kept, max);
             let added = count(&additions);
-            let (grown, map) = sets.revised(&additions, &removed, stamp, &update.descriptor());
+            let (grown, map) =
+                sets.revised(network, &additions, &removed, stamp, &update.descriptor());
             choices.revised(&map, &grown, trip_keys);
             (grown, added)
         }
         _ => {
             let added = count(&additions);
-            let (grown, shift) = sets.extended(&additions, stamp, &update.descriptor());
+            let (grown, shift) = sets.extended(network, &additions, stamp, &update.descriptor());
             choices.grown(sets, &shift, &grown, trip_keys);
             (grown, added)
         }

@@ -737,6 +737,25 @@ fn shared_start() -> RoadNetwork {
         .expect("buildable")
 }
 
+/// The path sizes of the routes of the key at `k`, over that key's whole set.
+fn set_path_sizes(sets: &RouteSets, net: &RoadNetwork, k: usize) -> Vec<f64> {
+    let routes: Vec<&[u32]> = sets.routes(k).map(|r| r.links).collect();
+    openmobisim_core_routes::path_sizes(&routes, |l| net.link_length(LinkId::new(l)).get())
+}
+
+/// Every route's length, summed again over its links in driving order.
+fn summed_lengths(sets: &RouteSets, net: &RoadNetwork) -> Vec<f64> {
+    (0..sets.route_count())
+        .map(|r| {
+            let mut total = 0.0;
+            for &l in sets.route(r).links {
+                total += net.link_length(LinkId::new(l)).get();
+            }
+            total
+        })
+        .collect()
+}
+
 #[test]
 fn routes_that_share_no_link_each_have_a_path_size_of_one() {
     let net = diamond();
@@ -747,9 +766,9 @@ fn routes_that_share_no_link_each_have_a_path_size_of_one() {
         &[RouteKey::new(a, d)],
         generator(DEFAULT_METHOD, &no_options()).expect("default").as_ref(),
     );
-    let attributes = sets.attributes(&net);
-    assert_eq!(attributes.length_m, [200.0, 240.0]);
-    assert!(attributes.path_size.iter().all(|&p| (p - 1.0).abs() < 1e-12), "{attributes:?}");
+    assert_eq!(sets.lengths_m(), [200.0, 240.0]);
+    let sizes = set_path_sizes(&sets, &net, 0);
+    assert!(sizes.iter().all(|&p| (p - 1.0).abs() < 1e-12), "{sizes:?}");
 }
 
 #[test]
@@ -763,40 +782,37 @@ fn a_shared_first_link_lowers_both_path_sizes_by_hand() {
         generator(DEFAULT_METHOD, &no_options()).expect("default").as_ref(),
     );
     assert_eq!(sets.routes(0).count(), 2);
-    let attributes = sets.attributes(&net);
     // Route 0: 300 m, of which the shared 100 m counts half: (50 + 100 + 100) / 300.
     // Route 1: 340 m: (50 + 120 + 120) / 340.
-    assert_eq!(attributes.length_m, [300.0, 340.0]);
-    assert!((attributes.path_size[0] - 250.0 / 300.0).abs() < 1e-12);
-    assert!((attributes.path_size[1] - 290.0 / 340.0).abs() < 1e-12);
+    assert_eq!(sets.lengths_m(), [300.0, 340.0]);
+    let sizes = set_path_sizes(&sets, &net, 0);
+    assert!((sizes[0] - 250.0 / 300.0).abs() < 1e-12);
+    assert!((sizes[1] - 290.0 / 340.0).abs() < 1e-12);
+}
+
+/// The lengths a store keeps are the sums over each route's links, to the bit, after the store
+/// is grown and revised too (S299).
+#[test]
+fn a_stores_kept_lengths_are_its_routes_summed_after_growing_and_revising() {
+    let (net, _) = manhattan_grid(6, 200.0, true);
+    let turns = turns_of(&net);
+    let keys = grid_keys(&net, 6, 40, 5);
+    let old = RouteSets::generate(&net, &turns, &keys, &Penalty::default());
+    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(old.lengths_m()), bits(&summed_lengths(&old, &net)));
+    let links = net.link_count();
+    let additions = vec![(1, vec![added(&[7, 8, 9 % links], 1.0)]), (3, vec![added(&[2], 2.0)])];
+    let (grown, _) = old.extended(&net, &additions, 4, "best_response;test");
+    assert_eq!(grown.lengths_m().len(), grown.route_count());
+    assert_eq!(bits(grown.lengths_m()), bits(&summed_lengths(&grown, &net)));
+    let mut removed = vec![false; grown.route_count()];
+    removed[grown.route_range(1).start] = true;
+    let (revised, _) = grown.revised(&net, &additions, &removed, 5, "best_response;test");
+    assert_eq!(bits(revised.lengths_m()), bits(&summed_lengths(&revised, &net)));
 }
 
 #[test]
-fn one_keys_links_do_not_leak_into_the_next_keys_path_size() {
-    let net = shared_start();
-    let (a, s, d) = (node(&net, "A"), node(&net, "S"), node(&net, "D"));
-    let keys = [RouteKey::new(a, d), RouteKey::new(s, d)];
-    let sets = RouteSets::generate(
-        &net,
-        &turns_of(&net),
-        &keys,
-        generator(DEFAULT_METHOD, &no_options()).expect("default").as_ref(),
-    );
-    let attributes = sets.attributes(&net);
-    let second = sets.route_range(sets.key_index(keys[1]).expect("key"));
-    assert_eq!(second.len(), 2);
-    for r in second {
-        assert!(
-            (attributes.path_size[r] - 1.0).abs() < 1e-12,
-            "route {r} shares nothing in its own set"
-        );
-    }
-    // A lone route has a path size of one, and the attributes are the same on a second call.
-    assert_eq!(attributes, sets.attributes(&net));
-}
-
-#[test]
-fn path_sizes_over_given_routes_equal_the_stores_over_the_whole_set_and_ignore_the_rest() {
+fn path_sizes_over_given_routes_ignore_the_rest() {
     let net = shared_start();
     let (a, d) = (node(&net, "A"), node(&net, "D"));
     let sets = RouteSets::generate(
@@ -807,12 +823,7 @@ fn path_sizes_over_given_routes_equal_the_stores_over_the_whole_set_and_ignore_t
     );
     let length = |l: u32| net.link_length(LinkId::new(l)).get();
     let both: Vec<&[u32]> = sets.routes(0).map(|r| r.links).collect();
-    let stored = sets.attributes(&net).path_size;
-    let over_both = openmobisim_core_routes::path_sizes(&both, length);
-    assert_eq!(over_both.len(), 2);
-    for (got, want) in over_both.iter().zip(&stored) {
-        assert_eq!(got.to_bits(), want.to_bits(), "{over_both:?} against {stored:?}");
-    }
+    assert_eq!(both.len(), 2);
     // One route alone shares with nobody; a repeated route splits with its twin by half.
     let alone = openmobisim_core_routes::path_sizes(&both[..1], length);
     assert_eq!(alone, [1.0]);
@@ -981,7 +992,7 @@ fn an_extended_store_keeps_every_route_and_puts_the_new_ones_last() {
             (k, (0..n).map(route).collect())
         })
         .collect();
-    let (grown, shift) = old.extended(&additions, 4, "best_response;test");
+    let (grown, shift) = old.extended(&net, &additions, 4, "best_response;test");
 
     // Sizes and identity.
     assert_eq!(grown.keys(), old.keys());
@@ -1028,12 +1039,13 @@ fn an_extended_store_keeps_every_route_and_puts_the_new_ones_last() {
     let index = grown.link_index(net.link_count());
     assert!(index.routes_using(7).len() >= 6, "the added routes are in the inverted index");
     // Adding nothing is a copy: equal, with the same identity.
-    let (same, none) = old.extended(&[], 1, "");
+    let (same, none) = old.extended(&net, &[], 1, "");
     assert_eq!(same, old);
     assert_eq!(same.identity(), old.identity());
     assert!(none.iter().all(|&s| s == 0));
     // Growing twice is growing once with both: the second update's descriptor is the store's.
-    let (twice, _) = grown.extended(&[(0, vec![added(&[1, 2], 10.0)])], 5, "best_response;other");
+    let (twice, _) =
+        grown.extended(&net, &[(0, vec![added(&[1, 2], 10.0)])], 5, "best_response;other");
     assert_eq!(twice.update(), "best_response;other");
     assert_eq!(twice.route_count(), grown.route_count() + 1);
 }
@@ -1049,7 +1061,8 @@ fn additions_out_of_key_order_are_refused() {
         &[RouteKey::new(a, d), RouteKey::new(d, a)],
         &Shortest,
     );
-    let _ = sets.extended(&[(1, vec![added(&[0], 1.0)]), (0, vec![added(&[0], 1.0)])], 1, "x");
+    let _ =
+        sets.extended(&net, &[(1, vec![added(&[0], 1.0)]), (0, vec![added(&[0], 1.0)])], 1, "x");
 }
 
 #[test]
@@ -1058,7 +1071,7 @@ fn additions_to_a_key_that_does_not_exist_are_refused() {
     let net = diamond();
     let (a, d) = (node(&net, "A"), node(&net, "D"));
     let sets = RouteSets::generate(&net, &turns_of(&net), &[RouteKey::new(a, d)], &Shortest);
-    let _ = sets.extended(&[(1, vec![added(&[0], 1.0)])], 1, "x");
+    let _ = sets.extended(&net, &[(1, vec![added(&[0], 1.0)])], 1, "x");
 }
 
 #[test]
@@ -1382,7 +1395,7 @@ fn a_revised_store_leaves_a_key_without_routes_empty() {
     removed[sets.route_range(other).start] = true;
     let ab = net.link_external_ids().typed_id_of::<LinkId>("ab").unwrap().raw();
     let additions = vec![(other, vec![added(&[ab], 50.0)])];
-    let (revised, map) = sets.revised(&additions, &removed, 3, "best_response;test");
+    let (revised, map) = sets.revised(&net, &additions, &removed, 3, "best_response;test");
     assert!(revised.route_range(k).is_empty());
     assert_eq!(revised.route_count(), sets.route_count());
     assert_eq!(map[sets.route_range(other).start], u32::MAX, "the dropped route is gone");

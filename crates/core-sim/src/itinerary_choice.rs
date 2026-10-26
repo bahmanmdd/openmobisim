@@ -69,9 +69,7 @@ use openmobisim_core_graph::geometry::{LonLat, ground_distance_metres};
 use openmobisim_core_graph::hubs::ParkingKind;
 use openmobisim_core_graph::layers::{BikeInfrastructure, StaticLayer};
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_routes::{
-    NodeSnapper, Reach, RouteAttributes, RouteKey, RouteSets, Search, SearchContext,
-};
+use openmobisim_core_routes::{NodeSnapper, Reach, RouteKey, RouteSets, Search, SearchContext};
 use openmobisim_core_transit::{Journey, JourneyLeg, Raptor, RaptorData, ServiceKind};
 use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, LinkId, NULL_ID, NodeId, TravellerId, TripId};
@@ -380,7 +378,6 @@ pub(crate) struct StaticLeg {
 /// The car's route sets, for the car alternatives of mode choice.
 pub(crate) struct CarRoutes<'a> {
     pub sets: &'a RouteSets,
-    pub attributes: &'a RouteAttributes,
 }
 
 /// What an itinerary choice set is made on: see the [module docs](self).
@@ -813,7 +810,7 @@ impl<'a> Planner<'a> {
                 let mut a = blank(Mode::Car, Shape::Direct);
                 a.vehicle_links = view.links.iter().map(|&l| LinkId::new(l)).collect();
                 a.vehicle_s = seconds;
-                a.vehicle_m = routes.attributes.length_m[r];
+                a.vehicle_m = routes.sets.lengths_m()[r];
                 a.vehicle_departure = at;
                 // Reaching the car; parking and walking from it (S279).
                 a.walk_s = self.car_access_s;

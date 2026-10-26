@@ -825,7 +825,9 @@ fn the_overlap_term_is_out_of_the_generalised_minutes() {
     let result = setup.go();
     let sets = result.route_sets.as_ref().expect("sets");
     assert_eq!(sets.route_range(0).len(), 3, "the three ways");
-    let path_size = sets.attributes(&network).path_size;
+    let links: Vec<&[u32]> = sets.routes(0).map(|r| r.links).collect();
+    let path_size =
+        openmobisim_core_routes::path_sizes(&links, |l| network.link_length(LinkId::new(l)).get());
     let separate = (0..3).find(|&k| (path_size[k] - 1.0).abs() < 1e-12).expect("one shares none");
     assert!((0..3).filter(|&k| k != separate).all(|k| path_size[k] < 0.9), "{path_size:?}");
     let counts: Vec<usize> = (0..3).map(|k| took(&result, k)).collect();

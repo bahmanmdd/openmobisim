@@ -3,7 +3,7 @@
 //! | Module | What it holds |
 //! |---|---|
 //! | [`search`] | The turn-aware shortest-path search every method is built on |
-//! | [`attributes`] | [`RouteAttributes`]: each route's length and path size, for the choice layer |
+//! | [`attributes`] | [`path_sizes`]: the path size of each route over the routes offered, for the choice layer |
 //! | [`generate`] | The [`RouteSetGenerator`] interface, the built-in methods (`penalty`, the default, `shortest`, the congestion-biased `montecarlo` and `sampled`, by each user class's generalised cost) and the by-name [`Registry`] |
 //! | [`store`] | [`RouteSets`]: routes flat in CSR form, with identity, an inverted link index and per-route metadata; it can be [extended](RouteSets::extended) with routes found later; [`search_map`] runs a search over many items in parallel, in order |
 //! | [`snap`] | [`NodeSnapper`]: the nearest drivable node to a point, from a grid, not a scan; [`TripSnapper`]: where a trip's end joins the roads (a street, not a motorway) |
@@ -27,7 +27,7 @@ pub mod search;
 pub mod snap;
 pub mod store;
 
-pub use attributes::{RouteAttributes, path_sizes, path_sizes_counted};
+pub use attributes::{path_sizes, path_sizes_counted};
 pub use generate::{
     ClassExtras, DEFAULT_METHOD, Demand, ExtrasRequest, MonteCarlo, Options,
     PROPENSITY_BIN_SECONDS, Penalty, Registry, RouteError, RouteSetGenerator, Sampled, Shortest,

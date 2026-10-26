@@ -2,7 +2,7 @@
 //!
 //! **Layout.** Paths are one flat array of link ids with offsets (CSR); a key's
 //! routes are a range of route numbers; per-route metadata (cost, overlap, a
-//! cost stamp) lives in parallel arrays. Everything is plain arrays with no
+//! cost stamp, the length) lives in parallel arrays. Everything is plain arrays with no
 //! pointers, so it can be written to disk and mapped back later without parsing.
 //!
 //! **Identity.** A store records the fingerprint of the network it was made
@@ -16,7 +16,7 @@
 //! [`RouteSets::stamps`] says in which iteration each came. Nothing that already
 //! has a number changes it except by a fixed shift per key.
 //!
-//! **Cost.** 4 bytes per link of every route, 12 bytes per route, and 12 bytes
+//! **Cost.** 4 bytes per link of every route, 20 bytes per route, and 12 bytes
 //! per key: a 100-link route costs about 400 bytes.
 //!
 //! **Keys** are pairs of node ids today; when zones exist they will be pairs of
@@ -26,7 +26,7 @@ use openmobisim_core_graph::link_geometry::NetworkFingerprint;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_types::hash::Fnv1a;
-use openmobisim_core_types::ids::{EntityId, NodeId};
+use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
 use crate::generate::RouteSetGenerator;
 use crate::search::{Route, Search, SearchContext};
@@ -120,6 +120,18 @@ pub struct RouteSets {
     /// from a fresh one. A route added to a grown store ([`RouteSets::extended`]) is
     /// stamped with the iteration that added it, and its cost is its free-flow cost.
     stamp: Vec<u32>,
+    /// Each route's length in metres, summed over its links in driving order when the route
+    /// is added (a length never changes, so it is kept rather than recomputed; S299).
+    length_m: Vec<f64>,
+}
+
+/// The length in metres of a route of `links`, summed in driving order.
+fn route_length(network: &RoadNetwork, links: impl Iterator<Item = u32>) -> f64 {
+    let mut total = 0.0;
+    for l in links {
+        total += network.link_length(LinkId::new(l)).get();
+    }
+    total
 }
 
 impl RouteSets {
@@ -196,6 +208,7 @@ impl RouteSets {
             cost: Vec::new(),
             overlap: Vec::new(),
             stamp: Vec::new(),
+            length_m: Vec::new(),
         };
         for routes in per_key {
             for route in routes {
@@ -207,6 +220,7 @@ impl RouteSets {
                     sets.overlap.push(route.overlap as f32);
                 }
                 sets.stamp.push(0);
+                sets.length_m.push(route_length(network, route.links.iter().map(|l| l.raw())));
             }
             sets.set_start.push(u32::try_from(sets.cost.len()).expect("routes fit u32"));
         }
@@ -243,6 +257,7 @@ impl RouteSets {
             cost: Vec::new(),
             overlap: Vec::new(),
             stamp: Vec::new(),
+            length_m: Vec::new(),
         };
         for (_, routes) in sets {
             for route in routes {
@@ -254,6 +269,7 @@ impl RouteSets {
                     out.overlap.push(route.overlap as f32);
                 }
                 out.stamp.push(0);
+                out.length_m.push(route_length(network, route.links.iter().map(|l| l.raw())));
             }
             out.set_start.push(u32::try_from(out.cost.len()).expect("routes fit u32"));
         }
@@ -271,9 +287,10 @@ impl RouteSets {
     ///
     /// Returns the new store and, per key, how many routes were added to the keys **before**
     /// it: route `r` of key `k` of *this* store is route `r + shift[k]` of the new one.
-    /// Every route keeps its links, cost, overlap and stamp; the routes of a key that got
-    /// nothing keep their order. **Cost:** one copy of the store (4 bytes per link and 12 per
-    /// route), a few milliseconds at the size of a country's network.
+    /// Every route keeps its links, cost, overlap, stamp and length; the routes of a key that
+    /// got nothing keep their order. `network` is the one the store was made from: the added
+    /// routes' lengths are taken on it. **Cost:** one copy of the store (4 bytes per link and
+    /// 20 per route), a few milliseconds at the size of a country's network.
     ///
     /// # Panics
     ///
@@ -282,6 +299,7 @@ impl RouteSets {
     #[must_use]
     pub fn extended(
         &self,
+        network: &RoadNetwork,
         additions: &[(usize, Vec<Route>)],
         stamp: u32,
         update: &str,
@@ -309,6 +327,7 @@ impl RouteSets {
             cost: Vec::with_capacity(self.cost.len() + added),
             overlap: Vec::with_capacity(self.cost.len() + added),
             stamp: Vec::with_capacity(self.cost.len() + added),
+            length_m: Vec::with_capacity(self.cost.len() + added),
         };
         out.set_start.push(0);
         out.route_start.push(0);
@@ -324,6 +343,7 @@ impl RouteSets {
                 out.cost.push(view.cost);
                 out.overlap.push(view.overlap);
                 out.stamp.push(self.stamp[r]);
+                out.length_m.push(self.length_m[r]);
             }
             if let Some((_, routes)) = next.next_if(|(key, _)| *key == k) {
                 for route in routes {
@@ -338,6 +358,7 @@ impl RouteSets {
                         out.overlap.push(route.overlap as f32);
                     }
                     out.stamp.push(stamp);
+                    out.length_m.push(route_length(network, route.links.iter().map(|l| l.raw())));
                     before += 1;
                 }
             }
@@ -347,8 +368,8 @@ impl RouteSets {
     }
 
     /// These sets with some routes **removed** and routes added (a full set making room for
-    /// a better route, see `core-sim`'s `BestResponse::max_routes`). `additions` as for
-    /// [`Self::extended`]; `removed[r]` drops route `r` of this store. Every key that has routes
+    /// a better route, see `core-sim`'s `BestResponse::max_routes`). `network` and `additions` as
+    /// for [`Self::extended`]; `removed[r]` drops route `r` of this store. Every key that has routes
     /// keeps at least one; a key with none (no route exists for its pair) stays empty.
     ///
     /// Returns the new store and, for each route of this store, its index in the new one, or
@@ -361,6 +382,7 @@ impl RouteSets {
     #[must_use]
     pub fn revised(
         &self,
+        network: &RoadNetwork,
         additions: &[(usize, Vec<Route>)],
         removed: &[bool],
         stamp: u32,
@@ -387,6 +409,7 @@ impl RouteSets {
             cost: Vec::with_capacity(self.cost.len()),
             overlap: Vec::with_capacity(self.cost.len()),
             stamp: Vec::with_capacity(self.cost.len()),
+            length_m: Vec::with_capacity(self.cost.len()),
         };
         out.set_start.push(0);
         out.route_start.push(0);
@@ -405,6 +428,7 @@ impl RouteSets {
                 out.cost.push(view.cost);
                 out.overlap.push(view.overlap);
                 out.stamp.push(self.stamp[r]);
+                out.length_m.push(self.length_m[r]);
             }
             if let Some((_, routes)) = next.next_if(|(key, _)| *key == k) {
                 for route in routes {
@@ -419,6 +443,7 @@ impl RouteSets {
                         out.overlap.push(route.overlap as f32);
                     }
                     out.stamp.push(stamp);
+                    out.length_m.push(route_length(network, route.links.iter().map(|l| l.raw())));
                 }
             }
             // A key that had routes keeps at least one; a key that never had one (no route
@@ -566,6 +591,12 @@ impl RouteSets {
         &self.overlap
     }
 
+    /// Every route's length in metres, summed over its links in driving order.
+    #[must_use]
+    pub fn lengths_m(&self) -> &[f64] {
+        &self.length_m
+    }
+
     /// Every route's stamp: 0 for a route the generator made, otherwise what the adder stamped
     /// it ([`Self::extended`]).
     #[must_use]
@@ -578,7 +609,7 @@ impl RouteSets {
     pub fn bytes(&self) -> usize {
         size_of::<RouteKey>() * self.keys.len()
             + 4 * (self.set_start.len() + self.route_start.len() + self.links.len())
-            + 12 * self.cost.len()
+            + 20 * self.cost.len()
     }
 
     /// The inverted index: for each link, the routes that use it.
