@@ -139,6 +139,14 @@ pub struct ImportOptions {
     /// Which static layers to build besides the road network. None by
     /// default in Rust; the Python reader builds both.
     pub layers: LayerOptions,
+    /// Read the bus lanes ([`tags::bus_lanes`]). On by default. A car link's bus lanes are
+    /// taken out of the lanes cars use (never below one) and kept on the link
+    /// ([`LinkSpec::bus_lanes`]), where a bus on the roads rides at free flow outside the cars'
+    /// queue; a
+    /// contraflow bus lane on a one-way street is a busway link against it; and on the bike
+    /// layer a bus lane bikes share (`cycleway=share_busway`) is a lane. Off: none of these, and
+    /// every lane `lanes` counts is the cars'.
+    pub bus_lanes: bool,
 }
 
 /// Which bike and walk layers an import builds, and with which defaults.
@@ -175,6 +183,7 @@ impl Default for ImportOptions {
             saturation_bands: SaturationBands::SHIPPED,
             connectivity: Connectivity::Keep,
             layers: LayerOptions::default(),
+            bus_lanes: true,
         }
     }
 }
@@ -233,6 +242,20 @@ pub struct ImportReport {
     pub drivable_lanes_links: u64,
     /// Their length, in whole metres.
     pub drivable_lanes_length_m: u64,
+    /// Car links with a bus lane in their direction ([`ImportOptions::bus_lanes`]).
+    pub bus_lane_links: u64,
+    /// Their length, in whole metres.
+    pub bus_lane_length_m: u64,
+    /// The lane length taken from cars for buses on them: each link's lanes less the lanes
+    /// cars keep, times its length, in whole metres.
+    pub bus_lane_car_lane_length_removed_m: u64,
+    /// The cars' lane length of every car link, in whole metres (lanes times length; the
+    /// denominator of [`Self::bus_lane_car_lane_length_removed_m`]'s share).
+    pub drivable_lane_length_m: u64,
+    /// Busway links made from contraflow bus lanes on one-way streets.
+    pub contraflow_bus_links: u64,
+    /// Their length, in whole metres.
+    pub contraflow_bus_length_m: u64,
 }
 
 impl ImportReport {
@@ -379,7 +402,12 @@ struct ProtoLink {
     from: i64,
     to: i64,
     class: RoadClass,
+    /// Every lane the tags count in this direction, bus lanes included.
     lanes: Option<u8>,
+    /// Of those, the lanes reserved for buses.
+    bus_lanes: u8,
+    /// A busway made from a contraflow bus lane.
+    contraflow: bool,
     maxspeed_km_h: Option<f64>,
     /// Part of a roundabout's circulating carriageway (`junction=roundabout`).
     roundabout: bool,
@@ -412,6 +440,8 @@ impl ProtoLink {
     fn mergeable_with(&self, next: &Self) -> bool {
         self.class == next.class
             && self.lanes == next.lanes
+            && self.bus_lanes == next.bus_lanes
+            && self.contraflow == next.contraflow
             && self.roundabout == next.roundabout
             && self.infrastructure == next.infrastructure
             && self.dismount == next.dismount
@@ -547,7 +577,7 @@ pub fn import_detailed(
     source.for_each_way(&mut |way| {
         report.ways_seen += 1;
         let n = way.node_ids.len();
-        let bike = layers.bike && tags::bike_way(&way.tags, n).is_some();
+        let bike = layers.bike && tags::bike_way_with(&way.tags, n, options.bus_lanes).is_some();
         let walk = layers.walk && tags::walk_way(&way.tags, n).is_some();
         for (on, counts) in [(bike, &mut bike_references), (walk, &mut walk_references)] {
             if on {
@@ -625,7 +655,7 @@ pub fn import_detailed(
     let mut links: Vec<ProtoLink> = Vec::new();
     let mut dropped: Vec<DroppedLink> = Vec::new();
     for way in &kept_ways {
-        let Some(spec) = road_spec(way, diagnostics) else { continue };
+        let Some(spec) = road_spec(way, options.bus_lanes, diagnostics) else { continue };
         split_way(way, &spec, &positions, &is_junction, diagnostics, &mut links, &mut dropped);
     }
     report.closed_loops_dropped = dropped.len() as u64;
@@ -688,7 +718,7 @@ pub fn import_detailed(
         links = contract(links, &signalised, &forced_splits, &HashSet::new());
     }
     report.links_after_contraction = links.len() as u64;
-    record_coverage(&links, &mut report);
+    record_coverage(&links, &options.classes, &mut report);
     report.nodes_contracted = (nodes_before - used_nodes(&links).len()) as u64;
 
     // --- 5. Hand to the graph builder ---------------------------------------
@@ -713,12 +743,13 @@ pub fn import_detailed(
             link.to.to_string(),
             LinkSpec {
                 class: link.class,
-                lanes: link.lanes,
+                lanes: tags::car_lanes(link.lanes, link.bus_lanes),
                 maxspeed_km_h: link.maxspeed_km_h,
                 signalised: stopped[i],
                 length_m: Some(link.length_m),
                 roundabout: link.roundabout,
                 capacity_veh_h: None,
+                bus_lanes: link.bus_lanes,
             },
         );
     }
@@ -775,9 +806,12 @@ fn layer_spec(layer: StaticLayer, way: &OsmWay, cx: &LayerContext<'_>) -> Option
     let n = way.node_ids.len();
     let spec = match layer {
         StaticLayer::Bike => {
-            let bike = tags::bike_way(&way.tags, n)?;
-            let attrs =
-                |infrastructure| LinkAttrs { lanes: None, infrastructure, dismount: bike.dismount };
+            let bike = tags::bike_way_with(&way.tags, n, cx.options.bus_lanes)?;
+            let attrs = |infrastructure| LinkAttrs {
+                infrastructure,
+                dismount: bike.dismount,
+                ..LinkAttrs::PLAIN
+            };
             WaySpec {
                 class: bike.class,
                 maxspeed_km_h: tags::maxspeed(&way.tags).value_km_h(),
@@ -789,11 +823,7 @@ fn layer_spec(layer: StaticLayer, way: &OsmWay, cx: &LayerContext<'_>) -> Option
         }
         StaticLayer::Walk => {
             let class = tags::walk_way(&way.tags, n)?;
-            let attrs = LinkAttrs {
-                lanes: None,
-                infrastructure: BikeInfrastructure::Mixed,
-                dismount: false,
-            };
+            let attrs = LinkAttrs::PLAIN;
             // Walkers go both ways on every street; a ferry keeps its own direction.
             let direction = if class == RoadClass::Ferry {
                 tags::direction(&way.tags, class)
@@ -972,17 +1002,40 @@ struct WaySpec {
 /// What differs between a way's two directions.
 #[derive(Clone, Copy, Debug)]
 struct LinkAttrs {
+    /// Every lane the tags count, bus lanes included.
     lanes: Option<u8>,
+    /// The bus lanes among them.
+    bus_lanes: u8,
+    /// Buses alone go this way: a contraflow bus lane, a busway link.
+    contraflow: bool,
     infrastructure: BikeInfrastructure,
     dismount: bool,
 }
 
+impl LinkAttrs {
+    /// No lane count, no bus lane, mixed traffic, ridden.
+    const PLAIN: LinkAttrs = LinkAttrs {
+        lanes: None,
+        bus_lanes: 0,
+        contraflow: false,
+        infrastructure: BikeInfrastructure::Mixed,
+        dismount: false,
+    };
+}
+
 /// The links a way makes on the road network, recording a speed limit that
-/// could not be read. `None` if the way is not a road.
-fn road_spec(way: &OsmWay, diagnostics: &mut Diagnostics) -> Option<WaySpec> {
+/// could not be read. `None` if the way is not a road. With `bus_lanes`, a car road's
+/// bus lanes are read ([`tags::bus_lanes`]), and a contraflow bus lane on a one-way street
+/// makes a busway link against it.
+fn road_spec(way: &OsmWay, bus_lanes: bool, diagnostics: &mut Diagnostics) -> Option<WaySpec> {
     let class = tags::classify(&way.tags, way.node_ids.len()).ok()?;
     let direction = tags::direction(&way.tags, class);
     let lane_counts = tags::lanes(&way.tags, direction);
+    let bus = if bus_lanes && class.carries_motor_traffic() {
+        tags::bus_lanes(&way.tags, direction)
+    } else {
+        tags::BusLanes::default()
+    };
 
     let speed = tags::maxspeed(&way.tags);
     if speed.is_noteworthy() {
@@ -992,8 +1045,19 @@ fn road_spec(way: &OsmWay, diagnostics: &mut Diagnostics) -> Option<WaySpec> {
         };
         diagnostics.record(DiagKey::run_level(Category::DataQuality, code, Severity::Info));
     }
-    let attrs =
-        |lanes| LinkAttrs { lanes, infrastructure: BikeInfrastructure::Mixed, dismount: false };
+    let attrs = |lanes, bus_lanes| LinkAttrs { lanes, bus_lanes, ..LinkAttrs::PLAIN };
+    // A bus lane against a one-way street: buses alone, at its own lanes.
+    let contraflow = |bus_lanes: u8| {
+        (bus_lanes > 0).then_some(LinkAttrs {
+            lanes: Some(bus_lanes),
+            bus_lanes,
+            contraflow: true,
+            ..LinkAttrs::PLAIN
+        })
+    };
+    let side = |has: bool, lanes: Option<u8>, bus_lanes: u8| {
+        if has { Some(attrs(lanes, bus_lanes)) } else { contraflow(bus_lanes) }
+    };
     Some(WaySpec {
         class,
         maxspeed_km_h: speed.value_km_h(),
@@ -1001,8 +1065,8 @@ fn road_spec(way: &OsmWay, diagnostics: &mut Diagnostics) -> Option<WaySpec> {
         // traffic gives way (S155).
         roundabout: crate::source::tag_of(&way.tags, "junction") == Some("roundabout"),
         speed_km_h: None,
-        forward: direction.has_forward().then(|| attrs(lane_counts.forward)),
-        backward: direction.has_backward().then(|| attrs(lane_counts.backward)),
+        forward: side(direction.has_forward(), lane_counts.forward, bus.forward),
+        backward: side(direction.has_backward(), lane_counts.backward, bus.backward),
     })
 }
 
@@ -1097,13 +1161,17 @@ fn split_way(
                     geometry,
                 });
             } else {
+                let class_of =
+                    |attrs: &LinkAttrs| if attrs.contraflow { RoadClass::Busway } else { class };
                 if let Some(attrs) = spec.forward {
                     out.push(ProtoLink {
                         way_id: way.id,
                         from,
                         to,
-                        class,
+                        class: class_of(&attrs),
                         lanes: attrs.lanes,
+                        bus_lanes: attrs.bus_lanes,
+                        contraflow: attrs.contraflow,
                         maxspeed_km_h,
                         roundabout,
                         infrastructure: attrs.infrastructure,
@@ -1121,8 +1189,10 @@ fn split_way(
                         way_id: way.id,
                         from: to,
                         to: from,
-                        class,
+                        class: class_of(&attrs),
                         lanes: attrs.lanes,
+                        bus_lanes: attrs.bus_lanes,
+                        contraflow: attrs.contraflow,
                         maxspeed_km_h,
                         roundabout,
                         infrastructure: attrs.infrastructure,
@@ -1140,15 +1210,30 @@ fn split_way(
     }
 }
 
-/// Count the drivable links, and how many say their own speed and lane count.
+/// Count the drivable links, how many say their own speed and lane count, and the bus lanes:
+/// the car links with one, the lane length they take from cars (the lanes less the cars', the
+/// class default's where no count is tagged), and the contraflow busways.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     reason = "a length in whole metres is far below 2^63"
 )]
-fn record_coverage(links: &[ProtoLink], report: &mut ImportReport) {
+fn record_coverage(links: &[ProtoLink], classes: &ClassTable, report: &mut ImportReport) {
     let metres = |l: &ProtoLink| l.length_m.round() as u64;
+    let (mut removed, mut lane_length) = (0.0f64, 0.0f64);
+    for l in links.iter().filter(|l| l.contraflow) {
+        report.contraflow_bus_links += 1;
+        report.contraflow_bus_length_m += metres(l);
+    }
     for l in links.iter().filter(|l| l.class.carries_motor_traffic()) {
+        let all = l.lanes.unwrap_or(classes.row(l.class).lanes_per_direction);
+        let cars = all.saturating_sub(l.bus_lanes).max(1);
+        lane_length += f64::from(cars) * l.length_m;
+        if l.bus_lanes > 0 {
+            report.bus_lane_links += 1;
+            report.bus_lane_length_m += metres(l);
+            removed += f64::from(all.saturating_sub(cars)) * l.length_m;
+        }
         report.drivable_links += 1;
         report.drivable_length_m += metres(l);
         if l.maxspeed_km_h.is_some() {
@@ -1160,6 +1245,8 @@ fn record_coverage(links: &[ProtoLink], report: &mut ImportReport) {
             report.drivable_lanes_length_m += metres(l);
         }
     }
+    report.bus_lane_car_lane_length_removed_m = removed.round() as u64;
+    report.drivable_lane_length_m = lane_length.round() as u64;
 }
 
 /// Keep only the drivable links inside the largest strongly connected component
@@ -1343,6 +1430,8 @@ fn contract(
                     to: b.to,
                     class: a.class,
                     lanes: a.lanes,
+                    bus_lanes: a.bus_lanes,
+                    contraflow: a.contraflow,
                     maxspeed_km_h: a.maxspeed_km_h,
                     roundabout: a.roundabout,
                     infrastructure: a.infrastructure,

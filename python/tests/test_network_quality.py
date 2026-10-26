@@ -223,3 +223,20 @@ def test_the_default_import_is_strongly_connected_and_contracted_past_footways()
     r = net.report_import()
     assert r["connectivity"] == "strong" and r["contract_drivable"] is True
     assert net.report_connectivity("car")["strongly_connected"]
+
+
+@needs_pbf
+def test_bus_lanes_come_out_of_the_cars_lanes_and_are_counted():
+    path = os.environ["OPENMOBISIM_TEST_PBF"]
+    on = ms.network_read_osm(path)
+    off = ms.network_read_osm(path, bus_lanes=False)
+    report, report_off = on.report_import(), off.report_import()
+    assert report["bus_lanes"] is True and report_off["bus_lanes"] is False
+    assert report_off["bus_lane_links"] == 0 and report_off["contraflow_bus_links"] == 0
+    assert not off.link_bus_lanes().any()
+    bus = on.link_bus_lanes()
+    drivable = on.link_class() != ms.LINK_CLASSES.index("busway")
+    assert int(((bus > 0) & drivable).sum()) == report["bus_lane_links"]
+    # The cars keep at least one lane wherever a bus lane is.
+    assert (on.link_lanes()[bus > 0] >= 1).all()
+    assert report["bus_lane_car_lane_length_removed_m"] <= report["drivable_lane_length_m"]

@@ -183,7 +183,16 @@ class Network:
         """Every link's road class as a number: its index in ``LINK_CLASSES`` (0 = motorway)."""
 
     def link_lanes(self) -> npt.NDArray[np.uint8]:
-        """Every link's lane count in its own direction."""
+        """Every link's lane count in its own direction: the lanes cars use, bus lanes not
+        counted."""
+
+    def link_bus_lanes(self) -> npt.NDArray[np.uint8]:
+        """Every link's lanes reserved for buses in its own direction (0: none).
+
+        They take none of the cars' capacity; with buses on the roads (``transit_options``
+        ``buses_on_roads`` 1), a bus on a link with one rides at free flow, outside the cars'
+        queue. An OSM import reads them with ``bus_lanes=True`` (the default).
+        """
 
     def link_capacity_pcu_h(self) -> npt.NDArray[np.float64]:
         """Every link's capacity across all its lanes, in PCU per hour.
@@ -262,8 +271,14 @@ class Network:
         speed limit and lane count rather than taking the class default
         (``drivable_links``, ``drivable_length_m``, ``drivable_maxspeed_links``,
         ``drivable_maxspeed_length_m``, ``drivable_lanes_links``,
-        ``drivable_lanes_length_m``), the options used (``connectivity``,
-        ``region``) and ``diagnostics``: every data-quality diagnostic as
+        ``drivable_lanes_length_m``), the bus lanes (``bus_lane_links``, the car links with
+        one in their direction, and ``bus_lane_length_m``, their length;
+        ``bus_lane_car_lane_length_removed_m``, the lane length taken from cars for them, each
+        link's lanes less the cars' times its length, against ``drivable_lane_length_m``, the
+        cars' lanes times length over every car link; ``contraflow_bus_links`` and
+        ``contraflow_bus_length_m``, the busway links made from contraflow bus lanes), the
+        options used (``connectivity``, ``contract_drivable``, ``bus_lanes``, ``region``) and
+        ``diagnostics``: every data-quality diagnostic as
         ``{code: {"severity": ..., "count": ...}}``. ``layers`` holds the bike and walk
         layers read with the network, each ``{"ways_kept", "links_before_contraction",
         "links_after_contraction", "components_before", "links_disconnected",
@@ -752,6 +767,7 @@ def network_read_osm(
     network_options: dict[str, float] | None = None,
     region_stubs: bool = True,
     region_buffer_m: float = 2000.0,
+    bus_lanes: bool = True,
 ) -> Network:
     """Read a road network from an OpenStreetMap ``.osm.pbf`` extract.
 
@@ -794,6 +810,18 @@ def network_read_osm(
             within this many metres of it, so a ring road just outside the area (Amsterdam's
             A10, Paris' Périphérique) and the main approaches stay; nothing else outside is kept.
             2 000 m by default (uncalibrated); 0 keeps none.
+        bus_lanes: Read the lanes reserved for buses (on by default): ``busway``,
+            ``busway:both|left|right`` (``lane``, ``opposite_lane``), ``lanes:bus``,
+            ``lanes:psv`` (counts), ``bus:lanes``, ``psv:lanes`` (``designated`` lanes), and
+            their ``:forward`` and ``:backward`` forms; where several describe a direction, the
+            largest count is taken. OpenStreetMap's ``lanes`` counts bus lanes with the others,
+            so a car link's bus lanes are taken out of the lanes cars use, never below one (where
+            no ``lanes`` is tagged, out of the class's default), and kept on the link
+            (:meth:`Network.link_bus_lanes`); with buses on the roads (``transit_options``
+            ``buses_on_roads`` 1), a bus there rides at free flow, outside the cars' queue. A contraflow bus lane on a one-way street is a busway link against it, for
+            buses alone. On the bike layer a bus lane bikes share (``cycleway=share_busway``,
+            ``opposite_share_busway``) is a bike lane. ``False``: none of these, and every lane
+            ``lanes`` counts is the cars'. Right-hand traffic is assumed for the sides.
 
     Returns:
         A :class:`Network` with the defaults table's parameters and the street

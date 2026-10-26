@@ -236,3 +236,18 @@ def test_as_bool_recognises_common_spellings(value, expected):
 )
 def test_as_float_rejects_blanks_and_non_finite_values(value, expected):
     assert _as_float(value) == expected
+
+
+def test_a_bus_lanes_column_is_read_and_leaves_the_cars_lanes_alone():
+    nodes = [{"id": "a", "x": 0, "y": 0}, {"id": "b", "x": 1, "y": 0}]
+    rows = [
+        {"from": "a", "to": "b", "class": "primary", "lanes": 2, "bus_lanes": 1},
+        {"from": "b", "to": "a", "class": "primary", "lanes": 2},
+    ]
+    net = ms.network_read_table(rows, nodes)
+    assert list(net.link_bus_lanes()) == [1, 0]
+    assert list(net.link_lanes()) == [2, 2], "a table's lanes are the cars'"
+    assert net.link_capacity_pcu_h()[0] == pytest.approx(net.link_capacity_pcu_h()[1])
+    # No lanes given: the class's default, less the bus lane.
+    rows = [{"from": "a", "to": "b", "class": "primary", "bus_lanes": 1}]
+    assert list(ms.network_read_table(rows, nodes).link_lanes()) == [1]

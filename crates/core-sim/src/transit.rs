@@ -40,6 +40,14 @@
 //! The loading's times replace the schedule's for those runs, and passengers
 //! ride them as they came.
 //!
+//! **Bus lanes** ([`RoadNetwork::has_bus_lane`]): on a link with a lane reserved for buses in
+//! its direction, a bus rides at the link's free-flow time (its control delay included),
+//! outside the cars' queue, and takes none of their capacity. A hop is cut into pieces: each
+//! run of links without a bus lane is a chained vehicle as above, and each run of bus-lane links
+//! adds its free-flow time to the wait of the vehicle that follows (or to the arrival at the
+//! next stop); a hop wholly on bus lanes takes its free-flow time. At the downstream end of a
+//! bus lane the bus joins the next link's queue like a departing vehicle.
+//!
 //! **Cost:** per stop, a hub (about 40 bytes) and its footpaths; per bus pattern,
 //! a shortest-path search per pair of stops (once); per trip, two bounded walks
 //! and one RAPTOR query, in parallel over trips in fixed chunks, so the result
@@ -144,10 +152,33 @@ fn within(walk: u32, limit: f64) -> bool {
 #[derive(Debug)]
 struct BusPlan {
     road: Arc<RoadNetwork>,
-    /// Per pattern group: the road links between each call and the next, or
+    /// Per pattern group: the road links between each call and the next, cut into pieces, or
     /// `None` if the group runs by the schedule.
-    hops: Vec<Option<Vec<Vec<LinkId>>>>,
+    hops: Vec<Option<Vec<Vec<Piece>>>>,
     report: BusReport,
+}
+
+/// A stretch of a bus's hop on the roads.
+#[derive(Clone, Debug, PartialEq)]
+enum Piece {
+    /// Links without a bus lane: the bus queues with the cars, a chained vehicle.
+    Queued(Vec<LinkId>),
+    /// Links with a bus lane in their direction: their free-flow time, in seconds.
+    Lane(f64),
+}
+
+/// A hop's links cut into [`Piece`]s by whether each has a bus lane.
+fn pieces(road: &RoadNetwork, links: &[LinkId]) -> Vec<Piece> {
+    let mut out: Vec<Piece> = Vec::new();
+    for &link in links {
+        match (road.has_bus_lane(link), out.last_mut()) {
+            (true, Some(Piece::Lane(s))) => *s += road.free_flow_time(link).get(),
+            (true, _) => out.push(Piece::Lane(road.free_flow_time(link).get())),
+            (false, Some(Piece::Queued(q))) => q.push(link),
+            (false, _) => out.push(Piece::Queued(vec![link])),
+        }
+    }
+    out
 }
 
 /// How the bus patterns were put on the roads.
@@ -168,7 +199,7 @@ pub struct BusReport {
 impl BusLoad {
     /// The runs loaded on the roads.
     pub(crate) fn runs(&self) -> impl Iterator<Item = TransitRunId> + '_ {
-        self.legs.iter().map(|(r, _)| *r)
+        self.legs.iter().map(|(r, _, _)| *r)
     }
 }
 
@@ -179,9 +210,23 @@ pub(crate) struct BusLoad {
     pub vehicles: Vec<Vehicle>,
     /// `(vehicle, after, wait, not_before)` by index into `vehicles`.
     pub chains: Vec<(usize, usize, f64, f64)>,
-    /// Per road-running run: the vehicle of each hop (call `k` to `k + 1`), or
-    /// `u32::MAX` for a hop with no road links.
-    legs: Vec<(TransitRunId, Vec<u32>)>,
+    /// Per road-running run: when it leaves its first stop (the schedule, a delay added), and
+    /// each hop's vehicles (call `k` to `k + 1`).
+    legs: Vec<(TransitRunId, f64, Vec<HopLoad>)>,
+    /// The window's end: a time a bus lane takes past it is not known.
+    until_s: f64,
+}
+
+/// One hop of a bus run in a loading: its first and last vehicle (by index into
+/// [`BusLoad::vehicles`]; `u32::MAX` for a hop without one: no road links, or bus lanes alone),
+/// and the free-flow seconds on bus lanes before the first and after the last (all of them in
+/// `lead_s` for a hop without a vehicle).
+#[derive(Clone, Copy, Debug)]
+struct HopLoad {
+    first: u32,
+    last: u32,
+    lead_s: f64,
+    trail_s: f64,
 }
 
 fn floor_seconds(s: f64) -> u32 {
@@ -435,7 +480,7 @@ impl TransitSetup {
             }
             report.groups_on_roads += 1;
             report.runs_on_roads += u32::try_from(runs.len()).expect("runs fit u32");
-            hops.push(Some(legs));
+            hops.push(Some(legs.iter().map(|links| pieces(&road, links)).collect()));
         }
         self.buses = Some(BusPlan { road, hops, report });
         self
@@ -470,7 +515,8 @@ impl TransitSetup {
         let d = self.defaults;
         let t = &self.timetable;
         let plan = self.buses.as_ref().expect("only called when the buses ride");
-        let mut load = BusLoad { vehicles: Vec::new(), chains: Vec::new(), legs: Vec::new() };
+        let mut load =
+            BusLoad { vehicles: Vec::new(), chains: Vec::new(), legs: Vec::new(), until_s };
         for (g, hops) in plan.hops.iter().enumerate() {
             let Some(hops) = hops else { continue };
             for &run in t.group_runs(u32::try_from(g).expect("groups fit u32")) {
@@ -487,35 +533,54 @@ impl TransitSetup {
                 }
                 // The departure rule for the next leg: max(leader's arrival + wait, not_before);
                 // with no leader yet, `not_before` alone.
-                let (mut wait, mut not_before) = (0.0, f64::from(sched.departure[calls[0]]) + late);
+                let start = f64::from(sched.departure[calls[0]]) + late;
+                let (mut wait, mut not_before) = (0.0, start);
                 let mut leader: Option<usize> = None;
                 let mut legs = Vec::with_capacity(hops.len());
-                for (k, links) in hops.iter().enumerate() {
+                for (k, pieces) in hops.iter().enumerate() {
                     let last = k + 2 == calls.len();
-                    if links.is_empty() {
-                        legs.push(u32::MAX);
-                    } else {
-                        let index = load.vehicles.len();
-                        let id = first_id + u32::try_from(index).expect("vehicles fit u32");
-                        #[allow(
-                            clippy::cast_possible_truncation,
-                            clippy::cast_sign_loss,
-                            reason = "a scheduled second"
-                        )]
-                        let departure = Second(not_before.max(0.0) as u32);
-                        load.vehicles.push(Vehicle::new(
-                            VehicleId::new(id),
-                            links.clone(),
-                            Pcu(d.bus_pcu),
-                            departure,
-                        ));
-                        if let Some(a) = leader {
-                            load.chains.push((index, a, wait, not_before));
+                    let mut hop =
+                        HopLoad { first: u32::MAX, last: u32::MAX, lead_s: 0.0, trail_s: 0.0 };
+                    for piece in pieces {
+                        match piece {
+                            // On a bus lane: its free-flow time, before the next vehicle leaves.
+                            Piece::Lane(s) => {
+                                if hop.first == u32::MAX {
+                                    hop.lead_s += s;
+                                } else {
+                                    hop.trail_s += s;
+                                }
+                                (wait, not_before) = (wait + s, not_before + s);
+                            }
+                            Piece::Queued(links) => {
+                                let index = load.vehicles.len();
+                                let id = first_id + u32::try_from(index).expect("vehicles fit u32");
+                                #[allow(
+                                    clippy::cast_possible_truncation,
+                                    clippy::cast_sign_loss,
+                                    reason = "a scheduled second"
+                                )]
+                                let departure = Second(not_before.max(0.0) as u32);
+                                load.vehicles.push(Vehicle::new(
+                                    VehicleId::new(id),
+                                    links.clone(),
+                                    Pcu(d.bus_pcu),
+                                    departure,
+                                ));
+                                if let Some(a) = leader {
+                                    load.chains.push((index, a, wait, not_before));
+                                }
+                                leader = Some(index);
+                                let index = u32::try_from(index).expect("vehicles fit u32");
+                                if hop.first == u32::MAX {
+                                    hop.first = index;
+                                }
+                                (hop.last, hop.trail_s) = (index, 0.0);
+                                (wait, not_before) = (0.0, f64::NEG_INFINITY);
+                            }
                         }
-                        leader = Some(index);
-                        legs.push(u32::try_from(index).expect("vehicles fit u32"));
-                        (wait, not_before) = (0.0, f64::NEG_INFINITY);
                     }
+                    legs.push(hop);
                     // Then the call at the end of the hop: its dwell and its schedule.
                     if !last {
                         let at_next = f64::from(sched.departure[calls[k + 1]]);
@@ -527,7 +592,7 @@ impl TransitSetup {
                         }
                     }
                 }
-                load.legs.push((run, legs));
+                load.legs.push((run, start, legs));
             }
         }
         load
@@ -537,7 +602,7 @@ impl TransitSetup {
     pub(crate) fn bus_summary(&self, load: &BusLoad, times: &CallTimes) -> BusSummary {
         let t = &self.timetable;
         let (mut arrived, mut delay) = (0u32, 0.0f64);
-        for (run, _) in &load.legs {
+        for (run, _, _) in &load.legs {
             let last = t.run_calls(*run).end - 1;
             if times.arrival[last] != UNKNOWN_TIME {
                 arrived += 1;
@@ -563,37 +628,61 @@ impl TransitSetup {
         let d = self.defaults;
         let t = &self.timetable;
         let mut times = t.scheduled().clone();
-        for (run, legs) in &load.legs {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a second")]
+        let second = |s: f64| s.max(0.0) as u32;
+        // A time a bus lane added, if inside the window (else not known: the loading stops there).
+        let within = |base: u32, lane_s: f64| {
+            let at = f64::from(base) + lane_s;
+            (lane_s <= 0.0 || at <= load.until_s).then(|| second(at))
+        };
+        for (run, start, legs) in &load.legs {
             let calls: Vec<usize> = t.run_calls(*run).collect();
             let sched = t.scheduled();
             let mut known = true;
-            for (k, &leg) in legs.iter().enumerate() {
+            for (k, hop) in legs.iter().enumerate() {
                 let (from, to) = (calls[k], calls[k + 1]);
                 if !known {
                     times.departure[from] = UNKNOWN_TIME;
                     times.arrival[to] = UNKNOWN_TIME;
                     continue;
                 }
-                if leg == u32::MAX {
-                    if k > 0 {
-                        #[allow(
-                            clippy::cast_possible_truncation,
-                            clippy::cast_sign_loss,
-                            reason = "a second"
-                        )]
-                        let dep = (f64::from(times.arrival[from]) + d.bus_dwell_s)
-                            .max(f64::from(sched.departure[from]))
-                            as u32;
-                        times.departure[from] = dep;
-                    }
-                    times.arrival[to] = times.departure[from];
-                } else if let Some(tr) = trajectory(leg as usize) {
-                    times.departure[from] = tr.links[0].enter.get();
-                    times.arrival[to] = tr.arrival().get();
+                let arrival = if hop.first == u32::MAX {
+                    // No vehicle: no road links, or bus lanes alone.
+                    times.departure[from] = if k > 0 {
+                        second(
+                            (f64::from(times.arrival[from]) + d.bus_dwell_s)
+                                .max(f64::from(sched.departure[from])),
+                        )
+                    } else if hop.lead_s > 0.0 {
+                        second(*start)
+                    } else {
+                        times.departure[from]
+                    };
+                    within(times.departure[from], hop.lead_s)
                 } else {
-                    known = false;
-                    times.departure[from] = UNKNOWN_TIME;
-                    times.arrival[to] = UNKNOWN_TIME;
+                    match (trajectory(hop.first as usize), trajectory(hop.last as usize)) {
+                        (Some(first), Some(last)) => {
+                            times.departure[from] =
+                                second(f64::from(first.links[0].enter.get()) - hop.lead_s);
+                            within(last.arrival().get(), hop.trail_s)
+                        }
+                        (Some(first), None) => {
+                            times.departure[from] =
+                                second(f64::from(first.links[0].enter.get()) - hop.lead_s);
+                            None
+                        }
+                        (None, _) => {
+                            times.departure[from] = UNKNOWN_TIME;
+                            None
+                        }
+                    }
+                };
+                match arrival {
+                    Some(a) => times.arrival[to] = a,
+                    None => {
+                        known = false;
+                        times.arrival[to] = UNKNOWN_TIME;
+                    }
                 }
             }
             let last = *calls.last().expect("two calls");

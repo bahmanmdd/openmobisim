@@ -292,7 +292,18 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// takes no road capacity and runs exactly on its timetable; 1 puts the buses on the roads among
 /// the cars. Travellers plan transit on the timetable (with the disruptions they know of) in
 /// every choice and gap, with buses on the roads too, never on the times a loading made.
-pub const DEFAULTS_VERSION: u32 = 38;
+///
+/// Version 39 (S299): **bus lanes read from OpenStreetMap** (`io-osm`'s
+/// `ImportOptions::bus_lanes`, on): a car link's lanes reserved for buses (`busway`,
+/// `lanes:bus`, `bus:lanes` and their kin, per direction) are taken out of the lanes cars use,
+/// never below one, out of the class's default where no `lanes` is tagged; a contraflow bus lane
+/// on a one-way street is a busway link against it; with buses on the roads
+/// (`buses_on_roads` 1), a bus on a link with a bus lane rides at free flow, outside the cars'
+/// queue; and on the bike layer a bus lane bikes share
+/// (`cycleway=share_busway`) is a lane. Every OSM city's network and results change where it
+/// maps bus lanes (Lyon, Paris; Amsterdam and Delft little); the benchmark networks and the
+/// link tables have none unless they say so (`bus_lanes`).
+pub const DEFAULTS_VERSION: u32 = 39;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

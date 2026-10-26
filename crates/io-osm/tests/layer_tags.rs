@@ -4,7 +4,7 @@
 
 use openmobisim_core_graph::defaults::RoadClass;
 use openmobisim_core_graph::layers::BikeInfrastructure::{Lane, Mixed, Separated};
-use openmobisim_io_osm::tags::{BikeWay, bike_way, walk_way};
+use openmobisim_io_osm::tags::{BikeWay, bike_way, bike_way_with, walk_way};
 
 fn tags(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
     pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
@@ -140,6 +140,31 @@ fn shared_lanes_and_separately_mapped_tracks_leave_the_road_mixed() {
         let way = bike(&[("highway", "secondary"), ("cycleway", value)]).unwrap();
         assert_eq!((way.forward, way.backward), (Some(Mixed), Some(Mixed)), "cycleway={value}");
     }
+}
+
+#[test]
+fn a_bus_lane_bikes_share_is_a_lane_in_its_direction() {
+    // `share_busway`: the bike rides the bus lane, beside the cars, not among them.
+    let both = bike(&[("highway", "primary"), ("cycleway", "share_busway")]).unwrap();
+    assert_eq!((both.forward, both.backward), (Some(Lane), Some(Lane)));
+    let right = bike(&[("highway", "primary"), ("cycleway:right", "share_busway")]).unwrap();
+    assert_eq!((right.forward, right.backward), (Some(Lane), Some(Mixed)));
+    // Against a one-way street it opens the contraflow, on the bus lane.
+    let contra = bike(&[
+        ("highway", "secondary"),
+        ("oneway", "yes"),
+        ("cycleway:left", "opposite_share_busway"),
+    ])
+    .unwrap();
+    assert_eq!((contra.forward, contra.backward), (Some(Mixed), Some(Lane)));
+    // Read without it (the import's `bus_lanes` off): mixed traffic, the contraflow still open.
+    let t = tags(&[("highway", "primary"), ("cycleway", "share_busway")]);
+    let off = bike_way_with(&t, 2, false).unwrap();
+    assert_eq!((off.forward, off.backward), (Some(Mixed), Some(Mixed)));
+    let t =
+        tags(&[("highway", "secondary"), ("oneway", "yes"), ("cycleway", "opposite_share_busway")]);
+    let off = bike_way_with(&t, 2, false).unwrap();
+    assert_eq!((off.forward, off.backward), (Some(Mixed), Some(Mixed)));
 }
 
 // --- direction --------------------------------------------------------------------

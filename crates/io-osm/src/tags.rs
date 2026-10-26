@@ -283,6 +283,169 @@ pub fn lanes(tags: &[(String, String)], direction: Direction) -> Lanes {
     }
 }
 
+/// Lanes reserved for buses in each direction, in the way's node order, as far as the tags say.
+///
+/// OpenStreetMap's `lanes` counts them with the others ("bus lanes, that are reserved for public
+/// service vehicles", <https://wiki.openstreetmap.org/wiki/Key:lanes>): the lanes cars use are
+/// `lanes` less these. On a one-way street, a count against the street's direction is a
+/// **contraflow bus lane**, which buses alone use.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct BusLanes {
+    /// Bus lanes in the way's own direction.
+    pub forward: u8,
+    /// Bus lanes against the way's direction.
+    pub backward: u8,
+}
+
+impl BusLanes {
+    /// Whether the way has a bus lane in either direction.
+    #[inline]
+    #[must_use]
+    pub const fn any(self) -> bool {
+        self.forward > 0 || self.backward > 0
+    }
+}
+
+/// The road's direction of traffic and the direction against it, in the way's node order (a
+/// two-way road: forward and backward).
+const fn with_and_against(road: Direction) -> (Direction, Direction) {
+    match road {
+        Direction::Backward => (Direction::Backward, Direction::Forward),
+        _ => (Direction::Forward, Direction::Backward),
+    }
+}
+
+/// Bus lanes from the `busway` family: `busway`, `busway:both`, `busway:left`, `busway:right`
+/// with the values `lane` and `opposite_lane`, and `busway:<side>:oneway` (`yes`, `-1`).
+fn busway_lanes(tags: &[(String, String)], road: Direction) -> (u8, u8) {
+    let is_lane = |v: &str| matches!(v, "lane" | "opposite_lane");
+    let (with, against) = with_and_against(road);
+    let mut out = (0u8, 0u8);
+    let mut add = |dir: Direction| match dir {
+        Direction::Forward => out.0 = out.0.saturating_add(1),
+        Direction::Backward => out.1 = out.1.saturating_add(1),
+        Direction::Both => {}
+    };
+    let both = tag_of(tags, "busway:both");
+    let plain = tag_of(tags, "busway");
+    let mut sided = both.is_some();
+    // Right-hand traffic: on a two-way road the right side serves the forward direction, and a
+    // plain tag is each side's unless the side says otherwise.
+    for (side, natural) in [("right", Direction::Forward), ("left", Direction::Backward)] {
+        let own = tag_of(tags, &format!("busway:{side}")).or(both);
+        let Some(value) = own.or(plain.filter(|_| road == Direction::Both)) else { continue };
+        sided = true;
+        if !is_lane(value) {
+            continue;
+        }
+        let dir = lane_runs(tags, &format!("busway:{side}:oneway")).unwrap_or(match road {
+            Direction::Both => natural,
+            _ if value == "opposite_lane" => against,
+            _ => with,
+        });
+        add(dir);
+    }
+    // On a one-way road a plain tag is one lane, unless a side is tagged.
+    if !sided && road != Direction::Both {
+        if let Some(value) = plain.filter(|v| is_lane(v)) {
+            add(if value == "opposite_lane" { against } else { with });
+        }
+    }
+    out
+}
+
+/// Bus lanes from a count, `lanes:<family>` and its `:forward` and `:backward` forms
+/// (`family` `bus` or `psv`). A total on a two-way road is split evenly, rounding down: an odd
+/// one's last lane has no direction the tags give.
+fn counted_lanes(tags: &[(String, String)], road: Direction, family: &str) -> (u8, u8) {
+    let n = |key: String| tag_of(tags, &key).and_then(|v| v.trim().parse::<u8>().ok());
+    let forward = n(format!("lanes:{family}:forward"));
+    let backward = n(format!("lanes:{family}:backward"));
+    let total = n(format!("lanes:{family}"));
+    let (f, b) = match road {
+        Direction::Both => (forward.or(total.map(|t| t / 2)), backward.or(total.map(|t| t / 2))),
+        Direction::Forward => (forward.or(total), backward),
+        Direction::Backward => (forward, backward.or(total)),
+    };
+    (f.unwrap_or(0), b.unwrap_or(0))
+}
+
+/// Bus lanes from a lane list, `<family>:lanes` and its `:forward` and `:backward` forms: the
+/// lanes marked `designated`. The plain form is read on a one-way road only (on a two-way one it
+/// lists both directions' lanes, and which are which is not in the tag).
+fn listed_lanes(tags: &[(String, String)], road: Direction, family: &str) -> (u8, u8) {
+    let count = |key: String| {
+        tag_of(tags, &key).map(|v| {
+            u8::try_from(v.split('|').filter(|lane| lane.trim() == "designated").count())
+                .unwrap_or(u8::MAX)
+        })
+    };
+    let forward = count(format!("{family}:lanes:forward"));
+    let backward = count(format!("{family}:lanes:backward"));
+    let plain = count(format!("{family}:lanes"));
+    let (f, b) = match road {
+        Direction::Both => (forward, backward),
+        Direction::Forward => (forward.or(plain), backward),
+        Direction::Backward => (forward, backward.or(plain)),
+    };
+    (f.unwrap_or(0), b.unwrap_or(0))
+}
+
+/// Read the bus lanes of a way whose traffic runs `road`.
+///
+/// Three families of tags describe them, often the same lanes twice, so each direction takes
+/// the largest count any of them gives:
+///
+/// - **`busway`**, `busway:both|left|right` = `lane` | `opposite_lane`. On a two-way road the
+///   right side serves the forward direction and the left the backward one (right-hand
+///   traffic), and a plain `busway=lane` is a lane each way. On a one-way road a side's `lane`
+///   runs with the traffic and `opposite_lane` against it (a contraflow bus lane), as a plain
+///   `busway` does. `busway:<side>:oneway` (`yes`, `-1`) overrides the side's direction.
+/// - **`lanes:bus`**, **`lanes:psv`**, and their `:forward` and `:backward` forms: a count. A
+///   plain count on a two-way road is split evenly, rounding down.
+/// - **`bus:lanes`**, **`psv:lanes`**, and their `:forward` and `:backward` forms: one value per
+///   lane, separated by `|`, a bus lane being `designated`. The plain form is read on one-way
+///   roads only.
+///
+/// # Examples
+///
+/// ```
+/// use openmobisim_io_osm::tags::{bus_lanes, BusLanes, Direction};
+///
+/// let tags = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+///     pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
+/// };
+///
+/// let both_ways = tags(&[("busway", "lane")]);
+/// assert_eq!(bus_lanes(&both_ways, Direction::Both), BusLanes { forward: 1, backward: 1 });
+/// let contraflow = tags(&[("oneway", "yes"), ("busway:left", "opposite_lane")]);
+/// assert_eq!(bus_lanes(&contraflow, Direction::Forward), BusLanes { forward: 0, backward: 1 });
+/// let listed = tags(&[("lanes", "3"), ("bus:lanes", "no|no|designated")]);
+/// assert_eq!(bus_lanes(&listed, Direction::Forward), BusLanes { forward: 1, backward: 0 });
+/// ```
+#[must_use]
+pub fn bus_lanes(tags: &[(String, String)], road: Direction) -> BusLanes {
+    let families = [
+        busway_lanes(tags, road),
+        counted_lanes(tags, road, "bus"),
+        counted_lanes(tags, road, "psv"),
+        listed_lanes(tags, road, "bus"),
+        listed_lanes(tags, road, "psv"),
+    ];
+    BusLanes {
+        forward: families.iter().map(|f| f.0).max().unwrap_or(0),
+        backward: families.iter().map(|f| f.1).max().unwrap_or(0),
+    }
+}
+
+/// The lanes cars use, given the lanes a way's tags count in one direction and the bus lanes
+/// there: the count less the bus lanes, never below one. `None` (no count) stays `None`; the
+/// network builder then takes the class's default less the bus lanes, again never below one.
+#[must_use]
+pub fn car_lanes(lanes: Option<u8>, bus: u8) -> Option<u8> {
+    lanes.map(|l| l.saturating_sub(bus).max(1))
+}
+
 /// Read a speed limit.
 ///
 /// Accepted forms: a bare number (km/h); a number with `km/h`, `kph`, `kmh`,
@@ -471,11 +634,16 @@ fn layer_class(highway: &str) -> Option<RoadClass> {
     RoadClass::from_osm_highway(highway)
 }
 
-/// The dedicated infrastructure a `cycleway…` value names, if any.
-fn infrastructure_of(value: Option<&str>) -> Option<BikeInfrastructure> {
+/// The dedicated infrastructure a `cycleway…` value names, if any: a track is separated; a
+/// lane, and with `share_busway` a bus lane bikes share (`share_busway`,
+/// `opposite_share_busway`), is a lane.
+fn infrastructure_of(value: Option<&str>, share_busway: bool) -> Option<BikeInfrastructure> {
     match value {
         Some("track" | "opposite_track") => Some(BikeInfrastructure::Separated),
         Some("lane" | "opposite_lane") => Some(BikeInfrastructure::Lane),
+        Some("share_busway" | "opposite_share_busway") if share_busway => {
+            Some(BikeInfrastructure::Lane)
+        }
         _ => None,
     }
 }
@@ -500,7 +668,11 @@ fn lane_runs(tags: &[(String, String)], key: &str) -> Option<Direction> {
 /// facility, not by `oneway:bicycle`: `opposite…` in `cycleway` or
 /// `cycleway:both|left|right`, or a lane or track on a side whose `:oneway`
 /// runs against the street. Always false on a two-way street.
-fn contraflow_opened(tags: &[(String, String)], road_direction: Direction) -> bool {
+fn contraflow_opened(
+    tags: &[(String, String)],
+    road_direction: Direction,
+    share_busway: bool,
+) -> bool {
     let against = match road_direction {
         Direction::Forward => Direction::Backward,
         Direction::Backward => Direction::Forward,
@@ -513,7 +685,7 @@ fn contraflow_opened(tags: &[(String, String)], road_direction: Direction) -> bo
         [("cycleway:left", "cycleway:left:oneway"), ("cycleway:right", "cycleway:right:oneway")]
             .into_iter()
             .any(|(side, oneway)| {
-                infrastructure_of(tag_of(tags, side)).is_some()
+                infrastructure_of(tag_of(tags, side), share_busway).is_some()
                     && lane_runs(tags, oneway) == Some(against)
             });
     opposite || lane_against
@@ -532,13 +704,15 @@ fn one_way_infrastructure(
     tags: &[(String, String)],
     road_direction: Direction,
     bike_direction: Direction,
+    share_busway: bool,
 ) -> (Option<BikeInfrastructure>, Option<BikeInfrastructure>) {
     let forward_road = road_direction == Direction::Forward;
     let against = if forward_road { Direction::Backward } else { Direction::Forward };
     let open =
         if forward_road { bike_direction.has_backward() } else { bike_direction.has_forward() };
 
-    let plain = |key: &str| infrastructure_of(tag_of(tags, key).filter(|v| !is_opposite(v)));
+    let plain =
+        |key: &str| infrastructure_of(tag_of(tags, key).filter(|v| !is_opposite(v)), share_busway);
     let both = plain("cycleway:both").or_else(|| plain("cycleway"));
     let right = plain("cycleway:right").or(both);
     let left = plain("cycleway:left").or(both);
@@ -546,9 +720,10 @@ fn one_way_infrastructure(
         // The contraflow side.
         let (with_side, contra_side) = if forward_road { (right, left) } else { (left, right) };
         // A facility named `opposite…`, or a lane that runs against the street.
-        let named = ["cycleway", "cycleway:both", "cycleway:left", "cycleway:right"]
-            .into_iter()
-            .find_map(|key| infrastructure_of(tag_of(tags, key).filter(|v| is_opposite(v))));
+        let named =
+            ["cycleway", "cycleway:both", "cycleway:left", "cycleway:right"].into_iter().find_map(
+                |key| infrastructure_of(tag_of(tags, key).filter(|v| is_opposite(v)), share_busway),
+            );
         let running_against = [
             ("cycleway:left", "cycleway:left:oneway"),
             ("cycleway:right", "cycleway:right:oneway"),
@@ -556,7 +731,7 @@ fn one_way_infrastructure(
         .into_iter()
         .find_map(|(side, oneway)| {
             (lane_runs(tags, oneway) == Some(against))
-                .then(|| infrastructure_of(tag_of(tags, side)))
+                .then(|| infrastructure_of(tag_of(tags, side), share_busway))
                 .flatten()
         });
         (with_side, named.or(running_against).or(contra_side))
@@ -598,8 +773,24 @@ fn one_way_infrastructure(
 /// one on a `oneway=-1` street) serves the contraflow, the other side the
 /// with-flow direction, and the contraflow is mixed where no lane or track
 /// is tagged (`opposite_lane|opposite_track` name theirs).
+///
+/// **A bus lane bikes share** (`cycleway[:side]=share_busway`, and `opposite_share_busway`
+/// against a one-way street, which opens its contraflow) is a lane in its direction: the bike
+/// rides beside the cars, not among them. [`bike_way_with`] can read it as mixed traffic.
 #[must_use]
 pub fn bike_way(tags: &[(String, String)], node_count: usize) -> Option<BikeWay> {
+    bike_way_with(tags, node_count, true)
+}
+
+/// [`bike_way`], reading a bus lane bikes share (`share_busway`) as a lane if `share_busway`,
+/// else as mixed traffic (the street's own level; `opposite_share_busway` still opens a one-way
+/// street's contraflow).
+#[must_use]
+pub fn bike_way_with(
+    tags: &[(String, String)],
+    node_count: usize,
+    share_busway: bool,
+) -> Option<BikeWay> {
     if is_ferry(tags) {
         // A ferry crossing (S197): bikes ride on unless the tags say not.
         if node_count < 2 || tag_of(tags, "bicycle") == Some("no") {
@@ -638,7 +829,7 @@ pub fn bike_way(tags: &[(String, String)], node_count: usize) -> Option<BikeWay>
 
     let road_direction = direction(tags, class);
     let cycleway = tag_of(tags, "cycleway");
-    let contraflow = contraflow_opened(tags, road_direction);
+    let contraflow = contraflow_opened(tags, road_direction, share_busway);
     let bike_direction = match tag_of(tags, "oneway:bicycle") {
         Some("no" | "false" | "0") => Direction::Both,
         Some("yes" | "true" | "1") if road_direction == Direction::Backward => Direction::Backward,
@@ -668,13 +859,14 @@ pub fn bike_way(tags: &[(String, String)], node_count: usize) -> Option<BikeWay>
                 BikeInfrastructure::Mixed
             };
             let (f, b) = if road_direction == Direction::Both {
-                let both = infrastructure_of(tag_of(tags, "cycleway:both"))
-                    .or_else(|| infrastructure_of(cycleway.filter(|v| !v.starts_with("opposite"))));
-                let right = infrastructure_of(tag_of(tags, "cycleway:right")).or(both);
-                let left = infrastructure_of(tag_of(tags, "cycleway:left")).or(both);
+                let of = |value| infrastructure_of(value, share_busway);
+                let both = of(tag_of(tags, "cycleway:both"))
+                    .or_else(|| of(cycleway.filter(|v| !v.starts_with("opposite"))));
+                let right = of(tag_of(tags, "cycleway:right")).or(both);
+                let left = of(tag_of(tags, "cycleway:left")).or(both);
                 (right, left)
             } else {
-                one_way_infrastructure(tags, road_direction, bike_direction)
+                one_way_infrastructure(tags, road_direction, bike_direction, share_busway)
             };
             (base.max(f.unwrap_or(base)), base.max(b.unwrap_or(base)))
         }

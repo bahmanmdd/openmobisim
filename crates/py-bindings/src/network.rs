@@ -109,6 +109,8 @@ struct ImportInfo {
     dropped: Vec<DroppedLink>,
     connectivity: &'static str,
     contract_drivable: bool,
+    /// Whether the bus lanes were read.
+    bus_lanes: bool,
     /// The region as the caller gave it, for the record.
     region: Option<String>,
 }
@@ -390,10 +392,21 @@ impl PyNetwork {
             .into_pyarray(py)
     }
 
-    /// Every link's lane count in its own direction (uint8).
+    /// Every link's lane count in its own direction (uint8): the lanes cars use, bus lanes
+    /// not counted.
     fn link_lanes<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u8>> {
         (0..self.inner.link_count())
             .map(|i| self.inner.link_lanes(LinkId::new(i)))
+            .collect::<Vec<_>>()
+            .into_pyarray(py)
+    }
+
+    /// Every link's lanes reserved for buses in its own direction (uint8; 0: none). They take
+    /// none of the cars' capacity; with buses on the roads (`transit_options` `buses_on_roads`
+    /// 1), a bus on a link with one rides at free flow, outside the cars' queue.
+    fn link_bus_lanes<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u8>> {
+        (0..self.inner.link_count())
+            .map(|i| self.inner.link_bus_lanes(LinkId::new(i)))
             .collect::<Vec<_>>()
             .into_pyarray(py)
     }
@@ -548,8 +561,15 @@ impl PyNetwork {
         d.set_item("drivable_maxspeed_length_m", r.drivable_maxspeed_length_m)?;
         d.set_item("drivable_lanes_links", r.drivable_lanes_links)?;
         d.set_item("drivable_lanes_length_m", r.drivable_lanes_length_m)?;
+        d.set_item("drivable_lane_length_m", r.drivable_lane_length_m)?;
+        d.set_item("bus_lane_links", r.bus_lane_links)?;
+        d.set_item("bus_lane_length_m", r.bus_lane_length_m)?;
+        d.set_item("bus_lane_car_lane_length_removed_m", r.bus_lane_car_lane_length_removed_m)?;
+        d.set_item("contraflow_bus_links", r.contraflow_bus_links)?;
+        d.set_item("contraflow_bus_length_m", r.contraflow_bus_length_m)?;
         d.set_item("connectivity", info.connectivity)?;
         d.set_item("contract_drivable", info.contract_drivable)?;
+        d.set_item("bus_lanes", info.bus_lanes)?;
         d.set_item("region", info.region.clone())?;
         let diagnostics = PyDict::new(py);
         for (code, severity, count) in &info.diagnostics {
@@ -694,6 +714,18 @@ pub fn toy_network() -> PyNetwork {
 /// default) also reads the bike and walk layers from the same ways:
 /// `network.layer("bike")` and `network.layer("walk")`.
 ///
+/// `bus_lanes` (on by default) reads the lanes reserved for buses (`busway`,
+/// `busway:both|left|right`, `lanes:bus`, `lanes:psv`, `bus:lanes`, `psv:lanes` and their
+/// `:forward` and `:backward` forms). OpenStreetMap's `lanes` counts them with the others, so a
+/// car link's bus lanes are taken out of the lanes cars use (never below one; where no `lanes`
+/// is tagged, out of the class's default) and kept on the link (`network.link_bus_lanes()`):
+/// with buses on the roads (`transit_options` `buses_on_roads` 1), a bus there rides at free
+/// flow, outside the cars' queue. A contraflow bus lane on a one-way
+/// street is a busway link against it, for buses alone. On the bike layer, a bus lane bikes
+/// share (`cycleway=share_busway`, `opposite_share_busway`) is a bike lane. Off: none of these,
+/// and every lane `lanes` counts is the cars'. `network.report_import()` counts the car links
+/// with a bus lane, their length, the lane length taken from cars and the contraflow busways.
+///
 /// # Errors
 ///
 /// `ValueError` if the file cannot be read, the region or `connectivity` is not
@@ -701,7 +733,7 @@ pub fn toy_network() -> PyNetwork {
 #[pyfunction]
 #[pyo3(signature = (
     path, contract=true, region=None, connectivity="strong", contract_drivable=true, layers=true,
-    network_options=None, region_stubs=true, region_buffer_m=2000.0,
+    network_options=None, region_stubs=true, region_buffer_m=2000.0, bus_lanes=true,
 ))]
 #[allow(clippy::too_many_arguments, reason = "one argument per import option")]
 pub fn network_read_osm(
@@ -715,6 +747,7 @@ pub fn network_read_osm(
     network_options: Option<HashMap<String, f64>>,
     region_stubs: bool,
     region_buffer_m: f64,
+    bus_lanes: bool,
 ) -> PyResult<PyNetwork> {
     let defaults = network_defaults(network_options)?;
     if !(region_buffer_m.is_finite() && region_buffer_m >= 0.0) {
@@ -748,6 +781,7 @@ pub fn network_read_osm(
                 signals: defaults.signals,
                 classes: defaults.classes,
                 saturation_bands: defaults.saturation_bands,
+                bus_lanes,
             };
             let mut diagnostics = Diagnostics::new();
             let source = PbfSource::new(&path);
@@ -788,6 +822,7 @@ pub fn network_read_osm(
             Connectivity::Strong => "strong",
         },
         contract_drivable,
+        bus_lanes,
         region: region_text,
     }));
     network.read_s = Some(started.elapsed().as_secs_f64());
@@ -823,7 +858,7 @@ pub fn network_read_osm(
     node_ids, node_lon, node_lat, node_signalised,
     link_ids, link_from, link_to, link_class, link_lanes,
     link_length_m, link_capacity_veh_h, link_free_flow_km_h, link_signalised, link_roundabout,
-    network_options=None, node_signal_location=None,
+    network_options=None, node_signal_location=None, link_bus_lanes=None,
 ))]
 pub fn network_from_columns(
     node_ids: Vec<String>,
@@ -842,6 +877,7 @@ pub fn network_from_columns(
     link_roundabout: Vec<bool>,
     network_options: Option<HashMap<String, f64>>,
     node_signal_location: Option<Vec<bool>>,
+    link_bus_lanes: Option<Vec<u8>>,
 ) -> PyResult<PyNetwork> {
     let defaults = network_defaults(network_options)?;
     let nodes = node_ids.len();
@@ -867,6 +903,7 @@ pub fn network_from_columns(
         ("link_free_flow_km_h", link_free_flow_km_h.len()),
         ("link_signalised", link_signalised.len()),
         ("link_roundabout", link_roundabout.len()),
+        ("link_bus_lanes", link_bus_lanes.as_ref().map_or(links, Vec::len)),
     ] {
         if len != links {
             return Err(PyValueError::new_err(format!(
@@ -908,6 +945,7 @@ pub fn network_from_columns(
             length_m: link_length_m[i],
             roundabout: link_roundabout[i],
             capacity_veh_h: link_capacity_veh_h[i],
+            bus_lanes: link_bus_lanes.as_ref().map_or(0, |b| b[i]),
         };
         builder.add_link(link_ids[i].clone(), link_from[i].clone(), link_to[i].clone(), spec);
     }

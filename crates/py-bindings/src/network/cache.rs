@@ -203,7 +203,15 @@ fn read_layer_report(r: &mut Reader<'_>) -> binary::Result<LayerReport> {
 }
 
 fn write_import(w: &mut Writer, info: &ImportInfo) {
-    let ImportInfo { report, diagnostics, dropped, connectivity, contract_drivable, region } = info;
+    let ImportInfo {
+        report,
+        diagnostics,
+        dropped,
+        connectivity,
+        contract_drivable,
+        bus_lanes,
+        region,
+    } = info;
     let ImportReport {
         ways_seen,
         ways_kept,
@@ -225,6 +233,12 @@ fn write_import(w: &mut Writer, info: &ImportInfo) {
         drivable_maxspeed_length_m,
         drivable_lanes_links,
         drivable_lanes_length_m,
+        bus_lane_links,
+        bus_lane_length_m,
+        bus_lane_car_lane_length_removed_m,
+        drivable_lane_length_m,
+        contraflow_bus_links,
+        contraflow_bus_length_m,
     } = *report;
     for v in [
         ways_seen,
@@ -247,6 +261,12 @@ fn write_import(w: &mut Writer, info: &ImportInfo) {
         drivable_maxspeed_length_m,
         drivable_lanes_links,
         drivable_lanes_length_m,
+        bus_lane_links,
+        bus_lane_length_m,
+        bus_lane_car_lane_length_removed_m,
+        drivable_lane_length_m,
+        contraflow_bus_links,
+        contraflow_bus_length_m,
     ] {
         w.u64(v);
     }
@@ -272,6 +292,7 @@ fn write_import(w: &mut Writer, info: &ImportInfo) {
         _ => 1,
     });
     w.bool(*contract_drivable);
+    w.bool(*bus_lanes);
     w.bool(region.is_some());
     if let Some(region) = region {
         w.str(region);
@@ -300,6 +321,12 @@ fn read_import(r: &mut Reader<'_>) -> binary::Result<ImportInfo> {
         drivable_maxspeed_length_m: r.u64()?,
         drivable_lanes_links: r.u64()?,
         drivable_lanes_length_m: r.u64()?,
+        bus_lane_links: r.u64()?,
+        bus_lane_length_m: r.u64()?,
+        bus_lane_car_lane_length_removed_m: r.u64()?,
+        drivable_lane_length_m: r.u64()?,
+        contraflow_bus_links: r.u64()?,
+        contraflow_bus_length_m: r.u64()?,
     };
     let n = r.len(24)?;
     let mut diagnostics = Vec::with_capacity(n);
@@ -333,6 +360,15 @@ fn read_import(r: &mut Reader<'_>) -> binary::Result<ImportInfo> {
         other => return invalid(format!("connectivity {other}")),
     };
     let contract_drivable = r.bool()?;
+    let bus_lanes = r.bool()?;
     let region = if r.bool()? { Some(r.str()?.to_string()) } else { None };
-    Ok(ImportInfo { report, diagnostics, dropped, connectivity, contract_drivable, region })
+    Ok(ImportInfo {
+        report,
+        diagnostics,
+        dropped,
+        connectivity,
+        contract_drivable,
+        bus_lanes,
+        region,
+    })
 }

@@ -35,6 +35,17 @@ bus times of the last iteration.
   `transit_summary` counts them (`timetable_searches_*`, `timetable_reused_*`, `timetable_kept`,
   `timetable_kept_bytes`).
 
+**Bus lanes from OpenStreetMap.** `network_read_osm` reads the lanes reserved for buses (`busway`,
+`busway:both|left|right`, `lanes:bus`, `lanes:psv`, `bus:lanes`, `psv:lanes` and their `:forward` and `:backward`
+forms), per direction. OpenStreetMap's `lanes` counts them with the others, so a car link's bus lanes are taken out of
+the lanes cars use, never below one (where no `lanes` is tagged, out of the road class's default). With buses on the
+roads (`buses_on_roads` 1), a bus on a link with a bus lane rides at free flow, outside the cars' queue; a contraflow bus lane on a one-way street is a busway link
+against it, for buses alone; on the bike network a bus lane bikes share (`cycleway=share_busway`) is a bike lane.
+- `bus_lanes=False` reads none of them, every lane being the cars'.
+- `Network.link_bus_lanes()` gives each link's bus lanes; `report_import()` counts the car links with one, their
+  length, the lane length taken from cars and the contraflow busways; `network_read_table` reads a `bus_lanes` column.
+- Networks of cities that map bus lanes (Lyon, Paris) have less car capacity than before, and their results change.
+
 ## 0.1.0 — 2026-10-20
 
 The first public release: **an alpha, for testing by students and colleagues.** The tests are not complete; please use

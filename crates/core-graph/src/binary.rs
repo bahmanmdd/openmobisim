@@ -46,7 +46,7 @@ use openmobisim_core_types::ids::{ExternalIdTable, ExternalIdTableBuilder};
 
 /// The layout's version: bumped whenever a stored type gains, loses or reorders a field, or the
 /// encoding of one changes. A file of another version is refused.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 /// The first eight bytes of every network file: a name, then a carriage return and a line feed,
 /// which a transfer that rewrites line endings would damage visibly.

@@ -532,6 +532,14 @@ pub(crate) fn hash_network(h: &mut Fnv1a, network: &RoadNetwork, ids: u64) {
             h.write_bool(network.is_closed(LinkId::new(raw)));
         }
     }
+    // Bus lanes (S299): nothing when no link has one, so such a network's fingerprint is what it
+    // was.
+    if (0..network.link_count()).any(|raw| network.has_bus_lane(LinkId::new(raw))) {
+        h.write_str("bus_lanes");
+        for raw in 0..network.link_count() {
+            h.write_u8(network.link_bus_lanes(LinkId::new(raw)));
+        }
+    }
 }
 
 /// Every trip's mode and the static layers the trips use; nothing at

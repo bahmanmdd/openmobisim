@@ -76,7 +76,8 @@ pub const WIDE_EXTENT_DEGREES: f64 = 4.5;
 pub struct LinkSpec {
     /// The OSM road class.
     pub class: RoadClass,
-    /// Lanes in this direction, if OSM says.
+    /// The lanes cars use in this direction, if the source says: an OSM import passes the
+    /// `lanes` it read less the bus lanes ([`Self::bus_lanes`]), never below one.
     pub lanes: Option<u8>,
     /// `maxspeed` in km/h, if OSM says.
     pub maxspeed_km_h: Option<f64>,
@@ -97,6 +98,11 @@ pub struct LinkSpec {
     /// directly, rather than through `highway` × `lanes`). `None` uses the
     /// class row's `saturation_flow_veh_h_lane × lanes`, as OSM does.
     pub capacity_veh_h: Option<f64>,
+    /// Lanes in this direction reserved for buses, besides [`Self::lanes`]: a bus there rides
+    /// at free flow, outside the cars' queue, and takes none of their capacity. With
+    /// [`Self::lanes`] unknown, the cars' lanes are the class's default less these, never below
+    /// one (the default counts every lane, as OSM's `lanes` does). 0: none.
+    pub bus_lanes: u8,
 }
 
 impl LinkSpec {
@@ -111,6 +117,7 @@ impl LinkSpec {
             length_m: None,
             roundabout: false,
             capacity_veh_h: None,
+            bus_lanes: 0,
         }
     }
 }
@@ -287,6 +294,7 @@ impl RoadNetworkBuilder {
         let mut link_class = Vec::with_capacity(self.links.len());
         let mut link_roundabout = Vec::with_capacity(self.links.len());
         let mut link_lanes = Vec::with_capacity(self.links.len());
+        let mut link_bus_lanes = Vec::with_capacity(self.links.len());
         let mut link_length = Vec::with_capacity(self.links.len());
         let mut link_params: Vec<LinkParameters> = Vec::with_capacity(self.links.len());
         let mut link_signalised: Vec<bool> = Vec::with_capacity(self.links.len());
@@ -321,7 +329,9 @@ impl RoadNetworkBuilder {
                 let speed = spec.maxspeed_km_h.unwrap_or(row.free_flow_km_h);
                 row = defaults.saturation_bands.applied(row, speed);
             }
-            let lanes = spec.lanes.unwrap_or(row.lanes_per_direction);
+            let lanes = spec
+                .lanes
+                .unwrap_or_else(|| row.lanes_per_direction.saturating_sub(spec.bus_lanes).max(1));
             let (params, note) = LinkParameters::from_defaults(
                 row,
                 lanes,
@@ -364,6 +374,7 @@ impl RoadNetworkBuilder {
             link_class.push(spec.class);
             link_roundabout.push(spec.roundabout);
             link_lanes.push(lanes);
+            link_bus_lanes.push(spec.bus_lanes);
             link_length.push(Metres(length));
             link_params.push(params);
             link_signalised.push(signalised);
@@ -399,6 +410,7 @@ impl RoadNetworkBuilder {
             link_class,
             link_roundabout,
             link_lanes,
+            link_bus_lanes,
             link_length,
             link_params,
             link_free_flow_time,
@@ -431,6 +443,8 @@ pub struct RoadNetwork {
     link_class: Vec<RoadClass>,
     link_roundabout: Vec<bool>,
     link_lanes: Vec<u8>,
+    /// Per link, its lanes reserved for buses ([`LinkSpec::bus_lanes`]).
+    link_bus_lanes: Vec<u8>,
     link_length: Vec<Metres>,
     link_params: Vec<LinkParameters>,
     link_free_flow_time: Vec<Duration>,
@@ -655,6 +669,7 @@ impl RoadNetwork {
             link_class: self.link_class.clone(),
             link_roundabout: self.link_roundabout.clone(),
             link_lanes: lanes,
+            link_bus_lanes: self.link_bus_lanes.clone(),
             link_length: self.link_length.clone(),
             link_free_flow_time: self.link_free_flow_time.clone(),
             link_params: params,
@@ -678,6 +693,21 @@ impl RoadNetwork {
     #[must_use]
     pub fn link_lanes(&self, link: LinkId) -> u8 {
         self.link_lanes[link.index()]
+    }
+
+    /// A link's lanes reserved for buses in its own direction, besides [`Self::link_lanes`]
+    /// ([`LinkSpec::bus_lanes`]).
+    #[inline]
+    #[must_use]
+    pub fn link_bus_lanes(&self, link: LinkId) -> u8 {
+        self.link_bus_lanes[link.index()]
+    }
+
+    /// Whether a bus on the link rides a lane of its own: at free flow, outside the cars' queue.
+    #[inline]
+    #[must_use]
+    pub fn has_bus_lane(&self, link: LinkId) -> bool {
+        self.link_bus_lanes[link.index()] > 0
     }
 
     /// A link's length.
@@ -784,7 +814,7 @@ impl RoadNetwork {
         n * (2 * size_of::<f64>() + size_of::<LonLat>() + 1)
             + l * (2 * size_of::<NodeId>()
                 + size_of::<RoadClass>()
-                + 2
+                + 3
                 + size_of::<Metres>()
                 + size_of::<LinkParameters>()
                 + size_of::<Duration>()
@@ -819,6 +849,7 @@ impl RoadNetwork {
             link_class,
             link_roundabout,
             link_lanes,
+            link_bus_lanes,
             link_length,
             link_params,
             link_free_flow_time,
@@ -847,6 +878,7 @@ impl RoadNetwork {
         w.u8s(link_class.iter().map(|&c| c as u8));
         w.bools(link_roundabout);
         w.u8s(link_lanes.iter().copied());
+        w.u8s(link_bus_lanes.iter().copied());
         w.f64s(link_length.iter().map(|m| m.0));
         w.len(link_params.len());
         for p in link_params {
@@ -908,6 +940,7 @@ impl RoadNetwork {
             .collect::<binary::Result<Vec<_>>>()?;
         let link_roundabout = sized(r.bools()?, links, "link roundabouts")?;
         let link_lanes = sized(r.u8s()?.to_vec(), links, "link lanes")?;
+        let link_bus_lanes = sized(r.u8s()?.to_vec(), links, "link bus lanes")?;
         let link_length =
             sized(r.f64s()?, links, "link lengths")?.into_iter().map(Metres).collect();
         let params = r.len(40)?;
@@ -948,6 +981,7 @@ impl RoadNetwork {
             link_class,
             link_roundabout,
             link_lanes,
+            link_bus_lanes,
             link_length,
             link_params,
             link_free_flow_time,
@@ -978,6 +1012,7 @@ impl PartialEq for RoadNetwork {
             link_class,
             link_roundabout,
             link_lanes,
+            link_bus_lanes,
             link_length,
             link_params,
             link_free_flow_time,
@@ -1005,6 +1040,7 @@ impl PartialEq for RoadNetwork {
             && *link_class == other.link_class
             && *link_roundabout == other.link_roundabout
             && *link_lanes == other.link_lanes
+            && *link_bus_lanes == other.link_bus_lanes
             && *link_length == other.link_length
             && *link_params == other.link_params
             && *link_free_flow_time == other.link_free_flow_time

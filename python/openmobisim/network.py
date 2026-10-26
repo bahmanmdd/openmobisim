@@ -47,6 +47,7 @@ _LINK_ALIASES: dict[str, tuple[str, ...]] = {
     "to": ("to", "term_node", "to_node", "target", "head"),
     "length": ("length", "length_m", "dist", "distance"),
     "lanes": ("lanes",),
+    "bus_lanes": ("bus_lanes",),
     # "speed" is deliberately not an alias: the standard TNTP files carry a
     # column of that exact name whose meaning is inconsistent across networks
     # (sometimes a speed limit, sometimes unused and zero) — reading it as
@@ -196,7 +197,10 @@ def network_read_table(
             case-insensitive): ``from`` (``init_node``, ``from_node``),
             ``to`` (``term_node``, ``to_node``) — **required**; ``id``
             (auto-numbered if absent); ``length`` (``length_m``, ``dist``);
-            ``lanes``; ``free_flow_speed`` (``free_flow_speed_km_h``; not ``speed``) or
+            ``lanes`` (the lanes cars use); ``bus_lanes``: lanes reserved for buses besides
+            them, on which a bus on the roads rides at free flow outside the cars' queue
+            (absent: none);
+            ``free_flow_speed`` (``free_flow_speed_km_h``; not ``speed``) or
             ``free_flow_time`` (``fftt``) — at most one is read, ``free_flow_speed`` first;
             ``capacity`` (``cap``); ``class`` (``type``, ``link_type``,
             ``highway``) — a name from ``openmobisim.LINK_CLASSES``
@@ -300,6 +304,7 @@ def network_read_table(
     link_to: list[str] = []
     link_class: list[str] = []
     link_lanes: list[int | None] = []
+    link_bus_lanes: list[int] = []
     link_length_m: list[float | None] = []
     link_capacity_veh_h: list[float | None] = []
     link_free_flow_km_h: list[float | None] = []
@@ -324,6 +329,8 @@ def network_read_table(
         link_class.append(str(_column(row, "class", _LINK_ALIASES) or ""))
         lanes = _column(row, "lanes", _LINK_ALIASES)
         link_lanes.append(int(lanes) if lanes is not None else None)
+        bus_lanes = _column(row, "bus_lanes", _LINK_ALIASES)
+        link_bus_lanes.append(int(bus_lanes) if bus_lanes is not None else 0)
 
         length_m = _as_float(_column(row, "length", _LINK_ALIASES))
         if length_m is not None:
@@ -402,6 +409,7 @@ def network_read_table(
         link_roundabout=link_roundabout,
         network_options=dict(network_options) if network_options else None,
         node_signal_location=node_signal_location,
+        link_bus_lanes=link_bus_lanes if any(link_bus_lanes) else None,
     )
     # A table-read network has no `report_import`-style diagnostics yet (the
     # Rust side records an unrecognised `class` value the same way an
