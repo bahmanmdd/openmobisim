@@ -64,11 +64,15 @@ pub struct TransitDefaults {
     ///
     /// *A modelling choice, not a calibrated value.*
     pub buses_on_roads: bool,
-    /// How long a bus stays at each stop, in seconds (D5: fixed).
+    /// The time a bus stays at each stop besides the feed's own dwell there, in seconds. A bus
+    /// stays at a stop for its scheduled departure less its scheduled arrival (0 where the feed
+    /// gives them equal: its running times then hold the dwell) plus this, and never leaves before
+    /// its scheduled departure. 0 by default: the feed's times alone.
     ///
-    /// *An assumption: 20 s stands for a typical stop until boarding-dependent dwell arrives;
-    /// a bus's dwell depends mostly on its boardings and alightings (Dueker et al. 2004,
-    /// *Journal of Public Transportation* 7(1) 21–40, <https://doi.org/10.5038/2375-0901.7.1.2>).*
+    /// *Uncalibrated: a feed with arrival = departure at every stop and running times without
+    /// the dwell wants a typical stop's dwell here (20 s, say); a bus's dwell depends mostly on
+    /// its boardings and alightings (Dueker et al. 2004, *Journal of Public Transportation* 7(1)
+    /// 21–40, <https://doi.org/10.5038/2375-0901.7.1.2>).*
     pub bus_dwell_s: f64,
     /// A bus's passenger car units on the roads.
     pub bus_pcu: f64,
@@ -96,7 +100,7 @@ impl TransitDefaults {
         stop_walk_snap_m: 300.0,
         stop_transfer_s: 0.0,
         buses_on_roads: false,
-        bus_dwell_s: 20.0,
+        bus_dwell_s: 0.0,
         bus_pcu: 2.0,
         bus_plausibility_ratio: 1.6,
         bus_stop_snap_m: 300.0,

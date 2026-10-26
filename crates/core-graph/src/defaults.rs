@@ -303,7 +303,14 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// (`cycleway=share_busway`) is a lane. Every OSM city's network and results change where it
 /// maps bus lanes (Lyon, Paris; Amsterdam and Delft little); the benchmark networks and the
 /// link tables have none unless they say so (`bus_lanes`).
-pub const DEFAULTS_VERSION: u32 = 39;
+///
+/// Version 40 (S299): **a bus on the roads dwells for the feed's own dwell** (its scheduled
+/// departure less its scheduled arrival at the stop, 0 where they are equal, the running times
+/// holding it), plus `transit_options` `bus_dwell_s`, now 0 (was 20 s at every stop); **each
+/// stop snaps to a node from which the bus can go on the way its pattern travels** (the bus's
+/// side of a dual carriageway); and **a one-way street buses may ride both ways**
+/// (`oneway:bus|psv=no`) is a busway link against it. Every run with buses on the roads moves.
+pub const DEFAULTS_VERSION: u32 = 40;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

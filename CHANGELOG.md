@@ -46,6 +46,14 @@ against it, for buses alone; on the bike network a bus lane bikes share (`cyclew
   length, the lane length taken from cars and the contraflow busways; `network_read_table` reads a `bus_lanes` column.
 - Networks of cities that map bus lanes (Lyon, Paris) have less car capacity than before, and their results change.
 
+**Buses on the roads keep the feed's times at their stops.** A bus stays at a stop for the feed's own dwell there
+(scheduled departure less scheduled arrival; nothing where the two are equal, the running times then holding it),
+plus `transit_options` `bus_dwell_s`, now 0 by default (it was 20 s at every stop, counting the dwell twice in feeds
+that hold it in their running times). Each stop snaps to a road node from which its bus can go on the way it travels,
+so a stop beside a dual carriageway is on the bus's side; and a one-way street buses may ride both ways
+(`oneway:bus=no`, `oneway:psv=no`) is a busway against it. Buses that ride the roads are less late, and fewer bus
+lines are run by the schedule for an implausible route.
+
 ## 0.1.0 — 2026-10-20
 
 The first public release: **an alpha, for testing by students and colleagues.** The tests are not complete; please use

@@ -972,7 +972,8 @@ class Scenario:
                 traffic (the timetable is taken to hold the delays they meet). With
                 ``transit_options`` ``buses_on_roads`` 1, **buses ride the roads**, 2 PCU each,
                 among the cars: routed stop to stop at
-                free flow, dwelling 20 s at a stop without blocking the traffic behind, never
+                free flow, staying at a stop for the feed's dwell there (scheduled departure
+                less scheduled arrival) without blocking the traffic behind, never
                 leaving a stop before their scheduled time, so congestion makes them late
                 and their passengers with them. A bus line the roads cannot carry plausibly
                 then runs by the schedule (``Run.transit_summary`` counts them). Rail, metro,
@@ -984,7 +985,8 @@ class Scenario:
                 ``transfer_walk_max_s`` (300), ``stop_walk_snap_m`` (300),
                 ``stop_transfer_s`` (0), ``buses_on_roads`` (0: every bus keeps to its
                 timetable; 1: buses ride the roads), and, with buses on the roads,
-                ``bus_dwell_s`` (20), ``bus_pcu`` (2),
+                ``bus_dwell_s`` (0: seconds added to the feed's dwell at every stop),
+                ``bus_pcu`` (2),
                 ``bus_plausibility_ratio`` (1.6), ``bus_stop_snap_m`` (300). Unknown names
                 and out-of-range values are refused.
             parkings: Park-and-ride car parks and bike parkings

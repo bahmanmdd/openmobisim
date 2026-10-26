@@ -226,6 +226,48 @@ impl NodeSnapper {
         best
     }
 
+    /// The indexed node closest to `(x, y)` (the network's projection, metres) within `radius`
+    /// metres that `accept` takes, with its distance; ties broken by node id. `None` if there is
+    /// none. Looks at the grid cells the square of side `2 radius` around the point touches.
+    #[must_use]
+    pub fn nearest_within_where(
+        &self,
+        x: f64,
+        y: f64,
+        radius: f64,
+        accept: impl Fn(NodeId) -> bool,
+    ) -> Option<(NodeId, f64)> {
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss,
+            reason = "clamped to the grid, so a small non-negative cell index"
+        )]
+        let cell = |v: f64, min: f64, n: usize| {
+            ((v - min) / self.cell).floor().clamp(0.0, (n - 1) as f64) as usize
+        };
+        let (x0, x1) =
+            (cell(x - radius, self.min_x, self.cols), cell(x + radius, self.min_x, self.cols));
+        let (y0, y1) =
+            (cell(y - radius, self.min_y, self.rows), cell(y + radius, self.min_y, self.rows));
+        let mut best: Option<(f64, u32)> = None;
+        for gy in y0..=y1 {
+            for gx in x0..=x1 {
+                let c = gy * self.cols + gx;
+                for i in self.start[c] as usize..self.start[c + 1] as usize {
+                    let d = (self.positions[i].0 - x).hypot(self.positions[i].1 - y);
+                    let node = self.nodes[i];
+                    let closer =
+                        best.is_none_or(|(bd, bn)| d.total_cmp(&bd).then(node.cmp(&bn)).is_lt());
+                    if d <= radius && closer && accept(NodeId::new(node)) {
+                        best = Some((d, node));
+                    }
+                }
+            }
+        }
+        best.map(|(d, n)| (NodeId::new(n), d))
+    }
+
     /// How many nodes are indexed.
     #[must_use]
     pub fn len(&self) -> usize {

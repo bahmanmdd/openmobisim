@@ -362,7 +362,7 @@ class TransitOptions(_Options):
     Attributes:
         access_walk_max_s: s; ``1800.0``.
         board_slack_s: s; ``60.0``.
-        bus_dwell_s: s; ``20.0``.
+        bus_dwell_s: s; ``0.0``: added to the feed's own dwell at each stop (uncalibrated).
         bus_pcu: PCU; ``2.0``.
         bus_plausibility_ratio: —; ``1.6``.
         bus_stop_snap_m: m; ``300.0``.
@@ -378,7 +378,7 @@ class TransitOptions(_Options):
     _defaults: ClassVar[dict[str, Any]] = {
         "access_walk_max_s": 1800.0,
         "board_slack_s": 60.0,
-        "bus_dwell_s": 20.0,
+        "bus_dwell_s": 0.0,
         "bus_pcu": 2.0,
         "bus_plausibility_ratio": 1.6,
         "bus_stop_snap_m": 300.0,
@@ -395,7 +395,7 @@ class TransitOptions(_Options):
         *,
         access_walk_max_s: float = 1800.0,
         board_slack_s: float = 60.0,
-        bus_dwell_s: float = 20.0,
+        bus_dwell_s: float = 0.0,
         bus_pcu: float = 2.0,
         bus_plausibility_ratio: float = 1.6,
         bus_stop_snap_m: float = 300.0,

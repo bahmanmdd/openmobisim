@@ -142,8 +142,8 @@ pub struct ImportOptions {
     /// Read the bus lanes ([`tags::bus_lanes`]). On by default. A car link's bus lanes are
     /// taken out of the lanes cars use (never below one) and kept on the link
     /// ([`LinkSpec::bus_lanes`]), where a bus on the roads rides at free flow outside the cars'
-    /// queue; a
-    /// contraflow bus lane on a one-way street is a busway link against it; and on the bike
+    /// queue; a contraflow bus lane on a one-way street, or a one-way street buses may ride both
+    /// ways (`oneway:bus` or `oneway:psv` `no`), is a busway link against it; and on the bike
     /// layer a bus lane bikes share (`cycleway=share_busway`) is a lane. Off: none of these, and
     /// every lane `lanes` counts is the cars'.
     pub bus_lanes: bool,
@@ -252,7 +252,8 @@ pub struct ImportReport {
     /// The cars' lane length of every car link, in whole metres (lanes times length; the
     /// denominator of [`Self::bus_lane_car_lane_length_removed_m`]'s share).
     pub drivable_lane_length_m: u64,
-    /// Busway links made from contraflow bus lanes on one-way streets.
+    /// Busway links made against one-way streets for buses: contraflow bus lanes, and
+    /// `oneway:bus|psv=no`.
     pub contraflow_bus_links: u64,
     /// Their length, in whole metres.
     pub contraflow_bus_length_m: u64,
@@ -1025,8 +1026,8 @@ impl LinkAttrs {
 
 /// The links a way makes on the road network, recording a speed limit that
 /// could not be read. `None` if the way is not a road. With `bus_lanes`, a car road's
-/// bus lanes are read ([`tags::bus_lanes`]), and a contraflow bus lane on a one-way street
-/// makes a busway link against it.
+/// bus lanes are read ([`tags::bus_lanes`]), and a contraflow bus lane on a one-way street, or
+/// `oneway:bus|psv=no` ([`tags::buses_both_ways`]), makes a busway link against it.
 fn road_spec(way: &OsmWay, bus_lanes: bool, diagnostics: &mut Diagnostics) -> Option<WaySpec> {
     let class = tags::classify(&way.tags, way.node_ids.len()).ok()?;
     let direction = tags::direction(&way.tags, class);
@@ -1046,14 +1047,21 @@ fn road_spec(way: &OsmWay, bus_lanes: bool, diagnostics: &mut Diagnostics) -> Op
         diagnostics.record(DiagKey::run_level(Category::DataQuality, code, Severity::Info));
     }
     let attrs = |lanes, bus_lanes| LinkAttrs { lanes, bus_lanes, ..LinkAttrs::PLAIN };
-    // A bus lane against a one-way street: buses alone, at its own lanes.
+    // A bus lane against a one-way street: buses alone, at its own lanes. Or, with
+    // `oneway:bus|psv=no`, buses alone against it without a lane of their own: the busway
+    // class's lanes, in the queue of the buses that way.
+    let both_ways = bus_lanes && class.carries_motor_traffic() && tags::buses_both_ways(&way.tags);
     let contraflow = |bus_lanes: u8| {
-        (bus_lanes > 0).then_some(LinkAttrs {
-            lanes: Some(bus_lanes),
-            bus_lanes,
-            contraflow: true,
-            ..LinkAttrs::PLAIN
-        })
+        if bus_lanes > 0 {
+            Some(LinkAttrs {
+                lanes: Some(bus_lanes),
+                bus_lanes,
+                contraflow: true,
+                ..LinkAttrs::PLAIN
+            })
+        } else {
+            both_ways.then_some(LinkAttrs { contraflow: true, ..LinkAttrs::PLAIN })
+        }
     };
     let side = |has: bool, lanes: Option<u8>, bus_lanes: u8| {
         if has { Some(attrs(lanes, bus_lanes)) } else { contraflow(bus_lanes) }

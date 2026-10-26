@@ -27,15 +27,16 @@
 //! **Buses keep to the timetable** unless they are put on the roads: then
 //! ([`TransitDefaults::buses_on_roads`], [`TransitSetup::with_roads`]) every bus pattern is
 //! routed stop to stop at free flow on the roads cars use and on **busways**, which
-//! only buses use (rung 2), each stop at the nearest node of such a
-//! link within
-//! [`TransitDefaults::bus_stop_snap_m`]. A pattern with a stop off the roads, a
+//! only buses use (rung 2), each stop at the nearest node of such a link within
+//! [`TransitDefaults::bus_stop_snap_m`] from which the bus can go on the way the pattern
+//! travels (on a dual carriageway, the bus's side; `snap_stop`). A pattern with a stop off the roads, a
 //! stop the roads do not connect to the next, or a free-flow time more than
 //! [`TransitDefaults::bus_plausibility_ratio`] times its schedule's is **run by
 //! the schedule** instead (rung 3; counted in [`BusReport`]). In a loading each
 //! bus run is a chain of stop-to-stop vehicles of [`TransitDefaults::bus_pcu`]:
-//! a leg leaves its stop [`TransitDefaults::bus_dwell_s`] after the leg before
-//! arrives, and not before its scheduled departure (`core-loading`'s chained
+//! a leg leaves its stop its dwell after the leg before arrives (the feed's own dwell at the
+//! stop, its scheduled departure less its scheduled arrival, plus
+//! [`TransitDefaults::bus_dwell_s`]), and not before its scheduled departure (`core-loading`'s chained
 //! vehicles), so a bus that falls behind stays behind and one that is early waits.
 //! The loading's times replace the schedule's for those runs, and passengers
 //! ride them as they came.
@@ -57,7 +58,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use openmobisim_core_graph::geometry::ground_distance_metres;
+use openmobisim_core_graph::geometry::{Projected, ground_distance_metres};
 use openmobisim_core_graph::hubs::{AccessPoint, HubKind, HubSet, HubSpec};
 use openmobisim_core_graph::layers::{Layer, StaticNetwork};
 use openmobisim_core_graph::network::RoadNetwork;
@@ -165,6 +166,52 @@ enum Piece {
     Queued(Vec<LinkId>),
     /// Links with a bus lane in their direction: their free-flow time, in seconds.
     Lane(f64),
+}
+
+/// The road node a bus pattern's stop `i` (of the stops at `at`, in the network's projection)
+/// snaps to: the nearest node of a link buses use, within `radius` metres, from which the bus
+/// can leave in the direction the pattern travels there and at which it can arrive from it
+/// (the first stop only the leaving, the last only the arriving): a link out of the node, or
+/// into it, pointing within 60° of the pattern's direction, which is from the stop before to
+/// the stop after (the first: to the next; the last: from the previous). On a two-way street
+/// the nearest node qualifies; across a dual carriageway it picks the bus's side. None
+/// qualifying: the nearest node within `radius`; none: `None`.
+fn snap_stop(
+    road: &RoadNetwork,
+    snapper: &NodeSnapper,
+    at: &[Projected],
+    i: usize,
+    radius: f64,
+) -> Option<NodeId> {
+    let p = at[i];
+    let (a, b) = (at[i.saturating_sub(1)], at[(i + 1).min(at.len() - 1)]);
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let aligned = |from: NodeId, to: NodeId| {
+        let (u, v) = (road.node_position(from), road.node_position(to));
+        let (lx, ly) = (v.x - u.x, v.y - u.y);
+        // cos > 0.5: within 60°.
+        lx * dx + ly * dy > 0.5 * lx.hypot(ly) * dx.hypot(dy)
+    };
+    let bus = |l: &LinkId| road.link_class(*l).carries_buses();
+    let leaves = |n: NodeId| {
+        road.out_links(n).iter().filter(|l| bus(l)).any(|&l| aligned(n, road.link_to(l)))
+    };
+    let arrives = |n: NodeId| {
+        road.in_links(n).iter().filter(|l| bus(l)).any(|&l| aligned(road.link_from(l), n))
+    };
+    let last = i + 1 == at.len();
+    let accept = |n: NodeId| (last || leaves(n)) && (i == 0 || arrives(n));
+    let found = if dx == 0.0 && dy == 0.0 {
+        None
+    } else {
+        snapper.nearest_within_where(p.x, p.y, radius, accept)
+    };
+    found
+        .or_else(|| {
+            let (n, dist) = snapper.nearest_xy_at(p.x, p.y);
+            (dist <= radius).then_some((n, dist))
+        })
+        .map(|(n, _)| n)
 }
 
 /// A hop's links cut into [`Piece`]s by whether each has a bus lane.
@@ -434,14 +481,12 @@ impl TransitSetup {
                 continue;
             }
             let calls: Vec<usize> = t.run_calls(first).collect();
-            let nodes: Option<Vec<NodeId>> = calls
+            let at: Vec<Projected> = calls
                 .iter()
-                .map(|&c| {
-                    let at = t.stop_position(t.call_stop(c));
-                    let node = snapper.nearest(&road, at);
-                    (ground_distance_metres(at, road.node_lonlat(node)) <= d.bus_stop_snap_m)
-                        .then_some(node)
-                })
+                .map(|&c| road.projection().project(t.stop_position(t.call_stop(c))))
+                .collect();
+            let nodes: Option<Vec<NodeId>> = (0..calls.len())
+                .map(|i| snap_stop(&road, &snapper, &at, i, d.bus_stop_snap_m))
                 .collect();
             let Some(nodes) = nodes else {
                 report.by_schedule_off_road += 1;
@@ -467,8 +512,7 @@ impl TransitSetup {
                 hops.push(None);
                 continue;
             }
-            #[allow(clippy::cast_precision_loss, reason = "a handful of stops")]
-            let dwells = d.bus_dwell_s * (calls.len().saturating_sub(2)) as f64;
+            let dwells: f64 = calls[1..calls.len() - 1].iter().map(|&c| self.dwell_s(c)).sum();
             let scheduled = f64::from(
                 t.scheduled().arrival[*calls.last().expect("two calls")]
                     .saturating_sub(t.scheduled().departure[calls[0]]),
@@ -484,6 +528,14 @@ impl TransitSetup {
         }
         self.buses = Some(BusPlan { road, hops, report });
         self
+    }
+
+    /// How long a bus stays at call `c`, in seconds: the feed's own dwell there (its scheduled
+    /// departure less its scheduled arrival; 0 where they are equal, the running times then
+    /// holding it), plus [`TransitDefaults::bus_dwell_s`].
+    fn dwell_s(&self, c: usize) -> f64 {
+        let sched = self.timetable.scheduled();
+        f64::from(sched.departure[c].saturating_sub(sched.arrival[c])) + self.defaults.bus_dwell_s
     }
 
     /// How the buses were put on the roads, if they ride them.
@@ -584,11 +636,11 @@ impl TransitSetup {
                     // Then the call at the end of the hop: its dwell and its schedule.
                     if !last {
                         let at_next = f64::from(sched.departure[calls[k + 1]]);
+                        let dwell = self.dwell_s(calls[k + 1]);
                         if leader.is_some() {
-                            (wait, not_before) =
-                                (wait + d.bus_dwell_s, (not_before + d.bus_dwell_s).max(at_next));
+                            (wait, not_before) = (wait + dwell, (not_before + dwell).max(at_next));
                         } else {
-                            not_before = (not_before + d.bus_dwell_s).max(at_next);
+                            not_before = (not_before + dwell).max(at_next);
                         }
                     }
                 }
@@ -625,7 +677,6 @@ impl TransitSetup {
         load: &BusLoad,
         trajectory: impl Fn(usize) -> Option<&'t Trajectory>,
     ) -> CallTimes {
-        let d = self.defaults;
         let t = &self.timetable;
         let mut times = t.scheduled().clone();
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a second")]
@@ -650,7 +701,7 @@ impl TransitSetup {
                     // No vehicle: no road links, or bus lanes alone.
                     times.departure[from] = if k > 0 {
                         second(
-                            (f64::from(times.arrival[from]) + d.bus_dwell_s)
+                            (f64::from(times.arrival[from]) + self.dwell_s(from))
                                 .max(f64::from(sched.departure[from])),
                         )
                     } else if hop.lead_s > 0.0 {

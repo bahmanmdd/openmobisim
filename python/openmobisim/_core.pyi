@@ -818,7 +818,9 @@ def network_read_osm(
             so a car link's bus lanes are taken out of the lanes cars use, never below one (where
             no ``lanes`` is tagged, out of the class's default), and kept on the link
             (:meth:`Network.link_bus_lanes`); with buses on the roads (``transit_options``
-            ``buses_on_roads`` 1), a bus there rides at free flow, outside the cars' queue. A contraflow bus lane on a one-way street is a busway link against it, for
+            ``buses_on_roads`` 1), a bus there rides at free flow, outside the cars' queue. A
+            contraflow bus lane on a one-way street, or a one-way street buses may ride both ways
+            (``oneway:bus`` or ``oneway:psv`` ``no``), is a busway link against it, for
             buses alone. On the bike layer a bus lane bikes share (``cycleway=share_busway``,
             ``opposite_share_busway``) is a bike lane. ``False``: none of these, and every lane
             ``lanes`` counts is the cars'. Right-hand traffic is assumed for the sides.

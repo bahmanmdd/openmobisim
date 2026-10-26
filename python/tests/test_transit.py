@@ -168,7 +168,9 @@ def test_b2_a_bus_on_the_roads_behind_cars_is_late_and_so_is_its_passenger() -> 
         network=net,
         choice_model="deterministic",
         mode_options=NO_ACCESS,
-        transit_options={"buses_on_roads": 1},
+        # The feed gives each call one time, so the bus's 20 s at M are `bus_dwell_s`'s (the
+        # Rust B2b).
+        transit_options={"buses_on_roads": 1, "bus_dwell_s": 20.0},
     )
     calls = run.transit_calls()
     i = calls["run"].index("B1:00")

@@ -1,8 +1,9 @@
 //! The toy bus `B1` on the roads: every number derived by hand.
 //!
 //! `B1` calls at `W`, `M` and `D1` on the one-way arterial, scheduled at `+0`,
-//! `+120`, `+240` s, every 600 s from 0. A bus is 2 PCU and dwells 20 s at a
-//! stop; a leg leaves its stop no earlier than its scheduled departure. The runs set the
+//! `+120`, `+240` s, every 600 s from 0. A bus is 2 PCU; the feed gives each call one time
+//! (arrival = departure), so a bus dwells 0 s at a stop besides `bus_dwell_s` (0 by default;
+//! B2b sets 20); a leg leaves its stop no earlier than its scheduled departure. The runs set the
 //! fixed access and egress times to 0, so a car trip leaving at 0 is on the road at 0. Roads:
 //! residential 30 km/h, capacity 1400/h; `a1` approaches the signal at `S`
 //! (discharge `q · g/C` = 0.18667/s: 5.357 s per PCU; Webster's delay
@@ -12,9 +13,10 @@
 //! | Case | Hand value |
 //! |---|---|
 //! | B1: alone on the roads | `M` at 80.554 → **80**; held to **120**; `D1` at 205.44 → **205** (35 s early). A passenger at `M` from 0 (boards with the 60 s slack) is at `D1` at **205** |
-//! | B2: behind ten cars `W → M`, all leaving at 0 | the cars and the bus enter `a1` together (an origin takes no inflow capacity), reach the stop line at 36; the bus passes it after car 9, at 36 + 9 · 5.357 + 2 · 5.357 = 94.93, waits the signal's 20.554, enters `a2` at 115.48, `M` at 139.48 → **139**; leaves at 139.48 + 20 = **159.48**; `D1` at 159.48 + 85.44 = 244.92 → **244** (4 s late). The passenger at `M` reaches `D1` at **244**, on the realised times, not the scheduled 240 |
+//! | B2: behind ten cars `W → M`, all leaving at 0 | the cars and the bus enter `a1` together (an origin takes no inflow capacity), reach the stop line at 36; the bus passes it after car 9, at 36 + 9 · 5.357 + 2 · 5.357 = 94.93, waits the signal's 20.554, enters `a2` at 115.48, `M` at 139.48 → **139**, leaves at once; `D1` at 139.48 + 85.44 = 224.92 → **224** (16 s early). The passenger at `M` reaches `D1` at **224**, on the realised times, not the scheduled 240 |
+//! | B2b: B2 with `bus_dwell_s` 20 | leaves `M` at 139.48 + 20 = **159.48**; `D1` at 244.92 → **244** (4 s late); the passenger at **244** |
 //! | B3: B1 at free flow (level 0) | the same as B1: **80, 120, 205** |
-//! | B4: the plausibility ratio at 0.5 | 80.554 + 20 + 85.44 = 185.99 s > 0.5 · 240: run by the schedule; the passenger arrives at **240** |
+//! | B4: the plausibility ratio at 0.5 | 80.554 + 0 + 85.44 = 165.99 s > 0.5 · 240: run by the schedule; the passenger arrives at **240** |
 //! | B5: a timetable not put on the roads | by the schedule: **240** |
 //! | B6: B1 as in B1, three loadings | the passenger rides the bus that comes, at `D1` at **205** in every loading, but plans on the timetable: **240** expected, never 205; the planned-against-realised part **−35 s**, all of the transit gap (share **1**); B5's setup: **0**, share **0** |
 
@@ -158,20 +160,35 @@ fn b1_alone_on_the_roads_the_bus_holds_for_its_schedule() {
     assert_eq!(bins.crossings().iter().sum::<u32>(), 7 * 18);
 }
 
-#[test]
-fn b2_behind_ten_cars_the_bus_is_late_and_so_is_its_passenger() {
+fn behind_ten_cars(defaults: TransitDefaults) -> (Toy, Arc<TransitSetup>, RunResult) {
     let t = toy();
-    let transit = t.transit(TransitDefaults::SHIPPED, true);
+    let transit = t.transit(defaults, true);
     let mut rows: Vec<RawTrip> =
         (0..10).map(|i| t.trip(&format!("c{i}"), "W", "M", Mode::Car)).collect();
     rows.push(t.trip("p", "M", "D1", Mode::Transit));
     let result = t.run(rows, transit.clone(), true);
-    assert_eq!(bus_times(&result, &transit, 0), [(0, 0), (139, 159), (244, 244)]);
-    assert_eq!(passenger(&result), (EventType::TripCompleted, 244));
+    (t, transit, result)
+}
+
+#[test]
+fn b2_behind_ten_cars_the_bus_is_late_at_its_stop_and_its_passenger_waits_for_it() {
+    let (_, transit, result) = behind_ten_cars(TransitDefaults::SHIPPED);
+    assert_eq!(bus_times(&result, &transit, 0), [(0, 0), (139, 139), (224, 224)]);
+    assert_eq!(passenger(&result), (EventType::TripCompleted, 224));
     assert_eq!(result.by_mode[Mode::Car.index()].completion.completed, 10);
-    // Run 0 is 4 s late at D1, the other seventeen 35 s early (as B1).
+    // Run 0 is 16 s early at D1, the other seventeen 35 s early (as B1).
     let buses = result.transit.as_ref().unwrap().buses.unwrap();
     assert_eq!((buses.runs_on_roads, buses.runs_arrived), (18, 18));
+    assert!((buses.delay_mean_s - (-16.0 - 17.0 * 35.0) / 18.0).abs() < 1e-9, "{buses:?}");
+}
+
+#[test]
+fn b2b_with_a_dwell_of_20_s_the_bus_and_its_passenger_are_late() {
+    let defaults = TransitDefaults { bus_dwell_s: 20.0, ..TransitDefaults::SHIPPED };
+    let (_, transit, result) = behind_ten_cars(defaults);
+    assert_eq!(bus_times(&result, &transit, 0), [(0, 0), (139, 159), (244, 244)]);
+    assert_eq!(passenger(&result), (EventType::TripCompleted, 244));
+    let buses = result.transit.as_ref().unwrap().buses.unwrap();
     assert!((buses.delay_mean_s - (4.0 - 17.0 * 35.0) / 18.0).abs() < 1e-9, "{buses:?}");
 }
 

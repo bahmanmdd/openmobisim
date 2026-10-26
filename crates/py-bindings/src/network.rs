@@ -720,8 +720,9 @@ pub fn toy_network() -> PyNetwork {
 /// car link's bus lanes are taken out of the lanes cars use (never below one; where no `lanes`
 /// is tagged, out of the class's default) and kept on the link (`network.link_bus_lanes()`):
 /// with buses on the roads (`transit_options` `buses_on_roads` 1), a bus there rides at free
-/// flow, outside the cars' queue. A contraflow bus lane on a one-way
-/// street is a busway link against it, for buses alone. On the bike layer, a bus lane bikes
+/// flow, outside the cars' queue. A contraflow bus lane on a one-way street, or a one-way street
+/// buses may ride both ways (`oneway:bus` or `oneway:psv` `no`), is a busway link against it,
+/// for buses alone. On the bike layer, a bus lane bikes
 /// share (`cycleway=share_busway`, `opposite_share_busway`) is a bike lane. Off: none of these,
 /// and every lane `lanes` counts is the cars'. `network.report_import()` counts the car links
 /// with a bus lane, their length, the lane length taken from cars and the contraflow busways.

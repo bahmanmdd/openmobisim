@@ -233,3 +233,26 @@ fn a_contraflow_bus_lane_is_a_busway_against_the_one_way_street() {
     let off = ImportOptions { bus_lanes: false, ..ImportOptions::default() };
     assert_eq!(import_way(&pairs, off).0.len(), 1);
 }
+
+#[test]
+fn a_one_way_street_buses_ride_both_ways_has_a_busway_against_it() {
+    for key in ["oneway:bus", "oneway:psv"] {
+        let pairs = [("highway", "tertiary"), ("oneway", "yes"), (key, "no")];
+        let (links, report) = import_way(&pairs, ImportOptions::default());
+        assert_eq!(links.len(), 2, "{key}");
+        let against = find(&links, false);
+        assert_eq!(
+            (against.class, against.bus_lanes),
+            (RoadClass::Busway, 0),
+            "no lane of its own"
+        );
+        assert_eq!(report.contraflow_bus_links, 1);
+        let off = ImportOptions { bus_lanes: false, ..ImportOptions::default() };
+        assert_eq!(import_way(&pairs, off).0.len(), 1);
+    }
+    // A two-way street needs nothing more.
+    let (links, report) =
+        import_way(&[("highway", "tertiary"), ("oneway:bus", "no")], ImportOptions::default());
+    assert!(links.iter().all(|l| l.class == RoadClass::Tertiary));
+    assert_eq!(report.contraflow_bus_links, 0);
+}

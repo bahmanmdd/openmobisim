@@ -438,6 +438,15 @@ pub fn bus_lanes(tags: &[(String, String)], road: Direction) -> BusLanes {
     }
 }
 
+/// Whether buses may ride a one-way street both ways without a lane of their own:
+/// `oneway:bus` or `oneway:psv` set to `no`.
+#[must_use]
+pub fn buses_both_ways(tags: &[(String, String)]) -> bool {
+    ["oneway:bus", "oneway:psv"]
+        .into_iter()
+        .any(|key| matches!(tag_of(tags, key), Some("no" | "false" | "0")))
+}
+
 /// The lanes cars use, given the lanes a way's tags count in one direction and the bus lanes
 /// there: the count less the bus lanes, never below one. `None` (no count) stays `None`; the
 /// network builder then takes the class's default less the bus lanes, again never below one.
