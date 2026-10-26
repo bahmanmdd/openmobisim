@@ -525,6 +525,10 @@ fn all_or_nothing_expects_no_gap_whenever_the_car_enters_the_roads() {
         let result = setup.run().with_mode_defaults(fixed).execute(&mut Diagnostics::new());
         let sets = result.route_sets.as_ref().expect("sets");
         assert!(sets.route_range(0).len() >= 2, "access {access}: the pair has two routes");
+        #[allow(
+            clippy::float_cmp,
+            reason = "the expected gap is exactly the set's best: no margin"
+        )]
         for it in &result.iterations {
             assert!(
                 it.gap_expected == 0.0 && it.gap_excess == it.gap,
