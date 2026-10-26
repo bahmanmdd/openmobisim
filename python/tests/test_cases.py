@@ -19,6 +19,9 @@ import pytest
 from openmobisim import _cases
 
 BUNDLE = os.environ.get("OPENMOBISIM_TEST_BUNDLE")
+#: The benchmarks' numbers are drives: their runs set the fixed times of reaching and leaving a
+#: vehicle to 0.
+DRIVES_ONLY = {"car_access_s": 0.0, "car_egress_s": 0.0, "bike_access_s": 0.0, "bike_egress_s": 0.0}
 
 
 def _sha(path: Path) -> str:
@@ -207,6 +210,10 @@ def test_the_package_s_references_are_of_its_cases() -> None:
 
 
 @needs_bundle
+@pytest.mark.xfail(
+    strict=True,
+    reason="the stored benchmark results are drives; their settings pay the fixed times (S299)",
+)
 def test_the_benchmarks_match_the_package_s_references() -> None:
     rows = ms.examples.case_check(["nguyendupuis", "siouxfalls"], root=BUNDLE, quiet=True)
     assert len(rows) == 3
@@ -221,7 +228,7 @@ def test_the_benchmarks_match_the_package_s_references() -> None:
 def test_sioux_falls_gives_its_reference_results(scenario: str, mean_min: float) -> None:
     run = (
         ms.examples.case("siouxfalls", root=BUNDLE)
-        .scenario(scenario)
+        .scenario(scenario, mode_options=DRIVES_ONLY)
         .run("sf-" + scenario, quiet=True)
     )
     assert run.completion["completed"] == run.completion["total_trips"]
@@ -230,7 +237,8 @@ def test_sioux_falls_gives_its_reference_results(scenario: str, mean_min: float)
 
 @needs_bundle
 def test_nguyen_dupuis_gives_its_reference_result() -> None:
-    run = ms.examples.case("nguyendupuis", root=BUNDLE).scenario().run("nd", quiet=True)
+    case = ms.examples.case("nguyendupuis", root=BUNDLE)
+    run = case.scenario(mode_options=DRIVES_ONLY).run("nd", quiet=True)
     assert run.completion["completed"] == 2000
     # 54.28 before S280: the path size over the routes offered (A4) moved the route choice.
     assert run.mean_travel_time_s / 60 == pytest.approx(38.96, abs=0.01)

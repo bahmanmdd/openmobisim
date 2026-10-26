@@ -16,6 +16,10 @@ import numpy as np
 import openmobisim as ms
 import pytest
 
+#: Every run pays the fixed times of reaching and leaving a vehicle; these tests read the drives
+#: and rides alone, so they set them to 0.
+DRIVES_ONLY = {"car_access_s": 0.0, "car_egress_s": 0.0, "bike_access_s": 0.0, "bike_egress_s": 0.0}
+
 
 def trip(net: ms._core.Network, frm: str, to: str, mode: str) -> tuple:
     o, d = net.node_lonlat(frm), net.node_lonlat(to)
@@ -24,7 +28,12 @@ def trip(net: ms._core.Network, frm: str, to: str, mode: str) -> tuple:
 
 def run(net: ms._core.Network, rows: list[tuple], run_id: str) -> ms.Run:
     return ms.Scenario.from_parts(
-        net, rows, classes={"x": (True, True, False)}, equilibration="free_flow", flow_level=0
+        net,
+        rows,
+        classes={"x": (True, True, False)},
+        equilibration="free_flow",
+        flow_level=0,
+        mode_options=DRIVES_ONLY,
     ).run(run_id, quiet=True)
 
 

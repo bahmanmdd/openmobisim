@@ -26,6 +26,10 @@ import numpy as np
 import openmobisim as ms
 import pytest
 
+#: Every run pays the fixed times of reaching and leaving a vehicle; these tests read the drives
+#: and rides alone, so they set them to 0.
+DRIVES_ONLY = {"car_access_s": 0.0, "car_egress_s": 0.0, "bike_access_s": 0.0, "bike_egress_s": 0.0}
+
 CLASSES = ms.examples.traveller_classes()
 PRICES = {"car_eur_km": 0.2, "fare_base_eur": 1.5, "fare_km_eur": 0.2, "parking_car_eur": 2.0}
 OUTCOMES = ("completed", "truncated", "no_vehicle_available", "no_feasible_path",
@@ -55,7 +59,7 @@ def case(name: str, weight: int = 1) -> tuple:
         trips = ms.examples.trips_random(
             net, 6000, seed=5, spread_s=900, min_m=400, max_m=2000, mode="car"
         )
-        parts = {}
+        parts = {"mode_options": DRIVES_ONLY}
     if weight > 1:
         trips = ms.demand_sample(trips, weight, seed=0)
     return net, trips, parts

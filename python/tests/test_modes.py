@@ -737,16 +737,16 @@ def test_a_bike_trip_pays_its_access_and_egress_in_choice_and_loading() -> None:
                 mode_options={"bike_egress_s": -1})  # fmt: skip
 
 
-def test_a_run_of_stated_car_trips_alone_pays_no_fixed_times() -> None:
-    # A car assignment, as the benchmarks count: no mode compared, no timetable, so the trip's
-    # time is its drive whatever the fixed times say, and its row says so (S295).
+def test_a_run_of_stated_car_trips_alone_pays_its_fixed_times_as_set() -> None:
+    # No mode compared, no timetable: the trip still pays the fixed times as set, and 0 leaves
+    # the drive alone, as the benchmarks count it (S299).
     net = ms.examples.toy_network()
     rows = [toy_trip(net, "a", "W", "M", 0, "car")]
-    run = toy_run(rows, "car-alone", transit=None, parkings=None,
-                  mode_options={"car_access_s": 120, "car_egress_s": 300})  # fmt: skip
-    assert run.itinerary_choices() is None
-    t = run.trip_results()
-    assert float(t["travel_time_s"][0]) == pytest.approx(80.0, abs=1.0)
-    assert float(t["vehicle_s"][0]) == pytest.approx(80.0, abs=1.0)
-    assert float(t["access_egress_s"][0]) == 0.0
-    assert run.total_travel_time_s == run.total_vehicle_time_s
+    for access, egress in ((120, 300), (0, 0)):
+        run = toy_run(rows, f"car-alone-{access}", transit=None, parkings=None,
+                      mode_options={"car_access_s": access, "car_egress_s": egress})  # fmt: skip
+        assert run.itinerary_choices() is None
+        t = run.trip_results()
+        assert float(t["vehicle_s"][0]) == pytest.approx(80.0, abs=1.0)
+        assert float(t["access_egress_s"][0]) == access + egress
+        assert float(t["travel_time_s"][0]) == pytest.approx(80.0 + access + egress, abs=1.0)

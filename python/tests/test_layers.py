@@ -8,6 +8,10 @@ import numpy as np
 import openmobisim as ms
 import pytest
 
+#: Every run pays the fixed times of reaching and leaving a vehicle; these tests read the drives
+#: and rides alone, so they set them to 0.
+DRIVES_ONLY = {"car_access_s": 0.0, "car_egress_s": 0.0, "bike_access_s": 0.0, "bike_egress_s": 0.0}
+
 
 def grid() -> object:
     return ms.examples.manhattan_grid(5, 200.0, False)
@@ -31,6 +35,7 @@ def run(net: object, rows: list[tuple], run_id: str, **kwargs: object) -> ms.Run
         demand=rows,
         classes=kwargs.pop("classes", everyone_owns()),
         link_bin_s=300,
+        mode_options=kwargs.pop("mode_options", DRIVES_ONLY),
         **kwargs,
     ).run(run_id=run_id)
 

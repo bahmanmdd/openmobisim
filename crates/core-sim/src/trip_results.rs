@@ -71,8 +71,8 @@ pub struct TripOutcomes {
     pub vehicle_s: Vec<Option<u32>>,
     /// For a completed trip, its fixed seconds around that vehicle: reaching it, leaving it and
     /// its parking's time (`mode_options` `car_access_s`, `car_egress_s`, `bike_access_s`,
-    /// `bike_egress_s`; `parking_options` the slopes); 0 without a vehicle of its own, and in a
-    /// run of stated car trips alone. `None` for a trip that did not complete.
+    /// `bike_egress_s`; `parking_options` the slopes); 0 without a vehicle of its own. `None` for a
+    /// trip that did not complete.
     pub access_egress_s: Vec<Option<u32>>,
 }
 

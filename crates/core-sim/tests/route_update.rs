@@ -22,6 +22,7 @@
     reason = "test fixtures: counts of a few thousand travellers"
 )]
 
+use openmobisim_core_sim::ModeDefaults;
 use std::sync::{Arc, Mutex};
 
 use openmobisim_core_choice::{
@@ -162,6 +163,7 @@ impl Setup {
                 .into_iter()
                 .collect();
         Run::new(network, Arc::new(travellers), Arc::new(raw), Second(3600))
+            .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
             .with_flow_motor(FlowMotor::Ltm {
                 turns,
                 step: Duration(60.0),
@@ -536,6 +538,7 @@ fn an_equally_good_route_is_added_and_a_route_the_set_holds_never_is() {
                 .unwrap();
         let turns = Arc::new(TurnTable::build(&network, SignalDefaults::SHIPPED));
         let mut run = Run::new(network, Arc::new(travellers), Arc::new(raw), Second(3600))
+            .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
             .with_flow_motor(FlowMotor::Ltm {
                 turns,
                 step: Duration(60.0),
@@ -642,6 +645,7 @@ fn a_run_tells_a_method_that_reads_the_demand_every_trip_before_it_generates() {
             .unwrap();
     let mut run =
         Run::new(Arc::new(bottleneck()), Arc::new(travellers), Arc::new(raw), Second(3600))
+            .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
             .with_route_generator(Arc::new(ReadsDemand { told: told.clone(), prepared: false }));
     let description = run.description();
     let result = run.execute(&mut Diagnostics::new());
@@ -821,6 +825,7 @@ fn what_is_added_is_a_route_of_the_network_and_new_to_its_set() {
     let (travellers, raw) =
         build_travellers(raw, Vec::new(), &car_owning(), 1, &mut Diagnostics::new()).unwrap();
     let mut run = Run::new(network.clone(), Arc::new(travellers), Arc::new(raw), Second(3600))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_flow_motor(FlowMotor::Ltm {
             turns: turns.clone(),
             step: Duration(30.0),
@@ -980,6 +985,7 @@ fn a_full_set_makes_room_for_a_better_route() {
     let (travellers, raw) =
         build_travellers(raw, Vec::new(), &car_owning(), 1, &mut Diagnostics::new()).unwrap();
     let mut run = Run::new(network.clone(), Arc::new(travellers), Arc::new(raw), Second(3600))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_flow_motor(FlowMotor::Ltm { turns, step: Duration(30.0), level: FidelityLevel::Full })
         .with_master_seed(3)
         .with_route_generator(Arc::from(
@@ -1035,6 +1041,7 @@ fn a_traveller_is_offered_at_most_the_fastest_routes() {
     let (travellers, raw) =
         build_travellers(raw, Vec::new(), &car_owning(), 1, &mut Diagnostics::new()).unwrap();
     let mut run = Run::new(network.clone(), Arc::new(travellers), Arc::new(raw), Second(3600))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_flow_motor(FlowMotor::Ltm { turns, step: Duration(30.0), level: FidelityLevel::Full })
         .with_master_seed(3)
         .with_route_generator(Arc::from(

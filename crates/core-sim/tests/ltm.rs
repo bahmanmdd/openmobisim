@@ -14,7 +14,7 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::FidelityLevel;
-use openmobisim_core_sim::{FlowMotor, Run};
+use openmobisim_core_sim::{FlowMotor, ModeDefaults, Run};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId};
 use openmobisim_core_types::time::Second;
@@ -85,6 +85,7 @@ fn an_uncongested_trip_completes_close_to_free_flow_time() {
 
     let mut run =
         Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1_000_000))
+            .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
             .with_flow_motor(ltm_motor(&network));
     let mut diagnostics = Diagnostics::new();
     let result = run.execute(&mut diagnostics);
@@ -111,6 +112,7 @@ fn a_trip_past_the_window_is_truncated_not_completed() {
             .expect("buildable");
 
     let mut run = Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_flow_motor(ltm_motor(&network));
     let mut diagnostics = Diagnostics::new();
     let result = run.execute(&mut diagnostics);
@@ -139,6 +141,7 @@ fn a_second_trip_uses_the_vehicle_the_first_trip_relocated() {
 
     let mut run =
         Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1_000_000))
+            .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
             .with_flow_motor(ltm_motor(&network));
     let mut diagnostics = Diagnostics::new();
     let result = run.execute(&mut diagnostics);
@@ -168,6 +171,7 @@ fn a_run_is_deterministic() {
         .expect("buildable");
         let mut run =
             Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1_000_000))
+                .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
                 .with_flow_motor(ltm_motor(&network));
         let mut diagnostics = Diagnostics::new();
         run.execute(&mut diagnostics)
@@ -197,6 +201,7 @@ fn heavier_demand_never_completes_faster_than_lighter_demand() {
         .expect("buildable");
         let mut run =
             Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(3600))
+                .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
                 .with_flow_motor(ltm_motor(&network));
         let mut diagnostics = Diagnostics::new();
         run.execute(&mut diagnostics)
@@ -232,6 +237,7 @@ fn a_run_can_report_per_link_bins_under_either_engine() {
                 .expect("buildable");
         let mut run =
             Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(3600))
+                .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
                 .with_link_bins(300);
         if ltm {
             run = run.with_flow_motor(ltm_motor(&network));
@@ -268,8 +274,10 @@ fn per_link_bins_are_off_unless_asked_for() {
             .expect("buildable");
     let (travellers, trips) = (Arc::new(travellers), Arc::new(trips));
     let plain = Run::new(network.clone(), travellers.clone(), trips.clone(), Second(3600))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .execute(&mut Diagnostics::new());
     let binned = Run::new(network, travellers, trips, Second(3600))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_link_bins(60)
         .execute(&mut Diagnostics::new());
     assert!(plain.link_bins.is_none());

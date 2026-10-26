@@ -14,6 +14,10 @@ from __future__ import annotations
 import openmobisim as ms
 import pytest
 
+#: Every run pays the fixed times of reaching and leaving a vehicle; these tests read the drives
+#: and rides alone, so they set them to 0.
+DRIVES_ONLY = {"car_access_s": 0.0, "car_egress_s": 0.0, "bike_access_s": 0.0, "bike_egress_s": 0.0}
+
 CLOSED = {"links": ["a2"], "capacity_factor": 0.0, "from_s": 60, "to_s": 300}
 
 
@@ -25,7 +29,11 @@ def cars(n: int = 30) -> list[tuple]:
 
 def run_cars(name: str, **kwargs: object) -> ms.Run:
     return ms.Scenario.from_parts(
-        ms.examples.toy_network(), cars(), classes={"x": (True, True, False)}, **kwargs
+        ms.examples.toy_network(),
+        cars(),
+        classes={"x": (True, True, False)},
+        mode_options=DRIVES_ONLY,
+        **kwargs,
     ).run(name, quiet=True)
 
 

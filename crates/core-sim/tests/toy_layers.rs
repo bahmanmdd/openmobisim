@@ -15,6 +15,7 @@
 
 #![allow(clippy::float_cmp, reason = "hand-derived values, floored to whole seconds")]
 
+use openmobisim_core_sim::ModeDefaults;
 use std::sync::Arc;
 
 use openmobisim_core_demand::{ClassDefaults, Mode, Ownership, RawTrip, build_travellers};
@@ -54,6 +55,7 @@ fn one_trip(from: &str, to: &str, mode: Mode, cost: BikeCost) -> RunResult {
     let (travellers, trips) =
         build_travellers(raw, Vec::new(), &defaults, 1, &mut Diagnostics::new()).expect("builds");
     let mut run = Run::new(road, Arc::new(travellers), Arc::new(trips), Second(86_400))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_layers(Arc::new(layers));
     run.execute(&mut Diagnostics::new())
 }

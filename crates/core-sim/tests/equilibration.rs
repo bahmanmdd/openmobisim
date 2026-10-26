@@ -19,6 +19,7 @@
     reason = "test fixtures: counts of a few thousand travellers"
 )]
 
+use openmobisim_core_sim::ModeDefaults;
 use std::sync::Arc;
 
 use openmobisim_core_choice::{Options as ChoiceOptions, model};
@@ -157,6 +158,7 @@ impl Setup {
             Arc::new(raw),
             Second(self.window),
         )
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_master_seed(self.seed);
         if let Some(level) = self.level {
             let turns = Arc::new(TurnTable::build(&self.network, SignalDefaults::SHIPPED));

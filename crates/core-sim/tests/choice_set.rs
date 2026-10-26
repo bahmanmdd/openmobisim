@@ -20,6 +20,7 @@
     reason = "test fixtures: counts of a few thousand travellers"
 )]
 
+use openmobisim_core_sim::ModeDefaults;
 use std::sync::{Arc, Mutex};
 
 use openmobisim_core_choice::{
@@ -117,6 +118,7 @@ impl Setup {
                 .expect("buildable");
         let mut run =
             Run::new(network.clone(), Arc::new(travellers), Arc::new(raw), Second(self.window))
+                .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
                 .with_master_seed(1);
         if let Some(level) = self.level {
             let turns = Arc::new(TurnTable::build(&network, SignalDefaults::SHIPPED));
@@ -168,6 +170,7 @@ fn the_detour_attribute_is_time_over_the_bests_within_the_set() {
             .into_iter()
             .collect();
     let mut run = Run::new(network, Arc::new(travellers), Arc::new(raw), Second(3600))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_master_seed(1)
         .with_choice_model(Arc::from(model("logit", &choice).expect("built in")));
     let result = run.execute(&mut Diagnostics::new());
@@ -397,6 +400,7 @@ fn offered(max_routes: u32) -> Vec<(f64, f64)> {
             .expect("buildable");
     let spy = Arc::new(PathSizes { seen: Mutex::new(Vec::new()) });
     let mut run = Run::new(network, Arc::new(travellers), Arc::new(raw), Second(3600))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_master_seed(1)
         .with_route_generator(Arc::new(ThreeRoutes { links }))
         .with_choice_model(spy.clone())

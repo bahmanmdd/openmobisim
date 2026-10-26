@@ -4,6 +4,7 @@
 
 #![allow(clippy::float_cmp, reason = "travel times here are exact sums of exact link times")]
 
+use openmobisim_core_sim::ModeDefaults;
 use std::sync::Arc;
 
 use openmobisim_core_demand::{
@@ -89,6 +90,7 @@ fn ltm(road: &RoadNetwork) -> FlowMotor {
 fn run(road: &Arc<RoadNetwork>, rows: Vec<RawTrip>, defaults: &ClassDefaults) -> RunResult {
     let (travellers, trips) = demand(rows, defaults);
     let mut run = Run::new(road.clone(), travellers, trips, Second(86_400))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_flow_motor(ltm(road))
         .with_layers(layers(road))
         .with_link_bins(300);
@@ -160,8 +162,11 @@ fn a_car_only_run_is_the_same_run_with_or_without_layers() {
     let road = grid();
     let rows = || vec![trip("c", 0, at(&road, 0, 0), at(&road, 4, 4), 0, Mode::Car)];
     let (travellers, trips) = demand(rows(), &owning(true, false));
-    let plain = Run::new(road.clone(), travellers.clone(), trips.clone(), Second(86_400));
-    let with = Run::new(road.clone(), travellers, trips, Second(86_400)).with_layers(layers(&road));
+    let plain = Run::new(road.clone(), travellers.clone(), trips.clone(), Second(86_400))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times());
+    let with = Run::new(road.clone(), travellers, trips, Second(86_400))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
+        .with_layers(layers(&road));
     assert_eq!(plain.description().fingerprint, with.description().fingerprint);
 }
 
@@ -174,6 +179,7 @@ fn modes_enter_the_fingerprint() {
             &owning(true, true),
         );
         Run::new(road.clone(), travellers, trips, Second(86_400))
+            .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
             .with_layers(layers(&road))
             .description()
             .fingerprint
@@ -223,7 +229,8 @@ fn a_mode_without_its_layer_or_not_built_yet_is_reported_not_guessed() {
         vec![trip("b", 0, at(&road, 0, 0), at(&road, 4, 4), 0, Mode::Bike)],
         &owning(false, true),
     );
-    let mut bare = Run::new(road.clone(), travellers, trips, Second(86_400));
+    let mut bare = Run::new(road.clone(), travellers, trips, Second(86_400))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times());
     let result = bare.execute(&mut Diagnostics::new());
     assert_eq!(result.by_mode[Mode::Bike.index()].completion.mode_not_available, 1);
 }
@@ -257,6 +264,7 @@ fn an_iterating_run_routes_bikes_once_and_leaves_them_out_of_the_gap() {
     }
     let (travellers, trips) = demand(rows, &owning(true, true));
     let mut iterating = Run::new(road.clone(), travellers, trips, Second(86_400))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_flow_motor(ltm(&road))
         .with_layers(layers(&road))
         .with_equilibration(Arc::from(
@@ -327,6 +335,7 @@ fn bike_route_sets_spread_bike_trips_over_several_routes_and_leave_the_car_alone
     let make = |sampled: bool| {
         let (travellers, trips) = demand(rows.clone(), &owning(true, true));
         let mut run = Run::new(road.clone(), travellers, trips, Second(86_400))
+            .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
             .with_flow_motor(ltm(&road))
             .with_layers(layers(&road))
             .with_link_bins(300)

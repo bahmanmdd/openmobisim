@@ -23,6 +23,10 @@ import math
 import numpy as np
 import openmobisim as ms
 
+#: Every run pays the fixed times of reaching and leaving a vehicle; these tests read the drives
+#: and rides alone, so they set them to 0.
+DRIVES_ONLY = {"car_access_s": 0.0, "car_egress_s": 0.0, "bike_access_s": 0.0, "bike_egress_s": 0.0}
+
 LAT = 52.0
 HORIZON = 3000
 
@@ -135,6 +139,7 @@ def simulated(
         link_bin_s=1,
         window=(0, HORIZON),
         loading_options=loading_options,
+        mode_options=DRIVES_ONLY,
     ).run("ltm-reference")
     bins = run.link_bins()
     out = np.zeros((net.link_count, HORIZON + 1))

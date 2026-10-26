@@ -15,7 +15,7 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::FidelityLevel;
-use openmobisim_core_sim::{FlowMotor, Run};
+use openmobisim_core_sim::{FlowMotor, ModeDefaults, Run};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::LinkId;
 use openmobisim_core_types::time::Second;
@@ -107,7 +107,8 @@ fn a_single_car_trip_completes_with_the_right_travel_time() {
             .expect("buildable");
 
     let mut run =
-        Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1_000_000));
+        Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1_000_000))
+            .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times());
     let mut diagnostics = Diagnostics::new();
     let result = run.execute(&mut diagnostics);
 
@@ -121,6 +122,40 @@ fn a_single_car_trip_completes_with_the_right_travel_time() {
         assert_eq!(result.completion.completion_rate(), 1.0);
         assert_eq!(result.total_travel_time.get(), f64::from(expected_a_to_c_seconds(&network)));
     }
+}
+
+/// S299: a run of stated car trips alone pays the fixed times as any run does: the car enters
+/// the roads `car_access_s` after the departure and the trip ends `car_egress_s` after the car
+/// arrives; with them at 0 (above) the trip's time is the drive.
+#[test]
+fn a_car_trip_without_mode_choice_pays_its_access_and_egress() {
+    let network = Arc::new(line_network());
+    let (travellers, trips) = build_travellers(
+        vec![trip("alice", 0, A, C, 0)],
+        Vec::new(),
+        &car_owning_defaults(),
+        1,
+        &mut Diagnostics::new(),
+    )
+    .expect("buildable");
+    let defaults =
+        ModeDefaults { car_access_s: 100.0, car_egress_s: 250.0, ..ModeDefaults::SHIPPED };
+    let mut run =
+        Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1_000_000))
+            .with_mode_defaults(defaults);
+    let result = run.execute(&mut Diagnostics::new());
+
+    assert_eq!(result.completion.completed, 1);
+    let drive = expected_a_to_c_seconds(&network);
+    #[allow(clippy::float_cmp, reason = "whole seconds; both sides are exact")]
+    {
+        assert_eq!(result.total_travel_time.get(), f64::from(drive + 350));
+        assert_eq!(result.total_vehicle_time.get(), f64::from(drive));
+    }
+    let outcomes = &result.trip_outcomes;
+    assert_eq!(outcomes.vehicle_s[0], Some(drive));
+    assert_eq!(outcomes.access_egress_s[0], Some(350));
+    assert_eq!(outcomes.arrival[0], Some(Second(drive + 350)));
 }
 
 /// S153: a car neither starts at a footway-only node nor routes over a
@@ -145,7 +180,8 @@ fn a_car_trip_ignores_footways() {
         build_travellers(raw_trips, Vec::new(), &car_owning_defaults(), 1, &mut Diagnostics::new())
             .expect("buildable");
     let mut run =
-        Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1_000_000));
+        Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1_000_000))
+            .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times());
     let result = run.execute(&mut Diagnostics::new());
 
     assert_eq!(result.completion.completed, 1);
@@ -171,7 +207,8 @@ fn a_second_trip_uses_the_vehicle_the_first_trip_relocated() {
             .expect("buildable");
 
     let mut run =
-        Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1_000_000));
+        Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1_000_000))
+            .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times());
     let mut diagnostics = Diagnostics::new();
     let result = run.execute(&mut diagnostics);
 
@@ -198,7 +235,8 @@ fn a_traveller_without_a_car_is_not_simulated() {
         build_travellers(raw_trips, Vec::new(), &ClassDefaults::new(), 1, &mut build_diagnostics)
             .expect("buildable");
 
-    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(1_000_000));
+    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(1_000_000))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times());
     let mut diagnostics = Diagnostics::new();
     let result = run.execute(&mut diagnostics);
 
@@ -225,7 +263,8 @@ fn a_trip_past_the_window_is_truncated_not_completed() {
             .expect("buildable");
 
     // A window shorter than the trip's own travel time.
-    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(1));
+    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(1))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times());
     let mut diagnostics = Diagnostics::new();
     let result = run.execute(&mut diagnostics);
 
@@ -254,7 +293,8 @@ fn traveller_weight_scales_the_kpi() {
             .expect("buildable");
 
     let mut run =
-        Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1_000_000));
+        Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(1_000_000))
+            .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times());
     let mut diagnostics = Diagnostics::new();
     let result = run.execute(&mut diagnostics);
 
@@ -281,7 +321,8 @@ fn no_feasible_path_is_counted_and_strands_the_rest_of_the_day() {
         build_travellers(raw_trips, Vec::new(), &car_owning_defaults(), 1, &mut build_diagnostics)
             .expect("buildable");
 
-    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(1_000_000));
+    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(1_000_000))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times());
     let mut diagnostics = Diagnostics::new();
     let result = run.execute(&mut diagnostics);
 
@@ -318,7 +359,8 @@ fn completion_counts_always_sum_to_total_trips() {
         build_travellers(raw_trips, Vec::new(), &car_owning_defaults(), 1, &mut build_diagnostics)
             .expect("buildable");
 
-    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(1_000_000));
+    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(1_000_000))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times());
     let mut diagnostics = Diagnostics::new();
     let result = run.execute(&mut diagnostics);
 
@@ -351,7 +393,8 @@ fn a_run_is_deterministic() {
             &mut build_diagnostics,
         )
         .expect("buildable");
-        let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(1_000_000));
+        let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(1_000_000))
+            .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times());
         let mut diagnostics = Diagnostics::new();
         run.execute(&mut diagnostics)
     };
@@ -374,7 +417,8 @@ fn events_are_one_row_per_trip_and_match_the_completion_buckets() {
         build_travellers(raw_trips, Vec::new(), &car_owning_defaults(), 1, &mut build_diagnostics)
             .expect("buildable");
 
-    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(1_000_000));
+    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(1_000_000))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times());
     let mut diagnostics = Diagnostics::new();
     let result = run.execute(&mut diagnostics);
 
@@ -428,7 +472,8 @@ fn diamond_run(
     let mut d = Diagnostics::new();
     let (travellers, trips) =
         build_travellers(raw, Vec::new(), &car_owning_defaults(), 1, &mut d).expect("buildable");
-    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(3600));
+    let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(3600))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times());
     if let Some(g) = generator {
         run = run.with_route_generator(g);
     }
@@ -522,6 +567,7 @@ impl Knobs {
                 .expect("buildable");
         let mut run =
             Run::new(network.clone(), Arc::new(travellers), Arc::new(trips), Second(self.window))
+                .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
                 .with_master_seed(self.seed)
                 .with_route_generator(Arc::from(
                     openmobisim_core_routes::generator(self.method, &Default::default())
@@ -621,6 +667,7 @@ fn choosing_run(
         build_travellers(raw, Vec::new(), &car_owning_defaults(), 1, &mut Diagnostics::new())
             .expect("buildable");
     let mut run = Run::new(network, Arc::new(travellers), Arc::new(trips), Second(7200))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_master_seed(seed);
     if let Some(m) = model {
         run = run.with_choice_model(m);

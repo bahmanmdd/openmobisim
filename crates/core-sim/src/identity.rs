@@ -299,19 +299,15 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             }
         }
     }
-    // The fixed times of reaching and leaving a car or a bike, wherever they are paid: a run
-    // with itinerary trips (modes compared, or a timetable). Absent elsewhere: a run of stated
-    // car trips alone pays none and hashes without them.
-    if inputs.mode_choice.is_some() || inputs.transit.is_some() {
-        h.write_str("fixed-times");
-        for v in [
-            inputs.mode_defaults.car_access_s,
-            inputs.mode_defaults.car_egress_s,
-            inputs.mode_defaults.bike_access_s,
-            inputs.mode_defaults.bike_egress_s,
-        ] {
-            h.write_f64(v);
-        }
+    // The fixed times of reaching and leaving a car or a bike: every run pays them as set.
+    h.write_str("fixed-times");
+    for v in [
+        inputs.mode_defaults.car_access_s,
+        inputs.mode_defaults.car_egress_s,
+        inputs.mode_defaults.bike_access_s,
+        inputs.mode_defaults.bike_egress_s,
+    ] {
+        h.write_f64(v);
     }
     // The car fallback (S271), wherever it can act: a run with itinerary trips. Off means
     // absent (off by default since S276), so a run without it hashes as before it existed.

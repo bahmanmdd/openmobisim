@@ -282,7 +282,11 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// departure and its trip ends `car_egress_s` (300 s) after it arrives, and a bike trip pays
 /// `bike_access_s` and `bike_egress_s` (60 s each) (`core-sim`'s `ModeDefaults`), as mode choice
 /// counts them. A run of stated car trips alone is unchanged.
-pub const DEFAULTS_VERSION: u32 = 36;
+///
+/// Version 37 (S299): **the fixed times in every run**: a run of stated car trips alone pays
+/// `car_access_s` and `car_egress_s` (and its bike trips `bike_access_s` and `bike_egress_s`) as
+/// a run that compares modes does; a run that wants the drives alone sets them to 0.
+pub const DEFAULTS_VERSION: u32 = 37;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

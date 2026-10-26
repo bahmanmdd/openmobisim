@@ -23,6 +23,10 @@ import numpy as np
 import openmobisim as ms
 import pytest
 
+#: Every run pays the fixed times of reaching and leaving a vehicle; these tests read the drives
+#: and rides alone, so they set them to 0.
+DRIVES_ONLY = {"car_access_s": 0.0, "car_egress_s": 0.0, "bike_access_s": 0.0, "bike_egress_s": 0.0}
+
 CAR = {"commuter": (True, False, False)}
 A, B = (4.8000, 45.7000), (4.8130, 45.7000)
 
@@ -55,6 +59,7 @@ def test_one_link_takes_the_whole_hour_at_its_bpr_time() -> None:
         flow_level=1,
         equilibration="frank_wolfe",
         link_bin_s=900,
+        mode_options=DRIVES_ONLY,
     ).run("one-link", quiet=True)
     t0 = float(net.link_free_flow_s()[0])
     expected = bpr(t0, 1500.0, 1000.0)
@@ -76,7 +81,12 @@ def test_one_link_takes_the_whole_hour_at_its_bpr_time() -> None:
         assert skim[0, 0] == pytest.approx(expected, rel=1e-9)
     # Half the demand over the same hour: half the flow, its own BPR time.
     half = ms.Scenario.from_parts(
-        net, trips_over_the_hour(750), classes=CAR, flow_level=1, equilibration="frank_wolfe"
+        net,
+        trips_over_the_hour(750),
+        classes=CAR,
+        flow_level=1,
+        equilibration="frank_wolfe",
+        mode_options=DRIVES_ONLY,
     ).run("one-link-half", quiet=True)
     assert half.mean_travel_time_s == pytest.approx(bpr(t0, 750.0, 1000.0), abs=1.0)
     # The period given by name: the same 1 500 trips over half an hour are twice the flow.
@@ -87,6 +97,7 @@ def test_one_link_takes_the_whole_hour_at_its_bpr_time() -> None:
         flow_level=1,
         equilibration="frank_wolfe",
         loading_options={"period_s": 1800},
+        mode_options=DRIVES_ONLY,
     ).run("one-link-short", quiet=True)
     assert short.mean_travel_time_s == pytest.approx(bpr(t0, 3000.0, 1000.0), abs=1.0)
 

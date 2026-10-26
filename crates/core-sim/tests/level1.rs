@@ -13,6 +13,7 @@
 //! * **what level 1 cannot run is refused** (mode choice), and its fingerprint is another
 //!   level's.
 
+use openmobisim_core_sim::ModeDefaults;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
@@ -93,6 +94,7 @@ fn run_of(network: &Arc<RoadNetwork>, n: u32, solver: &str, options: &[(&str, f6
     let turns = Arc::new(TurnTable::build(&network, network.signals()));
     let options: Options = options.iter().map(|&(k, v)| (k.to_string(), v)).collect();
     Run::new(network, Arc::new(travellers), Arc::new(trips), Second(36_000))
+        .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_window_start(Second(25_200))
         .with_flow_motor(FlowMotor::Static { turns, period_s: 3600 })
         .with_equilibration(Arc::from(strategy(solver, &options).expect("a strategy")))

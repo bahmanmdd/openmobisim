@@ -16,6 +16,10 @@ import numpy as np
 import openmobisim as ms
 import pytest
 
+#: Every run pays the fixed times of reaching and leaving a vehicle; these tests read the drives
+#: and rides alone, so they set them to 0.
+DRIVES_ONLY = {"car_access_s": 0.0, "car_egress_s": 0.0, "bike_access_s": 0.0, "bike_egress_s": 0.0}
+
 CAR = {"commuter": (True, False, False)}
 
 
@@ -27,6 +31,7 @@ def jammed(run_id: str, output_dir: str, outputs: str = "all") -> ms.Run:
         "equilibration": "free_flow",
         "equilibration_options": {"increments": 1, "warmup": 0},
         "window": (0, 600),  # departures in the first 600 s: the last cannot finish
+        "mode_options": DRIVES_ONLY,
     }
     return ms.Scenario.from_parts(net, rows, classes=CAR, **settings).run(
         run_id, output_dir=output_dir, overwrite=True, quiet=True, outputs=outputs
@@ -102,7 +107,7 @@ def test_a_car_still_travelling_at_free_flow_names_the_link_it_is_on() -> None:
     trips = ms.examples.fixed_car_trips(g, [("carol", (0, 0), (2, 2), 8.0, None)])
     for level in (0, 2):
         run = ms.Scenario.from_parts(
-            g, trips, classes=CAR, window=(0, 28_801), flow_level=level
+            g, trips, classes=CAR, window=(0, 28_801), flow_level=level, mode_options=DRIVES_ONLY
         ).run(f"trips-one-{level}", overwrite=True, quiet=True)
         t = run.trip_results()
         assert t["outcome"] == ["truncated"]

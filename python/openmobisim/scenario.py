@@ -1037,19 +1037,19 @@ class Scenario:
                 ``car_access_s`` (120) and ``car_egress_s`` (300): what a car trip takes before
                 its drive (reaching the car) and after it (parking and walking from it), and
                 ``bike_access_s`` (60) and ``bike_egress_s`` (60): the same for a bike (reaching
-                and unlocking it; parking and locking it). In a run that compares modes or has a
-                timetable every trip's time is door to door: the choice counts them (as walk and
-                parking time) and the loading pays them (the vehicle sets off that much after the
+                and unlocking it; parking and locking it). Every run pays them, so every trip's
+                time is door to door: the choice counts them (as walk and parking time) and the
+                loading pays them (the vehicle sets off that much after the
                 departure, the trip ends that much after it arrives), at home and at a parking
                 alike (a parking adds its occupancy's time, ``parking_options``); the results say
-                what a time holds (``trip_results`` ``vehicle_s``, ``access_egress_s``). A run of
-                stated car trips alone, with no timetable, pays none: it is a car assignment and
-                its times are the drives, as the benchmarks count them. Uncalibrated, 0 switches
-                any of them off. ``car_snap_motorway_m`` (50): a trip's end joins the roads
-                at the nearest street node (one with a road a car can enter from; motorways,
-                trunk roads and their ramps are not), unless it lies within this distance of a
-                node that has only such roads, which it then takes (through traffic placed on
-                the motorway keeps its node; an address beside it does not start on it);
+                what a time holds (``trip_results`` ``vehicle_s``, ``access_egress_s``). A run
+                compared with a benchmark that counts the drives alone sets them to 0.
+                Uncalibrated, 0 switches any of them off. ``car_snap_motorway_m`` (50): a
+                trip's end joins the roads at the nearest street node (one with a road a car
+                can enter from; motorways, trunk roads and their ramps are not), unless it lies
+                within this distance of a node that has only such roads, which it then takes
+                (through traffic placed on the motorway keeps its node; an address beside it
+                does not start on it);
                 uncalibrated, 0 sends every trip to a street, ``inf`` takes the nearest drivable
                 node of any class. Unknown names and negative values are refused (the limits
                 must be above 0).

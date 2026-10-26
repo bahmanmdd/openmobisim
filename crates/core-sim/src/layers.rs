@@ -159,14 +159,12 @@ pub struct ModeDefaults {
     /// it none (`RunResult::no_alternative`); `1` turns the fallback on.
     pub fallback_car: bool,
     /// The time a car trip takes before its drive, reaching the car and setting off, in
-    /// seconds. **Where the fixed times apply:** in a run that compares modes or has a
-    /// timetable, every trip's time is door to door, so every car trip pays this time at its
-    /// departure, at home and when the car is fetched from a car park on the way back: the
-    /// choice counts it (as walk time) and the loading enters the car on the roads this long
-    /// after the departure. A run of stated car trips alone, with no timetable, is a car
-    /// assignment: its times are the drives and it pays none of the fixed times, so it compares
-    /// with the benchmarks as they count. *Uncalibrated: 120 s, an assumption with no published
-    /// source; 0 switches it off.*
+    /// seconds. **Every run pays the fixed times** (this and the three below), so every trip's
+    /// time is door to door: a car trip pays this time at its departure, at home and when the
+    /// car is fetched from a car park on the way back; the choice counts it (as walk time) and
+    /// the loading enters the car on the roads this long after the departure. A run that
+    /// compares with a benchmark counting the drives alone sets the fixed times to 0.
+    /// *Uncalibrated: 120 s, an assumption with no published source; 0 switches it off.*
     pub car_access_s: f64,
     /// The time a car trip takes after its drive, finding a place and walking from it, in
     /// seconds: paid wherever a car is left, at the destination and at a car park alike (a car
@@ -219,6 +217,20 @@ impl ModeDefaults {
         match kind {
             ParkingKind::Car => self.car_egress_s,
             ParkingKind::Bike => self.bike_egress_s,
+        }
+    }
+
+    /// These values with the four fixed times at 0 (`car_access_s`, `car_egress_s`,
+    /// `bike_access_s`, `bike_egress_s`): a trip's time is then its drive or ride alone, as a
+    /// benchmark of the traffic model counts it.
+    #[must_use]
+    pub const fn without_fixed_times(self) -> Self {
+        ModeDefaults {
+            car_access_s: 0.0,
+            car_egress_s: 0.0,
+            bike_access_s: 0.0,
+            bike_egress_s: 0.0,
+            ..self
         }
     }
 

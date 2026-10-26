@@ -437,19 +437,12 @@ struct ItinStart<'a> {
 }
 
 impl Run {
-    /// Whether the run's car and bike trips pay the fixed times of reaching and leaving their
-    /// vehicle (S295): a run with itineraries (modes compared, or a timetable), whose times are
-    /// door to door; not a run of stated car trips alone, whose times are the drives.
-    fn pays_fixed_times(&self) -> bool {
-        self.transit.is_some() || self.mode_choice.is_some()
-    }
-
-    /// The whole seconds after a car trip's departure its car enters the roads: `car_access_s`
-    /// when the fixed times are paid, else 0. The loading starts the car there, and every
-    /// reading of a car route's cost at its departure (the route choice, the search trees, the
-    /// route update, the itinerary planner, the gap) starts there too.
+    /// The whole seconds after a car trip's departure its car enters the roads: `car_access_s`.
+    /// The loading starts the car there, and every reading of a car route's cost at its
+    /// departure (the route choice, the search trees, the route update, the itinerary planner,
+    /// the gap) starts there too.
     fn car_start_s(&self) -> u32 {
-        if self.pays_fixed_times() { whole_seconds(self.mode_defaults.car_access_s) } else { 0 }
+        whole_seconds(self.mode_defaults.car_access_s)
     }
 }
 
@@ -1443,11 +1436,7 @@ impl Run {
                     link_value_names: &link_value_names,
                     prices: &prices,
                     demand_values: &demand_values,
-                    car_start_s: if self.pays_fixed_times() {
-                        whole_seconds(self.mode_defaults.bike_access_s)
-                    } else {
-                        0
-                    },
+                    car_start_s: whole_seconds(self.mode_defaults.bike_access_s),
                     mode: Mode::Bike,
                     bike_layer: Some(setup.network()),
                 };
@@ -2162,16 +2151,13 @@ impl Run {
         diagnostics: &mut Diagnostics,
     ) -> Loaded {
         let LoadPlan { record_bins, want_entry, level_override, active, disrupted } = plan;
-        // The fixed times of reaching and leaving a vehicle (S295): paid by every car and bike
-        // trip of a run with itineraries (modes compared, or a timetable), whose times are door
-        // to door; none in a run of stated car trips alone, a car assignment whose times are
-        // the drives. Whole seconds, the loading's clock; the car's start is what every reading
-        // of its route's cost starts from (`Self::car_start_s`).
-        let fixed = |x: f64| if self.pays_fixed_times() { whole_seconds(x) } else { 0 };
-        let car_access_s = fixed(self.mode_defaults.car_access_s);
-        let car_egress_s = fixed(self.mode_defaults.car_egress_s);
-        let bike_access_s = fixed(self.mode_defaults.bike_access_s);
-        let bike_egress_s = fixed(self.mode_defaults.bike_egress_s);
+        // The fixed times of reaching and leaving a vehicle (S295, S299): paid by every car and
+        // bike trip as set (0 pays nothing). Whole seconds, the loading's clock; the car's start
+        // is what every reading of its route's cost starts from (`Self::car_start_s`).
+        let car_access_s = whole_seconds(self.mode_defaults.car_access_s);
+        let car_egress_s = whole_seconds(self.mode_defaults.car_egress_s);
+        let bike_access_s = whole_seconds(self.mode_defaults.bike_access_s);
+        let bike_egress_s = whole_seconds(self.mode_defaults.bike_egress_s);
         // Per completed trip with a vehicle of its own: the trip, its seconds in the vehicle
         // and its fixed seconds (access, egress and parking).
         let mut trip_parts: Vec<(TripId, u32, u32)> = Vec::new();
