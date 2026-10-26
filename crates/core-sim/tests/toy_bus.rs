@@ -16,7 +16,7 @@
 //! | B3: B1 at free flow (level 0) | the same as B1: **80, 120, 205** |
 //! | B4: the plausibility ratio at 0.5 | 80.554 + 20 + 85.44 = 185.99 s > 0.5 · 240: run by the schedule; the passenger arrives at **240** |
 //! | B5: a timetable not put on the roads | by the schedule: **240** |
-//! | B6: B1 as in B1, three loadings | the passenger rides the bus that comes, at `D1` at **205** in every loading, but plans on the timetable: **240** expected, never 205 |
+//! | B6: B1 as in B1, three loadings | the passenger rides the bus that comes, at `D1` at **205** in every loading, but plans on the timetable: **240** expected, never 205; the planned-against-realised part **−35 s**, all of the transit gap (share **1**); B5's setup: **0**, share **0** |
 
 #![allow(clippy::float_cmp, reason = "counts and whole seconds")]
 
@@ -217,4 +217,18 @@ fn b6_over_loadings_the_passenger_rides_the_bus_that_comes_but_plans_on_the_time
     assert_eq!(passenger(&result), (EventType::TripCompleted, 205));
     let it = result.itineraries.as_ref().expect("itineraries");
     assert_eq!(it.expected_s, [240.0], "planned on the timetable, not on the bus that came early");
+    // The planned-against-realised part of the gap: 205 − 240 in every loading; the trip's
+    // itinerary is the best of its set on the timetable (no gap of its own), so all of it.
+    for report in &result.iterations {
+        assert_eq!(report.gap_transit_plan_s, -35.0, "{report:?}");
+    }
+    let shares: Vec<f64> = result.iterations.iter().map(|r| r.gap_transit_plan_share).collect();
+    assert_eq!(shares, [1.0, 1.0, 1.0]);
+    // On the timetable (B5's setup): no difference at all.
+    let transit = t.transit(TransitDefaults::SHIPPED, false);
+    let result = t.run_loadings(vec![t.trip("p", "M", "D1", Mode::Transit)], transit, true, 3);
+    assert_eq!(passenger(&result), (EventType::TripCompleted, 240));
+    for report in &result.iterations {
+        assert_eq!((report.gap_transit_plan_s, report.gap_transit_plan_share), (0.0, 0.0));
+    }
 }

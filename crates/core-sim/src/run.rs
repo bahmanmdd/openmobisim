@@ -395,6 +395,10 @@ struct ItineraryTally {
     /// Σ |realised − expected| arrival at the parking of trips back, and how many.
     mismatch_sum: f64,
     mismatch_count: u32,
+    /// Σ w · (the second a transit part ended − the second it would have on the timetable
+    /// planned on) over the trips whose transit part arrived, and Σ w (S299).
+    plan_error_sum: f64,
+    plan_error_weight: f64,
 }
 
 /// An itinerary trip waiting for the loading.
@@ -419,6 +423,10 @@ struct Executed {
     followed: Option<Followed>,
     /// Back: |realised − expected| arrival at the parking.
     mismatch: Option<f64>,
+    /// Its transit part's end less where it would have ended on the timetable planned on,
+    /// followed the same way from the same moment at the first stop (S299); 0 when the
+    /// loading ran that timetable; `None` if either way did not get there.
+    plan_error: Option<f64>,
     /// Walk legs to bin: links and the second they start.
     walks: Vec<(Vec<LinkId>, u32)>,
     /// The seconds in the trip's own vehicle (the drive or the ride), and its fixed seconds
@@ -1788,6 +1796,12 @@ impl Run {
             report.reroutes = u32::try_from(loaded.reroutes.len()).unwrap_or(u32::MAX);
             report.reroute_searches = loaded.reroute_searches;
             report.hub_mismatch_s = loaded.parking.as_ref().map_or(f64::NAN, |p| p.mismatch_s);
+            let tally = &loaded.itinerary;
+            report.gap_transit_plan_s = if tally.plan_error_weight > 0.0 {
+                tally.plan_error_sum / tally.plan_error_weight
+            } else {
+                f64::NAN
+            };
             let mut pending_chosen: Option<Chosen> = None;
             if let (Some(before), Some(now)) = (&previous_bins, &loaded.entry_bins) {
                 report.time_change = relative_time_change(&self.network, before, now);
@@ -1982,6 +1996,8 @@ impl Run {
                             report.itinerary_gap[mode.index()] = found.gap(mode);
                         }
                         report.itinerary_recosted = found.recosted;
+                        report.gap_transit_plan_share =
+                            found.plan_error_share(report.gap_transit_plan_s);
                         report.itinerary_gap_excess = found.gap_excess_pooled();
                         // The full gap (S293): every trip choosing its mode and every car
                         // itinerary, on the same costs; after the last loading, or every one.
@@ -2865,6 +2881,20 @@ impl Run {
                     .apply_to_times(timetable, &mut times, &|r| on_roads.contains(&r.raw()));
                 bus_times = Some(times);
             }
+            // The timetable the travellers planned on, if this loading ran another (buses on the
+            // roads, or disruptions they did not know of): each transit part is followed on it
+            // too, for the gap's planned-against-realised part (S299). The schedule, with the
+            // disruptions they knew of.
+            let differs = bus_load.is_some()
+                || (disrupted && !self.disruptions.known && !self.disruptions.transit.is_empty());
+            let planned = differs.then(|| {
+                let timetable = transit.timetable();
+                let mut times = timetable.scheduled().clone();
+                if disrupted && self.disruptions.known {
+                    self.disruptions.apply_to_times(timetable, &mut times, &|_| false);
+                }
+                transit.on_times(&times)
+            });
             // On the loading's times if the buses rode, else on the schedule.
             let realised = bus_times.as_ref().map(|times| transit.on_times(times));
             let data = realised.as_ref().unwrap_or_else(|| transit.scheduled());
@@ -2887,7 +2917,7 @@ impl Run {
                 let mut walk_paths = std::mem::take(&mut self.walk_paths);
                 let executed = self.execute_itineraries(
                     &transit,
-                    data,
+                    (data, planned.as_ref()),
                     itineraries,
                     chosen,
                     &pending_itin,
@@ -2914,6 +2944,12 @@ impl Run {
                     if let Some(m) = done.mismatch {
                         itinerary.mismatch_sum += m;
                         itinerary.mismatch_count += 1;
+                    }
+                    if let (Some(e), ItinOutcome::Arrived(at)) = (done.plan_error, &done.outcome) {
+                        if Second(*at) <= self.window {
+                            itinerary.plan_error_sum += weight * e;
+                            itinerary.plan_error_weight += weight;
+                        }
                     }
                     for (links, start) in done.walks {
                         layer_vehicles[1].push(Vehicle::new(
@@ -3226,13 +3262,18 @@ impl Run {
 
     /// Execute every pending itinerary's transit part on `data`: see
     /// [`itinerary_choice::follow`]. In parallel, in fixed chunks. With `bin_walks`, each walk
-    /// leg's links, from `walk_paths` or searched once and kept there.
+    /// leg's links, from `walk_paths` or searched once and kept there. With `planned` (the
+    /// timetable the travellers planned on, when `data` is another), each transit part is
+    /// followed on it too, from the same moment at its first stop, and the difference kept.
     #[allow(clippy::too_many_arguments, reason = "the loading's pieces")]
     #[allow(clippy::too_many_lines, reason = "one pass: follow, then the walks")]
     fn execute_itineraries(
         &self,
         transit: &TransitSetup,
-        data: &openmobisim_core_transit::RaptorData,
+        (data, planned): (
+            &openmobisim_core_transit::RaptorData,
+            Option<&openmobisim_core_transit::RaptorData>,
+        ),
         itineraries: &Itineraries,
         chosen: &Chosen,
         pending: &[PendingItin],
@@ -3258,8 +3299,14 @@ impl Run {
         let followed: Vec<(Executed, Vec<WalkLeg>)> = par_map(
             pending,
             itinerary_choice::SCRATCH_CHUNK,
-            || (Reach::new(walk, seconds), Raptor::new(data, d.max_rides as usize)),
-            |(reach, raptor), pend| {
+            || {
+                (
+                    Reach::new(walk, seconds),
+                    Raptor::new(data, d.max_rides as usize),
+                    planned.map(|p| Raptor::new(p, d.max_rides as usize)),
+                )
+            },
+            |(reach, raptor, raptor_planned), pend| {
                 let alt =
                     chosen.alt[pend.position].as_ref().expect("a pending trip has its choice");
                 let nodes = itineraries.nodes(pend.position);
@@ -3269,6 +3316,7 @@ impl Run {
                         outcome: ItinOutcome::Truncated,
                         followed: None,
                         mismatch: None,
+                        plan_error: None,
                         walks: Vec::new(),
                         parts: (0, 0),
                     };
@@ -3313,19 +3361,26 @@ impl Run {
                         (departure.saturating_add(alt.access_walk_s), nodes.walk_o, p.walk_node(pk))
                     }
                 };
-                let followed = {
-                    let reach = &mut *reach;
-                    itinerary_choice::follow(data, raptor, alt, at_first, || match alt.shape {
-                        Shape::Back(pk) => parking
-                            .map(|p| {
-                                p.stops(pk)
-                                    .iter()
-                                    .map(|&(s, w)| (s, w.saturating_add(transfer)))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        _ => transit.egress(reach, nodes.walk_d, nodes.access_walk_s),
-                    })
+                let mut egress = || match alt.shape {
+                    Shape::Back(pk) => parking
+                        .map(|p| {
+                            p.stops(pk)
+                                .iter()
+                                .map(|&(s, w)| (s, w.saturating_add(transfer)))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    _ => transit.egress(reach, nodes.walk_d, nodes.access_walk_s),
+                };
+                let followed = itinerary_choice::follow(data, raptor, alt, at_first, &mut egress);
+                // The same, on the timetable planned on (S299).
+                let plan_error = match (&followed, planned.zip(raptor_planned.as_mut())) {
+                    (None, _) => None,
+                    (Some(_), None) => Some(0.0),
+                    (Some(f), Some((p, r))) => {
+                        itinerary_choice::follow(p, r, alt, at_first, egress)
+                            .map(|g| f64::from(f.end) - f64::from(g.end))
+                    }
                 };
                 let mut walks = Vec::new();
                 if let (true, Some(f)) = (bin_walks, &followed) {
@@ -3391,7 +3446,10 @@ impl Run {
                     }
                     _ => (0, 0),
                 };
-                (Executed { outcome, followed, mismatch, walks: Vec::new(), parts }, walks)
+                (
+                    Executed { outcome, followed, mismatch, plan_error, walks: Vec::new(), parts },
+                    walks,
+                )
             },
         );
         // The walks not searched yet in this execution, each once, in parallel.

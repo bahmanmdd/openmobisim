@@ -1896,6 +1896,8 @@ pub(crate) struct Assessment {
     /// of the least in its set.
     pub paid: [f64; Mode::COUNT],
     pub least: [f64; Mode::COUNT],
+    /// Per mode: Σ w of those trips.
+    pub weight: [f64; Mode::COUNT],
     /// Weights: all assessed, chose again, changed, had to choose again (their
     /// alternative had gone).
     pub w_all: f64,
@@ -1951,6 +1953,25 @@ impl Assessment {
     pub(crate) fn gap(&self, mode: Mode) -> f64 {
         let (paid, least) = (self.paid[mode.index()], self.least[mode.index()]);
         if least > 0.0 { (paid - least) / least } else { f64::NAN }
+    }
+
+    /// The share of the itineraries' gap with transit that the planned-against-realised
+    /// difference makes (S299): `e / (g + e)`, `e` the mean seconds a transit part ended later
+    /// than on the timetable it was planned on (`plan_error_s`, over the trips that rode), `g`
+    /// the mean seconds the transit, park-and-ride and bike-and-ride trips assessed paid above the
+    /// best of their mode on the costs they planned with. 0 when `e` is 0 (the buses kept to
+    /// the timetable); NaN when `e` is NaN or nothing with transit was assessed.
+    pub(crate) fn plan_error_share(&self, plan_error_s: f64) -> f64 {
+        let ms = [Mode::Transit, Mode::CarTransit, Mode::BikeTransit].map(Mode::index);
+        let w: f64 = ms.iter().map(|&m| self.weight[m]).sum();
+        if plan_error_s.is_nan() || w <= 0.0 {
+            return f64::NAN;
+        }
+        if plan_error_s == 0.0 {
+            return 0.0;
+        }
+        let g = ms.iter().map(|&m| self.paid[m] - self.least[m]).sum::<f64>() / w;
+        plan_error_s / (g + plan_error_s)
     }
 
     /// The share of the trips choosing their mode whose mode changed, NaN if none chose
@@ -2858,6 +2879,7 @@ impl Itineraries {
                     if first[w].parking.is_none() {
                         assessment.paid[m] += weight * kept.total_s;
                         assessment.least[m] += weight * best[m];
+                        assessment.weight[m] += weight;
                         in_gap.push((s, m, weight));
                     } else {
                         assessment.recosted += 1;

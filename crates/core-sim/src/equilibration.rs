@@ -178,6 +178,20 @@ pub struct IterationReport {
     /// the mean absolute difference between the parking time expected at the choice
     /// and the one paid, in seconds; `NaN` without parkings.
     pub hub_mismatch_s: f64,
+    /// **The planned-against-realised difference of transit** (S299): over the trips with a
+    /// transit part that ended in this loading (transit, park-and-ride, bike-and-ride; by
+    /// traveller weight), the mean of the second the transit part ended (at the destination,
+    /// or at the parking for a trip back) less the second it would have ended had every vehicle
+    /// kept to the timetable the trip planned on, the trip followed the same way from the same
+    /// moment at its first stop, in seconds (negative: earlier). 0 when every vehicle kept to
+    /// that timetable (buses not on the roads); `NaN` when no trip rode.
+    pub gap_transit_plan_s: f64,
+    /// Its share of the itineraries' gap with transit ([`Self::gap_transit_plan_s`] over itself
+    /// plus the mean seconds the transit, park-and-ride and bike-and-ride trips assessed paid
+    /// above the best of their mode on the costs they planned with): the part of what those
+    /// trips lost that their planning could not see. 0 when the difference is 0; `NaN` when it
+    /// is, or nothing with transit was assessed.
+    pub gap_transit_plan_share: f64,
     /// **Mode choice**: of the trips choosing their mode that had chosen before, the
     /// share (by traveller weight) whose mode changed on the way to this iteration's
     /// loading; `NaN` at the first, or without mode choice.
@@ -308,6 +322,8 @@ impl PartialEq for IterationReport {
             mode_changed_floor,
             reroute_searches,
             hub_mismatch_s,
+            gap_transit_plan_s,
+            gap_transit_plan_share,
             mode_changed_share,
             gap_route,
             gap_route_expected,
@@ -340,6 +356,8 @@ impl PartialEq for IterationReport {
             (*itinerary_gap_excess, other.itinerary_gap_excess),
             (*mode_changed_floor, other.mode_changed_floor),
             (*hub_mismatch_s, other.hub_mismatch_s),
+            (*gap_transit_plan_s, other.gap_transit_plan_s),
+            (*gap_transit_plan_share, other.gap_transit_plan_share),
             (*mode_changed_share, other.mode_changed_share),
             (*gap_route, other.gap_route),
             (*gap_route_expected, other.gap_route_expected),
@@ -412,6 +430,8 @@ impl IterationReport {
             itinerary_gap_excess: f64::NAN,
             mode_changed_floor: f64::NAN,
             hub_mismatch_s: f64::NAN,
+            gap_transit_plan_s: f64::NAN,
+            gap_transit_plan_share: f64::NAN,
             mode_changed_share: f64::NAN,
             gap_route: f64::NAN,
             gap_route_expected: f64::NAN,

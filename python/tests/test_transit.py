@@ -141,6 +141,7 @@ def test_b2_by_default_the_bus_keeps_to_its_timetable_behind_the_same_cars() -> 
     assert list(calls["arrival_s"]) == list(calls["scheduled_arrival_s"])
     assert list(calls["departure_s"]) == list(calls["scheduled_departure_s"])
     assert run.completion_by_mode["transit"]["total_travel_time_s"] == 240.0
+    assert list(run.convergence()["gap_transit_plan_s"]) == [0.0], "the plan is what happens"
     summary = run.transit_summary
     assert "bus_runs_on_roads" not in summary and "bus_groups_on_roads" not in summary
     # The bus takes no road capacity: the cars are no slower than with the bus among them.
@@ -177,6 +178,8 @@ def test_b2_a_bus_on_the_roads_behind_cars_is_late_and_so_is_its_passenger() -> 
     assert calls["departure_s"][i + 1] == 159.0
     p = run.completion_by_mode["transit"]
     assert p["total_travel_time_s"] == 244.0
+    # The planned-against-realised part: the passenger planned 240 s on the timetable.
+    assert list(run.convergence()["gap_transit_plan_s"]) == [4.0]
     summary = run.transit_summary
     assert summary["bus_runs_on_roads"] == 18
     assert summary["bus_groups_on_roads"] == 1

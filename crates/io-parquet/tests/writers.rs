@@ -578,6 +578,8 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
         itinerary_gap_excess: f64::NAN,
         mode_changed_floor: f64::NAN,
         hub_mismatch_s: f64::NAN,
+        gap_transit_plan_s: f64::NAN,
+        gap_transit_plan_share: f64::NAN,
         mode_changed_share: f64::NAN,
         // The full gaps (S293): measured from the second iteration on, the mode gap never.
         gap_route: if iteration == 0 { f64::NAN } else { gap / 3.0 },

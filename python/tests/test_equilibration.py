@@ -26,7 +26,7 @@ FIELDS = [
     "itinerary_gap_excess", "completed_people", "gap_route", "gap_route_expected",
     "gap_route_excess", "gap_route_network", "gap_route_network_excess", "gap_mode",
     "gap_mode_expected", "gap_mode_excess", "excess_min_route", "excess_min_mode",
-    "unfinished_cost_share",
+    "unfinished_cost_share", "gap_transit_plan_s", "gap_transit_plan_share",
 ]  # fmt: skip
 GAP_TRIPS = [
     "trip", "g_chosen_min", "g_best_set_min", "g_best_network_min", "g_expected_min",

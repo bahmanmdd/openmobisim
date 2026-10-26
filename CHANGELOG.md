@@ -28,6 +28,12 @@ loading: it takes no road capacity and traffic does not delay it. `transit_optio
 on the roads among the cars, where congestion makes them late, as 0.1.0 did. Travellers plan transit on the
 timetable in every iteration, with buses on the roads too, and ride the vehicles that come; 0.1.0 planned on the
 bus times of the last iteration.
+- `convergence()` has two new columns: `gap_transit_plan_s`, how much later the transit trips' rides ended than on
+  the timetable they planned on (0 with buses on the timetable), and `gap_transit_plan_share`, its share of the
+  itineraries' gap with transit.
+- The timetable searches are kept for the run and answer the same query again (the same results, sooner);
+  `transit_summary` counts them (`timetable_searches_*`, `timetable_reused_*`, `timetable_kept`,
+  `timetable_kept_bytes`).
 
 ## 0.1.0 — 2026-10-20
 

@@ -508,6 +508,20 @@ class Run:
         * ``hub_mismatch_s`` — the hub expectation mismatch: per traveller who parked, the
           mean difference between the parking time expected when they chose and the one
           they paid, in seconds; ``nan`` without parkings.
+        * ``gap_transit_plan_s`` — **the planned-against-realised difference of transit**: over
+          the trips with a transit part that ended in this loading (by traveller weight), the
+          mean of the second the transit part ended (at the destination, or at the parking for
+          a trip back to its vehicle) less the second it would have ended had every vehicle
+          kept to the timetable the trip planned on, followed the same way from the same moment
+          at its first stop, in seconds (negative: earlier). Travellers plan on the timetable,
+          so the gaps above never see it: 0 when the buses keep to the timetable (the
+          default); with ``transit_options`` ``buses_on_roads`` 1, what traffic did to the
+          buses. ``nan`` when no trip rode.
+        * ``gap_transit_plan_share`` — its share of the itineraries' gap with transit: that mean
+          over itself plus the mean seconds the transit, park-and-ride and bike-and-ride trips
+          measured in ``gap_transit``, ``gap_car_transit`` and ``gap_bike_transit`` paid above
+          the best of their mode. 0 when the difference is 0; ``nan`` when it is, or when no
+          such trip was measured (a run of one loading). Neither is in ``kpis.parquet``.
         * ``mode_changed_share`` — with ``modes``: of the trips choosing their mode that
           had chosen before, the share (by traveller weight) whose mode changed on the way
           to this loading; ``nan`` at the first iteration and without ``modes``. How the

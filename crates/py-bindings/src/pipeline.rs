@@ -716,6 +716,9 @@ fn convergence_arrays(
         reports.iter().map(|r| r.itinerary_recosted).collect::<Vec<_>>().into_pyarray(py),
     )?;
     dict.set_item("hub_mismatch_s", floats(|r| r.hub_mismatch_s).into_pyarray(py))?;
+    // The planned-against-realised part of transit (S299).
+    dict.set_item("gap_transit_plan_s", floats(|r| r.gap_transit_plan_s).into_pyarray(py))?;
+    dict.set_item("gap_transit_plan_share", floats(|r| r.gap_transit_plan_share).into_pyarray(py))?;
     dict.set_item("mode_changed_share", floats(|r| r.mode_changed_share).into_pyarray(py))?;
     dict.set_item("mode_changed_floor", floats(|r| r.mode_changed_floor).into_pyarray(py))?;
     dict.set_item("itinerary_gap_excess", floats(|r| r.itinerary_gap_excess).into_pyarray(py))?;
