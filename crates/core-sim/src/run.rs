@@ -2887,14 +2887,16 @@ impl Run {
             // disruptions they knew of.
             let differs = bus_load.is_some()
                 || (disrupted && !self.disruptions.known && !self.disruptions.transit.is_empty());
-            let planned = differs.then(|| {
+            let known_transit =
+                disrupted && self.disruptions.known && !self.disruptions.transit.is_empty();
+            let planned_known = (differs && known_transit).then(|| {
                 let timetable = transit.timetable();
                 let mut times = timetable.scheduled().clone();
-                if disrupted && self.disruptions.known {
-                    self.disruptions.apply_to_times(timetable, &mut times, &|_| false);
-                }
+                self.disruptions.apply_to_times(timetable, &mut times, &|_| false);
                 transit.on_times(&times)
             });
+            let planned =
+                differs.then(|| planned_known.as_ref().unwrap_or_else(|| transit.scheduled()));
             // On the loading's times if the buses rode, else on the schedule.
             let realised = bus_times.as_ref().map(|times| transit.on_times(times));
             let data = realised.as_ref().unwrap_or_else(|| transit.scheduled());
@@ -2917,7 +2919,7 @@ impl Run {
                 let mut walk_paths = std::mem::take(&mut self.walk_paths);
                 let executed = self.execute_itineraries(
                     &transit,
-                    (data, planned.as_ref()),
+                    (data, planned),
                     itineraries,
                     chosen,
                     &pending_itin,
