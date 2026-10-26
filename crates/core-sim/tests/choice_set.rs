@@ -89,6 +89,8 @@ struct Setup {
     iterations: f64,
     warmup: f64,
     limit: Option<f64>,
+    /// A toll on the slow road's first link, in euros (S299): 0 for none.
+    toll: f64,
 }
 
 impl Setup {
@@ -102,6 +104,7 @@ impl Setup {
             iterations: 1.0,
             warmup: 0.0,
             limit: None,
+            toll: 0.0,
         }
     }
 
@@ -138,6 +141,15 @@ impl Setup {
             .with_equilibration(Arc::from(strategy("msa", &equilibration).expect("built in")));
         if let Some(limit) = self.limit {
             run = run.with_choice_detour_limit(limit);
+        }
+        if self.toll > 0.0 {
+            let id = network.link_external_ids().typed_id_of::<LinkId>("slow1").unwrap();
+            let mut toll = vec![0.0; network.link_count() as usize];
+            toll[id.index()] = self.toll;
+            let values = openmobisim_core_sim::LinkValues::new()
+                .with_column(openmobisim_core_sim::ValueLayer::Road, "toll_eur", toll, &[])
+                .unwrap();
+            run = run.with_link_values(values);
         }
         run.execute(&mut Diagnostics::new())
     }
@@ -214,6 +226,28 @@ fn a_route_more_than_the_limit_slower_than_the_best_is_not_offered() {
     // The best route is always offered, however tight the limit.
     let tiny = Setup { limit: Some(1e-9), ..Setup::free_flow(n) }.go();
     assert_eq!(took(&tiny, 0), n as usize);
+}
+
+/// **The offered set by the route cost** (S299): a toll of 0.25 € on the slow road, 9 s at the
+/// default −1.2 per euro against −2 per minute, makes it 93/72 = 1.29 times the fast road's cost:
+/// within the generation's detour (1.3), so the set holds both, but past a limit of 0.2, which
+/// its time alone (1/6) is within. So the limit offers the fast road alone: everyone takes it.
+#[test]
+fn a_toll_takes_a_route_past_the_limit_in_the_class_s_cost() {
+    let n = 2_000;
+    let plain = Setup { limit: Some(0.2), ..Setup::free_flow(n) }.go();
+    assert!(took(&plain, 1) > 0, "by time the slow road is offered and taken");
+    let tolled = Setup { limit: Some(0.2), toll: 0.25, ..Setup::free_flow(n) }.go();
+    let rc = tolled.route_choices.as_ref().unwrap();
+    assert!(rc.alternatives.iter().all(|&a| a == 2), "the set still holds both roads");
+    let first = tolled.route_sets.as_ref().unwrap().route_range(0).start;
+    let fast_first = took(&tolled, 0) == n as usize || took(&tolled, 1) == n as usize;
+    assert!(fast_first, "one road offered: everyone on it");
+    assert!(rc.probability.iter().all(|&p| (p - 1.0).abs() < 1e-12), "one alternative: certain");
+    let routes = &tolled.route_sets.as_ref().unwrap();
+    let taken = rc.route[0] as usize;
+    assert_eq!(routes.route(taken).links.len(), 1, "the fast road, a single link");
+    assert!(taken >= first);
 }
 
 #[test]

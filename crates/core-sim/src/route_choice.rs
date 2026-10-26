@@ -311,6 +311,9 @@ pub(crate) struct Chooser<'a> {
     wants_path_size: bool,
     identity: Vec<u32>,
     weight: Vec<u32>,
+    /// Each route's extra seconds under each coefficient vector of the route cost
+    /// (`extra[vector][route]`, S299); empty where the cost is time alone.
+    extra: Vec<Vec<f64>>,
 }
 
 impl<'a> Chooser<'a> {
@@ -369,7 +372,29 @@ impl<'a> Chooser<'a> {
         let weight = (0..trips.len())
             .map(|i| travellers.weight(trips.traveller(TripId::from_index(i as usize))))
             .collect();
-        Ok(Self { inputs, route_sets, wanted, wants_length, wants_path_size, identity, weight })
+        // The routes' extras per vector, for the offered set and the gaps (S299): one pass over
+        // the store per vector, made only where the cost is not time alone.
+        let extra = match inputs.cost.filter(|c| !c.is_time_only()) {
+            None => Vec::new(),
+            #[allow(clippy::cast_possible_truncation, reason = "few vectors")]
+            Some(cost) => (0..cost.vector_count())
+                .map(|v| {
+                    (0..route_sets.route_count())
+                        .map(|r| cost.route_extra(v as u32, route_sets.route(r).links))
+                        .collect()
+                })
+                .collect(),
+        };
+        Ok(Self {
+            inputs,
+            route_sets,
+            wanted,
+            wants_length,
+            wants_path_size,
+            identity,
+            weight,
+            extra,
+        })
     }
 
     /// Route `r`'s length in metres, if the model reads a length or money; 0 otherwise.
@@ -485,10 +510,12 @@ impl<'a> Chooser<'a> {
 
     /// Put trips `from..to` that have a set into `batch`, with `times` as their cost (free flow
     /// if `None`), only those of the travellers `who` marks if it is given. Each situation offers
-    /// the routes of its pair's set **whose expected time is within [`Inputs::detour_limit`] of
-    /// the best's** (all of them if the limit is 0: the best route is always offered), **at most
-    /// [`Inputs::max_routes`] of them, the fastest**. What is
-    /// left besides the batch is in `filled`.
+    /// the routes of its pair's set **whose expected cost is within [`Inputs::detour_limit`] of
+    /// the least's** (all of them if the limit is 0: the least-cost route is always offered),
+    /// **at most [`Inputs::max_routes`] of them, the cheapest**: the cost a route's expected time
+    /// plus its extras under the trip's coefficient vector of the route cost ([`Inputs::cost`],
+    /// S299), its expected time where the cost is time alone. What is left besides the batch is
+    /// in `filled`.
     fn fill(
         &self,
         batch: &mut ChoiceBatch,
@@ -538,6 +565,7 @@ impl<'a> Chooser<'a> {
                 .map(|(_, set)| set.clone().map(|r| f64::from(route_sets.route(r).cost)).collect())
                 .collect(),
         };
+        let mut generalised: Vec<f64> = Vec::new();
         for ((i, set), set_seconds) in asked.into_iter().zip(costed) {
             let trip = TripId::from_index(i);
             let traveller = trips.traveller(trip);
@@ -546,22 +574,32 @@ impl<'a> Chooser<'a> {
             let at = filled.set_seconds.len();
             filled.set_seconds.extend(set_seconds);
             let seconds = &filled.set_seconds[at..];
+            // What the limit and the cap compare (S299): each route's expected time plus its
+            // extras under the trip's coefficient vector; its time where the cost is time alone.
+            let judged: &[f64] = if self.extra.is_empty() {
+                seconds
+            } else {
+                let extra = &self.extra[self.vector_of(trip) as usize];
+                generalised.clear();
+                generalised.extend(set.clone().zip(seconds).map(|(r, s)| s + extra[r]));
+                &generalised
+            };
             let best = seconds.iter().copied().fold(f64::INFINITY, f64::min);
+            let least = judged.iter().copied().fold(f64::INFINITY, f64::min);
             let reach =
-                if detour_limit > 0.0 { best * (1.0 + detour_limit) } else { f64::INFINITY };
-            // At most `max_routes` offered, the fastest, the earlier first among equals (S268).
+                if detour_limit > 0.0 { least * (1.0 + detour_limit) } else { f64::INFINITY };
+            // At most `max_routes` offered, the cheapest, the earlier first among equals (S268).
             let cap = max_routes as usize;
-            let offered: Option<Vec<bool>> = (cap > 0 && seconds.len() > cap).then(|| {
-                let mut order: Vec<usize> = (0..seconds.len()).collect();
-                order.sort_by(|&x, &y| seconds[x].total_cmp(&seconds[y]).then(x.cmp(&y)));
-                let mut keep = vec![false; seconds.len()];
+            let offered: Option<Vec<bool>> = (cap > 0 && judged.len() > cap).then(|| {
+                let mut order: Vec<usize> = (0..judged.len()).collect();
+                order.sort_by(|&x, &y| judged[x].total_cmp(&judged[y]).then(x.cmp(&y)));
+                let mut keep = vec![false; judged.len()];
                 for &a in &order[..cap] {
                     keep[a] = true;
                 }
                 keep
             });
-            let is_offered =
-                |a: usize| seconds[a] <= reach && offered.as_ref().is_none_or(|k| k[a]);
+            let is_offered = |a: usize| judged[a] <= reach && offered.as_ref().is_none_or(|k| k[a]);
             // The path size over the routes offered, by length (S279, CM-3), not over the
             // whole stored set: overlap with a route nobody is offered is no overlap.
             let path_size = if self.wants_path_size {

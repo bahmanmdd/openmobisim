@@ -916,7 +916,9 @@ impl Run {
     /// probability that belongs to routes that compete (the gap grows with the size of the set).
     /// `0.0` offers every route. The best route is always offered; a route dropped
     /// keeps its place in the sets and can return when the times change. The gap is still
-    /// measured against the whole set.
+    /// measured against the whole set. Where a class's utility weighs more than time (S299), a
+    /// route's expected time is read with its extras under the class's coefficient vector: the
+    /// limit is on that generalised cost.
     ///
     /// # Panics
     ///
@@ -933,7 +935,8 @@ impl Run {
 
     /// The same run, offering each traveller at most `n` routes, the fastest at their departure
     /// among those within the detour limit ([`DEFAULT_CHOICE_MAX_ROUTES`] by default; 0
-    /// offers every such route). The gap is still measured against the whole set.
+    /// offers every such route), the cheapest in the class's generalised cost where its utility
+    /// weighs more than time (S299). The gap is still measured against the whole set.
     #[must_use]
     pub fn with_choice_max_routes(mut self, n: u32) -> Self {
         self.choice_max_routes = n;
