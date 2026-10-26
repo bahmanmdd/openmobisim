@@ -250,22 +250,25 @@ fn a_toll_takes_a_route_past_the_limit_in_the_class_s_cost() {
     assert!(taken >= first);
 }
 
-/// **The stopping rule in generalised minutes** (S299): a run with a toll measures the full gap
-/// after every loading and stops on it; without, after the last alone.
+/// **The stopping rule in generalised minutes** (S299): a run with a toll measures the in-set
+/// gap in generalised minutes after every loading, beside the time gaps, and stops on it; the
+/// full gap stays after the last loading alone. Without a toll nothing of it is measured.
 #[test]
-fn a_tolled_run_measures_the_full_gap_after_every_loading() {
+fn a_tolled_run_stops_on_the_in_set_gap_in_generalised_minutes() {
     let tolled = Setup { iterations: 3.0, toll: 0.25, ..Setup::free_flow(500) }.go();
     assert!(tolled.iterations.len() >= 2);
-    for it in &tolled.iterations {
+    for it in &tolled.iterations[1..] {
         assert!(it.stop_generalised, "{it:?}");
-        assert!(!it.gap_route_excess.is_nan(), "measured at iteration {}", it.iteration);
+        assert!(!it.gap_generalised_excess.is_nan(), "measured at iteration {}", it.iteration);
+        assert!(!it.gap_excess.is_nan(), "the time gap still reported");
+        assert!((it.disequilibrium() - it.gap_generalised_excess).abs() < 1e-12);
     }
     let plain = Setup { iterations: 3.0, ..Setup::free_flow(500) }.go();
-    assert!(plain.iterations.iter().all(|it| !it.stop_generalised));
-    let first = &plain.iterations[0];
     assert!(
-        plain.iterations.len() < 2 || first.gap_route_excess.is_nan(),
-        "by time: the last alone"
+        plain
+            .iterations
+            .iter()
+            .all(|it| !it.stop_generalised && it.gap_generalised_excess.is_nan())
     );
 }
 

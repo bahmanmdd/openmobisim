@@ -1350,18 +1350,18 @@ fn a_run_without_the_strategy_reports_one_iteration_and_no_table_it_was_not_aske
 }
 
 /// **The stopping rule's currency** (S299): a report of a run whose route cost is not time alone
-/// is judged by the deterministic part of the duality gap in generalised minutes
-/// (`gap_route_excess`) where it was measured; the time gaps are only reported.
+/// is judged by the in-set gap's deterministic part in generalised minutes
+/// (`gap_generalised_excess`) where it was measured; the time gaps are only reported.
 #[test]
 fn a_run_by_the_route_cost_is_judged_in_generalised_minutes() {
     let time = IterationReport {
         gap_excess: 0.02,
-        gap_route_excess: 0.30,
+        gap_generalised_excess: 0.30,
         ..IterationReport::unmeasured(1)
     };
-    assert!((time.disequilibrium() - 0.02).abs() < 1e-12, "by time: the in-set gap");
+    assert!((time.disequilibrium() - 0.02).abs() < 1e-12, "by time: the in-set gap in time");
     let by_cost = IterationReport { stop_generalised: true, ..time };
-    assert!((by_cost.disequilibrium() - 0.30).abs() < 1e-12, "by the cost: the full gap's");
-    let unmeasured = IterationReport { gap_route_excess: f64::NAN, ..by_cost };
-    assert!((unmeasured.disequilibrium() - 0.02).abs() < 1e-12, "not measured: the in-set gap");
+    assert!((by_cost.disequilibrium() - 0.30).abs() < 1e-12, "by the cost: in generalised minutes");
+    let unmeasured = IterationReport { gap_generalised_excess: f64::NAN, ..by_cost };
+    assert!((unmeasured.disequilibrium() - 0.02).abs() < 1e-12, "not measured: the time gap");
 }

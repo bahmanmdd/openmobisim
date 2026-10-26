@@ -1949,7 +1949,7 @@ impl Run {
             let mut report = IterationReport::unmeasured(iteration);
             report.gap_currency = currency.label();
             // The stopping rule in the choice's own currency where a class weighs more than time
-            // (S299): the full gap is then measured after every loading.
+            // (S299): the in-set gap in generalised minutes, measured with the choice.
             report.stop_generalised = !road_cost.is_time_only();
             report.reselected_share = arrived_by.0;
             report.changed_share = arrived_by.1;
@@ -2113,7 +2113,7 @@ impl Run {
                     // The full gap after every loading, or after the last alone (S294): whether
                     // this loading is the last is read from the stopping rule on the reports so
                     // far with this one's in-set measures, before the gap is made.
-                    let gap_every = strategy.full_gap_every_loading() || !road_cost.is_time_only();
+                    let gap_every = strategy.full_gap_every_loading();
                     let is_last = |report: &IterationReport| {
                         gap_every || next == max_iterations || {
                             let mut so_far = reports.clone();
@@ -2129,8 +2129,10 @@ impl Run {
                         strategy_for_next,
                         &choice_rng,
                         &unfinished,
+                        (!road_cost.is_time_only()).then_some(&currency),
                     )?;
                     clock = timings.lap("route_choice", Some(iteration), clock);
+                    report.gap_generalised_excess = update.assessment.gap_generalised_excess;
                     report.gap = update.assessment.gap;
                     report.gap_expected = update.assessment.gap_expected;
                     report.gap_excess = update.assessment.gap_excess;

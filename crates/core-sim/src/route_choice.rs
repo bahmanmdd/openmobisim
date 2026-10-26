@@ -228,6 +228,11 @@ pub(crate) struct Assessment {
     pub incomplete_share: f64,
     pub gap_flow: f64,
     pub gap_flow_floor: f64,
+    /// The same in-set gap's deterministic part in **generalised minutes** (S299): `(Σ w g_taken
+    /// − Σ w g_expected) / Σ w g_least` over the finished trips whose route taken is offered, `g`
+    /// an alternative's utility over its class's time coefficient. Measured only when asked
+    /// ([`Chooser::update`]'s `currency`); `NaN` otherwise.
+    pub gap_generalised_excess: f64,
 }
 
 /// A trip that chose again, and what it chose.
@@ -1002,6 +1007,10 @@ impl<'a> Chooser<'a> {
     /// # Errors
     ///
     /// [`ChoiceError`] as for [`Self::choose_all`].
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the loading's times and draws, who finished, and the generalised gap's currency"
+    )]
     pub(crate) fn update(
         &self,
         current: &RouteChoices,
@@ -1010,6 +1019,7 @@ impl<'a> Chooser<'a> {
         strategy: Option<(&dyn Equilibration, &StreamRng, f64)>,
         rng: &StreamRng,
         unfinished: &[bool],
+        currency: Option<&Currency>,
     ) -> Result<Update, ChoiceError> {
         let total = self.inputs.trips.len() as usize;
         let sets = &*self.route_sets;
@@ -1020,6 +1030,9 @@ impl<'a> Chooser<'a> {
             (vec![0.0; routes], vec![0.0; routes], vec![0.0; routes]);
         let (mut w_all, mut w_reselected, mut w_changed, mut w_unfinished) = (0.0, 0.0, 0.0, 0.0);
         let (mut paid, mut least, mut expected_paid) = (0.0, 0.0, 0.0);
+        // The same in generalised minutes, when asked (S299).
+        let (mut g_paid, mut g_least, mut g_expected) = (0.0, 0.0, 0.0);
+        let mut g_measured = currency.is_some();
         let mut expected_seconds = vec![f64::NAN; total];
         let mut measured = true;
         let mut changes: Vec<Change> = Vec::new();
@@ -1034,6 +1047,10 @@ impl<'a> Chooser<'a> {
             batch.validate()?;
             let probabilities = self.inputs.model.probabilities(&batch)?;
             measured &= probabilities.is_some();
+            let generalised = match currency {
+                Some(c) => Some(c.minutes(self.inputs.model, &batch, &filled.alt_seconds)?),
+                None => None,
+            };
             // Each situation's draws, pure functions of their keys, drawn in parallel and read in
             // situation order below (S294): the floor sample's, and whether its traveller chooses
             // again.
@@ -1071,6 +1088,18 @@ impl<'a> Chooser<'a> {
                     least += w * least_here;
                 } else {
                     w_unfinished += w;
+                }
+                if let (Some(g), Some(p), true) = (&generalised, &probabilities, finished) {
+                    let range_g = &g[range.clone()];
+                    let taken_at =
+                        range.clone().position(|r| filled.alt_route[r] as usize == taken);
+                    if let Some(a) = taken_at {
+                        g_paid += w * range_g[a];
+                        g_least += w * range_g.iter().copied().fold(f64::INFINITY, f64::min);
+                        g_expected += w * range.clone().map(|r| p[r] * g[r]).sum::<f64>();
+                    }
+                } else if generalised.is_some() && probabilities.is_none() {
+                    g_measured = false;
                 }
                 if let Some(p) = &probabilities {
                     observed[taken] += w;
@@ -1138,6 +1167,11 @@ impl<'a> Chooser<'a> {
             incomplete_share: share(w_unfinished),
             gap_flow: if measured { share(tv(&observed)) } else { f64::NAN },
             gap_flow_floor: if measured { share(tv(&sample)) } else { f64::NAN },
+            gap_generalised_excess: if g_measured && g_least > 0.0 {
+                (g_paid - g_expected) / g_least
+            } else {
+                f64::NAN
+            },
         };
         Ok(Update { assessment, changes, expected_seconds })
     }

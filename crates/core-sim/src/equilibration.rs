@@ -245,13 +245,18 @@ pub struct IterationReport {
     /// model's utilities) or `"time"` (door-to-door minutes: a model without utilities, or a time
     /// coefficient not below 0).
     pub gap_currency: &'static str,
-    /// Whether the stopping rule reads the generalised-minute gaps (S299): set by a run whose
+    /// Whether the stopping rule reads the generalised-minute gap (S299): set by a run whose
     /// route cost is not time alone (a class's utility weighs money, length or a user link
-    /// value), which then measures the full gap after every loading; [`Self::disequilibrium`]
-    /// reads [`Self::gap_route_excess`] instead of [`Self::gap_excess`]. The time gaps are still
-    /// reported. Not a column of the convergence table: the table's `gap_route_excess` is what
-    /// the rule read.
+    /// value); [`Self::disequilibrium`] reads [`Self::gap_generalised_excess`] instead of
+    /// [`Self::gap_excess`]. The time gaps are still reported. Not a column of the convergence
+    /// table.
     pub stop_generalised: bool,
+    /// The in-set gap's deterministic part in generalised minutes (S299): what the stopping rule
+    /// reads with [`Self::stop_generalised`]: `(Σ w g_taken − Σ w g_expected) / Σ w g_least` over
+    /// the finished trips, `g` an alternative's utility over its class's time coefficient, as
+    /// [`Self::gap_excess`] in time. `NaN` where not measured. Not a column of the convergence
+    /// table: the full gap's [`Self::gap_route_excess`] at the last loading is its reported kin.
+    pub gap_generalised_excess: f64,
 }
 
 /// A disequilibrium below this is good (5 % on the disequilibrium).
@@ -346,6 +351,7 @@ impl PartialEq for IterationReport {
             unfinished_cost_share,
             gap_currency,
             stop_generalised,
+            gap_generalised_excess,
         } = self;
         let floats = [
             (*reselected_share, other.reselected_share),
@@ -390,6 +396,7 @@ impl PartialEq for IterationReport {
             && *reroute_searches == other.reroute_searches
             && *gap_currency == other.gap_currency
             && *stop_generalised == other.stop_generalised
+            && gap_generalised_excess.to_bits() == other.gap_generalised_excess.to_bits()
             && floats.iter().all(|(a, b)| a.to_bits() == b.to_bits())
             && itinerary_gap.map(f64::to_bits) == other.itinerary_gap.map(f64::to_bits)
     }
@@ -398,12 +405,12 @@ impl PartialEq for IterationReport {
 impl IterationReport {
     /// The number a run is judged by: [`Self::gap_excess`], the disequilibrium, or the
     /// plain [`Self::gap`] where the model gives no probabilities and the two cannot be told apart;
-    /// with [`Self::stop_generalised`], [`Self::gap_route_excess`] (the deterministic part of the
-    /// duality gap, in generalised minutes) where it was measured.
+    /// with [`Self::stop_generalised`], [`Self::gap_generalised_excess`] (the same in-set
+    /// deterministic part of the gap, in generalised minutes) where it was measured.
     #[must_use]
     pub fn disequilibrium(&self) -> f64 {
-        let routes = if self.stop_generalised && !self.gap_route_excess.is_nan() {
-            self.gap_route_excess
+        let routes = if self.stop_generalised && !self.gap_generalised_excess.is_nan() {
+            self.gap_generalised_excess
         } else if self.gap_excess.is_nan() {
             self.gap
         } else {
@@ -464,6 +471,7 @@ impl IterationReport {
             unfinished_cost_share: f64::NAN,
             gap_currency: "time",
             stop_generalised: false,
+            gap_generalised_excess: f64::NAN,
         }
     }
 }

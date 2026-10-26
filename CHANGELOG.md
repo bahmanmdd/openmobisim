@@ -60,8 +60,8 @@ time plus the seconds-equivalent of every per-link term the utility weighs (leng
 values), each user class by its own coefficients. With the defaults, which weigh only time on a car route (every price
 0), car routes are exactly as before. Classes with different coefficients get their own searches, up to the new
 `Scenario` argument `max_cost_vectors` (2); beyond it a class is searched by the nearest by value of time, recorded
-as a `cost_vectors_grouped` diagnostic. Where a class weighs more than time, the full gap is measured after every
-loading and the stopping rule reads `gap_route_excess`.
+as a `cost_vectors_grouped` diagnostic. Where a class weighs more than time, the stopping rule reads the gap within
+the choice set in generalised minutes (utility over the time coefficient); the gaps in time are still reported.
 - **Bike routes from the utility**: `bike_cost="utility"` is the new default (travel time plus 48 s per kilometre in
   mixed traffic at the default coefficients; a ferry is not mixed traffic); `"dedicated"` (the 1.2 factor) and
   `"time"` stay. The bike route choice now fills `bike_lane_km` and `bike_separated_km`.
