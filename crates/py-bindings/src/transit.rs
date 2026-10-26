@@ -299,9 +299,19 @@ pub(crate) fn transit_summary<'py>(
     py: Python<'py>,
     result: &TransitResult,
     buses: Option<BusReport>,
+    searches: Option<openmobisim_core_sim::TimetableSearches>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
     d.set_item("boardings", result.boardings.iter().sum::<f64>())?;
+    // The planning's timetable searches (S299): made, answered from a kept one, kept.
+    if let Some(t) = searches {
+        for (k, kind) in ["transit", "out", "back"].iter().enumerate() {
+            d.set_item(format!("timetable_searches_{kind}"), t.searched[k])?;
+            d.set_item(format!("timetable_reused_{kind}"), t.reused[k])?;
+        }
+        d.set_item("timetable_kept", t.kept)?;
+        d.set_item("timetable_kept_bytes", t.kept_bytes)?;
+    }
     if let Some(b) = buses {
         d.set_item("bus_groups_on_roads", b.groups_on_roads)?;
         d.set_item("bus_groups_by_schedule_off_road", b.by_schedule_off_road)?;

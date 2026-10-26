@@ -331,3 +331,21 @@ def test_a_headway_in_a_window_leaves_the_rest_of_the_day() -> None:
 def test_wrong_timetable_edits_are_refused(edit: dict, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         ms.transit_edit(ms.examples.toy_network_transit(), **edit)
+
+
+def test_a_transit_trips_timetable_search_is_made_once_and_read_at_every_later_choice() -> None:
+    net = ms.examples.toy_network()
+    rows = [toy_trip(net, "a", "N1", "D2", 0, "transit")]
+    run = ms.Scenario.from_parts(
+        network=net,
+        demand=rows,
+        classes={"everyone": (True, True, False)},
+        transit=ms.examples.toy_network_transit(),
+        equilibration="msa",
+        equilibration_options={"iterations": 3},
+    ).run(run_id="kept", quiet=True)
+    assert run.completion_by_mode["transit"]["total_travel_time_s"] == 900.0
+    summary = run.transit_summary
+    assert summary["timetable_searches_transit"] == 1
+    assert summary["timetable_reused_transit"] >= 3
+    assert summary["timetable_kept"] == 1 and summary["timetable_kept_bytes"] > 0

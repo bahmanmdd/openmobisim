@@ -1526,7 +1526,15 @@ pub fn run_pipeline(
     let (transit_calls_table, transit_summary_table) = match (&result.transit, &transit_setup) {
         (Some(r), Some(t)) => (
             Some(transit_calls(py, t.timetable(), r, window.end_s, &groups.stops)?.unbind()),
-            Some(transit_summary(py, r, t.bus_report())?.unbind()),
+            Some(
+                transit_summary(
+                    py,
+                    r,
+                    t.bus_report(),
+                    result.itineraries.as_ref().map(|i| i.timetable_searches),
+                )?
+                .unbind(),
+            ),
         ),
         _ => (None, None),
     };

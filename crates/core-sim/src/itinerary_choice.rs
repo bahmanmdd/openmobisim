@@ -42,8 +42,9 @@
 //! minute late keeps the alternative and its draws.
 //!
 //! **Choosing and executing**: the whole itinerary is chosen on expected
-//! costs (the last iteration's link times, realised timetable and parking
-//! availability; free flow, the schedule and the start-of-day parkings at first);
+//! costs (the last iteration's link times and parking availability; free flow and the
+//! start-of-day parkings at first; the timetable always, with the disruptions travellers
+//! know of);
 //! a run executes it on the realised times, boarding the first run of each
 //! chosen line that can be caught, and falls back to the earliest journey from
 //! where the traveller is when a line cannot be followed (counted). **Later**:
@@ -58,6 +59,13 @@
 //! picked car parks or, by bike, once per run, and up to `2K` queries; per back trip one
 //! query and a search per journey. Parallel in fixed chunks, so results never depend on
 //! the thread count.
+//!
+//! **Timetable searches are kept** ([`KeptSearches`]): the timetable a run plans on is the
+//! same in every choice, so a trip's plain transit journeys are searched once per run, its
+//! journeys back to a parking once per parking, and its journeys out of a parking again only
+//! when it reaches the parking at another second (the drive or the time to park changed) or
+//! with a looser bound on the arrival than the kept search had. Exact: a kept search answers
+//! only a query it answers bit for bit. Memory: the kept journeys, a few hundred bytes a trip.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -469,6 +477,127 @@ pub(crate) fn car_reach_of(drives: Vec<TreeDrive>) -> CarReach {
 /// costs, by trip position: see [`Itineraries::choose`]'s `gap_plans`.
 pub(crate) type GapPlans = Vec<Option<Vec<Alternative>>>;
 
+/// One trip's timetable searches, kept for the run (S299): the run plans on one timetable,
+/// so a RAPTOR query with the same stops at the same seconds and the same bounds has the
+/// same answer whenever it is asked. See [`Itineraries`]' `kept`.
+#[derive(Debug, Default)]
+pub(crate) struct KeptSearches {
+    /// Plain transit: the journeys from the origin at the trip's departure to the destination.
+    plain: Option<Box<[Journey]>>,
+    /// Through a parking: the last search out of each parking, and the search back to each.
+    at: Vec<KeptAt>,
+}
+
+/// One kept search through a parking.
+#[derive(Debug)]
+struct KeptAt {
+    /// Back (transit to the parking) or out (from it).
+    back: bool,
+    parking: u32,
+    /// Out: the second the traveller had parked (the access walks start from it); back: 0.
+    start: u32,
+    /// The arrival bound searched under (journeys arriving before it), `u32::MAX` for none.
+    bound: u32,
+    journeys: Box<[Journey]>,
+}
+
+/// One trip's kept searches, behind a lock (a trip is planned by one thread at a time; the
+/// lock is never contended).
+pub(crate) type Kept = std::sync::Mutex<KeptSearches>;
+
+/// How the timetable searches of a run's planning went, by kind: plain transit, out of a
+/// parking, back to one.
+#[derive(Debug, Default)]
+pub(crate) struct SearchCounts {
+    searched: [std::sync::atomic::AtomicU64; 3],
+    reused: [std::sync::atomic::AtomicU64; 3],
+}
+
+/// The kinds of [`SearchCounts`].
+const PLAIN: usize = 0;
+const OUT: usize = 1;
+const BACK: usize = 2;
+
+impl SearchCounts {
+    fn count(&self, kind: usize, reused: bool) {
+        let c = if reused { &self.reused[kind] } else { &self.searched[kind] };
+        c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// A trip's kept searches and the run's counts, as a plan reads and fills them.
+#[derive(Clone, Copy)]
+pub(crate) struct KeptFor<'k> {
+    kept: &'k Kept,
+    counts: &'k SearchCounts,
+}
+
+impl KeptFor<'_> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, KeptSearches> {
+        self.kept.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The plain transit journeys, searched by `search` the first time.
+    fn plain(&self, search: impl FnOnce() -> Vec<Journey>) -> Vec<Journey> {
+        if let Some(j) = &self.lock().plain {
+            self.counts.count(PLAIN, true);
+            return j.to_vec();
+        }
+        let found = search();
+        self.counts.count(PLAIN, false);
+        self.lock().plain = Some(found.clone().into_boxed_slice());
+        found
+    }
+
+    /// The journeys through `parking` (`back`, or out of it from `start`) arriving before
+    /// `bound`: a kept search with the same parking and start and a bound at least as loose,
+    /// its journeys arriving before `bound` (exact: RAPTOR's bound prunes only labels at or
+    /// after it, and nothing at or after it leads to an arrival before it); else searched by
+    /// `search`, and kept in place of the parking's last.
+    fn at(
+        &self,
+        back: bool,
+        parking: u32,
+        start: u32,
+        bound: u32,
+        search: impl FnOnce() -> Vec<Journey>,
+    ) -> Vec<Journey> {
+        let kind = if back { BACK } else { OUT };
+        {
+            let kept = self.lock();
+            if let Some(k) = kept.at.iter().find(|k| {
+                k.back == back && k.parking == parking && k.start == start && k.bound >= bound
+            }) {
+                self.counts.count(kind, true);
+                return k.journeys.iter().filter(|j| j.arrival < bound).cloned().collect();
+            }
+        }
+        let found = search();
+        self.counts.count(kind, false);
+        let mut kept = self.lock();
+        let entry =
+            KeptAt { back, parking, start, bound, journeys: found.clone().into_boxed_slice() };
+        match kept.at.iter_mut().find(|k| k.back == back && k.parking == parking) {
+            Some(k) => *k = entry,
+            None => kept.at.push(entry),
+        }
+        found
+    }
+}
+
+/// What the kept searches of a run came to: see [`Itineraries::timetable_searches`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TimetableSearches {
+    /// RAPTOR queries the planning made, by kind: plain transit, out of a parking, back to one.
+    pub searched: [u64; 3],
+    /// Queries answered from a kept search instead, by kind.
+    pub reused: [u64; 3],
+    /// Searches kept at the end of the run.
+    pub kept: u64,
+    /// The bytes they hold, the empty slots of the trips without one included.
+    pub kept_bytes: u64,
+}
+
 /// One shared drive: leaving a road node at the middle of a step, to the car parks the
 /// trips leaving there within the step pick.
 pub(crate) struct SharedDrive {
@@ -527,6 +656,7 @@ impl<'a> Planner<'a> {
         car_key: Option<RouteKey>,
         bike_reach: Option<&BikeReach>,
         car_reach: &CarReach,
+        kept: Option<KeptFor<'_>>,
     ) -> Vec<Alternative> {
         let k = self.parking.map_or(1, |p| p.defaults().candidate_count());
         let vehicles =
@@ -534,7 +664,7 @@ impl<'a> Planner<'a> {
         let mut alts = Vec::new();
         for (shape, kind) in vehicles {
             if let Some(Shape::Back(p)) = shape {
-                alts.extend(self.plan_back(s, n, departure, p, kind));
+                alts.extend(self.plan_back(s, n, departure, p, kind, kept));
             }
         }
         if !alts.is_empty() {
@@ -569,7 +699,7 @@ impl<'a> Planner<'a> {
             alts.extend(self.plan_car(routes, key, departure));
         }
         if offer.transit {
-            alts.extend(self.plan_transit(s, n, departure));
+            alts.extend(self.plan_transit(s, n, departure, kept));
         }
         let far_enough = self.far_enough(&offer, origin, destination);
         for (shape, kind) in vehicles {
@@ -582,6 +712,7 @@ impl<'a> Planner<'a> {
                     kind,
                     (bike_reach, car_reach),
                     offer.parking,
+                    kept,
                 ));
             }
         }
@@ -860,7 +991,13 @@ impl<'a> Planner<'a> {
         alts
     }
 
-    fn plan_transit(&self, s: &mut Scratch<'a>, n: &TripNodes, departure: u32) -> Vec<Alternative> {
+    fn plan_transit(
+        &self,
+        s: &mut Scratch<'a>,
+        n: &TripNodes,
+        departure: u32,
+        kept: Option<KeptFor<'_>>,
+    ) -> Vec<Alternative> {
         let (Some((transit, _)), Some(ts)) = (self.transit, s.transit.as_mut()) else {
             return Vec::new();
         };
@@ -872,10 +1009,19 @@ impl<'a> Planner<'a> {
         if access.is_empty() || egress.is_empty() {
             return Vec::new();
         }
-        ts.raptor
-            .pareto_last_walk(&access, &egress, u32::MAX, last_walk_max(n.access_walk_s))
+        let mut search = || {
+            ts.raptor
+                .pareto_last_walk(&access, &egress, u32::MAX, last_walk_max(n.access_walk_s))
+                .into_iter()
+                .filter(|j| !is_loop(j))
+                .collect::<Vec<Journey>>()
+        };
+        let journeys = match kept {
+            Some(kept) => kept.plain(search),
+            None => search(),
+        };
+        journeys
             .iter()
-            .filter(|j| !is_loop(j))
             .map(|j| {
                 let mut a = self.transit_part(j, departure);
                 a.shape = Shape::Transit;
@@ -898,6 +1044,7 @@ impl<'a> Planner<'a> {
         kind: ParkingKind,
         (bike_reach, car_reach): (Option<&BikeReach>, &CarReach),
         only: Option<u32>,
+        kept: Option<KeptFor<'_>>,
     ) -> Vec<Alternative> {
         let Some(parking) = self.parking else { return Vec::new() };
         let d = parking.defaults();
@@ -1091,12 +1238,18 @@ impl<'a> Planner<'a> {
                 .iter()
                 .map(|&(stop, w)| (stop, parked.saturating_add(w).saturating_add(transfer)))
                 .collect();
-            for j in ts
-                .raptor
-                .pareto_last_walk(&access, &egress, before, last_walk_max(n.access_walk_s))
-                .into_iter()
-                .filter(|j| !is_loop(j))
-            {
+            let mut search = || {
+                ts.raptor
+                    .pareto_last_walk(&access, &egress, before, last_walk_max(n.access_walk_s))
+                    .into_iter()
+                    .filter(|j| !is_loop(j))
+                    .collect::<Vec<Journey>>()
+            };
+            let journeys = match kept {
+                Some(kept) => kept.at(false, c.parking, parked, before, search),
+                None => search(),
+            };
+            for j in journeys {
                 let mut a = self.transit_part(&j, parked);
                 a.shape = Shape::Out;
                 a.mode = transit_mode(kind);
@@ -1167,6 +1320,7 @@ impl<'a> Planner<'a> {
         departure: u32,
         p: u32,
         kind: ParkingKind,
+        kept: Option<KeptFor<'_>>,
     ) -> Vec<Alternative> {
         let Some(parking) = self.parking else { return Vec::new() };
         let (Some((transit, _)), Some(ts)) = (self.transit, s.transit.as_mut()) else {
@@ -1186,8 +1340,13 @@ impl<'a> Planner<'a> {
         let (fetch, leave_s) = (self.access_s(kind), self.egress_s(kind));
         let dep = f64::from(departure);
         let from = parking.node(p);
-        let journeys: Vec<Journey> =
-            ts.raptor.pareto(&access, &egress).into_iter().filter(|j| !is_loop(j)).collect();
+        let mut search = || -> Vec<Journey> {
+            ts.raptor.pareto(&access, &egress).into_iter().filter(|j| !is_loop(j)).collect()
+        };
+        let journeys = match kept {
+            Some(kept) => kept.at(true, p, 0, u32::MAX, search),
+            None => search(),
+        };
         let mut alts = Vec::new();
         for j in journeys {
             let leave = f64::from(j.arrival) + fetch;
@@ -1828,6 +1987,13 @@ pub(crate) struct Itineraries {
     bike_reach: Vec<BikeReach>,
     /// Set once [`Self::fill_bike_reach`] has run.
     bike_reach_filled: OnceLock<()>,
+    /// Per position, its timetable searches, kept for the run ([`KeptSearches`]): valid on the
+    /// one timetable the run plans on, which `kept_on` names (its address) once a plan used it;
+    /// a planner on another timetable searches without them.
+    kept: Vec<Kept>,
+    kept_on: OnceLock<usize>,
+    /// How the kept searches were used.
+    search_counts: SearchCounts,
     /// Whether any trip may drive to a car park (stated park-and-ride, or offered it in mode
     /// choice): the car parks' free-flow table is then searched before planning.
     parks_cars: bool,
@@ -1934,6 +2100,9 @@ impl Itineraries {
             car_keys: Vec::new(),
             bike_reach: Vec::new(),
             bike_reach_filled: OnceLock::new(),
+            kept: Vec::new(),
+            kept_on: OnceLock::new(),
+            search_counts: SearchCounts::default(),
             parks_cars: false,
             class_modes: sim.class_modes.to_vec(),
             fallback_car: sim.modes.fallback_car,
@@ -2023,6 +2192,7 @@ impl Itineraries {
         }
         out.rounds = rounds;
         out.bike_reach = (0..out.trips.len()).map(|_| OnceLock::new()).collect();
+        out.kept = (0..out.trips.len()).map(|_| Kept::default()).collect();
         out.parks_cars = parking.is_some()
             && out.trips.iter().zip(&out.choosing).any(|(&trip, &choosing)| {
                 trips.mode(trip) == Mode::CarTransit
@@ -2050,6 +2220,46 @@ impl Itineraries {
     /// A trip's nodes.
     pub(crate) fn nodes(&self, position: usize) -> &TripNodes {
         &self.nodes[position]
+    }
+
+    /// The kept searches of the trip at `position`, if `planner` plans on the timetable they
+    /// were kept on (the first a plan used).
+    fn kept_for(&self, planner: &Planner<'_>, position: usize) -> Option<KeptFor<'_>> {
+        let (_, data) = planner.transit?;
+        let id = std::ptr::from_ref(data) as usize;
+        (*self.kept_on.get_or_init(|| id) == id)
+            .then(|| KeptFor { kept: &self.kept[position], counts: &self.search_counts })
+    }
+
+    /// What the kept timetable searches came to so far.
+    pub(crate) fn timetable_searches(&self) -> TimetableSearches {
+        use std::sync::atomic::Ordering::Relaxed;
+        let mut out = TimetableSearches::default();
+        for k in 0..3 {
+            out.searched[k] = self.search_counts.searched[k].load(Relaxed);
+            out.reused[k] = self.search_counts.reused[k].load(Relaxed);
+        }
+        let journeys = |js: &[Journey]| -> usize {
+            js.iter()
+                .map(|j| {
+                    std::mem::size_of::<Journey>()
+                        + j.legs.capacity() * std::mem::size_of::<JourneyLeg>()
+                })
+                .sum()
+        };
+        let mut bytes = self.kept.len() * std::mem::size_of::<Kept>();
+        for kept in &self.kept {
+            let kept = kept.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(j) = &kept.plain {
+                out.kept += 1;
+                bytes += journeys(j);
+            }
+            out.kept += kept.at.len() as u64;
+            bytes += kept.at.capacity() * std::mem::size_of::<KeptAt>();
+            bytes += kept.at.iter().map(|k| journeys(&k.journeys)).sum::<usize>();
+        }
+        out.kept_bytes = bytes as u64;
+        out
     }
 
     /// The car pair of the trip at `position` if it chooses its mode and may drive, for
@@ -2302,6 +2512,7 @@ impl Itineraries {
                 self.car_keys[p],
                 self.bike_reach.get(p),
                 car_reach,
+                self.kept_for(planner, p),
             )
         };
         // No alternative at all: the car (S271, W-1), if it has a road path.
@@ -3031,6 +3242,8 @@ pub struct ItineraryResult {
     pub choosing: Vec<bool>,
     /// The logsum of its choice set (`NaN` if the model gives none).
     pub logsum: Vec<f64>,
+    /// How the run's planning searched the timetable, and what it kept.
+    pub timetable_searches: TimetableSearches,
 }
 
 /// No mode: a trip that had no alternative.
@@ -3119,6 +3332,7 @@ impl ItineraryResult {
             mode: Vec::with_capacity(n),
             choosing: itineraries.choosing.clone(),
             logsum: chosen.logsum.clone(),
+            timetable_searches: itineraries.timetable_searches(),
         };
         for alt in &chosen.alt {
             #[allow(clippy::cast_possible_truncation, reason = "six modes")]

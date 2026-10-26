@@ -1232,7 +1232,14 @@ class Run:
         (those run by the schedule, and why), ``bus_runs_on_roads``,
         ``bus_runs_arrived`` (reached their last stop within the window) and
         ``bus_delay_mean_s`` (their mean delay there, realised minus scheduled;
-        negative is early).
+        negative is early). With itinerary trips, how their planning searched the timetable
+        (RAPTOR queries over the whole run): ``timetable_searches_transit``,
+        ``timetable_searches_out`` and ``timetable_searches_back`` (made, for plain transit,
+        out of a parking and back to one), ``timetable_reused_transit``,
+        ``timetable_reused_out`` and ``timetable_reused_back`` (answered from a search kept
+        earlier in the run instead: the timetable planned on is the same in every iteration,
+        so the same query has the same answer), ``timetable_kept`` (searches kept at the end)
+        and ``timetable_kept_bytes`` (the memory they hold).
         """
         summary = self._summary.transit_summary
         return None if summary is None else dict(summary)

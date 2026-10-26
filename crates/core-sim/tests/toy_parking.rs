@@ -381,3 +381,27 @@ fn pr6_a_kept_itinerary_is_recosted_at_its_parking_and_the_last_gap_is_exact() {
     assert!(gaps(&sampled).iter().all(|g| g.is_finite()), "{:?}", gaps(&sampled));
     assert!(outcomes(&sampled).iter().all(|o| o.0 == EventType::TripCompleted));
 }
+
+#[test]
+fn a_trips_timetable_searches_are_kept_and_answer_its_later_plans_exactly() {
+    // S299: the run plans on one timetable, so a transit trip's journeys are searched once and
+    // a park-and-ride trip's from a car park again only when it parks at another second. Four
+    // loadings, the gap after each: the same outcomes as PR1 and TR1.
+    let t = toy();
+    let rows = vec![
+        t.trip("a", 0, "W", "N1", 0, Mode::CarTransit),
+        t.trip("b", 0, "N1", "D2", 0, Mode::Transit),
+    ];
+    let r = t.iterate(rows, &[("iterations", 4.0), ("gap_every", 1.0)]);
+    assert_eq!(outcomes(&r), [(EventType::TripCompleted, 1200), (EventType::TripCompleted, 900)]);
+    let s = r.itineraries.as_ref().expect("itineraries").timetable_searches;
+    assert_eq!(s.searched[0], 1, "the transit trip searched once: {s:?}");
+    assert!(s.reused[0] >= 4, "and its plan read at every later choice: {s:?}");
+    // The car alone on the roads parks at the same second every loading: each car park's
+    // journeys found once.
+    assert_eq!(s.searched[1], 2, "H and P2, once each: {s:?}");
+    assert!(s.reused[1] >= 2 * 4, "{s:?}");
+    assert_eq!((s.searched[2], s.reused[2]), (0, 0), "no trip back");
+    assert_eq!(s.kept, 3);
+    assert!(s.kept_bytes > 0);
+}
