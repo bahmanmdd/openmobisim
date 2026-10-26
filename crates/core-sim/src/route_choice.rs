@@ -724,8 +724,9 @@ impl<'a> Chooser<'a> {
     /// `current` gives it, of the best of the routes it is offered (the batch [`Self::fill`]
     /// builds), what the model expects of it among them, and of the best over the whole network
     /// (the route the run's shared search `trees` found for the trip's origin and departure bin,
-    /// [`crate::trees`], re-costed at the trip's own departure and costed as any route where it
-    /// is no slower than the set's best), into `out`. A trip still under way at the end is costed
+    /// [`crate::trees`], of the trip's coefficient vector, re-costed at the trip's own departure
+    /// and costed as any route where it is no dearer than the set's least in the vector's
+    /// generalised cost, its time where the cost is time alone), into `out`. A trip still under way at the end is costed
     /// as what it paid and still had to pay ([`Ended::car_seconds`]); a route taken but no longer
     /// offered, at its time on these times. Every trip, every call; nothing is drawn, nothing
     /// changed.
@@ -759,8 +760,9 @@ impl<'a> Chooser<'a> {
         // still under way, a route the network search found.
         let mut single = ChoiceBatch::new(iteration, &names);
         let mut row = vec![0.0; self.wanted.len()];
-        // Each trip measured, and the least expected seconds of its set: the search's bound.
-        let mut measured: Vec<(usize, f64)> = Vec::new();
+        // Each trip measured, the least expected seconds of its set, and the least in the trip's
+        // vector's generalised cost (its seconds where the cost is time alone, S299).
+        let mut measured: Vec<(usize, f64, f64)> = Vec::new();
         let mut i = 0;
         while i < total {
             let end = (i + CHUNK).min(total);
@@ -817,7 +819,18 @@ impl<'a> Chooser<'a> {
                         pending_seconds.push(seconds);
                     }
                 }
-                measured.push((t, least));
+                let least_cost = if self.extra.is_empty() {
+                    least
+                } else {
+                    let extra = &self.extra[self.vector_of(TripId::from_index(t)) as usize];
+                    let first = filled.set_first[s];
+                    set_seconds
+                        .iter()
+                        .enumerate()
+                        .map(|(i, x)| x + extra[first + i])
+                        .fold(f64::INFINITY, f64::min)
+                };
+                measured.push((t, least, least_cost));
             }
             if !pending.is_empty() {
                 single.validate()?;
@@ -835,7 +848,7 @@ impl<'a> Chooser<'a> {
             single.clear();
             let mut pending: Vec<usize> = Vec::new();
             let mut pending_seconds: Vec<f64> = Vec::new();
-            for &(t, least) in chunk {
+            for &(t, least, least_cost) in chunk {
                 out.g_best_network[t] = out.g_best_set[t];
                 let key = trip_keys[t];
                 let trip = TripId::from_index(t);
@@ -846,7 +859,13 @@ impl<'a> Chooser<'a> {
                     continue;
                 };
                 let seconds = times.route_seconds(&found.links, departure);
-                if seconds > least {
+                // Costed as a route where it is no dearer than the set's least, in the trip's
+                // vector's generalised cost (its time where the cost is time alone).
+                let cost = match self.route_cost() {
+                    None => seconds,
+                    Some(c) => seconds + c.route_extra(vector, &found.links),
+                };
+                if cost > least_cost {
                     continue;
                 }
                 let links = &found.links;

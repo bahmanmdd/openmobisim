@@ -86,6 +86,7 @@ use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 use crate::demand_values::DemandValues;
 use crate::equilibration::Equilibration;
 use crate::gap::{Currency, Ended, GapTrips};
+use crate::generalised_cost::RouteCost;
 use crate::layers::{LayerSetup, StaticLayers, StaticRoutes};
 use crate::link_times::LinkTimes;
 use crate::link_values::{PreparedLinkValues, ValueLayer};
@@ -419,6 +420,10 @@ pub(crate) struct Planner<'a> {
     pub bike_egress_s: f64,
     /// The car's route sets, when the run offers mode choice.
     pub car_routes: Option<CarRoutes<'a>>,
+    /// The run's route cost for car searches (S299): what the gap's network search, the
+    /// park-and-ride drives and the car-park reach minimise per coefficient vector. `None` (or a
+    /// cost of time alone): travel time.
+    pub car_cost: Option<&'a RouteCost>,
 }
 
 /// One thread's scratch for planning.
@@ -3101,7 +3106,16 @@ impl Itineraries {
             let mut pending: Vec<(usize, f64)> = Vec::new();
             // The car trips to search for: trip, its pair, departure, the best car drive's
             // seconds (the search's bound) and the best car alternative's door to door.
-            let mut searches: Vec<(usize, RouteKey, f64, f64, f64)> = Vec::new();
+            let mut searches: Vec<(usize, RouteKey, f64, f64, f64, u32)> = Vec::new();
+            let cost = planner.car_cost.filter(|c| !c.is_time_only());
+            // Each vector's extras, prepared for the car's context (their A* bounds).
+            let prepared: Vec<Option<openmobisim_core_routes::Extras>> =
+                cost.map_or_else(Vec::new, |c| {
+                    c.vectors()
+                        .iter()
+                        .map(|v| v.as_ref().map(|e| planner.car.extras(e.to_vec())))
+                        .collect()
+                });
             for (s, &(j, best)) in situation_of.iter().enumerate() {
                 let (p, _) = jobs[j];
                 let set = &sets[j];
@@ -3131,11 +3145,24 @@ impl Itineraries {
                     });
                     out.g_best_network[t] = out.g_best_set[t];
                     if let Some(key) = self.car_keys[p] {
+                        // The best car drive's cost: its time, plus its extras under the trip's
+                        // coefficient vector where the cost is not time alone (S299).
+                        let vector = cost.map_or(0, |c| {
+                            c.vector_of_class(travellers.user_class(traveller).index())
+                        });
+                        let drive_cost = |a: &Alternative| match cost {
+                            None => a.vehicle_s,
+                            Some(c) => {
+                                let raw: Vec<u32> =
+                                    a.vehicle_links.iter().map(|l| l.raw()).collect();
+                                a.vehicle_s + c.route_extra(vector, &raw)
+                            }
+                        };
                         let bound =
-                            car.iter().map(|&i| set[i].vehicle_s).fold(f64::INFINITY, f64::min);
+                            car.iter().map(|&i| drive_cost(&set[i])).fold(f64::INFINITY, f64::min);
                         let departure =
                             f64::from(trips.departure(trip).get()) + planner.car_start_s();
-                        searches.push((t, key, departure, bound, best[Mode::Car.index()]));
+                        searches.push((t, key, departure, bound, best[Mode::Car.index()], vector));
                     }
                 }
                 let kept = set.iter().position(|a| a.identity == old.identity);
@@ -3181,28 +3208,58 @@ impl Itineraries {
             // The whole network for the car trips: one bounded search each, in parallel; each
             // route found costed as a car alternative.
             let times = planner.times;
+            let road_nodes = planner.car.network.node_count() as usize;
             let found = par_map(
                 &searches,
                 crate::route_choice::GAP_CHUNK,
                 || Search::new(planner.car),
-                |search, &(_, key, departure, bound, _)| {
+                |search, &(_, key, departure, bound, _, vector)| {
                     let wait = |link: u32, at: f64| times.origin_wait_seconds(link, at);
                     let link_seconds = |link: u32, at: f64| times.link_seconds(link, at);
-                    search.fastest_route(
-                        NodeId::new(key.origin),
-                        NodeId::new(key.destination),
-                        departure,
-                        bound,
-                        &wait,
-                        &link_seconds,
-                    )
+                    let (origin, destination) =
+                        (NodeId::new(key.origin), NodeId::new(key.destination));
+                    match prepared.get(vector as usize).and_then(Option::as_ref) {
+                        // By time: the fastest within the best drive's time.
+                        None => search.fastest_route(
+                            origin,
+                            destination,
+                            departure,
+                            bound,
+                            &wait,
+                            &link_seconds,
+                        ),
+                        // By the vector's generalised cost (S299): the cheapest within the best
+                        // drive's cost, timed as it is driven.
+                        Some(e) => {
+                            search.clear_route_state();
+                            search.set_extras(Some(e.clone()));
+                            let mut target = vec![false; road_nodes];
+                            target[destination.index()] = true;
+                            let one = search
+                                .cheapest_routes_to(
+                                    origin,
+                                    &target,
+                                    1,
+                                    departure,
+                                    bound,
+                                    &wait,
+                                    &link_seconds,
+                                )
+                                .into_iter()
+                                .next()
+                                .filter(|(_, _, _, links)| !links.is_empty())
+                                .map(|(_, _, seconds, links)| (seconds, links));
+                            search.clear_route_state();
+                            one
+                        }
+                    }
                 },
             );
             single.clear();
             single_seconds.clear();
             let mut pending: Vec<usize> = Vec::new();
             let road = planner.car.network;
-            for (&(t, _, _, _, best_car), found) in searches.iter().zip(found) {
+            for (&(t, _, _, _, best_car, _), found) in searches.iter().zip(found) {
                 let Some((drive_s, links)) = found else { continue };
                 let trip = TripId::from_index(t);
                 let traveller = trips.traveller(trip);

@@ -107,7 +107,8 @@ pub struct IterationReport {
     /// **The disequilibrium** (the headline): `gap − gap_expected`, the part of the gap the
     /// choice model does not explain, over the trips that finished (it also holds the
     /// sampling noise of a finite population). Below [`GAP_GOOD`] is good, below
-    /// [`GAP_ACCEPTABLE`] acceptable ([`gap_verdict`]); it is what `gap_tolerance` stops on.
+    /// [`GAP_ACCEPTABLE`] acceptable ([`gap_verdict`]); it is what `gap_tolerance` stops on
+    /// (but in a run by the route cost, [`Self::stop_generalised`]).
     /// Equal to `gap` for an all-or-nothing model; `NaN` if the model gives no probabilities
     /// ([`Self::disequilibrium`] then falls back to `gap`).
     pub gap_excess: f64,
@@ -244,6 +245,13 @@ pub struct IterationReport {
     /// model's utilities) or `"time"` (door-to-door minutes: a model without utilities, or a time
     /// coefficient not below 0).
     pub gap_currency: &'static str,
+    /// Whether the stopping rule reads the generalised-minute gaps (S299): set by a run whose
+    /// route cost is not time alone (a class's utility weighs money, length or a user link
+    /// value), which then measures the full gap after every loading; [`Self::disequilibrium`]
+    /// reads [`Self::gap_route_excess`] instead of [`Self::gap_excess`]. The time gaps are still
+    /// reported. Not a column of the convergence table: the table's `gap_route_excess` is what
+    /// the rule read.
+    pub stop_generalised: bool,
 }
 
 /// A disequilibrium below this is good (5 % on the disequilibrium).
@@ -337,6 +345,7 @@ impl PartialEq for IterationReport {
             excess_min_mode,
             unfinished_cost_share,
             gap_currency,
+            stop_generalised,
         } = self;
         let floats = [
             (*reselected_share, other.reselected_share),
@@ -380,6 +389,7 @@ impl PartialEq for IterationReport {
             && *reroutes == other.reroutes
             && *reroute_searches == other.reroute_searches
             && *gap_currency == other.gap_currency
+            && *stop_generalised == other.stop_generalised
             && floats.iter().all(|(a, b)| a.to_bits() == b.to_bits())
             && itinerary_gap.map(f64::to_bits) == other.itinerary_gap.map(f64::to_bits)
     }
@@ -387,10 +397,18 @@ impl PartialEq for IterationReport {
 
 impl IterationReport {
     /// The number a run is judged by: [`Self::gap_excess`], the disequilibrium, or the
-    /// plain [`Self::gap`] where the model gives no probabilities and the two cannot be told apart.
+    /// plain [`Self::gap`] where the model gives no probabilities and the two cannot be told apart;
+    /// with [`Self::stop_generalised`], [`Self::gap_route_excess`] (the deterministic part of the
+    /// duality gap, in generalised minutes) where it was measured.
     #[must_use]
     pub fn disequilibrium(&self) -> f64 {
-        let routes = if self.gap_excess.is_nan() { self.gap } else { self.gap_excess };
+        let routes = if self.stop_generalised && !self.gap_route_excess.is_nan() {
+            self.gap_route_excess
+        } else if self.gap_excess.is_nan() {
+            self.gap
+        } else {
+            self.gap_excess
+        };
         // The worse of the routes' and the itineraries' (I-al, S227): one meaning of converged.
         match (routes.is_nan(), self.itinerary_gap_excess.is_nan()) {
             (false, false) => routes.max(self.itinerary_gap_excess),
@@ -445,6 +463,7 @@ impl IterationReport {
             excess_min_mode: f64::NAN,
             unfinished_cost_share: f64::NAN,
             gap_currency: "time",
+            stop_generalised: false,
         }
     }
 }

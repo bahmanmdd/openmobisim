@@ -250,6 +250,25 @@ fn a_toll_takes_a_route_past_the_limit_in_the_class_s_cost() {
     assert!(taken >= first);
 }
 
+/// **The stopping rule in generalised minutes** (S299): a run with a toll measures the full gap
+/// after every loading and stops on it; without, after the last alone.
+#[test]
+fn a_tolled_run_measures_the_full_gap_after_every_loading() {
+    let tolled = Setup { iterations: 3.0, toll: 0.25, ..Setup::free_flow(500) }.go();
+    assert!(tolled.iterations.len() >= 2);
+    for it in &tolled.iterations {
+        assert!(it.stop_generalised, "{it:?}");
+        assert!(!it.gap_route_excess.is_nan(), "measured at iteration {}", it.iteration);
+    }
+    let plain = Setup { iterations: 3.0, ..Setup::free_flow(500) }.go();
+    assert!(plain.iterations.iter().all(|it| !it.stop_generalised));
+    let first = &plain.iterations[0];
+    assert!(
+        plain.iterations.len() < 2 || first.gap_route_excess.is_nan(),
+        "by time: the last alone"
+    );
+}
+
 #[test]
 fn a_traveller_offered_only_some_routes_is_mapped_to_the_right_one() {
     // The jam on the fast road makes the slow one several times quicker; from then on the fast road is

@@ -1619,6 +1619,7 @@ impl Run {
                 car_egress_s: self.mode_defaults.car_egress_s,
                 bike_access_s: self.mode_defaults.bike_access_s,
                 bike_egress_s: self.mode_defaults.bike_egress_s,
+                car_cost: Some(&road_cost),
                 car_routes: (mode_choice.is_some() || fallback_car)
                     .then(|| CarRoutes { sets: &route_sets }),
             };
@@ -1739,6 +1740,7 @@ impl Run {
                                 car_egress_s: self.mode_defaults.car_egress_s,
                                 bike_access_s: self.mode_defaults.bike_access_s,
                                 bike_egress_s: self.mode_defaults.bike_egress_s,
+                                car_cost: Some(&road_cost),
                                 car_routes: None,
                             };
                             Some(itin.drives_ahead(
@@ -1825,6 +1827,7 @@ impl Run {
                         car_egress_s: self.mode_defaults.car_egress_s,
                         bike_access_s: self.mode_defaults.bike_access_s,
                         bike_egress_s: self.mode_defaults.bike_egress_s,
+                        car_cost: Some(&road_cost),
                         car_routes: (mode_choice.is_some() || fallback_car)
                             .then(|| CarRoutes { sets: &route_sets }),
                     };
@@ -1865,6 +1868,9 @@ impl Run {
             clock = timings.lap("loading", Some(iteration), clock);
             let mut report = IterationReport::unmeasured(iteration);
             report.gap_currency = currency.label();
+            // The stopping rule in the choice's own currency where a class weighs more than time
+            // (S299): the full gap is then measured after every loading.
+            report.stop_generalised = !road_cost.is_time_only();
             report.reselected_share = arrived_by.0;
             report.changed_share = arrived_by.1;
             report.mode_changed_share = mode_changed_by;
@@ -1922,6 +1928,7 @@ impl Run {
                         car_egress_s: self.mode_defaults.car_egress_s,
                         bike_access_s: self.mode_defaults.bike_access_s,
                         bike_egress_s: self.mode_defaults.bike_egress_s,
+                        car_cost: Some(&road_cost),
                         car_routes: None,
                     };
                     // Park-and-ride's shared drives leave from a road node at a step's middle on
@@ -2025,7 +2032,7 @@ impl Run {
                     // The full gap after every loading, or after the last alone (S294): whether
                     // this loading is the last is read from the stopping rule on the reports so
                     // far with this one's in-set measures, before the gap is made.
-                    let gap_every = strategy.full_gap_every_loading();
+                    let gap_every = strategy.full_gap_every_loading() || !road_cost.is_time_only();
                     let is_last = |report: &IterationReport| {
                         gap_every || next == max_iterations || {
                             let mut so_far = reports.clone();

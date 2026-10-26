@@ -594,6 +594,7 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
         excess_min_mode: f64::NAN,
         unfinished_cost_share: if iteration == 0 { f64::NAN } else { 0.0 },
         gap_currency: "utility",
+        stop_generalised: false,
     };
     result.iterations = vec![report(0, 0.3), report(1, 0.1), report(2, 0.05)];
     let path = temp_path("kpis_iterated.parquet");
