@@ -383,6 +383,7 @@ class Scenario:
         route_update_options: dict[str, float] | None = None,
         choice_detour_limit: float | None = None,
         choice_max_routes: int | None = None,
+        max_cost_vectors: int = 2,
         route_cache: bool = False,
         bike_cost: str = "dedicated",
         bike_route_choice: str = "shortest",
@@ -518,6 +519,9 @@ class Scenario:
         self._route_update_options = route_update_options
         self._choice_detour_limit = choice_detour_limit
         self._choice_max_routes = choice_max_routes
+        if not (isinstance(max_cost_vectors, int) and max_cost_vectors >= 1):
+            raise ValueError(f"max_cost_vectors must be a whole number from 1: {max_cost_vectors}")
+        self._max_cost_vectors = max_cost_vectors
         self._route_cache = route_cache
         self._bike_cost = bike_cost
         self._bike_route_choice = bike_route_choice
@@ -577,6 +581,7 @@ class Scenario:
         route_update_options: dict[str, float] | None = None,
         choice_detour_limit: float | None = None,
         choice_max_routes: int | None = None,
+        max_cost_vectors: int = 2,
         route_cache: bool = False,
         bike_cost: str = "dedicated",
         bike_route_choice: str = "shortest",
@@ -799,6 +804,18 @@ class Scenario:
                 uncalibrated). ``None`` (the default) is the library's default, **5**; ``0``
                 offers every route within the limit. A pair's set may hold more (the route
                 update's ``max_routes``, 10), so a route not offered now can be later.
+            max_cost_vectors: The most **coefficient vectors** route searches are made by. Every
+                route search (generation, the route update, the offered set, the gaps,
+                park-and-ride's drives, rerouting) minimises the choice model's link-additive
+                utility: the travel time plus the seconds-equivalent of every per-link term the
+                utility weighs (length, running cost, tolls, user link values, and for bikes the
+                kilometres by facility). A user class whose coefficients on those terms differ
+                from another's gets its own search trees, up to this many (each costs about one
+                more set of trees per loading); beyond it, a class is searched by the kept
+                class's nearest by value of time, and the run records a
+                ``cost_vectors_grouped`` diagnostic. Where the utility weighs time alone (cars
+                at the defaults: every price 0) every search is by time and this changes
+                nothing. ``2`` by default (uncalibrated: a bound on run time).
             bike_cost: How bike trips choose their route on the bike layer: ``"dedicated"``
                 (the default) is the fastest route with every minute in mixed traffic
                 counting a little more (1.2 times), so cyclists go a little out of their way
@@ -1249,6 +1266,7 @@ class Scenario:
             route_update_options=route_update_options,
             choice_detour_limit=choice_detour_limit,
             choice_max_routes=choice_max_routes,
+            max_cost_vectors=max_cost_vectors,
             route_cache=route_cache,
             bike_cost=bike_cost,
             bike_route_choice=bike_route_choice,
@@ -1331,6 +1349,7 @@ class Scenario:
             route_update_options=self._route_update_options,
             choice_detour_limit=self._choice_detour_limit,
             choice_max_routes=self._choice_max_routes,
+            max_cost_vectors=self._max_cost_vectors,
             route_cache=self._route_cache,
             bike_cost=self._bike_cost,
             bike_route_choice=self._bike_route_choice,

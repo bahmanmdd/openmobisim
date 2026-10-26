@@ -19,6 +19,7 @@
 //! | `n_links` | how many links |
 //! | `car_min` | the same as `time_min`: a route is driven all the way |
 //! | `bike_min`, `walk_min`, `wait_min`, `ride_min`, `transfers`, `parking_min` | 0: a route has none |
+//! | `bike_mixed_km`, `bike_lane_km`, `bike_separated_km` | a bike route's kilometres in mixed traffic, on a painted lane, on a track of its own (a ferry crossing in none); 0 for a car route |
 //! | `nest`, `mode_car` and the other `mode_*` | the car's nest (its mode index) and 1 for `mode_car`, 0 for the others |
 //! | `cost_eur`, `cost_running_eur`, `cost_toll_eur`, `cost_parking_eur` | money ([`crate::prices`]): the route's kilometres at the car's price per km, its tolls, and the parking fee at the trip's destination if given; `cost_fare_eur` is 0 |
 //! | `trip_departure_h`, `person_<name>`, `trip_<name>` | the trip's departure in hours, and the user's traveller and trip values ([`crate::demand_values`]) |
@@ -426,20 +427,37 @@ impl<'a> Chooser<'a> {
                 "n_links" => f64::from(u32::try_from(route.links.len()).unwrap_or(u32::MAX)),
                 "car_min" if self.inputs.mode == Mode::Car => route.seconds / 60.0,
                 "bike_min" if self.inputs.mode == Mode::Bike => route.seconds / 60.0,
-                "bike_mixed_km" => match (self.inputs.mode, self.inputs.bike_layer) {
-                    (Mode::Bike, Some(layer)) => {
-                        let graph = layer.network();
-                        route
-                            .links
-                            .iter()
-                            .map(|&l| LinkId::new(l))
-                            .filter(|&l| layer.is_mixed_traffic(l))
-                            .map(|l| graph.link_length(l).get())
-                            .sum::<f64>()
-                            / 1000.0
+                "bike_mixed_km" | "bike_lane_km" | "bike_separated_km" => {
+                    match (self.inputs.mode, self.inputs.bike_layer) {
+                        (Mode::Bike, Some(layer)) => {
+                            use openmobisim_core_graph::layers::BikeInfrastructure as Kind;
+                            let graph = layer.network();
+                            // A ferry crossing is ridden on no facility: it counts in none.
+                            let counts = |l: LinkId| match name.as_str() {
+                                "bike_mixed_km" => layer.is_mixed_traffic(l),
+                                kind => {
+                                    let wanted = if kind == "bike_lane_km" {
+                                        Kind::Lane
+                                    } else {
+                                        Kind::Separated
+                                    };
+                                    layer.infrastructure(l) == wanted
+                                        && graph.link_class(l)
+                                            != openmobisim_core_graph::defaults::RoadClass::Ferry
+                                }
+                            };
+                            route
+                                .links
+                                .iter()
+                                .map(|&l| LinkId::new(l))
+                                .filter(|&l| counts(l))
+                                .map(|l| graph.link_length(l).get())
+                                .sum::<f64>()
+                                / 1000.0
+                        }
+                        _ => 0.0,
                     }
-                    _ => 0.0,
-                },
+                }
                 other => {
                     crate::itinerary_choice::mode_attribute(other, self.inputs.mode).unwrap_or(0.0)
                 }

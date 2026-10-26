@@ -160,6 +160,10 @@ pub(crate) struct Inputs<'a> {
     /// How bike routes are made (S298): `shortest` (the one route per pair of every run before
     /// bike route sets; hashed as absent) or the sampled generator's descriptor.
     pub bike_routing: &'a str,
+    /// The car's route cost when a class's is not time alone (S299,
+    /// [`crate::generalised_cost::RouteCost::descriptor`] and the most vectors kept); `None`
+    /// where every class searches by time.
+    pub road_cost: Option<&'a str>,
     pub choice_detour_limit: f64,
     pub choice_max_routes: u32,
     pub layers: &'a StaticLayers,
@@ -230,6 +234,11 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     if inputs.bike_routing != "shortest" {
         h.write_str("bike-routes");
         h.write_str(inputs.bike_routing);
+    }
+    // Off means absent (S299): a run whose car routes are searched by time hashes as before.
+    if let Some(cost) = inputs.road_cost {
+        h.write_str("road-cost");
+        h.write_str(cost);
     }
     if inputs.route_update_active {
         h.write_str("route-update");

@@ -52,7 +52,7 @@ use crate::disruptions::Disruptions;
 use crate::equilibration::{Equilibration, FreeFlow, IterationReport};
 use crate::events::{EventRow, EventType};
 use crate::gap::{Currency, Ended, GapTrips, NO_LINK};
-use crate::generalised_cost::{LinkTerms, class_extras, road_seconds};
+use crate::generalised_cost::{LinkTerms, RouteCost, class_extras, road_seconds};
 use crate::identity::{Inputs, RunDescription, describe};
 use crate::itinerary_choice::{
     self, CarReach, CarRoutes, ChooseInputs, Chosen, Followed, GapPlans, Itineraries,
@@ -133,6 +133,10 @@ pub mod local_codes {
     /// there (a bike or walk layer, a timetable for transit and its
     /// combinations, parkings for park-and-ride and bike-and-ride).
     pub const MODE_NOT_AVAILABLE: DiagCode = DiagCode("mode_not_available");
+    /// More user classes have their own coefficients on a route's link-additive terms than the
+    /// run searches by (`max_cost_vectors`): these classes' routes are searched by the nearest
+    /// kept class's by value of time ([`crate::generalised_cost::RouteCost`]); one per class.
+    pub const COST_VECTORS_GROUPED: DiagCode = DiagCode("cost_vectors_grouped");
 }
 
 /// Trip-level outcomes across a run.
@@ -520,6 +524,9 @@ pub struct Run {
     /// A traveller is offered at most this many routes, the fastest at their departure.
     /// [`DEFAULT_CHOICE_MAX_ROUTES`] by default.
     choice_max_routes: u32,
+    /// The most distinct coefficient vectors the route searches are made by (S299):
+    /// [`crate::generalised_cost::DEFAULT_MAX_COST_VECTORS`] by default.
+    max_cost_vectors: u32,
     /// Generated route sets kept for the next run that asks for the same: none, by default.
     route_cache: Option<Arc<RouteSetCache>>,
     /// The bike and walk layers: none, by default.
@@ -632,6 +639,7 @@ impl Run {
             bike_sampled: None,
             choice_detour_limit: DEFAULT_CHOICE_DETOUR_LIMIT,
             choice_max_routes: DEFAULT_CHOICE_MAX_ROUTES,
+            max_cost_vectors: crate::generalised_cost::DEFAULT_MAX_COST_VECTORS,
             route_cache: None,
             layers: Arc::new(StaticLayers::default()),
             transit: None,
@@ -932,6 +940,37 @@ impl Run {
         self
     }
 
+    /// The same run, its route searches made by at most `n` distinct coefficient vectors (S299,
+    /// [`crate::generalised_cost::RouteCost`]): user classes whose coefficients on a route's
+    /// link-additive terms (length, money, tolls, user link values) differ each get their own
+    /// search trees, up to `n`; beyond, a class is searched by the nearest kept class's by value
+    /// of time, and the run records it (`cost_vectors_grouped`). Each vector costs about one set
+    /// of search trees per loading. In the fingerprint only where a class's cost is not time
+    /// alone.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `n` is 0.
+    #[must_use]
+    pub fn with_max_cost_vectors(mut self, n: u32) -> Self {
+        assert!(n >= 1, "a run searches by at least one coefficient vector");
+        self.max_cost_vectors = n;
+        self
+    }
+
+    /// The road's route cost for car searches (S299): composed from the choice model's
+    /// coefficients, the prices and the user's road columns, floored on the free-flow times.
+    fn road_cost(&self, link_values: &PreparedLinkValues) -> RouteCost {
+        let terms = LinkTerms::road(&self.network, &self.prices, link_values);
+        RouteCost::compose(
+            self.choice_model.as_ref(),
+            &self.travellers,
+            &terms,
+            &road_seconds(&self.network),
+            self.max_cost_vectors as usize,
+        )
+    }
+
     /// The same run, taking its route sets from `cache` if it holds the sets this run would
     /// generate, and leaving them there if not: see [`RouteSetCache`]. Results do not depend
     /// on whether the cache was used.
@@ -1023,11 +1062,19 @@ impl Run {
         // The method as the run will use it, its extras named (S298): the fingerprint and the
         // manifest say what the sets were made with. Link values that the run would refuse give
         // the method without extras; the run then fails on them before anything else.
-        let (generator, bike_routing) = match self.link_values.prepare(&self.network, &self.layers)
-        {
-            Ok(values) => (self.keyed_generator(&values), self.bike_routing(&values).descriptor()),
-            Err(_) => (self.route_generator.clone(), "shortest".to_string()),
-        };
+        let (generator, bike_routing, road_cost) =
+            match self.link_values.prepare(&self.network, &self.layers) {
+                Ok(values) => (
+                    self.keyed_generator(&values),
+                    self.bike_routing(&values).descriptor(),
+                    self.road_cost(&values),
+                ),
+                Err(_) => {
+                    (self.route_generator.clone(), "shortest".to_string(), RouteCost::time_only())
+                }
+            };
+        let road_cost = (!road_cost.is_time_only())
+            .then(|| format!("{};max={}", road_cost.descriptor(), self.max_cost_vectors));
         describe(&Inputs {
             threads: self.threads(),
             network: &self.network,
@@ -1051,6 +1098,7 @@ impl Run {
             route_update_descriptor: &self.route_update.descriptor(),
             route_update_active: self.route_update.is_active(),
             bike_routing: &bike_routing,
+            road_cost: road_cost.as_deref(),
             choice_detour_limit: self.choice_detour_limit,
             choice_max_routes: self.choice_max_routes,
             layers: &self.layers,
@@ -1225,6 +1273,19 @@ impl Run {
                 }
             })
             .collect();
+        // What the car's route searches minimise (S299): the choice model's link-additive utility
+        // per coefficient vector, or time alone (every search then as without prices).
+        let road_cost = self.road_cost(&link_values);
+        if !road_cost.grouped().is_empty() {
+            diagnostics.record_n(
+                openmobisim_core_types::diagnostics::DiagKey::run_level(
+                    Category::Modelling,
+                    local_codes::COST_VECTORS_GROUPED,
+                    Severity::Warning,
+                ),
+                road_cost.grouped().len() as u64,
+            );
+        }
         // Each trip's user class, for the per-class draws of a sampled route update (S298).
         let trip_class: Vec<u32> = (0..total_trips)
             .map(|i| {

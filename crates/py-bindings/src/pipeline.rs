@@ -823,7 +823,7 @@ fn gap_trip_columns(py: Python<'_>, gap: &openmobisim_core_sim::GapTrips) -> PyR
     choice_model=None, choice_options=None,
     equilibration="free_flow", equilibration_options=None,
     route_update=None, route_update_options=None,
-    choice_detour_limit=None, choice_max_routes=None, route_cache=false, bike_cost="dedicated",
+    choice_detour_limit=None, choice_max_routes=None, max_cost_vectors=2, route_cache=false, bike_cost="dedicated",
     bike_route_choice="shortest", bike_route_options=None, transit=None,
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
     loading_options=None, price_options=None, threads=None, fingerprint_only=false,
@@ -871,6 +871,7 @@ pub fn run_pipeline(
     route_update_options: Option<HashMap<String, f64>>,
     choice_detour_limit: Option<f64>,
     choice_max_routes: Option<u32>,
+    max_cost_vectors: u32,
     route_cache: bool,
     bike_cost: &str,
     bike_route_choice: &str,
@@ -1202,6 +1203,10 @@ pub fn run_pipeline(
     if let Some(n) = choice_max_routes {
         run = run.with_choice_max_routes(n);
     }
+    if max_cost_vectors == 0 {
+        return Err(PyValueError::new_err("max_cost_vectors must be 1 or more"));
+    }
+    run = run.with_max_cost_vectors(max_cost_vectors);
     // Bike route sets (S298): an option; "shortest" is every run's one route per pair.
     match bike_route_choice {
         "shortest" => {
