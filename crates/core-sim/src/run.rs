@@ -1558,6 +1558,16 @@ impl Run {
             None => Vec::new(),
         };
         let car_ctx = SearchContext::new(&network, &turns);
+        // The route cost's extras prepared for the car's searches (S299): none by time alone.
+        let car_extras: Vec<Option<openmobisim_core_routes::Extras>> = if road_cost.is_time_only() {
+            Vec::new()
+        } else {
+            road_cost
+                .vectors()
+                .iter()
+                .map(|v| v.as_ref().map(|e| car_ctx.extras(e.to_vec())))
+                .collect()
+        };
         let bike_ctx = layers_arc.bike.as_ref().map(|b| {
             SearchContext::with_costs(b.network().network(), b.turns(), b.costs().to_vec())
         });
@@ -1620,6 +1630,7 @@ impl Run {
                 bike_access_s: self.mode_defaults.bike_access_s,
                 bike_egress_s: self.mode_defaults.bike_egress_s,
                 car_cost: Some(&road_cost),
+                car_extras: &car_extras,
                 car_routes: (mode_choice.is_some() || fallback_car)
                     .then(|| CarRoutes { sets: &route_sets }),
             };
@@ -1741,6 +1752,7 @@ impl Run {
                                 bike_access_s: self.mode_defaults.bike_access_s,
                                 bike_egress_s: self.mode_defaults.bike_egress_s,
                                 car_cost: Some(&road_cost),
+                                car_extras: &car_extras,
                                 car_routes: None,
                             };
                             Some(itin.drives_ahead(
@@ -1828,6 +1840,7 @@ impl Run {
                         bike_access_s: self.mode_defaults.bike_access_s,
                         bike_egress_s: self.mode_defaults.bike_egress_s,
                         car_cost: Some(&road_cost),
+                        car_extras: &car_extras,
                         car_routes: (mode_choice.is_some() || fallback_car)
                             .then(|| CarRoutes { sets: &route_sets }),
                     };
@@ -1929,6 +1942,7 @@ impl Run {
                         bike_access_s: self.mode_defaults.bike_access_s,
                         bike_egress_s: self.mode_defaults.bike_egress_s,
                         car_cost: Some(&road_cost),
+                        car_extras: &car_extras,
                         car_routes: None,
                     };
                     // Park-and-ride's shared drives leave from a road node at a step's middle on

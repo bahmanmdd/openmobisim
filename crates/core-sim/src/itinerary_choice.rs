@@ -93,7 +93,7 @@ use crate::link_values::{PreparedLinkValues, ValueLayer};
 use crate::parking::{ExpectedAvailability, ParkingSetup};
 use crate::prices::{Cost, PreparedPrices};
 use crate::transit::{TransitSetup, par_map};
-use crate::trees::TreeDrive;
+use crate::trees::{DriveKey, TreeDrive};
 
 /// The attributes every alternative carries, routes and itineraries alike, in
 /// the order a batch holds them.
@@ -327,6 +327,8 @@ pub(crate) struct TripNodes {
     pub bike_d: NodeId,
     /// The longest walk to or from a stop, in seconds: the class's or the run's.
     pub access_walk_s: f64,
+    /// The trip's user class index: its coefficient vector under the route cost (S299).
+    pub class: u32,
 }
 
 /// What a trip may choose from: each mode offered to it where it is.
@@ -424,6 +426,9 @@ pub(crate) struct Planner<'a> {
     /// park-and-ride drives and the car-park reach minimise per coefficient vector. `None` (or a
     /// cost of time alone): travel time.
     pub car_cost: Option<&'a RouteCost>,
+    /// Each coefficient vector's extras prepared for [`Self::car`] (their A* bounds), by vector;
+    /// empty where the route cost is time alone.
+    pub car_extras: &'a [Option<openmobisim_core_routes::Extras>],
 }
 
 /// One thread's scratch for planning.
@@ -471,7 +476,7 @@ pub(crate) type BikeReach = OnceLock<Box<[ReachCand]>>;
 
 /// Park-and-ride's shared drives ([`crate::parking::ParkingDefaults::reach_car_step_s`]),
 /// by road node and step of the day. Searched on one pass's times.
-pub(crate) type CarReach = HashMap<(u32, u64), SharedDrive>;
+pub(crate) type CarReach = HashMap<DriveKey, SharedDrive>;
 
 /// The shared drives the search trees answered (S299), as a pass reads them.
 pub(crate) fn car_reach_of(drives: Vec<TreeDrive>) -> CarReach {
@@ -612,6 +617,50 @@ pub(crate) struct SharedDrive {
     routes: Box<[(u32, Box<[LinkId]>)]>,
 }
 
+/// A link's time from a clock time: the wait at an origin or the time to cross a link.
+type LinkClock<'f> = dyn Fn(u32, f64) -> f64 + 'f;
+
+/// The car's routes from `origin` to the nodes `targets` marks (at most `wanted` of them) leaving
+/// at `departure`, within `bound_s` seconds of driving, on `wait` and `seconds`: `(node, seconds
+/// after departure, links)` in the order reached. By time without `extras` (the fastest routes,
+/// [`Search::fastest_routes_to`], to the bit); with them, the cheapest by the travel time plus the
+/// extras (S299), searched within the bound times the largest share of extras to time a link has
+/// and kept within `bound_s` of driving.
+#[allow(clippy::too_many_arguments, reason = "the time-dependent search's own arguments")]
+fn car_search_to(
+    search: &mut Search<'_>,
+    extras: Option<&openmobisim_core_routes::Extras>,
+    origin: NodeId,
+    targets: &[bool],
+    wanted: usize,
+    departure: f64,
+    bound_s: f64,
+    (wait, seconds): (&LinkClock<'_>, &LinkClock<'_>),
+) -> Vec<(NodeId, f64, Vec<LinkId>)> {
+    let Some(e) = extras else {
+        return search
+            .fastest_routes_to(origin, targets, wanted, departure, bound_s, wait, seconds);
+    };
+    search.clear_route_state();
+    search.set_extras(Some(e.clone()));
+    let found = search
+        .cheapest_routes_to(
+            origin,
+            targets,
+            wanted,
+            departure,
+            bound_s * (1.0 + e.max_ratio()),
+            wait,
+            seconds,
+        )
+        .into_iter()
+        .filter(|(_, _, t, _)| *t <= bound_s)
+        .map(|(node, _, t, links)| (node, t, links))
+        .collect();
+    search.clear_route_state();
+    found
+}
+
 /// A drive along `links` leaving at `dep`, in seconds on `times`: as the search times it.
 fn drive_seconds(times: &LinkTimes, links: &[LinkId], dep: f64) -> f64 {
     let Some(first) = links.first() else { return 0.0 };
@@ -740,6 +789,14 @@ impl<'a> Planner<'a> {
             })
     }
 
+    /// The coefficient vector a trip of `n` drives by, and its extras where it has some (S299):
+    /// `(0, None)` where the route cost is time alone.
+    fn car_vector(&self, n: &TripNodes) -> (u32, Option<&openmobisim_core_routes::Extras>) {
+        let Some(cost) = self.car_cost.filter(|c| !c.is_time_only()) else { return (0, None) };
+        let v = cost.vector_of_class(n.class as usize);
+        (v, self.car_extras.get(v as usize).and_then(Option::as_ref))
+    }
+
     /// The step of the day a park-and-ride drive leaving at `dep` shares its search in
     /// ([`crate::parking::ParkingDefaults::reach_car_step_s`]); `None` when each drive
     /// is searched on its own.
@@ -774,14 +831,15 @@ impl<'a> Planner<'a> {
         dep: f64,
         destination: LonLat,
         only: Option<u32>,
-    ) -> Option<((u32, u64), Vec<NodeId>)> {
+    ) -> Option<(DriveKey, Vec<NodeId>)> {
         let parking = self.parking?;
         let slot = self.car_step(dep)?;
         if n.road_o.is_null() {
             return None;
         }
         let picked = self.car_picked(parking, n.road_o, dep, destination, only);
-        (!picked.is_empty()).then(|| ((n.road_o.raw(), slot), picked))
+        let vector = self.car_vector(n).0;
+        (!picked.is_empty()).then(|| ((n.road_o.raw(), slot, vector), picked))
     }
 
     /// Searches the shared drives `wanted` asks for (road node and step, and the car parks
@@ -790,16 +848,16 @@ impl<'a> Planner<'a> {
     /// already but for fewer car parks is searched again for them all.
     pub(crate) fn fill_car_reach(
         &self,
-        wanted: Vec<((u32, u64), Vec<NodeId>)>,
+        wanted: Vec<(DriveKey, Vec<NodeId>)>,
         reach: &mut CarReach,
     ) {
         let Some(parking) = self.parking else { return };
-        let mut by_key: std::collections::BTreeMap<(u32, u64), Vec<u32>> =
+        let mut by_key: std::collections::BTreeMap<DriveKey, Vec<u32>> =
             std::collections::BTreeMap::new();
         for (key, nodes) in wanted {
             by_key.entry(key).or_default().extend(nodes.iter().map(|n| n.raw()));
         }
-        let jobs: Vec<((u32, u64), Vec<u32>)> = by_key
+        let jobs: Vec<(DriveKey, Vec<u32>)> = by_key
             .into_iter()
             .filter_map(|(key, mut nodes)| {
                 nodes.sort_unstable();
@@ -827,25 +885,26 @@ impl<'a> Planner<'a> {
             &jobs,
             16,
             || (Search::new(self.car), vec![false; road.node_count() as usize]),
-            |(search, mask), ((node, slot), sought)| {
+            |(search, mask), ((node, slot, vector), sought)| {
                 #[allow(clippy::cast_precision_loss, reason = "a step count")]
                 let departure = (*slot as f64 + 0.5) * d.reach_car_step_s;
                 for &n in sought {
                     mask[n as usize] = true;
                 }
-                let mut routes: Vec<(u32, Box<[LinkId]>)> = search
-                    .fastest_routes_to(
-                        NodeId::new(*node),
-                        mask,
-                        sought.len(),
-                        departure,
-                        d.reach_car_s,
-                        &wait,
-                        &secs,
-                    )
-                    .into_iter()
-                    .map(|(to, _, links)| (to.raw(), links.into_boxed_slice()))
-                    .collect();
+                let extras = self.car_extras.get(*vector as usize).and_then(Option::as_ref);
+                let mut routes: Vec<(u32, Box<[LinkId]>)> = car_search_to(
+                    search,
+                    extras,
+                    NodeId::new(*node),
+                    mask,
+                    sought.len(),
+                    departure,
+                    d.reach_car_s,
+                    (&wait, &secs),
+                )
+                .into_iter()
+                .map(|(to, _, links)| (to.raw(), links.into_boxed_slice()))
+                .collect();
                 for &n in sought {
                     mask[n as usize] = false;
                 }
@@ -1074,9 +1133,10 @@ impl<'a> Planner<'a> {
                 // A drive shared by the trips leaving this node within a step (S267), if it was
                 // searched for every car park picked here: its routes to them, each timed at
                 // this trip's departure.
+                let (vector, extras) = self.car_vector(n);
                 let shared = self
                     .car_step(leave)
-                    .and_then(|slot| car_reach.get(&(n.road_o.raw(), slot)))
+                    .and_then(|slot| car_reach.get(&(n.road_o.raw(), slot, vector)))
                     .filter(|drive| {
                         picked.iter().all(|node| drive.sought.binary_search(&node.raw()).is_ok())
                     });
@@ -1101,23 +1161,22 @@ impl<'a> Planner<'a> {
                     let times = self.times;
                     let wait = |l: u32, t: f64| times.origin_wait_seconds(l, t);
                     let secs = |l: u32, t: f64| times.link_seconds(l, t);
-                    let found = s
-                        .car(self.car)
-                        .fastest_routes_to(
-                            n.road_o,
-                            &mask,
-                            picked.len(),
-                            leave,
-                            d.reach_car_s,
-                            &wait,
-                            &secs,
-                        )
-                        .into_iter()
-                        .map(|(node, t, links)| {
-                            let m = links.iter().map(|&l| road.link_length(l).get()).sum();
-                            (node, t, links, m)
-                        })
-                        .collect();
+                    let found = car_search_to(
+                        s.car(self.car),
+                        extras,
+                        n.road_o,
+                        &mask,
+                        picked.len(),
+                        leave,
+                        d.reach_car_s,
+                        (&wait, &secs),
+                    )
+                    .into_iter()
+                    .map(|(node, t, links)| {
+                        let m = links.iter().map(|&l| road.link_length(l).get()).sum();
+                        (node, t, links, m)
+                    })
+                    .collect();
                     for node in &picked {
                         mask[node.index()] = false;
                     }
@@ -1364,12 +1423,43 @@ impl<'a> Planner<'a> {
                     let wait = |l: u32, t: f64| times.origin_wait_seconds(l, t);
                     let secs = |l: u32, t: f64| times.link_seconds(l, t);
                     let road = self.car.network;
-                    s.car(self.car)
-                        .fastest_route(from, n.road_d, leave, BACK_BOUND_S, &wait, &secs)
-                        .map(|(t, links)| {
-                            let m = links.iter().map(|&l| road.link_length(l).get()).sum();
-                            (t, links, m)
-                        })
+                    let extras = self.car_vector(n).1;
+                    let found = match extras {
+                        None => s.car(self.car).fastest_route(
+                            from,
+                            n.road_d,
+                            leave,
+                            BACK_BOUND_S,
+                            &wait,
+                            &secs,
+                        ),
+                        // By the trip's vector's generalised cost (S299).
+                        Some(_) => {
+                            let mut mask = std::mem::take(&mut s.car_mask);
+                            mask.resize(road.node_count() as usize, false);
+                            mask[n.road_d.index()] = true;
+                            let one = car_search_to(
+                                s.car(self.car),
+                                extras,
+                                from,
+                                &mask,
+                                1,
+                                leave,
+                                BACK_BOUND_S,
+                                (&wait, &secs),
+                            )
+                            .into_iter()
+                            .next()
+                            .map(|(_, t, links)| (t, links));
+                            mask[n.road_d.index()] = false;
+                            s.car_mask = mask;
+                            one
+                        }
+                    };
+                    found.map(|(t, links)| {
+                        let m = links.iter().map(|&l| road.link_length(l).get()).sum();
+                        (t, links, m)
+                    })
                 }
                 ParkingKind::Bike => match self.bike {
                     Some((layer, ctx)) if !n.bike_d.is_null() => {
@@ -2157,6 +2247,7 @@ impl Itineraries {
                 access_walk_s: limits
                     .access_walk_max_s
                     .unwrap_or_else(|| transit.map_or(0.0, |t| t.defaults().access_walk_max_s)),
+                class: sim.travellers.user_class(trips.traveller(trip)).raw(),
             };
             if choosing || mode == Mode::CarTransit || out.fallback_car {
                 nodes.road_o = road_snapper.nearest(road, o);
@@ -2555,7 +2646,7 @@ impl Itineraries {
         planner: &Planner<'_>,
         trips: &Trips,
         jobs: &[(usize, Offer)],
-    ) -> Vec<((u32, u64), Vec<NodeId>)> {
+    ) -> Vec<(DriveKey, Vec<NodeId>)> {
         jobs.iter()
             .filter_map(|&(p, offer)| {
                 let trip = self.trips[p];
@@ -2583,7 +2674,7 @@ impl Itineraries {
         travellers: &Travellers,
         current: &Chosen,
         only: Option<&[bool]>,
-    ) -> Vec<((u32, u64), Vec<NodeId>)> {
+    ) -> Vec<(DriveKey, Vec<NodeId>)> {
         let mut jobs: Vec<(usize, Offer)> = Vec::new();
         for p in 0..self.trips.len() {
             if only.is_some_and(|o| !o[trips.traveller(self.trips[p]).index()]) {
@@ -2764,7 +2855,7 @@ impl Itineraries {
         // The drives park-and-ride trips share (S267), searched on this pass's times as the
         // trips that need them come up, outside the parallel planning; those `car_reach` holds
         // already (the search trees', S299) are not searched again.
-        let car_reach_keys = |jobs: &[(usize, Offer)]| -> Vec<((u32, u64), Vec<NodeId>)> {
+        let car_reach_keys = |jobs: &[(usize, Offer)]| -> Vec<(DriveKey, Vec<NodeId>)> {
             self.drives_wanted(planner, trips, jobs)
         };
         for round in &self.rounds {
@@ -3109,13 +3200,7 @@ impl Itineraries {
             let mut searches: Vec<(usize, RouteKey, f64, f64, f64, u32)> = Vec::new();
             let cost = planner.car_cost.filter(|c| !c.is_time_only());
             // Each vector's extras, prepared for the car's context (their A* bounds).
-            let prepared: Vec<Option<openmobisim_core_routes::Extras>> =
-                cost.map_or_else(Vec::new, |c| {
-                    c.vectors()
-                        .iter()
-                        .map(|v| v.as_ref().map(|e| planner.car.extras(e.to_vec())))
-                        .collect()
-                });
+            let prepared = planner.car_extras;
             for (s, &(j, best)) in situation_of.iter().enumerate() {
                 let (p, _) = jobs[j];
                 let set = &sets[j];
@@ -3548,6 +3633,60 @@ pub(crate) fn follow(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Park-and-ride drives by the route cost** (S299): on a two-road diamond, the drive to a
+    /// car park at `D` is the top road by time; with 60 s of extras on its first link (a toll),
+    /// the bottom road; and a drive past its time bound is not kept, however cheap.
+    #[test]
+    fn a_drive_to_a_car_park_follows_its_class_s_generalised_cost() {
+        use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
+        use openmobisim_core_graph::geometry::LonLat;
+        use openmobisim_core_graph::network::{LinkSpec, RoadNetworkBuilder};
+        use openmobisim_core_graph::turns::TurnTable;
+        use openmobisim_core_types::diagnostics::Diagnostics;
+        let mut b = RoadNetworkBuilder::new();
+        for (n, x, y) in
+            [("A", 0.0, 0.0), ("B", 100.0, 60.0), ("C", 100.0, -60.0), ("D", 200.0, 0.0)]
+        {
+            b.add_node(n, LonLat::new(4.8 + x / 77_800.0, 45.7 + y / 110_574.0));
+        }
+        for (name, from, to, len) in [
+            ("ab", "A", "B", 100.0),
+            ("bd", "B", "D", 100.0),
+            ("ac", "A", "C", 120.0),
+            ("cd", "C", "D", 120.0),
+        ] {
+            let mut spec = LinkSpec::new(RoadClass::Residential);
+            spec.length_m = Some(len);
+            b.add_link(name, from, to, spec);
+        }
+        let net = b
+            .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+            .unwrap();
+        let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+        let ctx = SearchContext::new(&net, &turns);
+        let mut search = Search::new(&ctx);
+        let id = |n: &str| net.link_external_ids().typed_id_of::<LinkId>(n).unwrap();
+        let node = |n: &str| net.node_external_ids().typed_id_of::<NodeId>(n).unwrap();
+        let mut targets = vec![false; net.node_count() as usize];
+        targets[node("D").index()] = true;
+        let times = LinkTimes::free_flow(&net);
+        let wait = |l: u32, t: f64| times.origin_wait_seconds(l, t);
+        let secs = |l: u32, t: f64| times.link_seconds(l, t);
+        let mut extra = vec![0.0; net.link_count() as usize];
+        extra[id("ab").index()] = 60.0;
+        let extras = ctx.extras(extra);
+        let drive =
+            |e: Option<&openmobisim_core_routes::Extras>, bound: f64, s: &mut Search<'_>| {
+                car_search_to(s, e, node("A"), &targets, 1, 0.0, bound, (&wait, &secs))
+            };
+        let by_time = drive(None, 600.0, &mut search);
+        assert_eq!(by_time[0].2, vec![id("ab"), id("bd")]);
+        let by_cost = drive(Some(&extras), 600.0, &mut search);
+        assert_eq!(by_cost[0].2, vec![id("ac"), id("cd")], "the toll moves the drive");
+        let bottom = by_cost[0].1;
+        assert!(drive(Some(&extras), bottom - 1.0, &mut search).is_empty(), "past the bound");
+    }
 
     /// A park-and-ride alternative: `links` driven in 600 s to `parking`, 1 000 s in all.
     fn park_and_ride(parking: u32, links: &[u32]) -> Alternative {

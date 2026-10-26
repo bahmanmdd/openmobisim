@@ -90,11 +90,15 @@ type SearchedWithDrive = (Vec<(usize, f64)>, Vec<FoundRoute>, Option<TreeDrive>)
 /// A drive one tree's search answered beside its pairs ([`SearchTrees::build_with_drives`]):
 /// the tree's (origin, bin), the nodes sought (ascending) and the route to each of them reached
 /// within the drive's bound, ascending by node (the origin itself, if sought, with no links).
-pub type TreeDrive = ((u32, u64), Box<[u32]>, Box<[(u32, Box<[LinkId]>)]>);
+pub type TreeDrive = (DriveKey, Box<[u32]>, Box<[(u32, Box<[LinkId]>)]>);
+
+/// A shared drive's key: the road node it leaves, its step of the day, and the coefficient
+/// vector it is searched by (0 where the run's route cost is time alone; S299).
+pub type DriveKey = (u32, u64, u32);
 
 /// Drives to search with the trees: per (origin node, bin) the nodes sought, and the bound of
 /// every drive in seconds ([`SearchTrees::build_with_drives`]).
-pub type DrivesWanted<'w> = (&'w [((u32, u64), Vec<NodeId>)], f64);
+pub type DrivesWanted<'w> = (&'w [(DriveKey, Vec<NodeId>)], f64);
 
 /// What the trees' searches minimise (S299): the run's route cost, and each trip's user class
 /// index by trip (its vector is its class's).
@@ -249,7 +253,7 @@ impl SearchTrees {
             let mut by_head: std::collections::BTreeMap<usize, Vec<u32>> =
                 std::collections::BTreeMap::new();
             for (head, nodes) in wanted {
-                if let Ok(i) = heads.binary_search(&(head.0, head.1, 0)) {
+                if let Ok(i) = heads.binary_search(head) {
                     by_head.entry(i).or_default().extend(nodes.iter().map(|n| n.raw()));
                 }
             }
@@ -388,7 +392,11 @@ impl SearchTrees {
             }
             routes.sort_unstable_by_key(|r| r.destination);
             reached.sort_unstable_by_key(|r| r.0);
-            (keys, routes, Some(((origin, slot), drive.clone(), reached.into_boxed_slice())))
+            (
+                keys,
+                routes,
+                Some(((origin, slot, vector), drive.clone(), reached.into_boxed_slice())),
+            )
         });
         let mut pairs = 0_u32;
         let mut answered: Vec<TreeDrive> = Vec::new();
