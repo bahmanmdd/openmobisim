@@ -183,8 +183,7 @@ class Network:
         """Every link's road class as a number: its index in ``LINK_CLASSES`` (0 = motorway)."""
 
     def link_lanes(self) -> npt.NDArray[np.uint8]:
-        """Every link's lane count in its own direction: the lanes cars use, bus lanes not
-        counted."""
+        """Every link's lanes for cars in its own direction (bus lanes not counted)."""
 
     def link_bus_lanes(self) -> npt.NDArray[np.uint8]:
         """Every link's lanes reserved for buses in its own direction (0: none).
