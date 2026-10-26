@@ -9,19 +9,19 @@ a minor version may change the interface, and says so here.
 support policy ([SPEC 0](https://scientific-python.org/specs/spec-0000/)); one wheel per platform serves 3.13 and
 every later version, tested on 3.13 and 3.14. 0.1.0 accepted Python 3.11 and 3.12; on those, pip installs 0.1.0.
 
-**Door-to-door times for every mode.** In a run that compares modes or has a timetable, a car or bike trip pays the
-fixed times of its own vehicle in the loading as mode choice counts them: reaching it before the leg and leaving it
-after (`mode_options` `car_access_s` 120 s, `car_egress_s` 300 s, `bike_access_s` 60 s, `bike_egress_s` 60 s). The
-egress is also the time to park at a car or bike park with room; a full parking adds its slope on top. A run of
-stated car trips alone pays none of them.
+**Door-to-door times for every mode.** Every run's car and bike trips pay the fixed times of their own vehicle, in
+the loading as mode choice counts them: reaching it before the leg and leaving it after (`mode_options`
+`car_access_s` 120 s, `car_egress_s` 300 s, `bike_access_s` 60 s, `bike_egress_s` 60 s). Setting them to 0 leaves the
+drive or the ride alone, as a benchmark such as Sioux Falls counts it. The egress is also the time to park at a car or
+bike park with room; a full parking adds its slope on top.
 - `trip_results` has two new columns: `vehicle_s`, the completed trip's seconds in a vehicle of its own, and
   `access_egress_s`, its fixed seconds. `Run.total_vehicle_time_s` and `Run.mean_vehicle_time_s` sum and average
   the first.
 - `parking_options` `floor_car_s` and `floor_bike_s` are gone (a scenario naming them is refused with the list of
   options); `slope_car_s` and `slope_bike_s` stay.
 - Before this change the loading started a car at the trip's departure and added no egress, so a car trip's travel
-  time was its drive while mode choice weighed the door-to-door time: the mean trip by mode of a multimodal run is
-  longer now, by the fixed times.
+  time was its drive while mode choice weighed the door-to-door time: the mean trip of every run is longer now, by
+  the fixed times; a run of stated car trips sets them to 0 to keep the drives.
 
 ## 0.1.0 — 2026-10-20
 
