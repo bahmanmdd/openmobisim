@@ -367,6 +367,9 @@ pub struct Search<'a> {
     noise: Option<Noise>,
     /// Extra cost per link for the next searches, if a generator gave them.
     extras: Option<Extras>,
+    /// Extra cost per link that stays across keys ([`Self::set_base_extras`]): the run's route
+    /// cost for a method searching by it; [`Self::extras`] stand in for it while set.
+    base: Option<Extras>,
     /// The clock time at each label, for the time-dependent generalised-cost tree.
     time: Vec<f64>,
     marks: Vec<u32>,
@@ -388,6 +391,7 @@ impl<'a> Search<'a> {
             factors: LinkFactors::new(n),
             noise: None,
             extras: None,
+            base: None,
             time: vec![0.0; n],
             marks: vec![0; n],
             marked: Vec::new(),
@@ -438,9 +442,39 @@ impl<'a> Search<'a> {
         self.extras = extras;
     }
 
-    /// Search by time alone again.
+    /// Search by time alone again (or by the base extras, if set).
     pub fn clear_extras(&mut self) {
         self.extras = None;
+    }
+
+    /// Search every key by `base` (S299): extras that, unlike [`Self::set_extras`]'s, stay
+    /// through [`Self::clear_route_state`], so a method that clears its state between keys
+    /// searches every key by them; what the run's route cost hands a method that searches by
+    /// time ([`crate::ByCost`]). Extras set with [`Self::set_extras`] stand in for them while
+    /// set. `None` searches by time again.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the extras do not have one value per link of the network.
+    pub fn set_base_extras(&mut self, base: Option<Extras>) {
+        if let Some(e) = &base {
+            let links = self.ctx.network.link_count() as usize;
+            assert_eq!(e.seconds.len(), links, "extras have one value per link of the network");
+        }
+        self.base = base;
+    }
+
+    /// Whether the searches now are by generalised cost: extras or base extras are set. Without,
+    /// every cost is travel time, to the bit.
+    #[must_use]
+    pub fn has_extras(&self) -> bool {
+        self.active().is_some()
+    }
+
+    /// The extras the searches use now: those set, else the base ones.
+    #[inline]
+    fn active(&self) -> Option<&Extras> {
+        self.extras.as_ref().or(self.base.as_ref())
     }
 
     /// The generalised cost of `links` under the extras set: their time plus their extras,
@@ -450,10 +484,17 @@ impl<'a> Search<'a> {
         links.iter().map(|&l| self.raw(l)).sum()
     }
 
+    /// The cost of `links` a method compares routes in: [`Self::generalised`] under extras, the
+    /// route's travel time ([`SearchContext::route_cost`], to the bit) without.
+    #[must_use]
+    pub fn judged(&self, route: &Route) -> f64 {
+        if self.has_extras() { self.generalised(&route.links) } else { route.cost }
+    }
+
     /// A link's extra seconds under the extras set, 0 if none are.
     #[inline]
     fn extra(&self, link: LinkId) -> f64 {
-        self.extras.as_ref().map_or(0.0, |e| e.seconds[link.index()])
+        self.active().map_or(0.0, |e| e.seconds[link.index()])
     }
 
     /// A link's unperturbed generalised cost: its time plus its extra.
@@ -465,7 +506,7 @@ impl<'a> Search<'a> {
     /// The A\* bound's factor for the costs searched now: the extras' if set, the context's.
     #[inline]
     fn per_metre(&self) -> f64 {
-        self.extras.as_ref().map_or(self.ctx.per_metre, |e| e.per_metre)
+        self.active().map_or(self.ctx.per_metre, |e| e.per_metre)
     }
 
     /// A link's cost multiplier for the search now: the factors set, and the noise if any.
@@ -1118,13 +1159,15 @@ impl<'a> Search<'a> {
     }
 
     /// The largest share of `links`' cost that it has in common with any one
-    /// marked route.
+    /// marked route: of their generalised cost under extras ([`Self::set_extras`],
+    /// [`Self::set_base_extras`]), of their travel time without.
     #[must_use]
     pub fn max_overlap(&self, links: &[LinkId]) -> f64 {
         let mut shared = [0.0f64; MAX_ROUTES_PER_SET];
         let mut total = 0.0;
+        let by_extras = self.has_extras();
         for &l in links {
-            let c = self.ctx.link_cost(l);
+            let c = if by_extras { self.raw(l) } else { self.ctx.link_cost(l) };
             total += c;
             let mut m = self.marks[l.index()];
             while m != 0 {
@@ -1138,7 +1181,8 @@ impl<'a> Search<'a> {
         shared.iter().fold(0.0f64, |a, &s| a.max(s / total))
     }
 
-    /// Forget every mark, every factor and any noise, ready for the next key.
+    /// Forget every mark, every factor, any noise and any extras (but the base ones), ready for
+    /// the next key.
     pub fn clear_route_state(&mut self) {
         self.noise = None;
         self.extras = None;

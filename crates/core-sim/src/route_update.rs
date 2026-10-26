@@ -889,6 +889,32 @@ pub fn make_room(
     kept: &[bool],
     max_routes: usize,
 ) -> Vec<bool> {
+    make_room_by(sets, additions, chosen, weight, kept, max_routes, 1, &|_, r| {
+        f64::from(sets.route(r).cost)
+    })
+}
+
+/// [`make_room`] by the run's route cost (S299): `cost(v, r)` is route `r`'s free-flow cost
+/// under coefficient vector `v` (of `vectors`; its free-flow time plus its links' extras). A
+/// set never drops the route cheapest under any vector, and drops the unused routes dearest
+/// first by their least cost over the vectors. With one vector costing the stored free-flow
+/// time it is [`make_room`], to the bit.
+///
+/// # Panics
+///
+/// As [`make_room`].
+#[must_use]
+#[allow(clippy::too_many_arguments, reason = "make_room's arguments, and the cost")]
+pub fn make_room_by(
+    sets: &RouteSets,
+    additions: &mut Vec<(usize, Vec<Route>)>,
+    chosen: &[u32],
+    weight: &[u32],
+    kept: &[bool],
+    max_routes: usize,
+    vectors: usize,
+    cost_of: &dyn Fn(usize, usize) -> f64,
+) -> Vec<bool> {
     let mut usage = vec![0_u64; sets.route_count()];
     for (&r, &w) in chosen.iter().zip(weight) {
         if let Some(u) = usage.get_mut(r as usize) {
@@ -903,15 +929,23 @@ pub fn make_room(
         if excess == 0 {
             continue;
         }
-        let cost = |r: usize| sets.route(r).cost;
-        let shortest = range
-            .clone()
-            .min_by(|&a, &b| cost(a).total_cmp(&cost(b)).then(a.cmp(&b)))
-            .expect("a set is never empty");
+        let vectors = vectors.max(1);
+        let cost = |r: usize| (0..vectors).map(|v| cost_of(v, r)).fold(f64::INFINITY, f64::min);
+        // Each vector's free-flow cheapest, never dropped.
+        let shortest: Vec<usize> = (0..vectors)
+            .map(|v| {
+                range
+                    .clone()
+                    .min_by(|&a, &b| cost_of(v, a).total_cmp(&cost_of(v, b)).then(a.cmp(&b)))
+                    .expect("a set is never empty")
+            })
+            .collect();
         // Only a route nobody chose makes room: no trip is moved, so the averaging of the
         // iterations is not disturbed (a forced move set back Lyon's convergence, S268).
         let mut candidates: Vec<usize> = range
-            .filter(|&r| r != shortest && usage[r] == 0 && !kept.get(r).copied().unwrap_or(false))
+            .filter(|&r| {
+                !shortest.contains(&r) && usage[r] == 0 && !kept.get(r).copied().unwrap_or(false)
+            })
             .collect();
         candidates.sort_by(|&a, &b| cost(b).total_cmp(&cost(a)).then(a.cmp(&b)));
         // The new routes that fit once every removable route is gone; none: nothing removed. A

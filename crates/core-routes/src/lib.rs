@@ -29,7 +29,7 @@ pub mod store;
 
 pub use attributes::{path_sizes, path_sizes_counted};
 pub use generate::{
-    ClassExtras, DEFAULT_METHOD, Demand, ExtrasRequest, MonteCarlo, Options,
+    ByCost, ClassExtras, DEFAULT_METHOD, Demand, ExtrasRequest, MonteCarlo, Options,
     PROPENSITY_BIN_SECONDS, Penalty, Registry, RouteError, RouteSetGenerator, Sampled, Shortest,
     TripDemand, congestion_propensity, default_generator, generator,
 };

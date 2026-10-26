@@ -302,6 +302,16 @@ fn sort_best_first(routes: &mut [Route]) {
         .sort_by(|a, b| a.cost.total_cmp(&b.cost).then_with(|| a.links.iter().cmp(b.links.iter())));
 }
 
+/// Sort routes best first in the cost `search` judges them by ([`Search::judged`]): their time,
+/// as [`sort_best_first`], without extras.
+fn sort_judged(search: &Search<'_>, routes: &mut [Route]) {
+    if search.has_extras() {
+        sort_best_first_by(routes, |r| search.generalised(&r.links));
+    } else {
+        sort_best_first(routes);
+    }
+}
+
 /// Sort routes by `cost(route)`, then by their links: [`sort_best_first`] in another cost.
 fn sort_best_first_by(routes: &mut [Route], cost: impl Fn(&Route) -> f64) {
     let mut keyed: Vec<(f64, Route)> = routes.iter().map(|r| (cost(r), r.clone())).collect();
@@ -472,7 +482,8 @@ impl RouteSetGenerator for Penalty {
         let Some(first) = search.shortest(origin, destination) else {
             return Vec::new();
         };
-        let best = first.cost;
+        // In the cost searched: the generalised one under base extras, the time without.
+        let best = search.judged(&first);
         search.mark(&first.links, 0);
         let mut last = first.links.clone();
         let mut kept = vec![first];
@@ -491,7 +502,7 @@ impl RouteSetGenerator for Penalty {
                 break;
             };
             last.clone_from(&candidate.links);
-            if candidate.cost > self.max_detour * best
+            if search.judged(&candidate) > self.max_detour * best
                 || kept.iter().any(|k| k.links == candidate.links)
             {
                 continue;
@@ -505,7 +516,7 @@ impl RouteSetGenerator for Penalty {
             kept.push(candidate);
         }
         search.clear_route_state();
-        sort_best_first(&mut kept);
+        sort_judged(search, &mut kept);
         kept
     }
 }
@@ -744,7 +755,7 @@ impl RouteSetGenerator for MonteCarlo {
         let Some(first) = search.shortest(origin, destination) else {
             return Vec::new();
         };
-        let best = first.cost;
+        let best = search.judged(&first);
         search.mark(&first.links, 0);
         let mut kept = vec![first];
         for draw in 0..self.draws {
@@ -761,7 +772,7 @@ impl RouteSetGenerator for MonteCarlo {
             else {
                 continue;
             };
-            if candidate.cost > self.max_detour * best
+            if search.judged(&candidate) > self.max_detour * best
                 || kept.iter().any(|k| k.links == candidate.links)
             {
                 continue;
@@ -775,7 +786,7 @@ impl RouteSetGenerator for MonteCarlo {
             kept.push(candidate);
         }
         search.clear_route_state();
-        sort_best_first(&mut kept);
+        sort_judged(search, &mut kept);
         kept
     }
 
@@ -1184,6 +1195,183 @@ impl RouteSetGenerator for Sampled {
         let mut prepared = self.clone();
         prepared.prepared = Some(self.prepare(ctx));
         Some(Box::new(prepared))
+    }
+}
+
+// --- by the run's route cost -----------------------------------------------------------------
+
+/// A method that searches by time, made to search by the run's **route cost** (S299): for each
+/// coefficient vector (`vectors`, each the extra seconds per link it adds to the travel time, or
+/// `None` for time alone), the method's routes under that vector's generalised cost
+/// ([`Search::set_base_extras`]: its least-cost route, its detour and overlap limits and its
+/// order all in that cost), merged into one set per pair.
+///
+/// **The merge.** One vector: its routes, as the method made them. Several: the vectors' routes
+/// taken rank by rank (each vector's best, then each one's second, …), each route once, until
+/// the set holds as many as the largest of them (at least one per vector with a route); then
+/// ordered by the first vector's generalised cost. So every vector's least-cost route is in the set. A route's overlap is the method's,
+/// against the routes its own vector kept before it.
+///
+/// **Identity.** The method's name; its descriptor with `;cost=given:<hash>` of every vector's
+/// extras appended, so sets made under other costs are never mistaken for these.
+///
+/// **Cost:** the method's searches once per vector, each by generalised cost (about 1.2 times
+/// a search by time); 8 bytes per link per vector, shared by every thread.
+#[derive(Clone)]
+pub struct ByCost {
+    inner: Arc<dyn RouteSetGenerator>,
+    vectors: Vec<Option<Arc<[f64]>>>,
+    /// The vectors prepared for a context ([`RouteSetGenerator::with_context`]).
+    prepared: Option<Vec<Option<Extras>>>,
+}
+
+impl fmt::Debug for ByCost {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ByCost")
+            .field("inner", &self.inner.descriptor())
+            .field("vectors", &self.vectors.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ByCost {
+    /// `inner`, searching by each of `vectors` (at least one; `None` is time alone).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `vectors` is empty.
+    #[must_use]
+    pub fn new(inner: Arc<dyn RouteSetGenerator>, vectors: Vec<Option<Arc<[f64]>>>) -> Self {
+        assert!(!vectors.is_empty(), "a route cost has at least one vector");
+        Self { inner, vectors, prepared: None }
+    }
+
+    fn cost_name(&self) -> String {
+        let mut h = Fnv1a::new();
+        h.write_u64(self.vectors.len() as u64);
+        for v in &self.vectors {
+            match v {
+                None => h.write_bool(false),
+                Some(e) => {
+                    h.write_bool(true);
+                    h.write_u64(e.len() as u64);
+                    e.iter().for_each(|&x| h.write_u64(x.to_bits()));
+                }
+            }
+        }
+        format!("given:{:016x}", h.finish())
+    }
+
+    fn prepare(&self, ctx: &SearchContext<'_>) -> Vec<Option<Extras>> {
+        self.vectors.iter().map(|v| v.as_ref().map(|e| ctx.extras(e.to_vec()))).collect()
+    }
+
+    /// The routes of each vector merged into one set (see the type's docs).
+    fn merge(ctx: &SearchContext<'_>, first: Option<&Extras>, per: Vec<Vec<Route>>) -> Vec<Route> {
+        if per.len() == 1 {
+            return per.into_iter().next().unwrap_or_default();
+        }
+        // As many as the largest, and room for every vector's least-cost route.
+        let deepest = per.iter().map(Vec::len).max().unwrap_or(0);
+        let size = deepest.max(per.iter().filter(|r| !r.is_empty()).count());
+        let mut set: Vec<Route> = Vec::with_capacity(size);
+        'ranks: for rank in 0..deepest {
+            for routes in &per {
+                if set.len() >= size {
+                    break 'ranks;
+                }
+                if let Some(r) = routes.get(rank) {
+                    if !set.iter().any(|k| k.links == r.links) {
+                        set.push(r.clone());
+                    }
+                }
+            }
+        }
+        sort_best_first_by(&mut set, |r| generalised_route(ctx, first, &r.links));
+        set
+    }
+}
+
+impl RouteSetGenerator for ByCost {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn descriptor(&self) -> String {
+        format!("{};cost={}", self.inner.descriptor(), self.cost_name())
+    }
+
+    fn generate(&self, search: &mut Search<'_>, origin: NodeId, destination: NodeId) -> Vec<Route> {
+        let ctx = search.context();
+        let owned;
+        let prepared = if let Some(p) = &self.prepared {
+            p
+        } else {
+            owned = self.prepare(ctx);
+            &owned
+        };
+        let per: Vec<Vec<Route>> = prepared
+            .iter()
+            .map(|e| {
+                search.set_base_extras(e.clone());
+                self.inner.generate(search, origin, destination)
+            })
+            .collect();
+        search.set_base_extras(None);
+        Self::merge(ctx, prepared[0].as_ref(), per)
+    }
+
+    fn searches_trees(&self) -> bool {
+        self.inner.searches_trees()
+    }
+
+    fn generate_from(
+        &self,
+        search: &mut Search<'_>,
+        origin: NodeId,
+        destinations: &[NodeId],
+    ) -> Vec<Vec<Route>> {
+        let ctx = search.context();
+        let owned;
+        let prepared = if let Some(p) = &self.prepared {
+            p
+        } else {
+            owned = self.prepare(ctx);
+            &owned
+        };
+        let mut per: Vec<Vec<Vec<Route>>> = prepared
+            .iter()
+            .map(|e| {
+                search.set_base_extras(e.clone());
+                self.inner.generate_from(search, origin, destinations)
+            })
+            .collect();
+        search.set_base_extras(None);
+        (0..destinations.len())
+            .map(|i| {
+                let of_pair: Vec<Vec<Route>> =
+                    per.iter_mut().map(|sets| std::mem::take(&mut sets[i])).collect();
+                Self::merge(ctx, prepared[0].as_ref(), of_pair)
+            })
+            .collect()
+    }
+
+    fn reads_demand(&self) -> bool {
+        self.inner.reads_demand()
+    }
+
+    fn with_demand(&self, demand: &Demand<'_>) -> Option<Box<dyn RouteSetGenerator>> {
+        let inner = self.inner.with_demand(demand)?;
+        Some(Box::new(Self { inner: Arc::from(inner), ..self.clone() }))
+    }
+
+    fn with_context(&self, ctx: &SearchContext<'_>) -> Option<Box<dyn RouteSetGenerator>> {
+        let inner = self.inner.with_context(ctx).map_or_else(|| self.inner.clone(), Arc::from);
+        Some(Box::new(Self {
+            inner,
+            vectors: self.vectors.clone(),
+            prepared: Some(self.prepare(ctx)),
+        }))
     }
 }
 

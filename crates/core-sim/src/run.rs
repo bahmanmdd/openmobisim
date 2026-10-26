@@ -72,7 +72,7 @@ use crate::prices::{PreparedPrices, Prices};
 use crate::reroute::Rerouter;
 use crate::route_cache::{RouteSetCache, generation_key};
 use crate::route_choice::{self, NO_ROUTE, RouteChoices};
-use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext, make_room};
+use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext, make_room, make_room_by};
 use crate::timings::{Stage, Timings};
 use crate::transit::{TransitResult, TransitSetup, par_map};
 use crate::trees::SearchTrees;
@@ -1041,15 +1041,27 @@ impl Run {
         )
     }
 
-    /// The route method with the extras it asked for, if any (S298): its descriptor, and so the
-    /// run's fingerprint and the route cache's key, then name them.
+    /// The route method with the extras it asked for, if any (S298), or, for a method searching
+    /// by time, made to search by the run's route cost where it is not time alone (S299,
+    /// [`openmobisim_core_routes::ByCost`]): its descriptor, and so the run's fingerprint and the
+    /// route cache's key, then name them.
     fn keyed_generator(&self, link_values: &PreparedLinkValues) -> Arc<dyn RouteSetGenerator> {
         match self.route_generator.extras_wanted().map(|r| self.compose_extras(r, link_values)) {
             Some(extras) => self
                 .route_generator
                 .with_extras(extras)
                 .map_or_else(|| self.route_generator.clone(), Arc::from),
-            None => self.route_generator.clone(),
+            None => {
+                let cost = self.road_cost(link_values);
+                if cost.is_time_only() {
+                    self.route_generator.clone()
+                } else {
+                    Arc::new(openmobisim_core_routes::ByCost::new(
+                        self.route_generator.clone(),
+                        cost.vectors().to_vec(),
+                    ))
+                }
+            }
         }
     }
 
@@ -1779,6 +1791,7 @@ impl Run {
                             &trip_keys,
                             &kept_routes,
                             1,
+                            &road_cost,
                         );
                         increment_added += added;
                         route_sets = Arc::new(grown);
@@ -1964,6 +1977,7 @@ impl Run {
                                 &trip_keys,
                                 &kept_routes,
                                 next,
+                                &road_cost,
                             );
                             report.routes_added = added;
                             route_sets = Arc::new(grown);
@@ -3727,6 +3741,7 @@ fn grow_sets(
     trip_keys: &[RouteKey],
     kept: &[bool],
     stamp: u32,
+    cost: &RouteCost,
 ) -> (RouteSets, u32) {
     let count = |a: &[(usize, Vec<Route>)]| {
         u32::try_from(a.iter().map(|(_, r)| r.len()).sum::<usize>()).expect("few routes are added")
@@ -3736,8 +3751,27 @@ fn grow_sets(
     };
     match update.max_routes() {
         Some(max) if overflows(max) => {
-            let removed =
-                make_room(sets, &mut additions, &choices.route, &choices.weight, kept, max);
+            let removed = if cost.is_time_only() {
+                make_room(sets, &mut additions, &choices.route, &choices.weight, kept, max)
+            } else {
+                // By the route cost (S299): each route's free-flow time plus its extras.
+                let of = |v: usize, r: usize| {
+                    let view = sets.route(r);
+                    #[allow(clippy::cast_possible_truncation, reason = "few vectors")]
+                    let v = v as u32;
+                    f64::from(view.cost) + cost.route_extra(v, view.links)
+                };
+                make_room_by(
+                    sets,
+                    &mut additions,
+                    &choices.route,
+                    &choices.weight,
+                    kept,
+                    max,
+                    cost.vector_count(),
+                    &of,
+                )
+            };
             let added = count(&additions);
             let (grown, map) =
                 sets.revised(network, &additions, &removed, stamp, &update.descriptor());

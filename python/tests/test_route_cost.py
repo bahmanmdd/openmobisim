@@ -34,3 +34,33 @@ def test_a_priced_run_names_its_route_cost_in_the_fingerprint() -> None:
 def test_a_bad_most_vectors_is_refused() -> None:
     with pytest.raises(ValueError, match="max_cost_vectors"):
         _scenario(max_cost_vectors=0)
+
+
+def test_a_toll_changes_the_routes_generated_and_names_the_cost() -> None:
+    net = ms.examples.manhattan_grid(n=6, block_metres=200.0, signals=False)
+    rows = ms.examples.trips_random(net, 60, seed=5, min_m=600.0, max_m=2000.0, spread_s=900)
+
+    def sets(**options: object) -> ms._core.RouteSets:
+        return (
+            ms.Scenario.from_parts(
+                net,
+                rows,
+                classes={"driver": (True, False, False)},
+                choice_model="logit",
+                route_method="penalty",
+                equilibration="free_flow",
+                **options,
+            )
+            .run("rc-toll", quiet=True, overwrite=True)
+            .route_sets()
+        )
+
+    toll = {"road": {"toll_eur": [1.0 if i % 3 == 0 else 0.0 for i in range(net.link_count)]}}
+    a, b = sets(), sets(link_values=toll)
+    assert a.method == b.method == "penalty", "the method keeps its name"
+    assert ";cost=given:" in b.descriptor and ";cost=" not in a.descriptor
+    assert a.key_count == b.key_count
+    changed = sum(
+        [list(r) for r in a.routes(k)] != [list(r) for r in b.routes(k)] for k in range(a.key_count)
+    )
+    assert changed > 0, "a euro on every third link (six minutes at the defaults) moves some sets"

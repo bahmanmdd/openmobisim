@@ -7,7 +7,7 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::{Route, RouteKey, RouteSets, Shortest};
-use openmobisim_core_sim::route_update::make_room;
+use openmobisim_core_sim::route_update::{make_room, make_room_by};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
@@ -74,4 +74,32 @@ fn a_route_an_itinerary_trip_drives_is_kept() {
     let removed = make_room(&sets, &mut additions, &[0], &[1], &kept, 2);
     assert!(removed.iter().all(|&r| !r), "nothing removed: every route is in use");
     assert!(additions.is_empty(), "the addition is dropped instead");
+}
+
+/// **By the route cost** (S299): with no route in use, a set at its limit keeps the cheapest
+/// route of every coefficient vector. One vector whose extras make route 1 the cheaper: route 0,
+/// the free-flow shortest in time, is the one dropped; two vectors, each with its own cheapest:
+/// nothing can go, and the addition is dropped.
+#[test]
+fn a_set_keeps_the_cheapest_route_of_every_coefficient_vector() {
+    let sets = sets();
+    let time = |r: usize| f64::from(sets.route(r).cost);
+    // Route 1 cheaper under vector 0: a toll of 1000 s on route 0.
+    let tolled = |_: usize, r: usize| time(r) + if r == 0 { 1000.0 } else { 0.0 };
+    let mut additions = addition();
+    let removed = make_room_by(&sets, &mut additions, &[], &[], &[], 2, 1, &tolled);
+    assert_eq!(removed, vec![true, false], "the tolled route goes, the cheapest stays");
+    // Vector 1 by time alone: its cheapest is route 0, vector 0's is route 1.
+    let both = |v: usize, r: usize| if v == 0 { tolled(v, r) } else { time(r) };
+    let mut additions = addition();
+    let removed = make_room_by(&sets, &mut additions, &[], &[], &[], 2, 2, &both);
+    assert!(removed.iter().all(|&r| !r), "each route is a vector's cheapest");
+    assert!(additions.is_empty());
+    // One vector by time: make_room itself.
+    let (mut a, mut b) = (addition(), addition());
+    assert_eq!(
+        make_room_by(&sets, &mut a, &[], &[], &[], 2, 1, &|_, r| time(r)),
+        make_room(&sets, &mut b, &[], &[], &[], 2)
+    );
+    assert_eq!(a, b);
 }
