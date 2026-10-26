@@ -60,7 +60,7 @@
 //! query and a search per journey. Parallel in fixed chunks, so results never depend on
 //! the thread count.
 //!
-//! **Timetable searches are kept** ([`KeptSearches`]): the timetable a run plans on is the
+//! **Timetable searches are kept** (`KeptSearches`): the timetable a run plans on is the
 //! same in every choice, so a trip's plain transit journeys are searched once per run, its
 //! journeys back to a parking once per parking, and its journeys out of a parking again only
 //! when it reaches the parking at another second (the drive or the time to park changed) or
@@ -585,7 +585,7 @@ impl KeptFor<'_> {
     }
 }
 
-/// What the kept searches of a run came to: see [`Itineraries::timetable_searches`].
+/// What the kept searches of a run came to: see `Itineraries::timetable_searches`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TimetableSearches {
     /// RAPTOR queries the planning made, by kind: plain transit, out of a parking, back to one.
