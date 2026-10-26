@@ -414,7 +414,7 @@ fn updates_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
     assert!(route_update::update("best_response", &none).unwrap().is_active());
     let e = route_update::update("nope", &none).err().expect("unknown");
     assert!(matches!(e, RouteUpdateError::UnknownUpdate { .. }));
-    assert!(e.to_string().contains("none, least_cost, sampled"), "{e}");
+    assert!(e.to_string().contains("none, least_cost, doubly_stochastic"), "{e}");
     let e = route_update::update("best_response", &options(&[("nope", 1.0)])).err().unwrap();
     assert!(e.to_string().contains("max_routes, searches"), "{e}");
     let e = route_update::update("none", &options(&[("searches", 1.0)])).err().unwrap();
@@ -1399,12 +1399,19 @@ fn a_toll_makes_the_column_generation_add_the_route_cheapest_in_its_class_s_cost
     }
 }
 
-/// **The public name** (S299): `least_cost` selects the column generation internally named
-/// `best_response`, with the same name and descriptor; the internal name is still accepted.
+/// **The public names** (S299): `least_cost` selects the column generation internally named
+/// `best_response`, and `doubly_stochastic` the update internally named `sampled`, each with the
+/// same name and descriptor; the internal names are still accepted.
 #[test]
-fn least_cost_selects_the_column_generation_with_its_descriptor() {
-    let a = route_update::update("best_response", &options(&[])).unwrap();
-    let b = route_update::update("least_cost", &options(&[])).unwrap();
-    assert_eq!((a.name(), a.descriptor()), (b.name(), b.descriptor()));
+fn the_public_names_select_the_updates_with_their_descriptors() {
+    for (internal, public) in route_update::PUBLIC_NAMES {
+        let a = route_update::update(internal, &options(&[])).unwrap();
+        let b = route_update::update(public, &options(&[])).unwrap();
+        assert_eq!((a.name(), a.descriptor()), (b.name(), b.descriptor()), "{public}");
+        assert_eq!(a.name(), internal);
+        let named = (route_update::public_name(internal), route_update::internal_name(public));
+        assert_eq!(named, (public, internal));
+    }
     assert_eq!(route_update::public_name("best_response"), "least_cost");
+    assert_eq!(route_update::public_name("sampled"), "doubly_stochastic");
 }

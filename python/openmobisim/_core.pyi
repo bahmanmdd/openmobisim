@@ -964,7 +964,7 @@ class RunSummary:
     route_sets: RouteSets
     #: Which route each trip took, out of how many.
     route_choices: RouteChoices
-    #: The bike route sets, with ``bike_route_choice="sampled"``; ``None`` otherwise.
+    #: The bike route sets, with ``bike_route_choice="doubly_stochastic"``; ``None`` otherwise.
     bike_route_sets: RouteSets | None
     #: Each stated bike trip's route among its set; ``None`` without bike route sets.
     bike_route_choices: RouteChoices | None
@@ -1146,9 +1146,10 @@ def run_pipeline(
             ``"sra"`` also ``eta_fell``, ``eta_rose``).
         route_update: How the route sets grow between iterations: a name from
             :func:`route_update_methods` (``"none"``, the default, leaves them as the method made
-            them; ``"best_response"`` adds each pair's fastest route at the congested times).
+            them; ``"least_cost"`` adds each pair's least-cost route at the congested times;
+            ``"doubly_stochastic"`` adds perturbed candidates beside it).
         route_update_options: The update's options, numbers by name (for
-            ``"best_response"``: ``searches``, ``max_routes``, ``slack``).
+            ``"least_cost"``: ``searches``, ``max_routes``, ``slack``).
         route_cache: Keep the generated route sets for the next run of this process that asks for
             the same (same network, pairs, method and, for a method that reads it, demand).
         choice_detour_limit: Offer a traveller only the routes whose expected time is within this
@@ -1159,9 +1160,11 @@ def run_pipeline(
             beyond, classes are grouped to the nearest by value of time (``2``).
         bike_cost: ``"utility"`` (the default), ``"dedicated"`` or ``"time"``: how bike trips
             choose their route on the bike layer.
-        bike_route_choice: ``"shortest"`` (one route per pair, as before) or ``"sampled"``
-            (bike route sets by the sampled method, chosen through the choice model).
-        bike_route_options: The sampled method's options for the bike layer, numbers by name.
+        bike_route_choice: ``"shortest"`` (one route per pair) or ``"doubly_stochastic"`` (bike
+            route sets by the doubly stochastic method, chosen through the choice model;
+            ``"sampled"``, its old name, is still accepted).
+        bike_route_options: The doubly stochastic method's options for the bike layer, numbers by
+            name.
         transit: The timetable for the ``"transit"`` trips; its buses ride this
             network's roads with ``transit_options`` ``buses_on_roads`` 1, else keep to the
             timetable.

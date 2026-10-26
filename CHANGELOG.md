@@ -69,11 +69,12 @@ still reported.
   `"time"` stay. The bike route choice now fills `bike_lane_km` and `bike_separated_km`.
 - **Renamed, the old names still accepted with a `DeprecationWarning` and the same fingerprint:** `route_method`
   `"penalty"` → `"link_penalty"`, `"montecarlo"` → `"simulation"`, `"sampled"` → `"doubly_stochastic"`;
-  `route_update` `"best_response"` → `"least_cost"`; `PenaltyOptions` → `LinkPenaltyOptions`,
+  `route_update` `"best_response"` → `"least_cost"`, `"sampled"` → `"doubly_stochastic"`; `bike_route_choice`
+  `"sampled"` → `"doubly_stochastic"`; `PenaltyOptions` → `LinkPenaltyOptions`,
   `MonteCarloOptions` → `SimulationOptions`, `BestResponseOptions` → `LeastCostOptions`. A run's manifest and route
   sets keep the internal names. `parameters()` lists the groups by the new names.
-- The sampled method and update keep and order their routes by the generalised cost they were searched by, no longer
-  by travel time.
+- The doubly stochastic method and update keep and order their routes by the generalised cost they were searched by,
+  no longer by travel time.
 
 ## 0.1.0 — 2026-10-20
 

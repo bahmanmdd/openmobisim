@@ -454,7 +454,7 @@ pub struct PyRunSummary {
     /// Which route each trip took, out of how many.
     #[pyo3(get)]
     pub route_choices: Option<Py<PyRouteChoices>>,
-    /// The bike route sets (S298), with `bike_route_choice="sampled"`; `None` otherwise.
+    /// The bike route sets (S298), with `bike_route_choice="doubly_stochastic"`; `None` otherwise.
     #[pyo3(get)]
     pub bike_route_sets: Option<Py<PyRouteSets>>,
     /// Each stated bike trip's route among its set (S298); `None` without bike route sets.
@@ -1210,15 +1210,17 @@ pub fn run_pipeline(
     }
     run = run.with_max_cost_vectors(max_cost_vectors);
     // Bike route sets (S298): an option; "shortest" is every run's one route per pair.
+    // "sampled", the old name of "doubly_stochastic" (S299), selects the same.
     match bike_route_choice {
         "shortest" => {
             if bike_route_options.is_some() {
                 return Err(PyValueError::new_err(
-                    "bike_route_options are the sampled method's: give bike_route_choice=\"sampled\"",
+                    "bike_route_options are the doubly stochastic method's: give \
+                     bike_route_choice=\"doubly_stochastic\"",
                 ));
             }
         }
-        "sampled" => {
+        "doubly_stochastic" | "sampled" => {
             let generator =
                 openmobisim_core_routes::Sampled::from_options(&to_options(bike_route_options))
                     .map_err(to_value_error)?;
@@ -1226,7 +1228,7 @@ pub fn run_pipeline(
         }
         other => {
             return Err(PyValueError::new_err(format!(
-                "bike_route_choice must be \"shortest\" or \"sampled\", got {other:?}"
+                "bike_route_choice must be \"shortest\" or \"doubly_stochastic\", got {other:?}"
             )));
         }
     }

@@ -1,4 +1,4 @@
-"""Bike route sets and the bike route choice (S298): ``Scenario(bike_route_choice="sampled")``.
+"""Bike route sets and the bike route choice (S298): ``bike_route_choice="doubly_stochastic"``.
 
 A bike trip has one route by default; with the option its pair has a sampled set of routes on
 the bike layer, the trip chooses one through the choice model, and a trip choosing its mode is
@@ -55,7 +55,7 @@ def test_sampled_bike_route_sets_give_bikes_a_choice_and_leave_the_car_alone():
     net = grid()
     trips = rows(net, 40, "bike") + rows(net, 20, "car", seed=9)
     plain = run(net, trips, "bike-sets-plain", BOTH)
-    sampled = run(net, trips, "bike-sets", BOTH, bike_route_choice="sampled")
+    sampled = run(net, trips, "bike-sets", BOTH, bike_route_choice="doubly_stochastic")
     sets = sampled.bike_route_sets()
     assert sets is not None and sets.method == "sampled"
     assert sets.route_count > sets.key_count, "several routes for some pair"
@@ -69,10 +69,12 @@ def test_sampled_bike_route_sets_give_bikes_a_choice_and_leave_the_car_alone():
     assert plain.route_sets().route_count == sampled.route_sets().route_count
     assert np.array_equal(plain.route_choices().route, sampled.route_choices().route)
     assert plain.fingerprint != sampled.fingerprint
-    assert (
-        sampled.fingerprint
-        == run(net, trips, "bike-sets-again", BOTH, bike_route_choice="sampled").fingerprint
-    )
+    again = run(net, trips, "bike-sets-again", BOTH, bike_route_choice="doubly_stochastic")
+    assert sampled.fingerprint == again.fingerprint
+    # The old name selects the same, with a warning and the same fingerprint.
+    with pytest.warns(DeprecationWarning, match='"doubly_stochastic"'):
+        old = run(net, trips, "bike-sets-old", BOTH, bike_route_choice="sampled")
+    assert old.fingerprint == sampled.fingerprint
     # The summary of a stated-bike run holds the car's numbers only.
     assert sampled.route_set_summary()["pairs"] == plain.route_set_summary()["pairs"]
 
@@ -82,7 +84,7 @@ def test_bike_route_options_are_the_sampled_method_s_and_are_checked():
     trips = rows(net, 10, "bike")
     with pytest.raises(ValueError, match="bike_route_choice"):
         run(net, trips, "bike-bad", BIKES, bike_route_choice="penalty")
-    with pytest.raises(ValueError, match="sampled"):
+    with pytest.raises(ValueError, match="doubly_stochastic"):
         run(net, trips, "bike-opts-plain", BIKES, bike_route_options={"draws": 2})
     with pytest.raises(ValueError, match="draws"):
         run(
@@ -90,7 +92,7 @@ def test_bike_route_options_are_the_sampled_method_s_and_are_checked():
             trips,
             "bike-opts-bad",
             BIKES,
-            bike_route_choice="sampled",
+            bike_route_choice="doubly_stochastic",
             bike_route_options={"draws": 99},
         )
     with pytest.raises(ValueError, match="nope"):
@@ -99,11 +101,16 @@ def test_bike_route_options_are_the_sampled_method_s_and_are_checked():
             trips,
             "bike-opts-unknown",
             BIKES,
-            bike_route_choice="sampled",
+            bike_route_choice="doubly_stochastic",
             bike_route_options={"nope": 1},
         )
     one = run(
-        net, trips, "bike-one", BIKES, bike_route_choice="sampled", bike_route_options={"draws": 0}
+        net,
+        trips,
+        "bike-one",
+        BIKES,
+        bike_route_choice="doubly_stochastic",
+        bike_route_options={"draws": 0},
     )
     sets = one.bike_route_sets()
     assert sets.route_count == sets.key_count, (
@@ -117,7 +124,9 @@ def test_mode_choice_offers_every_bike_route():
     trips = rows(net, 40, None)
     settings = {"modes": ["bike", "walk"], "mode_options": {"walk_max_s": 7200, "bike_max_s": 7200}}
     plain = run(net, trips, "bike-modes-plain", BIKES, **settings)
-    sampled = run(net, trips, "bike-modes", BIKES, bike_route_choice="sampled", **settings)
+    sampled = run(
+        net, trips, "bike-modes", BIKES, bike_route_choice="doubly_stochastic", **settings
+    )
     alternatives = lambda r: int(r.itinerary_choices()["alternatives"].max())  # noqa: E731
     assert alternatives(plain) == 2, "one bike route and the walk"
     assert alternatives(sampled) > 2, "several bike routes and the walk"

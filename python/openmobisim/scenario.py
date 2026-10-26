@@ -52,9 +52,9 @@ PRESETS: dict[str, dict[str, dict[str, float]]] = {
 #: volume-delay times); 2, 3 and 4 are the link transmission
 #: model as a point queue, a spatial queue and the full triangular diagram.
 FLOW_LEVELS = (0, 1, 2, 3, 4)
-#: How a bike trip gets its route (S298): one shortest route per pair, or a sampled set it
-#: chooses from.
-BIKE_ROUTE_CHOICES = ("shortest", "sampled")
+#: How a bike trip gets its route (S298): one shortest route per pair, or a doubly stochastic set
+#: it chooses from.
+BIKE_ROUTE_CHOICES = ("shortest", "doubly_stochastic")
 #: Each flow level's name, as figures and pages write it (C3, P-14: one place).
 LEVEL_NAMES = {0: "free flow", 1: "static", 2: "point queue", 3: "spatial queue", 4: "full"}
 #: The equilibration strategies of the static assignment alone (S294).
@@ -159,14 +159,16 @@ def _window(window: Any) -> tuple[int | None, int | None]:
 
 BIKE_COSTS = ("utility", "dedicated", "time")
 
-#: Route methods and updates renamed (S299), old name to new: the old names are still accepted,
-#: with a ``DeprecationWarning``; both select the same method, with the same fingerprint.
+#: Route methods, updates and the bike route choice renamed (S299), old name to new: the old names
+#: are still accepted, with a ``DeprecationWarning``; both select the same method, with the same
+#: fingerprint.
 RENAMED_ROUTE_METHODS = {
     "penalty": "link_penalty",
     "montecarlo": "simulation",
     "sampled": "doubly_stochastic",
 }
-RENAMED_ROUTE_UPDATES = {"best_response": "least_cost"}
+RENAMED_ROUTE_UPDATES = {"best_response": "least_cost", "sampled": "doubly_stochastic"}
+RENAMED_BIKE_ROUTE_CHOICES = {"sampled": "doubly_stochastic"}
 
 
 def _renamed(argument: str, value: str | None, renamed: dict[str, str]) -> None:
@@ -450,15 +452,18 @@ class Scenario:
             } or None
         _renamed("route_method", route_method, RENAMED_ROUTE_METHODS)
         _renamed("route_update", route_update, RENAMED_ROUTE_UPDATES)
+        _renamed("bike_route_choice", bike_route_choice, RENAMED_BIKE_ROUTE_CHOICES)
+        bike_route_choice = RENAMED_BIKE_ROUTE_CHOICES.get(bike_route_choice, bike_route_choice)
         if bike_cost not in BIKE_COSTS:
             raise ValueError(f"bike_cost must be one of {BIKE_COSTS}, got {bike_cost!r}")
         if bike_route_choice not in BIKE_ROUTE_CHOICES:
             raise ValueError(
                 f"bike_route_choice must be one of {BIKE_ROUTE_CHOICES}, got {bike_route_choice!r}"
             )
-        if bike_route_options is not None and bike_route_choice != "sampled":
+        if bike_route_options is not None and bike_route_choice != "doubly_stochastic":
             raise ValueError(
-                'bike_route_options are the sampled method\'s: give bike_route_choice="sampled"'
+                "bike_route_options are the doubly stochastic method's: give "
+                'bike_route_choice="doubly_stochastic"'
             )
         if trips is not None:
             trips = _trips_checked(trips)
@@ -863,9 +868,9 @@ class Scenario:
                 calibration.
             bike_route_choice: Whether a bike trip has a **choice of routes** (an option, never
                 a default). ``"shortest"`` (the default): one route per pair, the least-cost
-                route under ``bike_cost``, as before. ``"sampled"``: the ``"sampled"`` route
-                method (see ``route_method``) makes a set of routes per pair on the bike layer,
-                the generalised cost of each class including its coefficients on
+                route under ``bike_cost``. ``"doubly_stochastic"``: the ``"doubly_stochastic"``
+                route method (see ``route_method``) makes a set of routes per pair on the bike
+                layer, the generalised cost of each class including its coefficients on
                 ``bike_mixed_km``, ``length_km`` and money; every bike trip with a stated mode
                 then chooses its route once, on the layer's times, through ``choice_model``
                 (with the path size over the routes offered, ``choice_detour_limit`` and
@@ -873,10 +878,11 @@ class Scenario:
                 offered every bike route as an alternative. The run's fingerprint names the
                 option; ``Run.bike_route_sets()`` and ``Run.bike_route_choices()`` show the
                 sets and the choices.
-            bike_route_options: The ``"sampled"`` method's options for the bike layer, numbers by
-                name (``draws``, ``sigma``, ``tau``, ``max_detour``, ``max_overlap``,
+            bike_route_options: The ``"doubly_stochastic"`` method's options for the bike layer,
+                numbers by name (``draws``, ``sigma``, ``tau``, ``max_detour``, ``max_overlap``,
                 ``max_paths``, ``seed``; the same defaults as for car routes). Only with
-                ``bike_route_choice="sampled"``.
+                ``bike_route_choice="doubly_stochastic"``. The old name ``"sampled"`` is still
+                accepted, with a ``DeprecationWarning``.
             route_cache: Keep the generated route sets in memory for the next run **of this
                 process** that asks for the same: the same network, the same origin-destination
                 pairs, the same route method and options and, for a method that reads the demand
@@ -986,16 +992,18 @@ class Scenario:
                 gridlock it can make a run worse. **The equilibrium is then over the sets the
                 route method and the update produce**, which the run's fingerprint and
                 manifest say.
-                ``"sampled"`` (an option, never a default) makes the same column generation as
-                ``"least_cost"`` and, beside it, after each loading, ``draws`` perturbed
-                searches per origin, departure bin and user class at the congested times, by
-                the class's generalised cost (as ``route_method="doubly_stochastic"`` describes, its
-                coefficients drawn again each iteration) with every link's cost multiplied by
-                ``1 + sigma·u``, ``u`` uniform in [0, 1). The route each finds to a pair is
-                added if it is new and its generalised cost at the middle of the departure bin
-                is at most ``max_detour`` times the set's best there; never to a full set.
+                ``"doubly_stochastic"`` (an option, never a default) makes the same column
+                generation as ``"least_cost"`` and, beside it, after each loading, ``draws``
+                perturbed searches per origin, departure bin and user class at the congested
+                times, by the class's generalised cost (as ``route_method="doubly_stochastic"``
+                describes, its coefficients drawn again each iteration) with every link's cost
+                multiplied by ``1 + sigma·u``, ``u`` uniform in [0, 1). The route each finds to a
+                pair is added if it is new and its generalised cost at the middle of the
+                departure bin is at most ``max_detour`` times the set's best there; never to a
+                full set.
                 The sets then hold routes that are competitive, not only ones that were once
-                the fastest.
+                the fastest. The old name ``"sampled"`` is still accepted, with a
+                ``DeprecationWarning``.
             route_update_options: The update's options, numbers by name: for
                 ``"least_cost"``, ``searches`` (1: how many searches per pair per
                 iteration, at spread quantiles of the pair's departures; more finds routes
@@ -1006,8 +1014,8 @@ class Scenario:
                 ``slack`` (0.02: a pair is not searched while its set's best route is within this
                 share of free flow, since nothing is faster than free flow and so at most that
                 much is left to gain).
-                For ``"sampled"``: those three, ``tree_step_s`` (300: the length in seconds
-                of the departure bins its searches are shared by; it must be above 0 here),
+                For ``"doubly_stochastic"``: those three, ``tree_step_s`` (300: the length in
+                seconds of the departure bins its searches are shared by; it must be above 0 here),
                 and ``draws`` (1: perturbed searches per origin,
                 departure bin and user class each iteration), ``sigma`` (0.5), ``tau`` (0.3),
                 ``max_detour`` (1.5) and ``seed`` (0: another seed is another set of draws).

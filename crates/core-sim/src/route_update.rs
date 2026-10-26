@@ -11,13 +11,13 @@
 //! equilibrium is then over the set the generator and the update rule produce, which is why
 //! the update is part of the run's description.
 //!
-//! Built in:
+//! Built in, by public name (the internal name, still accepted, in brackets; [`PUBLIC_NAMES`]):
 //!
 //! | name | what it does |
 //! |---|---|
 //! | `none` (the default, [`DEFAULT_UPDATE`]) | Nothing: the sets stay as the generator made them, and the run costs nothing extra |
-//! | `sampled` | `best_response` and, beside it, **sampled candidates** (S298): for each of `draws` preference draws per iteration, one perturbed generalised-cost tree per origin, departure bin and user class (the class's extra seconds per link for length, money and user values, drawn around its coefficients; every link's cost times a random factor), whose route to a pair is added if it is new and its cost at the bin's middle, in the class's generalised cost for the draw (its travel time where the class has no extras), is within `max_detour` of the set's best in that cost; never to a full set. The set then holds competitive routes, not only ones that were once the fastest |
-//! | `best_response` | **Column generation**: for every origin–destination pair, the least-cost route at the congested times (the time-dependent least-cost route by each user class's generalised cost, its travel time plus the seconds-equivalent of every per-link term its utility weighs; the fastest route where the utility weighs only time), read from the run's **shared search trees** (one bounded time-dependent search per origin, departure bin and coefficient vector, [`crate::trees`]; S294, S299) or, with `tree_step_s` 0, found by one bounded search per pair at the median departure of the pair's trips; it is **added if it is new and costs no more than the set's best route** in that cost: a tie counts, since an equally good alternative is one more to spread over. A route is a "column" of the route-flow problem; as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
+//! | `doubly_stochastic` (`sampled`) | `least_cost` and, beside it, **doubly stochastic candidates** (S298): for each of `draws` preference draws per iteration, one perturbed generalised-cost tree per origin, departure bin and user class (the class's extra seconds per link for length, money and user values, drawn around its coefficients; every link's cost times a random factor), whose route to a pair is added if it is new and its cost at the bin's middle, in the class's generalised cost for the draw (its travel time where the class has no extras), is within `max_detour` of the set's best in that cost; never to a full set. The set then holds competitive routes, not only ones that were once the fastest |
+//! | `least_cost` (`best_response`) | **Column generation**: for every origin–destination pair, the least-cost route at the congested times (the time-dependent least-cost route by each user class's generalised cost, its travel time plus the seconds-equivalent of every per-link term its utility weighs; the fastest route where the utility weighs only time), read from the run's **shared search trees** (one bounded time-dependent search per origin, departure bin and coefficient vector, [`crate::trees`]; S294, S299) or, with `tree_step_s` 0, found by one bounded search per pair at the median departure of the pair's trips; it is **added if it is new and costs no more than the set's best route** in that cost: a tie counts, since an equally good alternative is one more to spread over. A route is a "column" of the route-flow problem; as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
 //!
 //! **What `best_response` costs.** With the shared trees (the default) nothing is searched: the
 //! run builds the trees for its gap and the update reads each pair's route off its tree, at the
@@ -81,9 +81,11 @@ pub const REPLACE_GAIN_S: f64 = 1.0;
 pub const DEFAULT_UPDATE: &str = "none";
 
 /// The built-in updates' public names, by internal name (S299): `least_cost` selects the
-/// column generation, whose internal name (`best_response`) stays its name and the head of its
-/// descriptor, so no fingerprint changes. The internal name is still accepted.
-pub const PUBLIC_NAMES: [(&str, &str); 1] = [("best_response", "least_cost")];
+/// column generation and `doubly_stochastic` the column generation with doubly stochastic
+/// candidates, whose internal names (`best_response`, `sampled`) stay their names and the heads
+/// of their descriptors, so no fingerprint changes. The internal names are still accepted.
+pub const PUBLIC_NAMES: [(&str, &str); 2] =
+    [("best_response", "least_cost"), ("sampled", "doubly_stochastic")];
 
 /// The public name of the update called `internal` (itself where it has no other).
 #[must_use]
@@ -765,8 +767,9 @@ fn cost_candidates(
     out
 }
 
-/// The sampled update (S298): the best response, and beside it candidates drawn on the
-/// congested **generalised** costs. See the [module docs](self).
+/// The doubly stochastic update (`doubly_stochastic`, internally `sampled`; S298): the column
+/// generation, and beside it candidates drawn on the congested **generalised** costs, both the
+/// class's coefficients and the link costs drawn at random. See the [module docs](self).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sampled {
     /// The best-response part: its `searches`, `max_routes`, `slack` and `tree_step_s` (above 0:
@@ -1260,7 +1263,7 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// The built-in updates: `none`, `best_response` and `sampled`.
+    /// The built-in updates, by their internal names: `none`, `best_response` and `sampled`.
     #[must_use]
     pub fn builtin() -> Self {
         let mut r = Self { updates: Vec::new() };

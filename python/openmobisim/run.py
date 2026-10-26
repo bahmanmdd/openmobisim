@@ -355,7 +355,8 @@ class Run:
         """The name of the route update that grew the route sets between iterations.
 
         ``"none"`` (the sets stayed as the route method made them), ``"best_response"`` (the
-        internal name of ``"least_cost"``, column generation) or ``"sampled"``.
+        internal name of ``"least_cost"``, column generation) or ``"sampled"`` (the internal name
+        of ``"doubly_stochastic"``).
         """
         return self._summary.route_update
 
@@ -782,10 +783,11 @@ class Run:
         return self._summary.route_choices
 
     def bike_route_sets(self) -> _core.RouteSets | None:
-        """The bike route sets, with ``Scenario(bike_route_choice="sampled")``; ``None`` otherwise.
+        """The bike route sets, with ``bike_route_choice="doubly_stochastic"``; ``None`` otherwise.
 
         One set per pair of bike-layer nodes, made once per run on the layer's static costs
-        by the sampled method; the first route of a set is the least-cost one.
+        by the doubly stochastic method (its internal name, the sets' ``method``, is
+        ``"sampled"``); the first route of a set is the least-cost one.
         """
         return self._summary.bike_route_sets
 

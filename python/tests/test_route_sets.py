@@ -294,7 +294,7 @@ def one_loading(net, rows, name, **kwargs):
 
 def test_sampled_is_a_method_and_an_update_that_can_be_selected():
     assert "doubly_stochastic" in ms.route_methods()
-    assert "sampled" in ms.route_update_methods()
+    assert "doubly_stochastic" in ms.route_update_methods()
 
 
 def test_a_sampled_run_routes_and_names_the_method_with_every_option():

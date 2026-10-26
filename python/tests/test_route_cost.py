@@ -73,6 +73,8 @@ def test_a_toll_changes_the_routes_generated_and_names_the_cost() -> None:
         ("montecarlo", "simulation", "route_method"),
         ("sampled", "doubly_stochastic", "route_method"),
         ("best_response", "least_cost", "route_update"),
+        ("sampled", "doubly_stochastic", "route_update"),
+        ("sampled", "doubly_stochastic", "bike_route_choice"),
     ],
 )
 def test_an_old_name_warns_and_selects_the_same_method(old: str, new: str, argument: str) -> None:

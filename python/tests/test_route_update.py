@@ -51,7 +51,7 @@ def go(name, **kwargs):
 
 
 def test_the_updates_are_listed_with_the_default_first():
-    assert ms.route_update_methods() == ["none", "least_cost", "sampled"]
+    assert ms.route_update_methods() == ["none", "doubly_stochastic", "least_cost"]
 
 
 def test_without_an_update_nothing_is_added_and_the_sets_are_the_methods():
@@ -242,7 +242,7 @@ SAMPLED = (
 
 def test_the_sampled_update_grows_the_sets_and_says_so_everywhere():
     best = go("ru-s-best", route_update="best_response")
-    run = go("ru-sampled", route_update="sampled", route_update_options={"draws": 1})
+    run = go("ru-sampled", route_update="doubly_stochastic", route_update_options={"draws": 1})
     c, sets = run.convergence(), run.route_sets()
     assert run.route_update == "sampled"
     assert run.manifest()["route_update"] == "sampled"
@@ -259,7 +259,7 @@ def test_the_sampled_update_grows_the_sets_and_says_so_everywhere():
     assert sets.route_count <= go("ru-s-plain").route_sets().route_count + added
     roomy = go(
         "ru-sampled-32",
-        route_update="sampled",
+        route_update="doubly_stochastic",
         route_update_options={"draws": 1, "max_routes": 32},
     )
     stamps = roomy.route_sets().stamps()
@@ -279,7 +279,7 @@ def test_the_sampled_update_refuses_bad_settings_naming_the_known_ones():
 
     def build(**options):
         return ms.Scenario.from_parts(
-            net, rows, classes=CAR, route_update="sampled", route_update_options=options
+            net, rows, classes=CAR, route_update="doubly_stochastic", route_update_options=options
         ).run("ru-s-bad")
 
     known = "draws, max_detour, max_routes, searches, seed, sigma, slack, tau, tree_step_s"
