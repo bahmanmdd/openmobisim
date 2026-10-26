@@ -157,7 +157,7 @@ def _window(window: Any) -> tuple[int | None, int | None]:
     return start, end
 
 
-BIKE_COSTS = ("dedicated", "time")
+BIKE_COSTS = ("utility", "dedicated", "time")
 
 
 def _check_modes_can_run(modes: list[str], has_transit: bool, has_parkings: bool) -> None:
@@ -385,7 +385,7 @@ class Scenario:
         choice_max_routes: int | None = None,
         max_cost_vectors: int = 2,
         route_cache: bool = False,
-        bike_cost: str = "dedicated",
+        bike_cost: str = "utility",
         bike_route_choice: str = "shortest",
         bike_route_options: dict[str, float] | None = None,
         transit: _core.Transit | None = None,
@@ -583,7 +583,7 @@ class Scenario:
         choice_max_routes: int | None = None,
         max_cost_vectors: int = 2,
         route_cache: bool = False,
-        bike_cost: str = "dedicated",
+        bike_cost: str = "utility",
         bike_route_choice: str = "shortest",
         bike_route_options: dict[str, float] | None = None,
         transit: _core.Transit | None = None,
@@ -816,12 +816,19 @@ class Scenario:
                 ``cost_vectors_grouped`` diagnostic. Where the utility weighs time alone (cars
                 at the defaults: every price 0) every search is by time and this changes
                 nothing. ``2`` by default (uncalibrated: a bound on run time).
-            bike_cost: How bike trips choose their route on the bike layer: ``"dedicated"``
-                (the default) is the fastest route with every minute in mixed traffic
-                counting a little more (1.2 times), so cyclists go a little out of their way
-                for a cycle track or lane; ``"time"`` is the fastest route. Bikes ride at 15
-                km/h in mixed traffic and 18 km/h on dedicated infrastructure; these values
-                and the 1.2 are defaults, not a calibration.
+            bike_cost: How bike trips choose their route on the bike layer: ``"utility"`` (the
+                default) is the least-cost route by the choice model's bike coefficients: the
+                travel time plus the seconds-equivalent of every per-link term the utility
+                weighs (``beta_bike_mixed_km``, each kilometre in mixed traffic, by default; a
+                ferry crossing is not mixed traffic), so the route and the mode are chosen on
+                one utility; a model without coefficients rides the fastest route. Bike routes
+                are one per pair, shared by every class: the coefficients of the class serving
+                the most people are used, and a class with other coefficients is recorded as a
+                ``cost_vectors_grouped`` diagnostic. ``"dedicated"`` is the fastest route with
+                every minute in mixed traffic counting a little more (1.2 times); ``"time"`` is
+                the fastest route. Bikes ride at 15 km/h in mixed traffic and 18 km/h on
+                dedicated infrastructure; these values and the 1.2 are defaults, not a
+                calibration.
             bike_route_choice: Whether a bike trip has a **choice of routes** (an option, never
                 a default). ``"shortest"`` (the default): one route per pair, the least-cost
                 route under ``bike_cost``, as before. ``"sampled"``: the ``"sampled"`` route

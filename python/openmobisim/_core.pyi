@@ -1051,7 +1051,7 @@ def run_pipeline(
     choice_max_routes: int | None = None,
     max_cost_vectors: int = 2,
     route_cache: bool = False,
-    bike_cost: str = "dedicated",
+    bike_cost: str = "utility",
     bike_route_choice: str = "shortest",
     bike_route_options: dict[str, float] | None = None,
     transit: Transit | None = None,
@@ -1157,7 +1157,7 @@ def run_pipeline(
             limit, ``None`` the library's default, 5).
         max_cost_vectors: The most distinct coefficient vectors the route searches are made by;
             beyond, classes are grouped to the nearest by value of time (``2``).
-        bike_cost: ``"dedicated"`` (the default) or ``"time"``: how bike trips
+        bike_cost: ``"utility"`` (the default), ``"dedicated"`` or ``"time"``: how bike trips
             choose their route on the bike layer.
         bike_route_choice: ``"shortest"`` (one route per pair, as before) or ``"sampled"``
             (bike route sets by the sampled method, chosen through the choice model).

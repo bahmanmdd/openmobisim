@@ -162,9 +162,15 @@ pub enum BikeCost {
     Time,
     /// Travel time, with [`StaticLayerDefaults::bike_mixed_cost_factor`] on every
     /// link without dedicated infrastructure: cyclists accept a detour to ride on
-    /// it. **The default**.
-    #[default]
+    /// it.
     Dedicated,
+    /// **The choice model's bike utility** (S299, the default): the travel time plus the
+    /// seconds-equivalent of every per-link term the bike utility weighs (by default
+    /// `beta_bike_mixed_km`, each kilometre in mixed traffic; also length, the kilometres by
+    /// facility and the user's bike link values), composed by the run from its choice model. On
+    /// the layer alone, without a run, the cost is the time.
+    #[default]
+    Utility,
 }
 
 impl BikeCost {
@@ -174,6 +180,7 @@ impl BikeCost {
         match self {
             BikeCost::Time => "time",
             BikeCost::Dedicated => "dedicated",
+            BikeCost::Utility => "utility",
         }
     }
 
@@ -183,6 +190,7 @@ impl BikeCost {
         match name {
             "time" => Some(BikeCost::Time),
             "dedicated" => Some(BikeCost::Dedicated),
+            "utility" => Some(BikeCost::Utility),
             _ => None,
         }
     }
@@ -754,11 +762,11 @@ mod tests {
 
     #[test]
     fn cost_names_round_trip_and_dedicated_is_the_default() {
-        for cost in [BikeCost::Time, BikeCost::Dedicated] {
+        for cost in [BikeCost::Time, BikeCost::Dedicated, BikeCost::Utility] {
             assert_eq!(BikeCost::from_name(cost.as_str()), Some(cost));
         }
         assert_eq!(BikeCost::from_name("fastest"), None);
-        assert_eq!(BikeCost::default(), BikeCost::Dedicated);
+        assert_eq!(BikeCost::default(), BikeCost::Utility);
     }
 
     #[test]

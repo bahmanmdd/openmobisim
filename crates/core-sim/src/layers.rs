@@ -476,6 +476,35 @@ impl BikeRouting {
     }
 }
 
+/// The search costs a run composed for its static layers from the choice model (S299,
+/// [`BikeCost::Utility`]): per link, the travel time plus the extra seconds of the utility's
+/// link-additive terms under the layer's coefficient vector. `None` for a layer whose routes are
+/// searched by its own cost (another bike cost, or a utility that weighs time alone).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UtilityCosts {
+    /// The bike layer's.
+    pub bike: Option<Vec<f64>>,
+    /// The walk layer's.
+    pub walk: Option<Vec<f64>>,
+}
+
+impl UtilityCosts {
+    /// The costs of `layer`, if composed.
+    #[must_use]
+    pub fn of(&self, layer: StaticLayer) -> Option<&[f64]> {
+        match layer {
+            StaticLayer::Bike => self.bike.as_deref(),
+            StaticLayer::Walk => self.walk.as_deref(),
+        }
+    }
+
+    /// The search costs of `layer`: the composed ones, else the layer's own.
+    #[must_use]
+    pub fn costs<'s>(&'s self, layer: StaticLayer, setup: &'s LayerSetup) -> &'s [f64] {
+        self.of(layer).unwrap_or(&setup.costs)
+    }
+}
+
 /// Shortest routes, searched only as far as a bound for the keys only mode-choice trips use
 /// (their walk or ride is offered only up to [`ModeDefaults`]' times, or their class's), in
 /// full for the rest (a trip given the mode takes it at any length).
@@ -586,6 +615,7 @@ impl StaticRoutes {
         also: &dyn Fn(TripId, StaticLayer) -> bool,
         max_seconds: &dyn Fn(TripId, StaticLayer) -> f64,
         bike: &BikeRouting,
+        utility: &UtilityCosts,
     ) -> Self {
         let total = trips.len() as usize;
         let mut route = [vec![StaticRoute::None; total], vec![StaticRoute::None; total]];
@@ -618,11 +648,13 @@ impl StaticRoutes {
                 StaticLayer::Bike => bike.generator(),
                 StaticLayer::Walk => None,
             };
+            // The search costs: a sampled set's own (its extras on the time); the run's utility
+            // cost for the layer where it has one (S299); the layer's cost.
             let costs = match (layer, &sampled) {
                 (StaticLayer::Bike, Some(_)) => bike.search_costs(setup).to_vec(),
-                _ => setup.costs.clone(),
+                _ => utility.of(layer).map_or_else(|| setup.costs.clone(), <[f64]>::to_vec),
             };
-            let ctx = SearchContext::with_costs(graph, &setup.turns, costs);
+            let ctx = SearchContext::with_costs(graph, &setup.turns, costs.clone());
             let layer_sets = if let Some(generator) = sampled {
                 // Sampled bike sets (S298), searched in full: a ride longer than mode choice
                 // offers is left out when its leg is read (`leg`).
@@ -639,8 +671,7 @@ impl StaticRoutes {
                     .map(|(_, &k)| k)
                     .collect();
                 full.sort_unstable();
-                let per_second = setup
-                    .costs
+                let per_second = costs
                     .iter()
                     .zip(&setup.seconds)
                     .filter(|&(c, t)| c.is_finite() && *t > 0.0)
@@ -874,7 +905,14 @@ mod tests {
     }
 
     fn build(layers: &StaticLayers, trips: &Trips, bike: &BikeRouting) -> StaticRoutes {
-        StaticRoutes::build(layers, trips, &|_, _| false, &|_, _| f64::INFINITY, bike)
+        StaticRoutes::build(
+            layers,
+            trips,
+            &|_, _| false,
+            &|_, _| f64::INFINITY,
+            bike,
+            &UtilityCosts::default(),
+        )
     }
 
     fn sampled(generator: Sampled, extras: ClassExtras) -> BikeRouting {

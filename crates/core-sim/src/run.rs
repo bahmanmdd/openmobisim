@@ -961,6 +961,41 @@ impl Run {
         self
     }
 
+    /// The static layers' search costs from the choice model (S299): the bike layer's where its
+    /// bike cost is [`openmobisim_core_graph::layers::BikeCost::Utility`], the walk layer's where
+    /// the walk utility weighs more than time; each the travel time plus the extras of the one
+    /// coefficient vector serving the most people (a layer's routes are one per pair, shared by
+    /// every class). Returns them and how many classes were grouped onto another's vector.
+    fn utility_costs(
+        &self,
+        link_values: &PreparedLinkValues,
+    ) -> (crate::layers::UtilityCosts, usize) {
+        let mut grouped = 0;
+        let mut compose = |setup: &crate::layers::LayerSetup, terms: &LinkTerms| {
+            let cost = RouteCost::compose(
+                self.choice_model.as_ref(),
+                &self.travellers,
+                terms,
+                setup.seconds(),
+                1,
+            );
+            grouped += cost.grouped().len();
+            cost.extras(0).map(|e| {
+                setup.seconds().iter().zip(e.iter()).map(|(s, x)| s + x).collect::<Vec<f64>>()
+            })
+        };
+        let bike = self
+            .layers
+            .get(StaticLayer::Bike)
+            .filter(|b| b.cost() == openmobisim_core_graph::layers::BikeCost::Utility)
+            .and_then(|b| compose(b, &LinkTerms::bike(b.network(), &self.prices, link_values)));
+        let walk = self
+            .layers
+            .get(StaticLayer::Walk)
+            .and_then(|w| compose(w, &LinkTerms::walk(w.network(), link_values)));
+        (crate::layers::UtilityCosts { bike, walk }, grouped)
+    }
+
     /// The road's route cost for car searches (S299): composed from the choice model's
     /// coefficients, the prices and the user's road columns, floored on the free-flow times.
     fn road_cost(&self, link_values: &PreparedLinkValues) -> RouteCost {
@@ -1311,6 +1346,18 @@ impl Run {
         // Bike and walk trips' routes on their layers: once per run, since their
         // costs are static. A trip choosing its mode gets its route on each layer offered.
         let bike_routing = self.bike_routing(&link_values);
+        // The bike and walk layers' search costs from the choice model (S299), where asked for.
+        let (utility_costs, grouped) = self.utility_costs(&link_values);
+        if grouped > 0 {
+            diagnostics.record_n(
+                openmobisim_core_types::diagnostics::DiagKey::run_level(
+                    Category::Modelling,
+                    local_codes::COST_VECTORS_GROUPED,
+                    Severity::Warning,
+                ),
+                grouped as u64,
+            );
+        }
         let mut static_routes = StaticRoutes::build(
             &self.layers,
             &self.trips,
@@ -1328,6 +1375,7 @@ impl Run {
                     .max_seconds(layer)
             },
             &bike_routing,
+            &utility_costs,
         );
         clock = timings.lap("static_routes", None, clock);
         // Shared handles, so the loading (which moves vehicles about in `self`) and the
@@ -1569,7 +1617,8 @@ impl Run {
                 .collect()
         };
         let bike_ctx = layers_arc.bike.as_ref().map(|b| {
-            SearchContext::with_costs(b.network().network(), b.turns(), b.costs().to_vec())
+            let costs = utility_costs.costs(StaticLayer::Bike, b).to_vec();
+            SearchContext::with_costs(b.network().network(), b.turns(), costs)
         });
         let bike_planner = layers_arc.bike.as_ref().zip(bike_ctx.as_ref());
         let window_s = f64::from(self.window.get());

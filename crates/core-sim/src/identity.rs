@@ -596,6 +596,13 @@ fn hash_layer(h: &mut Fnv1a, layers: &StaticLayers, layer: StaticLayer) {
     for &c in setup.costs() {
         h.write_f64(c);
     }
+    // Off means absent (S299): the utility's cost reads the choice model, hashed apart; the
+    // layer's own costs are then its times, as `time`'s.
+    if layer == StaticLayer::Bike
+        && setup.cost() == openmobisim_core_graph::layers::BikeCost::Utility
+    {
+        h.write_str("utility");
+    }
 }
 
 /// Mode choice: the modes offered, which trips choose, and the layers they may use.

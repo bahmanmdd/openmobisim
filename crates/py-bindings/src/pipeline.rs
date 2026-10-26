@@ -823,7 +823,7 @@ fn gap_trip_columns(py: Python<'_>, gap: &openmobisim_core_sim::GapTrips) -> PyR
     choice_model=None, choice_options=None,
     equilibration="free_flow", equilibration_options=None,
     route_update=None, route_update_options=None,
-    choice_detour_limit=None, choice_max_routes=None, max_cost_vectors=2, route_cache=false, bike_cost="dedicated",
+    choice_detour_limit=None, choice_max_routes=None, max_cost_vectors=2, route_cache=false, bike_cost="utility",
     bike_route_choice="shortest", bike_route_options=None, transit=None,
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
     loading_options=None, price_options=None, threads=None, fingerprint_only=false,
@@ -917,7 +917,7 @@ pub fn run_pipeline(
     let mut timings = Timings::new();
     let bike_cost = BikeCost::from_name(bike_cost).ok_or_else(|| {
         PyValueError::new_err(format!(
-            "bike_cost must be \"dedicated\" or \"time\", not {bike_cost:?}"
+            "bike_cost must be \"utility\", \"dedicated\" or \"time\", not {bike_cost:?}"
         ))
     })?;
     if let Some(limit) = choice_detour_limit {

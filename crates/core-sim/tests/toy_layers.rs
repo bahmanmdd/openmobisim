@@ -12,6 +12,7 @@
 //! | L4 walk `N1 → N2` | `w2`, 200 m | 200 / (4.8/3.6) = **150 s** (by the streets 800 m) |
 //! | L5 walk `W → N1` | `w1`, 300√2 m | 424.26 / 1.3333 = 318.2 → **318 s** |
 //! | L6 walk `M → S` | `a2` walked against the traffic, 200 m | **150 s** |
+//! | L7 bike `M → X0`, cost `utility`, the default logit | the track, 520 m | **104 s** (`a3` costs 96 + 0.4 km × 48 s = 115.2 s: −0.16 per mixed km over −0.2 per minute) |
 
 #![allow(clippy::float_cmp, reason = "hand-derived values, floored to whole seconds")]
 
@@ -32,6 +33,17 @@ fn place(road: &RoadNetwork, name: &str) -> openmobisim_core_graph::LonLat {
 }
 
 fn one_trip(from: &str, to: &str, mode: Mode, cost: BikeCost) -> RunResult {
+    one_trip_by(from, to, mode, cost, None)
+}
+
+/// [`one_trip`], choosing by `model` (the run's default, deterministic, if `None`).
+fn one_trip_by(
+    from: &str,
+    to: &str,
+    mode: Mode,
+    cost: BikeCost,
+    model: Option<Arc<dyn openmobisim_core_choice::ChoiceModel>>,
+) -> RunResult {
     let (road, _) = toy_network();
     let road = Arc::new(road);
     let (bike, walk) = toy_network_layers();
@@ -57,6 +69,9 @@ fn one_trip(from: &str, to: &str, mode: Mode, cost: BikeCost) -> RunResult {
     let mut run = Run::new(road, Arc::new(travellers), Arc::new(trips), Second(86_400))
         .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
         .with_layers(Arc::new(layers));
+    if let Some(model) = model {
+        run = run.with_choice_model(model);
+    }
     run.execute(&mut Diagnostics::new())
 }
 
@@ -102,4 +117,15 @@ fn the_walk_cost_ignores_the_bike_cost() {
     for cost in [BikeCost::Time, BikeCost::Dedicated] {
         assert_eq!(seconds(&one_trip("N1", "N2", Mode::Walk, cost), Mode::Walk), 150.0);
     }
+}
+
+#[test]
+fn l7_under_the_utility_cost_the_track_wins_by_the_logit_s_weight_on_mixed_traffic() {
+    let logit: Arc<dyn openmobisim_core_choice::ChoiceModel> =
+        Arc::new(openmobisim_core_choice::Logit::default());
+    let r = one_trip_by("M", "X0", Mode::Bike, BikeCost::Utility, Some(logit));
+    assert_eq!(seconds(&r, Mode::Bike), 104.0);
+    // A model without coefficients weighs time alone: the street.
+    let r = one_trip("M", "X0", Mode::Bike, BikeCost::Utility);
+    assert_eq!(seconds(&r, Mode::Bike), 96.0);
 }

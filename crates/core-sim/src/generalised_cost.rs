@@ -131,7 +131,6 @@ impl LinkTerms {
     /// walk's generalised cost scales its time, which changes no walk's ranking, so it is not a
     /// term here.
     #[must_use]
-    #[allow(dead_code, reason = "the walk layer's searches read it with the bike's (S299)")]
     pub(crate) fn walk(layer: &StaticNetwork, values: &PreparedLinkValues) -> Self {
         let network = layer.network();
         let km: Vec<f64> = network.link_lengths().iter().map(|m| m.get() / 1000.0).collect();
