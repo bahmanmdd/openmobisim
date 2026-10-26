@@ -1,5 +1,6 @@
 //! Bus lanes (S299): the tags read per direction, the lanes cars keep, a contraflow bus lane
-//! as a busway against a one-way street, and the import report's counts.
+//! as a busway against a one-way street, a lane also for carpools kept for cars, and the import
+//! report's counts.
 
 use openmobisim_core_graph::defaults::RoadClass;
 use openmobisim_core_types::diagnostics::Diagnostics;
@@ -126,6 +127,64 @@ fn several_families_describing_one_lane_count_it_once() {
         ("lanes:psv", "1"),
     ]);
     assert_eq!(t, bus(1, 0));
+}
+
+/// The Boulevard Périphérique's tags (Paris; e.g. OSM way 10228044): its left lane is for
+/// buses, taxis, carpools and emergency vehicles.
+const PERIPHERIQUE: [(&str, &str); 6] = [
+    ("highway", "trunk"),
+    ("oneway", "yes"),
+    ("lanes", "4"),
+    ("psv:lanes", "designated|yes|yes|yes"),
+    ("hov:lanes", "designated|yes|yes|yes"),
+    ("emergency:lanes", "designated|yes|yes|yes"),
+];
+
+#[test]
+fn a_lane_also_for_carpools_is_not_a_bus_lane() {
+    assert_eq!(read(&PERIPHERIQUE), bus(0, 0));
+    let one_way = [("highway", "primary"), ("oneway", "yes"), ("lanes", "3")];
+    let with = |more: &[(&'static str, &'static str)]| {
+        let mut all = one_way.to_vec();
+        all.extend_from_slice(more);
+        read(&all)
+    };
+    // A bus lane alone is still taken.
+    assert_eq!(with(&[("busway", "lane")]), bus(1, 0));
+    assert_eq!(with(&[("psv:lanes", "designated|yes|yes")]), bus(1, 0));
+    // A count with a carpool lane in the list: the carpool lane is the bus lane.
+    assert_eq!(with(&[("lanes:psv", "1"), ("hov:lanes", "designated|no|no")]), bus(0, 0));
+    assert_eq!(with(&[("busway:right", "lane"), ("lanes:hov", "1")]), bus(0, 0));
+    // Two lists of one length: the places say which bus lane is also the carpools'.
+    let apart = [("bus:lanes", "no|no|designated"), ("hov:lanes", "designated|no|no")];
+    assert_eq!(with(&apart), bus(1, 0));
+    let one_of_two = [("psv:lanes", "designated|no|designated"), ("hov:lanes", "designated|no|no")];
+    assert_eq!(with(&one_of_two), bus(1, 0));
+    // `yes` (carpools allowed, as everywhere) keeps nothing; neither does a conditional tag.
+    assert_eq!(with(&[("psv:lanes", "designated|no|no"), ("hov:lanes", "yes|yes|yes")]), bus(1, 0));
+    assert_eq!(
+        with(&[
+            ("psv:lanes", "designated|no|no"),
+            ("hov:lanes:conditional", "designated|| @ Mo-Fr")
+        ]),
+        bus(1, 0)
+    );
+    // A way that is the lane, `hov=designated`.
+    assert_eq!(
+        with(&[("bus", "designated"), ("busway", "lane"), ("hov", "designated")]),
+        bus(0, 0)
+    );
+    // Per direction on a two-way road.
+    let two_way = read(&[
+        ("highway", "primary"),
+        ("lanes", "4"),
+        ("bus:lanes:forward", "no|designated"),
+        ("bus:lanes:backward", "no|designated"),
+        ("hov:lanes:forward", "no|designated"),
+    ]);
+    assert_eq!(two_way, bus(0, 1));
+    // A contraflow bus lane, which cars do not drive, stays the buses'.
+    assert_eq!(with(&[("busway", "opposite_lane"), ("hov", "designated")]), bus(0, 1));
 }
 
 #[test]
@@ -255,4 +314,19 @@ fn a_one_way_street_buses_ride_both_ways_has_a_busway_against_it() {
         import_way(&[("highway", "tertiary"), ("oneway:bus", "no")], ImportOptions::default());
     assert!(links.iter().all(|l| l.class == RoadClass::Tertiary));
     assert_eq!(report.contraflow_bus_links, 0);
+}
+
+#[test]
+fn the_peripheriques_four_lanes_stay_the_cars() {
+    let (links, report) = import_way(&PERIPHERIQUE, ImportOptions::default());
+    assert_eq!(links.len(), 1);
+    assert_eq!((links[0].lanes, links[0].bus_lanes), (4, 0));
+    assert_eq!(report.bus_lane_links, 0);
+    assert_eq!(report.bus_lane_car_lane_length_removed_m, 0);
+    // A bus lane alone on the same road: three lanes for cars.
+    let mut busway = PERIPHERIQUE[..3].to_vec();
+    busway.push(("busway", "lane"));
+    let (links, report) = import_way(&busway, ImportOptions::default());
+    assert_eq!((links[0].lanes, links[0].bus_lanes), (3, 1));
+    assert_eq!(report.bus_lane_links, 1);
 }

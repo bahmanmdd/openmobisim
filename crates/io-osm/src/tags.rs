@@ -370,25 +370,59 @@ fn counted_lanes(tags: &[(String, String)], road: Direction, family: &str) -> (u
     (f.unwrap_or(0), b.unwrap_or(0))
 }
 
-/// Bus lanes from a lane list, `<family>:lanes` and its `:forward` and `:backward` forms: the
-/// lanes marked `designated`. The plain form is read on a one-way road only (on a two-way one it
-/// lists both directions' lanes, and which are which is not in the tag).
-fn listed_lanes(tags: &[(String, String)], road: Direction, family: &str) -> (u8, u8) {
-    let count = |key: String| {
-        tag_of(tags, &key).map(|v| {
-            u8::try_from(v.split('|').filter(|lane| lane.trim() == "designated").count())
-                .unwrap_or(u8::MAX)
-        })
+/// A lane list, `<family>:lanes` and its `:forward` and `:backward` forms, per direction:
+/// whether each lane, in the list's order, is marked `designated`. The plain form is read on a
+/// one-way road only (on a two-way one it lists both directions' lanes, and which are which is
+/// not in the tag).
+fn designated_lanes(
+    tags: &[(String, String)],
+    road: Direction,
+    family: &str,
+) -> (Option<Vec<bool>>, Option<Vec<bool>>) {
+    let list = |key: String| {
+        tag_of(tags, &key)
+            .map(|v| v.split('|').map(|lane| lane.trim() == "designated").collect::<Vec<_>>())
     };
-    let forward = count(format!("{family}:lanes:forward"));
-    let backward = count(format!("{family}:lanes:backward"));
-    let plain = count(format!("{family}:lanes"));
-    let (f, b) = match road {
+    let forward = list(format!("{family}:lanes:forward"));
+    let backward = list(format!("{family}:lanes:backward"));
+    let plain = list(format!("{family}:lanes"));
+    match road {
         Direction::Both => (forward, backward),
         Direction::Forward => (forward.or(plain), backward),
         Direction::Backward => (forward, backward.or(plain)),
+    }
+}
+
+/// The number of lanes a list marks `designated`.
+fn designated_count(list: &[bool]) -> u8 {
+    u8::try_from(list.iter().filter(|&&d| d).count()).unwrap_or(u8::MAX)
+}
+
+/// The carpool lanes of one direction (`hov`, high-occupancy vehicles): where the tags place
+/// them in a lane list, and how many there are.
+#[derive(Default)]
+struct Carpool {
+    /// `hov:lanes` (or its `:forward`/`:backward` form): the lanes `designated` for carpools.
+    list: Option<Vec<bool>>,
+    /// The largest count of carpool lanes any tag gives: the list's `designated` lanes,
+    /// `lanes:hov` and its forms, and every lane (`u8::MAX`) where the way itself is
+    /// `hov=designated` (or `hov:forward`, `hov:backward`).
+    count: u8,
+}
+
+/// The carpool lanes of a way whose traffic runs `road`, forward and backward.
+fn carpool_lanes(tags: &[(String, String)], road: Direction) -> (Carpool, Carpool) {
+    let (list_f, list_b) = designated_lanes(tags, road, "hov");
+    let (count_f, count_b) = counted_lanes(tags, road, "hov");
+    let designated = |key: &str| tag_of(tags, key) == Some("designated");
+    let whole = designated("hov");
+    let whole_f = (whole && road.has_forward()) || designated("hov:forward");
+    let whole_b = (whole && road.has_backward()) || designated("hov:backward");
+    let one = |list: Option<Vec<bool>>, count: u8, whole: bool| {
+        let listed = list.as_deref().map_or(0, designated_count);
+        Carpool { count: if whole { u8::MAX } else { listed.max(count) }, list }
     };
-    (f.unwrap_or(0), b.unwrap_or(0))
+    (one(list_f, count_f, whole_f), one(list_b, count_b, whole_b))
 }
 
 /// Read the bus lanes of a way whose traffic runs `road`.
@@ -407,6 +441,14 @@ fn listed_lanes(tags: &[(String, String)], road: Direction, family: &str) -> (u8
 ///   lane, separated by `|`, a bus lane being `designated`. The plain form is read on one-way
 ///   roads only.
 ///
+/// **A lane also designated for carpools is not a bus lane** in a direction cars drive: cars
+/// keep it, as the model does not tell a car's occupancy. Carpool lanes are tagged as bus lanes
+/// are: `hov:lanes` and its `:forward` and `:backward` forms (`designated` lanes), `lanes:hov`
+/// and its forms (a count), and `hov=designated` (with `hov:forward`, `hov:backward`) on a way
+/// that is the lane. Where both lists give a direction's lanes in the same number, a bus lane
+/// is kept for cars at the place the carpool list marks; otherwise each carpool lane is taken to
+/// be one of the bus lanes. A contraflow bus lane, which cars do not drive, stays the buses'.
+///
 /// # Examples
 ///
 /// ```
@@ -422,20 +464,47 @@ fn listed_lanes(tags: &[(String, String)], road: Direction, family: &str) -> (u8
 /// assert_eq!(bus_lanes(&contraflow, Direction::Forward), BusLanes { forward: 0, backward: 1 });
 /// let listed = tags(&[("lanes", "3"), ("bus:lanes", "no|no|designated")]);
 /// assert_eq!(bus_lanes(&listed, Direction::Forward), BusLanes { forward: 1, backward: 0 });
+/// let carpool = tags(&[
+///     ("lanes", "4"),
+///     ("psv:lanes", "designated|yes|yes|yes"),
+///     ("hov:lanes", "designated|yes|yes|yes"),
+/// ]);
+/// assert_eq!(bus_lanes(&carpool, Direction::Forward), BusLanes { forward: 0, backward: 0 });
 /// ```
 #[must_use]
 pub fn bus_lanes(tags: &[(String, String)], road: Direction) -> BusLanes {
-    let families = [
+    let (carpool_f, carpool_b) = carpool_lanes(tags, road);
+    // A count, less the carpool lanes, in a direction cars drive.
+    let less = |n: u8, carpool: &Carpool, cars: bool| {
+        if cars { n.saturating_sub(carpool.count) } else { n }
+    };
+    // A list, less the lanes the carpool list marks too where the two line up.
+    let listed =
+        |list: Option<Vec<bool>>, carpool: &Carpool, cars: bool| match (list, &carpool.list) {
+            (None, _) => 0,
+            (Some(bus), Some(hov)) if cars && hov.len() == bus.len() => {
+                u8::try_from(bus.iter().zip(hov).filter(|&(&b, &h)| b && !h).count())
+                    .unwrap_or(u8::MAX)
+            }
+            (Some(bus), _) => less(designated_count(&bus), carpool, cars),
+        };
+    let (cars_f, cars_b) = (road.has_forward(), road.has_backward());
+    let mut forward = 0u8;
+    let mut backward = 0u8;
+    for (f, b) in [
         busway_lanes(tags, road),
         counted_lanes(tags, road, "bus"),
         counted_lanes(tags, road, "psv"),
-        listed_lanes(tags, road, "bus"),
-        listed_lanes(tags, road, "psv"),
-    ];
-    BusLanes {
-        forward: families.iter().map(|f| f.0).max().unwrap_or(0),
-        backward: families.iter().map(|f| f.1).max().unwrap_or(0),
+    ] {
+        forward = forward.max(less(f, &carpool_f, cars_f));
+        backward = backward.max(less(b, &carpool_b, cars_b));
     }
+    for family in ["bus", "psv"] {
+        let (f, b) = designated_lanes(tags, road, family);
+        forward = forward.max(listed(f, &carpool_f, cars_f));
+        backward = backward.max(listed(b, &carpool_b, cars_b));
+    }
+    BusLanes { forward, backward }
 }
 
 /// Whether buses may ride a one-way street both ways without a lane of their own:

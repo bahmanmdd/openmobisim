@@ -310,7 +310,12 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// stop snaps to a node from which the bus can go on the way its pattern travels** (the bus's
 /// side of a dual carriageway); and **a one-way street buses may ride both ways**
 /// (`oneway:bus|psv=no`) is a busway link against it. Every run with buses on the roads moves.
-pub const DEFAULTS_VERSION: u32 = 40;
+///
+/// Version 41 (S299): **a lane also designated for carpools stays the cars'** (`hov:lanes`,
+/// `lanes:hov`, `hov=designated`): only a lane for buses (or public service vehicles) alone is
+/// taken out of the lanes cars use, as the model does not tell a car's occupancy. Paris's
+/// Boulevard Périphérique keeps its four lanes; other networks move where they map such lanes.
+pub const DEFAULTS_VERSION: u32 = 41;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

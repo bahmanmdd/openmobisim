@@ -37,7 +37,9 @@ bus times of the last iteration.
 
 **Bus lanes from OpenStreetMap.** `network_read_osm` reads the lanes reserved for buses (`busway`,
 `busway:both|left|right`, `lanes:bus`, `lanes:psv`, `bus:lanes`, `psv:lanes` and their `:forward` and `:backward`
-forms), per direction. OpenStreetMap's `lanes` counts them with the others, so a car link's bus lanes are taken out of
+forms), per direction. A lane also designated for carpools (`hov:lanes`, `lanes:hov`, `hov=designated`) is not a bus
+lane: cars keep it, as the model does not tell a car's occupancy (Paris's Boulevard Périphérique keeps its four lanes).
+OpenStreetMap's `lanes` counts them with the others, so a car link's bus lanes are taken out of
 the lanes cars use, never below one (where no `lanes` is tagged, out of the road class's default). With buses on the
 roads (`buses_on_roads` 1), a bus on a link with a bus lane rides at free flow, outside the cars' queue; a contraflow bus lane on a one-way street is a busway link
 against it, for buses alone; on the bike network a bus lane bikes share (`cycleway=share_busway`) is a bike lane.

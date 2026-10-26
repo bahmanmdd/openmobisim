@@ -716,7 +716,9 @@ pub fn toy_network() -> PyNetwork {
 ///
 /// `bus_lanes` (on by default) reads the lanes reserved for buses (`busway`,
 /// `busway:both|left|right`, `lanes:bus`, `lanes:psv`, `bus:lanes`, `psv:lanes` and their
-/// `:forward` and `:backward` forms). OpenStreetMap's `lanes` counts them with the others, so a
+/// `:forward` and `:backward` forms); a lane also designated for carpools (`hov:lanes`,
+/// `lanes:hov`, `hov=designated`) is not one, cars keeping it. OpenStreetMap's `lanes` counts
+/// them with the others, so a
 /// car link's bus lanes are taken out of the lanes cars use (never below one; where no `lanes`
 /// is tagged, out of the class's default) and kept on the link (`network.link_bus_lanes()`):
 /// with buses on the roads (`transit_options` `buses_on_roads` 1), a bus there rides at free

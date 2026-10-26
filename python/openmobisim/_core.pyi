@@ -813,7 +813,9 @@ def network_read_osm(
             ``busway:both|left|right`` (``lane``, ``opposite_lane``), ``lanes:bus``,
             ``lanes:psv`` (counts), ``bus:lanes``, ``psv:lanes`` (``designated`` lanes), and
             their ``:forward`` and ``:backward`` forms; where several describe a direction, the
-            largest count is taken. OpenStreetMap's ``lanes`` counts bus lanes with the others,
+            largest count is taken. A lane also designated for carpools (``hov:lanes``,
+            ``lanes:hov``, ``hov=designated``) is not a bus lane: cars keep it, as the model does
+            not tell a car's occupancy. OpenStreetMap's ``lanes`` counts bus lanes with the others,
             so a car link's bus lanes are taken out of the lanes cars use, never below one (where
             no ``lanes`` is tagged, out of the class's default), and kept on the link
             (:meth:`Network.link_bus_lanes`); with buses on the roads (``transit_options``
