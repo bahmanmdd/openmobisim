@@ -366,6 +366,7 @@ class TransitOptions(_Options):
         bus_pcu: PCU; ``2.0``.
         bus_plausibility_ratio: —; ``1.6``.
         bus_stop_snap_m: m; ``300.0``.
+        buses_on_roads: 0 or 1; ``0``.
         journey_max_s: s; ``7200.0``.
         max_rides: count; ``8``.
         stop_transfer_s: s; ``0.0``.
@@ -381,6 +382,7 @@ class TransitOptions(_Options):
         "bus_pcu": 2.0,
         "bus_plausibility_ratio": 1.6,
         "bus_stop_snap_m": 300.0,
+        "buses_on_roads": 0,
         "journey_max_s": 7200.0,
         "max_rides": 8,
         "stop_transfer_s": 0.0,
@@ -397,6 +399,7 @@ class TransitOptions(_Options):
         bus_pcu: float = 2.0,
         bus_plausibility_ratio: float = 1.6,
         bus_stop_snap_m: float = 300.0,
+        buses_on_roads: int = 0,
         journey_max_s: float = 7200.0,
         max_rides: int = 8,
         stop_transfer_s: float = 0.0,

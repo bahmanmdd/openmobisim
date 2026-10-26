@@ -967,18 +967,24 @@ class Scenario:
                 the times the run makes: the traveller boards the first vehicle of each line
                 chosen they can catch. The run's clock counts seconds after the service day's
                 midnight and starts at the window.
-                **Buses ride the roads**, 2 PCU each, among the cars: routed stop to stop at
+                **Every vehicle keeps exactly to its timetable** by default: buses are not
+                vehicles of the loading, take no road capacity and are never delayed by
+                traffic (the timetable is taken to hold the delays they meet). With
+                ``transit_options`` ``buses_on_roads`` 1, **buses ride the roads**, 2 PCU each,
+                among the cars: routed stop to stop at
                 free flow, dwelling 20 s at a stop without blocking the traffic behind, never
                 leaving a stop before their scheduled time, so congestion makes them late
                 and their passengers with them. A bus line the roads cannot carry plausibly
-                runs by the schedule (``Run.transit_summary`` counts them). Rail, metro, trams
-                and ferries run by the schedule. These values are defaults, not a calibration:
-                ``transit_options`` overrides them.
+                then runs by the schedule (``Run.transit_summary`` counts them). Rail, metro,
+                trams and ferries run by the schedule. These values are defaults, not a
+                calibration: ``transit_options`` overrides them.
             transit_options: Transit's parameters by name, each replacing its default:
                 ``board_slack_s`` (60), ``max_rides`` (8), ``access_walk_max_s`` (1800),
                 ``journey_max_s`` (7200: the longest journey with transit offered),
                 ``transfer_walk_max_s`` (300), ``stop_walk_snap_m`` (300),
-                ``stop_transfer_s`` (0), ``bus_dwell_s`` (20), ``bus_pcu`` (2),
+                ``stop_transfer_s`` (0), ``buses_on_roads`` (0: every bus keeps to its
+                timetable; 1: buses ride the roads), and, with buses on the roads,
+                ``bus_dwell_s`` (20), ``bus_pcu`` (2),
                 ``bus_plausibility_ratio`` (1.6), ``bus_stop_snap_m`` (300). Unknown names
                 and out-of-range values are refused.
             parkings: Park-and-ride car parks and bike parkings

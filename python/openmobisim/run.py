@@ -1225,7 +1225,8 @@ class Run:
     def transit_summary(self) -> dict[str, float] | None:
         """How transit went, as numbers by name; ``None`` without a timetable.
 
-        ``boardings`` (weighted); and for the buses: ``bus_groups_on_roads`` (bus
+        ``boardings`` (weighted); and, with buses on the roads (``transit_options``
+        ``buses_on_roads`` 1), for the buses: ``bus_groups_on_roads`` (bus
         patterns that rode the roads), ``bus_groups_by_schedule_off_road``,
         ``bus_groups_by_schedule_no_route`` and ``bus_groups_by_schedule_implausible``
         (those run by the schedule, and why), ``bus_runs_on_roads``,

@@ -1131,7 +1131,8 @@ def run_pipeline(
             (bike route sets by the sampled method, chosen through the choice model).
         bike_route_options: The sampled method's options for the bike layer, numbers by name.
         transit: The timetable for the ``"transit"`` trips; its buses ride this
-            network's roads.
+            network's roads with ``transit_options`` ``buses_on_roads`` 1, else keep to the
+            timetable.
         parkings: The parkings for the ``"car_transit"`` and ``"bike_transit"`` trips;
             needs ``transit``.
         parking_options: Parking's parameters by name (see ``Scenario.from_parts``).

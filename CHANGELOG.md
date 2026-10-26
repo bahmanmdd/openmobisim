@@ -23,6 +23,10 @@ bike park with room; a full parking adds its slope on top.
   time was its drive while mode choice weighed the door-to-door time: the mean trip of every run is longer now, by
   the fixed times; a run of stated car trips sets them to 0 to keep the drives.
 
+**Buses keep to their timetable.** By default every bus runs exactly on its timetable and is not a vehicle of the
+loading: it takes no road capacity and traffic does not delay it. `transit_options` `buses_on_roads` 1 puts the buses
+on the roads among the cars, where congestion makes them late, as 0.1.0 did.
+
 ## 0.1.0 — 2026-10-20
 
 The first public release: **an alpha, for testing by students and colleagues.** The tests are not complete; please use

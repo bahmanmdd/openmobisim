@@ -21,7 +21,8 @@
 //! schedule, or the loading's realised times for the runs that ride the roads —
 //! with the fewest vehicles among the earliest. It takes at least one vehicle.
 //!
-//! **Buses ride the roads** ([`TransitSetup::with_roads`]): every bus pattern is
+//! **Buses keep to the timetable** unless they are put on the roads: then
+//! ([`TransitDefaults::buses_on_roads`], [`TransitSetup::with_roads`]) every bus pattern is
 //! routed stop to stop at free flow on the roads cars use and on **busways**, which
 //! only buses use (rung 2), each stop at the nearest node of such a
 //! link within
@@ -347,7 +348,8 @@ impl TransitSetup {
 
     /// The same setup, with its buses riding `road` (see the [module docs](self)).
     /// Only a run on this very network loads them; any other runs them by the
-    /// schedule.
+    /// schedule. Without it every bus keeps to its timetable (a run set up from Python calls
+    /// it when `TransitDefaults::buses_on_roads` is set).
     ///
     /// # Panics
     ///

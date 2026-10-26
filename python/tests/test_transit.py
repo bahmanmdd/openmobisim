@@ -1,4 +1,4 @@
-"""Transit: reading a GTFS feed, transit trips in a scenario, buses on the roads.
+"""Transit: reading a GTFS feed, transit trips in a scenario, buses on the timetable or the roads.
 
 The toy network's timetable (``examples.toy_network_transit``) carries the tram ``T1``
 (``N1`` ↔ ``H`` at ``D2``) and the bus ``B1`` (``W``, ``M``, ``D1``); the hand values are
@@ -115,13 +115,60 @@ def test_tr1_a_tram_trip_and_its_passenger_counts() -> None:
     assert transit["boardings"] == 1.0
 
 
-def test_b2_a_bus_behind_cars_is_late_and_so_is_its_passenger() -> None:
-    net = ms.examples.toy_network()
+def _b2_rows(net: object) -> list[tuple]:
+    """Ten cars from ``W`` to ``M`` at 0 and a passenger from ``M`` to ``D1`` (the Rust B2)."""
     rows = [toy_trip(net, f"c{i}", "W", "M", 0, "car") for i in range(10)]
     rows.append(toy_trip(net, "p", "M", "D1", 0, "transit"))
-    # No access or egress: the cars enter the road at 0, with the bus (the Rust B2).
-    no_access = {"car_access_s": 0, "car_egress_s": 0}
-    run = toy_run(rows, "b2", network=net, choice_model="deterministic", mode_options=no_access)
+    return rows
+
+
+#: No access or egress: the cars enter the road at 0, with the bus (the Rust B2).
+NO_ACCESS = {"car_access_s": 0, "car_egress_s": 0}
+
+
+def test_b2_by_default_the_bus_keeps_to_its_timetable_behind_the_same_cars() -> None:
+    net = ms.examples.toy_network()
+    run = toy_run(
+        _b2_rows(net),
+        "b2-schedule",
+        network=net,
+        choice_model="deterministic",
+        mode_options=NO_ACCESS,
+    )
+    calls = run.transit_calls()
+    i = calls["run"].index("B1:00")
+    assert list(calls["arrival_s"][i : i + 3]) == [0.0, 120.0, 240.0], "never delayed"
+    assert list(calls["arrival_s"]) == list(calls["scheduled_arrival_s"])
+    assert list(calls["departure_s"]) == list(calls["scheduled_departure_s"])
+    assert run.completion_by_mode["transit"]["total_travel_time_s"] == 240.0
+    summary = run.transit_summary
+    assert "bus_runs_on_roads" not in summary and "bus_groups_on_roads" not in summary
+    # The bus takes no road capacity: the cars are no slower than with the bus among them.
+    on_roads = toy_run(
+        _b2_rows(net),
+        "b2-roads",
+        network=net,
+        choice_model="deterministic",
+        mode_options=NO_ACCESS,
+        transit_options={"buses_on_roads": 1},
+    )
+    cars, cars_with_bus = (
+        r.completion_by_mode["car"]["total_travel_time_s"] for r in (run, on_roads)
+    )
+    assert cars <= cars_with_bus
+    assert run.fingerprint != on_roads.fingerprint
+
+
+def test_b2_a_bus_on_the_roads_behind_cars_is_late_and_so_is_its_passenger() -> None:
+    net = ms.examples.toy_network()
+    run = toy_run(
+        _b2_rows(net),
+        "b2",
+        network=net,
+        choice_model="deterministic",
+        mode_options=NO_ACCESS,
+        transit_options={"buses_on_roads": 1},
+    )
     calls = run.transit_calls()
     i = calls["run"].index("B1:00")
     assert calls["stop_id"][i : i + 3] == ["W", "M", "D1"]

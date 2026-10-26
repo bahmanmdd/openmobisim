@@ -241,6 +241,7 @@ def test_the_trip_back_and_an_iterating_run_under_the_loading_model() -> None:
         equilibration="msa",
         equilibration_options={"iterations": 3},
         flow_level=4,
+        transit_options={"buses_on_roads": 1},
     )
     assert run.completion["completed"] == 4
     choices = run.itinerary_choices()
@@ -251,13 +252,23 @@ def test_the_trip_back_and_an_iterating_run_under_the_loading_model() -> None:
     c = run.convergence()
     assert {"gap_transit", "gap_car_transit", "gap_bike_transit", "hub_mismatch_s"} <= set(c)
     assert len(c["gap_car_transit"]) == 3
-    # Out 1200, as the Rust PR4. Back: planned on the schedule at first (the tram to H, 225 s
-    # on foot to P2: 2925), then on the times the run made, where the bus B1 reaches D1 35 s
-    # early (the Rust B1 case): walk N1 to W (318 s), the 2400 bus, D1 at 2605, 292 s on foot to
-    # P2: 2897, 28 s sooner. Fetch 120 s, drive R2 to D2 36 s: 3053, leave the car 300 s: 3353,
-    # 1553 s.
+    # Buses on the roads. Out 1200, as the Rust PR4. Back: planned on the schedule at first (the
+    # tram to H, 225 s on foot to P2: 2925), then on the times the run made, where the bus B1
+    # reaches D1 35 s early (the Rust B1 case): walk N1 to W (318 s), the 2400 bus, D1 at 2605,
+    # 292 s on foot to P2: 2897, 28 s sooner. Fetch 120 s, drive R2 to D2 36 s: 3053, leave the
+    # car 300 s: 3353, 1553 s.
     assert run.completion_by_mode["car_transit"]["total_travel_time_s"] == pytest.approx(
         1200.0 + 1553.0
+    )
+    # With every bus on its timetable (the default) B1 reaches D1 at 2 640 s, 292 s on foot to P2:
+    # 2 932; the 2 400 tram to H at 2 700, 225 s on foot: 2 925 is sooner. Fetch 120 s, drive 36 s,
+    # leave the car 300 s: 3 381, 1 581 s.
+    on_timetable = toy_run(
+        rows, "pr-msa-timetable", parkings=only("P2", "H-bike"), choice_model="logit",
+        equilibration="msa", equilibration_options={"iterations": 3}, flow_level=4,
+    )  # fmt: skip
+    assert on_timetable.completion_by_mode["car_transit"]["total_travel_time_s"] == pytest.approx(
+        1200.0 + 1581.0
     )
 
 

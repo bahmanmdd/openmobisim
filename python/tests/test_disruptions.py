@@ -69,7 +69,15 @@ def test_a_tram_late_or_cancelled_known_or_not() -> None:
     assert unknown.mean_travel_time_s == pytest.approx(1400.0), "waits for the next, at 1 200 s"
     assert list(unknown.itinerary_choices()["expected_s"]) == [800.0], "planned on the 600 s tram"
     known = tram_trip("dis-gone-known", disruptions=[gone], disruptions_known=True)
-    assert known.mean_travel_time_s == pytest.approx(1181.0), "another way, planned"
+    # Another way, planned: on foot to W, the 600 s bus B1 to M on its timetable (at 720 s),
+    # 601 s on foot to D2: 1 321 s, 1 221 s after leaving at 100 s.
+    assert known.mean_travel_time_s == pytest.approx(1221.0), "another way, planned"
+    # With buses on the roads B1 rides them alone and reaches M at 680 s, 40 s early.
+    on_roads = tram_trip(
+        "dis-gone-known-roads", disruptions=[gone], disruptions_known=True,
+        transit_options={"buses_on_roads": 1},
+    )  # fmt: skip
+    assert on_roads.mean_travel_time_s == pytest.approx(1181.0)
 
 
 @pytest.mark.parametrize(

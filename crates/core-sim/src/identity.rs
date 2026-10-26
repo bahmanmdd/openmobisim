@@ -655,6 +655,10 @@ fn hash_transit(h: &mut Fnv1a, transit: &TransitSetup) {
         h.write_str("journey_max_s");
         h.write_f64(d.journey_max_s);
     }
+    // Whether the buses ride the roads (`TransitDefaults::buses_on_roads`, S299): what the
+    // setup was built with, not the option alone.
+    h.write_str("buses_on_roads");
+    h.write_bool(transit.bus_report().is_some());
     let walk = transit.walk().network();
     hash_network(h, walk, NetworkFingerprint::of(walk).value());
 }

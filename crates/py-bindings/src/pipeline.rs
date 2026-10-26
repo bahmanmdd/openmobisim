@@ -1250,7 +1250,7 @@ pub fn run_pipeline(
             None
         },
     };
-    // Stops with walk and bike access points, and buses on this network's roads.
+    // Stops with walk and bike access points, and buses on this network's roads if asked.
     let mut window_cut = None;
     let transit_setup = match &transit {
         Some(t) => {
@@ -1266,8 +1266,13 @@ pub fn run_pipeline(
             let (cut, report) = t.timetable.within(window.start_s, horizon);
             window_cut = Some(report);
             let built = TransitSetup::new(Arc::new(cut), walk, Some(&bike), transit_defaults)
-                .with_access_search_s(access_search_s)
-                .with_roads(network.inner.clone());
+                .with_access_search_s(access_search_s);
+            // Buses ride the roads only when asked (S299); else every bus keeps to its timetable.
+            let built = if transit_defaults.buses_on_roads {
+                built.with_roads(network.inner.clone())
+            } else {
+                built
+            };
             Some(Arc::new(built))
         }
         None => None,

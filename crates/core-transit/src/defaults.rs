@@ -53,6 +53,17 @@ pub struct TransitDefaults {
     /// the walk leg's and the margin before boarding is
     /// [`Self::board_slack_s`].
     pub stop_transfer_s: f64,
+    /// Whether buses ride the roads: `false` (the default, option value 0), every bus keeps
+    /// exactly to its timetable and is no vehicle of the loading, so it takes no road capacity
+    /// and traffic never delays it (the timetable is taken to hold the delays buses meet);
+    /// `true` (1), every bus pattern the roads can carry rides them among the cars, as
+    /// `core-sim`'s `TransitSetup::with_roads` describes (a run set up from Python calls it when
+    /// this is set), and its passengers ride the times the loading gives it. Travellers plan
+    /// on the timetable either way. The parameters below, from [`Self::bus_dwell_s`] on, act
+    /// only with buses on the roads.
+    ///
+    /// *A modelling choice, not a calibrated value.*
+    pub buses_on_roads: bool,
     /// How long a bus stays at each stop, in seconds (D5: fixed).
     ///
     /// *An assumption: 20 s stands for a typical stop until boarding-dependent dwell arrives;
@@ -84,6 +95,7 @@ impl TransitDefaults {
         transfer_walk_max_s: 300.0,
         stop_walk_snap_m: 300.0,
         stop_transfer_s: 0.0,
+        buses_on_roads: false,
         bus_dwell_s: 20.0,
         bus_pcu: 2.0,
         bus_plausibility_ratio: 1.6,
@@ -120,6 +132,7 @@ impl TransitDefaults {
             ("transfer_walk_max_s", self.transfer_walk_max_s),
             ("stop_walk_snap_m", self.stop_walk_snap_m),
             ("stop_transfer_s", self.stop_transfer_s),
+            ("buses_on_roads", f64::from(u8::from(self.buses_on_roads))),
             ("bus_dwell_s", self.bus_dwell_s),
             ("bus_pcu", self.bus_pcu),
             ("bus_plausibility_ratio", self.bus_plausibility_ratio),
@@ -128,7 +141,7 @@ impl TransitDefaults {
     }
 
     /// The names of the options, as [`Self::from_options`] takes them: the fields'.
-    pub const NAMES: [&'static str; 11] = [
+    pub const NAMES: [&'static str; 12] = [
         "board_slack_s",
         "max_rides",
         "access_walk_max_s",
@@ -136,6 +149,7 @@ impl TransitDefaults {
         "transfer_walk_max_s",
         "stop_walk_snap_m",
         "stop_transfer_s",
+        "buses_on_roads",
         "bus_dwell_s",
         "bus_pcu",
         "bus_plausibility_ratio",
@@ -149,7 +163,7 @@ impl TransitDefaults {
     ///
     /// [`TransitOptionError`] for a name that is not one of [`Self::NAMES`], or a
     /// value that is not a finite non-negative number (`max_rides` a whole number
-    /// of at least 1, `board_slack_s` a whole number).
+    /// of at least 1, `board_slack_s` a whole number, `buses_on_roads` 0 or 1).
     pub fn from_options(
         options: &std::collections::BTreeMap<String, f64>,
     ) -> Result<Self, TransitOptionError> {
@@ -188,6 +202,13 @@ impl TransitDefaults {
                 "transfer_walk_max_s" => d.transfer_walk_max_s = v,
                 "stop_walk_snap_m" => d.stop_walk_snap_m = v,
                 "stop_transfer_s" => d.stop_transfer_s = v,
+                "buses_on_roads" => {
+                    d.buses_on_roads = match whole() {
+                        Some(0) => false,
+                        Some(1) => true,
+                        _ => return Err(bad("must be 0 (buses keep to the timetable) or 1")),
+                    };
+                }
                 "bus_dwell_s" => d.bus_dwell_s = v,
                 "bus_pcu" => d.bus_pcu = v,
                 "bus_plausibility_ratio" => d.bus_plausibility_ratio = v,
@@ -229,5 +250,10 @@ mod tests {
         assert!(TransitDefaults::from_options(&o(&[("max_rides", 0.0)])).is_err());
         assert!(TransitDefaults::from_options(&o(&[("board_slack_s", 1.5)])).is_err());
         assert!(TransitDefaults::from_options(&o(&[("bus_pcu", -1.0)])).is_err());
+        assert!(!TransitDefaults::default().buses_on_roads, "buses keep to the timetable");
+        let on = TransitDefaults::from_options(&o(&[("buses_on_roads", 1.0)])).unwrap();
+        assert!(on.buses_on_roads);
+        assert!(TransitDefaults::from_options(&o(&[("buses_on_roads", 0.5)])).is_err());
+        assert!(TransitDefaults::from_options(&o(&[("buses_on_roads", 2.0)])).is_err());
     }
 }
