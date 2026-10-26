@@ -4,7 +4,7 @@
 //! |---|---|
 //! | [`search`] | The turn-aware shortest-path search every method is built on |
 //! | [`attributes`] | [`path_sizes`]: the path size of each route over the routes offered, for the choice layer |
-//! | [`generate`] | The [`RouteSetGenerator`] interface, the built-in methods (`penalty`, the default, `shortest`, the congestion-biased `montecarlo` and `sampled`, by each user class's generalised cost) and the by-name [`Registry`] |
+//! | [`generate`] | The [`RouteSetGenerator`] interface, the built-in methods (`link_penalty`, the default, `shortest`, `simulation`, biased towards congestion, and `doubly_stochastic`, by each user class's drawn generalised cost; [`PUBLIC_NAMES`]), [`ByCost`] (a method searching by the run's route cost) and the by-name [`Registry`] |
 //! | [`store`] | [`RouteSets`]: routes flat in CSR form, with identity, an inverted link index and per-route metadata; it can be [extended](RouteSets::extended) with routes found later; [`search_map`] runs a search over many items in parallel, in order |
 //! | [`snap`] | [`NodeSnapper`]: the nearest drivable node to a point, from a grid, not a scan; [`TripSnapper`]: where a trip's end joins the roads (a street, not a motorway) |
 //! | [`reach`] | [`Reach`]: bounded one-to-many searches by node, forward and backward (transit's walks) |
@@ -30,8 +30,9 @@ pub mod store;
 pub use attributes::{path_sizes, path_sizes_counted};
 pub use generate::{
     ByCost, ClassExtras, DEFAULT_METHOD, Demand, ExtrasRequest, MonteCarlo, Options,
-    PROPENSITY_BIN_SECONDS, Penalty, Registry, RouteError, RouteSetGenerator, Sampled, Shortest,
-    TripDemand, congestion_propensity, default_generator, generator,
+    PROPENSITY_BIN_SECONDS, PUBLIC_NAMES, Penalty, Registry, RouteError, RouteSetGenerator,
+    Sampled, Shortest, TripDemand, congestion_propensity, default_generator, generator,
+    internal_name, public_name,
 };
 pub use reach::Reach;
 pub use search::{Extras, LinkFactors, MAX_ROUTES_PER_SET, Route, Search, SearchContext};

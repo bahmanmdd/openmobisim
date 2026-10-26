@@ -19,8 +19,8 @@ def test_every_group_is_listed_with_units():
     rows = table()
     groups = {r["group"] for r in rows}
     assert {"scenario", "network", "loading", "modes", "transit", "parking", "prices",
-            "equilibration.msa", "equilibration.free_flow", "route_method.penalty",
-            "route_update.best_response", "choice_model.logit"} <= groups  # fmt: skip
+            "equilibration.msa", "equilibration.free_flow", "route_method.link_penalty",
+            "route_update.least_cost", "choice_model.logit"} <= groups  # fmt: skip
     units = {r["name"]: r["unit"] for r in rows if r["group"] == "network"}
     assert units["walk_km_h"] == "km/h" and units["signal_cycle_s"] == "s"
     assert units["primary.saturation_flow_veh_h_lane"] == "veh/h per lane"
@@ -58,7 +58,7 @@ def test_every_row_is_accepted_by_its_argument():
         run(equilibration=strategy, equilibration_options=options(f"equilibration.{strategy}"))
     for group in {r["group"] for r in rows if r["group"].startswith("route_method.")}:
         run(route_method=group.split(".", 1)[1], route_options=options(group) or None)
-    run(route_update="best_response", route_update_options=options("route_update.best_response"))
+    run(route_update="least_cost", route_update_options=options("route_update.least_cost"))
     for group in {r["group"] for r in rows if r["group"].startswith("choice_model.")}:
         run(choice_model=group.split(".", 1)[1], choice_options=options(group) or None)
     transit = options("transit")

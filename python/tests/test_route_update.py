@@ -51,7 +51,7 @@ def go(name, **kwargs):
 
 
 def test_the_updates_are_listed_with_the_default_first():
-    assert ms.route_update_methods() == ["none", "best_response", "sampled"]
+    assert ms.route_update_methods() == ["none", "least_cost", "sampled"]
 
 
 def test_without_an_update_nothing_is_added_and_the_sets_are_the_methods():
@@ -212,7 +212,7 @@ def test_bad_settings_are_refused_before_any_work():
     def build(**kwargs):
         return ms.Scenario.from_parts(net, rows, classes=CAR, **kwargs).run("ru-bad")
 
-    with pytest.raises(ValueError, match='no route update called "nope".*none, best_response'):
+    with pytest.raises(ValueError, match='no route update called "nope".*none, least_cost'):
         build(route_update="nope")
     with pytest.raises(ValueError, match="max_routes, searches"):
         build(route_update="best_response", route_update_options={"nope": 1})

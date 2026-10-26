@@ -20,7 +20,7 @@ run, its output artifacts, route choice among each trip's alternatives
 (``openmobisim.choice`` says how to add your own choice model) and, by default,
 iteration towards an equilibrium
 (``equilibration="msa"``), during which the route sets may grow
-(``route_update="best_response"``). Trips may also cycle, walk, take scheduled
+(``route_update="least_cost"``). Trips may also cycle, walk, take scheduled
 public transport (``transit_read_gtfs``, ``Scenario(transit=...)``), whose buses
 ride the roads among the cars, or drive or cycle to a parking and go on by
 transit (``parking_read_osm``, ``parking_read_table``, ``Scenario(parkings=...)``),
@@ -82,7 +82,9 @@ from openmobisim.options import (
     BestResponseOptions,
     FrankWolfeOptions,
     FreeFlowOptions,
+    LeastCostOptions,
     LinkClassOptions,
+    LinkPenaltyOptions,
     LoadingOptions,
     LogitOptions,
     ModeOptions,
@@ -93,6 +95,7 @@ from openmobisim.options import (
     ParkingOptions,
     PenaltyOptions,
     PriceOptions,
+    SimulationOptions,
     SraOptions,
     TransitOptions,
 )
@@ -115,6 +118,8 @@ __version__: str = _core.__version__
 
 __all__ = [
     "BestResponseOptions",
+    "LeastCostOptions",
+    "LinkPenaltyOptions",
     "Columns",
     "FallbackWarning",
     "FrankWolfeOptions",
@@ -126,6 +131,7 @@ __all__ = [
     "MODES",
     "ModeOptions",
     "MonteCarloOptions",
+    "SimulationOptions",
     "MsaOptions",
     "NestedLogitOptions",
     "NetworkOptions",

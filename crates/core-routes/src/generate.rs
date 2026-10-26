@@ -7,14 +7,18 @@
 //! k-shortest, plateau/via-node, a sampled or learned generator, a multimodal
 //! one) is one new type and one line in a [`Registry`]; nothing else changes.
 //!
-//! Built in:
+//! Built in, by public name (the internal name, still accepted, in brackets; [`PUBLIC_NAMES`]):
 //!
 //! | name | what it does |
 //! |---|---|
-//! | `penalty` (the default, [`DEFAULT_METHOD`]) | The shortest route, then repeatedly the shortest under penalties on the links already used, keeping routes that stay within a detour bound and an overlap limit |
-//! | `shortest` | The single shortest route |
-//! | `montecarlo` | The shortest route, then the shortest under **random link costs biased towards the links likely to congest**: distinct routes that avoid what the demand will jam |
-//! | `sampled` | The shortest route, then the cheapest by each user class's **generalised cost** (travel time plus extras per link), in preference draws and under random link costs: distinct routes that differ in what travellers value |
+//! | `link_penalty` (`penalty`, the default, [`DEFAULT_METHOD`]) | The **link penalty method** (de la Barra, Pérez & Añez 1993): the least-cost route, then repeatedly the least-cost route after the cost of every link of the route just found is multiplied by a factor, keeping routes that stay within a detour bound and an overlap limit |
+//! | `shortest` | The single least-cost route |
+//! | `simulation` (`montecarlo`) | **Stochastic simulation of link costs** (Ramming 2002): the least-cost route, then the least-cost route under **random link costs biased towards the links likely to congest**: distinct routes that avoid what the demand will jam |
+//! | `doubly_stochastic` (`sampled`) | **Doubly stochastic choice-set generation** (Bovy & Fiorenzo-Catalano 2006–2007): the fastest route, then the cheapest by each user class's **generalised cost** (travel time plus extras per link) when both its coefficients and the link costs are drawn at random: distinct routes that differ in what travellers value |
+//!
+//! A route's **cost** in every search is the run's route cost: the travel time plus each user
+//! class's extras ([`ByCost`], [`Search::set_base_extras`]), the free-flow time where the
+//! utility weighs time alone; a route's stored `cost` is its free-flow travel time.
 //!
 //! A method's **options** are numbers by name ([`Options`]), validated when the
 //! method is made, and its **descriptor** — its name and every option with
@@ -35,6 +39,24 @@ use crate::store::{RouteKey, RouteSets};
 
 /// The method used unless another is asked for.
 pub const DEFAULT_METHOD: &str = "penalty";
+
+/// The built-in methods' public names, by internal name (S299): what a user selects them by,
+/// while the internal name stays the method's [`RouteSetGenerator::name`] and the head of its
+/// descriptor, so no fingerprint changes. The internal names are still accepted.
+pub const PUBLIC_NAMES: [(&str, &str); 3] =
+    [("penalty", "link_penalty"), ("montecarlo", "simulation"), ("sampled", "doubly_stochastic")];
+
+/// The public name of the method called `internal` (itself where it has no other).
+#[must_use]
+pub fn public_name(internal: &str) -> &str {
+    PUBLIC_NAMES.iter().find(|(i, _)| *i == internal).map_or(internal, |(_, p)| p)
+}
+
+/// The internal name of the method selected as `name`, public or internal.
+#[must_use]
+pub fn internal_name(name: &str) -> &str {
+    PUBLIC_NAMES.iter().find(|(_, p)| *p == name).map_or(name, |(i, _)| i)
+}
 
 /// A method's options: numbers by name. Unknown names are an error, not ignored.
 pub type Options = BTreeMap<String, f64>;
@@ -375,10 +397,11 @@ impl RouteSetGenerator for Shortest {
 
 // --- penalty ----------------------------------------------------------------------
 
-/// The penalty method: find the shortest route, multiply the cost of the links
-/// of the route just found and search again, and keep a new route if it is
-/// distinct, within `max_detour` of the best cost, and shares at most
-/// `max_overlap` of its cost with every route kept before.
+/// The **link penalty method** (`link_penalty`; de la Barra, Pérez & Añez 1993): find the
+/// least-cost route, multiply the cost of the links of the route just found and search again, and
+/// keep a new route if it is distinct, within `max_detour` of the best cost, and shares at most
+/// `max_overlap` of its cost with every route kept before; each cost the generalised one under
+/// the search's base extras ([`ByCost`]), the free-flow time without.
 ///
 /// **Cost:** at most `max_attempts` searches per pair, each bounded to routes
 /// within `max_detour` of the best, so none explores more than about
@@ -549,7 +572,8 @@ impl BiasSource {
     }
 }
 
-/// Monte Carlo generation, biased towards the links likely to congest.
+/// **Stochastic simulation of link costs** (`simulation`; Ramming 2002), biased towards the links
+/// likely to congest.
 ///
 /// The shortest route, then, for each of `draws` draws, the shortest route when **every link's
 /// cost is multiplied by `1 + sigma · u · bias`**, `u` a uniform draw and `bias` the link's
@@ -808,8 +832,9 @@ impl RouteSetGenerator for MonteCarlo {
 /// Extras prepared for one context: by user class, then by draw; `None` is travel time alone.
 type PreparedExtras = Vec<Vec<Option<Extras>>>;
 
-/// Sampled generation by **generalised cost**: routes drawn with attribute noise and with
-/// preference draws per user class (S298).
+/// **Doubly stochastic choice-set generation** (`doubly_stochastic`; Bovy & Fiorenzo-Catalano
+/// 2006–2007) by **generalised cost**: routes drawn with attribute noise and with preference draws
+/// per user class (S298).
 ///
 /// First the **anchor**, the travel-time shortest route. Then, for each user class and each of
 /// its draws (draw 0 the class's unperturbed generalised cost, draws 1 to `draws` with its
@@ -1427,7 +1452,7 @@ impl Registry {
         self.methods.iter().map(|(n, _)| n.as_str()).collect()
     }
 
-    /// Make the method called `name` from `options`.
+    /// Make the method called `name` (public or internal, [`PUBLIC_NAMES`]) from `options`.
     ///
     /// # Errors
     ///
@@ -1438,11 +1463,12 @@ impl Registry {
         name: &str,
         options: &Options,
     ) -> Result<Box<dyn RouteSetGenerator>, RouteError> {
-        match self.methods.iter().find(|(n, _)| n == name) {
+        let internal = internal_name(name);
+        match self.methods.iter().find(|(n, _)| n == internal) {
             Some((_, factory)) => factory(options),
             None => Err(RouteError::UnknownMethod {
                 name: name.to_string(),
-                known: self.names().into_iter().map(str::to_string).collect(),
+                known: self.names().into_iter().map(|n| public_name(n).to_string()).collect(),
             }),
         }
     }

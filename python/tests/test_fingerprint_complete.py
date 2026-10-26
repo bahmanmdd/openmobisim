@@ -21,7 +21,7 @@ GROUPS = {
     "parking": "parking_options",
     "prices": "price_options",
     "equilibration.msa": "equilibration_options",
-    "route_update.best_response": "route_update_options",
+    "route_update.least_cost": "route_update_options",
     "choice_model.logit": "choice_options",
     "equilibration.frank_wolfe": "equilibration_options",
 }

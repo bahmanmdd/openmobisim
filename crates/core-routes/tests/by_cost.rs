@@ -172,3 +172,18 @@ fn the_route_after_a_link_by_generalised_cost() {
     assert!((g - t).abs() < 1e-9, "no extras on the bottom road");
     assert!(search.cheapest_route_after(za, d, 0.0, g - 1.0, &seconds).is_none(), "bounded");
 }
+
+/// **The public names** (S299): `link_penalty`, `simulation` and `doubly_stochastic` select the
+/// methods internally named `penalty`, `montecarlo` and `sampled`, with the same name and
+/// descriptor, so the same fingerprint; the internal names are still accepted.
+#[test]
+fn the_public_names_select_the_methods_with_their_descriptors() {
+    use openmobisim_core_routes::{generator, internal_name, public_name};
+    for (internal, public) in openmobisim_core_routes::PUBLIC_NAMES {
+        let a = generator(internal, &Options::new()).expect("internal name");
+        let b = generator(public, &Options::new()).expect("public name");
+        assert_eq!((a.name(), a.descriptor()), (b.name(), b.descriptor()), "{public}");
+        assert_eq!((public_name(internal), internal_name(public)), (public, internal));
+    }
+    assert_eq!(public_name("shortest"), "shortest");
+}

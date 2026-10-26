@@ -34,7 +34,7 @@ def corner_pairs(net, n=6):
 
 def test_the_default_method_is_listed_first_and_others_can_be_selected():
     names = ms.route_methods()
-    assert names[0] == "penalty" and {"shortest", "montecarlo"} <= set(names)
+    assert names[0] == "link_penalty" and {"shortest", "simulation"} <= set(names)
 
 
 def test_the_store_is_a_consistent_set_of_flat_arrays():
@@ -293,7 +293,7 @@ def one_loading(net, rows, name, **kwargs):
 
 
 def test_sampled_is_a_method_and_an_update_that_can_be_selected():
-    assert "sampled" in ms.route_methods()
+    assert "doubly_stochastic" in ms.route_methods()
     assert "sampled" in ms.route_update_methods()
 
 

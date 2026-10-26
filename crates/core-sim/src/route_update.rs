@@ -80,6 +80,23 @@ pub const REPLACE_GAIN_S: f64 = 1.0;
 /// The update used unless another is asked for.
 pub const DEFAULT_UPDATE: &str = "none";
 
+/// The built-in updates' public names, by internal name (S299): `least_cost` selects the
+/// column generation, whose internal name (`best_response`) stays its name and the head of its
+/// descriptor, so no fingerprint changes. The internal name is still accepted.
+pub const PUBLIC_NAMES: [(&str, &str); 1] = [("best_response", "least_cost")];
+
+/// The public name of the update called `internal` (itself where it has no other).
+#[must_use]
+pub fn public_name(internal: &str) -> &str {
+    PUBLIC_NAMES.iter().find(|(i, _)| *i == internal).map_or(internal, |(_, p)| p)
+}
+
+/// The internal name of the update selected as `name`, public or internal.
+#[must_use]
+pub fn internal_name(name: &str) -> &str {
+    PUBLIC_NAMES.iter().find(|(_, p)| *p == name).map_or(name, |(i, _)| i)
+}
+
 /// An update's options: numbers by name. Unknown names are an error.
 pub type Options = BTreeMap<String, f64>;
 
@@ -1277,11 +1294,12 @@ impl Registry {
         name: &str,
         options: &Options,
     ) -> Result<Box<dyn RouteUpdate>, RouteUpdateError> {
-        match self.updates.iter().find(|(n, _)| n == name) {
+        let internal = internal_name(name);
+        match self.updates.iter().find(|(n, _)| n == internal) {
             Some((_, factory)) => factory(options),
             None => Err(RouteUpdateError::UnknownUpdate {
                 name: name.to_string(),
-                known: self.names().into_iter().map(str::to_string).collect(),
+                known: self.names().into_iter().map(|n| public_name(n).to_string()).collect(),
             }),
         }
     }

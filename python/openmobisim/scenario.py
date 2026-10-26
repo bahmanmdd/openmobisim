@@ -4,7 +4,7 @@ A network, demand (an in-memory table or a ``trips.parquet`` path — the same
 schema either way), a loading with queues at capacity (the point queue, ``flow_level=2``),
 route choice among each trip's alternatives (a path-size ``"logit"``) and
 iteration towards an equilibrium (``"msa"``), during which the route sets may
-grow (``route_update="best_response"``) — all by default. Trips drive, cycle,
+grow (``route_update="least_cost"``) — all by default. Trips drive, cycle,
 walk, take transit (``transit=``) or drive or cycle to a parking and go on by
 transit (``parkings=``). Roads and lines can be disrupted at a time of day
 (``disruptions=``).
@@ -158,6 +158,25 @@ def _window(window: Any) -> tuple[int | None, int | None]:
 
 
 BIKE_COSTS = ("utility", "dedicated", "time")
+
+#: Route methods and updates renamed (S299), old name to new: the old names are still accepted,
+#: with a ``DeprecationWarning``; both select the same method, with the same fingerprint.
+RENAMED_ROUTE_METHODS = {
+    "penalty": "link_penalty",
+    "montecarlo": "simulation",
+    "sampled": "doubly_stochastic",
+}
+RENAMED_ROUTE_UPDATES = {"best_response": "least_cost"}
+
+
+def _renamed(argument: str, value: str | None, renamed: dict[str, str]) -> None:
+    """Warn that ``value`` of ``argument`` is an old name (see ``RENAMED_ROUTE_METHODS``)."""
+    if value in renamed:
+        warnings.warn(
+            f'{argument}="{value}" is now "{renamed[value]}"; the old name is still accepted',
+            DeprecationWarning,
+            stacklevel=4,
+        )
 
 
 def _check_modes_can_run(modes: list[str], has_transit: bool, has_parkings: bool) -> None:
@@ -429,6 +448,8 @@ class Scenario:
                 **chosen.get("parking_options", {}),
                 **(parking_options or {}),
             } or None
+        _renamed("route_method", route_method, RENAMED_ROUTE_METHODS)
+        _renamed("route_update", route_update, RENAMED_ROUTE_UPDATES)
         if bike_cost not in BIKE_COSTS:
             raise ValueError(f"bike_cost must be one of {BIKE_COSTS}, got {bike_cost!r}")
         if bike_route_choice not in BIKE_ROUTE_CHOICES:
@@ -489,7 +510,7 @@ class Scenario:
         # One default table (S280, C1): every default below is the core's, listed by
         # ``parameters()``; the strategy's options, the route method and the route update are
         # passed as given (``None``: the core's rule — a run that loads more than once starts
-        # from one route per pair and lets ``best_response`` grow the sets, S179, S223).
+        # from one route per pair and lets ``least_cost`` grow the sets, S179, S223).
         equilibration_options = dict(equilibration_options or {}) or None
         self._route_method = route_method
         self._route_options = route_options
@@ -711,23 +732,32 @@ class Scenario:
                 travellers choose on are binned at the equilibration's ``cost_bin_s``.
             route_method: How route sets are generated, by name (see
                 ``openmobisim.route_methods()``). **The default depends on the run:** a run
-                that loads once uses ``"penalty"``; a run that **loads more than once** (an
+                that loads once uses ``"link_penalty"``; a run that **loads more than once** (an
                 ``equilibration`` with more than one iteration, or a free-flow loading built up
                 in groups, the default at ``flow_level`` 2 to 4) starts from ``"shortest"``, one
                 route per pair, and lets the route update find the rest (measured: as good
                 as the alternatives of the other methods at about half the time). Naming a
                 method, or giving ``route_options``, overrides this (options alone mean
-                ``"penalty"``). ``"penalty"`` finds
-                distinct alternatives by penalising the links of the routes found.
-                ``"shortest"`` makes one route per pair. ``"montecarlo"`` finds routes
-                by searching under random link costs **biased towards the links the
+                ``"link_penalty"``). Every method searches by the **generalised cost**, read
+                from the choice model: a link's travel time plus the seconds-equivalent of every
+                per-link term the utility weighs (length, running cost, tolls, user link
+                values), each user class by its own coefficients (``max_cost_vectors``); with
+                the defaults, which weigh only time on a car route, by the free-flow time.
+                ``"link_penalty"``, the **link penalty method** (de la Barra, Pérez & Añez
+                1993), finds distinct alternatives: the least-cost route, then repeatedly the
+                least-cost route after the cost of every link of the route just found is
+                multiplied by ``penalty``. ``"shortest"`` makes one route per pair.
+                ``"simulation"``, **stochastic simulation of link costs** (Ramming 2002), finds
+                routes by searching under random link costs **biased towards the links the
                 demand is likely to congest** (the busiest half-hour's load on shortest
                 routes over each link's capacity, from this scenario's trips and their
                 weights): routes that go round what the demand will jam. It has been
-                measured on few networks: better alternatives than ``"penalty"`` on one
-                city's heavy load, worse on another's. ``"sampled"`` (an option, never a
-                default) finds routes that differ in **what travellers value**: first the
-                free-flow shortest route; then, for each user class and each preference
+                measured on few networks: better alternatives than ``"link_penalty"`` on one
+                city's heavy load, worse on another's. ``"doubly_stochastic"``, **doubly
+                stochastic choice-set generation** (Bovy & Fiorenzo-Catalano 2006-2007; an
+                option, never a default), finds routes that differ in **what travellers
+                value**: first the free-flow fastest route; then, for each user class and each
+                preference
                 draw, the cheapest route by that class's **generalised cost** (travel time plus
                 extra seconds per link for its length, its money and the user's link values,
                 weighed by the choice model's coefficients on ``time_min``, ``length_km``,
@@ -737,19 +767,21 @@ class Scenario:
                 only). Draw 0 is the class's own coefficients; each further draw multiplies
                 every coefficient but time's by ``1 + tau·v``, ``v`` uniform in [-1, 1), and
                 every link's cost by ``1 + sigma·u``, ``u`` uniform in [0, 1). A route is kept
-                if it is new, its travel time is at most ``max_detour`` times the shortest's,
-                and it shares at most ``max_overlap`` of its travel time with each route kept
-                before it, up to ``max_paths`` routes. Which route a trip takes among its
-                alternatives is ``choice_model``'s business.
+                if it is new, its generalised cost (unperturbed, by the coefficients it was
+                found with) is at most ``max_detour`` times the first route's, and it shares at
+                most ``max_overlap`` of that cost with each route kept before it, up to
+                ``max_paths`` routes. Which route a trip takes among its alternatives is
+                ``choice_model``'s business. The old names ``"penalty"``, ``"montecarlo"`` and
+                ``"sampled"`` are still accepted, with a ``DeprecationWarning``.
             route_options: The method's options, numbers by name; unknown names
-                and out-of-range values are refused. For ``"penalty"``: ``max_paths``
+                and out-of-range values are refused. For ``"link_penalty"``: ``max_paths``
                 (5), ``max_detour`` (1.3), ``max_overlap`` (0.75), ``penalty`` (1.5),
-                ``max_attempts`` (15). For ``"montecarlo"``: ``draws`` (16),
+                ``max_attempts`` (15). For ``"simulation"``: ``draws`` (16),
                 ``sigma`` (4: how far a link's cost may rise, times its bias),
                 ``max_detour`` (2), ``max_overlap`` (0.9), ``max_paths`` (10), ``seed``
                 (0: another seed is another set of draws) and ``biased`` (1; 0 for no
                 bias, which measured worse on the one heavy load it was tried on).
-                For ``"sampled"``: ``draws`` (4: preference draws per user class beside
+                For ``"doubly_stochastic"``: ``draws`` (4: preference draws per user class beside
                 its own coefficients; 0 searches each class's own generalised cost only),
                 ``sigma`` (0.5), ``tau`` (0.3), ``max_detour`` (1.5), ``max_overlap`` (0.9),
                 ``max_paths`` (10) and ``seed`` (0: another seed is another set of draws).
@@ -848,7 +880,7 @@ class Scenario:
             route_cache: Keep the generated route sets in memory for the next run **of this
                 process** that asks for the same: the same network, the same origin-destination
                 pairs, the same route method and options and, for a method that reads the demand
-                (``"montecarlo"``), the same trips. Generating them is the largest single cost of
+                (``"simulation"``), the same trips. Generating them is the largest single cost of
                 a run that iterates, so a study that runs one scenario many times, changing only
                 the equilibration, the choice model, the flow level or a seed, pays it once. Results
                 do not depend on whether the cache was used. Holds at most four sets (about 17 MB at
@@ -937,32 +969,35 @@ class Scenario:
                 ``warmup`` 0 is a single loading at ``flow_level`` on free-flow choices).
             route_update: How the route sets grow between iterations (see
                 ``openmobisim.route_update_methods()``). **The default depends on the run:**
-                ``"best_response"`` when the run loads more than once (it iterates, or builds
+                ``"least_cost"`` when the run loads more than once (it iterates, or builds
                 its free-flow loading in groups; or ``route_update_options`` is given),
                 ``"none"`` when it loads once. ``"none"`` leaves
-                the sets as the route method made them, at free-flow costs. ``"best_response"``
-                is for a run that loads more than once: after each loading it searches, for every
-                origin-destination pair, the fastest route at the congested times the
-                loading produced, and adds it to the pair's set if it is new and at least as
-                fast as the best route already there, before travellers choose again. It
+                the sets as the route method made them, at free-flow costs. ``"least_cost"``,
+                **column generation**, is for a run that loads more than once: after each
+                loading, each pair's least-cost route at that loading's link times (the
+                time-dependent least-cost route by each user class's generalised cost; the
+                fastest where the utility weighs only time) is added to the pair's set if the
+                set lacks it and it costs no more than the set's best, before travellers choose
+                again (a route is a "column" of the route-flow problem). The old name
+                ``"best_response"`` is still accepted, with a ``DeprecationWarning``. It
                 closes the gap that ``Run.convergence()["gap_network"]`` shows when traffic
                 has made a route worthwhile that no set held. Where nothing queues it adds
                 little or nothing. It is for congestion that is heavy but not gridlock: near
                 gridlock it can make a run worse. **The equilibrium is then over the sets the
                 route method and the update produce**, which the run's fingerprint and
                 manifest say.
-                ``"sampled"`` (an option, never a default) makes the same best response as
-                ``"best_response"`` and, beside it, after each loading, ``draws`` perturbed
+                ``"sampled"`` (an option, never a default) makes the same column generation as
+                ``"least_cost"`` and, beside it, after each loading, ``draws`` perturbed
                 searches per origin, departure bin and user class at the congested times, by
-                the class's generalised cost (as ``route_method="sampled"`` describes, its
+                the class's generalised cost (as ``route_method="doubly_stochastic"`` describes, its
                 coefficients drawn again each iteration) with every link's cost multiplied by
                 ``1 + sigma·u``, ``u`` uniform in [0, 1). The route each finds to a pair is
-                added if it is new and its travel time at the middle of the departure bin is
-                at most ``max_detour`` times the set's best route there; never to a full set.
+                added if it is new and its generalised cost at the middle of the departure bin
+                is at most ``max_detour`` times the set's best there; never to a full set.
                 The sets then hold routes that are competitive, not only ones that were once
                 the fastest.
             route_update_options: The update's options, numbers by name: for
-                ``"best_response"``, ``searches`` (1: how many searches per pair per
+                ``"least_cost"``, ``searches`` (1: how many searches per pair per
                 iteration, at spread quantiles of the pair's departures; more finds routes
                 that pay only at some hours and makes bigger sets) and ``max_routes`` (10:
                 the most routes a pair's set may hold; a full set is still searched, and a

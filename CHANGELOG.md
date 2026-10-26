@@ -54,6 +54,25 @@ so a stop beside a dual carriageway is on the bus's side; and a one-way street b
 (`oneway:bus=no`, `oneway:psv=no`) is a busway against it. Buses that ride the roads are less late, and fewer bus
 lines are run by the schedule for an implausible route.
 
+**Every route search by the choice model's utility.** Route generation, the route update, the routes a traveller is
+offered, the gaps, park-and-ride's drives and en-route rerouting search by a route's **generalised cost**: its travel
+time plus the seconds-equivalent of every per-link term the utility weighs (length, running cost, tolls, user link
+values), each user class by its own coefficients. With the defaults, which weigh only time on a car route (every price
+0), car routes are exactly as before. Classes with different coefficients get their own searches, up to the new
+`Scenario` argument `max_cost_vectors` (2); beyond it a class is searched by the nearest by value of time, recorded
+as a `cost_vectors_grouped` diagnostic. Where a class weighs more than time, the full gap is measured after every
+loading and the stopping rule reads `gap_route_excess`.
+- **Bike routes from the utility**: `bike_cost="utility"` is the new default (travel time plus 48 s per kilometre in
+  mixed traffic at the default coefficients; a ferry is not mixed traffic); `"dedicated"` (the 1.2 factor) and
+  `"time"` stay. The bike route choice now fills `bike_lane_km` and `bike_separated_km`.
+- **Renamed, the old names still accepted with a `DeprecationWarning` and the same fingerprint:** `route_method`
+  `"penalty"` → `"link_penalty"`, `"montecarlo"` → `"simulation"`, `"sampled"` → `"doubly_stochastic"`;
+  `route_update` `"best_response"` → `"least_cost"`; `PenaltyOptions` → `LinkPenaltyOptions`,
+  `MonteCarloOptions` → `SimulationOptions`, `BestResponseOptions` → `LeastCostOptions`. A run's manifest and route
+  sets keep the internal names. `parameters()` lists the groups by the new names.
+- The sampled method and update keep and order their routes by the generalised cost they were searched by, no longer
+  by travel time.
+
 ## 0.1.0 — 2026-10-20
 
 The first public release: **an alpha, for testing by students and colleagues.** The tests are not complete; please use

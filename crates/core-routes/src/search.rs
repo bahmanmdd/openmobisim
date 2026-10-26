@@ -7,7 +7,9 @@
 //! without touching a generator.
 //!
 //! **Costs** are free-flow travel times (control delay included) over
-//! links that carry motor traffic; other links cost infinity. A bike or walk
+//! links that carry motor traffic; other links cost infinity. A run whose
+//! utility weighs more than time adds each link's extras to them
+//! ([`Search::set_base_extras`], S299). A bike or walk
 //! layer searches its own costs instead ([`SearchContext::with_costs`]). A generator can
 //! multiply any link's cost with [`LinkFactors`] for the next search (the
 //! penalty method does), and asks [`Search::max_overlap`] how much of a route lies

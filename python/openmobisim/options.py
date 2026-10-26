@@ -11,13 +11,16 @@ nothing); a field whose default is a rule of the run's level is ``None`` until s
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, ClassVar
 
 __all__ = [
     "BestResponseOptions",
     "FrankWolfeOptions",
     "FreeFlowOptions",
+    "LeastCostOptions",
     "LinkClassOptions",
+    "LinkPenaltyOptions",
     "LoadingOptions",
     "LogitOptions",
     "ModeOptions",
@@ -28,6 +31,7 @@ __all__ = [
     "ParkingOptions",
     "PenaltyOptions",
     "PriceOptions",
+    "SimulationOptions",
     "SraOptions",
     "TransitOptions",
 ]
@@ -652,8 +656,11 @@ class FrankWolfeOptions(_Options):
         self._keep(given)
 
 
-class PenaltyOptions(_Options):
-    """``route_method="penalty"``: ``route_options``.
+class LinkPenaltyOptions(_Options):
+    """``route_method="link_penalty"``: ``route_options``.
+
+    The link penalty method (de la Barra, Pérez & Añez 1993): after each least-cost route, the
+    costs of its links are multiplied by ``penalty`` and the search is repeated.
 
     Attributes:
         max_attempts: count; ``15``.
@@ -687,8 +694,11 @@ class PenaltyOptions(_Options):
         self._keep(given)
 
 
-class MonteCarloOptions(_Options):
-    """``route_method="montecarlo"``: ``route_options``.
+class SimulationOptions(_Options):
+    """``route_method="simulation"``: ``route_options``.
+
+    Stochastic simulation of link costs (Ramming 2002): the least-cost route under link costs
+    drawn at random, ``draws`` times, the draws biased towards the links likely to congest.
 
     Attributes:
         biased: 0 or 1; ``1``.
@@ -728,8 +738,11 @@ class MonteCarloOptions(_Options):
         self._keep(given)
 
 
-class BestResponseOptions(_Options):
-    """``route_update="best_response"``: ``route_update_options``.
+class LeastCostOptions(_Options):
+    """``route_update="least_cost"``: ``route_update_options``.
+
+    Column generation: after each loading, each pair's least-cost route at that loading's link
+    times is added to its set when the set lacks it and it costs no more than the set's best.
 
     Attributes:
         max_routes: count; ``10``.
@@ -1035,3 +1048,42 @@ class NestedLogitOptions(_Options):
         given = dict(locals())
         del given["self"]
         self._keep(given)
+
+
+class PenaltyOptions(LinkPenaltyOptions):
+    """The old name of ``LinkPenaltyOptions``, still accepted with a ``DeprecationWarning``."""
+
+    def __init__(self, **options: Any) -> None:
+        """``LinkPenaltyOptions(**options)``, warning that the name has changed."""
+        warnings.warn(
+            "PenaltyOptions is now LinkPenaltyOptions; the old name is still accepted",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(**options)
+
+
+class MonteCarloOptions(SimulationOptions):
+    """The old name of ``SimulationOptions``, still accepted with a ``DeprecationWarning``."""
+
+    def __init__(self, **options: Any) -> None:
+        """``SimulationOptions(**options)``, warning that the name has changed."""
+        warnings.warn(
+            "MonteCarloOptions is now SimulationOptions; the old name is still accepted",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(**options)
+
+
+class BestResponseOptions(LeastCostOptions):
+    """The old name of ``LeastCostOptions``, still accepted with a ``DeprecationWarning``."""
+
+    def __init__(self, **options: Any) -> None:
+        """``LeastCostOptions(**options)``, warning that the name has changed."""
+        warnings.warn(
+            "BestResponseOptions is now LeastCostOptions; the old name is still accepted",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(**options)

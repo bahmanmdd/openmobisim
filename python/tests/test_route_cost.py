@@ -47,7 +47,7 @@ def test_a_toll_changes_the_routes_generated_and_names_the_cost() -> None:
                 rows,
                 classes={"driver": (True, False, False)},
                 choice_model="logit",
-                route_method="penalty",
+                route_method="link_penalty",
                 equilibration="free_flow",
                 **options,
             )
@@ -64,3 +64,32 @@ def test_a_toll_changes_the_routes_generated_and_names_the_cost() -> None:
         [list(r) for r in a.routes(k)] != [list(r) for r in b.routes(k)] for k in range(a.key_count)
     )
     assert changed > 0, "a euro on every third link (six minutes at the defaults) moves some sets"
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "argument"),
+    [
+        ("penalty", "link_penalty", "route_method"),
+        ("montecarlo", "simulation", "route_method"),
+        ("sampled", "doubly_stochastic", "route_method"),
+        ("best_response", "least_cost", "route_update"),
+    ],
+)
+def test_an_old_name_warns_and_selects_the_same_method(old: str, new: str, argument: str) -> None:
+    with pytest.warns(DeprecationWarning, match=f'"{new}"'):
+        before = _scenario(**{argument: old})
+    assert before._fingerprint() == _scenario(**{argument: new})._fingerprint()
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("PenaltyOptions", "LinkPenaltyOptions"),
+        ("MonteCarloOptions", "SimulationOptions"),
+        ("BestResponseOptions", "LeastCostOptions"),
+    ],
+)
+def test_an_old_options_class_warns_and_is_the_new_one(old: str, new: str) -> None:
+    with pytest.warns(DeprecationWarning, match=new):
+        given = getattr(ms, old)(max_routes=3) if "Response" in old else getattr(ms, old)()
+    assert isinstance(given, getattr(ms, new))

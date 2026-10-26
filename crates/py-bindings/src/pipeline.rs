@@ -1767,7 +1767,7 @@ pub fn route_update_methods() -> Vec<String> {
     let mut names: Vec<String> = openmobisim_core_sim::route_update::Registry::builtin()
         .names()
         .into_iter()
-        .map(str::to_string)
+        .map(|n| openmobisim_core_sim::route_update::public_name(n).to_string())
         .collect();
     names.sort_by_key(|n| (n != openmobisim_core_sim::route_update::DEFAULT_UPDATE, n.clone()));
     names
@@ -1834,7 +1834,7 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
         let mut values = descriptor_values(&u.descriptor());
         // The descriptor writes the search trees only when on (so older fingerprints stay), and
         // the table lists every option at its default (S282).
-        if name == "best_response" && !values.iter().any(|(n, _)| n == "tree_step_s") {
+        if name == "least_cost" && !values.iter().any(|(n, _)| n == "tree_step_s") {
             values.push((
                 "tree_step_s".to_string(),
                 f64::from(openmobisim_core_sim::route_update::DEFAULT_TREE_STEP_S),

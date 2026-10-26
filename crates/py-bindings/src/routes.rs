@@ -190,12 +190,14 @@ pub(crate) fn to_options(options: Option<HashMap<String, f64>>) -> BTreeMap<Stri
     options.unwrap_or_default().into_iter().collect()
 }
 
-/// The route-set methods that can be selected, the default first.
+/// The route-set methods that can be selected, by their public names, the default first.
 #[pyfunction]
 pub fn route_methods() -> Vec<String> {
+    use openmobisim_core_routes::public_name;
     let mut names: Vec<String> =
-        Registry::builtin().names().into_iter().map(str::to_string).collect();
-    names.sort_by_key(|n| (n != DEFAULT_METHOD, n.clone()));
+        Registry::builtin().names().into_iter().map(|n| public_name(n).to_string()).collect();
+    let default = public_name(DEFAULT_METHOD);
+    names.sort_by_key(|n| (n != default, n.clone()));
     names
 }
 

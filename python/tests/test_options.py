@@ -41,18 +41,23 @@ CLASSES = [
         "equilibration_options",
         '``equilibration="frank_wolfe"`` (``flow_level=1`` only)',
     ),
-    ("route_method.penalty", "PenaltyOptions", "route_options", '``route_method="penalty"``'),
     (
-        "route_method.montecarlo",
-        "MonteCarloOptions",
+        "route_method.link_penalty",
+        "LinkPenaltyOptions",
         "route_options",
-        '``route_method="montecarlo"``',
+        '``route_method="link_penalty"``',
     ),
     (
-        "route_update.best_response",
-        "BestResponseOptions",
+        "route_method.simulation",
+        "SimulationOptions",
+        "route_options",
+        '``route_method="simulation"``',
+    ),
+    (
+        "route_update.least_cost",
+        "LeastCostOptions",
         "route_update_options",
-        '``route_update="best_response"``',
+        '``route_update="least_cost"``',
     ),
     ("choice_model.logit", "LogitOptions", "choice_options", '``choice_model="logit"``'),
     (
@@ -61,6 +66,26 @@ CLASSES = [
         "choice_options",
         '``choice_model="nested_logit"``',
     ),
+]
+
+#: One line on what a class's method is, under its first line (S299: the terms of G's wording).
+WHAT = {
+    "LinkPenaltyOptions": "The link penalty method (de la Barra, Pérez & Añez 1993): after each "
+    "least-cost route, the costs of its links are multiplied by ``penalty`` and the search is "
+    "repeated.",
+    "SimulationOptions": "Stochastic simulation of link costs (Ramming 2002): the least-cost route "
+    "under link costs drawn at random, ``draws`` times, the draws biased towards the links likely "
+    "to congest.",
+    "LeastCostOptions": "Column generation: after each loading, each pair's least-cost route at "
+    "that loading's link times is added to its set when the set lacks it and it costs no more "
+    "than the set's best.",
+}
+
+#: The old names of renamed classes (S299), kept as deprecated subclasses: old, new.
+RENAMED = [
+    ("PenaltyOptions", "LinkPenaltyOptions"),
+    ("MonteCarloOptions", "SimulationOptions"),
+    ("BestResponseOptions", "LeastCostOptions"),
 ]
 
 HEADER = '''"""Typed options (C2, D-5 a): every parameter of a group as a keyword with its default.
@@ -76,6 +101,7 @@ nothing); a field whose default is a rule of the run's level is ``None`` until s
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, ClassVar
 
 __all__ = [
@@ -165,7 +191,9 @@ def generate() -> str:
         for g, n, v in zip(table["group"], table["name"], table["value"], strict=True):
             if g == group and n not in listed:
                 rows[group].append((n, float(v)))
-    classes = sorted([c for _, c, _, _ in CLASSES] + ["LinkClassOptions"])
+    classes = sorted(
+        [c for _, c, _, _ in CLASSES] + ["LinkClassOptions"] + [old for old, _ in RENAMED]
+    )
     names = "".join(f'    "{cls}",\n' for cls in classes)
     out = [HEADER.format(names=names)]
     for group, cls, argument, what in CLASSES:
@@ -175,6 +203,13 @@ def generate() -> str:
         lines = [f"\n\nclass {cls}(_Options):"]
         lines.append(f'    """{what[0].upper() + what[1:]}: ``{argument}``.')
         lines.append("")
+        if cls in WHAT:
+            lines.extend(
+                textwrap.wrap(
+                    WHAT[cls], width=96, initial_indent=" " * 4, subsequent_indent=" " * 4
+                )
+            )
+            lines.append("")
         lines.append("    Attributes:")
         for name, value in fields:
             whole = name in _COUNTS or name in _FLAGS
@@ -224,6 +259,23 @@ def generate() -> str:
             lines.append('                dict.__setitem__(self, f"{link_class}.{name}", value)')
         lines.append("        self._keep(given)")
         out.append("\n".join(lines))
+    for old, new in RENAMED:
+        out.append(
+            f"""
+
+
+class {old}({new}):
+    \"\"\"The old name of ``{new}``, still accepted with a ``DeprecationWarning``.\"\"\"
+
+    def __init__(self, **options: Any) -> None:
+        \"\"\"``{new}(**options)``, warning that the name has changed.\"\"\"
+        warnings.warn(
+            "{old} is now {new}; the old name is still accepted",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(**options)"""
+        )
     return "".join(out) + "\n"
 
 

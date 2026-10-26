@@ -354,8 +354,8 @@ class Run:
     def route_update(self) -> str:
         """The name of the route update that grew the route sets between iterations.
 
-        ``"none"`` (the sets stayed as the route method made them), ``"best_response"`` or
-        ``"sampled"``.
+        ``"none"`` (the sets stayed as the route method made them), ``"best_response"`` (the
+        internal name of ``"least_cost"``, column generation) or ``"sampled"``.
         """
         return self._summary.route_update
 
@@ -480,7 +480,7 @@ class Run:
         method) and are ``nan`` without one; ``gap`` does not.
 
         * ``routes_added``, ``route_searches`` — under a route update
-          (``route_update="best_response"``), how many routes it added to the route sets
+          (``route_update="least_cost"``), how many routes it added to the route sets
           **after** this loading, for the next iteration to choose among, and how many
           searches that took; 0 without one, and at the last iteration, which no choice
           follows. **``gap`` is measured against the sets as grown**: the routes the
