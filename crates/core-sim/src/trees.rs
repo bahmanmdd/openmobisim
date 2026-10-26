@@ -30,7 +30,7 @@ use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::{
     ClassExtras, Extras, RouteKey, RouteSets, SearchContext, search_map,
 };
-use openmobisim_core_types::ids::{EntityId, NodeId, TripId};
+use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
 
 use crate::link_times::LinkTimes;
 
@@ -74,6 +74,19 @@ impl Tree {
 /// What one tree's search returns: the keys served with their best times, and the routes found.
 type Searched = (Vec<(usize, f64)>, Vec<FoundRoute>);
 
+/// What one of [`SearchTrees`]' searches returns: a [`Searched`] and the drive it answered with
+/// it, if any.
+type SearchedWithDrive = (Vec<(usize, f64)>, Vec<FoundRoute>, Option<TreeDrive>);
+
+/// A drive one tree's search answered beside its pairs ([`SearchTrees::build_with_drives`]):
+/// the tree's (origin, bin), the nodes sought (ascending) and the route to each of them reached
+/// within the drive's bound, ascending by node (the origin itself, if sought, with no links).
+pub type TreeDrive = ((u32, u64), Box<[u32]>, Box<[(u32, Box<[LinkId]>)]>);
+
+/// Drives to search with the trees: per (origin node, bin) the nodes sought, and the bound of
+/// every drive in seconds ([`SearchTrees::build_with_drives`]).
+pub type DrivesWanted<'w> = (&'w [((u32, u64), Vec<NodeId>)], f64);
+
 /// The trees of one loading: see the [module docs](self).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SearchTrees {
@@ -112,6 +125,37 @@ impl SearchTrees {
         car_start_s: u32,
         step_s: f64,
     ) -> Self {
+        let inputs = (network, turns, times);
+        Self::build_with_drives(inputs, trips, trip_keys, sets, active, car_start_s, step_s, None).0
+    }
+
+    /// [`Self::build`], each tree also answering the **drives** `drives` asks for at its origin
+    /// and bin (S299): drives searched from the same node, leaving at the same bin's middle, on
+    /// the same times, to the nodes sought, bounded by the drives' bound (park-and-ride's shared
+    /// drives to their car parks, `crate::itinerary_choice`, when their step is the trees' bin).
+    /// The tree's search seeks its destinations and the drive's nodes at once, bounded by the
+    /// larger bound; each keeps what it reached within its own bound, which is exactly what
+    /// each search alone would have found
+    /// ([`openmobisim_core_routes::Search::fastest_arrivals_to`]). A drive at an origin and bin
+    /// without a tree is not searched here. Returns the trees, the same as [`Self::build`]'s, and
+    /// the drives answered, ascending by (origin, bin).
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::build`].
+    #[must_use]
+    #[allow(clippy::too_many_arguments, reason = "the loading's inputs, the trips and the bin")]
+    #[allow(clippy::too_many_lines, reason = "one pass: group, search, split")]
+    pub fn build_with_drives(
+        (network, turns, times): (&RoadNetwork, &TurnTable, &LinkTimes),
+        trips: &Trips,
+        trip_keys: &[RouteKey],
+        sets: &RouteSets,
+        active: Option<&[bool]>,
+        car_start_s: u32,
+        step_s: f64,
+        drives: Option<DrivesWanted<'_>>,
+    ) -> (Self, Vec<TreeDrive>) {
         assert!(step_s > 0.0, "a departure bin has a positive length");
         // (origin, bin, key), sorted and deduplicated: the trees in a fixed order, each key once.
         let mut items: Vec<(u32, u64, usize)> = (0..trips.len())
@@ -150,34 +194,52 @@ impl SearchTrees {
                 groups.push((departure, vec![k]));
             }
         }
+        // Each tree's drive, if one is wanted at its origin and bin: the nodes sought, ascending.
+        let mut sought: Vec<Option<Box<[u32]>>> = vec![None; heads.len()];
+        let drive_bound = drives.map_or(0.0, |(_, bound)| bound);
+        if let Some((wanted, _)) = drives {
+            let mut by_head: std::collections::BTreeMap<usize, Vec<u32>> =
+                std::collections::BTreeMap::new();
+            for (head, nodes) in wanted {
+                if let Ok(i) = heads.binary_search(head) {
+                    by_head.entry(i).or_default().extend(nodes.iter().map(|n| n.raw()));
+                }
+            }
+            for (i, mut nodes) in by_head {
+                nodes.sort_unstable();
+                nodes.dedup();
+                sought[i] = Some(nodes.into_boxed_slice());
+            }
+        }
         let ctx = SearchContext::new(network, turns);
         let node_count = network.node_count() as usize;
         let wait = |link: u32, at: f64| times.origin_wait_seconds(link, at);
         let seconds = |link: u32, at: f64| times.link_seconds(link, at);
-        let searched: Vec<Searched> =
-            search_map(&ctx, &heads.iter().zip(&groups).collect::<Vec<_>>(), |search, item| {
-                let (&(origin, _), (departure, keys)) = *item;
-                // Each key's best at the tree's departure: the search's bound is the slowest.
-                let keys: Vec<(usize, f64)> = keys
-                    .iter()
-                    .map(|&k| {
-                        let best = sets
-                            .route_range(k)
-                            .map(|r| times.route_seconds(sets.route(r).links, *departure))
-                            .fold(f64::INFINITY, f64::min);
-                        (k, best)
-                    })
-                    .collect();
-                let bound = keys.iter().map(|&(_, b)| b).fold(0.0, f64::max);
-                let mut targets = vec![false; node_count];
-                let mut wanted = 0;
-                for &(k, _) in &keys {
-                    let d = sets.keys()[k].destination as usize;
-                    if !targets[d] {
-                        targets[d] = true;
-                        wanted += 1;
-                    }
+        let items: Vec<_> = heads.iter().zip(&groups).zip(&sought).collect();
+        let searched: Vec<SearchedWithDrive> = search_map(&ctx, &items, |search, item| {
+            let ((&(origin, slot), (departure, keys)), drive) = *item;
+            // Each key's best at the tree's departure: the search's bound is the slowest.
+            let keys: Vec<(usize, f64)> = keys
+                .iter()
+                .map(|&k| {
+                    let best = sets
+                        .route_range(k)
+                        .map(|r| times.route_seconds(sets.route(r).links, *departure))
+                        .fold(f64::INFINITY, f64::min);
+                    (k, best)
+                })
+                .collect();
+            let bound = keys.iter().map(|&(_, b)| b).fold(0.0, f64::max);
+            let mut targets = vec![false; node_count];
+            let mut wanted = 0;
+            for &(k, _) in &keys {
+                let d = sets.keys()[k].destination as usize;
+                if !targets[d] {
+                    targets[d] = true;
+                    wanted += 1;
                 }
+            }
+            let Some(drive) = drive else {
                 let mut routes: Vec<FoundRoute> = search
                     .fastest_routes_to(
                         NodeId::new(origin),
@@ -197,19 +259,59 @@ impl SearchTrees {
                     })
                     .collect();
                 routes.sort_unstable_by_key(|r| r.destination);
-                (keys, routes)
-            });
+                return (keys, routes, None);
+            };
+            // One search for the pairs and the drive: each keeps what it reached within its
+            // own bound, the limits computed as each search alone computes its own.
+            let mut all = targets.clone();
+            let mut all_wanted = wanted;
+            for &n in drive.iter() {
+                if !all[n as usize] {
+                    all[n as usize] = true;
+                    all_wanted += 1;
+                }
+            }
+            let (tree_limit, drive_limit) = (*departure + bound, *departure + drive_bound);
+            let found = search.fastest_arrivals_to(
+                NodeId::new(origin),
+                &all,
+                all_wanted,
+                *departure,
+                bound.max(drive_bound),
+                &wait,
+                &seconds,
+            );
+            let mut routes: Vec<FoundRoute> = Vec::new();
+            let mut reached: Vec<(u32, Box<[LinkId]>)> = Vec::new();
+            for (node, arrival, links) in found {
+                if arrival <= drive_limit && drive.binary_search(&node.raw()).is_ok() {
+                    reached.push((node.raw(), links.clone().into_boxed_slice()));
+                }
+                if arrival <= tree_limit && targets[node.index()] && !links.is_empty() {
+                    routes.push(FoundRoute {
+                        destination: node.raw(),
+                        seconds: arrival - *departure,
+                        links: links.iter().map(|l| l.raw()).collect(),
+                    });
+                }
+            }
+            routes.sort_unstable_by_key(|r| r.destination);
+            reached.sort_unstable_by_key(|r| r.0);
+            (keys, routes, Some(((origin, slot), drive.clone(), reached.into_boxed_slice())))
+        });
         let mut pairs = 0_u32;
+        let mut answered: Vec<TreeDrive> = Vec::new();
         let trees: Vec<Tree> = heads
             .iter()
             .zip(groups)
             .zip(searched)
-            .map(|((&(origin, _), (departure, _)), (keys, routes))| {
+            .map(|((&(origin, _), (departure, _)), (keys, routes, drive))| {
                 pairs += u32::try_from(keys.len()).expect("few keys per tree");
+                answered.extend(drive);
                 Tree { origin, departure, keys, routes }
             })
             .collect();
-        Self { step_s, heads, trees, pairs }
+        (Self { step_s, heads, trees, pairs }, answered)
     }
 
     /// The length of a departure bin, in seconds.

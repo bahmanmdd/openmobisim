@@ -84,6 +84,7 @@ use crate::link_values::{PreparedLinkValues, ValueLayer};
 use crate::parking::{ExpectedAvailability, ParkingSetup};
 use crate::prices::{Cost, PreparedPrices};
 use crate::transit::{TransitSetup, par_map};
+use crate::trees::TreeDrive;
 
 /// The attributes every alternative carries, routes and itineraries alike, in
 /// the order a batch holds them.
@@ -458,6 +459,11 @@ pub(crate) type BikeReach = OnceLock<Box<[ReachCand]>>;
 /// Park-and-ride's shared drives ([`crate::parking::ParkingDefaults::reach_car_step_s`]),
 /// by road node and step of the day. Searched on one pass's times.
 pub(crate) type CarReach = HashMap<(u32, u64), SharedDrive>;
+
+/// The shared drives the search trees answered (S299), as a pass reads them.
+pub(crate) fn car_reach_of(drives: Vec<TreeDrive>) -> CarReach {
+    drives.into_iter().map(|(key, sought, routes)| (key, SharedDrive { sought, routes })).collect()
+}
 
 /// The choice sets a choice planned that the gap after it would plan again on the same
 /// costs, by trip position: see [`Itineraries::choose`]'s `gap_plans`.
@@ -2328,6 +2334,33 @@ impl Itineraries {
             .collect()
     }
 
+    /// The shared drives a pass after the loading `current` was chosen for is expected to read
+    /// (S299): those of every trip as `current` leaves its traveller's vehicles, offered all it
+    /// may use or, keeping an itinerary out through a car park, that car park alone. A pass
+    /// may read others (its earlier trips' choices can move a vehicle) and search them then.
+    /// With `only` (by traveller, as [`Self::choose`]'s), the marked travellers' trips alone.
+    pub(crate) fn drives_ahead(
+        &self,
+        planner: &Planner<'_>,
+        trips: &Trips,
+        travellers: &Travellers,
+        current: &Chosen,
+        only: Option<&[bool]>,
+    ) -> Vec<((u32, u64), Vec<NodeId>)> {
+        let mut jobs: Vec<(usize, Offer)> = Vec::new();
+        for p in 0..self.trips.len() {
+            if only.is_some_and(|o| !o[trips.traveller(self.trips[p]).index()]) {
+                continue;
+            }
+            let offer = self.offer_of(trips, travellers, p, &current.alt);
+            jobs.push((p, offer));
+            if let Some(old) = current.alt[p].as_ref().filter(|old| old.shape == Shape::Out) {
+                jobs.push((p, offer.only(old.mode).at_parking(old.parking)));
+            }
+        }
+        self.drives_wanted(planner, trips, &jobs)
+    }
+
     /// Finds, before the first planning, the bike parkings in reach of every trip that may ride
     /// out to one: one search per origin node, shared by the trips that start there
     /// (about four trips per bike node on Amsterdam's morning, which the free-flow loading's
@@ -2410,6 +2443,9 @@ impl Itineraries {
     /// marked travellers choose again and the others are neither planned nor assessed: they
     /// keep their alternatives as they are.
     ///
+    /// **`car_reach`** holds the shared drives searched on `planner`'s times so far (the search
+    /// trees', S299, or none): those the pass needs and it lacks are searched and added.
+    ///
     /// **With `gap_plans`** (when [`Self::gap`] follows on `planner` and `current`), each trip
     /// the gap measures that was planned here with the very offer the gap gives it leaves its
     /// set there (S299), so the gap plans it only once: same planner, same offer, same set.
@@ -2427,6 +2463,7 @@ impl Itineraries {
         iteration: u32,
         strategy: Option<(&dyn Equilibration, &StreamRng, f64)>,
         only: Option<&[bool]>,
+        car_reach: &mut CarReach,
         mut gap_plans: Option<&mut GapPlans>,
     ) -> Result<(Chosen, Assessment), ChoiceError> {
         let n = self.trips.len();
@@ -2488,8 +2525,8 @@ impl Itineraries {
             kept.resize(n, None);
         }
         // The drives park-and-ride trips share (S267), searched on this pass's times as the
-        // trips that need them come up, outside the parallel planning.
-        let mut car_reach = CarReach::new();
+        // trips that need them come up, outside the parallel planning; those `car_reach` holds
+        // already (the search trees', S299) are not searched again.
         let car_reach_keys = |jobs: &[(usize, Offer)]| -> Vec<((u32, u64), Vec<NodeId>)> {
             self.drives_wanted(planner, trips, jobs)
         };
@@ -2520,12 +2557,13 @@ impl Itineraries {
                 .collect();
             let jobs: Vec<(usize, Offer)> =
                 work.iter().zip(&first).map(|(&(p, _), &offer)| (p, offer)).collect();
-            planner.fill_car_reach(car_reach_keys(&jobs), &mut car_reach);
+            planner.fill_car_reach(car_reach_keys(&jobs), car_reach);
+            let reach: &CarReach = car_reach;
             let mut sets: Vec<Vec<Alternative>> = par_map(
                 &jobs,
                 SCRATCH_CHUNK,
                 || planner.scratch(),
-                |s, &(p, o)| plan(s, p, o, &car_reach),
+                |s, &(p, o)| plan(s, p, o, reach),
             );
             // Those whose alternative is gone must choose again: among all they are offered.
             let again: Vec<usize> = (0..work.len())
@@ -2542,12 +2580,13 @@ impl Itineraries {
             for &w in &again {
                 planned[w] = work[w].1;
             }
-            planner.fill_car_reach(car_reach_keys(&redo), &mut car_reach);
+            planner.fill_car_reach(car_reach_keys(&redo), car_reach);
+            let reach: &CarReach = car_reach;
             let replanned = par_map(
                 &redo,
                 SCRATCH_CHUNK,
                 || planner.scratch(),
-                |s, &(p, o)| plan(s, p, o, &car_reach),
+                |s, &(p, o)| plan(s, p, o, reach),
             );
             for (w, set) in again.into_iter().zip(replanned) {
                 sets[w] = set;
@@ -2727,8 +2766,10 @@ impl Itineraries {
     /// alternative). A car trip still under way at the end is costed as what it paid and still
     /// had to pay ([`Ended::car_seconds`]) plus its walk and parking; any other keeps its cost
     /// on these costs. An alternative no longer in the set is costed as it was planned, a car
-    /// route re-timed on these times. Every trip, every call; nothing is drawn, nothing changed:
-    /// the shared drives are searched apart from the choice's.
+    /// route re-timed on these times. Every trip, every call; nothing is drawn, nothing changed.
+    /// The shared drives are read from `car_reach` (those searched on `planner`'s times so far:
+    /// a drive's routes to the car parks it sought are the same whoever asked first, S299), and
+    /// those missing are searched and added.
     ///
     /// Costs one more planning of every such trip's whole set (in parallel), and one bounded
     /// search per car trip. A set in `kept` (left by [`Self::choose`] on the same planner and
@@ -2748,6 +2789,7 @@ impl Itineraries {
         ended: &Ended<'_>,
         currency: &Currency,
         out: &mut GapTrips,
+        car_reach: &mut CarReach,
         kept: Option<GapPlans>,
     ) -> Result<(), ChoiceError> {
         let (trips, travellers, model) = (inputs.trips, inputs.travellers, inputs.model);
@@ -2767,8 +2809,6 @@ impl Itineraries {
                 *slot = attribute(name, a, best, inputs, traveller, trip);
             }
         };
-        // The drives park-and-ride trips share, searched for these plans alone.
-        let mut car_reach = CarReach::new();
         for jobs in jobs.chunks(CHUNK) {
             // A set the choice before left (`kept`) is the one planning it again would give.
             let fresh: Vec<(usize, Offer)> = jobs
@@ -2776,12 +2816,13 @@ impl Itineraries {
                 .filter(|&&(p, _)| kept.get(p).is_none_or(Option::is_none))
                 .copied()
                 .collect();
-            planner.fill_car_reach(self.drives_wanted(planner, trips, &fresh), &mut car_reach);
+            planner.fill_car_reach(self.drives_wanted(planner, trips, &fresh), car_reach);
+            let reach: &CarReach = car_reach;
             let mut planned = par_map(
                 &fresh,
                 SCRATCH_CHUNK,
                 || planner.scratch(),
-                |s, &(p, offer)| self.plan_trip(planner, trips, s, p, offer, &car_reach),
+                |s, &(p, offer)| self.plan_trip(planner, trips, s, p, offer, reach),
             )
             .into_iter();
             let sets: Vec<Vec<Alternative>> = jobs

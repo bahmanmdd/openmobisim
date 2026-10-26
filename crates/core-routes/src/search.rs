@@ -735,11 +735,48 @@ impl<'a> Search<'a> {
         wait: &dyn Fn(u32, f64) -> f64,
         seconds: &dyn Fn(u32, f64) -> f64,
     ) -> Vec<(NodeId, f64, Vec<LinkId>)> {
+        let mut out =
+            self.fastest_arrivals_to(origin, targets, wanted, departure, bound, wait, seconds);
+        for found in &mut out {
+            found.1 -= departure;
+        }
+        out
+    }
+
+    /// [`Self::fastest_routes_to`] with each target's **arrival** as a clock time (`origin`'s is
+    /// `departure`) rather than seconds after `departure`; its arrival less `departure` is what
+    /// [`Self::fastest_routes_to`] gives, to the bit.
+    ///
+    /// **One search for several bounds** (S299): a label is found or not by the order in which
+    /// the search takes links off its queue, cheapest first and the link id breaking ties, and
+    /// a search with a larger bound takes the same links in the same order up to the smaller
+    /// bound. So the targets this search reaches with an arrival at most `departure + b`, for a
+    /// `b` up to `bound`, are with their routes exactly those a search bounded by `b`, stopping
+    /// once it has found them, would find: callers with different targets and bounds can share
+    /// one search, each keeping its own targets within its own bound.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `targets` has fewer entries than the network has nodes.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the time-dependent search's own arguments, plus the targets"
+    )]
+    pub fn fastest_arrivals_to(
+        &mut self,
+        origin: NodeId,
+        targets: &[bool],
+        wanted: usize,
+        departure: f64,
+        bound: f64,
+        wait: &dyn Fn(u32, f64) -> f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Vec<(NodeId, f64, Vec<LinkId>)> {
         let ctx = self.ctx;
         let mut found: Vec<(NodeId, f64, u32)> = Vec::new();
         let mut seen: Vec<u32> = Vec::new();
         if targets[origin.index()] {
-            found.push((origin, 0.0, NONE));
+            found.push((origin, departure, NONE));
             seen.push(origin.raw());
         }
         let limit = departure + bound;
@@ -765,7 +802,7 @@ impl<'a> Search<'a> {
             let to = ctx.network.link_to(l);
             if targets[to.index()] && !seen.contains(&to.raw()) {
                 seen.push(to.raw());
-                found.push((to, cost - departure, link));
+                found.push((to, cost, link));
             }
             for &t in ctx.turns.turns_from(l) {
                 let m = ctx.turns.outgoing(t);

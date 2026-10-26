@@ -54,8 +54,8 @@ use crate::gap::{Currency, Ended, GapTrips, NO_LINK};
 use crate::generalised_cost::{LinkTerms, class_extras, road_seconds};
 use crate::identity::{Inputs, RunDescription, describe};
 use crate::itinerary_choice::{
-    self, CarRoutes, ChooseInputs, Chosen, Followed, GapPlans, Itineraries, ItineraryResult,
-    NoAlternative, Planner, Shape, Simulated, WalkEnd, parking_kind_of,
+    self, CarReach, CarRoutes, ChooseInputs, Chosen, Followed, GapPlans, Itineraries,
+    ItineraryResult, NoAlternative, Planner, Shape, Simulated, WalkEnd, parking_kind_of,
 };
 use crate::layers::{
     ClassLimits, ModeDefaults, StaticLayers, StaticRoute, StaticRoutes, class_limits,
@@ -1524,8 +1524,17 @@ impl Run {
                     .then(|| CarRoutes { sets: &route_sets }),
             };
             chosen = Some(
-                itin.choose(&planner, &choose_inputs, None, 0, None, first_group.as_deref(), None)?
-                    .0,
+                itin.choose(
+                    &planner,
+                    &choose_inputs,
+                    None,
+                    0,
+                    None,
+                    first_group.as_deref(),
+                    &mut CarReach::new(),
+                    None,
+                )?
+                .0,
             );
             clock = timings.lap("itinerary_choice", Some(0), clock);
         }
@@ -1538,6 +1547,11 @@ impl Run {
         // and the gaps read the same trees; the cost bin where the update reads none.
         let tree_step_s =
             route_update.tree_step_s().unwrap_or_else(|| strategy.cost_bin_seconds()).max(1);
+        // Whether park-and-ride's shared drives share the trees' bin, to the bit: then a drive
+        // leaves at the very second its tree does, and the trees answer it too (S299).
+        let same_step = |p: &ParkingSetup| {
+            p.defaults().reach_car_step_s.to_bits() == f64::from(tree_step_s).to_bits()
+        };
         // Link times are recorded whenever there is a next iteration to cost: the flow map at
         // the user's bin length if they asked for one, the times the next choice reads at the
         // strategy's (S232).
@@ -1603,24 +1617,55 @@ impl Run {
                     |bins| LinkTimes::from_tables(&self.network, bins),
                 );
                 let choosing: Vec<bool> = group.iter().map(|&g| g == k).collect();
+                // The group's park-and-ride drives, answered by its trees (S299), if any.
+                let mut car_reach = CarReach::new();
                 // The group's pairs searched on these times: routes that avoid the congestion of
                 // the groups before it, for it to choose among.
                 if route_update.is_active() {
                     let trip_choosing: Vec<bool> = (0..total_trips)
                         .map(|i| choosing[trips.traveller(TripId::new(i)).index()])
                         .collect();
+                    let drives_ahead = match (&itineraries, &chosen, parking_arc.as_deref()) {
+                        (Some(itin), Some(current), Some(parking)) if same_step(parking) => {
+                            let planner = Planner {
+                                transit: None,
+                                parking: Some(parking),
+                                car: &car_ctx,
+                                bike: bike_planner,
+                                times: &times,
+                                availability: availability.as_ref(),
+                                detour_limit: self.choice_detour_limit,
+                                max_routes: self.choice_max_routes,
+                                car_access_s: self.mode_defaults.car_access_s,
+                                car_egress_s: self.mode_defaults.car_egress_s,
+                                bike_access_s: self.mode_defaults.bike_access_s,
+                                bike_egress_s: self.mode_defaults.bike_egress_s,
+                                car_routes: None,
+                            };
+                            Some(itin.drives_ahead(
+                                &planner,
+                                &trips,
+                                &travellers,
+                                current,
+                                Some(&choosing),
+                            ))
+                        }
+                        _ => None,
+                    };
                     // The group's shared search trees (S294), on these times.
-                    let trees = SearchTrees::build(
-                        &network,
-                        &turns,
-                        &times,
+                    let (trees, drives) = SearchTrees::build_with_drives(
+                        (&network, &turns, &times),
                         &trips,
                         &car_keys,
                         &route_sets,
                         Some(&trip_choosing),
                         self.car_start_s(),
                         f64::from(tree_step_s),
+                        drives_ahead
+                            .as_deref()
+                            .zip(parking_arc.as_deref().map(|p| p.defaults().reach_car_s)),
                     );
+                    car_reach = itinerary_choice::car_reach_of(drives);
                     clock = timings.lap("trees", Some(0), clock);
                     let found = route_update.update(&UpdateContext {
                         network: &network,
@@ -1693,6 +1738,7 @@ impl Run {
                         0,
                         None,
                         Some(&choosing),
+                        &mut car_reach,
                         None,
                     )?;
                     chosen = Some(next_chosen);
@@ -1751,20 +1797,55 @@ impl Run {
                 if let Some(bins) = &loaded.entry_bins {
                     let times = LinkTimes::from_tables(&self.network, bins);
                     let next = iteration + 1;
+                    // The parkings' availability this loading realised, for the itineraries
+                    // chosen on its costs.
+                    if let (Some(_), Some(_), Some(av), Some(real)) =
+                        (&itineraries, &chosen, availability.as_mut(), &loaded.availability)
+                    {
+                        av.absorb(real);
+                    }
+                    // What the itinerary choice and the gap plan on, but the timetable and the
+                    // car's route sets (set below, once the sets have grown).
+                    let base_planner = Planner {
+                        transit: None,
+                        parking: parking_arc.as_deref(),
+                        car: &car_ctx,
+                        bike: bike_planner,
+                        times: &times,
+                        availability: availability.as_ref(),
+                        detour_limit: self.choice_detour_limit,
+                        max_routes: self.choice_max_routes,
+                        car_access_s: self.mode_defaults.car_access_s,
+                        car_egress_s: self.mode_defaults.car_egress_s,
+                        bike_access_s: self.mode_defaults.bike_access_s,
+                        bike_egress_s: self.mode_defaults.bike_egress_s,
+                        car_routes: None,
+                    };
+                    // Park-and-ride's shared drives leave from a road node at a step's middle on
+                    // these times, as the trees do: when the step is the trees' bin, the trees
+                    // answer them too, in the same searches (S299).
+                    let drives_ahead = match (&itineraries, &chosen, parking_arc.as_deref()) {
+                        (Some(itin), Some(current), Some(parking)) if same_step(parking) => Some(
+                            itin.drives_ahead(&base_planner, &trips, &travellers, current, None),
+                        ),
+                        _ => None,
+                    };
                     // One search per origin and departure bin (S294), for every pair with a set:
                     // the route update reads them for the routes worth adding, the gaps for the
                     // network's best.
-                    let trees = SearchTrees::build(
-                        &network,
-                        &turns,
-                        &times,
+                    let (trees, drives) = SearchTrees::build_with_drives(
+                        (&network, &turns, &times),
                         &trips,
                         &car_keys,
                         &route_sets,
                         None,
                         self.car_start_s(),
                         f64::from(tree_step_s),
+                        drives_ahead
+                            .as_deref()
+                            .zip(parking_arc.as_deref().map(|p| p.defaults().reach_car_s)),
                     );
+                    let mut car_reach = itinerary_choice::car_reach_of(drives);
                     clock = timings.lap("trees", Some(iteration), clock);
                     // The sets grow between loadings (S176): routes the congested times of
                     // this one show to be worth having, for the next to choose among. Not
@@ -1866,11 +1947,6 @@ impl Run {
                         update.assessment.gap_flow - update.assessment.gap_flow_floor;
                     // The itineraries, on the costs this loading produced (M4).
                     if let (Some(itin), Some(current)) = (&itineraries, &chosen) {
-                        if let (Some(av), Some(real)) =
-                            (availability.as_mut(), &loaded.availability)
-                        {
-                            av.absorb(real);
-                        }
                         let transit = transit_arc.as_deref();
                         let realised = transit.zip(loaded.transit.as_ref()).map(|(transit, t)| {
                             transit.on_times(&transit.expected(&t.times, window_end))
@@ -1878,19 +1954,9 @@ impl Run {
                         let planner = Planner {
                             transit: transit
                                 .map(|t| (t, realised.as_ref().unwrap_or_else(|| t.scheduled()))),
-                            parking: parking_arc.as_deref(),
-                            car: &car_ctx,
-                            bike: bike_planner,
-                            times: &times,
-                            availability: availability.as_ref(),
-                            detour_limit: self.choice_detour_limit,
-                            max_routes: self.choice_max_routes,
-                            car_access_s: self.mode_defaults.car_access_s,
-                            car_egress_s: self.mode_defaults.car_egress_s,
-                            bike_access_s: self.mode_defaults.bike_access_s,
-                            bike_egress_s: self.mode_defaults.bike_egress_s,
                             car_routes: (mode_choice.is_some() || fallback_car)
                                 .then(|| CarRoutes { sets: &route_sets }),
+                            ..base_planner
                         };
                         // When the full gap surely follows on this planner, the choice leaves it
                         // the sets it would plan again (S299).
@@ -1903,6 +1969,7 @@ impl Run {
                             next,
                             strategy_for_next,
                             None,
+                            &mut car_reach,
                             gap_plans.as_mut(),
                         )?;
                         clock = timings.lap("itinerary_choice", Some(iteration), clock);
@@ -1924,6 +1991,7 @@ impl Run {
                                 &ended,
                                 &currency,
                                 &mut gap_trips,
+                                &mut car_reach,
                                 gap_plans.take(),
                             )?;
                             gap_made = true;
