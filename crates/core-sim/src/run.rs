@@ -54,8 +54,8 @@ use crate::gap::{Currency, Ended, GapTrips, NO_LINK};
 use crate::generalised_cost::{LinkTerms, class_extras, road_seconds};
 use crate::identity::{Inputs, RunDescription, describe};
 use crate::itinerary_choice::{
-    self, CarRoutes, ChooseInputs, Chosen, Followed, Itineraries, ItineraryResult, NoAlternative,
-    Planner, Shape, Simulated, WalkEnd, parking_kind_of,
+    self, CarRoutes, ChooseInputs, Chosen, Followed, GapPlans, Itineraries, ItineraryResult,
+    NoAlternative, Planner, Shape, Simulated, WalkEnd, parking_kind_of,
 };
 use crate::layers::{
     ClassLimits, ModeDefaults, StaticLayers, StaticRoute, StaticRoutes, class_limits,
@@ -1524,7 +1524,8 @@ impl Run {
                     .then(|| CarRoutes { sets: &route_sets }),
             };
             chosen = Some(
-                itin.choose(&planner, &choose_inputs, None, 0, None, first_group.as_deref())?.0,
+                itin.choose(&planner, &choose_inputs, None, 0, None, first_group.as_deref(), None)?
+                    .0,
             );
             clock = timings.lap("itinerary_choice", Some(0), clock);
         }
@@ -1692,6 +1693,7 @@ impl Run {
                         0,
                         None,
                         Some(&choosing),
+                        None,
                     )?;
                     chosen = Some(next_chosen);
                     clock = timings.lap("itinerary_choice", Some(0), clock);
@@ -1890,6 +1892,10 @@ impl Run {
                             car_routes: (mode_choice.is_some() || fallback_car)
                                 .then(|| CarRoutes { sets: &route_sets }),
                         };
+                        // When the full gap surely follows on this planner, the choice leaves it
+                        // the sets it would plan again (S299).
+                        let mut gap_plans =
+                            (gap_every || next == max_iterations).then(GapPlans::new);
                         let (next_chosen, found) = itin.choose(
                             &planner,
                             &choose_inputs,
@@ -1897,6 +1903,7 @@ impl Run {
                             next,
                             strategy_for_next,
                             None,
+                            gap_plans.as_mut(),
                         )?;
                         clock = timings.lap("itinerary_choice", Some(iteration), clock);
                         // Every mode's: a trip choosing its mode is measured against the best
@@ -1917,6 +1924,7 @@ impl Run {
                                 &ended,
                                 &currency,
                                 &mut gap_trips,
+                                gap_plans.take(),
                             )?;
                             gap_made = true;
                             clock = timings.lap("gap", Some(iteration), clock);

@@ -459,6 +459,10 @@ pub(crate) type BikeReach = OnceLock<Box<[ReachCand]>>;
 /// by road node and step of the day. Searched on one pass's times.
 pub(crate) type CarReach = HashMap<(u32, u64), SharedDrive>;
 
+/// The choice sets a choice planned that the gap after it would plan again on the same
+/// costs, by trip position: see [`Itineraries::choose`]'s `gap_plans`.
+pub(crate) type GapPlans = Vec<Option<Vec<Alternative>>>;
+
 /// One shared drive: leaving a road node at the middle of a step, to the car parks the
 /// trips leaving there within the step pick.
 pub(crate) struct SharedDrive {
@@ -2373,6 +2377,22 @@ impl Itineraries {
         );
     }
 
+    /// The trips [`Self::gap`] measures, with what each is offered: a trip choosing its mode
+    /// that travelled, and one that drove a car, offered all that `current` leaves it.
+    fn gap_jobs(
+        &self,
+        trips: &Trips,
+        travellers: &Travellers,
+        current: &Chosen,
+    ) -> Vec<(usize, Offer)> {
+        (0..self.trips.len())
+            .filter(|&p| {
+                current.alt[p].as_ref().is_some_and(|old| self.choosing[p] || old.mode == Mode::Car)
+            })
+            .map(|p| (p, self.offer_of(trips, travellers, p, &current.alt)))
+            .collect()
+    }
+
     /// Choose: every trip (`current` `None`, iteration 0), or, after a loading,
     /// the travellers `strategy` picks to choose again and those whose
     /// alternative is no longer on offer, the rest keeping theirs at the new
@@ -2390,10 +2410,15 @@ impl Itineraries {
     /// marked travellers choose again and the others are neither planned nor assessed: they
     /// keep their alternatives as they are.
     ///
+    /// **With `gap_plans`** (when [`Self::gap`] follows on `planner` and `current`), each trip
+    /// the gap measures that was planned here with the very offer the gap gives it leaves its
+    /// set there (S299), so the gap plans it only once: same planner, same offer, same set.
+    ///
     /// # Errors
     ///
     /// [`ChoiceError`] if the model fails or answers wrongly.
     #[allow(clippy::too_many_lines, reason = "one pass: plan, keep or choose, assess")]
+    #[allow(clippy::too_many_arguments, reason = "the costs, the choices and who chooses")]
     pub(crate) fn choose<'a>(
         &self,
         planner: &Planner<'a>,
@@ -2402,6 +2427,7 @@ impl Itineraries {
         iteration: u32,
         strategy: Option<(&dyn Equilibration, &StreamRng, f64)>,
         only: Option<&[bool]>,
+        mut gap_plans: Option<&mut GapPlans>,
     ) -> Result<(Chosen, Assessment), ChoiceError> {
         let n = self.trips.len();
         let mut next = Chosen {
@@ -2448,6 +2474,19 @@ impl Itineraries {
         let plan = |s: &mut Scratch<'a>, p: usize, offer: Offer, car_reach: &CarReach| {
             self.plan_trip(planner, trips, s, p, offer, car_reach)
         };
+        // The offer the gap after this pass gives each trip it measures.
+        let gap_offer: Option<Vec<Option<Offer>>> =
+            gap_plans.as_ref().zip(current).map(|(_, current)| {
+                let mut offers = vec![None; n];
+                for (p, offer) in self.gap_jobs(trips, travellers, current) {
+                    offers[p] = Some(offer);
+                }
+                offers
+            });
+        if let (Some(kept), Some(_)) = (gap_plans.as_deref_mut(), &gap_offer) {
+            kept.clear();
+            kept.resize(n, None);
+        }
         // The drives park-and-ride trips share (S267), searched on this pass's times as the
         // trips that need them come up, outside the parallel planning.
         let mut car_reach = CarReach::new();
@@ -2498,6 +2537,11 @@ impl Itineraries {
                 })
                 .collect();
             let redo: Vec<(usize, Offer)> = again.iter().map(|&w| work[w]).collect();
+            // The offer each set was planned with.
+            let mut planned = first.clone();
+            for &w in &again {
+                planned[w] = work[w].1;
+            }
             planner.fill_car_reach(car_reach_keys(&redo), &mut car_reach);
             let replanned = par_map(
                 &redo,
@@ -2658,6 +2702,15 @@ impl Itineraries {
                     next.probability[p] = choices.probability[m];
                 }
             }
+            // The sets the gap would plan again with the same offer, left for it.
+            if let (Some(kept), Some(gap_offer)) = (gap_plans.as_deref_mut(), &gap_offer) {
+                for (w, set) in sets.into_iter().enumerate() {
+                    let p = work[w].0;
+                    if gap_offer[p] == Some(planned[w]) {
+                        kept[p] = Some(set);
+                    }
+                }
+            }
         }
         Ok((next, assessment))
     }
@@ -2678,7 +2731,8 @@ impl Itineraries {
     /// the shared drives are searched apart from the choice's.
     ///
     /// Costs one more planning of every such trip's whole set (in parallel), and one bounded
-    /// search per car trip.
+    /// search per car trip. A set in `kept` (left by [`Self::choose`] on the same planner and
+    /// `current`) is taken as it is instead of being planned again.
     ///
     /// # Errors
     ///
@@ -2694,6 +2748,7 @@ impl Itineraries {
         ended: &Ended<'_>,
         currency: &Currency,
         out: &mut GapTrips,
+        kept: Option<GapPlans>,
     ) -> Result<(), ChoiceError> {
         let (trips, travellers, model) = (inputs.trips, inputs.travellers, inputs.model);
         if let (true, Some(parking)) = (self.parks_cars, planner.parking) {
@@ -2703,13 +2758,8 @@ impl Itineraries {
             self.fill_bike_reach(planner, trips, travellers);
             let _ = self.bike_reach_filled.set(());
         }
-        // Who is measured: a trip choosing its mode that travelled, and one that drove a car.
-        let jobs: Vec<(usize, Offer)> = (0..self.trips.len())
-            .filter(|&p| {
-                current.alt[p].as_ref().is_some_and(|old| self.choosing[p] || old.mode == Mode::Car)
-            })
-            .map(|p| (p, self.offer_of(trips, travellers, p, &current.alt)))
-            .collect();
+        let jobs = self.gap_jobs(trips, travellers, current);
+        let mut kept = kept.unwrap_or_default();
         let names: Vec<&str> = inputs.wanted.iter().map(String::as_str).collect();
         let mut row = vec![0.0; inputs.wanted.len()];
         let fill = |row: &mut [f64], a: &Alternative, best: f64, traveller, trip| {
@@ -2720,13 +2770,27 @@ impl Itineraries {
         // The drives park-and-ride trips share, searched for these plans alone.
         let mut car_reach = CarReach::new();
         for jobs in jobs.chunks(CHUNK) {
-            planner.fill_car_reach(self.drives_wanted(planner, trips, jobs), &mut car_reach);
-            let sets: Vec<Vec<Alternative>> = par_map(
-                jobs,
+            // A set the choice before left (`kept`) is the one planning it again would give.
+            let fresh: Vec<(usize, Offer)> = jobs
+                .iter()
+                .filter(|&&(p, _)| kept.get(p).is_none_or(Option::is_none))
+                .copied()
+                .collect();
+            planner.fill_car_reach(self.drives_wanted(planner, trips, &fresh), &mut car_reach);
+            let mut planned = par_map(
+                &fresh,
                 SCRATCH_CHUNK,
                 || planner.scratch(),
                 |s, &(p, offer)| self.plan_trip(planner, trips, s, p, offer, &car_reach),
-            );
+            )
+            .into_iter();
+            let sets: Vec<Vec<Alternative>> = jobs
+                .iter()
+                .map(|&(p, _)| match kept.get_mut(p).and_then(Option::take) {
+                    Some(set) => set,
+                    None => planned.next().expect("a plan for every job not kept"),
+                })
+                .collect();
             let mut batch = ChoiceBatch::new(iteration, &names);
             let mut seconds: Vec<f64> = Vec::new();
             // Per situation: its job, and the best door-to-door seconds of each mode in its set.
