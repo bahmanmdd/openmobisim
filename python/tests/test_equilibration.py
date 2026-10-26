@@ -23,7 +23,8 @@ FIELDS = [
     "gap_network_excess", "incomplete_share", "gap_transit", "gap_car_transit",
     "gap_bike_transit", "hub_mismatch_s", "gap_car", "gap_bike", "gap_walk", "mode_changed_share",
     "itinerary_recosted", "reroutes", "reroute_searches", "mode_changed_floor",
-    "itinerary_gap_excess", "completed_people", "gap_route", "gap_route_expected",
+    "itinerary_gap_excess", "gap_generalised_excess", "completed_people", "gap_route",
+    "gap_route_expected",
     "gap_route_excess", "gap_route_network", "gap_route_network_excess", "gap_mode",
     "gap_mode_expected", "gap_mode_excess", "excess_min_route", "excess_min_mode",
     "unfinished_cost_share", "gap_transit_plan_s", "gap_transit_plan_share",
@@ -576,3 +577,20 @@ def test_a_model_without_utilities_measures_the_full_gaps_in_time(tmp_path):
         back.gap_trips()
     with pytest.raises(RuntimeError, match="gap_currency"):
         back.gap_currency  # noqa: B018
+
+
+def test_the_generalised_gap_is_a_column_where_the_route_cost_is_not_time_alone(tmp_path):
+    pytest.importorskip("pyarrow")  # the run read back from its files
+
+    # S299: with a price per kilometre the stopping rule reads the in-set gap in generalised
+    # minutes, so the convergence table shows it, and kpis.parquet keeps it for Run.open; a run
+    # whose route cost is time alone does not measure it (its gap_excess is the same measure).
+    loadings = {**MSA, "equilibration_options": {"iterations": 4, "gap_tolerance": 0.0}}
+    priced = scenario(price_options={"car_eur_km": 0.2}, **loadings).run(
+        "eq-generalised", output_dir=str(tmp_path / "eq-generalised"), quiet=True
+    )
+    gap = priced.convergence()["gap_generalised_excess"]
+    assert len(gap) == 4 and np.isfinite(gap).all(), gap
+    assert np.isnan(go("eq-time-only", **loadings).convergence()["gap_generalised_excess"]).all()
+    back = ms.Run.open(tmp_path / "eq-generalised").convergence()["gap_generalised_excess"]
+    assert np.array_equal(back, gap)

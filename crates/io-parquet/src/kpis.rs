@@ -36,10 +36,10 @@ type Row = (u32, &'static str, &'static str, f64);
 /// loading, and what the iteration showed of the pattern settling
 /// (`reselected_share`, `changed_share`, `time_change`, `gap`, `gap_expected`, `gap_excess`,
 /// `incomplete_share`, `gap_network`, `gap_network_excess`, `gap_flow`, `gap_flow_floor`,
-/// `gap_flow_excess`, `itinerary_gap_excess`, and the full gaps `gap_route`,
-/// `gap_route_expected`, `gap_route_excess`, `gap_route_network`, `gap_route_network_excess`,
-/// `gap_mode`, `gap_mode_expected`, `gap_mode_excess`, `excess_min_route`, `excess_min_mode`,
-/// `unfinished_cost_share`; a number that was not measured has no row); the
+/// `gap_flow_excess`, `itinerary_gap_excess`, `gap_generalised_excess`, and the full gaps
+/// `gap_route`, `gap_route_expected`, `gap_route_excess`, `gap_route_network`,
+/// `gap_route_network_excess`, `gap_mode`, `gap_mode_expected`, `gap_mode_excess`,
+/// `excess_min_route`, `excess_min_mode`, `unfinished_cost_share`; a number that was not measured has no row); the
 /// counts that cannot change from one loading to the next
 /// (`trips`, `no_vehicle_available_trips`, `no_feasible_path_trips`,
 /// `mode_not_available_trips`, `completion_rate`) are written once, for the last.
@@ -177,6 +177,9 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
             // The itineraries' disequilibrium (S227), the third input of the run's verdict, so
             // the verdict can be read back from the file (C2, `Run.open`).
             ("itinerary_gap_excess", r.itinerary_gap_excess),
+            // The in-set gap's deterministic part in generalised minutes (S299), which the
+            // stopping rule reads where the route cost is not time alone.
+            ("gap_generalised_excess", r.gap_generalised_excess),
             // The full gaps (S293), in the currency the report names (not written: it is text).
             ("gap_route", r.gap_route),
             ("gap_route_expected", r.gap_route_expected),
@@ -225,8 +228,8 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
 /// completed and truncated trips of that loading, and what the iteration showed of
 /// the pattern settling (`reselected_share`, `changed_share`, `time_change`,
 /// `gap`, `gap_expected`, `gap_excess` (the disequilibrium), `incomplete_share`,
-/// `gap_network`, `gap_network_excess`, `gap_flow`, `gap_flow_floor`, `gap_flow_excess`, and
-/// the full gaps `gap_route`, `gap_route_expected`, `gap_route_excess`, `gap_route_network`,
+/// `gap_network`, `gap_network_excess`, `gap_flow`, `gap_flow_floor`, `gap_flow_excess`,
+/// `itinerary_gap_excess`, `gap_generalised_excess`, and the full gaps `gap_route`, `gap_route_expected`, `gap_route_excess`, `gap_route_network`,
 /// `gap_route_network_excess`, `gap_mode`, `gap_mode_expected`, `gap_mode_excess`,
 /// `excess_min_route`, `excess_min_mode`, `unfinished_cost_share`; a number that was not
 /// measured has no row). The counts that cannot change from one loading to the

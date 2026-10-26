@@ -253,9 +253,11 @@ pub struct IterationReport {
     pub stop_generalised: bool,
     /// The in-set gap's deterministic part in generalised minutes (S299): what the stopping rule
     /// reads with [`Self::stop_generalised`]: `(Σ w g_taken − Σ w g_expected) / Σ w g_least` over
-    /// the finished trips, `g` an alternative's utility over its class's time coefficient, as
-    /// [`Self::gap_excess`] in time. `NaN` where not measured. Not a column of the convergence
-    /// table: the full gap's [`Self::gap_route_excess`] at the last loading is its reported kin.
+    /// the finished trips whose route taken is offered, `g` an alternative's utility over its
+    /// class's time coefficient, as [`Self::gap_excess`] in time. `NaN` where not measured: a
+    /// run whose route cost is time alone (its stopping rule reads [`Self::gap_excess`], the
+    /// counterpart in travel time), a model without probabilities, or a run of one loading. A
+    /// column of the convergence table.
     pub gap_generalised_excess: f64,
 }
 

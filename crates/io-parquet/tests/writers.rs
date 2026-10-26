@@ -595,7 +595,8 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
         unfinished_cost_share: if iteration == 0 { f64::NAN } else { 0.0 },
         gap_currency: "utility",
         stop_generalised: false,
-        gap_generalised_excess: f64::NAN,
+        // The stopping rule's gap in generalised minutes (S299): measured at the last only.
+        gap_generalised_excess: if iteration == 2 { 0.02 } else { f64::NAN },
     };
     result.iterations = vec![report(0, 0.3), report(1, 0.1), report(2, 0.05)];
     let path = temp_path("kpis_iterated.parquet");
@@ -631,6 +632,10 @@ fn an_iterated_run_writes_a_row_set_per_iteration() {
     assert_eq!(get(2, "gap_route_network_excess"), Some(0.05 / 2.0 - 0.05 / 6.0));
     assert_eq!(get(1, "excess_min_route"), Some(0.5));
     assert_eq!(get(1, "unfinished_cost_share"), Some(0.0), "0 is measured: it has a row");
+    assert_eq!(
+        (get(2, "gap_generalised_excess"), get(1, "gap_generalised_excess")),
+        (Some(0.02), None)
+    );
     assert_eq!(
         (get(0, "gap_route"), get(2, "gap_mode"), get(2, "excess_min_mode")),
         (None, None, None)

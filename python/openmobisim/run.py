@@ -69,10 +69,10 @@ _FILE_CONVERGENCE = (
     "reselected_share", "changed_share", "total_travel_time_s", "completed_trips",
     "completed_people", "truncated_trips", "time_change", "gap", "gap_network", "gap_expected",
     "gap_excess", "gap_network_excess", "incomplete_share", "gap_flow", "gap_flow_floor",
-    "gap_flow_excess", "mode_changed_share", "itinerary_gap_excess", "gap_route",
-    "gap_route_expected", "gap_route_excess", "gap_route_network", "gap_route_network_excess",
-    "gap_mode", "gap_mode_expected", "gap_mode_excess", "excess_min_route", "excess_min_mode",
-    "unfinished_cost_share",
+    "gap_flow_excess", "mode_changed_share", "itinerary_gap_excess", "gap_generalised_excess",
+    "gap_route", "gap_route_expected", "gap_route_excess", "gap_route_network",
+    "gap_route_network_excess", "gap_mode", "gap_mode_expected", "gap_mode_excess",
+    "excess_min_route", "excess_min_mode", "unfinished_cost_share",
 )  # fmt: skip
 #: ``completion``'s keys and the ``kpis.parquet`` metrics they are.
 _FILE_COMPLETION = {
@@ -533,6 +533,18 @@ class Run:
           park-and-ride, bike-and-ride and mode-choosing trips, the gap to the best alternative
           of the mode each kept, less what the choice model itself expects. Part of
           ``convergence_gap`` and of what ``gap_tolerance`` stops on.
+        * ``gap_generalised_excess`` — **the disequilibrium in generalised minutes**: over the
+          car trips that finished (by traveller weight) and whose route taken was offered to
+          them, ``(Σ w g_chosen − Σ w g_expected) / Σ w g_least``, ``g`` a route's generalised
+          minutes at this loading's times (defined under the full gaps below), ``g_expected``
+          its expectation under the model's probabilities over the routes offered and
+          ``g_least`` the least of them: ``gap_excess`` with money, length and the user's link
+          values counted beside time. A ratio, not minutes. Where the choice model weighs more
+          than time on a car route (a price per kilometre, a toll, a user link value), it is
+          what ``gap_tolerance`` stops on in place of ``gap_excess``, together with
+          ``itinerary_gap_excess``. ``nan`` where the route cost is travel time alone (the
+          defaults: ``gap_excess`` is then its counterpart in travel time), for a model that
+          gives no probabilities, and for a run of one loading.
 
         **The full gaps**, measured over every trip after the last loading (after every loading with
         ``equilibration_options`` ``gap_every`` 1, else ``nan`` before the last), in the choice
@@ -579,7 +591,8 @@ class Run:
 
         The numbers up to ``gap_flow_excess`` are also in ``kpis.parquet``, a row per metric
         per iteration, and so are the itinerary gaps (under their modes, as ``gap``),
-        ``hub_mismatch_s``, ``mode_changed_share`` and the full gaps.
+        ``hub_mismatch_s``, ``mode_changed_share``, ``itinerary_gap_excess``,
+        ``gap_generalised_excess`` and the full gaps.
         """
         return Columns(self._summary.convergence)
 

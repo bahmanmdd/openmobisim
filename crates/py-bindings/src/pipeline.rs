@@ -722,6 +722,8 @@ fn convergence_arrays(
     dict.set_item("mode_changed_share", floats(|r| r.mode_changed_share).into_pyarray(py))?;
     dict.set_item("mode_changed_floor", floats(|r| r.mode_changed_floor).into_pyarray(py))?;
     dict.set_item("itinerary_gap_excess", floats(|r| r.itinerary_gap_excess).into_pyarray(py))?;
+    // What the stopping rule reads where the route cost is not time alone (S299).
+    dict.set_item("gap_generalised_excess", floats(|r| r.gap_generalised_excess).into_pyarray(py))?;
     // The full gaps (S293); what they are measured in is the run's `gap_currency`.
     dict.set_item("gap_route", floats(|r| r.gap_route).into_pyarray(py))?;
     dict.set_item("gap_route_expected", floats(|r| r.gap_route_expected).into_pyarray(py))?;
