@@ -34,14 +34,18 @@ use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
 
 use crate::link_times::LinkTimes;
 
-/// A route one tree found: the fastest from the tree's origin to `destination` at the tree's
-/// departure.
+/// A route one tree found: the cheapest from the tree's origin to `destination` at the tree's
+/// departure, in the tree's cost (the fastest, in a tree searched by time).
 #[derive(Clone, Debug, PartialEq)]
 pub struct FoundRoute {
     /// The destination node, raw.
     pub destination: u32,
     /// Its travel time at the tree's departure, in seconds.
     pub seconds: f64,
+    /// Its cost in the tree's currency, in seconds: its travel time in a tree searched by
+    /// time; its travel time plus its links' extra seconds, unperturbed, in a tree searched by
+    /// generalised cost. The keys' best ([`Tree::keys`]) are in the same currency.
+    pub cost: f64,
     /// Its links, raw, in driving order.
     pub links: Vec<u32>,
 }
@@ -255,6 +259,7 @@ impl SearchTrees {
                     .map(|(node, seconds, links)| FoundRoute {
                         destination: node.raw(),
                         seconds,
+                        cost: seconds,
                         links: links.iter().map(|l| l.raw()).collect(),
                     })
                     .collect();
@@ -288,9 +293,11 @@ impl SearchTrees {
                     reached.push((node.raw(), links.clone().into_boxed_slice()));
                 }
                 if arrival <= tree_limit && targets[node.index()] && !links.is_empty() {
+                    let seconds = arrival - *departure;
                     routes.push(FoundRoute {
                         destination: node.raw(),
-                        seconds: arrival - *departure,
+                        seconds,
+                        cost: seconds,
                         links: links.iter().map(|l| l.raw()).collect(),
                     });
                 }
@@ -387,9 +394,10 @@ impl DrawTrees {
     /// is entered plus the class's extra seconds for the draw (`extras[class][draw]`, time alone
     /// where `None`), every link's cost times `1 + sigma · u` (`u` uniform, from `seed`, the
     /// tree and the draw), and is bounded by `max_detour` times the largest, over the pairs it
-    /// serves, of the set's best generalised cost at the bin's middle. Each tree's `keys` carry
-    /// the set's best **travel time** at the bin's middle, as [`SearchTrees`]' do, and each route
-    /// found its travel time.
+    /// serves, of the set's best cost at the bin's middle. A tree's currency is the class's
+    /// generalised cost for the draw, unperturbed (its travel time where the class has no
+    /// extras): its `keys` carry the set's best in it, and each route found its travel time and
+    /// its cost in it ([`FoundRoute::cost`]).
     ///
     /// # Panics
     ///
@@ -492,27 +500,36 @@ impl DrawTrees {
             search_map(&ctx, &heads.iter().zip(&groups).collect::<Vec<_>>(), |search, item| {
                 let (&(origin, slot, class), (departure, keys)) = *item;
                 let extra = prepared.get(class as usize).cloned().flatten();
-                let ratio = extra.as_ref().map_or(0.0, Extras::max_ratio);
-                search.clear_route_state();
-                search.set_extras(extra);
-                search.set_noise(draw_seed(origin, slot, class, draw, seed), sigma, None);
-                // Each key's best travel time at the tree's departure, what the update compares a
-                // candidate's time with. The search is bounded in generalised cost: a candidate
-                // within the detour in time carries at most `1 + max_ratio` times its time, so
-                // the bound is the slowest best time, times the detour, times that.
+                let seconds_of = extra.as_ref().map(Extras::seconds);
+                // A route's cost in the tree's currency: its travel time at the tree's departure,
+                // plus its links' extras for the draw, unperturbed, where the class has extras.
+                let cost_of = |links: &[u32]| {
+                    let time = times.route_seconds(links, *departure);
+                    match seconds_of {
+                        None => time,
+                        Some(e) => time + links.iter().map(|&l| e[l as usize]).sum::<f64>(),
+                    }
+                };
+                // Each key's best at the tree's departure, in that currency: what the update
+                // compares a candidate with. The search is bounded by the detour times the
+                // slowest best, in the same cost.
                 let mut slowest = 0.0_f64;
                 let keys: Vec<(usize, f64)> = keys
                     .iter()
                     .map(|&k| {
-                        let best_time = sets
+                        let best = sets
                             .route_range(k)
-                            .map(|r| times.route_seconds(sets.route(r).links, *departure))
+                            .map(|r| cost_of(sets.route(r).links))
                             .fold(f64::INFINITY, f64::min);
-                        slowest = slowest.max(best_time);
-                        (k, best_time)
+                        slowest = slowest.max(best);
+                        (k, best)
                     })
                     .collect();
-                let bound = max_detour * (1.0 + ratio) * slowest;
+                let bound = max_detour * slowest;
+                let by_generalised = seconds_of.is_some();
+                search.clear_route_state();
+                search.set_extras(extra.clone());
+                search.set_noise(draw_seed(origin, slot, class, draw, seed), sigma, None);
                 let mut targets = vec![false; node_count];
                 let mut wanted = 0;
                 for &(k, _) in &keys {
@@ -534,9 +551,10 @@ impl DrawTrees {
                     )
                     .into_iter()
                     .filter(|(_, _, _, links)| !links.is_empty())
-                    .map(|(node, _, seconds, links)| FoundRoute {
+                    .map(|(node, generalised, seconds, links)| FoundRoute {
                         destination: node.raw(),
                         seconds,
+                        cost: if by_generalised { generalised } else { seconds },
                         links: links.iter().map(|l| l.raw()).collect(),
                     })
                     .collect();

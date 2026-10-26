@@ -1167,6 +1167,35 @@ fn a_competitive_route_that_is_never_the_fastest_enters_only_with_sampled_draws(
         let found = run(&Sampled { inner, draws: 1, sigma: 5.0, tau: 0.3, max_detour: 1.05, seed });
         assert_eq!(found.route_count(), 0);
     }
+    // Judged in the class's generalised cost for the draw (S299): 20 s of extras on the fast road
+    // (a toll, say) make the slow road the cheaper (84 s against 98 s), so the tight detour keeps
+    // it when a draw finds it, though it is past the detour in time.
+    let mut extra = vec![0.0; network.link_count() as usize];
+    extra[link("fast").index()] = 20.0;
+    let extras: openmobisim_core_routes::ClassExtras = vec![vec![Some(extra.into()); 2]];
+    let mut added_tight = 0;
+    for seed in 0..20 {
+        let update = Sampled { inner, draws: 1, sigma: 5.0, tau: 0.0, max_detour: 1.05, seed };
+        let found = update.update(&UpdateContext {
+            network: &network,
+            turns: &turns,
+            trips: &raw,
+            trip_keys: &trip_keys,
+            route_sets: &sets,
+            times: &times,
+            car_start_s: 0,
+            iteration: 1,
+            active: None,
+            trees: None,
+            trip_class: &trip_class,
+            extras: Some(&extras),
+        });
+        if let Some((_, routes)) = found.routes.first() {
+            assert_eq!(routes[0].links, slow, "what enters is the slow road");
+            added_tight += 1;
+        }
+    }
+    assert!(added_tight > 0, "the slow road, cheaper with the extras, enters within 1.05");
 }
 
 /// **The sampled update with no draws is the best response**, in a run: the same sets, the same

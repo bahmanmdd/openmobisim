@@ -302,6 +302,15 @@ fn sort_best_first(routes: &mut [Route]) {
         .sort_by(|a, b| a.cost.total_cmp(&b.cost).then_with(|| a.links.iter().cmp(b.links.iter())));
 }
 
+/// Sort routes by `cost(route)`, then by their links: [`sort_best_first`] in another cost.
+fn sort_best_first_by(routes: &mut [Route], cost: impl Fn(&Route) -> f64) {
+    let mut keyed: Vec<(f64, Route)> = routes.iter().map(|r| (cost(r), r.clone())).collect();
+    keyed.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.links.iter().cmp(b.1.links.iter())));
+    for (slot, (_, route)) in routes.iter_mut().zip(keyed) {
+        *slot = route;
+    }
+}
+
 // --- shortest ---------------------------------------------------------------------
 
 /// The single shortest route.
@@ -802,10 +811,12 @@ type PreparedExtras = Vec<Vec<Option<Extras>>>;
 /// by [`RouteSetGenerator::extras_wanted`]. Without extras every draw searches by travel time,
 /// and only the noise varies the routes.
 ///
-/// A route is kept if the set holds fewer than `max_paths`, it is new, its **travel time** is at
-/// most `max_detour` times the anchor's, and it shares at most `max_overlap` of its travel time
-/// with each route kept before. Its `cost` is its travel time, unperturbed, like every
-/// method's.
+/// A route is kept if the set holds fewer than `max_paths`, it is new, its cost **in the
+/// generalised cost it was searched by** (unperturbed: its travel time plus the class's extras
+/// for the draw) is at most `max_detour` times the anchor's in that cost, and it shares at most
+/// `max_overlap` of that cost with each route kept before; without extras that cost is the
+/// travel time. A set's routes are ordered by the first class's unperturbed generalised cost.
+/// A route's `cost` is its travel time, unperturbed, like every method's.
 ///
 /// **Cost:** one search tree per origin for the anchor, and one per class and draw for all the
 /// origin's destinations together, each bounded at `max_detour` times the largest generalised
@@ -822,10 +833,10 @@ pub struct Sampled {
     /// The spread of the preference draws, used by the run that composes the extras: each
     /// coefficient times `1 + tau · v`, `v` in `[−1, 1)` (at least 0).
     pub tau: f64,
-    /// A kept route's travel time is at most this multiple of the anchor's (at least 1).
+    /// A kept route's generalised cost is at most this multiple of the anchor's (at least 1).
     pub max_detour: f64,
-    /// A kept route shares at most this share of its travel time with any route kept before it
-    /// (above 0, at most 1).
+    /// A kept route shares at most this share of its generalised cost with any route kept
+    /// before it (above 0, at most 1).
     pub max_overlap: f64,
     /// How many routes to keep at most (1 to 32).
     pub max_paths: usize,
@@ -980,10 +991,10 @@ impl Sampled {
     }
 }
 
-/// The largest share of `candidate`'s cost in `ctx` that lies on links of any one of `kept`
-/// (each given as its links, sorted); 0 for a route of no cost.
-fn overlap_with(ctx: &SearchContext<'_>, candidate: &[LinkId], kept: &[Vec<LinkId>]) -> f64 {
-    let total: f64 = candidate.iter().map(|&l| ctx.link_cost(l)).sum();
+/// The largest share of `candidate`'s cost that lies on links of any one of `kept` (each given
+/// as its links, sorted), a link costing `cost(link)`; 0 for a route of no cost.
+fn overlap_with(cost: impl Fn(LinkId) -> f64, candidate: &[LinkId], kept: &[Vec<LinkId>]) -> f64 {
+    let total: f64 = candidate.iter().map(|&l| cost(l)).sum();
     if total <= 0.0 {
         return 0.0;
     }
@@ -992,11 +1003,28 @@ fn overlap_with(ctx: &SearchContext<'_>, candidate: &[LinkId], kept: &[Vec<LinkI
             candidate
                 .iter()
                 .filter(|l| sorted.binary_search(l).is_ok())
-                .map(|&l| ctx.link_cost(l))
+                .map(|&l| cost(l))
                 .sum::<f64>()
                 / total
         })
         .fold(0.0, f64::max)
+}
+
+/// A link's unperturbed cost in `ctx` under `extras`: its time, plus its extra if there are any.
+fn generalised_link(ctx: &SearchContext<'_>, extras: Option<&Extras>, link: LinkId) -> f64 {
+    match extras {
+        None => ctx.link_cost(link),
+        Some(e) => ctx.link_cost(link) + e.seconds()[link.index()],
+    }
+}
+
+/// The unperturbed cost of `links` in `ctx` under `extras`: their time if there are none, to
+/// the bit what [`SearchContext::route_cost`] gives.
+fn generalised_route(ctx: &SearchContext<'_>, extras: Option<&Extras>, links: &[LinkId]) -> f64 {
+    match extras {
+        None => ctx.route_cost(links),
+        Some(_) => links.iter().map(|&l| generalised_link(ctx, extras, l)).sum(),
+    }
 }
 
 impl RouteSetGenerator for Sampled {
@@ -1093,15 +1121,30 @@ impl RouteSetGenerator for Sampled {
                         .fold(0.0, f64::max);
                 let targets: Vec<NodeId> = active.iter().map(|&i| destinations[i]).collect();
                 let found = search.shortest_tree(origin, &targets, bound);
+                // A candidate is judged in the cost it was searched by, unperturbed: its travel
+                // time plus this class's extras for the draw (its time alone without extras),
+                // against the anchor's in the same cost.
+                let judged = extras.as_ref();
                 for (&i, candidate) in active.iter().zip(found) {
                     let Some(mut candidate) = candidate else { continue };
                     let Some(anchor) = &anchors[i] else { continue };
-                    if candidate.cost > self.max_detour * anchor.cost
+                    let (cost, anchor_cost) = match judged {
+                        None => (candidate.cost, anchor.cost),
+                        Some(_) => (
+                            generalised_route(ctx, judged, &candidate.links),
+                            generalised_route(ctx, judged, &anchor.links),
+                        ),
+                    };
+                    if cost > self.max_detour * anchor_cost
                         || sets[i].iter().any(|k| k.links == candidate.links)
                     {
                         continue;
                     }
-                    let overlap = overlap_with(ctx, &candidate.links, &sorted[i]);
+                    let overlap = overlap_with(
+                        |l| generalised_link(ctx, judged, l),
+                        &candidate.links,
+                        &sorted[i],
+                    );
                     if overlap > self.max_overlap {
                         continue;
                     }
@@ -1114,8 +1157,14 @@ impl RouteSetGenerator for Sampled {
             }
         }
         search.clear_route_state();
+        // Best first by the first class's generalised cost, unperturbed (its time where it has
+        // no extras): the order a set's routes keep.
+        let first = prepared.first().and_then(|row| row.first()).and_then(Option::as_ref);
         for set in &mut sets {
-            sort_best_first(set);
+            match first {
+                None => sort_best_first(set),
+                Some(_) => sort_best_first_by(set, |r| generalised_route(ctx, first, &r.links)),
+            }
         }
         sets
     }

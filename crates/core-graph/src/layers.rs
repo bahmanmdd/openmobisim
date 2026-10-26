@@ -598,6 +598,16 @@ impl StaticNetwork {
         &self.infrastructure
     }
 
+    /// Whether a bike on `link` rides in **mixed traffic**: [`BikeInfrastructure::Mixed`],
+    /// and not a ferry (a crossing is ridden on no facility, so it counts as none). What the
+    /// bike cost multiplies ([`Self::link_costs`]) and what `bike_mixed_km` sums.
+    #[inline]
+    #[must_use]
+    pub fn is_mixed_traffic(&self, link: LinkId) -> bool {
+        self.infrastructure[link.index()] == BikeInfrastructure::Mixed
+            && self.network.link_class(link) != RoadClass::Ferry
+    }
+
     /// Every link's travel time in seconds, in link order.
     #[must_use]
     pub fn link_seconds(&self) -> Vec<f64> {

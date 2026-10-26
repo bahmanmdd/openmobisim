@@ -10,11 +10,12 @@
 //! **Bike route sets, an option (S298).** Given [`BikeRouting::Sampled`], the
 //! bike layer holds a **route set** per origin-destination pair instead of one
 //! route: the `sampled` generator of `openmobisim_core_routes` searches the
-//! layer under its bike cost, first the least-cost route, then the cheapest
-//! route under each user class's generalised cost (the extra seconds per link
+//! layer, first the fastest route, then the cheapest route under each user
+//! class's generalised cost (the travel time plus the extra seconds per link
 //! the run composed from the choice model, per class and preference draw) with
 //! random link costs, keeping the routes within a detour of the first and under
-//! an overlap limit. Each trip rides the first route of its pair's set, the
+//! an overlap limit, both in that generalised cost. Where no class has extras
+//! the layer's bike cost stands in for the time. Each trip rides the first route of its pair's set, the
 //! least-cost one, until a choice among them records another; a ride longer
 //! than mode choice offers is left out when the leg is read, as before. The
 //! walk layer always has one route per pair, and [`BikeRouting::Shortest`]
@@ -432,6 +433,10 @@ pub enum BikeRouting {
     Shortest,
     /// Sampled sets: the `sampled` generator on the bike layer, with the extras per class and
     /// draw the run composed from the choice model (`extras[class][draw]`, `None`: time alone).
+    /// The sets are searched by **time plus the extras** where any class has extras (the
+    /// utility's own weight on mixed traffic, `bike_mixed_km`, is then in the extras, so the
+    /// bike cost's mixed-traffic factor would count it twice), by the layer's bike cost where
+    /// none has.
     Sampled {
         /// The generator, with its options (draws, noise, detour, overlap, size, seed).
         generator: openmobisim_core_routes::Sampled,
@@ -449,6 +454,17 @@ impl BikeRouting {
             Self::Sampled { generator, extras } => Some(
                 generator.with_extras(extras.clone()).expect("the sampled method takes extras"),
             ),
+        }
+    }
+
+    /// The search costs of the bike layer's routes: its travel times for sampled sets with
+    /// extras (see [`Self::Sampled`]), its bike cost otherwise.
+    fn search_costs<'s>(&self, setup: &'s LayerSetup) -> &'s [f64] {
+        match self {
+            Self::Sampled { extras, .. } if extras.iter().flatten().any(Option::is_some) => {
+                &setup.seconds
+            }
+            _ => &setup.costs,
         }
     }
 
@@ -598,11 +614,15 @@ impl StaticRoutes {
                     )
                 })
                 .collect();
-            let ctx = SearchContext::with_costs(graph, &setup.turns, setup.costs.clone());
             let sampled = match layer {
                 StaticLayer::Bike => bike.generator(),
                 StaticLayer::Walk => None,
             };
+            let costs = match (layer, &sampled) {
+                (StaticLayer::Bike, Some(_)) => bike.search_costs(setup).to_vec(),
+                _ => setup.costs.clone(),
+            };
+            let ctx = SearchContext::with_costs(graph, &setup.turns, costs);
             let layer_sets = if let Some(generator) = sampled {
                 // Sampled bike sets (S298), searched in full: a ride longer than mode choice
                 // offers is left out when its leg is read (`leg`).
@@ -861,6 +881,23 @@ mod tests {
         BikeRouting::Sampled { generator, extras }
     }
 
+    /// **Sampled bike sets with extras search by time plus the extras** (S299): the extras
+    /// carry the utility's weight on mixed traffic, so the bike cost's own factor on it would
+    /// count it twice; without extras the layer's bike cost stands for the time.
+    #[test]
+    fn sampled_sets_with_extras_search_by_time_and_without_by_the_bike_cost() {
+        let road = grid();
+        let l = layers(&road);
+        let setup = l.bike.as_ref().expect("a bike layer");
+        assert_ne!(setup.costs(), setup.seconds(), "the dedicated cost weighs mixed traffic");
+        let links = setup.seconds().len();
+        let with = sampled(Sampled::default(), vec![vec![Some(vec![1.0; links].into())]]);
+        assert_eq!(with.search_costs(setup), setup.seconds());
+        let without = sampled(Sampled::default(), vec![vec![None]]);
+        assert_eq!(without.search_costs(setup), setup.costs());
+        assert_eq!(BikeRouting::Shortest.search_costs(setup), setup.costs());
+    }
+
     fn four_draws() -> Sampled {
         let mut g = Sampled::default();
         g.draws = 4;
@@ -988,7 +1025,11 @@ mod tests {
         assert!(!avoids(&shortest), "the shortest route runs along the row");
         assert!(!avoids(&time_alone), "without extras the set is the shortest route alone");
         assert!(avoids(&with_extras), "the extras add a route off the row");
-        assert_eq!(routes(&with_extras, TripId::new(0))[0], routes(&shortest, TripId::new(0))[0]);
+        // Ordered by the class's generalised cost (S299): the route off the row first, the
+        // fastest route (the anchor, along the row) kept after it.
+        let set = routes(&with_extras, TripId::new(0));
+        assert!(!set[0].iter().any(|&l| on_row(l)), "the cheapest in generalised cost first");
+        assert!(set.contains(&routes(&shortest, TripId::new(0))[0]), "the anchor is kept");
     }
 
     #[test]

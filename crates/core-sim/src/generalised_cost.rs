@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use openmobisim_core_choice::ChoiceModel;
 use openmobisim_core_demand::Travellers;
-use openmobisim_core_graph::layers::{BikeInfrastructure, StaticNetwork};
+use openmobisim_core_graph::layers::StaticNetwork;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_routes::{ClassExtras, ExtrasRequest};
 use openmobisim_core_types::ids::{EntityId, LinkId};
@@ -80,8 +80,8 @@ impl LinkTerms {
     }
 
     /// The bike layer's terms for bike routes: `length_km`, `cost_running_eur` (at the bike's
-    /// price per kilometre), `bike_mixed_km` (the link's kilometres if it is in mixed traffic)
-    /// and the user's bike columns.
+    /// price per kilometre), `bike_mixed_km` (the link's kilometres if it is in mixed traffic,
+    /// a ferry not counted) and the user's bike columns.
     #[must_use]
     #[allow(dead_code, reason = "wired by the bike route sets (S298 P7a)")]
     pub(crate) fn bike(
@@ -95,13 +95,7 @@ impl LinkTerms {
         let mixed: Vec<f64> = km
             .iter()
             .enumerate()
-            .map(|(l, k)| {
-                if layer.infrastructure(LinkId::from_index(l)) == BikeInfrastructure::Mixed {
-                    *k
-                } else {
-                    0.0
-                }
-            })
+            .map(|(l, k)| if layer.is_mixed_traffic(LinkId::from_index(l)) { *k } else { 0.0 })
             .collect();
         let mut terms = vec![
             ("length_km".to_string(), km),

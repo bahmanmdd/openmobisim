@@ -181,9 +181,10 @@ fn an_extra_on_the_shorter_road_brings_in_the_longer_one_within_the_detour_limit
 
     let one = routes(given(&[("draws", 0.0)], vec![vec![Some(extra.clone())]]).as_ref());
     let links: Vec<Vec<u32>> = one.iter().map(|r| r.0.clone()).collect();
-    assert_eq!(links, vec![vec![id("ab"), id("bd")], vec![id("ac"), id("cd")]], "anchor first");
-    assert!((f64::from(one[0].1) - top).abs() < 1e-3, "the anchor's travel time");
-    assert!((f64::from(one[1].1) - bottom).abs() < 1e-3, "the bottom's travel time, no extra");
+    // Ordered by the class's generalised cost: the bottom road (no extra) before the top one.
+    assert_eq!(links, vec![vec![id("ac"), id("cd")], vec![id("ab"), id("bd")]], "cheapest first");
+    assert!((f64::from(one[1].1) - top).abs() < 1e-3, "the anchor's travel time");
+    assert!((f64::from(one[0].1) - bottom).abs() < 1e-3, "the bottom's travel time, no extra");
     assert_eq!((one[0].2, one[1].2), (0.0, 0.0), "the roads share no link");
 
     // Without the extra, draw 0 is time alone: the anchor only.
@@ -196,9 +197,11 @@ fn an_extra_on_the_shorter_road_brings_in_the_longer_one_within_the_detour_limit
         routes(given(&[("draws", 0.0)], vec![vec![Some(on_bottom.into())]]).as_ref()).len(),
         1
     );
-    // The bottom takes 1.2 times the top's time: over a detour limit of 1.1 it is not kept.
+    // Judged in the cost it was searched by (S299): the bottom takes 1.2 times the top's time,
+    // past a detour limit of 1.1 in time, but costs less than the top with its extra, so it is
+    // kept, with its share of the generalised cost in common with the top: none.
     let tight = given(&[("draws", 0.0), ("max_detour", 1.1)], vec![vec![Some(extra.clone())]]);
-    assert_eq!(routes(tight.as_ref()).len(), 1);
+    assert_eq!(routes(tight.as_ref()), one);
     // A second class by time alone repeats nothing.
     let two = given(&[("draws", 0.0)], vec![vec![Some(extra.clone())], vec![None]]);
     assert_eq!(routes(two.as_ref()), one);
@@ -453,28 +456,32 @@ fn the_method_is_chosen_by_name_and_bad_options_say_what_is_wrong() {
     }
 }
 
-/// **The search bound allows for the extras** (S298): on the diamond, a class whose extras make
-/// the bottom road's generalised cost 3.2 times the top's time still gets the bottom road when a
-/// draw's noise makes the top dearer, since the bottom's *travel time* (1.2 times the top's) is
-/// within the detour. A bound in generalised cost at the detour alone would cut it off forever.
+/// **A candidate is judged in the cost it was searched by** (S299): on the diamond, under
+/// draws whose noise makes the top road dearer, the bottom road (1.2 times the top's time) is
+/// kept when the class's extras on it leave its generalised cost within the detour of the
+/// anchor's (1.4 times the top's time), and refused when they take it past (3.2 times), though
+/// its travel time alone is within the detour either way.
 #[test]
-fn the_bound_lets_a_route_within_the_detour_in_time_through_whatever_its_extras() {
+fn a_candidate_is_kept_by_its_generalised_cost_within_the_detour() {
     let net = diamond();
     let turns = turns_of(&net);
     let ctx = SearchContext::new(&net, &turns);
     let top_time =
         net.free_flow_time(link(&net, "ab")).get() + net.free_flow_time(link(&net, "bd")).get();
-    let mut extra = vec![0.0; net.link_count() as usize];
-    extra[link(&net, "ac").index()] = top_time;
-    extra[link(&net, "cd").index()] = top_time;
-    let generator = Sampled::from_options(&opts(&[("draws", 16.0), ("sigma", 20.0)]))
-        .expect("valid")
-        .with_extras(vec![vec![Some(extra.into()); 17]])
-        .expect("takes extras");
-    let sets = RouteSets::generate_in(
-        &ctx,
-        &[RouteKey::new(node(&net, "A"), node(&net, "D"))],
-        generator.as_ref(),
-    );
-    assert_eq!(sets.route_count(), 2, "the top road (the anchor) and the bottom road");
+    let sets_with = |each: f64| {
+        let mut extra = vec![0.0; net.link_count() as usize];
+        extra[link(&net, "ac").index()] = each * top_time;
+        extra[link(&net, "cd").index()] = each * top_time;
+        let generator = Sampled::from_options(&opts(&[("draws", 16.0), ("sigma", 20.0)]))
+            .expect("valid")
+            .with_extras(vec![vec![Some(extra.into()); 17]])
+            .expect("takes extras");
+        RouteSets::generate_in(
+            &ctx,
+            &[RouteKey::new(node(&net, "A"), node(&net, "D"))],
+            generator.as_ref(),
+        )
+    };
+    assert_eq!(sets_with(0.1).route_count(), 2, "1.4 times the anchor's cost: kept");
+    assert_eq!(sets_with(1.0).route_count(), 1, "3.2 times the anchor's cost: refused");
 }

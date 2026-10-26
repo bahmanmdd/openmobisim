@@ -11,7 +11,7 @@
 //!
 //! | name | meaning |
 //! |---|---|
-//! | `time_min` | free-flow travel time in minutes, at the time the set was made (turns and signal delay included) |
+//! | `time_min` | expected travel time in minutes at the trip's departure, at the last loading's link times (at free flow for the first choice; turns and signal delay included) |
 //! | `length_km` | length in kilometres |
 //! | `detour` | `time / best time − 1` within the set: 0 for the best route |
 //! | `overlap` | the largest share of its cost shared with a route found before it (0 to 1) |
@@ -433,10 +433,7 @@ impl<'a> Chooser<'a> {
                             .links
                             .iter()
                             .map(|&l| LinkId::new(l))
-                            .filter(|&l| {
-                                layer.infrastructure(l)
-                                    == openmobisim_core_graph::layers::BikeInfrastructure::Mixed
-                            })
+                            .filter(|&l| layer.is_mixed_traffic(l))
                             .map(|l| graph.link_length(l).get())
                             .sum::<f64>()
                             / 1000.0

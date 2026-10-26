@@ -16,7 +16,7 @@
 //! | name | what it does |
 //! |---|---|
 //! | `none` (the default, [`DEFAULT_UPDATE`]) | Nothing: the sets stay as the generator made them, and the run costs nothing extra |
-//! | `sampled` | `best_response` and, beside it, **sampled candidates** (S298): for each of `draws` preference draws per iteration, one perturbed generalised-cost tree per origin, departure bin and user class (the class's extra seconds per link for length, money and user values, drawn around its coefficients; every link's cost times a random factor), whose route to a pair is added if it is new and its travel time at the bin's middle is within `max_detour` of the set's best there; never to a full set. The set then holds competitive routes, not only ones that were once the fastest |
+//! | `sampled` | `best_response` and, beside it, **sampled candidates** (S298): for each of `draws` preference draws per iteration, one perturbed generalised-cost tree per origin, departure bin and user class (the class's extra seconds per link for length, money and user values, drawn around its coefficients; every link's cost times a random factor), whose route to a pair is added if it is new and its cost at the bin's middle, in the class's generalised cost for the draw (its travel time where the class has no extras), is within `max_detour` of the set's best in that cost; never to a full set. The set then holds competitive routes, not only ones that were once the fastest |
 //! | `best_response` | For every origin–destination pair, the fastest route at the congested times, read from the run's **shared search trees** (one bounded time-dependent search per origin and departure bin, [`crate::trees`]; S294) or, with `tree_step_s` 0, found by one bounded search per pair at the median departure of the pair's trips; it is **added if it is new and at least as fast as the set's best route**: a tie counts, since an equally good alternative is one more to spread over. Column generation, as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
 //!
 //! **What `best_response` costs.** With the shared trees (the default) nothing is searched: the
@@ -606,8 +606,9 @@ pub struct Sampled {
     /// The preference draws' spread: each coefficient but time's times `1 + tau · v`, `v` uniform
     /// in [−1, 1) (0.3 by default; at least 0).
     pub tau: f64,
-    /// A sampled candidate's travel time at the bin's middle is at most this times the set's
-    /// best there (1.5 by default; at least 1).
+    /// A sampled candidate's cost at the bin's middle, in its class's generalised cost for the
+    /// draw (its travel time without extras), is at most this times the set's best in that cost
+    /// (1.5 by default; at least 1).
     pub max_detour: f64,
     /// The seed of the draws (0 by default); each iteration draws afresh from it.
     pub seed: u64,
@@ -823,7 +824,7 @@ impl RouteUpdate for Sampled {
                     .map(|r| f64::from(sets.route(r).cost))
                     .fold(f64::INFINITY, f64::min);
                 for &second in &departures[job.departures.clone()] {
-                    for class in 0..extras.len() {
+                    for (class, row) in extras.iter().enumerate() {
                         #[allow(clippy::cast_possible_truncation, reason = "a handful of classes")]
                         let Some(tree) = drawn.tree(key.origin, class as u32, f64::from(second))
                         else {
@@ -832,12 +833,25 @@ impl RouteUpdate for Sampled {
                         let Ok(at) = tree.keys.binary_search_by_key(&k, |&(k, _)| k) else {
                             continue;
                         };
+                        // The tree's currency: the class's generalised cost for the draw (its
+                        // travel time without extras), the set's best and its free flow in it.
                         let best = tree.keys[at].1;
+                        let free_flow = match row.get(draw).and_then(Option::as_ref) {
+                            None => free_flow,
+                            Some(e) => set
+                                .clone()
+                                .map(|r| {
+                                    let view = sets.route(r);
+                                    f64::from(view.cost)
+                                        + view.links.iter().map(|&l| e[l as usize]).sum::<f64>()
+                                })
+                                .fold(f64::INFINITY, f64::min),
+                        };
                         if self.inner.slack > 0.0 && best <= free_flow * (1.0 + self.inner.slack) {
                             continue;
                         }
                         let Some(found) = tree.route_to(key.destination) else { continue };
-                        if found.seconds > self.max_detour * best + 1e-9 {
+                        if found.cost > self.max_detour * best + 1e-9 {
                             continue;
                         }
                         let links: Vec<LinkId> =

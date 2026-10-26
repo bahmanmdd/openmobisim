@@ -217,3 +217,45 @@ fn a_changed_facility_rides_at_its_speed_but_never_above_the_way_s_cap() {
     assert!(near(km_h(&edited, "street"), d.bike_dedicated_km_h));
     assert_eq!(edited.infrastructure(id("living")), BikeInfrastructure::Separated);
 }
+
+/// **A ferry is not mixed traffic** (S299): a crossing is ridden on no facility, so neither the
+/// bike cost's mixed-traffic factor nor `bike_mixed_km` counts it; a street without a facility
+/// is mixed traffic, a track is not.
+#[test]
+fn a_ferry_crossing_is_not_mixed_traffic() {
+    let mut b = StaticNetworkBuilder::new(StaticLayer::Bike);
+    b.add_node("A", LonLat::new(4.80, 52.0));
+    b.add_node("B", LonLat::new(4.8146, 52.0));
+    let link = |class, infrastructure| StaticLink {
+        class,
+        speed_km_h: 10.0,
+        infrastructure,
+        length_m: Some(1000.0),
+        speed_cap_km_h: None,
+    };
+    b.add_link("street", "A", "B", link(RoadClass::Residential, BikeInfrastructure::Mixed));
+    b.add_link("track", "A", "B", link(RoadClass::Cycleway, BikeInfrastructure::Separated));
+    b.add_link("ferry", "B", "A", link(RoadClass::Ferry, BikeInfrastructure::Mixed));
+    let projection = {
+        let mut r = RoadNetworkBuilder::new();
+        r.add_node("A", LonLat::new(4.80, 52.0));
+        r.add_node("B", LonLat::new(4.8146, 52.0));
+        r.add_link("x", "A", "B", LinkSpec::new(RoadClass::Residential));
+        r.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+            .unwrap()
+            .projection()
+    };
+    let g = b.build(projection, &mut Diagnostics::new()).unwrap();
+    let id = |name: &str| LinkId::new(g.network().link_external_ids().id_of(name).unwrap());
+    assert!(g.is_mixed_traffic(id("street")));
+    assert!(!g.is_mixed_traffic(id("track")));
+    assert!(!g.is_mixed_traffic(id("ferry")), "a ferry is ridden on no facility");
+    let costs = g.link_costs(BikeCost::Dedicated, 1.0, 1.2);
+    let seconds = g.link_seconds();
+    assert!((costs[id("street").index()] - 1.2 * seconds[id("street").index()]).abs() < 1e-9);
+    assert_eq!(
+        costs[id("ferry").index()].to_bits(),
+        seconds[id("ferry").index()].to_bits(),
+        "no factor on a ferry"
+    );
+}
