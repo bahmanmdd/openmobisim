@@ -965,8 +965,8 @@ class Scenario:
                 ``ride_min`` and ``transfers`` say what it costs). It is chosen on the
                 **timetable**, in every iteration (no traveller knows a bus's delay in
                 advance), and ridden on the times the run makes: the traveller boards the
-                first vehicle of each line chosen they can catch. The run's clock counts seconds after the service day's
-                midnight and starts at the window.
+                first vehicle of each line chosen they can catch. The run's clock counts
+                seconds after the service day's midnight and starts at the window.
                 **Every vehicle keeps exactly to its timetable** by default: buses are not
                 vehicles of the loading, take no road capacity and are never delayed by
                 traffic (the timetable is taken to hold the delays they meet). With
