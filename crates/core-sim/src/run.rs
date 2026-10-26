@@ -566,6 +566,9 @@ pub struct Run {
     /// Level 1's equilibrium for the execution under way (S294): what its one loading drives
     /// on. `None` at every other level.
     static_solution: Option<Arc<crate::static_run::StaticSolution>>,
+    /// What re-routing searches by in the execution under way (S299): `None` where the route
+    /// cost is time alone.
+    reroute_cost: Option<Arc<crate::reroute::RerouteCost>>,
 }
 
 /// Walk paths by (from, to) walk node: see [`Run`]'s `walk_paths`.
@@ -658,6 +661,7 @@ impl Run {
             demand_values: DemandValues::new(),
             walk_paths: WalkPaths::new(),
             static_solution: None,
+            reroute_cost: None,
         }
     }
 
@@ -1606,6 +1610,20 @@ impl Run {
             None => Vec::new(),
         };
         let car_ctx = SearchContext::new(&network, &turns);
+        // Re-routing by each trip's vector, where the cost is not time alone (S299).
+        self.reroute_cost = (!road_cost.is_time_only()).then(|| {
+            Arc::new(crate::reroute::RerouteCost {
+                extras: road_cost
+                    .vectors()
+                    .iter()
+                    .map(|v| v.as_ref().map(|e| car_ctx.extras(e.to_vec())))
+                    .collect(),
+                trip_vector: trip_class
+                    .iter()
+                    .map(|&c| road_cost.vector_of_class(c as usize))
+                    .collect(),
+            })
+        });
         // The route cost's extras prepared for the car's searches (S299): none by time alone.
         let car_extras: Vec<Option<openmobisim_core_routes::Extras>> = if road_cost.is_time_only() {
             Vec::new()
@@ -2889,7 +2907,10 @@ impl Run {
                     Vec::new()
                 },
             };
-            let mut rerouter = rerouting.then(|| Rerouter::new(car_ctx, expected, &o, total_trips));
+            let reroute_cost = self.reroute_cost.clone();
+            let mut rerouter = rerouting.then(|| {
+                Rerouter::new(car_ctx, expected, &o, total_trips, reroute_cost.as_deref())
+            });
             let out = run_ltm_chained(
                 &self.network,
                 turns,

@@ -1043,6 +1043,88 @@ impl<'a> Search<'a> {
         route
     }
 
+    /// [`Self::fastest_route_after`] by **generalised cost** (S299): the route after `link`,
+    /// beginning with one of its legal turns at second `departure`, to `destination` that
+    /// minimises each link's time at the moment it is entered (`seconds`) plus its extra under the
+    /// extras set ([`Self::set_extras`], [`Self::set_base_extras`]), bounded by `bound` on that
+    /// cost: `(generalised cost, travel time in seconds after departure, links)`. With no extras
+    /// set it is a search by time (with sums rounded as such a search rounds them). `Some` with
+    /// no links if `link` already ends at `destination`. Plain Dijkstra over generalised costs,
+    /// the clock at a node that of its least-cost label (as [`Self::cheapest_routes_to`]).
+    pub fn cheapest_route_after(
+        &mut self,
+        link: LinkId,
+        destination: NodeId,
+        departure: f64,
+        bound: f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Option<(f64, f64, Vec<LinkId>)> {
+        let ctx = self.ctx;
+        if ctx.network.link_to(link) == destination {
+            return Some((0.0, 0.0, Vec::new()));
+        }
+        let seeds: Vec<LinkId> =
+            ctx.turns.turns_from(link).iter().map(|&t| ctx.turns.outgoing(t)).collect();
+        for l in seeds {
+            if !ctx.link_cost(l).is_finite() {
+                continue;
+            }
+            let s = seconds(l.raw(), departure);
+            let step = s + self.extra(l);
+            if step > bound {
+                continue;
+            }
+            let cost = step * self.factor(l);
+            if cost < self.dist[l.index()] {
+                self.set(l.index(), cost, step, NONE);
+                self.time[l.index()] = departure + s;
+                self.heap.push(Entry { cost, link: l.raw() });
+            }
+        }
+        let mut found = None;
+        while let Some(Entry { cost, link: at_link }) = self.heap.pop() {
+            let l = LinkId::new(at_link);
+            if cost > self.dist[l.index()] {
+                continue;
+            }
+            let (at, true_so_far) = (self.time[l.index()], self.true_dist[l.index()]);
+            if ctx.network.link_to(l) == destination {
+                found = Some((true_so_far, at - departure, at_link));
+                break;
+            }
+            for &t in ctx.turns.turns_from(l) {
+                let m = ctx.turns.outgoing(t);
+                if !ctx.link_cost(m).is_finite() {
+                    continue;
+                }
+                let s = seconds(m.raw(), at);
+                let step = s + self.extra(m);
+                let true_cost = true_so_far + step;
+                if true_cost > bound {
+                    continue;
+                }
+                let nd = cost + step * self.factor(m);
+                if nd < self.dist[m.index()] {
+                    self.set(m.index(), nd, true_cost, at_link);
+                    self.time[m.index()] = at + s;
+                    self.heap.push(Entry { cost: nd, link: m.raw() });
+                }
+            }
+        }
+        let route = found.map(|(generalised, time, last)| {
+            let mut links = Vec::new();
+            let mut at = last;
+            while at != NONE {
+                links.push(LinkId::new(at));
+                at = self.pred[at as usize];
+            }
+            links.reverse();
+            (generalised, time, links)
+        });
+        self.clean();
+        route
+    }
+
     fn earliest_arrival_from(
         &mut self,
         start: Start,

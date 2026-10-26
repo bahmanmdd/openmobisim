@@ -126,3 +126,49 @@ fn two_vectors_give_each_one_s_least_cost_route_ordered_by_the_first() {
     assert_eq!(routes(&net, &swapped)[0].0, vec![id("ab"), id("bd")], "ordered by the first");
     assert_ne!(both.descriptor(), swapped.descriptor());
 }
+
+/// **Re-routing by generalised cost** (S299): after a link into `A`, the route on to `D` that
+/// minimises the time plus the extras; by time without extras, the route and the time
+/// [`Search::fastest_route_after`] gives.
+#[test]
+fn the_route_after_a_link_by_generalised_cost() {
+    let mut b = RoadNetworkBuilder::new();
+    for (n, x, y) in [
+        ("Z", -100.0, 0.0),
+        ("A", 0.0, 0.0),
+        ("B", 100.0, 60.0),
+        ("C", 100.0, -60.0),
+        ("D", 200.0, 0.0),
+    ] {
+        b.add_node(n, LonLat::new(4.8 + x / 77_800.0, 45.7 + y / 110_574.0));
+    }
+    for (name, from, to, len) in [
+        ("za", "Z", "A", 100.0),
+        ("ab", "A", "B", 100.0),
+        ("bd", "B", "D", 100.0),
+        ("ac", "A", "C", 120.0),
+        ("cd", "C", "D", 120.0),
+    ] {
+        let mut spec = LinkSpec::new(RoadClass::Residential);
+        spec.length_m = Some(len);
+        b.add_link(name, from, to, spec);
+    }
+    let net = b
+        .build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable");
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    let ctx = openmobisim_core_routes::SearchContext::new(&net, &turns);
+    let mut search = openmobisim_core_routes::Search::new(&ctx);
+    let d = net.node_external_ids().typed_id_of::<NodeId>("D").expect("D");
+    let za = link(&net, "za");
+    let seconds = |l: u32, _: f64| net.free_flow_time(LinkId::new(l)).get();
+    let (time, links) = search.fastest_route_after(za, d, 0.0, 1e9, &seconds).expect("a route");
+    let (g, t, by_time) = search.cheapest_route_after(za, d, 0.0, 1e9, &seconds).expect("a route");
+    assert_eq!(by_time, links);
+    assert!((t - time).abs() < 1e-9 && (g - time).abs() < 1e-9);
+    search.set_extras(Some(ctx.extras(extra(&net, "ab", 60.0).to_vec())));
+    let (g, t, tolled) = search.cheapest_route_after(za, d, 0.0, 1e9, &seconds).expect("a route");
+    assert_eq!(tolled, vec![link(&net, "ac"), link(&net, "cd")]);
+    assert!((g - t).abs() < 1e-9, "no extras on the bottom road");
+    assert!(search.cheapest_route_after(za, d, 0.0, g - 1.0, &seconds).is_none(), "bounded");
+}
