@@ -510,6 +510,42 @@ fn the_gap_is_the_relative_excess_over_the_cheapest_route_and_has_a_closed_form(
 }
 
 #[test]
+fn all_or_nothing_expects_no_gap_whenever_the_car_enters_the_roads() {
+    // The deterministic model puts all its probability on the least time of the batch, and the gap
+    // costs the same batch: what it expects is the set's best exactly, on a jammed road with two
+    // routes and wherever after the departure the car starts (S299: the car's access time moves
+    // every reading of a route's cost). The logit on the same run expects a gap above 0.
+    for access in [0.0, 60.0, 120.0, 300.0] {
+        let fixed = ModeDefaults { car_access_s: access, ..ModeDefaults::SHIPPED };
+        let setup = Setup {
+            choice: ("deterministic", vec![]),
+            equilibration: ("msa", vec![("iterations", 4.0), ("gap_every", 1.0)]),
+            ..Setup::bottleneck(1_500)
+        };
+        let result = setup.run().with_mode_defaults(fixed).execute(&mut Diagnostics::new());
+        let sets = result.route_sets.as_ref().expect("sets");
+        assert!(sets.route_range(0).len() >= 2, "access {access}: the pair has two routes");
+        for it in &result.iterations {
+            assert!(
+                it.gap_expected == 0.0 && it.gap_excess == it.gap,
+                "access {access}, iteration {}: expected {} excess {} gap {}",
+                it.iteration,
+                it.gap_expected,
+                it.gap_excess,
+                it.gap
+            );
+        }
+        let logit = Setup {
+            choice: ("logit", vec![("beta_time_min", -0.2)]),
+            equilibration: ("msa", vec![("iterations", 2.0), ("gap_every", 1.0)]),
+            ..Setup::bottleneck(1_500)
+        };
+        let result = logit.run().with_mode_defaults(fixed).execute(&mut Diagnostics::new());
+        assert!(result.iterations.iter().all(|it| it.gap_expected > 0.0), "access {access}");
+    }
+}
+
+#[test]
 fn all_or_nothing_on_a_jammed_road_is_far_from_equilibrium_and_the_gap_says_so() {
     let setup = Setup {
         choice: ("deterministic", vec![]),

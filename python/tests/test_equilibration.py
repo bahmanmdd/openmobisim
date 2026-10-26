@@ -322,9 +322,14 @@ def test_the_disequilibrium_is_what_the_choice_model_does_not_explain():
         c["gap_excess"], c["gap"] - c["gap_expected"]
     )
     assert abs(c["gap_excess"][-1]) < 0.05 and logit.convergence_verdict == "good"
-    # An all-or-nothing model expects no gap: its disequilibrium is its gap.
+    # An all-or-nothing model expects no gap: its disequilibrium is its gap. Named: the library's
+    # default is the logit, whose gap is above 0 wherever a pair's set holds two routes (S299).
     aon = go(
-        "eq-diseq-aon", equilibration="msa", equilibration_options={"iterations": 3}, master_seed=3
+        "eq-diseq-aon",
+        choice_model="deterministic",
+        equilibration="msa",
+        equilibration_options={"iterations": 3},
+        master_seed=3,
     )
     a = aon.convergence()
     assert np.allclose(a["gap_expected"], 0) and np.allclose(a["gap_excess"], a["gap"])
