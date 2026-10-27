@@ -1533,6 +1533,12 @@ impl Run {
             }
             (None, None) => Arc::new(generate()),
         };
+        // Closures the travellers know of (S300): a pair whose every route crosses a closed link is
+        // given the least free-flow route round them, so that the first choice can plan round.
+        if !known_closures.is_empty() && static_solution.is_none() {
+            route_sets =
+                Arc::new(with_routes_round(&self.network, &turns, &route_sets, &known_closures));
+        }
         clock = timings.lap(
             if static_solution.is_some() { "static_assignment" } else { "route_sets" },
             None,
@@ -1626,6 +1632,11 @@ impl Run {
         let currency = Currency::new(model.as_ref(), &travellers, &chooser.wanted_names())?;
         let mut route_choices = match &static_solution {
             Some(solution) => solution.route_choices.clone(),
+            // On free-flow times and the closures the travellers know of (S300).
+            None if !known_closures.is_empty() => {
+                let free = LinkTimes::free_flow(&network).with_closures(&known_closures);
+                chooser.choose_all(&choice_rng, 0, Some(&free))?
+            }
             None => chooser.choose_all(&choice_rng, 0, None)?,
         };
         clock = timings.lap("route_choice", Some(0), clock);
@@ -3863,6 +3874,38 @@ fn itinerary_routes_kept(
 }
 
 #[allow(clippy::too_many_arguments, reason = "the sets, what grows them and what it changes")]
+/// `sets` with, for each pair whose every route crosses a link closed by a closure the travellers
+/// know of (`closures`, `(link, from, to)`), the least free-flow route that crosses none (S300).
+fn with_routes_round(
+    network: &RoadNetwork,
+    turns: &TurnTable,
+    sets: &RouteSets,
+    closures: &[(u32, f64, f64)],
+) -> RouteSets {
+    let mut cost: Vec<f64> =
+        (0..network.link_count()).map(|i| network.free_flow_time(LinkId::new(i)).get()).collect();
+    for &(l, _, _) in closures {
+        cost[l as usize] = f64::INFINITY;
+    }
+    let crosses = |links: &[u32]| links.iter().any(|&l| cost[l as usize].is_infinite());
+    let ctx = openmobisim_core_routes::SearchContext::with_costs(network, turns, cost.clone());
+    let mut search = openmobisim_core_routes::Search::new(&ctx);
+    let mut additions = Vec::new();
+    for (k, key) in sets.keys().iter().enumerate() {
+        if !sets.route_range(k).all(|r| crosses(sets.route(r).links)) {
+            continue;
+        }
+        let round = search.shortest(NodeId::new(key.origin), NodeId::new(key.destination));
+        if let Some(route) = round {
+            additions.push((k, vec![route]));
+        }
+    }
+    if additions.is_empty() {
+        return sets.clone();
+    }
+    sets.extended(network, &additions, 0, sets.update()).0
+}
+
 fn grow_sets(
     network: &RoadNetwork,
     sets: &RouteSets,
