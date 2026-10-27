@@ -728,6 +728,9 @@ fn whole(
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Msa {
     /// How many loadings to make at most (1 to [`MAX_ITERATIONS`]).
+    ///
+    /// *Uncalibrated: 15 (S300; 10 before). Delft's base reaches the tolerance at 12 or 13
+    /// loadings; a run that never does costs at most half again what 10 cost.*
     pub iterations: u32,
     /// Stop once the **disequilibrium** ([`IterationReport::disequilibrium`]: the gap less what
     /// the choice model itself expects), averaged over the last three iterations, is below
@@ -774,7 +777,7 @@ pub struct Msa {
 impl Default for Msa {
     fn default() -> Self {
         Self {
-            iterations: 10,
+            iterations: 15,
             gap_tolerance: 0.05,
             gap_sample: 300,
             itinerary_gap_sample: MAX_ITINERARY_GAP_SAMPLE,

@@ -943,7 +943,7 @@ class Scenario:
                 the iterations went, and ``Run.convergence_verdict`` judges
                 the disequilibrium the last iteration ended at.
             equilibration_options: The strategy's options, numbers by name: for
-                ``"msa"``, ``iterations`` (10; the most loadings), ``gap_tolerance``
+                ``"msa"``, ``iterations`` (15; the most loadings), ``gap_tolerance``
                 (0.05: stop once the disequilibrium, averaged over the last three
                 iterations, is below this, the verdict's "good"; 0.15 is acceptable; 0 never
                 stops early), ``route_growth_tolerance`` (1: and only while the last route update

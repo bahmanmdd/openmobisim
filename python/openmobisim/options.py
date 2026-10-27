@@ -520,7 +520,7 @@ class MsaOptions(_Options):
         gap_sample: count; ``300``.
         gap_tolerance: —; ``0.05``.
         increments: count; by default ``None``: 1 at flow_level 0 whatever is set.
-        iterations: count; ``10``.
+        iterations: count; ``15``.
         itinerary_gap_sample: count; ``100000000``.
         route_growth_tolerance: —; ``1.0``.
         warmup: count; ``1``.
@@ -533,7 +533,7 @@ class MsaOptions(_Options):
         "gap_sample": 300,
         "gap_tolerance": 0.05,
         "increments": None,
-        "iterations": 10,
+        "iterations": 15,
         "itinerary_gap_sample": 100000000,
         "route_growth_tolerance": 1.0,
         "warmup": 1,
@@ -547,7 +547,7 @@ class MsaOptions(_Options):
         gap_sample: int = 300,
         gap_tolerance: float = 0.05,
         increments: int | None = None,
-        iterations: int = 10,
+        iterations: int = 15,
         itinerary_gap_sample: int = 100000000,
         route_growth_tolerance: float = 1.0,
         warmup: int = 1,
@@ -569,7 +569,7 @@ class SraOptions(_Options):
         gap_sample: count; ``300``.
         gap_tolerance: —; ``0.05``.
         increments: count; by default ``None``: 1 at flow_level 0 whatever is set.
-        iterations: count; ``10``.
+        iterations: count; ``15``.
         itinerary_gap_sample: count; ``100000000``.
         route_growth_tolerance: —; ``1.0``.
         warmup: count; ``1``.
@@ -584,7 +584,7 @@ class SraOptions(_Options):
         "gap_sample": 300,
         "gap_tolerance": 0.05,
         "increments": None,
-        "iterations": 10,
+        "iterations": 15,
         "itinerary_gap_sample": 100000000,
         "route_growth_tolerance": 1.0,
         "warmup": 1,
@@ -600,7 +600,7 @@ class SraOptions(_Options):
         gap_sample: int = 300,
         gap_tolerance: float = 0.05,
         increments: int | None = None,
-        iterations: int = 10,
+        iterations: int = 15,
         itinerary_gap_sample: int = 100000000,
         route_growth_tolerance: float = 1.0,
         warmup: int = 1,

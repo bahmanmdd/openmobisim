@@ -323,7 +323,11 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// route there, from one search tree per junction kept `loading_options` `reroute_tree_s` (60 s);
 /// nobody else is offered one, and the queue-ahead offer and `reroute_queue_ahead` are gone.
 /// Every run with road disruptions moves.
-pub const DEFAULTS_VERSION: u32 = 42;
+///
+/// Version 43 (S300): **msa makes at most 15 loadings** (`equilibration_options` `iterations`; 10
+/// before): Delft's base reached its 10th still above the tolerance and now stops by it at 12 or
+/// 13. Every run that reached 10 loadings without converging moves.
+pub const DEFAULTS_VERSION: u32 = 43;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

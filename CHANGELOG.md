@@ -92,6 +92,10 @@ before the closed road. One search tree from each such junction answers its vehi
 - `loading_options` `reroute_queue_ahead` is gone (the offer for a queue seen further ahead), and `route_changes`
   reasons are `"closed_ahead"` and `"stuck"` (levels 3 and 4).
 
+**msa makes at most 15 iterations** (`equilibration_options` `iterations`; 10 before), still stopping as soon as
+the disequilibrium is below `gap_tolerance` (0.05). Delft's base reached its tenth iteration above the tolerance and
+now stops by it at the 13th; runs that converged within 10 are unchanged.
+
 **The last iteration's gap on the same footing as every other.** The route sets grow after the last iteration too,
 with the routes its travel times reveal, before its gaps are measured: the gaps take each set's best route, so the last
 iteration of a run now reads what the same iteration of a longer run reads (0.1.0 measured it without them, about 1 %
