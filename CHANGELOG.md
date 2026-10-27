@@ -78,6 +78,12 @@ the choice set in generalised minutes (utility over the time coefficient), shown
 - The doubly stochastic method and update keep and order their routes by the generalised cost they were searched by,
   no longer by travel time.
 
+**The last iteration's gap on the same footing as every other.** The route sets grow after the last iteration too,
+with the routes its travel times reveal, before its gaps are measured: the gaps take each set's best route, so the last
+iteration of a run now reads what the same iteration of a longer run reads (0.1.0 measured it without them, about 1 %
+lower on Delft). The traffic of every iteration is unchanged; `routes_added` of the last row counts those routes,
+which the run's route sets keep.
+
 ## 0.1.0 — 2026-10-20
 
 The first public release: **an alpha, for testing by students and colleagues.** The tests are not complete; please use

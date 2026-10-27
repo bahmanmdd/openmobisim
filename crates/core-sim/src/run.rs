@@ -2040,9 +2040,11 @@ impl Run {
                     let mut car_reach = itinerary_choice::car_reach_of(drives);
                     clock = timings.lap("trees", Some(iteration), clock);
                     // The sets grow between loadings (S176): routes the congested times of
-                    // this one show to be worth having, for the next to choose among. Not
-                    // after the last loading, which no choice follows.
-                    if next < max_iterations && route_update.is_active() {
+                    // this one show to be worth having, for the next to choose among. After the
+                    // last loading too, which no choice follows: the gaps below read the best
+                    // route of each set, so every loading is measured on the same footing as a
+                    // longer run's (S300).
+                    if route_update.is_active() {
                         let found = route_update.update(&UpdateContext {
                             network: &network,
                             turns: &turns,
