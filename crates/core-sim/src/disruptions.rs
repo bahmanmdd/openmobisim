@@ -111,6 +111,26 @@ impl Disruptions {
         Ok(())
     }
 
+    /// Each closure, `(link, from, to)` in seconds: the spans in which a link's capacity is 0
+    /// ([`Self::capacity_changes`]), `to` infinite for one never reopened. What travellers who
+    /// know of the disruptions plan on (S300).
+    #[must_use]
+    pub fn closures(&self) -> Vec<(u32, f64, f64)> {
+        let changes = self.capacity_changes();
+        let mut out = Vec::new();
+        for (k, c) in changes.iter().enumerate() {
+            if c.factor > 0.0 {
+                continue;
+            }
+            let to = changes[k + 1..]
+                .iter()
+                .find(|n| n.link == c.link)
+                .map_or(f64::INFINITY, |n| n.time);
+            out.push((c.link.raw(), c.time, to));
+        }
+        out
+    }
+
     /// The loading's capacity changes: per link, at every start and end of a disruption, the
     /// product of the factors of those under way then.
     #[must_use]

@@ -268,6 +268,24 @@ fn a_route_is_walked_link_by_link_through_the_bins_it_meets() {
     assert!((none.route_seconds(&[ab, bc], 500.0) - (free(ab) + free(bc))).abs() < 1e-12);
 }
 
+/// **Property (S300):** a closure the travellers know of is read from the closure itself: entering
+/// a link closed from 100 s to 400 s at 150 s costs the 250 s until it reopens plus its time
+/// then, whatever the table recorded (nobody crossed it); before and after, the table's times.
+#[test]
+fn a_known_closure_costs_the_wait_until_it_reopens() {
+    let (net, ab, bc) = line();
+    let free = |l: u32| net.free_flow_time(LinkId::new(l)).get();
+    let times = LinkTimes::free_flow(&net).with_closures(&[(bc, 100.0, 400.0)]);
+    assert!((times.link_seconds(bc, 150.0) - (250.0 + free(bc))).abs() < 1e-9);
+    assert!((times.link_seconds(bc, 99.0) - free(bc)).abs() < 1e-12, "before: free flow");
+    assert!((times.link_seconds(bc, 400.0) - free(bc)).abs() < 1e-12, "reopened");
+    assert!((times.link_seconds(ab, 150.0) - free(ab)).abs() < 1e-12, "another link: its own");
+    // A route reaching `bc` during the closure waits for it.
+    let t = times.route_seconds(&[ab, bc], 100.0);
+    assert!((t - (400.0 - 100.0 + free(bc))).abs() < 1e-9, "{t}");
+    assert!((times.link_seconds_held(bc, 150.0) - (250.0 + free(bc))).abs() < 1e-9);
+}
+
 #[test]
 fn a_bin_nobody_crossed_between_two_that_were_recorded_costs_free_flow() {
     // S259: each link's times are laid out from its first recorded bin to its last; a bin

@@ -54,6 +54,10 @@ pub struct LinkTimes {
     /// Per link, where its last recorded bin is in its span, counted from its first: what
     /// [`LinkTimes::link_seconds_held`] holds after it.
     span_last: Vec<u32>,
+    /// Closures the travellers know of ([`Self::with_closures`]), `(link, from, to)`, and per link
+    /// whether it has one; both empty without.
+    closures: Vec<(u32, f64, f64)>,
+    has_closure: Vec<bool>,
 }
 
 /// One table's rows, by link then bin.
@@ -168,7 +172,39 @@ impl LinkTimes {
             span_start,
             span,
             span_last,
+            closures: Vec::new(),
+            has_closure: Vec::new(),
         }
+    }
+
+    /// These times with the closures the travellers know of (S300), `(link, from, to)` in
+    /// seconds: entering a closed link at `at` in `[from, to)` costs the wait until it reopens
+    /// plus its time when entered then, the loading's own rule (a closed link takes no vehicle
+    /// in). Read from the closure itself, not from who crossed the link: nobody enters a closed
+    /// link, so its recorded bins say nothing of it. A disruption the travellers know of is the
+    /// network as it will be, for every route cost read from these times.
+    #[must_use]
+    pub fn with_closures(mut self, closures: &[(u32, f64, f64)]) -> Self {
+        if closures.is_empty() {
+            return self;
+        }
+        self.has_closure = vec![false; self.free_flow.len()];
+        for &(l, _, _) in closures {
+            self.has_closure[l as usize] = true;
+        }
+        self.closures = closures.to_vec();
+        self
+    }
+
+    /// When `link`, closed at `at` by a closure the travellers know of, reopens.
+    fn reopens(&self, link: u32, at: f64) -> Option<f64> {
+        if !self.has_closure.get(link as usize).copied().unwrap_or(false) {
+            return None;
+        }
+        self.closures
+            .iter()
+            .find(|&&(l, from, to)| l == link && from <= at && at < to)
+            .map(|&(_, _, to)| to)
     }
 
     /// Free-flow times everywhere: what the first assignment sees.
@@ -187,6 +223,8 @@ impl LinkTimes {
             span_start: vec![0; links + 1],
             span: Vec::new(),
             span_last: vec![0; links],
+            closures: Vec::new(),
+            has_closure: Vec::new(),
         }
     }
 
@@ -219,9 +257,18 @@ impl LinkTimes {
         bin
     }
 
-    /// The time to cross `link` when entering it at second `at`.
+    /// The time to cross `link` when entering it at second `at`: under a known closure, the wait
+    /// until it reopens plus its time then ([`Self::with_closures`]).
     #[must_use]
     pub fn link_seconds(&self, link: u32, at: f64) -> f64 {
+        if let Some(to) = self.reopens(link, at) {
+            return (to - at) + self.recorded_seconds(link, to);
+        }
+        self.recorded_seconds(link, at)
+    }
+
+    /// [`Self::link_seconds`] from the recorded table alone.
+    fn recorded_seconds(&self, link: u32, at: f64) -> f64 {
         let l = link as usize;
         let (a, z) = (self.span_start[l] as usize, self.span_start[l + 1] as usize);
         let k = self.bin_of(at).wrapping_sub(self.span_first[l]) as usize;
@@ -237,6 +284,9 @@ impl LinkTimes {
     /// before its first recorded bin.
     #[must_use]
     pub fn link_seconds_held(&self, link: u32, at: f64) -> f64 {
+        if let Some(to) = self.reopens(link, at) {
+            return (to - at) + self.link_seconds_held(link, to);
+        }
         let l = link as usize;
         let (a, z) = (self.span_start[l] as usize, self.span_start[l + 1] as usize);
         let bin = self.bin_of(at);

@@ -60,6 +60,21 @@ def test_a_closed_road_holds_its_cars_until_it_opens() -> None:
     assert free.mean_travel_time_s == pytest.approx(80.0), "no capacity at free flow"
 
 
+def test_a_known_narrowing_starts_and_ends_on_the_cost_bins() -> None:
+    # S300: a known narrowing is read from the times the loadings record, by cost bin, so a bin
+    # never mixes the times before and during it; a known closure is read from the closure itself.
+    narrow = {"links": ["a2"], "capacity_factor": 0.5, "from_s": 60, "to_s": 300}
+    with pytest.raises(ValueError, match="inside a cost bin of 300 s"):
+        run_cars("dis-narrow-mid", disruptions=[narrow], disruptions_known=True)
+    on_edges = {**narrow, "from_s": 0, "to_s": 600}
+    assert (
+        run_cars("dis-narrow", disruptions=[on_edges], disruptions_known=True).completion[
+            "completed"
+        ]
+        == 30
+    )
+
+
 def test_a_tram_late_or_cancelled_known_or_not() -> None:
     assert tram_trip("dis-tram").mean_travel_time_s == pytest.approx(800.0)
     late = {"line": "T1", "delay_s": 120, "from_s": 0, "to_s": 1000}

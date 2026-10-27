@@ -1290,6 +1290,30 @@ impl Run {
             .check(&self.network, self.transit.as_ref().map(|t| t.timetable().route_count()))
             .map_err(RunError::Input)?;
         let known_disruptions = self.disruptions.known && !self.disruptions.is_empty();
+        // Closures the travellers know of are the network as it will be: every route cost reads
+        // them from the closure itself (S300). A known narrowing is read from the link times the
+        // loadings record, so it starts and ends on the edges of the cost bins: no bin's times mix
+        // before and during it.
+        let known_closures =
+            if self.disruptions.known { self.disruptions.closures() } else { Vec::new() };
+        if self.disruptions.known {
+            let bin = f64::from(self.equilibration.cost_bin_seconds());
+            let mut factor: std::collections::HashMap<u32, f64> = std::collections::HashMap::new();
+            for c in self.disruptions.capacity_changes() {
+                let before = factor.insert(c.link.raw(), c.factor).unwrap_or(1.0);
+                if c.factor > 0.0 && before > 0.0 && c.time % bin != 0.0 {
+                    return Err(RunError::Input(format!(
+                        "a road narrowing the travellers know of changes link {} at {} s, inside \
+                         a cost bin of {bin} s: the link times averaged over that bin would mix \
+                         the times before and during it; start and end it on a multiple of {bin} \
+                         s, or set equilibration_options cost_bin_s to a length that divides its \
+                         times",
+                        self.network.link_external_ids().external_of(c.link).unwrap_or("?"),
+                        c.time
+                    )));
+                }
+            }
+        }
         // Level 1 (S294) loads car trips on one period's flows, and refuses what it cannot run.
         if let FlowMotor::Static { .. } = self.flow_motor {
             let refused = crate::static_run::refusal(
@@ -1688,7 +1712,7 @@ impl Run {
             (increments > 1).then(|| group.iter().map(|&g| g == 0).collect());
         let mut chosen: Option<Chosen> = None;
         if let Some(itin) = &itineraries {
-            let free = LinkTimes::free_flow(&network);
+            let free = LinkTimes::free_flow(&network).with_closures(&known_closures);
             let planner = Planner {
                 transit: planned,
                 parking: parking_arc.as_deref(),
@@ -1796,10 +1820,14 @@ impl Run {
                 increment_reroute_searches += loaded.reroute_searches;
                 // Every group chooses (S267: none chose before), on free flow if this loading
                 // recorded no times.
-                let times = loaded.entry_bins.as_ref().map_or_else(
-                    || LinkTimes::free_flow(&network),
-                    |bins| LinkTimes::from_tables(&self.network, bins),
-                );
+                let times = loaded
+                    .entry_bins
+                    .as_ref()
+                    .map_or_else(
+                        || LinkTimes::free_flow(&network),
+                        |bins| LinkTimes::from_tables(&self.network, bins),
+                    )
+                    .with_closures(&known_closures);
                 let choosing: Vec<bool> = group.iter().map(|&g| g == k).collect();
                 // The group's park-and-ride drives, answered by its trees (S299), if any.
                 let mut car_reach = CarReach::new();
@@ -1990,7 +2018,8 @@ impl Run {
             let mut assessed: Option<(Vec<bool>, Vec<f64>)> = None;
             if max_iterations > 1 {
                 if let Some(bins) = &loaded.entry_bins {
-                    let times = LinkTimes::from_tables(&self.network, bins);
+                    let times =
+                        LinkTimes::from_tables(&self.network, bins).with_closures(&known_closures);
                     let next = iteration + 1;
                     // The parkings' availability this loading realised, for the itineraries
                     // chosen on its costs.
