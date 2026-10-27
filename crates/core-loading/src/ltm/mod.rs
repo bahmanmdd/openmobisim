@@ -1212,8 +1212,12 @@ impl<'a> LtmNetwork<'a> {
             }
             Place::Origin => {
                 let first = vehicle.route[0].index();
-                // Under `with_origin_inflow`, the first link's inflow headway, as from a link.
-                if self.origin_inflow && self.headway_blocks(first, pcu, queue, t, t0) {
+                // Under `with_origin_inflow`, the first link's inflow headway, as from a link; a
+                // closed first link refuses a departure as it refuses a vehicle at a node: it
+                // waits at its origin (S300).
+                if (self.origin_inflow || self.is_closed(first))
+                    && self.headway_blocks(first, pcu, queue, t, t0)
+                {
                     return;
                 }
                 match self.admissible(first, pcu, t, None) {

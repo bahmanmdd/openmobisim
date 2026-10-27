@@ -7,7 +7,7 @@
 //! | Case | Hand value |
 //! |---|---|
 //! | no change | every car 72 s |
-//! | `BC` closed from 100 s to 400 s (no car enters or leaves it) | none arrives between 100 and 400 s; the 4 cars on `BC` when it closed leave from **400 s**, one every 2.571 s; those held on `AB` enter at 400 s and arrive from **436 s** (400 + 36), one every 2.571 s |
+//! | `BC` closed from 100 s to 400 s (no car enters it) | the 4 cars on `BC` when it closed (entered at 66, 76, 86, 96 s) drive out at their free times, **102, 112, 122, 132 s**; none arrives between them and 436 s; those held on `AB` enter at 400 s and arrive from **436 s** (400 + 36), one every 2.571 s |
 //! | `BC` at a tenth of its capacity from 100 s | its cars leave 25.71 s apart (the tenth's headway) until the queue clears |
 
 use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
@@ -77,21 +77,24 @@ fn no_change_changes_nothing() {
 }
 
 #[test]
-fn a_closed_link_holds_its_cars_until_it_opens_and_then_discharges_at_capacity() {
+fn a_closed_link_takes_no_car_until_it_opens_and_lets_out_those_on_it() {
     let (_, _, bc) = line();
     let closed = arrivals(vec![
         CapacityChange { time: 100.0, link: bc, factor: 0.0 },
         CapacityChange { time: 400.0, link: bc, factor: 1.0 },
     ]);
-    assert!(closed.iter().all(|&a| !(100.0 < a && a < 400.0)), "nothing passes while closed");
-    let held: Vec<f64> = closed.iter().copied().filter(|&a| a >= 400.0 - 1e-6).collect();
+    // The four cars on `BC` when it closed drive out at their free times (S300).
+    assert!(
+        closed[3..7].iter().zip([102.0, 112.0, 122.0, 132.0]).all(|(a, e)| (a - e).abs() < 1e-6)
+    );
+    assert!(
+        closed.iter().all(|&a| !(133.0 < a && a < 436.0 - 1e-6)),
+        "nothing enters while closed"
+    );
+    let held: Vec<f64> = closed.iter().copied().filter(|&a| a >= 400.0).collect();
     let headway = 1.0 / (1400.0 / 3600.0);
-    let on_bc = held.iter().filter(|&&a| a < 436.0).count();
-    assert_eq!(on_bc, 4, "the cars on BC when it closed: {held:?}");
-    assert!((held[0] - 400.0).abs() < 1e-6, "they leave when it opens");
-    assert!((held[3] - held[0] - 3.0 * headway).abs() <= 1.0, "at capacity");
-    assert!((held[4] - 436.0).abs() < 1e-6, "the held ones enter at 400 s, cross in 36 s");
-    assert!((held[14] - held[4] - 10.0 * headway).abs() <= 1.0, "then at capacity: {held:?}");
+    assert!((held[0] - 436.0).abs() < 1e-6, "the held ones enter at 400 s, cross in 36 s");
+    assert!((held[10] - held[0] - 10.0 * headway).abs() <= 1.0, "then at capacity: {held:?}");
     assert!(closed[..3].iter().zip([72.0, 82.0, 92.0]).all(|(a, e)| (a - e).abs() < 1e-6));
 }
 
@@ -141,7 +144,7 @@ fn one_car_at(
 #[test]
 fn a_closed_link_holds_even_a_first_vehicle() {
     // No vehicle has passed `BC` before it closes, so no headway runs from an earlier one: the
-    // closure itself must hold the car, entering and leaving alike.
+    // closure itself must keep the car out.
     let (_, _, bc) = line();
     let closed = |from: f64| {
         vec![
@@ -153,9 +156,9 @@ fn a_closed_link_holds_even_a_first_vehicle() {
     // Closed before it reaches `B`: it waits there and enters at 400 s, then 36 s on `BC`.
     let held_at_b = one_car(10, closed(0.0));
     assert!((held_at_b - 436.0).abs() < 1e-6, "entering a closed link: {held_at_b}");
-    // On `BC` (it entered at 36 s) when `BC` closes at 50 s: it leaves when it opens.
-    let held_on_bc = one_car(0, closed(50.0));
-    assert!((held_on_bc - 400.0).abs() < 1e-6, "leaving a closed link: {held_on_bc}");
+    // On `BC` (it entered at 36 s) when `BC` closes at 50 s: it drives out, free (S300).
+    let on_bc = one_car(0, closed(50.0));
+    assert!((on_bc - 72.0).abs() < 1e-6, "leaving a closed link: {on_bc}");
 }
 
 /// **Property (S293):** at the point queue a closed link refuses entry under either rule of entry
@@ -179,4 +182,38 @@ fn at_the_point_queue_a_closed_link_refuses_entry_too() {
     let narrowed = vec![CapacityChange { time: 0.0, link: bc, factor: 0.5 }];
     let (_, entered) = one_car_at(10, narrowed, FidelityLevel::PointQueue, false);
     assert!((entered - 46.0).abs() < 1e-6, "a narrowed link takes it at 10 + 36 s: {entered}");
+}
+
+/// **Property (S300):** a closed link refuses a departure as it refuses a vehicle at a node, at
+/// every level: a car leaving `B` onto `BC` while it is closed (100 s to 400 s) waits at its origin,
+/// enters at 400 s and arrives 36 s later; nobody is shut inside a closed road.
+#[test]
+fn a_departure_onto_a_closed_link_waits_at_its_origin() {
+    let (net, _, bc) = line();
+    let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+    let car = [Vehicle::new(VehicleId::new(0), vec![bc], Pcu(1.0), Second(150))];
+    for level in [FidelityLevel::PointQueue, FidelityLevel::Full] {
+        let out = run_ltm_chained(
+            &net,
+            &turns,
+            &car,
+            &[],
+            Duration(3600.0),
+            Duration(300.0),
+            level,
+            Recording::Trajectories,
+            Rules {
+                capacity_changes: vec![
+                    CapacityChange { time: 100.0, link: bc, factor: 0.0 },
+                    CapacityChange { time: 400.0, link: bc, factor: 1.0 },
+                ],
+                ..Rules::default()
+            },
+            None,
+        );
+        let t = &out.trajectories[0];
+        let (entered, arrival) = (f64::from(t.links[0].enter.get()), f64::from(t.arrival().get()));
+        assert!((entered - 400.0).abs() < 1e-6, "{level:?}: entered at {entered}");
+        assert!((arrival - 436.0).abs() < 1e-6, "{level:?}: arrived at {arrival}");
+    }
 }

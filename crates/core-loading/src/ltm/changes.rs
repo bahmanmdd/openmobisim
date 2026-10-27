@@ -6,19 +6,20 @@ use openmobisim_core_types::units::Duration;
 use super::LtmNetwork;
 
 /// A link's capacity from a second on, as a share of its own (disruptions): `factor` 0
-/// closes it (nothing passes until a later change opens it), 1 restores it. Made by the loading
-/// when its clock reaches `time`; zero cost when there is none.
+/// closes it (nothing enters until a later change opens it; what is on it drives out), 1
+/// restores it. Made by the loading when its clock reaches `time`; zero cost when there is none.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CapacityChange {
     /// The second it takes effect.
     pub time: f64,
     /// The link.
     pub link: LinkId,
-    /// The share of the link's capacity, discharge and inflow alike, from then on.
+    /// The share of the link's capacity, discharge and inflow alike, from then on; 0 closes the
+    /// link to entry alone.
     pub factor: f64,
 }
 
-/// What a closed link's rates are multiplied by: next to nothing, but finite, so no headway
+/// What a closed link's inflow rate is multiplied by: next to nothing, but finite, so no headway
 /// becomes infinite and no arithmetic turns into `NaN`.
 pub(super) const CLOSED_FACTOR: f64 = 1e-9;
 
@@ -27,7 +28,9 @@ impl LtmNetwork<'_> {
     /// closed for a while by an accident or works. Each is made when the loading's clock
     /// reaches it — before any movement at that second — and the queues it touches (the link's
     /// own, those feeding it, the departures onto it) are looked at again, so a reopened link
-    /// moves at once. A vehicle on a closed link waits there; behind it, the queue grows as it
+    /// moves at once. A closed link takes no vehicle in, and the vehicles on it when it closed
+    /// drive out at its discharge rate (nobody is shut inside a closed road, S300); behind it, the
+    /// queue grows as it
     /// would behind any bottleneck. A closed link refuses entry at every level, the classic
     /// point queue's included ([`Self::with_node_inflow`]): the vehicles bound onto it wait at
     /// the downstream end of the link before it.
@@ -49,7 +52,7 @@ impl LtmNetwork<'_> {
     /// Whether link `i` is closed now by a capacity change (its rates at the closed factor of its
     /// own, or below). One comparison, after one when there is no change at all.
     pub(super) fn is_closed(&self, i: usize) -> bool {
-        !self.changes.is_empty() && self.discharge_rate[i] <= self.base_rates[i].0 * CLOSED_FACTOR
+        !self.changes.is_empty() && self.inflow_rate[i] <= self.base_rates[i].1 * CLOSED_FACTOR
     }
 
     /// The time of the next capacity change, if one is left.
@@ -79,17 +82,18 @@ impl LtmNetwork<'_> {
         self.next_change += 1;
         let i = change.link.index();
         let (discharge, inflow) = self.base_rates[i];
-        let factor = if change.factor > 0.0 { change.factor } else { CLOSED_FACTOR };
-        self.discharge_rate[i] = discharge * factor;
-        self.inflow_rate[i] = inflow * factor;
         let at = change.time;
-        if change.factor <= 0.0 {
-            // Closed from `at`: its headway clocks restart there. A headway counts from the last
-            // vehicle in or out, and with none yet (the clocks at -inf) even a closed link's
-            // tiny rate would let the first one pass at once.
+        if change.factor > 0.0 {
+            self.discharge_rate[i] = discharge * change.factor;
+            self.inflow_rate[i] = inflow * change.factor;
+        } else {
+            // Closed from `at` to entry alone: its discharge stays as it was, so the vehicles on
+            // it drive out (S300). Its entry clock restarts there: a headway counts from the last
+            // vehicle in, and with none yet (the clock at -inf) even a closed link's tiny rate
+            // would let the first one in at once.
+            self.inflow_rate[i] = inflow * CLOSED_FACTOR;
             let curves = &mut self.curves[i];
             curves.set_last_entry(Duration(curves.last_entry().get().max(at)));
-            curves.set_last_exit(Duration(curves.last_exit().get().max(at)));
         }
         // The link's own queue (its discharge), its departures (their inflow) and the queues
         // bound onto it from upstream (their inflow): each front's time, again.
