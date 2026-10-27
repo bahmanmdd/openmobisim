@@ -75,11 +75,11 @@ def test_an_update_grows_the_sets_between_iterations_and_says_so_everywhere():
     c, sets = run.convergence(), run.route_sets()
     assert run.route_update == "best_response"
     assert run.fingerprint != plain.fingerprint, "an update is an input"
-    # It found routes on the jam, looked after every loading but the last, and only then.
+    # It found routes on the jam and looked after every loading, the last included (its gaps read
+    # the sets it grows).
     added = int(c["routes_added"].sum())
     assert added > 0, "the grid jams: some pair has a faster route than its set holds"
-    assert (c["route_searches"][:-1] > 0).all()
-    assert c["route_searches"][-1] == 0 and c["routes_added"][-1] == 0
+    assert (c["route_searches"] > 0).all()
     # The sets agree with the count: each added route carries the iteration it was added for.
     stamps = sets.stamps()
     assert (stamps > 0).sum() == added
@@ -141,7 +141,7 @@ def test_when_nothing_beats_the_set_nothing_is_added_and_nothing_changes():
         **{**settings, "route_update": "best_response"},
         route_update_options={"slack": 0},
     ).run("ru-empty-looked")
-    assert looked.convergence()["route_searches"].tolist() == [1, 1, 0]
+    assert looked.convergence()["route_searches"].tolist() == [1, 1, 1]
     assert (looked.convergence()["routes_added"] == 0).all()
     assert (
         run.route_sets().update == "" and run.route_sets().identity == plain.route_sets().identity
@@ -252,7 +252,7 @@ def test_the_sampled_update_grows_the_sets_and_says_so_everywhere():
     # response alone on the jammed grid.
     added = int(c["routes_added"].sum())
     assert added > int(best.convergence()["routes_added"].sum()) > 0
-    assert c["routes_added"][-1] == 0 and c["route_searches"][-1] == 0
+    assert c["route_searches"][-1] > 0
     # A route added to a full set (max_routes 10) takes the place of one nobody chose, so the sets
     # hold at most what was added; with room for every addition they hold exactly that.
     assert (sets.stamps() > 0).sum() <= added

@@ -222,10 +222,8 @@ fn a_road_that_only_pays_under_congestion_enters_the_set_and_the_gap_to_the_netw
     assert!(sets.route(1).overlap.abs() < 1e-9, "the roads share no link");
     // Nothing is added once the set has it: the road is known, and no other exists.
     assert!(with.iterations[1..].iter().all(|it| it.routes_added == 0), "{:?}", with.iterations);
-    // A search is made after every loading but the last, which no choice follows.
-    let last = with.iterations.len() - 1;
-    assert!(with.iterations[..last].iter().all(|it| it.route_searches == 1));
-    assert_eq!(with.iterations[last].route_searches, 0);
+    // A search is made after every loading, the last included: its gaps read the sets it grows.
+    assert!(with.iterations.iter().all(|it| it.route_searches == 1));
 
     // Travellers use it, the queue eases, and the time everyone spends falls.
     let took_slow = with
@@ -878,7 +876,7 @@ fn what_is_added_is_a_route_of_the_network_and_new_to_its_set() {
                 continue;
             }
             checked += 1;
-            assert!(stamp < 5, "added for an iteration the run made: {stamp}");
+            assert!(stamp <= 5, "added after a loading the run made: {stamp}");
             let links: Vec<LinkId> = view.links.iter().map(|&l| LinkId::new(l)).collect();
             assert_eq!(network.link_from(links[0]).raw(), key.origin, "starts at the origin");
             assert_eq!(network.link_to(*links.last().unwrap()).raw(), key.destination);
