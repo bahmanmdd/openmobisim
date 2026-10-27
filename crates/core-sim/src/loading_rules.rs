@@ -21,17 +21,18 @@ use openmobisim_core_loading::{Bpr, FidelityLevel};
 /// Whether en-route rerouting is on: by the level, or as asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RerouteSetting {
-    /// On at the levels with spillback (3 and 4), where a vehicle can be held for room; off at
-    /// the point queue (2), with or without road disruptions. The shipped setting.
+    /// On: at the levels with spillback (3 and 4), where a vehicle can be held for room; at the
+    /// point queue (2), only in a loading with road disruptions the travellers did not know of,
+    /// and there only for a vehicle whose next link is closed (S300). The shipped setting.
     ///
-    /// Off at the point queue whatever the disruptions, so that the model does not depend on
-    /// them: a run with a disruption and the same run without it are the same model, compared on
-    /// equal terms (S293). A driver who does not know of a closure waits for it to reopen;
-    /// [`Self::On`] lets them re-route.
+    /// At the point queue nobody is held anywhere else, and travellers who knew of a disruption
+    /// planned around it: a driver who meets an unexpected closure at its approach may take
+    /// another way from that junction, or waits for it to reopen; nobody reads the road further
+    /// ahead.
     Auto,
     /// Off at every level.
     Off,
-    /// On at every level (at the point queue it acts only behind a closed or narrowed link).
+    /// The same as [`Self::Auto`]: rerouting where it can act.
     On,
 }
 
@@ -114,18 +115,15 @@ pub struct LoadingOptions {
     /// *Uncalibrated: off. On treats the origin as a centroid connector with the first link's
     /// capacity, an assumption.*
     pub origin_inflow: bool,
-    /// At the point queue, when a vehicle at the downstream end of its link is offered a new
-    /// route for a **queue ahead** on its route longer than its link and the links before it
-    /// would hold ([`openmobisim_core_loading::QueueAhead`]; X-69): 0 never; 1 (the default)
-    /// only in a loading with road disruptions the travellers did not know of, behind a link
-    /// those disruptions narrowed or closed; 2 behind such a link in any loading with
-    /// disruptions, known or not; 3 behind any queue. Acts only with `reroute` on.
+    /// How long, in seconds, one search tree from where a vehicle meets a closed link serves the
+    /// next vehicles offered a route there: the vehicles at a closure's approach all leave the
+    /// same junction, so one earliest-arrival tree answers each by its own destination, on the
+    /// link times of the moment it was grown; a vehicle offered one later gets a new tree. Where
+    /// the route cost weighs more than time, each offer is its own search. 0: a tree for every
+    /// offer.
     ///
-    /// *Uncalibrated: 1 (S294). 3 offers a route at every congested entry, which makes a run
-    /// many times slower; 2 can send the traffic of known disruptions onto the alternatives and
-    /// jam them; 1 costs nothing where nothing is unexpected and lets traffic round an
-    /// unexpected closure.*
-    pub reroute_queue_ahead: u32,
+    /// *Uncalibrated: 60 s, an assumption: the queue's estimate changes little within a minute.*
+    pub reroute_tree_s: f64,
     /// **Level 1 only:** the volume-delay function, `t = t0 · (1 + α (v/c)^β)`, one `(α, β)` per
     /// road class, by name `bpr_alpha` and `bpr_beta` for every class and `<class>.bpr_alpha`,
     /// `<class>.bpr_beta` for one (`<class>` as OpenStreetMap writes it: `motorway`,
@@ -156,7 +154,7 @@ impl LoadingOptions {
         origin_inflow: false,
         bpr: Bpr::SHIPPED,
         period_s: 0,
-        reroute_queue_ahead: 1,
+        reroute_tree_s: 60.0,
     };
 
     /// Every option's value, by name, in [`Self::NAMES`]' order (the parameter listing): the
@@ -177,7 +175,7 @@ impl LoadingOptions {
             ("pocket_length_m", self.pocket_length_m),
             ("node_inflow", flag(self.node_inflow)),
             ("origin_inflow", flag(self.origin_inflow)),
-            ("reroute_queue_ahead", f64::from(self.reroute_queue_ahead)),
+            ("reroute_tree_s", self.reroute_tree_s),
             ("period_s", f64::from(self.period_s)),
         ]
         .into_iter()
@@ -212,7 +210,7 @@ impl LoadingOptions {
         "pocket_length_m",
         "node_inflow",
         "origin_inflow",
-        "reroute_queue_ahead",
+        "reroute_tree_s",
         "period_s",
         "bpr_alpha",
         "bpr_beta",
@@ -242,19 +240,14 @@ impl LoadingOptions {
                 "priority" => d.priority = flag(name, v)?,
                 "node_inflow" => d.node_inflow = flag(name, v)?,
                 "origin_inflow" => d.origin_inflow = flag(name, v)?,
-                "reroute_queue_ahead" => {
-                    if !(v.fract() == 0.0 && (0.0..=3.0).contains(&v)) {
+                "reroute_tree_s" => {
+                    if v.is_nan() || v < 0.0 || v.is_infinite() {
                         return Err(format!(
-                            "loading_options \"reroute_queue_ahead\" must be 0, 1, 2 or 3, got {v}"
+                            "loading_options \"reroute_tree_s\" must be a finite number of \
+                             seconds, at least 0, got {v}"
                         ));
                     }
-                    #[allow(
-                        clippy::cast_possible_truncation,
-                        clippy::cast_sign_loss,
-                        reason = "checked to be 0 to 3"
-                    )]
-                    let n = v as u32;
-                    d.reroute_queue_ahead = n;
+                    d.reroute_tree_s = v;
                 }
                 "reroute" => {
                     d.reroute =
@@ -359,24 +352,24 @@ impl LoadingOptions {
         self.priority || self.reroute != RerouteSetting::Off || self.pocket_length_m > 0.0
     }
 
-    /// Whether this run re-routes, at `level` (`None`: free flow, where nothing is ever held).
-    /// The same with or without road disruptions (S293).
+    /// Whether a loading re-routes, at `level` (`None`: free flow, where nothing is ever held),
+    /// `unknown` saying whether it carries road disruptions the travellers did not know of: at
+    /// the point queue only then, and only at closures (S300); at levels 3 and 4 always.
     #[must_use]
-    pub fn reroutes(&self, level: Option<FidelityLevel>) -> bool {
+    pub fn reroutes(&self, level: Option<FidelityLevel>, unknown: bool) -> bool {
         match (self.reroute, level) {
             (_, None) | (RerouteSetting::Off, _) => false,
-            (RerouteSetting::On, Some(_)) => true,
-            (RerouteSetting::Auto, Some(level)) => level != FidelityLevel::PointQueue,
+            (_, Some(FidelityLevel::PointQueue)) => unknown,
+            (_, Some(_)) => true,
         }
     }
 
-    /// These options with the rerouting setting settled for `level` ([`Self::reroutes`]): what a
-    /// run hashes and reports, so a point-queue run and a level-4 run of the shipped options say
-    /// what each does.
+    /// These options with the rerouting setting settled for `level` and `unknown`
+    /// ([`Self::reroutes`]): what a run hashes and reports, so each run says what it does.
     #[must_use]
-    pub fn resolved(&self, level: Option<FidelityLevel>) -> Self {
-        let reroute = if self.reroutes(level) { RerouteSetting::On } else { RerouteSetting::Off };
-        Self { reroute, ..*self }
+    pub fn resolved(&self, level: Option<FidelityLevel>, unknown: bool) -> Self {
+        let on = self.reroutes(level, unknown);
+        Self { reroute: if on { RerouteSetting::On } else { RerouteSetting::Off }, ..*self }
     }
 }
 
@@ -458,7 +451,7 @@ mod tests {
             unknown.starts_with(
                 "loading_options has no \"node_inflows\"; the options are: priority, reroute, \
                  reroute_after_s, reroute_max, reroute_min_gain, pocket_length_m, node_inflow, \
-                 origin_inflow, reroute_queue_ahead, period_s, bpr_alpha, bpr_beta, \
+                 origin_inflow, reroute_tree_s, period_s, bpr_alpha, bpr_beta, \
                  <class>.bpr_alpha, <class>.bpr_beta (<class> one of motorway, motorway_link,"
             ),
             "{unknown}"
@@ -497,12 +490,12 @@ mod tests {
         );
     }
 
-    /// **Property (S293):** rerouting is settled by the setting and the level alone: `Auto` is
-    /// on at levels 3 and 4 and off at the point queue and at free flow, `On` on and `Off` off at
-    /// every level that loads, and nothing re-routes at free flow; the settled options say the
-    /// same, and keep every other option.
+    /// **Property (S300):** rerouting is settled by the setting, the level and whether the loading
+    /// carries disruptions the travellers did not know of: on at levels 3 and 4, at the point
+    /// queue only with such disruptions, never at free flow, and off at every level when off; the
+    /// settled options say the same, and keep every other option.
     #[test]
-    fn rerouting_is_settled_by_the_setting_and_the_level_alone() {
+    fn rerouting_is_settled_by_the_setting_the_level_and_the_unknown_disruptions() {
         let levels = [
             None,
             Some(FidelityLevel::PointQueue),
@@ -512,22 +505,19 @@ mod tests {
         for setting in [RerouteSetting::Auto, RerouteSetting::Off, RerouteSetting::On] {
             let o = LoadingOptions { reroute: setting, ..LoadingOptions::SHIPPED };
             for level in levels {
-                let expected = match (setting, level) {
-                    (_, None) | (RerouteSetting::Off, _) => false,
-                    (RerouteSetting::On, Some(_)) => true,
-                    (RerouteSetting::Auto, Some(l)) => {
-                        matches!(l, FidelityLevel::SpatialQueue | FidelityLevel::Full)
-                    }
-                };
-                assert_eq!(o.reroutes(level), expected, "{setting:?} at {level:?}");
-                let settled = o.resolved(level);
-                let want = if expected { RerouteSetting::On } else { RerouteSetting::Off };
-                assert_eq!(
-                    settled,
-                    LoadingOptions { reroute: want, ..o },
-                    "{setting:?} at {level:?}"
-                );
-                assert_eq!(settled.reroutes(level), expected, "settled once, settled for good");
+                for unknown in [false, true] {
+                    let expected = match (setting, level) {
+                        (_, None) | (RerouteSetting::Off, _) => false,
+                        (_, Some(FidelityLevel::PointQueue)) => unknown,
+                        (_, Some(_)) => true,
+                    };
+                    let case = format!("{setting:?} at {level:?}, unknown {unknown}");
+                    assert_eq!(o.reroutes(level, unknown), expected, "{case}");
+                    let settled = o.resolved(level, unknown);
+                    let want = if expected { RerouteSetting::On } else { RerouteSetting::Off };
+                    assert_eq!(settled, LoadingOptions { reroute: want, ..o }, "{case}");
+                    assert_eq!(settled.reroutes(level, unknown), expected, "settled for good");
+                }
             }
         }
     }

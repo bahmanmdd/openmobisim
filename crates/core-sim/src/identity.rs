@@ -256,8 +256,8 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             h.write_f64(o.reroute_after_s);
             h.write_u32(o.reroute_max);
             h.write_f64(o.reroute_min_gain);
-            // The queue-ahead offer acts with rerouting alone (X-69, S294).
-            h.write_u32(o.reroute_queue_ahead);
+            // The shared tree at a closure acts with rerouting alone (S300).
+            h.write_f64(o.reroute_tree_s);
         }
         // Off means absent (S217): without pockets, rules hash as they did before them.
         if o.pocket_length_m > 0.0 {

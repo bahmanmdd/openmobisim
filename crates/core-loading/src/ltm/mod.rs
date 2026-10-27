@@ -247,7 +247,7 @@ mod reroute;
 pub use changes::CapacityChange;
 pub use node::PRIORITY_CAPACITY_RATIO;
 pub use report::LockReport;
-pub use reroute::{LiveTimes, Reroute, RerouteReason, RerouteRecord, RerouteRule};
+pub use reroute::{LiveTimes, Reroute, RerouteFrom, RerouteReason, RerouteRecord, RerouteRule};
 
 use chains::Chains;
 use pockets::Pockets;
@@ -384,23 +384,6 @@ pub struct Rules {
     /// Whether a departure enters its first link no faster than the link's inflow headway
     /// ([`LtmNetwork::with_origin_inflow`]); false by default.
     pub origin_inflow: bool,
-    /// At the point queue, when a vehicle is offered a route for a queue ahead on its route
-    /// ([`LtmNetwork::with_queue_ahead`]); [`QueueAhead::Off`] by default.
-    pub queue_ahead: QueueAhead,
-}
-
-/// When, at the point queue, a vehicle at the downstream end of its link is offered a new
-/// route for a **queue ahead** on its route longer than its link and the links before it would
-/// hold ([`RerouteReason::QueueAhead`]; X-69, S294).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum QueueAhead {
-    /// Never.
-    #[default]
-    Off,
-    /// Only behind a link narrowed or closed by a capacity change, or feeding a closed one.
-    BehindDisruption,
-    /// Behind any queue (on a city network, many times slower).
-    AnyQueue,
 }
 
 impl Default for Rules {
@@ -415,7 +398,6 @@ impl Default for Rules {
             start_s: 0.0,
             node_inflow: false,
             origin_inflow: false,
-            queue_ahead: QueueAhead::Off,
         }
     }
 }
@@ -514,8 +496,6 @@ pub struct LtmNetwork<'a> {
 
     /// En-route rerouting, when asked for.
     rerouting: Option<Rerouting>,
-    /// When a queue ahead earns an offer ([`Self::with_queue_ahead`]).
-    queue_ahead: QueueAhead,
 
     /// Turn pockets, when asked for.
     pockets: Option<Pockets>,
@@ -600,7 +580,6 @@ impl<'a> LtmNetwork<'a> {
             priority_major: Vec::new(),
             events: EventQueue::new(queues + 2 * n),
             rerouting: None,
-            queue_ahead: QueueAhead::Off,
             pockets: None,
             recorder: None,
             changes: Vec::new(),
@@ -727,15 +706,6 @@ impl<'a> LtmNetwork<'a> {
     #[must_use]
     pub fn with_node_inflow(mut self, on: bool) -> Self {
         self.node_inflow = on;
-        self
-    }
-
-    /// When, at the point queue, a vehicle at the downstream end of its link is offered a
-    /// route for a queue ahead on its route ([`QueueAhead`]); acts with [`Self::with_rerouting`]
-    /// alone. [`QueueAhead::Off`] unless set.
-    #[must_use]
-    pub fn with_queue_ahead(mut self, rule: QueueAhead) -> Self {
-        self.queue_ahead = rule;
         self
     }
 
@@ -946,7 +916,6 @@ impl<'a> LtmNetwork<'a> {
             r.route_of.push(NONE);
             r.count.push(0);
             r.last_offer.push(f64::NEG_INFINITY);
-            r.offered_leg.push(NONE);
         }
         self.traversals.push(Vec::with_capacity(vehicle.route.len()));
         self.parts.push(VecDeque::new());
@@ -1177,11 +1146,6 @@ impl<'a> LtmNetwork<'a> {
 
         match self.place(queue) {
             Place::Link(i) => {
-                // A queue ahead that a point queue cannot show (X-69): the offer first, the move
-                // once it is answered.
-                if next.is_some() && self.offer_if_queue_ahead(i, front) {
-                    return;
-                }
                 if self.pocket(i) > 0.0 {
                     return self.process_pockets(i, t, tag, t0, completed);
                 }
@@ -1211,13 +1175,16 @@ impl<'a> LtmNetwork<'a> {
                 self.advance(i, 0, tag, t, room, t0, completed);
             }
             Place::Origin => {
-                let first = vehicle.route[0].index();
+                let first = self.route(front.slot)[0].index();
                 // Under `with_origin_inflow`, the first link's inflow headway, as from a link; a
                 // closed first link refuses a departure as it refuses a vehicle at a node: it
-                // waits at its origin (S300).
+                // waits at its origin, where it may be offered another way (S300).
                 if (self.origin_inflow || self.is_closed(first))
                     && self.headway_blocks(first, pcu, queue, t, t0)
                 {
+                    if self.is_closed(first) {
+                        self.offer_reroute(queue, t);
+                    }
                     return;
                 }
                 match self.admissible(first, pcu, t, None) {
@@ -1870,7 +1837,6 @@ fn run_ltm_inner_chained(
         .with_level(level)
         .with_node_inflow(rules.node_inflow)
         .with_origin_inflow(rules.origin_inflow)
-        .with_queue_ahead(rules.queue_ahead)
         .starting_at(Duration(start));
     if rules.priority {
         sim = sim.with_priority();
@@ -2163,8 +2129,11 @@ mod tests {
         let cars: Vec<Vehicle> = (0..600)
             .map(|k| Vehicle::new(VehicleId::new(k), route.clone(), Pcu(1.0), Second(k)))
             .collect();
-        let mut sim =
-            LtmNetwork::new(&network, &turns).with_rerouting(RerouteRule { after_s: 10.0, max: 3 });
+        let mut sim = LtmNetwork::new(&network, &turns).with_rerouting(RerouteRule {
+            after_s: 10.0,
+            max: 3,
+            closures_only: false,
+        });
         cars.iter().for_each(|v| sim.depart(v));
         for _ in 0..20 {
             let _ = sim.step(Duration(60.0));

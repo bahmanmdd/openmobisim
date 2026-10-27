@@ -1610,15 +1610,16 @@ class Run:
     def route_changes(self) -> Columns:
         """Every reroute of the last loading, as columns (empty without rerouting).
 
-        A vehicle blocked at the downstream end of its link for ``reroute_after_s`` re-routes
-        from where it is (``loading_options``); at the point queue, so does one that can see a
-        queue ahead on its route longer than the links before it would hold. One row per
-        reroute, in the order they happened: ``trip`` (its index in the run), ``traveller_id``,
-        ``trip_seq``, ``second``, ``link`` (the link at whose downstream end it re-routed),
-        ``next_planned`` (the next link of its route until then), ``next_taken`` (of its new
-        route) and ``reason`` (``"stuck"``: blocked for ``reroute_after_s``; ``"queue_ahead"``:
-        the queue seen from upstream, at the point queue). Its planned route is its route choice
-        (``route_choices``); what it actually took is in ``route_realised``.
+        A vehicle whose next link is closed by a road disruption may re-route where it meets
+        it, at the downstream end of its link (or at its origin, if the closed link is its first);
+        at flow levels 3 and 4, so may one blocked at the downstream end of its link for
+        ``reroute_after_s`` (``loading_options``). One row per reroute, in the order they
+        happened: ``trip`` (its index in the run), ``traveller_id``, ``trip_seq``, ``second``,
+        ``link`` (the link at whose downstream end it re-routed; for a trip re-routed at its
+        origin, the closed first link it did not take), ``next_planned`` (the next link of its
+        route until then), ``next_taken`` (of its new route) and ``reason`` (``"closed_ahead"``:
+        its next link closed; ``"stuck"``: blocked for ``reroute_after_s``). Its planned route is
+        its route choice (``route_choices``); what it actually took is in ``route_realised``.
         """
         return Columns(self._summary.route_changes)
 

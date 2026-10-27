@@ -1,28 +1,37 @@
-//! En-route rerouting's decision: what a vehicle stuck at the front of its link does,
-//! asked by the loading ([`openmobisim_core_loading::Reroute`]).
+//! En-route rerouting's decision: what a vehicle offered a new route does, asked by the loading
+//! ([`openmobisim_core_loading::Reroute`]).
 //!
 //! **The costs a vehicle sees:** each link's time is the larger of what the trip planned on —
 //! the time expected from the last loading ([`LinkTimes`]; free flow at the first) — and the
 //! loading's **live** estimate now (free-flow time, the queue's clearance time, how long the
-//! link's front has been blocked; [`openmobisim_core_loading::LiveTimes`]). So a vehicle avoids
-//! what it can see jammed now and what it knows is usually slow.
+//! link's front has been blocked, the wait until a closed link reopens;
+//! [`openmobisim_core_loading::LiveTimes`]). So a vehicle avoids what it can see jammed now and
+//! what it knows is usually slow.
 //!
 //! **The decision:** the rest of its planned route is timed on those costs; the earliest
-//! arrival from the end of its link, through its legal turns, is searched (A\*, bounded by the
-//! planned time less the required gain); a route that beats the plan by at least
-//! [`LoadingOptions::reroute_min_gain`] is taken. Buses never re-route: their line is their
-//! route.
+//! arrival from where it is, through its legal turns (or any link out of its origin), is found;
+//! a route that beats the plan by at least [`LoadingOptions::reroute_min_gain`] is taken. Buses
+//! never re-route: their line is their route.
+//!
+//! **One tree per junction (S300):** the vehicles offered a route where they meet a closed link
+//! all leave the same place, so one earliest-arrival tree from there, grown for the first,
+//! answers each by its own destination for [`LoadingOptions::reroute_tree_s`] seconds, on the
+//! link times of the moment it was grown.
 //!
 //! **By the route cost** (S299): where the run's route cost is not time alone, a car is
-//! re-routed by its trip's coefficient vector: the plan's cost and the search's are the time on
-//! those costs plus the links' extras ([`openmobisim_core_routes::Search::cheapest_route_after`]),
-//! and a route beating the plan's generalised cost by the required gain is taken.
+//! re-routed by its trip's coefficient vector, one search per offer: the plan's cost and the
+//! search's are the time on those costs plus the links' extras
+//! ([`openmobisim_core_routes::Search::cheapest_route_after`]), and a route beating the plan's
+//! generalised cost by the required gain is taken.
 //!
-//! **Cost:** one bounded search per offer; offers come only to vehicles blocked for
-//! [`LoadingOptions::reroute_after_s`], at most [`LoadingOptions::reroute_max`] taken per trip.
+//! **Cost:** one tree per junction and `reroute_tree_s` (a search over the network, kept as a
+//! map of the links it reached), or one bounded search per offer by generalised cost; offers come
+//! only to vehicles held, at most [`LoadingOptions::reroute_max`] taken per trip.
+
+use std::collections::HashMap;
 
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_loading::{LiveTimes, Reroute, RerouteReason};
+use openmobisim_core_loading::{LiveTimes, Reroute, RerouteFrom, RerouteReason};
 use openmobisim_core_routes::{Extras, Search, SearchContext};
 use openmobisim_core_types::ids::{EntityId, LinkId, VehicleId};
 
@@ -38,6 +47,14 @@ pub(crate) struct RerouteCost {
     pub trip_vector: Vec<u32>,
 }
 
+/// One earliest-arrival tree from where vehicles are offered routes: grown at `at`, each link it
+/// reached with its arrival (a clock time) and the link before it (`u32::MAX` for a first link).
+struct Tree {
+    from: RerouteFrom,
+    at: f64,
+    reached: HashMap<u32, (f64, u32)>,
+}
+
 /// Decides reroutes for one loading.
 pub(crate) struct Rerouter<'a> {
     network: &'a RoadNetwork,
@@ -45,10 +62,14 @@ pub(crate) struct Rerouter<'a> {
     expected: Option<&'a LinkTimes>,
     cost: Option<&'a RerouteCost>,
     min_gain: f64,
+    tree_s: f64,
+    trees: Vec<Tree>,
     /// Vehicles with an id below this are trips' cars; the rest are buses.
     cars_below: u32,
-    /// Offers answered, and routes changed.
+    /// Offers answered, searches made (trees grown and searches by generalised cost), and
+    /// routes changed.
     pub offers: u32,
+    pub searches: u32,
     pub changed: u32,
 }
 
@@ -66,9 +87,44 @@ impl<'a> Rerouter<'a> {
             expected,
             cost,
             min_gain: options.reroute_min_gain,
+            tree_s: options.reroute_tree_s,
+            trees: Vec::new(),
             cars_below,
             offers: 0,
+            searches: 0,
             changed: 0,
+        }
+    }
+
+    /// The tree from `from` grown at most `tree_s` seconds before `now`, or a new one grown now.
+    fn tree(&mut self, from: RerouteFrom, now: f64, seconds: &dyn Fn(u32, f64) -> f64) -> usize {
+        let fresh = |t: &Tree| t.from == from && now >= t.at && now - t.at <= self.tree_s;
+        if let Some(k) = self.trees.iter().position(fresh) {
+            return k;
+        }
+        self.searches += 1;
+        let settled = match from {
+            RerouteFrom::EndOf(link) => {
+                self.search.fastest_tree_after(link, now, f64::INFINITY, seconds)
+            }
+            RerouteFrom::Origin(node) => {
+                self.search.fastest_tree_from(node, now, f64::INFINITY, seconds)
+            }
+        };
+        let tree = Tree {
+            from,
+            at: now,
+            reached: settled.into_iter().map(|(l, at, pred)| (l, (at, pred))).collect(),
+        };
+        match self.trees.iter().position(|t| t.from == from) {
+            Some(k) => {
+                self.trees[k] = tree;
+                k
+            }
+            None => {
+                self.trees.push(tree);
+                self.trees.len() - 1
+            }
         }
     }
 }
@@ -77,14 +133,14 @@ impl Reroute for Rerouter<'_> {
     fn reroute(
         &mut self,
         vehicle: VehicleId,
-        current: LinkId,
+        from: RerouteFrom,
         planned: &[LinkId],
         now: f64,
         live: &dyn LiveTimes,
         _reason: RerouteReason,
     ) -> Option<Vec<LinkId>> {
-        // Every driver re-routes the same way when stuck, whatever the reason (only "stuck"
-        // exists yet). An informed share, alerts and disruptions (S215) decide here.
+        // Every driver re-routes the same way, whatever the reason. An informed share and
+        // alerts (S215) would decide here.
         if vehicle.raw() >= self.cars_below {
             return None;
         }
@@ -95,7 +151,7 @@ impl Reroute for Rerouter<'_> {
             known.max(live.live_seconds(LinkId::new(l)))
         };
         let destination = self.network.link_to(*planned.last()?);
-        // By the trip's vector's generalised cost where it has extras (S299).
+        // By the trip's vector's generalised cost where it has extras (S299): one search.
         let extras = self.cost.and_then(|c| {
             let v = c.trip_vector.get(vehicle.index()).copied().unwrap_or(0);
             c.extras.get(v as usize).and_then(Option::as_ref)
@@ -109,10 +165,17 @@ impl Reroute for Rerouter<'_> {
                 planned_cost += s + e.seconds()[l.index()];
             }
             let bound = planned_cost * (1.0 - self.min_gain);
+            self.searches += 1;
             self.search.clear_route_state();
             self.search.set_extras(Some(e.clone()));
-            let found =
-                self.search.cheapest_route_after(current, destination, now, bound, &seconds);
+            let found = match from {
+                RerouteFrom::EndOf(link) => {
+                    self.search.cheapest_route_after(link, destination, now, bound, &seconds)
+                }
+                RerouteFrom::Origin(node) => {
+                    self.search.cheapest_route_from(node, destination, now, bound, &seconds)
+                }
+            };
             self.search.clear_route_state();
             let (cost, _, links) = found?;
             return (cost < bound && !links.is_empty()).then(|| {
@@ -124,13 +187,27 @@ impl Reroute for Rerouter<'_> {
         for l in planned {
             t += seconds(l.raw(), t);
         }
-        let planned_s = t - now;
-        let bound = planned_s * (1.0 - self.min_gain);
-        let (time, links) =
-            self.search.fastest_route_after(current, destination, now, bound, &seconds)?;
-        (time < bound && !links.is_empty()).then(|| {
-            self.changed += 1;
-            links
-        })
+        let bound = (t - now) * (1.0 - self.min_gain);
+        // The earliest arrival at the destination in the junction's tree, and its way there.
+        let k = self.tree(from, now, &seconds);
+        let tree = &self.trees[k];
+        let (arrival, last) = self
+            .network
+            .in_links(destination)
+            .iter()
+            .filter_map(|l| tree.reached.get(&l.raw()).map(|&(at, _)| (at, l.raw())))
+            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))?;
+        if arrival - tree.at >= bound {
+            return None;
+        }
+        let mut links = Vec::new();
+        let mut at = last;
+        while at != u32::MAX {
+            links.push(LinkId::new(at));
+            at = tree.reached.get(&at).map_or(u32::MAX, |&(_, pred)| pred);
+        }
+        links.reverse();
+        self.changed += 1;
+        Some(links)
     }
 }

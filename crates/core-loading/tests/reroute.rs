@@ -3,15 +3,15 @@
 //! A diamond: from `a`, link `ab` to `b`, then either `bc`–`cd` (planned; `cd` a one-lane
 //! service road, so its queue fills `bc` and spills back into `ab`) or `be`–`ed` (free). A
 //! vehicle blocked at the front of `ab` long enough is offered a new route; the script sends it
-//! by `e`. At the point queue, where no queue spills back, a vehicle at the downstream end of `ab`
-//! that can see a queue on `bc` longer than `bc` holds is offered one too (X-69).
+//! by `e`. At the point queue, where no queue spills back, only a vehicle whose next link is
+//! closed is offered one (S300).
 
 use openmobisim_core_graph::defaults::{GlobalMultipliers, RoadClass, SignalDefaults};
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    CapacityChange, FidelityLevel, LiveTimes, QueueAhead, Recording, Reroute, RerouteReason,
+    CapacityChange, FidelityLevel, LiveTimes, Recording, Reroute, RerouteFrom, RerouteReason,
     RerouteRule, Rules, Trajectory, Vehicle, run_ltm_chained,
 };
 use openmobisim_core_types::diagnostics::Diagnostics;
@@ -71,14 +71,22 @@ impl Reroute for ByE {
     fn reroute(
         &mut self,
         _vehicle: VehicleId,
-        current: LinkId,
+        from: RerouteFrom,
         planned: &[LinkId],
         _now: f64,
         live: &dyn LiveTimes,
         reason: RerouteReason,
     ) -> Option<Vec<LinkId>> {
-        assert!(matches!(reason, RerouteReason::Stuck | RerouteReason::QueueAhead));
+        assert!(matches!(reason, RerouteReason::Stuck | RerouteReason::ClosedAhead));
         self.calls += 1;
+        // At its origin `b` (its first link `bc` closed): the way round from there.
+        let current = match from {
+            RerouteFrom::EndOf(link) => link,
+            RerouteFrom::Origin(_) => {
+                return (!self.decline && planned.first() == Some(&self.bc))
+                    .then(|| self.detour.clone());
+            }
+        };
         // The live estimate of a blocked link includes how long its front has waited.
         assert!(live.live_seconds(current) > 0.0);
         if self.decline || current != self.ab || planned.first() != Some(&self.bc) {
@@ -121,7 +129,7 @@ fn a_vehicle_stuck_long_enough_takes_the_way_round_and_the_day_ends_sooner() {
     let (plain, n_plain, none) = load(&d, None, None);
     assert_eq!(n_plain, 1200);
     assert!(none.is_empty());
-    let rule = RerouteRule { after_s: 120.0, max: 3 };
+    let rule = RerouteRule { after_s: 120.0, max: 3, closures_only: false };
     let mut rr = ByE { ab: d.ab, bc: d.bc, detour: vec![d.be, d.ed], calls: 0, decline: false };
     let (rerouted, n, records) = load(&d, Some(rule), Some(&mut rr));
     assert_eq!(n, 1200, "every trip completes");
@@ -151,7 +159,7 @@ fn a_vehicle_stuck_long_enough_takes_the_way_round_and_the_day_ends_sooner() {
 fn a_rerouter_that_always_declines_changes_nothing() {
     let d = diamond();
     let (plain, _, _) = load(&d, None, None);
-    let rule = RerouteRule { after_s: 120.0, max: 3 };
+    let rule = RerouteRule { after_s: 120.0, max: 3, closures_only: false };
     let mut rr = ByE { ab: d.ab, bc: d.bc, detour: vec![d.be, d.ed], calls: 0, decline: true };
     let (declined, _, records) = load(&d, Some(rule), Some(&mut rr));
     assert!(rr.calls > 0, "vehicles were offered routes");
@@ -168,11 +176,11 @@ fn a_rerouter_that_always_declines_changes_nothing() {
 #[test]
 fn a_vehicle_re_routes_at_most_max_times_and_only_after_waiting() {
     let d = diamond();
-    let rule = RerouteRule { after_s: 120.0, max: 0 };
+    let rule = RerouteRule { after_s: 120.0, max: 0, closures_only: false };
     let mut rr = ByE { ab: d.ab, bc: d.bc, detour: vec![d.be, d.ed], calls: 0, decline: false };
     let (_, _, records) = load(&d, Some(rule), Some(&mut rr));
     assert_eq!((rr.calls, records.len()), (0, 0), "max 0: never offered");
-    let rule = RerouteRule { after_s: 1.0e6, max: 3 };
+    let rule = RerouteRule { after_s: 1.0e6, max: 3, closures_only: false };
     let mut rr = ByE { ab: d.ab, bc: d.bc, detour: vec![d.be, d.ed], calls: 0, decline: false };
     let (_, _, records) = load(&d, Some(rule), Some(&mut rr));
     assert_eq!((rr.calls, records.len()), (0, 0), "nobody waits a million seconds");
@@ -210,10 +218,13 @@ fn load_changed_at(
         level,
         Recording::Trajectories,
         Rules {
-            reroute: Some(RerouteRule { after_s: 120.0, max: 3 }),
+            reroute: Some(RerouteRule {
+                after_s: 120.0,
+                max: 3,
+                closures_only: level == FidelityLevel::PointQueue,
+            }),
             capacity_changes: changes,
             node_inflow,
-            queue_ahead: QueueAhead::BehindDisruption,
             ..Rules::default()
         },
         Some(rr as &mut dyn Reroute),
@@ -266,35 +277,53 @@ fn at_the_point_queue_a_closed_link_refuses_entry_and_its_traffic_re_routes() {
     }
 }
 
-/// **Property (X-69, S294):** at the point queue a queue has no length, so behind a closure
-/// whose node has no other way out only the vehicle at the downstream end of `bc` is stuck, and
-/// from `c` there is no other route. A vehicle at the downstream end of `ab` is offered one
-/// when the queue on `bc` is longer than `bc` holds (where its back would stand with spillback),
-/// and the script sends it by `e`; the vehicles that fill `bc` before that stay, as they would.
+/// **Property (S300):** nobody reads the road ahead. With `cd` closed, the queue for it gathers
+/// at the downstream end of `bc`; only the vehicles there, whose next link is closed, are offered a
+/// new route (from `c` there is none, so the script declines), and none at the end of `ab`, two
+/// links before the closure, whatever the queue.
 #[test]
-fn at_the_point_queue_a_queue_longer_than_its_link_is_seen_from_the_junction_upstream() {
+fn at_the_point_queue_only_the_vehicles_at_a_closure_are_offered_a_route() {
     let d = diamond();
-    let cars = demand(&d); // one a second for twenty minutes, all by `c`
+    let cars: Vec<Vehicle> = (0..300u32)
+        .map(|n| Vehicle::new(VehicleId::new(n), vec![d.ab, d.bc, d.cd], Pcu(1.0), Second(n)))
+        .collect();
     let closed = vec![CapacityChange { time: 0.0, link: d.cd, factor: 0.0 }];
     let mut rr = ByE { ab: d.ab, bc: d.bc, detour: vec![d.be, d.ed], calls: 0, decline: false };
     let (done, records) =
-        load_changed_at(&d, &cars, closed, 3.0 * 3600.0, &mut rr, FidelityLevel::PointQueue, false);
-    let storage = d.net.storage(d.bc).get();
-    let ahead: Vec<_> = records.iter().filter(|r| r.reason == RerouteReason::QueueAhead).collect();
-    assert!(!ahead.is_empty(), "nobody saw the queue; bc holds {storage}");
-    assert!(ahead.iter().all(|r| (r.link, r.planned_next, r.new_next) == (d.ab, d.bc, d.be)));
-    assert_eq!(records.len(), ahead.len(), "no other reroute: from `c` there is no way round");
-    // The first offer comes once `bc` holds more than its storage, not before; after it, every
-    // vehicle reaching `b` is offered the way round, takes it, and arrives.
-    let first = ahead.iter().map(|r| r.second).fold(f64::INFINITY, f64::min);
-    assert!(first >= storage, "the first offer at {first} s, bc holds {storage} PCU");
-    assert_eq!(done.len(), ahead.len(), "those offered the way round arrived; the rest wait");
-    assert!(done.iter().all(|t| t.links.iter().any(|x| x.link == d.be)));
-    let stuck = u32::try_from(cars.len() - done.len()).expect("few cars");
-    assert!(
-        f64::from(stuck) >= storage && f64::from(stuck) < storage + 60.0,
-        "{stuck} stuck on `bc`, which holds {storage} PCU plus what crosses it freely"
-    );
+        load_changed_at(&d, &cars, closed, 3600.0, &mut rr, FidelityLevel::PointQueue, false);
+    assert!(rr.calls > 0, "the vehicles at the closure were asked");
+    assert!(records.is_empty(), "nobody was offered a way round at `b`: {}", records.len());
+    assert!(done.is_empty(), "all wait for `cd`, which never opens");
+}
+
+/// **Property (S300):** a departure whose first link is closed waits at its origin and is offered
+/// a new route there, beginning with any link out of its origin.
+#[test]
+fn a_departure_onto_a_closed_link_is_offered_a_route_at_its_origin() {
+    let d = diamond();
+    let cars: Vec<Vehicle> = (0..10u32)
+        .map(|n| Vehicle::new(VehicleId::new(n), vec![d.bc, d.cd], Pcu(1.0), Second(n)))
+        .collect();
+    let closed = vec![CapacityChange { time: 0.0, link: d.bc, factor: 0.0 }];
+    let mut rr = ByE { ab: d.ab, bc: d.bc, detour: vec![d.be, d.ed], calls: 0, decline: false };
+    let (done, records) =
+        load_changed_at(&d, &cars, closed, 3600.0, &mut rr, FidelityLevel::PointQueue, false);
+    assert_eq!(records.len(), 10, "each departure is offered the way round at `b`");
+    assert!(records.iter().all(|r| r.reason == RerouteReason::ClosedAhead));
+    assert!(records.iter().all(|r| (r.planned_next, r.new_next) == (d.bc, d.be)));
+    assert_eq!(done.len(), 10, "and arrives, `bc` never opening");
+    assert!(done.iter().all(|t| t.links.iter().all(|x| x.link != d.bc)), "none entered `bc`");
+}
+
+/// **Property (S300):** under the rule's closures alone, a vehicle blocked by a queue (no closure)
+/// is offered nothing, however long it waits.
+#[test]
+fn offers_at_closures_alone_leave_an_ordinary_queue_alone() {
+    let d = diamond();
+    let rule = RerouteRule { after_s: 120.0, max: 3, closures_only: true };
+    let mut rr = ByE { ab: d.ab, bc: d.bc, detour: vec![d.be, d.ed], calls: 0, decline: false };
+    let (_, n, records) = load(&d, Some(rule), Some(&mut rr));
+    assert_eq!((rr.calls, records.len(), n), (0, 0, 1200));
 }
 
 /// **Property (X-37 #11):** a new route is taken only if it joins on where the vehicle is and
@@ -303,7 +332,7 @@ fn at_the_point_queue_a_queue_longer_than_its_link_is_seen_from_the_junction_ups
 #[test]
 fn a_new_route_that_does_not_join_on_is_refused() {
     let d = diamond();
-    let rule = RerouteRule { after_s: 120.0, max: 3 };
+    let rule = RerouteRule { after_s: 120.0, max: 3, closures_only: false };
     // `ed` ends where the plan ends, but does not leave `b`, where the vehicle is.
     let mut rr = ByE { ab: d.ab, bc: d.bc, detour: vec![d.ed], calls: 0, decline: false };
     let (done, n, records) = load(&d, Some(rule), Some(&mut rr));

@@ -1061,12 +1061,39 @@ impl<'a> Search<'a> {
         bound: f64,
         seconds: &dyn Fn(u32, f64) -> f64,
     ) -> Option<(f64, f64, Vec<LinkId>)> {
+        self.cheapest_route_start(Start::AfterLink(link), destination, departure, bound, seconds)
+    }
+
+    /// [`Self::cheapest_route_after`] from `origin`, beginning with any link out of it (a
+    /// vehicle not yet on a link, S300). `Some` with no links if `origin` is `destination`.
+    pub fn cheapest_route_from(
+        &mut self,
+        origin: NodeId,
+        destination: NodeId,
+        departure: f64,
+        bound: f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Option<(f64, f64, Vec<LinkId>)> {
+        self.cheapest_route_start(Start::Node(origin), destination, departure, bound, seconds)
+    }
+
+    fn cheapest_route_start(
+        &mut self,
+        start: Start,
+        destination: NodeId,
+        departure: f64,
+        bound: f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Option<(f64, f64, Vec<LinkId>)> {
         let ctx = self.ctx;
-        if ctx.network.link_to(link) == destination {
+        let start_node = match start {
+            Start::Node(n) => n,
+            Start::AfterLink(l) => ctx.network.link_to(l),
+        };
+        if start_node == destination {
             return Some((0.0, 0.0, Vec::new()));
         }
-        let seeds: Vec<LinkId> =
-            ctx.turns.turns_from(link).iter().map(|&t| ctx.turns.outgoing(t)).collect();
+        let seeds = self.seeds(start);
         for l in seeds {
             if !ctx.link_cost(l).is_finite() {
                 continue;
@@ -1159,13 +1186,7 @@ impl<'a> Search<'a> {
                 0.0
             }
         };
-        let seeds: Vec<LinkId> = match start {
-            Start::Node(n) => ctx.network.out_links(n).to_vec(),
-            Start::AfterLink(from) => {
-                ctx.turns.turns_from(from).iter().map(|&t| ctx.turns.outgoing(t)).collect()
-            }
-        };
-        for l in seeds {
+        for l in self.seeds(start) {
             if !ctx.link_cost(l).is_finite() {
                 continue;
             }
@@ -1202,6 +1223,88 @@ impl<'a> Search<'a> {
             }
         }
         found
+    }
+
+    /// The links a search from `start` begins with: every link out of a node, or the legal turns
+    /// out of a link.
+    fn seeds(&self, start: Start) -> Vec<LinkId> {
+        let ctx = self.ctx;
+        match start {
+            Start::Node(n) => ctx.network.out_links(n).to_vec(),
+            Start::AfterLink(from) => {
+                ctx.turns.turns_from(from).iter().map(|&t| ctx.turns.outgoing(t)).collect()
+            }
+        }
+    }
+
+    /// The earliest-arrival **tree** after `link`, beginning with one of its legal turns at second
+    /// `departure`, to every link reached within `bound` seconds: `(link, arrival at its
+    /// downstream end as a clock time, the link before it on the way or `u32::MAX` for a first
+    /// link)`, in the order the search settled them. Same costs and exactness as
+    /// [`Self::fastest_route_after`], without a destination: one search answers every vehicle
+    /// leaving the end of `link` at about that second, whatever its destination (S300: the
+    /// vehicles at a closure's approach).
+    pub fn fastest_tree_after(
+        &mut self,
+        link: LinkId,
+        departure: f64,
+        bound: f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Vec<(u32, f64, u32)> {
+        self.arrival_tree(Start::AfterLink(link), departure, bound, seconds)
+    }
+
+    /// [`Self::fastest_tree_after`] from `origin`, beginning with any link out of it.
+    pub fn fastest_tree_from(
+        &mut self,
+        origin: NodeId,
+        departure: f64,
+        bound: f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Vec<(u32, f64, u32)> {
+        self.arrival_tree(Start::Node(origin), departure, bound, seconds)
+    }
+
+    fn arrival_tree(
+        &mut self,
+        start: Start,
+        departure: f64,
+        bound: f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Vec<(u32, f64, u32)> {
+        let ctx = self.ctx;
+        let limit = departure + bound;
+        for l in self.seeds(start) {
+            if !ctx.link_cost(l).is_finite() {
+                continue;
+            }
+            let arrive = departure + seconds(l.raw(), departure);
+            if arrive <= limit && arrive < self.dist[l.index()] {
+                self.set(l.index(), arrive, 0.0, NONE);
+                self.heap.push(Entry { cost: arrive, link: l.raw() });
+            }
+        }
+        let mut settled = Vec::new();
+        while let Some(Entry { cost, link }) = self.heap.pop() {
+            let l = LinkId::new(link);
+            if cost > self.dist[l.index()] {
+                continue;
+            }
+            settled.push((link, cost, self.pred[l.index()]));
+            for &t in ctx.turns.turns_from(l) {
+                let m = ctx.turns.outgoing(t);
+                if !ctx.link_cost(m).is_finite() {
+                    continue;
+                }
+                let arrive = cost + seconds(m.raw(), cost);
+                if arrive <= limit && arrive < self.dist[m.index()] {
+                    self.set(m.index(), arrive, 0.0, link);
+                    self.heap.push(Entry { cost: arrive, link: m.raw() });
+                }
+            }
+        }
+        self.clean();
+        settled
     }
 
     fn set(&mut self, link: usize, dist: f64, true_dist: f64, pred: u32) {

@@ -47,9 +47,9 @@ pub use level1::{
 };
 pub use link_bins::{EntryTables, LinkBinRecorder, LinkBins};
 pub use ltm::{
-    CapacityChange, Chain, FidelityLevel, LiveTimes, LockReport, LtmNetwork, LtmOutput, QueueAhead,
-    Recording, Reroute, RerouteReason, RerouteRecord, RerouteRule, Rules, run_ltm, run_ltm_binned,
-    run_ltm_chained, run_ltm_recorded,
+    CapacityChange, Chain, FidelityLevel, LiveTimes, LockReport, LtmNetwork, LtmOutput, Recording,
+    Reroute, RerouteFrom, RerouteReason, RerouteRecord, RerouteRule, Rules, run_ltm,
+    run_ltm_binned, run_ltm_chained, run_ltm_recorded,
 };
 pub use node_model::{TurnDemand, solve_node};
 pub use vehicle::Vehicle;

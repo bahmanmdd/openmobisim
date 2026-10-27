@@ -162,10 +162,10 @@ def test_the_headway_at_nodes_changes_a_point_queue_run_of_nguyen_dupuis() -> No
     assert headway.total_travel_time_s != plain.total_travel_time_s
 
 
-def test_at_the_point_queue_a_closure_re_routes_only_when_asked_for() -> None:
-    # S293: ``reroute`` unsaid is off at flow_level 2, with or without road disruptions, so a run
-    # and the same run with a closure are the same model; asked for, the trips behind a closed
-    # street re-route round it.
+def test_at_the_point_queue_an_unknown_closure_re_routes_at_the_closure() -> None:
+    # S300: at flow_level 2 a vehicle that meets a closure the travellers did not know of is
+    # offered a way round where it meets it, unless ``reroute`` is 0; under a closure they knew
+    # of, they planned round it and nobody is offered one.
     net = ms.examples.manhattan_grid(n=5, block_metres=200.0, signals=False)
     rows = ms.examples.trips_random(net, 600, seed=4, min_m=500.0, max_m=1200.0, spread_s=900)
     common = {
@@ -181,15 +181,24 @@ def test_at_the_point_queue_a_closure_re_routes_only_when_asked_for() -> None:
     busiest = net.link_ids()[int(np.argmax(crossings))]
     closed = [{"links": [busiest], "capacity_factor": 0.0, "from_s": 0, "to_s": 86_400}]
 
-    def run(**loading: float) -> ms.Run:
+    def run(known: bool = False, **loading: float) -> ms.Run:
         scenario = ms.Scenario.from_parts(
-            net, rows, disruptions=closed, loading_options=loading, **common
+            net,
+            rows,
+            disruptions=closed,
+            disruptions_known=known,
+            loading_options=loading,
+            **common,
         )
         return scenario.run("pq-closure", quiet=True, overwrite=True)
 
-    unasked, asked = run(), run(reroute=1)
-    assert len(unasked.route_changes()["trip"]) == 0, "nobody re-routes unless asked for"
-    assert unasked.completion["completed"] < unasked.completion["total_trips"], "they wait"
-    assert len(asked.route_changes()["trip"]) > 0
-    assert asked.completion["completed"] > unasked.completion["completed"]
-    assert asked.fingerprint != unasked.fingerprint
+    shipped, off = run(), run(reroute=0)
+    changes = shipped.route_changes()
+    assert len(changes["trip"]) > 0, "the vehicles at the closure are offered a way round"
+    assert set(changes["reason"]) == {"closed_ahead"}, "and nobody else"
+    assert len(off.route_changes()["trip"]) == 0
+    assert off.completion["completed"] < off.completion["total_trips"], "without it they wait"
+    assert shipped.completion["completed"] > off.completion["completed"]
+    assert shipped.fingerprint != off.fingerprint
+    assert len(run(known=True).route_changes()["trip"]) == 0, "a known closure offers nothing"
+    assert len(run(known=True, reroute=1).route_changes()["trip"]) == 0

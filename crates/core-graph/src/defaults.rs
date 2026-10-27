@@ -315,7 +315,15 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// `lanes:hov`, `hov=designated`): only a lane for buses (or public service vehicles) alone is
 /// taken out of the lanes cars use, as the model does not tell a car's occupancy. Paris's
 /// Boulevard Périphérique keeps its four lanes; other networks move where they map such lanes.
-pub const DEFAULTS_VERSION: u32 = 41;
+///
+/// Version 42 (S300): **disruptions as travellers meet them.** A closed link takes no vehicle in,
+/// a departure onto it included (it waits at its origin), and the vehicles on it when it closed
+/// drive out. At the point queue, in a loading with road disruptions the travellers did not know
+/// of, a vehicle whose next link is closed (or a departure whose first link is) is offered a new
+/// route there, from one search tree per junction kept `loading_options` `reroute_tree_s` (60 s);
+/// nobody else is offered one, and the queue-ahead offer and `reroute_queue_ahead` are gone.
+/// Every run with road disruptions moves.
+pub const DEFAULTS_VERSION: u32 = 42;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

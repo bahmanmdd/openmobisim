@@ -270,12 +270,13 @@ class LoadingOptions(_Options):
         period_s: s; ``0.0``.
         pocket_length_m: m; ``50.0``.
         priority: 0 or 1; ``0``.
-        reroute: 0 or 1; by default ``None``: on at flow_level 3 and 4; off at 2 unless asked for
-            (1).
+        reroute: 0 or 1; by default ``None``: on at flow_level 3 and 4; at 2 only for road
+            disruptions the travellers did not know of, offering a new route to a vehicle whose
+            next link is closed; 0 turns it off.
         reroute_after_s: s; ``300.0``.
         reroute_max: count; ``3``.
         reroute_min_gain: —; ``0.1``.
-        reroute_queue_ahead: —; ``1.0``.
+        reroute_tree_s: s; ``60.0``.
     """
 
     _argument: ClassVar[str] = "loading_options"
@@ -291,7 +292,7 @@ class LoadingOptions(_Options):
         "reroute_after_s": 300.0,
         "reroute_max": 3,
         "reroute_min_gain": 0.1,
-        "reroute_queue_ahead": 1.0,
+        "reroute_tree_s": 60.0,
     }
 
     def __init__(
@@ -308,7 +309,7 @@ class LoadingOptions(_Options):
         reroute_after_s: float = 300.0,
         reroute_max: int = 3,
         reroute_min_gain: float = 0.1,
-        reroute_queue_ahead: float = 1.0,
+        reroute_tree_s: float = 60.0,
     ) -> None:
         """Keep the options given that differ from their defaults."""
         given = dict(locals())

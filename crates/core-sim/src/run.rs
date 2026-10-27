@@ -29,9 +29,9 @@ use openmobisim_core_demand::{Mode, Travellers, Trips, VehicleKind, VehicleLocat
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    Chain, EntryTables, FidelityLevel, LinkBins, LockReport, QueueAhead, Recording, Reroute,
-    RerouteRecord, RerouteRule, Rules, Trajectory, Vehicle, load_level_0_binned,
-    load_level_0_recorded, load_timed_binned, run_ltm_chained, traverse_free_flow, traverse_timed,
+    Chain, EntryTables, FidelityLevel, LinkBins, LockReport, Recording, Reroute, RerouteRecord,
+    RerouteRule, Rules, Trajectory, Vehicle, load_level_0_binned, load_level_0_recorded,
+    load_timed_binned, run_ltm_chained, traverse_free_flow, traverse_timed,
 };
 use openmobisim_core_routes::{
     ClassExtras, Demand, ExtrasRequest, RouteKey, RouteSetGenerator, RouteSets, TripDemand,
@@ -1056,6 +1056,12 @@ impl Run {
         })
     }
 
+    /// Whether the run has road disruptions the travellers did not know of: at the point queue,
+    /// its disrupted loading then re-routes at closures (S300).
+    fn unknown_road_disruptions(&self) -> bool {
+        !self.disruptions.known && !self.disruptions.capacity_changes().is_empty()
+    }
+
     /// The loading's level: `None` at free flow.
     fn level(&self) -> Option<FidelityLevel> {
         match &self.flow_motor {
@@ -1164,7 +1170,7 @@ impl Run {
             class_limits: &self.class_limits,
             link_values: &self.link_values,
             disruptions: &self.disruptions,
-            loading: &self.loading.resolved(self.level()),
+            loading: &self.loading.resolved(self.level(), self.unknown_road_disruptions()),
             prices: self.reads_money().then_some(&self.prices),
             demand_values: &self.demand_values,
             reads: &reads,
@@ -2883,33 +2889,25 @@ impl Run {
             };
             // The rerouting setting settled for the run's own level (S280, C1): a warm-up
             // loading of a level-4 run keeps the run's rule, as the fingerprint does. At the
-            // point queue it is off unless asked for, with or without road disruptions (S293).
-            let o = self.loading.resolved(self.level());
-            let rerouting = o.reroutes(self.level());
+            // point queue only a loading with road disruptions the travellers did not know of
+            // re-routes, and there only at closures (S300).
+            let capacity_changes =
+                if disrupted { self.disruptions.capacity_changes() } else { Vec::new() };
+            let unknown = !self.disruptions.known && !capacity_changes.is_empty();
+            let o = self.loading.resolved(self.level(), unknown);
+            let rerouting = o.reroutes(self.level(), unknown);
             let rules = Rules {
                 priority: o.priority,
                 reroute: rerouting.then(|| RerouteRule {
                     after_s: o.reroute_after_s,
                     max: u8::try_from(o.reroute_max).unwrap_or(u8::MAX),
+                    closures_only: *level == FidelityLevel::PointQueue,
                 }),
                 pocket_length_m: o.pocket_length_m,
                 node_inflow: o.node_inflow,
                 origin_inflow: o.origin_inflow,
-                // The queue-ahead offer (X-69): by default only where the day holds what the
-                // travellers did not plan on.
-                queue_ahead: match o.reroute_queue_ahead {
-                    0 => QueueAhead::Off,
-                    1 if disrupted && !self.disruptions.known => QueueAhead::BehindDisruption,
-                    1 => QueueAhead::Off,
-                    2 => QueueAhead::BehindDisruption,
-                    _ => QueueAhead::AnyQueue,
-                },
                 start_s: f64::from(self.window_start.get()),
-                capacity_changes: if disrupted {
-                    self.disruptions.capacity_changes()
-                } else {
-                    Vec::new()
-                },
+                capacity_changes,
             };
             let reroute_cost = self.reroute_cost.clone();
             let mut rerouter = rerouting.then(|| {
@@ -2928,7 +2926,7 @@ impl Run {
                 rerouter.as_mut().map(|r| r as &mut dyn Reroute),
             );
             reroutes = out.reroutes;
-            reroute_searches = rerouter.as_ref().map_or(0, |r| r.offers);
+            reroute_searches = rerouter.as_ref().map_or(0, |r| r.searches);
             peak_pcu = Some(out.peak_occupancy);
             let (trajectories, bins, entry) = (out.trajectories, out.link_bins, out.entry);
             // Where each vehicle still travelling at the end was (a car's vehicle id is its
