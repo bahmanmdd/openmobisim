@@ -78,6 +78,20 @@ the choice set in generalised minutes (utility over the time coefficient), shown
 - The doubly stochastic method and update keep and order their routes by the generalised cost they were searched by,
   no longer by travel time.
 
+**Disruptions as travellers meet them.** A closed road takes no vehicle in, a departure onto it included (it waits
+at its origin), and the vehicles on it when it closes drive out. Under disruptions the travellers know of, a closure
+is part of the network they plan on: every route cost (the route choice from the first iteration, the route update,
+the gaps, the car legs of the itineraries, skims) reads the wait until it reopens from the closure itself, and a pair
+whose every route crosses a closed road is given the least route round it. A known narrowing is read from the link
+times the iterations record, so it must start and end on the cost bins (`equilibration_options` `cost_bin_s`; a run
+that does not is refused with the reason). Under disruptions the travellers did not know of, at flow level 2, a
+vehicle whose next road is closed is offered a new route where it meets it (or at its origin), taken if it beats
+waiting for the reopening by `reroute_min_gain`; nobody else is offered one, and a vehicle with no way round waits
+before the closed road. One search tree from each such junction answers its vehicles for `loading_options`
+`reroute_tree_s` (60 s). `loading_options` `reroute` 0 turns these offers off.
+- `loading_options` `reroute_queue_ahead` is gone (the offer for a queue seen further ahead), and `route_changes`
+  reasons are `"closed_ahead"` and `"stuck"` (levels 3 and 4).
+
 **The last iteration's gap on the same footing as every other.** The route sets grow after the last iteration too,
 with the routes its travel times reveal, before its gaps are measured: the gaps take each set's best route, so the last
 iteration of a run now reads what the same iteration of a longer run reads (0.1.0 measured it without them, about 1 %

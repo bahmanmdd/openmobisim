@@ -3873,7 +3873,6 @@ fn itinerary_routes_kept(
     kept
 }
 
-#[allow(clippy::too_many_arguments, reason = "the sets, what grows them and what it changes")]
 /// `sets` with, for each pair whose every route crosses a link closed by a closure the travellers
 /// know of (`closures`, `(link, from, to)`), the least free-flow route that crosses none (S300).
 fn with_routes_round(
@@ -3906,6 +3905,7 @@ fn with_routes_round(
     sets.extended(network, &additions, 0, sets.update()).0
 }
 
+#[allow(clippy::too_many_arguments, reason = "the sets, what grows them and what it changes")]
 fn grow_sets(
     network: &RoadNetwork,
     sets: &RouteSets,
