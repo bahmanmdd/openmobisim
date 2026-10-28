@@ -794,6 +794,7 @@ dependencies = [
  "openmobisim-io-osm",
  "openmobisim-io-parquet",
  "pyo3",
+ "rayon",
 ]
 
 [[package]]
