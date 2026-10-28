@@ -805,6 +805,20 @@ class PolicyView:
     services: list[str]
     def __getitem__(self, name: str) -> dict[str, Any]: ...
     def __contains__(self, name: str) -> bool: ...
+    #: The zones (``grid_m``, ``id``, ``lon``, ``lat``), or ``None`` without them.
+    zones: dict[str, Any] | None
+    def travel_times(
+        self,
+        service: str | None,
+        from_nodes: list[str],
+        to_nodes: list[str],
+        max_s: float = ...,
+    ) -> Any:
+        """Seconds between road nodes leaving at the step, ``[from, to]``; ``inf`` past max_s."""
+    def expected_legs(self, service: str, bin_s: float = 900.0) -> Any:
+        """People expected per dock or zone and time bin, ``[rows, bins]``."""
+    def nearest(self, service: str, kind: str, node: str, k: int) -> list[tuple[str, float]]:
+        """The ``k`` docks or vehicles nearest ``node`` by free-flow time: ``(id, seconds)``."""
 
 def _docks_from_rows(
     rows: list[tuple[str, float, float, int, str | None, str | None, int | None]],

@@ -10,7 +10,9 @@
 //! targets solved into moves; bikes in vans counted in the conservation; the same seed the same
 //! decisions, and a copy continuing as the original; a policy deciding nothing changes nothing;
 //! the built-in policies (`Reset`, `Threshold`, `ChargeRule`) making the moves and charges their
-//! rules give, and named with their parameters.
+//! rules give, and named with their parameters; the view's queries (travel times equal to single
+//! drives at 1 and 8 threads, expected legs by hand and unchanged by a seed's variation, nearest
+//! docks with ties by index, zones stable across rebuilds).
 
 #![allow(clippy::float_cmp, reason = "times here are exact sums of the networks' own times")]
 
@@ -21,21 +23,26 @@ use openmobisim_core_graph::geometry::{LonLat, ground_distance_metres};
 use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults, StaticNetwork};
 use openmobisim_core_graph::manhattan_grid;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
+use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_sim::services::decisions::{Decision, DecisionKind};
 use openmobisim_core_sim::services::engine::{
     FleetDay, FleetEngine, Leg, NoLegs, ServiceLegs, ServiceRoads, ServiceState, VehicleState,
 };
+use openmobisim_core_sim::services::frozen::vary_legs;
 use openmobisim_core_sim::services::outcome::{FleetOutcome, LegStatus};
 use openmobisim_core_sim::services::policy::{
     ChargeRule, NoOp, Policy, PolicyDescription, Reset, Threshold, policy_builtin,
 };
+use openmobisim_core_sim::services::queries::{NearestKind, Zones};
+use openmobisim_core_sim::services::roads::{FrozenRoads, RoadTimes, search_context};
 use openmobisim_core_sim::services::view::View;
+use openmobisim_core_sim::services::world::{FrozenWorld, ServiceWorld};
 use openmobisim_core_sim::services::{
     ChargerRow, DockDefaults, DockRow, ServiceParts, ServiceSetup, TaxiDefaults, VehicleRow,
 };
 use openmobisim_core_sim::{LayerSetup, StaticLayers};
 use openmobisim_core_types::diagnostics::Diagnostics;
-use openmobisim_core_types::ids::{EntityId, NodeId};
+use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
 // --- A policy that asks for fixed decisions and records what it saw -----------------------------
 
@@ -887,4 +894,224 @@ fn a_threshold_rule_counts_the_bikes_already_on_their_way() {
     let out = docks_day(&s, vans, &[], 600.0, Some(Box::new(rule))).expect("runs");
     let to_a: u32 = solver_moves(&out).iter().filter(|m| m.2 == A).map(|m| m.3).sum();
     assert_eq!(to_a, 5, "A brought to its middle once: {:?}", solver_moves(&out));
+}
+
+// --- The view's queries: travel times, expected legs, nearest, zones ----------------------------
+
+/// The grid's city, owned, for `setups` and `legs`, at `times` (free flow if `None`).
+fn grid_world(setups: &[ServiceSetup], legs: &[Leg], times: Option<RoadTimes>) -> FrozenWorld {
+    let (road, layers) = grid();
+    let road = Arc::new(road);
+    let turns = Arc::new(TurnTable::build(&road, road.signals()));
+    let times = times.unwrap_or_else(|| RoadTimes::free_flow(&road));
+    FrozenWorld::new(
+        Arc::clone(&road),
+        turns,
+        Arc::new(layers.walk.expect("walk")),
+        Arc::new(layers.bike.expect("bike")),
+        times,
+        Arc::new(setups.to_vec()),
+        legs,
+    )
+}
+
+/// Road times on the grid that change by the bin: every third link slower in bins 30 to 33.
+fn grid_times(road: &RoadNetwork) -> RoadTimes {
+    let rows: Vec<(u32, u32, f64)> = (0..road.link_count())
+        .step_by(3)
+        .flat_map(|l| {
+            let ff = road.free_flow_time(LinkId::new(l)).get();
+            (30..34).map(move |b| (l, b, ff * f64::from(1 + (l + b) % 4)))
+        })
+        .collect();
+    RoadTimes::from_rows(road, 900.0, &rows).expect("valid rows")
+}
+
+#[test]
+fn travel_times_equal_single_drives_at_any_number_of_threads() {
+    let (road, _) = grid();
+    let turns = TurnTable::build(&road, road.signals());
+    let ctx = search_context(&road, &turns);
+    let roads = FrozenRoads::new(&road, &ctx, grid_times(&road));
+    let from: Vec<NodeId> = (0..10).map(|i| NodeId::from_index(2 * i)).collect();
+    let to: Vec<NodeId> = (0..10).map(|i| NodeId::from_index(24 - 2 * i)).collect();
+    // Leaving inside the slow bins, so the times are time-dependent.
+    let t = 30.0 * 900.0 + 400.0;
+    let single: Vec<f64> = from
+        .iter()
+        .flat_map(|&a| to.iter().map(move |&b| (a, b)))
+        .map(|(a, b)| roads.drive(a, b, t).0)
+        .collect();
+    assert!(single.iter().all(|s| s.is_finite()), "every pair connected");
+    assert_ne!(
+        single,
+        FrozenRoads::new(&road, &ctx, RoadTimes::free_flow(&road)).travel_times(
+            &from,
+            &to,
+            t,
+            f64::INFINITY
+        ),
+        "the road times matter"
+    );
+    for threads in [1, 8] {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().expect("a pool");
+        let runs = 20;
+        let clock = std::time::Instant::now();
+        let mut m = Vec::new();
+        for _ in 0..runs {
+            m = pool.install(|| roads.travel_times(&from, &to, t, f64::INFINITY));
+        }
+        let per = clock.elapsed().as_secs_f64() / f64::from(runs);
+        println!(
+            "travel_times 10 x 10 nodes on the 5 x 5 grid, {threads} threads: {:.1} µs a query",
+            per * 1e6
+        );
+        assert_eq!(m, single, "value for value, {threads} threads");
+    }
+    // Past max_s: infinite; within it, the same.
+    let mut sorted = single.clone();
+    sorted.sort_by(f64::total_cmp);
+    let max_s = sorted[sorted.len() / 2];
+    let bounded = roads.travel_times(&from, &to, t, max_s);
+    for (b, s) in bounded.iter().zip(&single) {
+        assert_eq!(*b, if *s <= max_s { *s } else { f64::INFINITY });
+    }
+    assert!(bounded.iter().any(|s| s.is_infinite()) && bounded.iter().any(|s| s.is_finite()));
+}
+
+#[test]
+fn a_view_s_travel_times_are_the_world_s_drives_at_the_step_and_cached() {
+    let (s, _) = three([1, 1, 1], 3, true);
+    let (road, _) = grid();
+    let world = Arc::new(grid_world(std::slice::from_ref(&s), &[], Some(grid_times(&road))));
+    let day = FleetDay { window: (30.0 * 900.0, 34.0 * 900.0), legs: Vec::new(), seed: 1 };
+    let mut engine = FleetEngine::in_world(Arc::new(vec![s]), Arc::new(day), world.clone(), None);
+    engine.advance_to(30.0 * 900.0 + 400.0).expect("runs");
+    let view = engine.view();
+    let from = [NodeId::from_index(0), NodeId::from_index(12)];
+    let to = [NodeId::from_index(24), NodeId::from_index(3), NodeId::from_index(0)];
+    let m = view.queries.travel_times(&from, &to, f64::INFINITY).expect("a query");
+    let turns = TurnTable::build(&road, road.signals());
+    let ctx = search_context(&road, &turns);
+    let roads = FrozenRoads::new(&road, &ctx, grid_times(&road));
+    for (i, &a) in from.iter().enumerate() {
+        for (j, &b) in to.iter().enumerate() {
+            assert_eq!(m[i * 3 + j], roads.drive(a, b, view.t).0);
+        }
+    }
+    let again = view.queries.travel_times(&from, &to, f64::INFINITY).expect("a query");
+    assert!(Arc::ptr_eq(&m, &again), "cached within the step");
+    assert!(view.queries.travel_times(&from, &to, -1.0).is_err());
+}
+
+#[test]
+fn expected_legs_count_the_world_s_legs_by_dock_and_bin_whatever_the_seed_varies() {
+    let (s, _) = three([1, 1, 1], 3, true);
+    let mut legs = vec![
+        trip(0, 100.0, A, B, &s),
+        trip(1, 200.0, A, C, &s),
+        trip(2, 1000.0, B, A, &s),
+        trip(3, 1900.0, C, A, &s),
+        trip(4, 950.0, A, B, &s),
+        trip(5, 4000.0, A, B, &s),
+    ];
+    legs[4].weight = 3;
+    let world: Arc<dyn ServiceWorld> = Arc::new(grid_world(std::slice::from_ref(&s), &legs, None));
+    let setups = Arc::new(vec![s.clone()]);
+    let at = |day_legs: Vec<Leg>| {
+        let day = FleetDay { window: (0.0, 3600.0), legs: day_legs, seed: 1 };
+        let engine =
+            FleetEngine::in_world(Arc::clone(&setups), Arc::new(day), Arc::clone(&world), None);
+        let e = engine.view().queries.expected_legs(0, 900.0).expect("a query");
+        (*e).clone()
+    };
+    let e = at(legs.clone());
+    assert_eq!((e.rows, e.bins, e.by_zone), (3, 4, false));
+    // By hand: A asks 2 people in the first quarter hour and 3 in the second; B one in the
+    // second; C one in the third; the leg after the window is not counted.
+    assert_eq!(e.values, [2.0, 3.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    // A day the seed thinned and shifted: the expectation is still the world's legs.
+    let varied = vary_legs(&legs, 7, 0.5, 300.0, 3600.0);
+    assert_ne!(varied, legs, "the seed varied the day");
+    assert_eq!(at(varied), e, "the base legs, not the day's");
+    assert!(at(Vec::new()).values.iter().sum::<f64>() > 0.0);
+    let day = FleetDay { window: (0.0, 3600.0), legs: legs.clone(), seed: 1 };
+    let engine = FleetEngine::in_world(Arc::clone(&setups), Arc::new(day), world, None);
+    assert!(engine.view().queries.expected_legs(0, 0.0).is_err());
+    assert!(engine.view().queries.expected_legs(1, 900.0).is_err());
+}
+
+#[test]
+fn nearest_docks_by_free_flow_time_ties_by_index() {
+    // Docks "x" and "y" both at node 1, "w" at node 3, "v" at node 24; from node 2 the two at
+    // node 1 tie, broken by index.
+    let (road, layers) = grid();
+    let row = |id: &str, node: usize| DockRow {
+        dock_id: id.to_string(),
+        name: None,
+        hub_id: None,
+        position: at(&road, node),
+        capacity: 3,
+        bikes: Some(1),
+    };
+    let rows = vec![row("y", 1), row("v", 24), row("x", 1), row("w", 3)];
+    let s = ServiceSetup::bike_docked(
+        "bike_share",
+        &rows,
+        layers.walk.as_ref().expect("walk"),
+        layers.bike.as_ref().expect("bike"),
+        Some(&road),
+        DockDefaults::SHIPPED,
+    )
+    .expect("set up");
+    let world = Arc::new(grid_world(std::slice::from_ref(&s), &[], None));
+    let day = FleetDay { window: (0.0, 3600.0), legs: Vec::new(), seed: 1 };
+    let engine = FleetEngine::in_world(Arc::new(vec![s.clone()]), Arc::new(day), world, None);
+    let view = engine.view();
+    let ServiceParts::BikeDocked(docks, _) = s.parts() else { panic!("docks") };
+    let index =
+        |id: &str| u32::try_from(docks.external.iter().position(|d| d == id).unwrap()).unwrap();
+    let from = NodeId::from_index(2);
+    let n = view.queries.nearest(0, NearestKind::Docks, from, 4).expect("a query");
+    let tt = view.queries.travel_times(&[from], &docks.road_node, f64::INFINITY).expect("q");
+    let mut by_hand: Vec<(u32, f64)> = (0_u32..).zip(tt.iter().copied()).collect();
+    by_hand.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+    assert_eq!(n, by_hand, "at free flow: the travel times, ordered");
+    let order: Vec<u32> = n.iter().map(|p| p.0).collect();
+    let (kx, ky) = (
+        order.iter().position(|&i| i == index("x")).unwrap(),
+        order.iter().position(|&i| i == index("y")).unwrap(),
+    );
+    assert_eq!(n[kx].1, n[ky].1, "a tie");
+    assert_eq!(kx.abs_diff(ky), 1);
+    assert_eq!((kx < ky), (index("x") < index("y")), "ties by index");
+    assert_eq!(order[3], index("v"), "the far corner last");
+    assert_eq!(view.queries.nearest(0, NearestKind::Docks, from, 1).expect("q").len(), 1);
+    assert!(view.queries.nearest(0, NearestKind::Vehicles, from, 1).is_err(), "no vehicles");
+}
+
+#[test]
+fn zones_are_a_grid_over_the_nodes_stable_across_rebuilds() {
+    let (road, _) = grid();
+    let z = Zones::grid(&road, 300.0).expect("a grid").expect("zones");
+    // Nodes 0, 200, …, 800 m along each axis fall in cells 0, 0, 1, 2, 2: 3 × 3 zones.
+    assert_eq!(z.len(), 9);
+    assert_eq!(z, Zones::grid(&grid().0, 300.0).expect("a grid").expect("zones"), "stable");
+    let mut seen = [false; 9];
+    for i in 0..road.node_count() as usize {
+        let k = z.of_node(NodeId::from_index(i)).expect("a zone") as usize;
+        seen[k] = true;
+        assert_eq!(
+            z.of_point(road.node_lonlat(NodeId::from_index(i))),
+            Some(u32::try_from(k).unwrap())
+        );
+    }
+    assert!(seen.iter().all(|&s| s), "every zone holds a node");
+    assert_eq!(z.of_node(NodeId::from_index(0)), Some(0), "the south-west corner first");
+    assert!(Zones::grid(&road, 0.0).is_err());
+    let (s, _) = three([1, 1, 1], 3, true);
+    let one = grid_world(std::slice::from_ref(&s), &[], None);
+    assert_eq!(one.zones().expect("zones").len(), 1, "1 000 m over an 800 m grid: one zone");
+    let fine = grid_world(&[s], &[], None).with_zone_grid_m(300.0).expect("a grid");
+    assert_eq!(fine.zones(), Some(&z));
 }

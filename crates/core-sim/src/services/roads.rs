@@ -16,8 +16,9 @@
 //! the static layer's shortest time.
 //!
 //! **Cost:** road times 8 bytes per (link, bin) row plus 8 per link, a lookup one binary
-//! search over the link's few rows; a drive one bounded time-dependent search; a ride or walk
-//! one static search, kept per pair.
+//! search over the link's few rows; a drive one bounded time-dependent search; a matrix of
+//! travel times one such search per source, in parallel (each thread's search about 40 bytes
+//! per link); a ride or walk one static search, kept per pair.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -31,6 +32,7 @@ use openmobisim_core_routes::{Reach, Search, SearchContext};
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
 use super::engine::ServiceRoads;
+use crate::transit::par_map;
 
 /// The longest drive a vehicle's search looks for, in seconds: a city crossed with room.
 pub const DRIVE_BOUND_S: f64 = 4.0 * 3600.0;
@@ -176,6 +178,7 @@ impl RoadTimes {
 #[derive(Debug)]
 pub struct FrozenRoads<'a> {
     road: &'a RoadNetwork,
+    ctx: &'a SearchContext<'a>,
     times: Cow<'a, RoadTimes>,
     /// Free-flow seconds of the links motor traffic may use, infinite on the others.
     free: Vec<f64>,
@@ -209,6 +212,7 @@ impl<'a> FrozenRoads<'a> {
             .collect();
         Self {
             road,
+            ctx,
             times,
             free,
             every: vec![true; road.node_count() as usize],
@@ -249,6 +253,63 @@ impl<'a> FrozenRoads<'a> {
             })
     }
 
+    /// Seconds from each of `from` to each of `to` leaving at second `t` on the road times, row
+    /// by row (`out[i * to.len() + j]`), infinite where no road gets there within `max_s` (nor
+    /// within [`DRIVE_BOUND_S`]): per source one earliest-arrival search to every target, the
+    /// same search and times as [`Self::drive`]'s; sources in parallel, each thread with its own
+    /// search, the matrix the same at any number of threads.
+    ///
+    /// # Panics
+    ///
+    /// If a node is not of the network.
+    #[must_use]
+    pub fn travel_times(&self, from: &[NodeId], to: &[NodeId], t: f64, max_s: f64) -> Vec<f64> {
+        let bound = max_s.min(DRIVE_BOUND_S);
+        let mut targets = vec![false; self.road.node_count() as usize];
+        let mut wanted = 0;
+        for n in to {
+            if !targets[n.index()] {
+                targets[n.index()] = true;
+                wanted += 1;
+            }
+        }
+        let seconds = |l: u32, at: f64| {
+            if self.free[l as usize].is_finite() {
+                self.times.link_seconds(l, at)
+            } else {
+                f64::INFINITY
+            }
+        };
+        #[cfg(feature = "parallel")]
+        let threads = rayon::current_num_threads();
+        #[cfg(not(feature = "parallel"))]
+        let threads = 1;
+        let chunk = from.len().div_ceil(threads).max(1);
+        let rows = par_map(
+            from,
+            chunk,
+            || Search::new(self.ctx),
+            |search, &source| {
+                let found = search.fastest_arrivals_to(
+                    source,
+                    &targets,
+                    wanted,
+                    t,
+                    bound,
+                    &|_, _| 0.0,
+                    &seconds,
+                );
+                let at: HashMap<u32, f64> =
+                    found.into_iter().map(|(n, arrive, _)| (n.raw(), arrive - t)).collect();
+                to.iter()
+                    .map(|n| at.get(&n.raw()).copied().filter(|&s| s <= bound))
+                    .map(|s| s.unwrap_or(f64::INFINITY))
+                    .collect::<Vec<f64>>()
+            },
+        );
+        rows.concat()
+    }
+
     /// The nodes from which `to` is reached within `bound` seconds at free flow, with those
     /// seconds, nearest first (ties by node id).
     #[must_use]
@@ -278,6 +339,9 @@ impl<'a> FrozenRoads<'a> {
 impl ServiceRoads for FrozenRoads<'_> {
     fn drive(&self, from: NodeId, to: NodeId, t: f64) -> (f64, f64) {
         FrozenRoads::drive(self, from, to, t)
+    }
+    fn travel_times(&self, from: &[NodeId], to: &[NodeId], t: f64, max_s: f64) -> Vec<f64> {
+        FrozenRoads::travel_times(self, from, to, t, max_s)
     }
     fn reach_to(&self, to: NodeId, bound: f64) -> Vec<(NodeId, f64)> {
         FrozenRoads::reach_to(self, to, bound)
