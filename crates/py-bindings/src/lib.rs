@@ -39,6 +39,7 @@ mod choice;
 mod network;
 mod parking;
 mod pipeline;
+mod policy;
 mod routes;
 mod services;
 mod transit;
@@ -170,6 +171,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<services::PyDocks>()?;
     m.add_class::<services::PyVehicles>()?;
     m.add_class::<services::PyChargers>()?;
+    m.add_class::<policy::PyPolicyView>()?;
     m.add_function(wrap_pyfunction!(services::docks_from_rows, m)?)?;
     m.add_function(wrap_pyfunction!(services::vehicles_from_rows, m)?)?;
     m.add_function(wrap_pyfunction!(services::chargers_from_rows, m)?)?;

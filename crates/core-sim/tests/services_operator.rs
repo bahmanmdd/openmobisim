@@ -8,7 +8,9 @@
 //! with their reasons; a policy's failure stopping the day; bikes brought to a full dock; a
 //! refusal of each decision kind; a relocation and a charge with closed-form arrival and charge;
 //! targets solved into moves; bikes in vans counted in the conservation; the same seed the same
-//! decisions, and a copy continuing as the original; a policy deciding nothing changes nothing.
+//! decisions, and a copy continuing as the original; a policy deciding nothing changes nothing;
+//! the built-in policies (`Reset`, `Threshold`, `ChargeRule`) making the moves and charges their
+//! rules give, and named with their parameters.
 
 #![allow(clippy::float_cmp, reason = "times here are exact sums of the networks' own times")]
 
@@ -24,7 +26,9 @@ use openmobisim_core_sim::services::engine::{
     FleetDay, FleetEngine, Leg, NoLegs, ServiceLegs, ServiceRoads, ServiceState, VehicleState,
 };
 use openmobisim_core_sim::services::outcome::{FleetOutcome, LegStatus};
-use openmobisim_core_sim::services::policy::{NoOp, Policy, PolicyDescription};
+use openmobisim_core_sim::services::policy::{
+    ChargeRule, NoOp, Policy, PolicyDescription, Reset, Threshold, policy_builtin,
+};
 use openmobisim_core_sim::services::view::View;
 use openmobisim_core_sim::services::{
     ChargerRow, DockDefaults, DockRow, ServiceParts, ServiceSetup, TaxiDefaults, VehicleRow,
@@ -691,4 +695,107 @@ fn taxi_decisions_are_refused_with_why() {
             Some("service 0 is not a docked service"),
         ]
     );
+}
+
+// --- The built-in policies ----------------------------------------------------------------------
+
+/// The moves the target solver made, as `(second, from, to, bikes)`.
+fn solver_moves(out: &FleetOutcome) -> Vec<(f64, u32, u32, u32)> {
+    out.decisions
+        .iter()
+        .filter(|r| r.from_target && r.accepted)
+        .map(|r| {
+            let p = |k: &str| {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "small")]
+                let v = r.parameters.iter().find(|x| x.0 == k).expect("a parameter").1 as u32;
+                v
+            };
+            (r.t_s, p("from_dock"), p("to_dock"), r.moved)
+        })
+        .collect()
+}
+
+#[test]
+fn reset_brings_the_bikes_back_to_their_start_of_day_docks() {
+    // A starts with three bikes, B and C empty; three travellers ride them from A to C at
+    // 8:00, 8:01 and 8:02; from 9:00 the reset brings them back: one move, C to A, three bikes,
+    // at 9:00, and nothing after (every dock at its count again).
+    let (s, vans) = three([3, 0, 0], 3, true);
+    let legs: Vec<Leg> =
+        (0..3).map(|k| trip(k, 8.0 * 3600.0 + 60.0 * f64::from(k), A, C, &s)).collect();
+    let reset = Reset::new(900.0, 9.0 * 3600.0);
+    let out = docks_day(&s, vans, &legs, 10.0 * 3600.0, Some(Box::new(reset))).expect("runs");
+    assert_eq!(solver_moves(&out), [(9.0 * 3600.0, C, A, 3)]);
+    assert!(out.decisions.iter().all(|r| r.t_s >= 9.0 * 3600.0), "nothing before 9:00");
+    // From the window's start (the default), it acts at each step: the first move at 8:15.
+    let (_, vans) = three([3, 0, 0], 3, true);
+    let out = docks_day(&s, vans, &legs, 10.0 * 3600.0, Some(Box::new(Reset::new(900.0, 0.0))))
+        .expect("runs");
+    assert_eq!(solver_moves(&out), [(8.25 * 3600.0, C, A, 3)]);
+}
+
+#[test]
+fn threshold_tops_up_the_empty_docks_from_the_full_ones() {
+    // Three slots a dock, low 0.25, high 0.5: the middle is 1.125 bikes. A (3 bikes, above
+    // 1.5) gives down to 2 (rounded up), B and C (none, below 0.75) want 1 (rounded down): A
+    // gives one bike, to B (the tie between B and C goes to the lower index). At the later
+    // steps A (2 bikes, still above 1.5) and C (none) are past a threshold again, but A is at
+    // its target and has none to spare: C stays short. Equivalently, a dock past a threshold
+    // gives `floor(bikes − middle)` bikes and takes `floor(middle − bikes)`.
+    let (s, vans) = three([3, 0, 0], 3, true);
+    let rule = Threshold::new(0.25, 0.5, 900.0).expect("valid");
+    assert_eq!((rule.target(3, 3), rule.target(0, 3), rule.target(1, 3)), (Some(2), Some(1), None));
+    let out = docks_day(&s, vans, &[], 3600.0, Some(Box::new(rule))).expect("runs");
+    assert_eq!(solver_moves(&out), [(0.0, A, B, 1)]);
+    let targets: Vec<_> = out.decisions.iter().filter(|r| r.kind == DecisionKind::Target).collect();
+    assert_eq!(targets.len(), 3 + 3 * 2, "three docks past a threshold at 0 s, then A and C");
+    assert!(Threshold::new(0.8, 0.2, 900.0).unwrap_err().contains("low < high"));
+}
+
+#[test]
+fn charge_rule_sends_a_low_idle_taxi_to_its_nearest_charger() {
+    let net = line();
+    // `v` at node 0 with 30 % (above the fleet's own 20 %, below the rule's 50 %); `w` at
+    // node 9 with 90 %. Chargers at nodes 4 (`far`) and 2 (`near`): `v` goes to `near`.
+    let setup = taxi_fleet(&net, &[("v", 0, 0.3), ("w", 9, 0.9)], &[("far", 4, 1), ("near", 2, 1)]);
+    let ServiceParts::Taxi(fleet, _) = setup.parts() else { panic!("a taxi fleet") };
+    let near = u32::try_from(fleet.charger_ids.iter().position(|c| c == "near").unwrap()).unwrap();
+    let rule = ChargeRule::new(0.5, 0.9, 900.0).expect("valid");
+    let out = taxi_day(&net, &setup, &[], Some(Box::new(rule))).unwrap();
+    assert_eq!(out.decisions.len(), 1, "one vehicle low, sent once (charging after)");
+    let r = &out.decisions[0];
+    assert_eq!(r.kind, DecisionKind::Charge);
+    assert!(r.accepted);
+    assert_eq!(r.parameters, [("vehicle", 0.0), ("charger", f64::from(near)), ("to_soc", 0.9)]);
+    assert!(close(r.metres, 2000.0), "2 km to the near charger");
+    assert!(ChargeRule::new(0.9, 0.5, 900.0).is_err());
+}
+
+#[test]
+fn the_built_in_policies_are_named_with_their_parameters() {
+    let none = std::collections::BTreeMap::new();
+    let describe = |name: &str, p: &[(&str, f64)]| {
+        let p = p.iter().map(|&(k, v)| (k.to_string(), v)).collect();
+        policy_builtin(name, &p).map(|x| x.describe())
+    };
+    assert_eq!(
+        describe("threshold", &[("low", 0.1)]).unwrap(),
+        PolicyDescription {
+            name: "threshold".into(),
+            parameters: vec![("low".into(), 0.1), ("high".into(), 0.8), ("step_s".into(), 900.0)],
+        }
+    );
+    assert_eq!(
+        describe("reset", &[]).unwrap().parameters,
+        [("step_s".into(), 900.0), ("from_s".into(), 0.0)]
+    );
+    assert_eq!(
+        describe("charge_rule", &[("step_s", 300.0)]).unwrap().parameters,
+        [("charge_below".into(), 0.2), ("charge_to".into(), 0.8), ("step_s".into(), 300.0)]
+    );
+    assert_eq!(policy_builtin("noop", &none).unwrap().describe().name, "noop");
+    let unknown = describe("nope", &[]).unwrap_err();
+    assert!(unknown.contains("noop, reset, threshold, charge_rule"), "{unknown}");
+    let bad = describe("threshold", &[("lo", 0.1)]).unwrap_err();
+    assert!(bad.contains("\"lo\"") && bad.contains("low, high, step_s"), "{bad}");
 }

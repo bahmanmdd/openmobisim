@@ -11,6 +11,10 @@ returns at the dock nearest its destination on foot, whatever the docks hold; a 
 the given road times and adds no traffic. What a full run adds — travellers choosing among
 modes and docks by what they expect, the services' vehicles in the traffic — is not here. The
 result says so (``FleetDay.fidelity``).
+
+**An operator** (``policy=``, see ``openmobisim.operator``) may steer the services during the
+day: move bikes between docks, set docks' target levels, relocate or charge taxis. Its
+decisions, accepted or refused with the reason, are in ``FleetDay.decisions()``.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from openmobisim import _core
+from openmobisim.operator import _policy_for_binding
 from openmobisim.parking import _csv_rows, _number, _text
 from openmobisim.table import Columns
 
@@ -157,6 +162,10 @@ class FleetDay:
     counts: dict[str, float]
     #: The seconds the day took to set up and to simulate.
     seconds: dict[str, float]
+    #: Every decision the policy took, in order (``decisions()``).
+    decision_rows: Columns
+    #: The policy's name and parameters (``{"name", "parameters"}``), or ``None`` without one.
+    policy: dict[str, Any] | None
 
     def trip_results(self) -> Columns:
         """What became of each trip given, in the order given.
@@ -166,6 +175,21 @@ class FleetDay:
         ``truncated``, ``not_requested``, ``not_planned``).
         """
         return self.trips
+
+    def decisions(self) -> Columns:
+        """Every decision the policy took, in the order taken, accepted or refused.
+
+        Columns: ``step`` (the policy step's index, 0 at the window's start), ``t_s`` (its
+        second), ``service``, ``kind`` (``move``, ``target``, ``relocate``, ``charge``), the
+        parameters by id (``from_dock``, ``to_dock``, ``n``, ``dock``, ``level``, ``vehicle``,
+        ``node``, ``charger``, ``to_soc``; ``None`` or NaN where a kind has none),
+        ``accepted``, ``reason`` (why it was refused, ``None`` if accepted), ``executed_s`` (the
+        second it started), ``finished_s`` (the van's or vehicle's arrival, the charge's end;
+        NaN if refused or not finished by the window's end), ``moved`` (a move's bikes in the
+        van), ``metres`` (the drive's), ``from_target`` (a move the solver made for the
+        step's targets).
+        """
+        return self.decision_rows
 
     def __repr__(self) -> str:
         """The trips, how many were served, and the day's seconds."""
@@ -219,6 +243,8 @@ def fleet_day(
     window: tuple[object, object] = ("07:30", "09:30"),
     road_times: RoadTimes | None = None,
     seed: int = 0,
+    policy: Any = None,
+    policy_options: Mapping[str, float] | None = None,
 ) -> FleetDay:
     """Run every service's day together on the fleet engine, from a table of trips.
 
@@ -234,10 +260,15 @@ def fleet_day(
             asks at its start, one after it ends is never asked.
         road_times: An earlier run's road times (``road_times_read``); ``None``: free flow.
         seed: The day's seed.
+        policy: An operator steering the services (``openmobisim.operator``): a policy object
+            (``step(view)``), a built-in one (``policy_threshold(...)``), a name (built-in or
+            registered with ``policy_register``), or ``None``: no operator.
+        policy_options: A named policy's options (``{"low": 0.1}`` for ``"threshold"``).
 
     Raises:
-        ValueError: For a service, trip or option that is not valid, or road times of another
-            network.
+        ValueError: For a service, trip, option or policy that is not valid, road times of
+            another network, or a decision naming an id that does not exist.
+        Exception: A Python policy's own exception, which stops the day.
     """
     names = [s.name for s in services]
     if len(set(names)) != len(names):
@@ -262,7 +293,8 @@ def fleet_day(
         )
         for s in services
     ]
-    out = _core._fleet_day(network, parts, rows, roads, (start, end), int(seed))
+    chosen = _policy_for_binding(policy, policy_options)
+    out = _core._fleet_day(network, parts, rows, roads, (start, end), int(seed), chosen)
     trips_out = Columns(out["trips"])
     return FleetDay(
         fidelity="frozen_day",
@@ -272,4 +304,6 @@ def fleet_day(
         plan=dict(out["plan"]),
         counts=dict(out["counts"]),
         seconds={**out["seconds"], "total_s": time.perf_counter() - started},
+        decision_rows=Columns(out["decisions"]),
+        policy=out["policy"],
     )

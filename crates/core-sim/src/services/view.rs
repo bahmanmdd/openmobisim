@@ -7,8 +7,10 @@
 //! cleared after each step. A taxi fleet's waiting requests and chargers' plugs in use and
 //! queues are gathered at the step (one pass over the waiting requests and the chargers).
 
+use std::collections::HashMap;
+
 use openmobisim_core_graph::geometry::LonLat;
-use openmobisim_core_types::ids::NodeId;
+use openmobisim_core_types::ids::{EntityId, NodeId};
 
 use super::engine::VehicleState;
 
@@ -123,4 +125,16 @@ pub struct TaxiView<'a> {
     pub charger_in_use: Vec<u32>,
     /// Per charger, the vehicles queued for a plug now.
     pub charger_queued: Vec<u32>,
+    /// Per road node with a charger within the fleet's `charger_reach_s` at free flow: the
+    /// nearest (ties by charger index).
+    pub(crate) nearest: &'a HashMap<u32, u32>,
+}
+
+impl TaxiView<'_> {
+    /// The charger nearest road node `node` by free-flow time, within the fleet's
+    /// `charger_reach_s` (`None`: none in reach); the one the fleet's own charging rule picks.
+    #[must_use]
+    pub fn nearest_charger(&self, node: NodeId) -> Option<u32> {
+        self.nearest.get(&node.raw()).copied()
+    }
 }

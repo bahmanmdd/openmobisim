@@ -754,6 +754,25 @@ class Chargers:
     def rows(self) -> dict[str, Any]:
         """Every charger: ``{"charger_id", "hub_id", "lon", "lat", "plugs", "kw"}``."""
 
+class PolicyView:
+    """What a policy sees at one step (``openmobisim.operator``); not readable after its step.
+
+    ``view["<service>"]`` is the service's dict of arrays, one value per dock or vehicle.
+    """
+
+    #: The step's second, from midnight.
+    t: float
+    #: The step's index: 0 at the window's start.
+    step: int
+    #: A number for the policy's own draws at this step.
+    rng_seed: int
+    #: The day's window: its start and end, in seconds from midnight.
+    window: tuple[float, float]
+    #: The services' names, in the order given.
+    services: list[str]
+    def __getitem__(self, name: str) -> dict[str, Any]: ...
+    def __contains__(self, name: str) -> bool: ...
+
 def _docks_from_rows(
     rows: list[tuple[str, float, float, int, str | None, str | None, int | None]],
 ) -> Docks: ...
