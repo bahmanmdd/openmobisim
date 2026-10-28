@@ -799,3 +799,60 @@ fn the_built_in_policies_are_named_with_their_parameters() {
     let bad = describe("threshold", &[("lo", 0.1)]).unwrap_err();
     assert!(bad.contains("\"lo\"") && bad.contains("low, high, step_s"), "{bad}");
 }
+
+#[test]
+fn a_reset_acting_while_its_van_is_on_the_road_moves_no_bike_twice() {
+    // The reset of `reset_brings_the_bikes_back…`, every 30 s: shorter than the van's drive plus
+    // its handling (3 × 30 s), so the van is still on the road at the next steps. The bikes
+    // moved over the day are the three that went to C, once.
+    let (s, vans) = three([3, 0, 0], 3, true);
+    let legs: Vec<Leg> =
+        (0..3).map(|k| trip(k, 8.0 * 3600.0 + 60.0 * f64::from(k), A, C, &s)).collect();
+    let reset = Reset::new(30.0, 9.0 * 3600.0);
+    let out = docks_day(&s, vans, &legs, 10.0 * 3600.0, Some(Box::new(reset))).expect("runs");
+    let moves = solver_moves(&out);
+    let moved: u32 = moves.iter().map(|m| m.3).sum();
+    assert_eq!(moved, 3, "every bike moved once: {moves:?}");
+    let last = out.docks[0].as_ref().expect("docks");
+    let n = last.bins;
+    assert!(
+        (0..3).all(|k| last.bikes_mean[k * n + n - 1] >= 0.0),
+        "counts stay whole: {:?}",
+        last.bikes_mean
+    );
+}
+
+#[test]
+fn a_reset_with_a_small_van_counts_the_bikes_already_on_their_way() {
+    // As above with vans of two bikes: the first step sends two of A's three back; at the next
+    // steps, while that van is on the road, A still shows none. Bikes on their way must count,
+    // or a second van brings two more and A ends above its start.
+    let (road, layers) = grid();
+    let row = |id: &str, node: usize, b: u32| DockRow {
+        dock_id: id.to_string(),
+        name: None,
+        hub_id: None,
+        position: at(&road, node),
+        capacity: 5,
+        bikes: Some(b),
+    };
+    let rows = vec![row("C", 3, 0), row("A", 0, 3), row("B", 1, 0)];
+    let small = DockDefaults { van_bikes: 2.0, ..DockDefaults::SHIPPED };
+    let s = ServiceSetup::bike_docked(
+        "bike_share",
+        &rows,
+        layers.walk.as_ref().expect("walk"),
+        layers.bike.as_ref().expect("bike"),
+        Some(&road),
+        small,
+    )
+    .expect("set up");
+    let vans = Vans((0..road.node_count() as usize).map(|i| at(&road, i)).collect());
+    let legs: Vec<Leg> =
+        (0..3).map(|k| trip(k, 8.0 * 3600.0 + 60.0 * f64::from(k), A, C, &s)).collect();
+    let reset = Reset::new(30.0, 9.0 * 3600.0);
+    let out = docks_day(&s, vans, &legs, 10.0 * 3600.0, Some(Box::new(reset))).expect("runs");
+    let moves = solver_moves(&out);
+    let moved: u32 = moves.iter().map(|m| m.3).sum();
+    assert_eq!(moved, 3, "three bikes back, none twice: {moves:?}");
+}
