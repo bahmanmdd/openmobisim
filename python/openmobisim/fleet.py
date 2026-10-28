@@ -284,6 +284,8 @@ def fleet_environment(
     road_times: RoadTimes | None = None,
     step_s: float = 900.0,
     reward_weights: Mapping[str, float] | None = None,
+    legs_keep: float = 1.0,
+    departure_jitter_s: float = 0.0,
 ) -> Any:
     """A fleet day to step through: ``reset(seed)``, then ``step(decisions)`` until the day ends.
 
@@ -310,6 +312,10 @@ def fleet_environment(
         step_s: The seconds between steps.
         reward_weights: Weights by name in place of ``REWARD_WEIGHTS``'; a name not among them is
             refused with the list.
+        legs_keep: The share of the trips' legs each day keeps, drawn by the day's seed (1: all).
+        departure_jitter_s: How far each kept leg's request moves, drawn by the day's seed, in
+            seconds either way (0: not at all). With these two, each seed of ``reset`` is another
+            day; both thin and shift the same trips, they do not draw a new demand.
 
     Raises:
         ValueError: As ``fleet_day``.
@@ -329,6 +335,8 @@ def fleet_environment(
             span,
             float(step_s),
             (weights["w_fail"], weights["w_wait"], weights["w_walk"], weights["w_km"]),
+            float(legs_keep),
+            float(departure_jitter_s),
         )
     )
 

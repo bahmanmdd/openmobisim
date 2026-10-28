@@ -11,6 +11,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use openmobisim_core_sim::services::engine::{FleetDay, FleetEngine};
+use openmobisim_core_sim::services::frozen::vary_legs;
 use openmobisim_core_sim::services::outcome::LegStatus;
 use openmobisim_core_sim::services::world::ServiceWorld;
 
@@ -35,6 +36,9 @@ pub struct PyFleetEnvironment {
     window: (f64, f64),
     step_s: f64,
     weights: Weights,
+    /// The share of legs a day keeps, and how far a request may move, in seconds.
+    keep: f64,
+    jitter_s: f64,
     engine: Option<FleetEngine>,
     /// Per leg, whether its end was counted in a reward.
     counted: Vec<bool>,
@@ -112,7 +116,8 @@ impl PyFleetEnvironment {
         py: Python<'py>,
         seed: u64,
     ) -> PyResult<(Py<PyPolicyView>, Bound<'py, PyDict>)> {
-        let day = Arc::new(FleetDay { window: self.window, legs: self.frozen.legs.clone(), seed });
+        let legs = vary_legs(&self.frozen.legs, seed, self.keep, self.jitter_s, self.window.1);
+        let day = Arc::new(FleetDay { window: self.window, legs, seed });
         let world: Arc<dyn ServiceWorld> = self.frozen.world.clone();
         let mut engine = FleetEngine::in_world(Arc::clone(&self.frozen.setups), day, world, None);
         engine.advance_to(self.window.0).map_err(PyValueError::new_err)?;
@@ -176,6 +181,8 @@ impl PyFleetEnvironment {
             window: self.window,
             step_s: self.step_s,
             weights: self.weights,
+            keep: self.keep,
+            jitter_s: self.jitter_s,
             engine: Some(engine.clone()),
             counted: self.counted.clone(),
             records_seen: self.records_seen,
@@ -217,9 +224,19 @@ pub fn fleet_environment(
     window: (f64, f64),
     step_s: f64,
     weights: (f64, f64, f64, f64),
+    keep: f64,
+    jitter_s: f64,
 ) -> PyResult<PyFleetEnvironment> {
     if !(step_s.is_finite() && step_s > 0.0) {
         return Err(PyValueError::new_err(format!("step_s must be above 0, got {step_s}")));
+    }
+    if !(keep > 0.0 && keep <= 1.0) {
+        return Err(PyValueError::new_err(format!("legs_keep must be in (0, 1], got {keep}")));
+    }
+    if !(jitter_s.is_finite() && jitter_s >= 0.0) {
+        return Err(PyValueError::new_err(format!(
+            "departure_jitter_s must be 0 or more, got {jitter_s}"
+        )));
     }
     let f = frozen(network, &services, trips, road_times)?;
     let n = f.legs.len();
@@ -228,6 +245,8 @@ pub fn fleet_environment(
         window,
         step_s,
         weights: Weights { fail: weights.0, wait: weights.1, walk: weights.2, km: weights.3 },
+        keep,
+        jitter_s,
         engine: None,
         counted: vec![false; n],
         records_seen: 0,

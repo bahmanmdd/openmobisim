@@ -158,3 +158,26 @@ def test_an_environment_is_deterministic_and_refuses_bad_input():
         env.step()
     with pytest.raises(ValueError, match="unknown reward weight"):
         ms.fleet_environment(net, [bikes], trips, reward_weights={"w_nope": 1.0})
+
+
+def test_each_seed_is_another_day_when_legs_are_thinned_or_shifted():
+    net = grid()
+    bikes = ms.service_bike_docked(docks(net, bikes=(2, 0)))
+    trips = [trip(net, f"t{k}", 27_000 + 120 * k, (0, 0), (4, 4)) for k in range(30)]
+
+    def total(env, seed):
+        env.reset(seed)
+        reward, done = 0.0, False
+        while not done:
+            _, r, done, _, _ = env.step()
+            reward += r
+        return reward
+
+    same = ms.fleet_environment(net, [bikes], trips)
+    assert total(same, 1) == total(same, 2), "nothing drawn: one day"
+    varied = ms.fleet_environment(net, [bikes], trips, legs_keep=0.5, departure_jitter_s=300)
+    days = {total(varied, seed) for seed in range(6)}
+    assert len(days) > 1, "the seeds give other days"
+    assert total(varied, 4) == total(varied, 4), "a seed replays its day"
+    with pytest.raises(ValueError, match="legs_keep"):
+        ms.fleet_environment(net, [bikes], trips, legs_keep=0.0)

@@ -783,6 +783,8 @@ def _fleet_environment(
     window: tuple[float, float],
     step_s: float,
     weights: tuple[float, float, float, float],
+    keep: float,
+    jitter_s: float,
 ) -> FleetEnvironment: ...
 
 class PolicyView:
