@@ -12,6 +12,7 @@
 //! | [`engine`] | [`engine::FleetEngine`] — the services' day: legs, vehicles and docks, events in time order |
 //! | [`outcome`] | [`outcome::FleetOutcome`] — what became of each leg, and the day's counts |
 //! | [`frozen`] | [`frozen::plan_legs`], [`frozen::FrozenLegs`] — a fleet day without a run: trips as a table, legs planned by a fixed rule |
+//! | [`world`] | [`world::FrozenWorld`] — a fleet day's city, owned, lending the engine its roads one call at a time |
 //! | [`roads`] | [`roads::RoadTimes`], [`roads::FrozenRoads`], [`roads::FrozenPaths`] — a day's road times and the drives, rides and walks on them, without a run |
 //! | [`docks`] | [`docks::DockBins`] — docked bikes' pickups, returns and redirections on the engine, bin by bin |
 //! | [`costs`] | [`costs::DockCosts`] — what a dock is expected to cost a pickup and a return, per bin |
@@ -34,6 +35,7 @@ pub mod policy;
 pub mod roads;
 pub mod taxis;
 pub mod view;
+pub mod world;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
