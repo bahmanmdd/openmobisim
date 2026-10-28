@@ -15,7 +15,7 @@ use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults,
 use openmobisim_core_graph::manhattan_grid;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_sim::services::costs::DockCosts;
-use openmobisim_core_sim::services::engine::{FleetDay, FleetEngine, Leg, ServiceLegs};
+use openmobisim_core_sim::services::engine::{FleetDay, FleetEngine, Leg, NoRoads, ServiceLegs};
 use openmobisim_core_sim::services::outcome::{FleetOutcome, LegStatus};
 use openmobisim_core_sim::services::{
     DockDefaults, DockRow, Docks, ServiceError, ServiceParts, ServiceSetup,
@@ -112,8 +112,13 @@ fn trip(trip: u32, at_pickup_s: f64, pickup: u32, ret: u32, s: &ServiceSetup) ->
 /// One fleet day of `legs` over the window 0..`window` s.
 fn load(s: &ServiceSetup, legs: &[Leg], window: f64) -> FleetOutcome {
     let day = FleetDay { window: (0.0, window), legs: legs.to_vec(), step_s: None, seed: 1 };
-    let out =
-        FleetEngine::new(Arc::new(vec![s.clone()]), Arc::new(day), Arc::new(Legs::of(s))).run_day();
+    let out = FleetEngine::new(
+        Arc::new(vec![s.clone()]),
+        Arc::new(day),
+        Arc::new(Legs::of(s)),
+        Arc::new(NoRoads),
+    )
+    .run_day();
     assert_eq!(out.invariant_violations, 0, "bikes are conserved");
     out
 }

@@ -29,6 +29,8 @@ use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::{Reach, Search, SearchContext};
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
+use super::engine::ServiceRoads;
+
 /// The longest drive a vehicle's search looks for, in seconds: a city crossed with room.
 pub const DRIVE_BOUND_S: f64 = 4.0 * 3600.0;
 
@@ -259,6 +261,18 @@ impl<'a> FrozenRoads<'a> {
         };
         out.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.raw().cmp(&b.0.raw())));
         out
+    }
+}
+
+impl ServiceRoads for FrozenRoads<'_> {
+    fn drive(&self, from: NodeId, to: NodeId, t: f64) -> (f64, f64) {
+        FrozenRoads::drive(self, from, to, t)
+    }
+    fn reach_to(&self, to: NodeId, bound: f64) -> Vec<(NodeId, f64)> {
+        FrozenRoads::reach_to(self, to, bound)
+    }
+    fn reach_from(&self, from: NodeId, bound: f64) -> Vec<(NodeId, f64)> {
+        FrozenRoads::reach_from(self, from, bound)
     }
 }
 
