@@ -710,7 +710,8 @@ impl FleetEngine {
                     ServiceParts::BikeDocked(docks, _),
                     ServiceState::BikeDocked { bikes, riding, moving, .. },
                 ) => {
-                    let since = &self.docks[s].as_ref().expect("a docked service's run").since;
+                    let run = self.docks[s].as_ref().expect("a docked service's run");
+                    let since = &run.since;
                     ServiceView::BikeDocked(DockView {
                         name: setup.name(),
                         bikes,
@@ -722,6 +723,7 @@ impl FleetEngine {
                         failed: &since.failed,
                         redirected_in: &since.redirected_in,
                         redirected_out: &since.redirected_out,
+                        incoming: &run.incoming,
                         moving: *moving,
                         riding: *riding,
                     })

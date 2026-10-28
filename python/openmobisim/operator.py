@@ -19,7 +19,8 @@ A policy is one of:
 
 **The view** (``view.t``, ``view.step``, ``view.rng_seed``, ``view.window``,
 ``view.services``) holds per service name a dict of arrays, one value per dock or vehicle:
-a docked service's ``dock_id``, ``bikes``, ``slots``, ``lon``, ``lat``, and since the last
+a docked service's ``dock_id``, ``bikes``, ``slots``, ``incoming`` (bikes in vans on their way to
+the dock), ``lon``, ``lat``, and since the last
 step ``pickups``, ``returns``, ``failed``, ``redirected_in``, ``redirected_out`` (people), and
 ``moving`` (bikes in vans now) and ``riding``; a taxi fleet's ``vehicle_id``, ``state`` (names:
 ``idle``, ``to_pickup``, ``occupied``, ``to_charger``, ``queued_at_charger``, ``charging``,

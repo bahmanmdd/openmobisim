@@ -190,7 +190,9 @@ impl DecisionRecord {
 
 /// The built-in target solver: moves from docks above their wanted level to docks below it.
 ///
-/// `want` is per dock, `None` for a dock without a target (it neither gives nor takes). The
+/// `want` is per dock, `None` for a dock without a target (it neither gives nor takes). A
+/// dock's level counts the bikes `incoming` to it in vans already on the road (empty: none), so
+/// a step shorter than a van's trip does not ask twice; it spares only the bikes docked. The
 /// dock furthest below its level is served first (ties by dock index), from the docks above
 /// theirs nearest to it as the crow flies (ties by dock index), one move from each, of at most
 /// `van` bikes (a dock left short by the van's size waits for the next step). Returns
@@ -202,15 +204,18 @@ impl DecisionRecord {
 #[must_use]
 pub fn plan_moves(
     bikes: &[u32],
+    incoming: &[u32],
     want: &[Option<u32>],
     position: &[LonLat],
     van: u32,
 ) -> Vec<(u32, u32, u32)> {
     let n = bikes.len();
+    // A dock's bikes once its vans arrive; it spares only bikes docked now.
+    let after = |k: usize| bikes[k] + incoming.get(k).copied().unwrap_or(0);
     let mut spare: Vec<u32> =
-        (0..n).map(|k| want[k].map_or(0, |w| bikes[k].saturating_sub(w))).collect();
+        (0..n).map(|k| want[k].map_or(0, |w| after(k).saturating_sub(w).min(bikes[k]))).collect();
     let short: Vec<u32> =
-        (0..n).map(|k| want[k].map_or(0, |w| w.saturating_sub(bikes[k]))).collect();
+        (0..n).map(|k| want[k].map_or(0, |w| w.saturating_sub(after(k)))).collect();
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by(|&a, &b| short[b].cmp(&short[a]).then(a.cmp(&b)));
     let mut moves = Vec::new();
@@ -285,8 +290,9 @@ impl FleetEngine {
             let setups = Arc::clone(&self.setups);
             let ServiceParts::BikeDocked(docks, defaults) = setups[s].parts() else { continue };
             let ServiceState::BikeDocked { bikes, .. } = &self.state.services[s] else { continue };
+            let incoming = &self.docks[s].as_ref().expect("a docked service's run").incoming;
             for (from_dock, to_dock, n) in
-                plan_moves(bikes, &want, &docks.position, defaults.van_count())
+                plan_moves(bikes, incoming, &want, &docks.position, defaults.van_count())
             {
                 let d = Decision::Move { service, from_dock, to_dock, n };
                 let mut record = DecisionRecord::new(step, t, &d);
@@ -349,6 +355,7 @@ impl FleetEngine {
         let moved = n.min(there).min(defaults.van_count());
         let run = self.docks[s].as_mut().expect("a docked service's run");
         run.van_out(docks, bikes, from as usize, moved, t);
+        run.incoming[to as usize] += moved;
         *moving += u64::from(moved);
         let arrival = t + drive_s + defaults.handling_s * f64::from(moved);
         let van = u32::try_from(self.vans.len()).expect("vans fit u32");
@@ -372,6 +379,7 @@ impl FleetEngine {
         };
         *moving -= u64::from(n);
         let run = self.docks[s].as_mut().expect("a docked service's run");
+        run.incoming[to as usize] -= n;
         run.van_in(docks, bikes, to, n, t);
         if let Some(r) = self.records.get_mut(record as usize) {
             r.finished_s = t;
@@ -449,9 +457,9 @@ mod tests {
         // Vans of 3: 2 from dock 1, then 3 from dock 2.
         let bikes = [0, 4, 8, 9];
         let want = [Some(5), Some(2), Some(2), None];
-        assert_eq!(plan_moves(&bikes, &want, &position, 3), [(1, 0, 2), (2, 0, 3)]);
+        assert_eq!(plan_moves(&bikes, &[], &want, &position, 3), [(1, 0, 2), (2, 0, 3)]);
         // Vans of 2: one move from each, dock 0 left one short.
-        assert_eq!(plan_moves(&bikes, &want, &position, 2), [(1, 0, 2), (2, 0, 2)]);
-        assert!(plan_moves(&bikes, &[None; 4], &position, 2).is_empty(), "no target, no move");
+        assert_eq!(plan_moves(&bikes, &[], &want, &position, 2), [(1, 0, 2), (2, 0, 2)]);
+        assert!(plan_moves(&bikes, &[], &[None; 4], &position, 2).is_empty(), "no target, no move");
     }
 }

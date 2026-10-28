@@ -201,6 +201,7 @@ pub(crate) fn view_to_py(py: Python<'_>, view: &View<'_>, ids: &Ids) -> PyResult
                 d.set_item("dock_id", s.docks.clone())?;
                 d.set_item("bikes", v.bikes.to_vec().into_pyarray(py))?;
                 d.set_item("slots", v.slots.to_vec().into_pyarray(py))?;
+                d.set_item("incoming", v.incoming.to_vec().into_pyarray(py))?;
                 d.set_item(
                     "lon",
                     v.position.iter().map(|p| p.lon).collect::<Vec<_>>().into_pyarray(py),

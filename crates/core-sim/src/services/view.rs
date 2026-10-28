@@ -83,6 +83,8 @@ pub struct DockView<'a> {
     pub redirected_in: &'a [f64],
     /// Per dock, travellers who found it empty or full and went on since the last step (people).
     pub redirected_out: &'a [f64],
+    /// Per dock, the bikes in operators' vans on their way to it.
+    pub incoming: &'a [u32],
     /// Bikes in operators' vans now.
     pub moving: u64,
     /// Bikes being ridden now.

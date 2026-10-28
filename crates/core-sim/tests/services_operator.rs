@@ -856,3 +856,35 @@ fn a_reset_with_a_small_van_counts_the_bikes_already_on_their_way() {
     let moved: u32 = moves.iter().map(|m| m.3).sum();
     assert_eq!(moved, 3, "three bikes back, none twice: {moves:?}");
 }
+
+#[test]
+fn a_threshold_rule_counts_the_bikes_already_on_their_way() {
+    // Docks of 10 slots: A empty, B and C full; low 0.25, high 0.75: A's target is the middle,
+    // 5. Vans of two bikes, a step every 30 s, shorter than a van's trip: while the first vans
+    // are on the road A still shows none. Counting the bikes on their way, A ends at its 5.
+    let (road, layers) = grid();
+    let row = |id: &str, node: usize, b: u32| DockRow {
+        dock_id: id.to_string(),
+        name: None,
+        hub_id: None,
+        position: at(&road, node),
+        capacity: 10,
+        bikes: Some(b),
+    };
+    let rows = vec![row("C", 3, 10), row("A", 0, 0), row("B", 1, 10)];
+    let small = DockDefaults { van_bikes: 2.0, ..DockDefaults::SHIPPED };
+    let s = ServiceSetup::bike_docked(
+        "bike_share",
+        &rows,
+        layers.walk.as_ref().expect("walk"),
+        layers.bike.as_ref().expect("bike"),
+        Some(&road),
+        small,
+    )
+    .expect("set up");
+    let vans = Vans((0..road.node_count() as usize).map(|i| at(&road, i)).collect());
+    let rule = Threshold::new(0.25, 0.75, 30.0).expect("a rule");
+    let out = docks_day(&s, vans, &[], 600.0, Some(Box::new(rule))).expect("runs");
+    let to_a: u32 = solver_moves(&out).iter().filter(|m| m.2 == A).map(|m| m.3).sum();
+    assert_eq!(to_a, 5, "A brought to its middle once: {:?}", solver_moves(&out));
+}
