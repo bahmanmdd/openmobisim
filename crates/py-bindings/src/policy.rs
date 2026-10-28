@@ -49,6 +49,11 @@ pub(crate) struct Ids {
 }
 
 impl Ids {
+    /// The road network the ids' nodes are of.
+    pub(crate) fn network(&self) -> &Arc<RoadNetwork> {
+        &self.net
+    }
+
     pub(crate) fn new(setups: &[ServiceSetup], net: Arc<RoadNetwork>) -> Self {
         let services = setups
             .iter()
@@ -123,7 +128,7 @@ impl PyPolicyView {
         }
     }
 
-    fn end(&self) {
+    pub(crate) fn end(&self) {
         *self.inner.lock().unwrap_or_else(PoisonError::into_inner) = None;
     }
 }
@@ -186,7 +191,7 @@ impl PyPolicyView {
 }
 
 /// The Python view of `view`: copies of its arrays, ids in place of indices.
-fn view_to_py(py: Python<'_>, view: &View<'_>, ids: &Ids) -> PyResult<Py<PyPolicyView>> {
+pub(crate) fn view_to_py(py: Python<'_>, view: &View<'_>, ids: &Ids) -> PyResult<Py<PyPolicyView>> {
     let mut sections = Vec::with_capacity(view.services.len());
     for (s, section) in ids.services.iter().zip(&view.services) {
         let d = PyDict::new(py);
@@ -264,7 +269,7 @@ fn view_to_py(py: Python<'_>, view: &View<'_>, ids: &Ids) -> PyResult<Py<PyPolic
 }
 
 /// One decision as the adapter hands it (a tuple naming things by id), as the engine's.
-fn decision_from_py(
+pub(crate) fn decision_from_py(
     item: &Bound<'_, PyAny>,
     ids: &Ids,
     net: &RoadNetwork,

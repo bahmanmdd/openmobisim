@@ -36,6 +36,7 @@ use openmobisim_core_types::{
 
 mod cache_file;
 mod choice;
+mod environment;
 mod network;
 mod parking;
 mod pipeline;
@@ -176,6 +177,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(services::vehicles_from_rows, m)?)?;
     m.add_function(wrap_pyfunction!(services::chargers_from_rows, m)?)?;
     m.add_function(wrap_pyfunction!(services::fleet_day, m)?)?;
+    m.add_class::<environment::PyFleetEnvironment>()?;
+    m.add_function(wrap_pyfunction!(environment::fleet_environment, m)?)?;
     m.add_class::<PyRunSummary>()?;
     m.add_class::<PyLinkBins>()?;
     m.add_class::<PyRouteSets>()?;

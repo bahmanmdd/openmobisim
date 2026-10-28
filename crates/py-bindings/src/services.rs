@@ -19,9 +19,10 @@ use openmobisim_core_graph::link_geometry::NetworkFingerprint;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_sim::LayerSetup;
 use openmobisim_core_sim::services::engine::{FleetDay, FleetEngine, Leg};
-use openmobisim_core_sim::services::frozen::{TripRow, plan_legs};
+use openmobisim_core_sim::services::frozen::{PlanReport, TripRow, plan_legs};
+use openmobisim_core_sim::services::outcome::FleetOutcome;
 use openmobisim_core_sim::services::roads::{FrozenPaths, RoadTimes};
-use openmobisim_core_sim::services::world::FrozenWorld;
+use openmobisim_core_sim::services::world::{FrozenWorld, ServiceWorld};
 use openmobisim_core_sim::services::{
     ChargerRow, DockDefaults, DockRow, ServiceParts, ServiceSetup, TaxiDefaults, VehicleRow,
 };
@@ -223,7 +224,7 @@ pub fn chargers_from_rows(rows: Vec<ChargerTuple>) -> PyResult<PyChargers> {
 // --- A fleet day without a run ----------------------------------------------------------------
 
 /// One service as `fleet.py` hands it: `(kind, name, docks, vehicles, chargers, options)`.
-type ServiceTuple<'py> = (
+pub(crate) type ServiceTuple<'py> = (
     String,
     String,
     Option<Bound<'py, PyDocks>>,
@@ -234,30 +235,30 @@ type ServiceTuple<'py> = (
 
 /// One trip: `(trip_id, service index, weight, departure_s, origin_lon, origin_lat,
 /// destination_lon, destination_lat)`.
-type TripTuple = (String, u16, u32, f64, f64, f64, f64, f64);
+pub(crate) type TripTuple = (String, u16, u32, f64, f64, f64, f64, f64);
 
 /// Road times: `(bin_s, rows of (link index, bin, seconds), network fingerprint)`.
-type RoadTuple = (f64, Vec<(u32, u32, f64)>, Option<String>);
+pub(crate) type RoadTuple = (f64, Vec<(u32, u32, f64)>, Option<String>);
 
-/// Run one fleet day on `network` (`openmobisim.fleet_day` checks and documents the inputs).
-#[pyfunction(name = "_fleet_day")]
-#[allow(
-    clippy::too_many_lines,
-    clippy::too_many_arguments,
-    reason = "the inputs built, the day run, the tables written, in order; the arguments are \
-              fleet_day's, checked in fleet.py"
-)]
-pub fn fleet_day<'py>(
-    py: Python<'py>,
+/// A frozen day's inputs, built once: the services, the city, the legs planned from the trips.
+pub(crate) struct Frozen {
+    pub(crate) setups: Arc<Vec<ServiceSetup>>,
+    pub(crate) world: Arc<FrozenWorld>,
+    pub(crate) legs: Vec<Leg>,
+    pub(crate) planned: Vec<(usize, Leg)>,
+    pub(crate) report: PlanReport,
+    pub(crate) trips: Vec<TripTuple>,
+    pub(crate) names: Vec<String>,
+    pub(crate) ids: Arc<Ids>,
+}
+
+/// Build a frozen day's inputs on `network` (`openmobisim.fleet_day` checks and documents them).
+pub(crate) fn frozen(
     network: &PyNetwork,
-    services: Vec<ServiceTuple<'py>>,
+    services: &[ServiceTuple<'_>],
     trips: Vec<TripTuple>,
     road_times: Option<RoadTuple>,
-    window: (f64, f64),
-    seed: u64,
-    policy: Option<PolicyTuple<'py>>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let started = Instant::now();
+) -> PyResult<Frozen> {
     let net = network.inner.clone();
     let layer = |l: StaticLayer| -> PyResult<LayerSetup> {
         Ok(LayerSetup::new(network.static_layer(l)?, BikeCost::Utility, net.defaults().layers))
@@ -265,7 +266,7 @@ pub fn fleet_day<'py>(
     let (walk, bike) = (layer(StaticLayer::Walk)?, layer(StaticLayer::Bike)?);
     let bad = |e: String| PyValueError::new_err(e);
     let mut setups = Vec::with_capacity(services.len());
-    for (kind, name, docks, vehicles, chargers, options) in &services {
+    for (kind, name, docks, vehicles, chargers, options) in services {
         let setup = match kind.as_str() {
             "bike_docked" => {
                 let docks = docks.as_ref().ok_or_else(|| bad(format!("{name}: no docks")))?;
@@ -314,11 +315,8 @@ pub fn fleet_day<'py>(
     }
     let (planned, report) = plan_legs(&setups, &rows, &net, &walk, &paths);
     let legs: Vec<Leg> = planned.iter().map(|&(_, l)| l).collect();
-    let setup_s = started.elapsed().as_secs_f64();
-    let clock = Instant::now();
-    let day = Arc::new(FleetDay { window, legs: legs.clone(), seed });
     let setups = Arc::new(setups);
-    let world = FrozenWorld::new(
+    let world = Arc::new(FrozenWorld::new(
         Arc::clone(&net),
         turns,
         Arc::new(walk),
@@ -326,22 +324,29 @@ pub fn fleet_day<'py>(
         times,
         Arc::clone(&setups),
         &legs,
-    );
+    ));
     let ids = Arc::new(Ids::new(&setups, Arc::clone(&net)));
-    let (policy, raised) = policy_from_py(policy, Arc::clone(&ids))?;
-    let engine = FleetEngine::in_world(Arc::clone(&setups), day, Arc::new(world), policy);
-    let description = engine.policy_description();
-    let out = engine.run_day().map_err(|msg| {
-        // A Python policy's own exception is raised as it was; any other failure as a
-        // ValueError with the engine's message.
-        raised
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-            .unwrap_or_else(|| PyValueError::new_err(msg))
-    })?;
-    let day_s = clock.elapsed().as_secs_f64();
+    Ok(Frozen {
+        setups,
+        world,
+        legs,
+        planned,
+        report,
+        trips,
+        names: services.iter().map(|s| s.1.clone()).collect(),
+        ids,
+    })
+}
 
+/// The tables of a day so far: per trip given, per dock and bin, the plan, the counts and the
+/// decisions.
+#[allow(clippy::too_many_lines, reason = "the tables written column by column, in order")]
+pub(crate) fn outcome_dict<'py>(
+    py: Python<'py>,
+    f: &Frozen,
+    out: &FleetOutcome,
+) -> PyResult<Bound<'py, PyDict>> {
+    let (trips, setups, planned, report) = (&f.trips, &f.setups, &f.planned, &f.report);
     // Per trip given: its leg's outcome, or "not_planned".
     let n = trips.len();
     let mut leg_of = vec![None; n];
@@ -398,7 +403,7 @@ pub fn fleet_day<'py>(
         redirections.push(o.redirections);
         overflow.push(o.overflow);
     }
-    let names: Vec<&str> = services.iter().map(|s| s.1.as_str()).collect();
+    let names: Vec<&str> = f.names.iter().map(String::as_str).collect();
     let cols = PyDict::new(py);
     cols.set_item("trip_id", trips.iter().map(|t| t.0.clone()).collect::<Vec<_>>())?;
     cols.set_item("service", trips.iter().map(|t| names[usize::from(t.1)]).collect::<Vec<_>>())?;
@@ -455,16 +460,52 @@ pub fn fleet_day<'py>(
     let counts = PyDict::new(py);
     counts.set_item("events", out.events)?;
     counts.set_item("invariant_violations", out.invariant_violations)?;
-    let seconds = PyDict::new(py);
-    seconds.set_item("setup_s", setup_s)?;
-    seconds.set_item("day_s", day_s)?;
     let result = PyDict::new(py);
     result.set_item("trips", cols)?;
     result.set_item("dock_bins", dock_bins)?;
     result.set_item("plan", plan)?;
     result.set_item("counts", counts)?;
+    result.set_item("decisions", decision_columns(py, &out.decisions, &f.ids)?)?;
+    Ok(result)
+}
+
+/// Run one fleet day on `network` (`openmobisim.fleet_day` checks and documents the inputs).
+#[pyfunction(name = "_fleet_day")]
+#[allow(clippy::too_many_arguments, reason = "fleet_day's arguments, checked in fleet.py")]
+pub fn fleet_day<'py>(
+    py: Python<'py>,
+    network: &PyNetwork,
+    services: Vec<ServiceTuple<'py>>,
+    trips: Vec<TripTuple>,
+    road_times: Option<RoadTuple>,
+    window: (f64, f64),
+    seed: u64,
+    policy: Option<PolicyTuple<'py>>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let started = Instant::now();
+    let f = frozen(network, &services, trips, road_times)?;
+    let setup_s = started.elapsed().as_secs_f64();
+    let clock = Instant::now();
+    let day = Arc::new(FleetDay { window, legs: f.legs.clone(), seed });
+    let (policy, raised) = policy_from_py(policy, Arc::clone(&f.ids))?;
+    let world: Arc<dyn ServiceWorld> = f.world.clone();
+    let engine = FleetEngine::in_world(Arc::clone(&f.setups), day, world, policy);
+    let description = engine.policy_description();
+    let out = engine.run_day().map_err(|msg| {
+        // A Python policy's own exception is raised as it was; any other failure as a
+        // ValueError with the engine's message.
+        raised
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+            .unwrap_or_else(|| PyValueError::new_err(msg))
+    })?;
+    let day_s = clock.elapsed().as_secs_f64();
+    let result = outcome_dict(py, &f, &out)?;
+    let seconds = PyDict::new(py);
+    seconds.set_item("setup_s", setup_s)?;
+    seconds.set_item("day_s", day_s)?;
     result.set_item("seconds", seconds)?;
-    result.set_item("decisions", decision_columns(py, &out.decisions, &ids)?)?;
     result.set_item("policy", description_to_py(py, description.as_ref())?)?;
     Ok(result)
 }

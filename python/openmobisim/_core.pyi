@@ -754,6 +754,37 @@ class Chargers:
     def rows(self) -> dict[str, Any]:
         """Every charger: ``{"charger_id", "hub_id", "lon", "lat", "plugs", "kw"}``."""
 
+class FleetEnvironment:
+    """A fleet day stepped from Python (``openmobisim.fleet_environment`` wraps it)."""
+
+    #: The clock, in seconds from midnight.
+    t: float
+    def reset(self, seed: int) -> tuple[PolicyView, dict[str, Any]]: ...
+    def step(
+        self, decisions: list[tuple]
+    ) -> tuple[PolicyView, float, bool, bool, dict[str, Any]]: ...
+    def fork(self) -> FleetEnvironment: ...
+    def plan(self) -> dict[str, int]: ...
+
+def _fleet_day(
+    network: Network,
+    services: list[tuple],
+    trips: list[tuple],
+    road_times: tuple | None,
+    window: tuple[float, float],
+    seed: int,
+    policy: tuple | None,
+) -> dict[str, Any]: ...
+def _fleet_environment(
+    network: Network,
+    services: list[tuple],
+    trips: list[tuple],
+    road_times: tuple | None,
+    window: tuple[float, float],
+    step_s: float,
+    weights: tuple[float, float, float, float],
+) -> FleetEnvironment: ...
+
 class PolicyView:
     """What a policy sees at one step (``openmobisim.operator``); not readable after its step.
 

@@ -32,7 +32,10 @@ from openmobisim.table import Columns
 __all__ = [
     "FleetDay",
     "Service",
+    "REWARD_WEIGHTS",
+    "FleetEnvironment",
     "fleet_day",
+    "fleet_environment",
     "road_times_read",
     "service_bike_docked",
     "service_taxi",
@@ -235,6 +238,135 @@ def _trip_rows(trips: str | Iterable[Mapping[str, Any]], names: Sequence[str]) -
     return out
 
 
+def _inputs(
+    services: Sequence[Service],
+    trips: str | Iterable[Mapping[str, Any]],
+    window: tuple[object, object],
+    road_times: RoadTimes | None,
+) -> tuple[list[tuple], list[tuple], tuple | None, tuple[float, float]]:
+    """A fleet day's inputs as the binding takes them, checked."""
+    names = [s.name for s in services]
+    if len(set(names)) != len(names):
+        raise ValueError(f"service names repeat: {names}")
+    rows = _trip_rows(trips, names)
+    start, end = (_seconds(w, "window") for w in window)
+    if not start < end:
+        raise ValueError(f"the window must end after it starts, got {window}")
+    roads = None
+    if road_times is not None:
+        # The binding checks the fingerprint against the network's.
+        roads = (road_times.bin_s, road_times.rows, road_times.network_fingerprint)
+    parts = [
+        (
+            s.kind,
+            s.name,
+            s.docks,
+            s.vehicles,
+            s.chargers,
+            {k: float(v) for k, v in s.options.items()},
+        )
+        for s in services
+    ]
+    return parts, rows, roads, (start, end)
+
+
+#: The standard reward's weights (``fleet_environment``): per failed leg, per minute waited, per
+#: extra minute walked, per van kilometre. Uncalibrated; named so a study sets its own.
+REWARD_WEIGHTS: dict[str, float] = {"w_fail": 1.0, "w_wait": 0.1, "w_walk": 0.1, "w_km": 0.1}
+
+
+def fleet_environment(
+    network: Any,
+    services: Sequence[Service],
+    trips: str | Iterable[Mapping[str, Any]],
+    *,
+    window: tuple[object, object] = ("07:30", "09:30"),
+    road_times: RoadTimes | None = None,
+    step_s: float = 900.0,
+    reward_weights: Mapping[str, float] | None = None,
+) -> Any:
+    """A fleet day to step through: ``reset(seed)``, then ``step(decisions)`` until the day ends.
+
+    The day is ``fleet_day``'s (the same services, trips, window and road times; a frozen day:
+    the travellers' choices and the traffic are held fixed), with no policy of its own: the
+    caller decides at each step. ``reset(seed)`` returns ``(view, info)`` at the window's start;
+    ``step(decisions)`` applies the decisions (as a policy returns them: ``operator.Move``,
+    ``Target``, ``Relocate``, ``Charge``), runs ``step_s`` seconds and returns ``(view, reward,
+    terminated, truncated, info)``; at the window's end ``info["outcome"]`` holds the day's tables.
+    ``fork()`` copies the day at its clock, to simulate ahead without touching it. A view cannot
+    be read after the next step.
+
+    The reward of a step is minus ``w_fail`` × the people of the legs that failed, ``w_wait`` ×
+    the minutes they waited, ``w_walk`` × the extra minutes they walked, and ``w_km`` × the van
+    kilometres of the moves carried out, each counted once, when its leg ends (``REWARD_WEIGHTS``,
+    uncalibrated).
+
+    Args:
+        network: The road network.
+        services: The services (``service_bike_docked``, ``service_taxi``).
+        trips: The trips, as for ``fleet_day``.
+        window: The day's start and end.
+        road_times: An earlier run's road times, or ``None``: free flow.
+        step_s: The seconds between steps.
+        reward_weights: Weights by name in place of ``REWARD_WEIGHTS``'; a name not among them is
+            refused with the list.
+
+    Raises:
+        ValueError: As ``fleet_day``.
+    """
+    weights = dict(REWARD_WEIGHTS)
+    for k, v in (reward_weights or {}).items():
+        if k not in weights:
+            raise ValueError(f"unknown reward weight {k!r}; the weights are {sorted(weights)}")
+        weights[k] = float(v)
+    parts, rows, roads, span = _inputs(services, trips, window, road_times)
+    return FleetEnvironment(
+        _core._fleet_environment(
+            network,
+            parts,
+            rows,
+            roads,
+            span,
+            float(step_s),
+            (weights["w_fail"], weights["w_wait"], weights["w_walk"], weights["w_km"]),
+        )
+    )
+
+
+class FleetEnvironment:
+    """A fleet day to step through (``fleet_environment``)."""
+
+    def __init__(self, inner: Any) -> None:
+        """Wrap the engine's environment (made by ``fleet_environment``)."""
+        self._inner = inner
+
+    def reset(self, seed: int = 0) -> tuple[Any, dict[str, Any]]:
+        """Start the day with ``seed``: ``(view, info)`` at the window's start."""
+        return self._inner.reset(int(seed))
+
+    def step(self, decisions: Sequence[Any] | None = None) -> tuple[Any, float, bool, bool, dict]:
+        """Apply ``decisions`` at the clock and run one step.
+
+        Returns ``(view, reward, terminated, truncated, info)``.
+        """
+        from openmobisim.operator import _decision
+
+        return self._inner.step([_decision(d) for d in decisions or []])
+
+    def fork(self) -> FleetEnvironment:
+        """A copy of the day at its clock, to simulate ahead without touching this one."""
+        return FleetEnvironment(self._inner.fork())
+
+    @property
+    def t(self) -> float:
+        """The clock, in seconds from midnight."""
+        return self._inner.t
+
+    def plan(self) -> dict[str, int]:
+        """The trips given, the legs planned and those left out, by reason."""
+        return dict(self._inner.plan())
+
+
 def fleet_day(
     network: Any,
     services: Sequence[Service],
@@ -270,35 +402,14 @@ def fleet_day(
             another network, or a decision naming an id that does not exist.
         Exception: A Python policy's own exception, which stops the day.
     """
-    names = [s.name for s in services]
-    if len(set(names)) != len(names):
-        raise ValueError(f"service names repeat: {names}")
     started = time.perf_counter()
-    rows = _trip_rows(trips, names)
-    start, end = (_seconds(w, "window") for w in window)
-    if not start < end:
-        raise ValueError(f"the window must end after it starts, got {window}")
-    roads = None
-    if road_times is not None:
-        # The binding checks the fingerprint against the network's.
-        roads = (road_times.bin_s, road_times.rows, road_times.network_fingerprint)
-    parts = [
-        (
-            s.kind,
-            s.name,
-            s.docks,
-            s.vehicles,
-            s.chargers,
-            {k: float(v) for k, v in s.options.items()},
-        )
-        for s in services
-    ]
+    parts, rows, roads, (start, end) = _inputs(services, trips, window, road_times)
     chosen = _policy_for_binding(policy, policy_options)
     out = _core._fleet_day(network, parts, rows, roads, (start, end), int(seed), chosen)
     trips_out = Columns(out["trips"])
     return FleetDay(
         fidelity="frozen_day",
-        services=names,
+        services=[s.name for s in services],
         trips=trips_out,
         dock_bins={name: Columns(cols) for name, cols in out["dock_bins"].items()},
         plan=dict(out["plan"]),

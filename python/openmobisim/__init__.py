@@ -79,6 +79,7 @@ from openmobisim.demand import (
 from openmobisim.fleet import (
     FleetDay,
     fleet_day,
+    fleet_environment,
     road_times_read,
     service_bike_docked,
     service_taxi,
@@ -200,6 +201,7 @@ __all__ = [
     "charger_read_table",
     "FleetDay",
     "fleet_day",
+    "fleet_environment",
     "road_times_read",
     "service_bike_docked",
     "service_taxi",

@@ -44,7 +44,7 @@ pub struct DayInfo<'a> {
 }
 
 /// An operator: see the [module docs](self).
-pub trait Policy: Send + PolicyClone {
+pub trait Policy: Send + Sync + PolicyClone {
     /// Its name and parameters.
     fn describe(&self) -> PolicyDescription;
 
