@@ -122,6 +122,9 @@ pub struct TaxiView<'a> {
     /// Per vehicle, its road node: where it is when idle, charging or queued; where it is going
     /// when driving.
     pub node: &'a [NodeId],
+    /// Per vehicle, the second it reaches `node` when driving, or ends its charge when
+    /// charging (`NaN`: idle, or queued for a plug).
+    pub until_s: &'a [f64],
     /// Per vehicle, its charge as a share of the battery.
     pub soc: &'a [f64],
     /// The requests waiting for a vehicle, oldest first.

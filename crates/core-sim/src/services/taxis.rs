@@ -162,6 +162,8 @@ pub(crate) struct TaxiRun {
     since: Vec<f64>,
     /// Per vehicle: the charge it charges to at its charger.
     charge_target: Vec<f64>,
+    /// Per vehicle: the second its drive or charge under way ends (`NaN`: idle or queued).
+    pub(crate) until: Vec<f64>,
     /// Per vehicle: the policy's decision it is carrying out (its record's index), or
     /// `u32::MAX`.
     pub(crate) decision: Vec<u32>,
@@ -235,6 +237,7 @@ impl TaxiRun {
             task: vec![u32::MAX; n],
             since: vec![0.0; n],
             charge_target: vec![d.charge_to; n],
+            until: vec![f64::NAN; n],
             decision: vec![u32::MAX; n],
             idle_at: BTreeMap::new(),
             waiting: VecDeque::new(),
@@ -330,6 +333,12 @@ impl Taxis<'_> {
         self.state[v as usize] = s;
     }
 
+    /// Vehicle `v`'s drive or charge under way ends with `mv` at second `at`.
+    fn schedule(&mut self, at: f64, mv: Move, v: u32) {
+        self.run.until[v as usize] = at;
+        self.next.push(Next::Vehicle(at, mv, v));
+    }
+
     fn make_idle(&mut self, v: u32, node: NodeId) {
         self.set_state(v, VehicleState::Idle);
         self.node[v as usize] = node;
@@ -394,7 +403,7 @@ impl Taxis<'_> {
         self.run.days[v as usize].km_empty += to_m / 1000.0;
         self.use_energy(v, to_m);
         self.node[v as usize] = leg.origin;
-        self.next.push(Next::Vehicle(t + to_s, Move::AtPickup, v));
+        self.schedule(t + to_s, Move::AtPickup, v);
         true
     }
 
@@ -463,7 +472,7 @@ impl Taxis<'_> {
         self.run.days[v as usize].km_empty += m / 1000.0;
         self.use_energy(v, m);
         self.node[v as usize] = self.fleet.charger_node[c as usize];
-        self.next.push(Next::Vehicle(t + s, Move::AtCharger, v));
+        self.schedule(t + s, Move::AtCharger, v);
     }
 
     /// Why vehicle `v` cannot take a policy's decision, if it cannot: it does not exist or is
@@ -498,7 +507,7 @@ impl Taxis<'_> {
         self.run.days[v as usize].km_empty += m / 1000.0;
         self.use_energy(v, m);
         self.node[v as usize] = node;
-        self.next.push(Next::Vehicle(t + s, Move::Relocated, v));
+        self.schedule(t + s, Move::Relocated, v);
         Ok((s, m))
     }
 
@@ -542,7 +551,7 @@ impl Taxis<'_> {
         let to = self.run.charge_target[v as usize];
         let kwh = ((to - self.soc[v as usize]) * self.d.battery_kwh).max(0.0);
         let s = kwh / self.fleet.charger_kw[c as usize] * 3600.0;
-        self.next.push(Next::Vehicle(t + s, Move::Charged, v));
+        self.schedule(t + s, Move::Charged, v);
     }
 
     /// The day's start at second `t`: every vehicle idle, those below the threshold sent to
@@ -594,6 +603,7 @@ impl Taxis<'_> {
     /// Vehicle `v`'s move `mv` ends at second `t`.
     pub(crate) fn arrive(&mut self, mv: Move, v: u32, t: f64) {
         let i = v as usize;
+        self.run.until[i] = f64::NAN;
         match mv {
             Move::AtPickup => {
                 let u = self.run.task[i];
@@ -617,7 +627,7 @@ impl Taxis<'_> {
                 self.run.days[i].km_occupied += m / 1000.0;
                 self.use_energy(v, m);
                 self.node[i] = leg.destination;
-                self.next.push(Next::Vehicle(leave + s, Move::Dropoff, v));
+                self.schedule(leave + s, Move::Dropoff, v);
             }
             Move::Dropoff => {
                 let u = self.run.task[i];

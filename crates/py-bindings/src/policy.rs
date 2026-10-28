@@ -359,6 +359,7 @@ pub(crate) fn view_to_py(
                 d.set_item("vehicle_id", s.vehicles.clone())?;
                 d.set_item("state", v.state.iter().map(|x| x.as_str()).collect::<Vec<_>>())?;
                 d.set_item("node", v.node.iter().map(|&n| ids.node(n)).collect::<Vec<_>>())?;
+                d.set_item("until_s", v.until_s.to_vec().into_pyarray(py))?;
                 d.set_item("soc", v.soc.to_vec().into_pyarray(py))?;
                 d.set_item(
                     "zone",
