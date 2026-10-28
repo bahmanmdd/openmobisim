@@ -52,6 +52,7 @@ use super::outcome::{FleetOutcome, LegOutcome, LegStatus};
 use super::policy::{DayInfo, Policy, PolicyDescription, PolicySlot};
 use super::taxis::{Move, Next, TaxiRun, Taxis};
 use super::view::{DockView, ServiceView, TaxiView, View};
+use super::world::ServiceWorld;
 use super::{ServiceParts, ServiceSetup};
 
 /// One service leg: the part of a trip that needs a service's vehicle.
@@ -350,13 +351,31 @@ pub struct StepReport {
     pub steps: u32,
 }
 
+/// A city from owned parts: rides and walks, and roads that need no lending (the tests' and
+/// [`NoLegs`]' and [`NoRoads`]'s).
+#[derive(Debug)]
+struct PartsWorld {
+    legs: Arc<dyn ServiceLegs>,
+    roads: Arc<dyn ServiceRoads>,
+}
+
+impl ServiceWorld for PartsWorld {
+    fn legs(&self) -> &dyn ServiceLegs {
+        &*self.legs
+    }
+
+    fn with_roads(&self, f: &mut dyn FnMut(&dyn ServiceRoads)) {
+        f(&*self.roads);
+    }
+}
+
 /// The fleet engine: see the [module docs](self).
 #[derive(Clone, Debug)]
-pub struct FleetEngine<'w> {
+pub struct FleetEngine {
     pub(super) setups: Arc<Vec<ServiceSetup>>,
     day: Arc<FleetDay>,
-    legs_io: Arc<dyn ServiceLegs + 'w>,
-    pub(super) roads_io: Arc<dyn ServiceRoads + 'w>,
+    /// The city: rides and walks, and the roads lent one call at a time.
+    world: Arc<dyn ServiceWorld>,
     pub(super) state: FleetState,
     /// Per service: a docked service's running counts.
     pub(super) docks: Vec<Option<DockRun>>,
@@ -389,7 +408,7 @@ pub struct FleetEngine<'w> {
     trace: Option<Vec<(f64, EventKind, u64)>>,
 }
 
-impl<'w> FleetEngine<'w> {
+impl FleetEngine {
     /// An engine at the window's start of `day`, for `setups`, asking `legs` for rides and
     /// walks a leg did not plan and `roads` for vehicles' drives: every leg's request, every
     /// policy step and the window's end scheduled; a taxi fleet's vehicles below the charging
@@ -408,11 +427,52 @@ impl<'w> FleetEngine<'w> {
     pub fn new(
         setups: Arc<Vec<ServiceSetup>>,
         day: Arc<FleetDay>,
-        legs: Arc<dyn ServiceLegs + 'w>,
-        roads: Arc<dyn ServiceRoads + 'w>,
+        legs: Arc<dyn ServiceLegs>,
+        roads: Arc<dyn ServiceRoads>,
         policy: Option<Box<dyn Policy>>,
     ) -> Self {
-        let (start, end) = day.window;
+        Self::in_world(setups, day, Arc::new(PartsWorld { legs, roads }), policy)
+    }
+
+    /// As [`Self::new`], in `world`: an owned city whose roads are lent one call at a time
+    /// ([`ServiceWorld`]), so the engine borrows nothing and can be kept between calls.
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::new`].
+    #[must_use]
+    pub fn in_world(
+        setups: Arc<Vec<ServiceSetup>>,
+        day: Arc<FleetDay>,
+        world: Arc<dyn ServiceWorld>,
+        policy: Option<Box<dyn Policy>>,
+    ) -> Self {
+        let lent = Arc::clone(&world);
+        let mut parts = Some((setups, day, world));
+        let mut built = None;
+        lent.with_roads(&mut |roads| {
+            if let Some((setups, day, world)) = parts.take() {
+                built = Some(Self::build(setups, day, world, roads));
+            }
+        });
+        let mut engine = built.expect("a world lends its roads");
+        engine.schedule_all(policy);
+        lent.with_roads(&mut |roads| {
+            for s in 0..engine.setups.len() {
+                let start = engine.day.window.0;
+                engine.with_taxis(s, roads, |taxis| taxis.start(start));
+            }
+        });
+        engine
+    }
+
+    fn build(
+        setups: Arc<Vec<ServiceSetup>>,
+        day: Arc<FleetDay>,
+        world: Arc<dyn ServiceWorld>,
+        roads: &dyn ServiceRoads,
+    ) -> Self {
+        let start = day.window.0;
         let seed = day.seed;
         let services = setups.iter().map(ServiceState::start).collect();
         let docks = setups
@@ -429,16 +489,15 @@ impl<'w> FleetEngine<'w> {
             .zip(setups.iter())
             .map(|(s, setup)| match setup.parts() {
                 ServiceParts::Taxi(fleet, d) => {
-                    Some(TaxiRun::new(s, fleet, d, &day.legs, &mut leg_unit, &*roads, day.window))
+                    Some(TaxiRun::new(s, fleet, d, &day.legs, &mut leg_unit, roads, day.window))
                 }
                 ServiceParts::BikeDocked(..) => None,
             })
             .collect();
-        let mut engine = Self {
+        let engine = Self {
             setups,
             day,
-            legs_io: legs,
-            roads_io: roads,
+            world,
             docks,
             taxis,
             leg_unit,
@@ -459,6 +518,14 @@ impl<'w> FleetEngine<'w> {
             records: Vec::new(),
             vans: Vec::new(),
         };
+        let _ = &engine;
+        engine
+    }
+
+    /// Schedule every leg's request, the policy's steps and the window's end.
+    fn schedule_all(&mut self, policy: Option<Box<dyn Policy>>) {
+        let engine = self;
+        let (start, end) = engine.day.window;
         let day = Arc::clone(&engine.day);
         for (i, leg) in day.legs.iter().enumerate() {
             assert!(
@@ -513,10 +580,6 @@ impl<'w> FleetEngine<'w> {
             engine.policy = Some(PolicySlot(policy));
         }
         engine.schedule(end, EventKind::End, 0, 0, 0);
-        for s in 0..engine.setups.len() {
-            engine.with_taxis(s, |taxis| taxis.start(start));
-        }
-        engine
     }
 
     /// Record every event handled, for tests and diagnostics.
@@ -536,11 +599,11 @@ impl<'w> FleetEngine<'w> {
     pub(super) fn with_taxis<R>(
         &mut self,
         s: usize,
+        roads: &dyn ServiceRoads,
         f: impl FnOnce(&mut Taxis<'_>) -> R,
     ) -> Option<R> {
         let setups = Arc::clone(&self.setups);
         let day = Arc::clone(&self.day);
-        let roads = Arc::clone(&self.roads_io);
         let (ServiceParts::Taxi(fleet, d), Some(run)) = (setups[s].parts(), self.taxis[s].as_mut())
         else {
             return None;
@@ -557,7 +620,7 @@ impl<'w> FleetEngine<'w> {
             counts,
             fleet,
             d,
-            roads: &*roads,
+            roads,
             legs: &day.legs,
             out: &mut self.state.legs,
             next: &mut next,
@@ -688,12 +751,15 @@ impl<'w> FleetEngine<'w> {
     /// Check and carry out `decisions` at the clock, as at step [`Self::view`]'s; each
     /// recorded. Per decision given, why it was refused (`None`: carried out).
     pub fn apply(&mut self, decisions: &[Decision]) -> Vec<Option<String>> {
-        self.apply_at(self.steps, decisions)
+        let world = Arc::clone(&self.world);
+        let mut out = Vec::new();
+        world.with_roads(&mut |roads| out = self.apply_at(self.steps, decisions, roads));
+        out
     }
 
     /// The policy's step `step`: its view, its decisions carried out, the counts since the
     /// last step cleared.
-    fn policy_step(&mut self, step: u32) -> Result<(), String> {
+    fn policy_step(&mut self, step: u32, roads: &dyn ServiceRoads) -> Result<(), String> {
         let Some(mut slot) = self.policy.take() else { return Ok(()) };
         let mut out = Vec::new();
         let result = slot.0.step(&self.view_at(step), &mut out);
@@ -702,7 +768,7 @@ impl<'w> FleetEngine<'w> {
             run.since.clear();
         }
         result?;
-        self.apply_at(step, &out);
+        self.apply_at(step, &out, roads);
         Ok(())
     }
 
@@ -722,6 +788,13 @@ impl<'w> FleetEngine<'w> {
         if let Some(why) = &self.failure {
             return Err(why.clone());
         }
+        let world = Arc::clone(&self.world);
+        let mut out = Ok(StepReport::default());
+        world.with_roads(&mut |roads| out = self.advance_with(t, roads));
+        out
+    }
+
+    fn advance_with(&mut self, t: f64, roads: &dyn ServiceRoads) -> Result<StepReport, String> {
         let mut report = StepReport::default();
         while let Some(&event) = self.heap.peek() {
             if event.t > t || self.done {
@@ -730,7 +803,7 @@ impl<'w> FleetEngine<'w> {
             self.heap.pop();
             self.now = event.t;
             self.record_bins(event.t);
-            if let Err(why) = self.handle(event, &mut report) {
+            if let Err(why) = self.handle(event, &mut report, roads) {
                 self.failure = Some(why.clone());
                 return Err(why);
             }
@@ -759,7 +832,12 @@ impl<'w> FleetEngine<'w> {
         }
     }
 
-    fn handle(&mut self, event: Event, report: &mut StepReport) -> Result<(), String> {
+    fn handle(
+        &mut self,
+        event: Event,
+        report: &mut StepReport,
+        roads: &dyn ServiceRoads,
+    ) -> Result<(), String> {
         match event.kind {
             EventKind::Request => {
                 let i = event.subject as usize;
@@ -773,7 +851,7 @@ impl<'w> FleetEngine<'w> {
                 let s = usize::from(self.day.legs[i].service);
                 if self.taxis[s].is_some() {
                     let first = self.leg_unit[i];
-                    self.with_taxis(s, |taxis| taxis.request(i, first, event.t));
+                    self.with_taxis(s, roads, |taxis| taxis.request(i, first, event.t));
                 } else {
                     self.handle_dock(event);
                 }
@@ -782,7 +860,7 @@ impl<'w> FleetEngine<'w> {
             EventKind::Step => {
                 self.steps += 1;
                 report.steps += 1;
-                self.policy_step(event.subject)?;
+                self.policy_step(event.subject, roads)?;
             }
             EventKind::Arrival if event.key >> 48 == VAN_RANK => {
                 self.van_arrives(event.subject, event.t)
@@ -800,19 +878,19 @@ impl<'w> FleetEngine<'w> {
                         }
                     }
                 }
-                self.with_taxis(s, |taxis| {
+                self.with_taxis(s, roads, |taxis| {
                     taxis.arrive(mv, event.subject, event.t);
                 });
             }
             EventKind::Expire => {
-                self.with_taxis(usize::from(event.service), |taxis| {
+                self.with_taxis(usize::from(event.service), roads, |taxis| {
                     taxis.expire(event.subject, event.t);
                 });
             }
             EventKind::End => {
                 self.done = true;
                 for s in 0..self.setups.len() {
-                    self.with_taxis(s, |taxis| taxis.end(event.t));
+                    self.with_taxis(s, roads, |taxis| taxis.end(event.t));
                 }
                 for leg in &mut self.state.legs {
                     if matches!(leg.status, LegStatus::Waiting | LegStatus::Riding) {
@@ -827,6 +905,7 @@ impl<'w> FleetEngine<'w> {
     /// A docked leg's pickup or return, by its service's handlers; the next moment they ask
     /// for scheduled, if inside the window.
     fn handle_dock(&mut self, event: Event) {
+        let world = Arc::clone(&self.world);
         let i = event.subject as usize;
         let leg = &self.day.legs[i];
         let s = usize::from(leg.service);
@@ -842,7 +921,7 @@ impl<'w> FleetEngine<'w> {
         let mut ctx = LegCtx {
             docks,
             defaults,
-            legs: &*self.legs_io,
+            legs: world.legs(),
             leg,
             index: i,
             tried: &mut self.tried[i],
@@ -949,7 +1028,7 @@ mod tests {
         setups: Arc<Vec<ServiceSetup>>,
         day: Arc<FleetDay>,
         step_s: Option<f64>,
-    ) -> FleetEngine<'static> {
+    ) -> FleetEngine {
         let policy =
             step_s.map(|s| Box::new(crate::services::policy::NoOp::every(s)) as Box<dyn Policy>);
         FleetEngine::new(setups, day, Arc::new(NoLegs), Arc::new(NoRoads), policy)

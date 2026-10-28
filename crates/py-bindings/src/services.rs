@@ -17,11 +17,11 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::layers::{BikeCost, StaticLayer};
 use openmobisim_core_graph::link_geometry::NetworkFingerprint;
 use openmobisim_core_graph::turns::TurnTable;
-use openmobisim_core_routes::SearchContext;
 use openmobisim_core_sim::LayerSetup;
 use openmobisim_core_sim::services::engine::{FleetDay, FleetEngine, Leg};
-use openmobisim_core_sim::services::frozen::{FrozenLegs, TripRow, plan_legs};
-use openmobisim_core_sim::services::roads::{FrozenPaths, FrozenRoads, RoadTimes};
+use openmobisim_core_sim::services::frozen::{TripRow, plan_legs};
+use openmobisim_core_sim::services::roads::{FrozenPaths, RoadTimes};
+use openmobisim_core_sim::services::world::FrozenWorld;
 use openmobisim_core_sim::services::{
     ChargerRow, DockDefaults, DockRow, ServiceParts, ServiceSetup, TaxiDefaults, VehicleRow,
 };
@@ -295,9 +295,7 @@ pub fn fleet_day<'py>(
             RoadTimes::from_rows(&net, bin_s, &rows).map_err(bad)?
         }
     };
-    let turns = TurnTable::build(&net, net.signals());
-    let ctx = SearchContext::new(&net, &turns);
-    let roads = FrozenRoads::new(&net, &ctx, times);
+    let turns = Arc::new(TurnTable::build(&net, net.signals()));
     let paths = FrozenPaths::new(bike.network(), bike.seconds(), walk.network(), walk.seconds());
     let rows: Vec<TripRow> = trips
         .iter()
@@ -319,11 +317,19 @@ pub fn fleet_day<'py>(
     let setup_s = started.elapsed().as_secs_f64();
     let clock = Instant::now();
     let day = Arc::new(FleetDay { window, legs: legs.clone(), seed });
-    let world = FrozenLegs::new(&setups, &paths, &legs);
+    let setups = Arc::new(setups);
+    let world = FrozenWorld::new(
+        Arc::clone(&net),
+        turns,
+        Arc::new(walk),
+        Arc::new(bike),
+        times,
+        Arc::clone(&setups),
+        &legs,
+    );
     let ids = Arc::new(Ids::new(&setups, Arc::clone(&net)));
     let (policy, raised) = policy_from_py(policy, Arc::clone(&ids))?;
-    let engine =
-        FleetEngine::new(Arc::new(setups.clone()), day, Arc::new(world), Arc::new(roads), policy);
+    let engine = FleetEngine::in_world(Arc::clone(&setups), day, Arc::new(world), policy);
     let description = engine.policy_description();
     let out = engine.run_day().map_err(|msg| {
         // A Python policy's own exception is raised as it was; any other failure as a

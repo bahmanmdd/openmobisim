@@ -129,7 +129,7 @@ fn legs(line: &Line, requests: &[(f64, usize, usize)]) -> Vec<Leg> {
     (0_u32..).zip(requests).map(|(k, &(t, from, to))| leg(line, k, t, from, to, 1)).collect()
 }
 
-fn engine<'w>(setup: &ServiceSetup, legs: Vec<Leg>, window: f64, roads: Line) -> FleetEngine<'w> {
+fn engine(setup: &ServiceSetup, legs: Vec<Leg>, window: f64, roads: Line) -> FleetEngine {
     let day = FleetDay { window: (0.0, window), legs, seed: 1 };
     FleetEngine::new(
         Arc::new(vec![setup.clone()]),

@@ -6,15 +6,18 @@
 
 use std::sync::Arc;
 
+use openmobisim_core_graph::defaults::SignalDefaults;
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::layers::{BikeCost, StaticLayerDefaults};
 use openmobisim_core_graph::network::RoadNetwork;
+use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_graph::{toy_network, toy_network_layers};
 use openmobisim_core_sim::LayerSetup;
-use openmobisim_core_sim::services::engine::{FleetDay, FleetEngine, NoRoads};
-use openmobisim_core_sim::services::frozen::{FrozenLegs, TripRow, plan_legs};
+use openmobisim_core_sim::services::engine::{FleetDay, FleetEngine};
+use openmobisim_core_sim::services::frozen::{TripRow, plan_legs};
 use openmobisim_core_sim::services::outcome::LegStatus;
-use openmobisim_core_sim::services::roads::FrozenPaths;
+use openmobisim_core_sim::services::roads::{FrozenPaths, RoadTimes};
+use openmobisim_core_sim::services::world::FrozenWorld;
 use openmobisim_core_sim::services::{DockDefaults, DockRow, ServiceSetup};
 
 fn at(road: &RoadNetwork, name: &str) -> LonLat {
@@ -37,8 +40,8 @@ fn trips_ride_between_their_nearest_docks_and_the_second_walks_on_to_the_returne
     let (road, _) = toy_network();
     let (bike, walk) = toy_network_layers();
     let d = StaticLayerDefaults::SHIPPED;
-    let bike = LayerSetup::new(Arc::new(bike), BikeCost::Dedicated, d);
-    let walk = LayerSetup::new(Arc::new(walk), BikeCost::Dedicated, d);
+    let bike = Arc::new(LayerSetup::new(Arc::new(bike), BikeCost::Dedicated, d));
+    let walk = Arc::new(LayerSetup::new(Arc::new(walk), BikeCost::Dedicated, d));
     // One bike at R2; none at D2, which has room. (The bike layer's `e2` runs from R2 to D2.)
     let rows = [dock("d-D2", at(&road, "D2"), 4, 0), dock("d-R2", at(&road, "R2"), 4, 1)];
     let setups = vec![
@@ -71,11 +74,21 @@ fn trips_ride_between_their_nearest_docks_and_the_second_walks_on_to_the_returne
     assert!(legs[0].egress_s.abs() < 1e-9, "the dock is at the destination's node");
 
     let day = Arc::new(FleetDay { window: (27_000.0, 34_200.0), legs: legs.clone(), seed: 1 });
-    let world = FrozenLegs::new(&setups, &paths, &legs);
+    // The city, owned: the engine borrows nothing.
+    let turns = Arc::new(TurnTable::build(&road, SignalDefaults::SHIPPED));
+    let road = Arc::new(road);
+    let setups = Arc::new(setups);
+    let world = FrozenWorld::new(
+        Arc::clone(&road),
+        turns,
+        Arc::clone(&walk),
+        Arc::clone(&bike),
+        RoadTimes::free_flow(&road),
+        Arc::clone(&setups),
+        &legs,
+    );
     let out =
-        FleetEngine::new(Arc::new(setups.clone()), day, Arc::new(world), Arc::new(NoRoads), None)
-            .run_day()
-            .expect("no policy");
+        FleetEngine::in_world(setups, day, Arc::new(world), None).run_day().expect("no policy");
     let (first, second) = (out.legs[0], out.legs[1]);
     let s = DockDefaults::SHIPPED;
     assert_eq!(first.status, LegStatus::Served);

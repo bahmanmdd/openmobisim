@@ -199,7 +199,7 @@ fn dock_engine(
     window: f64,
     seed: u64,
     policy: Option<Box<dyn Policy>>,
-) -> FleetEngine<'static> {
+) -> FleetEngine {
     let day = FleetDay { window: (0.0, window), legs: legs.to_vec(), seed };
     FleetEngine::new(
         Arc::new(vec![s.clone()]),

@@ -18,7 +18,7 @@ use openmobisim_core_graph::geometry::{LonLat, ground_distance_metres};
 use openmobisim_core_types::ids::{EntityId, NodeId};
 
 use super::ServiceParts;
-use super::engine::{FleetEngine, ServiceState, Van};
+use super::engine::{FleetEngine, ServiceRoads, ServiceState, Van};
 
 /// What a policy asks for. Services are named by their index in the run's order, docks,
 /// vehicles and chargers by their index in the service.
@@ -238,10 +238,15 @@ pub fn plan_moves(
     moves
 }
 
-impl FleetEngine<'_> {
+impl FleetEngine {
     /// Check and carry out `decisions` at the clock, as asked at step `step`, then the
     /// services' targets; every one recorded. Per decision given, why it was refused.
-    pub(super) fn apply_at(&mut self, step: u32, decisions: &[Decision]) -> Vec<Option<String>> {
+    pub(super) fn apply_at(
+        &mut self,
+        step: u32,
+        decisions: &[Decision],
+        roads: &dyn ServiceRoads,
+    ) -> Vec<Option<String>> {
         let t = self.now();
         let mut out = Vec::with_capacity(decisions.len());
         // Per service, its docks' targets at this step.
@@ -250,15 +255,15 @@ impl FleetEngine<'_> {
             let mut record = DecisionRecord::new(step, t, d);
             let result = match *d {
                 Decision::Move { service, from_dock, to_dock, n } => {
-                    self.move_bikes(service, from_dock, to_dock, n, &mut record)
+                    self.move_bikes(service, from_dock, to_dock, n, &mut record, roads)
                 }
                 Decision::Relocate { service, vehicle, node } => {
-                    self.taxi_decision(service, vehicle, &mut record, |taxis| {
+                    self.taxi_decision(service, vehicle, &mut record, roads, |taxis| {
                         taxis.relocate(vehicle, node, t)
                     })
                 }
                 Decision::Charge { service, vehicle, charger, to_soc } => {
-                    self.taxi_decision(service, vehicle, &mut record, |taxis| {
+                    self.taxi_decision(service, vehicle, &mut record, roads, |taxis| {
                         taxis.charge(vehicle, charger, to_soc, t)
                     })
                 }
@@ -286,7 +291,7 @@ impl FleetEngine<'_> {
                 let d = Decision::Move { service, from_dock, to_dock, n };
                 let mut record = DecisionRecord::new(step, t, &d);
                 record.from_target = true;
-                let result = self.move_bikes(service, from_dock, to_dock, n, &mut record);
+                let result = self.move_bikes(service, from_dock, to_dock, n, &mut record, roads);
                 record.accepted = result.is_ok();
                 record.reason = result.err();
                 self.records.push(record);
@@ -303,6 +308,7 @@ impl FleetEngine<'_> {
         to: u32,
         n: u32,
         record: &mut DecisionRecord,
+        roads: &dyn ServiceRoads,
     ) -> Result<(), String> {
         let t = self.now();
         let s = usize::from(service);
@@ -336,7 +342,7 @@ impl FleetEngine<'_> {
             return Err("no roads".to_string());
         }
         let (drive_s, metres) =
-            self.roads_io.drive(docks.road_node[from as usize], docks.road_node[to as usize], t);
+            roads.drive(docks.road_node[from as usize], docks.road_node[to as usize], t);
         if !drive_s.is_finite() {
             return Err("no road between".to_string());
         }
@@ -379,6 +385,7 @@ impl FleetEngine<'_> {
         service: u16,
         vehicle: u32,
         record: &mut DecisionRecord,
+        roads: &dyn ServiceRoads,
         f: impl FnOnce(&mut super::taxis::Taxis<'_>) -> Result<(f64, f64), String>,
     ) -> Result<(), String> {
         let s = usize::from(service);
@@ -389,7 +396,7 @@ impl FleetEngine<'_> {
             }
             Some(ServiceParts::Taxi(..)) => {}
         }
-        let (_, metres) = self.with_taxis(s, f).expect("a taxi fleet")?;
+        let (_, metres) = self.with_taxis(s, roads, f).expect("a taxi fleet")?;
         let index = u32::try_from(self.records.len()).expect("records fit u32");
         if let Some(run) = self.taxis[s].as_mut() {
             run.decision[vehicle as usize] = index;
