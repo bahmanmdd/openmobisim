@@ -12,10 +12,14 @@
 //! | [`engine`] | [`engine::FleetEngine`] — the services' day: legs, vehicles and docks, events in time order |
 //! | [`outcome`] | [`outcome::FleetOutcome`] — what became of each leg, and the day's counts |
 //! | [`roads`] | [`roads::RoadTimes`], [`roads::FrozenRoads`], [`roads::FrozenPaths`] — a day's road times and the drives, rides and walks on them, without a run |
+//! | [`docks`] | [`docks::DockBins`] — docked bikes' pickups, returns and redirections on the engine, bin by bin |
+//! | [`costs`] | [`costs::DockCosts`] — what a dock is expected to cost a pickup and a return, per bin |
 //!
 //! **Cost:** per dock about 60 bytes and its neighbours, found by one bounded walk search per
 //! dock, once per run; per vehicle and charger about 40 bytes.
 
+pub mod costs;
+pub mod docks;
 pub mod engine;
 pub mod hubs;
 pub mod outcome;
@@ -550,6 +554,37 @@ pub struct Docks {
     pub neighbours_start: Vec<u32>,
     /// See [`Self::neighbours_start`].
     pub neighbours: Vec<(u32, f64)>,
+}
+
+impl Docks {
+    /// How many docks.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.external.len()
+    }
+
+    /// Whether there is none.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.external.is_empty()
+    }
+
+    /// Dock `dock`'s neighbours and the walk to each, in seconds, nearest first (none if the
+    /// docks were given without their neighbours).
+    #[must_use]
+    pub fn neighbours(&self, dock: u32) -> &[(u32, f64)] {
+        let d = dock as usize;
+        match (self.neighbours_start.get(d), self.neighbours_start.get(d + 1)) {
+            (Some(&a), Some(&b)) => &self.neighbours[a as usize..b as usize],
+            _ => &[],
+        }
+    }
+
+    /// The bikes docked at the start of the day: the fleet.
+    #[must_use]
+    pub fn fleet(&self) -> u64 {
+        self.start.iter().map(|&b| u64::from(b)).sum()
+    }
 }
 
 /// A taxi fleet's vehicles and chargers, snapped to the road network, in table order.

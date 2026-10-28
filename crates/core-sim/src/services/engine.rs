@@ -16,11 +16,14 @@
 //! bikes docked, riding and in vans add up to the fleet; vehicles in each state add up to the
 //! fleet (asserted in debug builds, counted in release).
 //!
-//! **This module is the skeleton**: the clock, the queue, the state, the window's end and the
-//! policy steps' times. A request is recorded and waits; what serves it (docks, then taxis) is
-//! added by the services' own handlers.
+//! **Handlers.** A docked service's requests and returns are taken by its handlers
+//! ([`super::docks`]): pickups, redirections, returns and overflow, with the bikes counted and
+//! the docks' counts kept bin by bin. A taxi's request is recorded and waits (its handlers come
+//! later). What the handlers need to know of the city (a ride between two docks, a walk from a
+//! dock to a leg's destination) they ask a [`ServiceLegs`].
 //!
-//! **Cost:** per leg one event and 40 bytes; per event `O(log n)` in the queue.
+//! **Cost:** per leg one event per pickup, redirection and return, and about 120 bytes; per
+//! event `O(log n)` in the queue.
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -28,6 +31,7 @@ use std::sync::Arc;
 
 use openmobisim_core_types::ids::NodeId;
 
+use super::docks::{DockRun, Fleet, LegCtx};
 use super::outcome::{FleetOutcome, LegOutcome, LegStatus};
 use super::{ServiceParts, ServiceSetup};
 
@@ -50,6 +54,34 @@ pub struct Leg {
     pub pickup_dock: u32,
     /// See [`Self::pickup_dock`].
     pub return_dock: u32,
+    /// A bike leg's planned ride from its pickup dock to its return dock, in seconds, the
+    /// fleet's speed included (`NaN` for a taxi).
+    pub ride_s: f64,
+    /// A bike leg's walk from its return dock to its destination, in seconds (`NaN` for a taxi).
+    pub egress_s: f64,
+}
+
+/// What the services' handlers ask of the city: rides and walks a leg did not plan, for
+/// redirections.
+pub trait ServiceLegs: Send + Sync + std::fmt::Debug {
+    /// Service `service`'s ride from dock `from` to dock `to`, in seconds (INFINITY if none).
+    fn ride_s(&self, service: u16, from: u32, to: u32) -> f64;
+    /// The walk from dock `dock` to leg number `leg`'s destination, in seconds.
+    fn walk_to_destination_s(&self, leg: usize, dock: u32) -> f64;
+}
+
+/// No city: no ride between docks (INFINITY), no walk to a destination (0 s). For tests and a
+/// day without legs ([`super::costs::DockCosts::initial`]).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoLegs;
+
+impl ServiceLegs for NoLegs {
+    fn ride_s(&self, _: u16, _: u32, _: u32) -> f64 {
+        f64::INFINITY
+    }
+    fn walk_to_destination_s(&self, _: usize, _: u32) -> f64 {
+        0.0
+    }
 }
 
 /// What one fleet day is run on: its legs, its window and its seed.
@@ -259,7 +291,14 @@ pub struct StepReport {
 pub struct FleetEngine {
     setups: Arc<Vec<ServiceSetup>>,
     day: Arc<FleetDay>,
+    legs_io: Arc<dyn ServiceLegs>,
     state: FleetState,
+    /// Per service: a docked service's running counts.
+    docks: Vec<Option<DockRun>>,
+    /// Per leg: the dock its next pickup or return is at.
+    leg_dock: Vec<u32>,
+    /// Per leg: the docks tried since its last pickup.
+    tried: Vec<Vec<u32>>,
     heap: BinaryHeap<Event>,
     seq: u64,
     now: f64,
@@ -272,29 +311,39 @@ pub struct FleetEngine {
 }
 
 impl FleetEngine {
-    /// An engine at the window's start of `day`, for `setups`: every leg's request, every
-    /// policy step and the window's end scheduled.
+    /// An engine at the window's start of `day`, for `setups`, asking `legs` for rides and
+    /// walks a leg did not plan: every leg's request, every policy step and the window's end
+    /// scheduled.
     ///
     /// # Panics
     ///
-    /// If a leg names a service `setups` does not have, or there are more than `u32::MAX` legs.
+    /// If a leg names a service `setups` does not have, a docked service's leg names a dock it
+    /// does not have, or there are more than `u32::MAX` legs.
     #[must_use]
-    pub fn new(setups: Arc<Vec<ServiceSetup>>, day: Arc<FleetDay>) -> Self {
+    pub fn new(
+        setups: Arc<Vec<ServiceSetup>>,
+        day: Arc<FleetDay>,
+        legs: Arc<dyn ServiceLegs>,
+    ) -> Self {
         let (start, end) = day.window;
         let services = setups.iter().map(ServiceState::start).collect();
+        let docks = setups
+            .iter()
+            .map(|s| match s.parts() {
+                ServiceParts::BikeDocked(docks, d) => Some(DockRun::new(docks, d, day.window)),
+                ServiceParts::Taxi(..) => None,
+            })
+            .collect();
         let legs_n = day.legs.len();
-        let legs = vec![
-            LegOutcome {
-                status: LegStatus::NotRequested,
-                requested_s: f64::NAN,
-                arrived_s: f64::NAN,
-            };
-            day.legs.len()
-        ];
+        let leg_dock = day.legs.iter().map(|l| l.pickup_dock).collect();
         let mut engine = Self {
             setups,
             day,
-            state: FleetState { services, legs },
+            legs_io: legs,
+            docks,
+            leg_dock,
+            tried: vec![Vec::new(); legs_n],
+            state: FleetState { services, legs: vec![LegOutcome::NOT_REQUESTED; legs_n] },
             heap: BinaryHeap::with_capacity(legs_n + 2),
             seq: 0,
             now: start,
@@ -312,6 +361,17 @@ impl FleetEngine {
                 leg.service,
                 engine.setups.len()
             );
+            if let ServiceParts::BikeDocked(docks, _) =
+                engine.setups[usize::from(leg.service)].parts()
+            {
+                let n = docks.len();
+                assert!(
+                    (leg.pickup_dock as usize) < n && (leg.return_dock as usize) < n,
+                    "leg {i} names docks {} and {}, of {n}",
+                    leg.pickup_dock,
+                    leg.return_dock
+                );
+            }
             if leg.request_s <= end {
                 // A leg asking before the window opens asks at its start.
                 let i = u32::try_from(i).expect("legs fit u32");
@@ -409,15 +469,20 @@ impl FleetEngine {
         match event.kind {
             EventKind::Request => {
                 let leg = &mut self.state.legs[event.subject as usize];
-                leg.status = LegStatus::Waiting;
-                leg.requested_s = event.t;
-                report.requests += 1;
+                // A further request, at the next dock tried, keeps the first second.
+                if leg.status == LegStatus::NotRequested {
+                    leg.status = LegStatus::Waiting;
+                    leg.requested_s = event.t;
+                    report.requests += 1;
+                }
+                self.handle_dock(event);
             }
+            EventKind::Return => self.handle_dock(event),
             EventKind::Step => {
                 self.steps += 1;
                 report.steps += 1;
             }
-            EventKind::Return | EventKind::Arrival => {}
+            EventKind::Arrival => {}
             EventKind::End => {
                 self.done = true;
                 for leg in &mut self.state.legs {
@@ -425,6 +490,44 @@ impl FleetEngine {
                         leg.status = LegStatus::Truncated;
                     }
                 }
+            }
+        }
+    }
+
+    /// A docked leg's pickup or return, by its service's handlers; the next moment they ask
+    /// for scheduled, if inside the window.
+    fn handle_dock(&mut self, event: Event) {
+        let i = event.subject as usize;
+        let leg = &self.day.legs[i];
+        let s = usize::from(leg.service);
+        let (ServiceParts::BikeDocked(docks, defaults), Some(run)) =
+            (self.setups[s].parts(), self.docks[s].as_mut())
+        else {
+            return;
+        };
+        let ServiceState::BikeDocked { bikes, riding, .. } = &mut self.state.services[s] else {
+            return;
+        };
+        let mut fleet = Fleet { bikes, riding };
+        let mut ctx = LegCtx {
+            docks,
+            defaults,
+            legs: &*self.legs_io,
+            leg,
+            index: i,
+            tried: &mut self.tried[i],
+            out: &mut self.state.legs[i],
+        };
+        let dock = self.leg_dock[i];
+        let next = match event.kind {
+            EventKind::Request => run.pickup(&mut fleet, &mut ctx, dock, event.t),
+            EventKind::Return => run.ret(&mut fleet, &mut ctx, dock, event.t),
+            _ => None,
+        };
+        if let Some((t, kind, dock)) = next {
+            self.leg_dock[i] = dock;
+            if t <= self.day.window.1 {
+                self.schedule(t, kind, event.key, event.subject);
             }
         }
     }
@@ -438,13 +541,34 @@ impl FleetEngine {
 
     /// The outcome so far.
     #[must_use]
-    pub fn into_outcome(self) -> FleetOutcome {
+    pub fn into_outcome(mut self) -> FleetOutcome {
+        let mut docks = Vec::with_capacity(self.setups.len());
+        let mut overflow_max = Vec::with_capacity(self.setups.len());
+        for (s, run) in self.docks.iter_mut().enumerate() {
+            match (run, self.setups[s].parts(), &self.state.services[s]) {
+                (
+                    Some(run),
+                    ServiceParts::BikeDocked(setup, _),
+                    ServiceState::BikeDocked { bikes, .. },
+                ) => {
+                    run.finish(setup, bikes, self.now);
+                    docks.push(Some(run.bins.clone()));
+                    overflow_max.push(run.overflow_max);
+                }
+                _ => {
+                    docks.push(None);
+                    overflow_max.push(0.0);
+                }
+            }
+        }
         FleetOutcome {
             legs: self.state.legs,
             events: self.events,
             steps: self.steps,
             end_s: self.now,
             invariant_violations: self.violations,
+            docks,
+            overflow_max,
         }
     }
 }
@@ -462,17 +586,24 @@ mod tests {
             request_s,
             origin: NodeId::new(0),
             destination: NodeId::new(1),
-            pickup_dock: u32::MAX,
-            return_dock: u32::MAX,
+            pickup_dock: 0,
+            return_dock: 1,
+            ride_s: f64::INFINITY,
+            egress_s: 0.0,
         }
     }
 
-    /// One docked service of two docks, 2 and 3 bikes.
+    fn engine(setups: Arc<Vec<ServiceSetup>>, day: Arc<FleetDay>) -> FleetEngine {
+        FleetEngine::new(setups, day, Arc::new(NoLegs))
+    }
+
+    /// One docked service of two docks, 5 and 3 bikes.
     fn one_service() -> Arc<Vec<ServiceSetup>> {
         let docks = crate::services::Docks {
             external: vec!["a".into(), "b".into()],
-            start: vec![2, 3],
-            capacity: vec![4, 4],
+            start: vec![5, 3],
+            capacity: vec![8, 8],
+            position: vec![openmobisim_core_graph::geometry::LonLat::new(0.0, 0.0); 2],
             ..crate::services::Docks::default()
         };
         Arc::new(vec![ServiceSetup::from_parts(
@@ -487,7 +618,7 @@ mod tests {
 
     #[test]
     fn an_empty_day_ends_at_the_window() {
-        let engine = FleetEngine::new(Arc::new(Vec::new()), day(Vec::new(), None));
+        let engine = engine(Arc::new(Vec::new()), day(Vec::new(), None));
         assert!((engine.now() - 27_000.0).abs() < 1e-9, "the clock starts at the window's start");
         let out = engine.run_day();
         assert_eq!((out.events, out.steps, out.invariant_violations), (1, 0, 0), "the end alone");
@@ -496,7 +627,7 @@ mod tests {
 
     #[test]
     fn steps_fall_every_step_s_from_the_window_s_start() {
-        let out = FleetEngine::new(Arc::new(Vec::new()), day(Vec::new(), Some(900.0))).run_day();
+        let out = engine(Arc::new(Vec::new()), day(Vec::new(), Some(900.0))).run_day();
         assert_eq!(out.steps, 8, "07:30, 07:45, ..., 09:15: two hours of 15 minutes");
     }
 
@@ -511,7 +642,7 @@ mod tests {
             leg(2, 26_000.0),
             leg(5, 40_000.0),
         ];
-        let mut engine = FleetEngine::new(one_service(), day(legs, Some(900.0))).with_trace();
+        let mut engine = engine(one_service(), day(legs, Some(900.0))).with_trace();
         let report = engine.advance_to(27_900.0);
         assert_eq!((report.requests, report.steps), (3, 2));
         let at: Vec<(EventKind, u64)> = engine
@@ -546,18 +677,19 @@ mod tests {
     #[test]
     fn a_copy_runs_the_same_day_and_leaves_the_original_alone() {
         let legs = (0..50).map(|k| leg(k, 27_000.0 + f64::from(k * 97 % 7_000))).collect();
-        let mut engine = FleetEngine::new(one_service(), day(legs, Some(600.0)));
+        let mut engine = engine(one_service(), day(legs, Some(600.0)));
         engine.advance_to(30_000.0);
         let copy = engine.clone();
         let a = engine.run_day();
         // Printed, so the times not yet known (`NaN`) compare equal.
         assert_eq!(format!("{a:?}"), format!("{:?}", copy.clone().run_day()), "the same day twice");
         assert!(copy.now() < 30_000.0 + 1e-9, "the copy was not advanced by the first");
-        assert_eq!(
-            copy.state().services[0],
-            ServiceState::BikeDocked { bikes: vec![2, 3], riding: 0, moving: 0, fleet: 5 },
-            "the fleet is the bikes docked at the start"
-        );
+        let ServiceState::BikeDocked { bikes, riding, fleet, .. } = &copy.state().services[0]
+        else {
+            panic!("a docked service")
+        };
+        assert_eq!(*fleet, 8, "the fleet is the bikes docked at the start");
+        assert_eq!(bikes.iter().map(|&b| u64::from(b)).sum::<u64>() + riding, 8);
     }
 
     #[test]
