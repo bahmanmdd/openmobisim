@@ -40,6 +40,7 @@ mod network;
 mod parking;
 mod pipeline;
 mod routes;
+mod services;
 mod transit;
 use network::{
     PyNetwork, grid_node_lonlat, link_classes, manhattan_grid, network_cache_header, network_edit,
@@ -166,6 +167,12 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(step_of, m)?)?;
     m.add_function(wrap_pyfunction!(choice_draw, m)?)?;
     m.add_class::<PyNetwork>()?;
+    m.add_class::<services::PyDocks>()?;
+    m.add_class::<services::PyVehicles>()?;
+    m.add_class::<services::PyChargers>()?;
+    m.add_function(wrap_pyfunction!(services::docks_from_rows, m)?)?;
+    m.add_function(wrap_pyfunction!(services::vehicles_from_rows, m)?)?;
+    m.add_function(wrap_pyfunction!(services::chargers_from_rows, m)?)?;
     m.add_class::<PyRunSummary>()?;
     m.add_class::<PyLinkBins>()?;
     m.add_class::<PyRouteSets>()?;
