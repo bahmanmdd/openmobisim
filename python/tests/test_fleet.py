@@ -318,3 +318,22 @@ def test_a_taxi_observation_counts_the_requests_waiting_within_reach():
     assert wide.shape == (6,) and wide[2] == 3
     with pytest.raises(ValueError, match="docked services only"):
         env.action([1], {"service": "taxi"})
+
+
+def test_the_zone_grid_is_set_by_name():
+    net = grid()
+    bikes = ms.service_bike_docked(docks(net))
+    trips = [trip(net, "t", "08:00", (0, 0), (4, 4))]
+    seen = {}
+
+    class Look:
+        step_s = 900.0
+
+        def step(self, view):
+            seen.setdefault("grid_m", view.zones["grid_m"])
+            return []
+
+    ms.fleet_day(net, [bikes], trips, policy=Look(), zone_grid_m=250.0)
+    assert seen["grid_m"] == 250.0
+    with pytest.raises(ValueError):
+        ms.fleet_day(net, [bikes], trips, zone_grid_m=0.0)

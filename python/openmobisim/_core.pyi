@@ -799,6 +799,7 @@ def _fleet_day(
     window: tuple[float, float],
     seed: int,
     policy: tuple | None,
+    zone_grid_m: float,
 ) -> dict[str, Any]: ...
 def _fleet_environment(
     network: Network,
@@ -810,6 +811,7 @@ def _fleet_environment(
     weights: tuple[float, float, float, float],
     keep: float,
     jitter_s: float,
+    zone_grid_m: float,
 ) -> FleetEnvironment: ...
 
 class PolicyView:

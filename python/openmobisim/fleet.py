@@ -36,6 +36,7 @@ __all__ = [
     "FleetDay",
     "Service",
     "REWARD_WEIGHTS",
+    "ZONE_GRID_M",
     "FleetEnvironment",
     "FleetVectorEnvironment",
     "TAXI_STATES",
@@ -275,6 +276,10 @@ def _inputs(
     return parts, rows, roads, (start, end)
 
 
+#: The side of the square zones a policy's view groups places by, in metres: an assumption,
+#: uncalibrated (``zone_grid_m`` of ``fleet_day`` and ``fleet_environment``).
+ZONE_GRID_M: float = 1000.0
+
 #: The standard reward's weights (``fleet_environment``): per failed leg, per minute waited, per
 #: extra minute walked, per van kilometre. Uncalibrated; named so a study sets its own.
 REWARD_WEIGHTS: dict[str, float] = {"w_fail": 1.0, "w_wait": 0.1, "w_walk": 0.1, "w_km": 0.1}
@@ -292,6 +297,7 @@ def fleet_environment(
     legs_keep: float = 1.0,
     departure_jitter_s: float = 0.0,
     n: int = 1,
+    zone_grid_m: float = ZONE_GRID_M,
 ) -> Any:
     """A fleet day to step through: ``reset(seed)``, then ``step(decisions)`` until the day ends.
 
@@ -327,6 +333,8 @@ def fleet_environment(
         reward_weights: Weights by name in place of ``REWARD_WEIGHTS``'; a name not among them is
             refused with the list.
         legs_keep: The share of the trips' legs each day keeps, drawn by the day's seed (1: all).
+        zone_grid_m: The side of the square zones a view groups places by, in metres
+            (``ZONE_GRID_M``, 1 000: an assumption, uncalibrated).
         departure_jitter_s: How far each kept leg's request moves, drawn by the day's seed, in
             seconds either way (0: not at all). With these two, each seed of ``reset`` is another
             day; both thin and shift the same trips, they do not draw a new demand.
@@ -353,6 +361,7 @@ def fleet_environment(
         (weights["w_fail"], weights["w_wait"], weights["w_walk"], weights["w_km"]),
         float(legs_keep),
         float(departure_jitter_s),
+        float(zone_grid_m),
     )
     if int(n) == 1:
         return FleetEnvironment(inner, network)
@@ -584,6 +593,7 @@ def fleet_day(
     seed: int = 0,
     policy: Any = None,
     policy_options: Mapping[str, float] | None = None,
+    zone_grid_m: float = ZONE_GRID_M,
 ) -> FleetDay:
     """Run every service's day together on the fleet engine, from a table of trips.
 
@@ -603,6 +613,8 @@ def fleet_day(
             (``step(view)``), a built-in one (``policy_threshold(...)``), a name (built-in or
             registered with ``policy_register``), or ``None``: no operator.
         policy_options: A named policy's options (``{"low": 0.1}`` for ``"threshold"``).
+        zone_grid_m: The side of the square zones a view groups places by, in metres
+            (``ZONE_GRID_M``, 1 000: an assumption, uncalibrated).
 
     Raises:
         ValueError: For a service, trip, option or policy that is not valid, road times of
@@ -612,7 +624,9 @@ def fleet_day(
     started = time.perf_counter()
     parts, rows, roads, (start, end) = _inputs(services, trips, window, road_times)
     chosen = _policy_for_binding(policy, policy_options)
-    out = _core._fleet_day(network, parts, rows, roads, (start, end), int(seed), chosen)
+    out = _core._fleet_day(
+        network, parts, rows, roads, (start, end), int(seed), chosen, float(zone_grid_m)
+    )
     trips_out = Columns(out["trips"])
     return FleetDay(
         fidelity="frozen_day",

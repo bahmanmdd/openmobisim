@@ -454,6 +454,7 @@ pub fn fleet_environment(
     weights: (f64, f64, f64, f64),
     keep: f64,
     jitter_s: f64,
+    zone_grid_m: f64,
 ) -> PyResult<PyFleetEnvironment> {
     if !(step_s.is_finite() && step_s > 0.0) {
         return Err(PyValueError::new_err(format!("step_s must be above 0, got {step_s}")));
@@ -466,7 +467,7 @@ pub fn fleet_environment(
             "departure_jitter_s must be 0 or more, got {jitter_s}"
         )));
     }
-    let f = frozen(network, &services, trips, road_times)?;
+    let f = frozen(network, &services, trips, road_times, zone_grid_m)?;
     Ok(PyFleetEnvironment {
         setup: Arc::new(Setup {
             frozen: Arc::new(f),
