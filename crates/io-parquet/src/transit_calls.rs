@@ -5,8 +5,8 @@
 //! `run_id, run, line, kind, stop_id, sequence, scheduled_arrival_s,
 //! scheduled_departure_s, arrival_s, departure_s, boardings, alightings,
 //! on_board, hub_group`. The same table `Run.transit_calls()` returns in Python.
-//! `hub_group` is the stop's hub group (C4: its station, or the stop; a label,
-//! `openmobisim_core_sim::hub_groups`).
+//! `hub_group` is the stop's hub in the run's hub set (C4: its station, or the stop;
+//! `openmobisim_core_sim::services::hubs`).
 //!
 //! - `run` is the GTFS `trip_id`, `line` the route's short name, `kind` the
 //!   service (`bus`, `tram`, `metro`, `rail`, `ferry`, `other`), `sequence` the

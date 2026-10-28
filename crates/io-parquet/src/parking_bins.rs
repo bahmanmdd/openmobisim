@@ -10,8 +10,8 @@
 //!   `start_s` 27 000. The file records `bin_s` as `openmobisim.bin_seconds`.
 //! - `parking` is the parking's index in the run, `parking_id` its id in the
 //!   parking table, `hub_id` its hub's (the model's); `vehicle` is `car` or `bike`;
-//!   `hub_group` the group it shares with the stops beside it (C4: a label,
-//!   `openmobisim_core_sim::hub_groups`).
+//!   `hub_group` its hub in the run's hub set, which it shares with the stops beside it
+//!   (C4: `openmobisim_core_sim::services::hubs`).
 //! - `arrivals` and `departures` count vehicles parked and fetched in the bin,
 //!   weighted by traveller weight; `occupancy_mean` and `occupancy_max` the
 //!   vehicles parked; `full_s` the seconds of the bin the parking was full;
