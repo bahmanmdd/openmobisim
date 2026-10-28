@@ -676,6 +676,7 @@ impl<'w> FleetEngine<'w> {
                         charger_plugs: &fleet.charger_plugs,
                         charger_in_use,
                         charger_queued,
+                        nearest: &run.nearest_charger,
                     })
                 }
                 _ => unreachable!("a service's state is of its kind"),

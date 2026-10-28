@@ -173,7 +173,7 @@ pub(crate) struct TaxiRun {
     charger_free: Vec<u32>,
     charger_queue: Vec<VecDeque<u32>>,
     /// Per node with a charger within reach: the nearest.
-    nearest_charger: Arc<HashMap<u32, u32>>,
+    pub(crate) nearest_charger: Arc<HashMap<u32, u32>>,
     /// Per unit request: its leg's first unit and one past its last.
     range: Vec<(u32, u32)>,
     pub(crate) requests: Vec<TaxiRequest>,

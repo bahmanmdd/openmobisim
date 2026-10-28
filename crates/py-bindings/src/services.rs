@@ -28,6 +28,7 @@ use openmobisim_core_sim::services::{
 use openmobisim_core_types::hash::fingerprint_hex;
 
 use crate::network::PyNetwork;
+use crate::policy::{Ids, PolicyTuple, decision_columns, description_to_py, policy_from_py};
 
 fn place(what: &str, id: &str, lon: f64, lat: f64) -> PyResult<LonLat> {
     if lon.is_finite()
@@ -242,7 +243,9 @@ type RoadTuple = (f64, Vec<(u32, u32, f64)>, Option<String>);
 #[pyfunction(name = "_fleet_day")]
 #[allow(
     clippy::too_many_lines,
-    reason = "the inputs built, the day run, the tables written, in order"
+    clippy::too_many_arguments,
+    reason = "the inputs built, the day run, the tables written, in order; the arguments are \
+              fleet_day's, checked in fleet.py"
 )]
 pub fn fleet_day<'py>(
     py: Python<'py>,
@@ -252,6 +255,7 @@ pub fn fleet_day<'py>(
     road_times: Option<RoadTuple>,
     window: (f64, f64),
     seed: u64,
+    policy: Option<PolicyTuple<'py>>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let started = Instant::now();
     let net = network.inner.clone();
@@ -316,10 +320,20 @@ pub fn fleet_day<'py>(
     let clock = Instant::now();
     let day = Arc::new(FleetDay { window, legs: legs.clone(), seed });
     let world = FrozenLegs::new(&setups, &paths, &legs);
-    let out =
-        FleetEngine::new(Arc::new(setups.clone()), day, Arc::new(world), Arc::new(roads), None)
-            .run_day()
-            .map_err(PyValueError::new_err)?;
+    let ids = Arc::new(Ids::new(&setups, Arc::clone(&net)));
+    let (policy, raised) = policy_from_py(policy, Arc::clone(&ids))?;
+    let engine =
+        FleetEngine::new(Arc::new(setups.clone()), day, Arc::new(world), Arc::new(roads), policy);
+    let description = engine.policy_description();
+    let out = engine.run_day().map_err(|msg| {
+        // A Python policy's own exception is raised as it was; any other failure as a
+        // ValueError with the engine's message.
+        raised
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+            .unwrap_or_else(|| PyValueError::new_err(msg))
+    })?;
     let day_s = clock.elapsed().as_secs_f64();
 
     // Per trip given: its leg's outcome, or "not_planned".
@@ -444,5 +458,7 @@ pub fn fleet_day<'py>(
     result.set_item("plan", plan)?;
     result.set_item("counts", counts)?;
     result.set_item("seconds", seconds)?;
+    result.set_item("decisions", decision_columns(py, &out.decisions, &ids)?)?;
+    result.set_item("policy", description_to_py(py, description.as_ref())?)?;
     Ok(result)
 }
