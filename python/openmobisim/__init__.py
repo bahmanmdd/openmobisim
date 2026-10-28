@@ -111,6 +111,12 @@ from openmobisim.scenario import (
     Table,
     WindowWarning,
 )
+from openmobisim.services import (
+    charger_read_table,
+    dock_read_gbfs,
+    dock_read_table,
+    vehicle_read_table,
+)
 from openmobisim.table import Columns
 from openmobisim.transit import transit_edit
 
@@ -183,6 +189,10 @@ __all__ = [
     "parking_read_cache",
     "parking_read_osm",
     "parking_read_table",
+    "charger_read_table",
+    "dock_read_gbfs",
+    "dock_read_table",
+    "vehicle_read_table",
     "parking_write_cache",
     "route_cache_clear",
     "route_cache_info",

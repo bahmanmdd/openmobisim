@@ -726,6 +726,41 @@ def parking_cache_header(path: str | os.PathLike[str]) -> dict[str, object]:
 def _parking_from_rows(
     rows: list[tuple[str, float, float, str, int, str | None, str | None, int, float | None]],
 ) -> Parkings: ...
+
+class Docks:
+    """A bike-sharing system's docks.
+
+    Read them with ``openmobisim.dock_read_table`` or ``openmobisim.dock_read_gbfs``.
+    """
+
+    #: How many docks.
+    count: int
+    def rows(self) -> dict[str, Any]:
+        """Every dock: ``{"dock_id", "name", "hub_id", "lon", "lat", "capacity", "bikes"}``."""
+
+class Vehicles:
+    """An electric fleet's vehicles: read them with ``openmobisim.vehicle_read_table``."""
+
+    #: How many vehicles.
+    count: int
+    def rows(self) -> dict[str, Any]:
+        """Every vehicle: ``{"vehicle_id", "lon", "lat", "soc"}``."""
+
+class Chargers:
+    """Chargers: read them with ``openmobisim.charger_read_table``."""
+
+    #: How many chargers.
+    count: int
+    def rows(self) -> dict[str, Any]:
+        """Every charger: ``{"charger_id", "hub_id", "lon", "lat", "plugs", "kw"}``."""
+
+def _docks_from_rows(
+    rows: list[tuple[str, float, float, int, str | None, str | None, int | None]],
+) -> Docks: ...
+def _vehicles_from_rows(rows: list[tuple[str, float, float, float | None]]) -> Vehicles: ...
+def _chargers_from_rows(
+    rows: list[tuple[str, float, float, int, str | None, float | None]],
+) -> Chargers: ...
 def toy_network_parkings() -> Parkings:
     """The toy network's parkings: hub ``H`` and car park ``P2``.
 
