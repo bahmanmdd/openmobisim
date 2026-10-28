@@ -242,7 +242,7 @@ pub(crate) fn transit_calls<'py>(
     timetable: &Timetable,
     result: &TransitResult,
     until_s: u32,
-    stop_groups: &[String],
+    stop_hubs: &[String],
 ) -> PyResult<Bound<'py, PyDict>> {
     let n = timetable.call_count();
     let s = timetable.scheduled();
@@ -266,7 +266,7 @@ pub(crate) fn transit_calls<'py>(
             line.push(timetable.route_short_name(route).to_string());
             kind.push(timetable.route_kind(route).as_str());
             stop.push(timetable.stop_ids().external(timetable.call_stop(c).raw()).to_string());
-            group.push(stop_groups[timetable.call_stop(c).index()].clone());
+            group.push(stop_hubs[timetable.call_stop(c).index()].clone());
             sequence.push(u32::try_from(k).expect("calls of a run fit u32"));
         }
     }
@@ -290,7 +290,7 @@ pub(crate) fn transit_calls<'py>(
     d.set_item("boardings", floats(&result.boardings).into_pyarray(py))?;
     d.set_item("alightings", floats(&result.alightings).into_pyarray(py))?;
     d.set_item("on_board", floats(&on_board).into_pyarray(py))?;
-    d.set_item("hub_group", group)?;
+    d.set_item("hub_id", group)?;
     Ok(d)
 }
 

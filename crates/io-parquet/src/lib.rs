@@ -107,8 +107,10 @@ impl From<arrow_schema::ArrowError> for WriteError {
 /// The version of the output files' layout: written to every Parquet file as the
 /// key-value `openmobisim.schema_version` ([`SCHEMA_VERSION_KEY`]) and to `manifest.json` as
 /// `manifest_version`. A reader checks it before trusting a column; it is raised when a column
-/// is renamed, removed or changes meaning (the version 1 files are the first versioned ones).
-pub const SCHEMA_VERSION: u32 = 1;
+/// is renamed, removed or changes meaning. Version 2: one `hub_id`, the hub in the run's hub set,
+/// in `transit_calls` and `parking_bins` (version 1 wrote a `hub_group` beside the parking table's
+/// `hub_id`).
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// The Parquet key-value metadata key under which every file carries [`SCHEMA_VERSION`].
 pub const SCHEMA_VERSION_KEY: &str = "openmobisim.schema_version";

@@ -830,7 +830,7 @@ fn gap_trip_columns(py: Python<'_>, gap: &openmobisim_core_sim::GapTrips) -> PyR
     bike_route_choice="shortest", bike_route_options=None, transit=None,
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
     loading_options=None, price_options=None, threads=None, fingerprint_only=false,
-    design_id="default", replication=0, outputs="all", hub_group_m=150.0,
+    design_id="default", replication=0, outputs="all", hub_join_m=150.0,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -892,7 +892,7 @@ pub fn run_pipeline(
     design_id: &str,
     replication: u32,
     outputs: &str,
-    hub_group_m: f64,
+    hub_join_m: f64,
 ) -> PyResult<Py<PyAny>> {
     // Which files the run writes (C2): "all", or "minimal" (kpis.csv and manifest.json) for mass
     // runs; the results in memory are the same either way.
@@ -905,9 +905,9 @@ pub fn run_pipeline(
             )));
         }
     };
-    if !(hub_group_m.is_finite() && hub_group_m >= 0.0) {
+    if !(hub_join_m.is_finite() && hub_join_m >= 0.0) {
         return Err(PyValueError::new_err(format!(
-            "hub_group_m must be 0 or more metres, got {hub_group_m}"
+            "hub_join_m must be 0 or more metres, got {hub_join_m}"
         )));
     }
     // The run's thread count (S277): `None` for every logical core; never 0.
@@ -1372,10 +1372,10 @@ pub fn run_pipeline(
     let mut diagnostics = build_diagnostics;
     diagnostics.merge(&run_diagnostics);
 
-    // The run's one hub set; each stop's and parking's hub id is the `hub_group` the outputs
-    // write (C4; no result depends on it yet, so it is in no fingerprint).
+    // The run's one hub set; each stop's and parking's hub id is the `hub_id` the outputs write
+    // (no result depends on it yet, so it is in no fingerprint).
     let run_hubs =
-        RunHubs::build(transit_setup.as_deref(), &[], parking_setup.as_deref(), &[], hub_group_m);
+        RunHubs::build(transit_setup.as_deref(), &[], parking_setup.as_deref(), &[], hub_join_m);
     let (stop_hubs, parking_hubs) = (run_hubs.stop_hub_ids(), run_hubs.parking_hub_ids());
     let dir = Path::new(output_dir);
     std::fs::create_dir_all(dir).map_err(to_value_error)?;

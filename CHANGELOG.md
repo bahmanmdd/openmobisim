@@ -23,6 +23,14 @@ bike park with room; a full parking adds its slope on top.
   time was its drive while mode choice weighed the door-to-door time: the mean trip of every run is longer now, by
   the fixed times; a run of stated car trips sets them to 0 to keep the drives.
 
+**One hub id in the results.** `transit_calls` and `parking_bins` carry one `hub_id`, the hub of the run: a stop's
+station (GTFS `parent_station`) or the stop itself; a parking's is the hub its table names, else the nearest stop's
+within `hub_join_m` (150 m), else its own. The output files' schema is version 2.
+- `transit_calls`: `hub_group` is now `hub_id` (the same values).
+- `parking_bins` and `Run.parking_places()`: `hub_id` holds what `hub_group` held, and `hub_group` is gone; the hub a
+  parking table names is still in the table.
+- `Scenario.run`'s `hub_group_m` is now `hub_join_m`.
+
 **Buses keep to their timetable.** By default every bus runs exactly on its timetable and is not a vehicle of the
 loading: it takes no road capacity and traffic does not delay it. `transit_options` `buses_on_roads` 1 puts the buses
 on the roads among the cars, where congestion makes them late, as 0.1.0 did. Travellers plan transit on the

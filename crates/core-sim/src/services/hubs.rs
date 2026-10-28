@@ -155,10 +155,10 @@ impl RunHubs {
                 for (layer, node) in
                     [(Layer::Walk, t.stop_walk_node(stop)), (Layer::Bike, t.stop_bike_node(stop))]
                 {
-                    if let Some(node) = node
-                        && !points.iter().any(|p| p.layer == layer)
-                    {
-                        points.push(AccessPoint { layer, node });
+                    if let Some(node) = node {
+                        if !points.iter().any(|p| p.layer == layer) {
+                            points.push(AccessPoint { layer, node });
+                        }
                     }
                 }
                 stop_key.push(d);
@@ -257,13 +257,13 @@ impl RunHubs {
         self.set.external_ids().external(hub.raw())
     }
 
-    /// Each stop's hub id, by stop index: the `hub_group` the outputs write.
+    /// Each stop's hub id, by stop index: the `hub_id` the outputs write.
     #[must_use]
     pub fn stop_hub_ids(&self) -> Vec<String> {
         self.stop_hub.iter().map(|&h| self.hub_external_id(h).to_string()).collect()
     }
 
-    /// Each parking's hub id, by parking index: the `hub_group` the outputs write.
+    /// Each parking's hub id, by parking index: the `hub_id` the outputs write.
     #[must_use]
     pub fn parking_hub_ids(&self) -> Vec<String> {
         self.parking_resource

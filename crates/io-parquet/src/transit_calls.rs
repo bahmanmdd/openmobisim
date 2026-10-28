@@ -4,8 +4,8 @@
 //! One row per call — a run at a stop — in run order, then stop order:
 //! `run_id, run, line, kind, stop_id, sequence, scheduled_arrival_s,
 //! scheduled_departure_s, arrival_s, departure_s, boardings, alightings,
-//! on_board, hub_group`. The same table `Run.transit_calls()` returns in Python.
-//! `hub_group` is the stop's hub in the run's hub set (C4: its station, or the stop;
+//! on_board, hub_id`. The same table `Run.transit_calls()` returns in Python.
+//! `hub_id` is the stop's hub in the run's hub set (its station, or the stop;
 //! `openmobisim_core_sim::services::hubs`).
 //!
 //! - `run` is the GTFS `trip_id`, `line` the route's short name, `kind` the
@@ -130,7 +130,7 @@ pub fn write_transit_calls(
             field("boardings", DataType::Float64, false),
             field("alightings", DataType::Float64, false),
             field("on_board", DataType::Float64, false),
-            field("hub_group", DataType::Utf8, false),
+            field("hub_id", DataType::Utf8, false),
         ])
         .with_metadata(metadata.iter().cloned().collect::<HashMap<_, _>>()),
     );
