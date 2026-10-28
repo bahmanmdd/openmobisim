@@ -130,17 +130,18 @@ fn legs(line: &Line, requests: &[(f64, usize, usize)]) -> Vec<Leg> {
 }
 
 fn engine<'w>(setup: &ServiceSetup, legs: Vec<Leg>, window: f64, roads: Line) -> FleetEngine<'w> {
-    let day = FleetDay { window: (0.0, window), legs, step_s: None, seed: 1 };
+    let day = FleetDay { window: (0.0, window), legs, seed: 1 };
     FleetEngine::new(
         Arc::new(vec![setup.clone()]),
         Arc::new(day),
         Arc::new(NoLegs),
         Arc::new(roads),
+        None,
     )
 }
 
 fn load(setup: &ServiceSetup, legs: Vec<Leg>, window: f64, roads: Line) -> FleetOutcome {
-    let out = engine(setup, legs, window, roads).run_day();
+    let out = engine(setup, legs, window, roads).run_day().expect("no policy");
     assert_eq!(out.invariant_violations, 0);
     out
 }
@@ -314,7 +315,7 @@ fn a_random_day_conserves_vehicles_and_charge_replays_and_a_copy_ends_as_the_ori
     let mut t = 0.0;
     while !e.is_done() {
         t += 600.0;
-        e.advance_to(t);
+        e.advance_to(t).expect("no policy");
         let ServiceState::Taxi { soc, counts, .. } = &e.state().services[0] else {
             panic!("a taxi fleet")
         };
@@ -336,7 +337,7 @@ fn a_random_day_conserves_vehicles_and_charge_replays_and_a_copy_ends_as_the_ori
     let b = load(&setup, day(&Line::new(&net)), window, Line::new(&net));
     // Printed, so the times not yet known (`NaN`) compare equal.
     assert_eq!(format!("{a:?}"), format!("{b:?}"), "the same day twice");
-    let c = copy.expect("a copy at 9000 s").run_day();
+    let c = copy.expect("a copy at 9000 s").run_day().expect("no policy");
     assert_eq!(format!("{a:?}"), format!("{c:?}"), "a copy from the middle ends as the original");
 }
 

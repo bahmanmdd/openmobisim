@@ -21,9 +21,15 @@
 //! [`TaxiDefaults::charge_to`] at the charger's power, first come first served at its plugs. A
 //! charge never goes below zero.
 //!
-//! **Events.** A vehicle reaching a drop-off, finishing a charge, reaching a charger and
-//! reaching a pickup are the engine's `Arrival`s, taken in that order at one second (a vehicle
-//! freed can take the next request at once), then by service and vehicle index.
+//! **A policy's decisions**: an idle vehicle sent elsewhere ([`super::decisions::Decision::Relocate`])
+//! drives there empty and waits, idle, offered to the waiting requests on arriving; one sent
+//! to charge ([`super::decisions::Decision::Charge`]) drives to the charger, queues and charges
+//! to the share asked, as under the default rule.
+//!
+//! **Events.** A vehicle reaching a drop-off, finishing a charge, reaching a charger, reaching
+//! a pickup and ending a relocation are the engine's `Arrival`s, taken in that order at one
+//! second (a vehicle freed can take the next request at once), then by service and vehicle
+//! index.
 //!
 //! **No traffic of its own**: the vehicles drive on the given road times and add none.
 //! **Conservation**: the vehicles in each state add up to the fleet, checked by the engine
@@ -42,6 +48,7 @@ use openmobisim_core_types::ids::{EntityId, NodeId};
 
 use super::engine::{Leg, ServiceRoads, VehicleState};
 use super::outcome::{LegOutcome, LegStatus};
+use super::view::WaitingRequest;
 use super::{Fleet, TaxiDefaults};
 
 /// The length of a [`FleetBins`] bin, in seconds.
@@ -120,6 +127,8 @@ pub(crate) enum Move {
     Charged = 1,
     AtCharger = 2,
     AtPickup = 3,
+    /// At the end of a policy's relocation.
+    Relocated = 4,
 }
 
 impl Move {
@@ -128,7 +137,8 @@ impl Move {
             0 => Move::Dropoff,
             1 => Move::Charged,
             2 => Move::AtCharger,
-            _ => Move::AtPickup,
+            3 => Move::AtPickup,
+            _ => Move::Relocated,
         }
     }
 }
@@ -150,6 +160,11 @@ pub(crate) struct TaxiRun {
     task: Vec<u32>,
     /// Per vehicle: the second it reached its charger.
     since: Vec<f64>,
+    /// Per vehicle: the charge it charges to at its charger.
+    charge_target: Vec<f64>,
+    /// Per vehicle: the policy's decision it is carrying out (its record's index), or
+    /// `u32::MAX`.
+    pub(crate) decision: Vec<u32>,
     /// Idle vehicles by node.
     idle_at: BTreeMap<u32, Vec<u32>>,
     /// Unit requests waiting, oldest first.
@@ -219,6 +234,8 @@ impl TaxiRun {
         Self {
             task: vec![u32::MAX; n],
             since: vec![0.0; n],
+            charge_target: vec![d.charge_to; n],
+            decision: vec![u32::MAX; n],
             idle_at: BTreeMap::new(),
             waiting: VecDeque::new(),
             charger_free: fleet.charger_plugs.clone(),
@@ -234,6 +251,34 @@ impl TaxiRun {
             },
             bins_n,
         }
+    }
+
+    /// The requests waiting, oldest first, for a policy's view.
+    pub(crate) fn waiting_view(&self, legs: &[Leg]) -> Vec<WaitingRequest> {
+        self.waiting
+            .iter()
+            .map(|&u| {
+                let r = &self.requests[u as usize];
+                WaitingRequest {
+                    id: u,
+                    leg: r.leg,
+                    origin: legs[r.leg as usize].origin,
+                    since_s: r.requested_s,
+                }
+            })
+            .collect()
+    }
+
+    /// Per charger, the plugs in use and the vehicles queued, for a policy's view.
+    pub(crate) fn chargers_view(&self, fleet: &Fleet) -> (Vec<u32>, Vec<u32>) {
+        let in_use =
+            fleet.charger_plugs.iter().zip(&self.charger_free).map(|(p, f)| p - f).collect();
+        let queued = self
+            .charger_queue
+            .iter()
+            .map(|q| u32::try_from(q.len()).expect("a queue fits u32"))
+            .collect();
+        (in_use, queued)
     }
 
     /// Note the counts at the start of every bin starting at or before second `t`.
@@ -405,20 +450,97 @@ impl Taxis<'_> {
         if !s.is_finite() {
             return false;
         }
+        self.drive_to_charger(v, c, (s, m), self.d.charge_to, t);
+        true
+    }
+
+    /// Vehicle `v`, taken from the idle ones, drives `(seconds, metres)` to charger `c` at
+    /// second `t`, to charge to `to_soc`.
+    fn drive_to_charger(&mut self, v: u32, c: u32, (s, m): (f64, f64), to_soc: f64, t: f64) {
         self.set_state(v, VehicleState::ToCharger);
         self.run.task[v as usize] = c;
+        self.run.charge_target[v as usize] = to_soc;
         self.run.days[v as usize].km_empty += m / 1000.0;
         self.use_energy(v, m);
-        self.node[v as usize] = at;
+        self.node[v as usize] = self.fleet.charger_node[c as usize];
         self.next.push(Next::Vehicle(t + s, Move::AtCharger, v));
-        true
+    }
+
+    /// Why vehicle `v` cannot take a policy's decision, if it cannot: it does not exist or is
+    /// not idle.
+    fn not_idle(&self, v: u32) -> Option<String> {
+        match self.state.get(v as usize) {
+            None => Some(format!("no vehicle {v}")),
+            Some(VehicleState::Idle) => None,
+            Some(s) => Some(format!("vehicle {v} is not idle ({})", s.as_str())),
+        }
+    }
+
+    /// A policy sends idle vehicle `v` empty to `node` at second `t`: the drive's seconds and
+    /// metres, or why not.
+    pub(crate) fn relocate(&mut self, v: u32, node: NodeId, t: f64) -> Result<(f64, f64), String> {
+        if let Some(why) = self.not_idle(v) {
+            return Err(why);
+        }
+        let from = self.node[v as usize];
+        if from == node {
+            return Err(format!("vehicle {v} is already at node {}", node.raw()));
+        }
+        let (s, m) = self.roads.drive(from, node, t);
+        if !s.is_finite() {
+            return Err(format!("no road to node {}", node.raw()));
+        }
+        if !self.can_drive(v, m) {
+            return Err(format!("vehicle {v} has not the charge for the drive and the reserve"));
+        }
+        self.take_idle(v);
+        self.set_state(v, VehicleState::Relocating);
+        self.run.days[v as usize].km_empty += m / 1000.0;
+        self.use_energy(v, m);
+        self.node[v as usize] = node;
+        self.next.push(Next::Vehicle(t + s, Move::Relocated, v));
+        Ok((s, m))
+    }
+
+    /// A policy sends idle vehicle `v` to charger `c` at second `t`, to charge to `to_soc`:
+    /// the drive's seconds and metres, or why not.
+    pub(crate) fn charge(
+        &mut self,
+        v: u32,
+        c: u32,
+        to_soc: f64,
+        t: f64,
+    ) -> Result<(f64, f64), String> {
+        if let Some(why) = self.not_idle(v) {
+            return Err(why);
+        }
+        let Some(&at) = self.fleet.charger_node.get(c as usize) else {
+            return Err(format!("no charger {c}"));
+        };
+        let soc = self.soc[v as usize];
+        if !(to_soc > soc && to_soc <= 1.0) {
+            return Err(format!(
+                "to_soc {to_soc} is not above vehicle {v}'s charge {soc} and at most 1"
+            ));
+        }
+        let (s, m) = self.roads.drive(self.node[v as usize], at, t);
+        if !s.is_finite() {
+            return Err(format!("no road to charger {c}"));
+        }
+        if self.d.kwh_per_km * m / 1000.0 / self.d.battery_kwh > soc {
+            return Err(format!("vehicle {v} has not the charge to reach charger {c}"));
+        }
+        self.take_idle(v);
+        self.drive_to_charger(v, c, (s, m), to_soc, t);
+        Ok((s, m))
     }
 
     /// Start charging vehicle `v` at charger `c` at second `t`.
     fn start_charge(&mut self, v: u32, c: u32, t: f64) {
         self.set_state(v, VehicleState::Charging);
         self.run.charger_free[c as usize] -= 1;
-        let kwh = ((self.d.charge_to - self.soc[v as usize]) * self.d.battery_kwh).max(0.0);
+        let to = self.run.charge_target[v as usize];
+        let kwh = ((to - self.soc[v as usize]) * self.d.battery_kwh).max(0.0);
         let s = kwh / self.fleet.charger_kw[c as usize] * 3600.0;
         self.next.push(Next::Vehicle(t + s, Move::Charged, v));
     }
@@ -534,14 +656,21 @@ impl Taxis<'_> {
             }
             Move::Charged => {
                 let c = self.run.task[i];
-                let kwh = ((self.d.charge_to - self.soc[i]) * self.d.battery_kwh).max(0.0);
+                let to = self.run.charge_target[i];
+                let kwh = ((to - self.soc[i]) * self.d.battery_kwh).max(0.0);
                 self.run.days[i].kwh_charged += kwh;
-                self.soc[i] = self.soc[i].max(self.d.charge_to);
+                self.soc[i] = self.soc[i].max(to);
+                self.run.charge_target[i] = self.d.charge_to;
                 self.run.days[i].charging_s += t - self.run.since[i];
                 self.run.charger_free[c as usize] += 1;
                 if let Some(queued) = self.run.charger_queue[c as usize].pop_front() {
                     self.start_charge(queued, c, t);
                 }
+                let node = self.node[i];
+                self.make_idle(v, node);
+                self.serve_waiting(v, t);
+            }
+            Move::Relocated => {
                 let node = self.node[i];
                 self.make_idle(v, node);
                 self.serve_waiting(v, t);

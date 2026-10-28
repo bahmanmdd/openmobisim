@@ -42,7 +42,7 @@ fn trips_ride_between_their_nearest_docks_and_the_second_walks_on_to_the_returne
     // One bike at R2; none at D2, which has room. (The bike layer's `e2` runs from R2 to D2.)
     let rows = [dock("d-D2", at(&road, "D2"), 4, 0), dock("d-R2", at(&road, "R2"), 4, 1)];
     let setups = vec![
-        ServiceSetup::bike_docked("bike_share", &rows, &walk, &bike, DockDefaults::SHIPPED)
+        ServiceSetup::bike_docked("bike_share", &rows, &walk, &bike, None, DockDefaults::SHIPPED)
             .unwrap(),
     ];
     let paths = FrozenPaths::new(bike.network(), bike.seconds(), walk.network(), walk.seconds());
@@ -70,15 +70,12 @@ fn trips_ride_between_their_nearest_docks_and_the_second_walks_on_to_the_returne
     assert!(legs[0].ride_s > 0.0 && legs[0].ride_s.is_finite());
     assert!(legs[0].egress_s.abs() < 1e-9, "the dock is at the destination's node");
 
-    let day = Arc::new(FleetDay {
-        window: (27_000.0, 34_200.0),
-        legs: legs.clone(),
-        step_s: None,
-        seed: 1,
-    });
+    let day = Arc::new(FleetDay { window: (27_000.0, 34_200.0), legs: legs.clone(), seed: 1 });
     let world = FrozenLegs::new(&setups, &paths, &legs);
-    let out = FleetEngine::new(Arc::new(setups.clone()), day, Arc::new(world), Arc::new(NoRoads))
-        .run_day();
+    let out =
+        FleetEngine::new(Arc::new(setups.clone()), day, Arc::new(world), Arc::new(NoRoads), None)
+            .run_day()
+            .expect("no policy");
     let (first, second) = (out.legs[0], out.legs[1]);
     let s = DockDefaults::SHIPPED;
     assert_eq!(first.status, LegStatus::Served);

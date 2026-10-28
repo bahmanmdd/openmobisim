@@ -266,7 +266,7 @@ pub fn fleet_day<'py>(
             "bike_docked" => {
                 let docks = docks.as_ref().ok_or_else(|| bad(format!("{name}: no docks")))?;
                 let d = DockDefaults::from_options(options).map_err(|e| bad(e.to_string()))?;
-                ServiceSetup::bike_docked(name, &docks.get().rows, &walk, &bike, d)
+                ServiceSetup::bike_docked(name, &docks.get().rows, &walk, &bike, Some(&net), d)
             }
             "taxi" => {
                 let vehicles =
@@ -314,10 +314,12 @@ pub fn fleet_day<'py>(
     let legs: Vec<Leg> = planned.iter().map(|&(_, l)| l).collect();
     let setup_s = started.elapsed().as_secs_f64();
     let clock = Instant::now();
-    let day = Arc::new(FleetDay { window, legs: legs.clone(), step_s: None, seed });
+    let day = Arc::new(FleetDay { window, legs: legs.clone(), seed });
     let world = FrozenLegs::new(&setups, &paths, &legs);
     let out =
-        FleetEngine::new(Arc::new(setups.clone()), day, Arc::new(world), Arc::new(roads)).run_day();
+        FleetEngine::new(Arc::new(setups.clone()), day, Arc::new(world), Arc::new(roads), None)
+            .run_day()
+            .map_err(PyValueError::new_err)?;
     let day_s = clock.elapsed().as_secs_f64();
 
     // Per trip given: its leg's outcome, or "not_planned".

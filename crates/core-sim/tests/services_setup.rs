@@ -56,6 +56,7 @@ impl Toy {
             rows,
             self.layers.walk.as_ref().unwrap(),
             self.layers.bike.as_ref().unwrap(),
+            None,
             DockDefaults::SHIPPED,
         )
     }

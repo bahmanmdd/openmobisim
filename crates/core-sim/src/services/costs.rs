@@ -87,14 +87,16 @@ impl DockCosts {
     /// If `setup` is not a docked service.
     #[must_use]
     pub fn initial(setup: &ServiceSetup, window: (f64, f64)) -> Self {
-        let day = FleetDay { window, legs: Vec::new(), step_s: None, seed: 0 };
+        let day = FleetDay { window, legs: Vec::new(), seed: 0 };
         let out = FleetEngine::new(
             Arc::new(vec![setup.clone()]),
             Arc::new(day),
             Arc::new(NoLegs),
             Arc::new(NoRoads),
+            None,
         )
-        .run_day();
+        .run_day()
+        .expect("no policy, no policy failure");
         let bins = out.docks[0]
             .as_ref()
             .unwrap_or_else(|| panic!("service `{}` has no docks", setup.name()));
