@@ -56,8 +56,8 @@ def service_bike_docked(
         name: Its name, unique among a day's services.
         options: Its options by name (``walk_max_s``, ``redirect_max``, ``redirect_max_m``,
             ``pickup_s``, ``return_s``, ``ride_factor``, ``start_share``, ``fail_s``, ``bin_s``,
-            ``handling_s``, ``candidates``, ``snap_m``); a name not among them is refused with
-            the list.
+            ``handling_s``, ``van_bikes``, ``candidates``, ``snap_m``); a name not among them is
+            refused with the list.
     """
     return Service("bike_docked", name, docks=docks, options=dict(options or {}))
 
