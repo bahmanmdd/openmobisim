@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use super::docks::DockBins;
-use super::engine::{FleetDay, FleetEngine, NoLegs};
+use super::engine::{FleetDay, FleetEngine, NoLegs, NoRoads};
 use super::{ServiceParts, ServiceSetup};
 
 /// What a docked service's docks cost per time bin: per dock and bin, the expected extra
@@ -88,8 +88,13 @@ impl DockCosts {
     #[must_use]
     pub fn initial(setup: &ServiceSetup, window: (f64, f64)) -> Self {
         let day = FleetDay { window, legs: Vec::new(), step_s: None, seed: 0 };
-        let out = FleetEngine::new(Arc::new(vec![setup.clone()]), Arc::new(day), Arc::new(NoLegs))
-            .run_day();
+        let out = FleetEngine::new(
+            Arc::new(vec![setup.clone()]),
+            Arc::new(day),
+            Arc::new(NoLegs),
+            Arc::new(NoRoads),
+        )
+        .run_day();
         let bins = out.docks[0]
             .as_ref()
             .unwrap_or_else(|| panic!("service `{}` has no docks", setup.name()));

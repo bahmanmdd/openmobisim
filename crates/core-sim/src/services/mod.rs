@@ -15,6 +15,7 @@
 //! | [`roads`] | [`roads::RoadTimes`], [`roads::FrozenRoads`], [`roads::FrozenPaths`] — a day's road times and the drives, rides and walks on them, without a run |
 //! | [`docks`] | [`docks::DockBins`] — docked bikes' pickups, returns and redirections on the engine, bin by bin |
 //! | [`costs`] | [`costs::DockCosts`] — what a dock is expected to cost a pickup and a return, per bin |
+//! | [`taxis`] | electric taxis on the engine: matching, drives, energy, the charging rule and plug queues; [`taxis::TaxiDay`] |
 //!
 //! **Cost:** per dock about 60 bytes and its neighbours, found by one bounded walk search per
 //! dock, once per run; per vehicle and charger about 40 bytes.
@@ -26,6 +27,7 @@ pub mod frozen;
 pub mod hubs;
 pub mod outcome;
 pub mod roads;
+pub mod taxis;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
