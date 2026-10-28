@@ -26,12 +26,22 @@ pub enum Mode {
     CarTransit = 4,
     /// By bike to a hub, then public transport (bike-and-ride).
     BikeTransit = 5,
+    /// By a shared bike of a docked service: walk to a dock, ride, return it at a dock, walk.
+    /// No bike of one's own.
+    BikeShare = 6,
 }
 
 impl Mode {
     /// Every mode, in discriminant order.
-    pub const ALL: [Mode; 6] =
-        [Mode::Car, Mode::Bike, Mode::Walk, Mode::Transit, Mode::CarTransit, Mode::BikeTransit];
+    pub const ALL: [Mode; 7] = [
+        Mode::Car,
+        Mode::Bike,
+        Mode::Walk,
+        Mode::Transit,
+        Mode::CarTransit,
+        Mode::BikeTransit,
+        Mode::BikeShare,
+    ];
 
     /// How many modes there are.
     pub const COUNT: usize = Mode::ALL.len();
@@ -46,6 +56,7 @@ impl Mode {
             Mode::Transit => "transit",
             Mode::CarTransit => "car_transit",
             Mode::BikeTransit => "bike_transit",
+            Mode::BikeShare => "bike_share",
         }
     }
 
@@ -79,8 +90,15 @@ impl Mode {
         match self {
             Mode::Car | Mode::CarTransit => Some(VehicleKind::Car),
             Mode::Bike | Mode::BikeTransit => Some(VehicleKind::Bike),
-            Mode::Walk | Mode::Transit => None,
+            Mode::Walk | Mode::Transit | Mode::BikeShare => None,
         }
+    }
+
+    /// Whether the mode needs a service of the run (a shared bike): offered, and written in the
+    /// outputs, only in a run that has one.
+    #[must_use]
+    pub const fn is_service(self) -> bool {
+        matches!(self, Mode::BikeShare)
     }
 }
 

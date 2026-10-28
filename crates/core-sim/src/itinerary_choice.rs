@@ -374,6 +374,7 @@ impl Offer {
             Mode::Transit => out.transit = self.transit,
             Mode::CarTransit => out.car_transit = self.car_transit,
             Mode::BikeTransit => out.bike_transit = self.bike_transit,
+            Mode::BikeShare => {}
         }
         out
     }
@@ -1823,7 +1824,7 @@ fn best_by_mode(alts: &[Alternative]) -> [f64; Mode::COUNT] {
 fn leg_layer(mode: Mode) -> Option<ValueLayer> {
     match mode {
         Mode::Car | Mode::CarTransit => Some(ValueLayer::Road),
-        Mode::Bike | Mode::BikeTransit => Some(ValueLayer::Bike),
+        Mode::Bike | Mode::BikeTransit | Mode::BikeShare => Some(ValueLayer::Bike),
         Mode::Walk => Some(ValueLayer::Walk),
         Mode::Transit => None,
     }
@@ -1899,7 +1900,7 @@ fn attribute(
     let kind = match a.mode {
         Mode::Car | Mode::CarTransit => Some(ParkingKind::Car),
         Mode::Bike | Mode::BikeTransit => Some(ParkingKind::Bike),
-        Mode::Walk | Mode::Transit => None,
+        Mode::Walk | Mode::Transit | Mode::BikeShare => None,
     };
     let vehicle_min = a.vehicle_s / 60.0;
     match name {
@@ -2142,7 +2143,7 @@ fn vehicle_of(mode: Mode) -> Option<ParkingKind> {
     match mode {
         Mode::Car | Mode::CarTransit => Some(ParkingKind::Car),
         Mode::Bike | Mode::BikeTransit => Some(ParkingKind::Bike),
-        Mode::Walk | Mode::Transit => None,
+        Mode::Walk | Mode::Transit | Mode::BikeShare => None,
     }
 }
 
@@ -2197,6 +2198,8 @@ impl Itineraries {
             Mode::Bike => bike.is_some(),
             Mode::Walk => sim.layers.walk.is_some(),
             Mode::Car => true,
+            // Offered once the run's docked service is wired in.
+            Mode::BikeShare => false,
         };
         let mut offered = [false; Mode::COUNT];
         for &m in sim.choice.unwrap_or(&[]) {
