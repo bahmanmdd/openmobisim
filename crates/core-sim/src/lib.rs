@@ -7,8 +7,9 @@
 //! | [`layers`] | [`layers::StaticLayers`] — the bike and walk trips' routes on their layers, once per run, and the choice-set limits by class |
 //! | [`itinerary`] | [`itinerary::Itinerary`] — a trip's legs across modes and hubs |
 //! | [`itinerary_choice`] | Itinerary choice: the competitive itineraries of transit, park-and-ride and bike-and-ride trips, and, with mode choice, every mode a trip's class may use |
-//! | [`transit`] | [`transit::TransitSetup`] — a timetable linked to the walk and bike layers: stop hubs, walks, RAPTOR; buses on the roads |
-//! | [`parking`] | [`parking::ParkingSetup`] — parkings as hubs on the layers, and how full they are over the day |
+//! | [`transit`] | [`transit::TransitSetup`] — a timetable linked to the walk and bike layers: stops' access points, walks, RAPTOR; buses on the roads |
+//! | [`parking`] | [`parking::ParkingSetup`] — parkings on the layers, and how full they are over the day |
+//! | [`services`] | [`services::hubs::RunHubs`] — the run's one hub set: stops, parkings, docks, chargers and stands |
 //! | [`route_choice`] | [`route_choice::RouteChoices`] — which route each car trip takes, from its pair's route set and a choice model |
 //! | [`route_update`] | [`route_update::RouteUpdate`] — growing the route sets between iterations: `none` and `best_response` |
 //! | [`route_cache`] | [`route_cache::RouteSetCache`] — generated route sets kept for the next run that asks for the same |
@@ -44,7 +45,6 @@ pub mod equilibration;
 pub mod events;
 pub mod gap;
 pub mod generalised_cost;
-pub mod hub_groups;
 pub mod identity;
 pub mod itinerary;
 pub mod itinerary_choice;
@@ -59,6 +59,7 @@ pub mod route_cache;
 pub mod route_choice;
 pub mod route_update;
 pub mod run;
+pub mod services;
 pub mod skims;
 pub mod static_run;
 pub mod timings;

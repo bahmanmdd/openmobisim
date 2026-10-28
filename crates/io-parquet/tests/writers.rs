@@ -17,7 +17,7 @@ use openmobisim_core_sim::{
 use openmobisim_core_types::diagnostics::{
     Category, DiagKey, Diagnostics, ElementRef, Severity, codes,
 };
-use openmobisim_core_types::ids::{EntityId, LinkId, TripId};
+use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 use openmobisim_io_parquet::manifest::Manifest;
@@ -726,7 +726,13 @@ fn transit_calls_round_trip_with_an_unknown_time() {
         &result,
         &sample_description(None, None),
         u32::MAX,
-        &openmobisim_core_sim::hub_groups::hub_groups(Some(&timetable), None, 150.0).stops,
+        // Each stop's hub: its station, or the stop itself.
+        &(0..timetable.stop_count())
+            .map(|s| {
+                let stop = NodeId::new(s);
+                timetable.stop_parent(stop).unwrap_or(timetable.stop_ids().external(s)).to_string()
+            })
+            .collect::<Vec<_>>(),
     )
     .unwrap();
     let batch = read_first_batch(&path);

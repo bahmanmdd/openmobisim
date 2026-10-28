@@ -25,6 +25,7 @@ use openmobisim_core_graph::examples::{manhattan_grid, node_name};
 use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::FidelityLevel;
+use openmobisim_core_sim::services::hubs::RunHubs;
 use openmobisim_core_sim::{FlowMotor, Run};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::time::Second;
@@ -454,7 +455,7 @@ fn transit_probe(dir: &std::path::Path) {
         t,
         &description,
         u32::MAX,
-        &openmobisim_core_sim::hub_groups::hub_groups(Some(transit.timetable()), None, 150.0).stops,
+        &RunHubs::build(Some(&transit), &[], None, &[], 150.0).stop_hub_ids(),
     )
     .expect("write transit calls");
     println!("transit_fingerprint   {}", description.fingerprint_hex());
@@ -582,7 +583,7 @@ fn parking_probe(dir: &std::path::Path) {
         &parking,
         p,
         &description,
-        &openmobisim_core_sim::hub_groups::hub_groups(None, Some(&parking), 150.0).parkings,
+        &RunHubs::build(None, &[], Some(&parking), &[], 150.0).parking_hub_ids(),
     )
     .expect("write parking bins");
     println!("parking_fingerprint   {}", description.fingerprint_hex());

@@ -37,6 +37,7 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::layers::{BikeCost, StaticLayer};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{FidelityLevel, LinkBins};
+use openmobisim_core_sim::services::hubs::RunHubs;
 use openmobisim_core_sim::{
     ClassLimits, DemandValues, Disruptions, FlowMotor, LayerSetup, LinkValues, LoadingOptions,
     ModeDefaults, ParkingDefaults, ParkingSetup, Prices, ROUTE_ATTRIBUTES, RoadDisruption,
@@ -1371,12 +1372,11 @@ pub fn run_pipeline(
     let mut diagnostics = build_diagnostics;
     diagnostics.merge(&run_diagnostics);
 
-    // C4: the hub groups, a label of the outputs (in no fingerprint).
-    let groups = openmobisim_core_sim::hub_groups::hub_groups(
-        transit_setup.as_ref().map(|t| t.timetable().as_ref()),
-        parking_setup.as_deref(),
-        hub_group_m,
-    );
+    // The run's one hub set; each stop's and parking's hub id is the `hub_group` the outputs
+    // write (C4; no result depends on it yet, so it is in no fingerprint).
+    let run_hubs =
+        RunHubs::build(transit_setup.as_deref(), &[], parking_setup.as_deref(), &[], hub_group_m);
+    let (stop_hubs, parking_hubs) = (run_hubs.stop_hub_ids(), run_hubs.parking_hub_ids());
     let dir = Path::new(output_dir);
     std::fs::create_dir_all(dir).map_err(to_value_error)?;
     let kpis_path = dir.join(if minimal { "kpis.csv" } else { "kpis.parquet" });
@@ -1455,7 +1455,7 @@ pub fn run_pipeline(
                 r,
                 &description,
                 window.end_s,
-                &groups.stops,
+                &stop_hubs,
             )
             .map_err(to_value_error)?;
             Some(path.to_string_lossy().into_owned())
@@ -1472,7 +1472,7 @@ pub fn run_pipeline(
                 p,
                 r,
                 &description,
-                &groups.parkings,
+                &parking_hubs,
             )
             .map_err(to_value_error)?;
             Some(path.to_string_lossy().into_owned())
@@ -1482,8 +1482,8 @@ pub fn run_pipeline(
     let (parking_bins_table, parking_places_table, parking_summary_table) =
         match (&result.parking, &parking_setup) {
             (Some(r), Some(p)) => (
-                Some(parking_bins(py, p, r, &groups.parkings)?.unbind()),
-                Some(parking_places(py, p, &groups.parkings)?.unbind()),
+                Some(parking_bins(py, p, r, &parking_hubs)?.unbind()),
+                Some(parking_places(py, p, &parking_hubs)?.unbind()),
                 Some(parking_summary(py, p, r)?.unbind()),
             ),
             _ => (None, None, None),
@@ -1537,7 +1537,7 @@ pub fn run_pipeline(
 
     let (transit_calls_table, transit_summary_table) = match (&result.transit, &transit_setup) {
         (Some(r), Some(t)) => (
-            Some(transit_calls(py, t.timetable(), r, window.end_s, &groups.stops)?.unbind()),
+            Some(transit_calls(py, t.timetable(), r, window.end_s, &stop_hubs)?.unbind()),
             Some(
                 transit_summary(
                     py,

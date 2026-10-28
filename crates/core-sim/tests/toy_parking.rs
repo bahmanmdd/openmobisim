@@ -31,10 +31,12 @@ use std::sync::Arc;
 use openmobisim_core_choice::{Logit, Options};
 use openmobisim_core_demand::{ClassDefaults, Mode, Ownership, RawTrip, build_travellers};
 use openmobisim_core_graph::examples::toy_network_parkings;
-use openmobisim_core_graph::hubs::ParkingRow;
+use openmobisim_core_graph::hubs::{HubKind, ParkingKind, ParkingRow, Resource, ResourceKind};
+use openmobisim_core_graph::layers::Layer;
 use openmobisim_core_graph::layers::{BikeCost, StaticLayerDefaults};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::{LonLat, toy_network, toy_network_layers};
+use openmobisim_core_sim::services::hubs::{DEFAULT_HUB_JOIN_M, ResourceRow, RunHubs};
 use openmobisim_core_sim::{
     EventType, LayerSetup, Msa, NO_PARKING, ParkingDefaults, ParkingSetup, Run, RunResult,
     StaticLayers, TransitSetup,
@@ -164,7 +166,6 @@ fn the_parkings_are_hubs_with_their_stops_on_foot() {
     let p = t.parking(&toy_network_parkings());
     assert_eq!(p.report().rows, 3);
     assert_eq!((p.report().kept_car, p.report().kept_bike), (2, 1));
-    assert_eq!(p.hubs().len(), 2, "H (car and bike) and P2");
     let by_id = |id: &str| (0..3u32).find(|&i| p.external_id(i) == id).expect("a parking");
     let (h, p2) = (by_id("H-car"), by_id("P2"));
     assert_eq!(p.hub_external_id(h), "H");
@@ -173,6 +174,90 @@ fn the_parkings_are_hubs_with_their_stops_on_foot() {
     let stop_h = t.transit.timetable().stop_ids().id_of("H").expect("stop H");
     assert_eq!(p.stops(h), &[(NodeId::new(stop_h), 0)], "the stop is where the parking is");
     assert_eq!(p.stops(p2), &[(NodeId::new(stop_h), 225)], "300 m on foot");
+}
+
+/// The run's one hub set on the toy: the tram stops `H` (at `D2`) and `N1`; the parkings `H-car`
+/// and `H-bike` name hub `H`, so they join the stop's hub; `P2`, 300 m from `H` (beyond the
+/// 150 m of the join rule), is a hub of its own. Then three docks: one 50 m from `H` naming no
+/// hub joins the nearest stop's; one naming `P2` joins it; one 2 km from every stop is its own.
+#[test]
+fn a_stop_its_parkings_and_a_dock_beside_it_are_one_hub() {
+    let t = toy();
+    let p = t.parking(&toy_network_parkings());
+    let stop_h = NodeId::new(t.transit.timetable().stop_ids().id_of("H").expect("stop H"));
+    let at_h = t.transit.timetable().stop_position(stop_h);
+    let dock = |id: &str, hub: Option<&str>, east_m: f64| ResourceRow {
+        resource: Resource {
+            external_id: id.to_string(),
+            kind: ResourceKind::Dock,
+            capacity: 20,
+            initial: 10,
+            kw: 0.0,
+            service: Some("bike_share".to_string()),
+        },
+        hub_id: hub.map(str::to_string),
+        // About 111 km per degree of latitude; east by the cosine of it.
+        position: LonLat::new(
+            at_h.lon + east_m / (111_320.0 * at_h.lat.to_radians().cos()),
+            at_h.lat,
+        ),
+        access_points: Vec::new(),
+    };
+    let rows = [
+        dock("d-near", None, 50.0),
+        dock("d-p2", Some("P2"), 5_000.0),
+        dock("d-far", None, 2_000.0),
+    ];
+    let hubs = RunHubs::build(Some(&t.transit), &[], Some(&p), &rows, DEFAULT_HUB_JOIN_M);
+    let set = hubs.set();
+    let ids: Vec<&str> = (0..set.len()).map(|h| set.external_ids().external(h)).collect();
+    assert_eq!(ids, ["H", "N1", "P2", "d-far"], "sorted by id");
+    let h = set.id_of("H").unwrap();
+    assert_eq!(hubs.stop_hub(stop_h), h);
+    assert_eq!(set.kind(h), HubKind::Stop);
+    let kinds: Vec<ResourceKind> = set.resources(h).map(|r| set.resource_kind(r)).collect();
+    assert_eq!(
+        kinds,
+        [
+            ResourceKind::Parking(ParkingKind::Bike),
+            ResourceKind::Parking(ParkingKind::Car),
+            ResourceKind::Dock
+        ],
+        "the stop's hub holds both parkings (in the parkings' order) and the dock beside it"
+    );
+    let layers: Vec<Layer> = set.access_points(h).map(|a| set.access_point(a).layer).collect();
+    assert_eq!(layers, [Layer::Car, Layer::Bike, Layer::Walk, Layer::Transit]);
+    let p2 = set.id_of("P2").unwrap();
+    assert_eq!(set.kind(p2), HubKind::Declared);
+    assert_eq!(set.resource_hub(hubs.row_resource(1)), p2, "a dock naming a hub joins it by id");
+    let far = set.id_of("d-far").unwrap();
+    assert_eq!(
+        set.resource_hub(hubs.row_resource(2)),
+        far,
+        "a dock far from every stop is its own hub"
+    );
+    assert_eq!(set.kind(far), HubKind::Declared);
+    // The labels the outputs write: each parking's hub id, by parking index.
+    let by_id = |id: &str| (0..3u32).find(|&i| p.external_id(i) == id).expect("a parking");
+    let labels = hubs.parking_hub_ids();
+    assert_eq!(
+        [
+            &labels[by_id("H-car") as usize],
+            &labels[by_id("H-bike") as usize],
+            &labels[by_id("P2") as usize]
+        ],
+        ["H", "H", "P2"]
+    );
+    // Rebuilt, the same ids.
+    let again = RunHubs::build(Some(&t.transit), &[], Some(&p), &rows, DEFAULT_HUB_JOIN_M);
+    assert_eq!(
+        (0..again.set().len()).map(|h| again.set().external_ids().external(h)).collect::<Vec<_>>(),
+        ids
+    );
+    assert_eq!(again.row_resource(0), hubs.row_resource(0));
+    // At 0 m nothing joins by distance: the near dock is its own hub too.
+    let apart = RunHubs::build(Some(&t.transit), &[], Some(&p), &rows, 0.0);
+    assert_eq!(apart.set().len(), 5);
 }
 
 #[test]
