@@ -11,6 +11,7 @@
 //! | [`hubs`] | [`hubs::RunHubs`] — the run's one hub set: stops, parkings, docks, chargers and stands, joined by hub id or by distance |
 //! | [`engine`] | [`engine::FleetEngine`] — the services' day: legs, vehicles and docks, events in time order |
 //! | [`outcome`] | [`outcome::FleetOutcome`] — what became of each leg, and the day's counts |
+//! | [`roads`] | [`roads::RoadTimes`], [`roads::FrozenRoads`], [`roads::FrozenPaths`] — a day's road times and the drives, rides and walks on them, without a run |
 //!
 //! **Cost:** per dock about 60 bytes and its neighbours, found by one bounded walk search per
 //! dock, once per run; per vehicle and charger about 40 bytes.
@@ -18,6 +19,7 @@
 pub mod engine;
 pub mod hubs;
 pub mod outcome;
+pub mod roads;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;

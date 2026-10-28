@@ -55,6 +55,9 @@ pub const MAGIC: [u8; 8] = *b"OMSNET\r\n";
 /// The first eight bytes of every parkings file, made as [`MAGIC`] is.
 pub const PARKINGS_MAGIC: [u8; 8] = *b"OMSPRK\r\n";
 
+/// The first eight bytes of a file holding a day's road times (a fleet's frozen day).
+pub const ROAD_TIMES_MAGIC: [u8; 8] = *b"OMSRTM\r\n";
+
 /// What a file holds, said by its first eight bytes: a [`Reader`] of one refuses a file of the
 /// other before reading anything else of it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +66,8 @@ pub enum Content {
     Network,
     /// A scenario's parkings: [`PARKINGS_MAGIC`].
     Parkings,
+    /// A day's road times: [`ROAD_TIMES_MAGIC`].
+    RoadTimes,
 }
 
 impl Content {
@@ -72,6 +77,7 @@ impl Content {
         match self {
             Content::Network => MAGIC,
             Content::Parkings => PARKINGS_MAGIC,
+            Content::RoadTimes => ROAD_TIMES_MAGIC,
         }
     }
 
@@ -81,6 +87,7 @@ impl Content {
         match self {
             Content::Network => "network",
             Content::Parkings => "parkings",
+            Content::RoadTimes => "road times",
         }
     }
 }
