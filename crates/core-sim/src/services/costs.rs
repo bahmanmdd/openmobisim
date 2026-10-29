@@ -1,8 +1,11 @@
 //! What a dock is expected to cost a traveller, per time bin, as the fleet engine's days left
 //! it.
 //!
-//! **Per dock and bin**, for a pickup: the share of the bin the dock was empty times the walk to
-//! its nearest neighbour that was empty for at most half of that bin (or
+//! **Per dock and bin**, what a day's legs met there: the extra seconds of the pickups planned at
+//! the dock in the bin, and of the returns, each the mean over those legs weighted by the people
+//! they stand for ([`DockCosts::with_legs`]). **Where no leg went**, an estimate from the
+//! dock's counts ([`DockCosts::from_bins`]): for a pickup, the share of the bin the dock was
+//! empty times the walk to its nearest neighbour that was empty for at most half of that bin (or
 //! [`DockDefaults::fail_s`](super::DockDefaults::fail_s) if none); for a return, the same with
 //! "full" in place of "empty". **Choice reads the expected cost**, the average over the
 //! loadings so far (the method of successive averages: each loading's realised costs averaged
@@ -76,6 +79,33 @@ impl DockCosts {
             }
         }
         Self { start_s: bins.start_s, bin_s: f64::from(bins.bin_s), bins: nb, pickup, ret }
+    }
+
+    /// The realised costs of a day whose legs met `pickups` and `returns` (each: dock, second
+    /// from midnight, extra seconds met, people): in a dock and bin some leg met, the mean of
+    /// what those legs met, weighted by people; elsewhere the cost `self` says (the bins').
+    #[must_use]
+    pub fn with_legs(
+        mut self,
+        pickups: &[(u32, f64, f64, f64)],
+        returns: &[(u32, f64, f64, f64)],
+    ) -> Self {
+        for (side, met) in [(0, pickups), (1, returns)] {
+            let mut sum = vec![0.0; self.pickup.len()];
+            let mut people = vec![0.0; self.pickup.len()];
+            for &(dock, t, extra, w) in met {
+                let c = self.cell(dock, t);
+                sum[c] += w * extra;
+                people[c] += w;
+            }
+            let v = if side == 0 { &mut self.pickup } else { &mut self.ret };
+            for ((v, s), p) in v.iter_mut().zip(&sum).zip(&people) {
+                if *p > 0.0 {
+                    *v = s / p;
+                }
+            }
+        }
+        self
     }
 
     /// Before any loading: the costs of a day with no legs over `window` (seconds from

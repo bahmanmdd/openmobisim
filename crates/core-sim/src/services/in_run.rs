@@ -5,8 +5,10 @@
 //! trips whose choice was a shared bike give the day's legs (their chosen pickup and return
 //! docks; a request at the departure plus the walk to the pickup dock); the engine plays them
 //! with no operator; a trip whose pickup fails walks on and arrives on foot, as the engine's
-//! day says. The docks' realised costs ([`DockCosts::from_bins`]) are averaged into the
-//! expectation the next choice reads (the method of successive averages, [`DockCosts::absorb`]).
+//! day says. The docks' realised costs (what the legs met per dock and bin,
+//! [`DockCosts::with_legs`]; the counts' estimate where no leg went) are averaged into the
+//! expectation the next choice reads (the method of successive averages, [`DockCosts::absorb`]),
+//! so the expectation's fixed point is what the travellers met.
 //!
 //! **The mismatch** of a loading ([`ShareDay::mismatch_s`]): per leg that arrived, the absolute
 //! difference between the extra seconds it was expected to spend at the docks (its choice's
@@ -180,7 +182,31 @@ pub fn play(
     .expect("no policy, no policy failure");
     let setup = &setups[0];
     let bins = outcome.docks[0].as_ref().expect("the run's service is docked bikes");
-    let realised = DockCosts::from_bins(setup, bins);
+    let (pickup_s, return_s) = match setup.parts() {
+        ServiceParts::BikeDocked(_, d) => (d.pickup_s, d.return_s),
+        ServiceParts::Taxi(..) => (0.0, 0.0),
+    };
+    let (mut met_pickup, mut met_return) = (Vec::new(), Vec::new());
+    for (l, o) in legs.iter().zip(&outcome.legs) {
+        if !(matches!(o.status, LegStatus::Served | LegStatus::Failed) && o.arrived_s.is_finite()) {
+            continue;
+        }
+        let w = f64::from(l.leg.weight);
+        let total = o.arrived_s - l.planned_arrival_s(setup);
+        // The pickup's part: the seconds until a bike was in hand past the planned ones; a
+        // pickup that failed met the whole of it.
+        let at_pickup = if o.picked.is_some() && o.picked_s.is_finite() {
+            (o.picked_s - l.leg.request_s - pickup_s).max(0.0)
+        } else {
+            total
+        };
+        met_pickup.push((l.leg.pickup_dock, l.leg.request_s, at_pickup, w));
+        if o.picked.is_some() {
+            let planned_return = l.leg.request_s + pickup_s + l.leg.ride_s + return_s;
+            met_return.push((l.leg.return_dock, planned_return, (total - at_pickup).max(0.0), w));
+        }
+    }
+    let realised = DockCosts::from_bins(setup, bins).with_legs(&met_pickup, &met_return);
     let (mut sum, mut signed, mut people) = (0.0, 0.0, 0.0);
     for (l, o) in legs.iter().zip(&outcome.legs) {
         if matches!(o.status, LegStatus::Served | LegStatus::Failed) && o.arrived_s.is_finite() {
