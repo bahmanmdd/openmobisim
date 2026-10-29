@@ -169,6 +169,8 @@ pub(crate) struct DockRun {
     pub(crate) overflow_max: f64,
     /// Per dock, the counts since the last policy step.
     pub(crate) since: SinceStep,
+    /// Per dock, the bikes in operators' vans on their way to it.
+    pub(crate) incoming: Vec<u32>,
 }
 
 /// A docked service's counts the handlers change: per dock its bikes, and the bikes ridden.
@@ -201,6 +203,7 @@ impl DockRun {
             clock: vec![0.0; docks.len()],
             overflow_max: 0.0,
             since: SinceStep::new(docks.len()),
+            incoming: vec![0; docks.len()],
         }
     }
 

@@ -258,6 +258,7 @@ pub(crate) fn frozen(
     services: &[ServiceTuple<'_>],
     trips: Vec<TripTuple>,
     road_times: Option<RoadTuple>,
+    zone_grid_m: f64,
 ) -> PyResult<Frozen> {
     let net = network.inner.clone();
     let layer = |l: StaticLayer| -> PyResult<LayerSetup> {
@@ -316,15 +317,19 @@ pub(crate) fn frozen(
     let (planned, report) = plan_legs(&setups, &rows, &net, &walk, &paths);
     let legs: Vec<Leg> = planned.iter().map(|&(_, l)| l).collect();
     let setups = Arc::new(setups);
-    let world = Arc::new(FrozenWorld::new(
-        Arc::clone(&net),
-        turns,
-        Arc::new(walk),
-        Arc::new(bike),
-        times,
-        Arc::clone(&setups),
-        &legs,
-    ));
+    let world = Arc::new(
+        FrozenWorld::new(
+            Arc::clone(&net),
+            turns,
+            Arc::new(walk),
+            Arc::new(bike),
+            times,
+            Arc::clone(&setups),
+            &legs,
+        )
+        .with_zone_grid_m(zone_grid_m)
+        .map_err(bad)?,
+    );
     let ids = Arc::new(Ids::new(&setups, Arc::clone(&net)));
     Ok(Frozen {
         setups,
@@ -481,9 +486,10 @@ pub fn fleet_day<'py>(
     window: (f64, f64),
     seed: u64,
     policy: Option<PolicyTuple<'py>>,
+    zone_grid_m: f64,
 ) -> PyResult<Bound<'py, PyDict>> {
     let started = Instant::now();
-    let f = frozen(network, &services, trips, road_times)?;
+    let f = frozen(network, &services, trips, road_times, zone_grid_m)?;
     let setup_s = started.elapsed().as_secs_f64();
     let clock = Instant::now();
     let day = Arc::new(FleetDay { window, legs: f.legs.clone(), seed });

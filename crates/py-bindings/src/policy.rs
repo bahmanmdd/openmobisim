@@ -10,12 +10,15 @@
 //!
 //! **The view is a copy** of what the engine's view borrows (one array per field and step), and
 //! it refuses to be read once its step has ended: a policy keeps what it needs as its own
-//! copies.
+//! copies. Its queries (`travel_times`, `expected_legs`, `nearest`) are the engine's
+//! ([`openmobisim_core_sim::services::queries`]), run in Rust without the interpreter lock and
+//! cached within the step; they refuse after the step like the rest of the view.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use numpy::IntoPyArray;
+use numpy::ndarray::Array2;
+use numpy::{IntoPyArray, PyArray2};
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
@@ -23,6 +26,7 @@ use pyo3::types::{PyDict, PyTuple};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_sim::services::decisions::{Decision, DecisionRecord};
 use openmobisim_core_sim::services::policy::{DayInfo, Policy, PolicyDescription, policy_builtin};
+use openmobisim_core_sim::services::queries::{NearestKind, Queries};
 use openmobisim_core_sim::services::view::{ServiceView, View};
 use openmobisim_core_sim::services::{ServiceParts, ServiceSetup};
 use openmobisim_core_types::ids::{EntityId, NodeId};
@@ -82,6 +86,20 @@ impl Ids {
         self.net.node_external_ids().external_of(n).unwrap_or_default().to_string()
     }
 
+    /// Road node `id` (a text id, or an integer standing for its text).
+    fn node_of(&self, id: &Bound<'_, PyAny>) -> PyResult<NodeId> {
+        let text = match id.extract::<String>() {
+            Ok(t) => t,
+            Err(_) => id.extract::<i64>().map(|i| i.to_string()).map_err(|_| {
+                PyValueError::new_err(format!("a road node id is text or an integer, not {id}"))
+            })?,
+        };
+        self.net
+            .node_external_ids()
+            .typed_id_of::<NodeId>(&text)
+            .ok_or_else(|| PyKeyError::new_err(format!("no road node {text:?}")))
+    }
+
     fn service(&self, name: &str) -> Result<(u16, &ServiceIds), String> {
         let names: Vec<&str> = self.services.iter().map(|s| s.name.as_str()).collect();
         let k = names
@@ -113,6 +131,9 @@ struct ViewData {
     window: (f64, f64),
     names: Vec<String>,
     sections: Vec<Py<PyDict>>,
+    zones: Option<Py<PyDict>>,
+    queries: Queries,
+    ids: Arc<Ids>,
 }
 
 impl PyPolicyView {
@@ -179,6 +200,98 @@ impl PyPolicyView {
         self.read(|d| Ok(d.names.iter().any(|n| n == name)))
     }
 
+    /// The zones: a square grid of ``grid_m`` metres over the road network's nodes, a zone per
+    /// cell holding a node (``id``, its centre's ``lon`` and ``lat``); ``None`` without zones.
+    /// Each service's ``zone`` gives the zone per dock or vehicle (-1: none).
+    #[getter]
+    fn zones<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.read(|d| Ok(d.zones.as_ref().map(|z| z.bind(py).clone())))
+    }
+
+    /// Seconds from each road node of ``from_nodes`` to each of ``to_nodes``, leaving at the
+    /// step's second on the day's road times: a matrix ``[len(from_nodes), len(to_nodes)]``,
+    /// ``inf`` where no road gets there within ``max_s`` seconds (nor within 4 hours).
+    /// ``service`` (a name, or ``None``) is checked but changes nothing: every service's
+    /// vehicles drive the roads.
+    #[pyo3(signature = (service, from_nodes, to_nodes, max_s = f64::INFINITY))]
+    fn travel_times<'py>(
+        &self,
+        py: Python<'py>,
+        service: Option<&str>,
+        from_nodes: Vec<Bound<'py, PyAny>>,
+        to_nodes: Vec<Bound<'py, PyAny>>,
+        max_s: f64,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let (q, from, to) = self.read(|d| {
+            if let Some(name) = service {
+                d.ids.service(name).map_err(PyKeyError::new_err)?;
+            }
+            let nodes = |list: &[Bound<'py, PyAny>]| -> PyResult<Vec<NodeId>> {
+                list.iter().map(|n| d.ids.node_of(n)).collect()
+            };
+            Ok((d.queries.clone(), nodes(&from_nodes)?, nodes(&to_nodes)?))
+        })?;
+        let m = py.detach(|| q.travel_times(&from, &to, max_s)).map_err(PyValueError::new_err)?;
+        let a = Array2::from_shape_vec((from.len(), to.len()), m.to_vec())
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(a.into_pyarray(py))
+    }
+
+    /// The people expected to ask for ``service`` per dock (a docked service: pickups at the
+    /// dock each leg planned; rows as ``view[service]["dock_id"]``) or per zone (a taxi fleet:
+    /// requests by their origin's zone; rows as ``view.zones["id"]``), per time bin of
+    /// ``bin_s`` seconds from the window's start: a matrix ``[rows, bins]``. From the day's
+    /// legs before the variation a seed draws (``fleet_environment``'s ``legs_keep`` and
+    /// ``departure_jitter_s``): the expectation over the days the seeds draw. **In a day
+    /// without variation (``fleet_day``, or ``legs_keep=1`` and no jitter) these are the
+    /// day's own legs: what the day will ask for.**
+    #[pyo3(signature = (service, bin_s = 900.0))]
+    fn expected_legs<'py>(
+        &self,
+        py: Python<'py>,
+        service: &str,
+        bin_s: f64,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let e = self.read(|d| {
+            let (s, _) = d.ids.service(service).map_err(PyKeyError::new_err)?;
+            d.queries.expected_legs(s, bin_s).map_err(PyValueError::new_err)
+        })?;
+        let a = Array2::from_shape_vec((e.rows, e.bins), e.values.clone())
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(a.into_pyarray(py))
+    }
+
+    /// ``service``'s ``k`` docks (``kind="docks"``, by their road nodes) or vehicles
+    /// (``kind="vehicles"``, by the nodes they are at or driving to) nearest road node
+    /// ``node`` by free-flow time: a list of ``(id, seconds)``, nearest first, ties by their
+    /// order in the view; those no road reaches are left out.
+    fn nearest(
+        &self,
+        py: Python<'_>,
+        service: &str,
+        kind: &str,
+        node: &Bound<'_, PyAny>,
+        k: usize,
+    ) -> PyResult<Vec<(String, f64)>> {
+        let (q, s, kind, from, ids) = self.read(|d| {
+            let (s, _) = d.ids.service(service).map_err(PyKeyError::new_err)?;
+            let kind = match kind {
+                "docks" => NearestKind::Docks,
+                "vehicles" => NearestKind::Vehicles,
+                other => {
+                    return Err(PyValueError::new_err(format!(
+                        "kind is \"docks\" or \"vehicles\", not {other:?}"
+                    )));
+                }
+            };
+            Ok((d.queries.clone(), s, kind, d.ids.node_of(node)?, Arc::clone(&d.ids)))
+        })?;
+        let found = py.detach(|| q.nearest(s, kind, from, k)).map_err(PyValueError::new_err)?;
+        let si = &ids.services[usize::from(s)];
+        let names = if kind == NearestKind::Docks { &si.docks } else { &si.vehicles };
+        Ok(found.into_iter().map(|(i, secs)| (names[i as usize].clone(), secs)).collect())
+    }
+
     fn __repr__(&self) -> String {
         let guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         match guard.as_ref() {
@@ -191,7 +304,13 @@ impl PyPolicyView {
 }
 
 /// The Python view of `view`: copies of its arrays, ids in place of indices.
-pub(crate) fn view_to_py(py: Python<'_>, view: &View<'_>, ids: &Ids) -> PyResult<Py<PyPolicyView>> {
+pub(crate) fn view_to_py(
+    py: Python<'_>,
+    view: &View<'_>,
+    ids: &Arc<Ids>,
+) -> PyResult<Py<PyPolicyView>> {
+    let zones = view.queries.zones();
+    let zone_of_node = |n: NodeId| zones.and_then(|z| z.of_node(n)).map_or(-1, i64::from);
     let mut sections = Vec::with_capacity(view.services.len());
     for (s, section) in ids.services.iter().zip(&view.services) {
         let d = PyDict::new(py);
@@ -199,8 +318,15 @@ pub(crate) fn view_to_py(py: Python<'_>, view: &View<'_>, ids: &Ids) -> PyResult
             ServiceView::BikeDocked(v) => {
                 d.set_item("kind", "bike_docked")?;
                 d.set_item("dock_id", s.docks.clone())?;
+                d.set_item(
+                    "node",
+                    (0..v.position.len())
+                        .map(|k| v.road_node.get(k).map(|&n| ids.node(n)))
+                        .collect::<Vec<_>>(),
+                )?;
                 d.set_item("bikes", v.bikes.to_vec().into_pyarray(py))?;
                 d.set_item("slots", v.slots.to_vec().into_pyarray(py))?;
+                d.set_item("incoming", v.incoming.to_vec().into_pyarray(py))?;
                 d.set_item(
                     "lon",
                     v.position.iter().map(|p| p.lon).collect::<Vec<_>>().into_pyarray(py),
@@ -220,13 +346,25 @@ pub(crate) fn view_to_py(py: Python<'_>, view: &View<'_>, ids: &Ids) -> PyResult
                 }
                 d.set_item("moving", v.moving)?;
                 d.set_item("riding", v.riding)?;
+                let zone: Vec<i64> = (0..v.position.len())
+                    .map(|k| match v.road_node.get(k) {
+                        Some(&n) => zone_of_node(n),
+                        None => zones.and_then(|z| z.of_point(v.position[k])).map_or(-1, i64::from),
+                    })
+                    .collect();
+                d.set_item("zone", zone.into_pyarray(py))?;
             }
             ServiceView::Taxi(v) => {
                 d.set_item("kind", "taxi")?;
                 d.set_item("vehicle_id", s.vehicles.clone())?;
                 d.set_item("state", v.state.iter().map(|x| x.as_str()).collect::<Vec<_>>())?;
                 d.set_item("node", v.node.iter().map(|&n| ids.node(n)).collect::<Vec<_>>())?;
+                d.set_item("until_s", v.until_s.to_vec().into_pyarray(py))?;
                 d.set_item("soc", v.soc.to_vec().into_pyarray(py))?;
+                d.set_item(
+                    "zone",
+                    v.node.iter().map(|&n| zone_of_node(n)).collect::<Vec<_>>().into_pyarray(py),
+                )?;
                 d.set_item(
                     "nearest_charger",
                     v.node
@@ -241,6 +379,14 @@ pub(crate) fn view_to_py(py: Python<'_>, view: &View<'_>, ids: &Ids) -> PyResult
                 d.set_item(
                     "waiting_node",
                     v.waiting.iter().map(|w| ids.node(w.origin)).collect::<Vec<_>>(),
+                )?;
+                d.set_item(
+                    "waiting_zone",
+                    v.waiting
+                        .iter()
+                        .map(|w| zone_of_node(w.origin))
+                        .collect::<Vec<_>>()
+                        .into_pyarray(py),
                 )?;
                 d.set_item(
                     "waiting_since_s",
@@ -264,6 +410,19 @@ pub(crate) fn view_to_py(py: Python<'_>, view: &View<'_>, ids: &Ids) -> PyResult
         window: view.window,
         names: ids.services.iter().map(|s| s.name.clone()).collect(),
         sections,
+        zones: match zones {
+            Some(z) => {
+                let d = PyDict::new(py);
+                d.set_item("grid_m", z.grid_m())?;
+                d.set_item("id", (0..z.len() as i64).collect::<Vec<_>>().into_pyarray(py))?;
+                d.set_item("lon", z.lon().to_vec().into_pyarray(py))?;
+                d.set_item("lat", z.lat().to_vec().into_pyarray(py))?;
+                Some(d.unbind())
+            }
+            None => None,
+        },
+        queries: view.queries.clone(),
+        ids: Arc::clone(ids),
     };
     Py::new(py, PyPolicyView { step: view.step, inner: Mutex::new(Some(data)) })
 }

@@ -19,10 +19,13 @@ decisions, accepted or refused with the reason, are in ``FleetDay.decisions()``.
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+import numpy as np
 
 from openmobisim import _core
 from openmobisim.operator import _policy_for_binding
@@ -33,7 +36,10 @@ __all__ = [
     "FleetDay",
     "Service",
     "REWARD_WEIGHTS",
+    "ZONE_GRID_M",
     "FleetEnvironment",
+    "FleetVectorEnvironment",
+    "TAXI_STATES",
     "fleet_day",
     "fleet_environment",
     "road_times_read",
@@ -270,6 +276,10 @@ def _inputs(
     return parts, rows, roads, (start, end)
 
 
+#: The side of the square zones a policy's view groups places by, in metres: an assumption,
+#: uncalibrated (``zone_grid_m`` of ``fleet_day`` and ``fleet_environment``).
+ZONE_GRID_M: float = 1000.0
+
 #: The standard reward's weights (``fleet_environment``): per failed leg, per minute waited, per
 #: extra minute walked, per van kilometre. Uncalibrated; named so a study sets its own.
 REWARD_WEIGHTS: dict[str, float] = {"w_fail": 1.0, "w_wait": 0.1, "w_walk": 0.1, "w_km": 0.1}
@@ -284,6 +294,10 @@ def fleet_environment(
     road_times: RoadTimes | None = None,
     step_s: float = 900.0,
     reward_weights: Mapping[str, float] | None = None,
+    legs_keep: float = 1.0,
+    departure_jitter_s: float = 0.0,
+    n: int = 1,
+    zone_grid_m: float = ZONE_GRID_M,
 ) -> Any:
     """A fleet day to step through: ``reset(seed)``, then ``step(decisions)`` until the day ends.
 
@@ -299,7 +313,15 @@ def fleet_environment(
     The reward of a step is minus ``w_fail`` × the people of the legs that failed, ``w_wait`` ×
     the minutes they waited, ``w_walk`` × the extra minutes they walked, and ``w_km`` × the van
     kilometres of the moves carried out, each counted once, when its leg ends (``REWARD_WEIGHTS``,
-    uncalibrated).
+    uncalibrated). ``info["refused"]`` holds, per decision given at the step, why the engine
+    refused it (``None``: accepted).
+
+    With ``n`` above 1 the result is a ``FleetVectorEnvironment``: ``n`` days stepped together,
+    in parallel, ``reset(seeds)`` taking one seed per day and ``step`` one list of decisions per
+    day. Seed ``k`` gives the same day there as here.
+
+    ``observation(view, spec)`` and ``action(vector, spec)`` turn views and decisions into arrays
+    of fixed shapes, for learning methods (``spec`` is described with ``observation``).
 
     Args:
         network: The road network.
@@ -310,6 +332,13 @@ def fleet_environment(
         step_s: The seconds between steps.
         reward_weights: Weights by name in place of ``REWARD_WEIGHTS``'; a name not among them is
             refused with the list.
+        legs_keep: The share of the trips' legs each day keeps, drawn by the day's seed (1: all).
+        zone_grid_m: The side of the square zones a view groups places by, in metres
+            (``ZONE_GRID_M``, 1 000: an assumption, uncalibrated).
+        departure_jitter_s: How far each kept leg's request moves, drawn by the day's seed, in
+            seconds either way (0: not at all). With these two, each seed of ``reset`` is another
+            day; both thin and shift the same trips, they do not draw a new demand.
+        n: How many days to step together (1: a ``FleetEnvironment``).
 
     Raises:
         ValueError: As ``fleet_day``.
@@ -319,26 +348,175 @@ def fleet_environment(
         if k not in weights:
             raise ValueError(f"unknown reward weight {k!r}; the weights are {sorted(weights)}")
         weights[k] = float(v)
+    if int(n) < 1:
+        raise ValueError(f"n must be 1 or more, got {n}")
     parts, rows, roads, span = _inputs(services, trips, window, road_times)
-    return FleetEnvironment(
-        _core._fleet_environment(
-            network,
-            parts,
-            rows,
-            roads,
-            span,
-            float(step_s),
-            (weights["w_fail"], weights["w_wait"], weights["w_walk"], weights["w_km"]),
-        )
+    inner = _core._fleet_environment(
+        network,
+        parts,
+        rows,
+        roads,
+        span,
+        float(step_s),
+        (weights["w_fail"], weights["w_wait"], weights["w_walk"], weights["w_km"]),
+        float(legs_keep),
+        float(departure_jitter_s),
+        float(zone_grid_m),
     )
+    if int(n) == 1:
+        return FleetEnvironment(inner, network)
+    return FleetVectorEnvironment(inner.vector(int(n)), network)
 
 
-class FleetEnvironment:
+#: A taxi's state codes in ``observation``: its state's index here.
+TAXI_STATES: tuple[str, ...] = (
+    "idle",
+    "to_pickup",
+    "occupied",
+    "to_charger",
+    "queued_at_charger",
+    "charging",
+    "relocating",
+)
+
+_SPEC_KEYS = {"service", "flat", "reach_m"}
+
+
+class _Encoding:
+    """The fixed-shape observations and actions of a fleet environment (both kinds share them)."""
+
+    _inner: Any
+    _network: Any
+
+    def _spec(self, spec: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+        unknown = set(spec) - _SPEC_KEYS
+        if unknown:
+            raise ValueError(
+                f"unknown spec keys {sorted(unknown)}; the keys are {sorted(_SPEC_KEYS)}"
+            )
+        layout = self.layout()
+        name = spec.get("service")
+        if name not in layout:
+            raise ValueError(f"spec['service'] must be one of {list(layout)}, got {name!r}")
+        return name, layout[name]
+
+    def layout(self) -> dict[str, dict[str, Any]]:
+        """Per service: its ``kind``, and its docks' or vehicles' ids, in the views' order.
+
+        A docked service has ``dock_id`` and ``slots``; a taxi fleet ``vehicle_id``.
+        """
+        if not hasattr(self, "_layout"):
+            self._layout = {k: dict(v) for k, v in self._inner.layout().items()}
+        return self._layout
+
+    @property
+    def window(self) -> tuple[float, float]:
+        """The window's start and end, in seconds from midnight."""
+        return tuple(self._inner.window)
+
+    def observation(self, view: Any, spec: Mapping[str, Any]) -> Any:
+        """A view as arrays of a fixed shape, for one service.
+
+        A docked service gives ``{"docks": float32 [docks, 5], "time": float32 [3]}``: per dock
+        (in ``layout()``'s order) ``bikes, slots, pickups, returns, failed``, the last three
+        counted since the previous step (people); the time is ``t_frac`` (the share of the
+        window gone), and the sine and cosine of the hour of the day (2π · t / 86 400 s). A taxi
+        fleet gives ``{"vehicles": float32 [vehicles, 3], "time": ...}``: per vehicle its state's
+        code (its index in ``TAXI_STATES``), its charge (share of the battery) and the requests
+        waiting within ``reach_m`` in a straight line of its ``node`` in the view (where it is,
+        or where it is heading).
+
+        Args:
+            view: A view from ``reset`` or ``step``.
+            spec: A dict: ``service`` (the service's name; required), ``flat`` (``True``: one 1-D
+                array, the rows then the time; ``False`` by default), ``reach_m`` (taxis: the
+                metres within which a waiting request counts; 1000 by default). Any other key is
+                refused with the list.
+        """
+        name, layout = self._spec(spec)
+        v = view[name]
+        start, end = self.window
+        t = float(view.t)
+        angle = 2.0 * math.pi * t / 86_400.0
+        frac = (t - start) / (end - start)
+        clock = np.array([frac, math.sin(angle), math.cos(angle)], dtype=np.float32)
+        if layout["kind"] == "bike_docked":
+            key = "docks"
+            rows = np.stack(
+                [np.asarray(v[c], dtype=np.float32) for c in _DOCK_COLUMNS], axis=1
+            ).reshape(len(layout["dock_id"]), len(_DOCK_COLUMNS))
+        else:
+            key = "vehicles"
+            rows = self._taxi_rows(v, float(spec.get("reach_m", 1000.0)))
+        if spec.get("flat", False):
+            return np.concatenate([rows.ravel(), clock])
+        return {key: rows, "time": clock}
+
+    def _taxi_rows(self, v: Mapping[str, Any], reach_m: float) -> np.ndarray:
+        code = np.array([TAXI_STATES.index(s) for s in v["state"]], dtype=np.float32)
+        soc = np.asarray(v["soc"], dtype=np.float32)
+        here = self._lonlat(v["node"])
+        waiting = self._lonlat(v["waiting_node"])
+        near = np.zeros(len(code), dtype=np.float32)
+        if len(waiting) and len(here):
+            lat0 = np.radians(here[:, 1])[:, None]
+            dx = np.radians(waiting[None, :, 0] - here[:, None, 0]) * np.cos(lat0)
+            dy = np.radians(waiting[None, :, 1] - here[:, None, 1])
+            metres = 6_371_000.0 * np.hypot(dx, dy)
+            near = (metres <= reach_m).sum(axis=1).astype(np.float32)
+        return np.stack([code, soc, near], axis=1).reshape(len(code), 3)
+
+    def _lonlat(self, nodes: Sequence[str]) -> np.ndarray:
+        if not hasattr(self, "_nodes"):
+            self._nodes: dict[str, tuple[float, float]] = {}
+        for n in nodes:
+            if n not in self._nodes:
+                self._nodes[n] = tuple(self._network.node_lonlat(n))
+        return np.array([self._nodes[n] for n in nodes], dtype=np.float64).reshape(len(nodes), 2)
+
+    def action(self, vector: Any, spec: Mapping[str, Any]) -> list[Any]:
+        """A vector of target levels, one per dock of a docked service, as ``Target`` decisions.
+
+        Entry ``i`` is the bikes dock ``i`` (in ``layout()``'s order) should hold, or -1: no
+        target. Levels are not checked here: the engine refuses one above the dock's slots, with
+        its reason (``info["refused"]``). A taxi fleet is steered with decisions
+        (``Relocate``, ``Charge``), not by this function.
+
+        Args:
+            vector: The levels, integers, one per dock.
+            spec: As for ``observation``.
+        """
+        from openmobisim.operator import Target
+
+        name, layout = self._spec(spec)
+        if layout["kind"] != "bike_docked":
+            raise ValueError(
+                f"{name!r} is a {layout['kind']} service: action() encodes docked services only; "
+                "steer it with decisions (Relocate, Charge)"
+            )
+        levels = np.asarray(vector).ravel()
+        docks = layout["dock_id"]
+        if len(levels) != len(docks):
+            raise ValueError(f"the vector has {len(levels)} levels, the service {len(docks)} docks")
+        if not np.all(np.equal(np.mod(levels, 1), 0)):
+            raise ValueError("the levels must be integers")
+        return [Target(name, d, int(x)) for d, x in zip(docks, levels, strict=True) if x >= 0]
+
+    def plan(self) -> dict[str, int]:
+        """The trips given, the legs planned and those left out, by reason."""
+        return dict(self._inner.plan())
+
+
+_DOCK_COLUMNS = ("bikes", "slots", "pickups", "returns", "failed")
+
+
+class FleetEnvironment(_Encoding):
     """A fleet day to step through (``fleet_environment``)."""
 
-    def __init__(self, inner: Any) -> None:
+    def __init__(self, inner: Any, network: Any = None) -> None:
         """Wrap the engine's environment (made by ``fleet_environment``)."""
         self._inner = inner
+        self._network = network
 
     def reset(self, seed: int = 0) -> tuple[Any, dict[str, Any]]:
         """Start the day with ``seed``: ``(view, info)`` at the window's start."""
@@ -355,16 +533,54 @@ class FleetEnvironment:
 
     def fork(self) -> FleetEnvironment:
         """A copy of the day at its clock, to simulate ahead without touching this one."""
-        return FleetEnvironment(self._inner.fork())
+        return FleetEnvironment(self._inner.fork(), self._network)
 
     @property
     def t(self) -> float:
         """The clock, in seconds from midnight."""
         return self._inner.t
 
-    def plan(self) -> dict[str, int]:
-        """The trips given, the legs planned and those left out, by reason."""
-        return dict(self._inner.plan())
+
+class FleetVectorEnvironment(_Encoding):
+    """``n`` fleet days stepped together, in parallel (``fleet_environment(..., n=...)``).
+
+    One call steps every day; the engines run in parallel on the machine's cores. Seed ``k``
+    gives the same day here as in a single environment. ``observation`` and ``action`` encode
+    one day's view or decisions, as for ``FleetEnvironment``.
+    """
+
+    def __init__(self, inner: Any, network: Any = None) -> None:
+        """Wrap the engine's environments (made by ``fleet_environment``)."""
+        self._inner = inner
+        self._network = network
+
+    def __len__(self) -> int:
+        """How many days."""
+        return len(self._inner)
+
+    def reset(self, seeds: Sequence[int]) -> tuple[list[Any], list[dict[str, Any]]]:
+        """Start each day with its seed (one per day): ``(views, infos)``."""
+        return self._inner.reset([int(s) for s in seeds])
+
+    def step(
+        self, decisions: Sequence[Sequence[Any] | None]
+    ) -> tuple[list[Any], np.ndarray, list[bool], list[bool], list[dict[str, Any]]]:
+        """Apply one list of decisions per day and run each one step.
+
+        Returns ``(views, rewards, terminated, truncated, infos)``: lists of one per day,
+        ``rewards`` an array.
+
+        Raises:
+            ValueError: Unless there is one list per day.
+        """
+        from openmobisim.operator import _decision
+
+        return self._inner.step([[_decision(d) for d in ds or []] for ds in decisions])
+
+    @property
+    def t(self) -> list[float]:
+        """Each day's clock, in seconds from midnight."""
+        return list(self._inner.t)
 
 
 def fleet_day(
@@ -377,6 +593,7 @@ def fleet_day(
     seed: int = 0,
     policy: Any = None,
     policy_options: Mapping[str, float] | None = None,
+    zone_grid_m: float = ZONE_GRID_M,
 ) -> FleetDay:
     """Run every service's day together on the fleet engine, from a table of trips.
 
@@ -396,6 +613,8 @@ def fleet_day(
             (``step(view)``), a built-in one (``policy_threshold(...)``), a name (built-in or
             registered with ``policy_register``), or ``None``: no operator.
         policy_options: A named policy's options (``{"low": 0.1}`` for ``"threshold"``).
+        zone_grid_m: The side of the square zones a view groups places by, in metres
+            (``ZONE_GRID_M``, 1 000: an assumption, uncalibrated).
 
     Raises:
         ValueError: For a service, trip, option or policy that is not valid, road times of
@@ -405,7 +624,9 @@ def fleet_day(
     started = time.perf_counter()
     parts, rows, roads, (start, end) = _inputs(services, trips, window, road_times)
     chosen = _policy_for_binding(policy, policy_options)
-    out = _core._fleet_day(network, parts, rows, roads, (start, end), int(seed), chosen)
+    out = _core._fleet_day(
+        network, parts, rows, roads, (start, end), int(seed), chosen, float(zone_grid_m)
+    )
     trips_out = Columns(out["trips"])
     return FleetDay(
         fidelity="frozen_day",

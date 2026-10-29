@@ -9,7 +9,8 @@
 //! events, so the pass is paid once per step of a policy, not per drive.
 //!
 //! **Cost:** per call one pass over the links (the search's context and scratch: about 40
-//! bytes per link); per ride or walk one static search, rides kept per dock pair.
+//! bytes per link); per ride or walk one static search, rides kept per dock pair; the day's
+//! legs kept (about 60 bytes a leg) and the zones (4 bytes a node).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -21,6 +22,7 @@ use openmobisim_core_routes::{Reach, SearchContext};
 use openmobisim_core_types::ids::{EntityId, NodeId};
 
 use super::engine::{Leg, ServiceLegs, ServiceRoads};
+use super::queries::{ZONE_GRID_M, Zones};
 use super::roads::{FrozenRoads, RoadTimes};
 use super::{ServiceParts, ServiceSetup};
 use crate::layers::LayerSetup;
@@ -31,21 +33,37 @@ pub trait ServiceWorld: Send + Sync + std::fmt::Debug {
     fn legs(&self) -> &dyn ServiceLegs;
     /// Lend `f` the roads for one call: drives on the road times, free-flow reaches.
     fn with_roads(&self, f: &mut dyn FnMut(&dyn ServiceRoads));
+    /// The day's legs before any variation a seed draws (a policy's expectation,
+    /// [`super::queries::Queries::expected_legs`]); `None`: the engine's own day's legs.
+    fn base_legs(&self) -> Option<&[Leg]> {
+        None
+    }
+    /// The zones over the road network's nodes ([`super::queries::Zones`]); `None`: none.
+    fn zones(&self) -> Option<&Zones> {
+        None
+    }
 }
 
 /// A city for a frozen day: its network and turns, its walk and bike layers, the road times,
-/// the services and the day's legs (for their destinations), every one owned.
+/// the services, the day's legs (their destinations, and the legs a policy may expect: before
+/// any variation a seed draws) and the zones over the network's nodes, every one owned.
 #[derive(Debug)]
 pub struct FrozenWorld {
     road: Arc<RoadNetwork>,
     turns: Arc<TurnTable>,
     times: RoadTimes,
     legs: OwnedLegs,
+    base: Vec<Leg>,
+    zones: Option<Zones>,
 }
 
 impl FrozenWorld {
     /// The city of `road` (its turns), the layers `walk` and `bike`, `times`, for `setups` and
-    /// the day's `legs`.
+    /// the day's `legs` (before any variation a seed draws); zones of [`ZONE_GRID_M`] metres.
+    ///
+    /// # Panics
+    ///
+    /// Never: [`ZONE_GRID_M`] is a positive number of metres.
     #[must_use]
     pub fn new(
         road: Arc<RoadNetwork>,
@@ -56,10 +74,13 @@ impl FrozenWorld {
         setups: Arc<Vec<ServiceSetup>>,
         legs: &[Leg],
     ) -> Self {
+        let zones = Zones::grid(&road, ZONE_GRID_M).expect("a positive grid");
         Self {
             road,
             turns,
             times,
+            base: legs.to_vec(),
+            zones,
             legs: OwnedLegs {
                 setups,
                 walk,
@@ -75,6 +96,17 @@ impl FrozenWorld {
     pub fn times(&self) -> &RoadTimes {
         &self.times
     }
+
+    /// The same city with zones of `grid_m` metres (the fleet day's option `zone_grid_m`,
+    /// [`ZONE_GRID_M`] unless given).
+    ///
+    /// # Errors
+    ///
+    /// A message for a side that is not a positive number of metres.
+    pub fn with_zone_grid_m(mut self, grid_m: f64) -> Result<Self, String> {
+        self.zones = Zones::grid(&self.road, grid_m)?;
+        Ok(self)
+    }
 }
 
 impl ServiceWorld for FrozenWorld {
@@ -86,6 +118,14 @@ impl ServiceWorld for FrozenWorld {
         let ctx = SearchContext::new(&self.road, &self.turns);
         let roads = FrozenRoads::with_times(&self.road, &ctx, Cow::Borrowed(&self.times));
         f(&roads);
+    }
+
+    fn base_legs(&self) -> Option<&[Leg]> {
+        Some(&self.base)
+    }
+
+    fn zones(&self) -> Option<&Zones> {
+        self.zones.as_ref()
     }
 }
 

@@ -50,6 +50,7 @@ use super::decisions::{Decision, DecisionRecord};
 use super::docks::{DockRun, Fleet, LegCtx};
 use super::outcome::{FleetOutcome, LegOutcome, LegStatus};
 use super::policy::{DayInfo, Policy, PolicyDescription, PolicySlot};
+use super::queries::Queries;
 use super::taxis::{Move, Next, TaxiRun, Taxis};
 use super::view::{DockView, ServiceView, TaxiView, View};
 use super::world::ServiceWorld;
@@ -114,6 +115,15 @@ pub trait ServiceRoads: Send + Sync + std::fmt::Debug {
     fn reach_to(&self, to: NodeId, bound: f64) -> Vec<(NodeId, f64)>;
     /// Nodes reached from `from` within `bound` s at free flow, nearest first (ties by node id).
     fn reach_from(&self, from: NodeId, bound: f64) -> Vec<(NodeId, f64)>;
+    /// Seconds from each of `from` to each of `to` leaving at second `t`, row by row
+    /// (`out[i * to.len() + j]`), infinite past `max_s`: by default one [`Self::drive`] per pair.
+    fn travel_times(&self, from: &[NodeId], to: &[NodeId], t: f64, max_s: f64) -> Vec<f64> {
+        from.iter()
+            .flat_map(|&a| to.iter().map(move |&b| (a, b)))
+            .map(|(a, b)| self.drive(a, b, t).0)
+            .map(|s| if s <= max_s { s } else { f64::INFINITY })
+            .collect()
+    }
 }
 
 /// No roads: no drive (INFINITY), nothing within reach. For a day of docked services only.
@@ -710,7 +720,8 @@ impl FleetEngine {
                     ServiceParts::BikeDocked(docks, _),
                     ServiceState::BikeDocked { bikes, riding, moving, .. },
                 ) => {
-                    let since = &self.docks[s].as_ref().expect("a docked service's run").since;
+                    let run = self.docks[s].as_ref().expect("a docked service's run");
+                    let since = &run.since;
                     ServiceView::BikeDocked(DockView {
                         name: setup.name(),
                         bikes,
@@ -722,6 +733,7 @@ impl FleetEngine {
                         failed: &since.failed,
                         redirected_in: &since.redirected_in,
                         redirected_out: &since.redirected_out,
+                        incoming: &run.incoming,
                         moving: *moving,
                         riding: *riding,
                     })
@@ -733,6 +745,7 @@ impl FleetEngine {
                         name: setup.name(),
                         state,
                         node,
+                        until_s: &run.until,
                         soc,
                         waiting: run.waiting_view(&self.day.legs),
                         charger_node: &fleet.charger_node,
@@ -745,7 +758,23 @@ impl FleetEngine {
                 _ => unreachable!("a service's state is of its kind"),
             })
             .collect();
-        View { t: self.now, step, rng_seed, window: self.day.window, services }
+        let vehicles = self
+            .state
+            .services
+            .iter()
+            .map(|s| match s {
+                ServiceState::Taxi { node, .. } => node.clone(),
+                ServiceState::BikeDocked { .. } => Vec::new(),
+            })
+            .collect();
+        let queries = Queries::new(
+            Arc::clone(&self.world),
+            Arc::clone(&self.setups),
+            Arc::clone(&self.day),
+            self.now,
+            vehicles,
+        );
+        View { t: self.now, step, rng_seed, window: self.day.window, services, queries }
     }
 
     /// Check and carry out `decisions` at the clock, as at step [`Self::view`]'s; each

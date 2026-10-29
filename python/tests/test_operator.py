@@ -207,3 +207,126 @@ def test_reset_and_charge_rule_run_by_name_on_a_fleet_day():
     d = t.decisions()
     assert d["kind"] == ["charge"] and d["vehicle"] == ["v1"] and d["charger"] == ["near"]
     assert d["accepted"] == [True] and list(d["to_soc"]) == [0.8]
+
+
+def test_a_policy_s_queries_during_its_step_and_refused_after_it():
+    asked, kept = {}, []
+
+    class Asker:
+        def step(self, view):
+            if view.step == 0:
+                d = view["bike_share"]
+                kept.append(view)
+                asked["node"] = d["node"]
+                asked["times"] = view.travel_times(None, d["node"], d["node"])
+                asked["again"] = view.travel_times("bike_share", d["node"], d["node"])
+                asked["bounded"] = view.travel_times(None, d["node"], d["node"], max_s=60.0)
+                asked["legs"] = view.expected_legs("bike_share", 900.0)
+                asked["nearest"] = view.nearest("bike_share", "docks", d["node"][0], 3)
+                asked["zones"] = view.zones
+                asked["zone"] = d["zone"]
+            return []
+
+    day(Asker())
+    m = asked["times"]
+    assert m.shape == (4, 4) and list(np.diag(m)) == [0.0] * 4
+    assert np.array_equal(m, asked["again"]), "the service changes nothing: all drive the roads"
+    # a to b and a to c are four 200 m blocks, a to z eight: twice as long (to the projection's
+    # rounding); free flow, so both ways alike.
+    assert m[0, 3] <= m[0, 1] + m[1, 3], "the fastest way, not through b"
+    assert m[0, 3] == pytest.approx(2 * m[0, 1], rel=1e-2)
+    assert np.allclose(m, m.T, rtol=1e-3)
+    assert np.array_equal(asked["bounded"], np.where(m <= 60.0, m, np.inf))
+    # By hand: trips every 2 minutes from 08:00, one dock after another (a, b, c, z, a, …),
+    # each from its dock: per dock 2 people in 08:00-08:15 (bin 2 of the window from 07:30) and
+    # 1 in 08:15-08:30.
+    legs = asked["legs"]
+    assert legs.shape == (4, 8)
+    assert np.array_equal(legs, np.tile([0, 0, 2, 1, 0, 0, 0, 0], (4, 1)))
+    # Nearest a: a itself, then by the same times as travel_times (free flow both; travel_times
+    # are a clock time less the step's second, so equal to its rounding).
+    near = asked["nearest"]
+    assert near[0] == ("a", 0.0)
+    assert [k for k, _ in near] == ["a", "b", "c"]
+    assert [s for _, s in near] == pytest.approx(sorted(m[0])[:3], abs=1e-9)
+    z = asked["zones"]
+    assert z["grid_m"] == 1000.0 and list(z["id"]) == [0], "an 800 m grid: one zone"
+    assert list(asked["zone"]) == [0, 0, 0, 0]
+    view = kept[0]
+    for ask in (
+        lambda: view.travel_times(None, asked["node"], asked["node"]),
+        lambda: view.expected_legs("bike_share"),
+        lambda: view.nearest("bike_share", "docks", asked["node"][0], 1),
+        lambda: view.zones,
+    ):
+        with pytest.raises(RuntimeError, match="has ended"):
+            ask()
+
+
+def test_queries_refuse_unknown_names_and_the_wrong_kind():
+    errors = []
+
+    class Wrong:
+        def step(self, view):
+            if view.step == 0:
+                n = view["bike_share"]["node"][0]
+                for ask, kind in (
+                    (lambda: view.travel_times("nope", [n], [n]), KeyError),
+                    (lambda: view.travel_times(None, ["nowhere"], [n]), KeyError),
+                    (lambda: view.travel_times(None, [n], [n], max_s=-1.0), ValueError),
+                    (lambda: view.expected_legs("bike_share", 0.0), ValueError),
+                    (lambda: view.nearest("bike_share", "vehicles", n, 1), ValueError),
+                    (lambda: view.nearest("bike_share", "hubs", n, 1), ValueError),
+                ):
+                    with pytest.raises(kind):
+                        ask()
+                    errors.append(kind)
+            return []
+
+    day(Wrong())
+    assert len(errors) == 6
+
+
+def test_a_taxi_fleet_s_legs_by_zone_and_its_nearest_vehicles():
+    net = grid()
+    v = ms.vehicle_read_table(
+        [
+            {"vehicle_id": "far", "lon": at(net, 4, 4)[0], "lat": at(net, 4, 4)[1]},
+            {"vehicle_id": "near", "lon": at(net, 0, 1)[0], "lat": at(net, 0, 1)[1]},
+        ]
+    )
+    rows = [
+        trip(net, f"t{k}", 8 * 3600 + 600 * k, (0, 0), (4, 4), service="taxi") for k in range(3)
+    ]
+    asked = {}
+
+    class Asker:
+        def step(self, view):
+            if view.step == 0:
+                d = view["taxi"]
+                asked["legs"] = view.expected_legs("taxi", 1800.0)
+                asked["nearest"] = view.nearest("taxi", "vehicles", d["node"][1], 2)
+                asked["zone"] = d["zone"]
+            return []
+
+    ms.fleet_day(net, [ms.service_taxi(v)], rows, policy=Asker())
+    # One zone; the window 07:30-09:30 in half hours: requests at 08:00, 08:10, 08:20.
+    assert np.array_equal(asked["legs"], [[0, 3, 0, 0]])
+    assert [k for k, _ in asked["nearest"]] == ["near", "far"]
+    assert asked["nearest"][0][1] == 0.0
+    assert list(asked["zone"]) == [0, 0]
+
+
+def test_an_environment_s_expected_legs_are_the_day_s_before_the_seed_varies_it():
+    net = grid()
+    rows = [
+        trip(net, f"t{k}", 8 * 3600 + 120 * k, PLACES["abcz"[k % 4]], PLACES["zcba"[k % 4]])
+        for k in range(12)
+    ]
+    bikes = ms.service_bike_docked(docks(net))
+    same = ms.fleet_environment(net, [bikes], rows)
+    varied = ms.fleet_environment(net, [bikes], rows, legs_keep=0.5, departure_jitter_s=300)
+    a, _ = same.reset(3)
+    b, _ = varied.reset(3)
+    assert np.array_equal(a.expected_legs("bike_share"), b.expected_legs("bike_share"))
+    assert a.expected_legs("bike_share").sum() == 12

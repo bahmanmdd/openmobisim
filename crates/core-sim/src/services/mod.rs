@@ -19,6 +19,7 @@
 //! | [`taxis`] | electric taxis on the engine: matching, drives, energy, the charging rule and plug queues; [`taxis::TaxiDay`] |
 //! | [`policy`] | [`policy::Policy`] — an operator: called every few minutes with a [`view::View`], it returns [`decisions::Decision`]s; the built-in ones, by name ([`policy::policy_builtin`]): [`policy::NoOp`], [`policy::Reset`], [`policy::Threshold`], [`policy::ChargeRule`] |
 //! | [`view`] | [`view::View`] — what a policy sees at a step, read-only |
+//! | [`queries`] | [`queries::Queries`] — what a policy may ask at a step: travel times, expected legs, nearest docks or vehicles; [`queries::Zones`] |
 //! | [`decisions`] | [`decisions::Decision`] — what a policy asks for, checked and refused with a reason or carried out; [`decisions::DecisionRecord`] |
 //!
 //! **Cost:** per dock about 60 bytes and its neighbours, found by one bounded walk search per
@@ -32,6 +33,7 @@ pub mod frozen;
 pub mod hubs;
 pub mod outcome;
 pub mod policy;
+pub mod queries;
 pub mod roads;
 pub mod taxis;
 pub mod view;

@@ -216,3 +216,87 @@ impl ServiceLegs for FrozenLegs<'_> {
         }
     }
 }
+
+/// A uniform draw in `[0, 1)` for leg `leg` and purpose `salt` of the day `seed`: a fixed mix of
+/// the three (splitmix64), so a day's variation replays exactly and does not depend on the
+/// order legs are visited.
+fn draw(seed: u64, leg: u64, salt: u64) -> f64 {
+    let mut z =
+        seed ^ leg.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ salt.wrapping_mul(0xD1B5_4A32_D192_ED03);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    #[allow(clippy::cast_precision_loss, reason = "53 bits of a draw")]
+    let u = (z >> 11) as f64 / (1u64 << 53) as f64;
+    u
+}
+
+/// Another day of the same legs, for seed `seed`: each leg kept with probability `keep` (a leg
+/// dropped is moved past `window_end`, so it is never asked and its place stays), and each kept
+/// leg's request moved by a uniform draw in `[-jitter_s, jitter_s]`. With `keep` 1 and
+/// `jitter_s` 0 the legs are returned unchanged. **New information across episodes, labelled
+/// as such**: the demand is thinned and shifted, not drawn anew.
+#[must_use]
+pub fn vary_legs(legs: &[Leg], seed: u64, keep: f64, jitter_s: f64, window_end: f64) -> Vec<Leg> {
+    legs.iter()
+        .enumerate()
+        .map(|(i, l)| {
+            let i = i as u64;
+            let mut out = *l;
+            if keep < 1.0 && draw(seed, i, 1) >= keep {
+                out.request_s = window_end + 1.0;
+            } else if jitter_s > 0.0 {
+                out.request_s += (2.0 * draw(seed, i, 2) - 1.0) * jitter_s;
+            }
+            out
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openmobisim_core_types::ids::EntityId;
+
+    fn legs(n: u32) -> Vec<Leg> {
+        (0..n)
+            .map(|k| Leg {
+                service: 0,
+                trip: k,
+                weight: 1,
+                request_s: 28_000.0 + f64::from(k),
+                origin: NodeId::new(0),
+                destination: NodeId::new(1),
+                pickup_dock: u32::MAX,
+                return_dock: u32::MAX,
+                ride_s: f64::NAN,
+                egress_s: f64::NAN,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_day_varies_by_seed_replays_exactly_and_keeps_every_leg_s_place() {
+        let base = legs(2_000);
+        let same = vary_legs(&base, 7, 1.0, 0.0, 34_200.0);
+        assert!(
+            same.iter().zip(&base).all(|(a, b)| a.request_s.to_bits() == b.request_s.to_bits())
+        );
+        let a = vary_legs(&base, 7, 0.5, 300.0, 34_200.0);
+        let b = vary_legs(&base, 7, 0.5, 300.0, 34_200.0);
+        let c = vary_legs(&base, 8, 0.5, 300.0, 34_200.0);
+        assert_eq!(a.len(), base.len(), "every leg keeps its place");
+        assert!(a.iter().zip(&b).all(|(x, y)| x.request_s.to_bits() == y.request_s.to_bits()));
+        assert!(a.iter().zip(&c).any(|(x, y)| x.request_s.to_bits() != y.request_s.to_bits()));
+        let kept = a.iter().filter(|l| l.request_s <= 34_200.0).count();
+        assert!((900..1_100).contains(&kept), "about half kept: {kept}");
+        assert!(
+            a.iter().zip(&base).filter(|(x, _)| x.request_s <= 34_200.0).all(|(x, y)| (x
+                .request_s
+                - y.request_s)
+                .abs()
+                <= 300.0),
+            "moved at most the jitter"
+        );
+    }
+}
