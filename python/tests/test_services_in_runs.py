@@ -159,3 +159,122 @@ def test_the_grid_run_time_with_and_without_the_service() -> None:
     print(f"\ngrid 10 x 10, 600 trips: without the service {t_plain:.2f} s, with {t_share:.2f} s")
     print(f"shares with the service: {shares(shared)}")
     assert plain.completion["total_trips"] == shared.completion["total_trips"] == 600
+
+
+# --- a shared bike to a stop's hub, then transit (bike_share_transit) ---------------------------
+#
+# A line on the grid's last column, from stop A (row 0) to stop B (row 9), five minutes, every
+# ten from 08:00. Dock "o" at the origin's corner (row 0, column 0) and dock "a" at stop A (it
+# joins A's hub); travellers own nothing. From row 0, column 0 to row 9, column 9 (3.6 km) the
+# walk is beyond the shipped 1 800 s; walking to A (1.8 km, within the 1 800 s to a stop) and
+# riding is transit; a shared bike from "o" to "a" and the line is the chain.
+
+LINE = {
+    "routes.txt": "route_id,route_short_name,route_long_name,route_type\nL,L,Line,3\n",
+    "calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,"
+    "start_date,end_date\nWK,1,1,1,1,1,1,1,20261005,20261011\n",
+}
+
+
+def line_feed(net: object, folder: object) -> object:
+    a, b = at(net, 0, 9), at(net, 9, 9)
+    files = dict(LINE)
+    files["stops.txt"] = (
+        "stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station\n"
+        f"A,Alpha,{a[1]},{a[0]},0,\nB,Bravo,{b[1]},{b[0]},0,\n"
+    )
+    runs = [f"T{k}" for k in range(10)]
+    files["trips.txt"] = "route_id,service_id,trip_id\n" + "".join(f"L,WK,{r}\n" for r in runs)
+    times = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n"
+    for k, r in enumerate(runs):
+        h, m = divmod(8 * 60 + 10 * k, 60)
+        times += f"{r},{h:02}:{m:02}:00,{h:02}:{m:02}:00,A,1\n"
+        h, m = divmod(8 * 60 + 10 * k + 5, 60)
+        times += f"{r},{h:02}:{m:02}:00,{h:02}:{m:02}:00,B,2\n"
+    files["stop_times.txt"] = times
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, text in files.items():
+        (folder / name).write_text(text, encoding="utf-8")
+    return ms.transit_read_gtfs(str(folder), network=net)
+
+
+def chain_docks(net: object, a_row: int = 0) -> object:
+    places = {"o": (0, 0), "a": (a_row, 9)}
+    return ms.dock_read_table(
+        [
+            {"dock_id": k, "lon": at(net, *p)[0], "lat": at(net, *p)[1], "capacity": 8, "bikes": 4}
+            for k, p in places.items()
+        ]
+    )
+
+
+CHAIN_MODES = ["walk", "transit", "bike_share_transit"]
+
+
+def test_a_shared_bike_to_the_stop_is_taken_over_walking_to_it(tmp_path: object) -> None:
+    net = grid()
+    transit = line_feed(net, tmp_path / "line")
+    rows = trips(net, 3, (0, 0), (9, 9), "yes") + trips(net, 2, (0, 0), (9, 9), "no")
+    classes = {
+        "yes": {"owns_car": 0, "owns_bike": 0},
+        "no": {"owns_car": 0, "owns_bike": 0, "has_bike_share": 0},
+    }
+    kw = {"transit": transit, "classes": classes, "modes": CHAIN_MODES}
+    kw |= {"choice_model": "deterministic"}
+    run = scenario(net, rows, services=[ms.service_bike_docked(chain_docks(net))], **kw).run(
+        "chain", quiet=True
+    )
+    t = run.trip_modes()
+    modes = dict(zip(t["traveller_id"], t["mode"], strict=True))
+    assert {modes[f"yes{k}"] for k in range(3)} == {"bike_share_transit"}
+    # A class without shared bikes walks to the stop.
+    assert {modes[f"no{k}"] for k in range(2)} == {"transit"}
+    assert run.completion_by_mode["bike_share_transit"]["completed"] == 3
+    assert "gap_bike_share_transit" in run.convergence()
+    assert "reason_bike_share_transit" in run.report_no_alternative()
+    # Dock "a" 400 m from the stop joins no stop's hub: no chain.
+    far = scenario(net, rows, services=[ms.service_bike_docked(chain_docks(net, 2))], **kw)
+    t = far.run("chain-far", quiet=True).trip_modes()
+    assert set(t["mode"]) == {"transit"}
+
+
+def test_the_chain_needs_a_service_and_a_timetable(tmp_path: object) -> None:
+    net = grid()
+    transit = line_feed(net, tmp_path / "line")
+    rows = trips(net, 2, (0, 0), (9, 9))
+    with pytest.raises(ValueError, match="bike_share_transit.*services"):
+        scenario(net, rows, transit=transit, modes=CHAIN_MODES)
+    with pytest.raises(ValueError, match="bike_share_transit.*transit"):
+        scenario(
+            net,
+            rows,
+            services=[ms.service_bike_docked(chain_docks(net))],
+            modes=["walk", "bike_share_transit"],
+        )
+    with pytest.raises(ValueError, match="among other modes"):
+        scenario(
+            net,
+            rows,
+            transit=transit,
+            services=[ms.service_bike_docked(chain_docks(net))],
+            modes=["bike_share_transit"],
+        )
+    # Without a service nothing lists the chain.
+    run = scenario(net, rows, transit=transit, modes=["walk", "transit"]).run(
+        "no-chain", quiet=True
+    )
+    assert "gap_bike_share_transit" not in run.convergence()
+
+
+def test_same_seed_same_chain(tmp_path: object) -> None:
+    net = grid()
+    transit = line_feed(net, tmp_path / "line")
+    rows = trips(net, 30, (0, 0), (9, 9))
+    bikes = ms.service_bike_docked(chain_docks(net))
+    kw = {"transit": transit, "modes": CHAIN_MODES, "services": [bikes]}
+    s = scenario(net, rows, choice_model="logit", equilibration="msa", **kw)
+    a, b = s.run("chain-a", quiet=True), s.run("chain-b", quiet=True)
+    assert a.fingerprint == b.fingerprint
+    assert list(a.trip_modes()["mode"]) == list(b.trip_modes()["mode"])
+    assert a.total_travel_time_s == b.total_travel_time_s
+    assert "bike_share_transit" in set(a.trip_modes()["mode"])

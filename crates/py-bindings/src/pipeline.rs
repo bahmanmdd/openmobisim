@@ -1134,7 +1134,7 @@ pub fn run_pipeline(
         let ids = travellers.class_external_ids();
         (0..ids.count()).map(|c| ids.external(c).to_string()).collect()
     };
-    // A class with `has_bike_share` 0 (S302) never sees a shared bike.
+    // A class with `has_bike_share` 0 (S302) never sees a shared bike, alone or to transit.
     let no_share = class_no_bike_share.unwrap_or_default();
     let class_allowed: Vec<[bool; Mode::COUNT]> = class_names
         .iter()
@@ -1142,6 +1142,7 @@ pub fn run_pipeline(
             let mut allowed = class_modes.get(c).copied().unwrap_or([true; Mode::COUNT]);
             if no_share.contains(c) {
                 allowed[Mode::BikeShare.index()] = false;
+                allowed[Mode::BikeShareTransit.index()] = false;
             }
             allowed
         })

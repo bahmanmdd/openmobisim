@@ -222,6 +222,10 @@ def _check_modes_can_run(
         "car_transit": ("transit=… and parkings=…", has_transit and has_parkings),
         "bike_transit": ("transit=… and parkings=…", has_transit and has_parkings),
         "bike_share": ("services=[service_bike_docked(…)]", has_docks),
+        "bike_share_transit": (
+            "services=[service_bike_docked(…)] and transit=…",
+            has_docks and has_transit,
+        ),
     }
     for mode in modes:
         what, present = needs.get(mode, ("", True))
@@ -603,9 +607,9 @@ class Scenario:
                 _check_modes_can_run(
                     modes, transit is not None, parkings is not None, self._services is not None
                 )
-            if "bike_share" in modes and len(set(modes)) == 1:
+            if len(set(modes)) == 1 and modes[0] in SERVICE_MODES:
                 raise ValueError(
-                    'modes: "bike_share" is chosen among other modes; give at least one more '
+                    f'modes: "{modes[0]}" is chosen among other modes; give at least one more '
                     "(a shared bike is offered as a choice, not as the only mode)"
                 )
         self._modes = modes
@@ -1127,8 +1131,18 @@ class Scenario:
                 ``mode_bike_share``. After each loading the service's day is played on the fleet
                 engine with the trips that took a shared bike: a traveller finding an empty dock
                 walks to another, one whose pickup fails walks on to the destination; the docks'
-                costs it realises are averaged into what the next choice expects. A class with
-                ``has_bike_share`` 0 is never offered it. Without a service, nothing changes.
+                costs it realises are averaged into what the next choice expects. With
+                ``"bike_share_transit"`` among ``modes`` and a ``transit`` timetable, a trip is
+                also offered **a shared bike to a stop, then transit**: walk to a dock, ride to a
+                dock of a stop's hub (a dock within ``hub_join_m`` of a stop, or naming its
+                ``hub_id``), return the bike there, walk to the stop, ride, walk; the pairs are
+                of the ``candidates`` docks nearest the origin and the hubs' docks within
+                ``parking_options``' ``reach_bike_s`` by bike, as bike-and-ride picks its
+                parkings, each with ``dock_min`` and ``mode_bike_share_transit``; its shared
+                bike is a leg of the same day on the fleet engine, and its transit part starts
+                when the engine has the bike returned (or the traveller at the hub on foot). A
+                class with ``has_bike_share`` 0 is offered neither. Without a service, nothing
+                changes.
             parking_options: Parking's parameters by name, each replacing its default:
                 ``walk_max_s`` (300: the longest walk from a parking to a stop),
                 ``reach_car_s`` (1800) and ``reach_bike_s`` (1200: the longest drive or ride
@@ -1255,7 +1269,8 @@ class Scenario:
                 bike service (``services``), a shared bike's price is part of its
                 ``cost_fare_eur``: ``bike_share_eur_per_ride`` once and
                 ``bike_share_eur_per_min`` per minute ridden (0 by default; a transit pass does
-                not cover it). The built-in
+                not cover it), and, for a shared bike to transit, the journey's fare on top. The
+                built-in
                 models weigh money by ``beta_cost_eur`` (or a part's coefficient), **-1.2 per euro
                 by default** (0 drops it): a value of time of ``V`` euros per hour is
                 ``beta_cost_eur = beta_time_min * 60 / V``, so -1.2 is 10 €/h at the default

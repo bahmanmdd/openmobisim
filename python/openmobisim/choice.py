@@ -176,11 +176,12 @@ ROUTE_ATTRIBUTES: tuple[str, ...] = (
 
 
 #: The attributes a shared bike adds, in a run with a docked bike service (``services``), after
-#: ``ROUTE_ATTRIBUTES``: ``mode_bike_share`` (1 for a shared bike, 0 for the rest: its constant)
-#: and ``dock_min`` (the minutes expected walking to another dock when the pickup dock is empty
-#: or the return dock full; part of ``walk_min``, 0 for the other modes). A run without a
-#: service offers neither.
-SERVICE_ATTRIBUTES: tuple[str, ...] = ("mode_bike_share", "dock_min")
+#: ``ROUTE_ATTRIBUTES``: ``mode_bike_share`` (1 for a shared bike, 0 for the rest: its
+#: constant), ``dock_min`` (the minutes expected walking to another dock when the pickup dock is
+#: empty or the return dock full; part of ``walk_min``, 0 for the other modes) and
+#: ``mode_bike_share_transit`` (1 for a shared bike to a stop's hub then transit). A run without
+#: a service offers none.
+SERVICE_ATTRIBUTES: tuple[str, ...] = ("mode_bike_share", "dock_min", "mode_bike_share_transit")
 
 
 @runtime_checkable
