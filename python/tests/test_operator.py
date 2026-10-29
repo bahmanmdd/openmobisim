@@ -119,7 +119,7 @@ def test_a_refused_decision_comes_back_with_its_reason():
     d = day(Once()).decisions()
     assert d["kind"] == ["move", "move"]
     assert d["accepted"] == [False, True]
-    assert d["reason"] == ["no bike at the first dock", None]
+    assert d["reason"] == ["no bike at dock b", None]
     assert d["from_dock"] == ["b", "a"] and d["to_dock"] == ["a", "z"]
     assert list(d["moved"]) == [0, 2]
     assert math.isnan(d["executed_s"][0]) and d["executed_s"][1] == 7.5 * 3600

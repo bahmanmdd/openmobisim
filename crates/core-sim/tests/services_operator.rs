@@ -286,8 +286,8 @@ fn a_task_that_cannot_be_done_is_refused_with_why_and_the_run_goes_on() {
     let (op, _) = Fixed::boxed(900.0, vec![plan]);
     let out = docks_day(&s, vans, &[], 3600.0, Some(op)).expect("runs");
     let why: Vec<Option<String>> = out.decisions.iter().map(|m| m.reason.clone()).collect();
-    assert_eq!(why[0].as_deref(), Some("no bike at the first dock"));
-    assert_eq!(why[1].as_deref(), Some("the two docks are one"));
+    assert_eq!(why[0].as_deref(), Some("no bike at dock A"));
+    assert_eq!(why[1].as_deref(), Some("dock B is both ends"));
     assert_eq!(why[2].as_deref(), Some("no dock 7"));
     assert_eq!(why[3].as_deref(), Some("no bike asked for"));
     assert_eq!((why[4].clone(), out.decisions[4].moved), (None, 1), "as many as there are");
@@ -346,13 +346,13 @@ fn docks_refuse_moves_without_roads_targets_above_slots_and_unknown_services() {
         why,
         [
             Some("no roads"),
-            Some("level 4 is above dock 0's 3 slots"),
+            Some("level 4 is above dock A's 3 slots"),
             Some("no dock 9"),
             None,
-            Some("a second target for dock 0 at this step"),
+            Some("a second target for dock A at this step"),
             Some("no service 3"),
-            Some("service 0 is not a taxi fleet"),
-            Some("service 0 is not a taxi fleet"),
+            Some("service bike_share is not a taxi fleet"),
+            Some("service bike_share is not a taxi fleet"),
         ]
     );
     // The accepted target of 2 at A, alone: the solver moves nothing (no dock gives without
@@ -691,15 +691,15 @@ fn taxi_decisions_are_refused_with_why() {
         why,
         [
             None,
-            Some("vehicle 0 is not idle (relocating)"),
-            Some("vehicle 0 is not idle (relocating)"),
+            Some("vehicle v is not idle (relocating)"),
+            Some("vehicle v is not idle (relocating)"),
             Some("no vehicle 9"),
-            Some("vehicle 1 is already at node 4"),
-            Some("vehicle 1 has not the charge for the drive and the reserve"),
-            Some("to_soc 0.1 is not above vehicle 1's charge 0.16 and at most 1"),
+            Some("vehicle w is already there"),
+            Some("vehicle w has not the charge for the drive and the reserve"),
+            Some("to_soc 0.1 is not above vehicle w's charge 0.16 and at most 1"),
             Some("no charger 5"),
-            Some("service 0 is not a docked service"),
-            Some("service 0 is not a docked service"),
+            Some("service taxi is not a docked service"),
+            Some("service taxi is not a docked service"),
         ]
     );
 }

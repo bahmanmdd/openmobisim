@@ -322,7 +322,7 @@ impl FleetEngine {
         let docks = match setups.get(s).map(super::ServiceSetup::parts) {
             None => return Err(format!("no service {service}")),
             Some(ServiceParts::Taxi(..)) => {
-                return Err(format!("service {service} is not a docked service"));
+                return Err(format!("service {} is not a docked service", self.setups[s].name()));
             }
             Some(ServiceParts::BikeDocked(docks, d)) => (docks, d),
         };
@@ -332,17 +332,17 @@ impl FleetEngine {
             return Err(format!("no dock {}", if from as usize >= count { from } else { to }));
         }
         if from == to {
-            return Err("the two docks are one".to_string());
+            return Err(format!("dock {} is both ends", docks.external[from as usize]));
         }
         if n == 0 {
             return Err("no bike asked for".to_string());
         }
         let ServiceState::BikeDocked { bikes, moving, .. } = &mut self.state.services[s] else {
-            return Err(format!("service {service} is not a docked service"));
+            return Err(format!("service {} is not a docked service", self.setups[s].name()));
         };
         let there = bikes[from as usize];
         if there == 0 {
-            return Err("no bike at the first dock".to_string());
+            return Err(format!("no bike at dock {}", docks.external[from as usize]));
         }
         if docks.road_node.len() != count {
             return Err("no roads".to_string());
@@ -350,7 +350,10 @@ impl FleetEngine {
         let (drive_s, metres) =
             roads.drive(docks.road_node[from as usize], docks.road_node[to as usize], t);
         if !drive_s.is_finite() {
-            return Err("no road between".to_string());
+            return Err(format!(
+                "no road from dock {} to dock {}",
+                docks.external[from as usize], docks.external[to as usize]
+            ));
         }
         let moved = n.min(there).min(defaults.van_count());
         let run = self.docks[s].as_mut().expect("a docked service's run");
@@ -400,7 +403,7 @@ impl FleetEngine {
         match self.setups.get(s).map(super::ServiceSetup::parts) {
             None => return Err(format!("no service {service}")),
             Some(ServiceParts::BikeDocked(..)) => {
-                return Err(format!("service {service} is not a taxi fleet"));
+                return Err(format!("service {} is not a taxi fleet", self.setups[s].name()));
             }
             Some(ServiceParts::Taxi(..)) => {}
         }
@@ -426,7 +429,7 @@ impl FleetEngine {
         let docks = match self.setups.get(s).map(super::ServiceSetup::parts) {
             None => return Err(format!("no service {service}")),
             Some(ServiceParts::Taxi(..)) => {
-                return Err(format!("service {service} is not a docked service"));
+                return Err(format!("service {} is not a docked service", self.setups[s].name()));
             }
             Some(ServiceParts::BikeDocked(docks, _)) => docks,
         };
@@ -434,11 +437,17 @@ impl FleetEngine {
             return Err(format!("no dock {dock}"));
         };
         if level > slots {
-            return Err(format!("level {level} is above dock {dock}'s {slots} slots"));
+            return Err(format!(
+                "level {level} is above dock {}'s {slots} slots",
+                docks.external[dock as usize]
+            ));
         }
         let want = targets[s].get_or_insert_with(|| vec![None; docks.len()]);
         if want[dock as usize].is_some() {
-            return Err(format!("a second target for dock {dock} at this step"));
+            return Err(format!(
+                "a second target for dock {} at this step",
+                docks.external[dock as usize]
+            ));
         }
         want[dock as usize] = Some(level);
         Ok(())
