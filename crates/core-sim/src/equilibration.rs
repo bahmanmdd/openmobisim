@@ -92,7 +92,11 @@ pub struct IterationReport {
     /// least-cost route of the same choice set at the times this loading produced,
     /// `Σ w (t_chosen − t_least) / Σ w t_least`, **over the travellers whose trip finished
     /// inside the window** (the times of trips still under way at the end are lower
-    /// bounds, not measurements; [`Self::incomplete_share`] says how many were left out). The
+    /// bounds, not measurements; [`Self::incomplete_share`] says how many were left out).
+    /// **Every car trip that drove counts** (S302): the trips given the car, against their
+    /// route set, and the trips choosing their mode that drove, against the car routes of their
+    /// choice set (a route no longer in it re-timed on these times), `t` the seconds driven
+    /// from where the car enters the roads. The
     /// usual relative gap of traffic assignment, against the shortest congested path among the
     /// alternatives. **A stochastic choice model does not reach 0 by design**: some travellers
     /// take slower routes with the probability the model gives them ([`Self::gap_expected`]);
@@ -112,8 +116,8 @@ pub struct IterationReport {
     /// Equal to `gap` for an all-or-nothing model; `NaN` if the model gives no probabilities
     /// ([`Self::disequilibrium`] then falls back to `gap`).
     pub gap_excess: f64,
-    /// The share of travellers (by weight) whose trip had not finished when the window ended, and
-    /// who are therefore left out of the gaps.
+    /// The share of the trips given the car (by weight) whose trip had not finished when the
+    /// window ended, and who are therefore left out of the gaps.
     pub incomplete_share: f64,
     /// The same measure against the **whole network**: the least travel time over
     /// *any* route at the current times (read off the run's shared search trees, one
@@ -254,8 +258,9 @@ pub struct IterationReport {
     /// The in-set gap's deterministic part in generalised minutes (S299): what the stopping rule
     /// reads with [`Self::stop_generalised`]: `(Σ w g_taken − Σ w g_expected) / Σ w g_least` over
     /// the finished trips whose route taken is offered, `g` an alternative's utility over its
-    /// class's time coefficient, as [`Self::gap_excess`] in time. `NaN` where not measured: a
-    /// run whose route cost is time alone (its stopping rule reads [`Self::gap_excess`], the
+    /// class's time coefficient, as [`Self::gap_excess`] in time, over the same car trips (a trip
+    /// choosing its mode costed door to door, as its choice sees its car routes). `NaN` where
+    /// not measured: a run whose route cost is time alone (its stopping rule reads [`Self::gap_excess`], the
     /// counterpart in travel time), a model without probabilities, or a run of one loading. A
     /// column of the convergence table.
     pub gap_generalised_excess: f64,
@@ -405,7 +410,8 @@ impl PartialEq for IterationReport {
 }
 
 impl IterationReport {
-    /// The number a run is judged by: [`Self::gap_excess`], the disequilibrium, or the
+    /// The number a run is judged by: [`Self::gap_excess`], the disequilibrium of every car
+    /// trip's route (given the car, or choosing its mode and driving), or the
     /// plain [`Self::gap`] where the model gives no probabilities and the two cannot be told apart;
     /// with [`Self::stop_generalised`], [`Self::gap_generalised_excess`] (the same in-set
     /// deterministic part of the gap, in generalised minutes) where it was measured.
