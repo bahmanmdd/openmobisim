@@ -85,7 +85,7 @@ use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
 use crate::demand_values::DemandValues;
 use crate::equilibration::Equilibration;
-use crate::gap::{Currency, Ended, GapTrips};
+use crate::gap::{Currency, Ended, GapTrips, RouteGapSums};
 use crate::generalised_cost::RouteCost;
 use crate::layers::{LayerSetup, StaticLayers, StaticRoutes};
 use crate::link_times::LinkTimes;
@@ -2612,6 +2612,22 @@ pub(crate) struct Assessment {
     /// Σ w · (1 − the probability the model gives the mode kept) over the trips choosing their
     /// mode that chose again: the mode changes chance alone would make (I-al's floor).
     pub w_mode_floor: f64,
+    /// The route gap's sums over the car routes of the trips choosing their mode that drove
+    /// this loading and finished (S302; [`CarGap`]): each one's route against the car routes of
+    /// its set, a route no longer in the set re-timed on these times. Empty without a
+    /// [`CarGap`].
+    pub car_routes: RouteGapSums,
+}
+
+/// What [`Itineraries::choose`] needs to measure the car routes of the trips choosing their
+/// mode, for the route gap the stopping rule reads (S302).
+#[derive(Clone, Copy)]
+pub(crate) struct CarGap<'a> {
+    /// Per trip of the run: whether it was still under way when the window ended (left out, as
+    /// the route choice leaves its own).
+    pub unfinished: &'a [bool],
+    /// The currency of the generalised sums, when the stopping rule reads them.
+    pub currency: Option<&'a Currency>,
 }
 
 impl Assessment {
@@ -3456,6 +3472,7 @@ impl Itineraries {
         only: Option<&[bool]>,
         car_reach: &mut CarReach,
         mut gap_plans: Option<&mut GapPlans>,
+        car_gap: Option<CarGap<'_>>,
     ) -> Result<(Chosen, Assessment), ChoiceError> {
         let n = self.trips.len();
         let mut next = Chosen {
@@ -3464,7 +3481,11 @@ impl Itineraries {
             alternatives: current.map_or_else(|| vec![0; n], |c| c.alternatives.clone()),
             logsum: current.map_or_else(|| vec![f64::NAN; n], |c| c.logsum.clone()),
         };
-        let mut assessment = Assessment { expected_measured: true, ..Assessment::default() };
+        let mut assessment = Assessment {
+            expected_measured: true,
+            car_routes: RouteGapSums::new(car_gap.is_some_and(|c| c.currency.is_some())),
+            ..Assessment::default()
+        };
         let (trips, travellers) = (inputs.trips, inputs.travellers);
         // The car parks' free-flow table, searched here, outside the parallel planning (S209).
         if let (true, Some(parking)) = (self.parks_cars, planner.parking) {
@@ -3592,6 +3613,12 @@ impl Itineraries {
                 // choose again, whose expectation and floor need the model's probabilities.
                 let mut in_gap: Vec<(usize, usize, f64)> = Vec::new();
                 let mut floor: Vec<(usize, usize, f64)> = Vec::new();
+                // (situation, weight, the route taken's place in the set or its re-timed
+                // alternative): the car routes of the trips choosing their mode (S302).
+                let mut car_in_gap: Vec<(usize, f64, Result<usize, Alternative>)> = Vec::new();
+                // Each alternative's door-to-door seconds, for the generalised sums.
+                let mut alt_seconds: Vec<f64> = Vec::new();
+                let car_currency = car_gap.and_then(|c| c.currency);
                 for &w in chunk {
                     let (p, _) = work[w];
                     let set = &sets[w];
@@ -3619,9 +3646,40 @@ impl Itineraries {
                                 attribute(name, a, best[a.mode.index()], inputs, traveller, trip);
                         }
                         batch.push_alternative(a.identity, &row);
+                        if car_currency.is_some() {
+                            alt_seconds.push(a.total_s);
+                        }
                     }
                     let s = situation_of.len();
                     situation_of.push(w);
+                    // A trip choosing its mode that drove and finished: its route in the route
+                    // gap, against the car routes of its set (S302). A route no longer in the
+                    // set (slower than the detour limit allows, or gone) is re-timed on these
+                    // times, as the full gap does.
+                    let drove = match (car_gap, old, self.choosing[p]) {
+                        (Some(cg), Some(old), true) => {
+                            old.mode == Mode::Car
+                                && !cg.unfinished[trip.index()]
+                                && set.iter().any(|a| a.mode == Mode::Car)
+                        }
+                        _ => false,
+                    };
+                    if let (true, Some(old)) = (drove, old) {
+                        let taken = match set.iter().position(|a| a.identity == old.identity) {
+                            Some(i) => Ok(i),
+                            None => {
+                                let mut a = old.clone();
+                                let links: Vec<u32> =
+                                    a.vehicle_links.iter().map(|l| l.raw()).collect();
+                                let at =
+                                    f64::from(trips.departure(trip).get()) + planner.car_start_s();
+                                a.vehicle_s = planner.times.route_seconds(&links, at);
+                                a.total_s = a.vehicle_s + a.walk_s + a.parking_s;
+                                Err(a)
+                            }
+                        };
+                        car_in_gap.push((s, weight, taken));
+                    }
                     // Keep, or choose again.
                     let kept = old.and_then(|old| set.iter().find(|a| a.identity == old.identity));
                     let Some(kept) = kept else {
@@ -3675,12 +3733,23 @@ impl Itineraries {
                         }
                     }
                 }
-                if !(in_gap.is_empty() && floor.is_empty()) {
+                if !(in_gap.is_empty() && floor.is_empty() && car_in_gap.is_empty()) {
                     if !checked {
                         batch.validate()?;
                         checked = true;
                     }
-                    match inputs.model.probabilities(&batch)? {
+                    let probabilities = inputs.model.probabilities(&batch)?;
+                    if !car_in_gap.is_empty() {
+                        self.car_route_sums(
+                            inputs,
+                            &batch,
+                            probabilities.as_deref(),
+                            (&car_in_gap, &situation_of, &sets),
+                            car_currency.map(|c| (c, alt_seconds.as_slice())),
+                            &mut assessment.car_routes,
+                        )?;
+                    }
+                    match probabilities {
                         Some(prob) => {
                             // A situation's alternatives are its set's, in order.
                             let within = |s: usize, m: usize| {
@@ -3744,6 +3813,114 @@ impl Itineraries {
             }
         }
         Ok((next, assessment))
+    }
+
+    /// The route gap's sums over the car routes of the trips choosing their mode that drove
+    /// (S302), for one chunk of [`Self::choose`]: `cars` holds each such trip's situation in
+    /// `batch`, its weight and its route taken (its place in the set, or the route re-timed when
+    /// the set no longer holds it); `situation_of` and `sets` give each situation's set. In
+    /// seconds of driving (the route chosen, the least of the set's car routes, and what the
+    /// model expects among them, its probabilities renormalised over the car routes; the least
+    /// where it gives the car no probability, as an all-or-nothing model does); with
+    /// `generalised`, also in generalised minutes, from the alternatives' door-to-door seconds.
+    ///
+    /// # Errors
+    ///
+    /// [`ChoiceError`] if the model fails or answers wrongly.
+    #[allow(clippy::type_complexity, reason = "the chunk's own vectors, as they are")]
+    fn car_route_sums(
+        &self,
+        inputs: &ChooseInputs<'_>,
+        batch: &ChoiceBatch,
+        probabilities: Option<&[f64]>,
+        (cars, situation_of, sets): (
+            &[(usize, f64, Result<usize, Alternative>)],
+            &[usize],
+            &[Vec<Alternative>],
+        ),
+        generalised: Option<(&Currency, &[f64])>,
+        sums: &mut RouteGapSums,
+    ) -> Result<(), ChoiceError> {
+        let g = match generalised {
+            Some((currency, seconds)) => Some(currency.minutes(inputs.model, batch, seconds)?),
+            None => None,
+        };
+        // The routes no longer in their set, costed in generalised minutes one by one.
+        let names: Vec<&str> = inputs.wanted.iter().map(String::as_str).collect();
+        let mut single = ChoiceBatch::new(batch.iteration(), &names);
+        let mut single_seconds: Vec<f64> = Vec::new();
+        let mut row = vec![0.0; inputs.wanted.len()];
+        // Per car trip: (weight, paid, least, expected, g_least, g_expected) and, for one
+        // costed apart, its place in `single`.
+        let mut rows: Vec<([f64; 6], Option<f64>)> = Vec::with_capacity(cars.len());
+        for (s, weight, taken) in cars {
+            let (s, weight) = (*s, *weight);
+            let set = &sets[situation_of[s]];
+            let start = batch.range(s).start;
+            let car: Vec<usize> = (0..set.len()).filter(|&i| set[i].mode == Mode::Car).collect();
+            let least = car.iter().map(|&i| set[i].vehicle_s).fold(f64::INFINITY, f64::min);
+            let (paid, g_paid) = match taken {
+                Ok(i) => (set[*i].vehicle_s, g.as_ref().map(|g| g[start + *i])),
+                Err(a) => {
+                    if g.is_some() {
+                        let traveller = TravellerId::new(batch.travellers()[s]);
+                        let trip = TripId::new(batch.trips()[s]);
+                        let best =
+                            car.iter().map(|&i| set[i].total_s).fold(f64::INFINITY, f64::min);
+                        single.begin_situation_in(traveller.raw(), trip.raw(), batch.classes()[s]);
+                        for (slot, name) in row.iter_mut().zip(inputs.wanted) {
+                            *slot = attribute(name, a, best, inputs, traveller, trip);
+                        }
+                        single.push_alternative(a.identity, &row);
+                        single_seconds.push(a.total_s);
+                    }
+                    (a.vehicle_s, None)
+                }
+            };
+            let (mut expected, mut g_least, mut g_expected) = (f64::NAN, f64::NAN, f64::NAN);
+            if let Some(pr) = probabilities {
+                let p_car: f64 = car.iter().map(|&i| pr[start + i]).sum();
+                expected = if p_car > 0.0 {
+                    car.iter().map(|&i| pr[start + i] * set[i].vehicle_s).sum::<f64>() / p_car
+                } else {
+                    least
+                };
+                if let Some(g) = &g {
+                    g_least = car.iter().map(|&i| g[start + i]).fold(f64::INFINITY, f64::min);
+                    g_expected = if p_car > 0.0 {
+                        car.iter().map(|&i| pr[start + i] * g[start + i]).sum::<f64>() / p_car
+                    } else {
+                        g_least
+                    };
+                }
+            }
+            rows.push(([weight, paid, least, expected, g_least, g_expected], g_paid));
+        }
+        let mut apart = Vec::new().into_iter();
+        if !single_seconds.is_empty() {
+            single.validate()?;
+            if let Some((currency, _)) = generalised {
+                apart = currency.minutes(inputs.model, &single, &single_seconds)?.into_iter();
+            }
+        }
+        let measured = probabilities.is_some();
+        sums.measured &= measured;
+        sums.g_measured &= measured;
+        for ([weight, paid, least, expected, g_least, g_expected], g_paid) in rows {
+            sums.weight += weight;
+            sums.paid += weight * paid;
+            sums.least += weight * least;
+            if measured {
+                sums.expected += weight * expected;
+            }
+            if sums.g_measured {
+                let g_paid = g_paid.or_else(|| apart.next()).unwrap_or(f64::NAN);
+                sums.g_paid += weight * g_paid;
+                sums.g_least += weight * g_least;
+                sums.g_expected += weight * g_expected;
+            }
+        }
+        Ok(())
     }
 
     /// **The full gap's itinerary trips** (S293, [`crate::gap`]), on `planner`'s costs (this

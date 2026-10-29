@@ -461,7 +461,11 @@ class Run:
           much more travel time the routes chosen cost than the cheapest route of the same
           choice set at the times this loading produced, ``Σ w (t_chosen − t_least) /
           Σ w t_least``, **over the trips that finished** (the times of trips still under way
-          when the window ended are lower bounds, not measurements). **A stochastic choice model
+          when the window ended are lower bounds, not measurements), ``t`` the seconds driven from
+          where the car enters the roads. **Every car trip counts**: those given the car, against
+          their route set, and those choosing their mode (``modes``) that drove, against the car
+          routes of their choice set (a route no longer in it re-timed at these times), so a run
+          whose trips all choose their mode stops on its car routes too. **A stochastic choice model
           does not reach 0 by design**: a logit at −0.2 per minute has a gap of about 7% at
           equilibrium.
         * ``gap_expected`` — **the gap the choice model itself expects** at these times: the
@@ -473,8 +477,9 @@ class Run:
           **Below 0.05 is good, below 0.15 acceptable**; it is what ``gap_tolerance`` stops on
           and what ``convergence_verdict`` judges (``gap_generalised_excess`` instead where that
           is measured). Equal to ``gap`` for ``"deterministic"``.
-        * ``incomplete_share`` — the share of travellers (by weight) whose trip had not finished
-          when the window ended, who are left out of the gaps.
+        * ``incomplete_share`` — the share of the travellers given the car (by weight) whose trip
+          had not finished when the window ended, who are left out of the gaps (as are the trips
+          choosing their mode that had not).
         * ``gap_network`` — the same measure against the **whole network**: the least
           time over *any* route at the current times (read off the run's shared search
           trees, one time-dependent search per origin and departure bin), for every trip
@@ -514,7 +519,8 @@ class Run:
           car routes'. With mode choice (``modes``), a trip's itinerary is measured against
           the best of its own mode (with mode constants, the fastest mode need not be the
           best), and ``gap_car``, ``gap_bike`` and ``gap_walk`` are the same for the trips
-          that chose those modes (``gap`` above covers the car trips given their mode).
+          that chose those modes, door to door against the best of their mode (``gap`` above
+          covers every car trip's route: given the car, or choosing it).
           With ``itinerary_gap_sample`` set below the number of such trips, it is **measured
           on a sample** before the last iteration: the trips choosing again and that many
           others plan their whole choice set; the rest that keep an itinerary out through a
@@ -555,11 +561,12 @@ class Run:
           minutes at this loading's times (defined under the full gaps below), ``g_expected``
           its expectation under the model's probabilities over the routes offered and
           ``g_least`` the least of them: ``gap_excess`` with money, length and the user's link
-          values counted beside time. A ratio, not minutes. Where the choice model weighs more
-          than time on a car route (a price per kilometre, a toll, a user link value), it is
-          what ``gap_tolerance`` stops on in place of ``gap_excess``, together with
-          ``itinerary_gap_excess``, and what ``convergence_gap`` and ``convergence_verdict``
-          read. ``nan`` where the route cost is travel time alone (the
+          values counted beside time, over the same car trips (a trip choosing its mode costed
+          door to door, as its choice sees its car routes). A ratio, not minutes. Where the
+          choice model weighs more than time on a car route (a price per kilometre, a toll, a
+          user link value), it is what ``gap_tolerance`` stops on in place of ``gap_excess``,
+          together with ``itinerary_gap_excess``, and what ``convergence_gap`` and
+          ``convergence_verdict`` read. ``nan`` where the route cost is travel time alone (the
           defaults: ``gap_excess`` is then its counterpart in travel time), for a model that
           gives no probabilities, and for a run of one loading.
 
