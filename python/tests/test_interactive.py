@@ -113,10 +113,13 @@ def test_embedded_routes_are_the_run_route_sets(tmp_path):
     assert len(a["rc"]) == len(a["ro"]) == len(a["rst"]) - 1 == meta["n_routes"]
     assert a["ss"][-1] == meta["n_routes"] and len(a["ss"]) == meta["n_pairs"] + 1
     assert (a["ro"] >= 0).all() and (a["ro"] <= 1).all()
-    # Within a pair: the first route is the cheapest.
+    # Within a pair: the most chosen first, then the cheapest (a pair's equal-cost twins can be
+    # chosen more than its first route, S302).
     for k in range(meta["n_pairs"]):
         costs = a["rc"][a["ss"][k] : a["ss"][k + 1]]
-        assert costs[0] == costs.min()
+        used = a["ru"][a["ss"][k] : a["ss"][k + 1]]
+        for i in range(len(costs) - 1):
+            assert used[i] > used[i + 1] or (used[i] == used[i + 1] and costs[i] <= costs[i + 1])
 
 
 def test_a_build_is_repeatable_byte_for_byte(tmp_path):

@@ -614,7 +614,7 @@ impl RouteSetGenerator for ReadsDemand {
         "reads_demand".to_string()
     }
     fn generate(&self, search: &mut Search<'_>, origin: NodeId, destination: NodeId) -> Vec<Route> {
-        Shortest.generate(search, origin, destination)
+        Shortest::ONE.generate(search, origin, destination)
     }
     fn reads_demand(&self) -> bool {
         !self.prepared
@@ -699,7 +699,8 @@ fn a_pair_within_the_slack_of_free_flow_is_not_searched_and_one_beyond_it_is() {
     let turns = TurnTable::build(&network, SignalDefaults::SHIPPED);
     let node = |n: &str| network.node_external_ids().typed_id_of::<NodeId>(n).unwrap();
     let key = RouteKey::new(node("o"), node("d"));
-    let sets = RouteSets::generate(&network, &turns, &[key], &openmobisim_core_routes::Shortest);
+    let sets =
+        RouteSets::generate(&network, &turns, &[key], &openmobisim_core_routes::Shortest::ONE);
     let free = f64::from(sets.route(0).cost);
     assert!((free - 72.0).abs() < 1.0, "the fast road: {free}");
     let (travellers, raw) =
@@ -1108,7 +1109,8 @@ fn a_competitive_route_that_is_never_the_fastest_enters_only_with_sampled_draws(
     let node = |n: &str| network.node_external_ids().typed_id_of::<NodeId>(n).unwrap();
     let link = |n: &str| network.link_external_ids().typed_id_of::<LinkId>(n).unwrap();
     let key = RouteKey::new(node("o"), node("d"));
-    let sets = RouteSets::generate(&network, &turns, &[key], &openmobisim_core_routes::Shortest);
+    let sets =
+        RouteSets::generate(&network, &turns, &[key], &openmobisim_core_routes::Shortest::ONE);
     let free = f64::from(sets.route(0).cost);
     let (_travellers, raw) =
         build_travellers(trips(40, 900), Vec::new(), &car_owning(), 1, &mut Diagnostics::new())
@@ -1293,7 +1295,7 @@ fn a_toll_makes_the_column_generation_add_the_route_cheapest_in_its_class_s_cost
     let node = |n: &str| network.node_external_ids().typed_id_of::<NodeId>(n).unwrap();
     let link = |n: &str| network.link_external_ids().typed_id_of::<LinkId>(n).unwrap();
     let key = RouteKey::new(node("o"), node("d"));
-    let sets = RouteSets::generate(&network, &turns, &[key], &Shortest);
+    let sets = RouteSets::generate(&network, &turns, &[key], &Shortest::ONE);
     let free = f64::from(sets.route(0).cost);
     // Twenty trips of each class.
     let rows: Vec<RawTrip> = trips(40, 900)

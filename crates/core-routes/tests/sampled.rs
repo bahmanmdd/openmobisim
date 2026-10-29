@@ -140,7 +140,7 @@ fn no_draws_and_no_extras_give_exactly_the_shortest_routes() {
     let keys = grid_keys(&net, 7, 60, 5);
     let sampled = Sampled::from_options(&opts(&[("draws", 0.0)])).expect("valid");
     let sets = RouteSets::generate(&net, &turns, &keys, &sampled);
-    let shortest = RouteSets::generate(&net, &turns, &keys, &Shortest);
+    let shortest = RouteSets::generate(&net, &turns, &keys, &Shortest::ONE);
     assert_eq!(sets.keys(), shortest.keys());
     for i in 0..sets.keys().len() {
         let routes = routes_of(&sets, i);
@@ -217,7 +217,7 @@ fn noise_finds_alternatives_and_every_route_is_a_route_within_the_limits() {
     let (net, _) = manhattan_grid(8, 200.0, true);
     let turns = turns_of(&net);
     let keys = grid_keys(&net, 8, 200, 11);
-    let shortest = RouteSets::generate(&net, &turns, &keys, &Shortest);
+    let shortest = RouteSets::generate(&net, &turns, &keys, &Shortest::ONE);
     for (label, sampled) in [
         ("the defaults", Sampled::default()),
         ("max_overlap 0.5", Sampled::from_options(&opts(&[("max_overlap", 0.5)])).expect("valid")),

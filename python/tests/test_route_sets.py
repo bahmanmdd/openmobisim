@@ -104,7 +104,7 @@ def test_the_shortest_method_gives_the_penalty_methods_first_route():
     net = grid()
     pairs = corner_pairs(net)
     full = ms.route_sets_build(net, pairs)
-    single = ms.route_sets_build(net, pairs, method="shortest")
+    single = ms.route_sets_build(net, pairs, method="shortest", options={"max_paths": 1})
     assert (np.diff(single.set_offsets()) == 1).all()
     for k in range(full.key_count):
         assert (single.routes(k)[0] == full.routes(k)[0]).all()
@@ -216,7 +216,7 @@ def test_montecarlo_is_biased_by_the_demand_it_is_generated_for():
     net = ms.examples.manhattan_grid(n=8, block_metres=200.0, signals=False)
     rows = ms.examples.trips_random(net, 300, seed=5, min_m=300.0, max_m=1400.0, spread_s=300)
 
-    def sets(weight, method="montecarlo"):
+    def sets(weight, method="montecarlo", options=None):
         run = ms.Scenario.from_parts(
             net,
             rows,
@@ -225,6 +225,7 @@ def test_montecarlo_is_biased_by_the_demand_it_is_generated_for():
             flow_level=4,
             default_weight=weight,
             route_method=method,
+            route_options=options,
             # The sets as generated: nothing added by an update (the free-flow loading's groups
             # would search, S223).
             route_update="none",
@@ -234,7 +235,7 @@ def test_montecarlo_is_biased_by_the_demand_it_is_generated_for():
     (light, light_run), (heavy, _), (shortest, shortest_run) = (
         sets(1),
         sets(1000),
-        sets(1, "shortest"),
+        sets(1, "shortest", {"max_paths": 1}),
     )
     assert light.method == "montecarlo" and "bias=demand" in light.descriptor
     assert light_run.fingerprint != shortest_run.fingerprint
@@ -323,7 +324,9 @@ def test_sampled_without_draws_is_the_shortest_route_of_each_pair():
     net = grid()
     rows = ms.examples.trips_random(net, 60, seed=5, min_m=300.0, max_m=900.0)
     none = one_loading(net, rows, "sampled-0", route_method="sampled", route_options={"draws": 0})
-    shortest = one_loading(net, rows, "sampled-0-short", route_method="shortest")
+    shortest = one_loading(
+        net, rows, "sampled-0-short", route_method="shortest", route_options={"max_paths": 1}
+    )
     a, b = none.route_sets(), shortest.route_sets()
     assert "draws=0;" in a.descriptor
     assert a.key_count == b.key_count and a.route_count == b.route_count == a.key_count
@@ -396,9 +399,47 @@ def test_the_route_set_summary_counts_what_the_sets_and_choices_hold():
 def test_the_route_set_summary_of_one_route_per_pair():
     net = grid()
     rows = ms.examples.trips_random(net, 60, seed=5, min_m=300.0, max_m=900.0)
-    run = one_loading(net, rows, "summary-short", route_method="shortest", route_update="none")
+    run = one_loading(
+        net, rows, "summary-short", route_method="shortest", route_options={"max_paths": 1},
+        route_update="none",
+    )  # fmt: skip
     s = run.route_set_summary()
     assert s["routes_per_pair_max"] == 1 and s["routes_per_pair_mean"] == 1
     assert s["share_on_best"] == 1 and s["share_routes_unchosen"] == 0
     assert s["alternatives_mean"] == 1 and s["alternatives_p95"] == 1
     assert s["pairs"] == s["routes"] == run.route_sets().key_count
+
+
+def test_equal_routes_are_split_by_the_logit_at_the_first_loading():
+    # S302: a pair with two routes of equal free-flow time (the 2 × 2 grid's opposite corners)
+    # holds both from the start, so the logit, not the order of the links, splits the tie: at
+    # the first loading the share on each is a half, within three standard deviations of a
+    # binomial share over the trips. With the route alone (max_paths 1) all take one route.
+    net = grid(2)
+    n = 400
+    trips = [(f"t{i}", (0, 0), (1, 1), 0.25 * i / n, 1) for i in range(n)]
+    rows = ms.examples.fixed_car_trips(net, trips)
+    run = one_loading(net, rows, "twins-split", route_method="shortest", flow_level=2)
+    sets = run.route_sets()
+    assert sets.key_count == 1 and sets.route_count == 2
+    assert "max_paths=2" in sets.descriptor and "twin_tolerance=0.001" in sets.descriptor
+    costs = sets.costs()
+    assert abs(costs[0] - costs[1]) < 1e-3, "the two routes take the same free-flow time"
+    rc = run.route_choices()
+    assert (rc.route >= 0).all() and (rc.alternatives == 2).all()
+    share = float((rc.rank == 0).mean())
+    sigma = (0.25 / n) ** 0.5
+    assert abs(share - 0.5) <= 3 * sigma, f"share on the first route {share:.3f}"
+    one = one_loading(
+        net, rows, "twins-one", route_method="shortest", route_options={"max_paths": 1},
+        flow_level=2,
+    )  # fmt: skip
+    assert one.route_sets().route_count == 1 and one.route_sets().descriptor == "shortest"
+    assert (one.route_choices().rank == 0).all()
+    # An iterating run starts from the same method by default.
+    default = one_loading(
+        net, rows, "twins-default", route_method=None, route_update=None, flow_level=2,
+        equilibration="msa", equilibration_options={"iterations": 2, "warmup": 0},
+    )  # fmt: skip
+    assert default.route_sets().method == "shortest"
+    assert len(default.route_sets().routes(0)) >= 2, "the route and its twin from the start"
