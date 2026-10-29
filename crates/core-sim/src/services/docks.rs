@@ -21,8 +21,13 @@
 //! Once docked, the traveller arrives [`DockDefaults::return_s`] plus the walk to the
 //! destination later.
 //!
+//! **An operator's van** ([`super::decisions::Decision::Move`]) takes bikes from a dock at once
+//! and, on arriving, docks them into the free slots of the dock it was sent to, the rest into
+//! that dock's neighbours with room, nearest first, any left above capacity (counted as
+//! overflow).
+//!
 //! **Cost:** per pickup or return one event; per redirection a look along a short list; per
-//! dock and bin 80 bytes.
+//! dock and bin 80 bytes, and 40 bytes for the counts since the last policy step.
 
 use openmobisim_core_graph::geometry::ground_distance_metres;
 
@@ -59,9 +64,9 @@ pub struct DockBins {
     pub failed: Vec<f64>,
     /// Travellers who found the dock empty or full and went on to another (people).
     pub redirected: Vec<f64>,
-    /// Bikes an operator took away (always 0 for now: no operator yet).
+    /// Bikes an operator's van took away.
     pub moved_out: Vec<f64>,
-    /// Bikes an operator brought (always 0 for now).
+    /// Bikes an operator's van brought.
     pub moved_in: Vec<f64>,
 }
 
@@ -120,6 +125,40 @@ impl DockBins {
     }
 }
 
+/// Per dock, the counts since the last policy step (people).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SinceStep {
+    pub(crate) pickups: Vec<f64>,
+    pub(crate) returns: Vec<f64>,
+    pub(crate) failed: Vec<f64>,
+    pub(crate) redirected_in: Vec<f64>,
+    pub(crate) redirected_out: Vec<f64>,
+}
+
+impl SinceStep {
+    fn new(n: usize) -> Self {
+        Self {
+            pickups: vec![0.0; n],
+            returns: vec![0.0; n],
+            failed: vec![0.0; n],
+            redirected_in: vec![0.0; n],
+            redirected_out: vec![0.0; n],
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        for v in [
+            &mut self.pickups,
+            &mut self.returns,
+            &mut self.failed,
+            &mut self.redirected_in,
+            &mut self.redirected_out,
+        ] {
+            v.fill(0.0);
+        }
+    }
+}
+
 /// One docked service's running counts on the engine.
 #[derive(Clone, Debug)]
 pub(crate) struct DockRun {
@@ -128,6 +167,8 @@ pub(crate) struct DockRun {
     clock: Vec<f64>,
     /// The most bikes docked above capacity at once, over every dock.
     pub(crate) overflow_max: f64,
+    /// Per dock, the counts since the last policy step.
+    pub(crate) since: SinceStep,
 }
 
 /// A docked service's counts the handlers change: per dock its bikes, and the bikes ridden.
@@ -159,6 +200,43 @@ impl DockRun {
             bins: DockBins::new(docks.len(), defaults, window),
             clock: vec![0.0; docks.len()],
             overflow_max: 0.0,
+            since: SinceStep::new(docks.len()),
+        }
+    }
+
+    /// An operator's van takes `n` bikes (at most those docked) from dock `k` at second `t`.
+    pub(crate) fn van_out(&mut self, docks: &Docks, bikes: &mut [u32], k: usize, n: u32, t: f64) {
+        let cell = self.touch(docks, bikes, k, t);
+        bikes[k] -= n;
+        self.bins.moved_out[cell] += f64::from(n);
+        self.bins.bikes_min[cell] = self.bins.bikes_min[cell].min(f64::from(bikes[k]));
+    }
+
+    /// An operator's van docks `n` bikes at second `t`: into dock `to`'s free slots, the rest
+    /// into its neighbours with room, nearest first, any left at `to` above capacity.
+    pub(crate) fn van_in(&mut self, docks: &Docks, bikes: &mut [u32], to: u32, n: u32, t: f64) {
+        let mut left = n;
+        let targets = std::iter::once(to).chain(docks.neighbours(to).iter().map(|x| x.0));
+        for k in targets {
+            let k = k as usize;
+            let room = docks.capacity[k].saturating_sub(bikes[k]).min(left);
+            if room > 0 {
+                let cell = self.touch(docks, bikes, k, t);
+                bikes[k] += room;
+                self.bins.moved_in[cell] += f64::from(room);
+                left -= room;
+            }
+            if left == 0 {
+                break;
+            }
+        }
+        if left > 0 {
+            let k = to as usize;
+            let cell = self.touch(docks, bikes, k, t);
+            bikes[k] += left;
+            self.bins.moved_in[cell] += f64::from(left);
+            self.overflow_max =
+                self.overflow_max.max(f64::from(bikes[k]) - f64::from(docks.capacity[k]));
         }
     }
 
@@ -230,6 +308,7 @@ impl DockRun {
             fleet.bikes[k] -= w;
             *fleet.riding += u64::from(w);
             self.bins.pickups[cell] += wf;
+            self.since.pickups[k] += wf;
             self.bins.bikes_min[cell] = self.bins.bikes_min[cell].min(f64::from(fleet.bikes[k]));
             c.out.status = LegStatus::Riding;
             c.out.picked = Some(dock);
@@ -257,11 +336,14 @@ impl DockRun {
         };
         if let Some((o, walk)) = next {
             self.bins.redirected[cell] += wf;
+            self.since.redirected_out[k] += wf;
+            self.since.redirected_in[o as usize] += wf;
             c.out.extra_walk_s += walk;
             c.out.redirections += 1;
             return Some((t + walk, EventKind::Request, o));
         }
         self.bins.failed[cell] += wf;
+        self.since.failed[k] += wf;
         c.out.status = LegStatus::Failed;
         c.out.picked_s = t;
         c.out.arrived_s = t + c.legs.walk_to_destination_s(c.index, dock);
@@ -294,6 +376,8 @@ impl DockRun {
             });
             if let Some((o, _)) = next {
                 self.bins.redirected[cell] += wf;
+                self.since.redirected_out[k] += wf;
+                self.since.redirected_in[o as usize] += wf;
                 c.out.redirections += 1;
                 let ride = c.legs.ride_s(leg.service, dock, o);
                 return Some((t + ride, EventKind::Return, o));
@@ -302,6 +386,7 @@ impl DockRun {
         fleet.bikes[k] += w;
         *fleet.riding -= u64::from(w);
         self.bins.returns[cell] += wf;
+        self.since.returns[k] += wf;
         self.overflow_max = self.overflow_max.max(f64::from(fleet.bikes[k]) - f64::from(cap));
         let egress = if dock == leg.return_dock {
             leg.egress_s

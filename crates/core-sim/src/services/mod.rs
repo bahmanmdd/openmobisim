@@ -12,22 +12,30 @@
 //! | [`engine`] | [`engine::FleetEngine`] — the services' day: legs, vehicles and docks, events in time order |
 //! | [`outcome`] | [`outcome::FleetOutcome`] — what became of each leg, and the day's counts |
 //! | [`frozen`] | [`frozen::plan_legs`], [`frozen::FrozenLegs`] — a fleet day without a run: trips as a table, legs planned by a fixed rule |
+//! | [`world`] | [`world::FrozenWorld`] — a fleet day's city, owned, lending the engine its roads one call at a time |
 //! | [`roads`] | [`roads::RoadTimes`], [`roads::FrozenRoads`], [`roads::FrozenPaths`] — a day's road times and the drives, rides and walks on them, without a run |
 //! | [`docks`] | [`docks::DockBins`] — docked bikes' pickups, returns and redirections on the engine, bin by bin |
 //! | [`costs`] | [`costs::DockCosts`] — what a dock is expected to cost a pickup and a return, per bin |
 //! | [`taxis`] | electric taxis on the engine: matching, drives, energy, the charging rule and plug queues; [`taxis::TaxiDay`] |
+//! | [`policy`] | [`policy::Policy`] — an operator: called every few minutes with a [`view::View`], it returns [`decisions::Decision`]s; the built-in ones, by name ([`policy::policy_builtin`]): [`policy::NoOp`], [`policy::Reset`], [`policy::Threshold`], [`policy::ChargeRule`] |
+//! | [`view`] | [`view::View`] — what a policy sees at a step, read-only |
+//! | [`decisions`] | [`decisions::Decision`] — what a policy asks for, checked and refused with a reason or carried out; [`decisions::DecisionRecord`] |
 //!
 //! **Cost:** per dock about 60 bytes and its neighbours, found by one bounded walk search per
 //! dock, once per run; per vehicle and charger about 40 bytes.
 
 pub mod costs;
+pub mod decisions;
 pub mod docks;
 pub mod engine;
 pub mod frozen;
 pub mod hubs;
 pub mod outcome;
+pub mod policy;
 pub mod roads;
 pub mod taxis;
+pub mod view;
+pub mod world;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -142,6 +150,10 @@ pub struct DockDefaults {
     ///
     /// *An assumption. CITATION OWED.*
     pub handling_s: f64,
+    /// The most bikes an operator's van carries in one move.
+    ///
+    /// *An assumption: a small van or a bike trailer. CITATION OWED.*
+    pub van_bikes: f64,
 }
 
 impl DockDefaults {
@@ -159,10 +171,11 @@ impl DockDefaults {
         fail_s: 1200.0,
         bin_s: 900.0,
         handling_s: 30.0,
+        van_bikes: 20.0,
     };
 
     /// The names of the options, in the order [`Self::values`] gives them.
-    pub const NAMES: [&'static str; 12] = [
+    pub const NAMES: [&'static str; 13] = [
         "walk_max_s",
         "candidates",
         "snap_m",
@@ -175,6 +188,7 @@ impl DockDefaults {
         "fail_s",
         "bin_s",
         "handling_s",
+        "van_bikes",
     ];
 
     /// Every option, by name, in [`Self::NAMES`]' order (the parameter listing, the manifest).
@@ -193,6 +207,7 @@ impl DockDefaults {
             ("fail_s", self.fail_s),
             ("bin_s", self.bin_s),
             ("handling_s", self.handling_s),
+            ("van_bikes", self.van_bikes),
         ]
     }
 
@@ -202,7 +217,7 @@ impl DockDefaults {
     ///
     /// [`ServiceError::UnknownOption`] for a name not in [`Self::NAMES`],
     /// [`ServiceError::BadOption`] for a value that is not finite, is negative, or is out of its
-    /// range (`ride_factor` and `bin_s` above 0, `start_share` at most 1).
+    /// range (`ride_factor` and `bin_s` above 0, `start_share` at most 1, `van_bikes` at least 1).
     pub fn from_options(options: &Options) -> Result<Self, ServiceError> {
         let mut d = Self::SHIPPED;
         for (name, &value) in options {
@@ -219,6 +234,7 @@ impl DockDefaults {
                 "fail_s" => &mut d.fail_s,
                 "bin_s" => &mut d.bin_s,
                 "handling_s" => &mut d.handling_s,
+                "van_bikes" => &mut d.van_bikes,
                 _ => {
                     return Err(ServiceError::UnknownOption {
                         kind: ServiceKind::BikeDocked,
@@ -232,6 +248,7 @@ impl DockDefaults {
                 || value < 0.0
                 || (positive && value <= 0.0)
                 || (name == "start_share" && value > 1.0)
+                || (name == "van_bikes" && value < 1.0)
             {
                 return Err(ServiceError::BadOption {
                     kind: ServiceKind::BikeDocked,
@@ -250,6 +267,14 @@ impl DockDefaults {
     pub fn candidate_count(&self) -> usize {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a small count")]
         let n = self.candidates.round().max(1.0) as usize;
+        n
+    }
+
+    /// [`Self::van_bikes`] as a count, at least one.
+    #[must_use]
+    pub fn van_count(&self) -> u32 {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a small count")]
+        let n = self.van_bikes.floor().clamp(1.0, f64::from(u32::MAX)) as u32;
         n
     }
 
@@ -538,6 +563,8 @@ pub struct ServiceSetupReport {
 pub struct Docks {
     /// Per dock: its id, name, hub named by its row, position, walk and bike nodes, slots and
     /// bikes at the start of the day.
+    ///
+    /// Each list has one entry per dock, except [`Self::road_node`].
     pub external: Vec<String>,
     /// See [`Self::external`].
     pub name: Vec<Option<String>>,
@@ -551,6 +578,9 @@ pub struct Docks {
     pub bike_node: Vec<NodeId>,
     /// See [`Self::external`].
     pub capacity: Vec<u32>,
+    /// Per dock, the road network's nearest node, where an operator's van stops; empty when
+    /// the docks were set up without roads (then no van can move bikes).
+    pub road_node: Vec<NodeId>,
     /// See [`Self::external`].
     pub start: Vec<u32>,
     /// Per dock, CSR: the other docks within [`DockDefaults::redirect_max_m`] and their walk in
@@ -637,7 +667,8 @@ pub struct ServiceSetup {
 impl ServiceSetup {
     /// A docked bike service named `name`: `rows` snapped to `walk` and `bike` (a dock farther
     /// than `snap_m` from either, or without slots, is left out and counted), kept in dock id
-    /// order, each with its neighbours for redirections.
+    /// order, each with its neighbours for redirections and, given `road`, its nearest road
+    /// node (where an operator's van stops; `None`: no van can move bikes).
     ///
     /// # Errors
     ///
@@ -652,6 +683,7 @@ impl ServiceSetup {
         rows: &[DockRow],
         walk: &LayerSetup,
         bike: &LayerSetup,
+        road: Option<&RoadNetwork>,
         defaults: DockDefaults,
     ) -> Result<Self, ServiceError> {
         let mut seen = HashSet::new();
@@ -700,6 +732,10 @@ impl ServiceSetup {
         }
         if docks.external.is_empty() {
             return Err(ServiceError::Empty(format!("service `{name}`: no dock near the layers")));
+        }
+        if let Some(road) = road {
+            let snapper = NodeSnapper::new(road);
+            docks.road_node = docks.position.iter().map(|&p| snapper.nearest(road, p)).collect();
         }
         // Each dock's neighbours: one walk search bounded at a slow walker's time over the
         // redirection distance (1 m/s), then those within it as the crow flies.

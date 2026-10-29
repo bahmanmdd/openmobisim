@@ -37,7 +37,7 @@ traveller classes, each with its own modes and coefficients, from a class table
 (``demand_read_classes``), drawn for each traveller by ``demand_assign_classes``.
 """
 
-from openmobisim import _core, choice, examples, options
+from openmobisim import _core, choice, examples, operator, options
 from openmobisim._core import (
     Parkings,
     Transit,
@@ -79,12 +79,14 @@ from openmobisim.demand import (
 from openmobisim.fleet import (
     FleetDay,
     fleet_day,
+    fleet_environment,
     road_times_read,
     service_bike_docked,
     service_taxi,
 )
 from openmobisim.gmns import network_read_gmns, network_write_gmns
 from openmobisim.network import LINK_CLASSES, network_edit, network_options, network_read_table
+from openmobisim.operator import policy_register
 from openmobisim.options import (
     BestResponseOptions,
     FrankWolfeOptions,
@@ -199,9 +201,12 @@ __all__ = [
     "charger_read_table",
     "FleetDay",
     "fleet_day",
+    "fleet_environment",
     "road_times_read",
     "service_bike_docked",
     "service_taxi",
+    "operator",
+    "policy_register",
     "dock_read_gbfs",
     "dock_read_table",
     "vehicle_read_table",

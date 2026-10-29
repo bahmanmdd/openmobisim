@@ -102,3 +102,59 @@ def test_inputs_that_are_not_valid_are_refused_with_why():
         ms.fleet_day(net, [bikes], [row])
     with pytest.raises(ValueError, match="is not one of"):
         ms.fleet_day(net, [bikes], [trip(net, "t", "08:00", (0, 0), (4, 4), service="nope")])
+
+
+def test_an_environment_steps_through_the_day_and_a_fork_leaves_it_alone():
+    from openmobisim.operator import Move
+
+    net = grid()
+    bikes = ms.service_bike_docked(docks(net, bikes=(3, 0)))
+    trips = [trip(net, f"t{k}", 27_000 + 600 * k, (0, 0), (4, 4)) for k in range(6)]
+    env = ms.fleet_environment(net, [bikes], trips, step_s=900)
+    view, info = env.reset(seed=1)
+    assert info["fidelity"] == "frozen_day" and env.t == 27_000
+    # The first trip asks at 07:30 itself: a second's requests come before its step.
+    assert list(view["bike_share"]["bikes"]) == [2, 0]
+    total, steps, done = 0.0, 0, False
+    ahead = None
+    while not done:
+        if steps == 2:
+            ahead = env.fork()
+            t_before = env.t
+        view, reward, done, truncated, info = env.step([])
+        total += reward
+        steps += 1
+        assert not truncated
+    assert steps == 8, "two hours of 15 minutes"
+    outcome = info["outcome"]["trips"]
+    failed = sum(1 for s in outcome["status"] if s == "failed")
+    assert total == pytest.approx(-failed - 0.1 * sum(outcome["extra_walk_s"]) / 60)
+    assert ahead.t == t_before, "the fork stayed where it was"
+    # The fork goes on alone, with a decision of its own; a view ends at its own day's next step.
+    first, _ = ahead.reset(seed=1)
+    _, _, _, _, info = ahead.step([Move("bike_share", "a", "z", 1)])
+    assert info["t"] == 27_900
+    with pytest.raises(RuntimeError, match="has ended"):
+        first["bike_share"]
+
+
+def test_an_environment_is_deterministic_and_refuses_bad_input():
+    net = grid()
+    bikes = ms.service_bike_docked(docks(net, bikes=(1, 0)))
+    trips = [trip(net, f"t{k}", 27_000 + 60 * k, (0, 0), (4, 4)) for k in range(4)]
+
+    def run(seed):
+        env = ms.fleet_environment(net, [bikes], trips, step_s=600)
+        env.reset(seed)
+        rewards, done = [], False
+        while not done:
+            _, r, done, _, _ = env.step()
+            rewards.append(r)
+        return rewards
+
+    assert run(3) == run(3)
+    env = ms.fleet_environment(net, [bikes], trips)
+    with pytest.raises(RuntimeError, match="reset"):
+        env.step()
+    with pytest.raises(ValueError, match="unknown reward weight"):
+        ms.fleet_environment(net, [bikes], trips, reward_weights={"w_nope": 1.0})

@@ -28,18 +28,31 @@
 //! they ask a [`ServiceLegs`] (a ride between two docks, a walk from a dock to a leg's
 //! destination) and a [`ServiceRoads`] (a vehicle's drive, the nodes within a few minutes).
 //!
+//! **A policy** ([`super::policy::Policy`]), if the engine is given one, is called at each
+//! step (every [`super::policy::Policy::step_s`] seconds from the window's start) with a
+//! [`View`] of the state and returns [`Decision`]s, which are checked, refused with a reason
+//! or carried out ([`super::decisions`]), and recorded. Without a policy there are no steps,
+//! and the day is exactly as before. A policy's failure stops the day: [`FleetEngine::advance_to`]
+//! and [`FleetEngine::run_day`] return its message.
+//!
 //! **Cost:** per leg one event per pickup, redirection and return, and about 120 bytes; per
-//! event `O(log n)` in the queue.
+//! event `O(log n)` in the queue; per policy step one view (borrowed arrays, and one pass over
+//! a taxi fleet's waiting requests and chargers) and the policy's own time.
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
 
 use openmobisim_core_types::ids::NodeId;
+use openmobisim_core_types::rng::{DrawAddress, RngKey, Stream, StreamRng};
 
+use super::decisions::{Decision, DecisionRecord};
 use super::docks::{DockRun, Fleet, LegCtx};
 use super::outcome::{FleetOutcome, LegOutcome, LegStatus};
+use super::policy::{DayInfo, Policy, PolicyDescription, PolicySlot};
 use super::taxis::{Move, Next, TaxiRun, Taxis};
+use super::view::{DockView, ServiceView, TaxiView, View};
+use super::world::ServiceWorld;
 use super::{ServiceParts, ServiceSetup};
 
 /// One service leg: the part of a trip that needs a service's vehicle.
@@ -119,17 +132,30 @@ impl ServiceRoads for NoRoads {
     }
 }
 
-/// What one fleet day is run on: its legs, its window and its seed.
+/// What one fleet day is run on: its legs, its window and its seed. (The steps are the
+/// policy's: [`super::policy::Policy::step_s`].)
 #[derive(Clone, Debug, PartialEq)]
 pub struct FleetDay {
     /// The window's start and end, in seconds from midnight.
     pub window: (f64, f64),
     /// The legs, in any order.
     pub legs: Vec<Leg>,
-    /// The seconds between policy steps, the first at the window's start; `None`: no steps.
-    pub step_s: Option<f64>,
-    /// The day's seed (the engine's own draws, from the stream `fleet_day`).
+    /// The day's seed (the engine's own draws, from the stream `fleet_day`; a policy's, from
+    /// `fleet_policy`, through [`View::rng_seed`]).
     pub seed: u64,
+}
+
+/// An `Arrival`'s rank for an operator's van (after the taxis' moves at one second).
+const VAN_RANK: u64 = 5;
+
+/// An operator's van on the way.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Van {
+    pub(super) service: u16,
+    pub(super) to: u32,
+    pub(super) n: u32,
+    /// Its decision's record.
+    pub(super) record: u32,
 }
 
 /// A vehicle's state.
@@ -325,18 +351,46 @@ pub struct StepReport {
     pub steps: u32,
 }
 
+/// A city from owned parts: rides and walks, and roads that need no lending (the tests' and
+/// [`NoLegs`]' and [`NoRoads`]'s).
+#[derive(Debug)]
+struct PartsWorld {
+    legs: Arc<dyn ServiceLegs>,
+    roads: Arc<dyn ServiceRoads>,
+}
+
+impl ServiceWorld for PartsWorld {
+    fn legs(&self) -> &dyn ServiceLegs {
+        &*self.legs
+    }
+
+    fn with_roads(&self, f: &mut dyn FnMut(&dyn ServiceRoads)) {
+        f(&*self.roads);
+    }
+}
+
 /// The fleet engine: see the [module docs](self).
 #[derive(Clone, Debug)]
-pub struct FleetEngine<'w> {
-    setups: Arc<Vec<ServiceSetup>>,
+pub struct FleetEngine {
+    pub(super) setups: Arc<Vec<ServiceSetup>>,
     day: Arc<FleetDay>,
-    legs_io: Arc<dyn ServiceLegs + 'w>,
-    roads_io: Arc<dyn ServiceRoads + 'w>,
-    state: FleetState,
+    /// The city: rides and walks, and the roads lent one call at a time.
+    world: Arc<dyn ServiceWorld>,
+    pub(super) state: FleetState,
     /// Per service: a docked service's running counts.
-    docks: Vec<Option<DockRun>>,
+    pub(super) docks: Vec<Option<DockRun>>,
     /// Per service: a taxi fleet's running state.
-    taxis: Vec<Option<TaxiRun>>,
+    pub(super) taxis: Vec<Option<TaxiRun>>,
+    /// The policy, if any.
+    policy: Option<PolicySlot>,
+    /// The draws handed to the policy, one number per step.
+    policy_rng: StreamRng,
+    /// A policy's failure: the day stopped with this message.
+    failure: Option<String>,
+    /// Every decision taken, in order.
+    pub(super) records: Vec<DecisionRecord>,
+    /// Every van sent, in order.
+    pub(super) vans: Vec<Van>,
     /// Per leg of a taxi fleet: its first unit request.
     leg_unit: Vec<u32>,
     /// Per leg: the dock its next pickup or return is at.
@@ -354,7 +408,7 @@ pub struct FleetEngine<'w> {
     trace: Option<Vec<(f64, EventKind, u64)>>,
 }
 
-impl<'w> FleetEngine<'w> {
+impl FleetEngine {
     /// An engine at the window's start of `day`, for `setups`, asking `legs` for rides and
     /// walks a leg did not plan and `roads` for vehicles' drives: every leg's request, every
     /// policy step and the window's end scheduled; a taxi fleet's vehicles below the charging
@@ -364,14 +418,62 @@ impl<'w> FleetEngine<'w> {
     ///
     /// If a leg names a service `setups` does not have, a docked service's leg names a dock it
     /// does not have, or there are more than `u32::MAX` legs.
+    ///
+    /// With `policy`, its steps are scheduled every [`Policy::step_s`] from the window's start
+    /// (a step at the window's end is not), and it is told the day begins
+    /// ([`Policy::day_start`]); a `step_s` that is not a positive number stops the day at
+    /// once (the engine's first [`Self::advance_to`] returns why).
     #[must_use]
     pub fn new(
         setups: Arc<Vec<ServiceSetup>>,
         day: Arc<FleetDay>,
-        legs: Arc<dyn ServiceLegs + 'w>,
-        roads: Arc<dyn ServiceRoads + 'w>,
+        legs: Arc<dyn ServiceLegs>,
+        roads: Arc<dyn ServiceRoads>,
+        policy: Option<Box<dyn Policy>>,
     ) -> Self {
-        let (start, end) = day.window;
+        Self::in_world(setups, day, Arc::new(PartsWorld { legs, roads }), policy)
+    }
+
+    /// As [`Self::new`], in `world`: an owned city whose roads are lent one call at a time
+    /// ([`ServiceWorld`]), so the engine borrows nothing and can be kept between calls.
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::new`].
+    #[must_use]
+    pub fn in_world(
+        setups: Arc<Vec<ServiceSetup>>,
+        day: Arc<FleetDay>,
+        world: Arc<dyn ServiceWorld>,
+        policy: Option<Box<dyn Policy>>,
+    ) -> Self {
+        let lent = Arc::clone(&world);
+        let mut parts = Some((setups, day, world));
+        let mut built = None;
+        lent.with_roads(&mut |roads| {
+            if let Some((setups, day, world)) = parts.take() {
+                built = Some(Self::build(setups, day, world, roads));
+            }
+        });
+        let mut engine = built.expect("a world lends its roads");
+        engine.schedule_all(policy);
+        lent.with_roads(&mut |roads| {
+            for s in 0..engine.setups.len() {
+                let start = engine.day.window.0;
+                engine.with_taxis(s, roads, |taxis| taxis.start(start));
+            }
+        });
+        engine
+    }
+
+    fn build(
+        setups: Arc<Vec<ServiceSetup>>,
+        day: Arc<FleetDay>,
+        world: Arc<dyn ServiceWorld>,
+        roads: &dyn ServiceRoads,
+    ) -> Self {
+        let start = day.window.0;
+        let seed = day.seed;
         let services = setups.iter().map(ServiceState::start).collect();
         let docks = setups
             .iter()
@@ -387,16 +489,15 @@ impl<'w> FleetEngine<'w> {
             .zip(setups.iter())
             .map(|(s, setup)| match setup.parts() {
                 ServiceParts::Taxi(fleet, d) => {
-                    Some(TaxiRun::new(s, fleet, d, &day.legs, &mut leg_unit, &*roads, day.window))
+                    Some(TaxiRun::new(s, fleet, d, &day.legs, &mut leg_unit, roads, day.window))
                 }
                 ServiceParts::BikeDocked(..) => None,
             })
             .collect();
-        let mut engine = Self {
+        let engine = Self {
             setups,
             day,
-            legs_io: legs,
-            roads_io: roads,
+            world,
             docks,
             taxis,
             leg_unit,
@@ -411,7 +512,20 @@ impl<'w> FleetEngine<'w> {
             steps: 0,
             violations: 0,
             trace: None,
+            policy: None,
+            policy_rng: StreamRng::new(RngKey::from_seed(seed), Stream::FleetPolicy),
+            failure: None,
+            records: Vec::new(),
+            vans: Vec::new(),
         };
+        let _ = &engine;
+        engine
+    }
+
+    /// Schedule every leg's request, the policy's steps and the window's end.
+    fn schedule_all(&mut self, policy: Option<Box<dyn Policy>>) {
+        let engine = self;
+        let (start, end) = engine.day.window;
         let day = Arc::clone(&engine.day);
         for (i, leg) in day.legs.iter().enumerate() {
             assert!(
@@ -443,20 +557,29 @@ impl<'w> FleetEngine<'w> {
                 );
             }
         }
-        if let Some(step) = day.step_s.filter(|s| *s > 0.0) {
-            let mut t = start;
-            let mut k = 0u32;
-            while t < end {
-                engine.schedule(t, EventKind::Step, u64::from(k), k, 0);
-                k += 1;
-                t = start + f64::from(k) * step;
+        if let Some(mut policy) = policy {
+            let step = policy.step_s();
+            if step.is_finite() && step > 0.0 {
+                let mut t = start;
+                let mut k = 0u32;
+                while t < end {
+                    engine.schedule(t, EventKind::Step, u64::from(k), k, 0);
+                    k += 1;
+                    t = start + f64::from(k) * step;
+                }
+            } else {
+                engine.failure = Some(format!(
+                    "a policy's step_s must be a positive number of seconds, not {step}"
+                ));
             }
+            policy.day_start(&DayInfo {
+                window: day.window,
+                seed: day.seed,
+                services: &engine.setups,
+            });
+            engine.policy = Some(PolicySlot(policy));
         }
         engine.schedule(end, EventKind::End, 0, 0, 0);
-        for s in 0..engine.setups.len() {
-            engine.with_taxis(s, |taxis| taxis.start(start));
-        }
-        engine
     }
 
     /// Record every event handled, for tests and diagnostics.
@@ -472,17 +595,21 @@ impl<'w> FleetEngine<'w> {
     }
 
     /// Run `f` on service `s`'s taxi handlers, if it is a taxi fleet, and schedule what they
-    /// ask for inside the window.
-    fn with_taxis(&mut self, s: usize, f: impl FnOnce(&mut Taxis<'_>)) {
+    /// ask for inside the window; what `f` returns (`None`: not a taxi fleet).
+    pub(super) fn with_taxis<R>(
+        &mut self,
+        s: usize,
+        roads: &dyn ServiceRoads,
+        f: impl FnOnce(&mut Taxis<'_>) -> R,
+    ) -> Option<R> {
         let setups = Arc::clone(&self.setups);
         let day = Arc::clone(&self.day);
-        let roads = Arc::clone(&self.roads_io);
         let (ServiceParts::Taxi(fleet, d), Some(run)) = (setups[s].parts(), self.taxis[s].as_mut())
         else {
-            return;
+            return None;
         };
         let ServiceState::Taxi { state, node, soc, counts } = &mut self.state.services[s] else {
-            return;
+            return None;
         };
         let mut next = Vec::new();
         let mut taxis = Taxis {
@@ -493,12 +620,12 @@ impl<'w> FleetEngine<'w> {
             counts,
             fleet,
             d,
-            roads: &*roads,
+            roads,
             legs: &day.legs,
             out: &mut self.state.legs,
             next: &mut next,
         };
-        f(&mut taxis);
+        let r = f(&mut taxis);
         let service = u16::try_from(s).expect("services fit u16");
         for n in next {
             match n {
@@ -516,6 +643,15 @@ impl<'w> FleetEngine<'w> {
                     }
                 }
             }
+        }
+        Some(r)
+    }
+
+    /// Schedule van `van`'s arrival at second `t`, if inside the window.
+    pub(super) fn schedule_van(&mut self, t: f64, van: u32, service: u16) {
+        if t <= self.day.window.1 {
+            let key = (VAN_RANK << 48) | (u64::from(service) << 32) | u64::from(van);
+            self.schedule(t, EventKind::Arrival, key, van, service);
         }
     }
 
@@ -543,6 +679,99 @@ impl<'w> FleetEngine<'w> {
         &self.day
     }
 
+    /// The policy's name and parameters, if there is a policy.
+    #[must_use]
+    pub fn policy_description(&self) -> Option<PolicyDescription> {
+        self.policy.as_ref().map(|p| p.0.describe())
+    }
+
+    /// The decisions taken so far, in order.
+    #[must_use]
+    pub fn decisions(&self) -> &[DecisionRecord] {
+        &self.records
+    }
+
+    /// What a policy would see now: the step index is the number of steps taken so far.
+    #[must_use]
+    pub fn view(&self) -> View<'_> {
+        self.view_at(self.steps)
+    }
+
+    /// The view at step `step`, at the clock.
+    fn view_at(&self, step: u32) -> View<'_> {
+        let rng_seed = self.policy_rng.block(DrawAddress::from_one(step)).word64(0);
+        let services = self
+            .setups
+            .iter()
+            .zip(&self.state.services)
+            .enumerate()
+            .map(|(s, (setup, state))| match (setup.parts(), state) {
+                (
+                    ServiceParts::BikeDocked(docks, _),
+                    ServiceState::BikeDocked { bikes, riding, moving, .. },
+                ) => {
+                    let since = &self.docks[s].as_ref().expect("a docked service's run").since;
+                    ServiceView::BikeDocked(DockView {
+                        name: setup.name(),
+                        bikes,
+                        slots: &docks.capacity,
+                        position: &docks.position,
+                        road_node: &docks.road_node,
+                        pickups: &since.pickups,
+                        returns: &since.returns,
+                        failed: &since.failed,
+                        redirected_in: &since.redirected_in,
+                        redirected_out: &since.redirected_out,
+                        moving: *moving,
+                        riding: *riding,
+                    })
+                }
+                (ServiceParts::Taxi(fleet, _), ServiceState::Taxi { state, node, soc, .. }) => {
+                    let run = self.taxis[s].as_ref().expect("a taxi fleet's run");
+                    let (charger_in_use, charger_queued) = run.chargers_view(fleet);
+                    ServiceView::Taxi(TaxiView {
+                        name: setup.name(),
+                        state,
+                        node,
+                        soc,
+                        waiting: run.waiting_view(&self.day.legs),
+                        charger_node: &fleet.charger_node,
+                        charger_plugs: &fleet.charger_plugs,
+                        charger_in_use,
+                        charger_queued,
+                        nearest: &run.nearest_charger,
+                    })
+                }
+                _ => unreachable!("a service's state is of its kind"),
+            })
+            .collect();
+        View { t: self.now, step, rng_seed, window: self.day.window, services }
+    }
+
+    /// Check and carry out `decisions` at the clock, as at step [`Self::view`]'s; each
+    /// recorded. Per decision given, why it was refused (`None`: carried out).
+    pub fn apply(&mut self, decisions: &[Decision]) -> Vec<Option<String>> {
+        let world = Arc::clone(&self.world);
+        let mut out = Vec::new();
+        world.with_roads(&mut |roads| out = self.apply_at(self.steps, decisions, roads));
+        out
+    }
+
+    /// The policy's step `step`: its view, its decisions carried out, the counts since the
+    /// last step cleared.
+    fn policy_step(&mut self, step: u32, roads: &dyn ServiceRoads) -> Result<(), String> {
+        let Some(mut slot) = self.policy.take() else { return Ok(()) };
+        let mut out = Vec::new();
+        let result = slot.0.step(&self.view_at(step), &mut out);
+        self.policy = Some(slot);
+        for run in self.docks.iter_mut().flatten() {
+            run.since.clear();
+        }
+        result?;
+        self.apply_at(step, &out, roads);
+        Ok(())
+    }
+
     /// The events handled so far, if [`Self::with_trace`] asked for them.
     #[must_use]
     pub fn trace(&self) -> Option<&[(f64, EventKind, u64)]> {
@@ -551,7 +780,21 @@ impl<'w> FleetEngine<'w> {
 
     /// Handle every event up to and including second `t` (never past the window's end), in
     /// order; the clock ends at `t`, or at the window's end.
-    pub fn advance_to(&mut self, t: f64) -> StepReport {
+    ///
+    /// # Errors
+    ///
+    /// The policy's failure (its message), here or at an earlier call: the day stopped there.
+    pub fn advance_to(&mut self, t: f64) -> Result<StepReport, String> {
+        if let Some(why) = &self.failure {
+            return Err(why.clone());
+        }
+        let world = Arc::clone(&self.world);
+        let mut out = Ok(StepReport::default());
+        world.with_roads(&mut |roads| out = self.advance_with(t, roads));
+        out
+    }
+
+    fn advance_with(&mut self, t: f64, roads: &dyn ServiceRoads) -> Result<StepReport, String> {
         let mut report = StepReport::default();
         while let Some(&event) = self.heap.peek() {
             if event.t > t || self.done {
@@ -560,7 +803,10 @@ impl<'w> FleetEngine<'w> {
             self.heap.pop();
             self.now = event.t;
             self.record_bins(event.t);
-            self.handle(event, &mut report);
+            if let Err(why) = self.handle(event, &mut report, roads) {
+                self.failure = Some(why.clone());
+                return Err(why);
+            }
             report.events += 1;
             self.events += 1;
             if let Some(trace) = &mut self.trace {
@@ -574,7 +820,7 @@ impl<'w> FleetEngine<'w> {
         if !self.done {
             self.now = self.now.max(t.min(self.day.window.1));
         }
-        report
+        Ok(report)
     }
 
     /// Note every taxi fleet's counts at the start of each bin up to second `t`.
@@ -586,7 +832,12 @@ impl<'w> FleetEngine<'w> {
         }
     }
 
-    fn handle(&mut self, event: Event, report: &mut StepReport) {
+    fn handle(
+        &mut self,
+        event: Event,
+        report: &mut StepReport,
+        roads: &dyn ServiceRoads,
+    ) -> Result<(), String> {
         match event.kind {
             EventKind::Request => {
                 let i = event.subject as usize;
@@ -600,7 +851,7 @@ impl<'w> FleetEngine<'w> {
                 let s = usize::from(self.day.legs[i].service);
                 if self.taxis[s].is_some() {
                     let first = self.leg_unit[i];
-                    self.with_taxis(s, |taxis| taxis.request(i, first, event.t));
+                    self.with_taxis(s, roads, |taxis| taxis.request(i, first, event.t));
                 } else {
                     self.handle_dock(event);
                 }
@@ -609,22 +860,37 @@ impl<'w> FleetEngine<'w> {
             EventKind::Step => {
                 self.steps += 1;
                 report.steps += 1;
+                self.policy_step(event.subject, roads)?;
+            }
+            EventKind::Arrival if event.key >> 48 == VAN_RANK => {
+                self.van_arrives(event.subject, event.t)
             }
             EventKind::Arrival => {
                 let mv = Move::from_rank(event.key >> 48);
-                self.with_taxis(usize::from(event.service), |taxis| {
+                let s = usize::from(event.service);
+                let v = event.subject as usize;
+                if matches!(mv, Move::Charged | Move::Relocated) {
+                    // The end of a policy's charge or relocation.
+                    if let Some(run) = self.taxis[s].as_mut() {
+                        let d = std::mem::replace(&mut run.decision[v], u32::MAX);
+                        if let Some(r) = self.records.get_mut(d as usize) {
+                            r.finished_s = event.t;
+                        }
+                    }
+                }
+                self.with_taxis(s, roads, |taxis| {
                     taxis.arrive(mv, event.subject, event.t);
                 });
             }
             EventKind::Expire => {
-                self.with_taxis(usize::from(event.service), |taxis| {
+                self.with_taxis(usize::from(event.service), roads, |taxis| {
                     taxis.expire(event.subject, event.t);
                 });
             }
             EventKind::End => {
                 self.done = true;
                 for s in 0..self.setups.len() {
-                    self.with_taxis(s, |taxis| taxis.end(event.t));
+                    self.with_taxis(s, roads, |taxis| taxis.end(event.t));
                 }
                 for leg in &mut self.state.legs {
                     if matches!(leg.status, LegStatus::Waiting | LegStatus::Riding) {
@@ -633,11 +899,13 @@ impl<'w> FleetEngine<'w> {
                 }
             }
         }
+        Ok(())
     }
 
     /// A docked leg's pickup or return, by its service's handlers; the next moment they ask
     /// for scheduled, if inside the window.
     fn handle_dock(&mut self, event: Event) {
+        let world = Arc::clone(&self.world);
         let i = event.subject as usize;
         let leg = &self.day.legs[i];
         let s = usize::from(leg.service);
@@ -653,7 +921,7 @@ impl<'w> FleetEngine<'w> {
         let mut ctx = LegCtx {
             docks,
             defaults,
-            legs: &*self.legs_io,
+            legs: world.legs(),
             leg,
             index: i,
             tried: &mut self.tried[i],
@@ -674,10 +942,13 @@ impl<'w> FleetEngine<'w> {
     }
 
     /// Run to the window's end and return the outcome.
-    #[must_use]
-    pub fn run_day(mut self) -> FleetOutcome {
-        self.advance_to(self.day.window.1);
-        self.into_outcome()
+    ///
+    /// # Errors
+    ///
+    /// The policy's failure: its message.
+    pub fn run_day(mut self) -> Result<FleetOutcome, String> {
+        self.advance_to(self.day.window.1)?;
+        Ok(self.into_outcome())
     }
 
     /// The outcome so far.
@@ -722,6 +993,7 @@ impl<'w> FleetEngine<'w> {
             docks,
             overflow_max,
             taxis,
+            decisions: self.records,
         }
     }
 }
@@ -751,8 +1023,15 @@ mod tests {
         }
     }
 
-    fn engine(setups: Arc<Vec<ServiceSetup>>, day: Arc<FleetDay>) -> FleetEngine<'static> {
-        FleetEngine::new(setups, day, Arc::new(NoLegs), Arc::new(NoRoads))
+    /// An engine without roads; with a policy that decides nothing every `step_s`, if given.
+    fn engine(
+        setups: Arc<Vec<ServiceSetup>>,
+        day: Arc<FleetDay>,
+        step_s: Option<f64>,
+    ) -> FleetEngine {
+        let policy =
+            step_s.map(|s| Box::new(crate::services::policy::NoOp::every(s)) as Box<dyn Policy>);
+        FleetEngine::new(setups, day, Arc::new(NoLegs), Arc::new(NoRoads), policy)
     }
 
     /// One docked service of two docks, 5 and 3 bikes.
@@ -770,22 +1049,22 @@ mod tests {
         )])
     }
 
-    fn day(legs: Vec<Leg>, step_s: Option<f64>) -> Arc<FleetDay> {
-        Arc::new(FleetDay { window: (27_000.0, 34_200.0), legs, step_s, seed: 1 })
+    fn day(legs: Vec<Leg>) -> Arc<FleetDay> {
+        Arc::new(FleetDay { window: (27_000.0, 34_200.0), legs, seed: 1 })
     }
 
     #[test]
     fn an_empty_day_ends_at_the_window() {
-        let engine = engine(Arc::new(Vec::new()), day(Vec::new(), None));
+        let engine = engine(Arc::new(Vec::new()), day(Vec::new()), None);
         assert!((engine.now() - 27_000.0).abs() < 1e-9, "the clock starts at the window's start");
-        let out = engine.run_day();
+        let out = engine.run_day().unwrap();
         assert_eq!((out.events, out.steps, out.invariant_violations), (1, 0, 0), "the end alone");
         assert!((out.end_s - 34_200.0).abs() < 1e-9);
     }
 
     #[test]
     fn steps_fall_every_step_s_from_the_window_s_start() {
-        let out = engine(Arc::new(Vec::new()), day(Vec::new(), Some(900.0))).run_day();
+        let out = engine(Arc::new(Vec::new()), day(Vec::new()), Some(900.0)).run_day().unwrap();
         assert_eq!(out.steps, 8, "07:30, 07:45, ..., 09:15: two hours of 15 minutes");
     }
 
@@ -800,8 +1079,8 @@ mod tests {
             leg(2, 26_000.0),
             leg(5, 40_000.0),
         ];
-        let mut engine = engine(one_service(), day(legs, Some(900.0))).with_trace();
-        let report = engine.advance_to(27_900.0);
+        let mut engine = engine(one_service(), day(legs), Some(900.0)).with_trace();
+        let report = engine.advance_to(27_900.0).unwrap();
         assert_eq!((report.requests, report.steps), (3, 2));
         let at: Vec<(EventKind, u64)> = engine
             .trace()
@@ -816,7 +1095,7 @@ mod tests {
             "requests before the step, by trip id"
         );
         assert!((engine.now() - 27_900.0).abs() < 1e-9);
-        let out = engine.run_day();
+        let out = engine.run_day().unwrap();
         let last = out.legs[2];
         assert_eq!(
             last.status,
@@ -835,12 +1114,16 @@ mod tests {
     #[test]
     fn a_copy_runs_the_same_day_and_leaves_the_original_alone() {
         let legs = (0..50).map(|k| leg(k, 27_000.0 + f64::from(k * 97 % 7_000))).collect();
-        let mut engine = engine(one_service(), day(legs, Some(600.0)));
-        engine.advance_to(30_000.0);
+        let mut engine = engine(one_service(), day(legs), Some(600.0));
+        engine.advance_to(30_000.0).unwrap();
         let copy = engine.clone();
-        let a = engine.run_day();
+        let a = engine.run_day().unwrap();
         // Printed, so the times not yet known (`NaN`) compare equal.
-        assert_eq!(format!("{a:?}"), format!("{:?}", copy.clone().run_day()), "the same day twice");
+        assert_eq!(
+            format!("{a:?}"),
+            format!("{:?}", copy.clone().run_day().unwrap()),
+            "the same day twice"
+        );
         assert!(copy.now() < 30_000.0 + 1e-9, "the copy was not advanced by the first");
         let ServiceState::BikeDocked { bikes, riding, fleet, .. } = &copy.state().services[0]
         else {

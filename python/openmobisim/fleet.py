@@ -11,6 +11,10 @@ returns at the dock nearest its destination on foot, whatever the docks hold; a 
 the given road times and adds no traffic. What a full run adds — travellers choosing among
 modes and docks by what they expect, the services' vehicles in the traffic — is not here. The
 result says so (``FleetDay.fidelity``).
+
+**An operator** (``policy=``, see ``openmobisim.operator``) may steer the services during the
+day: move bikes between docks, set docks' target levels, relocate or charge taxis. Its
+decisions, accepted or refused with the reason, are in ``FleetDay.decisions()``.
 """
 
 from __future__ import annotations
@@ -21,13 +25,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from openmobisim import _core
+from openmobisim.operator import _policy_for_binding
 from openmobisim.parking import _csv_rows, _number, _text
 from openmobisim.table import Columns
 
 __all__ = [
     "FleetDay",
     "Service",
+    "REWARD_WEIGHTS",
+    "FleetEnvironment",
     "fleet_day",
+    "fleet_environment",
     "road_times_read",
     "service_bike_docked",
     "service_taxi",
@@ -56,8 +64,8 @@ def service_bike_docked(
         name: Its name, unique among a day's services.
         options: Its options by name (``walk_max_s``, ``redirect_max``, ``redirect_max_m``,
             ``pickup_s``, ``return_s``, ``ride_factor``, ``start_share``, ``fail_s``, ``bin_s``,
-            ``handling_s``, ``candidates``, ``snap_m``); a name not among them is refused with
-            the list.
+            ``handling_s``, ``van_bikes``, ``candidates``, ``snap_m``); a name not among them is
+            refused with the list.
     """
     return Service("bike_docked", name, docks=docks, options=dict(options or {}))
 
@@ -157,6 +165,10 @@ class FleetDay:
     counts: dict[str, float]
     #: The seconds the day took to set up and to simulate.
     seconds: dict[str, float]
+    #: Every decision the policy took, in order (``decisions()``).
+    decision_rows: Columns
+    #: The policy's name and parameters (``{"name", "parameters"}``), or ``None`` without one.
+    policy: dict[str, Any] | None
 
     def trip_results(self) -> Columns:
         """What became of each trip given, in the order given.
@@ -166,6 +178,21 @@ class FleetDay:
         ``truncated``, ``not_requested``, ``not_planned``).
         """
         return self.trips
+
+    def decisions(self) -> Columns:
+        """Every decision the policy took, in the order taken, accepted or refused.
+
+        Columns: ``step`` (the policy step's index, 0 at the window's start), ``t_s`` (its
+        second), ``service``, ``kind`` (``move``, ``target``, ``relocate``, ``charge``), the
+        parameters by id (``from_dock``, ``to_dock``, ``n``, ``dock``, ``level``, ``vehicle``,
+        ``node``, ``charger``, ``to_soc``; ``None`` or NaN where a kind has none),
+        ``accepted``, ``reason`` (why it was refused, ``None`` if accepted), ``executed_s`` (the
+        second it started), ``finished_s`` (the van's or vehicle's arrival, the charge's end;
+        NaN if refused or not finished by the window's end), ``moved`` (a move's bikes in the
+        van), ``metres`` (the drive's), ``from_target`` (a move the solver made for the
+        step's targets).
+        """
+        return self.decision_rows
 
     def __repr__(self) -> str:
         """The trips, how many were served, and the day's seconds."""
@@ -211,38 +238,16 @@ def _trip_rows(trips: str | Iterable[Mapping[str, Any]], names: Sequence[str]) -
     return out
 
 
-def fleet_day(
-    network: Any,
+def _inputs(
     services: Sequence[Service],
     trips: str | Iterable[Mapping[str, Any]],
-    *,
-    window: tuple[object, object] = ("07:30", "09:30"),
-    road_times: RoadTimes | None = None,
-    seed: int = 0,
-) -> FleetDay:
-    """Run every service's day together on the fleet engine, from a table of trips.
-
-    Args:
-        network: The road network (its walk and bike layers are made from it).
-        services: The services (``service_bike_docked``, ``service_taxi``), names unique.
-        trips: One row per trip: ``origin_lon, origin_lat, destination_lon, destination_lat``,
-            ``departure`` (seconds from midnight, or ``"HH:MM"``), and optionally ``trip_id``,
-            ``service`` (a service's name; required with more than one service) and
-            ``weight`` (the people it stands for, 1 by default). A CSV/TSV path or text, or rows
-            as dicts.
-        window: The day's start and end (seconds or ``"HH:MM"``); a trip asking before it opens
-            asks at its start, one after it ends is never asked.
-        road_times: An earlier run's road times (``road_times_read``); ``None``: free flow.
-        seed: The day's seed.
-
-    Raises:
-        ValueError: For a service, trip or option that is not valid, or road times of another
-            network.
-    """
+    window: tuple[object, object],
+    road_times: RoadTimes | None,
+) -> tuple[list[tuple], list[tuple], tuple | None, tuple[float, float]]:
+    """A fleet day's inputs as the binding takes them, checked."""
     names = [s.name for s in services]
     if len(set(names)) != len(names):
         raise ValueError(f"service names repeat: {names}")
-    started = time.perf_counter()
     rows = _trip_rows(trips, names)
     start, end = (_seconds(w, "window") for w in window)
     if not start < end:
@@ -262,14 +267,154 @@ def fleet_day(
         )
         for s in services
     ]
-    out = _core._fleet_day(network, parts, rows, roads, (start, end), int(seed))
+    return parts, rows, roads, (start, end)
+
+
+#: The standard reward's weights (``fleet_environment``): per failed leg, per minute waited, per
+#: extra minute walked, per van kilometre. Uncalibrated; named so a study sets its own.
+REWARD_WEIGHTS: dict[str, float] = {"w_fail": 1.0, "w_wait": 0.1, "w_walk": 0.1, "w_km": 0.1}
+
+
+def fleet_environment(
+    network: Any,
+    services: Sequence[Service],
+    trips: str | Iterable[Mapping[str, Any]],
+    *,
+    window: tuple[object, object] = ("07:30", "09:30"),
+    road_times: RoadTimes | None = None,
+    step_s: float = 900.0,
+    reward_weights: Mapping[str, float] | None = None,
+) -> Any:
+    """A fleet day to step through: ``reset(seed)``, then ``step(decisions)`` until the day ends.
+
+    The day is ``fleet_day``'s (the same services, trips, window and road times; a frozen day:
+    the travellers' choices and the traffic are held fixed), with no policy of its own: the
+    caller decides at each step. ``reset(seed)`` returns ``(view, info)`` at the window's start;
+    ``step(decisions)`` applies the decisions (as a policy returns them: ``operator.Move``,
+    ``Target``, ``Relocate``, ``Charge``), runs ``step_s`` seconds and returns ``(view, reward,
+    terminated, truncated, info)``; at the window's end ``info["outcome"]`` holds the day's tables.
+    ``fork()`` copies the day at its clock, to simulate ahead without touching it. A view cannot
+    be read after the next step.
+
+    The reward of a step is minus ``w_fail`` × the people of the legs that failed, ``w_wait`` ×
+    the minutes they waited, ``w_walk`` × the extra minutes they walked, and ``w_km`` × the van
+    kilometres of the moves carried out, each counted once, when its leg ends (``REWARD_WEIGHTS``,
+    uncalibrated).
+
+    Args:
+        network: The road network.
+        services: The services (``service_bike_docked``, ``service_taxi``).
+        trips: The trips, as for ``fleet_day``.
+        window: The day's start and end.
+        road_times: An earlier run's road times, or ``None``: free flow.
+        step_s: The seconds between steps.
+        reward_weights: Weights by name in place of ``REWARD_WEIGHTS``'; a name not among them is
+            refused with the list.
+
+    Raises:
+        ValueError: As ``fleet_day``.
+    """
+    weights = dict(REWARD_WEIGHTS)
+    for k, v in (reward_weights or {}).items():
+        if k not in weights:
+            raise ValueError(f"unknown reward weight {k!r}; the weights are {sorted(weights)}")
+        weights[k] = float(v)
+    parts, rows, roads, span = _inputs(services, trips, window, road_times)
+    return FleetEnvironment(
+        _core._fleet_environment(
+            network,
+            parts,
+            rows,
+            roads,
+            span,
+            float(step_s),
+            (weights["w_fail"], weights["w_wait"], weights["w_walk"], weights["w_km"]),
+        )
+    )
+
+
+class FleetEnvironment:
+    """A fleet day to step through (``fleet_environment``)."""
+
+    def __init__(self, inner: Any) -> None:
+        """Wrap the engine's environment (made by ``fleet_environment``)."""
+        self._inner = inner
+
+    def reset(self, seed: int = 0) -> tuple[Any, dict[str, Any]]:
+        """Start the day with ``seed``: ``(view, info)`` at the window's start."""
+        return self._inner.reset(int(seed))
+
+    def step(self, decisions: Sequence[Any] | None = None) -> tuple[Any, float, bool, bool, dict]:
+        """Apply ``decisions`` at the clock and run one step.
+
+        Returns ``(view, reward, terminated, truncated, info)``.
+        """
+        from openmobisim.operator import _decision
+
+        return self._inner.step([_decision(d) for d in decisions or []])
+
+    def fork(self) -> FleetEnvironment:
+        """A copy of the day at its clock, to simulate ahead without touching this one."""
+        return FleetEnvironment(self._inner.fork())
+
+    @property
+    def t(self) -> float:
+        """The clock, in seconds from midnight."""
+        return self._inner.t
+
+    def plan(self) -> dict[str, int]:
+        """The trips given, the legs planned and those left out, by reason."""
+        return dict(self._inner.plan())
+
+
+def fleet_day(
+    network: Any,
+    services: Sequence[Service],
+    trips: str | Iterable[Mapping[str, Any]],
+    *,
+    window: tuple[object, object] = ("07:30", "09:30"),
+    road_times: RoadTimes | None = None,
+    seed: int = 0,
+    policy: Any = None,
+    policy_options: Mapping[str, float] | None = None,
+) -> FleetDay:
+    """Run every service's day together on the fleet engine, from a table of trips.
+
+    Args:
+        network: The road network (its walk and bike layers are made from it).
+        services: The services (``service_bike_docked``, ``service_taxi``), names unique.
+        trips: One row per trip: ``origin_lon, origin_lat, destination_lon, destination_lat``,
+            ``departure`` (seconds from midnight, or ``"HH:MM"``), and optionally ``trip_id``,
+            ``service`` (a service's name; required with more than one service) and
+            ``weight`` (the people it stands for, 1 by default). A CSV/TSV path or text, or rows
+            as dicts.
+        window: The day's start and end (seconds or ``"HH:MM"``); a trip asking before it opens
+            asks at its start, one after it ends is never asked.
+        road_times: An earlier run's road times (``road_times_read``); ``None``: free flow.
+        seed: The day's seed.
+        policy: An operator steering the services (``openmobisim.operator``): a policy object
+            (``step(view)``), a built-in one (``policy_threshold(...)``), a name (built-in or
+            registered with ``policy_register``), or ``None``: no operator.
+        policy_options: A named policy's options (``{"low": 0.1}`` for ``"threshold"``).
+
+    Raises:
+        ValueError: For a service, trip, option or policy that is not valid, road times of
+            another network, or a decision naming an id that does not exist.
+        Exception: A Python policy's own exception, which stops the day.
+    """
+    started = time.perf_counter()
+    parts, rows, roads, (start, end) = _inputs(services, trips, window, road_times)
+    chosen = _policy_for_binding(policy, policy_options)
+    out = _core._fleet_day(network, parts, rows, roads, (start, end), int(seed), chosen)
     trips_out = Columns(out["trips"])
     return FleetDay(
         fidelity="frozen_day",
-        services=names,
+        services=[s.name for s in services],
         trips=trips_out,
         dock_bins={name: Columns(cols) for name, cols in out["dock_bins"].items()},
         plan=dict(out["plan"]),
         counts=dict(out["counts"]),
         seconds={**out["seconds"], "total_s": time.perf_counter() - started},
+        decision_rows=Columns(out["decisions"]),
+        policy=out["policy"],
     )

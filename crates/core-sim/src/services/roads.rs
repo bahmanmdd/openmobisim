@@ -19,6 +19,7 @@
 //! search over the link's few rows; a drive one bounded time-dependent search; a ride or walk
 //! one static search, kept per pair.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -175,7 +176,7 @@ impl RoadTimes {
 #[derive(Debug)]
 pub struct FrozenRoads<'a> {
     road: &'a RoadNetwork,
-    times: RoadTimes,
+    times: Cow<'a, RoadTimes>,
     /// Free-flow seconds of the links motor traffic may use, infinite on the others.
     free: Vec<f64>,
     every: Vec<bool>,
@@ -186,6 +187,16 @@ impl<'a> FrozenRoads<'a> {
     /// The roads of `ctx`'s network at `times`.
     #[must_use]
     pub fn new(road: &'a RoadNetwork, ctx: &'a SearchContext<'a>, times: RoadTimes) -> Self {
+        Self::with_times(road, ctx, Cow::Owned(times))
+    }
+
+    /// The roads of `ctx`'s network at `times`, borrowed or owned.
+    #[must_use]
+    pub fn with_times(
+        road: &'a RoadNetwork,
+        ctx: &'a SearchContext<'a>,
+        times: Cow<'a, RoadTimes>,
+    ) -> Self {
         let free = (0..road.link_count())
             .map(|i| {
                 let link = LinkId::new(i);

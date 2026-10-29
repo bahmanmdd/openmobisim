@@ -1,5 +1,6 @@
 //! What a fleet day returns: per leg what became of it, and the day's counts.
 
+pub use super::decisions::{DecisionKind, DecisionRecord};
 pub use super::docks::DockBins;
 pub use super::taxis::{FLEET_BIN_S, FleetBins, TaxiDay, TaxiRequest, VehicleDay};
 
@@ -109,4 +110,7 @@ pub struct FleetOutcome {
     /// Per service: a taxi fleet's unit requests, vehicles' days and states bin by bin
     /// (`None` for a docked service).
     pub taxis: Vec<Option<TaxiDay>>,
+    /// The policy's decisions, in the order taken, each with what became of it (empty without
+    /// a policy), and the moves the target solver made.
+    pub decisions: Vec<DecisionRecord>,
 }
