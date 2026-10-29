@@ -37,6 +37,7 @@ use openmobisim_core_types::{
 mod cache_file;
 mod choice;
 mod environment;
+mod frozen_day;
 mod network;
 mod parking;
 mod pipeline;

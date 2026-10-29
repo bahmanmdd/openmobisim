@@ -547,6 +547,8 @@ pub struct PyRunSummary {
     /// at level 0.
     #[pyo3(get)]
     pub spillback: Option<Py<PyDict>>,
+    /// The last loading's service day, kept to freeze it (S302): `None` without a service.
+    share: Option<crate::frozen_day::ShareFreeze>,
 }
 
 /// Per-link, per-time-bin results, as numpy columns.
@@ -619,6 +621,34 @@ impl PyRunSummary {
         numpy::PyArray1::from_vec(py, values)
             .reshape([rows, destinations.len()])
             .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// What a frozen day's ``setup.json`` records of this run (``Run.freeze``); ``None`` for a
+    /// run without a service.
+    fn _freeze_setup<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.share.as_ref().map(|s| s.setup(py)).transpose()
+    }
+
+    /// Write the last loading's legs and road times into `folder`, which exists
+    /// (``Run.freeze``).
+    fn _freeze_write(&self, folder: &str) -> PyResult<()> {
+        let share = self
+            .share
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("this run has no service: no day to freeze"))?;
+        share.write(Path::new(folder))
+    }
+
+    /// The last loading's service day in ``fleet_day``'s tables, on the run's `network`: what a
+    /// replay of the frozen day reproduces.
+    fn _share_day<'py>(
+        &self,
+        py: Python<'py>,
+        network: PyRef<'_, PyNetwork>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let share =
+            self.share.as_ref().ok_or_else(|| PyValueError::new_err("this run has no service"))?;
+        share.outcome(py, &network)
     }
 }
 
@@ -1334,8 +1364,9 @@ pub fn run_pipeline(
     if let Some(p) = &parking_setup {
         run = run.with_parking(p.clone());
     }
-    if !service_setups.is_empty() {
-        run = run.with_services(Arc::new(service_setups)).with_hub_join_m(hub_join_m);
+    let service_setups = (!service_setups.is_empty()).then(|| Arc::new(service_setups));
+    if let Some(setups) = &service_setups {
+        run = run.with_services(Arc::clone(setups)).with_hub_join_m(hub_join_m);
     }
     run = run
         .with_mode_choice(&modes)
@@ -1384,6 +1415,25 @@ pub fn run_pipeline(
     // Python is called from that pool's thread, which takes the lock when it needs it.
     let result = py.detach(|| run.try_execute(&mut run_diagnostics)).map_err(to_value_error)?;
     let core_stages = run.timings().to_vec();
+    // A run with a service keeps its last loading's day, to freeze it (S302); one without keeps
+    // nothing.
+    let share = match &service_setups {
+        Some(setups) => Some(
+            crate::frozen_day::ShareFreeze::new(
+                Arc::clone(setups),
+                result.services.as_ref().and_then(|s| s.last.clone()),
+                &trips_used,
+                &travellers,
+                result.link_bins.as_ref(),
+                &network.inner,
+                (f64::from(window.start_s), f64::from(window.end_s)),
+                master_seed,
+                description.fingerprint_hex(),
+            )
+            .map_err(PyValueError::new_err)?,
+        ),
+        None => None,
+    };
     // What a skim needs after the run (S238), kept with the summary.
     let skimmer = Arc::new(Skimmer::new(
         network.inner.clone(),
@@ -1763,6 +1813,7 @@ pub fn run_pipeline(
             .bike_route_sets
             .map(|sets| Py::new(py, PyRouteSets::new(Arc::new(sets), bike_link_count)))
             .transpose()?,
+        share,
     };
     Ok(Py::new(py, summary)?.into_any())
 }

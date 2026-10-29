@@ -628,6 +628,19 @@ fn hash_layer(h: &mut Fnv1a, layers: &StaticLayers, layer: StaticLayer) {
     }
 }
 
+/// The services' own fingerprint: each one hashed as a run's fingerprint hashes it (its name,
+/// kind, options, docks or vehicles and chargers, the nodes they were snapped to), in order. A
+/// frozen day records it, and a fleet day refuses to replay that day with other services.
+#[must_use]
+pub fn services_fingerprint(services: &[crate::services::ServiceSetup]) -> u64 {
+    let mut h = Fnv1a::new();
+    h.write_str("services");
+    for service in services {
+        hash_service(&mut h, service);
+    }
+    h.finish()
+}
+
 /// A service: its name, kind, options and its docks (id, place, slots, bikes at the start, the
 /// nodes it was snapped to) or its vehicles and chargers.
 fn hash_service(h: &mut Fnv1a, service: &crate::services::ServiceSetup) {

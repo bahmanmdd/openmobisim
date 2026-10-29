@@ -11,6 +11,7 @@
 //! | [`transit_calls`] | Every call of the timetable with its times and passengers, from [`openmobisim_core_sim::RunResult::transit`] |
 //! | [`parking_bins`] | Every parking's occupancy bin by bin, from [`openmobisim_core_sim::RunResult::parking`] |
 //! | [`trip_results`] | Every trip and what became of it, from [`openmobisim_core_sim::TripTable`] |
+//! | [`frozen_legs`] | A frozen day's service legs (`legs.parquet`), written and read back |
 //! | [`manifest`] | [`manifest::Manifest`] — the file that makes a run reproducible |
 //!
 //! # What is not written yet
@@ -38,6 +39,7 @@ use core::fmt;
 
 pub mod diagnostics;
 pub mod events;
+pub mod frozen_legs;
 mod io;
 pub mod kpis;
 pub mod link_bins;
@@ -48,6 +50,7 @@ pub mod trip_results;
 
 pub use diagnostics::write_diagnostics;
 pub use events::write_events;
+pub use frozen_legs::{FrozenLegRow, read_frozen_legs, write_frozen_legs};
 pub use kpis::{write_kpis, write_kpis_csv};
 pub use link_bins::{write_layer_link_bins, write_link_bins};
 pub use manifest::{Manifest, write_manifest};

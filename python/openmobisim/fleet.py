@@ -19,10 +19,12 @@ decisions, accepted or refused with the reason, are in ``FleetDay.decisions()``.
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -175,6 +177,10 @@ class FleetDay:
     decision_rows: Columns
     #: The policy's name and parameters (``{"name", "parameters"}``), or ``None`` without one.
     policy: dict[str, Any] | None
+    #: A day replayed from a run (``frozen=``): the frozen day's ``setup.json`` (the run's,
+    #: network's and services' fingerprints, the window, the seed, ...); ``None`` for a day of
+    #: trips.
+    frozen: dict[str, Any] | None = None
 
     def trip_results(self) -> Columns:
         """What became of each trip given, in the order given.
@@ -276,6 +282,72 @@ def _inputs(
     return parts, rows, roads, (start, end)
 
 
+def _frozen_read(
+    folder: str | Path,
+    services: Sequence[Service],
+    trips: object,
+    road_times: RoadTimes | None,
+    window: tuple[object, object] | None,
+) -> tuple[dict[str, Any], tuple[str, str, str], tuple[float, float]]:
+    """A run's frozen day (``Run.freeze``): its ``setup.json``, the binding's argument, its window.
+
+    Refuses trips or road times given beside it, a window other than the day's, and services
+    other than the run's, naming what differs where ``setup.json`` shows it (the binding then
+    checks the fingerprints).
+    """
+    from openmobisim.run import _FROZEN_DAY_FORMAT, _FROZEN_DAY_VERSION
+
+    if trips is not None or road_times is not None:
+        raise ValueError(
+            "a frozen day brings its own legs and road times: give frozen= without trips or "
+            "road_times"
+        )
+    folder = Path(folder)
+    path = folder / "setup.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"{folder} holds no setup.json: not a frozen day (Run.freeze)")
+    setup = json.loads(path.read_text(encoding="utf-8"))
+    if setup.get("format") != _FROZEN_DAY_FORMAT or setup.get("version") != _FROZEN_DAY_VERSION:
+        raise ValueError(
+            f"{path}: not a frozen day of this version (format {setup.get('format')!r}, version "
+            f"{setup.get('version')!r}; this package reads version {_FROZEN_DAY_VERSION})"
+        )
+    theirs = setup["services"]
+    names = [s.name for s in services]
+    if names != [s["name"] for s in theirs]:
+        raise ValueError(
+            f"the frozen day was made with the services {[s['name'] for s in theirs]}, not {names}"
+        )
+    for given, made in zip(services, theirs, strict=True):
+        if given.kind != made["kind"]:
+            raise ValueError(f"{given.name}: a {made['kind']} service in the run, not {given.kind}")
+        if given.docks is not None and "docks" in made and given.docks.count != made["docks"]:
+            raise ValueError(
+                f"{given.name}: {made['docks']} docks in the run, {given.docks.count} here"
+            )
+        options = made.get("options", {})
+        differ = {
+            k: (options[k], float(v))
+            for k, v in given.options.items()
+            if k in options and float(v) != options[k]
+        }
+        if differ:
+            shown = ", ".join(f"{k} {a} in the run, {b} here" for k, (a, b) in differ.items())
+            raise ValueError(f"{given.name}: options differ ({shown})")
+    start, end = (float(x) for x in setup["window"])
+    if window is not None:
+        given = tuple(_seconds(w, "window") for w in window)
+        if given != (start, end):
+            raise ValueError(
+                f"the frozen day's window is ({start}, {end}) s, not {given}: leave window out"
+            )
+    arg = (str(folder), str(setup["services_fingerprint"]), str(setup["network_fingerprint"]))
+    return setup, arg, (start, end)
+
+
+#: A fleet day's window when none is given: 07:30 to 09:30.
+_DEFAULT_WINDOW: tuple[object, object] = ("07:30", "09:30")
+
 #: The side of the square zones a policy's view groups places by, in metres: an assumption,
 #: uncalibrated (``zone_grid_m`` of ``fleet_day`` and ``fleet_environment``).
 ZONE_GRID_M: float = 1000.0
@@ -288,9 +360,10 @@ REWARD_WEIGHTS: dict[str, float] = {"w_fail": 1.0, "w_wait": 0.1, "w_walk": 0.1,
 def fleet_environment(
     network: Any,
     services: Sequence[Service],
-    trips: str | Iterable[Mapping[str, Any]],
+    trips: str | Iterable[Mapping[str, Any]] | None = None,
     *,
-    window: tuple[object, object] = ("07:30", "09:30"),
+    frozen: str | Path | None = None,
+    window: tuple[object, object] | None = None,
     road_times: RoadTimes | None = None,
     step_s: float = 900.0,
     reward_weights: Mapping[str, float] | None = None,
@@ -324,12 +397,19 @@ def fleet_environment(
     ``observation(view, spec)`` and ``action(vector, spec)`` turn views and decisions into arrays
     of fixed shapes, for learning methods (``spec`` is described with ``observation``).
 
+    With ``frozen`` (a folder ``Run.freeze`` wrote), the day is a run's last loading: its legs as
+    the run played them and its road times, in place of trips; ``frozen`` on the environment holds
+    its ``setup.json``. ``legs_keep`` and ``departure_jitter_s`` vary it by seed as they vary a
+    day of trips; with neither, every seed replays the run's day.
+
     Args:
         network: The road network.
         services: The services (``service_bike_docked``, ``service_taxi``).
-        trips: The trips, as for ``fleet_day``.
-        window: The day's start and end.
-        road_times: An earlier run's road times, or ``None``: free flow.
+        trips: The trips, as for ``fleet_day``; ``None`` with ``frozen``.
+        frozen: A run's frozen day, as for ``fleet_day``.
+        window: The day's start and end; ``None``: 07:30 to 09:30, or a frozen day's own.
+        road_times: An earlier run's road times, or ``None``: free flow (a frozen day's own
+            with ``frozen``).
         step_s: The seconds between steps.
         reward_weights: Weights by name in place of ``REWARD_WEIGHTS``'; a name not among them is
             refused with the list.
@@ -351,22 +431,29 @@ def fleet_environment(
         weights[k] = float(v)
     if int(n) < 1:
         raise ValueError(f"n must be 1 or more, got {n}")
-    parts, rows, roads, span = _inputs(services, trips, window, road_times)
+    setup, from_run, frozen_span = None, None, None
+    if frozen is not None:
+        setup, from_run, frozen_span = _frozen_read(frozen, services, trips, road_times, window)
+        trips = []
+    elif trips is None:
+        raise ValueError("give the trips, or a run's frozen day (frozen=)")
+    parts, rows, roads, span = _inputs(services, trips, window or _DEFAULT_WINDOW, road_times)
     inner = _core._fleet_environment(
         network,
         parts,
         rows,
         roads,
-        span,
+        frozen_span or span,
         float(step_s),
         (weights["w_fail"], weights["w_wait"], weights["w_walk"], weights["w_km"]),
         float(legs_keep),
         float(departure_jitter_s),
         float(zone_grid_m),
+        from_run,
     )
     if int(n) == 1:
-        return FleetEnvironment(inner, network)
-    return FleetVectorEnvironment(inner.vector(int(n)), network)
+        return FleetEnvironment(inner, network, frozen=setup)
+    return FleetVectorEnvironment(inner.vector(int(n)), network, frozen=setup)
 
 
 #: A taxi's state codes in ``observation``: its state's index here.
@@ -514,10 +601,15 @@ _DOCK_COLUMNS = ("bikes", "slots", "pickups", "returns", "failed")
 class FleetEnvironment(_Encoding):
     """A fleet day to step through (``fleet_environment``)."""
 
-    def __init__(self, inner: Any, network: Any = None) -> None:
+    def __init__(
+        self, inner: Any, network: Any = None, *, frozen: dict[str, Any] | None = None
+    ) -> None:
         """Wrap the engine's environment (made by ``fleet_environment``)."""
         self._inner = inner
         self._network = network
+        #: A day replayed from a run (``frozen=``): the frozen day's ``setup.json``; ``None``
+        #: for a day of trips.
+        self.frozen = frozen
 
     def reset(self, seed: int = 0) -> tuple[Any, dict[str, Any]]:
         """Start the day with ``seed``: ``(view, info)`` at the window's start."""
@@ -534,7 +626,7 @@ class FleetEnvironment(_Encoding):
 
     def fork(self) -> FleetEnvironment:
         """A copy of the day at its clock, to simulate ahead without touching this one."""
-        return FleetEnvironment(self._inner.fork(), self._network)
+        return FleetEnvironment(self._inner.fork(), self._network, frozen=self.frozen)
 
     @property
     def t(self) -> float:
@@ -550,10 +642,14 @@ class FleetVectorEnvironment(_Encoding):
     one day's view or decisions, as for ``FleetEnvironment``.
     """
 
-    def __init__(self, inner: Any, network: Any = None) -> None:
+    def __init__(
+        self, inner: Any, network: Any = None, *, frozen: dict[str, Any] | None = None
+    ) -> None:
         """Wrap the engine's environments (made by ``fleet_environment``)."""
         self._inner = inner
         self._network = network
+        #: As ``FleetEnvironment.frozen``.
+        self.frozen = frozen
 
     def __len__(self) -> int:
         """How many days."""
@@ -587,16 +683,26 @@ class FleetVectorEnvironment(_Encoding):
 def fleet_day(
     network: Any,
     services: Sequence[Service],
-    trips: str | Iterable[Mapping[str, Any]],
+    trips: str | Iterable[Mapping[str, Any]] | None = None,
     *,
-    window: tuple[object, object] = ("07:30", "09:30"),
+    frozen: str | Path | None = None,
+    window: tuple[object, object] | None = None,
     road_times: RoadTimes | None = None,
-    seed: int = 0,
+    seed: int | None = None,
     policy: Any = None,
     policy_options: Mapping[str, float] | None = None,
     zone_grid_m: float = ZONE_GRID_M,
 ) -> FleetDay:
     """Run every service's day together on the fleet engine, from a table of trips.
+
+    **Or from a run's frozen day** (``frozen``, a folder ``Run.freeze`` wrote): the legs of the
+    run's last loading as the run played them (the docks the travellers chose, the second each
+    asks for a bike, its ride and walk), on that loading's road times, over its window. With no
+    policy, the day replays the run's: every leg's status, seconds and docks, and the docks' bins,
+    are the run's own. The services must be the run's (the same names, docks, bikes and options)
+    and the network too: either differing is refused, saying what differs. Each trip of the
+    result is a leg: its ``trip_id`` the trip's index in the run (``Run.trip_results()``'s
+    ``trip``); ``FleetDay.frozen`` holds the day's ``setup.json``.
 
     Args:
         network: The road network (its walk and bike layers are made from it).
@@ -605,11 +711,14 @@ def fleet_day(
             ``departure`` (seconds from midnight, or ``"HH:MM"``), and optionally ``trip_id``,
             ``service`` (a service's name; required with more than one service) and
             ``weight`` (the people it stands for, 1 by default). A CSV/TSV path or text, or rows
-            as dicts.
+            as dicts. ``None`` with ``frozen``.
+        frozen: A folder ``Run.freeze`` wrote, in place of ``trips`` and ``road_times``.
         window: The day's start and end (seconds or ``"HH:MM"``); a trip asking before it opens
-            asks at its start, one after it ends is never asked.
+            asks at its start, one after it ends is never asked. ``None``: 07:30 to 09:30, or a
+            frozen day's own (another window is refused with ``frozen``).
         road_times: An earlier run's road times (``road_times_read``); ``None``: free flow.
-        seed: The day's seed.
+        seed: The day's seed (a policy's draws); ``None``: 0, or a frozen day's (the run's master
+            seed).
         policy: An operator steering the services (``openmobisim.operator``): a policy object
             (``step(view)``), a built-in one (``policy_threshold(...)``), a name (built-in or
             registered with ``policy_register``), or ``None``: no operator.
@@ -619,14 +728,34 @@ def fleet_day(
 
     Raises:
         ValueError: For a service, trip, option or policy that is not valid, road times of
-            another network, or a decision naming an id that does not exist.
+            another network, or a decision naming an id that does not exist; with ``frozen``,
+            for another network, other services, another window, or trips or road times given
+            too.
+        FileNotFoundError: For a ``frozen`` folder without ``setup.json``.
         Exception: A Python policy's own exception, which stops the day.
     """
     started = time.perf_counter()
-    parts, rows, roads, (start, end) = _inputs(services, trips, window, road_times)
+    setup, from_run = None, None
+    if frozen is not None:
+        setup, from_run, span = _frozen_read(frozen, services, trips, road_times, window)
+        trips, window = [], span
+        seed = int(setup["seed"]) if seed is None else seed
+    elif trips is None:
+        raise ValueError("give the trips, or a run's frozen day (frozen=)")
+    parts, rows, roads, (start, end) = _inputs(
+        services, trips, window or _DEFAULT_WINDOW, road_times
+    )
     chosen = _policy_for_binding(policy, policy_options)
     out = _core._fleet_day(
-        network, parts, rows, roads, (start, end), int(seed), chosen, float(zone_grid_m)
+        network,
+        parts,
+        rows,
+        roads,
+        (start, end),
+        int(seed or 0),
+        chosen,
+        float(zone_grid_m),
+        from_run,
     )
     trips_out = Columns(out["trips"])
     return FleetDay(
@@ -639,4 +768,5 @@ def fleet_day(
         seconds={**out["seconds"], "total_s": time.perf_counter() - started},
         decision_rows=Columns(out["decisions"]),
         policy=out["policy"],
+        frozen=setup,
     )
