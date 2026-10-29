@@ -439,3 +439,40 @@ def test_the_interactive_page_carries_the_mark_and_its_generator(tmp_path):
     assert '<meta name="generator" content="openmobisim' in page and "Bahman Madadi" in page
     assert page.count('class="mark"') == 2, "beside the title and in the footer"
     assert "lamps" not in page
+
+
+# --- the road hierarchy ----------------------------------------------------------------
+
+
+class _Roads:
+    """The two things a road's weight is read from: capacity (PCU/h) and whether cars may use it."""
+
+    def __init__(self, capacity, drivable=None):
+        self.capacity = np.asarray(capacity, dtype=float)
+        self.drivable = np.ones(len(self.capacity), bool) if drivable is None else drivable
+
+    def link_capacity_pcu_h(self):
+        return self.capacity
+
+    def link_drivable(self):
+        return np.asarray(self.drivable)
+
+
+def test_a_road_weighs_by_its_capacity_relative_to_the_network():
+    from openmobisim.viz._canvas import road_weight
+
+    # The largest road weighs 1 where nothing is larger, and less beside a larger one.
+    assert road_weight(_Roads([1000.0, 2000.0]))[1] == pytest.approx(1.0)
+    assert road_weight(_Roads([1000.0, 2000.0, 4000.0]))[1] == pytest.approx(0.71, abs=0.01)
+    # A link no car may use weighs 0; a bike or walk layer (no capacity) is all 0.
+    w = road_weight(_Roads([1000.0, 2000.0, 3000.0], drivable=[True, True, False]))
+    assert w[2] == 0.0 and w[1] == pytest.approx(1.0)
+    assert not road_weight(_Roads([np.nan, np.nan])).any()
+
+
+def test_road_tiers_span_minor_to_major_and_a_layer_without_roads_keeps_one_width():
+    from openmobisim.viz._canvas import road_tier
+
+    tiers = road_tier(_Roads([0.0, 400.0, 1000.0, 4000.0], drivable=[False, True, True, True]))
+    assert tiers.tolist() == [0, 1, 2, 3]
+    assert road_tier(_Roads([np.nan, np.nan])).tolist() == [1, 1]
