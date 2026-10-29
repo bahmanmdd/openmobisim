@@ -211,6 +211,7 @@ def draw_furniture(
     compass: bool = True,
     route_legend: list[tuple[np.ndarray, str]] | None = None,
     marker_legend: list[tuple[str, bool, str]] | None = None,
+    band_legend: str | None = None,
 ) -> None:
     """Title with the signal glyph, legends, the footer strip and the logo.
 
@@ -224,7 +225,8 @@ def draw_furniture(
     legend's title (both show one quantity: the title once); `route_legend` is a list of
     ``(rgb, text)`` rows, one per route, in place of both; `marker_legend` is a list
     of ``(marker, filled, text)`` rows, one per kind of symbol on the map, in the place
-    of the width legend. `credit` is the user's own
+    of the width legend. `band_legend` is one line under the width legend, beside a short band
+    in the network's colour (a traffic map's road band). `credit` is the user's own
     line (a name, an institution, their copyright) placed before the logo; the
     logo is a signature, not a claim over the figure or its data.
     """
@@ -287,6 +289,21 @@ def draw_furniture(
                 ha="center",
             )
             x0 += ribbon + 0.030
+        if band_legend:
+            y_band = y_label - 0.024
+            fig.add_artist(
+                Line2D(
+                    [lx, lx + 0.034],
+                    [y_band + 0.004] * 2,
+                    transform=fig.transFigure,
+                    color=t.base,
+                    linewidth=3.0 * k,
+                    solid_capstyle="round",
+                )
+            )
+            fig.text(
+                lx + 0.042, y_band, band_legend, color=t.ink2, fontsize=8.5 * k, fontfamily=sans
+            )
     if marker_legend:
         for i, (marker, filled, text) in enumerate(marker_legend[:4]):
             y0 = 0.950 - i * 0.021
