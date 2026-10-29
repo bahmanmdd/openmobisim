@@ -564,12 +564,30 @@ impl DockRun {
                 f64::NAN,
             );
             c.tried.push(dock);
+            // The dock with a free slot that brings them soonest to their destination (the ride
+            // there and the walk from it), never the one the bike came from; none sooner than
+            // leaving the bike here above capacity and walking from here: they leave it here.
+            // Cost: per neighbour with room, one walk search and one ride (kept per pair).
             let bikes = &*fleet.bikes;
-            let next = c.docks.neighbours(dock).iter().copied().find(|&(o, _)| {
-                !c.tried.contains(&o)
-                    && u64::from(bikes[o as usize]) + u64::from(w)
-                        <= u64::from(c.docks.capacity[o as usize])
-            });
+            let here = c.legs.walk_to_destination_s(c.index, dock);
+            let next = c
+                .docks
+                .neighbours(dock)
+                .iter()
+                .copied()
+                .filter(|&(o, _)| {
+                    !c.tried.contains(&o)
+                        && Some(o) != c.out.picked
+                        && u64::from(bikes[o as usize]) + u64::from(w)
+                            <= u64::from(c.docks.capacity[o as usize])
+                })
+                .map(|(o, _)| {
+                    let via = c.legs.ride_s(leg.service, dock, o)
+                        + c.legs.walk_to_destination_s(c.index, o);
+                    (o, via)
+                })
+                .filter(|&(_, via)| via < here || here.is_nan())
+                .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
             if let Some((o, _)) = next {
                 self.bins.redirected[cell] += wf;
                 let to = o as usize * self.bins.bins + self.bins.bin_of(t);

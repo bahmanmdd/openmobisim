@@ -172,9 +172,11 @@ fn travellers_without_a_bike_choose_a_shared_one_over_a_long_walk() {
     let picked: Vec<Option<u32>> = day.outcome.legs.iter().map(|o| o.picked).collect();
     assert_eq!(picked, [Some(0), Some(0), Some(1)]);
     let returned: Vec<Option<u32>> = day.outcome.legs.iter().map(|o| o.returned).collect();
-    // z holds four: its two bikes and the first two returned fill it, so the third rides on to
-    // its nearest neighbour with room, y.
-    assert_eq!(returned, [Some(3), Some(3), Some(2)]);
+    // z holds four: its two bikes and the first two returned fill it. The destination is at z:
+    // riding on to y and walking back is slower than walking from z, so the third leaves its
+    // bike at z above capacity (S302).
+    assert_eq!(returned, [Some(3), Some(3), Some(3)]);
+    assert!(day.outcome.legs[2].overflow);
     assert_eq!(day.outcome.invariant_violations, 0, "bikes are conserved");
     // The first: docks at its origin and destination nodes, so no walk; the ride is the bike
     // layer's corner-to-corner time (about 384 s, 1 600 m at the layer's speed), with a minute to
@@ -187,8 +189,8 @@ fn travellers_without_a_bike_choose_a_shared_one_over_a_long_walk() {
     );
     // The third walked from a to b and back to nothing more: its extra is that walk.
     let third = day.outcome.legs[2];
-    // Two docks tried after the planned ones: b at the pickup, y at the return.
-    assert_eq!(third.redirections, 2);
+    // One dock tried after the planned one, b at the pickup; none at the return.
+    assert_eq!(third.redirections, 1);
     assert!(third.extra_walk_s > 0.0 && third.arrived_s > day.outcome.legs[0].arrived_s);
     // The modes listed: the service's among them.
     assert!(result.modes_listed().contains(&Mode::BikeShare));

@@ -110,18 +110,36 @@ fn trip(trip: u32, at_pickup_s: f64, pickup: u32, ret: u32, s: &ServiceSetup) ->
     }
 }
 
+/// [`Legs`], with a walk of 100 s to the destination from one dock.
+#[derive(Debug)]
+struct Near(Legs, u32);
+
+impl ServiceLegs for Near {
+    fn ride_s(&self, service: u16, from: u32, to: u32) -> f64 {
+        self.0.ride_s(service, from, to)
+    }
+    fn walk_to_destination_s(&self, _: usize, dock: u32) -> f64 {
+        if dock == self.1 { 100.0 } else { 500.0 }
+    }
+}
+
 /// One fleet day of `legs` over the window 0..`window` s.
 fn load(s: &ServiceSetup, legs: &[Leg], window: f64) -> FleetOutcome {
+    load_with(s, legs, window, Arc::new(Legs::of(s)))
+}
+
+/// [`load`], with the city `city`.
+fn load_with(
+    s: &ServiceSetup,
+    legs: &[Leg],
+    window: f64,
+    city: Arc<dyn ServiceLegs>,
+) -> FleetOutcome {
     let day = FleetDay { window: (0.0, window), legs: legs.to_vec(), seed: 1 };
-    let out = FleetEngine::new(
-        Arc::new(vec![s.clone()]),
-        Arc::new(day),
-        Arc::new(Legs::of(s)),
-        Arc::new(NoRoads),
-        None,
-    )
-    .run_day()
-    .expect("no policy");
+    let out =
+        FleetEngine::new(Arc::new(vec![s.clone()]), Arc::new(day), city, Arc::new(NoRoads), None)
+            .run_day()
+            .expect("no policy");
     assert_eq!(out.invariant_violations, 0, "bikes are conserved");
     out
 }
@@ -224,15 +242,28 @@ fn a_pickup_fails_past_the_docks_near_the_planned_one_and_the_traveller_walks() 
 
 #[test]
 fn a_full_return_dock_sends_the_bike_on_and_with_no_room_near_it_overflows() {
-    // B is full; the bike ridden from C to B goes on to A, which has room.
+    // B is full; the bike ridden from C to B goes on to A, which has room and from which the
+    // destination is nearer (100 s on foot against 500 s from B).
     let s = three([0, 2, 2], 2);
     let t = trip(0, 100.0, C, B, &s);
-    let out = load(&s, &[t], 3600.0);
+    let out = load_with(&s, &[t], 3600.0, Arc::new(Near(Legs::of(&s), A)));
     let o = out.legs[0];
     assert_eq!((o.picked, o.returned, o.redirections, o.overflow), (Some(C), Some(A), 1, false));
     let ba = Legs::of(&s).ride_s(0, B, A);
     let d = DockDefaults::SHIPPED;
-    assert_eq!(o.arrived_s, 100.0 + d.pickup_s + t.ride_s + ba + d.return_s + 500.0);
+    assert_eq!(o.arrived_s, 100.0 + d.pickup_s + t.ride_s + ba + d.return_s + 100.0);
+    // With the destination as near on foot from B as from A, riding on is not worth it: the
+    // bike is left at B above capacity (S302).
+    let out = load(&s, &[t], 3600.0);
+    let o = out.legs[0];
+    assert_eq!((o.returned, o.redirections, o.overflow), (Some(B), 0, true));
+    // Never back to the dock the bike came from: B full, C (where it was taken) the nearest.
+    let s = three([1, 2, 0], 2);
+    let t = trip(0, 100.0, C, B, &s);
+    let t = Leg { pickup_dock: A, ride_s: Legs::of(&s).ride_s(0, A, B), ..t };
+    let out = load_with(&s, &[t], 3600.0, Arc::new(Near(Legs::of(&s), A)));
+    assert_eq!(out.legs[0].picked, Some(A));
+    assert_ne!(out.legs[0].returned, Some(A), "not back to its pickup dock");
     // A full dock with no other within 800 m: the bike is docked anyway, above its slots.
     let (road, layers) = grid();
     let rows = vec![row("A", at(&road, 0), 2, Some(2)), row("Z", at(&road, 24), 1, Some(1))];
