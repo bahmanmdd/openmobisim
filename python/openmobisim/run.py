@@ -26,6 +26,10 @@ MODES = ("car", "bike", "walk", "transit", "car_transit", "bike_transit")
 #: timetable: a docked bike service, ``service_bike_docked``): chosen, and listed in a run's
 #: results, only in a run that has the service.
 SERVICE_MODES = ("bike_share", "bike_share_transit")
+#: A frozen day's ``setup.json``: its ``format`` and the ``version`` of its files' layout
+#: (``Run.freeze``).
+_FROZEN_DAY_FORMAT = "openmobisim.frozen_day"
+_FROZEN_DAY_VERSION = 1
 
 
 #: What to change for each reason a mode gave a trip no alternative, as
@@ -1523,6 +1527,81 @@ class Run:
             out["people"].append(w)
             out["logsum"].append(s / w if w else float("nan"))
         return out
+
+    def freeze(self, folder: str | Path, *, overwrite: bool = False) -> Path:
+        """Write the run's last loading's service day to ``folder``: a frozen day to replay.
+
+        A run with a service (``services=[service_bike_docked(...)]``) plays, after each loading,
+        the shared-bike legs the travellers chose on the fleet engine. This writes the last
+        loading's legs exactly as the run played them, with that loading's road times and what
+        the run was, so that ``fleet_day(network, services, frozen=folder)`` and
+        ``fleet_environment(network, services, frozen=folder)`` play the same day with the
+        travellers' choices held fixed: an operator's policy is trained and tested on it. A
+        replay with no policy gives the run's own outcome, leg by leg.
+
+        The folder holds three files:
+
+        * ``legs.parquet``: one row per leg, in the order the run played them: ``trip`` (the
+          trip's index in the run, as in ``trip_results()``), ``traveller_id``, ``trip_seq``,
+          ``service`` (its name), ``weight`` (people), ``request_s`` (the second it asks for a
+          bike at its pickup dock, from midnight), ``origin_node`` and ``destination_node`` (the
+          trip's ends as nodes of the network's walk layer), ``dock_from`` and ``dock_to`` (the
+          docks it chose), ``ride_s`` (the planned ride between them, the service's
+          ``ride_factor`` included), ``egress_s`` (the walk from the return dock to the
+          destination) and ``expected_dock_s`` (the extra seconds at the docks its choice
+          expected); every number as the run held it, bit for bit;
+        * ``road_times.bin``: the last loading's road times, per link and time bin the mean
+          seconds to cross it (``pcu_seconds / pcu`` of its link bins, as ``road_times_read``
+          reads them; free flow where no vehicle left the link in the bin), in the network
+          cache's binary form; what a policy's vans drive on;
+        * ``setup.json``: ``format`` and ``version``, the ``run_id``, the run's, its network's
+          and its services' fingerprints (``run_fingerprint``, ``network_fingerprint``,
+          ``services_fingerprint``), the ``window`` (seconds from midnight), the ``seed`` (the
+          run's master seed, the engine's), the ``services`` (name, kind, docks, options), the
+          ``legs`` and ``people``, and the road times' bin length and rows.
+
+        A replay is refused with a network or services other than the run's.
+
+        Args:
+            folder: Where to write; made if missing.
+            overwrite: Replace a frozen day already in the folder (``False``: refuse).
+
+        Returns:
+            The folder.
+
+        Raises:
+            ValueError: For a run without a service, or a folder holding a frozen day already
+                (without ``overwrite``).
+            RuntimeError: For a run read back with ``Run.open``: only a run in memory holds its
+                service day.
+        """
+        freeze = getattr(self._summary, "_freeze_setup", None)
+        if freeze is None:
+            raise RuntimeError(
+                "this run was read back from its folder; only a run in memory holds its service "
+                "day: run the scenario again to freeze it"
+            )
+        setup = freeze()
+        if setup is None:
+            raise ValueError(
+                "this run has no service (Scenario.from_parts(services=[...])): there is no "
+                "service day to freeze"
+            )
+        folder = Path(folder)
+        if (folder / "setup.json").exists() and not overwrite:
+            raise ValueError(f"{folder} holds a frozen day already; pass overwrite=True")
+        folder.mkdir(parents=True, exist_ok=True)
+        self._summary._freeze_write(str(folder))
+        record = {"format": _FROZEN_DAY_FORMAT, "version": _FROZEN_DAY_VERSION}
+        record |= {"run_id": self.run_id, **setup}
+        record["window"] = list(record["window"])
+        text = json.dumps(record, indent=2)
+        (folder / "setup.json").write_text(text + "\n", encoding="utf-8")
+        return folder
+
+    def _share_day(self) -> dict[str, Any]:
+        """The last loading's service day in ``fleet_day``'s tables (what a replay reproduces)."""
+        return self._summary._share_day(self._network)
 
     def skim(
         self,

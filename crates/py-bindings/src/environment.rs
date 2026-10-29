@@ -443,6 +443,7 @@ impl PyFleetVectorEnvironment {
 /// A fleet environment on `network` (`openmobisim.fleet_environment` checks and documents the
 /// inputs).
 #[pyfunction(name = "_fleet_environment")]
+#[pyo3(signature = (network, services, trips, road_times, window, step_s, weights, keep, jitter_s, zone_grid_m, from_run=None))]
 #[allow(clippy::too_many_arguments, reason = "fleet_environment's arguments, checked in fleet.py")]
 pub fn fleet_environment(
     network: &PyNetwork,
@@ -455,6 +456,7 @@ pub fn fleet_environment(
     keep: f64,
     jitter_s: f64,
     zone_grid_m: f64,
+    from_run: Option<crate::frozen_day::FrozenArg>,
 ) -> PyResult<PyFleetEnvironment> {
     if !(step_s.is_finite() && step_s > 0.0) {
         return Err(PyValueError::new_err(format!("step_s must be above 0, got {step_s}")));
@@ -467,7 +469,11 @@ pub fn fleet_environment(
             "departure_jitter_s must be 0 or more, got {jitter_s}"
         )));
     }
-    let f = frozen(network, &services, trips, road_times, zone_grid_m)?;
+    // A run's frozen day (S302): its legs as the run played them, in place of the trips.
+    let f = match &from_run {
+        Some(arg) => crate::frozen_day::frozen_read(network, &services, arg, zone_grid_m)?,
+        None => frozen(network, &services, trips, road_times, zone_grid_m)?,
+    };
     Ok(PyFleetEnvironment {
         setup: Arc::new(Setup {
             frozen: Arc::new(f),

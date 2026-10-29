@@ -281,6 +281,95 @@ pub(crate) struct Frozen {
     pub(crate) ids: Arc<Ids>,
 }
 
+/// The walk and bike layers of `network`, as a fleet day uses them.
+pub(crate) fn layers_of(network: &PyNetwork) -> PyResult<(LayerSetup, LayerSetup)> {
+    let net = &network.inner;
+    let layer = |l: StaticLayer| -> PyResult<LayerSetup> {
+        Ok(LayerSetup::new(network.static_layer(l)?, BikeCost::Utility, net.defaults().layers))
+    };
+    Ok((layer(StaticLayer::Walk)?, layer(StaticLayer::Bike)?))
+}
+
+/// The services `services` (as `fleet.py` hands them) on `network`'s layers `walk` and `bike`.
+pub(crate) fn setups_of(
+    network: &PyNetwork,
+    services: &[ServiceTuple<'_>],
+    walk: &LayerSetup,
+    bike: &LayerSetup,
+) -> PyResult<Vec<ServiceSetup>> {
+    let net = &network.inner;
+    let bad = |e: String| PyValueError::new_err(e);
+    let mut setups = Vec::with_capacity(services.len());
+    for (kind, name, docks, vehicles, chargers, options) in services {
+        let setup = match kind.as_str() {
+            "bike_docked" => {
+                let docks = docks.as_ref().ok_or_else(|| bad(format!("{name}: no docks")))?;
+                let d = DockDefaults::from_options(options).map_err(|e| bad(e.to_string()))?;
+                ServiceSetup::bike_docked(name, &docks.get().rows, walk, bike, Some(net), d)
+            }
+            "taxi" => {
+                let vehicles =
+                    vehicles.as_ref().ok_or_else(|| bad(format!("{name}: no vehicles")))?;
+                let d = TaxiDefaults::from_options(options).map_err(|e| bad(e.to_string()))?;
+                let chargers = chargers.as_ref().map_or(&[][..], |c| &c.get().rows[..]);
+                ServiceSetup::taxi(name, net, &vehicles.get().rows, chargers, d)
+            }
+            other => return Err(bad(format!("{name}: unknown service kind {other:?}"))),
+        };
+        setups.push(setup.map_err(|e| bad(e.to_string()))?);
+    }
+    Ok(setups)
+}
+
+/// What a frozen day's inputs are built from: the legs, each with the row of the trips table it
+/// answers, the plan's counts, and that table.
+pub(crate) struct Planned {
+    pub(crate) planned: Vec<(usize, Leg)>,
+    pub(crate) report: PlanReport,
+    pub(crate) trips: Vec<TripTuple>,
+}
+
+/// A frozen day's inputs from its parts: the city owned, the ids of its services.
+#[allow(clippy::too_many_arguments, reason = "the parts a frozen day is made of")]
+pub(crate) fn assemble(
+    network: &PyNetwork,
+    setups: Arc<Vec<ServiceSetup>>,
+    walk: LayerSetup,
+    bike: LayerSetup,
+    times: RoadTimes,
+    day: Planned,
+    names: Vec<String>,
+    zone_grid_m: f64,
+) -> PyResult<Frozen> {
+    let net = network.inner.clone();
+    let turns = Arc::new(TurnTable::build(&net, net.signals()));
+    let legs: Vec<Leg> = day.planned.iter().map(|&(_, l)| l).collect();
+    let world = Arc::new(
+        FrozenWorld::new(
+            Arc::clone(&net),
+            turns,
+            Arc::new(walk),
+            Arc::new(bike),
+            times,
+            Arc::clone(&setups),
+            &legs,
+        )
+        .with_zone_grid_m(zone_grid_m)
+        .map_err(PyValueError::new_err)?,
+    );
+    let ids = Arc::new(Ids::new(&setups, Arc::clone(&net)));
+    Ok(Frozen {
+        setups,
+        world,
+        legs,
+        planned: day.planned,
+        report: day.report,
+        trips: day.trips,
+        names,
+        ids,
+    })
+}
+
 /// Build a frozen day's inputs on `network` (`openmobisim.fleet_day` checks and documents them).
 pub(crate) fn frozen(
     network: &PyNetwork,
@@ -290,30 +379,9 @@ pub(crate) fn frozen(
     zone_grid_m: f64,
 ) -> PyResult<Frozen> {
     let net = network.inner.clone();
-    let layer = |l: StaticLayer| -> PyResult<LayerSetup> {
-        Ok(LayerSetup::new(network.static_layer(l)?, BikeCost::Utility, net.defaults().layers))
-    };
-    let (walk, bike) = (layer(StaticLayer::Walk)?, layer(StaticLayer::Bike)?);
+    let (walk, bike) = layers_of(network)?;
     let bad = |e: String| PyValueError::new_err(e);
-    let mut setups = Vec::with_capacity(services.len());
-    for (kind, name, docks, vehicles, chargers, options) in services {
-        let setup = match kind.as_str() {
-            "bike_docked" => {
-                let docks = docks.as_ref().ok_or_else(|| bad(format!("{name}: no docks")))?;
-                let d = DockDefaults::from_options(options).map_err(|e| bad(e.to_string()))?;
-                ServiceSetup::bike_docked(name, &docks.get().rows, &walk, &bike, Some(&net), d)
-            }
-            "taxi" => {
-                let vehicles =
-                    vehicles.as_ref().ok_or_else(|| bad(format!("{name}: no vehicles")))?;
-                let d = TaxiDefaults::from_options(options).map_err(|e| bad(e.to_string()))?;
-                let chargers = chargers.as_ref().map_or(&[][..], |c| &c.get().rows[..]);
-                ServiceSetup::taxi(name, &net, &vehicles.get().rows, chargers, d)
-            }
-            other => return Err(bad(format!("{name}: unknown service kind {other:?}"))),
-        };
-        setups.push(setup.map_err(|e| bad(e.to_string()))?);
-    }
+    let setups = setups_of(network, services, &walk, &bike)?;
     let times = match road_times {
         None => RoadTimes::free_flow(&net),
         Some((bin_s, rows, fingerprint)) => {
@@ -326,7 +394,6 @@ pub(crate) fn frozen(
             RoadTimes::from_rows(&net, bin_s, &rows).map_err(bad)?
         }
     };
-    let turns = Arc::new(TurnTable::build(&net, net.signals()));
     let paths = FrozenPaths::new(bike.network(), bike.seconds(), walk.network(), walk.seconds());
     let rows: Vec<TripRow> = trips
         .iter()
@@ -344,32 +411,18 @@ pub(crate) fn frozen(
         return Err(bad(format!("trip {} names service {}", t.trip, t.service)));
     }
     let (planned, report) = plan_legs(&setups, &rows, &net, &walk, &paths);
-    let legs: Vec<Leg> = planned.iter().map(|&(_, l)| l).collect();
-    let setups = Arc::new(setups);
-    let world = Arc::new(
-        FrozenWorld::new(
-            Arc::clone(&net),
-            turns,
-            Arc::new(walk),
-            Arc::new(bike),
-            times,
-            Arc::clone(&setups),
-            &legs,
-        )
-        .with_zone_grid_m(zone_grid_m)
-        .map_err(bad)?,
-    );
-    let ids = Arc::new(Ids::new(&setups, Arc::clone(&net)));
-    Ok(Frozen {
-        setups,
-        world,
-        legs,
-        planned,
-        report,
-        trips,
-        names: services.iter().map(|s| s.1.clone()).collect(),
-        ids,
-    })
+    drop(paths);
+    let names = services.iter().map(|s| s.1.clone()).collect();
+    assemble(
+        network,
+        Arc::new(setups),
+        walk,
+        bike,
+        times,
+        Planned { planned, report, trips },
+        names,
+        zone_grid_m,
+    )
 }
 
 /// The tables of a day so far: per trip given, per dock and bin, the plan, the counts and the
@@ -505,6 +558,7 @@ pub(crate) fn outcome_dict<'py>(
 
 /// Run one fleet day on `network` (`openmobisim.fleet_day` checks and documents the inputs).
 #[pyfunction(name = "_fleet_day")]
+#[pyo3(signature = (network, services, trips, road_times, window, seed, policy, zone_grid_m, from_run=None))]
 #[allow(clippy::too_many_arguments, reason = "fleet_day's arguments, checked in fleet.py")]
 pub fn fleet_day<'py>(
     py: Python<'py>,
@@ -516,9 +570,14 @@ pub fn fleet_day<'py>(
     seed: u64,
     policy: Option<PolicyTuple<'py>>,
     zone_grid_m: f64,
+    from_run: Option<crate::frozen_day::FrozenArg>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let started = Instant::now();
-    let f = frozen(network, &services, trips, road_times, zone_grid_m)?;
+    // A run's frozen day (S302): its legs as the run played them, in place of the trips.
+    let f = match &from_run {
+        Some(arg) => crate::frozen_day::frozen_read(network, &services, arg, zone_grid_m)?,
+        None => frozen(network, &services, trips, road_times, zone_grid_m)?,
+    };
     let setup_s = started.elapsed().as_secs_f64();
     let clock = Instant::now();
     let day = Arc::new(FleetDay { window, legs: f.legs.clone(), seed });
