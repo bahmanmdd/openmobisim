@@ -165,6 +165,10 @@ for (const a of META.arrays) A[a.n] = new CTOR[a.t](raw.buffer, a.o, a.c);
 const NL = META.n_links, NV = META.n_verts, NB = META.n_bins;
 const VS = A.vs, CLS = A.cls, LEN = A.len, FF = A.ff, CAP = A.cap, SG = A.sg || new Uint8Array(CAP.length), SW = A.sw || new Float32Array(CAP.length);
 const SB = A.sb || null;
+// Each link's road tier (S302): the base network's width by tier, as multiples of its base width, and the
+// grey margin around a ribbon (px at a zoom scale of 1). Without roads, one width and no margin.
+const RT = A.rt || null, TIERS = RT ? META.road_tiers : [1], CASING_PX = RT ? META.road_casings : [0];
+const tierOf = (l) => (RT ? RT[l] : 0);
 // The other layers (T-4), each drawn only when its box is ticked.
 const LY = META.layers || {};
 const LAYER_ROWS = [
@@ -320,8 +324,9 @@ const sx = (x) => (x - S.cx) / S.mpp + W / 2, sy = (y) => H / 2 - (y - S.cy) / S
 
 // ---------------------------------------------------------------- draw ----
 const WFLOOR = 0.9;
+function zoomScale() { return Math.min(2.2, Math.max(0.2, 1.15 * Math.sqrt(2600 / (W * S.mpp)))); }
 function ribbonWidth(l) {
-  const zs = Math.min(2.2, Math.max(0.2, 1.15 * Math.sqrt(2600 / (W * S.mpp))));
+  const zs = zoomScale();
   const f = Math.sqrt(Math.min(vol[l], VMAX) / VMAX);
   return Math.max((0.5 + 5.2 * f) * zs, WFLOOR);
 }
@@ -396,7 +401,7 @@ function draw() {
   const cand = candidates(S.cx - hw - pad, S.cy - hh - pad, S.cx + hw + pad, S.cy + hh + pad);
   const lim = classLimit() - (MOVING ? 3 : 0), gap = MOVING ? 3 : 1.2;
   const showAll = classLimit() >= 16;
-  const base = new Path2D(), faint = new Path2D(), buckets = new Map();
+  const base = TIERS.map(() => new Path2D()), casings = new Map(), faint = new Path2D(), buckets = new Map();
   const dimming = S.pair >= 0 && S.routes && S.dim;
   for (const l of cand) {
     const busy = HAS_TRAFFIC && vol[l] > 0 && (vol[l] >= VHIGH * (S.mpp > 8 ? 1 : 0.4) || CLS[l] <= lim);
@@ -406,20 +411,26 @@ function draw() {
       if (!MOVING) addLine(faint, l, 0, gap);
       continue;
     }
-    addLine(base, l, 0, gap); DRAWN++;
+    addLine(base[tierOf(l)], l, 0, gap); DRAWN++;
     if (S.ly.road && HAS_TRAFFIC && vol[l] > 0 && CLS[l] <= Math.max(lim, 16) && (CLS[l] <= lim || busy)) {
       const w = ribbonWidth(l), wi = Math.min(31, Math.round(w * 2)), key = colourIndex(l) * 32 + wi;
       let b = buckets.get(key); if (!b) { b = new Path2D(); buckets.set(key, b); }
       addLine(b, l, w / 2 + 0.25, gap);
+      if (CASING_PX[tierOf(l)] > 0) { const ck = tierOf(l) * 32 + wi; let c = casings.get(ck); if (!c) { c = new Path2D(); casings.set(ck, c); } addLine(c, l, w / 2 + 0.25, gap); }
     }
   }
   ctx.lineCap = "round"; ctx.lineJoin = "round";
   ctx.globalAlpha = 0.55; ctx.strokeStyle = TH.base; ctx.lineWidth = 0.4; ctx.stroke(faint); ctx.globalAlpha = 1;
-  ctx.strokeStyle = TH.base; ctx.lineWidth = S.mpp > 6 ? 0.5 : 0.9; ctx.stroke(base);
+  // The road hierarchy (S302): the minor tiers first, so the major roads sit on top.
+  ctx.strokeStyle = TH.base; for (let t = 0; t < TIERS.length; t++) { ctx.lineWidth = (S.mpp > 6 ? 0.5 : 0.9) * TIERS[t]; ctx.stroke(base[t]); }
   const keys = [...buckets.keys()].sort((a, b) => a - b), tbl = TABLES[S.colour];
   ctx.globalAlpha = dimming ? 0.35 : 1;
   if (TH.glow) { for (const k of keys) { ctx.strokeStyle = tbl[k >> 5]; ctx.globalAlpha = (dimming ? 0.35 : 1) * 0.14; ctx.lineWidth = (k & 31) / 2 * 2.8 + 1.2; ctx.stroke(buckets.get(k)); } ctx.globalAlpha = dimming ? 0.35 : 1; }
   else if (!MOVING) { for (const k of keys) { ctx.strokeStyle = TH.surface; ctx.lineWidth = (k & 31) / 2 + 1.4; ctx.stroke(buckets.get(k)); } }
+  // The casing (S302): each ribbon widened by its road's tier, a grey margin = capacity; major roads on top.
+  { const a = ctx.globalAlpha, zs = zoomScale(); ctx.globalAlpha = 1; ctx.strokeStyle = TH.base; ctx.lineCap = "butt";
+    for (const k of [...casings.keys()].sort((x, y) => x - y)) { ctx.lineWidth = (k & 31) / 2 + CASING_PX[k >> 5] * zs; ctx.stroke(casings.get(k)); }
+    ctx.lineCap = "round"; ctx.globalAlpha = a; }
   for (const k of keys) { ctx.strokeStyle = tbl[k >> 5]; ctx.lineWidth = (k & 31) / 2; ctx.stroke(buckets.get(k)); }
   ctx.globalAlpha = 1;
   if (!MOVING && S.mpp < 3 && S.ly.road) drawChevrons(cand, lim);
@@ -771,7 +782,7 @@ function renderLegend() {
     const ramp = r.bands
       ? '<div class="bar" style="background:' + bandGradient(r.stops) + '"></div><div class="bands">' + r.bands.map((t) => "<span>" + t + "</span>").join("") + "</div>"
       : '<div class="bar" style="background:linear-gradient(90deg,' + r.stops.join(",") + ')"></div><div class="ends"><span>' + r.low + "</span><span>" + r.high + "</span></div>";
-    parts.push('<div class="lg"><h3>Road traffic</h3><div class="sub">' + r.label + "</div>" + ramp + '<div class="note">width = volume per direction</div></div>');
+    parts.push('<div class="lg"><h3>Road traffic</h3><div class="sub">' + r.label + "</div>" + ramp + '<div class="note">width = volume per direction' + (RT ? "; grey margin: road capacity" : "") + "</div></div>");
   }
   if (LY.transit) parts.push('<div class="lg"><h3>Transit lines</h3><div class="kinds">' + transitKinds().map(([name, k]) => "<span>" + line(TH.kinds[k]) + name + "</span>").join("") + '</div><div class="note">width = passengers on board; ○ stops, size = boardings</div></div>');
   if (FLOWS.bike) parts.push('<div class="lg"><h3>Cyclists</h3><div class="kinds"><span>' + line(TH.modes[1], "dash") + 'cyclists</span></div><div class="note">width = cyclists; faint = the bike network</div></div>');
