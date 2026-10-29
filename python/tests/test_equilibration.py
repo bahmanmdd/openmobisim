@@ -504,13 +504,47 @@ def test_a_run_where_trips_choose_their_mode_gets_a_verdict():
         master_seed=3,
     ).run("eq-modes", quiet=True)
     c = run.convergence()
-    assert np.isnan(c["gap_excess"]).all(), "no trip is given the car"
+    # No trip is given the car; the route gap is that of the trips that chose it (S302).
+    assert np.isfinite(c["gap_excess"]).all()
     assert np.isfinite(c["itinerary_gap_excess"][1:]).all()
     assert run.convergence_verdict in ("good", "acceptable", "poor")
-    assert run.convergence_gap == pytest.approx(float(c["itinerary_gap_excess"][-1]))
+    worst = max(float(c["gap_excess"][-1]), float(c["itinerary_gap_excess"][-1]))
+    assert run.convergence_gap == pytest.approx(worst)
     floor, share = c["mode_changed_floor"][1:], c["mode_changed_share"][1:]
     assert np.isfinite(floor).all() and ((floor >= 0) & (floor <= 1)).all()
     assert np.isfinite(share).all()
+
+
+def test_a_run_whose_trips_all_choose_their_mode_stops_on_its_car_routes_too():
+    # S302: no trip is given the car, so before, the stopping rule read the itineraries' gap
+    # alone, which pools the car routes with the walks and rides and stopped this run after 4
+    # loadings with its car routes far from equilibrium. The route gap now covers the car routes
+    # of the trips choosing their mode, after every loading, and the run goes on.
+    net = ms.examples.manhattan_grid(n=8, block_metres=200.0, signals=False)
+    rows = ms.examples.trips_random(net, 10_000, seed=5, min_m=300.0, max_m=1400.0, spread_s=300)
+    run = ms.Scenario.from_parts(
+        net,
+        rows,
+        classes={"commuter": (True, True, False)},
+        window=(0, 7_200),
+        flow_level=4,
+        link_bin_s=300,
+        modes=("car", "bike", "walk"),
+        choice_model="logit",
+        choice_options={"beta_mode_walk": 3.0},
+        equilibration_options={"iterations": 15, "gap_tolerance": 0.05},
+        master_seed=3,
+    ).run("eq-modes-stop", quiet=True)
+    c = run.convergence()
+    itinerary, routes = c["itinerary_gap_excess"], c["gap_excess"]
+    assert np.isfinite(routes).all()
+    # The itineraries' gap alone would have stopped it after 4 loadings ...
+    assert itinerary[1:4].mean() < 0.05
+    # ... where the car routes were still out of equilibrium.
+    assert routes[1:4].mean() > 0.05
+    assert len(c["iteration"]) > 4
+    stop = np.maximum(routes, itinerary)
+    assert run.converged == (stop[-3:].mean() < 0.05)
 
 
 def test_the_full_mode_gap_covers_every_trip_choosing_its_mode():
