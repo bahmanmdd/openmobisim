@@ -164,9 +164,9 @@ def policy_reset(from_s: float = 0.0, *, step_s: float = 900.0) -> PolicyBuiltin
 
     At each step at or after ``from_s``, every dock whose bikes differ from its start-of-day
     count is given that count as its target (``Target``); the engine's solver moves bikes from
-    the docks above their count to those below it, nearest first. Bikes still in a van at the
-    next step are not counted at their destination, so a dock may be served twice when vans
-    take longer than ``step_s``.
+    the docks above their count to those below it, nearest first, counting the bikes already
+    in a van on their way to a dock, so a dock is not served twice when vans take longer than
+    ``step_s``.
 
     Args:
         from_s: The second of the day (from midnight) it starts acting at; 0: from the start.
