@@ -2,7 +2,7 @@
 # pip install -r requirements/notebooks.txt  (then the openmobisim wheel). Minimum versions: pyproject.toml.
 contourpy==1.4.0
 cycler==0.12.1
-fonttools==4.66.1
+fonttools==4.67.0
 ipykernel==7.4.0
 jupyterlab==4.6.4
 kiwisolver==1.5.1
