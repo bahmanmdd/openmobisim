@@ -15,6 +15,7 @@
 //! | [`frozen`] | [`frozen::plan_legs`], [`frozen::FrozenLegs`] — a fleet day without a run: trips as a table, legs planned by a fixed rule |
 //! | [`world`] | [`world::FrozenWorld`] — a fleet day's city, owned, lending the engine its roads one call at a time |
 //! | [`roads`] | [`roads::RoadTimes`], [`roads::FrozenRoads`], [`roads::FrozenPaths`] — a day's road times and the drives, rides and walks on them, without a run |
+//! | [`tables`] | [`tables::ServiceLegTable`], [`tables::HubBinTable`] — the rows of `service_legs.parquet` and `hub_bins.parquet` |
 //! | [`docks`] | [`docks::DockBins`] — docked bikes' pickups, returns and redirections on the engine, bin by bin |
 //! | [`costs`] | [`costs::DockCosts`] — what a dock is expected to cost a pickup and a return, per bin |
 //! | [`taxis`] | electric taxis on the engine: matching, drives, energy, the charging rule and plug queues; [`taxis::TaxiDay`] |
@@ -37,6 +38,7 @@ pub mod outcome;
 pub mod policy;
 pub mod queries;
 pub mod roads;
+pub mod tables;
 pub mod taxis;
 pub mod view;
 pub mod world;

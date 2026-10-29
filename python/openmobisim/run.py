@@ -62,6 +62,7 @@ _STAGE_LABELS = {
     "itineraries_setup": "itineraries prepared",
     "route_sets": "route sets",
     "results_assembled": "results assembled",
+    "services_written": "shared-bike legs and hub bins made and written",
     "results_written": "results written",
     "total": "run total (without the network read)",
 }
@@ -125,6 +126,8 @@ class _Files:
             "parking_bins",
             "transit_calls",
             "trip_results",
+            "service_legs",
+            "hub_bins",
         ):
             path = folder / f"{name}.parquet"
             setattr(self, f"{name}_path", str(path) if path.exists() else None)
@@ -244,9 +247,9 @@ class Run:
         ``convergence_verdict`` (from ``kpis.parquet``); ``timings()``; ``trip_results()`` and
         ``trip_modes()`` (from ``trip_results.parquet``); and every table (``kpis()``,
         ``diagnostics()``, ``events()``, ``link_bins_table()``, ``parking_bins_table()``,
-        ``transit_calls_table()``). What only the run in memory holds
-        (the network, the route sets and choices, the per-link arrays, the itinerary choices)
-        raises a ``RuntimeError`` that says so. Needs pyarrow.
+        ``transit_calls_table()``, ``service_legs_table()``, ``hub_bins_table()``). What only the
+        run in memory holds (the network, the route sets and choices, the per-link arrays, the
+        itinerary choices) raises a ``RuntimeError`` that says so. Needs pyarrow.
 
         Args:
             folder: The run's ``output_dir``, holding its ``manifest.json``.
@@ -1376,6 +1379,78 @@ class Run:
         """
         path = self._written(self._summary.parking_bins_path, "parking_bins.parquet")
         return None if path is None else Table(path)
+
+    def service_legs(self) -> Columns | None:
+        """Every shared-bike leg of the last loading, as columns; ``None`` without a service.
+
+        A **leg** is the part of a trip ridden on a service's vehicle: here a shared bike from a
+        pickup dock to a return dock, played by the services' simulation after the loading.
+        One row per leg, in trip order: ``service`` (its name), ``mode`` (the trip's:
+        ``"bike_share"``, or ``"bike_share_transit"`` for a shared bike to a stop's hub and
+        transit on), ``traveller_id`` and ``trip_seq`` (as in ``trip_results()``), ``weight``
+        (the people it stands for: the bikes it takes); in seconds from midnight
+        ``requested_s`` (it asked for a bike at its planned pickup dock), ``picked_s`` (it had
+        one; ``NaN``: none found) and ``arrived_s`` (it reached the leg's end, the trip's
+        destination or, to transit, the dock at the stop's hub; riding, or on foot after a
+        failed pickup); ``hub_from`` and ``hub_to`` (the hubs of the docks its choice planned);
+        ``dock_from`` and ``dock_to`` (the docks used; ``None``: none); in seconds
+        ``waited_s`` (0 for a docked bike: from an empty dock a traveller walks on rather than
+        waits), ``extra_walk_s`` (walked between docks looking for a bike), ``redirections``
+        (docks tried after the planned one, picking up and returning), ``expected_dock_s`` (the
+        extra time at the docks its choice expected) and ``met_dock_s`` (the extra time it met:
+        its arrival less its arrival had the planned docks had a bike and a free slot; ``NaN``:
+        it did not arrive); and ``outcome`` (``"served"``: a bike taken and docked;
+        ``"failed"``: none found at the docks tried, the traveller walked on; ``"truncated"``:
+        under way when the window ended). The same table is written to
+        ``service_legs.parquet``: read it with ``service_legs_table()``.
+        """
+        legs = self._summary.service_legs
+        return None if legs is None else Columns(legs)
+
+    def service_legs_table(self) -> Table | None:
+        """``service_legs.parquet``: ``service_legs()`` after ``run_id``; ``None`` if no service.
+
+        A time that did not come and a dock not used are null. The file's metadata carries the
+        run's fingerprint and its master seed.
+        """
+        path = self._written(self._summary.service_legs_path, "service_legs.parquet")
+        return None if path is None else Table(path)
+
+    def hub_bins(self) -> Columns | None:
+        """Every dock of the run's services over the last loading, bin by bin; ``None`` if none.
+
+        ``None`` without a service. One row per dock and bin: ``bin`` (counted from midnight,
+        ``start_s // bin_s``, as in ``parking_bins()``), ``start_s``, ``hub_id`` (the dock's hub:
+        a stop's within ``hub_join_m``, or its own), ``hub_kind`` (``"stop"`` or ``"declared"``),
+        ``resource_kind`` (``"dock"``), ``resource_id`` (the dock's id), ``service``,
+        ``level_mean`` and ``level_min`` (bikes docked: the mean over the bin and the fewest at
+        once), ``capacity`` (its slots), ``empty_s`` and ``full_s`` (seconds of the bin with no
+        bike, and with every slot taken), and counts of people in the bin: ``pickups``,
+        ``returns``, ``failed`` (pickups that failed here, the last dock tried),
+        ``redirected_in`` (sent on here from an empty or full dock), ``redirected_out`` (found it
+        empty or full and went on), ``moved_in`` and ``moved_out`` (bikes an operator brought or
+        took away: 0, a run having no operator yet). The same table is written to
+        ``hub_bins.parquet``: read it with ``hub_bins_table()``.
+        """
+        bins = self._summary.hub_bins
+        return None if bins is None else Columns(bins)
+
+    def hub_bins_table(self) -> Table | None:
+        """``hub_bins.parquet``: ``hub_bins()`` after ``run_id``; ``None`` without a service.
+
+        The file's metadata carries the bins' length, the run's fingerprint and its master seed.
+        """
+        path = self._written(self._summary.hub_bins_path, "hub_bins.parquet")
+        return None if path is None else Table(path)
+
+    def hub_places(self) -> Columns | None:
+        """Every dock of the run's services, for maps; ``None`` without a service.
+
+        ``resource_id``, ``hub_id``, ``hub_kind``, ``service``, ``capacity`` (slots),
+        ``bikes_start`` (bikes at the start of the day), ``lon`` and ``lat``.
+        """
+        places = self._summary.hub_places
+        return None if places is None else Columns(places)
 
     def parking_places(self) -> Columns | None:
         """Each parking the run kept, as columns; ``None`` without parkings.

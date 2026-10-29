@@ -64,6 +64,9 @@ pub struct DockBins {
     pub failed: Vec<f64>,
     /// Travellers who found the dock empty or full and went on to another (people).
     pub redirected: Vec<f64>,
+    /// Travellers sent on to this dock from another that was empty or full (people), counted
+    /// in the bin they were sent.
+    pub redirected_in: Vec<f64>,
     /// Bikes an operator's van took away.
     pub moved_out: Vec<f64>,
     /// Bikes an operator's van brought.
@@ -95,6 +98,7 @@ impl DockBins {
             returns: vec![0.0; cells],
             failed: vec![0.0; cells],
             redirected: vec![0.0; cells],
+            redirected_in: vec![0.0; cells],
             moved_out: vec![0.0; cells],
             moved_in: vec![0.0; cells],
         }
@@ -339,6 +343,8 @@ impl DockRun {
         };
         if let Some((o, walk)) = next {
             self.bins.redirected[cell] += wf;
+            let to = o as usize * self.bins.bins + self.bins.bin_of(t);
+            self.bins.redirected_in[to] += wf;
             self.since.redirected_out[k] += wf;
             self.since.redirected_in[o as usize] += wf;
             c.out.extra_walk_s += walk;
@@ -379,6 +385,8 @@ impl DockRun {
             });
             if let Some((o, _)) = next {
                 self.bins.redirected[cell] += wf;
+                let to = o as usize * self.bins.bins + self.bins.bin_of(t);
+                self.bins.redirected_in[to] += wf;
                 self.since.redirected_out[k] += wf;
                 self.since.redirected_in[o as usize] += wf;
                 c.out.redirections += 1;

@@ -77,9 +77,14 @@ pub struct ShareDay {
     pub engine_s: f64,
 }
 
-/// What a run's services did: kept in memory (no results file yet).
+/// What a run's services did: the numbers `kpis.parquet` carries per service, and the last
+/// loading's day `service_legs.parquet` and `hub_bins.parquet` are made of.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct ServicesRun {
+    /// The service's name (the run's one docked service).
+    pub service: String,
+    /// Its bikes at the start of the day.
+    pub fleet: f64,
     /// Per loading, its [`ShareDay::mismatch_s`].
     pub mismatch_s: Vec<f64>,
     /// Per loading, its [`ShareDay::bias_s`].
@@ -92,6 +97,19 @@ pub struct ServicesRun {
     pub last: Option<ShareDay>,
     /// The docks' expected costs as the run ended.
     pub expected: Option<DockCosts>,
+}
+
+impl ServicesRun {
+    /// Nothing done yet by `setup`, the run's service.
+    #[must_use]
+    pub fn of(setup: &ServiceSetup) -> Self {
+        #[allow(clippy::cast_precision_loss, reason = "a count of bikes")]
+        let fleet = match setup.parts() {
+            ServiceParts::BikeDocked(docks, _) => docks.fleet() as f64,
+            ServiceParts::Taxi(fleet, _) => fleet.vehicle_ids.len() as f64,
+        };
+        Self { service: setup.name().to_string(), fleet, ..Self::default() }
+    }
 }
 
 /// Rides between docks and walks from a dock to a leg's destination, on the run's layers.
@@ -227,4 +245,25 @@ pub fn play(
         bias_s,
         engine_s: started.elapsed().as_secs_f64(),
     }
+}
+
+/// The day of the run's docked services `setups` over `window` (seconds from midnight) with no
+/// leg: the docks keep their start-of-day bikes (what `hub_bins.parquet` holds for a run whose
+/// last loading had no shared-bike trip).
+///
+/// # Panics
+///
+/// Never in practice: a day without a policy cannot fail.
+#[must_use]
+pub fn idle(setups: &Arc<Vec<ServiceSetup>>, window: (f64, f64)) -> FleetOutcome {
+    let day = FleetDay { window, legs: Vec::new(), seed: 0 };
+    FleetEngine::new(
+        Arc::clone(setups),
+        Arc::new(day),
+        Arc::new(super::engine::NoLegs),
+        Arc::new(NoRoads),
+        None,
+    )
+    .run_day()
+    .expect("no policy, no policy failure")
 }

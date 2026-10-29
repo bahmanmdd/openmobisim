@@ -498,6 +498,21 @@ pub struct PyRunSummary {
     /// Path to the written `parking_bins.parquet`, if the run had parkings.
     #[pyo3(get)]
     pub parking_bins_path: Option<String>,
+    /// The shared-bike legs of the last loading, as columns; `None` without a service.
+    #[pyo3(get)]
+    pub service_legs: Option<Py<PyDict>>,
+    /// Every dock of the services, bin by bin, as columns; `None` without a service.
+    #[pyo3(get)]
+    pub hub_bins: Option<Py<PyDict>>,
+    /// Every dock of the services, where it is and its hub; `None` without a service.
+    #[pyo3(get)]
+    pub hub_places: Option<Py<PyDict>>,
+    /// Path to the written `service_legs.parquet`, if the run had a service.
+    #[pyo3(get)]
+    pub service_legs_path: Option<String>,
+    /// Path to the written `hub_bins.parquet`, if the run had a service.
+    #[pyo3(get)]
+    pub hub_bins_path: Option<String>,
     /// Each transit, park-and-ride and bike-and-ride trip's choice, as columns;
     /// `None` without such trips.
     #[pyo3(get)]
@@ -696,7 +711,7 @@ impl PyLinkBins {
     }
 }
 
-fn to_value_error<E: std::fmt::Display>(e: E) -> PyErr {
+pub(crate) fn to_value_error<E: std::fmt::Display>(e: E) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
@@ -1442,7 +1457,7 @@ pub fn run_pipeline(
         layers,
         transit_setup.clone().map(|t| (t, result.transit.as_ref().map(|r| r.times.clone()))),
     ));
-    let clock = Instant::now();
+    let mut clock = Instant::now();
 
     let mut diagnostics = build_diagnostics;
     diagnostics.merge(&run_diagnostics);
@@ -1560,6 +1575,27 @@ pub fn run_pipeline(
             Some(path.to_string_lossy().into_owned())
         }
         _ => None,
+    };
+    // A run's services (S302): its shared-bike legs and its docks bin by bin; nothing without.
+    let service_out = match &service_setups {
+        Some(setups) => Some(crate::service_results::service_results(
+            py,
+            setups,
+            &run_hubs,
+            result.services.as_ref(),
+            (&trips_used, &travellers, &trip_table),
+            (f64::from(window.start_s), f64::from(window.end_s)),
+            (dir, run_id, &description, minimal),
+        )?),
+        None => None,
+    };
+    // Their own stage, so the time the service tables and files take is seen (none without).
+    if service_out.is_some() {
+        clock = timings.lap("services_written", None, clock);
+    }
+    let (service_legs, hub_bins, hub_places, service_legs_path, hub_bins_path) = match service_out {
+        Some(o) => (Some(o.legs), Some(o.bins), Some(o.places), o.legs_path, o.bins_path),
+        None => (None, None, None, None, None),
     };
     let (parking_bins_table, parking_places_table, parking_summary_table) =
         match (&result.parking, &parking_setup) {
@@ -1746,6 +1782,11 @@ pub fn run_pipeline(
         parking_places: parking_places_table,
         parking_summary: parking_summary_table,
         parking_bins_path,
+        service_legs,
+        hub_bins,
+        hub_places,
+        service_legs_path,
+        hub_bins_path,
         itinerary_choices: itinerary_table,
         trip_modes: trip_modes_table,
         trip_results: trip_results_table,

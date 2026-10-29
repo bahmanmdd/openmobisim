@@ -87,6 +87,136 @@
     "openmobisim.schema_version"
    ]
   },
+  "hub_bins.parquet": {
+   "columns": [
+    {
+     "name": "run_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "bin",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "index"
+    },
+    {
+     "name": "start_s",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "hub_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "hub_kind",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "resource_kind",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "resource_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "service",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "level_mean",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    },
+    {
+     "name": "level_min",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    },
+    {
+     "name": "capacity",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "slots"
+    },
+    {
+     "name": "empty_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "full_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "pickups",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    },
+    {
+     "name": "returns",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    },
+    {
+     "name": "failed",
+     "type": "double",
+     "nullable": false,
+     "unit": "travellers"
+    },
+    {
+     "name": "redirected_in",
+     "type": "double",
+     "nullable": false,
+     "unit": "travellers"
+    },
+    {
+     "name": "redirected_out",
+     "type": "double",
+     "nullable": false,
+     "unit": "travellers"
+    },
+    {
+     "name": "moved_in",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    },
+    {
+     "name": "moved_out",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    }
+   ],
+   "metadata": [
+    "openmobisim.bin_seconds",
+    "openmobisim.master_seed",
+    "openmobisim.run_fingerprint",
+    "openmobisim.schema_version"
+   ]
+  },
   "kpis.parquet": {
    "columns": [
     {
@@ -404,6 +534,129 @@
    ],
    "metadata": [
     "openmobisim.bin_seconds",
+    "openmobisim.master_seed",
+    "openmobisim.run_fingerprint",
+    "openmobisim.schema_version"
+   ]
+  },
+  "service_legs.parquet": {
+   "columns": [
+    {
+     "name": "run_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "service",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "mode",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "traveller_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "trip_seq",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "index"
+    },
+    {
+     "name": "weight",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "travellers"
+    },
+    {
+     "name": "requested_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "picked_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "arrived_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "hub_from",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "hub_to",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "dock_from",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "dock_to",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "waited_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "extra_walk_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "redirections",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "docks"
+    },
+    {
+     "name": "expected_dock_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "met_dock_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
+     "name": "outcome",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    }
+   ],
+   "metadata": [
     "openmobisim.master_seed",
     "openmobisim.run_fingerprint",
     "openmobisim.schema_version"
