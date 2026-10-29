@@ -46,6 +46,18 @@ impl Mode {
     /// How many modes there are.
     pub const COUNT: usize = Mode::ALL.len();
 
+    /// The modes that need no service of the run, in discriminant order: what the outputs of a
+    /// run without services list, so they stay what they were before services existed.
+    pub const BASE: [Mode; 6] =
+        [Mode::Car, Mode::Bike, Mode::Walk, Mode::Transit, Mode::CarTransit, Mode::BikeTransit];
+
+    /// The modes a run's outputs list (its reasons per mode, its gaps per mode): the
+    /// [`Self::BASE`] modes, and the service modes too when the run has a service.
+    #[must_use]
+    pub fn listed(with_services: bool) -> &'static [Mode] {
+        if with_services { &Mode::ALL } else { &Mode::BASE }
+    }
+
     /// The stable snake_case name, as the `mode` column writes it.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -115,5 +127,14 @@ mod tests {
         let err = Mode::from_name("Bike").unwrap_err().to_string();
         assert!(err.contains("`Bike`") && err.contains("car, bike, walk"), "{err}");
         assert_eq!(Mode::default(), Mode::Car);
+    }
+
+    #[test]
+    fn the_base_modes_are_those_without_a_service_in_order() {
+        assert!(Mode::BASE.iter().all(|m| !m.is_service()));
+        assert_eq!(&Mode::ALL[..Mode::BASE.len()], &Mode::BASE);
+        assert!(Mode::ALL[Mode::BASE.len()..].iter().all(|m| m.is_service()));
+        assert_eq!(Mode::listed(false), &Mode::BASE);
+        assert_eq!(Mode::listed(true), &Mode::ALL);
     }
 }

@@ -92,6 +92,8 @@ use crate::link_times::LinkTimes;
 use crate::link_values::{PreparedLinkValues, ValueLayer};
 use crate::parking::{ExpectedAvailability, ParkingSetup};
 use crate::prices::{Cost, PreparedPrices};
+use crate::services::ServiceSetup;
+use crate::services::costs::DockCosts;
 use crate::transit::{TransitSetup, par_map};
 use crate::trees::{DriveKey, TreeDrive};
 
@@ -153,6 +155,14 @@ pub const ATTRIBUTES: [&str; 40] = [
     "mode_bike_transit",
 ];
 
+/// The attributes a shared-bike alternative adds, in a run with a docked service (S302), after
+/// [`ATTRIBUTES`]: `mode_bike_share` (1 for a shared bike, 0 for the rest: its constant) and
+/// `dock_min`, the expected minutes walked to other docks when the pickup dock is empty or
+/// the return dock full ([`crate::services::costs::DockCosts`]; part of `walk_min`, so weighed as
+/// walking by default; 0 for every other mode). A run without a service offers neither, so its
+/// choice sets are what they were before services existed.
+pub const SERVICE_ATTRIBUTES: [&str; 2] = ["mode_bike_share", "dock_min"];
+
 /// The value of a mode attribute for an alternative of `mode`: `nest` is the mode's index
 /// ([`Mode::index`], the nest of a nested logit), `mode_<name>` is 1 for that mode's
 /// alternatives and 0 for the rest (so `beta_mode_bike` is the bike's constant, M5).
@@ -195,6 +205,9 @@ pub enum Shape {
     /// One leg on one layer (M5, mode choice): a car route, a bike route or a walk; the
     /// alternative's [`Alternative::mode`] says which.
     Direct,
+    /// A shared bike (S302): walk to a dock, ride on the bike layer, return the bike at a dock,
+    /// walk; [`Alternative::share_docks`] says which docks.
+    Share,
 }
 
 /// A ride of a chosen journey: the line and the stops.
@@ -276,6 +289,12 @@ pub struct Alternative {
     /// A car trip offered only because the trip had no alternative at all: it
     /// takes no car of the traveller's (a lift or a taxi for one without), and is counted apart.
     pub fallback: bool,
+    /// A shared bike's pickup and return docks, by the docked service's dock index ([`NO_PARKING`]
+    /// for any other alternative).
+    pub share_docks: (u32, u32),
+    /// A shared bike's expected seconds walked to other docks, the pickup dock empty or the
+    /// return dock full (part of [`Self::walk_s`]); 0 for any other alternative.
+    pub dock_s: f64,
 }
 
 impl Alternative {
@@ -292,6 +311,11 @@ impl Alternative {
             Shape::Out => h.write_u32(1),
             Shape::Back(_) => h.write_u32(2),
             Shape::Direct => h.write_u32(3 + u32::try_from(self.mode.index()).unwrap_or(0)),
+            Shape::Share => {
+                h.write_u32(100);
+                h.write_u32(self.share_docks.0);
+                h.write_u32(self.share_docks.1);
+            }
         }
         h.write_u32(self.parking);
         for l in &self.vehicle_links {
@@ -310,6 +334,7 @@ impl Alternative {
         self.shape == other.shape
             && (self.shape != Shape::Direct || self.mode == other.mode)
             && self.parking == other.parking
+            && self.share_docks == other.share_docks
             && self.vehicle_links == other.vehicle_links
             && self.rides == other.rides
     }
@@ -329,6 +354,11 @@ pub(crate) struct TripNodes {
     pub access_walk_s: f64,
     /// The trip's user class index: its coefficient vector under the route cost (S299).
     pub class: u32,
+    /// The origin and destination on the run's walk layer, for a shared bike (null without a
+    /// docked service, or for a trip not offered one).
+    pub share_o: NodeId,
+    /// See [`Self::share_o`].
+    pub share_d: NodeId,
 }
 
 /// What a trip may choose from: each mode offered to it where it is.
@@ -346,6 +376,8 @@ pub(crate) struct Offer {
     pub bike_transit: Option<Shape>,
     /// Out through this parking only: a kept itinerary re-costed, not re-planned.
     pub parking: Option<u32>,
+    /// A shared bike, dock to dock (S302).
+    pub bike_share: bool,
 }
 
 impl Offer {
@@ -374,7 +406,7 @@ impl Offer {
             Mode::Transit => out.transit = self.transit,
             Mode::CarTransit => out.car_transit = self.car_transit,
             Mode::BikeTransit => out.bike_transit = self.bike_transit,
-            Mode::BikeShare => {}
+            Mode::BikeShare => out.bike_share = self.bike_share,
         }
         out
     }
@@ -430,7 +462,78 @@ pub(crate) struct Planner<'a> {
     /// Each coefficient vector's extras prepared for [`Self::car`] (their A* bounds), by vector;
     /// empty where the route cost is time alone.
     pub car_extras: &'a [Option<openmobisim_core_routes::Extras>],
+    /// The run's docked service and its docks' expected costs, for shared bikes (S302); `None`
+    /// without one.
+    pub share: Option<ShareContext<'a>>,
 }
+
+/// A run's docked bike service as the choice sees it (S302): the service, the walk layer its
+/// docks are on, which walk nodes hold a dock, and the docks' expected costs.
+#[derive(Clone, Copy)]
+pub(crate) struct ShareContext<'a> {
+    pub setup: &'a ServiceSetup,
+    pub walk: &'a LayerSetup,
+    pub index: &'a DockIndex,
+    pub costs: &'a DockCosts,
+}
+
+/// Which walk nodes hold a dock of a docked service, and the docks at each: made once per run.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DockIndex {
+    /// Per walk node, whether a dock is there.
+    marks: Vec<bool>,
+    /// The docks at a walk node, in dock order.
+    at: HashMap<u32, Vec<u32>>,
+}
+
+impl DockIndex {
+    /// The docks of `setup` (a docked service) on its walk layer of `walk_nodes` nodes.
+    pub(crate) fn new(setup: &ServiceSetup, walk_nodes: u32) -> Self {
+        let mut out = Self { marks: vec![false; walk_nodes as usize], at: HashMap::new() };
+        if let crate::services::ServiceParts::BikeDocked(docks, _) = setup.parts() {
+            for (d, w) in docks.walk_node.iter().enumerate() {
+                out.marks[w.index()] = true;
+                out.at.entry(w.raw()).or_default().push(u32::try_from(d).expect("docks fit u32"));
+            }
+        }
+        out
+    }
+
+    /// The docks within `bound` seconds' walk of `node` (`back`: the walks *to* it), nearest
+    /// first, ties by dock index, with the walk's seconds.
+    fn near(&self, reach: &mut Reach<'_>, node: NodeId, bound: f64, back: bool) -> Vec<(u32, f64)> {
+        let found = if back {
+            reach.backward(node, bound, &self.marks)
+        } else {
+            reach.forward(node, bound, &self.marks)
+        };
+        let mut out = Vec::new();
+        for (at, secs) in found {
+            for &d in self.at.get(&at.raw()).map_or(&[][..], Vec::as_slice) {
+                out.push((d, secs));
+            }
+        }
+        out.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        out
+    }
+}
+
+/// A shared-bike trip's dock pair, routed: the walks, the ride and its route. Static (the walk
+/// and bike layers' costs are), so found once per run; the docks' expected costs are added
+/// per choice.
+#[derive(Clone, Debug)]
+pub(crate) struct SharePlan {
+    pickup: u32,
+    ret: u32,
+    walk_o_s: f64,
+    walk_d_s: f64,
+    ride_s: f64,
+    links: Box<[LinkId]>,
+    metres: f64,
+}
+
+/// One trip's dock pairs, kept once found.
+pub(crate) type SharePlans = OnceLock<Box<[SharePlan]>>;
 
 /// One thread's scratch for planning.
 pub(crate) struct Scratch<'a> {
@@ -440,6 +543,8 @@ pub(crate) struct Scratch<'a> {
     /// neither, and each holds a few bytes per link of its whole network.
     car: Option<Search<'a>>,
     bike: Option<Search<'a>>,
+    /// The walks to and from docks, made on first use (S302).
+    docks: Option<Reach<'a>>,
     /// One flag per road node: the car parks a park-and-ride search looks for. Made on
     /// first use, and left all false between uses.
     car_mask: Vec<bool>,
@@ -686,6 +791,7 @@ impl<'a> Planner<'a> {
             }),
             car: None,
             bike: None,
+            docks: None,
             car_mask: Vec::new(),
         }
     }
@@ -712,6 +818,7 @@ impl<'a> Planner<'a> {
         bike_reach: Option<&BikeReach>,
         car_reach: &CarReach,
         kept: Option<KeptFor<'_>>,
+        share: Option<&SharePlans>,
     ) -> Vec<Alternative> {
         let k = self.parking.map_or(1, |p| p.defaults().candidate_count());
         let vehicles =
@@ -756,6 +863,9 @@ impl<'a> Planner<'a> {
         if offer.transit {
             alts.extend(self.plan_transit(s, n, departure, kept));
         }
+        if let (true, Some(memo)) = (offer.bike_share, share) {
+            alts.extend(self.plan_share(s, n, departure, memo));
+        }
         let far_enough = self.far_enough(&offer, origin, destination);
         for (shape, kind) in vehicles {
             if let (Some(Shape::Out), true) = (shape, far_enough) {
@@ -773,6 +883,105 @@ impl<'a> Planner<'a> {
         }
         self.measure_bike_legs(&mut alts);
         finalise(alts, self.detour_limit, k, self.journey_max_s())
+    }
+
+    /// A trip's shared-bike alternatives (S302): its dock pairs, found and routed once per run
+    /// ([`Self::share_plans`]), each costed with the docks' expected costs at the seconds it
+    /// would reach them.
+    fn plan_share(
+        &self,
+        s: &mut Scratch<'a>,
+        n: &TripNodes,
+        departure: u32,
+        memo: &SharePlans,
+    ) -> Vec<Alternative> {
+        let Some(share) = self.share else { return Vec::new() };
+        let crate::services::ServiceParts::BikeDocked(_, d) = share.setup.parts() else {
+            return Vec::new();
+        };
+        let plans = memo.get_or_init(|| self.share_plans(s, n));
+        plans
+            .iter()
+            .map(|p| {
+                let mut a = blank(Mode::BikeShare, Shape::Share);
+                a.share_docks = (p.pickup, p.ret);
+                a.vehicle_links = p.links.to_vec();
+                a.vehicle_s = p.ride_s;
+                a.vehicle_m = p.metres;
+                a.access_walk_s = floor_seconds(p.walk_o_s);
+                a.egress_walk_s = floor_seconds(p.walk_d_s);
+                let at_pickup = f64::from(departure) + p.walk_o_s;
+                let at_return = at_pickup + d.pickup_s + p.ride_s;
+                a.dock_s = share.costs.pickup_s(p.pickup, at_pickup)
+                    + share.costs.return_s(p.ret, at_return);
+                a.parking_s = d.pickup_s + d.return_s;
+                a.walk_s = p.walk_o_s + p.walk_d_s + a.dock_s;
+                a.total_s = a.walk_s + a.parking_s + a.vehicle_s;
+                a
+            })
+            .collect()
+    }
+
+    /// A trip's dock pairs: of the docks within the service's `walk_max_s` of its origin and of
+    /// its destination on the walk layer, the `3K` nearest of each (`K` the service's
+    /// `candidates`); of their pairs (two docks apart), the `K` best by an estimate (the walks
+    /// and the distance as the crow flies at 4 m/s), each routed on the bike layer by the bike's
+    /// cost, as one's own bike is, and timed at the service's `ride_factor`. None without a pair.
+    fn share_plans(&self, s: &mut Scratch<'a>, n: &TripNodes) -> Box<[SharePlan]> {
+        let (Some(share), Some((bike, bike_ctx))) = (self.share, self.bike) else {
+            return Box::new([]);
+        };
+        let crate::services::ServiceParts::BikeDocked(docks, d) = share.setup.parts() else {
+            return Box::new([]);
+        };
+        if n.share_o.is_null() || n.share_d.is_null() {
+            return Box::new([]);
+        }
+        let k = d.candidate_count();
+        let walk = share.walk;
+        let reach =
+            s.docks.get_or_insert_with(|| Reach::new(walk.network().network(), walk.seconds()));
+        let mut from = share.index.near(reach, n.share_o, d.walk_max_s, false);
+        let mut to = share.index.near(reach, n.share_d, d.walk_max_s, true);
+        from.truncate(3 * k);
+        to.truncate(3 * k);
+        let mut pairs: Vec<(f64, u32, f64, u32, f64)> = Vec::new();
+        for &(po, wo) in &from {
+            for &(pd, wd) in &to {
+                if po == pd {
+                    continue;
+                }
+                let metres = ground_distance_metres(
+                    docks.position[po as usize],
+                    docks.position[pd as usize],
+                );
+                pairs.push((wo + wd + metres / 4.0 * d.ride_factor, po, wo, pd, wd));
+            }
+        }
+        pairs.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.3.cmp(&b.3)));
+        let seconds = bike.seconds();
+        let net = bike.network().network();
+        let search = s.bike(bike_ctx);
+        let mut out = Vec::new();
+        for &(_, po, wo, pd, wd) in pairs.iter().take(k) {
+            let Some(route) =
+                search.shortest(docks.bike_node[po as usize], docks.bike_node[pd as usize])
+            else {
+                continue;
+            };
+            let ride: f64 = route.links.iter().map(|l| seconds[l.index()]).sum();
+            let metres: f64 = route.links.iter().map(|&l| net.link_length(l).get()).sum();
+            out.push(SharePlan {
+                pickup: po,
+                ret: pd,
+                walk_o_s: wo,
+                walk_d_s: wd,
+                ride_s: ride * d.ride_factor,
+                links: route.links.into_boxed_slice(),
+                metres,
+            });
+        }
+        out.into_boxed_slice()
     }
 
     /// The longest journey with transit offered: the timetable's limit, or none.
@@ -957,7 +1166,10 @@ impl<'a> Planner<'a> {
     fn measure_bike_legs(&self, alts: &mut [Alternative]) {
         let Some((layer, _)) = self.bike else { return };
         let net = layer.network();
-        for a in alts.iter_mut().filter(|a| matches!(a.mode, Mode::Bike | Mode::BikeTransit)) {
+        for a in alts
+            .iter_mut()
+            .filter(|a| matches!(a.mode, Mode::Bike | Mode::BikeTransit | Mode::BikeShare))
+        {
             for &l in &a.vehicle_links {
                 if net.network().link_class(l) != RoadClass::Ferry {
                     a.bike_m[net.infrastructure(l) as usize] += net.network().link_length(l).get();
@@ -1661,7 +1873,16 @@ fn blank(mode: Mode, shape: Shape) -> Alternative {
         ride_kind_s: [0; 6],
         ride_m: 0.0,
         fallback: false,
+        share_docks: (NO_PARKING, NO_PARKING),
+        dock_s: 0.0,
     }
+}
+
+/// Seconds as whole seconds, rounded down (a walk's, for its attribute in minutes).
+fn floor_seconds(s: f64) -> u32 {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "seconds")]
+    let out = s.max(0.0).floor().min(f64::from(u32::MAX - 1)) as u32;
+    out
 }
 
 /// A bike route or a walk as an alternative: a bike pays `access_s` before its ride (as walk
@@ -1859,7 +2080,10 @@ fn cost(a: &Alternative, inputs: &ChooseInputs<'_>, trip: TripId) -> Cost {
         },
         // A pass holder pays no fare (S279, CM-15): the pass is access, not money, and its own
         // price is not counted (Q-7).
-        fare: if inputs.travellers.ownership(inputs.trips.traveller(trip)).transit_pass {
+        fare: if a.mode == Mode::BikeShare {
+            // A shared bike's price (S302): every traveller pays it, a transit pass covers none.
+            prices.bike_share(a.vehicle_s)
+        } else if inputs.travellers.ownership(inputs.trips.traveller(trip)).transit_pass {
             0.0
         } else {
             prices.fare(a.rides.len(), a.ride_m)
@@ -1920,7 +2144,8 @@ fn attribute(
             n
         }
         "car_min" if kind == Some(ParkingKind::Car) => vehicle_min,
-        "bike_min" if kind == Some(ParkingKind::Bike) => vehicle_min,
+        "bike_min" if kind == Some(ParkingKind::Bike) || a.mode == Mode::BikeShare => vehicle_min,
+        "dock_min" => a.dock_s / 60.0,
         "walk_min" => a.walk_s / 60.0,
         "wait_min" => a.wait_s / 60.0,
         "ride_min" => a.ride_s / 60.0,
@@ -2104,6 +2329,10 @@ pub(crate) struct Itineraries {
     bike_reach: Vec<BikeReach>,
     /// Set once [`Self::fill_bike_reach`] has run.
     bike_reach_filled: OnceLock<()>,
+    /// Per position, its shared-bike dock pairs (S302), found by the first plan that needs them
+    /// and kept for the run: the walk and bike layers' costs are static. Empty without a docked
+    /// service.
+    share: Vec<SharePlans>,
     /// Per position, its timetable searches, kept for the run ([`KeptSearches`]): valid on the
     /// one timetable the run plans on, which `kept_on` names (its address) once a plan used it;
     /// a planner on another timetable searches without them.
@@ -2180,6 +2409,8 @@ pub(crate) struct Simulated<'a> {
     pub class_limits: &'a [crate::layers::ClassLimits],
     /// The travellers, for each trip's class.
     pub travellers: &'a Travellers,
+    /// The run's docked bike service (S302), if it has one.
+    pub share: Option<&'a ServiceSetup>,
 }
 
 impl Itineraries {
@@ -2198,8 +2429,7 @@ impl Itineraries {
             Mode::Bike => bike.is_some(),
             Mode::Walk => sim.layers.walk.is_some(),
             Mode::Car => true,
-            // Offered once the run's docked service is wired in.
-            Mode::BikeShare => false,
+            Mode::BikeShare => sim.share.is_some() && bike.is_some() && sim.layers.walk.is_some(),
         };
         let mut offered = [false; Mode::COUNT];
         for &m in sim.choice.unwrap_or(&[]) {
@@ -2207,6 +2437,13 @@ impl Itineraries {
         }
         let road_snapper = NodeSnapper::new(road);
         let bike_snapper = bike.map(|b| NodeSnapper::every_node(b.network().network()));
+        // Origins and destinations on the walk layer, for a shared bike (S302).
+        let share_walk = sim
+            .layers
+            .walk
+            .as_ref()
+            .filter(|_| offered[Mode::BikeShare.index()])
+            .map(|w| (w, NodeSnapper::every_node(w.network().network())));
         let null = NodeId::from_raw(NULL_ID);
         let mut out = Self {
             trips: Vec::new(),
@@ -2219,6 +2456,7 @@ impl Itineraries {
             car_keys: Vec::new(),
             bike_reach: Vec::new(),
             bike_reach_filled: OnceLock::new(),
+            share: Vec::new(),
             kept: Vec::new(),
             kept_on: OnceLock::new(),
             search_counts: SearchCounts::default(),
@@ -2251,7 +2489,14 @@ impl Itineraries {
                     .access_walk_max_s
                     .unwrap_or_else(|| transit.map_or(0.0, |t| t.defaults().access_walk_max_s)),
                 class: sim.travellers.user_class(trips.traveller(trip)).raw(),
+                share_o: null,
+                share_d: null,
             };
+            if let (true, Some((w, snapper))) = (choosing, &share_walk) {
+                let graph = w.network().network();
+                nodes.share_o = snapper.nearest(graph, o);
+                nodes.share_d = snapper.nearest(graph, d);
+            }
             if choosing || mode == Mode::CarTransit || out.fallback_car {
                 nodes.road_o = road_snapper.nearest(road, o);
                 nodes.road_d = road_snapper.nearest(road, d);
@@ -2312,6 +2557,9 @@ impl Itineraries {
         }
         out.rounds = rounds;
         out.bike_reach = (0..out.trips.len()).map(|_| OnceLock::new()).collect();
+        if share_walk.is_some() {
+            out.share = (0..out.trips.len()).map(|_| OnceLock::new()).collect();
+        }
         out.kept = (0..out.trips.len()).map(|_| Kept::default()).collect();
         out.parks_cars = parking.is_some()
             && out.trips.iter().zip(&out.choosing).any(|(&trip, &choosing)| {
@@ -2464,6 +2712,16 @@ impl Itineraries {
                 if on(Mode::Transit) {
                     reasons[Mode::Transit.index()] = transit_reason();
                 }
+                // A shared bike gives nothing only when no two docks are within the walk of
+                // the origin and of the destination (or no ride joins them) (S302).
+                if on(Mode::BikeShare) {
+                    reasons[Mode::BikeShare.index()] =
+                        if self.share.get(p).and_then(OnceLock::get).is_none_or(|p| p.is_empty()) {
+                            R::NoDockInReach
+                        } else {
+                            R::Unexplained
+                        };
+                }
                 let far_enough = parking.is_none_or(|pk| {
                     ground_distance_metres(origin, trips.destination(trip))
                         >= pk.defaults().pr_min_km * 1000.0
@@ -2600,6 +2858,7 @@ impl Itineraries {
             car_transit: via(car, Mode::CarTransit),
             bike_transit: via(bike, Mode::BikeTransit),
             parking: None,
+            bike_share: on(Mode::BikeShare),
         }
     }
 
@@ -2633,6 +2892,7 @@ impl Itineraries {
                 self.bike_reach.get(p),
                 car_reach,
                 self.kept_for(planner, p),
+                self.share.get(p),
             )
         };
         // No alternative at all: the car (S271, W-1), if it has a road path.
@@ -3439,6 +3699,9 @@ pub enum NoAlternativeReason {
     NoTransitJourney,
     /// Shorter than the shortest trip offered a parking on the way (`pr_min_km`).
     TooShort,
+    /// No two docks of the run's docked service within its walk (`walk_max_s`) of the origin
+    /// and of the destination, or no ride on the bike layer between them (S302).
+    NoDockInReach,
     /// None of the above: what the mode was offered should have given an alternative. A
     /// defect to report.
     Unexplained,
@@ -3457,6 +3720,7 @@ impl NoAlternativeReason {
             Self::NoStopInReach => "no_stop_in_reach",
             Self::NoTransitJourney => "no_transit_journey",
             Self::TooShort => "too_short",
+            Self::NoDockInReach => "no_dock_in_reach",
             Self::Unexplained => "unexplained",
         }
     }
@@ -3721,6 +3985,8 @@ mod tests {
             ride_kind_s: [0; 6],
             ride_m: 0.0,
             fallback: false,
+            share_docks: (NO_PARKING, NO_PARKING),
+            dock_s: 0.0,
         }
     }
 

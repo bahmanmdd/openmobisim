@@ -685,7 +685,15 @@ def demand_write_trips(trips: Iterable[tuple], path: str | Path) -> int:
 #: its trips choosing their mode, and the longest walk to or from a stop.
 CLASS_LIMITS = ("walk_max_s", "bike_max_s", "access_walk_max_s")
 #: What a class may say besides its ``beta_*`` coefficients (its limits).
-CLASS_KEYS = ("share", "modes", "owns_car", "owns_bike", "has_transit_pass", *CLASS_LIMITS)
+CLASS_KEYS = (
+    "share",
+    "modes",
+    "owns_car",
+    "owns_bike",
+    "has_transit_pass",
+    "has_bike_share",
+    *CLASS_LIMITS,
+)
 _OWNERSHIP = ("owns_car", "owns_bike", "has_transit_pass")
 _TRUE, _FALSE = ("1", "true", "yes", "y", "t"), ("0", "false", "no", "n", "f")
 
@@ -703,6 +711,7 @@ def _flag(value: object, what: str) -> bool:
 
 def _class_entry(name: str, spec: object) -> dict[str, Any]:
     """One class, in the one shape a run reads (see ``Scenario.from_parts``' ``classes``)."""
+    from openmobisim.run import SERVICE_MODES
     from openmobisim.scenario import MODES
 
     if isinstance(spec, (tuple, list)):
@@ -730,10 +739,11 @@ def _class_entry(name: str, spec: object) -> dict[str, Any]:
     if modes is not None:
         modes = [m.strip() for m in modes.split(";")] if isinstance(modes, str) else list(modes)
         modes = [m for m in modes if m]
-        bad = [m for m in modes if m not in MODES]
+        known = MODES + SERVICE_MODES
+        bad = [m for m in modes if m not in known]
         if bad:
-            raise ValueError(f"class {name!r}: modes must be among {MODES}, got {bad}")
-        modes = [m for m in MODES if m in modes]
+            raise ValueError(f"class {name!r}: modes must be among {known}, got {bad}")
+        modes = [m for m in known if m in modes]
     share = given.get("share")
     if share is not None:
         share = float(share)
@@ -759,6 +769,9 @@ def _class_entry(name: str, spec: object) -> dict[str, Any]:
                 raise ValueError(f"class {name!r}: {key} must be a finite number, got {value!r}")
             betas[str(key)] = v
     entry["betas"] = betas
+    # Shared bikes (S302): offered unless the class says 0; kept only when given.
+    if "has_bike_share" in given:
+        entry["has_bike_share"] = _flag(given["has_bike_share"], f"class {name!r}: has_bike_share")
     limits = {}
     for key in CLASS_LIMITS:
         if key in given:
@@ -788,12 +801,13 @@ def demand_read_classes(path: str | Path) -> dict[str, dict[str, Any]]:
     the people in the class, for ``demand_assign_classes``), ``modes`` (the modes its travellers may
     use, separated by ``;``: ``car;bike;walk``; empty: every mode the run offers), ``owns_car``,
     ``owns_bike`` and ``has_transit_pass`` (``1`` or ``0``; empty: a car for a class that may drive
-    or park and ride, a bike for one that may cycle, both when the modes are empty, and no pass —
-    a pass only waives the fare, never gates transit), any ``beta_*`` coefficient of the choice
-    model (``beta_mode_bike``, ``beta_time_min`` …; empty: the model's own) and the class's own
-    choice-set limits in seconds, ``walk_max_s``, ``bike_max_s`` and ``access_walk_max_s`` (empty:
-    the run's ``mode_options`` and ``transit_options``). Every value is what the user gives, not a
-    calibration.
+    or park and ride, a bike for one that may cycle, both when the modes are empty, and no pass — a
+    pass only waives the fare, never gates transit), ``has_bike_share`` (``0``: the class is never
+    offered a shared bike; empty: offered, in a run with a docked bike service), any ``beta_*``
+    coefficient of the choice model (``beta_mode_bike``, ``beta_time_min`` …; empty: the model's
+    own) and the class's own choice-set limits in seconds, ``walk_max_s``, ``bike_max_s`` and
+    ``access_walk_max_s`` (empty: the run's ``mode_options`` and ``transit_options``). Every value
+    is what the user gives, not a calibration.
 
     Returns:
         The classes in the file's order, a dict by class name of dicts with the keys ``share``,

@@ -674,6 +674,7 @@ fn to_value_error<E: std::fmt::Display>(e: E) -> PyErr {
 fn convergence_arrays(
     py: Python<'_>,
     reports: &[openmobisim_core_sim::IterationReport],
+    modes: &[Mode],
 ) -> PyResult<Py<PyDict>> {
     let dict = PyDict::new(py);
     let floats = |f: fn(&openmobisim_core_sim::IterationReport) -> f64| -> Vec<f64> {
@@ -705,7 +706,8 @@ fn convergence_arrays(
     dict.set_item("gap_flow", floats(|r| r.gap_flow).into_pyarray(py))?;
     dict.set_item("gap_flow_floor", floats(|r| r.gap_flow_floor).into_pyarray(py))?;
     dict.set_item("gap_flow_excess", floats(|r| r.gap_flow_excess).into_pyarray(py))?;
-    for mode in Mode::ALL {
+    // The modes the run lists alone (S302): a service's mode only in a run with a service.
+    for mode in modes {
         let i = mode.index();
         dict.set_item(
             format!("gap_{}", mode.as_str()),
@@ -831,6 +833,7 @@ fn gap_trip_columns(py: Python<'_>, gap: &openmobisim_core_sim::GapTrips) -> PyR
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
     loading_options=None, price_options=None, threads=None, fingerprint_only=false,
     design_id="default", replication=0, outputs="all", hub_join_m=150.0,
+    services=None, class_no_bike_share=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -893,6 +896,8 @@ pub fn run_pipeline(
     replication: u32,
     outputs: &str,
     hub_join_m: f64,
+    services: Option<Vec<crate::services::ServiceTuple<'_>>>,
+    class_no_bike_share: Option<Vec<String>>,
 ) -> PyResult<Py<PyAny>> {
     // Which files the run writes (C2): "all", or "minimal" (kpis.csv and manifest.json) for mass
     // runs; the results in memory are the same either way.
@@ -1129,9 +1134,17 @@ pub fn run_pipeline(
         let ids = travellers.class_external_ids();
         (0..ids.count()).map(|c| ids.external(c).to_string()).collect()
     };
+    // A class with `has_bike_share` 0 (S302) never sees a shared bike.
+    let no_share = class_no_bike_share.unwrap_or_default();
     let class_allowed: Vec<[bool; Mode::COUNT]> = class_names
         .iter()
-        .map(|c| class_modes.get(c).copied().unwrap_or([true; Mode::COUNT]))
+        .map(|c| {
+            let mut allowed = class_modes.get(c).copied().unwrap_or([true; Mode::COUNT]);
+            if no_share.contains(c) {
+                allowed[Mode::BikeShare.index()] = false;
+            }
+            allowed
+        })
         .collect();
     let class_limits: Vec<ClassLimits> =
         class_names.iter().map(|c| class_limits.get(c).copied().unwrap_or_default()).collect();
@@ -1250,14 +1263,16 @@ pub fn run_pipeline(
             network.inner.defaults().layers,
         ))
     };
-    // A timetable walks its passengers on the walk layer (S199), so the run needs it.
+    // A timetable walks its passengers on the walk layer (S199), so the run needs it; a service's
+    // docks are snapped to both layers (S302).
+    let services = services.unwrap_or_default();
     let layers = StaticLayers {
-        bike: if uses(Mode::Bike) || uses(Mode::BikeTransit) {
+        bike: if uses(Mode::Bike) || uses(Mode::BikeTransit) || !services.is_empty() {
             Some(setup(StaticLayer::Bike)?)
         } else {
             None
         },
-        walk: if uses(Mode::Walk) || transit.is_some() {
+        walk: if uses(Mode::Walk) || transit.is_some() || !services.is_empty() {
             Some(setup(StaticLayer::Walk)?)
         } else {
             None
@@ -1301,6 +1316,8 @@ pub fn run_pipeline(
         }
         _ => None,
     };
+    // The services (S302), snapped to the run's walk and bike layers.
+    let service_setups = crate::services::setups_on(&services, &layers, &network.inner)?;
     let layers = Arc::new(layers);
     // The bike layer's link count, for its route sets' Python view (S298).
     let bike_link_count =
@@ -1311,6 +1328,9 @@ pub fn run_pipeline(
     }
     if let Some(p) = &parking_setup {
         run = run.with_parking(p.clone());
+    }
+    if !service_setups.is_empty() {
+        run = run.with_services(Arc::new(service_setups));
     }
     run = run
         .with_mode_choice(&modes)
@@ -1683,6 +1703,7 @@ pub fn run_pipeline(
             &result.no_alternative,
             &trips_used,
             &travellers,
+            result.modes_listed(),
         )?
         .unbind(),
         transit_calls: transit_calls_table,
@@ -1697,7 +1718,7 @@ pub fn run_pipeline(
         choice_model: description.choice_model.clone(),
         equilibration: description.equilibration.clone(),
         route_update: description.route_update.clone(),
-        convergence: convergence_arrays(py, &result.iterations)?,
+        convergence: convergence_arrays(py, &result.iterations, result.modes_listed())?,
         converged: result.converged,
         fingerprint: description.fingerprint_hex(),
         total_trips: result.completion.total_trips,

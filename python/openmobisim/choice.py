@@ -91,6 +91,7 @@ import numpy as np
 
 __all__ = [
     "ROUTE_ATTRIBUTES",
+    "SERVICE_ATTRIBUTES",
     "ChoiceModel",
     "choice_model_register",
     "choice_models",
@@ -172,6 +173,14 @@ ROUTE_ATTRIBUTES: tuple[str, ...] = (
     "mode_car_transit",
     "mode_bike_transit",
 )
+
+
+#: The attributes a shared bike adds, in a run with a docked bike service (``services``), after
+#: ``ROUTE_ATTRIBUTES``: ``mode_bike_share`` (1 for a shared bike, 0 for the rest: its constant)
+#: and ``dock_min`` (the minutes expected walking to another dock when the pickup dock is empty
+#: or the return dock full; part of ``walk_min``, 0 for the other modes). A run without a
+#: service offers neither.
+SERVICE_ATTRIBUTES: tuple[str, ...] = ("mode_bike_share", "dock_min")
 
 
 @runtime_checkable

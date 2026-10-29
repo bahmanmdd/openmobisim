@@ -169,6 +169,8 @@ pub(crate) struct Inputs<'a> {
     pub layers: &'a StaticLayers,
     pub transit: Option<&'a TransitSetup>,
     pub parking: Option<&'a ParkingSetup>,
+    /// The shared-mobility services (S302); empty: none, hashed as before services existed.
+    pub services: &'a [crate::services::ServiceSetup],
     /// The modes a trip without a stated mode chooses among, if the run offers a choice.
     pub mode_choice: Option<&'a [Mode]>,
     /// How long a walk or ride mode choice offers; hashed only with mode choice.
@@ -299,11 +301,14 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         h.write_f64(inputs.mode_defaults.bike_max_s);
         // The classes' modes (S231): nothing when every class may use all, so such a run's
         // fingerprint is what it was.
-        if inputs.class_modes.iter().any(|modes| modes.contains(&false)) {
+        // Only the modes the run lists (S302): a service's mode only in a run with a service, so
+        // a run without one hashes as before services existed.
+        let listed = Mode::listed(!inputs.services.is_empty());
+        if inputs.class_modes.iter().any(|modes| listed.iter().any(|m| !modes[m.index()])) {
             for (class, modes) in inputs.class_modes.iter().enumerate() {
                 h.write_u32(u32::try_from(class).expect("few classes"));
-                for &allowed in modes {
-                    h.write_bool(allowed);
+                for m in listed {
+                    h.write_bool(modes[m.index()]);
                 }
             }
         }
@@ -435,6 +440,13 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             h.write_str(name);
             h.write_f64(value);
         }
+        // The services' prices only with a service (S302).
+        if !inputs.services.is_empty() {
+            for (name, value) in prices.service_values() {
+                h.write_str(name);
+                h.write_f64(value);
+            }
+        }
     }
     // Off means absent: a run without a timetable hashes as it did before transit.
     if let Some(transit) = inputs.transit {
@@ -443,6 +455,10 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     // Likewise without parkings (M4).
     if let Some(parking) = inputs.parking {
         hash_parking(&mut h, parking);
+    }
+    // And without services (S302).
+    for service in inputs.services {
+        hash_service(&mut h, service);
     }
 
     RunDescription {
@@ -495,9 +511,10 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             .map(|(layer, name, _)| (layer.as_str().to_string(), name.to_string()))
             .collect(),
         disruptions: (!d.is_empty()).then_some((d.road.len(), d.transit.len(), d.known)),
-        prices: inputs
-            .prices
-            .map(|p| p.values().into_iter().map(|(n, v)| (n.to_string(), v)).collect()),
+        prices: inputs.prices.map(|p| {
+            let services = if inputs.services.is_empty() { Vec::new() } else { p.service_values() };
+            p.values().into_iter().chain(services).map(|(n, v)| (n.to_string(), v)).collect()
+        }),
         person_values: inputs.demand_values.persons().map(|(n, _)| n.to_string()).collect(),
         trip_values: inputs.demand_values.trips().map(|(n, _)| n.to_string()).collect(),
     }
@@ -602,6 +619,45 @@ fn hash_layer(h: &mut Fnv1a, layers: &StaticLayers, layer: StaticLayer) {
         && setup.cost() == openmobisim_core_graph::layers::BikeCost::Utility
     {
         h.write_str("utility");
+    }
+}
+
+/// A service: its name, kind, options and its docks (id, place, slots, bikes at the start, the
+/// nodes it was snapped to) or its vehicles and chargers.
+fn hash_service(h: &mut Fnv1a, service: &crate::services::ServiceSetup) {
+    use crate::services::ServiceParts;
+    h.write_str("service");
+    h.write_str(service.name());
+    h.write_str(service.kind().as_str());
+    for (name, value) in service.option_values() {
+        h.write_str(name);
+        h.write_f64(value);
+    }
+    match service.parts() {
+        ServiceParts::BikeDocked(docks, _) => {
+            for d in 0..docks.len() {
+                h.write_str(&docks.external[d]);
+                h.write_f64(docks.position[d].lon);
+                h.write_f64(docks.position[d].lat);
+                h.write_u32(docks.capacity[d]);
+                h.write_u32(docks.start[d]);
+                h.write_u32(docks.walk_node[d].raw());
+                h.write_u32(docks.bike_node[d].raw());
+            }
+        }
+        ServiceParts::Taxi(fleet, _) => {
+            for (v, id) in fleet.vehicle_ids.iter().enumerate() {
+                h.write_str(id);
+                h.write_u32(fleet.vehicle_node[v].raw());
+                h.write_f64(fleet.vehicle_soc[v]);
+            }
+            for (c, id) in fleet.charger_ids.iter().enumerate() {
+                h.write_str(id);
+                h.write_u32(fleet.charger_node[c].raw());
+                h.write_u32(fleet.charger_plugs[c]);
+                h.write_f64(fleet.charger_kw[c]);
+            }
+        }
     }
 }
 

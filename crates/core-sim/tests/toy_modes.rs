@@ -138,7 +138,7 @@ impl Default for Setup {
             transit: true,
             parking_at_any_length: true,
             model: None,
-            modes: Mode::ALL.to_vec(),
+            modes: Mode::BASE.to_vec(),
             msa: None,
         }
     }
@@ -640,7 +640,7 @@ fn mc8_a_trip_with_no_alternative_is_reported_with_each_mode_s_reason() {
             "no_transit_journey",
             "too_short",
             "too_short",
-            "not_offered"
+            ""
         ]
     );
     // A trip that had alternatives is not listed.

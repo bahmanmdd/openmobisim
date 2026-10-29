@@ -1,0 +1,411 @@
+//! Docked bike sharing in a run: trips choosing their mode are offered shared bikes between the
+//! docks within a walk of their origin and destination; after each loading the fleet engine
+//! plays the legs of those who took one, and the docks' realised costs are averaged into what
+//! the next choice expects.
+//!
+//! The network: a 5 × 5 two-way grid of 200 m blocks. Docks of four slots at the corners of its
+//! first and last rows: a (row 0, column 0), b (0, 1), y (4, 3), z (4, 4). Travellers own no
+//! bike and no car; they choose between walking and a shared bike.
+
+#![allow(clippy::float_cmp, reason = "counts of bikes and trips are whole numbers held exactly")]
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use openmobisim_core_choice::{ChoiceModel, Deterministic};
+use openmobisim_core_demand::{
+    ClassDefaults, Mode, Ownership, RawTrip, Travellers, Trips, build_travellers,
+};
+use openmobisim_core_graph::examples::node_name;
+use openmobisim_core_graph::geometry::LonLat;
+use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults, StaticNetwork};
+use openmobisim_core_graph::manhattan_grid;
+use openmobisim_core_graph::network::RoadNetwork;
+use openmobisim_core_sim::services::{DockDefaults, DockRow, ServiceSetup};
+use openmobisim_core_sim::{LayerSetup, Prices, Run, RunResult, StaticLayers};
+use openmobisim_core_types::diagnostics::Diagnostics;
+use openmobisim_core_types::ids::EntityId;
+use openmobisim_core_types::time::Second;
+
+fn grid() -> Arc<RoadNetwork> {
+    Arc::new(manhattan_grid(5, 200.0, false).0)
+}
+
+fn layers(road: &RoadNetwork) -> Arc<StaticLayers> {
+    let d = StaticLayerDefaults::SHIPPED;
+    let derive = |layer| {
+        Arc::new(StaticNetwork::derive(road, layer, d, &mut Diagnostics::new()).expect("derives"))
+    };
+    Arc::new(StaticLayers {
+        bike: Some(LayerSetup::new(derive(StaticLayer::Bike), BikeCost::Dedicated, d)),
+        walk: Some(LayerSetup::new(derive(StaticLayer::Walk), BikeCost::Dedicated, d)),
+    })
+}
+
+fn at(road: &RoadNetwork, row: u32, col: u32) -> LonLat {
+    let id = road.node_external_ids().id_of(&node_name(row, col)).expect("a grid node");
+    road.node_lonlat(EntityId::new(id))
+}
+
+/// The four docks, `bikes` at the start of the day (a, b, y, z), four slots each.
+fn service(
+    road: &RoadNetwork,
+    layers: &StaticLayers,
+    bikes: [u32; 4],
+    walk_max_s: f64,
+    fail_s: f64,
+) -> ServiceSetup {
+    let row = |id: &str, p: LonLat, b: u32| DockRow {
+        dock_id: id.to_string(),
+        name: None,
+        hub_id: None,
+        position: p,
+        capacity: 4,
+        bikes: Some(b),
+    };
+    let rows = vec![
+        row("a", at(road, 0, 0), bikes[0]),
+        row("b", at(road, 0, 1), bikes[1]),
+        row("y", at(road, 4, 3), bikes[2]),
+        row("z", at(road, 4, 4), bikes[3]),
+    ];
+    ServiceSetup::bike_docked(
+        "bike_share",
+        &rows,
+        layers.walk.as_ref().unwrap(),
+        layers.bike.as_ref().unwrap(),
+        Some(road),
+        DockDefaults { walk_max_s, fail_s, ..DockDefaults::SHIPPED },
+    )
+    .expect("set up")
+}
+
+fn trip(who: &str, from: LonLat, to: LonLat, t: u32) -> RawTrip {
+    RawTrip {
+        traveller_id: who.to_string(),
+        trip_seq: 0,
+        origin: from,
+        destination: to,
+        departure_time: Second(t),
+        user_class: "everyone".to_string(),
+        weight: None,
+        mode: None,
+    }
+}
+
+fn demand(rows: Vec<RawTrip>) -> (Arc<Travellers>, Arc<Trips>) {
+    let classes = ClassDefaults::new()
+        .with_default("everyone", Ownership { car: false, bike: false, transit_pass: false });
+    let (t, trips) =
+        build_travellers(rows, Vec::new(), &classes, 1, &mut Diagnostics::new()).expect("builds");
+    (Arc::new(t), Arc::new(trips))
+}
+
+/// What a run is given besides its trips.
+struct Setup {
+    bikes: [u32; 4],
+    docks: bool,
+    model: Arc<dyn ChoiceModel>,
+    iterations: u32,
+    prices: Prices,
+    walk_max_s: f64,
+    fail_s: f64,
+}
+
+impl Default for Setup {
+    fn default() -> Self {
+        Self {
+            bikes: [2, 2, 2, 2],
+            docks: true,
+            model: Arc::new(Deterministic),
+            iterations: 1,
+            prices: Prices::SHIPPED,
+            walk_max_s: DockDefaults::SHIPPED.walk_max_s,
+            fail_s: DockDefaults::SHIPPED.fail_s,
+        }
+    }
+}
+
+fn run(rows: Vec<RawTrip>, s: &Setup) -> RunResult {
+    let road = grid();
+    let layers = layers(&road);
+    let service = service(&road, &layers, s.bikes, s.walk_max_s, s.fail_s);
+    let (travellers, trips) = demand(rows);
+    let mut run = Run::new(road, travellers, trips, Second(86_400))
+        .with_layers(layers)
+        .with_choice_model(Arc::clone(&s.model))
+        .with_prices(s.prices)
+        .with_mode_choice(&[Mode::Walk, Mode::BikeShare]);
+    if s.docks {
+        run = run.with_services(Arc::new(vec![service]));
+    }
+    if s.iterations > 1 {
+        // Every loading made: no stopping on the gap.
+        let options = BTreeMap::from([
+            ("iterations".to_string(), f64::from(s.iterations)),
+            ("gap_tolerance".to_string(), 0.0),
+        ]);
+        run = run.with_equilibration(Arc::from(
+            openmobisim_core_sim::equilibration::strategy("msa", &options).expect("msa"),
+        ));
+    }
+    run.execute(&mut Diagnostics::new())
+}
+
+fn corner_trips(road: &RoadNetwork, n: u32, every_s: u32) -> Vec<RawTrip> {
+    (0..n)
+        .map(|k| trip(&format!("t{k:02}"), at(road, 0, 0), at(road, 4, 4), 100 + k * every_s))
+        .collect()
+}
+
+#[test]
+fn travellers_without_a_bike_choose_a_shared_one_over_a_long_walk() {
+    let road = grid();
+    let result = run(corner_trips(&road, 3, 1), &Setup::default());
+    // 1.6 km on foot is about 20 minutes; by shared bike about 8: the deterministic model rides.
+    let share = result.by_mode[Mode::BikeShare.index()];
+    assert_eq!(share.completion.completed, 3, "{:?}", result.by_mode);
+    assert_eq!(result.by_mode[Mode::Walk.index()].completion.total_trips, 0);
+    let services = result.services.as_ref().expect("the run has a service");
+    let day = services.last.as_ref().expect("shared bikes were ridden");
+    // Dock a has two bikes: the third traveller finds it empty and takes one at b.
+    let picked: Vec<Option<u32>> = day.outcome.legs.iter().map(|o| o.picked).collect();
+    assert_eq!(picked, [Some(0), Some(0), Some(1)]);
+    let returned: Vec<Option<u32>> = day.outcome.legs.iter().map(|o| o.returned).collect();
+    // z holds four: its two bikes and the first two returned fill it, so the third rides on to
+    // its nearest neighbour with room, y.
+    assert_eq!(returned, [Some(3), Some(3), Some(2)]);
+    assert_eq!(day.outcome.invariant_violations, 0, "bikes are conserved");
+    // The first: docks at its origin and destination nodes, so no walk; the ride is the bike
+    // layer's corner-to-corner time (about 384 s, 1 600 m at the layer's speed), with a minute to
+    // take the bike and half a minute to dock it (the closed form of the earlier branch's toy).
+    let d = DockDefaults::SHIPPED;
+    let first = day.outcome.legs[0].arrived_s - 100.0;
+    assert!(
+        first > 384.0 + d.pickup_s + d.return_s - 1.0 && first < 400.0 + d.pickup_s + d.return_s,
+        "{first}"
+    );
+    // The third walked from a to b and back to nothing more: its extra is that walk.
+    let third = day.outcome.legs[2];
+    // Two docks tried after the planned ones: b at the pickup, y at the return.
+    assert_eq!(third.redirections, 2);
+    assert!(third.extra_walk_s > 0.0 && third.arrived_s > day.outcome.legs[0].arrived_s);
+    // The modes listed: the service's among them.
+    assert!(result.modes_listed().contains(&Mode::BikeShare));
+}
+
+#[test]
+fn without_a_service_bike_sharing_is_not_offered_nor_listed() {
+    let road = grid();
+    let result = run(corner_trips(&road, 3, 1), &Setup { docks: false, ..Setup::default() });
+    assert_eq!(result.by_mode[Mode::Walk.index()].completion.completed, 3);
+    assert_eq!(result.by_mode[Mode::BikeShare.index()].completion.total_trips, 0);
+    assert!(result.services.is_none());
+    assert!(!result.modes_listed().contains(&Mode::BikeShare));
+}
+
+#[test]
+fn a_shared_bike_is_taken_when_it_beats_walking_and_not_when_no_dock_is_within_the_walk() {
+    // From row 0, column 2 to the far corner (row 4, column 4): 1 200 m on foot. With the
+    // shipped reach (600 s on foot) dock b is 200 m from the origin and z at the destination:
+    // walk, ride b → z, walk nothing, faster than the walk.
+    let road = grid();
+    let rows = || vec![trip("t", at(&road, 0, 2), at(&road, 4, 4), 100)];
+    let result = run(rows(), &Setup::default());
+    assert_eq!(result.by_mode[Mode::BikeShare.index()].completion.completed, 1);
+    // With a reach of 100 s on foot no dock is within the origin's walk (b is 200 m away): no
+    // pair is offered, and the trip walks.
+    let result = run(rows(), &Setup { walk_max_s: 100.0, ..Setup::default() });
+    assert_eq!(result.by_mode[Mode::Walk.index()].completion.completed, 1, "{:?}", result.by_mode);
+    assert!(result.services.as_ref().unwrap().last.is_none(), "nobody took a shared bike");
+}
+
+#[test]
+fn a_price_per_ride_moves_travellers_from_shared_bikes_to_walking() {
+    let road = grid();
+    let logit = |prices: Prices| {
+        let options = BTreeMap::new();
+        let model: Arc<dyn ChoiceModel> =
+            Arc::from(openmobisim_core_choice::model("logit", &options).expect("logit"));
+        let rows = corner_trips(&road, 40, 15);
+        let r = run(rows, &Setup { model, prices, bikes: [4, 4, 0, 0], ..Setup::default() });
+        r.by_mode[Mode::BikeShare.index()].completion.total_trips
+    };
+    let free = logit(Prices::SHIPPED);
+    let priced = logit(Prices { bike_share_eur_per_ride: 3.0, ..Prices::SHIPPED });
+    assert!(free > 0 && priced < free, "free {free}, at 3 € a ride {priced}");
+}
+
+#[test]
+fn same_seed_same_day() {
+    let road = grid();
+    let a = run(corner_trips(&road, 12, 20), &Setup { iterations: 4, ..Setup::default() });
+    let b = run(corner_trips(&road, 12, 20), &Setup { iterations: 4, ..Setup::default() });
+    let (sa, sb) = (a.services.unwrap(), b.services.unwrap());
+    assert_eq!(sa.legs_people, sb.legs_people);
+    assert_eq!(
+        sa.mismatch_s.iter().map(|m| m.to_bits()).collect::<Vec<_>>(),
+        sb.mismatch_s.iter().map(|m| m.to_bits()).collect::<Vec<_>>()
+    );
+    let (da, db) = (sa.last.unwrap(), sb.last.unwrap());
+    // Compared as printed: a bike leg's outcome holds NaN (no taxi was sent), never equal to itself.
+    assert_eq!(
+        format!("{:?}", (da.legs, da.outcome)),
+        format!("{:?}", (db.legs, db.outcome)),
+        "the same days, but their clocks"
+    );
+    assert_eq!(sa.expected, sb.expected);
+    assert_eq!(a.events, b.events);
+}
+
+/// The hypothesis of the expected costs: the mismatch per leg between the extra seconds at the
+/// docks a choice expected and those its traveller met shrinks over the loadings, as the method
+/// of successive averages brings the expectation to what the days realise. Printed per loading
+/// (`cargo test --test services_in_runs -- --nocapture`): the mean absolute mismatch, and the
+/// signed mean (realised less expected), twice: with the shipped cost of finding no bike
+/// (`fail_s`, 1 200 s) and with 700 s, about what a failed pickup costs here (the walk on from b
+/// to the far corner less the ride it replaced).
+#[test]
+fn the_mismatch_per_loading_is_printed_and_is_finite() {
+    let road = grid();
+    let options = BTreeMap::new();
+    let model: Arc<dyn ChoiceModel> =
+        Arc::from(openmobisim_core_choice::model("logit", &options).expect("logit"));
+    // Twenty travellers over ten minutes from a's corner to z's: a and b hold four bikes
+    // between them, so most find them empty and walk on to other docks or give up.
+    for fail_s in [DockDefaults::SHIPPED.fail_s, 700.0] {
+        let s = Setup {
+            model: Arc::clone(&model),
+            iterations: 15,
+            bikes: [2, 2, 0, 0],
+            fail_s,
+            ..Setup::default()
+        };
+        let result = run(corner_trips(&road, 20, 30), &s);
+        let services = result.services.as_ref().expect("a service");
+        println!("fail_s {fail_s} s");
+        println!("loading | legs | mean |realised - expected| s | mean realised - expected s");
+        for (k, ((m, b), n)) in
+            services.mismatch_s.iter().zip(&services.bias_s).zip(&services.legs_people).enumerate()
+        {
+            println!("{k:7} | {n:4} | {m:28.1} | {b:26.1}");
+        }
+        assert_eq!(services.mismatch_s.len(), result.iterations.len());
+        assert!(
+            services
+                .mismatch_s
+                .iter()
+                .zip(&services.legs_people)
+                .all(|(m, &n)| n == 0.0 || m.is_finite())
+        );
+    }
+}
+
+#[test]
+fn a_class_without_shared_bikes_never_takes_one() {
+    let road = grid();
+    let mut allowed = [true; Mode::COUNT];
+    allowed[Mode::BikeShare.index()] = false;
+    let (travellers, trips) = demand(corner_trips(&road, 3, 1));
+    let layers = layers(&road);
+    let service = service(&road, &layers, [2, 2, 2, 2], 600.0, 1200.0);
+    let result = Run::new(Arc::clone(&road), travellers, trips, Second(86_400))
+        .with_layers(layers)
+        .with_choice_model(Arc::new(Deterministic))
+        .with_mode_choice(&[Mode::Walk, Mode::BikeShare])
+        .with_services(Arc::new(vec![service]))
+        .with_class_modes(vec![allowed])
+        .execute(&mut Diagnostics::new());
+    assert_eq!(result.by_mode[Mode::Walk.index()].completion.completed, 3);
+    assert_eq!(result.by_mode[Mode::BikeShare.index()].completion.total_trips, 0);
+}
+
+/// The run time with and without the service on a 10 × 10 grid of 200 m blocks (S302 step 1.3's
+/// measurement): the same 4 000 trips between random grid nodes, travellers owning a bike,
+/// choosing among walking and their bike, and shared bikes in the second run (docks of 10 slots
+/// at every other node of every other row: 25 docks); 10 loadings of the method of successive
+/// averages, the logit. Prints the seconds of each run and the engine's share
+/// (`cargo test --release --test services_in_runs -- --ignored --nocapture`).
+#[test]
+#[ignore = "a run-time measurement, run by hand"]
+fn run_time_on_the_10_by_10_grid_with_and_without_the_service() {
+    let road = Arc::new(manhattan_grid(10, 200.0, false).0);
+    let layers = layers(&road);
+    let rows: Vec<DockRow> = (0..10)
+        .step_by(2)
+        .flat_map(|r| (0..10).step_by(2).map(move |c| (r, c)))
+        .map(|(r, c)| DockRow {
+            dock_id: format!("d{r}{c}"),
+            name: None,
+            hub_id: None,
+            position: at(&road, r, c),
+            capacity: 10,
+            bikes: Some(5),
+        })
+        .collect();
+    let service = ServiceSetup::bike_docked(
+        "bike_share",
+        &rows,
+        layers.walk.as_ref().unwrap(),
+        layers.bike.as_ref().unwrap(),
+        Some(&road),
+        DockDefaults::SHIPPED,
+    )
+    .expect("set up");
+    // Random trips by a fixed linear congruential sequence, so both runs have the same.
+    let mut x: u64 = 12_345;
+    let mut next = |n: u32| {
+        x = x.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        u32::try_from((x >> 33) % u64::from(n)).expect("small")
+    };
+    let trips: Vec<RawTrip> = (0..4_000)
+        .map(|k| {
+            let (a, b, c, d) = (next(10), next(10), next(10), next(10));
+            trip(&format!("t{k:04}"), at(&road, a, b), at(&road, c, d), 28_800 + next(3_600))
+        })
+        .collect();
+    let classes = ClassDefaults::new()
+        .with_default("everyone", Ownership { car: false, bike: true, transit_pass: false });
+    let options =
+        BTreeMap::from([("iterations".to_string(), 10.0), ("gap_tolerance".to_string(), 0.0)]);
+    let make = |with: bool| {
+        let (t, tr) =
+            build_travellers(trips.clone(), Vec::new(), &classes, 1, &mut Diagnostics::new())
+                .expect("builds");
+        let modes: &[Mode] = if with {
+            &[Mode::Walk, Mode::Bike, Mode::BikeShare]
+        } else {
+            &[Mode::Walk, Mode::Bike]
+        };
+        let mut run = Run::new(Arc::clone(&road), Arc::new(t), Arc::new(tr), Second(86_400))
+            .with_layers(Arc::clone(&layers))
+            .with_choice_model(Arc::from(
+                openmobisim_core_choice::model("logit", &BTreeMap::new()).expect("logit"),
+            ))
+            .with_equilibration(Arc::from(
+                openmobisim_core_sim::equilibration::strategy("msa", &options).expect("msa"),
+            ))
+            .with_mode_choice(modes);
+        if with {
+            run = run.with_services(Arc::new(vec![service.clone()]));
+        }
+        run
+    };
+    for with in [false, true, false, true] {
+        let mut run = make(with);
+        let started = std::time::Instant::now();
+        let result = run.execute(&mut Diagnostics::new());
+        let seconds = started.elapsed().as_secs_f64();
+        let engine = result.services.as_ref().map_or(0.0, |s| s.engine_s);
+        let share = result.by_mode[Mode::BikeShare.index()].completion.total_trips;
+        println!(
+            "service {with}: {seconds:.3} s, engine {engine:.4} s ({:.1} %), shared-bike trips {share}",
+            100.0 * engine / seconds
+        );
+        let mut by: BTreeMap<&str, f64> = BTreeMap::new();
+        for st in run.timings() {
+            *by.entry(st.name).or_default() += st.seconds;
+        }
+        println!("  by stage (s): {by:?}");
+    }
+}
