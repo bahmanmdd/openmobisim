@@ -111,6 +111,93 @@ impl Currency {
     }
 }
 
+/// The sums of the **in-set route gap measured after every loading** (S302): over car trips
+/// that finished, by traveller weight, what the route taken costs (`paid`), the least of the
+/// trip's car routes (`least`) and what the choice model expects among them (`expected`), in
+/// seconds of driving; and the same in generalised minutes (`g_*`) where asked. The route
+/// choice fills one for the trips given the car, the itinerary choice one for the trips
+/// choosing their mode that drove, and the run's `gap`, `gap_expected`, `gap_excess` and
+/// `gap_generalised_excess` are made from their sum.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RouteGapSums {
+    /// Σ w of the trips summed.
+    pub weight: f64,
+    pub paid: f64,
+    pub least: f64,
+    pub expected: f64,
+    /// Whether the model gave probabilities for every trip summed (else `expected` is not).
+    pub measured: bool,
+    pub g_paid: f64,
+    pub g_least: f64,
+    pub g_expected: f64,
+    /// Whether the generalised sums were asked for and measured for every trip summed.
+    pub g_measured: bool,
+}
+
+impl Default for RouteGapSums {
+    fn default() -> Self {
+        Self::new(false)
+    }
+}
+
+impl RouteGapSums {
+    /// Nothing summed yet; the generalised sums measured if `generalised`.
+    pub(crate) fn new(generalised: bool) -> Self {
+        Self {
+            weight: 0.0,
+            paid: 0.0,
+            least: 0.0,
+            expected: 0.0,
+            measured: true,
+            g_paid: 0.0,
+            g_least: 0.0,
+            g_expected: 0.0,
+            g_measured: generalised,
+        }
+    }
+
+    /// The two together.
+    #[must_use]
+    pub(crate) fn plus(&self, other: &Self) -> Self {
+        Self {
+            weight: self.weight + other.weight,
+            paid: self.paid + other.paid,
+            least: self.least + other.least,
+            expected: self.expected + other.expected,
+            measured: self.measured && other.measured,
+            g_paid: self.g_paid + other.g_paid,
+            g_least: self.g_least + other.g_least,
+            g_expected: self.g_expected + other.g_expected,
+            g_measured: self.g_measured && other.g_measured,
+        }
+    }
+
+    /// `(gap, gap_expected, gap_excess)`: `(paid − least) / least`, `(expected − least) /
+    /// least` and their difference; `NaN` where not measured.
+    pub(crate) fn gaps(&self) -> (f64, f64, f64) {
+        if self.least > 0.0 {
+            let gap = (self.paid - self.least) / self.least;
+            if self.measured {
+                let expected_gap = (self.expected - self.least) / self.least;
+                (gap, expected_gap, gap - expected_gap)
+            } else {
+                (gap, f64::NAN, f64::NAN)
+            }
+        } else {
+            (f64::NAN, f64::NAN, f64::NAN)
+        }
+    }
+
+    /// `(g_paid − g_expected) / g_least`, `NaN` where not measured.
+    pub(crate) fn generalised_excess(&self) -> f64 {
+        if self.g_measured && self.g_least > 0.0 {
+            (self.g_paid - self.g_expected) / self.g_least
+        } else {
+            f64::NAN
+        }
+    }
+}
+
 /// No road link: a trip that was not on the roads when the window ended.
 pub(crate) const NO_LINK: u32 = u32::MAX;
 
@@ -289,5 +376,38 @@ impl GapTrips {
         report.gap_mode_expected = ratio(expected - best, best);
         report.gap_mode_excess = report.gap_mode - report.gap_mode_expected;
         report.excess_min_mode = ratio(excess, people);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RouteGapSums;
+
+    fn sums(paid: f64, least: f64, expected: f64) -> RouteGapSums {
+        RouteGapSums { weight: 2.0, paid, least, expected, ..RouteGapSums::new(false) }
+    }
+
+    #[test]
+    fn nothing_added_leaves_the_route_gap_as_it_was_bit_for_bit() {
+        // S302: a run whose trips are all given their mode adds no sums of the trips choosing
+        // theirs, and its gaps must not move by a bit.
+        let given = sums(1_000.1, 900.3, 950.7);
+        let both = given.plus(&RouteGapSums::new(false));
+        let bits = |(a, b, c): (f64, f64, f64)| (a.to_bits(), b.to_bits(), c.to_bits());
+        assert_eq!(bits(both.gaps()), bits(given.gaps()));
+    }
+
+    #[test]
+    fn the_route_gap_of_two_groups_is_their_pooled_sums() {
+        // 10 % over the least for one group, 30 % for the other, with the same least: 20 %.
+        let (a, b) = (sums(110.0, 100.0, 105.0), sums(130.0, 100.0, 105.0));
+        let (gap, expected, excess) = a.plus(&b).gaps();
+        assert!((gap - 0.2).abs() < 1e-12 && (expected - 0.05).abs() < 1e-12);
+        assert!((excess - 0.15).abs() < 1e-12);
+        // Not measured: no probabilities in either, no trip at all.
+        let blind = RouteGapSums { measured: false, ..b };
+        assert!(a.plus(&blind).gaps().1.is_nan());
+        assert!(RouteGapSums::new(false).gaps().0.is_nan());
+        assert!(RouteGapSums::new(true).generalised_excess().is_nan());
     }
 }

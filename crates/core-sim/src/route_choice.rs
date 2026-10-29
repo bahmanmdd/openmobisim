@@ -44,7 +44,7 @@ use openmobisim_core_types::ids::{EntityId, LinkId, TravellerId, TripId};
 
 use crate::demand_values::DemandValues;
 use crate::equilibration::Equilibration;
-use crate::gap::{Currency, Ended, GapTrips};
+use crate::gap::{Currency, Ended, GapTrips, RouteGapSums};
 use crate::generalised_cost::RouteCost;
 use crate::link_times::LinkTimes;
 use crate::link_values::{PreparedLinkValues, ValueLayer};
@@ -233,6 +233,9 @@ pub(crate) struct Assessment {
     /// an alternative's utility over its class's time coefficient. Measured only when asked
     /// ([`Chooser::update`]'s `currency`); `NaN` otherwise.
     pub gap_generalised_excess: f64,
+    /// The sums `gap` to `gap_excess` and `gap_generalised_excess` are made of, for the run to
+    /// add the car routes of the trips choosing their mode to them (S302).
+    pub sums: RouteGapSums,
 }
 
 /// A trip that chose again, and what it chose.
@@ -1147,17 +1150,18 @@ impl<'a> Chooser<'a> {
         }
         let share = |x: f64| if w_all > 0.0 { x / w_all } else { 0.0 };
         let tv = |a: &[f64]| 0.5 * a.iter().zip(&expected).map(|(x, e)| (x - e).abs()).sum::<f64>();
-        let (gap, gap_expected, gap_excess) = if least > 0.0 {
-            let gap = (paid - least) / least;
-            if measured {
-                let expected_gap = (expected_paid - least) / least;
-                (gap, expected_gap, gap - expected_gap)
-            } else {
-                (gap, f64::NAN, f64::NAN)
-            }
-        } else {
-            (f64::NAN, f64::NAN, f64::NAN)
+        let sums = RouteGapSums {
+            weight: w_all - w_unfinished,
+            paid,
+            least,
+            expected: expected_paid,
+            measured,
+            g_paid,
+            g_least,
+            g_expected,
+            g_measured,
         };
+        let (gap, gap_expected, gap_excess) = sums.gaps();
         let assessment = Assessment {
             reselected_share: share(w_reselected),
             changed_share: share(w_changed),
@@ -1167,11 +1171,8 @@ impl<'a> Chooser<'a> {
             incomplete_share: share(w_unfinished),
             gap_flow: if measured { share(tv(&observed)) } else { f64::NAN },
             gap_flow_floor: if measured { share(tv(&sample)) } else { f64::NAN },
-            gap_generalised_excess: if g_measured && g_least > 0.0 {
-                (g_paid - g_expected) / g_least
-            } else {
-                f64::NAN
-            },
+            gap_generalised_excess: sums.generalised_excess(),
+            sums,
         };
         Ok(Update { assessment, changes, expected_seconds })
     }

@@ -55,9 +55,9 @@ use crate::gap::{Currency, Ended, GapTrips, NO_LINK};
 use crate::generalised_cost::{LinkTerms, RouteCost, class_extras, road_seconds};
 use crate::identity::{Inputs, RunDescription, describe};
 use crate::itinerary_choice::{
-    self, CarReach, CarRoutes, ChooseInputs, Chosen, DockIndex, Followed, GapPlans, HubDocks,
-    Itineraries, ItineraryResult, NoAlternative, Planner, Shape, ShareContext, Simulated, WalkEnd,
-    parking_kind_of,
+    self, CarGap, CarReach, CarRoutes, ChooseInputs, Chosen, DockIndex, Followed, GapPlans,
+    HubDocks, Itineraries, ItineraryResult, NoAlternative, Planner, Shape, ShareContext, Simulated,
+    WalkEnd, parking_kind_of,
 };
 use crate::layers::{
     ClassLimits, ModeDefaults, StaticLayers, StaticRoute, StaticRoutes, class_limits,
@@ -1860,6 +1860,7 @@ impl Run {
                     first_group.as_deref(),
                     &mut CarReach::new(),
                     None,
+                    None,
                 )?
                 .0,
             );
@@ -2086,6 +2087,7 @@ impl Run {
                         None,
                         Some(&choosing),
                         &mut car_reach,
+                        None,
                         None,
                     )?;
                     chosen = Some(next_chosen);
@@ -2353,6 +2355,10 @@ impl Run {
                             None,
                             &mut car_reach,
                             gap_plans.as_mut(),
+                            Some(CarGap {
+                                unfinished: &unfinished,
+                                currency: (!road_cost.is_time_only()).then_some(&currency),
+                            }),
                         )?;
                         clock = timings.lap("itinerary_choice", Some(iteration), clock);
                         // Every mode's: a trip choosing its mode is measured against the best
@@ -2364,6 +2370,16 @@ impl Run {
                         report.gap_transit_plan_share =
                             found.plan_error_share(report.gap_transit_plan_s);
                         report.itinerary_gap_excess = found.gap_excess_pooled();
+                        // The route gap over every car trip that finished (S302): the trips
+                        // given the car and those choosing their mode that drove, each against
+                        // the car routes of its set, so that a run whose trips all choose their
+                        // mode still stops on its car routes' disequilibrium. Unchanged where no
+                        // trip choosing its mode drove.
+                        if found.car_routes.weight > 0.0 {
+                            let sums = update.assessment.sums.plus(&found.car_routes);
+                            (report.gap, report.gap_expected, report.gap_excess) = sums.gaps();
+                            report.gap_generalised_excess = sums.generalised_excess();
+                        }
                         // The full gap (S293): every trip choosing its mode and every car
                         // itinerary, on the same costs; after the last loading, or every one.
                         if is_last(&report) {
