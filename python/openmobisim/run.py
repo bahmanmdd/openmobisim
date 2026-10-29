@@ -1394,15 +1394,17 @@ class Run:
         ``reached_destination``), ``bikes_at_dock_after`` and ``free_slots_after`` (the dock's
         state just after the event; ``None`` without a dock), ``next_dock`` and ``to_next_m``
         (the dock walked or ridden on to, and how far in metres as the crow flies; ``None`` and
-        ``NaN`` otherwise).
+        ``NaN`` otherwise), ``transit_stop`` (for ``reached_transit_stop``, the stop's hub).
 
         ``event`` is one of: ``arrived_for_bike`` (at the planned dock, or one tried after it),
         ``took_bike``, ``found_no_bike``, ``walking_to_next_dock``,
         ``gave_up_walking_to_destination`` (no dock left to try within the service's
         ``redirect_max`` and ``redirect_max_m``), ``arrived_to_return``, ``returned_bike``,
         ``found_no_free_slot``, ``riding_to_next_dock``, ``left_bike_over_capacity`` (every
-        dock near full: the bike is docked above capacity), ``reached_destination`` (the trip's
-        destination, or for ``bike_share_transit`` the dock at the stop's hub); and for an
+        dock near full: the bike is docked above capacity), ``reached_destination`` (a
+        ``bike_share`` trip at its destination), ``reached_transit_stop`` (a
+        ``bike_share_transit`` trip at its stop's hub, named in ``transit_stop``; ``dock``
+        ``None``); and for an
         operator's van ``van_took_bikes`` and ``van_brought_bikes``. A service with
         ``options={"log_events": 0}`` keeps no log (for very large runs): no rows. The same
         table is written to ``bike_share_events.parquet``: read it with
@@ -1426,13 +1428,13 @@ class Run:
         ``travellers`` (the people the traveller stands for: the bikes taken), ``mode``
         (``"bike_share"``, or ``"bike_share_transit"``: a shared bike to a stop's hub, transit on).
         The plan, as the trip's choice made it: ``planned_pickup_dock``, ``planned_return_dock``,
-        ``planned_at_pickup_dock_s`` (when it was to reach that dock), ``planned_arrival_s`` (when
+        ``planned_at_pickup_dock_s`` (when it was to reach that dock), ``planned_leg_end_s`` (when
         it was to arrive had the planned docks had a bike and a free slot), ``expected_extra_s``
         (the extra seconds at the docks the choice expected). What happened: ``pickup_dock`` and
         ``pickup_s`` (``None`` and ``NaN``: no bike), ``docks_tried_for_bike``, ``return_dock`` and
-        ``return_s``, ``docks_tried_for_slot``, ``arrival_s`` (at the destination, or for
+        ``return_s``, ``docks_tried_for_slot``, ``leg_end_s`` (at the destination, or for
         ``bike_share_transit`` the dock at the stop's hub; riding, or on foot after giving up). The
-        difference: ``extra_s`` (``arrival_s`` less ``planned_arrival_s``), ``extra_walk_m`` (walked
+        difference: ``extra_s`` (``leg_end_s`` less ``planned_leg_end_s``), ``extra_walk_m`` (walked
         between docks looking for a bike, metres as the crow flies), ``met_minus_expected_s``
         (``extra_s`` less ``expected_extra_s``: met minus expected, positive when worse than
         expected); ``failed_attempts_for_bike`` and ``failed_attempts_for_slot`` (docks found empty,

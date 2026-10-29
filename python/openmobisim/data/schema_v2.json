@@ -234,6 +234,12 @@
      "type": "double",
      "nullable": true,
      "unit": "m"
+    },
+    {
+     "name": "transit_stop",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
     }
    ],
    "metadata": [
@@ -299,7 +305,7 @@
      "unit": "s after midnight"
     },
     {
-     "name": "planned_arrival_s",
+     "name": "planned_leg_end_s",
      "type": "double",
      "nullable": false,
      "unit": "s after midnight"
@@ -347,7 +353,7 @@
      "unit": "docks"
     },
     {
-     "name": "arrival_s",
+     "name": "leg_end_s",
      "type": "double",
      "nullable": true,
      "unit": "s after midnight"

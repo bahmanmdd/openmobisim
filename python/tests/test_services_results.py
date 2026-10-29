@@ -83,7 +83,8 @@ def test_the_trips_docks_and_events_reconcile(run: ms.Run) -> None:
     sent = people["walking_to_next_dock"] + people["riding_to_next_dock"]
     assert sent == pytest.approx(dk["people_sent_here"].sum())
     # Every trip that arrived reached its destination once.
-    assert people["reached_destination"] == pytest.approx(w[np.isfinite(tr["arrival_s"])].sum())
+    ended = people["reached_destination"] + people["reached_transit_stop"]
+    assert ended == pytest.approx(w[np.isfinite(tr["leg_end_s"])].sum())
     # No operator in a run.
     assert not dk["bikes_brought_by_van"].any() and not dk["bikes_taken_by_van"].any()
     # A bike_at_another_dock trip failed an attempt, then took a bike elsewhere.

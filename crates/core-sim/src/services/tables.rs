@@ -16,7 +16,7 @@
 use openmobisim_core_demand::{Mode, Travellers, Trips};
 use openmobisim_core_types::ids::EntityId;
 
-use super::docks::{DockEvent, NONE};
+use super::docks::{DockEvent, DockEventKind, NONE};
 use super::hubs::RunHubs;
 use super::in_run::ShareDay;
 use super::outcome::{FleetOutcome, LegStatus};
@@ -105,17 +105,27 @@ pub struct BikeShareEventTable {
     pub next_dock: Vec<Option<String>>,
     /// How far that dock is, in metres as the crow flies.
     pub to_next_m: Vec<Option<f64>>,
+    /// For `reached_transit_stop`, the stop's hub (the hub of the dock the trip planned to
+    /// return its bike at).
+    pub transit_stop: Vec<Option<String>>,
 }
 
 impl BikeShareEventTable {
-    /// The events of `day` on `setups`, whose trips are `trips` of `travellers`; empty if the
-    /// day kept no log.
+    /// The events of `day` on `setups`, whose trips are `trips` of `travellers` with their
+    /// `modes` (by trip index), the docks' hubs from `hubs` ([`resource_hubs`]); empty if the
+    /// day kept no log. A shared bike to transit ends its leg with `reached_transit_stop` (its
+    /// stop's hub in [`Self::transit_stop`], no dock) where a shared bike alone ends with
+    /// `reached_destination`.
+    ///
+    /// # Panics
+    ///
+    /// If an event's leg or dock is not of `day`, `setups` or `hubs`.
     #[must_use]
     pub fn new(
         day: &ShareDay,
         setups: &[ServiceSetup],
-        trips: &Trips,
-        travellers: &Travellers,
+        (trips, travellers, modes): (&Trips, &Travellers, &[Option<Mode>]),
+        hubs: &[Vec<(String, &'static str)>],
     ) -> Self {
         let mut t = Self::default();
         let people = who(day, trips, travellers);
@@ -125,6 +135,15 @@ impl BikeShareEventTable {
             let id = |d: u32| (d != NONE).then(|| ids[d as usize].clone());
             for e in log {
                 t.push(setups[s].name(), e, &id, day, &people);
+                let leg = (e.leg != NONE).then(|| &day.legs[e.leg as usize]);
+                let chain = leg.filter(|l| {
+                    e.kind == DockEventKind::ReachedDestination
+                        && modes[l.trip.index()] == Some(Mode::BikeShareTransit)
+                });
+                t.transit_stop.push(chain.map(|l| hubs[s][l.leg.return_dock as usize].0.clone()));
+                if chain.is_some() {
+                    *t.event.last_mut().expect("just pushed") = "reached_transit_stop";
+                }
             }
         }
         t
@@ -189,7 +208,7 @@ pub struct BikeShareTripTable {
     /// When it was to reach the planned pickup dock.
     pub planned_at_pickup_dock_s: Vec<f64>,
     /// When it was to arrive, had the planned docks had a bike and a free slot.
-    pub planned_arrival_s: Vec<f64>,
+    pub planned_leg_end_s: Vec<f64>,
     /// The extra seconds at the docks its choice expected (the docks' expected cost).
     pub expected_extra_s: Vec<f64>,
     /// The dock the bike was taken from.
@@ -206,8 +225,8 @@ pub struct BikeShareTripTable {
     pub docks_tried_for_slot: Vec<u32>,
     /// When it reached the leg's end (the destination, or for `bike_share_transit` the dock at
     /// the stop's hub), riding or on foot.
-    pub arrival_s: Vec<Option<f64>>,
-    /// `arrival_s − planned_arrival_s`: the extra seconds it met at the docks.
+    pub leg_end_s: Vec<Option<f64>>,
+    /// `leg_end_s − planned_leg_end_s`: the extra seconds it met at the docks.
     pub extra_s: Vec<Option<f64>>,
     /// Metres walked between docks looking for a bike, as the crow flies.
     pub extra_walk_m: Vec<f64>,
@@ -283,7 +302,7 @@ impl BikeShareTripTable {
             t.planned_return_dock.push(ids[l.leg.return_dock as usize].clone());
             t.planned_at_pickup_dock_s.push(l.leg.request_s);
             let planned = l.planned_arrival_s(setup);
-            t.planned_arrival_s.push(planned);
+            t.planned_leg_end_s.push(planned);
             t.expected_extra_s.push(l.expected_dock_s);
             t.pickup_dock.push(id(o.picked));
             t.pickup_s.push(o.picked.and(finite(o.picked_s)));
@@ -294,7 +313,7 @@ impl BikeShareTripTable {
                 .push(o.failed_for_slot + u32::from(o.returned.is_some() && !o.overflow));
             let arrived = matches!(o.status, LegStatus::Served | LegStatus::Failed)
                 && o.arrived_s.is_finite();
-            t.arrival_s.push(arrived.then_some(o.arrived_s));
+            t.leg_end_s.push(arrived.then_some(o.arrived_s));
             let extra = arrived.then_some(o.arrived_s - planned);
             t.extra_s.push(extra);
             t.extra_walk_m.push(o.extra_walk_m);

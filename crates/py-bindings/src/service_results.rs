@@ -47,7 +47,7 @@ pub(crate) fn service_results(
     let at = resource_hubs(setups, hubs);
     let day = services.and_then(|s| s.last.as_ref());
     let events = day.map_or_else(BikeShareEventTable::default, |d| {
-        BikeShareEventTable::new(d, setups, trips, travellers)
+        BikeShareEventTable::new(d, setups, (trips, travellers, &trip_table.mode), &at)
     });
     let trip_rows = day.map_or_else(BikeShareTripTable::default, |d| {
         BikeShareTripTable::new(d, setups, trips, travellers, &trip_table.mode)
@@ -102,6 +102,7 @@ fn events_dict<'py>(py: Python<'py>, t: &BikeShareEventTable) -> PyResult<Bound<
     d.set_item("free_slots_after", t.free_slots_after.clone())?;
     d.set_item("next_dock", t.next_dock.clone())?;
     d.set_item("to_next_m", nan(&t.to_next_m).into_pyarray(py))?;
+    d.set_item("transit_stop", t.transit_stop.clone())?;
     Ok(d)
 }
 
@@ -117,7 +118,7 @@ fn trips_dict<'py>(py: Python<'py>, t: &BikeShareTripTable) -> PyResult<Bound<'p
     d.set_item("planned_pickup_dock", t.planned_pickup_dock.clone())?;
     d.set_item("planned_return_dock", t.planned_return_dock.clone())?;
     d.set_item("planned_at_pickup_dock_s", t.planned_at_pickup_dock_s.clone().into_pyarray(py))?;
-    d.set_item("planned_arrival_s", t.planned_arrival_s.clone().into_pyarray(py))?;
+    d.set_item("planned_leg_end_s", t.planned_leg_end_s.clone().into_pyarray(py))?;
     d.set_item("expected_extra_s", t.expected_extra_s.clone().into_pyarray(py))?;
     d.set_item("pickup_dock", t.pickup_dock.clone())?;
     d.set_item("pickup_s", nan(&t.pickup_s).into_pyarray(py))?;
@@ -125,7 +126,7 @@ fn trips_dict<'py>(py: Python<'py>, t: &BikeShareTripTable) -> PyResult<Bound<'p
     d.set_item("return_dock", t.return_dock.clone())?;
     d.set_item("return_s", nan(&t.return_s).into_pyarray(py))?;
     d.set_item("docks_tried_for_slot", t.docks_tried_for_slot.clone().into_pyarray(py))?;
-    d.set_item("arrival_s", nan(&t.arrival_s).into_pyarray(py))?;
+    d.set_item("leg_end_s", nan(&t.leg_end_s).into_pyarray(py))?;
     d.set_item("extra_s", nan(&t.extra_s).into_pyarray(py))?;
     d.set_item("extra_walk_m", t.extra_walk_m.clone().into_pyarray(py))?;
     d.set_item("met_minus_expected_s", nan(&t.met_minus_expected_s).into_pyarray(py))?;

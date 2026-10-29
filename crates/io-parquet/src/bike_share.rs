@@ -7,22 +7,23 @@
 //! events in the order the simulation handled them), so every traveller's sequence and every
 //! dock's state after each event can be followed:
 //! `run_id, service, time_s, time, traveller_id, trip_seq, travellers, event, dock,
-//! bikes_at_dock_after, free_slots_after, next_dock, to_next_m`.
+//! bikes_at_dock_after, free_slots_after, next_dock, to_next_m, transit_stop`.
 //! `event` is one of `arrived_for_bike`, `took_bike`, `found_no_bike`, `walking_to_next_dock`,
 //! `gave_up_walking_to_destination`, `arrived_to_return`, `returned_bike`, `found_no_free_slot`,
-//! `riding_to_next_dock`, `left_bike_over_capacity`, `reached_destination` (the leg's end: the
-//! trip's destination, or for a shared bike to transit the dock at the stop's hub), and for an
+//! `riding_to_next_dock`, `left_bike_over_capacity`, `reached_destination` (a shared bike alone at
+//! the trip's destination), `reached_transit_stop` (a shared bike to transit at its stop's hub,
+//! named in `transit_stop`; `dock` null), and for an
 //! operator's van `van_took_bikes`, `van_brought_bikes` (`traveller_id` null, `travellers` the
-//! bikes moved). `dock` is null for `reached_destination`; `next_dock` and `to_next_m` (metres
+//! bikes moved). `dock` is null for `reached_destination` and `reached_transit_stop`; `next_dock` and `to_next_m` (metres
 //! as the crow flies) are set for `walking_to_next_dock` and `riding_to_next_dock`. Without the
 //! service's log (`options={"log_events": 0}`) the file has no rows.
 //!
 //! **`bike_share_trips.parquet`** — one row per trip that chose a shared bike, in trip order:
 //! who (`run_id, service, traveller_id, trip_seq, travellers, mode`); the plan
-//! (`planned_pickup_dock, planned_return_dock, planned_at_pickup_dock_s, planned_arrival_s,
+//! (`planned_pickup_dock, planned_return_dock, planned_at_pickup_dock_s, planned_leg_end_s,
 //! expected_extra_s`); what happened (`pickup_dock, pickup_s, docks_tried_for_bike,
-//! return_dock, return_s, docks_tried_for_slot, arrival_s`); the difference (`extra_s` =
-//! `arrival_s − planned_arrival_s`, `extra_walk_m`, `met_minus_expected_s` = `extra_s −
+//! return_dock, return_s, docks_tried_for_slot, leg_end_s`); the difference (`extra_s` =
+//! `leg_end_s − planned_leg_end_s`, `extra_walk_m`, `met_minus_expected_s` = `extra_s −
 //! expected_extra_s`: met minus expected, positive when worse than expected); `failed_attempts_for_bike`, `failed_attempts_for_slot`; and `result`:
 //! `as_planned`, `bike_at_another_dock` (found a dock empty, then a bike at another),
 //! `returned_at_another_dock`, `no_bike_walked_to_destination`, `left_over_capacity`,
@@ -134,7 +135,8 @@ pub fn write_bike_share_events(
         .maybe_count("bikes_at_dock_after", &t.bikes_at_dock_after)
         .maybe_count("free_slots_after", &t.free_slots_after)
         .maybe_text("next_dock", &t.next_dock)
-        .maybe_number("to_next_m", &t.to_next_m);
+        .maybe_number("to_next_m", &t.to_next_m)
+        .maybe_text("transit_stop", &t.transit_stop);
     c.write(path.as_ref(), description, &[])
 }
 
@@ -159,7 +161,7 @@ pub fn write_bike_share_trips(
         .text("planned_pickup_dock", &t.planned_pickup_dock)
         .text("planned_return_dock", &t.planned_return_dock)
         .number("planned_at_pickup_dock_s", &t.planned_at_pickup_dock_s)
-        .number("planned_arrival_s", &t.planned_arrival_s)
+        .number("planned_leg_end_s", &t.planned_leg_end_s)
         .number("expected_extra_s", &t.expected_extra_s)
         .maybe_text("pickup_dock", &t.pickup_dock)
         .maybe_number("pickup_s", &t.pickup_s)
@@ -167,7 +169,7 @@ pub fn write_bike_share_trips(
         .maybe_text("return_dock", &t.return_dock)
         .maybe_number("return_s", &t.return_s)
         .count("docks_tried_for_slot", &t.docks_tried_for_slot)
-        .maybe_number("arrival_s", &t.arrival_s)
+        .maybe_number("leg_end_s", &t.leg_end_s)
         .maybe_number("extra_s", &t.extra_s)
         .number("extra_walk_m", &t.extra_walk_m)
         .maybe_number("met_minus_expected_s", &t.met_minus_expected_s)
