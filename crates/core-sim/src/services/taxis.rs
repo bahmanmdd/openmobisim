@@ -475,13 +475,18 @@ impl Taxis<'_> {
         self.schedule(t + s, Move::AtCharger, v);
     }
 
+    /// Vehicle `v`'s id, for messages.
+    fn vehicle_id(&self, v: u32) -> &str {
+        &self.fleet.vehicle_ids[v as usize]
+    }
+
     /// Why vehicle `v` cannot take a policy's decision, if it cannot: it does not exist or is
     /// not idle.
     fn not_idle(&self, v: u32) -> Option<String> {
         match self.state.get(v as usize) {
             None => Some(format!("no vehicle {v}")),
             Some(VehicleState::Idle) => None,
-            Some(s) => Some(format!("vehicle {v} is not idle ({})", s.as_str())),
+            Some(s) => Some(format!("vehicle {} is not idle ({})", self.vehicle_id(v), s.as_str())),
         }
     }
 
@@ -493,14 +498,17 @@ impl Taxis<'_> {
         }
         let from = self.node[v as usize];
         if from == node {
-            return Err(format!("vehicle {v} is already at node {}", node.raw()));
+            return Err(format!("vehicle {} is already there", self.vehicle_id(v)));
         }
         let (s, m) = self.roads.drive(from, node, t);
         if !s.is_finite() {
-            return Err(format!("no road to node {}", node.raw()));
+            return Err(format!("no road for vehicle {} to that node", self.vehicle_id(v)));
         }
         if !self.can_drive(v, m) {
-            return Err(format!("vehicle {v} has not the charge for the drive and the reserve"));
+            return Err(format!(
+                "vehicle {} has not the charge for the drive and the reserve",
+                self.vehicle_id(v)
+            ));
         }
         self.take_idle(v);
         self.set_state(v, VehicleState::Relocating);
@@ -529,15 +537,20 @@ impl Taxis<'_> {
         let soc = self.soc[v as usize];
         if !(to_soc > soc && to_soc <= 1.0) {
             return Err(format!(
-                "to_soc {to_soc} is not above vehicle {v}'s charge {soc} and at most 1"
+                "to_soc {to_soc} is not above vehicle {}'s charge {soc} and at most 1",
+                self.vehicle_id(v)
             ));
         }
         let (s, m) = self.roads.drive(self.node[v as usize], at, t);
         if !s.is_finite() {
-            return Err(format!("no road to charger {c}"));
+            return Err(format!("no road to charger {}", self.fleet.charger_ids[c as usize]));
         }
         if self.d.kwh_per_km * m / 1000.0 / self.d.battery_kwh > soc {
-            return Err(format!("vehicle {v} has not the charge to reach charger {c}"));
+            return Err(format!(
+                "vehicle {} has not the charge to reach charger {}",
+                self.vehicle_id(v),
+                self.fleet.charger_ids[c as usize]
+            ));
         }
         self.take_idle(v);
         self.drive_to_charger(v, c, (s, m), to_soc, t);

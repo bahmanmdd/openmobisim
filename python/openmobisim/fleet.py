@@ -71,7 +71,7 @@ def service_bike_docked(
         options: Its options by name (``walk_max_s``, ``redirect_max``, ``redirect_max_m``,
             ``pickup_s``, ``return_s``, ``ride_factor``, ``start_share``, ``fail_s``, ``bin_s``,
             ``handling_s``, ``van_bikes``, ``candidates``, ``snap_m``); a name not among them is
-            refused with the list.
+            refused with the list. A fleet day does not read ``candidates`` or ``fail_s``.
     """
     return Service("bike_docked", name, docks=docks, options=dict(options or {}))
 
@@ -311,8 +311,9 @@ def fleet_environment(
     be read after the next step.
 
     The reward of a step is minus ``w_fail`` × the people of the legs that failed, ``w_wait`` ×
-    the minutes they waited, ``w_walk`` × the extra minutes they walked, and ``w_km`` × the van
-    kilometres of the moves carried out, each counted once, when its leg ends (``REWARD_WEIGHTS``,
+    the minutes they waited, ``w_walk`` × the extra minutes they walked, and ``w_km`` × the
+    kilometres the policy's decisions drove (vans moving bikes, taxis relocating or driving to
+    charge), each counted once, when its leg ends (``REWARD_WEIGHTS``,
     uncalibrated). ``info["refused"]`` holds, per decision given at the step, why the engine
     refused it (``None``: accepted).
 

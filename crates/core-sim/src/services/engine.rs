@@ -777,12 +777,18 @@ impl FleetEngine {
         View { t: self.now, step, rng_seed, window: self.day.window, services, queries }
     }
 
-    /// Check and carry out `decisions` at the clock, as at step [`Self::view`]'s; each
-    /// recorded. Per decision given, why it was refused (`None`: carried out).
+    /// A step taken by the caller (an environment's): check and carry out `decisions` at the
+    /// clock, as at step [`Self::view`]'s, each recorded; then the counts since the last step
+    /// cleared and the step counted, as a policy's step does. Per decision given, why it was
+    /// refused (`None`: carried out).
     pub fn apply(&mut self, decisions: &[Decision]) -> Vec<Option<String>> {
         let world = Arc::clone(&self.world);
         let mut out = Vec::new();
         world.with_roads(&mut |roads| out = self.apply_at(self.steps, decisions, roads));
+        for run in self.docks.iter_mut().flatten() {
+            run.since.clear();
+        }
+        self.steps += 1;
         out
     }
 
