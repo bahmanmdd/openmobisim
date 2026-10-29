@@ -3656,11 +3656,15 @@ impl Itineraries {
                     // gap, against the car routes of its set (S302). A route no longer in the
                     // set (slower than the detour limit allows, or gone) is re-timed on these
                     // times, as the full gap does.
-                    if let (Some(cg), Some(old), true) = (car_gap, old, self.choosing[p])
-                        && old.mode == Mode::Car
-                        && !cg.unfinished[trip.index()]
-                        && set.iter().any(|a| a.mode == Mode::Car)
-                    {
+                    let drove = match (car_gap, old, self.choosing[p]) {
+                        (Some(cg), Some(old), true) => {
+                            old.mode == Mode::Car
+                                && !cg.unfinished[trip.index()]
+                                && set.iter().any(|a| a.mode == Mode::Car)
+                        }
+                        _ => false,
+                    };
+                    if let (true, Some(old)) = (drove, old) {
                         let taken = match set.iter().position(|a| a.identity == old.identity) {
                             Some(i) => Ok(i),
                             None => {
