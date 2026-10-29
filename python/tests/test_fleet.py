@@ -355,3 +355,24 @@ def test_a_driving_taxi_s_view_says_when_it_gets_to_its_node():
     while view["taxi"]["state"] != ["idle"]:
         view, *_ = env.step([])
     assert math.isnan(view["taxi"]["until_s"][0])
+
+
+def test_an_environment_s_view_counts_its_steps_and_the_counts_since_the_last_one():
+    net = grid()
+    bikes = ms.service_bike_docked(docks(net, bikes=(4, 0)))
+    # Thirty people ask for the four bikes at one dock over the morning: four pickups in all.
+    trips = [trip(net, f"t{k}", 27_000 + 120 * k, (0, 0), (4, 4)) for k in range(30)]
+    env = ms.fleet_environment(net, [bikes], trips, step_s=900)
+    view, _ = env.reset(0)
+    steps, seeds, pickups = [], set(), 0
+    while True:
+        steps.append(view.step)
+        seeds.add(view.rng_seed)
+        pickups += int(view["bike_share"]["pickups"].sum())
+        view, _, done, _, _ = env.step([])
+        if done:
+            break
+    pickups += int(view["bike_share"]["pickups"].sum())
+    assert steps == list(range(len(steps)))
+    assert len(seeds) == len(steps)
+    assert pickups == 4
