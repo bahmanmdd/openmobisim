@@ -13,6 +13,18 @@
 //! `boardings` (weighted by traveller weight) and, if its buses rode the roads,
 //! `bus_runs_on_roads`, `bus_runs_arrived` and `bus_delay_mean_s` (the mean
 //! delay at the last stop, realised minus scheduled; negative is early).
+//!
+//! **A docked bike service**, for a run with one, under `mode` the service's name (`bike_share`
+//! unless the scenario named it otherwise), counted in people (the travellers' weights): per
+//! iteration `bike_share_travellers` (the loading's trips that chose a shared bike),
+//! `mean_met_minus_expected_s` (over the trips that arrived, the mean of the extra seconds they
+//! met at the docks less those their choice expected: met minus expected, positive when worse
+//! than expected) and `mean_abs_met_minus_expected_s` (the mean of its absolute value); for the last loading,
+//! over the trips that asked for a bike, `share_failed_attempt_no_bike` (found a dock empty and
+//! went on to another, at least once), `share_gave_up_no_bike` (found no bike at any dock tried
+//! and walked to the destination), `share_found_no_slot` (found a return dock full at least
+//! once), and over the trips that arrived `mean_extra_s` (the mean extra seconds met at the
+//! docks). A run without a service has none of these rows.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -20,6 +32,7 @@ use std::sync::Arc;
 use arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray, UInt32Array};
 use arrow_schema::{DataType, Field, Schema};
 use openmobisim_core_demand::Mode;
+use openmobisim_core_sim::services::outcome::LegStatus;
 use openmobisim_core_sim::{RunResult, TripCompletionStats};
 
 use crate::WriteError;
@@ -221,6 +234,78 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
     rows
 }
 
+/// One service row: `(iteration, service name, metric, value)`.
+type ServiceRow = (u32, String, &'static str, f64);
+
+/// A run's service rows (see the [module docs](self)); none without a service.
+fn service_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow> {
+    let Some(s) = &result.services else { return Vec::new() };
+    let name = || s.service.clone();
+    let mut rows: Vec<ServiceRow> = Vec::new();
+    let reports: Vec<u32> = if result.iterations.len() <= 1 {
+        vec![single_iteration]
+    } else {
+        result.iterations.iter().map(|r| r.iteration).collect()
+    };
+    let last = *reports.last().expect("one iteration at least");
+    // Per loading; a run whose reports are not its loadings (a static solution's) keeps only
+    // the last loading's.
+    let per = if reports.len() == s.legs_people.len() {
+        reports.iter().copied().zip(0..s.legs_people.len()).collect::<Vec<_>>()
+    } else {
+        s.legs_people.len().checked_sub(1).map(|k| vec![(last, k)]).unwrap_or_default()
+    };
+    for (i, k) in per {
+        rows.push((i, name(), "bike_share_travellers", s.legs_people[k]));
+        for (metric, v) in [
+            ("mean_met_minus_expected_s", s.bias_s[k]),
+            ("mean_abs_met_minus_expected_s", s.mismatch_s[k]),
+        ] {
+            if v.is_finite() {
+                rows.push((i, name(), metric, v));
+            }
+        }
+    }
+    let (mut requested, mut went_on, mut gave_up, mut no_slot) = (0.0, 0.0, 0.0, 0.0);
+    if let Some(day) = &s.last {
+        for (l, o) in day.legs.iter().zip(&day.outcome.legs) {
+            if o.status == LegStatus::NotRequested {
+                continue;
+            }
+            let w = f64::from(l.leg.weight);
+            requested += w;
+            let failed = o.status == LegStatus::Failed;
+            if o.failed_for_bike > u32::from(failed) {
+                went_on += w;
+            }
+            if failed {
+                gave_up += w;
+            }
+            if o.failed_for_slot > 0 {
+                no_slot += w;
+            }
+        }
+        if requested > 0.0 {
+            rows.push((last, name(), "share_failed_attempt_no_bike", went_on / requested));
+            rows.push((last, name(), "share_gave_up_no_bike", gave_up / requested));
+            rows.push((last, name(), "share_found_no_slot", no_slot / requested));
+        }
+        if day.extra_mean_s.is_finite() {
+            rows.push((last, name(), "mean_extra_s", day.extra_mean_s));
+        }
+    }
+    rows
+}
+
+/// Every row of `kpis.parquet`: the run's, then its services'.
+fn all_rows(result: &RunResult, single_iteration: u32) -> Vec<(u32, String, &'static str, f64)> {
+    metrics(result, single_iteration)
+        .into_iter()
+        .map(|(i, mode, name, v)| (i, mode.to_string(), name, v))
+        .chain(service_metrics(result, single_iteration))
+        .collect()
+}
+
 /// Write `kpis.parquet` for one run.
 ///
 /// A run that iterated writes a row set for every iteration it made and
@@ -254,7 +339,7 @@ pub fn write_kpis(
     iteration: u32,
     result: &RunResult,
 ) -> Result<(), WriteError> {
-    let rows = metrics(result, iteration);
+    let rows = all_rows(result, iteration);
     let n = rows.len();
 
     let run_id_col: ArrayRef = Arc::new(StringArray::from(vec![run_id; n]));
@@ -262,8 +347,9 @@ pub fn write_kpis(
     let replication_col: ArrayRef = Arc::new(UInt32Array::from(vec![replication; n]));
     let iteration_col: ArrayRef =
         Arc::new(UInt32Array::from(rows.iter().map(|(i, _, _, _)| *i).collect::<Vec<_>>()));
-    let mode_col: ArrayRef =
-        Arc::new(StringArray::from(rows.iter().map(|(_, mode, _, _)| *mode).collect::<Vec<_>>()));
+    let mode_col: ArrayRef = Arc::new(StringArray::from(
+        rows.iter().map(|(_, mode, _, _)| mode.as_str()).collect::<Vec<_>>(),
+    ));
     let metric_col: ArrayRef =
         Arc::new(StringArray::from(rows.iter().map(|(_, _, name, _)| *name).collect::<Vec<_>>()));
     let value_col: ArrayRef =
@@ -320,7 +406,8 @@ pub fn write_kpis_csv(
     };
     let (run_id, design_id) = (quoted(run_id), quoted(design_id));
     let mut text = String::from("run_id,design_id,replication,iteration,mode,metric,value\n");
-    for (i, mode, name, value) in metrics(result, iteration) {
+    for (i, mode, name, value) in all_rows(result, iteration) {
+        let mode = quoted(&mode);
         let _ = writeln!(text, "{run_id},{design_id},{replication},{i},{mode},{name},{value}");
     }
     std::fs::write(path, text)?;

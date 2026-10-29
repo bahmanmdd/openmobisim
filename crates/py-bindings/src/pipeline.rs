@@ -498,6 +498,27 @@ pub struct PyRunSummary {
     /// Path to the written `parking_bins.parquet`, if the run had parkings.
     #[pyo3(get)]
     pub parking_bins_path: Option<String>,
+    /// The docked bike service's events of the last loading, as columns; `None` without one.
+    #[pyo3(get)]
+    pub bike_share_events: Option<Py<PyDict>>,
+    /// Its trips, as columns; `None` without a service.
+    #[pyo3(get)]
+    pub bike_share_trips: Option<Py<PyDict>>,
+    /// Its docks bin by bin, as columns; `None` without a service.
+    #[pyo3(get)]
+    pub bike_share_docks: Option<Py<PyDict>>,
+    /// Its docks, where each is and its hub; `None` without a service.
+    #[pyo3(get)]
+    pub bike_share_dock_places: Option<Py<PyDict>>,
+    /// Path to the written `bike_share_events.parquet`, if the run had a service.
+    #[pyo3(get)]
+    pub bike_share_events_path: Option<String>,
+    /// Path to the written `bike_share_trips.parquet`, if the run had a service.
+    #[pyo3(get)]
+    pub bike_share_trips_path: Option<String>,
+    /// Path to the written `bike_share_docks.parquet`, if the run had a service.
+    #[pyo3(get)]
+    pub bike_share_docks_path: Option<String>,
     /// Each transit, park-and-ride and bike-and-ride trip's choice, as columns;
     /// `None` without such trips.
     #[pyo3(get)]
@@ -696,7 +717,7 @@ impl PyLinkBins {
     }
 }
 
-fn to_value_error<E: std::fmt::Display>(e: E) -> PyErr {
+pub(crate) fn to_value_error<E: std::fmt::Display>(e: E) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
@@ -1164,16 +1185,17 @@ pub fn run_pipeline(
         let ids = travellers.class_external_ids();
         (0..ids.count()).map(|c| ids.external(c).to_string()).collect()
     };
-    // A class with `has_bike_share` 0 (S302) never sees a shared bike, alone or to transit.
+    // The service modes (S302) are governed by `has_bike_share` alone, not by a class's
+    // `modes` list (which names the ordinary modes): with a service every class is offered a
+    // shared bike, alone or to transit, unless its `has_bike_share` is 0.
     let no_share = class_no_bike_share.unwrap_or_default();
     let class_allowed: Vec<[bool; Mode::COUNT]> = class_names
         .iter()
         .map(|c| {
             let mut allowed = class_modes.get(c).copied().unwrap_or([true; Mode::COUNT]);
-            if no_share.contains(c) {
-                allowed[Mode::BikeShare.index()] = false;
-                allowed[Mode::BikeShareTransit.index()] = false;
-            }
+            let share = !no_share.contains(c);
+            allowed[Mode::BikeShare.index()] = share;
+            allowed[Mode::BikeShareTransit.index()] = share;
             allowed
         })
         .collect();
@@ -1442,7 +1464,7 @@ pub fn run_pipeline(
         layers,
         transit_setup.clone().map(|t| (t, result.transit.as_ref().map(|r| r.times.clone()))),
     ));
-    let clock = Instant::now();
+    let mut clock = Instant::now();
 
     let mut diagnostics = build_diagnostics;
     diagnostics.merge(&run_diagnostics);
@@ -1560,6 +1582,43 @@ pub fn run_pipeline(
             Some(path.to_string_lossy().into_owned())
         }
         _ => None,
+    };
+    // A run's services (S302): its shared-bike legs and its docks bin by bin; nothing without.
+    let service_out = match &service_setups {
+        Some(setups) => Some(crate::service_results::service_results(
+            py,
+            setups,
+            &run_hubs,
+            result.services.as_ref(),
+            (&trips_used, &travellers, &trip_table),
+            (f64::from(window.start_s), f64::from(window.end_s)),
+            (dir, run_id, &description, minimal),
+        )?),
+        None => None,
+    };
+    // Their own stage, so the time the service tables and files take is seen (none without).
+    if service_out.is_some() {
+        clock = timings.lap("services_written", None, clock);
+    }
+    let (
+        bike_share_events,
+        bike_share_trips,
+        bike_share_docks,
+        bike_share_dock_places,
+        bike_share_events_path,
+        bike_share_trips_path,
+        bike_share_docks_path,
+    ) = match service_out {
+        Some(o) => (
+            Some(o.events),
+            Some(o.trips),
+            Some(o.docks),
+            Some(o.places),
+            o.events_path,
+            o.trips_path,
+            o.docks_path,
+        ),
+        None => (None, None, None, None, None, None, None),
     };
     let (parking_bins_table, parking_places_table, parking_summary_table) =
         match (&result.parking, &parking_setup) {
@@ -1746,6 +1805,13 @@ pub fn run_pipeline(
         parking_places: parking_places_table,
         parking_summary: parking_summary_table,
         parking_bins_path,
+        bike_share_events,
+        bike_share_trips,
+        bike_share_docks,
+        bike_share_dock_places,
+        bike_share_events_path,
+        bike_share_trips_path,
+        bike_share_docks_path,
         itinerary_choices: itinerary_table,
         trip_modes: trip_modes_table,
         trip_results: trip_results_table,

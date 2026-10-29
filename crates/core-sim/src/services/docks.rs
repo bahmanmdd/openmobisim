@@ -64,6 +64,16 @@ pub struct DockBins {
     pub failed: Vec<f64>,
     /// Travellers who found the dock empty or full and went on to another (people).
     pub redirected: Vec<f64>,
+    /// Travellers sent on to this dock from another that was empty or full (people), counted
+    /// in the bin they were sent.
+    pub redirected_in: Vec<f64>,
+    /// Of [`Self::redirected`], those who found the dock full when returning (people); the
+    /// rest found it empty when picking up.
+    pub redirected_no_slot: Vec<f64>,
+    /// Bikes docked above capacity, every dock near being full too (people).
+    pub over_capacity: Vec<f64>,
+    /// The bikes docked when the bin ended (at the window's end for the last bin).
+    pub bikes_end: Vec<f64>,
     /// Bikes an operator's van took away.
     pub moved_out: Vec<f64>,
     /// Bikes an operator's van brought.
@@ -95,6 +105,10 @@ impl DockBins {
             returns: vec![0.0; cells],
             failed: vec![0.0; cells],
             redirected: vec![0.0; cells],
+            redirected_in: vec![0.0; cells],
+            redirected_no_slot: vec![0.0; cells],
+            over_capacity: vec![0.0; cells],
+            bikes_end: vec![0.0; cells],
             moved_out: vec![0.0; cells],
             moved_in: vec![0.0; cells],
         }
@@ -124,6 +138,86 @@ impl DockBins {
         b.min(self.bins - 1)
     }
 }
+
+/// What happened, in a day's log of events ([`DockEvent`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DockEventKind {
+    /// A traveller reached a dock to take a bike (the planned one, or one tried after it).
+    ArrivedForBike,
+    /// They took a bike there.
+    TookBike,
+    /// They found it without a bike for them.
+    FoundNoBike,
+    /// They walk on to another dock ([`DockEvent::next_dock`]).
+    WalkingToNextDock,
+    /// No other dock left to try: they walk from here to their destination.
+    GaveUpWalkingToDestination,
+    /// A traveller reached a dock to return their bike (the planned one, or one tried after).
+    ArrivedToReturn,
+    /// They docked their bike there.
+    ReturnedBike,
+    /// They found it without a free slot for them.
+    FoundNoFreeSlot,
+    /// They ride on to another dock ([`DockEvent::next_dock`]).
+    RidingToNextDock,
+    /// Every dock near being full, they docked their bike above capacity here.
+    LeftBikeOverCapacity,
+    /// They reached the end of the leg (the trip's destination, or for a shared bike to
+    /// transit the dock at the stop's hub), riding or on foot.
+    ReachedDestination,
+    /// An operator's van took bikes from the dock.
+    VanTookBikes,
+    /// An operator's van brought bikes to the dock.
+    VanBroughtBikes,
+}
+
+impl DockEventKind {
+    /// The stable snake_case name, as `bike_share_events.parquet` writes it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            DockEventKind::ArrivedForBike => "arrived_for_bike",
+            DockEventKind::TookBike => "took_bike",
+            DockEventKind::FoundNoBike => "found_no_bike",
+            DockEventKind::WalkingToNextDock => "walking_to_next_dock",
+            DockEventKind::GaveUpWalkingToDestination => "gave_up_walking_to_destination",
+            DockEventKind::ArrivedToReturn => "arrived_to_return",
+            DockEventKind::ReturnedBike => "returned_bike",
+            DockEventKind::FoundNoFreeSlot => "found_no_free_slot",
+            DockEventKind::RidingToNextDock => "riding_to_next_dock",
+            DockEventKind::LeftBikeOverCapacity => "left_bike_over_capacity",
+            DockEventKind::ReachedDestination => "reached_destination",
+            DockEventKind::VanTookBikes => "van_took_bikes",
+            DockEventKind::VanBroughtBikes => "van_brought_bikes",
+        }
+    }
+}
+
+/// One event of a docked service's day, as it happened. [`NONE`] marks a field that does not
+/// apply (no leg for a van's event; no dock for an arrival at the destination; no next dock).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DockEvent {
+    /// When, in seconds from midnight.
+    pub t: f64,
+    /// The leg, by its index in the day.
+    pub leg: u32,
+    /// What happened.
+    pub kind: DockEventKind,
+    /// Where: the dock.
+    pub dock: u32,
+    /// The bikes docked there just after.
+    pub bikes_after: u32,
+    /// The slots free there just after (0 when bikes stand above capacity).
+    pub free_slots_after: u32,
+    /// The dock walked or ridden on to.
+    pub next_dock: u32,
+    /// How far, in metres as the crow flies (`NaN` without a next dock); a van's event: the
+    /// bikes it took or brought.
+    pub to_next_m: f64,
+}
+
+/// A field of a [`DockEvent`] that does not apply.
+pub const NONE: u32 = u32::MAX;
 
 /// Per dock, the counts since the last policy step (people).
 #[derive(Clone, Debug, Default)]
@@ -171,6 +265,8 @@ pub(crate) struct DockRun {
     pub(crate) since: SinceStep,
     /// Per dock, the bikes in operators' vans on their way to it.
     pub(crate) incoming: Vec<u32>,
+    /// The day's events in the order handled (`None`: not kept).
+    pub(crate) log: Option<Vec<DockEvent>>,
 }
 
 /// A docked service's counts the handlers change: per dock its bikes, and the bikes ridden.
@@ -204,7 +300,38 @@ impl DockRun {
             overflow_max: 0.0,
             since: SinceStep::new(docks.len()),
             incoming: vec![0; docks.len()],
+            log: defaults.log_events.then(Vec::new),
         }
+    }
+
+    /// Note an event at dock `k` (or [`NONE`]) with its counts just after.
+    #[allow(clippy::too_many_arguments, reason = "an event's fields, named")]
+    fn note(
+        &mut self,
+        docks: &Docks,
+        bikes: &[u32],
+        (t, leg, kind): (f64, u32, DockEventKind),
+        k: u32,
+        next: u32,
+        to_next_m: f64,
+    ) {
+        let Some(log) = self.log.as_mut() else { return };
+        let (b, free) = if k == NONE {
+            (NONE, NONE)
+        } else {
+            let b = bikes[k as usize];
+            (b, docks.capacity[k as usize].saturating_sub(b))
+        };
+        log.push(DockEvent {
+            t,
+            leg,
+            kind,
+            dock: k,
+            bikes_after: b,
+            free_slots_after: free,
+            next_dock: next,
+            to_next_m,
+        });
     }
 
     /// An operator's van takes `n` bikes (at most those docked) from dock `k` at second `t`.
@@ -213,6 +340,9 @@ impl DockRun {
         bikes[k] -= n;
         self.bins.moved_out[cell] += f64::from(n);
         self.bins.bikes_min[cell] = self.bins.bikes_min[cell].min(f64::from(bikes[k]));
+        let k32 = u32::try_from(k).expect("docks fit u32");
+        let what = (t, NONE, DockEventKind::VanTookBikes);
+        self.note(docks, bikes, what, k32, NONE, f64::from(n));
     }
 
     /// An operator's van docks `n` bikes at second `t`: into dock `to`'s free slots, the rest
@@ -228,6 +358,9 @@ impl DockRun {
                 bikes[k] += room;
                 self.bins.moved_in[cell] += f64::from(room);
                 left -= room;
+                let k32 = u32::try_from(k).expect("docks fit u32");
+                let what = (t, NONE, DockEventKind::VanBroughtBikes);
+                self.note(docks, bikes, what, k32, NONE, f64::from(room));
             }
             if left == 0 {
                 break;
@@ -238,6 +371,14 @@ impl DockRun {
             let cell = self.touch(docks, bikes, k, t);
             bikes[k] += left;
             self.bins.moved_in[cell] += f64::from(left);
+            self.note(
+                docks,
+                bikes,
+                (t, NONE, DockEventKind::VanBroughtBikes),
+                to,
+                NONE,
+                f64::from(left),
+            );
             self.overflow_max =
                 self.overflow_max.max(f64::from(bikes[k]) - f64::from(docks.capacity[k]));
         }
@@ -262,6 +403,7 @@ impl DockRun {
             let cell = k * out.bins + b;
             out.bikes_mean[cell] += bikes * span / out.bin_len(b);
             out.bikes_min[cell] = out.bikes_min[cell].min(bikes);
+            out.bikes_end[cell] = bikes;
             if bikes <= 0.0 {
                 out.empty_s[cell] += span;
             }
@@ -307,12 +449,22 @@ impl DockRun {
         let w = leg.weight;
         let wf = f64::from(w);
         let cell = self.touch(c.docks, fleet.bikes, k, t);
+        let me = u32::try_from(c.index).expect("legs fit u32");
+        self.note(
+            c.docks,
+            fleet.bikes,
+            (t, me, DockEventKind::ArrivedForBike),
+            dock,
+            NONE,
+            f64::NAN,
+        );
         if fleet.bikes[k] >= w {
             fleet.bikes[k] -= w;
             *fleet.riding += u64::from(w);
             self.bins.pickups[cell] += wf;
             self.since.pickups[k] += wf;
             self.bins.bikes_min[cell] = self.bins.bikes_min[cell].min(f64::from(fleet.bikes[k]));
+            self.note(c.docks, fleet.bikes, (t, me, DockEventKind::TookBike), dock, NONE, f64::NAN);
             c.out.status = LegStatus::Riding;
             c.out.picked = Some(dock);
             c.out.picked_s = t;
@@ -325,6 +477,8 @@ impl DockRun {
             return Some((t + c.defaults.pickup_s + ride, EventKind::Return, leg.return_dock));
         }
         c.tried.push(dock);
+        c.out.failed_for_bike += 1;
+        self.note(c.docks, fleet.bikes, (t, me, DockEventKind::FoundNoBike), dock, NONE, f64::NAN);
         // The nearest untried dock from here, near the planned one.
         let planned = c.docks.position[leg.pickup_dock as usize];
         let next = if c.tried.len() <= c.defaults.redirect_count() {
@@ -337,12 +491,29 @@ impl DockRun {
         } else {
             None
         };
+        // Go on only if a bike there is worth it: from that dock, walking on to the destination
+        // must be slower than taking a bike there, riding to the return dock and walking from it
+        // (so a traveller never goes on to their return dock itself, to ride 0 m). Otherwise
+        // they give up here and walk to their destination. Cost: one walk search per dock tried
+        // after the first, the ride kept per dock pair.
+        let next = next.filter(|&(o, _)| {
+            let walk_on = c.legs.walk_to_destination_s(c.index, o);
+            let ride = c.legs.ride_s(leg.service, o, leg.return_dock);
+            let by_bike = c.defaults.pickup_s + ride + c.defaults.return_s + leg.egress_s;
+            walk_on > by_bike || walk_on.is_nan()
+        });
         if let Some((o, walk)) = next {
             self.bins.redirected[cell] += wf;
+            let to = o as usize * self.bins.bins + self.bins.bin_of(t);
+            self.bins.redirected_in[to] += wf;
             self.since.redirected_out[k] += wf;
             self.since.redirected_in[o as usize] += wf;
             c.out.extra_walk_s += walk;
             c.out.redirections += 1;
+            let m = ground_distance_metres(c.docks.position[k], c.docks.position[o as usize]);
+            c.out.extra_walk_m += m;
+            let what = (t, me, DockEventKind::WalkingToNextDock);
+            self.note(c.docks, fleet.bikes, what, dock, o, m);
             return Some((t + walk, EventKind::Request, o));
         }
         self.bins.failed[cell] += wf;
@@ -350,6 +521,10 @@ impl DockRun {
         c.out.status = LegStatus::Failed;
         c.out.picked_s = t;
         c.out.arrived_s = t + c.legs.walk_to_destination_s(c.index, dock);
+        let what = (t, me, DockEventKind::GaveUpWalkingToDestination);
+        self.note(c.docks, fleet.bikes, what, dock, NONE, f64::NAN);
+        let what = (c.out.arrived_s, me, DockEventKind::ReachedDestination);
+        self.note(c.docks, fleet.bikes, what, NONE, NONE, f64::NAN);
         c.tried.clear();
         None
     }
@@ -368,20 +543,62 @@ impl DockRun {
         let wf = f64::from(w);
         let cell = self.touch(c.docks, fleet.bikes, k, t);
         let cap = c.docks.capacity[k];
+        let me = u32::try_from(c.index).expect("legs fit u32");
+        self.note(
+            c.docks,
+            fleet.bikes,
+            (t, me, DockEventKind::ArrivedToReturn),
+            dock,
+            NONE,
+            f64::NAN,
+        );
         let room = u64::from(fleet.bikes[k]) + u64::from(w) <= u64::from(cap);
         if !room {
+            c.out.failed_for_slot += 1;
+            self.note(
+                c.docks,
+                fleet.bikes,
+                (t, me, DockEventKind::FoundNoFreeSlot),
+                dock,
+                NONE,
+                f64::NAN,
+            );
             c.tried.push(dock);
+            // The dock with a free slot that brings them soonest to their destination (the ride
+            // there and the walk from it), never the one the bike came from; none sooner than
+            // leaving the bike here above capacity and walking from here: they leave it here.
+            // Cost: per neighbour with room, one walk search and one ride (kept per pair).
             let bikes = &*fleet.bikes;
-            let next = c.docks.neighbours(dock).iter().copied().find(|&(o, _)| {
-                !c.tried.contains(&o)
-                    && u64::from(bikes[o as usize]) + u64::from(w)
-                        <= u64::from(c.docks.capacity[o as usize])
-            });
+            let here = c.legs.walk_to_destination_s(c.index, dock);
+            let next = c
+                .docks
+                .neighbours(dock)
+                .iter()
+                .copied()
+                .filter(|&(o, _)| {
+                    !c.tried.contains(&o)
+                        && Some(o) != c.out.picked
+                        && u64::from(bikes[o as usize]) + u64::from(w)
+                            <= u64::from(c.docks.capacity[o as usize])
+                })
+                .map(|(o, _)| {
+                    let via = c.legs.ride_s(leg.service, dock, o)
+                        + c.legs.walk_to_destination_s(c.index, o);
+                    (o, via)
+                })
+                .filter(|&(_, via)| via < here || here.is_nan())
+                .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
             if let Some((o, _)) = next {
                 self.bins.redirected[cell] += wf;
+                let to = o as usize * self.bins.bins + self.bins.bin_of(t);
+                self.bins.redirected_in[to] += wf;
                 self.since.redirected_out[k] += wf;
                 self.since.redirected_in[o as usize] += wf;
+                self.bins.redirected_no_slot[cell] += wf;
                 c.out.redirections += 1;
+                let m = ground_distance_metres(c.docks.position[k], c.docks.position[o as usize]);
+                let what = (t, me, DockEventKind::RidingToNextDock);
+                self.note(c.docks, fleet.bikes, what, dock, o, m);
                 let ride = c.legs.ride_s(leg.service, dock, o);
                 return Some((t + ride, EventKind::Return, o));
             }
@@ -391,6 +608,13 @@ impl DockRun {
         self.bins.returns[cell] += wf;
         self.since.returns[k] += wf;
         self.overflow_max = self.overflow_max.max(f64::from(fleet.bikes[k]) - f64::from(cap));
+        let kind = if room {
+            DockEventKind::ReturnedBike
+        } else {
+            self.bins.over_capacity[cell] += wf;
+            DockEventKind::LeftBikeOverCapacity
+        };
+        self.note(c.docks, fleet.bikes, (t, me, kind), dock, NONE, f64::NAN);
         let egress = if dock == leg.return_dock {
             leg.egress_s
         } else {
@@ -398,8 +622,11 @@ impl DockRun {
         };
         c.out.status = LegStatus::Served;
         c.out.returned = Some(dock);
+        c.out.returned_s = t;
         c.out.overflow = !room;
         c.out.arrived_s = t + c.defaults.return_s + egress;
+        let what = (c.out.arrived_s, me, DockEventKind::ReachedDestination);
+        self.note(c.docks, fleet.bikes, what, NONE, NONE, f64::NAN);
         c.tried.clear();
         None
     }

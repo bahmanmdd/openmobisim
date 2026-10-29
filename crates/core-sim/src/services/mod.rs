@@ -15,6 +15,7 @@
 //! | [`frozen`] | [`frozen::plan_legs`], [`frozen::FrozenLegs`] — a fleet day without a run: trips as a table, legs planned by a fixed rule |
 //! | [`world`] | [`world::FrozenWorld`] — a fleet day's city, owned, lending the engine its roads one call at a time |
 //! | [`roads`] | [`roads::RoadTimes`], [`roads::FrozenRoads`], [`roads::FrozenPaths`] — a day's road times and the drives, rides and walks on them, without a run |
+//! | [`tables`] | [`tables::BikeShareEventTable`], [`tables::BikeShareTripTable`], [`tables::BikeShareDockTable`] — the rows of `bike_share_events.parquet`, `bike_share_trips.parquet` and `bike_share_docks.parquet` |
 //! | [`docks`] | [`docks::DockBins`] — docked bikes' pickups, returns and redirections on the engine, bin by bin |
 //! | [`costs`] | [`costs::DockCosts`] — what a dock is expected to cost a pickup and a return, per bin |
 //! | [`taxis`] | electric taxis on the engine: matching, drives, energy, the charging rule and plug queues; [`taxis::TaxiDay`] |
@@ -37,6 +38,7 @@ pub mod outcome;
 pub mod policy;
 pub mod queries;
 pub mod roads;
+pub mod tables;
 pub mod taxis;
 pub mod view;
 pub mod world;
@@ -158,6 +160,13 @@ pub struct DockDefaults {
     ///
     /// *An assumption: a small van or a bike trailer. CITATION OWED.*
     pub van_bikes: f64,
+    /// Whether the day keeps its log of events (every arrival at a dock, bike taken, dock
+    /// found empty or full, walk or ride on, return, arrival at the destination), the source of
+    /// `bike_share_events.parquet`: on by default; off (option `log_events` 0) for a very large
+    /// run, whose results are otherwise the same. A switch of what is kept, not of what is
+    /// simulated: not among [`Self::values`] (the run's fingerprint), so it never changes a
+    /// run's identity.
+    pub log_events: bool,
 }
 
 impl DockDefaults {
@@ -176,6 +185,7 @@ impl DockDefaults {
         bin_s: 900.0,
         handling_s: 30.0,
         van_bikes: 20.0,
+        log_events: true,
     };
 
     /// The names of the options, in the order [`Self::values`] gives them.
@@ -225,6 +235,20 @@ impl DockDefaults {
     pub fn from_options(options: &Options) -> Result<Self, ServiceError> {
         let mut d = Self::SHIPPED;
         for (name, &value) in options {
+            if name == "log_events" {
+                #[allow(clippy::float_cmp, reason = "a switch: exactly 0 or 1")]
+                let (off, on) = (value == 0.0, value == 1.0);
+                if !off && !on {
+                    return Err(ServiceError::BadOption {
+                        kind: ServiceKind::BikeDocked,
+                        name: name.clone(),
+                        value,
+                        why: "1 (keep the events) or 0 (do not)".to_string(),
+                    });
+                }
+                d.log_events = on;
+                continue;
+            }
             let slot = match name.as_str() {
                 "walk_max_s" => &mut d.walk_max_s,
                 "candidates" => &mut d.candidates,
@@ -243,7 +267,7 @@ impl DockDefaults {
                     return Err(ServiceError::UnknownOption {
                         kind: ServiceKind::BikeDocked,
                         name: name.clone(),
-                        known: Self::NAMES.to_vec(),
+                        known: Self::NAMES.iter().copied().chain(["log_events"]).collect(),
                     });
                 }
             };

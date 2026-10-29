@@ -1,6 +1,406 @@
 {
  "schema_version": 2,
  "files": {
+  "bike_share_docks.parquet": {
+   "columns": [
+    {
+     "name": "run_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "service",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "dock",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "hub_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "bin_start",
+     "type": "string",
+     "nullable": false,
+     "unit": "clock text"
+    },
+    {
+     "name": "bin_end",
+     "type": "string",
+     "nullable": false,
+     "unit": "clock text"
+    },
+    {
+     "name": "bin_start_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "bin_end_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "slots",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "slots"
+    },
+    {
+     "name": "bikes_at_start",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    },
+    {
+     "name": "bikes_at_end",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    },
+    {
+     "name": "bikes_min",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    },
+    {
+     "name": "bikes_mean",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    },
+    {
+     "name": "seconds_empty",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "seconds_full",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "bikes_taken",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    },
+    {
+     "name": "bikes_returned",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    },
+    {
+     "name": "people_failed_attempt_no_bike",
+     "type": "double",
+     "nullable": false,
+     "unit": "travellers"
+    },
+    {
+     "name": "people_gave_up_no_bike",
+     "type": "double",
+     "nullable": false,
+     "unit": "travellers"
+    },
+    {
+     "name": "people_failed_attempt_no_slot",
+     "type": "double",
+     "nullable": false,
+     "unit": "travellers"
+    },
+    {
+     "name": "people_left_bike_over_capacity",
+     "type": "double",
+     "nullable": false,
+     "unit": "travellers"
+    },
+    {
+     "name": "people_sent_here",
+     "type": "double",
+     "nullable": false,
+     "unit": "travellers"
+    },
+    {
+     "name": "bikes_brought_by_van",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    },
+    {
+     "name": "bikes_taken_by_van",
+     "type": "double",
+     "nullable": false,
+     "unit": "bikes"
+    }
+   ],
+   "metadata": [
+    "openmobisim.fleet_bikes",
+    "openmobisim.master_seed",
+    "openmobisim.run_fingerprint",
+    "openmobisim.schema_version"
+   ]
+  },
+  "bike_share_events.parquet": {
+   "columns": [
+    {
+     "name": "run_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "service",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "time_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "time",
+     "type": "string",
+     "nullable": false,
+     "unit": "clock text"
+    },
+    {
+     "name": "traveller_id",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "trip_seq",
+     "type": "uint32",
+     "nullable": true,
+     "unit": "index"
+    },
+    {
+     "name": "travellers",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "travellers"
+    },
+    {
+     "name": "event",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "dock",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "bikes_at_dock_after",
+     "type": "uint32",
+     "nullable": true,
+     "unit": "bikes"
+    },
+    {
+     "name": "free_slots_after",
+     "type": "uint32",
+     "nullable": true,
+     "unit": "slots"
+    },
+    {
+     "name": "next_dock",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "to_next_m",
+     "type": "double",
+     "nullable": true,
+     "unit": "m"
+    },
+    {
+     "name": "transit_stop",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    }
+   ],
+   "metadata": [
+    "openmobisim.master_seed",
+    "openmobisim.run_fingerprint",
+    "openmobisim.schema_version"
+   ]
+  },
+  "bike_share_trips.parquet": {
+   "columns": [
+    {
+     "name": "run_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "service",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "traveller_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "trip_seq",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "index"
+    },
+    {
+     "name": "travellers",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "travellers"
+    },
+    {
+     "name": "mode",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "planned_pickup_dock",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "planned_return_dock",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "planned_at_pickup_dock_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "planned_leg_end_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "expected_extra_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "pickup_dock",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "pickup_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "docks_tried_for_bike",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "docks"
+    },
+    {
+     "name": "return_dock",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "return_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "docks_tried_for_slot",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "docks"
+    },
+    {
+     "name": "leg_end_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "extra_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
+     "name": "extra_walk_m",
+     "type": "double",
+     "nullable": false,
+     "unit": "m"
+    },
+    {
+     "name": "met_minus_expected_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
+     "name": "failed_attempts_for_bike",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "docks"
+    },
+    {
+     "name": "failed_attempts_for_slot",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "docks"
+    },
+    {
+     "name": "result",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    }
+   ],
+   "metadata": [
+    "openmobisim.master_seed",
+    "openmobisim.run_fingerprint",
+    "openmobisim.schema_version"
+   ]
+  },
   "diagnostics.parquet": {
    "columns": [
     {

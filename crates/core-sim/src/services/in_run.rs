@@ -73,13 +73,22 @@ pub struct ShareDay {
     pub mismatch_s: f64,
     /// The signed mean per leg, realised less expected, in seconds; `NaN` likewise.
     pub bias_s: f64,
+    /// The mean extra seconds the legs that arrived met at the docks (their arrival less their
+    /// arrival had the planned docks had a bike and a free slot), weighted by people; `NaN`
+    /// likewise.
+    pub extra_mean_s: f64,
     /// The engine's wall-clock seconds.
     pub engine_s: f64,
 }
 
-/// What a run's services did: kept in memory (no results file yet).
+/// What a run's services did: the numbers `kpis.parquet` carries per service, and the last
+/// loading's day `service_legs.parquet` and `hub_bins.parquet` are made of.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct ServicesRun {
+    /// The service's name (the run's one docked service).
+    pub service: String,
+    /// Its bikes at the start of the day.
+    pub fleet: f64,
     /// Per loading, its [`ShareDay::mismatch_s`].
     pub mismatch_s: Vec<f64>,
     /// Per loading, its [`ShareDay::bias_s`].
@@ -92,6 +101,19 @@ pub struct ServicesRun {
     pub last: Option<ShareDay>,
     /// The docks' expected costs as the run ended.
     pub expected: Option<DockCosts>,
+}
+
+impl ServicesRun {
+    /// Nothing done yet by `setup`, the run's service.
+    #[must_use]
+    pub fn of(setup: &ServiceSetup) -> Self {
+        #[allow(clippy::cast_precision_loss, reason = "a count of bikes")]
+        let fleet = match setup.parts() {
+            ServiceParts::BikeDocked(docks, _) => docks.fleet() as f64,
+            ServiceParts::Taxi(fleet, _) => fleet.vehicle_ids.len() as f64,
+        };
+        Self { service: setup.name().to_string(), fleet, ..Self::default() }
+    }
 }
 
 /// Rides between docks and walks from a dock to a leg's destination, on the run's layers.
@@ -207,24 +229,50 @@ pub fn play(
         }
     }
     let realised = DockCosts::from_bins(setup, bins).with_legs(&met_pickup, &met_return);
-    let (mut sum, mut signed, mut people) = (0.0, 0.0, 0.0);
+    let (mut sum, mut signed, mut people, mut met) = (0.0, 0.0, 0.0, 0.0);
     for (l, o) in legs.iter().zip(&outcome.legs) {
         if matches!(o.status, LegStatus::Served | LegStatus::Failed) && o.arrived_s.is_finite() {
             let w = f64::from(l.leg.weight);
             let extra = o.arrived_s - l.planned_arrival_s(setup);
             sum += w * (extra - l.expected_dock_s).abs();
             signed += w * (extra - l.expected_dock_s);
+            met += w * extra;
             people += w;
         }
     }
-    let (mismatch_s, bias_s) =
-        if people > 0.0 { (sum / people, signed / people) } else { (f64::NAN, f64::NAN) };
+    let (mismatch_s, bias_s, extra_mean_s) = if people > 0.0 {
+        (sum / people, signed / people, met / people)
+    } else {
+        (f64::NAN, f64::NAN, f64::NAN)
+    };
     ShareDay {
         legs,
         outcome,
         realised,
         mismatch_s,
         bias_s,
+        extra_mean_s,
         engine_s: started.elapsed().as_secs_f64(),
     }
+}
+
+/// The day of the run's docked services `setups` over `window` (seconds from midnight) with no
+/// leg: the docks keep their start-of-day bikes (what `hub_bins.parquet` holds for a run whose
+/// last loading had no shared-bike trip).
+///
+/// # Panics
+///
+/// Never in practice: a day without a policy cannot fail.
+#[must_use]
+pub fn idle(setups: &Arc<Vec<ServiceSetup>>, window: (f64, f64)) -> FleetOutcome {
+    let day = FleetDay { window, legs: Vec::new(), seed: 0 };
+    FleetEngine::new(
+        Arc::clone(setups),
+        Arc::new(day),
+        Arc::new(super::engine::NoLegs),
+        Arc::new(NoRoads),
+        None,
+    )
+    .run_day()
+    .expect("no policy, no policy failure")
 }

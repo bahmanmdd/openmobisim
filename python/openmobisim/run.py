@@ -62,6 +62,7 @@ _STAGE_LABELS = {
     "itineraries_setup": "itineraries prepared",
     "route_sets": "route sets",
     "results_assembled": "results assembled",
+    "services_written": "shared bikes' events, trips and docks made and written",
     "results_written": "results written",
     "total": "run total (without the network read)",
 }
@@ -125,6 +126,9 @@ class _Files:
             "parking_bins",
             "transit_calls",
             "trip_results",
+            "bike_share_events",
+            "bike_share_trips",
+            "bike_share_docks",
         ):
             path = folder / f"{name}.parquet"
             setattr(self, f"{name}_path", str(path) if path.exists() else None)
@@ -244,9 +248,9 @@ class Run:
         ``convergence_verdict`` (from ``kpis.parquet``); ``timings()``; ``trip_results()`` and
         ``trip_modes()`` (from ``trip_results.parquet``); and every table (``kpis()``,
         ``diagnostics()``, ``events()``, ``link_bins_table()``, ``parking_bins_table()``,
-        ``transit_calls_table()``). What only the run in memory holds
-        (the network, the route sets and choices, the per-link arrays, the itinerary choices)
-        raises a ``RuntimeError`` that says so. Needs pyarrow.
+        ``transit_calls_table()``, the ``bike_share_*_table()``). What only the
+        run in memory holds (the network, the route sets and choices, the per-link arrays, the
+        itinerary choices) raises a ``RuntimeError`` that says so. Needs pyarrow.
 
         Args:
             folder: The run's ``output_dir``, holding its ``manifest.json``.
@@ -260,7 +264,8 @@ class Run:
             files,  # in place of the core's summary
             run_id=Path(folder).name,
             flow_level=int(m.get("flow_level", 0)),
-            flow_step_s=int(m.get("flow_step_seconds", 300)),
+            # A run at flow level 0 has no flow step: its manifest records null.
+            flow_step_s=int(m.get("flow_step_seconds") or 300),
         )
         run._files = files
         run._outputs = files.outputs
@@ -1383,6 +1388,118 @@ class Run:
         """
         path = self._written(self._summary.parking_bins_path, "parking_bins.parquet")
         return None if path is None else Table(path)
+
+    def bike_share_events(self) -> Columns | None:
+        """The docked bike service's logbook over the last loading; ``None`` without a service.
+
+        One row per event, in time order (one second's events in the order the simulation
+        handled them), so each traveller's sequence and each dock's state after each event can
+        be followed: ``service``, ``time_s`` (seconds from midnight) and ``time`` (the same as
+        ``"08:03:20"``), ``traveller_id`` and ``trip_seq`` (as in ``trip_results()``; ``None``
+        for an operator's van), ``travellers`` (the people the traveller stands for, each
+        taking a bike; a van's event: the bikes it moved), ``event``, ``dock`` (``None`` for
+        ``reached_destination``), ``bikes_at_dock_after`` and ``free_slots_after`` (the dock's
+        state just after the event; ``None`` without a dock), ``next_dock`` and ``to_next_m``
+        (the dock walked or ridden on to, and how far in metres as the crow flies; ``None`` and
+        ``NaN`` otherwise), ``transit_stop`` (for ``reached_transit_stop``, the stop's hub).
+
+        ``event`` is one of: ``arrived_for_bike`` (at the planned dock, or one tried after it),
+        ``took_bike``, ``found_no_bike``, ``walking_to_next_dock``,
+        ``gave_up_walking_to_destination`` (no dock left to try within the service's
+        ``redirect_max`` and ``redirect_max_m``), ``arrived_to_return``, ``returned_bike``,
+        ``found_no_free_slot``, ``riding_to_next_dock``, ``left_bike_over_capacity`` (every
+        dock near full: the bike is docked above capacity), ``reached_destination`` (a
+        ``bike_share`` trip at its destination), ``reached_transit_stop`` (a
+        ``bike_share_transit`` trip at its stop's hub, named in ``transit_stop``; ``dock``
+        ``None``); and for an
+        operator's van ``van_took_bikes`` and ``van_brought_bikes``. A service with
+        ``options={"log_events": 0}`` keeps no log (for very large runs): no rows. The same
+        table is written to ``bike_share_events.parquet``: read it with
+        ``bike_share_events_table()``.
+        """
+        t = self._summary.bike_share_events
+        return None if t is None else Columns(t)
+
+    def bike_share_events_table(self) -> Table | None:
+        """``bike_share_events.parquet``: ``bike_share_events()`` after ``run_id``.
+
+        ``None`` without a service.
+        """
+        path = self._written(self._summary.bike_share_events_path, "bike_share_events.parquet")
+        return None if path is None else Table(path)
+
+    def bike_share_trips(self) -> Columns | None:
+        """Every trip that chose a shared bike, over the last loading; ``None`` without a service.
+
+        One row per trip, in trip order. Who: ``service``, ``traveller_id``, ``trip_seq``,
+        ``travellers`` (the people the traveller stands for: the bikes taken), ``mode``
+        (``"bike_share"``, or ``"bike_share_transit"``: a shared bike to a stop's hub, transit on).
+        The plan, as the trip's choice made it: ``planned_pickup_dock``, ``planned_return_dock``,
+        ``planned_at_pickup_dock_s`` (when it was to reach that dock), ``planned_leg_end_s`` (when
+        it was to arrive had the planned docks had a bike and a free slot), ``expected_extra_s``
+        (the extra seconds at the docks the choice expected). What happened: ``pickup_dock`` and
+        ``pickup_s`` (``None`` and ``NaN``: no bike), ``docks_tried_for_bike``, ``return_dock`` and
+        ``return_s``, ``docks_tried_for_slot``, ``leg_end_s`` (at the destination, or for
+        ``bike_share_transit`` the dock at the stop's hub; riding, or on foot after giving up). The
+        difference: ``extra_s`` (``leg_end_s`` less ``planned_leg_end_s``), ``extra_walk_m`` (walked
+        between docks looking for a bike, metres as the crow flies), ``met_minus_expected_s``
+        (``extra_s`` less ``expected_extra_s``: met minus expected, positive when worse than
+        expected); ``failed_attempts_for_bike`` and ``failed_attempts_for_slot`` (docks found empty,
+        and full; the last one included when it gave up or left the bike above capacity).
+        ``result``: ``"as_planned"``, ``"bike_at_another_dock"`` (found a dock empty, then took a
+        bike at another), ``"returned_at_another_dock"``, ``"no_bike_walked_to_destination"``,
+        ``"left_over_capacity"``, ``"still_riding_at_window_end"``,
+        ``"still_looking_for_bike_at_window_end"``, ``"not_started"`` (its time at the dock came
+        after the window's end); the first that applies, in the reverse of this order. The same
+        table is written to ``bike_share_trips.parquet``: read it with ``bike_share_trips_table()``.
+        """
+        t = self._summary.bike_share_trips
+        return None if t is None else Columns(t)
+
+    def bike_share_trips_table(self) -> Table | None:
+        """``bike_share_trips.parquet``: ``bike_share_trips()`` after ``run_id``.
+
+        What did not happen is null. ``None`` without a service.
+        """
+        path = self._written(self._summary.bike_share_trips_path, "bike_share_trips.parquet")
+        return None if path is None else Table(path)
+
+    def bike_share_docks(self) -> Columns | None:
+        """Every dock of the docked bike service over the last loading, bin by bin.
+
+        ``None`` without a service. One row per dock and time bin (the service's ``bin_s``, 900 s by
+        default): ``service``, ``dock``, ``hub_id`` (its hub: a stop's within ``hub_join_m``, or its
+        own), ``bin_start`` and ``bin_end`` (``"08:00:00"``), ``bin_start_s`` and ``bin_end_s``. Its
+        state: ``slots``, ``bikes_at_start``, ``bikes_at_end``, ``bikes_min``, ``bikes_mean``
+        (time-weighted), ``seconds_empty``, ``seconds_full``. Its flows: ``bikes_taken``,
+        ``bikes_returned``. The travellers in trouble there (people):
+        ``people_failed_attempt_no_bike`` (found it empty and went on to another dock),
+        ``people_gave_up_no_bike`` (found it empty and walked to their destination),
+        ``people_failed_attempt_no_slot`` (found it full and rode on),
+        ``people_left_bike_over_capacity``, ``people_sent_here`` (from another dock, counted in the
+        bin they were sent). An operator's: ``bikes_brought_by_van``, ``bikes_taken_by_van`` (0: a
+        run has no operator yet). The same table is written to ``bike_share_docks.parquet``: read it
+        with ``bike_share_docks_table()``.
+        """
+        t = self._summary.bike_share_docks
+        return None if t is None else Columns(t)
+
+    def bike_share_docks_table(self) -> Table | None:
+        """``bike_share_docks.parquet``: ``bike_share_docks()`` after ``run_id``.
+
+        ``None`` without a service.
+        """
+        path = self._written(self._summary.bike_share_docks_path, "bike_share_docks.parquet")
+        return None if path is None else Table(path)
+
+    def bike_share_dock_places(self) -> Columns | None:
+        """Every dock of the docked bike service, for maps; ``None`` without a service.
+
+        ``dock``, ``hub_id``, ``hub_kind`` (``"stop"`` or ``"declared"``), ``service``,
+        ``slots``, ``bikes_start`` (bikes at the start of the day), ``lon`` and ``lat``.
+        """
+        t = self._summary.bike_share_dock_places
+        return None if t is None else Columns(t)
 
     def parking_places(self) -> Columns | None:
         """Each parking the run kept, as columns; ``None`` without parkings.

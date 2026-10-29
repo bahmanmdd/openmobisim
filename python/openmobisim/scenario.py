@@ -715,7 +715,8 @@ class Scenario:
                 ``price_options`` — the pass is money, never access: who may take transit is said
                 by the modes, so give ``has_transit_pass`` as 1 for a class that holds one; its
                 own price is not counted), ``has_bike_share`` (0: never offered a shared bike,
-                ``services``; unsaid: offered) and any
+                ``services``; unsaid: offered, whatever the class's ``modes``, which govern
+                the ordinary modes only) and any
                 ``beta_*`` coefficient of the choice model (its own mode
                 constants, ``beta_mode_bike`` …, or its own value of time, ``beta_time_min``;
                 unsaid: ``choice_options``'), for ``"logit"`` and ``"nested_logit"``, and its own
@@ -1141,8 +1142,8 @@ class Scenario:
                 parkings, each with ``dock_min`` and ``mode_bike_share_transit``; its shared
                 bike is a leg of the same day on the fleet engine, and its transit part starts
                 when the engine has the bike returned (or the traveller at the hub on foot). A
-                class with ``has_bike_share`` 0 is offered neither. Without a service, nothing
-                changes.
+                class with ``has_bike_share`` 0 is offered neither; every other class is offered
+                both, whatever its own ``modes`` list. Without a service, nothing changes.
             parking_options: Parking's parameters by name, each replacing its default:
                 ``walk_max_s`` (300: the longest walk from a parking to a stop),
                 ``reach_car_s`` (1800) and ``reach_bike_s`` (1200: the longest drive or ride

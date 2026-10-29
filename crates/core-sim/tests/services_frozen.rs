@@ -36,7 +36,7 @@ fn dock(id: &str, at: LonLat, capacity: u32, bikes: u32) -> DockRow {
 }
 
 #[test]
-fn trips_ride_between_their_nearest_docks_and_the_second_walks_on_to_the_returned_bike() {
+fn trips_ride_between_their_nearest_docks_and_the_second_walks_rather_than_ride_0_m() {
     let (road, _) = toy_network();
     let (bike, walk) = toy_network_layers();
     let d = StaticLayerDefaults::SHIPPED;
@@ -98,19 +98,22 @@ fn trips_ride_between_their_nearest_docks_and_the_second_walks_on_to_the_returne
         "{} s against {expected} s",
         first.arrived_s
     );
-    // The second finds R2 empty and walks on to D2, the nearest other dock, where the first
-    // rider has just returned the bike: one redirection, the bike taken there.
-    assert_eq!((second.picked, second.redirections), (Some(0), 1));
+    // The second finds R2 empty. The nearest other dock, D2, is its return dock: from there a
+    // bike would ride 0 m, so walking on is no slower and it gives up, walking from R2 (S302).
+    assert_eq!(second.status, LegStatus::Failed);
+    assert_eq!((second.picked, second.redirections, second.failed_for_bike), (None, 0, 1));
     let walk_r2_d2 = paths.walk_s(
         walk.network().network().node_external_ids().typed_id_of("R2").unwrap(),
         walk.network().network().node_external_ids().typed_id_of("D2").unwrap(),
     );
-    assert!((second.extra_walk_s - walk_r2_d2).abs() < 1e-6, "{}", second.extra_walk_s);
-    assert!(second.picked_s >= first.arrived_s - legs[0].egress_s - 1e-6, "after the return");
+    assert!(
+        (second.arrived_s - (second.picked_s + walk_r2_d2)).abs() < 1e-6,
+        "it walks from R2 to its destination"
+    );
     assert_eq!(out.invariant_violations, 0);
     assert_eq!(
         out.docks[0].as_ref().map(|b| b.pickups.iter().sum::<f64>()),
-        Some(2.0),
-        "one bike, taken twice"
+        Some(1.0),
+        "one bike, taken once"
     );
 }

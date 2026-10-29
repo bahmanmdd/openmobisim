@@ -991,6 +991,7 @@ impl FleetEngine {
     pub fn into_outcome(mut self) -> FleetOutcome {
         let mut docks = Vec::with_capacity(self.setups.len());
         let mut overflow_max = Vec::with_capacity(self.setups.len());
+        let mut dock_log = Vec::with_capacity(self.setups.len());
         for (s, run) in self.docks.iter_mut().enumerate() {
             match (run, self.setups[s].parts(), &self.state.services[s]) {
                 (
@@ -1001,10 +1002,17 @@ impl FleetEngine {
                     run.finish(setup, bikes, self.now);
                     docks.push(Some(run.bins.clone()));
                     overflow_max.push(run.overflow_max);
+                    // In time order; one second's events in the order handled.
+                    let mut log = run.log.take();
+                    if let Some(log) = log.as_mut() {
+                        log.sort_by(|a, b| a.t.total_cmp(&b.t));
+                    }
+                    dock_log.push(log);
                 }
                 _ => {
                     docks.push(None);
                     overflow_max.push(0.0);
+                    dock_log.push(None);
                 }
             }
         }
@@ -1027,6 +1035,7 @@ impl FleetEngine {
             invariant_violations: self.violations,
             docks,
             overflow_max,
+            dock_log,
             taxis,
             decisions: self.records,
         }

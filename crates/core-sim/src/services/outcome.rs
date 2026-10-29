@@ -1,7 +1,7 @@
 //! What a fleet day returns: per leg what became of it, and the day's counts.
 
 pub use super::decisions::{DecisionKind, DecisionRecord};
-pub use super::docks::DockBins;
+pub use super::docks::{DockBins, DockEvent, DockEventKind};
 pub use super::taxis::{FLEET_BIN_S, FleetBins, TaxiDay, TaxiRequest, VehicleDay};
 
 /// What became of one service leg by the window's end.
@@ -68,6 +68,15 @@ pub struct LegOutcome {
     /// A taxi leg's wait, in seconds: from its request until its last unit request's vehicle
     /// reached the pickup, that unit failed, or the window ended (0 for a bike leg).
     pub waited_s: f64,
+    /// A bike leg's docks found without a bike for it (the last one included when it gave up).
+    pub failed_for_bike: u32,
+    /// A bike leg's docks found without a free slot for it (the last one included when it left
+    /// its bike above capacity).
+    pub failed_for_slot: u32,
+    /// Metres walked between docks looking for a bike, as the crow flies.
+    pub extra_walk_m: f64,
+    /// The second the bike was docked (`NaN`: not docked).
+    pub returned_s: f64,
 }
 
 impl LegOutcome {
@@ -85,6 +94,10 @@ impl LegOutcome {
         vehicle: None,
         assigned_s: f64::NAN,
         waited_s: 0.0,
+        failed_for_bike: 0,
+        failed_for_slot: 0,
+        extra_walk_m: 0.0,
+        returned_s: f64::NAN,
     };
 }
 
@@ -107,6 +120,9 @@ pub struct FleetOutcome {
     pub docks: Vec<Option<DockBins>>,
     /// Per service: the most bikes docked above a dock's capacity at once (0 for a taxi fleet).
     pub overflow_max: Vec<f64>,
+    /// Per service: a docked service's events in time order (`None` for a taxi fleet, or with
+    /// the service's `log_events` off).
+    pub dock_log: Vec<Option<Vec<DockEvent>>>,
     /// Per service: a taxi fleet's unit requests, vehicles' days and states bin by bin
     /// (`None` for a docked service).
     pub taxis: Vec<Option<TaxiDay>>,

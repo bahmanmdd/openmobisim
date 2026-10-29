@@ -1122,6 +1122,20 @@ class RunSummary:
     parking_summary: dict[str, float] | None
     #: The written ``parking_bins.parquet``, if the run had parkings.
     parking_bins_path: str | None
+    #: The docked bike service's events (see ``Run.bike_share_events``).
+    bike_share_events: dict[str, Any] | None
+    #: Its trips (see ``Run.bike_share_trips``).
+    bike_share_trips: dict[str, Any] | None
+    #: Its docks bin by bin (see ``Run.bike_share_docks``).
+    bike_share_docks: dict[str, Any] | None
+    #: Its docks and their hubs (see ``Run.bike_share_dock_places``).
+    bike_share_dock_places: dict[str, Any] | None
+    #: The written ``bike_share_events.parquet``, if the run had a service.
+    bike_share_events_path: str | None
+    #: The written ``bike_share_trips.parquet``, if the run had a service.
+    bike_share_trips_path: str | None
+    #: The written ``bike_share_docks.parquet``, if the run had a service.
+    bike_share_docks_path: str | None
     #: Each itinerary trip's choice (see ``Run.itinerary_choices``).
     itinerary_choices: dict[str, Any] | None
     #: Every trip's departure and the mode it took (see ``Run.trip_modes``).

@@ -1797,7 +1797,7 @@ impl Run {
             _ => None,
         };
         let mut dock_seen = 0_u32;
-        let mut services_run = services_arc.as_ref().map(|_| ServicesRun::default());
+        let mut services_run = services_arc.as_ref().map(|s| ServicesRun::of(&s[0]));
         let choose_inputs = ChooseInputs {
             trips: &trips,
             travellers: &travellers,
