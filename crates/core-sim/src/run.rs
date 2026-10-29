@@ -546,6 +546,9 @@ pub struct Run {
     parking: Option<Arc<ParkingSetup>>,
     /// The shared-mobility services (S302): none, by default.
     services: Option<Arc<Vec<ServiceSetup>>>,
+    /// How far a dock may be from a stop to join its hub, in metres (S302): read only with
+    /// services.
+    hub_join_m: f64,
     /// The modes a trip without a stated mode chooses among: no choice, by default.
     mode_choice: Option<Vec<Mode>>,
     /// How long a walk or ride mode choice offers: the shipped values, by default.
@@ -659,6 +662,7 @@ impl Run {
             transit: None,
             parking: None,
             services: None,
+            hub_join_m: crate::services::hubs::DEFAULT_HUB_JOIN_M,
             mode_choice: None,
             mode_defaults: ModeDefaults::SHIPPED,
             loading: LoadingOptions::SHIPPED,
@@ -785,6 +789,16 @@ impl Run {
     #[must_use]
     pub fn with_services(mut self, services: Arc<Vec<ServiceSetup>>) -> Self {
         self.services = (!services.is_empty()).then_some(services);
+        self
+    }
+
+    /// The same run with docks joining a stop's hub within `metres` of it in a straight line
+    /// (S302; [`crate::services::hubs::DEFAULT_HUB_JOIN_M`] by default): a dock at a stop's hub
+    /// is where [`Mode::BikeShareTransit`] returns its shared bike. Read only in a run with
+    /// services, so a run without one is what it was.
+    #[must_use]
+    pub fn with_hub_join_m(mut self, metres: f64) -> Self {
+        self.hub_join_m = metres;
         self
     }
 
@@ -1190,6 +1204,7 @@ impl Run {
             transit: self.transit.as_deref(),
             parking: self.parking.as_deref(),
             services: self.services.as_deref().map_or(&[], Vec::as_slice),
+            hub_join_m: self.hub_join_m,
             mode_choice: self.mode_choice.as_deref(),
             mode_defaults: &self.mode_defaults,
             class_modes: &self.class_modes,

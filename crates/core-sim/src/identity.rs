@@ -171,6 +171,8 @@ pub(crate) struct Inputs<'a> {
     pub parking: Option<&'a ParkingSetup>,
     /// The shared-mobility services (S302); empty: none, hashed as before services existed.
     pub services: &'a [crate::services::ServiceSetup],
+    /// How far a dock may be from a stop to join its hub (S302); hashed only with services.
+    pub hub_join_m: f64,
     /// The modes a trip without a stated mode chooses among, if the run offers a choice.
     pub mode_choice: Option<&'a [Mode]>,
     /// How long a walk or ride mode choice offers; hashed only with mode choice.
@@ -459,6 +461,10 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     // And without services (S302).
     for service in inputs.services {
         hash_service(&mut h, service);
+    }
+    if !inputs.services.is_empty() {
+        h.write_str("hub_join_m");
+        h.write_f64(inputs.hub_join_m);
     }
 
     RunDescription {
