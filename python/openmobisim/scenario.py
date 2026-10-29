@@ -606,7 +606,7 @@ class Scenario:
             if "bike_share" in modes and len(set(modes)) == 1:
                 raise ValueError(
                     'modes: "bike_share" is chosen among other modes; give at least one more '
-                    "(a trip stated to take a shared bike is not simulated yet)"
+                    "(a shared bike is offered as a choice, not as the only mode)"
                 )
         self._modes = modes
         self._mode_options = mode_options
