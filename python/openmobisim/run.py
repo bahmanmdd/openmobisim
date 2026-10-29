@@ -22,10 +22,10 @@ __all__ = ["LAYERS", "MODES", "NO_ALTERNATIVE_CHANGES", "SERVICE_MODES", "Run"]
 LAYERS = ("road", "bike", "walk")
 #: The modes a trip may have or choose (the ``mode`` column of ``trips.parquet``).
 MODES = ("car", "bike", "walk", "transit", "car_transit", "bike_transit")
-#: The modes a service of the run offers (``bike_share``: a docked bike service,
-#: ``service_bike_docked``): chosen, and listed in a run's results, only in a run that has the
-#: service.
-SERVICE_MODES = ("bike_share",)
+#: The modes a service of the run offers (``bike_share``, and ``bike_share_transit`` with a
+#: timetable: a docked bike service, ``service_bike_docked``): chosen, and listed in a run's
+#: results, only in a run that has the service.
+SERVICE_MODES = ("bike_share", "bike_share_transit")
 
 
 #: What to change for each reason a mode gave a trip no alternative, as

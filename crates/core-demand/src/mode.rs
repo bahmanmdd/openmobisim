@@ -29,11 +29,15 @@ pub enum Mode {
     /// By a shared bike of a docked service: walk to a dock, ride, return it at a dock, walk.
     /// No bike of one's own.
     BikeShare = 6,
+    /// By a shared bike of a docked service to a dock at a transit stop's hub, then public
+    /// transport: walk to a dock, ride, return the bike at the hub's dock, walk to the stop,
+    /// ride(s), walk. No bike of one's own.
+    BikeShareTransit = 7,
 }
 
 impl Mode {
     /// Every mode, in discriminant order.
-    pub const ALL: [Mode; 7] = [
+    pub const ALL: [Mode; 8] = [
         Mode::Car,
         Mode::Bike,
         Mode::Walk,
@@ -41,6 +45,7 @@ impl Mode {
         Mode::CarTransit,
         Mode::BikeTransit,
         Mode::BikeShare,
+        Mode::BikeShareTransit,
     ];
 
     /// How many modes there are.
@@ -69,6 +74,7 @@ impl Mode {
             Mode::CarTransit => "car_transit",
             Mode::BikeTransit => "bike_transit",
             Mode::BikeShare => "bike_share",
+            Mode::BikeShareTransit => "bike_share_transit",
         }
     }
 
@@ -102,7 +108,7 @@ impl Mode {
         match self {
             Mode::Car | Mode::CarTransit => Some(VehicleKind::Car),
             Mode::Bike | Mode::BikeTransit => Some(VehicleKind::Bike),
-            Mode::Walk | Mode::Transit | Mode::BikeShare => None,
+            Mode::Walk | Mode::Transit | Mode::BikeShare | Mode::BikeShareTransit => None,
         }
     }
 
@@ -110,7 +116,7 @@ impl Mode {
     /// outputs, only in a run that has one.
     #[must_use]
     pub const fn is_service(self) -> bool {
-        matches!(self, Mode::BikeShare)
+        matches!(self, Mode::BikeShare | Mode::BikeShareTransit)
     }
 }
 

@@ -258,6 +258,17 @@ fn a_stop_its_parkings_and_a_dock_beside_it_are_one_hub() {
     // At 0 m nothing joins by distance: the near dock is its own hub too.
     let apart = RunHubs::build(Some(&t.transit), &[], Some(&p), &rows, 0.0);
     assert_eq!(apart.set().len(), 5);
+    // Docks never move a stop's or a parking's hub id (S302): the outputs write the same labels
+    // with docks or without, even when a dock's own hub sorts first and so shifts the dense ids.
+    let without = RunHubs::build(Some(&t.transit), &[], Some(&p), &[], DEFAULT_HUB_JOIN_M);
+    let mut first = rows.to_vec();
+    first.push(dock("A-first", None, 9_000.0));
+    let with = RunHubs::build(Some(&t.transit), &[], Some(&p), &first, DEFAULT_HUB_JOIN_M);
+    assert_eq!(with.set().external_ids().external(0), "A-first");
+    assert_ne!(with.stop_hub(stop_h), without.stop_hub(stop_h), "the dense ids moved");
+    assert_eq!(with.stop_hub_ids(), without.stop_hub_ids());
+    assert_eq!(with.parking_hub_ids(), without.parking_hub_ids());
+    assert_eq!(hubs.stop_hub_ids(), without.stop_hub_ids());
 }
 
 #[test]

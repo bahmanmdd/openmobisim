@@ -1134,7 +1134,7 @@ pub fn run_pipeline(
         let ids = travellers.class_external_ids();
         (0..ids.count()).map(|c| ids.external(c).to_string()).collect()
     };
-    // A class with `has_bike_share` 0 (S302) never sees a shared bike.
+    // A class with `has_bike_share` 0 (S302) never sees a shared bike, alone or to transit.
     let no_share = class_no_bike_share.unwrap_or_default();
     let class_allowed: Vec<[bool; Mode::COUNT]> = class_names
         .iter()
@@ -1142,6 +1142,7 @@ pub fn run_pipeline(
             let mut allowed = class_modes.get(c).copied().unwrap_or([true; Mode::COUNT]);
             if no_share.contains(c) {
                 allowed[Mode::BikeShare.index()] = false;
+                allowed[Mode::BikeShareTransit.index()] = false;
             }
             allowed
         })
@@ -1318,6 +1319,10 @@ pub fn run_pipeline(
     };
     // The services (S302), snapped to the run's walk and bike layers.
     let service_setups = crate::services::setups_on(&services, &layers, &network.inner)?;
+    // Their docks as resources of the run's one hub set, in service and dock order: a dock
+    // within `hub_join_m` of a stop joins its hub (none without a service).
+    let service_rows: Vec<openmobisim_core_sim::services::hubs::ResourceRow> =
+        service_setups.iter().flat_map(|s| s.resource_rows()).collect();
     let layers = Arc::new(layers);
     // The bike layer's link count, for its route sets' Python view (S298).
     let bike_link_count =
@@ -1330,7 +1335,7 @@ pub fn run_pipeline(
         run = run.with_parking(p.clone());
     }
     if !service_setups.is_empty() {
-        run = run.with_services(Arc::new(service_setups));
+        run = run.with_services(Arc::new(service_setups)).with_hub_join_m(hub_join_m);
     }
     run = run
         .with_mode_choice(&modes)
@@ -1392,10 +1397,17 @@ pub fn run_pipeline(
     let mut diagnostics = build_diagnostics;
     diagnostics.merge(&run_diagnostics);
 
-    // The run's one hub set; each stop's and parking's hub id is the `hub_id` the outputs write
-    // (no result depends on it yet, so it is in no fingerprint).
-    let run_hubs =
-        RunHubs::build(transit_setup.as_deref(), &[], parking_setup.as_deref(), &[], hub_join_m);
+    // The run's one hub set; each stop's and parking's hub id is the `hub_id` the outputs write.
+    // Its stops and parkings come before the services' docks, so their hubs are the same with
+    // services or without; `hub_join_m` reaches the fingerprint only with a service, whose docks
+    // it joins to stops.
+    let run_hubs = RunHubs::build(
+        transit_setup.as_deref(),
+        &[],
+        parking_setup.as_deref(),
+        &service_rows,
+        hub_join_m,
+    );
     let (stop_hubs, parking_hubs) = (run_hubs.stop_hub_ids(), run_hubs.parking_hub_ids());
     let dir = Path::new(output_dir);
     std::fs::create_dir_all(dir).map_err(to_value_error)?;
