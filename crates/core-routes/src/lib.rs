@@ -29,12 +29,14 @@ pub mod store;
 
 pub use attributes::{path_sizes, path_sizes_counted};
 pub use generate::{
-    ByCost, ClassExtras, DEFAULT_METHOD, Demand, ExtrasRequest, MonteCarlo, Options,
-    PROPENSITY_BIN_SECONDS, PUBLIC_NAMES, Penalty, Registry, RouteError, RouteSetGenerator,
-    Sampled, Shortest, TripDemand, congestion_propensity, default_generator, generator,
-    internal_name, public_name,
+    ByCost, ClassExtras, DEFAULT_METHOD, DEFAULT_TWIN_TOLERANCE, Demand, ExtrasRequest, MonteCarlo,
+    Options, PROPENSITY_BIN_SECONDS, PUBLIC_NAMES, Penalty, Registry, RouteError,
+    RouteSetGenerator, Sampled, Shortest, TripDemand, congestion_propensity, default_generator,
+    generator, internal_name, public_name,
 };
 pub use reach::Reach;
-pub use search::{Extras, LinkFactors, MAX_ROUTES_PER_SET, Route, Search, SearchContext};
+pub use search::{
+    Extras, LinkFactors, MAX_ROUTES_PER_SET, Route, Search, SearchContext, TWIN_CANDIDATES,
+};
 pub use snap::{NodeSnapper, TripSnapper};
 pub use store::{LinkIndex, RouteKey, RouteSets, RouteView, search_map};

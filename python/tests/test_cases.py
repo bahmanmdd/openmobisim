@@ -223,7 +223,7 @@ def test_the_benchmarks_match_the_package_s_references() -> None:
 
 @needs_bundle
 @pytest.mark.parametrize(
-    ("scenario", "mean_min"), [("base", 11.65), ("congested", 20.95)]
+    ("scenario", "mean_min"), [("base", 11.69), ("congested", 20.92)]
 )  # fmt: skip
 def test_sioux_falls_gives_its_reference_results(scenario: str, mean_min: float) -> None:
     run = (

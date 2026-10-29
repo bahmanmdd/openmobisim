@@ -69,6 +69,10 @@ use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 /// The most routes a set can hold: one bit each in a per-link mask.
 pub const MAX_ROUTES_PER_SET: usize = 32;
 
+/// The most candidate twins [`Search::shortest_tree_twins`] builds for one destination: a
+/// bound on its work where many routes tie (a grid of equal blocks).
+pub const TWIN_CANDIDATES: usize = 16;
+
 /// One route: the links from an origin node to a destination node.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Route {
@@ -626,6 +630,84 @@ impl<'a> Search<'a> {
         destinations: &[NodeId],
         max_true_cost: f64,
     ) -> Vec<Option<Route>> {
+        let last = self.grow_tree(origin, destinations, max_true_cost);
+        let routes = destinations
+            .iter()
+            .map(|d| {
+                let &end = last.get(&d.raw())?;
+                let links = self.tree_links(end);
+                let cost = self.ctx.route_cost(&links);
+                Some(Route { links, cost, overlap: 0.0 })
+            })
+            .collect();
+        self.clean();
+        routes
+    }
+
+    /// [`Self::shortest_tree`] with, beside each destination's least-cost route, up to
+    /// `max_twins` of its **equal-cost twins**: the routes of each destination reached, the
+    /// least-cost one first.
+    ///
+    /// **What a twin is.** A route that differs from the least-cost one and whose cost (the
+    /// search's cost: the free-flow time, or the generalised cost under extras) is at most
+    /// `1 + tolerance` times the least cost. A least-cost tree keeps one way into each link, and
+    /// where two ways cost the same it keeps the one the order of the links gives: a twin is
+    /// what the tree threw away. **How it is found, from the tree alone (no second search):**
+    /// at each node `v` of the least-cost route, every other link into `v` that the search
+    /// reached (and that may turn onto the route's next link) gives a candidate, the tree's
+    /// route to that link followed by the rest of the least-cost route from `v`; at the
+    /// destination, every other link into it. A candidate within the tolerance and without a
+    /// repeated node is a twin. **Of several, those that leave the route nearest the origin are
+    /// kept**: there the tree's order of links decided first, and a route that parts there is
+    /// the other way the pair's travellers could set out (on a symmetric grid, from a corner,
+    /// the other side; measured on a symmetric city, keeping the twin that shares least with
+    /// the route instead kept two routes into the same side, and the sides stayed 2.5 % apart).
+    /// A twin's `overlap` is the largest share of its cost it has in common with a route kept
+    /// before it. At most [`TWIN_CANDIDATES`] candidates within the tolerance are built per
+    /// destination.
+    ///
+    /// **Cost:** the tree's search as [`Self::shortest_tree`]; then, per destination, a look at
+    /// the links into each node of its route (about three on a road network) and, for each
+    /// candidate within the tolerance, a walk back along the tree. Ties are rare on a real
+    /// network, so most destinations build none.
+    ///
+    /// **Guarantee:** a twin returned is within the tolerance and differs from the best route;
+    /// not every twin is found (the tree's labels of links costlier than the destinations can
+    /// be provisional, and a twin that leaves the best route twice is not looked for).
+    pub fn shortest_tree_twins(
+        &mut self,
+        origin: NodeId,
+        destinations: &[NodeId],
+        max_true_cost: f64,
+        tolerance: f64,
+        max_twins: usize,
+    ) -> Vec<Vec<Route>> {
+        let last = self.grow_tree(origin, destinations, max_true_cost);
+        let routes = destinations
+            .iter()
+            .map(|&d| {
+                let Some(&end) = last.get(&d.raw()) else { return Vec::new() };
+                let links = self.tree_links(end);
+                let cost = self.ctx.route_cost(&links);
+                let twins = self.twins(origin, d, &links, tolerance, max_twins);
+                let mut routes = vec![Route { links, cost, overlap: 0.0 }];
+                routes.extend(twins);
+                routes
+            })
+            .collect();
+        self.clean();
+        routes
+    }
+
+    /// Dijkstra from `origin` until every destination is reached (or nothing is left within
+    /// `max_true_cost`): the last link of each destination's least-cost route, by node. The
+    /// labels stay for the caller, which [`Self::clean`]s.
+    fn grow_tree(
+        &mut self,
+        origin: NodeId,
+        destinations: &[NodeId],
+        max_true_cost: f64,
+    ) -> std::collections::HashMap<u32, u32> {
         let ctx = self.ctx;
         let mut wanted = vec![false; ctx.network.node_count() as usize];
         for d in destinations {
@@ -666,23 +748,113 @@ impl<'a> Search<'a> {
                 }
             }
         }
-        let routes = destinations
+        last
+    }
+
+    /// The links of the tree's route ending with link `end`, in driving order.
+    fn tree_links(&self, end: u32) -> Vec<LinkId> {
+        let mut links = Vec::new();
+        let mut at = end;
+        while at != NONE {
+            links.push(LinkId::new(at));
+            at = self.pred[at as usize];
+        }
+        links.reverse();
+        links
+    }
+
+    /// Up to `count` equal-cost twins of `best` (the tree's route from `origin` to
+    /// `destination`) read off the labels of the tree just grown: see
+    /// [`Self::shortest_tree_twins`].
+    fn twins(
+        &self,
+        origin: NodeId,
+        destination: NodeId,
+        best: &[LinkId],
+        tolerance: f64,
+        count: usize,
+    ) -> Vec<Route> {
+        let ctx = self.ctx;
+        let network = ctx.network;
+        let n = best.len();
+        if n == 0 || count == 0 {
+            return Vec::new();
+        }
+        // The cost the search minimised, link by link, and what is left of it after each node.
+        let costs: Vec<f64> = best.iter().map(|&l| self.raw(l)).collect();
+        let best_cost: f64 = costs.iter().sum();
+        // Within the tolerance; a relative 1e-9 more so that equal sums added in another
+        // order still tie.
+        let limit = best_cost * (1.0 + tolerance + 1e-9);
+        let mut rest = vec![0.0; n + 1];
+        for j in (0..n).rev() {
+            rest[j] = rest[j + 1] + costs[j];
+        }
+        // The route's nodes: node j is where link j starts, node n the destination.
+        let nodes: Vec<NodeId> = best
             .iter()
-            .map(|d| {
-                let &end = last.get(&d.raw())?;
-                let mut links = Vec::new();
-                let mut at = end;
-                while at != NONE {
-                    links.push(LinkId::new(at));
-                    at = self.pred[at as usize];
-                }
-                links.reverse();
-                let cost = ctx.route_cost(&links);
-                Some(Route { links, cost, overlap: 0.0 })
-            })
+            .map(|&l| network.link_from(l))
+            .chain(std::iter::once(destination))
             .collect();
-        self.clean();
-        routes
+        debug_assert_eq!(nodes[0], origin);
+        // The candidates, nearest the origin first.
+        let mut candidates: Vec<Vec<LinkId>> = Vec::new();
+        let mut built = 0;
+        'nodes: for j in 1..=n {
+            for &alt in network.in_links(nodes[j]) {
+                if alt == best[j - 1] || !self.dist[alt.index()].is_finite() {
+                    continue;
+                }
+                if self.dist[alt.index()] + rest[j] > limit {
+                    continue;
+                }
+                if j < n
+                    && !ctx.turns.turns_from(alt).iter().any(|&t| ctx.turns.outgoing(t) == best[j])
+                {
+                    continue;
+                }
+                if built == TWIN_CANDIDATES {
+                    break 'nodes;
+                }
+                built += 1;
+                let mut links = self.tree_links(alt.raw());
+                links.extend_from_slice(&best[j..]);
+                // A twin visits no node twice.
+                let mut seen = std::collections::HashSet::with_capacity(links.len() + 1);
+                seen.insert(origin.raw());
+                if !links.iter().all(|&l| seen.insert(network.link_to(l).raw())) {
+                    continue;
+                }
+                if self.generalised(&links) > limit || candidates.contains(&links) {
+                    continue;
+                }
+                candidates.push(links);
+                if candidates.len() == count {
+                    break 'nodes;
+                }
+            }
+        }
+        // The first ones found: those that leave the route nearest the origin, where the tree's
+        // order of links decided first. Each with its overlap: the largest share of its cost it
+        // has in common with a route kept before it.
+        let overlap_cost =
+            |l: LinkId| if self.has_extras() { self.raw(l) } else { ctx.link_cost(l) };
+        let share = |links: &[LinkId], with: &std::collections::HashSet<u32>| {
+            let total: f64 = links.iter().map(|&l| overlap_cost(l)).sum();
+            let shared: f64 =
+                links.iter().filter(|l| with.contains(&l.raw())).map(|&l| overlap_cost(l)).sum();
+            if total > 0.0 { shared / total } else { 1.0 }
+        };
+        let mut kept: Vec<std::collections::HashSet<u32>> =
+            vec![best.iter().map(|l| l.raw()).collect()];
+        let mut out = Vec::new();
+        for links in candidates {
+            let overlap = kept.iter().map(|k| share(&links, k)).fold(0.0, f64::max);
+            kept.push(links.iter().map(|l| l.raw()).collect());
+            let cost = ctx.route_cost(&links);
+            out.push(Route { links, cost, overlap });
+        }
+        out
     }
 
     /// The least time to drive from `origin` to `destination` when setting out at

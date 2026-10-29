@@ -48,6 +48,12 @@ CLASSES = [
         '``route_method="link_penalty"``',
     ),
     (
+        "route_method.shortest",
+        "ShortestOptions",
+        "route_options",
+        '``route_method="shortest"``',
+    ),
+    (
         "route_method.simulation",
         "SimulationOptions",
         "route_options",
@@ -70,6 +76,8 @@ CLASSES = [
 
 #: One line on what a class's method is, under its first line (S299: the terms of G's wording).
 WHAT = {
+    "ShortestOptions": "The least-cost route, and its equal-cost twin where it has one: a route "
+    "that leaves it once and joins it again and costs at most ``twin_tolerance`` more.",
     "LinkPenaltyOptions": "The link penalty method (de la Barra, Pérez & Añez 1993): after each "
     "least-cost route, the costs of its links are multiplied by ``penalty`` and the search is "
     "repeated.",

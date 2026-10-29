@@ -196,7 +196,7 @@ fn the_cache_keeps_the_most_recently_used_and_forgets_on_request() {
     let get = |key: u64| {
         cache.get_or_generate(key, || {
             made.set(made.get() + 1);
-            RouteSets::generate(&network, &turns, &keys, &Shortest)
+            RouteSets::generate(&network, &turns, &keys, &Shortest::ONE)
         })
     };
     get(1);
@@ -215,7 +215,7 @@ fn the_cache_keeps_the_most_recently_used_and_forgets_on_request() {
     assert_eq!(made.get(), 5);
     // A capacity of 0 is 1: a cache always holds the last.
     let one = RouteSetCache::new(0);
-    one.get_or_generate(7, || RouteSets::generate(&network, &turns, &keys, &Shortest));
+    one.get_or_generate(7, || RouteSets::generate(&network, &turns, &keys, &Shortest::ONE));
     assert_eq!(one.stats().held, 1);
 }
 
@@ -230,7 +230,7 @@ fn the_key_does_not_depend_on_the_order_of_the_pairs_only_on_which_they_are() {
         RouteKey::new(node("o"), node("m")),
         RouteKey::new(node("m"), node("d")),
     );
-    let g = Shortest;
+    let g = Shortest::ONE;
     let key = |keys: &[RouteKey]| generation_key(&network, &g, keys, None);
     assert_eq!(key(&[a, b, c]), key(&[c, a, b, a, a]), "order and repeats do not matter");
     assert_ne!(key(&[a, b, c]), key(&[a, b]));

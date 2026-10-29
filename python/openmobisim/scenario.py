@@ -792,7 +792,8 @@ class Scenario:
                 that loads once uses ``"link_penalty"``; a run that **loads more than once** (an
                 ``equilibration`` with more than one iteration, or a free-flow loading built up
                 in groups, the default at ``flow_level`` 2 to 4) starts from ``"shortest"``, one
-                route per pair, and lets the route update find the rest (measured: as good
+                route per pair (two where it ties), and lets the route update find the rest
+                (measured: as good
                 as the alternatives of the other methods at about half the time). Naming a
                 method, or giving ``route_options``, overrides this (options alone mean
                 ``"link_penalty"``). Every method searches by the **generalised cost**, read
@@ -803,7 +804,10 @@ class Scenario:
                 ``"link_penalty"``, the **link penalty method** (de la Barra, Pérez & Añez
                 1993), finds distinct alternatives: the least-cost route, then repeatedly the
                 least-cost route after the cost of every link of the route just found is
-                multiplied by ``penalty``. ``"shortest"`` makes one route per pair.
+                multiplied by ``penalty``. ``"shortest"`` makes one route per pair, the least-cost
+                one, and beside it its **equal-cost twin** where it has one: a route that leaves
+                it once and joins it again and costs at most ``twin_tolerance`` (0.1 %) more,
+                so that the choice model, not the order of the network's links, splits a tie.
                 ``"simulation"``, **stochastic simulation of link costs** (Ramming 2002), finds
                 routes by searching under random link costs **biased towards the links the
                 demand is likely to congest** (the busiest half-hour's load on shortest
@@ -833,7 +837,9 @@ class Scenario:
             route_options: The method's options, numbers by name; unknown names
                 and out-of-range values are refused. For ``"link_penalty"``: ``max_paths``
                 (5), ``max_detour`` (1.3), ``max_overlap`` (0.75), ``penalty`` (1.5),
-                ``max_attempts`` (15). For ``"simulation"``: ``draws`` (16),
+                ``max_attempts`` (15). For ``"shortest"``: ``max_paths`` (2; 1 for the
+                least-cost route alone) and ``twin_tolerance`` (0.001). For ``"simulation"``:
+                ``draws`` (16),
                 ``sigma`` (4: how far a link's cost may rise, times its bias),
                 ``max_detour`` (2), ``max_overlap`` (0.9), ``max_paths`` (10), ``seed``
                 (0: another seed is another set of draws) and ``biased`` (1; 0 for no

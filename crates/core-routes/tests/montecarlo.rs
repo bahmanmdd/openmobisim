@@ -144,7 +144,7 @@ fn a_bias_of_nothing_leaves_only_the_shortest_route_everywhere() {
     let keys = grid_keys(&net, 7, 120, 4);
     let mc = MonteCarlo::default().with_bias(vec![0.0; net.link_count() as usize]).expect("valid");
     let sets = RouteSets::generate(&net, &turns, &keys, &mc);
-    let shortest = RouteSets::generate(&net, &turns, &keys, &Shortest);
+    let shortest = RouteSets::generate(&net, &turns, &keys, &Shortest::ONE);
     for i in 0..sets.keys().len() {
         assert_eq!(sets.routes(i).count(), 1);
         assert_eq!(sets.routes(i).next().unwrap().links, shortest.routes(i).next().unwrap().links);
@@ -165,7 +165,7 @@ fn every_route_is_loop_free_connected_and_within_the_limits() {
         ("half the links", MonteCarlo::default().with_bias(half).expect("valid")),
     ] {
         let sets = RouteSets::generate(&net, &turns, &keys, &mc);
-        let shortest = RouteSets::generate(&net, &turns, &keys, &Shortest);
+        let shortest = RouteSets::generate(&net, &turns, &keys, &Shortest::ONE);
         let mut with_alternatives = 0;
         for (i, key) in sets.keys().iter().enumerate() {
             let (origin, destination) = (NodeId::new(key.origin), NodeId::new(key.destination));
@@ -354,7 +354,7 @@ fn a_method_that_reads_the_demand_is_given_it_once_and_says_so_in_its_descriptor
     let made = RouteSets::generate(&net, &turns, &[key], prepared.as_ref());
     assert_eq!(made.method(), "montecarlo");
     // Not reading the demand: nothing to be told, and nothing done.
-    for m in [Box::new(Penalty::default()) as Box<dyn RouteSetGenerator>, Box::new(Shortest)] {
+    for m in [Box::new(Penalty::default()) as Box<dyn RouteSetGenerator>, Box::new(Shortest::ONE)] {
         assert!(!m.reads_demand() && m.with_demand(&demand).is_none());
     }
     let unbiased = MonteCarlo::from_options(&opts(&[("biased", 0.0)])).unwrap();

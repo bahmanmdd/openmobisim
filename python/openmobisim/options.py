@@ -31,6 +31,7 @@ __all__ = [
     "ParkingOptions",
     "PenaltyOptions",
     "PriceOptions",
+    "ShortestOptions",
     "SimulationOptions",
     "SraOptions",
     "TransitOptions",
@@ -688,6 +689,32 @@ class LinkPenaltyOptions(_Options):
         max_overlap: float = 0.75,
         max_paths: int = 5,
         penalty: float = 1.5,
+    ) -> None:
+        """Keep the options given that differ from their defaults."""
+        given = dict(locals())
+        del given["self"]
+        self._keep(given)
+
+
+class ShortestOptions(_Options):
+    """``route_method="shortest"``: ``route_options``.
+
+    The least-cost route, and its equal-cost twin where it has one: a route that leaves it once
+    and joins it again and costs at most ``twin_tolerance`` more.
+
+    Attributes:
+        max_paths: count; ``2``.
+        twin_tolerance: —; ``0.001``.
+    """
+
+    _argument: ClassVar[str] = "route_options"
+    _defaults: ClassVar[dict[str, Any]] = {"max_paths": 2, "twin_tolerance": 0.001}
+
+    def __init__(
+        self,
+        *,
+        max_paths: int = 2,
+        twin_tolerance: float = 0.001,
     ) -> None:
         """Keep the options given that differ from their defaults."""
         given = dict(locals())

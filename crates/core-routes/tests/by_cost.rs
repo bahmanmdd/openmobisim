@@ -69,7 +69,7 @@ fn methods() -> Vec<(&'static str, Arc<dyn RouteSetGenerator>)> {
     let montecarlo = MonteCarlo::from_options(&Options::new()).expect("valid");
     vec![
         ("penalty", Arc::new(penalty)),
-        ("shortest", Arc::new(Shortest)),
+        ("shortest", Arc::new(Shortest::ONE)),
         ("montecarlo", Arc::new(montecarlo)),
     ]
 }
@@ -114,7 +114,7 @@ fn an_extra_on_the_shorter_road_makes_the_longer_one_the_least_cost_route() {
 fn two_vectors_give_each_one_s_least_cost_route_ordered_by_the_first() {
     let net = diamond();
     let id = |n: &str| link(&net, n).raw();
-    let shortest: Arc<dyn RouteSetGenerator> = Arc::new(Shortest);
+    let shortest: Arc<dyn RouteSetGenerator> = Arc::new(Shortest::ONE);
     let both = ByCost::new(shortest.clone(), vec![Some(extra(&net, "ab", 60.0)), None]);
     let set = routes(&net, &both);
     assert_eq!(

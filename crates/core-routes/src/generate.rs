@@ -12,7 +12,7 @@
 //! | name | what it does |
 //! |---|---|
 //! | `link_penalty` (`penalty`, the default, [`DEFAULT_METHOD`]) | The **link penalty method** (de la Barra, Pérez & Añez 1993): the least-cost route, then repeatedly the least-cost route after the cost of every link of the route just found is multiplied by a factor, keeping routes that stay within a detour bound and an overlap limit |
-//! | `shortest` | The single least-cost route |
+//! | `shortest` | The least-cost route, and its equal-cost twin where it has one ([`Shortest`]) |
 //! | `simulation` (`montecarlo`) | **Stochastic simulation of link costs** (Ramming 2002): the least-cost route, then the least-cost route under **random link costs biased towards the links likely to congest**: distinct routes that avoid what the demand will jam |
 //! | `doubly_stochastic` (`sampled`) | **Doubly stochastic choice-set generation** (Bovy & Fiorenzo-Catalano 2006–2007): the fastest route, then the cheapest by each user class's **generalised cost** (travel time plus extras per link) when both its coefficients and the link costs are drawn at random: distinct routes that differ in what travellers value |
 //!
@@ -256,7 +256,7 @@ pub fn congestion_propensity(demand: &Demand<'_>) -> Vec<f32> {
         demand.trips.iter().map(|t| t.key).filter(|k| k.origin != k.destination).collect();
     keys.sort_unstable();
     keys.dedup();
-    let shortest = RouteSets::generate(network, demand.turns, &keys, &Shortest);
+    let shortest = RouteSets::generate(network, demand.turns, &keys, &Shortest::ONE);
     // (bin of departure, pair, persons): sorted, so a bin's trips are together and a pair's
     // within it, whatever the order they came in.
     let mut rows: Vec<(u32, u32, u32)> = demand
@@ -345,21 +345,89 @@ fn sort_best_first_by(routes: &mut [Route], cost: impl Fn(&Route) -> f64) {
 
 // --- shortest ---------------------------------------------------------------------
 
-/// The single shortest route.
-#[derive(Clone, Debug, Default)]
-pub struct Shortest;
+/// The least-cost route, and beside it its **equal-cost twin** where it has one (S302).
+///
+/// **Why the twin.** Where two routes cost exactly the same (a grid's blocks, a symmetric
+/// network, two equal ways round an obstacle), a least-cost search keeps one of them, chosen by
+/// the order of the network's links; a set that starts with that one route alone then sends
+/// every traveller of the pair the same way until congestion makes the other faster, and on
+/// roads that never congest it never does: a symmetric network loads asymmetrically. With the
+/// twin in the set, the choice model splits the tie.
+///
+/// **What counts as a twin** ([`Search::shortest_tree_twins`]): a route that differs from the
+/// least-cost one, costs at most `1 + twin_tolerance` times as much (the free-flow time, or the
+/// run's generalised cost when it searches by one), and leaves the least-cost route once and
+/// joins it again (the tree's other way into one of its nodes); of several, the one that leaves
+/// it nearest the origin, where the tree's order of links decided first. Found from the same
+/// search tree, with no second search.
+///
+/// **Options:** `max_paths` (1 to 8, default 2: the route and one twin; 1 is the least-cost
+/// route alone, under the bare descriptor `shortest`) and `twin_tolerance` ([`DEFAULT_TWIN_TOLERANCE`], 0.1 %, uncalibrated: wide enough for
+/// costs equal but for rounding, narrow enough that a route costing a second more on a
+/// ten-minute trip is not a twin; 0 keeps exact ties only).
+///
+/// **Cost:** the search is the one route's; per pair, a look at the links into each node of its
+/// route, and a walk back along the tree for each tie found. A pair with a twin holds two routes,
+/// so the choice and the loading see one more route for it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shortest {
+    /// How many routes per pair at most: the least-cost route and up to `max_paths − 1` twins
+    /// (1 to 8).
+    pub max_paths: usize,
+    /// How much more than the least cost a twin may cost, as a share (0 to 1).
+    pub twin_tolerance: f64,
+}
+
+/// The share of the least cost by which a twin may cost more ([`Shortest::twin_tolerance`]).
+pub const DEFAULT_TWIN_TOLERANCE: f64 = 0.001;
+
+impl Default for Shortest {
+    fn default() -> Self {
+        Self { max_paths: 2, twin_tolerance: DEFAULT_TWIN_TOLERANCE }
+    }
+}
 
 impl Shortest {
-    const OPTIONS: [&'static str; 0] = [];
+    const OPTIONS: [&'static str; 2] = ["max_paths", "twin_tolerance"];
 
-    /// Make the method from its options (it has none).
+    /// The least-cost route alone, without its twin (its descriptor is the bare `shortest`).
+    pub const ONE: Self = Self { max_paths: 1, twin_tolerance: DEFAULT_TWIN_TOLERANCE };
+
+    /// Make the method from its options, defaults for those not given.
     ///
     /// # Errors
     ///
-    /// [`RouteError::UnknownOption`] for any option.
+    /// [`RouteError::UnknownOption`] for a name it does not have, [`RouteError::BadOption`]
+    /// for a value out of range.
     pub fn from_options(options: &Options) -> Result<Self, RouteError> {
         check_known("shortest", options, &Self::OPTIONS)?;
-        Ok(Self)
+        let mut m = Self::default();
+        for (name, &v) in options {
+            let bad = |reason: String| RouteError::BadOption {
+                method: "shortest".to_string(),
+                option: name.clone(),
+                reason,
+            };
+            if name == "max_paths" {
+                if !(v.is_finite() && v.fract() == 0.0 && (1.0..=8.0).contains(&v)) {
+                    return Err(bad(format!("must be a whole number from 1 to 8, got {v}")));
+                }
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "checked: a whole number from 1 to 8"
+                )]
+                {
+                    m.max_paths = v as usize;
+                }
+            } else {
+                if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
+                    return Err(bad(format!("must be from 0 to 1, got {v}")));
+                }
+                m.twin_tolerance = v;
+            }
+        }
+        Ok(m)
     }
 }
 
@@ -368,30 +436,51 @@ impl RouteSetGenerator for Shortest {
         "shortest"
     }
 
+    /// The bare `shortest` for the route alone, its options written otherwise.
     fn descriptor(&self) -> String {
-        "shortest".to_string()
+        if self.max_paths == 1 {
+            "shortest".to_string()
+        } else {
+            format!("shortest;max_paths={};twin_tolerance={}", self.max_paths, self.twin_tolerance)
+        }
     }
 
     fn generate(&self, search: &mut Search<'_>, origin: NodeId, destination: NodeId) -> Vec<Route> {
-        search.shortest(origin, destination).into_iter().collect()
+        if self.max_paths == 1 {
+            return search.shortest(origin, destination).into_iter().collect();
+        }
+        if origin == destination {
+            return search.shortest(origin, destination).into_iter().collect();
+        }
+        self.generate_from(search, origin, &[destination]).pop().unwrap_or_default()
     }
 
     fn searches_trees(&self) -> bool {
         true
     }
 
-    /// One search tree for all of them ([`Search::shortest_tree`]).
+    /// One search tree for all of them ([`Search::shortest_tree`], or
+    /// [`Search::shortest_tree_twins`] with the twins).
     fn generate_from(
         &self,
         search: &mut Search<'_>,
         origin: NodeId,
         destinations: &[NodeId],
     ) -> Vec<Vec<Route>> {
-        search
-            .shortest_tree(origin, destinations, f64::INFINITY)
-            .into_iter()
-            .map(|r| r.into_iter().collect())
-            .collect()
+        if self.max_paths == 1 {
+            return search
+                .shortest_tree(origin, destinations, f64::INFINITY)
+                .into_iter()
+                .map(|r| r.into_iter().collect())
+                .collect();
+        }
+        search.shortest_tree_twins(
+            origin,
+            destinations,
+            f64::INFINITY,
+            self.twin_tolerance,
+            self.max_paths - 1,
+        )
     }
 }
 

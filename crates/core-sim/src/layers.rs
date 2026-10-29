@@ -984,7 +984,7 @@ mod tests {
                 )
             })
             .collect();
-        let plain = RouteSets::generate_in(&ctx, &keys, &Shortest);
+        let plain = RouteSets::generate_in(&ctx, &keys, &Shortest::ONE);
         assert_eq!(shortest.sets(StaticLayer::Bike), Some(&plain));
         // Sampled bike sets leave the walk layer exactly as it was.
         let with_sets = build(&layers, &trips, &sampled(four_draws(), vec![vec![None; 5]]));

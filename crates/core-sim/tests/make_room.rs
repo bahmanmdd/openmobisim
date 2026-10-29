@@ -35,7 +35,7 @@ fn sets() -> RouteSets {
     let turns = TurnTable::build(&network, network.signals());
     let node = |n: &str| network.node_external_ids().typed_id_of::<NodeId>(n).unwrap();
     let key = RouteKey::new(node("o"), node("d"));
-    let base = RouteSets::generate(&network, &turns, &[key], &Shortest);
+    let base = RouteSets::generate(&network, &turns, &[key], &Shortest::ONE);
     assert_eq!(base.route_count(), 1, "the shortest route alone");
     // The other route, added as a route update would (its cost above the shortest's).
     let fast = network.link_external_ids().typed_id_of::<LinkId>("fast").unwrap();
