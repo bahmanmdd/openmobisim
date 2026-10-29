@@ -357,11 +357,12 @@ fn sort_best_first_by(routes: &mut [Route], cost: impl Fn(&Route) -> f64) {
 /// **What counts as a twin** ([`Search::shortest_tree_twins`]): a route that differs from the
 /// least-cost one, costs at most `1 + twin_tolerance` times as much (the free-flow time, or the
 /// run's generalised cost when it searches by one), and leaves the least-cost route once and
-/// joins it again (the tree's other way into one of its nodes); of several, the one sharing the
-/// least with it. Found from the same search tree, with no second search.
+/// joins it again (the tree's other way into one of its nodes); of several, the one that leaves
+/// it nearest the origin, where the tree's order of links decided first. Found from the same
+/// search tree, with no second search.
 ///
-/// **Options:** `max_paths` (1 or 2, default 2: 1 is the least-cost route alone, under
-/// the bare descriptor `shortest`) and `twin_tolerance` ([`DEFAULT_TWIN_TOLERANCE`], 0.1 %, uncalibrated: wide enough for
+/// **Options:** `max_paths` (1 to 8, default 2: the route and one twin; 1 is the least-cost
+/// route alone, under the bare descriptor `shortest`) and `twin_tolerance` ([`DEFAULT_TWIN_TOLERANCE`], 0.1 %, uncalibrated: wide enough for
 /// costs equal but for rounding, narrow enough that a route costing a second more on a
 /// ten-minute trip is not a twin; 0 keeps exact ties only).
 ///
@@ -370,7 +371,8 @@ fn sort_best_first_by(routes: &mut [Route], cost: impl Fn(&Route) -> f64) {
 /// so the choice and the loading see one more route for it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Shortest {
-    /// How many routes per pair: 1 (the least-cost route) or 2 (and its twin, if it has one).
+    /// How many routes per pair at most: the least-cost route and up to `max_paths − 1` twins
+    /// (1 to 8).
     pub max_paths: usize,
     /// How much more than the least cost a twin may cost, as a share (0 to 1).
     pub twin_tolerance: f64,
@@ -407,11 +409,17 @@ impl Shortest {
                 reason,
             };
             if name == "max_paths" {
-                m.max_paths = match v.to_bits() {
-                    b if b == 1.0_f64.to_bits() => 1,
-                    b if b == 2.0_f64.to_bits() => 2,
-                    _ => return Err(bad(format!("must be 1 or 2, got {v}"))),
-                };
+                if !(v.is_finite() && v.fract() == 0.0 && (1.0..=8.0).contains(&v)) {
+                    return Err(bad(format!("must be a whole number from 1 to 8, got {v}")));
+                }
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "checked: a whole number from 1 to 8"
+                )]
+                {
+                    m.max_paths = v as usize;
+                }
             } else {
                 if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
                     return Err(bad(format!("must be from 0 to 1, got {v}")));
@@ -466,7 +474,13 @@ impl RouteSetGenerator for Shortest {
                 .map(|r| r.into_iter().collect())
                 .collect();
         }
-        search.shortest_tree_twins(origin, destinations, f64::INFINITY, self.twin_tolerance)
+        search.shortest_tree_twins(
+            origin,
+            destinations,
+            f64::INFINITY,
+            self.twin_tolerance,
+            self.max_paths - 1,
+        )
     }
 }
 

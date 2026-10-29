@@ -473,7 +473,9 @@ fn methods_are_selected_by_name_and_bad_choices_say_what_is_wrong() {
         generator("shortest", &opts(&[("penalty", 1.5)])).err(),
         Some(RouteError::UnknownOption { .. })
     ));
-    for (option, value) in [("max_paths", 3.0), ("max_paths", 0.0), ("twin_tolerance", -0.1)] {
+    for (option, value) in
+        [("max_paths", 9.0), ("max_paths", 0.0), ("max_paths", 1.5), ("twin_tolerance", -0.1)]
+    {
         assert!(
             matches!(
                 generator("shortest", &opts(&[(option, value)])).err(),
@@ -1784,4 +1786,32 @@ fn grid_twins_are_loop_free_and_within_the_tolerance() {
     // Without signals every block costs the same: each of the 900 pairs not on one row or
     // column (6 × 6 nodes, 25 such destinations per origin) has a twin, the others none.
     assert_eq!(with_twin, 36 * 25, "every pair apart in both directions has a twin");
+}
+
+/// Of several twins the one that leaves the route nearest the origin is kept: on a grid of
+/// equal blocks, from corner to corner, it parts from the route no later than any other twin.
+#[test]
+fn the_twin_leaves_the_route_nearest_the_origin() {
+    let (net, _) = manhattan_grid(4, 200.0, false);
+    let turns = turns_of(&net);
+    let key = RouteKey::new(node(&net, &node_name(0, 0)), node(&net, &node_name(3, 3)));
+    let parts = |a: &[u32], b: &[u32]| a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let two = RouteSets::generate(&net, &turns, &[key], &Shortest::default());
+    let two: Vec<_> = two.routes(0).collect();
+    assert_eq!(two.len(), 2);
+    let more = RouteSets::generate(
+        &net,
+        &turns,
+        &[key],
+        &Shortest { max_paths: 4, ..Shortest::default() },
+    );
+    let more: Vec<_> = more.routes(0).collect();
+    assert!(more.len() > 2 && more.len() <= 4, "more twins with room for them");
+    assert_eq!(more[0].links, two[0].links);
+    let first = parts(two[0].links, two[1].links);
+    for (i, r) in more.iter().enumerate().skip(1) {
+        assert!(parts(more[0].links, r.links) >= first, "no twin parts earlier");
+        assert!(r.cost <= more[0].cost * 1.001 + 1e-3, "every twin within the tolerance");
+        assert!(more[..i].iter().all(|q| q.links != r.links), "each twin once");
+    }
 }
