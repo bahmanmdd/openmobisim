@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from openmobisim import MODES, __version__
+from openmobisim import MODES, SERVICE_MODES, __version__
 from openmobisim.viz._figure import (
     SIZE_CM,
     Page,
@@ -26,15 +26,33 @@ from openmobisim.viz._style import Theme, get_theme
 
 __all__ = ["chart_mode_share"]
 
-#: Bottom to top: the active modes, then transit and its combinations, the car last.
-_STACK = ("walk", "bike", "bike_transit", "transit", "car_transit", "car")
+#: Bottom to top: the active modes, then transit and its combinations, the car last; the shared
+#: bikes beside the own bikes.
+_STACK = (
+    "walk",
+    "bike",
+    "bike_share",
+    "bike_share_transit",
+    "bike_transit",
+    "transit",
+    "car_transit",
+    "car",
+)
 _LABEL = {
     "walk": "walk",
     "bike": "bike",
+    "bike_share": "shared bike",
+    "bike_share_transit": "shared bike+PT",
     "bike_transit": "bike-and-ride",
     "transit": "transit",
     "car_transit": "park-and-ride",
     "car": "car",
+}
+#: The shared bikes' colours (provisional, S302): the bike family's blue-green, deeper for a
+#: shared bike alone and paler for one to transit, per theme.
+_SERVICE_COLOURS = {
+    "paper": {"bike_share": "#036f6b", "bike_share_transit": "#b5e3e0"},
+    "night": {"bike_share": "#2aa39d", "bike_share_transit": "#c8f1ee"},
 }
 #: A bin with fewer trips than this share of the busiest bin's is left out: a handful of
 #: trips would draw a full bar of one mode.
@@ -92,6 +110,7 @@ def chart_mode_share(
 
     th = get_theme(theme)
     colours = dict(zip(MODES, th.modes, strict=True))
+    colours.update(_SERVICE_COLOURS.get(th.name, _SERVICE_COLOURS["paper"]))
     trips = run.trip_modes()
     has_mode = np.array([m is not None for m in trips["mode"]])
     if not has_mode.any():
@@ -149,6 +168,8 @@ def chart_mode_share(
     y = 0.80
     for m in reversed(_STACK):
         day = float(weight[mode == m].sum()) / total
+        if m in SERVICE_MODES and not (mode == m).any():
+            continue  # a service's mode, listed only in a run whose trips took it
         page.fig.add_artist(
             Rectangle(
                 (0.835, y - 0.004),

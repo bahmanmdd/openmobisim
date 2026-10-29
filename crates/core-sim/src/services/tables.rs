@@ -1,17 +1,22 @@
-//! The results tables of a run's services (S302): one row per shared-bike leg of the last
-//! loading ([`ServiceLegTable`], `service_legs.parquet`) and one row per dock and time bin
-//! ([`HubBinTable`], `hub_bins.parquet`), each dock named with its hub in the run's hub set.
+//! The results tables of a run's docked bike service (S302), from its last loading's day:
+//!
+//! - [`BikeShareEventTable`] (`bike_share_events.parquet`): the day's log, one row per event in
+//!   time order, so the sequence of events and each dock's state after each can be followed;
+//! - [`BikeShareTripTable`] (`bike_share_trips.parquet`): one row per trip that chose a shared
+//!   bike: its plan, what happened, the difference, and a result from a fixed list;
+//! - [`BikeShareDockTable`] (`bike_share_docks.parquet`): one row per dock and time bin: its
+//!   state, its flows, and the travellers who met trouble there.
 //!
 //! **Which hub.** The run's hub set ([`RunHubs`]) is built with every service's resources in
 //! service and dock order ([`ServiceSetup::resource_rows`]); [`resource_hubs`] reads each dock's
 //! hub back from it in that order.
 //!
-//! **Cost:** about 150 bytes per leg and 120 per dock and bin while the tables are held.
+//! **Cost:** about 100 bytes per event, 200 per trip and 200 per dock and bin while held.
 
 use openmobisim_core_demand::{Mode, Travellers, Trips};
-use openmobisim_core_graph::hubs::ResourceKind;
 use openmobisim_core_types::ids::EntityId;
 
+use super::docks::{DockEvent, NONE};
 use super::hubs::RunHubs;
 use super::in_run::ShareDay;
 use super::outcome::{FleetOutcome, LegStatus};
@@ -39,109 +44,117 @@ pub fn resource_hubs(setups: &[ServiceSetup], hubs: &RunHubs) -> Vec<Vec<(String
         .collect()
 }
 
-/// One row per service leg of a fleet day, in the order the day played them: what
-/// `service_legs.parquet` holds. Seconds count from midnight; `None` is a time that did not
-/// come (written as null).
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ServiceLegTable {
-    /// The service's name.
-    pub service: Vec<String>,
-    /// The trip's mode (`bike_share`, or `bike_share_transit` for a shared bike to transit).
-    pub mode: Vec<&'static str>,
-    /// The traveller's id, as given.
-    pub traveller_id: Vec<String>,
-    /// The trip's place in its traveller's day, from 0.
-    pub trip_seq: Vec<u32>,
-    /// The people the leg stands for (its traveller's weight): the bikes it takes.
-    pub weight: Vec<u32>,
-    /// The second it asked for a bike at its planned pickup dock.
-    pub requested_s: Vec<Option<f64>>,
-    /// The second a bike was in hand (`None`: none was).
-    pub picked_s: Vec<Option<f64>>,
-    /// The second it reached the leg's end (the trip's destination, or for a shared bike to
-    /// transit the dock at the stop's hub), riding or, after a failed pickup, on foot.
-    pub arrived_s: Vec<Option<f64>>,
-    /// The hub of the pickup dock its choice planned.
-    pub hub_from: Vec<String>,
-    /// The hub of the return dock its choice planned.
-    pub hub_to: Vec<String>,
-    /// The dock the bike was taken from (`None`: none was).
-    pub dock_from: Vec<Option<String>>,
-    /// The dock the bike was returned to (`None`: not returned).
-    pub dock_to: Vec<Option<String>>,
-    /// Seconds waited for a vehicle: 0 for a docked bike, whose traveller walks on from an
-    /// empty dock instead of waiting.
-    pub waited_s: Vec<f64>,
-    /// Seconds walked between docks looking for a bike.
-    pub extra_walk_s: Vec<f64>,
-    /// Docks tried after the planned one, at the pickup and at the return.
-    pub redirections: Vec<u32>,
-    /// The extra seconds at the docks its choice expected.
-    pub expected_dock_s: Vec<f64>,
-    /// The extra seconds it met: its arrival less its arrival had the planned pickup dock had a
-    /// bike and the planned return dock a free slot (`None`: it did not arrive).
-    pub met_dock_s: Vec<Option<f64>>,
-    /// What became of it ([`LegStatus::as_str`]).
-    pub outcome: Vec<&'static str>,
+/// Seconds from midnight as a clock time, `08:03:20` (whole seconds, rounded down; past
+/// midnight `24:…`).
+#[must_use]
+pub fn clock(s: f64) -> String {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a clock")]
+    let s = s.max(0.0).floor() as u64;
+    format!("{:02}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
+}
+
+fn dock_ids(setup: &ServiceSetup) -> &[String] {
+    match setup.parts() {
+        ServiceParts::BikeDocked(docks, _) => &docks.external,
+        ServiceParts::Taxi(..) => &[],
+    }
 }
 
 fn finite(v: f64) -> Option<f64> {
     v.is_finite().then_some(v)
 }
 
-impl ServiceLegTable {
-    /// The legs of `day`, a run's last loading on `setups`, whose trips are `trips` of
-    /// `travellers`, each with its trip's `modes` (by trip index) and its planned docks' hubs
-    /// from `hubs` ([`resource_hubs`]).
-    ///
-    /// # Panics
-    ///
-    /// If a leg's service or dock is not of `setups` or `hubs`.
+/// Who each leg of `day` is: its traveller's id and the trip's place in their day.
+fn who(day: &ShareDay, trips: &Trips, travellers: &Travellers) -> Vec<(String, u32)> {
+    day.legs
+        .iter()
+        .map(|l| {
+            let traveller = trips.traveller(l.trip);
+            (
+                travellers.external_ids().external(traveller.raw()).to_string(),
+                l.trip.raw() - travellers.first_trip(traveller).raw(),
+            )
+        })
+        .collect()
+}
+
+/// The day's log of events, one row per event in time order: `bike_share_events.parquet`.
+/// `None` is a field that does not apply (written as null).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BikeShareEventTable {
+    /// The service's name.
+    pub service: Vec<String>,
+    /// When, in seconds from midnight.
+    pub time_s: Vec<f64>,
+    /// The traveller (`None`: an operator's van).
+    pub traveller_id: Vec<Option<String>>,
+    /// The trip's place in the traveller's day, from 0.
+    pub trip_seq: Vec<Option<u32>>,
+    /// The people the traveller stands for (the bikes they take); a van's event: the bikes
+    /// moved.
+    pub travellers: Vec<u32>,
+    /// What happened ([`super::docks::DockEventKind::as_str`]).
+    pub event: Vec<&'static str>,
+    /// The dock (`None`: the arrival at the destination).
+    pub dock: Vec<Option<String>>,
+    /// The bikes docked there just after.
+    pub bikes_at_dock_after: Vec<Option<u32>>,
+    /// The free slots there just after (0 when bikes stand above capacity).
+    pub free_slots_after: Vec<Option<u32>>,
+    /// The dock walked or ridden on to.
+    pub next_dock: Vec<Option<String>>,
+    /// How far that dock is, in metres as the crow flies.
+    pub to_next_m: Vec<Option<f64>>,
+}
+
+impl BikeShareEventTable {
+    /// The events of `day` on `setups`, whose trips are `trips` of `travellers`; empty if the
+    /// day kept no log.
     #[must_use]
     pub fn new(
         day: &ShareDay,
         setups: &[ServiceSetup],
-        hubs: &[Vec<(String, &'static str)>],
         trips: &Trips,
         travellers: &Travellers,
-        modes: &[Option<Mode>],
     ) -> Self {
         let mut t = Self::default();
-        for (l, o) in day.legs.iter().zip(&day.outcome.legs) {
-            let s = usize::from(l.leg.service);
-            let setup = &setups[s];
-            let dock = |d: Option<u32>| match (setup.parts(), d) {
-                (ServiceParts::BikeDocked(docks, _), Some(d)) => {
-                    Some(docks.external[d as usize].clone())
-                }
-                _ => None,
-            };
-            let traveller = trips.traveller(l.trip);
-            t.service.push(setup.name().to_string());
-            t.mode.push(modes[l.trip.index()].map_or("", Mode::as_str));
-            t.traveller_id.push(travellers.external_ids().external(traveller.raw()).to_string());
-            t.trip_seq.push(l.trip.raw() - travellers.first_trip(traveller).raw());
-            t.weight.push(l.leg.weight);
-            t.requested_s.push(finite(o.requested_s));
-            t.picked_s.push(o.picked.and(finite(o.picked_s)));
-            t.arrived_s.push(finite(o.arrived_s));
-            t.hub_from.push(hubs[s][l.leg.pickup_dock as usize].0.clone());
-            t.hub_to.push(hubs[s][l.leg.return_dock as usize].0.clone());
-            t.dock_from.push(dock(o.picked));
-            t.dock_to.push(dock(o.returned));
-            t.waited_s.push(o.waited_s);
-            t.extra_walk_s.push(o.extra_walk_s);
-            t.redirections.push(o.redirections);
-            t.expected_dock_s.push(l.expected_dock_s);
-            let arrived = matches!(o.status, LegStatus::Served | LegStatus::Failed)
-                && o.arrived_s.is_finite();
-            t.met_dock_s.push(arrived.then(|| o.arrived_s - l.planned_arrival_s(setup)));
-            t.outcome.push(o.status.as_str());
+        let people = who(day, trips, travellers);
+        for (s, log) in day.outcome.dock_log.iter().enumerate() {
+            let Some(log) = log else { continue };
+            let ids = dock_ids(&setups[s]);
+            let id = |d: u32| (d != NONE).then(|| ids[d as usize].clone());
+            for e in log {
+                t.push(setups[s].name(), e, &id, day, &people);
+            }
         }
         t
     }
 
-    /// How many legs.
+    fn push(
+        &mut self,
+        service: &str,
+        e: &DockEvent,
+        id: &dyn Fn(u32) -> Option<String>,
+        day: &ShareDay,
+        people: &[(String, u32)],
+    ) {
+        self.service.push(service.to_string());
+        self.time_s.push(e.t);
+        let leg = (e.leg != NONE).then_some(e.leg as usize);
+        self.traveller_id.push(leg.map(|l| people[l].0.clone()));
+        self.trip_seq.push(leg.map(|l| people[l].1));
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "bikes")]
+        let n = leg.map_or(e.to_next_m as u32, |l| day.legs[l].leg.weight);
+        self.travellers.push(n);
+        self.event.push(e.kind.as_str());
+        self.dock.push(id(e.dock));
+        self.bikes_at_dock_after.push((e.bikes_after != NONE).then_some(e.bikes_after));
+        self.free_slots_after.push((e.free_slots_after != NONE).then_some(e.free_slots_after));
+        self.next_dock.push(id(e.next_dock));
+        self.to_next_m.push(if leg.is_some() { finite(e.to_next_m) } else { None });
+    }
+
+    /// How many events.
     #[must_use]
     pub fn len(&self) -> usize {
         self.service.len()
@@ -154,51 +167,215 @@ impl ServiceLegTable {
     }
 }
 
-/// One row per dock and time bin of a fleet day, service by service, dock by dock (in dock id
-/// order), bin by bin: what `hub_bins.parquet` holds. Counts are of people (bikes).
+/// One row per trip that chose a shared bike, in trip order: `bike_share_trips.parquet`. Seconds
+/// count from midnight; `None` is what did not happen (written as null).
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct HubBinTable {
-    /// The bin's length, in seconds.
-    pub bin_s: u32,
-    /// The bin's start, in seconds from midnight.
-    pub start_s: Vec<u32>,
-    /// The dock's hub in the run's hub set.
-    pub hub_id: Vec<String>,
-    /// The hub's kind (`stop`: a stop's hub the dock joined; `declared`: a hub of its own).
-    pub hub_kind: Vec<&'static str>,
-    /// The resource's kind (`dock`).
-    pub resource_kind: Vec<&'static str>,
-    /// The dock's id.
-    pub resource_id: Vec<String>,
+pub struct BikeShareTripTable {
     /// The service's name.
     pub service: Vec<String>,
-    /// The mean bikes docked over the bin.
-    pub level_mean: Vec<f64>,
-    /// The fewest bikes docked at once in the bin.
-    pub level_min: Vec<f64>,
-    /// The dock's slots.
-    pub capacity: Vec<u32>,
-    /// Seconds of the bin it held no bike.
-    pub empty_s: Vec<f64>,
-    /// Seconds of the bin its slots were all taken.
-    pub full_s: Vec<f64>,
-    /// Bikes taken.
-    pub pickups: Vec<f64>,
-    /// Bikes returned.
-    pub returns: Vec<f64>,
-    /// Pickups that failed here, the last dock tried.
-    pub failed: Vec<f64>,
-    /// Travellers sent on to this dock from another empty or full one.
-    pub redirected_in: Vec<f64>,
-    /// Travellers who found it empty (picking up) or full (returning) and went on.
-    pub redirected_out: Vec<f64>,
-    /// Bikes an operator brought (0 without an operator).
-    pub moved_in: Vec<f64>,
-    /// Bikes an operator took away (0 without an operator).
-    pub moved_out: Vec<f64>,
+    /// The traveller's id, as given.
+    pub traveller_id: Vec<String>,
+    /// The trip's place in its traveller's day, from 0.
+    pub trip_seq: Vec<u32>,
+    /// The people the traveller stands for: the bikes the trip takes.
+    pub travellers: Vec<u32>,
+    /// The trip's mode: `bike_share`, or `bike_share_transit` (a shared bike to a stop's hub,
+    /// transit on).
+    pub mode: Vec<&'static str>,
+    /// The pickup dock its choice planned.
+    pub planned_pickup_dock: Vec<String>,
+    /// The return dock its choice planned.
+    pub planned_return_dock: Vec<String>,
+    /// When it was to reach the planned pickup dock.
+    pub planned_at_pickup_dock_s: Vec<f64>,
+    /// When it was to arrive, had the planned docks had a bike and a free slot.
+    pub planned_arrival_s: Vec<f64>,
+    /// The extra seconds at the docks its choice expected (the docks' expected cost).
+    pub expected_extra_s: Vec<f64>,
+    /// The dock the bike was taken from.
+    pub pickup_dock: Vec<Option<String>>,
+    /// When.
+    pub pickup_s: Vec<Option<f64>>,
+    /// The docks reached to take a bike (the planned one included).
+    pub docks_tried_for_bike: Vec<u32>,
+    /// The dock the bike was left at (above capacity included).
+    pub return_dock: Vec<Option<String>>,
+    /// When.
+    pub return_s: Vec<Option<f64>>,
+    /// The docks reached to return the bike (the planned one included).
+    pub docks_tried_for_slot: Vec<u32>,
+    /// When it reached the leg's end (the destination, or for `bike_share_transit` the dock at
+    /// the stop's hub), riding or on foot.
+    pub arrival_s: Vec<Option<f64>>,
+    /// `arrival_s − planned_arrival_s`: the extra seconds it met at the docks.
+    pub extra_s: Vec<Option<f64>>,
+    /// Metres walked between docks looking for a bike, as the crow flies.
+    pub extra_walk_m: Vec<f64>,
+    /// `extra_s − expected_extra_s`.
+    pub extra_vs_expected_s: Vec<Option<f64>>,
+    /// Docks found without a bike (the last one included when it gave up).
+    pub failed_attempts_for_bike: Vec<u32>,
+    /// Docks found without a free slot (the last one included when it left the bike above
+    /// capacity).
+    pub failed_attempts_for_slot: Vec<u32>,
+    /// What became of it, from a fixed list (see [`trip_result`]).
+    pub result: Vec<&'static str>,
 }
 
-impl HubBinTable {
+/// A trip's result, the first that applies: `not_started` (its request came after the window's
+/// end), `no_bike_walked_to_destination` (no bike at any dock tried: it walked from the last),
+/// `still_riding_at_window_end`, `still_looking_for_bike_at_window_end`, `left_over_capacity`
+/// (no free slot at any dock tried: the bike left above capacity at the last),
+/// `bike_at_another_dock` (a failed attempt, then a bike at another dock),
+/// `returned_at_another_dock` (a full dock, then a slot at another), `as_planned`.
+#[must_use]
+pub fn trip_result(
+    status: LegStatus,
+    picked: Option<u32>,
+    overflow: bool,
+    failed_for_bike: u32,
+    failed_for_slot: u32,
+) -> &'static str {
+    match status {
+        LegStatus::NotRequested => "not_started",
+        LegStatus::Failed => "no_bike_walked_to_destination",
+        LegStatus::Waiting | LegStatus::Riding | LegStatus::Truncated => {
+            if picked.is_some() {
+                "still_riding_at_window_end"
+            } else {
+                "still_looking_for_bike_at_window_end"
+            }
+        }
+        LegStatus::Served if overflow => "left_over_capacity",
+        LegStatus::Served if failed_for_bike > 0 => "bike_at_another_dock",
+        LegStatus::Served if failed_for_slot > 0 => "returned_at_another_dock",
+        LegStatus::Served => "as_planned",
+    }
+}
+
+impl BikeShareTripTable {
+    /// The trips of `day`, a run's last loading on `setups`, whose trips are `trips` of
+    /// `travellers`, each with its trip's mode from `modes` (by trip index).
+    ///
+    /// # Panics
+    ///
+    /// If a leg's service or dock is not of `setups`.
+    #[must_use]
+    pub fn new(
+        day: &ShareDay,
+        setups: &[ServiceSetup],
+        trips: &Trips,
+        travellers: &Travellers,
+        modes: &[Option<Mode>],
+    ) -> Self {
+        let mut t = Self::default();
+        let people = who(day, trips, travellers);
+        for ((l, o), (traveller, seq)) in day.legs.iter().zip(&day.outcome.legs).zip(people) {
+            let setup = &setups[usize::from(l.leg.service)];
+            let ids = dock_ids(setup);
+            let id = |d: Option<u32>| d.map(|d| ids[d as usize].clone());
+            t.service.push(setup.name().to_string());
+            t.traveller_id.push(traveller);
+            t.trip_seq.push(seq);
+            t.travellers.push(l.leg.weight);
+            t.mode.push(modes[l.trip.index()].map_or("", Mode::as_str));
+            t.planned_pickup_dock.push(ids[l.leg.pickup_dock as usize].clone());
+            t.planned_return_dock.push(ids[l.leg.return_dock as usize].clone());
+            t.planned_at_pickup_dock_s.push(l.leg.request_s);
+            let planned = l.planned_arrival_s(setup);
+            t.planned_arrival_s.push(planned);
+            t.expected_extra_s.push(l.expected_dock_s);
+            t.pickup_dock.push(id(o.picked));
+            t.pickup_s.push(o.picked.and(finite(o.picked_s)));
+            t.docks_tried_for_bike.push(o.failed_for_bike + u32::from(o.picked.is_some()));
+            t.return_dock.push(id(o.returned));
+            t.return_s.push(o.returned.and(finite(o.returned_s)));
+            t.docks_tried_for_slot
+                .push(o.failed_for_slot + u32::from(o.returned.is_some() && !o.overflow));
+            let arrived = matches!(o.status, LegStatus::Served | LegStatus::Failed)
+                && o.arrived_s.is_finite();
+            t.arrival_s.push(arrived.then_some(o.arrived_s));
+            let extra = arrived.then_some(o.arrived_s - planned);
+            t.extra_s.push(extra);
+            t.extra_walk_m.push(o.extra_walk_m);
+            t.extra_vs_expected_s.push(extra.map(|e| e - l.expected_dock_s));
+            t.failed_attempts_for_bike.push(o.failed_for_bike);
+            t.failed_attempts_for_slot.push(o.failed_for_slot);
+            t.result.push(trip_result(
+                o.status,
+                o.picked,
+                o.overflow,
+                o.failed_for_bike,
+                o.failed_for_slot,
+            ));
+        }
+        t
+    }
+
+    /// How many trips.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.service.len()
+    }
+
+    /// Whether there is none.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.service.is_empty()
+    }
+}
+
+/// One row per dock and time bin, service by service, dock by dock (in dock id order), bin by
+/// bin: `bike_share_docks.parquet`. Counts of people are the travellers' weights.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BikeShareDockTable {
+    /// The service's name.
+    pub service: Vec<String>,
+    /// The dock's id.
+    pub dock: Vec<String>,
+    /// Its hub in the run's hub set.
+    pub hub_id: Vec<String>,
+    /// The bin's start, in seconds from midnight.
+    pub bin_start_s: Vec<f64>,
+    /// The bin's end (the window's end for the last bin).
+    pub bin_end_s: Vec<f64>,
+    /// The dock's slots.
+    pub slots: Vec<u32>,
+    /// Bikes docked when the bin began.
+    pub bikes_at_start: Vec<f64>,
+    /// Bikes docked when it ended.
+    pub bikes_at_end: Vec<f64>,
+    /// The fewest docked at once in the bin.
+    pub bikes_min: Vec<f64>,
+    /// The time-weighted mean docked over the bin.
+    pub bikes_mean: Vec<f64>,
+    /// Seconds of the bin it held no bike.
+    pub seconds_empty: Vec<f64>,
+    /// Seconds of the bin every slot was taken.
+    pub seconds_full: Vec<f64>,
+    /// Bikes taken.
+    pub bikes_taken: Vec<f64>,
+    /// Bikes returned (above capacity included).
+    pub bikes_returned: Vec<f64>,
+    /// Travellers who found no bike here and went on to another dock.
+    pub people_failed_attempt_no_bike: Vec<f64>,
+    /// Travellers who found no bike here and gave up, walking to their destination.
+    pub people_gave_up_no_bike: Vec<f64>,
+    /// Travellers who found no free slot here and rode on to another dock.
+    pub people_failed_attempt_no_slot: Vec<f64>,
+    /// Travellers who found no free slot here, nor at the docks near, and left the bike here
+    /// above capacity.
+    pub people_left_bike_over_capacity: Vec<f64>,
+    /// Travellers sent here from another dock, empty or full (counted in the bin they were
+    /// sent).
+    pub people_sent_here: Vec<f64>,
+    /// Bikes an operator's van brought (0 without an operator).
+    pub bikes_brought_by_van: Vec<f64>,
+    /// Bikes an operator's van took away (0 without an operator).
+    pub bikes_taken_by_van: Vec<f64>,
+}
+
+impl BikeShareDockTable {
     /// The docks of `setups` over `outcome`'s day, with their hubs from `hubs`
     /// ([`resource_hubs`]). A service without docks adds no row.
     ///
@@ -218,34 +395,37 @@ impl HubBinTable {
             else {
                 continue;
             };
-            t.bin_s = b.bin_s;
-            for (k, (hub, kind)) in hubs[s].iter().enumerate().take(docks.len()) {
+            for (k, (hub, _)) in hubs[s].iter().enumerate().take(docks.len()) {
                 for bin in 0..b.bins {
                     let cell = k * b.bins + bin;
-                    let bin32 = u32::try_from(bin).expect("bins fit u32");
-                    #[allow(
-                        clippy::cast_possible_truncation,
-                        clippy::cast_sign_loss,
-                        reason = "s"
-                    )]
-                    t.start_s.push(b.start_s as u32 + bin32 * b.bin_s);
-                    t.hub_id.push(hub.clone());
-                    t.hub_kind.push(kind);
-                    t.resource_kind.push(ResourceKind::Dock.as_str());
-                    t.resource_id.push(docks.external[k].clone());
+                    #[allow(clippy::cast_precision_loss, reason = "a count of bins")]
+                    let start = b.start_s + f64::from(b.bin_s) * bin as f64;
                     t.service.push(setup.name().to_string());
-                    t.level_mean.push(b.bikes_mean[cell]);
-                    t.level_min.push(b.bikes_min[cell]);
-                    t.capacity.push(docks.capacity[k]);
-                    t.empty_s.push(b.empty_s[cell]);
-                    t.full_s.push(b.full_s[cell]);
-                    t.pickups.push(b.pickups[cell]);
-                    t.returns.push(b.returns[cell]);
-                    t.failed.push(b.failed[cell]);
-                    t.redirected_in.push(b.redirected_in[cell]);
-                    t.redirected_out.push(b.redirected[cell]);
-                    t.moved_in.push(b.moved_in[cell]);
-                    t.moved_out.push(b.moved_out[cell]);
+                    t.dock.push(docks.external[k].clone());
+                    t.hub_id.push(hub.clone());
+                    t.bin_start_s.push(start);
+                    t.bin_end_s.push(start + b.bin_len(bin));
+                    t.slots.push(docks.capacity[k]);
+                    t.bikes_at_start.push(if bin == 0 {
+                        f64::from(docks.start[k])
+                    } else {
+                        b.bikes_end[cell - 1]
+                    });
+                    t.bikes_at_end.push(b.bikes_end[cell]);
+                    t.bikes_min.push(b.bikes_min[cell]);
+                    t.bikes_mean.push(b.bikes_mean[cell]);
+                    t.seconds_empty.push(b.empty_s[cell]);
+                    t.seconds_full.push(b.full_s[cell]);
+                    t.bikes_taken.push(b.pickups[cell]);
+                    t.bikes_returned.push(b.returns[cell]);
+                    t.people_failed_attempt_no_bike
+                        .push(b.redirected[cell] - b.redirected_no_slot[cell]);
+                    t.people_gave_up_no_bike.push(b.failed[cell]);
+                    t.people_failed_attempt_no_slot.push(b.redirected_no_slot[cell]);
+                    t.people_left_bike_over_capacity.push(b.over_capacity[cell]);
+                    t.people_sent_here.push(b.redirected_in[cell]);
+                    t.bikes_brought_by_van.push(b.moved_in[cell]);
+                    t.bikes_taken_by_van.push(b.moved_out[cell]);
                 }
             }
         }
@@ -255,12 +435,12 @@ impl HubBinTable {
     /// How many rows.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.start_s.len()
+        self.service.len()
     }
 
     /// Whether there is none.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.start_s.is_empty()
+        self.service.is_empty()
     }
 }

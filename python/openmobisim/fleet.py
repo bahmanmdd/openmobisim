@@ -72,8 +72,10 @@ def service_bike_docked(
         name: Its name, unique among a day's services.
         options: Its options by name (``walk_max_s``, ``redirect_max``, ``redirect_max_m``,
             ``pickup_s``, ``return_s``, ``ride_factor``, ``start_share``, ``fail_s``, ``bin_s``,
-            ``handling_s``, ``van_bikes``, ``candidates``, ``snap_m``); a name not among them is
-            refused with the list. A fleet day does not read ``candidates`` or ``fail_s``.
+            ``handling_s``, ``van_bikes``, ``candidates``, ``snap_m``, and ``log_events``: 1 to
+            keep the day's log of events, the default, 0 not to, for a very large run, whose
+            results are otherwise the same); a name not among them is refused with the list. A
+            fleet day does not read ``candidates`` or ``fail_s``.
     """
     return Service("bike_docked", name, docks=docks, options=dict(options or {}))
 

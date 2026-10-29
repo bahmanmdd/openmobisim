@@ -1,12 +1,13 @@
-"""Shared bikes in a run: how full the hubs' docks were, and the fleet over the day.
+"""Shared bikes in a run: how full the hubs' docks were, and the service over the day.
 
 :func:`map_hubs` draws each hub's docks at one time of day: a disc sized by the docks' slots,
 coloured by the share of the slots holding a bike, from empty to full, with a ring where the
-docks were empty, or full, for more than half of that time bin. :func:`chart_service` draws a
-service's bikes over the day, docked and ridden, and the pickups that failed.
+docks held no bike, or had no free slot, for more than half of that time bin. :func:`chart_service`
+draws a docked bike service's day: the bikes docked and ridden, the docks without a bike, and the
+travellers who found a dock empty, bin by bin.
 
-Both read the run's last loading (``Run.hub_bins()``, ``Run.hub_places()``,
-``Run.service_legs()``), the day the travellers met after the run settled.
+Both read the run's last loading (``Run.bike_share_docks()``, ``Run.bike_share_dock_places()``,
+``Run.bike_share_trips()``), the day the travellers met after the run settled.
 """
 
 from __future__ import annotations
@@ -33,7 +34,8 @@ from openmobisim.viz._style import ION, Theme, get_theme
 
 __all__ = ["chart_service", "map_hubs"]
 
-#: A hub whose docks were empty (or full) for more than this share of the bin gets a ring.
+#: A hub whose docks held no bike (or no free slot) for more than this share of the bin gets a
+#: ring.
 _RING_SHARE = 0.5
 
 
@@ -63,8 +65,8 @@ def _clock(s: float) -> str:
 
 
 def _service_rows(run: Any, service: str | None, what: str) -> tuple[Any, Any, np.ndarray]:
-    """The run's hub bins and docks, and which bin rows are of ``service`` (all: ``None``)."""
-    bins, places = run.hub_bins(), run.hub_places()
+    """The run's dock bins and docks, and which bin rows are of ``service`` (all: ``None``)."""
+    bins, places = run.bike_share_docks(), run.bike_share_dock_places()
     if bins is None or places is None:
         raise ValueError(f"{what} needs a run of a scenario with a service (services=[...])")
     names = sorted(set(bins["service"]))
@@ -72,15 +74,6 @@ def _service_rows(run: Any, service: str | None, what: str) -> tuple[Any, Any, n
         raise ValueError(f"the run has no service {service!r}; its services: {names}")
     keep = np.array([service is None or s == service for s in bins["service"]], dtype=bool)
     return bins, places, keep
-
-
-def _bin_lengths(run: Any, start: np.ndarray, bin_s: float) -> np.ndarray:
-    """Each bin's length inside the window, in seconds (the last may be shorter)."""
-    try:
-        end = float(run.window["end_s"])
-    except (KeyError, RuntimeError, TypeError):
-        return np.full(len(start), bin_s)
-    return np.clip(end - start, 1.0, bin_s)
 
 
 def map_hubs(
@@ -102,10 +95,11 @@ def map_hubs(
 
     A hub is a place where travellers change vehicle (a stop, or a dock standing alone); its
     docks are added up. Each hub is a disc sized by its docks' slots and coloured by the share
-    of the slots holding a bike over the time bin that holds ``at`` (the bins' mean, from
-    ``Run.hub_bins()``), from empty to full. A ring marks a hub whose docks were empty for more
-    than half of the bin (no bike to take: in the delay spectrum's red), or full (no slot to
-    return one: in its gold). The run's network is drawn quietly underneath.
+    of the slots holding a bike over the time bin that holds ``at`` (the bin's time-weighted
+    mean, ``bikes_mean`` of ``Run.bike_share_docks()``), from empty to full. A ring marks a hub
+    whose docks held no bike for more than half of the bin (no bike to take: in the delay
+    spectrum's red), or had no free slot (no room to return one: in its gold). The run's
+    network is drawn quietly underneath.
 
     Args:
         run: A ``Run`` of a scenario with a docked bike service.
@@ -115,7 +109,8 @@ def map_hubs(
         title: Figure title.
         subtitle: A line under the title; defaults to the time bin and what size, colour and
             rings mean.
-        note: A third, italic line; defaults to the bin's pickups, returns and failed pickups.
+        note: A third, italic line; defaults to the bin's bikes taken and returned and the
+            travellers who found a dock empty.
         size_cm: Figure size, width and height in centimetres.
         dpi: Resolution in dots per inch (25.4 mm), the image-file convention.
         credit: A line of your own before the logo (a name, an institution).
@@ -135,16 +130,15 @@ def map_hubs(
 
     th = get_theme(theme)
     bins, places, keep = _service_rows(run, service, "map_hubs")
-    start = np.asarray(bins["start_s"], dtype=float)
-    bin_s = float(start[1] - start[0]) if len(set(start)) > 1 else 900.0
+    start = np.asarray(bins["bin_start_s"], dtype=float)
+    end = np.asarray(bins["bin_end_s"], dtype=float)
     t = _seconds(at)
-    inside = keep & (start <= t) & (t < start + bin_s)
+    inside = keep & (start <= t) & (t < end)
     if not inside.any():
-        first, last = start[keep].min(), start[keep].max() + bin_s
-        span = f"{_clock(first)}–{_clock(last)}"
+        span = f"{_clock(start[keep].min())}–{_clock(end[keep].max())}"
         raise ValueError(f"at {_clock(t)} is outside the run's bins, {span}")
-    t0 = float(start[inside][0])
-    length = float(_bin_lengths(run, np.array([t0]), bin_s)[0])
+    t0, t1 = float(start[inside][0]), float(end[inside][0])
+    length = max(t1 - t0, 1.0)
 
     rows = np.flatnonzero(inside)
     hub_of_row = [bins["hub_id"][i] for i in rows]
@@ -153,22 +147,19 @@ def map_hubs(
     at_hub = np.array([index[h] for h in hub_of_row])
     n = len(hubs)
 
-    def per_hub(column: str) -> np.ndarray:
-        return np.bincount(at_hub, weights=np.asarray(bins[column], dtype=float)[rows], minlength=n)
+    def per_hub(column: str, weight: np.ndarray | None = None) -> np.ndarray:
+        v = np.asarray(bins[column], dtype=float)[rows]
+        return np.bincount(at_hub, weights=v if weight is None else v * weight, minlength=n)
 
-    capacity = per_hub("capacity")
-    level = per_hub("level_mean")
-    fill = np.clip(level / np.maximum(capacity, 1.0), 0.0, 1.0)
+    slots = per_hub("slots")
+    fill = np.clip(per_hub("bikes_mean") / np.maximum(slots, 1.0), 0.0, 1.0)
     # A hub's share of the bin empty (or full): its docks' shares, weighted by their slots.
-    slots = np.asarray(bins["capacity"], dtype=float)[rows]
-    share_empty = slots * np.asarray(bins["empty_s"])[rows] / length
-    share_full = slots * np.asarray(bins["full_s"])[rows] / length
-    empty = np.bincount(at_hub, weights=share_empty, minlength=n)
-    full = np.bincount(at_hub, weights=share_full, minlength=n)
-    empty, full = empty / np.maximum(capacity, 1.0), full / np.maximum(capacity, 1.0)
+    dock_slots = np.asarray(bins["slots"], dtype=float)[rows]
+    empty = per_hub("seconds_empty", dock_slots) / length / np.maximum(slots, 1.0)
+    full = per_hub("seconds_full", dock_slots) / length / np.maximum(slots, 1.0)
 
     # Where each hub is: its docks' mean position.
-    where = {h: [] for h in hubs}
+    where: dict[str, list[tuple[float, float]]] = {h: [] for h in hubs}
     for h, lon, lat, s in zip(
         places["hub_id"], places["lon"], places["lat"], places["service"], strict=True
     ):
@@ -191,12 +182,12 @@ def map_hubs(
     k = page.k
     if canvas is not None:
         page.ax.add_collection(canvas.base(th.base, 0.3 * k))
-    top = float(capacity.max()) if n else 1.0
-    radius = 1.5 + 4.5 * np.sqrt(capacity / max(top, 1.0))
+    top = float(slots.max()) if n else 1.0
+    radius = 1.5 + 4.5 * np.sqrt(slots / max(top, 1.0))
     ramp = _fill_ramp(th)
     colours = ramp_rgb(ramp, fill)
     ring_empty, ring_full = th.ramp_delay[2], th.ramp_delay[1]
-    order = np.argsort(-capacity, kind="stable")  # the small hubs on top
+    order = np.argsort(-slots, kind="stable")  # the small hubs on top
     page.ax.scatter(
         xy[order, 0],
         xy[order, 1],
@@ -218,22 +209,25 @@ def map_hubs(
         )
 
     n_empty, n_full = int((empty > _RING_SHARE).sum()), int((full > _RING_SHARE).sum())
-    picked = float(np.asarray(bins["pickups"])[rows].sum())
-    returned = float(np.asarray(bins["returns"])[rows].sum())
-    failed = float(np.asarray(bins["failed"])[rows].sum())
-    span = f"{_clock(t0)}–{_clock(t0 + length)}"
+
+    def total(column: str) -> float:
+        return float(np.asarray(bins[column], dtype=float)[rows].sum())
+
+    found_empty = total("people_failed_attempt_no_bike") + total("people_gave_up_no_bike")
+    span = f"{_clock(t0)}–{_clock(t1)}"
     draw_furniture(
         page,
         title=title or f"Shared-bike hubs at {_clock(t)}",
         subtitle=subtitle
         or (
-            f"{n:,} hubs, {int(capacity.sum()):,} slots · bin {span} · size: slots · "
+            f"{n:,} hubs, {int(slots.sum()):,} slots · bin {span} · size: slots · "
             "colour: share of the slots holding a bike (bin mean)"
         ),
         note=note
         or (
-            f"in the bin: {picked:,.0f} bikes taken, {returned:,.0f} returned, "
-            f"{failed:,.0f} pickups failed · {n_empty:,} hubs mostly empty, {n_full:,} mostly full"
+            f"in the bin: {total('bikes_taken'):,.0f} bikes taken, "
+            f"{total('bikes_returned'):,.0f} returned · {found_empty:,.0f} travellers found a "
+            f"dock empty, {total('people_gave_up_no_bike'):,.0f} of them gave up and walked"
         ),
         provenance=f"{__version__} · {run_identity(run)} · {network_source(network)}",
         colour_legend=("bikes docked / slots", ramp, "empty", "full"),
@@ -245,8 +239,8 @@ def map_hubs(
     fig, lx = page.fig, 0.585
     for i, (colour, text) in enumerate(
         (
-            (ring_empty, f"ring: empty over half the bin ({n_empty:,})"),
-            (ring_full, f"ring: full over half the bin ({n_full:,})"),
+            (ring_empty, f"ring: no bike over half the bin ({n_empty:,})"),
+            (ring_full, f"ring: no free slot over half the bin ({n_full:,})"),
         )
     ):
         y0 = 0.950 - i * 0.021
@@ -283,12 +277,15 @@ def chart_service(
     logo: bool = True,
     path: str | None = None,
 ) -> Any:
-    """Draw a docked bike service's bikes over the day, and the pickups that failed.
+    """Draw a docked bike service's day, bin by bin of ``Run.bike_share_docks()``.
 
-    Above, one stacked bar per time bin of ``Run.hub_bins()``: the bikes docked (the docks'
-    mean over the bin, summed) and the bikes ridden (the fleet less those docked; bikes in an
-    operator's van would count here, and a run has no operator yet). Below, the pickups that
-    failed in the bin (travellers who found no bike at the docks they tried and walked on).
+    Three panels over the run's window. **Bikes**: one stacked bar per bin, the bikes docked
+    (the docks' time-weighted means, summed) and the bikes ridden (the fleet less those docked;
+    bikes in an operator's van would count here, and a run has no operator yet). **Docks
+    without a bike**: the mean number of docks empty over the bin (their seconds empty over the
+    bin's length, summed), beside the docks: a fleet with many bikes docked can still have its
+    busy docks empty. **Travellers who found a dock empty** (people): those who went on to
+    another dock, and those who gave up and walked to their destination.
 
     Args:
         run: A ``Run`` of a scenario with a docked bike service.
@@ -296,7 +293,7 @@ def chart_service(
         theme: ``"paper"`` or ``"night"``.
         title: Figure title.
         subtitle: A line under the title; defaults to the fleet, the docks and the bins.
-        note: A third, italic line; defaults to the legs and how many failed.
+        note: A third, italic line; defaults to the trips and how they went.
         size_cm: Figure size, width and height in centimetres.
         dpi: Resolution in dots per inch (25.4 mm), the image-file convention.
         credit: A line of your own before the logo (a name, an institution).
@@ -315,35 +312,48 @@ def chart_service(
 
     th = get_theme(theme)
     bins, places, keep = _service_rows(run, service, "chart_service")
-    start = np.asarray(bins["start_s"], dtype=float)[keep]
+    start = np.asarray(bins["bin_start_s"], dtype=float)[keep]
+    end = np.asarray(bins["bin_end_s"], dtype=float)[keep]
     times, at = np.unique(start, return_inverse=True)
-    bin_s = float(times[1] - times[0]) if len(times) > 1 else 900.0
-    docked = np.bincount(at, weights=np.asarray(bins["level_mean"], dtype=float)[keep])
-    failed = np.bincount(at, weights=np.asarray(bins["failed"], dtype=float)[keep])
+    ends = np.zeros(len(times))
+    np.maximum.at(ends, at, end)
+    length = np.maximum(ends - times, 1.0)
+
+    def per_bin(column: str) -> np.ndarray:
+        return np.bincount(at, weights=np.asarray(bins[column], dtype=float)[keep])
+
+    docked = per_bin("bikes_mean")
+    docks_empty = per_bin("seconds_empty") / length
+    went_on = per_bin("people_failed_attempt_no_bike")
+    gave_up = per_bin("people_gave_up_no_bike")
     mine = np.array([s == service for s in places["service"]], dtype=bool)
     fleet = float(np.asarray(places["bikes_start"], dtype=float)[mine].sum())
     riding = np.maximum(fleet - docked, 0.0)
-    docks = int(mine.sum())
+    n_docks = int(mine.sum())
 
-    x = times / 3600.0
-    width = bin_s / 3600.0
+    x, width = times / 3600.0, length / 3600.0
+    bin_s = float(np.max(ends - times))
     page = Page.new(th, size_cm, dpi, np.array([0.0, 0.0]), np.array([1.0, 1.0]))
     page.fig.delaxes(page.ax)
     k = page.k
     mono = font_mono_name()
-    upper = page.fig.add_axes((0.07, 0.40, 0.74, 0.42), facecolor=th.surface)
-    lower = page.fig.add_axes((0.07, 0.12, 0.74, 0.20), facecolor=th.surface, sharex=upper)
-    c_docked, c_riding, c_failed = th.ramp_volume[1], th.modes[1], th.ramp_delay[2]
-    upper.bar(x, docked, width=width * 0.92, align="edge", color=c_docked, linewidth=0)
-    upper.bar(
-        x, riding, width=width * 0.92, bottom=docked, align="edge", color=c_riding, linewidth=0
-    )
-    lower.bar(x, failed, width=width * 0.92, align="edge", color=c_failed, linewidth=0)
-    first, last = float(np.floor(x.min())), float(np.ceil(x.max() + width))
-    upper.set_xlim(first, last)
-    upper.set_ylim(0, max(fleet, 1.0) * 1.05)
-    lower.set_ylim(0, max(float(failed.max()), 1.0) * 1.15)
-    for ax in (upper, lower):
+    top = page.fig.add_axes((0.07, 0.53, 0.74, 0.30), facecolor=th.surface)
+    middle = page.fig.add_axes((0.07, 0.33, 0.74, 0.14), facecolor=th.surface, sharex=top)
+    low = page.fig.add_axes((0.07, 0.12, 0.74, 0.15), facecolor=th.surface, sharex=top)
+    c_docked, c_riding = th.ramp_volume[1], th.modes[1]
+    c_empty, c_went_on, c_gave_up = th.ink2, th.ramp_delay[1], th.ramp_delay[2]
+    bar = {"align": "edge", "linewidth": 0}
+    top.bar(x, docked, width=width * 0.92, color=c_docked, **bar)
+    top.bar(x, riding, width=width * 0.92, bottom=docked, color=c_riding, **bar)
+    middle.bar(x, docks_empty, width=width * 0.92, color=c_empty, **bar)
+    low.bar(x, went_on, width=width * 0.92, color=c_went_on, **bar)
+    low.bar(x, gave_up, width=width * 0.92, bottom=went_on, color=c_gave_up, **bar)
+    first, last = float(x.min()), float((ends.max()) / 3600.0)
+    top.set_xlim(first, last)
+    top.set_ylim(0, max(fleet, 1.0) * 1.05)
+    middle.set_ylim(0, max(float(docks_empty.max()), 1.0) * 1.15)
+    low.set_ylim(0, max(float((went_on + gave_up).max()), 1.0) * 1.15)
+    for ax in (top, middle, low):
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
         for side in ("left", "bottom"):
@@ -351,21 +361,25 @@ def chart_service(
         ax.tick_params(colors=th.muted, labelsize=9 * k)
         for label in ax.get_yticklabels():
             label.set_fontfamily(mono)
-    upper.tick_params(labelbottom=False)
-    hours = np.arange(first, last + 1)
+    top.tick_params(labelbottom=False)
+    middle.tick_params(labelbottom=False)
+    hours = np.arange(np.ceil(first), np.floor(last) + 1)
     hours = hours[:: max(int(np.ceil(len(hours) / 25)), 1)]
-    lower.set_xticks(hours, [f"{int(h):02d}:00" for h in hours], fontfamily=mono)
+    low.set_xticks(hours, [f"{int(h):02d}:00" for h in hours], fontfamily=mono)
     minutes = f"{bin_s / 60:g}-minute bins"
-    lower.set_xlabel(f"time of day ({minutes})", color=th.ink2, fontsize=10 * k)
-    upper.set_ylabel("bikes", color=th.ink2, fontsize=10 * k)
-    lower.set_ylabel("failed pickups", color=th.ink2, fontsize=10 * k)
+    low.set_xlabel(f"time of day ({minutes}, the run's window)", color=th.ink2, fontsize=10 * k)
+    top.set_ylabel("bikes", color=th.ink2, fontsize=10 * k)
+    middle.set_ylabel(f"docks empty\n(of {n_docks})", color=th.ink2, fontsize=10 * k)
+    low.set_ylabel("travellers", color=th.ink2, fontsize=10 * k)
 
     page.fig.text(0.835, 0.83, "per bin", color=th.ink2, fontsize=10 * k)
     y = 0.80
     for colour, text in (
         (c_riding, "bikes ridden (mean)"),
         (c_docked, "bikes docked (mean)"),
-        (c_failed, "pickups failed (people)"),
+        (c_empty, "docks with no bike (mean)"),
+        (c_went_on, "found a dock empty, went on"),
+        (c_gave_up, "found a dock empty, gave up"),
     ):
         page.fig.add_artist(
             Rectangle(
@@ -375,21 +389,26 @@ def chart_service(
         page.fig.text(0.852, y, text, color=th.ink2, fontsize=9.5 * k, fontfamily=mono)
         y -= 0.034
 
-    legs = run.service_legs()
-    if note is None and legs is not None:
-        mine_legs = np.array([s == service for s in legs["service"]], dtype=bool)
-        w = np.asarray(legs["weight"], dtype=float)[mine_legs]
-        out = np.array(legs["outcome"], dtype=object)[mine_legs]
-        n_failed = float(w[out == "failed"].sum())
-        share = n_failed / w.sum() if w.sum() > 0 else 0.0
+    trips = run.bike_share_trips()
+    if note is None and trips is not None:
+        mine_trips = np.array([s == service for s in trips["service"]], dtype=bool)
+        w = np.asarray(trips["travellers"], dtype=float)[mine_trips]
+        result = np.array(trips["result"], dtype=object)[mine_trips]
+        total = w.sum()
+
+        def share(r: str) -> str:
+            v = float(w[result == r].sum())
+            return f"{v:,.0f} ({100 * v / total:.0f}%)" if total > 0 else "0"
+
         note = (
-            f"{w.sum():,.0f} legs ridden or tried · {n_failed:,.0f} failed ({100 * share:.0f}%), "
-            "walked on from the last dock tried"
+            f"{total:,.0f} travellers chose a shared bike · {share('bike_at_another_dock')} took "
+            f"one at another dock · {share('no_bike_walked_to_destination')} found none and "
+            "walked"
         )
     draw_furniture(
         page,
         title=title or f"Shared bikes over the day: {service}",
-        subtitle=subtitle or f"{fleet:,.0f} bikes at {docks:,} docks · {minutes}",
+        subtitle=subtitle or f"{fleet:,.0f} bikes at {n_docks:,} docks · {minutes}",
         note=note,
         provenance=f"{__version__} · {run_identity(run)}",
         credit=credit,

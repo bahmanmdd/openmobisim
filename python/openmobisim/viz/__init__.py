@@ -17,8 +17,8 @@ so related ones sort and complete together: ``map_*`` draws on a map,
 * :func:`map_interactive` — a run and its route sets as one interactive HTML file:
   zoom levels, time, colour, hover, and route inspection. Needs no matplotlib.
 * :func:`chart_demand_matrix` — the origin-destination matrix as a heat-map.
-* :func:`chart_service` — a docked bike service's bikes over the day, docked and ridden,
-  and the pickups that failed.
+* :func:`chart_service` — a docked bike service's day: bikes docked and ridden, docks
+  without a bike, and the travellers who found a dock empty.
 * :func:`chart_mode_share` — the share of the trips each mode took, by departure
   time.
 * :func:`summary` — a run's summary as one self-contained HTML page: headline

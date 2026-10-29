@@ -26,8 +26,9 @@ RESULTS = (
     "link_bins_walk_path",
     "transit_calls_path",
     "parking_bins_path",
-    "service_legs_path",
-    "hub_bins_path",
+    "bike_share_events_path",
+    "bike_share_trips_path",
+    "bike_share_docks_path",
 )
 
 

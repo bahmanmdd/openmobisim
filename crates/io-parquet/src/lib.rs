@@ -1,6 +1,7 @@
 //! Output writers for openmobisim: `kpis.parquet`, `diagnostics.parquet`, `link_bins.parquet`,
 //! `transit_calls.parquet`, `parking_bins.parquet`, `trip_results.parquet`, `events.parquet`,
-//! `service_legs.parquet`, `hub_bins.parquet` and `manifest.json`.
+//! `bike_share_events.parquet`, `bike_share_trips.parquet`, `bike_share_docks.parquet` and
+//! `manifest.json`.
 //!
 //! | Module | What it writes |
 //! |---|---|
@@ -10,8 +11,7 @@
 //! | [`link_bins`] | Per-link, per-time-bin results, from [`openmobisim_core_sim::RunResult::link_bins`] |
 //! | [`transit_calls`] | Every call of the timetable with its times and passengers, from [`openmobisim_core_sim::RunResult::transit`] |
 //! | [`parking_bins`] | Every parking's occupancy bin by bin, from [`openmobisim_core_sim::RunResult::parking`] |
-//! | [`service_legs`] | A run's shared-bike legs of its last loading, from [`openmobisim_core_sim::services::tables::ServiceLegTable`] (runs with a service only) |
-//! | [`hub_bins`] | Every dock of a run's services bin by bin, with its hub, from [`openmobisim_core_sim::services::tables::HubBinTable`] (runs with a service only) |
+//! | [`bike_share`] | A run's docked bike service over its last loading: its events, its trips, its docks bin by bin (runs with a service only) |
 //! | [`trip_results`] | Every trip and what became of it, from [`openmobisim_core_sim::TripTable`] |
 //! | [`frozen_legs`] | A frozen day's service legs (`legs.parquet`), written and read back |
 //! | [`manifest`] | [`manifest::Manifest`] — the file that makes a run reproducible |
@@ -39,28 +39,26 @@
 
 use core::fmt;
 
+pub mod bike_share;
 pub mod diagnostics;
 pub mod events;
 pub mod frozen_legs;
-pub mod hub_bins;
 mod io;
 pub mod kpis;
 pub mod link_bins;
 pub mod manifest;
 pub mod parking_bins;
-pub mod service_legs;
 pub mod transit_calls;
 pub mod trip_results;
 
+pub use bike_share::{write_bike_share_docks, write_bike_share_events, write_bike_share_trips};
 pub use diagnostics::write_diagnostics;
 pub use events::write_events;
 pub use frozen_legs::{FrozenLegRow, read_frozen_legs, write_frozen_legs};
-pub use hub_bins::write_hub_bins;
 pub use kpis::{write_kpis, write_kpis_csv};
 pub use link_bins::{write_layer_link_bins, write_link_bins};
 pub use manifest::{Manifest, write_manifest};
 pub use parking_bins::write_parking_bins;
-pub use service_legs::write_service_legs;
 pub use transit_calls::write_transit_calls;
 pub use trip_results::write_trip_results;
 

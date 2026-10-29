@@ -14,16 +14,17 @@
 //! `bus_runs_on_roads`, `bus_runs_arrived` and `bus_delay_mean_s` (the mean
 //! delay at the last stop, realised minus scheduled; negative is early).
 //!
-//! **Services**, for a run with one, under `mode` the service's name (`bike_share` unless the
-//! scenario named it otherwise), counted in people (the travellers' weights): per iteration
-//! `service_legs` (the loading's shared-bike legs), `service_mismatch_s` (the mean over the legs
-//! that arrived of `|met − expected|`, the extra seconds at the docks they met less those their
-//! choice expected) and `service_bias_s` (the same mean, signed: positive when the travellers met
-//! more than they expected); for the last loading `service_failed` (legs whose pickup failed and
-//! walked on), `service_failed_share` (of the legs requested), `service_wait_mean_s` (0 for a
-//! docked bike, whose travellers never wait), `service_extra_walk_mean_s` (the mean walk between
-//! docks looking for a bike, over the legs requested) and `service_fleet` (the bikes at the start
-//! of the day). A run without a service has none of these rows.
+//! **A docked bike service**, for a run with one, under `mode` the service's name (`bike_share`
+//! unless the scenario named it otherwise), counted in people (the travellers' weights): per
+//! iteration `bike_share_travellers` (the loading's trips that chose a shared bike),
+//! `mean_expected_minus_met_s` (over the trips that arrived, the mean of the extra seconds at the
+//! docks their choice expected less those they met: negative when they met more than expected)
+//! and `mean_abs_expected_minus_met_s` (the mean of its absolute value); for the last loading,
+//! over the trips that asked for a bike, `share_failed_attempt_no_bike` (found a dock empty and
+//! went on to another, at least once), `share_gave_up_no_bike` (found no bike at any dock tried
+//! and walked to the destination), `share_found_no_slot` (found a return dock full at least
+//! once), and over the trips that arrived `mean_extra_s` (the mean extra seconds met at the
+//! docks). A run without a service has none of these rows.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -255,16 +256,17 @@ fn service_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow>
         s.legs_people.len().checked_sub(1).map(|k| vec![(last, k)]).unwrap_or_default()
     };
     for (i, k) in per {
-        rows.push((i, name(), "service_legs", s.legs_people[k]));
-        for (metric, v) in
-            [("service_mismatch_s", s.mismatch_s[k]), ("service_bias_s", s.bias_s[k])]
-        {
+        rows.push((i, name(), "bike_share_travellers", s.legs_people[k]));
+        for (metric, v) in [
+            ("mean_expected_minus_met_s", -s.bias_s[k]),
+            ("mean_abs_expected_minus_met_s", s.mismatch_s[k]),
+        ] {
             if v.is_finite() {
                 rows.push((i, name(), metric, v));
             }
         }
     }
-    let (mut requested, mut failed, mut waited, mut walked) = (0.0, 0.0, 0.0, 0.0);
+    let (mut requested, mut went_on, mut gave_up, mut no_slot) = (0.0, 0.0, 0.0, 0.0);
     if let Some(day) = &s.last {
         for (l, o) in day.legs.iter().zip(&day.outcome.legs) {
             if o.status == LegStatus::NotRequested {
@@ -272,20 +274,26 @@ fn service_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow>
             }
             let w = f64::from(l.leg.weight);
             requested += w;
-            waited += w * o.waited_s;
-            walked += w * o.extra_walk_s;
-            if o.status == LegStatus::Failed {
-                failed += w;
+            let failed = o.status == LegStatus::Failed;
+            if o.failed_for_bike > u32::from(failed) {
+                went_on += w;
+            }
+            if failed {
+                gave_up += w;
+            }
+            if o.failed_for_slot > 0 {
+                no_slot += w;
             }
         }
+        if requested > 0.0 {
+            rows.push((last, name(), "share_failed_attempt_no_bike", went_on / requested));
+            rows.push((last, name(), "share_gave_up_no_bike", gave_up / requested));
+            rows.push((last, name(), "share_found_no_slot", no_slot / requested));
+        }
+        if day.extra_mean_s.is_finite() {
+            rows.push((last, name(), "mean_extra_s", day.extra_mean_s));
+        }
     }
-    rows.push((last, name(), "service_failed", failed));
-    if requested > 0.0 {
-        rows.push((last, name(), "service_failed_share", failed / requested));
-        rows.push((last, name(), "service_wait_mean_s", waited / requested));
-        rows.push((last, name(), "service_extra_walk_mean_s", walked / requested));
-    }
-    rows.push((last, name(), "service_fleet", s.fleet));
     rows
 }
 

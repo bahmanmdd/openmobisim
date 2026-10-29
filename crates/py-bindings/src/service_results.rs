@@ -1,6 +1,7 @@
-//! A run's services' results (S302): `service_legs.parquet` and `hub_bins.parquet`, and the same
-//! tables for `Run.service_legs()`, `Run.hub_bins()` and `Run.hub_places()`. A run without a
-//! service makes none of them.
+//! A run's docked bike service's results (S302): `bike_share_events.parquet`,
+//! `bike_share_trips.parquet` and `bike_share_docks.parquet`, and the same tables for
+//! `Run.bike_share_events()`, `Run.bike_share_trips()`, `Run.bike_share_docks()`, with
+//! `Run.bike_share_dock_places()` for maps. A run without a service makes none of them.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -12,19 +13,23 @@ use pyo3::types::PyDict;
 use openmobisim_core_demand::{Travellers, Trips};
 use openmobisim_core_sim::services::hubs::RunHubs;
 use openmobisim_core_sim::services::in_run::{ServicesRun, idle};
-use openmobisim_core_sim::services::tables::{HubBinTable, ServiceLegTable, resource_hubs};
+use openmobisim_core_sim::services::tables::{
+    BikeShareDockTable, BikeShareEventTable, BikeShareTripTable, clock, resource_hubs,
+};
 use openmobisim_core_sim::services::{ServiceParts, ServiceSetup};
 use openmobisim_core_sim::{RunDescription, TripTable};
 
 use crate::pipeline::to_value_error;
 
-/// What a run with a service returns of it.
+/// What a run with a service returns of it: each table as columns, and its file's path.
 pub(crate) struct ServiceResults {
-    pub(crate) legs: Py<PyDict>,
-    pub(crate) bins: Py<PyDict>,
+    pub(crate) events: Py<PyDict>,
+    pub(crate) trips: Py<PyDict>,
+    pub(crate) docks: Py<PyDict>,
     pub(crate) places: Py<PyDict>,
-    pub(crate) legs_path: Option<String>,
-    pub(crate) bins_path: Option<String>,
+    pub(crate) events_path: Option<String>,
+    pub(crate) trips_path: Option<String>,
+    pub(crate) docks_path: Option<String>,
 }
 
 /// What the run that had `setups` (its hub set `hubs`, its `services` result) did with them over
@@ -41,30 +46,39 @@ pub(crate) fn service_results(
 ) -> PyResult<ServiceResults> {
     let at = resource_hubs(setups, hubs);
     let day = services.and_then(|s| s.last.as_ref());
-    let legs = day.map_or_else(ServiceLegTable::default, |d| {
-        ServiceLegTable::new(d, setups, &at, trips, travellers, &trip_table.mode)
+    let events = day.map_or_else(BikeShareEventTable::default, |d| {
+        BikeShareEventTable::new(d, setups, trips, travellers)
     });
-    let bins = match day {
-        Some(d) => HubBinTable::new(&d.outcome, setups, &at),
-        None => HubBinTable::new(&idle(setups, window), setups, &at),
+    let trip_rows = day.map_or_else(BikeShareTripTable::default, |d| {
+        BikeShareTripTable::new(d, setups, trips, travellers, &trip_table.mode)
+    });
+    let docks = match day {
+        Some(d) => BikeShareDockTable::new(&d.outcome, setups, &at),
+        None => BikeShareDockTable::new(&idle(setups, window), setups, &at),
     };
-    let (mut legs_path, mut bins_path) = (None, None);
+    let (mut events_path, mut trips_path, mut docks_path) = (None, None, None);
     if !minimal {
-        let path = dir.join("service_legs.parquet");
-        openmobisim_io_parquet::write_service_legs(&path, run_id, &legs, description)
+        let path = dir.join("bike_share_events.parquet");
+        openmobisim_io_parquet::write_bike_share_events(&path, run_id, &events, description)
             .map_err(to_value_error)?;
-        legs_path = Some(path.to_string_lossy().into_owned());
-        let path = dir.join("hub_bins.parquet");
-        openmobisim_io_parquet::write_hub_bins(&path, run_id, &bins, description)
+        events_path = Some(path.to_string_lossy().into_owned());
+        let path = dir.join("bike_share_trips.parquet");
+        openmobisim_io_parquet::write_bike_share_trips(&path, run_id, &trip_rows, description)
             .map_err(to_value_error)?;
-        bins_path = Some(path.to_string_lossy().into_owned());
+        trips_path = Some(path.to_string_lossy().into_owned());
+        let path = dir.join("bike_share_docks.parquet");
+        openmobisim_io_parquet::write_bike_share_docks(&path, run_id, &docks, description)
+            .map_err(to_value_error)?;
+        docks_path = Some(path.to_string_lossy().into_owned());
     }
     Ok(ServiceResults {
-        legs: legs_dict(py, &legs)?.unbind(),
-        bins: bins_dict(py, &bins)?.unbind(),
+        events: events_dict(py, &events)?.unbind(),
+        trips: trips_dict(py, &trip_rows)?.unbind(),
+        docks: docks_dict(py, &docks)?.unbind(),
         places: places_dict(py, setups, &at)?.unbind(),
-        legs_path,
-        bins_path,
+        events_path,
+        trips_path,
+        docks_path,
     })
 }
 
@@ -72,63 +86,89 @@ fn nan(v: &[Option<f64>]) -> Vec<f64> {
     v.iter().map(|x| x.unwrap_or(f64::NAN)).collect()
 }
 
-/// `service_legs.parquet`'s columns after `run_id`; a time that did not come is `NaN`, a dock
-/// not used `None`.
-fn legs_dict<'py>(py: Python<'py>, t: &ServiceLegTable) -> PyResult<Bound<'py, PyDict>> {
+/// `bike_share_events.parquet`'s columns after `run_id`; a number that does not apply is
+/// `NaN` (a count: `None` in a list), a text `None`.
+fn events_dict<'py>(py: Python<'py>, t: &BikeShareEventTable) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
     d.set_item("service", t.service.clone())?;
-    d.set_item("mode", t.mode.clone())?;
+    d.set_item("time_s", t.time_s.clone().into_pyarray(py))?;
+    d.set_item("time", t.time_s.iter().map(|&s| clock(s)).collect::<Vec<_>>())?;
     d.set_item("traveller_id", t.traveller_id.clone())?;
-    d.set_item("trip_seq", t.trip_seq.clone().into_pyarray(py))?;
-    d.set_item("weight", t.weight.clone().into_pyarray(py))?;
-    d.set_item("requested_s", nan(&t.requested_s).into_pyarray(py))?;
-    d.set_item("picked_s", nan(&t.picked_s).into_pyarray(py))?;
-    d.set_item("arrived_s", nan(&t.arrived_s).into_pyarray(py))?;
-    d.set_item("hub_from", t.hub_from.clone())?;
-    d.set_item("hub_to", t.hub_to.clone())?;
-    d.set_item("dock_from", t.dock_from.clone())?;
-    d.set_item("dock_to", t.dock_to.clone())?;
-    d.set_item("waited_s", t.waited_s.clone().into_pyarray(py))?;
-    d.set_item("extra_walk_s", t.extra_walk_s.clone().into_pyarray(py))?;
-    d.set_item("redirections", t.redirections.clone().into_pyarray(py))?;
-    d.set_item("expected_dock_s", t.expected_dock_s.clone().into_pyarray(py))?;
-    d.set_item("met_dock_s", nan(&t.met_dock_s).into_pyarray(py))?;
-    d.set_item("outcome", t.outcome.clone())?;
+    d.set_item("trip_seq", t.trip_seq.clone())?;
+    d.set_item("travellers", t.travellers.clone().into_pyarray(py))?;
+    d.set_item("event", t.event.clone())?;
+    d.set_item("dock", t.dock.clone())?;
+    d.set_item("bikes_at_dock_after", t.bikes_at_dock_after.clone())?;
+    d.set_item("free_slots_after", t.free_slots_after.clone())?;
+    d.set_item("next_dock", t.next_dock.clone())?;
+    d.set_item("to_next_m", nan(&t.to_next_m).into_pyarray(py))?;
     Ok(d)
 }
 
-/// `hub_bins.parquet`'s columns after `run_id`.
-fn bins_dict<'py>(py: Python<'py>, t: &HubBinTable) -> PyResult<Bound<'py, PyDict>> {
+/// `bike_share_trips.parquet`'s columns after `run_id`; what did not happen is `NaN` (a time)
+/// or `None` (a dock).
+fn trips_dict<'py>(py: Python<'py>, t: &BikeShareTripTable) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
-    let bin_s = t.bin_s.max(1);
-    d.set_item("bin", t.start_s.iter().map(|s| s / bin_s).collect::<Vec<_>>().into_pyarray(py))?;
-    d.set_item("start_s", t.start_s.clone().into_pyarray(py))?;
-    d.set_item("hub_id", t.hub_id.clone())?;
-    d.set_item("hub_kind", t.hub_kind.clone())?;
-    d.set_item("resource_kind", t.resource_kind.clone())?;
-    d.set_item("resource_id", t.resource_id.clone())?;
     d.set_item("service", t.service.clone())?;
-    for (name, v) in [("level_mean", &t.level_mean), ("level_min", &t.level_min)] {
-        d.set_item(name, v.clone().into_pyarray(py))?;
-    }
-    d.set_item("capacity", t.capacity.clone().into_pyarray(py))?;
+    d.set_item("traveller_id", t.traveller_id.clone())?;
+    d.set_item("trip_seq", t.trip_seq.clone().into_pyarray(py))?;
+    d.set_item("travellers", t.travellers.clone().into_pyarray(py))?;
+    d.set_item("mode", t.mode.clone())?;
+    d.set_item("planned_pickup_dock", t.planned_pickup_dock.clone())?;
+    d.set_item("planned_return_dock", t.planned_return_dock.clone())?;
+    d.set_item("planned_at_pickup_dock_s", t.planned_at_pickup_dock_s.clone().into_pyarray(py))?;
+    d.set_item("planned_arrival_s", t.planned_arrival_s.clone().into_pyarray(py))?;
+    d.set_item("expected_extra_s", t.expected_extra_s.clone().into_pyarray(py))?;
+    d.set_item("pickup_dock", t.pickup_dock.clone())?;
+    d.set_item("pickup_s", nan(&t.pickup_s).into_pyarray(py))?;
+    d.set_item("docks_tried_for_bike", t.docks_tried_for_bike.clone().into_pyarray(py))?;
+    d.set_item("return_dock", t.return_dock.clone())?;
+    d.set_item("return_s", nan(&t.return_s).into_pyarray(py))?;
+    d.set_item("docks_tried_for_slot", t.docks_tried_for_slot.clone().into_pyarray(py))?;
+    d.set_item("arrival_s", nan(&t.arrival_s).into_pyarray(py))?;
+    d.set_item("extra_s", nan(&t.extra_s).into_pyarray(py))?;
+    d.set_item("extra_walk_m", t.extra_walk_m.clone().into_pyarray(py))?;
+    d.set_item("extra_vs_expected_s", nan(&t.extra_vs_expected_s).into_pyarray(py))?;
+    d.set_item("failed_attempts_for_bike", t.failed_attempts_for_bike.clone().into_pyarray(py))?;
+    d.set_item("failed_attempts_for_slot", t.failed_attempts_for_slot.clone().into_pyarray(py))?;
+    d.set_item("result", t.result.clone())?;
+    Ok(d)
+}
+
+/// `bike_share_docks.parquet`'s columns after `run_id`.
+fn docks_dict<'py>(py: Python<'py>, t: &BikeShareDockTable) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("service", t.service.clone())?;
+    d.set_item("dock", t.dock.clone())?;
+    d.set_item("hub_id", t.hub_id.clone())?;
+    d.set_item("bin_start", t.bin_start_s.iter().map(|&s| clock(s)).collect::<Vec<_>>())?;
+    d.set_item("bin_end", t.bin_end_s.iter().map(|&s| clock(s)).collect::<Vec<_>>())?;
+    d.set_item("bin_start_s", t.bin_start_s.clone().into_pyarray(py))?;
+    d.set_item("bin_end_s", t.bin_end_s.clone().into_pyarray(py))?;
+    d.set_item("slots", t.slots.clone().into_pyarray(py))?;
     for (name, v) in [
-        ("empty_s", &t.empty_s),
-        ("full_s", &t.full_s),
-        ("pickups", &t.pickups),
-        ("returns", &t.returns),
-        ("failed", &t.failed),
-        ("redirected_in", &t.redirected_in),
-        ("redirected_out", &t.redirected_out),
-        ("moved_in", &t.moved_in),
-        ("moved_out", &t.moved_out),
+        ("bikes_at_start", &t.bikes_at_start),
+        ("bikes_at_end", &t.bikes_at_end),
+        ("bikes_min", &t.bikes_min),
+        ("bikes_mean", &t.bikes_mean),
+        ("seconds_empty", &t.seconds_empty),
+        ("seconds_full", &t.seconds_full),
+        ("bikes_taken", &t.bikes_taken),
+        ("bikes_returned", &t.bikes_returned),
+        ("people_failed_attempt_no_bike", &t.people_failed_attempt_no_bike),
+        ("people_gave_up_no_bike", &t.people_gave_up_no_bike),
+        ("people_failed_attempt_no_slot", &t.people_failed_attempt_no_slot),
+        ("people_left_bike_over_capacity", &t.people_left_bike_over_capacity),
+        ("people_sent_here", &t.people_sent_here),
+        ("bikes_brought_by_van", &t.bikes_brought_by_van),
+        ("bikes_taken_by_van", &t.bikes_taken_by_van),
     ] {
         d.set_item(name, v.clone().into_pyarray(py))?;
     }
     Ok(d)
 }
 
-/// Each dock of the run's services, for maps: `resource_id, hub_id, hub_kind, service, capacity,
+/// Each dock of the run's services, for maps: `dock, hub_id, hub_kind, service, slots,
 /// bikes_start, lon, lat`.
 fn places_dict<'py>(
     py: Python<'py>,
@@ -152,11 +192,11 @@ fn places_dict<'py>(
         }
     }
     let d = PyDict::new(py);
-    d.set_item("resource_id", id)?;
+    d.set_item("dock", id)?;
     d.set_item("hub_id", hub)?;
     d.set_item("hub_kind", kind)?;
     d.set_item("service", service)?;
-    d.set_item("capacity", capacity.into_pyarray(py))?;
+    d.set_item("slots", capacity.into_pyarray(py))?;
     d.set_item("bikes_start", start.into_pyarray(py))?;
     d.set_item("lon", lon.into_pyarray(py))?;
     d.set_item("lat", lat.into_pyarray(py))?;

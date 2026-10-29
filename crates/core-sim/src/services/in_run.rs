@@ -73,6 +73,10 @@ pub struct ShareDay {
     pub mismatch_s: f64,
     /// The signed mean per leg, realised less expected, in seconds; `NaN` likewise.
     pub bias_s: f64,
+    /// The mean extra seconds the legs that arrived met at the docks (their arrival less their
+    /// arrival had the planned docks had a bike and a free slot), weighted by people; `NaN`
+    /// likewise.
+    pub extra_mean_s: f64,
     /// The engine's wall-clock seconds.
     pub engine_s: f64,
 }
@@ -225,24 +229,29 @@ pub fn play(
         }
     }
     let realised = DockCosts::from_bins(setup, bins).with_legs(&met_pickup, &met_return);
-    let (mut sum, mut signed, mut people) = (0.0, 0.0, 0.0);
+    let (mut sum, mut signed, mut people, mut met) = (0.0, 0.0, 0.0, 0.0);
     for (l, o) in legs.iter().zip(&outcome.legs) {
         if matches!(o.status, LegStatus::Served | LegStatus::Failed) && o.arrived_s.is_finite() {
             let w = f64::from(l.leg.weight);
             let extra = o.arrived_s - l.planned_arrival_s(setup);
             sum += w * (extra - l.expected_dock_s).abs();
             signed += w * (extra - l.expected_dock_s);
+            met += w * extra;
             people += w;
         }
     }
-    let (mismatch_s, bias_s) =
-        if people > 0.0 { (sum / people, signed / people) } else { (f64::NAN, f64::NAN) };
+    let (mismatch_s, bias_s, extra_mean_s) = if people > 0.0 {
+        (sum / people, signed / people, met / people)
+    } else {
+        (f64::NAN, f64::NAN, f64::NAN)
+    };
     ShareDay {
         legs,
         outcome,
         realised,
         mismatch_s,
         bias_s,
+        extra_mean_s,
         engine_s: started.elapsed().as_secs_f64(),
     }
 }
