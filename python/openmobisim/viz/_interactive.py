@@ -25,7 +25,7 @@ from openmobisim._paths import show_path
 from openmobisim.network import LINK_CLASSES
 from openmobisim.scenario import LEVEL_NAMES
 from openmobisim.viz import _geometry as geo
-from openmobisim.viz._canvas import ROAD_BAND_PT, ROAD_TIER_WIDTHS, road_tier
+from openmobisim.viz._canvas import ROAD_CASING_PT, ROAD_TIER_WIDTHS, road_tier
 from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._interactive_page import PAGE_CSS, PAGE_HTML, PAGE_JS
 from openmobisim.viz._link import (
@@ -390,7 +390,7 @@ def map_interactive(
         "note": note, "credit": credit, "logo": bool(logo),
         "provenance": provenance, "source": source, "n_spillback": n_spill,
         "arrays": blob.table, "tokens": _tokens(), "layers": layers,
-        "road_tiers": list(ROAD_TIER_WIDTHS), "road_bands": list(ROAD_BAND_PT),
+        "road_tiers": list(ROAD_TIER_WIDTHS), "road_casings": list(ROAD_CASING_PT),
     }  # fmt: skip
     body = len(payload) + len(PAGE_JS) + len(PAGE_CSS) + len(PAGE_HTML)
     meta["size_note"] = f"{n_links:,} links · {body / 1e6:.1f} MB"
