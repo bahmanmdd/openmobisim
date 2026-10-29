@@ -450,6 +450,7 @@ pub(crate) fn no_alternative<'py>(
     none: &[NoAlternative],
     trips: &Trips,
     travellers: &Travellers,
+    modes: &[Mode],
 ) -> PyResult<Bound<'py, PyDict>> {
     let n = none.len();
     let (mut who, mut class, mut seq, mut departure, mut weight) = (
@@ -499,8 +500,11 @@ pub(crate) fn no_alternative<'py>(
     d.set_item("destination_lat", dlat.into_pyarray(py))?;
     d.set_item("mode_stated", stated)?;
     d.set_item("fallback_car", fallback)?;
+    // The modes the run lists alone (S302): a service's mode only in a run with a service.
     for (mode, column) in Mode::ALL.iter().zip(reasons) {
-        d.set_item(format!("reason_{}", mode.as_str()), column)?;
+        if modes.contains(mode) {
+            d.set_item(format!("reason_{}", mode.as_str()), column)?;
+        }
     }
     Ok(d)
 }

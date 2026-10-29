@@ -11,6 +11,7 @@
 //! | [`hubs`] | [`hubs::RunHubs`] — the run's one hub set: stops, parkings, docks, chargers and stands, joined by hub id or by distance |
 //! | [`engine`] | [`engine::FleetEngine`] — the services' day: legs, vehicles and docks, events in time order |
 //! | [`outcome`] | [`outcome::FleetOutcome`] — what became of each leg, and the day's counts |
+//! | [`in_run`] | [`in_run::play`] — a run's shared-bike trips of a loading on the engine, after it; [`in_run::ServicesRun`] |
 //! | [`frozen`] | [`frozen::plan_legs`], [`frozen::FrozenLegs`] — a fleet day without a run: trips as a table, legs planned by a fixed rule |
 //! | [`world`] | [`world::FrozenWorld`] — a fleet day's city, owned, lending the engine its roads one call at a time |
 //! | [`roads`] | [`roads::RoadTimes`], [`roads::FrozenRoads`], [`roads::FrozenPaths`] — a day's road times and the drives, rides and walks on them, without a run |
@@ -31,6 +32,7 @@ pub mod docks;
 pub mod engine;
 pub mod frozen;
 pub mod hubs;
+pub mod in_run;
 pub mod outcome;
 pub mod policy;
 pub mod queries;

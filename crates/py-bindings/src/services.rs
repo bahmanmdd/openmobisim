@@ -240,6 +240,35 @@ pub(crate) type TripTuple = (String, u16, u32, f64, f64, f64, f64, f64);
 /// Road times: `(bin_s, rows of (link index, bin, seconds), network fingerprint)`.
 pub(crate) type RoadTuple = (f64, Vec<(u32, u32, f64)>, Option<String>);
 
+/// The services `services` (as `fleet.py` hands them) snapped to a run's walk and bike layers
+/// (S302): docked bikes need both, which the run then has.
+pub(crate) fn setups_on(
+    services: &[ServiceTuple<'_>],
+    layers: &openmobisim_core_sim::StaticLayers,
+    net: &Arc<openmobisim_core_graph::network::RoadNetwork>,
+) -> PyResult<Vec<ServiceSetup>> {
+    let bad = |e: String| PyValueError::new_err(e);
+    let mut out = Vec::with_capacity(services.len());
+    for (kind, name, docks, _, _, options) in services {
+        if kind != "bike_docked" {
+            return Err(bad(format!(
+                "{name}: a run takes docked bike services for now, not {kind:?} (taxis in a run \
+                 come later; a frozen day plays them: fleet_day)"
+            )));
+        }
+        let docks = docks.as_ref().ok_or_else(|| bad(format!("{name}: no docks")))?;
+        let d = DockDefaults::from_options(options).map_err(|e| bad(e.to_string()))?;
+        let (Some(walk), Some(bike)) = (layers.walk.as_ref(), layers.bike.as_ref()) else {
+            return Err(bad(format!("{name}: docks need the walk and bike layers")));
+        };
+        out.push(
+            ServiceSetup::bike_docked(name, &docks.get().rows, walk, bike, Some(net), d)
+                .map_err(|e| bad(e.to_string()))?,
+        );
+    }
+    Ok(out)
+}
+
 /// A frozen day's inputs, built once: the services, the city, the legs planned from the trips.
 pub(crate) struct Frozen {
     pub(crate) setups: Arc<Vec<ServiceSetup>>,

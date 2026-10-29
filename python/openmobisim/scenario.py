@@ -23,7 +23,7 @@ from typing import Any, TypeVar, cast
 from openmobisim import _core, choice
 from openmobisim._log import logger
 from openmobisim.demand import _class_table, _trips_checked, _zone_points, demand_read_trips
-from openmobisim.run import MODES, Run
+from openmobisim.run import MODES, SERVICE_MODES, Run
 from openmobisim.table import Table
 
 __all__ = [
@@ -103,7 +103,12 @@ def _clock_s(value: str | float, what: str) -> int:
 
 
 def _check_level(
-    flow_level: int, equilibration: str, transit: Any, parkings: Any, modes: list[str] | None
+    flow_level: int,
+    equilibration: str,
+    transit: Any,
+    parkings: Any,
+    modes: list[str] | None,
+    services: Any = None,
 ) -> None:
     """Refuse what a flow level cannot run (S294).
 
@@ -127,6 +132,8 @@ def _check_level(
         if transit is not None
         else "parkings (park-and-ride, bike-and-ride)"
         if parkings is not None
+        else "a shared-mobility service (services)"
+        if services
         else "mode choice (modes, or classes that name more than one)"
         if modes and len(set(modes)) > 1
         else None
@@ -137,6 +144,26 @@ def _check_level(
             f"bike and walk trips on their layers; it cannot simulate {what}. Run it at "
             "flow_level 0, 2, 3 or 4."
         )
+
+
+def _services_checked(services: Any) -> tuple[Any, ...] | None:
+    """A scenario's ``services``, checked: one docked bike service for now; ``None`` for none."""
+    if services is None:
+        return None
+    from openmobisim.fleet import Service
+
+    services = tuple(services)
+    for s in services:
+        if not isinstance(s, Service):
+            raise ValueError(f"services: give service_bike_docked(...) objects, got {s!r}")
+        if s.kind != "bike_docked":
+            raise ValueError(
+                f"services: {s.name!r} is a {s.kind} service; a run takes docked bike services "
+                "for now (fleet_day plays taxis on a day without a run)"
+            )
+    if len(services) > 1:
+        raise ValueError(f"services: one docked bike service per run for now, got {len(services)}")
+    return services or None
 
 
 def _window(window: Any) -> tuple[int | None, int | None]:
@@ -181,7 +208,9 @@ def _renamed(argument: str, value: str | None, renamed: dict[str, str]) -> None:
         )
 
 
-def _check_modes_can_run(modes: list[str], has_transit: bool, has_parkings: bool) -> None:
+def _check_modes_can_run(
+    modes: list[str], has_transit: bool, has_parkings: bool, has_docks: bool = False
+) -> None:
     """Refuse a mode asked for in ``modes=`` that the run has nothing to simulate it with.
 
     A mode left out silently would read as a result (its share is 0); the error names the mode and
@@ -192,6 +221,7 @@ def _check_modes_can_run(modes: list[str], has_transit: bool, has_parkings: bool
         "transit": ("transit=…", has_transit),
         "car_transit": ("transit=… and parkings=…", has_transit and has_parkings),
         "bike_transit": ("transit=… and parkings=…", has_transit and has_parkings),
+        "bike_share": ("services=[service_bike_docked(…)]", has_docks),
     }
     for mode in modes:
         what, present = needs.get(mode, ("", True))
@@ -413,6 +443,7 @@ class Scenario:
         transit_options: dict[str, float] | None = None,
         parkings: _core.Parkings | None = None,
         parking_options: dict[str, float] | None = None,
+        services: list[Any] | tuple[Any, ...] | None = None,
         modes: tuple[str, ...] | list[str] | None = None,
         mode_options: dict[str, float] | None = None,
         loading_options: dict[str, float] | None = None,
@@ -493,10 +524,17 @@ class Scenario:
         } or None
         self._class_options = {name: c["betas"] for name, c in table.items() if c["betas"]} or None
         self._class_limits = {name: c["limits"] for name, c in table.items() if c["limits"]} or None
+        # The classes without shared bikes (S302): ``has_bike_share`` 0.
+        self._class_no_bike_share = [
+            name for name, c in table.items() if not c.get("has_bike_share", True)
+        ] or None
+        self._services = _services_checked(services)
+        # A service's mode is a mode of the run only with the service (S302).
+        known = MODES + SERVICE_MODES if self._services else MODES
         modes_asked = modes is not None
         if modes is None and self._class_modes:
             # The classes say which modes their travellers may use: the run offers them all.
-            modes = [m for m in MODES if any(m in ms for ms in self._class_modes.values())]
+            modes = [m for m in known if any(m in ms for ms in self._class_modes.values())]
         if isinstance(choice_model, str) and choice_model in choice._REGISTERED:
             # A Python model registered by name (C5): built from the options, which it reads
             # (they reach the fingerprint through its descriptor, not the core's options).
@@ -558,11 +596,18 @@ class Scenario:
         self._parking_options = parking_options
         if modes is not None:
             modes = list(modes)
-            unknown = [m for m in modes if m not in MODES]
+            unknown = [m for m in modes if m not in MODES + SERVICE_MODES]
             if unknown:
-                raise ValueError(f"modes must be among {MODES}, got {unknown}")
+                raise ValueError(f"modes must be among {MODES + SERVICE_MODES}, got {unknown}")
             if modes_asked:
-                _check_modes_can_run(modes, transit is not None, parkings is not None)
+                _check_modes_can_run(
+                    modes, transit is not None, parkings is not None, self._services is not None
+                )
+            if "bike_share" in modes and len(set(modes)) == 1:
+                raise ValueError(
+                    'modes: "bike_share" is chosen among other modes; give at least one more '
+                    "(a shared bike is offered as a choice, not as the only mode)"
+                )
         self._modes = modes
         self._mode_options = mode_options
         # ``reroute`` unsaid is the core's rule: on at levels 3 and 4, off at the point queue,
@@ -581,7 +626,7 @@ class Scenario:
         # The zones' points (S294): read at flow level 1 alone, which moves every trip end to
         # its zone's point before it routes; checked whatever the level.
         self._zones = _zone_points(zones) if zones is not None else None
-        _check_level(flow_level, equilibration, transit, parkings, modes)
+        _check_level(flow_level, equilibration, transit, parkings, modes, self._services)
 
     @classmethod
     @_run_arguments_refused
@@ -616,6 +661,7 @@ class Scenario:
         transit_options: dict[str, float] | None = None,
         parkings: _core.Parkings | None = None,
         parking_options: dict[str, float] | None = None,
+        services: list[Any] | tuple[Any, ...] | None = None,
         modes: tuple[str, ...] | list[str] | None = None,
         mode_options: dict[str, float] | None = None,
         loading_options: dict[str, float] | None = None,
@@ -664,7 +710,8 @@ class Scenario:
                 no pass; **a traveller with a transit pass pays no fare**, whatever the
                 ``price_options`` — the pass is money, never access: who may take transit is said
                 by the modes, so give ``has_transit_pass`` as 1 for a class that holds one; its
-                own price is not counted) and any
+                own price is not counted), ``has_bike_share`` (0: never offered a shared bike,
+                ``services``; unsaid: offered) and any
                 ``beta_*`` coefficient of the choice model (its own mode
                 constants, ``beta_mode_bike`` …, or its own value of time, ``beta_time_min``;
                 unsaid: ``choice_options``'), for ``"logit"`` and ``"nested_logit"``, and its own
@@ -1068,6 +1115,20 @@ class Scenario:
                 takes longer (``parking_options``), the overflow is counted
                 (``Run.parking_bins()``), and the choice sees how full each parking was in
                 the iterations so far.
+            services: Shared-mobility services: a docked bike service,
+                ``service_bike_docked(docks, options=...)`` (one per run for now). With
+                ``"bike_share"`` among ``modes``, a trip choosing its mode is offered **shared
+                bikes**: walk to a dock, ride a shared bike on the bike layer (the bike's routes
+                and costs, as one's own bike), return it at a dock and walk on. The pairs offered
+                are of the service's ``candidates`` (3) docks nearest the origin and the
+                destination within its ``walk_max_s`` (600 s) on foot, the ``candidates`` best
+                pairs; each carries ``dock_min`` (the minutes expected walking to another dock
+                when the pickup dock is empty or the return dock full, part of ``walk_min``) and
+                ``mode_bike_share``. After each loading the service's day is played on the fleet
+                engine with the trips that took a shared bike: a traveller finding an empty dock
+                walks to another, one whose pickup fails walks on to the destination; the docks'
+                costs it realises are averaged into what the next choice expects. A class with
+                ``has_bike_share`` 0 is never offered it. Without a service, nothing changes.
             parking_options: Parking's parameters by name, each replacing its default:
                 ``walk_max_s`` (300: the longest walk from a parking to a stop),
                 ``reach_car_s`` (1800) and ``reach_bike_s`` (1200: the longest drive or ride
@@ -1190,7 +1251,11 @@ class Scenario:
                 named ``toll_eur`` (``link_values``), paid at each passage. Every alternative
                 carries what it costs: ``cost_eur`` and its
                 parts ``cost_running_eur``, ``cost_toll_eur``, ``cost_parking_eur`` (park-and-ride
-                and bike-and-ride, on the trip that parks) and ``cost_fare_eur``. The built-in
+                and bike-and-ride, on the trip that parks) and ``cost_fare_eur``. With a docked
+                bike service (``services``), a shared bike's price is part of its
+                ``cost_fare_eur``: ``bike_share_eur_per_ride`` once and
+                ``bike_share_eur_per_min`` per minute ridden (0 by default; a transit pass does
+                not cover it). The built-in
                 models weigh money by ``beta_cost_eur`` (or a part's coefficient), **-1.2 per euro
                 by default** (0 drops it): a value of time of ``V`` euros per hour is
                 ``beta_cost_eur = beta_time_min * 60 / V``, so -1.2 is 10 €/h at the default
@@ -1325,6 +1390,7 @@ class Scenario:
             transit_options=transit_options,
             parkings=parkings,
             parking_options=parking_options,
+            services=services,
             modes=modes,
             mode_options=mode_options,
             loading_options=loading_options,
@@ -1420,8 +1486,28 @@ class Scenario:
             transit_disruptions=self._transit_disruptions,
             disruptions_known=self._disruptions_known,
             zones=self._zones if self._flow_level == 1 else None,
+            **self._service_arguments(),
             **extra,
         )
+
+    def _service_arguments(self) -> dict[str, Any]:
+        """The services' arguments of the core's run (S302); none without a service."""
+        out: dict[str, Any] = {}
+        if self._services:
+            out["services"] = [
+                (
+                    s.kind,
+                    s.name,
+                    s.docks,
+                    s.vehicles,
+                    s.chargers,
+                    {k: float(v) for k, v in s.options.items()},
+                )
+                for s in self._services
+            ]
+        if self._class_no_bike_share:
+            out["class_no_bike_share"] = self._class_no_bike_share
+        return out
 
     def _fingerprint(self) -> str:
         """The fingerprint a run of this scenario would have, without running it.

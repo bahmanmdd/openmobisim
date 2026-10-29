@@ -110,6 +110,7 @@ from openmobisim.options import (
 )
 from openmobisim.parameters import parameters
 from openmobisim.parking import parking_read_table
+from openmobisim.run import SERVICE_MODES
 from openmobisim.scenario import (
     MODES,
     PRESETS,
@@ -144,6 +145,7 @@ __all__ = [
     "LoadingOptions",
     "LogitOptions",
     "MODES",
+    "SERVICE_MODES",
     "ModeOptions",
     "MonteCarloOptions",
     "SimulationOptions",

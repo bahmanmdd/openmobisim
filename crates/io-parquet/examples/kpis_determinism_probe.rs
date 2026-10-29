@@ -676,7 +676,7 @@ fn mode_choice_probe() {
         .with_layers(layers)
         .with_transit(transit)
         .with_parking(parking)
-        .with_mode_choice(&Mode::ALL);
+        .with_mode_choice(&Mode::BASE);
     let description = run.description();
     let result = run.execute(&mut Diagnostics::new());
     let it = result.itineraries.as_ref().expect("itinerary trips");
@@ -698,7 +698,7 @@ fn mode_choice_probe() {
             step(g.to_bits());
         }
     }
-    let shares: Vec<String> = Mode::ALL
+    let shares: Vec<String> = Mode::BASE
         .iter()
         .map(|m| format!("{} {}", m.as_str(), result.by_mode[m.index()].completion.total_trips))
         .collect();
@@ -813,7 +813,7 @@ fn default_pipeline_probe() {
         .with_layers(layers)
         .with_transit(transit)
         .with_parking(parking)
-        .with_mode_choice(&Mode::ALL)
+        .with_mode_choice(&Mode::BASE)
         .with_class_modes(class_modes)
         .with_disruptions(narrowing);
     let description = run.description();
@@ -840,7 +840,7 @@ fn default_pipeline_probe() {
             step(g.to_bits());
         }
     }
-    let shares: Vec<String> = Mode::ALL
+    let shares: Vec<String> = Mode::BASE
         .iter()
         .map(|m| format!("{} {}", m.as_str(), result.by_mode[m.index()].completion.total_trips))
         .collect();

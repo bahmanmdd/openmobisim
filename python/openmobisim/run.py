@@ -17,11 +17,15 @@ from openmobisim import _core
 from openmobisim.demand import demand_read_trips
 from openmobisim.table import Columns, Table
 
-__all__ = ["LAYERS", "MODES", "NO_ALTERNATIVE_CHANGES", "Run"]
+__all__ = ["LAYERS", "MODES", "NO_ALTERNATIVE_CHANGES", "SERVICE_MODES", "Run"]
 
 LAYERS = ("road", "bike", "walk")
 #: The modes a trip may have or choose (the ``mode`` column of ``trips.parquet``).
 MODES = ("car", "bike", "walk", "transit", "car_transit", "bike_transit")
+#: The modes a service of the run offers (``bike_share``: a docked bike service,
+#: ``service_bike_docked``): chosen, and listed in a run's results, only in a run that has the
+#: service.
+SERVICE_MODES = ("bike_share",)
 
 
 #: What to change for each reason a mode gave a trip no alternative, as
@@ -34,6 +38,7 @@ NO_ALTERNATIVE_CHANGES = {
     "no_stop_in_reach": "transit_options['access_walk_max_s'] or the class's access_walk_max_s",
     "no_transit_journey": "transit_options['journey_max_s'], the window, or the timetable",
     "too_short": "parking_options['pr_min_km']",
+    "no_dock_in_reach": "the service's walk_max_s, or its docks",
     "unexplained": "nothing: a defect, please report it",
 }
 
@@ -966,12 +971,17 @@ class Run:
         (``NO_ALTERNATIVE_CHANGES``).
         """
         table = Columns(self._summary.no_alternative)
-        columns = [f"reason_{mode}" for mode in MODES]
+        columns = [f"reason_{mode}" for mode in self._modes_listed(table)]
         table["change"] = [
             "; ".join(dict.fromkeys(NO_ALTERNATIVE_CHANGES[r] for r in reasons if r))
             for reasons in zip(*(table[c] for c in columns), strict=True)
         ]
         return table
+
+    @staticmethod
+    def _modes_listed(table: Any) -> tuple[str, ...]:
+        """The modes a no-alternative table lists: ``MODES``, and a service's mode with one."""
+        return MODES + tuple(m for m in SERVICE_MODES if f"reason_{m}" in table)
 
     def _no_alternative_text(self, places: int = 5) -> str | None:
         """The trips left with no alternative and not simulated, in words; ``None`` if none."""
@@ -993,7 +1003,8 @@ class Run:
         )
         # Why: per mode offered, the trips each reason held back.
         why = []
-        for mode in MODES:
+        listed = self._modes_listed(t)
+        for mode in listed:
             counts: dict[str, int] = {}
             for i in rows:
                 reason = t[f"reason_{mode}"][i]
@@ -1021,7 +1032,7 @@ class Run:
             f"{w:,.0f} people from ({a:.2f}, {b:.2f}) to ({c:.2f}, {d:.2f})"
             for (a, b, c, d), w in top
         )
-        reasons = {r for mode in MODES for i in rows if (r := t[f"reason_{mode}"][i])}
+        reasons = {r for mode in listed for i in rows if (r := t[f"reason_{mode}"][i])}
         change = "; ".join(
             f"{r}: {NO_ALTERNATIVE_CHANGES[r]}" for r in NO_ALTERNATIVE_CHANGES if r in reasons
         )
