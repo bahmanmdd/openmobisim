@@ -331,7 +331,7 @@ pub fn toy_network_layers() -> (crate::layers::StaticNetwork, crate::layers::Sta
 /// Never in practice: `D2` is a node of the road network and of both layers.
 #[must_use]
 pub fn toy_network_hubs() -> crate::hubs::HubSet {
-    use crate::hubs::{AccessPoint, HubKind, HubSet, HubSpec, Parking, ParkingKind};
+    use crate::hubs::{AccessPoint, HubKind, HubSet, HubSpec, ParkingKind, Resource};
     use crate::layers::Layer;
 
     let (road, _) = toy_network();
@@ -348,19 +348,9 @@ pub fn toy_network_hubs() -> crate::hubs::HubSet {
             AccessPoint { layer: Layer::Walk, node: node(walk.network()) },
         ],
         transfer_seconds: 60.0,
-        parkings: vec![
-            Parking {
-                external_id: "H-car".to_string(),
-                kind: ParkingKind::Car,
-                capacity: 6,
-                initial_occupancy: 0,
-            },
-            Parking {
-                external_id: "H-bike".to_string(),
-                kind: ParkingKind::Bike,
-                capacity: 3,
-                initial_occupancy: 0,
-            },
+        resources: vec![
+            Resource::parking("H-car", ParkingKind::Car, 6, 0),
+            Resource::parking("H-bike", ParkingKind::Bike, 3, 0),
         ],
     }])
 }

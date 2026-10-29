@@ -17,7 +17,7 @@ use openmobisim_core_sim::{
 use openmobisim_core_types::diagnostics::{
     Category, DiagKey, Diagnostics, ElementRef, Severity, codes,
 };
-use openmobisim_core_types::ids::{EntityId, LinkId, TripId};
+use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Duration;
 use openmobisim_io_parquet::manifest::Manifest;
@@ -296,7 +296,7 @@ fn manifest_reports_the_fields_phase_1_actually_has() {
     let path = temp_path("manifest.json");
     write_manifest(&path, &manifest).expect("write");
     let json = std::fs::read_to_string(&path).expect("read back");
-    assert!(json.contains("\"manifest_version\": 1"));
+    assert!(json.contains("\"manifest_version\": 2"));
     assert!(json.contains("\"window_end_seconds\": 3600"));
     assert!(!json.contains("\"window_seconds\""), "renamed (G-34)");
     let sha = json_string_field(&json, "git_sha");
@@ -726,7 +726,13 @@ fn transit_calls_round_trip_with_an_unknown_time() {
         &result,
         &sample_description(None, None),
         u32::MAX,
-        &openmobisim_core_sim::hub_groups::hub_groups(Some(&timetable), None, 150.0).stops,
+        // Each stop's hub: its station, or the stop itself.
+        &(0..timetable.stop_count())
+            .map(|s| {
+                let stop = NodeId::new(s);
+                timetable.stop_parent(stop).unwrap_or(timetable.stop_ids().external(s)).to_string()
+            })
+            .collect::<Vec<_>>(),
     )
     .unwrap();
     let batch = read_first_batch(&path);
@@ -738,7 +744,7 @@ fn transit_calls_round_trip_with_an_unknown_time() {
         batch.column_by_name(name).unwrap().as_any().downcast_ref::<UInt32Array>().unwrap().clone()
     };
     assert_eq!((text("run").value(0), text("stop_id").value(1)), ("B1:00", "M"));
-    assert_eq!(text("hub_group").value(1), "M", "a stop without a parent station is its own group");
+    assert_eq!(text("hub_id").value(1), "M", "a stop without a parent station is its own hub");
     assert_eq!((text("line").value(0), text("kind").value(0)), ("B1", "bus"));
     assert_eq!(u32s("sequence").value(2), 2);
     assert_eq!((u32s("arrival_s").value(1), u32s("scheduled_arrival_s").value(1)), (139, 120));
@@ -767,7 +773,7 @@ fn every_parquet_file_carries_the_schema_version() {
     };
     let expected = Some(openmobisim_io_parquet::SCHEMA_VERSION.to_string());
     assert_eq!(openmobisim_io_parquet::SCHEMA_VERSION_KEY, "openmobisim.schema_version");
-    assert_eq!(expected.as_deref(), Some("1"));
+    assert_eq!(expected.as_deref(), Some("2"));
 
     let result = sample_result();
     let kpis = temp_path("version-kpis.parquet");

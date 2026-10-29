@@ -1,11 +1,12 @@
 //! Scheduled public transport in a run: stops as hubs, walking to, from
 //! and between them, and passengers routed by RAPTOR.
 //!
-//! **Stops are hubs**: every stop of the timetable is a `stop`
-//! hub with a transit access point (the stop), a walk access point (the walk
-//! layer's nearest node, if within [`TransitDefaults::stop_walk_snap_m`]) and a
-//! **bike access point** where the bike layer reaches it likewise, so
-//! bike-and-ride needs nothing more. A stop no pedestrian can reach is kept
+//! **Stops are hubs' access points**: every stop of the timetable has a
+//! transit access point (the stop), a walk access point (the walk layer's
+//! nearest node, if within [`TransitDefaults::stop_walk_snap_m`]) and a **bike
+//! access point** where the bike layer reaches it likewise, so bike-and-ride
+//! needs nothing more. The run's one hub set (`crate::services::hubs`) makes
+//! them a `stop` hub, one per station (its GTFS `parent_station`) or per stop. A stop no pedestrian can reach is kept
 //! in the timetable (its runs still run) but boards and alights nobody.
 //!
 //! **Walking** is on the walk layer, by its travel times: to the stops within
@@ -59,8 +60,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 use openmobisim_core_graph::geometry::{Projected, ground_distance_metres};
-use openmobisim_core_graph::hubs::{AccessPoint, HubKind, HubSet, HubSpec};
-use openmobisim_core_graph::layers::{Layer, StaticNetwork};
+use openmobisim_core_graph::layers::StaticNetwork;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{Trajectory, Vehicle};
@@ -113,7 +113,6 @@ pub struct TransitSetup {
     walk: Arc<StaticNetwork>,
     walk_seconds: Vec<f64>,
     walk_snapper: NodeSnapper,
-    hubs: HubSet,
     /// Per stop: its walk and bike layer nodes, or null.
     stop_walk: Vec<NodeId>,
     stop_bike: Vec<NodeId>,
@@ -326,29 +325,6 @@ impl TransitSetup {
             None => vec![NodeId::from_raw(NULL_ID); n],
         };
 
-        let hubs = HubSet::build(
-            (0..n)
-                .map(|s| {
-                    let stop = NodeId::from_index(s);
-                    let mut access_points = vec![AccessPoint { layer: Layer::Transit, node: stop }];
-                    for (layer, node) in [(Layer::Walk, stop_walk[s]), (Layer::Bike, stop_bike[s])]
-                    {
-                        if !node.is_null() {
-                            access_points.push(AccessPoint { layer, node });
-                        }
-                    }
-                    HubSpec {
-                        external_id: timetable.stop_ids().external(stop.raw()).to_string(),
-                        kind: HubKind::Stop,
-                        position: timetable.stop_position(stop),
-                        access_points,
-                        transfer_seconds: defaults.stop_transfer_s,
-                        parkings: Vec::new(),
-                    }
-                })
-                .collect(),
-        );
-
         let nodes = walk_graph.node_count() as usize;
         let mut per_node: Vec<Vec<NodeId>> = vec![Vec::new(); nodes];
         for (s, node) in stop_walk.iter().enumerate() {
@@ -409,7 +385,6 @@ impl TransitSetup {
             walk: walk_net,
             walk_seconds,
             walk_snapper,
-            hubs,
             stop_walk,
             stop_bike,
             node_stops_start,
@@ -760,12 +735,6 @@ impl TransitSetup {
         &self.walk
     }
 
-    /// The stop hubs, one per stop, by stop id.
-    #[must_use]
-    pub fn hubs(&self) -> &HubSet {
-        &self.hubs
-    }
-
     /// A stop's node on the walk layer, if a pedestrian can reach it.
     #[must_use]
     pub fn stop_walk_node(&self, stop: NodeId) -> Option<NodeId> {
@@ -926,8 +895,7 @@ impl TransitSetup {
     /// Bytes held, besides the timetable.
     #[must_use]
     pub fn bytes(&self) -> usize {
-        self.hubs.bytes()
-            + (self.stop_walk.len() + self.stop_bike.len()) * 4
+        (self.stop_walk.len() + self.stop_bike.len()) * 4
             + (self.node_stops_start.len() + self.node_stops.len()) * 4
             + self.has_stop.len()
             + self.footpaths.len() * 8

@@ -31,7 +31,7 @@ _SCENARIO = [
     ("choice_detour_limit", 0.5, "share"),
     ("choice_max_routes", 5.0, "routes"),
     ("max_cost_vectors", 2.0, "vectors"),
-    ("hub_group_m", 150.0, "m", "a label of the outputs (Scenario.run); not in the fingerprint"),
+    ("hub_join_m", 150.0, "m", "the outputs' hub_id (Scenario.run); not in the fingerprint"),
 ]
 
 _COUNTS = ("iterations", "max_paths", "max_attempts", "max_routes", "searches", "candidates",

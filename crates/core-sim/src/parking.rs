@@ -1,10 +1,12 @@
 //! Parking in a run: the parkings of a scenario as hubs on the
 //! layers, how full they are over the day, and what that costs a traveller.
 //!
-//! **Parkings are hubs**: each row of a parking table
+//! **Parkings are hubs' resources**: each row of a parking table
 //! ([`ParkingRow`]) is snapped to its vehicle's layer (the roads for a car, the
-//! bike layer for a bike) and to the walk layer, and becomes a hub with a
-//! [`Parking`] resource; rows sharing a `hub_id` share a hub. **A parking need
+//! bike layer for a bike) and to the walk layer. The run's one hub set
+//! (`crate::services::hubs`) makes it a resource of a hub: rows sharing a
+//! `hub_id` share one, a row without one joins the nearest stop's. Here a
+//! parking is known by its index, in the order of its hub's id. **A parking need
 //! not be a stop**: the traveller walks from it to the stops within
 //! [`ParkingDefaults::walk_max_s`], found here once. A parking with no stop
 //! within that walk is left out, since in this version only park-and-ride and
@@ -27,13 +29,10 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use openmobisim_core_graph::geometry::{LonLat, ground_distance_metres};
-use openmobisim_core_graph::hubs::{
-    AccessPoint, HubKind, HubSet, HubSpec, Parking, ParkingKind, ParkingRow,
-};
-use openmobisim_core_graph::layers::Layer;
+use openmobisim_core_graph::hubs::{ParkingKind, ParkingRow};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_routes::NodeSnapper;
-use openmobisim_core_types::ids::{EntityId, NodeId, ResourceId};
+use openmobisim_core_types::ids::{EntityId, NodeId};
 
 use crate::layers::LayerSetup;
 use crate::transit::TransitSetup;
@@ -271,9 +270,15 @@ pub struct ParkingSetupReport {
 /// [module docs](self).
 #[derive(Debug)]
 pub struct ParkingSetup {
-    hubs: HubSet,
     defaults: ParkingDefaults,
     road: Arc<RoadNetwork>,
+    /// Per parking: its external id, its hub's (its table's `hub_id`, or its own id), its
+    /// vehicle, its capacity and its occupancy at the start of the day.
+    external: Vec<String>,
+    hub_external: Vec<String>,
+    kind: Vec<ParkingKind>,
+    capacity: Vec<u32>,
+    initial: Vec<u32>,
     /// Per parking: its node on its vehicle's layer, its walk node, where it is.
     node: Vec<NodeId>,
     walk_node: Vec<NodeId>,
@@ -393,8 +398,9 @@ impl ParkingSetup {
             }
             kept.push(Kept { row, node, walk, stops });
         }
-        // Hubs: one per hub id, or per parking; access points from the first parking
-        // of each kind.
+        // Parkings in the order of their hub's id (a table's `hub_id`, else the parking's own),
+        // and in table order within a hub: the order the parking hubs had when each setup built
+        // a hub set of its own, so a parking's index, and every result, is unchanged.
         let mut by_hub: Vec<(String, Vec<usize>)> = Vec::new();
         let mut hub_index: HashMap<String, usize> = HashMap::new();
         for (i, k) in kept.iter().enumerate() {
@@ -405,42 +411,16 @@ impl ParkingSetup {
             });
             by_hub[slot].1.push(i);
         }
-        let specs: Vec<HubSpec> = by_hub
-            .iter()
-            .map(|(hub, members)| {
-                let mut access_points = Vec::new();
-                for kind in ParkingKind::ALL {
-                    if let Some(&m) = members.iter().find(|&&m| kept[m].row.kind == kind) {
-                        access_points.push(AccessPoint { layer: kind.layer(), node: kept[m].node });
-                    }
-                }
-                access_points.push(AccessPoint { layer: Layer::Walk, node: kept[members[0]].walk });
-                HubSpec {
-                    external_id: hub.clone(),
-                    kind: HubKind::Declared,
-                    position: kept[members[0]].row.position,
-                    access_points,
-                    transfer_seconds: 0.0,
-                    parkings: members
-                        .iter()
-                        .map(|&m| Parking {
-                            external_id: kept[m].row.parking_id.clone(),
-                            kind: kept[m].row.kind,
-                            capacity: kept[m].row.capacity,
-                            initial_occupancy: kept[m].row.initial_occupancy,
-                        })
-                        .collect(),
-                }
-            })
-            .collect();
-        let hubs = HubSet::build(specs);
-        // Per parking, in the hub set's parking order.
-        let by_id: HashMap<&str, &Kept<'_>> =
-            kept.iter().map(|k| (k.row.parking_id.as_str(), k)).collect();
-        let n = hubs.parking_count() as usize;
+        by_hub.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let n = kept.len();
         let mut setup = Self {
             defaults,
             road,
+            external: Vec::with_capacity(n),
+            hub_external: Vec::with_capacity(n),
+            kind: Vec::with_capacity(n),
+            capacity: Vec::with_capacity(n),
+            initial: Vec::with_capacity(n),
             node: Vec::with_capacity(n),
             walk_node: Vec::with_capacity(n),
             position: Vec::with_capacity(n),
@@ -452,7 +432,6 @@ impl ParkingSetup {
             target_nodes: [0, 0],
             at_node: [HashMap::new(), HashMap::new()],
             report,
-            hubs,
             car_free_flow: OnceLock::new(),
         };
         let layer_nodes = [
@@ -460,10 +439,15 @@ impl ParkingSetup {
             bike.map_or(0, |b| b.network().network().node_count() as usize),
         ];
         setup.targets = [vec![false; layer_nodes[0]], vec![false; layer_nodes[1]]];
-        for p in 0..n {
-            let id = ResourceId::from_index(p);
-            let k = by_id[setup.hubs.parking_external_id(id)];
+        let order = by_hub.iter().flat_map(|(hub, members)| members.iter().map(move |&m| (hub, m)));
+        for (p, (hub, m)) in order.enumerate() {
+            let k = &kept[m];
             let kind = k.row.kind.index();
+            setup.external.push(k.row.parking_id.clone());
+            setup.hub_external.push(hub.clone());
+            setup.kind.push(k.row.kind);
+            setup.capacity.push(k.row.capacity);
+            setup.initial.push(k.row.initial_occupancy);
             setup.node.push(k.node);
             setup.walk_node.push(k.walk);
             setup.position.push(k.row.position);
@@ -481,12 +465,6 @@ impl ParkingSetup {
                 .push(u32::try_from(p).expect("parkings fit u32"));
         }
         Ok(setup)
-    }
-
-    /// The parking hubs.
-    #[must_use]
-    pub fn hubs(&self) -> &HubSet {
-        &self.hubs
     }
 
     /// The defaults it was set up with.
@@ -516,32 +494,32 @@ impl ParkingSetup {
     /// A parking's kind.
     #[must_use]
     pub fn kind(&self, parking: u32) -> ParkingKind {
-        self.hubs.parking_kind(ResourceId::new(parking))
+        self.kind[parking as usize]
     }
 
     /// A parking's capacity.
     #[must_use]
     pub fn capacity(&self, parking: u32) -> u32 {
-        self.hubs.parking_capacity(ResourceId::new(parking))
+        self.capacity[parking as usize]
     }
 
     /// A parking's occupancy at the start of the day.
     #[must_use]
     pub fn initial_occupancy(&self, parking: u32) -> u32 {
-        self.hubs.parking_initial_occupancy(ResourceId::new(parking))
+        self.initial[parking as usize]
     }
 
     /// A parking's external id.
     #[must_use]
     pub fn external_id(&self, parking: u32) -> &str {
-        self.hubs.parking_external_id(ResourceId::new(parking))
+        &self.external[parking as usize]
     }
 
-    /// Its hub's external id.
+    /// Its table's `hub_id`, or its own id without one (the run's hub set may join
+    /// it to a stop's hub: `crate::services::hubs`).
     #[must_use]
     pub fn hub_external_id(&self, parking: u32) -> &str {
-        let hub = self.hubs.parking_hub(ResourceId::new(parking));
-        self.hubs.external_ids().external(hub.raw())
+        &self.hub_external[parking as usize]
     }
 
     /// A parking's name, if it has one.
@@ -667,8 +645,8 @@ impl ParkingSetup {
     /// Bytes held.
     #[must_use]
     pub fn bytes(&self) -> usize {
-        self.hubs.bytes()
-            + self.node.len() * (4 + 4 + 16 + 24)
+        self.external.iter().chain(&self.hub_external).map(|e| e.len() + 24).sum::<usize>()
+            + self.node.len() * (4 + 4 + 16 + 24 + 1 + 4 + 4)
             + self.stops_start.len() * 4
             + self.stops.len() * 8
             + self.targets.iter().map(Vec::len).sum::<usize>()

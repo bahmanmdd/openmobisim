@@ -29,6 +29,7 @@ use openmobisim_core_graph::hubs::HubKind;
 use openmobisim_core_graph::layers::{BikeCost, Layer, StaticLayerDefaults};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::{LonLat, toy_network, toy_network_layers};
+use openmobisim_core_sim::services::hubs::{DEFAULT_HUB_JOIN_M, RunHubs};
 use openmobisim_core_sim::{
     EventType, LayerSetup, ModeDefaults, NoAlternativeReason, Run, RunResult, StaticLayers,
     TransitSetup,
@@ -119,7 +120,8 @@ fn outcomes(result: &RunResult) -> Vec<(EventType, u32)> {
 #[test]
 fn stops_are_hubs_with_walk_bike_and_transit_access_points() {
     let t = toy();
-    let hubs = t.transit.hubs();
+    let run_hubs = RunHubs::build(Some(&t.transit), &[], None, &[], DEFAULT_HUB_JOIN_M);
+    let hubs = run_hubs.set();
     assert_eq!(hubs.len(), 2);
     for (stop, node) in [("H", "D2"), ("N1", "N1")] {
         let hub = hubs.id_of(stop).expect("a stop hub");

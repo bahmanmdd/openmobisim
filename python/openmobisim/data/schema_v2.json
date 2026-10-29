@@ -1,5 +1,5 @@
 {
- "schema_version": 1,
+ "schema_version": 2,
  "files": {
   "diagnostics.parquet": {
    "columns": [
@@ -400,12 +400,6 @@
      "type": "double",
      "nullable": false,
      "unit": "vehicles"
-    },
-    {
-     "name": "hub_group",
-     "type": "string",
-     "nullable": false,
-     "unit": "text"
     }
    ],
    "metadata": [
@@ -496,7 +490,7 @@
      "unit": "travellers"
     },
     {
-     "name": "hub_group",
+     "name": "hub_id",
      "type": "string",
      "nullable": false,
      "unit": "text"
