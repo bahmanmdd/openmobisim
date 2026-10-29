@@ -337,3 +337,21 @@ def test_the_zone_grid_is_set_by_name():
     assert seen["grid_m"] == 250.0
     with pytest.raises(ValueError):
         ms.fleet_day(net, [bikes], trips, zone_grid_m=0.0)
+
+
+def test_a_driving_taxi_s_view_says_when_it_gets_to_its_node():
+    import math
+
+    net = grid()
+    v = ms.vehicle_read_table(
+        [{"vehicle_id": "v1", "lon": at(net, 0, 0)[0], "lat": at(net, 0, 0)[1]}]
+    )
+    taxis = ms.service_taxi(v, options={"max_wait_s": 3600})
+    env = ms.fleet_environment(net, [taxis], [trip(net, "a", 26_000, (0, 2), (2, 2))])
+    view, _ = env.reset(0)
+    # Sent at once to a pickup two blocks away: it gets there after the step's second.
+    assert view["taxi"]["state"] == ["to_pickup"]
+    assert view["taxi"]["until_s"][0] > view.t
+    while view["taxi"]["state"] != ["idle"]:
+        view, *_ = env.step([])
+    assert math.isnan(view["taxi"]["until_s"][0])

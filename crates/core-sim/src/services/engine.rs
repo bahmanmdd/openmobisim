@@ -745,6 +745,7 @@ impl FleetEngine {
                         name: setup.name(),
                         state,
                         node,
+                        until_s: &run.until,
                         soc,
                         waiting: run.waiting_view(&self.day.legs),
                         charger_node: &fleet.charger_node,

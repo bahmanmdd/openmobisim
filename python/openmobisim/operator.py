@@ -24,7 +24,9 @@ a docked service's ``dock_id``, ``node`` (its road node id), ``zone``, ``bikes``
 step ``pickups``, ``returns``, ``failed``, ``redirected_in``, ``redirected_out`` (people), and
 ``moving`` (bikes in vans now) and ``riding``; a taxi fleet's ``vehicle_id``, ``state`` (names:
 ``idle``, ``to_pickup``, ``occupied``, ``to_charger``, ``queued_at_charger``, ``charging``,
-``relocating``), ``node`` (road node ids), ``zone``, ``soc`` (charge as a share of the battery),
+``relocating``), ``node`` (road node ids: where it is, or where it is driving to), ``until_s``
+(the second it gets there when driving, or ends its charge when charging; ``nan`` when idle or
+queued for a plug), ``zone``, ``soc`` (charge as a share of the battery),
 ``nearest_charger`` (by free-flow time, within the fleet's ``charger_reach_s``, or ``None``),
 the waiting requests (``waiting_id``, ``waiting_node``, ``waiting_zone``, ``waiting_since_s``)
 and the chargers (``charger_id``, ``charger_node``, ``charger_plugs``, ``charger_in_use``,
