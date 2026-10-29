@@ -491,6 +491,17 @@ impl DockRun {
         } else {
             None
         };
+        // Go on only if a bike there is worth it: from that dock, walking on to the destination
+        // must be slower than taking a bike there, riding to the return dock and walking from it
+        // (so a traveller never goes on to their return dock itself, to ride 0 m). Otherwise
+        // they give up here and walk to their destination. Cost: one walk search per dock tried
+        // after the first, the ride kept per dock pair.
+        let next = next.filter(|&(o, _)| {
+            let walk_on = c.legs.walk_to_destination_s(c.index, o);
+            let ride = c.legs.ride_s(leg.service, o, leg.return_dock);
+            let by_bike = c.defaults.pickup_s + ride + c.defaults.return_s + leg.egress_s;
+            walk_on > by_bike || walk_on.is_nan()
+        });
         if let Some((o, walk)) = next {
             self.bins.redirected[cell] += wf;
             let to = o as usize * self.bins.bins + self.bins.bin_of(t);

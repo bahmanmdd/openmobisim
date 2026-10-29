@@ -1425,25 +1425,24 @@ class Run:
         One row per trip, in trip order. Who: ``service``, ``traveller_id``, ``trip_seq``,
         ``travellers`` (the people the traveller stands for: the bikes taken), ``mode``
         (``"bike_share"``, or ``"bike_share_transit"``: a shared bike to a stop's hub, transit on).
-        The plan, as the trip's choice made it: ``planned_pickup_dock``,
-        ``planned_return_dock``, ``planned_at_pickup_dock_s`` (when it was to reach that dock),
-        ``planned_arrival_s`` (when it was to arrive had the planned docks had a bike and a
-        free slot), ``expected_extra_s`` (the extra seconds at the docks the choice expected).
-        What happened: ``pickup_dock`` and ``pickup_s`` (``None`` and ``NaN``: no bike),
-        ``docks_tried_for_bike``, ``return_dock`` and ``return_s``, ``docks_tried_for_slot``,
-        ``arrival_s`` (at the destination, or for ``bike_share_transit`` the dock at the stop's
-        hub; riding, or on foot after giving up). The difference: ``extra_s`` (``arrival_s``
-        less ``planned_arrival_s``), ``extra_walk_m`` (walked between docks looking for a bike,
-        metres as the crow flies), ``extra_vs_expected_s`` (``extra_s`` less
-        ``expected_extra_s``); ``failed_attempts_for_bike`` and ``failed_attempts_for_slot``
-        (docks found empty, and full; the last one included when it gave up or left the bike
-        above capacity). ``result``: ``"as_planned"``, ``"bike_at_another_dock"`` (found a dock
-        empty, then took a bike at another), ``"returned_at_another_dock"``,
-        ``"no_bike_walked_to_destination"``, ``"left_over_capacity"``,
-        ``"still_riding_at_window_end"``, ``"still_looking_for_bike_at_window_end"``,
-        ``"not_started"`` (its time at the dock came after the window's end); the first that
-        applies, in the reverse of this order. The same table is written to
-        ``bike_share_trips.parquet``: read it with ``bike_share_trips_table()``.
+        The plan, as the trip's choice made it: ``planned_pickup_dock``, ``planned_return_dock``,
+        ``planned_at_pickup_dock_s`` (when it was to reach that dock), ``planned_arrival_s`` (when
+        it was to arrive had the planned docks had a bike and a free slot), ``expected_extra_s``
+        (the extra seconds at the docks the choice expected). What happened: ``pickup_dock`` and
+        ``pickup_s`` (``None`` and ``NaN``: no bike), ``docks_tried_for_bike``, ``return_dock`` and
+        ``return_s``, ``docks_tried_for_slot``, ``arrival_s`` (at the destination, or for
+        ``bike_share_transit`` the dock at the stop's hub; riding, or on foot after giving up). The
+        difference: ``extra_s`` (``arrival_s`` less ``planned_arrival_s``), ``extra_walk_m`` (walked
+        between docks looking for a bike, metres as the crow flies), ``met_minus_expected_s``
+        (``extra_s`` less ``expected_extra_s``: met minus expected, positive when worse than
+        expected); ``failed_attempts_for_bike`` and ``failed_attempts_for_slot`` (docks found empty,
+        and full; the last one included when it gave up or left the bike above capacity).
+        ``result``: ``"as_planned"``, ``"bike_at_another_dock"`` (found a dock empty, then took a
+        bike at another), ``"returned_at_another_dock"``, ``"no_bike_walked_to_destination"``,
+        ``"left_over_capacity"``, ``"still_riding_at_window_end"``,
+        ``"still_looking_for_bike_at_window_end"``, ``"not_started"`` (its time at the dock came
+        after the window's end); the first that applies, in the reverse of this order. The same
+        table is written to ``bike_share_trips.parquet``: read it with ``bike_share_trips_table()``.
         """
         t = self._summary.bike_share_trips
         return None if t is None else Columns(t)

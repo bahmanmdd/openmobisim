@@ -17,9 +17,9 @@
 //! **A docked bike service**, for a run with one, under `mode` the service's name (`bike_share`
 //! unless the scenario named it otherwise), counted in people (the travellers' weights): per
 //! iteration `bike_share_travellers` (the loading's trips that chose a shared bike),
-//! `mean_expected_minus_met_s` (over the trips that arrived, the mean of the extra seconds at the
-//! docks their choice expected less those they met: negative when they met more than expected)
-//! and `mean_abs_expected_minus_met_s` (the mean of its absolute value); for the last loading,
+//! `mean_met_minus_expected_s` (over the trips that arrived, the mean of the extra seconds they
+//! met at the docks less those their choice expected: met minus expected, positive when worse
+//! than expected) and `mean_abs_met_minus_expected_s` (the mean of its absolute value); for the last loading,
 //! over the trips that asked for a bike, `share_failed_attempt_no_bike` (found a dock empty and
 //! went on to another, at least once), `share_gave_up_no_bike` (found no bike at any dock tried
 //! and walked to the destination), `share_found_no_slot` (found a return dock full at least
@@ -258,8 +258,8 @@ fn service_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow>
     for (i, k) in per {
         rows.push((i, name(), "bike_share_travellers", s.legs_people[k]));
         for (metric, v) in [
-            ("mean_expected_minus_met_s", -s.bias_s[k]),
-            ("mean_abs_expected_minus_met_s", s.mismatch_s[k]),
+            ("mean_met_minus_expected_s", s.bias_s[k]),
+            ("mean_abs_met_minus_expected_s", s.mismatch_s[k]),
         ] {
             if v.is_finite() {
                 rows.push((i, name(), metric, v));

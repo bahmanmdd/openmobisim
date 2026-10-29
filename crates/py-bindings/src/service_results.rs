@@ -128,7 +128,7 @@ fn trips_dict<'py>(py: Python<'py>, t: &BikeShareTripTable) -> PyResult<Bound<'p
     d.set_item("arrival_s", nan(&t.arrival_s).into_pyarray(py))?;
     d.set_item("extra_s", nan(&t.extra_s).into_pyarray(py))?;
     d.set_item("extra_walk_m", t.extra_walk_m.clone().into_pyarray(py))?;
-    d.set_item("extra_vs_expected_s", nan(&t.extra_vs_expected_s).into_pyarray(py))?;
+    d.set_item("met_minus_expected_s", nan(&t.met_minus_expected_s).into_pyarray(py))?;
     d.set_item("failed_attempts_for_bike", t.failed_attempts_for_bike.clone().into_pyarray(py))?;
     d.set_item("failed_attempts_for_slot", t.failed_attempts_for_slot.clone().into_pyarray(py))?;
     d.set_item("result", t.result.clone())?;

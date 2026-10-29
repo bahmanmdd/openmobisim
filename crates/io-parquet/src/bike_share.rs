@@ -22,8 +22,8 @@
 //! (`planned_pickup_dock, planned_return_dock, planned_at_pickup_dock_s, planned_arrival_s,
 //! expected_extra_s`); what happened (`pickup_dock, pickup_s, docks_tried_for_bike,
 //! return_dock, return_s, docks_tried_for_slot, arrival_s`); the difference (`extra_s` =
-//! `arrival_s − planned_arrival_s`, `extra_walk_m`, `extra_vs_expected_s` = `extra_s −
-//! expected_extra_s`); `failed_attempts_for_bike`, `failed_attempts_for_slot`; and `result`:
+//! `arrival_s − planned_arrival_s`, `extra_walk_m`, `met_minus_expected_s` = `extra_s −
+//! expected_extra_s`: met minus expected, positive when worse than expected); `failed_attempts_for_bike`, `failed_attempts_for_slot`; and `result`:
 //! `as_planned`, `bike_at_another_dock` (found a dock empty, then a bike at another),
 //! `returned_at_another_dock`, `no_bike_walked_to_destination`, `left_over_capacity`,
 //! `still_riding_at_window_end`, `still_looking_for_bike_at_window_end`, `not_started`.
@@ -38,7 +38,8 @@
 //! (`bikes_brought_by_van, bikes_taken_by_van`, 0 in a run).
 //!
 //! Each file's key-value metadata carries `openmobisim.run_fingerprint` and
-//! `openmobisim.master_seed`. **Cost.** About 150 bytes per row while writing.
+//! `openmobisim.master_seed`; `bike_share_docks.parquet`'s also `openmobisim.fleet_bikes`, the
+//! bikes at the start of the day, all docks summed. **Cost.** About 150 bytes per row while writing.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -89,11 +90,17 @@ impl Columns {
         self
     }
 
-    fn write(self, path: &Path, description: &RunDescription) -> Result<(), WriteError> {
-        let metadata = vec![
+    fn write(
+        self,
+        path: &Path,
+        description: &RunDescription,
+        extra: &[(&str, String)],
+    ) -> Result<(), WriteError> {
+        let mut metadata = vec![
             ("openmobisim.run_fingerprint".to_string(), description.fingerprint_hex()),
             ("openmobisim.master_seed".to_string(), description.master_seed.to_string()),
         ];
+        metadata.extend(extra.iter().map(|(k, v)| ((*k).to_string(), v.clone())));
         let schema = Arc::new(
             Schema::new(self.fields)
                 .with_metadata(metadata.iter().cloned().collect::<HashMap<_, _>>()),
@@ -128,7 +135,7 @@ pub fn write_bike_share_events(
         .maybe_count("free_slots_after", &t.free_slots_after)
         .maybe_text("next_dock", &t.next_dock)
         .maybe_number("to_next_m", &t.to_next_m);
-    c.write(path.as_ref(), description)
+    c.write(path.as_ref(), description, &[])
 }
 
 /// Write `bike_share_trips.parquet` (see the [module docs](self)).
@@ -163,11 +170,11 @@ pub fn write_bike_share_trips(
         .maybe_number("arrival_s", &t.arrival_s)
         .maybe_number("extra_s", &t.extra_s)
         .number("extra_walk_m", &t.extra_walk_m)
-        .maybe_number("extra_vs_expected_s", &t.extra_vs_expected_s)
+        .maybe_number("met_minus_expected_s", &t.met_minus_expected_s)
         .count("failed_attempts_for_bike", &t.failed_attempts_for_bike)
         .count("failed_attempts_for_slot", &t.failed_attempts_for_slot)
         .text("result", &t.result);
-    c.write(path.as_ref(), description)
+    c.write(path.as_ref(), description, &[])
 }
 
 /// Write `bike_share_docks.parquet` (see the [module docs](self)).
@@ -210,5 +217,5 @@ pub fn write_bike_share_docks(
     ] {
         c.number(name, v);
     }
-    c.write(path.as_ref(), description)
+    c.write(path.as_ref(), description, &[("openmobisim.fleet_bikes", t.fleet.to_string())])
 }

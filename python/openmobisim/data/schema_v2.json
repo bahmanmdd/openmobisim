@@ -149,6 +149,7 @@
     }
    ],
    "metadata": [
+    "openmobisim.fleet_bikes",
     "openmobisim.master_seed",
     "openmobisim.run_fingerprint",
     "openmobisim.schema_version"
@@ -364,7 +365,7 @@
      "unit": "m"
     },
     {
-     "name": "extra_vs_expected_s",
+     "name": "met_minus_expected_s",
      "type": "double",
      "nullable": true,
      "unit": "s"

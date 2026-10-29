@@ -211,8 +211,8 @@ pub struct BikeShareTripTable {
     pub extra_s: Vec<Option<f64>>,
     /// Metres walked between docks looking for a bike, as the crow flies.
     pub extra_walk_m: Vec<f64>,
-    /// `extra_s − expected_extra_s`.
-    pub extra_vs_expected_s: Vec<Option<f64>>,
+    /// `extra_s − expected_extra_s`: met minus expected (positive: worse than expected).
+    pub met_minus_expected_s: Vec<Option<f64>>,
     /// Docks found without a bike (the last one included when it gave up).
     pub failed_attempts_for_bike: Vec<u32>,
     /// Docks found without a free slot (the last one included when it left the bike above
@@ -298,7 +298,7 @@ impl BikeShareTripTable {
             let extra = arrived.then_some(o.arrived_s - planned);
             t.extra_s.push(extra);
             t.extra_walk_m.push(o.extra_walk_m);
-            t.extra_vs_expected_s.push(extra.map(|e| e - l.expected_dock_s));
+            t.met_minus_expected_s.push(extra.map(|e| e - l.expected_dock_s));
             t.failed_attempts_for_bike.push(o.failed_for_bike);
             t.failed_attempts_for_slot.push(o.failed_for_slot);
             t.result.push(trip_result(
@@ -329,6 +329,8 @@ impl BikeShareTripTable {
 /// bin: `bike_share_docks.parquet`. Counts of people are the travellers' weights.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BikeShareDockTable {
+    /// The bikes of the services' fleets at the start of the day, all docks summed.
+    pub fleet: u64,
     /// The service's name.
     pub service: Vec<String>,
     /// The dock's id.
@@ -395,6 +397,7 @@ impl BikeShareDockTable {
             else {
                 continue;
             };
+            t.fleet += docks.fleet();
             for (k, (hub, _)) in hubs[s].iter().enumerate().take(docks.len()) {
                 for bin in 0..b.bins {
                     let cell = k * b.bins + bin;

@@ -137,17 +137,17 @@ def test_the_docks_keep_their_bikes(run: ms.Run) -> None:
 def test_the_kpi_rows_are_the_trips(run: ms.Run) -> None:
     tr = run.bike_share_trips()
     w = np.asarray(tr["travellers"], dtype=float)
-    diff = np.asarray(tr["extra_vs_expected_s"])
+    diff = np.asarray(tr["met_minus_expected_s"])
     arrived = np.isfinite(diff)
     travellers = _kpi(run, "bike_share_travellers")
     last = max(travellers)
     assert len(travellers) == 4
     assert travellers[last] == pytest.approx(w.sum())
     wa = w[arrived]
-    assert _kpi(run, "mean_expected_minus_met_s")[last] == pytest.approx(
-        -np.sum(wa * diff[arrived]) / wa.sum()
+    assert _kpi(run, "mean_met_minus_expected_s")[last] == pytest.approx(
+        np.sum(wa * diff[arrived]) / wa.sum()
     )
-    assert _kpi(run, "mean_abs_expected_minus_met_s")[last] == pytest.approx(
+    assert _kpi(run, "mean_abs_met_minus_expected_s")[last] == pytest.approx(
         np.sum(wa * np.abs(diff[arrived])) / wa.sum()
     )
     assert _kpi(run, "mean_extra_s")[last] == pytest.approx(
