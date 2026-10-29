@@ -76,6 +76,13 @@ from openmobisim.demand import (
     demand_sample,
     demand_write_trips,
 )
+from openmobisim.fleet import (
+    FleetDay,
+    fleet_day,
+    road_times_read,
+    service_bike_docked,
+    service_taxi,
+)
 from openmobisim.gmns import network_read_gmns, network_write_gmns
 from openmobisim.network import LINK_CLASSES, network_edit, network_options, network_read_table
 from openmobisim.options import (
@@ -110,6 +117,12 @@ from openmobisim.scenario import (
     Scenario,
     Table,
     WindowWarning,
+)
+from openmobisim.services import (
+    charger_read_table,
+    dock_read_gbfs,
+    dock_read_table,
+    vehicle_read_table,
 )
 from openmobisim.table import Columns
 from openmobisim.transit import transit_edit
@@ -183,6 +196,15 @@ __all__ = [
     "parking_read_cache",
     "parking_read_osm",
     "parking_read_table",
+    "charger_read_table",
+    "FleetDay",
+    "fleet_day",
+    "road_times_read",
+    "service_bike_docked",
+    "service_taxi",
+    "dock_read_gbfs",
+    "dock_read_table",
+    "vehicle_read_table",
     "parking_write_cache",
     "route_cache_clear",
     "route_cache_info",

@@ -76,6 +76,7 @@ const fn named(content: Content) -> (&'static str, &'static str) {
     match content {
         Content::Network => ("a network", "import the network again"),
         Content::Parkings => ("parkings", "read the parkings again"),
+        Content::RoadTimes => ("road times", "freeze the day again"),
     }
 }
 
