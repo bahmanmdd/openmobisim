@@ -42,6 +42,8 @@ _WIDTH_MIN_PT, _WIDTH_SPAN_PT = 0.5, 5.2
 #: No ribbon is thinner than this many points (on a full-screen page), whatever the
 #: view scale: a link with any traffic must stay visible.
 _WIDTH_FLOOR_PT = 0.9
+#: Whether the road band surrounds the two ribbons (a casing, ``True``) or lies under them.
+_BAND_AROUND = False
 #: The delay colours' bands, as the upper
 #: edges of the share of a link's mean time that is not free flow: the Highway Capacity Manual's
 #: urban-street levels of service by travel speed over free-flow speed (A above 85 %, B-C 50-85 %,
@@ -434,6 +436,12 @@ def map_link(
                 zorder=2,
             )
         )
+    # The road band (S302): each loaded road as wide as its capacity, under its two ribbons.
+    road_band = canvas.band(
+        th.base, drawn, zs * page.k, (lines, line_width) if _BAND_AROUND else None
+    )
+    if road_band is not None:
+        page.ax.add_collection(road_band)
     page.ax.add_collection(
         LineCollection(lines, colors=line_rgb, linewidths=line_width, capstyle="round", zorder=3)
     )
@@ -493,6 +501,7 @@ def map_link(
         provenance=provenance,
         width_legend=("Width: volume per direction", samples, unit),
         colour_legend=(legend_label, legend_stops, low, high),
+        band_legend="Grey band: road capacity" if canvas.tier is not None else None,
         credit=credit,
         logo=logo,
         compass=True,

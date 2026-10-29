@@ -458,21 +458,16 @@ class _Roads:
         return np.asarray(self.drivable)
 
 
-def test_a_road_weighs_by_its_capacity_relative_to_the_network():
-    from openmobisim.viz._canvas import road_weight
+def test_a_road_is_ranked_by_its_capacity_relative_to_the_network():
+    from openmobisim.viz._canvas import road_ratio, road_tier
 
-    # The largest road weighs 1 where nothing is larger, and less beside a larger one.
-    assert road_weight(_Roads([1000.0, 2000.0]))[1] == pytest.approx(1.0)
-    assert road_weight(_Roads([1000.0, 2000.0, 4000.0]))[1] == pytest.approx(0.71, abs=0.01)
-    # A link no car may use weighs 0; a bike or walk layer (no capacity) is all 0.
-    w = road_weight(_Roads([1000.0, 2000.0, 3000.0], drivable=[True, True, False]))
-    assert w[2] == 0.0 and w[1] == pytest.approx(1.0)
-    assert not road_weight(_Roads([np.nan, np.nan])).any()
-
-
-def test_road_tiers_span_minor_to_major_and_a_layer_without_roads_keeps_one_width():
-    from openmobisim.viz._canvas import road_tier
-
-    tiers = road_tier(_Roads([0.0, 400.0, 1000.0, 4000.0], drivable=[False, True, True, True]))
-    assert tiers.tolist() == [0, 1, 2, 3]
-    assert road_tier(_Roads([np.nan, np.nan])).tolist() == [1, 1]
+    # The largest road is the top tier where nothing is larger, a tier lower beside a larger one.
+    assert road_ratio(_Roads([1000.0, 2000.0]))[1] == pytest.approx(1.0, abs=0.01)
+    assert road_tier(_Roads([1000.0, 2000.0]))[1] == 4
+    assert road_ratio(_Roads([1000.0, 2000.0, 4000.0]))[1] == pytest.approx(0.505, abs=0.01)
+    assert road_tier(_Roads([1000.0, 2000.0, 4000.0]))[1] == 3
+    # A link no car may use is tier 0; a bike or walk layer (no capacity) has no hierarchy.
+    tiers = road_tier(_Roads([0.0, 500.0, 1300.0, 2400.0, 4000.0], [False] + [True] * 4))
+    assert tiers.tolist() == [0, 1, 2, 3, 4]
+    assert np.isnan(road_ratio(_Roads([1000.0, 3000.0], drivable=[True, False]))[1])
+    assert road_tier(_Roads([np.nan, np.nan])) is None

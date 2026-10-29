@@ -25,7 +25,7 @@ from openmobisim._paths import show_path
 from openmobisim.network import LINK_CLASSES
 from openmobisim.scenario import LEVEL_NAMES
 from openmobisim.viz import _geometry as geo
-from openmobisim.viz._canvas import ROAD_TIER_WIDTHS, road_tier
+from openmobisim.viz._canvas import ROAD_BAND_PT, ROAD_TIER_WIDTHS, road_tier
 from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._interactive_page import PAGE_CSS, PAGE_HTML, PAGE_JS
 from openmobisim.viz._link import (
@@ -311,8 +311,10 @@ def map_interactive(
     blob.add("dx", delta[:, 0], "i32")
     blob.add("dy", delta[:, 1], "i32")
     blob.add("cls", network.link_class()[keep], "u8")
-    # The road hierarchy (S302): the base network's width tier, from the link's capacity.
-    blob.add("rt", road_tier(network)[keep], "u8")
+    # The road hierarchy (S302): each link's tier, from its capacity (none without roads).
+    tier = road_tier(network)
+    if tier is not None:
+        blob.add("rt", tier[keep], "u8")
     blob.add("len", network.link_length_m()[keep], "f32")
     # Free flow is the moving time plus a signal's mean wait (S268): the wait apart, for the hover.
     moving = free_flow_moving_s(network)
@@ -388,7 +390,7 @@ def map_interactive(
         "note": note, "credit": credit, "logo": bool(logo),
         "provenance": provenance, "source": source, "n_spillback": n_spill,
         "arrays": blob.table, "tokens": _tokens(), "layers": layers,
-        "road_tiers": list(ROAD_TIER_WIDTHS),
+        "road_tiers": list(ROAD_TIER_WIDTHS), "road_bands": list(ROAD_BAND_PT),
     }  # fmt: skip
     body = len(payload) + len(PAGE_JS) + len(PAGE_CSS) + len(PAGE_HTML)
     meta["size_note"] = f"{n_links:,} links · {body / 1e6:.1f} MB"
