@@ -79,7 +79,7 @@ fn toy(n: u32, block_m: f64, line: &[(u32, u32)]) -> Toy {
         .collect();
     let route =
         b.add_route(RouteSpec { external_id: "L".into(), short_name: "L".into(), route_type: 3 });
-    for k in 0..40 {
+    for k in 0..144 {
         let calls: Vec<CallSpec> = stops
             .iter()
             .enumerate()
