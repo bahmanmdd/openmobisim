@@ -158,3 +158,182 @@ def test_an_environment_is_deterministic_and_refuses_bad_input():
         env.step()
     with pytest.raises(ValueError, match="unknown reward weight"):
         ms.fleet_environment(net, [bikes], trips, reward_weights={"w_nope": 1.0})
+
+
+def test_each_seed_is_another_day_when_legs_are_thinned_or_shifted():
+    net = grid()
+    bikes = ms.service_bike_docked(docks(net, bikes=(2, 0)))
+    trips = [trip(net, f"t{k}", 27_000 + 120 * k, (0, 0), (4, 4)) for k in range(30)]
+
+    def total(env, seed):
+        env.reset(seed)
+        reward, done = 0.0, False
+        while not done:
+            _, r, done, _, _ = env.step()
+            reward += r
+        return reward
+
+    same = ms.fleet_environment(net, [bikes], trips)
+    assert total(same, 1) == total(same, 2), "nothing drawn: one day"
+    varied = ms.fleet_environment(net, [bikes], trips, legs_keep=0.5, departure_jitter_s=300)
+    days = {total(varied, seed) for seed in range(6)}
+    assert len(days) > 1, "the seeds give other days"
+    assert total(varied, 4) == total(varied, 4), "a seed replays its day"
+    with pytest.raises(ValueError, match="legs_keep"):
+        ms.fleet_environment(net, [bikes], trips, legs_keep=0.0)
+
+
+def run_vector(env, seeds, decide=None):
+    """Every day of a vector environment to its end: per day, its rewards."""
+    views, _ = env.reset(seeds)
+    rewards = [[] for _ in seeds]
+    done = False
+    while not done:
+        lists = [decide(v) if decide else [] for v in views]
+        views, r, terminated, truncated, _ = env.step(lists)
+        assert len(views) == len(seeds) and r.shape == (len(seeds),)
+        assert not any(truncated)
+        for k, x in enumerate(r):
+            rewards[k].append(float(x))
+        done = all(terminated)
+        assert done == any(terminated), "the days end together"
+    return rewards
+
+
+def test_a_vector_of_days_gives_each_seed_its_own_day_and_refuses_a_wrong_count():
+    import time
+
+    net = grid()
+    bikes = ms.service_bike_docked(docks(net, bikes=(2, 0)))
+    trips = [trip(net, f"t{k}", 27_000 + 120 * k, (0, 0), (4, 4)) for k in range(30)]
+    kw = {"legs_keep": 0.5, "departure_jitter_s": 300, "step_s": 600}
+    seeds = [3, 1, 4, 1]
+
+    def decide(view):
+        # A decision depending on the view, so the days' decisions differ.
+        return [Target("bike_share", "z", 0)] if view["bike_share"]["bikes"][0] == 0 else []
+
+    from openmobisim.operator import Target
+
+    single = ms.fleet_environment(net, [bikes], trips, **kw)
+    alone = []
+    for s in seeds:
+        view, _ = single.reset(s)
+        rewards, done = [], False
+        while not done:
+            view, r, done, _, _ = single.step(decide(view))
+            rewards.append(r)
+        alone.append(rewards)
+    vector = ms.fleet_environment(net, [bikes], trips, n=4, **kw)
+    assert isinstance(vector, ms.fleet.FleetVectorEnvironment) and len(vector) == 4
+    assert run_vector(vector, seeds, decide) == alone, "seed by seed, the same day"
+    assert len({sum(r) for r in alone}) > 1, "the seeds are other days"
+    vector.reset(seeds)
+    with pytest.raises(ValueError, match="step takes 4 decision lists"):
+        vector.step([[], []])
+    with pytest.raises(ValueError, match="reset takes 4 seeds"):
+        vector.reset([1])
+    with pytest.raises(ValueError, match="n must be 1 or more"):
+        ms.fleet_environment(net, [bikes], trips, n=0)
+
+    # The time of n episodes, n = 1, 4 and 8, one after another and as a vector (printed; a
+    # speed-up is expected, not asserted).
+    for n in (1, 4, 8):
+        started = time.perf_counter()
+        for s in range(n):
+            single.reset(s)
+            done = False
+            while not done:
+                _, _, done, _, _ = single.step([])
+        one_by_one = time.perf_counter() - started
+        # A vector of one is timed alike (fleet_environment gives a single one for n=1).
+        env = ms.fleet.FleetVectorEnvironment(single._inner.vector(n), net)  # noqa: SLF001
+        started = time.perf_counter()
+        run_vector(env, list(range(n)))
+        together = time.perf_counter() - started
+        print(f"fleet n={n}: one by one {one_by_one:.4f} s, as a vector {together:.4f} s")
+
+
+def test_observation_and_action_have_fixed_shapes_and_the_engine_refuses_a_level_too_high():
+    import numpy as np
+    from openmobisim.operator import Target
+
+    net = grid()
+    bikes = ms.service_bike_docked(docks(net, bikes=(3, 0)))
+    trips = [trip(net, f"t{k}", 27_000 + 60 * k, (0, 0), (4, 4)) for k in range(2)]
+    env = ms.fleet_environment(net, [bikes], trips, step_s=900)
+    spec = {"service": "bike_share"}
+    assert env.layout()["bike_share"] == {
+        "kind": "bike_docked",
+        "dock_id": ["a", "z"],
+        "slots": [4, 4],
+    }
+    view, _ = env.reset(0)
+    obs = env.observation(view, spec)
+    assert obs["docks"].dtype == np.float32 and obs["docks"].shape == (2, 5)
+    # The first trip asks at 07:30 itself: one pickup at "a" already counted.
+    assert obs["docks"].tolist() == [[2, 4, 1, 0, 0], [0, 4, 0, 0, 0]]
+    hour = 2 * math.pi * 27_000 / 86_400
+    assert obs["time"] == pytest.approx([0.0, math.sin(hour), math.cos(hour)], abs=1e-6)
+    flat = env.observation(view, {**spec, "flat": True})
+    assert flat.shape == (13,) and flat[:10].tolist() == obs["docks"].ravel().tolist()
+
+    assert env.action([-1, 1], spec) == [Target("bike_share", "z", 1)]
+    assert env.action(np.array([2, -1]), spec) == [Target("bike_share", "a", 2)]
+    with pytest.raises(ValueError, match="2 docks"):
+        env.action([1], spec)
+    with pytest.raises(ValueError, match="unknown spec keys"):
+        env.observation(view, {**spec, "size": 3})
+    with pytest.raises(ValueError, match="must be one of"):
+        env.action([1, 1], {"service": "nope"})
+    _, _, _, _, info = env.step(env.action([-1, 9], spec))
+    assert len(info["refused"]) == 1 and "9" in info["refused"][0], info["refused"]
+    _, _, _, _, info = env.step(env.action([0, 1], spec))
+    assert info["refused"] == [None, None]
+    view, *_ = env.step([])
+    t = env.observation(view, spec)["time"]
+    assert t[0] == pytest.approx(3 * 900 / 7200)
+
+
+def test_a_taxi_observation_counts_the_requests_waiting_within_reach():
+    import numpy as np
+
+    net = grid()
+    v = ms.vehicle_read_table(
+        [{"vehicle_id": "v1", "lon": at(net, 0, 0)[0], "lat": at(net, 0, 0)[1]}]
+    )
+    taxis = ms.service_taxi(v, options={"max_wait_s": 3600})
+    # Asked before the window: two requests one block from the vehicle, then two at the far
+    # corner. The vehicle takes the first; its node in the view is where it is heading.
+    trips = [trip(net, f"a{k}", 26_000, (0, 1), (2, 2)) for k in range(2)]
+    trips += [trip(net, f"b{k}", 26_010, (4, 3), (2, 2)) for k in range(2)]
+    env = ms.fleet_environment(net, [taxis], trips)
+    view, _ = env.reset(0)
+    assert view["taxi"]["state"] == ["to_pickup"] and len(view["taxi"]["waiting_node"]) == 3
+    obs = env.observation(view, {"service": "taxi", "reach_m": 300})
+    assert obs["vehicles"].shape == (1, 3) and obs["vehicles"].dtype == np.float32
+    code = ms.fleet.TAXI_STATES.index("to_pickup")
+    assert obs["vehicles"][0].tolist() == pytest.approx([code, view["taxi"]["soc"][0], 1])
+    wide = env.observation(view, {"service": "taxi", "reach_m": 5000, "flat": True})
+    assert wide.shape == (6,) and wide[2] == 3
+    with pytest.raises(ValueError, match="docked services only"):
+        env.action([1], {"service": "taxi"})
+
+
+def test_the_zone_grid_is_set_by_name():
+    net = grid()
+    bikes = ms.service_bike_docked(docks(net))
+    trips = [trip(net, "t", "08:00", (0, 0), (4, 4))]
+    seen = {}
+
+    class Look:
+        step_s = 900.0
+
+        def step(self, view):
+            seen.setdefault("grid_m", view.zones["grid_m"])
+            return []
+
+    ms.fleet_day(net, [bikes], trips, policy=Look(), zone_grid_m=250.0)
+    assert seen["grid_m"] == 250.0
+    with pytest.raises(ValueError):
+        ms.fleet_day(net, [bikes], trips, zone_grid_m=0.0)

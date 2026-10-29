@@ -763,7 +763,32 @@ class FleetEnvironment:
     def step(
         self, decisions: list[tuple]
     ) -> tuple[PolicyView, float, bool, bool, dict[str, Any]]: ...
+    #: The window's start and end, in seconds from midnight.
+    window: tuple[float, float]
     def fork(self) -> FleetEnvironment: ...
+    def vector(self, n: int) -> FleetVectorEnvironment: ...
+    def layout(self) -> dict[str, dict[str, Any]]: ...
+    def plan(self) -> dict[str, int]: ...
+
+class FleetVectorEnvironment:
+    """``n`` fleet days stepped together, in parallel (``openmobisim.fleet_environment(n=...)``)."""
+
+    #: Each day's clock, in seconds from midnight.
+    t: list[float]
+    #: The window's start and end, in seconds from midnight.
+    window: tuple[float, float]
+    def __len__(self) -> int: ...
+    def reset(self, seeds: list[int]) -> tuple[list[PolicyView], list[dict[str, Any]]]: ...
+    def step(
+        self, decisions: list[list[tuple]]
+    ) -> tuple[
+        list[PolicyView],
+        npt.NDArray[np.float64],
+        list[bool],
+        list[bool],
+        list[dict[str, Any]],
+    ]: ...
+    def layout(self) -> dict[str, dict[str, Any]]: ...
     def plan(self) -> dict[str, int]: ...
 
 def _fleet_day(
@@ -774,6 +799,7 @@ def _fleet_day(
     window: tuple[float, float],
     seed: int,
     policy: tuple | None,
+    zone_grid_m: float,
 ) -> dict[str, Any]: ...
 def _fleet_environment(
     network: Network,
@@ -783,6 +809,9 @@ def _fleet_environment(
     window: tuple[float, float],
     step_s: float,
     weights: tuple[float, float, float, float],
+    keep: float,
+    jitter_s: float,
+    zone_grid_m: float,
 ) -> FleetEnvironment: ...
 
 class PolicyView:
@@ -803,6 +832,20 @@ class PolicyView:
     services: list[str]
     def __getitem__(self, name: str) -> dict[str, Any]: ...
     def __contains__(self, name: str) -> bool: ...
+    #: The zones (``grid_m``, ``id``, ``lon``, ``lat``), or ``None`` without them.
+    zones: dict[str, Any] | None
+    def travel_times(
+        self,
+        service: str | None,
+        from_nodes: list[str],
+        to_nodes: list[str],
+        max_s: float = ...,
+    ) -> Any:
+        """Seconds between road nodes leaving at the step, ``[from, to]``; ``inf`` past max_s."""
+    def expected_legs(self, service: str, bin_s: float = 900.0) -> Any:
+        """People expected per dock or zone and time bin, ``[rows, bins]``."""
+    def nearest(self, service: str, kind: str, node: str, k: int) -> list[tuple[str, float]]:
+        """The ``k`` docks or vehicles nearest ``node`` by free-flow time: ``(id, seconds)``."""
 
 def _docks_from_rows(
     rows: list[tuple[str, float, float, int, str | None, str | None, int | None]],

@@ -40,3 +40,4 @@ openmobisim-io-gtfs = { workspace = true }
 # version, which is the whole reason installation is a plain `pip install`.
 pyo3 = { workspace = true, features = ["abi3-py313"] }
 numpy = { workspace = true }
+rayon = { workspace = true }

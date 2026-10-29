@@ -6,6 +6,8 @@
 //! (pickups, returns, failed pickups, redirections, per dock) are kept by the engine and
 //! cleared after each step. A taxi fleet's waiting requests and chargers' plugs in use and
 //! queues are gathered at the step (one pass over the waiting requests and the chargers).
+//! What a policy may ask besides (travel times, expected legs, nearest docks or vehicles, the
+//! zones) is in [`View::queries`], computed only when asked ([`super::queries`]).
 
 use std::collections::HashMap;
 
@@ -13,6 +15,7 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_types::ids::{EntityId, NodeId};
 
 use super::engine::VehicleState;
+use super::queries::Queries;
 
 /// What a policy sees at a step: see the [module docs](self).
 #[derive(Clone, Debug)]
@@ -28,6 +31,10 @@ pub struct View<'a> {
     pub window: (f64, f64),
     /// Per service, in the run's order.
     pub services: Vec<ServiceView<'a>>,
+    /// What the policy may ask besides the state, computed on demand and cached within the
+    /// step: travel times, expected legs, nearest docks or vehicles, and the zones
+    /// ([`super::queries`]).
+    pub queries: Queries,
 }
 
 impl<'a> View<'a> {
@@ -83,6 +90,8 @@ pub struct DockView<'a> {
     pub redirected_in: &'a [f64],
     /// Per dock, travellers who found it empty or full and went on since the last step (people).
     pub redirected_out: &'a [f64],
+    /// Per dock, the bikes in operators' vans on their way to it.
+    pub incoming: &'a [u32],
     /// Bikes in operators' vans now.
     pub moving: u64,
     /// Bikes being ridden now.
