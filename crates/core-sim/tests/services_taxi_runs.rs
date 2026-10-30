@@ -472,14 +472,22 @@ fn the_service_day_is_the_replay_of_its_legs_on_its_road_times() {
 #[test]
 fn shared_bikes_and_taxis_play_in_one_day_and_the_bikes_as_alone() {
     let road = grid();
-    // Walk, shared bike and taxi offered; the one vehicle stands at the far corner and the
-    // longest wait is 30 s, so every request is expected to fail and the taxi is slower than the
-    // shared bike: the same legs ride the bikes as without a taxi fleet, and their day must be
-    // the same in one engine day with the fleet.
+    // Walk, shared bike and taxi offered; the one vehicle stands at the far corner, the
+    // longest wait is 30 s and every request is expected to fail (the expectation's failure
+    // share 1), so the taxi is expected to cost that wait and the walk, slower than the shared
+    // bike: the same legs ride the bikes as without a taxi fleet, and their day must be the
+    // same in one engine day with the fleet.
     let taxi = TaxiDefaults { max_wait_s: 30.0, ..TaxiDefaults::SHIPPED };
+    let expectations = ServiceExpectations { taxi_fail_share: 1.0, ..ServiceExpectations::SHIPPED };
     let both = run(
         corner_trips(&road, 6, 5),
-        &Setup { docks: true, places: vec![(4, 4)], defaults: taxi, ..Setup::default() },
+        &Setup {
+            docks: true,
+            places: vec![(4, 4)],
+            defaults: taxi,
+            expectations,
+            ..Setup::default()
+        },
     );
     let bikes_alone =
         run(corner_trips(&road, 6, 5), &Setup { docks: true, taxis: false, ..Setup::default() });

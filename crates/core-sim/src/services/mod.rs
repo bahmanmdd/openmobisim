@@ -580,11 +580,12 @@ impl Default for TaxiDefaults {
 /// *Every value an assumption, uncalibrated. CITATION OWED.*
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ServiceExpectations {
-    /// The wait a traveller expects before a taxi reaches the pickup, in seconds.
+    /// The wait a traveller expects before a taxi reaches the pickup, in seconds. In the choice
+    /// it is read as at most the fleet's longest wait ([`TaxiDefaults::max_wait_s`]): nobody
+    /// plans on waiting longer than the fleet keeps a request.
     ///
-    /// *An assumption: 600 s, the fleet's shipped longest wait
-    /// ([`TaxiDefaults::max_wait_s`]), so a traveller plans on the longest wait still served.
-    /// CITATION OWED.*
+    /// *An assumption: 600 s, the fleet's shipped longest wait, so a traveller plans on the
+    /// longest wait still served. CITATION OWED.*
     pub taxi_wait_s: f64,
     /// The share of taxi requests a traveller expects to get no vehicle within the fleet's
     /// longest wait, from 0 to 1.

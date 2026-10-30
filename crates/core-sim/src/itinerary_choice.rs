@@ -1633,6 +1633,10 @@ impl<'a> Planner<'a> {
         let d = taxi.defaults;
         let k = routes.sets.key_index(key)?;
         let (wait, fail) = taxi.costs.at(n.road_o, f64::from(departure));
+        // A traveller never plans on waiting longer than the fleet keeps a request (S303): an
+        // expected wait above the fleet's longest wait is read as that longest wait, so the
+        // presets keep their order whatever the fleet's limit.
+        let wait = wait.min(d.max_wait_s);
         let leave = f64::from(departure) + wait + d.board_s;
         let (r, seconds) = routes
             .sets
