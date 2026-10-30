@@ -809,7 +809,9 @@ class Run:
         route), ``pair``, ``alternatives`` (how many it could choose from),
         ``probability`` (what the model gave the route taken; ``nan`` if it gave
         none) and ``weight`` (how many people the trip stands for). ``-1`` marks a
-        trip with no route. ``np.bincount(rc.route[rc.route >= 0], rc.weight[rc.route >= 0],
+        trip with no route, and every trip that chose its mode (``itinerary_choices()`` has its
+        mode; the car route of such a trip is not reported): the routes are those of the trips
+        of a stated mode. ``np.bincount(rc.route[rc.route >= 0], rc.weight[rc.route >= 0],
         minlength=route_sets.route_count)`` is each route's number of travellers.
         """
         return self._summary.route_choices

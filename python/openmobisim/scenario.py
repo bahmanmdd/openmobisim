@@ -1183,8 +1183,9 @@ class Scenario:
                 Every value is an assumption, not a calibration.
                 Unknown names and out-of-range values are refused.
             transit: The timetable of a service day (``openmobisim.transit_read_gtfs``),
-                for the ``"transit"`` trips. A transit trip walks (4.8 km/h, at most 30
-                minutes, ``transit_options``' ``access_walk_max_s``) to a stop, rides one or more
+                for the ``"transit"`` trips. A transit trip walks (on the walk layer, at its
+                ``walk_km_h``, 4.8 km/h by default, a network option; at most 30 minutes,
+                ``transit_options``' ``access_walk_max_s``) to a stop, rides one or more
                 vehicles and walks on, boarding only if
                 at the stop a minute before a vehicle leaves; walks between stops are at most
                 5 minutes. **Its journey is chosen by** ``choice_model`` among the
