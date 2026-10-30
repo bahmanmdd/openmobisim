@@ -5,9 +5,11 @@
 //! a return, from the dock's start-of-day counts ([`DockCosts::initial`], a day with no legs):
 //! for a pickup, the share of the bin the dock is empty times the walk to its nearest neighbour
 //! that is empty for at most half of that bin (or [`DockDefaults::fail_s`](super::DockDefaults::fail_s)
-//! if none); for a return, the same with "full" in place of "empty". The expectations then scale
-//! them ([`DockCosts::expected`]): each side by its factor, or, in the worst case, every dock
-//! empty and full all day (the walk to its nearest neighbour, `fail_s` with none).
+//! if none); for a return, the same with "full" in place of "empty". The expectations then set
+//! them ([`DockCosts::expected`]): in the worst case, every dock empty and full all day (the walk
+//! to its nearest neighbour, `fail_s` with none); and a side given in seconds
+//! ([`super::ServiceExpectations::dock_pickup_extra_s`],
+//! [`super::ServiceExpectations::dock_return_extra_s`]) that constant at every dock and bin.
 //!
 //! **A taxi** ([`TaxiExpectation`]): one expected wait and one expected share of requests with no
 //! vehicle, the same everywhere and all day.
@@ -108,10 +110,12 @@ impl DockCosts {
         Self::from_bins(setup, bins)
     }
 
-    /// These costs as the run's travellers expect them under `e`: each side multiplied by its
-    /// factor; with [`ServiceExpectations::dock_worst_case`], first every dock and bin set to
-    /// the walk to the dock's nearest neighbour ([`DockDefaults::fail_s`](super::DockDefaults::fail_s)
-    /// with none), at both ends.
+    /// These costs as the run's travellers expect them under `e`: with
+    /// [`ServiceExpectations::dock_worst_case`], first every dock and bin set to the walk to the
+    /// dock's nearest neighbour ([`DockDefaults::fail_s`](super::DockDefaults::fail_s) with
+    /// none), at both ends; then a side whose extra walk `e` gives in seconds
+    /// ([`ServiceExpectations::dock_pickup_extra_s`],
+    /// [`ServiceExpectations::dock_return_extra_s`], not `NaN`) set to it at every dock and bin.
     ///
     /// # Panics
     ///
@@ -132,11 +136,11 @@ impl DockCosts {
                 }
             }
         }
-        for v in &mut self.pickup {
-            *v *= e.dock_pickup_factor;
+        if !e.dock_pickup_extra_s.is_nan() {
+            self.pickup.fill(e.dock_pickup_extra_s);
         }
-        for v in &mut self.ret {
-            *v *= e.dock_return_factor;
+        if !e.dock_return_extra_s.is_nan() {
+            self.ret.fill(e.dock_return_extra_s);
         }
         self
     }

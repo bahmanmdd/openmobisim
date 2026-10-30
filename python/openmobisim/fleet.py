@@ -96,9 +96,13 @@ def service_taxi(
         name: Its name, unique among a day's services.
         options: Its options by name (``battery_kwh``, ``kwh_per_km``, ``soc_start``,
             ``reserve_soc``, ``charge_below``, ``charge_to``, ``charger_kw``, ``max_wait_s``,
-            ``board_s``, ``snap_m``, ``charger_reach_s``, and ``log_events``: 1 by default, 0
-            to keep no event log in a very large run, ``taxi_events.parquet`` then empty); a name
-            not among them is refused with the list.
+            ``board_s``, ``hail_s``, ``snap_m``, ``charger_reach_s``, and ``log_events``: 1 by
+            default, 0 to keep no event log in a very large run, ``taxi_events.parquet`` then
+            empty); a name not among them is refused with the list. ``hail_s`` (120 s, an
+            assumption) is the hailing time: a vehicle matched to a request sets off to the
+            pickup that many seconds later (the dispatch and the driver's acceptance), so the
+            wait counts it, and a vehicle serves a request only if the hailing time and its
+            drive fit within ``max_wait_s``; a ``hail_s`` at or above ``max_wait_s`` is refused.
     """
     return Service("taxi", name, vehicles=vehicles, chargers=chargers, options=dict(options or {}))
 

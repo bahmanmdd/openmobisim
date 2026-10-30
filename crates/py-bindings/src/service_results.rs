@@ -135,6 +135,8 @@ fn trips_dict<'py>(py: Python<'py>, t: &BikeShareTripTable) -> PyResult<Bound<'p
     d.set_item("docks_tried_for_slot", t.docks_tried_for_slot.clone().into_pyarray(py))?;
     d.set_item("leg_end_s", nan(&t.leg_end_s).into_pyarray(py))?;
     d.set_item("extra_s", nan(&t.extra_s).into_pyarray(py))?;
+    d.set_item("pickup_extra_s", nan(&t.pickup_extra_s).into_pyarray(py))?;
+    d.set_item("return_extra_s", nan(&t.return_extra_s).into_pyarray(py))?;
     d.set_item("extra_walk_m", t.extra_walk_m.clone().into_pyarray(py))?;
     d.set_item("met_minus_expected_s", nan(&t.met_minus_expected_s).into_pyarray(py))?;
     d.set_item("failed_attempts_for_bike", t.failed_attempts_for_bike.clone().into_pyarray(py))?;
@@ -306,7 +308,6 @@ fn taxi_trips_dict<'py>(py: Python<'py>, t: &TaxiTripTable) -> PyResult<Bound<'p
         ("km_to_pickup", &t.km_to_pickup),
         ("km_with_passenger", &t.km_with_passenger),
         ("dropped_off_s", &t.dropped_off_s),
-        ("walk_s", &t.walk_s),
         ("arrived_s", &t.arrived_s),
         ("door_to_door_s", &t.door_to_door_s),
         ("met_minus_expected_s", &t.met_minus_expected_s),

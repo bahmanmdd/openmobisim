@@ -22,7 +22,7 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults, StaticNetwork};
 use openmobisim_core_graph::manhattan_grid;
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_sim::services::{DockDefaults, DockRow, ServiceSetup};
+use openmobisim_core_sim::services::{DockDefaults, DockRow, ServiceExpectations, ServiceSetup};
 use openmobisim_core_sim::{LayerSetup, Prices, Run, RunResult, StaticLayers};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::EntityId;
@@ -111,6 +111,7 @@ struct Setup {
     prices: Prices,
     walk_max_s: f64,
     fail_s: f64,
+    expectations: ServiceExpectations,
 }
 
 impl Default for Setup {
@@ -123,6 +124,7 @@ impl Default for Setup {
             prices: Prices::SHIPPED,
             walk_max_s: DockDefaults::SHIPPED.walk_max_s,
             fail_s: DockDefaults::SHIPPED.fail_s,
+            expectations: ServiceExpectations::SHIPPED,
         }
     }
 }
@@ -136,6 +138,7 @@ fn run(rows: Vec<RawTrip>, s: &Setup) -> RunResult {
         .with_layers(layers)
         .with_choice_model(Arc::clone(&s.model))
         .with_prices(s.prices)
+        .with_service_expectations(s.expectations)
         .with_mode_choice(&[Mode::Walk, Mode::BikeShare]);
     if s.docks {
         run = run.with_services(Arc::new(vec![service]));
@@ -239,6 +242,45 @@ fn a_price_per_ride_moves_travellers_from_shared_bikes_to_walking() {
     assert!(free > 0 && priced < free, "free {free}, at 3 € a ride {priced}");
 }
 
+/// The shared-bike trips (people) of forty corner trips under logit at 3 € a ride, with `bikes`
+/// at the start and the expectations `e`.
+fn shared_under(bikes: [u32; 4], e: ServiceExpectations) -> u32 {
+    let road = grid();
+    let model: Arc<dyn ChoiceModel> =
+        Arc::from(openmobisim_core_choice::model("logit", &BTreeMap::new()).expect("logit"));
+    // A fare that puts the shared bike near walking (as in the fare test above), so what is
+    // expected at the docks shows in the share.
+    let prices = Prices { bike_share_eur_per_ride: 3.0, ..Prices::SHIPPED };
+    let s = Setup { model, bikes, prices, expectations: e, ..Setup::default() };
+    let r = run(corner_trips(&road, 40, 15), &s);
+    r.by_mode[Mode::BikeShare.index()].completion.total_trips
+}
+
+#[test]
+fn the_presets_order_the_shared_bike_share_and_a_dock_s_extra_walk_is_set_in_seconds() {
+    // Dock a starts empty: the default expects, at a, the walk to b (the start-of-day counts),
+    // the optimistic preset nothing, the pessimistic one the walk to the nearest neighbour at
+    // every dock, at both ends.
+    let preset = |name: &str| ServiceExpectations::preset(name).unwrap();
+    let bikes = [0, 2, 0, 0];
+    let optimistic = shared_under(bikes, preset("optimistic"));
+    let default = shared_under(bikes, preset("default"));
+    let pessimistic = shared_under(bikes, preset("pessimistic"));
+    println!(
+        "shared-bike trips: optimistic {optimistic}, default {default}, pessimistic {pessimistic}"
+    );
+    assert!(optimistic >= default && default >= pessimistic);
+    assert!(optimistic > pessimistic, "the presets move the share");
+    // a and b start full of bikes: the default expects no extra walk at the pickup; 300 s at
+    // every pickup dock lowers the share.
+    let full = [4, 4, 0, 0];
+    let free = shared_under(full, ServiceExpectations::SHIPPED);
+    let walk = ServiceExpectations { dock_pickup_extra_s: 300.0, ..ServiceExpectations::SHIPPED };
+    let slowed = shared_under(full, walk);
+    println!("shared-bike trips with full docks: default {free}, 300 s at the pickup {slowed}");
+    assert!(free > slowed, "default {free}, 300 s at the pickup {slowed}");
+}
+
 #[test]
 fn same_seed_same_day() {
     let road = grid();
@@ -283,6 +325,13 @@ fn the_expectations_stay_fixed_and_the_service_day_shows_what_was_met() {
     assert!(day.summary.failed > 0.0, "some find no bike at any dock tried");
     assert!(day.summary.mismatch_mean_s > 0.0, "worse than the start-of-day counts expected");
     assert!(day.summary.mismatch_abs_mean_s >= day.summary.mismatch_mean_s);
+    // The extra seconds met, split at the pickup and at the return, add up to the whole; these
+    // corner trips find their pickup docks empty, so most of it is the pickup's.
+    let (p, r) = (day.summary.dock_pickup_extra_s, day.summary.dock_return_extra_s);
+    assert!((p + r - day.extra_mean_s).abs() < 1e-6, "{p} + {r} vs {}", day.extra_mean_s);
+    assert!(p > 0.0 && r >= 0.0 && p > r, "pickup {p}, return {r}");
+    let rows: Vec<&str> = day.summary.rows().iter().map(|(n, _)| *n).collect();
+    assert!(rows.contains(&"dock_pickup_extra_s") && rows.contains(&"dock_return_extra_s"));
     // Each trip's row is as planned: completed at its expected end, not at what it met.
     for (l, &(_, met_end)) in day.legs.iter().zip(&day.met) {
         let done =

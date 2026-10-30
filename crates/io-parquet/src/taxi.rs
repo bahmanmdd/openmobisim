@@ -22,9 +22,10 @@
 //! **`taxi_trips.parquet`** — one row per trip that chose a taxi, in trip order: who (`run_id,
 //! service, traveller_id, trip_seq, travellers`); the plan (`requested_s, expected_wait_s,
 //! expected_no_taxi_share, expected_door_to_door_s`); what happened (`vehicle, assigned_s,
-//! taxi_at_pickup_s, waited_s, km_to_pickup, km_with_passenger, dropped_off_s, walk_s,
-//! arrived_s, door_to_door_s`; a request with no vehicle within the longest wait ends there, so
-//! it has no arrival, and `walk_s` is always null); the difference (`waited_minus_expected_s`,
+//! taxi_at_pickup_s, waited_s, km_to_pickup, km_with_passenger, dropped_off_s, arrived_s,
+//! door_to_door_s`; `assigned_s` is when a vehicle was matched, which sets off after the
+//! fleet's hailing time `hail_s`; a request with no vehicle within the longest wait ends there,
+//! so it has no arrival); the difference (`waited_minus_expected_s`,
 //! `met_minus_expected_s` = `door_to_door_s − expected_door_to_door_s`, positive when worse than
 //! expected); and `result`: `as_planned`, `waited_longer_than_expected` (by more than a
 //! minute), `no_taxi`, `still_waiting_at_window_end`, `still_riding_at_window_end`, `not_started`.
@@ -112,7 +113,6 @@ pub fn write_taxi_trips(
         .maybe_number("km_to_pickup", &t.km_to_pickup)
         .maybe_number("km_with_passenger", &t.km_with_passenger)
         .maybe_number("dropped_off_s", &t.dropped_off_s)
-        .maybe_number("walk_s", &t.walk_s)
         .maybe_number("arrived_s", &t.arrived_s)
         .maybe_number("door_to_door_s", &t.door_to_door_s)
         .maybe_number("met_minus_expected_s", &t.met_minus_expected_s)

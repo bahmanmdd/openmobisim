@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import math
 import tempfile
 import warnings
 from collections.abc import Callable, Mapping
@@ -219,7 +220,8 @@ def _check_taxi_priced(
 def _service_expectations(given: Any) -> tuple[str, dict[str, float]] | None:
     """``Scenario.run``'s ``service_expectations`` as the core takes them.
 
-    A preset's name and values by name over it; the core checks both, naming what exists.
+    A preset's name and values by name over it; the core checks both, naming what exists. A
+    value ``None`` is ``NaN`` (a dock's extra walk from the start-of-day counts).
     """
     if given is None:
         return None
@@ -232,6 +234,9 @@ def _service_expectations(given: Any) -> tuple[str, dict[str, float]] | None:
                 raise ValueError(
                     f"service_expectations: give numbers by parameter name, got {name!r}: {value!r}"
                 )
+            if value is None:
+                values[name] = math.nan
+                continue
             try:
                 values[name] = float(value)
             except (TypeError, ValueError):
@@ -1236,10 +1241,11 @@ class Scenario:
                 destination within its ``walk_max_s`` (600 s) on foot, the ``candidates`` best
                 pairs; each carries ``dock_min`` (the minutes expected walking to another dock
                 when the pickup dock is empty or the return dock full, part of ``walk_min``) and
-                ``mode_bike_share``. After each loading the service's day is played on the fleet
-                engine with the trips that took a shared bike: a traveller finding an empty dock
-                walks to another, one whose pickup fails walks on to the destination; the docks'
-                costs it realises are averaged into what the next choice expects. With
+                ``mode_bike_share``, priced on what travellers expect of the docks
+                (``service_expectations``). Once the run has stopped, the service's day is played
+                on the fleet engine with the last loading's trips that took a shared bike: a
+                traveller finding an empty dock walks to another, one whose pickup fails walks on
+                to the destination; what they met is reported, not fed back. With
                 ``"bike_share_transit"`` among ``modes`` and a ``transit`` timetable, a trip is
                 also offered **a shared bike to a stop, then transit**: walk to a dock, ride to a
                 dock of a stop's hub (a dock within ``hub_join_m`` of a stop, or naming its
@@ -1254,16 +1260,16 @@ class Scenario:
                 ``service_taxi(vehicles, chargers, options=...)`` (one per run, beside a docked
                 bike service or alone): with ``"taxi"`` among ``modes`` a trip choosing its mode is
                 offered a taxi, door to door: it asks for one at its departure, waits, rides the
-                car's fastest route. Its alternative carries ``wait_min`` (the expected wait),
-                ``fail_prob`` (the expected share of requests from its zone, a 1 km square, in its
-                15-minute bin that no vehicle reaches within the fleet's ``max_wait_s``),
-                ``car_min`` (the drive), ``mode_taxi`` and a ``time_min`` that counts, for the share
-                that fails, the longest wait and the walk to the destination. After each loading
-                the taxi trips are played on the fleet engine (the built-in matching, the
-                charging rule): the vehicles drive on the loading's link times without adding
-                traffic, a request no vehicle reaches within ``max_wait_s`` fails and **the
-                traveller walks from the origin to the destination**; the waits and failures met
-                are averaged into what the next choice expects. **A run offering a taxi needs a
+                car's fastest route. Its alternative carries ``wait_min`` (the expected wait,
+                ``service_expectations``' ``taxi_wait_s``, at most the fleet's ``max_wait_s``),
+                ``fail_prob`` (the expected share of requests with no vehicle,
+                ``taxi_fail_share``), ``car_min`` (the drive), ``mode_taxi`` and a ``time_min``
+                that counts, for the share that fails, the longest wait. Once the run has
+                stopped, the last loading's taxi trips are played on the fleet engine (the
+                built-in matching, the hailing time ``hail_s``, the charging rule): the vehicles
+                drive on that loading's link times without adding traffic, and a request no
+                vehicle reaches within ``max_wait_s`` fails and the trip ends there; what they met
+                is reported, not fed back. **A run offering a taxi needs a
                 constant or a fare**: ``beta_mode_taxi`` (``choice_options`` or every class's) or
                 ``price_options``' ``taxi_eur_per_km`` or ``taxi_eur_per_ride``; it refuses to
                 start without, since a free taxi at the door would take nearly every trip. A class
@@ -1675,7 +1681,7 @@ class Scenario:
         replication: int = 0,
         outputs: str = "all",
         hub_join_m: float = 150.0,
-        service_expectations: str | Mapping[str, float] | None = None,
+        service_expectations: str | Mapping[str, float | None] | None = None,
     ) -> Run:
         """Run the scenario and write its output artifacts.
 
@@ -1719,15 +1725,18 @@ class Scenario:
                 whole run: a preset's name or values by name. ``None`` (the default) is the preset
                 ``"default"``. A taxi alternative plans on ``taxi_wait_s`` (600 s) and a share
                 ``taxi_fail_share`` (0) of requests with no vehicle within the fleet's longest wait;
-                a shared bike on the docks' start-of-day extra walks (an empty pickup dock costs the
-                walk to its nearest neighbour with bikes, a full return dock the walk to its nearest
-                with room) multiplied by ``dock_pickup_factor`` (1) and ``dock_return_factor`` (1),
+                a shared bike on an extra walk at the pickup dock and at the return dock, in
+                seconds: ``dock_pickup_extra_s`` and ``dock_return_extra_s``, each the same at every
+                dock and time, or ``None`` (the default, ``NaN`` also accepted) for the docks'
+                start-of-day counts, dock by dock (an empty pickup dock costs the walk to its
+                nearest neighbour with bikes, a full return dock the walk to its nearest with room)
                 or, with ``dock_worst_case`` 1 (0 by default), every dock expected empty and full
                 all day. The presets: ``"default"`` (those values), ``"optimistic"`` (120 s, no
-                failure, no extra walk: better than what is likely met), ``"pessimistic"`` (600 s, a
-                quarter of requests with no vehicle, every dock empty and full). A dict starts from
-                ``"default"`` and replaces the values it names; a misspelt name is refused with the
-                list of names. Every value is an assumption, uncalibrated. The services are not
+                failure, both dock values 0: better than what is likely met), ``"pessimistic"``
+                (600 s, a quarter of requests with no vehicle, every dock empty and full). A dict
+                starts from ``"default"`` and replaces the values it names (``Run.service_met()``
+                of an earlier run is such a dict); a misspelt name is refused with the list of
+                names. Every value is an assumption, uncalibrated. The services are not
                 played in the loadings: once the run has stopped, its last loading's service trips
                 are played in one day, and what they met is reported beside what they expected
                 (``Run.service_met()``, ``kpis.parquet``, ``trip_results()``'s ``service_outcome``).

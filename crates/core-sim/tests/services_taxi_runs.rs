@@ -231,10 +231,11 @@ fn a_taxi_is_chosen_over_a_long_walk_and_its_requests_played_on_the_engine() {
     let day = taxis.last.as_ref().expect("taxis were taken");
     let status: Vec<LegStatus> = day.outcome.iter().map(|o| o.status).collect();
     assert_eq!(status, [LegStatus::Served; 3]);
-    // The first two: sent at once, 0 km from the pickup, boarded a minute later.
+    // The first two: matched at once, 0 km from the pickup, there after the hailing time,
+    // boarded a minute later.
     let d = TaxiDefaults::SHIPPED;
     for o in &day.outcome[..2] {
-        assert_eq!(o.waited_s, 0.0);
+        assert_eq!(o.waited_s, d.hail_s);
         assert!(o.arrived_s > o.requested_s + d.board_s);
     }
     // The third waited for the first vehicle back: its whole round trip and more.
@@ -264,7 +265,7 @@ fn a_request_no_vehicle_reaches_fails_and_ends_there_with_no_walk_on() {
     // time, so the request fails, and the trip ends there (S303): no walk on, no event after.
     let s = Setup {
         places: vec![(4, 4)],
-        defaults: TaxiDefaults { max_wait_s: 30.0, ..TaxiDefaults::SHIPPED },
+        defaults: TaxiDefaults { max_wait_s: 30.0, hail_s: 0.0, ..TaxiDefaults::SHIPPED },
         ..Setup::default()
     };
     let rows = vec![trip("t", at(&road, 0, 0), at(&road, 4, 4), 100)];
@@ -477,7 +478,7 @@ fn shared_bikes_and_taxis_play_in_one_day_and_the_bikes_as_alone() {
     // share 1), so the taxi is expected to cost that wait and the walk, slower than the shared
     // bike: the same legs ride the bikes as without a taxi fleet, and their day must be the
     // same in one engine day with the fleet.
-    let taxi = TaxiDefaults { max_wait_s: 30.0, ..TaxiDefaults::SHIPPED };
+    let taxi = TaxiDefaults { max_wait_s: 30.0, hail_s: 0.0, ..TaxiDefaults::SHIPPED };
     let expectations = ServiceExpectations { taxi_fail_share: 1.0, ..ServiceExpectations::SHIPPED };
     let both = run(
         corner_trips(&road, 6, 5),

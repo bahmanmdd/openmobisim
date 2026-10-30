@@ -252,11 +252,16 @@ fn a_full_return_dock_sends_the_bike_on_and_with_no_room_near_it_overflows() {
     let ba = Legs::of(&s).ride_s(0, B, A);
     let d = DockDefaults::SHIPPED;
     assert_eq!(o.arrived_s, 100.0 + d.pickup_s + t.ride_s + ba + d.return_s + 100.0);
+    // The return's extra seconds: the ride on to A and the walk from A less the planned walk
+    // from B (60 s); none at the pickup.
+    assert_eq!(o.return_extra_s, ba + 100.0 - t.egress_s);
+    assert_eq!(o.extra_walk_s, 0.0);
     // With the destination as near on foot from B as from A, riding on is not worth it: the
     // bike is left at B above capacity (S302).
     let out = load(&s, &[t], 3600.0);
     let o = out.legs[0];
     assert_eq!((o.returned, o.redirections, o.overflow), (Some(B), 0, true));
+    assert_eq!(o.return_extra_s, 0.0, "left at the planned return dock");
     // Never back to the dock the bike came from: B full, C (where it was taken) the nearest.
     let s = three([1, 2, 0], 2);
     let t = trip(0, 100.0, C, B, &s);
@@ -321,15 +326,18 @@ fn a_dock_empty_at_the_start_costs_the_walk_to_its_nearest_neighbour_with_bikes(
     // C is full: a return there costs the walk to B, the nearest with room.
     let to_b = d.neighbours(C).iter().find(|n| n.0 == B).unwrap().1;
     assert_eq!(costs.return_s(C, 1000.0), to_b);
-    // The expectations scale them (S303): the default keeps them, the factors multiply each
-    // side, and the worst case expects every dock empty and full: the walk to the nearest
-    // neighbour at both ends.
+    // The expectations set them (S303): the default (both sides NaN) keeps them, a side in
+    // seconds is that constant at every dock and bin, and the worst case expects every dock
+    // empty and full: the walk to the nearest neighbour at both ends.
     let e = ServiceExpectations::SHIPPED;
+    assert!(e.dock_pickup_extra_s.is_nan() && e.dock_return_extra_s.is_nan());
     assert_eq!(costs.clone().expected(&s, &e), costs);
-    let half = ServiceExpectations { dock_pickup_factor: 0.5, dock_return_factor: 0.0, ..e };
-    let scaled = costs.clone().expected(&s, &half);
-    assert_eq!(scaled.pickup_s(A, 0.0), to_c / 2.0);
-    assert_eq!(scaled.return_s(C, 1000.0), 0.0);
+    let set = ServiceExpectations { dock_pickup_extra_s: 300.0, ..e };
+    let fixed = costs.clone().expected(&s, &set);
+    for k in [A, B, C] {
+        assert_eq!(fixed.pickup_s(k, 0.0), 300.0, "dock {k}");
+        assert_eq!(fixed.return_s(k, 1000.0), costs.return_s(k, 1000.0), "dock {k}");
+    }
     let worst = costs.expected(&s, &ServiceExpectations::preset("pessimistic").unwrap());
     let nearest = |k: u32| d.neighbours(k)[0].1;
     for k in [A, B, C] {
@@ -359,7 +367,17 @@ fn expectations_are_set_by_name_and_refused_with_the_names() {
     let err = ServiceExpectations::preset("cheerful").unwrap_err();
     assert!(err.contains("optimistic") && err.contains("pessimistic"), "{err}");
     assert_eq!(ServiceExpectations::preset("default").unwrap(), ServiceExpectations::SHIPPED);
+    assert_ne!(ServiceExpectations::preset("optimistic").unwrap(), ServiceExpectations::SHIPPED);
     assert_eq!(ServiceExpectations::SHIPPED.taxi_wait_s, 600.0);
+    // A dock's extra walk: NaN (the start-of-day counts) or seconds, 0 or more.
+    let by = |n: &str, v: f64| {
+        ServiceExpectations::SHIPPED.with_options(&BTreeMap::from([(n.to_string(), v)]))
+    };
+    assert!(by("dock_pickup_extra_s", f64::NAN).unwrap().dock_pickup_extra_s.is_nan());
+    assert_eq!(by("dock_return_extra_s", 90.0).unwrap().dock_return_extra_s, 90.0);
+    assert!(by("dock_return_extra_s", -1.0).unwrap_err().contains("NaN"));
+    assert!(by("dock_pickup_extra_s", f64::INFINITY).is_err());
+    assert!(by("dock_pickup_factor", 1.0).unwrap_err().contains("dock_pickup_extra_s"));
 }
 
 #[test]

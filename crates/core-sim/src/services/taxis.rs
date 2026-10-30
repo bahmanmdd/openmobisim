@@ -6,16 +6,24 @@
 //! no pooling; a weight of 0 counts as 1), matched one after the other.
 //!
 //! **Matching** (built in). At a request, the idle vehicles that can reach the pickup within
-//! [`TaxiDefaults::max_wait_s`] are found by one bounded backward search on free-flow times
-//! from the pickup; the nearest by that estimate that has charge enough for the drive to the
-//! pickup and the trip, above [`TaxiDefaults::reserve_soc`], is sent (ties by vehicle index);
-//! its drives are timed on the day's roads ([`ServiceRoads::drive`]). With none, the unit
-//! request **waits**, and is offered, oldest first, to every vehicle freed; past
-//! [`TaxiDefaults::max_wait_s`] it **fails** (an `Expire` event, taken after the requests of
-//! its second and before the policy step).
+//! [`TaxiDefaults::max_wait_s`] less the hailing time [`TaxiDefaults::hail_s`] are found by one
+//! bounded backward search on free-flow times from the pickup; the nearest by that estimate
+//! that has charge enough for the drive to the pickup and the trip, above
+//! [`TaxiDefaults::reserve_soc`], is sent (ties by vehicle index); its drives are timed on the
+//! day's roads ([`ServiceRoads::drive`]). With none, the unit request **waits**, and is
+//! offered, oldest first, to every vehicle freed that can reach it, hailing included, within
+//! [`TaxiDefaults::max_wait_s`] of its request; past [`TaxiDefaults::max_wait_s`] it **fails**
+//! (an `Expire` event, taken after the requests of its second and before the policy step).
+//!
+//! **Hailing.** A vehicle matched at second `t` is held for the request from `t` (state
+//! `to_pickup`, the request's `assigned_s` = `t`) and sets off at `t + hail_s`; it reaches the
+//! pickup at `t + hail_s` plus its drive, boards for [`TaxiDefaults::board_s`] and leaves. The
+//! request's wait runs from its request to the vehicle reaching the pickup, hailing included.
+//! No kilometre is driven during the hailing.
 //!
 //! **Energy.** Each drive uses [`TaxiDefaults::kwh_per_km`] per kilometre, taken when the
-//! drive starts. **The default charging rule:** a vehicle that drops a passenger below
+//! drive is decided (for a drive to a pickup: at the match, before the hailing; nothing is used
+//! during the hailing itself). **The default charging rule:** a vehicle that drops a passenger below
 //! [`TaxiDefaults::charge_below`] (or starts the day below it) drives to the charger nearest
 //! it by free-flow time, within [`TaxiDefaults::charger_reach_s`], and charges to
 //! [`TaxiDefaults::charge_to`] at the charger's power, first come first served at its plugs. A
@@ -63,7 +71,8 @@ pub struct TaxiRequest {
     pub vehicle: Option<u32>,
     /// The second it asked (`NaN` if never).
     pub requested_s: f64,
-    /// The second a vehicle was sent (`NaN` if none was).
+    /// The second a vehicle was matched to it (`NaN` if none was); the vehicle sets off
+    /// [`TaxiDefaults::hail_s`] later.
     pub assigned_s: f64,
     /// The second the vehicle reached the pickup (`NaN` if it did not).
     pub picked_s: f64,
@@ -134,7 +143,8 @@ pub enum TaxiEventKind {
     AskedForTaxi,
     /// No idle vehicle could take the request at once: it waits, offered to every vehicle freed.
     WaitingForTaxi,
-    /// A vehicle was sent to the pickup (its drive there, `km`, starts).
+    /// A vehicle was matched to the request and is held for it; its drive to the pickup, `km`,
+    /// starts after the hailing time ([`TaxiDefaults::hail_s`]).
     TaxiAssigned,
     /// The vehicle reached the pickup; boarding starts.
     TaxiArrivedAtPickup,
@@ -626,15 +636,17 @@ impl Taxis<'_> {
         self.run.range[u as usize].1 == u + 1
     }
 
-    /// Send vehicle `v` from its node to unit request `u` at second `t`, if it has the charge.
+    /// Match vehicle `v` to unit request `u` at second `t`, if it has the charge: it is held
+    /// from `t` and drives from its node to the pickup from `t + hail_s`.
     fn try_send(&mut self, v: u32, u: u32, t: f64) -> bool {
         let leg = *self.leg_of(u);
         let from = self.node[v as usize];
-        let (to_s, to_m) = self.roads.drive(from, leg.origin, t);
+        let go = t + self.d.hail_s;
+        let (to_s, to_m) = self.roads.drive(from, leg.origin, go);
         if !to_s.is_finite() {
             return false;
         }
-        let (_, trip_m) = self.roads.drive(leg.origin, leg.destination, t + to_s);
+        let (_, trip_m) = self.roads.drive(leg.origin, leg.destination, go + to_s);
         if !trip_m.is_finite() || !self.can_drive(v, to_m + trip_m) {
             return false;
         }
@@ -653,16 +665,22 @@ impl Taxis<'_> {
         self.run.days[v as usize].km_empty += to_m / 1000.0;
         self.use_energy(v, to_m);
         self.node[v as usize] = leg.origin;
-        self.drive_km(v, false, t, t + to_s, to_m / 1000.0);
+        self.drive_km(v, false, go, go + to_s, to_m / 1000.0);
         self.log(t, TaxiEventKind::TaxiAssigned, u, v, NO, to_m / 1000.0);
-        self.schedule(t + to_s, Move::AtPickup, v);
+        self.schedule(go + to_s, Move::AtPickup, v);
         true
+    }
+
+    /// The free-flow seconds of driving a vehicle may have to a pickup: the longest wait less
+    /// the hailing time.
+    fn reach_s(&self) -> f64 {
+        (self.d.max_wait_s - self.d.hail_s).max(0.0)
     }
 
     /// Match unit request `u` at second `t` to the nearest idle vehicle that can serve it.
     fn match_unit(&mut self, u: u32, t: f64) -> bool {
         let origin = self.leg_of(u).origin;
-        for (node, _) in self.roads.reach_to(origin, self.d.max_wait_s) {
+        for (node, _) in self.roads.reach_to(origin, self.reach_s()) {
             let mut here = self.run.idle_at.get(&node.raw()).cloned().unwrap_or_default();
             here.sort_unstable();
             for v in here {
@@ -681,7 +699,7 @@ impl Taxis<'_> {
         }
         let reach: HashMap<u32, f64> = self
             .roads
-            .reach_from(self.node[v as usize], self.d.max_wait_s)
+            .reach_from(self.node[v as usize], self.reach_s())
             .into_iter()
             .map(|(n, s)| (n.raw(), s))
             .collect();
@@ -690,8 +708,9 @@ impl Taxis<'_> {
         while let Some(u) = self.run.waiting.pop_front() {
             let asked = self.run.requests[u as usize].requested_s;
             let origin = self.leg_of(u).origin;
-            let in_time =
-                reach.get(&origin.raw()).is_some_and(|&s| t + s <= asked + self.d.max_wait_s);
+            let in_time = reach
+                .get(&origin.raw())
+                .is_some_and(|&s| t + self.d.hail_s + s <= asked + self.d.max_wait_s);
             if !sent && in_time && self.try_send(v, u, t) {
                 sent = true;
             } else {

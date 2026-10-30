@@ -537,16 +537,18 @@ def policy_assignment(
 ) -> PolicyAssignment:
     """CFA for taxis: waiting requests matched to idle vehicles by an assignment each step.
 
-    The engine matches a request to the nearest idle vehicle within the fleet's
-    ``max_wait_s`` the moment it is made; a request no vehicle can reach in time **waits**
+    The engine matches a request to the nearest idle vehicle that can reach it within the
+    fleet's ``max_wait_s`` less its hailing time ``hail_s`` the moment it is made; a request no
+    vehicle can reach in time **waits**
     (``waiting_node`` in the view). Each step, this policy (1) sends every idle vehicle below
     ``charge_below`` to its nearest charger, to charge to ``charge_to``, and (2) assigns the
     other idle vehicles to the waiting requests, one each, minimising the seconds to the pickup
     (``view.travel_times``) plus ``soc_penalty_s`` × the share of battery used, by
     ``scipy.optimize.linear_sum_assignment``; each assigned vehicle is relocated to its
     request's road node. The engine offers waiting requests, oldest first, to a vehicle that
-    ends a relocation: the request is served if the vehicle arrives within the request's
-    ``max_wait_s``. The engine does the match, so nothing is assigned twice; the assignment
+    ends a relocation: the request is served if the vehicle, hailing time included, arrives
+    within the request's ``max_wait_s``. The engine does the match, so nothing is assigned
+    twice; the assignment
     chooses which vehicle drives, not which request it takes on arrival.
 
     Args:

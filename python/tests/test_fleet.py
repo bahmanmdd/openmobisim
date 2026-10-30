@@ -357,6 +357,26 @@ def test_a_driving_taxi_s_view_says_when_it_gets_to_its_node():
     assert math.isnan(view["taxi"]["until_s"][0])
 
 
+def test_the_hailing_time_is_set_by_name_and_delays_the_vehicle_by_as_much():
+    net = grid()
+    v = ms.vehicle_read_table(
+        [{"vehicle_id": "v1", "lon": at(net, 0, 0)[0], "lat": at(net, 0, 0)[1]}]
+    )
+    until = {}
+    for hail in (0.0, 300.0):
+        taxis = ms.service_taxi(v, options={"max_wait_s": 3600, "hail_s": hail})
+        env = ms.fleet_environment(net, [taxis], [trip(net, "a", 26_000, (0, 2), (2, 2))])
+        view, _ = env.reset(0)
+        assert view["taxi"]["state"] == ["to_pickup"], "held for the request from the match"
+        until[hail] = view["taxi"]["until_s"][0]
+    # The same drive to the pickup, set off 300 s later.
+    assert until[300.0] - until[0.0] == pytest.approx(300.0)
+    with pytest.raises(ValueError, match="hail_s"):
+        ms.fleet_day(net, [ms.service_taxi(v, options={"hail": 60})], [])
+    with pytest.raises(ValueError, match="max_wait_s"):
+        ms.fleet_day(net, [ms.service_taxi(v, options={"hail_s": 600, "max_wait_s": 600})], [])
+
+
 def test_an_environment_s_view_counts_its_steps_and_the_counts_since_the_last_one():
     net = grid()
     bikes = ms.service_bike_docked(docks(net, bikes=(4, 0)))

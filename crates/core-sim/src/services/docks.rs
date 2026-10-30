@@ -600,6 +600,7 @@ impl DockRun {
                 let what = (t, me, DockEventKind::RidingToNextDock);
                 self.note(c.docks, fleet.bikes, what, dock, o, m);
                 let ride = c.legs.ride_s(leg.service, dock, o);
+                c.out.return_extra_s += ride;
                 return Some((t + ride, EventKind::Return, o));
             }
         }
@@ -618,7 +619,9 @@ impl DockRun {
         let egress = if dock == leg.return_dock {
             leg.egress_s
         } else {
-            c.legs.walk_to_destination_s(c.index, dock)
+            let walk = c.legs.walk_to_destination_s(c.index, dock);
+            c.out.return_extra_s += walk - leg.egress_s;
+            walk
         };
         c.out.status = LegStatus::Served;
         c.out.returned = Some(dock);

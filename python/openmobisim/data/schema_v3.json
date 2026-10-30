@@ -1,5 +1,5 @@
 {
- "schema_version": 2,
+ "schema_version": 3,
  "files": {
   "bike_share_docks.parquet": {
    "columns": [
@@ -360,6 +360,18 @@
     },
     {
      "name": "extra_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
+     "name": "pickup_extra_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
+     "name": "return_extra_s",
      "type": "double",
      "nullable": true,
      "unit": "s"
@@ -999,12 +1011,6 @@
      "type": "double",
      "nullable": true,
      "unit": "s after midnight"
-    },
-    {
-     "name": "walk_s",
-     "type": "double",
-     "nullable": true,
-     "unit": "s"
     },
     {
      "name": "arrived_s",

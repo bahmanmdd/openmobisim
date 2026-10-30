@@ -299,7 +299,9 @@ fn manifest_reports_the_fields_phase_1_actually_has() {
     let path = temp_path("manifest.json");
     write_manifest(&path, &manifest).expect("write");
     let json = std::fs::read_to_string(&path).expect("read back");
-    assert!(json.contains("\"manifest_version\": 2"));
+    assert!(
+        json.contains(&format!("\"manifest_version\": {}", openmobisim_io_parquet::SCHEMA_VERSION))
+    );
     assert!(json.contains("\"window_end_seconds\": 3600"));
     assert!(!json.contains("\"window_seconds\""), "renamed (G-34)");
     let sha = json_string_field(&json, "git_sha");
@@ -777,7 +779,7 @@ fn every_parquet_file_carries_the_schema_version() {
     };
     let expected = Some(openmobisim_io_parquet::SCHEMA_VERSION.to_string());
     assert_eq!(openmobisim_io_parquet::SCHEMA_VERSION_KEY, "openmobisim.schema_version");
-    assert_eq!(expected.as_deref(), Some("2"));
+    assert_eq!(expected.as_deref(), Some("3"));
 
     let result = sample_result();
     let kpis = temp_path("version-kpis.parquet");

@@ -105,13 +105,25 @@ pub struct ServiceSummary {
     pub mismatch_abs_mean_s: f64,
     /// A taxi fleet's mean wait of the trips served, in seconds (`NaN` for a docked service).
     pub wait_mean_s: f64,
+    /// A docked service's mean extra seconds at the pickup, over the shared-bike trips whose
+    /// leg ended (served, or given up and walked on), by people: per trip its extra seconds
+    /// ([`ShareLeg::dock_extra_s`]) less its return's (`NaN` for a taxi fleet, or with none).
+    /// The met counterpart of [`super::ServiceExpectations::dock_pickup_extra_s`].
+    pub dock_pickup_extra_s: f64,
+    /// Likewise at the return ([`LegOutcome::return_extra_s`]); the met counterpart of
+    /// [`super::ServiceExpectations::dock_return_extra_s`].
+    pub dock_return_extra_s: f64,
 }
 
 impl ServiceSummary {
     /// The summary of legs given as `(people, departure, expected end, met, met end, wait)`
     /// (the wait `NaN` where none is kept).
     fn of(legs: impl Iterator<Item = (f64, f64, f64, Met, f64, f64)>) -> Self {
-        let mut s = Self::default();
+        let mut s = Self {
+            dock_pickup_extra_s: f64::NAN,
+            dock_return_extra_s: f64::NAN,
+            ..Self::default()
+        };
         let (mut expected, mut met, mut signed, mut abs, mut ended) = (0.0, 0.0, 0.0, 0.0, 0.0);
         let (mut waited, mut waits) = (0.0, 0.0);
         for (w, departure, expected_end, m, met_end, wait) in legs {
@@ -155,6 +167,8 @@ impl ServiceSummary {
             ("mismatch_mean_s", self.mismatch_mean_s),
             ("mismatch_abs_mean_s", self.mismatch_abs_mean_s),
             ("wait_mean_s", self.wait_mean_s),
+            ("dock_pickup_extra_s", self.dock_pickup_extra_s),
+            ("dock_return_extra_s", self.dock_return_extra_s),
         ]
         .into_iter()
         .filter(|(_, v)| v.is_finite())
@@ -192,6 +206,21 @@ impl ShareLeg {
     #[must_use]
     pub fn expected_end_s(&self, setup: &ServiceSetup) -> f64 {
         self.planned_arrival_s(setup) + self.expected_dock_s
+    }
+
+    /// The extra seconds the service day gave this leg at the pickup and at the return, if its
+    /// leg ended (served, or given up and walked on): its arrival less
+    /// [`Self::planned_arrival_s`], split into the return's part
+    /// ([`LegOutcome::return_extra_s`]) and the rest, the pickup's (the walks between docks
+    /// looking for a bike, the ride's change from another pickup dock, or the walk on of a
+    /// traveller who gave up).
+    #[must_use]
+    pub fn dock_extra_s(&self, setup: &ServiceSetup, o: &LegOutcome) -> Option<(f64, f64)> {
+        let ended = matches!(o.status, LegStatus::Served | LegStatus::Failed);
+        (ended && o.arrived_s.is_finite()).then(|| {
+            let extra = o.arrived_s - self.planned_arrival_s(setup);
+            (extra - o.return_extra_s, o.return_extra_s)
+        })
     }
 }
 
@@ -502,15 +531,22 @@ fn share_day(
     let summary = ServiceSummary::of(legs.iter().zip(&met).map(|(l, &(m, at))| {
         (f64::from(l.leg.weight), l.departure_s, l.expected_end_s(setup), m, at, f64::NAN)
     }));
-    let (mut extra, mut people) = (0.0, 0.0);
+    let (mut pickup, mut ret, mut people) = (0.0, 0.0, 0.0);
     for (l, o) in legs.iter().zip(&outcome.legs) {
-        if matches!(o.status, LegStatus::Served | LegStatus::Failed) && o.arrived_s.is_finite() {
+        if let Some((p, r)) = l.dock_extra_s(setup, o) {
             let w = f64::from(l.leg.weight);
-            extra += w * (o.arrived_s - l.planned_arrival_s(setup));
+            pickup += w * p;
+            ret += w * r;
             people += w;
         }
     }
-    let extra_mean_s = if people > 0.0 { extra / people } else { f64::NAN };
+    let mean = |x: f64| if people > 0.0 { x / people } else { f64::NAN };
+    let extra_mean_s = mean(pickup + ret);
+    let summary = ServiceSummary {
+        dock_pickup_extra_s: mean(pickup),
+        dock_return_extra_s: mean(ret),
+        ..summary
+    };
     ShareDay { legs, outcome, met, summary, extra_mean_s, engine_s }
 }
 
