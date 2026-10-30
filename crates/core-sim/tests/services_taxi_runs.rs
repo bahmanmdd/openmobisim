@@ -480,7 +480,10 @@ fn an_assumed_wait_above_the_cancel_limit_is_not_capped_and_the_engine_ignores_i
         format!("{:?}", (a.legs.iter().map(|l| l.leg).collect::<Vec<_>>(), &a.outcome, &a.day)),
         format!("{:?}", (b.legs.iter().map(|l| l.leg).collect::<Vec<_>>(), &b.outcome, &b.day)),
     );
-    assert!(a.legs.iter().zip(&b.legs).all(|(x, y)| y.planned_s - x.planned_s == 300.0));
+    // 300 s later, to rounding (exact on one platform, a last digit off on another).
+    assert!(
+        a.legs.iter().zip(&b.legs).all(|(x, y)| (y.planned_s - x.planned_s - 300.0).abs() < 1e-6)
+    );
 }
 
 /// The run's service day is what an engine day of its legs on its road times plays (S303): the
