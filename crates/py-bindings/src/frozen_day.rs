@@ -1,17 +1,20 @@
 //! A run's day frozen (`Run.freeze`), and read back as a fleet day's legs (`fleet_day(...,
 //! frozen=folder)`, `fleet_environment(..., frozen=folder)`).
 //!
-//! **What is kept.** A run with a service keeps, beside its summary, its last loading's
-//! shared-bike day ([`ShareDay`]: the legs as the engine played them, and their outcome), the
-//! services as the run built them, that loading's road times and the run's window, seed and
+//! **What is kept.** A run with a service keeps, beside its summary, its service day (S303: its
+//! last loading's service trips, played once after the run had stopped): the shared-bike legs
+//! ([`ShareDay`]) and the taxi legs ([`TaxiRunDay`]) as the engine played them, and their
+//! outcome, the services as the run built them, the road times that day's taxis drove on
+//! ([`openmobisim_core_sim::RunResult::service_road_times`]) and the run's window, seed and
 //! fingerprints. A run without a service keeps nothing.
 //!
 //! **The folder.** `legs.parquet` ([`openmobisim_io_parquet::frozen_legs`]: one row per leg, every
 //! number bit for bit), `road_times.bin` (the road times in the network cache's binary form,
 //! [`RoadTimes::write_binary`]) and `setup.json` (written by `run.py` from [`ShareFreeze::setup`]).
 //!
-//! **Read back**, the legs become the engine's legs again, in the run's order, so a replay with
-//! no policy plays what the run played. The folder is refused with a network or services other
+//! **Read back**, the legs become the engine's legs again, in the run's order (the shared
+//! bikes', then the taxis'), on the same road times, so a replay with no policy plays what the
+//! run's service day played, bikes and taxis. The folder is refused with a network or services other
 //! than the run's (their fingerprints).
 //!
 //! **Cost:** the day kept is the run's own (about 120 bytes a leg), plus the road times (8 bytes
@@ -28,11 +31,10 @@ use pyo3::types::PyDict;
 use openmobisim_core_demand::{Travellers, Trips};
 use openmobisim_core_graph::link_geometry::NetworkFingerprint;
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_loading::LinkBins;
 use openmobisim_core_sim::identity::services_fingerprint;
 use openmobisim_core_sim::services::engine::Leg;
 use openmobisim_core_sim::services::frozen::PlanReport;
-use openmobisim_core_sim::services::in_run::ShareDay;
+use openmobisim_core_sim::services::in_run::{ShareDay, TaxiRunDay};
 use openmobisim_core_sim::services::queries::ZONE_GRID_M;
 use openmobisim_core_sim::services::roads::RoadTimes;
 use openmobisim_core_sim::services::{ServiceParts, ServiceSetup};
@@ -50,13 +52,16 @@ pub(crate) const LEGS_FILE: &str = "legs.parquet";
 /// The road times' file.
 pub(crate) const ROAD_TIMES_FILE: &str = "road_times.bin";
 
-/// What a run with a service keeps to freeze its last loading's day (see the
+/// What a run with a service keeps to freeze its service day (see the
 /// [module docs](self)).
 pub(crate) struct ShareFreeze {
     setups: Arc<Vec<ServiceSetup>>,
-    /// The last loading's day; `None` if no trip took a shared bike in it.
+    /// The service day's shared bikes; `None` if no trip took a shared bike in it.
     day: Option<ShareDay>,
-    /// Per leg of the day, its traveller's id and the trip's place in the traveller's day.
+    /// Its taxis; `None` if no trip took a taxi in it.
+    taxi: Option<TaxiRunDay>,
+    /// Per leg of the day (the shared bikes', then the taxis'), its traveller's id and the
+    /// trip's place in the traveller's day.
     who: Vec<(String, u32)>,
     times: RoadTimes,
     window: (f64, f64),
@@ -66,94 +71,84 @@ pub(crate) struct ShareFreeze {
 }
 
 impl ShareFreeze {
-    /// What a run on `net` with `setups` keeps: its last loading's `day`, its trips' ids from
-    /// `trips` and `travellers`, the road times of that loading's `link_bins` (each link's mean
-    /// time in each bin, `pcu_seconds / pcu`, as `road_times_read` reads `link_bins.parquet`;
-    /// free flow without them), its `window`, `seed` and fingerprint.
-    ///
-    /// # Errors
-    ///
-    /// A message if the link bins do not make road times (a link index not of `net`).
+    /// What a run on `net` with `setups` keeps: its service day's shared bikes `day` and taxis
+    /// `taxi`, its trips' ids from `trips` and `travellers`, the road times that day drove on
+    /// (`times`; free flow without), its `window`, `seed` and fingerprint.
     #[allow(clippy::too_many_arguments, reason = "what a run keeps, named")]
     pub(crate) fn new(
         setups: Arc<Vec<ServiceSetup>>,
-        day: Option<ShareDay>,
+        (day, taxi): (Option<ShareDay>, Option<TaxiRunDay>),
         trips: &Trips,
         travellers: &Travellers,
-        link_bins: Option<&LinkBins>,
+        times: Option<RoadTimes>,
         net: &RoadNetwork,
         window: (f64, f64),
         seed: u64,
         run_fingerprint: String,
-    ) -> Result<Self, String> {
-        let who = day
-            .as_ref()
-            .map(|d| {
-                d.legs
-                    .iter()
-                    .map(|l| {
-                        let traveller = trips.traveller(l.trip);
-                        let first = travellers.first_trip(traveller);
-                        (
-                            travellers.external_ids().external(traveller.raw()).to_string(),
-                            l.trip.raw() - first.raw(),
-                        )
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let times = match link_bins {
-            Some(b) => {
-                let rows: Vec<(u32, u32, f64)> = b
-                    .links()
-                    .iter()
-                    .zip(b.bins())
-                    .zip(b.pcu().iter().zip(b.pcu_seconds()))
-                    .filter(|(_, (p, s))| **p > 0.0 && **s > 0.0)
-                    .map(|((&l, &bin), (p, s))| (l, bin, s / p))
-                    .collect();
-                RoadTimes::from_rows(net, f64::from(b.bin_seconds()), &rows)?
-            }
-            None => RoadTimes::free_flow(net),
+    ) -> Self {
+        let id = |trip: openmobisim_core_types::ids::TripId| {
+            let traveller = trips.traveller(trip);
+            let first = travellers.first_trip(traveller);
+            (
+                travellers.external_ids().external(traveller.raw()).to_string(),
+                trip.raw() - first.raw(),
+            )
         };
-        Ok(Self {
+        let who = day
+            .iter()
+            .flat_map(|d| d.legs.iter().map(|l| l.trip))
+            .chain(taxi.iter().flat_map(|d| d.legs.iter().map(|l| l.trip)))
+            .map(id)
+            .collect();
+        let times = times.unwrap_or_else(|| RoadTimes::free_flow(net));
+        Self {
             setups,
             day,
+            taxi,
             who,
             times,
             window,
             seed,
             run_fingerprint,
             network_fingerprint: fingerprint_hex(NetworkFingerprint::of(net).value()),
-        })
+        }
+    }
+
+    /// The day's engine legs, in the order the run played them, each with what its choice
+    /// expected at the docks (`NaN` for a taxi leg).
+    fn legs(&self) -> Vec<(Leg, f64)> {
+        self.day
+            .iter()
+            .flat_map(|d| d.legs.iter().map(|l| (l.leg, l.expected_dock_s)))
+            .chain(self.taxi.iter().flat_map(|d| d.legs.iter().map(|l| (l.leg, f64::NAN))))
+            .collect()
     }
 
     /// The day's legs as `legs.parquet`'s rows, in the order the run played them.
     fn rows(&self) -> Vec<FrozenLegRow> {
-        let Some(day) = &self.day else { return Vec::new() };
-        day.legs
-            .iter()
+        self.legs()
+            .into_iter()
             .zip(&self.who)
-            .map(|(l, (traveller, seq))| {
-                let setup = &self.setups[usize::from(l.leg.service)];
+            .map(|((leg, expected_dock_s), (traveller, seq))| {
+                let setup = &self.setups[usize::from(leg.service)];
                 let dock = |d: u32| match setup.parts() {
                     ServiceParts::BikeDocked(docks, _) => docks.external[d as usize].clone(),
                     ServiceParts::Taxi(..) => String::new(),
                 };
                 FrozenLegRow {
-                    trip: l.leg.trip,
+                    trip: leg.trip,
                     traveller_id: traveller.clone(),
                     trip_seq: *seq,
                     service: setup.name().to_string(),
-                    weight: l.leg.weight,
-                    request_s: l.leg.request_s,
-                    origin_node: l.leg.origin.raw(),
-                    destination_node: l.leg.destination.raw(),
-                    dock_from: dock(l.leg.pickup_dock),
-                    dock_to: dock(l.leg.return_dock),
-                    ride_s: l.leg.ride_s,
-                    egress_s: l.leg.egress_s,
-                    expected_dock_s: l.expected_dock_s,
+                    weight: leg.weight,
+                    request_s: leg.request_s,
+                    origin_node: leg.origin.raw(),
+                    destination_node: leg.destination.raw(),
+                    dock_from: dock(leg.pickup_dock),
+                    dock_to: dock(leg.return_dock),
+                    ride_s: leg.ride_s,
+                    egress_s: leg.egress_s,
+                    expected_dock_s,
                 }
             })
             .collect()
@@ -205,11 +200,9 @@ impl ShareFreeze {
             })
             .collect::<PyResult<Vec<_>>>()?;
         d.set_item("services", services)?;
-        let legs = self.day.as_ref().map_or(0, |day| day.legs.len());
-        let people: u64 = self
-            .day
-            .as_ref()
-            .map_or(0, |day| day.legs.iter().map(|l| u64::from(l.leg.weight)).sum());
+        let all = self.legs();
+        let legs = all.len();
+        let people: u64 = all.iter().map(|(l, _)| u64::from(l.weight)).sum();
         d.set_item("legs", legs)?;
         d.set_item("people", people)?;
         d.set_item("road_times_bin_s", self.times.bin_s())?;
@@ -217,9 +210,10 @@ impl ShareFreeze {
         Ok(d)
     }
 
-    /// The run's last loading's day in `fleet_day`'s tables (its trips, the docks' bins, the
-    /// plan, the counts), on `network`, the run's: what a replay of the frozen day is compared
-    /// with.
+    /// The run's service day in `fleet_day`'s tables (its trips, the docks' bins, the plan, the
+    /// counts), on `network`, the run's: what a replay of the frozen day is compared with. The
+    /// taxis' rows are the engine's (the leg's status, seconds and vehicle), as a replay gives
+    /// them.
     ///
     /// # Errors
     ///
@@ -236,9 +230,8 @@ impl ShareFreeze {
         }
         let (walk, bike) = layers_of(network)?;
         let rows = self.rows();
-        let planned = planned_of(&self.setups, walk.network().network(), &rows)?;
-        let legs: Vec<Leg> =
-            self.day.as_ref().map_or_else(Vec::new, |d| d.legs.iter().map(|l| l.leg).collect());
+        let planned = planned_of(&self.setups, &network.inner, walk.network().network(), &rows)?;
+        let legs: Vec<Leg> = self.legs().into_iter().map(|(l, _)| l).collect();
         let same = planned.planned.len() == legs.len()
             && planned.planned.iter().zip(&legs).all(|((_, a), b)| same_leg(a, b));
         if !same {
@@ -255,13 +248,27 @@ impl ShareFreeze {
             names,
             ZONE_GRID_M,
         )?;
-        let Some(day) = &self.day else {
-            return Err(PyValueError::new_err(
-                "no trip took a shared bike in the run's last loading",
-            ));
+        if legs.is_empty() {
+            return Err(PyValueError::new_err("no trip took a service in the run's last loading"));
+        }
+        // One engine day played both services: the shared bikes' outcome holds every service's
+        // counts; the taxis' legs follow the shared bikes'.
+        let mut outcome = match (&self.day, &self.taxi) {
+            (Some(d), _) => d.outcome.clone(),
+            (None, Some(_)) => {
+                openmobisim_core_sim::services::in_run::idle(&self.setups, self.window)
+            }
+            (None, None) => unreachable!("legs without a day"),
         };
-        let outcome = &day.outcome;
-        outcome_dict(py, &f, outcome)
+        if let Some(t) = &self.taxi {
+            outcome.legs.extend_from_slice(&t.outcome);
+            if let Some(i) =
+                self.setups.iter().position(|s| matches!(s.parts(), ServiceParts::Taxi(..)))
+            {
+                outcome.taxis[i] = Some(t.day.clone());
+            }
+        }
+        outcome_dict(py, &f, &outcome)
     }
 }
 
@@ -279,9 +286,11 @@ fn same_leg(a: &Leg, b: &Leg) -> bool {
         && a.egress_s.to_bits() == b.egress_s.to_bits()
 }
 
-/// The engine's legs of `rows` for `setups` on the walk layer `walk`, each its own trip row.
+/// The engine's legs of `rows` for `setups` on the road network `road` (a taxi leg's nodes)
+/// and the walk layer `walk` (a shared bike's), each its own trip row.
 fn planned_of(
     setups: &[ServiceSetup],
+    road: &RoadNetwork,
     walk: &RoadNetwork,
     rows: &[FrozenLegRow],
 ) -> PyResult<Planned> {
@@ -300,16 +309,48 @@ fn planned_of(
             ServiceParts::Taxi(..) => HashMap::new(),
         })
         .collect();
-    let nodes = walk.node_count();
     let mut planned = Vec::with_capacity(rows.len());
     let mut trips: Vec<TripTuple> = Vec::with_capacity(rows.len());
     for (i, r) in rows.iter().enumerate() {
         let &s = services
             .get(r.service.as_str())
             .ok_or_else(|| bad(format!("leg {i}: no service {:?} here", r.service)))?;
-        if !matches!(setups[s].parts(), ServiceParts::BikeDocked(..)) {
-            return Err(bad(format!("leg {i}: {:?} is not a docked bike service", r.service)));
+        // A taxi leg (S303): from the origin's road node to the destination's, asked at its
+        // departure.
+        if matches!(setups[s].parts(), ServiceParts::Taxi(..)) {
+            let n = road.node_count();
+            if r.origin_node >= n || r.destination_node >= n {
+                return Err(bad(format!("leg {i}: a road node not of this network")));
+            }
+            let (origin, destination) =
+                (NodeId::new(r.origin_node), NodeId::new(r.destination_node));
+            let leg = Leg {
+                service: u16::try_from(s).expect("services fit u16"),
+                trip: r.trip,
+                weight: r.weight,
+                request_s: r.request_s,
+                origin,
+                destination,
+                pickup_dock: u32::MAX,
+                return_dock: u32::MAX,
+                ride_s: f64::NAN,
+                egress_s: f64::NAN,
+            };
+            let (o, d) = (road.node_lonlat(origin), road.node_lonlat(destination));
+            trips.push((
+                r.trip.to_string(),
+                leg.service,
+                r.weight,
+                r.request_s,
+                o.lon,
+                o.lat,
+                d.lon,
+                d.lat,
+            ));
+            planned.push((i, leg));
+            continue;
         }
+        let nodes = walk.node_count();
         let dock = |id: &str| {
             docks[s]
                 .get(id)
@@ -391,7 +432,7 @@ pub(crate) fn frozen_read(
     let times = RoadTimes::read_binary(&bytes)
         .map_err(|e| bad(format!("{}: {e}", dir.join(ROAD_TIMES_FILE).display())))?;
     let rows = read_frozen_legs(dir.join(LEGS_FILE)).map_err(bad)?;
-    let planned = planned_of(&setups, walk.network().network(), &rows)?;
+    let planned = planned_of(&setups, net, walk.network().network(), &rows)?;
     let names = services.iter().map(|s| s.1.clone()).collect();
     assemble(network, Arc::new(setups), walk, bike, times, planned, names, zone_grid_m)
 }

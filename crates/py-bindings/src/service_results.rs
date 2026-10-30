@@ -306,7 +306,6 @@ fn taxi_trips_dict<'py>(py: Python<'py>, t: &TaxiTripTable) -> PyResult<Bound<'p
         ("km_to_pickup", &t.km_to_pickup),
         ("km_with_passenger", &t.km_with_passenger),
         ("dropped_off_s", &t.dropped_off_s),
-        ("walk_s", &t.walk_s),
         ("arrived_s", &t.arrived_s),
         ("door_to_door_s", &t.door_to_door_s),
         ("met_minus_expected_s", &t.met_minus_expected_s),

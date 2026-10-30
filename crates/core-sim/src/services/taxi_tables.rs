@@ -1,4 +1,5 @@
-//! The results tables of a run's taxi fleet (S302), from its last loading's day:
+//! The results tables of a run's taxi fleet (S302), from its service day (the last loading's
+//! taxi trips, played once after the run has stopped, S303):
 //!
 //! - [`TaxiEventTable`] (`taxi_events.parquet`): the day's log, one row per event in time order,
 //!   with the vehicle's state and charge just after, so each traveller's and each vehicle's
@@ -22,7 +23,7 @@ use super::ServiceSetup;
 use super::engine::VehicleState;
 use super::in_run::TaxiRunDay;
 use super::outcome::LegStatus;
-use super::taxis::{NO, TaxiEventKind};
+use super::taxis::NO;
 use super::{ServiceParts, TaxiDefaults};
 
 /// A wait within this many seconds of the one expected counts as expected (the trip's `result`
@@ -62,8 +63,7 @@ pub struct TaxiEventTable {
     pub service: Vec<String>,
     /// When, in seconds from midnight.
     pub time_s: Vec<f64>,
-    /// What happened ([`TaxiEventKind::as_str`], and `gave_up_walking_to_destination`,
-    /// `reached_destination` for a traveller whose request failed and who walked on).
+    /// What happened ([`super::taxis::TaxiEventKind::as_str`]).
     pub event: Vec<&'static str>,
     /// The traveller (`None`: a vehicle's own event).
     pub traveller_id: Vec<Option<String>>,
@@ -86,9 +86,7 @@ pub struct TaxiEventTable {
 
 impl TaxiEventTable {
     /// The events of `day` of the fleet `setup`, whose trips are `trips` of `travellers`; empty
-    /// if the day kept no log. A traveller whose request failed and who walked on has two more
-    /// rows: `gave_up_walking_to_destination` when the longest wait ended, and
-    /// `reached_destination` on arriving (if by the window's end).
+    /// if the day kept no log. A request that failed ends with `no_taxi_within_wait_limit`.
     ///
     /// # Panics
     ///
@@ -101,43 +99,14 @@ impl TaxiEventTable {
         travellers: &Travellers,
     ) -> Self {
         let mut t = Self::default();
-        let (Some(log), Some((fleet, d))) = (&day.day.log, parts(setup)) else { return t };
+        let (Some(log), Some((fleet, _))) = (&day.day.log, parts(setup)) else { return t };
         let people = who(day, trips, travellers);
         let leg_of = |unit: u32| {
             (unit != NO)
                 .then(|| day.day.requests[unit as usize].leg as usize)
                 .and_then(|l| l.checked_sub(day.offset))
         };
-        // The walks of failed requests: placed among the engine's events by time.
-        let mut walks: Vec<(f64, &'static str, usize)> = Vec::new();
-        for (i, (o, &at)) in day.outcome.iter().zip(&day.arrived_s).enumerate() {
-            if o.status == LegStatus::Failed {
-                walks.push((o.requested_s + d.max_wait_s, "gave_up_walking_to_destination", i));
-                if at.is_finite() {
-                    walks.push((at, "reached_destination", i));
-                }
-            }
-        }
-        walks.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut w = walks.into_iter().peekable();
-        let walk_row = |t: &mut Self, (time, kind, i): (f64, &'static str, usize)| {
-            t.service.push(setup.name().to_string());
-            t.time_s.push(time);
-            t.event.push(kind);
-            t.traveller_id.push(Some(people[i].0.clone()));
-            t.trip_seq.push(Some(people[i].1));
-            t.travellers.push(Some(day.legs[i].leg.weight));
-            t.vehicle.push(None);
-            t.vehicle_state_after.push(None);
-            t.charge_after.push(None);
-            t.charger.push(None);
-            t.drive_km.push(None);
-        };
         for e in log {
-            // A walk's row after the engine's events of its second (the expiry comes first).
-            while w.peek().is_some_and(|x| x.0 < e.t) {
-                walk_row(&mut t, w.next().expect("peeked"));
-            }
             let leg = leg_of(e.unit);
             t.service.push(setup.name().to_string());
             t.time_s.push(e.t);
@@ -152,14 +121,6 @@ impl TaxiEventTable {
             t.charger
                 .push((e.charger != NO).then(|| fleet.charger_ids[e.charger as usize].clone()));
             t.drive_km.push(finite(e.km));
-            if e.kind == TaxiEventKind::NoTaxiWithinWaitLimit {
-                while w.peek().is_some_and(|x| x.0 <= e.t) {
-                    walk_row(&mut t, w.next().expect("peeked"));
-                }
-            }
-        }
-        for rest in w {
-            walk_row(&mut t, rest);
         }
         t
     }
@@ -178,23 +139,19 @@ impl TaxiEventTable {
 }
 
 /// A taxi trip's result, the first that applies: `not_started` (its request came after the
-/// window's end), `no_taxi_walked_to_destination` (no vehicle was sent within the longest wait:
-/// the traveller walked from the origin and arrived by the window's end),
-/// `no_taxi_still_walking_at_window_end` (likewise, not arrived by then),
+/// window's end), `no_taxi` (no vehicle was sent within the longest wait: the trip ends there),
 /// `still_waiting_at_window_end` (no vehicle, or the one sent not yet there),
 /// `still_riding_at_window_end`, `waited_longer_than_expected` (carried, its wait more than
 /// [`WAIT_TOLERANCE_S`] past the one expected), `as_planned` (carried, within it).
 #[must_use]
 pub fn taxi_trip_result(
     status: LegStatus,
-    arrived: bool,
     picked: bool,
     waited_minus_expected_s: f64,
 ) -> &'static str {
     match status {
         LegStatus::NotRequested => "not_started",
-        LegStatus::Failed if arrived => "no_taxi_walked_to_destination",
-        LegStatus::Failed => "no_taxi_still_walking_at_window_end",
+        LegStatus::Failed => "no_taxi",
         LegStatus::Waiting | LegStatus::Riding | LegStatus::Truncated => {
             if picked {
                 "still_riding_at_window_end"
@@ -227,8 +184,8 @@ pub struct TaxiTripTable {
     pub expected_wait_s: Vec<f64>,
     /// The share of requests its choice expected to get no vehicle within the longest wait.
     pub expected_no_taxi_share: Vec<f64>,
-    /// The door-to-door seconds its choice expected (the failures' longest wait and walk
-    /// weighed in).
+    /// The door-to-door seconds its choice expected (the longest wait and the walk of the share
+    /// expected to fail weighed in).
     pub expected_door_to_door_s: Vec<f64>,
     /// The vehicle sent.
     pub vehicle: Vec<Option<String>>,
@@ -247,9 +204,8 @@ pub struct TaxiTripTable {
     pub km_with_passenger: Vec<Option<f64>>,
     /// When the passenger was dropped at the destination.
     pub dropped_off_s: Vec<Option<f64>>,
-    /// For a request that failed: the walk from the origin to the destination, in seconds.
-    pub walk_s: Vec<Option<f64>>,
-    /// When the traveller reached the destination, by taxi or on foot.
+    /// When the traveller reached the destination (`None`: a request that failed, or not by the
+    /// window's end).
     pub arrived_s: Vec<Option<f64>>,
     /// `arrived_s − requested_s`.
     pub door_to_door_s: Vec<Option<f64>>,
@@ -311,14 +267,12 @@ impl TaxiTripTable {
             t.km_to_pickup.push(r.filter(|r| r.vehicle.is_some()).map(|r| r.empty_km));
             t.km_with_passenger.push(r.filter(|r| r.picked_s.is_finite()).map(|r| r.trip_km));
             t.dropped_off_s.push(served.then_some(o.arrived_s).and_then(finite));
-            t.walk_s.push((o.status == LegStatus::Failed).then_some(l.walk_s).and_then(finite));
             t.arrived_s.push(finite(at));
             let door = finite(at).map(|a| a - l.leg.request_s);
             t.door_to_door_s.push(door);
             t.met_minus_expected_s.push(door.map(|x| x - l.expected_s));
             t.result.push(taxi_trip_result(
                 o.status,
-                at.is_finite(),
                 o.picked_s.is_finite(),
                 wait_diff.unwrap_or(0.0),
             ));

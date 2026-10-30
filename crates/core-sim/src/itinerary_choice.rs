@@ -167,12 +167,13 @@ pub const SERVICE_ATTRIBUTES: [&str; 3] =
 
 /// The attributes a taxi alternative adds, in a run with a taxi fleet (S302), after
 /// [`ATTRIBUTES`] (and [`SERVICE_ATTRIBUTES`] with a docked service too): `mode_taxi` (1 for a
-/// taxi, 0 for the rest: its constant) and `fail_prob`, the expected share of requests from the
-/// trip's zone in its bin that no vehicle reaches within the longest wait
-/// ([`crate::services::costs::TaxiCosts`]; 0 for every other mode). A taxi's `wait_min` is its
-/// expected wait (the longest wait for the share that fails), its `car_min` its drive and its
-/// `time_min` the door-to-door expectation, the walk of a failed request included. A run without
-/// a taxi fleet offers neither.
+/// taxi, 0 for the rest: its constant) and `fail_prob`, the run's expected share of requests that
+/// get no vehicle within the fleet's longest wait
+/// ([`crate::services::ServiceExpectations::taxi_fail_share`], the same for every trip; 0 for
+/// every other mode). A taxi's `wait_min` is its expected wait (the run's
+/// [`crate::services::ServiceExpectations::taxi_wait_s`]; the longest wait for the share
+/// expected to fail), its `car_min` its drive and its `time_min` the door-to-door expectation,
+/// the walk of the share expected to fail included. A run without a taxi fleet offers neither.
 pub const TAXI_ATTRIBUTES: [&str; 2] = ["mode_taxi", "fail_prob"];
 
 /// The value of a mode attribute for an alternative of `mode`: `nest` is the mode's index
@@ -509,11 +510,12 @@ pub(crate) struct Planner<'a> {
     pub taxi: Option<TaxiContext<'a>>,
 }
 
-/// A run's taxi fleet as the choice sees it (S302): its defaults and its expected costs.
+/// A run's taxi fleet as the choice sees it (S302): its defaults and what travellers expect of
+/// it (S303).
 #[derive(Clone, Copy)]
 pub(crate) struct TaxiContext<'a> {
     pub defaults: &'a crate::services::TaxiDefaults,
-    pub costs: &'a crate::services::costs::TaxiCosts,
+    pub costs: crate::services::costs::TaxiExpectation,
 }
 
 /// A run's docked bike service as the choice sees it (S302): the service, the walk layer its
@@ -1616,10 +1618,10 @@ impl<'a> Planner<'a> {
     }
 
     /// A trip's taxi alternative (S302): the fastest of its car pair's routes at the expected
-    /// link times, leaving once the expected wait and boarding are over; the expected wait and
-    /// failure share of its origin's zone and bin; a failure costs the longest wait and the
-    /// walk. None if a failure would leave it no way on (no walk path) while failures are
-    /// expected, or without a route.
+    /// link times, leaving once the expected wait and boarding are over; the run's expected wait
+    /// and failure share (S303); a failure is expected to cost the longest wait and the walk.
+    /// None if a failure would leave it no way on (no walk path) while failures are expected,
+    /// or without a route.
     fn plan_taxi(
         &self,
         routes: &CarRoutes<'_>,
@@ -1630,7 +1632,7 @@ impl<'a> Planner<'a> {
         let taxi = self.taxi?;
         let d = taxi.defaults;
         let k = routes.sets.key_index(key)?;
-        let (wait, fail) = taxi.costs.at(n.road_o, f64::from(departure))?;
+        let (wait, fail) = taxi.costs.at(n.road_o, f64::from(departure));
         let leave = f64::from(departure) + wait + d.board_s;
         let (r, seconds) = routes
             .sets

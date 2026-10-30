@@ -327,7 +327,14 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// Version 43 (S300): **msa makes at most 15 loadings** (`equilibration_options` `iterations`; 10
 /// before): Delft's base reached its 10th still above the tolerance and now stops by it at 12 or
 /// 13. Every run that reached 10 loadings without converging moves.
-pub const DEFAULTS_VERSION: u32 = 43;
+///
+/// Version 44 (S303): **what travellers expect of a shared-mobility service is set by name,
+/// fixed for the run** (`core-sim`'s `ServiceExpectations`: `taxi_wait_s` 600, `taxi_fail_share`
+/// 0, `dock_pickup_factor` 1, `dock_return_factor` 1, `dock_worst_case` 0; presets `default`,
+/// `optimistic`, `pessimistic`), and the services' day is played once, after the run has stopped,
+/// on its last loading; a taxi request with no vehicle within the longest wait ends there, with
+/// no walk on. Runs without a service do not move.
+pub const DEFAULTS_VERSION: u32 = 44;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

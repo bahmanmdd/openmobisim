@@ -1,5 +1,6 @@
-//! A run's docked bike service, from its last loading's day: three files, written only by a run
-//! with a service. Seconds count from midnight; a clock text beside them (`08:03:20`) is the
+//! A run's docked bike service, from its service day (the last loading's shared-bike trips,
+//! played once after the run has stopped, S303): three files, written only by a run with a
+//! service. Seconds count from midnight; a clock text beside them (`08:03:20`) is the
 //! same second. Counts of people are the travellers' weights (one simulated traveller may stand
 //! for several people, each taking a bike).
 //!

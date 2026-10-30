@@ -117,6 +117,9 @@ pub struct RunDescription {
     pub person_values: Vec<String>,
     /// The user's trip values' names, in the order given; empty if none.
     pub trip_values: Vec<String>,
+    /// What travellers expected of the services, by name (S303), in a run with services;
+    /// `None` without.
+    pub service_expectations: Option<Vec<(String, f64)>>,
 }
 
 impl RunDescription {
@@ -173,6 +176,8 @@ pub(crate) struct Inputs<'a> {
     pub services: &'a [crate::services::ServiceSetup],
     /// How far a dock may be from a stop to join its hub (S302); hashed only with services.
     pub hub_join_m: f64,
+    /// What travellers expect of the services (S303); hashed only with services.
+    pub service_expectations: &'a crate::services::ServiceExpectations,
     /// The modes a trip without a stated mode chooses among, if the run offers a choice.
     pub mode_choice: Option<&'a [Mode]>,
     /// How long a walk or ride mode choice offers; hashed only with mode choice.
@@ -467,6 +472,11 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
     if !inputs.services.is_empty() {
         h.write_str("hub_join_m");
         h.write_f64(inputs.hub_join_m);
+        h.write_str("service_expectations");
+        for (name, value) in inputs.service_expectations.values() {
+            h.write_str(name);
+            h.write_f64(value);
+        }
     }
 
     RunDescription {
@@ -526,6 +536,14 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         }),
         person_values: inputs.demand_values.persons().map(|(n, _)| n.to_string()).collect(),
         trip_values: inputs.demand_values.trips().map(|(n, _)| n.to_string()).collect(),
+        service_expectations: (!inputs.services.is_empty()).then(|| {
+            inputs
+                .service_expectations
+                .values()
+                .into_iter()
+                .map(|(n, v)| (n.to_string(), v))
+                .collect()
+        }),
     }
 }
 

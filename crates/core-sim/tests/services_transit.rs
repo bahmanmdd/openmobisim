@@ -1,7 +1,8 @@
 //! A shared bike to a transit stop's hub, then transit (`bike_share_transit`): trips choosing
 //! their mode are offered a ride on a shared bike from a dock near their origin to a dock at a
-//! stop's hub, the bike returned there, then the timetable from that stop; the shared bike is a
-//! leg of the fleet engine's day, and the transit part starts when the engine has it returned.
+//! stop's hub, the bike returned there, then the timetable from that stop; the transit part
+//! starts when the bike was planned to be returned (S303), and the shared bike is a leg of the
+//! service day the fleet engine plays once the run has stopped.
 //!
 //! The network: a 5 × 5 two-way grid of 400 m blocks. A line runs from stop `A` (row 0,
 //! column 4) to stop `B` (row 4, column 4) in 240 s, every 600 s from second 0. Docks of four
@@ -227,9 +228,10 @@ fn a_shared_bike_to_the_stop_is_chosen_over_walking_to_it() {
         .map(|e| e.second.get());
     assert_eq!(arrival, Some(board + RIDE_S), "at the stop at {at_stop}");
     // Its expected arrival, as the choice saw it, is the realised one: the docks had bikes and
-    // slots, and the expectation at the first loading is the start-of-day counts'.
+    // slots, and the expectation is the start-of-day counts'. The service day met it.
     assert_eq!(it.expected_s[0], f64::from(board + RIDE_S - 100));
-    assert_eq!(day.mismatch_s, 0.0);
+    assert_eq!(day.summary.mismatch_abs_mean_s, 0.0);
+    assert_eq!(day.met[0].0, openmobisim_core_sim::services::in_run::Met::Served);
     // Transit alone, for the comparison: later.
     let alone = run_on(&t, rows(), None, &[Mode::Walk, Mode::Transit], Arc::clone(&det), None);
     let walked = alone
@@ -302,8 +304,8 @@ fn without_a_service_the_chain_is_neither_offered_nor_listed() {
     assert!(!r.modes_listed().contains(&Mode::BikeShareTransit));
 }
 
-/// Twelve travellers a minute apart, the logit, four loadings: the two bikes at `o` run out, so
-/// later travellers redirect or walk on; two runs give the same day.
+/// Twelve travellers a minute apart, the logit, four loadings: in the service day the two bikes
+/// at `o` run out, so later travellers redirect or walk on; two runs give the same day.
 #[test]
 fn same_seed_same_day_and_an_empty_dock_walks_on_to_the_stop() {
     let t = line_toy();
@@ -331,11 +333,10 @@ fn same_seed_same_day_and_an_empty_dock_walks_on_to_the_stop() {
     let (a, b) = (go(), go());
     assert_eq!(a.events, b.events);
     let (sa, sb) = (a.services.unwrap(), b.services.unwrap());
-    assert_eq!(sa.legs_people, sb.legs_people);
     let (da, db) = (sa.last.unwrap(), sb.last.unwrap());
     assert_eq!(format!("{:?}", (&da.legs, &da.outcome)), format!("{:?}", (db.legs, db.outcome)));
     assert_eq!(da.outcome.invariant_violations, 0, "bikes are conserved");
-    // Every traveller who took the chain got to the hub, by bike or on foot, and on to `B`.
+    // Every traveller who took the chain got to `B`, as planned.
     let chain = a.by_mode[Mode::BikeShareTransit.index()].completion;
     assert_eq!(chain.completed, chain.total_trips, "{chain:?}");
     println!(

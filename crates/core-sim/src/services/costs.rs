@@ -1,34 +1,30 @@
-//! What a dock is expected to cost a traveller, per time bin, as the fleet engine's days left
-//! it.
+//! What a service is expected to cost a traveller, fixed for the whole run
+//! ([`super::ServiceExpectations`], S303): never learned from a loading.
 //!
-//! **Per dock and bin**, what a day's legs met there: the extra seconds of the pickups planned at
-//! the dock in the bin, and of the returns, each the mean over those legs weighted by the people
-//! they stand for ([`DockCosts::with_legs`]). **Where no leg went**, an estimate from the
-//! dock's counts ([`DockCosts::from_bins`]): for a pickup, the share of the bin the dock was
-//! empty times the walk to its nearest neighbour that was empty for at most half of that bin (or
-//! [`DockDefaults::fail_s`](super::DockDefaults::fail_s) if none); for a return, the same with
-//! "full" in place of "empty". **Choice reads the expected cost**, the average over the
-//! loadings so far (the method of successive averages: each loading's realised costs averaged
-//! in with weight `1 / (loadings seen + 1)`); at the start, the costs of a day with no legs, from
-//! the start-of-day counts alone. **A traveller pays the realised one**, on the engine.
+//! **A dock**, per dock and time bin ([`DockCosts`]): the extra walk expected at a pickup and at
+//! a return, from the dock's start-of-day counts ([`DockCosts::initial`], a day with no legs):
+//! for a pickup, the share of the bin the dock is empty times the walk to its nearest neighbour
+//! that is empty for at most half of that bin (or [`DockDefaults::fail_s`](super::DockDefaults::fail_s)
+//! if none); for a return, the same with "full" in place of "empty". The expectations then scale
+//! them ([`DockCosts::expected`]): each side by its factor, or, in the worst case, every dock
+//! empty and full all day (the walk to its nearest neighbour, `fail_s` with none).
 //!
-//! **Times** are seconds from midnight, as the engine's clock; the bins start at the window's
-//! start ([`DockBins::start_s`]). A second before the window reads its first bin, one after it
-//! its last.
+//! **A taxi** ([`TaxiExpectation`]): one expected wait and one expected share of requests with no
+//! vehicle, the same everywhere and all day.
 //!
-//! **Cost:** two `f64` per dock and bin.
+//! **Times** are seconds from midnight, as the engine's clock; the docks' bins start at the
+//! window's start ([`DockBins::start_s`]). A second before the window reads its first bin, one
+//! after it its last.
+//!
+//! **Cost:** two `f64` per dock and bin; two per taxi fleet.
 
 use std::sync::Arc;
 
-use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_routes::Reach;
-use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
+use openmobisim_core_types::ids::NodeId;
 
-#[cfg(doc)]
-use super::TaxiDefaults;
 use super::docks::DockBins;
 use super::engine::{FleetDay, FleetEngine, NoLegs, NoRoads};
-use super::{ServiceParts, ServiceSetup};
+use super::{ServiceExpectations, ServiceParts, ServiceSetup};
 
 /// What a docked service's docks cost per time bin: per dock and bin, the expected extra
 /// seconds of a pickup and of a return. See the [module docs](self).
@@ -87,34 +83,7 @@ impl DockCosts {
         Self { start_s: bins.start_s, bin_s: f64::from(bins.bin_s), bins: nb, pickup, ret }
     }
 
-    /// The realised costs of a day whose legs met `pickups` and `returns` (each: dock, second
-    /// from midnight, extra seconds met, people): in a dock and bin some leg met, the mean of
-    /// what those legs met, weighted by people; elsewhere the cost `self` says (the bins').
-    #[must_use]
-    pub fn with_legs(
-        mut self,
-        pickups: &[(u32, f64, f64, f64)],
-        returns: &[(u32, f64, f64, f64)],
-    ) -> Self {
-        for (side, met) in [(0, pickups), (1, returns)] {
-            let mut sum = vec![0.0; self.pickup.len()];
-            let mut people = vec![0.0; self.pickup.len()];
-            for &(dock, t, extra, w) in met {
-                let c = self.cell(dock, t);
-                sum[c] += w * extra;
-                people[c] += w;
-            }
-            let v = if side == 0 { &mut self.pickup } else { &mut self.ret };
-            for ((v, s), p) in v.iter_mut().zip(&sum).zip(&people) {
-                if *p > 0.0 {
-                    *v = s / p;
-                }
-            }
-        }
-        self
-    }
-
-    /// Before any loading: the costs of a day with no legs over `window` (seconds from
+    /// The start-of-day costs: those of a day with no legs over `window` (seconds from
     /// midnight), from the start-of-day counts alone (a dock empty or full at the start stays
     /// so).
     ///
@@ -139,16 +108,37 @@ impl DockCosts {
         Self::from_bins(setup, bins)
     }
 
-    /// Average in a later loading's realised costs: the method of successive averages over
-    /// `seen + 1` loadings.
-    pub fn absorb(&mut self, realised: &DockCosts, seen: u32) {
-        let w = (1.0 / f64::from(seen + 1)).max(experiment::cost_floor());
-        for (v, r) in self.pickup.iter_mut().zip(&realised.pickup) {
-            *v += w * (r - *v);
+    /// These costs as the run's travellers expect them under `e`: each side multiplied by its
+    /// factor; with [`ServiceExpectations::dock_worst_case`], first every dock and bin set to
+    /// the walk to the dock's nearest neighbour ([`DockDefaults::fail_s`](super::DockDefaults::fail_s)
+    /// with none), at both ends.
+    ///
+    /// # Panics
+    ///
+    /// If `setup` is not the docked service these costs are of.
+    #[must_use]
+    pub fn expected(mut self, setup: &ServiceSetup, e: &ServiceExpectations) -> Self {
+        let ServiceParts::BikeDocked(docks, defaults) = setup.parts() else {
+            panic!("service `{}` has no docks", setup.name());
+        };
+        assert_eq!(self.pickup.len(), docks.len() * self.bins, "costs of this service's docks");
+        if e.dock_worst() {
+            for k in 0..docks.len() {
+                let k32 = u32::try_from(k).expect("docks fit u32");
+                let walk = docks.neighbours(k32).first().map_or(defaults.fail_s, |&(_, w)| w);
+                for b in 0..self.bins {
+                    self.pickup[k * self.bins + b] = walk;
+                    self.ret[k * self.bins + b] = walk;
+                }
+            }
         }
-        for (v, r) in self.ret.iter_mut().zip(&realised.ret) {
-            *v += w * (r - *v);
+        for v in &mut self.pickup {
+            *v *= e.dock_pickup_factor;
         }
+        for v in &mut self.ret {
+            *v *= e.dock_return_factor;
+        }
+        self
     }
 
     fn cell(&self, dock: u32, t: f64) -> usize {
@@ -170,252 +160,29 @@ impl DockCosts {
     }
 }
 
-/// What a taxi fleet is expected to cost a traveller, per zone and time bin (S302): the wait for
-/// a vehicle of a request that is served, and the share of requests that fail (no vehicle sent
-/// within the fleet's longest wait, [`TaxiDefaults::max_wait_s`]).
-///
-/// **Per zone and bin**, what a day's requests met there (by the zone of their pickup and the
-/// bin of their request): the mean wait of the served ones and the share that failed, each
-/// weighted by people ([`TaxiCosts::with_requests`]); **where no request went, the expectation
-/// is kept** (not an estimate from the vehicles' start-of-day places: those are stale once the
-/// day has moved the vehicles, and averaging them in where few ask would pull the expectation
-/// back towards the empty morning's short waits, loading after loading). **At the start**, before
-/// any loading ([`TaxiCosts::initial`]): per zone, over its road nodes, the free-flow drive from
-/// the nearest vehicle where it stands at the start (the mean over the nodes some vehicle
-/// reaches within the longest wait), and the share of its nodes none reaches. **Choice reads the
-/// expected cost**, the average over the loadings so far (the method of successive averages,
-/// [`TaxiCosts::absorb`]); a traveller pays the realised one, on the engine.
-///
-/// **Zones** are the engine's ([`super::queries::Zones`]): squares of
-/// [`super::queries::ZONE_GRID_M`] metres over the road network's nodes. **Bins** start at the
-/// window's start, [`super::taxis::FLEET_BIN_S`] seconds long; a second before the window reads
-/// its first bin, one after it its last.
-///
-/// **Cost:** two `f64` per zone and bin; at the start one bounded free-flow search per distinct
-/// node a vehicle stands at.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TaxiCosts {
-    start_s: f64,
-    bin_s: f64,
-    bins: usize,
-    /// Per road node, its zone.
-    node_zone: Arc<Vec<u32>>,
-    /// `zone * bins + bin`.
-    wait: Vec<f64>,
-    fail: Vec<f64>,
-    /// Per cell, the loadings averaged into [`Self::wait`] and [`Self::fail`] (0: the
-    /// start-of-day estimate alone); in a day's realised costs, 1 where its requests met
-    /// something, 0 where the cell holds the expectation kept.
-    wait_n: Vec<u32>,
-    fail_n: Vec<u32>,
+/// What a taxi fleet is expected to cost a traveller (S303): the wait for a vehicle and the
+/// share of requests with no vehicle within the fleet's longest wait, the same at every road
+/// node and second ([`ServiceExpectations::taxi_wait_s`],
+/// [`ServiceExpectations::taxi_fail_share`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TaxiExpectation {
+    /// The expected wait, in seconds, of a request that is served.
+    pub wait_s: f64,
+    /// The expected share of requests with no vehicle.
+    pub fail_share: f64,
 }
 
-impl TaxiCosts {
-    /// The start-of-day estimate for the taxi fleet `setup` over `window` (seconds from
-    /// midnight), on `road` at free flow (the links motor traffic may use), with `zones` over its
-    /// nodes (`node_zone`: per road node, its zone; `zones`: how many).
-    ///
-    /// # Panics
-    ///
-    /// If `setup` is not a taxi fleet.
+impl TaxiExpectation {
+    /// The taxi part of `e`.
     #[must_use]
-    pub fn initial(
-        setup: &ServiceSetup,
-        road: &RoadNetwork,
-        (node_zone, zones): (Arc<Vec<u32>>, usize),
-        window: (f64, f64),
-    ) -> Self {
-        let ServiceParts::Taxi(fleet, d) = setup.parts() else {
-            panic!("service `{}` is not a taxi fleet", setup.name());
-        };
-        let free: Vec<f64> = (0..road.link_count())
-            .map(|i| {
-                let link = LinkId::new(i);
-                if road.link_class(link).carries_motor_traffic() {
-                    road.free_flow_time(link).get()
-                } else {
-                    f64::INFINITY
-                }
-            })
-            .collect();
-        let every = vec![true; road.node_count() as usize];
-        let mut nearest = vec![f64::INFINITY; road.node_count() as usize];
-        let mut starts: Vec<NodeId> = fleet.vehicle_node.clone();
-        starts.sort_unstable_by_key(|n| n.raw());
-        starts.dedup();
-        let mut reach = Reach::new(road, &free);
-        for from in starts {
-            nearest[from.index()] = 0.0;
-            for (node, s) in reach.forward(from, d.max_wait_s, &every) {
-                let n = &mut nearest[node.index()];
-                *n = n.min(s);
-            }
-        }
-        let (mut sum, mut reached, mut nodes) =
-            (vec![0.0; zones], vec![0.0_f64; zones], vec![0.0_f64; zones]);
-        for (node, &z) in node_zone.iter().enumerate() {
-            if z == u32::MAX {
-                continue;
-            }
-            let z = z as usize;
-            nodes[z] += 1.0;
-            if nearest[node] <= d.max_wait_s {
-                sum[z] += nearest[node];
-                reached[z] += 1.0;
-            }
-        }
-        let window_s = (window.1 - window.0).max(0.0);
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin count")]
-        let bins = ((window_s / f64::from(super::taxis::FLEET_BIN_S)).ceil() as usize).max(1);
-        let (mut wait, mut fail) = (vec![0.0; zones * bins], vec![0.0; zones * bins]);
-        for z in 0..zones {
-            let (w, f) = if nodes[z] > 0.0 && reached[z] > 0.0 {
-                (sum[z] / reached[z], 1.0 - reached[z] / nodes[z])
-            } else {
-                (d.max_wait_s, 1.0)
-            };
-            for b in 0..bins {
-                wait[z * bins + b] = w;
-                fail[z * bins + b] = f;
-            }
-        }
-        Self {
-            start_s: window.0,
-            bin_s: f64::from(super::taxis::FLEET_BIN_S),
-            bins,
-            node_zone,
-            wait_n: vec![0; wait.len()],
-            fail_n: vec![0; fail.len()],
-            wait,
-            fail,
-        }
+    pub fn of(e: &ServiceExpectations) -> Self {
+        Self { wait_s: e.taxi_wait_s, fail_share: e.taxi_fail_share }
     }
 
-    /// The realised costs of a day whose requests met `met` (each: pickup road node, second of
-    /// the request, seconds waited if served (`None`: failed), people): in a zone and bin some
-    /// request asked from, the mean wait of the served ones (where one was) and the share that
-    /// failed, weighted by people; elsewhere what `self` says.
+    /// The expected wait, in seconds, of a request at road node `node` asked at second `t`, and
+    /// the expected share of such requests with no vehicle: the same everywhere.
     #[must_use]
-    pub fn with_requests(mut self, met: &[(NodeId, f64, Option<f64>, f64)]) -> Self {
-        let n = self.wait.len();
-        let (mut waited, mut served, mut people, mut failed) =
-            (vec![0.0; n], vec![0.0; n], vec![0.0; n], vec![0.0; n]);
-        for &(node, t, wait, w) in met {
-            let Some(c) = self.cell(node, t) else { continue };
-            people[c] += w;
-            match wait {
-                Some(s) => {
-                    waited[c] += w * s;
-                    served[c] += w;
-                }
-                None => failed[c] += w,
-            }
-        }
-        for c in 0..n {
-            self.wait_n[c] = u32::from(served[c] > 0.0);
-            self.fail_n[c] = u32::from(people[c] > 0.0);
-            if served[c] > 0.0 {
-                self.wait[c] = waited[c] / served[c];
-            }
-            if people[c] > 0.0 {
-                self.fail[c] = failed[c] / people[c];
-            }
-        }
-        self
-    }
-
-    /// Average in a later loading's realised costs, cell by cell where its requests met
-    /// something: the method of successive averages over the loadings in which someone asked
-    /// there (the first replaces the start-of-day estimate; the `k`-th weighs `1 / k`). A cell
-    /// first asked from late is not held near the estimate by the loadings before, in which
-    /// nobody asked there.
-    pub fn absorb(&mut self, realised: &TaxiCosts) {
-        for (k, (v, r)) in [(&mut self.wait, &realised.wait), (&mut self.fail, &realised.fail)]
-            .into_iter()
-            .enumerate()
-        {
-            let (n, met) = if k == 0 {
-                (&mut self.wait_n, &realised.wait_n)
-            } else {
-                (&mut self.fail_n, &realised.fail_n)
-            };
-            for c in 0..v.len() {
-                if met[c] > 0 {
-                    n[c] += 1;
-                    let w = (1.0 / f64::from(n[c])).max(experiment::cost_floor());
-                    v[c] += w * (r[c] - v[c]);
-                }
-            }
-        }
-    }
-
-    /// Raise each bin's expected failure share to at least `per_bin[bin]` in every zone (the
-    /// experiment's capacity-aware start, [`experiment::capacity_start`]).
-    pub fn with_fail_floor(mut self, per_bin: &[f64]) -> Self {
-        for (c, f) in self.fail.iter_mut().enumerate() {
-            if let Some(&p) = per_bin.get(c % self.bins) {
-                *f = f.max(p);
-            }
-        }
-        self
-    }
-
-    /// The bins' length in seconds, their start and count.
-    #[must_use]
-    pub fn bins(&self) -> (f64, f64, usize) {
-        (self.bin_s, self.start_s, self.bins)
-    }
-
-    fn cell(&self, node: NodeId, t: f64) -> Option<usize> {
-        let z = *self.node_zone.get(node.index())?;
-        if z == u32::MAX {
-            return None;
-        }
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin")]
-        let b = (((t - self.start_s).max(0.0) / self.bin_s) as usize).min(self.bins - 1);
-        Some(z as usize * self.bins + b)
-    }
-
-    /// The expected wait, in seconds, of a request served at road node `node` asked at second
-    /// `t`, and the expected share of such requests that fail; `None` for a node of no zone.
-    #[must_use]
-    pub fn at(&self, node: NodeId, t: f64) -> Option<(f64, f64)> {
-        self.cell(node, t).map(|c| (self.wait[c], self.fail[c]))
-    }
-}
-
-/// Experiment switches for the services' expected costs (S302), read from the environment; not
-/// defaults, not in a run's fingerprint: for comparing remedies only.
-///
-/// - `OPENMOBISIM_EXPERIMENT_COST_FLOOR` (a number, default 0): the averaging weight of a
-///   loading's realised costs is at least this.
-/// - `OPENMOBISIM_EXPERIMENT_SKIP_FIRST` (1): loading 0's realised costs are left out of the
-///   average.
-/// - `OPENMOBISIM_EXPERIMENT_CAPACITY_START` (1): the taxi fleet's start-of-day failure share is
-///   raised per bin to `max(0, 1 − C / D)`: `D` the people choosing their mode who depart in the
-///   bin, divided by the number of modes the run offers (an even split); `C` the fleet's rides in
-///   a bin, vehicles × bin length / (boarding + twice the mean crow-fly distance of those trips
-///   over the length-weighted mean free-flow speed of the motor links).
-pub mod experiment {
-    fn read(name: &str) -> Option<f64> {
-        std::env::var(name).ok().and_then(|v| v.parse().ok())
-    }
-
-    /// The floor on the averaging weight (0: none).
-    #[must_use]
-    pub fn cost_floor() -> f64 {
-        read("OPENMOBISIM_EXPERIMENT_COST_FLOOR").unwrap_or(0.0)
-    }
-
-    /// Whether loading 0's realised costs are left out of the average.
-    #[must_use]
-    pub fn skip_first() -> bool {
-        read("OPENMOBISIM_EXPERIMENT_SKIP_FIRST").is_some_and(|v| v > 0.0)
-    }
-
-    /// Whether the taxi fleet's start is capacity-aware.
-    #[must_use]
-    pub fn capacity_start() -> bool {
-        read("OPENMOBISIM_EXPERIMENT_CAPACITY_START").is_some_and(|v| v > 0.0)
+    pub fn at(&self, _node: NodeId, _t: f64) -> (f64, f64) {
+        (self.wait_s, self.fail_share)
     }
 }

@@ -1,7 +1,8 @@
 //! Docked bike sharing in a run: trips choosing their mode are offered shared bikes between the
-//! docks within a walk of their origin and destination; after each loading the fleet engine
-//! plays the legs of those who took one, and the docks' realised costs are averaged into what
-//! the next choice expects.
+//! docks within a walk of their origin and destination, planned on the docks' fixed expected
+//! extra walks (S303); once the run has stopped, the fleet engine plays the legs of the last
+//! loading's shared-bike trips in one service day, and reports what they met beside what they
+//! planned.
 //!
 //! The network: a 5 × 5 two-way grid of 200 m blocks. Docks of four slots at the corners of its
 //! first and last rows: a (row 0, column 0), b (0, 1), y (4, 3), z (4, 4). Travellers own no
@@ -244,62 +245,50 @@ fn same_seed_same_day() {
     let a = run(corner_trips(&road, 12, 20), &Setup { iterations: 4, ..Setup::default() });
     let b = run(corner_trips(&road, 12, 20), &Setup { iterations: 4, ..Setup::default() });
     let (sa, sb) = (a.services.unwrap(), b.services.unwrap());
-    assert_eq!(sa.legs_people, sb.legs_people);
-    assert_eq!(
-        sa.mismatch_s.iter().map(|m| m.to_bits()).collect::<Vec<_>>(),
-        sb.mismatch_s.iter().map(|m| m.to_bits()).collect::<Vec<_>>()
-    );
     let (da, db) = (sa.last.unwrap(), sb.last.unwrap());
     // Compared as printed: a bike leg's outcome holds NaN (no taxi was sent), never equal to itself.
     assert_eq!(
-        format!("{:?}", (da.legs, da.outcome)),
-        format!("{:?}", (db.legs, db.outcome)),
+        format!("{:?}", (da.legs, da.outcome, da.met, da.summary)),
+        format!("{:?}", (db.legs, db.outcome, db.met, db.summary)),
         "the same days, but their clocks"
     );
     assert_eq!(sa.expected, sb.expected);
     assert_eq!(a.events, b.events);
 }
 
-/// The hypothesis of the expected costs: the mismatch per leg between the extra seconds at the
-/// docks a choice expected and those its traveller met shrinks over the loadings, as the method
-/// of successive averages brings the expectation to what the days realise. Printed per loading
-/// (`cargo test --test services_in_runs -- --nocapture`): the mean absolute mismatch, and the
-/// signed mean (realised less expected), twice: with the shipped cost of finding no bike
-/// (`fail_s`, 1 200 s) and with 700 s, about what a failed pickup costs here (the walk on from b
-/// to the far corner less the ride it replaced).
+/// The expectations are fixed for the run (S303): whatever the loadings, the docks' expected
+/// costs are the start-of-day counts', and the trips end as planned on them; the service day,
+/// played once after the run, shows what they met. Twenty travellers over ten minutes from a's
+/// corner to z's, a and b holding four bikes between them: in the service day most find them
+/// empty and walk on to other docks or give up. Printed
+/// (`cargo test --test services_in_runs -- --nocapture`): the service day's summary.
 #[test]
-fn the_mismatch_per_loading_is_printed_and_is_finite() {
+fn the_expectations_stay_fixed_and_the_service_day_shows_what_was_met() {
     let road = grid();
     let options = BTreeMap::new();
     let model: Arc<dyn ChoiceModel> =
         Arc::from(openmobisim_core_choice::model("logit", &options).expect("logit"));
-    // Twenty travellers over ten minutes from a's corner to z's: a and b hold four bikes
-    // between them, so most find them empty and walk on to other docks or give up.
-    for fail_s in [DockDefaults::SHIPPED.fail_s, 700.0] {
-        let s = Setup {
-            model: Arc::clone(&model),
-            iterations: 15,
-            bikes: [2, 2, 0, 0],
-            fail_s,
-            ..Setup::default()
-        };
-        let result = run(corner_trips(&road, 20, 30), &s);
-        let services = result.services.as_ref().expect("a service");
-        println!("fail_s {fail_s} s");
-        println!("loading | legs | mean |realised - expected| s | mean realised - expected s");
-        for (k, ((m, b), n)) in
-            services.mismatch_s.iter().zip(&services.bias_s).zip(&services.legs_people).enumerate()
-        {
-            println!("{k:7} | {n:4} | {m:28.1} | {b:26.1}");
-        }
-        assert_eq!(services.mismatch_s.len(), result.iterations.len());
-        assert!(
-            services
-                .mismatch_s
-                .iter()
-                .zip(&services.legs_people)
-                .all(|(m, &n)| n == 0.0 || m.is_finite())
-        );
+    let s = Setup { model, iterations: 6, bikes: [2, 2, 0, 0], ..Setup::default() };
+    let result = run(corner_trips(&road, 20, 30), &s);
+    let services = result.services.as_ref().expect("a service");
+    let layers = layers(&road);
+    let setup = service(&road, &layers, s.bikes, s.walk_max_s, s.fail_s);
+    let start = openmobisim_core_sim::services::costs::DockCosts::initial(&setup, (0.0, 86_400.0));
+    assert_eq!(services.expected.as_ref(), Some(&start), "the start-of-day counts', unchanged");
+    let day = services.last.as_ref().expect("shared bikes were ridden");
+    println!("{:?}", day.summary);
+    let share = result.by_mode[Mode::BikeShare.index()].completion;
+    assert_eq!(day.summary.trips, f64::from(share.total_trips));
+    assert_eq!(day.summary.trips, day.summary.served + day.summary.failed + day.summary.truncated);
+    assert!(day.summary.failed > 0.0, "some find no bike at any dock tried");
+    assert!(day.summary.mismatch_mean_s > 0.0, "worse than the start-of-day counts expected");
+    assert!(day.summary.mismatch_abs_mean_s >= day.summary.mismatch_mean_s);
+    // Each trip's row is as planned: completed at its expected end, not at what it met.
+    for (l, &(_, met_end)) in day.legs.iter().zip(&day.met) {
+        let done =
+            result.events.iter().find(|e| e.entity_id == l.trip.raw()).expect("the trip's event");
+        assert_eq!(f64::from(done.second.get()), l.expected_end_s(&setup).floor());
+        assert!(met_end.is_nan() || met_end >= l.planned_arrival_s(&setup) - 1e-9);
     }
 }
 

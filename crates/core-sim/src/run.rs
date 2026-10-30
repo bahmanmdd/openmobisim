@@ -74,11 +74,11 @@ use crate::reroute::Rerouter;
 use crate::route_cache::{RouteSetCache, generation_key};
 use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext, make_room, make_room_by};
-use crate::services::costs::DockCosts;
-use crate::services::costs::TaxiCosts;
+use crate::services::costs::{DockCosts, TaxiExpectation};
 use crate::services::engine::Leg;
-use crate::services::in_run::{ServicesRun, ShareDay, ShareLeg, TaxiLeg, TaxiRunDay, TaxisRun};
-use crate::services::{ServiceKind, ServiceSetup};
+use crate::services::in_run::{ServicesRun, ShareLeg, TaxiLeg, TaxisRun};
+use crate::services::roads::RoadTimes;
+use crate::services::{ServiceExpectations, ServiceKind, ServiceSetup};
 use crate::timings::{Stage, Timings};
 use crate::transit::{TransitResult, TransitSetup, par_map};
 use crate::trees::{SearchTrees, TreeCost};
@@ -293,12 +293,15 @@ pub struct RunResult {
     /// The outcomes by mode, in [`Mode::ALL`] order; with [`Self::no_mode`] they add up
     /// to [`Self::completion`] and [`Self::total_travel_time`].
     pub by_mode: [ModeTotals; Mode::COUNT],
-    /// What the run's docked bike service did (S302), kept in memory: `None` in a run without
-    /// one.
+    /// What the run's docked bike service did in its service day, played once after the run
+    /// had stopped on its last loading (S303), kept in memory: `None` in a run without one.
     pub services: Option<ServicesRun>,
-    /// What the run's taxi fleet did (S302), kept in memory: `None` in a run without one in its
-    /// choice.
+    /// What the run's taxi fleet did in that day, likewise: `None` in a run without one.
     pub taxis: Option<TaxisRun>,
+    /// The road times the service day's taxis drove on (the last loading's link times by the bin
+    /// a vehicle enters a link), what a frozen day of the run keeps: `None` in a run without a
+    /// service.
+    pub service_road_times: Option<RoadTimes>,
     /// The trips that chose their mode and had none to choose (counted under the car
     /// before, a trip's stated mode).
     pub no_mode: ModeTotals,
@@ -399,10 +402,13 @@ struct Loaded {
     peak_pcu: Option<Vec<f64>>,
     /// The road link of each car trip still travelling when the window ended.
     at_end: Vec<(TripId, LinkId)>,
-    /// The shared-bike trips' engine day (S302), if any trip took a shared bike.
-    share: Option<ShareDay>,
-    /// The taxi trips' engine day (S302), if any trip took a taxi.
-    taxi: Option<TaxiRunDay>,
+    /// The loading's service trips (S303), in trip order: its shared-bike legs and its taxi
+    /// legs, for the service day played once the run has stopped; empty without.
+    service_legs: (Vec<ShareLeg>, Vec<TaxiLeg>),
+    /// The times travellers planned the loading on, kept where the loading recorded no entry
+    /// times of its own (a run of one loading) and had service trips: what the service day's
+    /// taxis then drive on.
+    service_planned_times: Option<LinkTimes>,
 }
 
 /// How the itinerary trips of a loading went.
@@ -420,10 +426,6 @@ struct ItineraryTally {
     plan_error_sum: f64,
     plan_error_weight: f64,
 }
-
-/// A shared-bike leg's ride on the bike layer, and, for a shared bike to transit, its place
-/// among the loading's pending itineraries (S302).
-type ShareRest = (Vec<LinkId>, Option<usize>);
 
 /// An itinerary trip waiting for the loading.
 struct PendingItin {
@@ -594,10 +596,8 @@ pub struct Run {
     /// What re-routing searches by in the execution under way (S299): `None` where the route
     /// cost is time alone.
     reroute_cost: Option<Arc<crate::reroute::RerouteCost>>,
-    /// The taxi fleet's expected costs the travellers choose on in the execution under way (the
-    /// start-of-day estimate, then the loadings' average), and the turn rules its drives keep
-    /// (S302): `None` without a taxi fleet in the run's choice.
-    taxi_setup: Option<(Arc<TaxiCosts>, Arc<TurnTable>)>,
+    /// What travellers expect of the services (S303): the shipped values, by default.
+    service_expectations: ServiceExpectations,
 }
 
 /// Walk paths by (from, to) walk node: see [`Run`]'s `walk_paths`.
@@ -693,7 +693,7 @@ impl Run {
             walk_paths: WalkPaths::new(),
             static_solution: None,
             reroute_cost: None,
-            taxi_setup: None,
+            service_expectations: ServiceExpectations::SHIPPED,
         }
     }
 
@@ -765,6 +765,15 @@ impl Run {
         self
     }
 
+    /// The same run with travellers expecting `expectations` of its services (S303): the wait
+    /// and failure share of a taxi, the docks' extra walks, fixed for the whole run. Read only in
+    /// a run with services, so a run without one is what it was.
+    #[must_use]
+    pub fn with_service_expectations(mut self, expectations: ServiceExpectations) -> Self {
+        self.service_expectations = expectations;
+        self
+    }
+
     /// Wall-clock time by stage of the last [`Self::execute`] or [`Self::try_execute`],
     /// in the order the stages ended; empty before. Kept apart from [`RunResult`], since it
     /// differs from run to run. The names: [`Timings::lap`].
@@ -798,13 +807,16 @@ impl Run {
     /// The same run with shared-mobility services (S302): a docked bike service offers the mode
     /// [`Mode::BikeShare`] to the trips choosing their mode, when [`Self::with_mode_choice`]
     /// lists it and the run has the walk and bike layers. Its trips walk to a dock, ride a shared
-    /// bike on the bike layer, return it at a dock and walk on; after each loading the fleet
-    /// engine plays their legs, and the docks' costs it realises are averaged into what the next
-    /// choice expects. A taxi fleet offers [`Mode::Taxi`] likewise: its trips ask for a vehicle
-    /// at their departure, the engine's matching sends one, its drives timed on the loading's
-    /// link times (not loaded on the roads), and a request no vehicle reaches within the longest
-    /// wait walks on. At most one docked bike service and one taxi fleet per run
-    /// ([`RunError::Input`] otherwise); both play on one engine day. An empty list is no service.
+    /// bike on the bike layer, return it at a dock and walk on, planned on the docks' expected
+    /// extra walks ([`Self::with_service_expectations`]). A taxi fleet offers [`Mode::Taxi`]
+    /// likewise, planned on an expected wait and failure share. The loadings never play the
+    /// services: their trips end as planned. Once the run has stopped, the fleet engine plays its
+    /// last loading's service trips in one day ([`crate::services::in_run::play`]): the docks'
+    /// redirections, the taxis' matching, drives timed on that loading's link times (not loaded
+    /// on the roads), a request no vehicle reaches within the longest wait failing there; what
+    /// it gives is reported beside what was planned ([`RunResult::services`],
+    /// [`RunResult::taxis`]). At most one docked bike service and one taxi fleet per run
+    /// ([`RunError::Input`] otherwise). An empty list is no service.
     #[must_use]
     pub fn with_services(mut self, services: Arc<Vec<ServiceSetup>>) -> Self {
         self.services = (!services.is_empty()).then_some(services);
@@ -1224,6 +1236,7 @@ impl Run {
             parking: self.parking.as_deref(),
             services: self.services.as_deref().map_or(&[], Vec::as_slice),
             hub_join_m: self.hub_join_m,
+            service_expectations: &self.service_expectations,
             mode_choice: self.mode_choice.as_deref(),
             mode_defaults: &self.mode_defaults,
             class_modes: &self.class_modes,
@@ -1794,12 +1807,15 @@ impl Run {
             .map(|t| (t, planned_times.as_ref().unwrap_or_else(|| t.scheduled())));
         let mut availability =
             parking_arc.as_deref().map(|p| ExpectedAvailability::initial(p, start_s, window_s));
-        // The docks' expected costs (S302): the start-of-day counts', then the loadings' average.
         let share_walk = layers_arc.walk.as_ref();
         let dock_index = share_service
             .zip(share_walk)
             .map(|(s, w)| DockIndex::new(s, w.network().network().node_count()));
-        let mut dock_costs = share_service.map(|s| DockCosts::initial(s, (start_s, window_s)));
+        // The docks' expected costs (S303): the start-of-day counts', as the expectations scale
+        // them, fixed for the whole run.
+        let expectations = self.service_expectations;
+        let dock_costs = share_service
+            .map(|s| DockCosts::initial(s, (start_s, window_s)).expected(s, &expectations));
         // The docks at stops' hubs (S302), when the run offers a shared bike to transit: the
         // run's one hub set, its stops and parkings first, then the service's docks.
         let hub_docks = match (share_service, transit_arc.as_deref(), share_walk, &layers_arc.bike)
@@ -1828,43 +1844,14 @@ impl Run {
             }
             _ => None,
         };
-        let mut dock_seen = 0_u32;
         // What the services did (S302): in a run that has them, offered in its choice or not.
         let of_kind = |kind: ServiceKind| {
             services_arc.as_deref().and_then(|s| s.iter().find(|s| s.kind() == kind))
         };
         let mut services_run = of_kind(ServiceKind::BikeDocked).map(ServicesRun::of);
-        // The taxi fleet's expected wait and failure share per zone and bin (S302): the
-        // start-of-day estimate, then the loadings' average.
-        self.taxi_setup = taxi_service.map(|s| {
-            let zones = crate::services::queries::Zones::grid(
-                &network,
-                crate::services::queries::ZONE_GRID_M,
-            )
-            .ok()
-            .flatten();
-            let (node_zone, n) = zones.map_or_else(
-                || (vec![u32::MAX; network.node_count() as usize], 0),
-                |z| (z.node_zones().to_vec(), z.len()),
-            );
-            let estimate =
-                TaxiCosts::initial(s, &network, (Arc::new(node_zone), n), (start_s, window_s));
-            (Arc::new(estimate), turns.clone())
-        });
-        if let (true, Some((estimate, _)), Some(itin), Some(service), Some(modes)) = (
-            crate::services::costs::experiment::capacity_start(),
-            self.taxi_setup.as_mut(),
-            itineraries.as_ref(),
-            taxi_service,
-            mode_choice.as_deref(),
-        ) {
-            let floor =
-                capacity_fail(&network, &trips, &travellers, itin, service, modes, estimate);
-            *estimate = Arc::new(TaxiCosts::clone(estimate).with_fail_floor(&floor));
-        }
-        let mut taxi_costs: Option<TaxiCosts> =
-            self.taxi_setup.as_ref().map(|(e, _)| TaxiCosts::clone(e));
-        let mut taxis_run = of_kind(ServiceKind::Taxi).map(TaxisRun::of);
+        // What travellers expect of the taxi fleet (S303): one wait and one failure share.
+        let taxi_costs = TaxiExpectation::of(&expectations);
+        let mut taxis_run = of_kind(ServiceKind::Taxi).map(|s| TaxisRun::of(s, taxi_costs));
         let choose_inputs = ChooseInputs {
             trips: &trips,
             travellers: &travellers,
@@ -1914,7 +1901,7 @@ impl Run {
                     dock_costs.as_ref(),
                     hub_docks.as_ref(),
                 ),
-                taxi: taxi_context(taxi_service, taxi_costs.as_ref()),
+                taxi: taxi_context(taxi_service, taxi_costs),
                 car_routes: (mode_choice.is_some() || fallback_car)
                     .then(|| CarRoutes { sets: &route_sets }),
             };
@@ -2049,7 +2036,7 @@ impl Run {
                                     dock_costs.as_ref(),
                                     hub_docks.as_ref(),
                                 ),
-                                taxi: taxi_context(taxi_service, taxi_costs.as_ref()),
+                                taxi: taxi_context(taxi_service, taxi_costs),
                                 car_routes: None,
                             };
                             Some(itin.drives_ahead(
@@ -2145,7 +2132,7 @@ impl Run {
                             dock_costs.as_ref(),
                             hub_docks.as_ref(),
                         ),
-                        taxi: taxi_context(taxi_service, taxi_costs.as_ref()),
+                        taxi: taxi_context(taxi_service, taxi_costs),
                         car_routes: (mode_choice.is_some() || fallback_car)
                             .then(|| CarRoutes { sets: &route_sets }),
                     };
@@ -2185,32 +2172,6 @@ impl Run {
                 &mut iteration_diagnostics,
             );
             clock = timings.lap("loading", Some(iteration), clock);
-            if let Some(services) = services_run.as_mut() {
-                let day = loaded.share.as_ref();
-                services.mismatch_s.push(day.map_or(f64::NAN, |d| d.mismatch_s));
-                services.bias_s.push(day.map_or(f64::NAN, |d| d.bias_s));
-                services.legs_people.push(
-                    day.map_or(0.0, |d| d.legs.iter().map(|l| f64::from(l.leg.weight)).sum()),
-                );
-                services.engine_s += day.map_or(0.0, |d| d.engine_s);
-            }
-            if let Some(taxis) = taxis_run.as_mut() {
-                let day = loaded.taxi.as_ref();
-                taxis.mismatch_s.push(day.map_or(f64::NAN, |d| d.mismatch_s));
-                taxis.bias_s.push(day.map_or(f64::NAN, |d| d.bias_s));
-                taxis.wait_mean_s.push(day.map_or(f64::NAN, |d| d.wait_mean_s));
-                taxis.no_taxi_share.push(day.map_or(f64::NAN, |d| d.no_taxi_share));
-                taxis
-                    .expected_no_taxi_share
-                    .push(day.map_or(f64::NAN, |d| d.expected_no_taxi_share));
-                taxis.legs_people.push(
-                    day.map_or(0.0, |d| d.legs.iter().map(|l| f64::from(l.leg.weight)).sum()),
-                );
-                // One engine day plays both services: its time is counted once, with the docks'.
-                if loaded.share.is_none() {
-                    taxis.engine_s += day.map_or(0.0, |d| d.engine_s);
-                }
-            }
             let mut report = IterationReport::unmeasured(iteration);
             report.gap_currency = currency.label();
             // The stopping rule in the choice's own currency where a class weighs more than time
@@ -2259,22 +2220,6 @@ impl Run {
                     {
                         av.absorb(real);
                     }
-                    // The docks' costs this loading realised (S302), averaged in.
-                    let absorb = iteration > 0 || !crate::services::costs::experiment::skip_first();
-                    if let (Some(expected), Some(day), true) =
-                        (dock_costs.as_mut(), &loaded.share, absorb)
-                    {
-                        expected.absorb(&day.realised, dock_seen);
-                        dock_seen += 1;
-                    }
-                    // The taxi fleet's (S302): what this loading's requests met, the expectation
-                    // kept where none asked; the next loading's requests are measured against it.
-                    if let (Some(expected), Some(day), Some((base, _)), true) =
-                        (taxi_costs.as_mut(), &loaded.taxi, self.taxi_setup.as_mut(), absorb)
-                    {
-                        expected.absorb(&day.realised);
-                        *base = Arc::new(expected.clone());
-                    }
                     // What the itinerary choice and the gap plan on, but the timetable and the
                     // car's route sets (set below, once the sets have grown).
                     let base_planner = Planner {
@@ -2299,7 +2244,7 @@ impl Run {
                             dock_costs.as_ref(),
                             hub_docks.as_ref(),
                         ),
-                        taxi: taxi_context(taxi_service, taxi_costs.as_ref()),
+                        taxi: taxi_context(taxi_service, taxi_costs),
                         car_routes: None,
                     };
                     // Park-and-ride's shared drives leave from a road node at a step's middle on
@@ -2672,15 +2617,54 @@ impl Run {
             )),
             _ => None,
         };
+        // The service day (S303): once the run has stopped, the last loading's service trips
+        // on the fleet engine, its taxis on that loading's link times; nothing in the run moves.
+        let service_road_times = services_arc.as_ref().map(|_| {
+            let times = match (&loaded.entry_bins, loaded.service_planned_times) {
+                (Some(bins), _) => LinkTimes::from_tables(&network, bins),
+                (None, Some(times)) => times,
+                (None, None) => LinkTimes::free_flow(&network),
+            };
+            let rows: Vec<(u32, u32, f64)> =
+                times.rows().into_iter().filter(|r| r.2.is_finite() && r.2 > 0.0).collect();
+            RoadTimes::from_rows(&network, times.bin_seconds(), &rows)
+                .expect("a loading's own link times make road times")
+        });
+        if let (Some(services), Some(road_times)) = (&services_arc, &service_road_times) {
+            let (share, taxi) = loaded.service_legs;
+            if !share.is_empty() || !taxi.is_empty() {
+                let roads = (!taxi.is_empty()).then(|| crate::services::in_run::RunRoads {
+                    road: Arc::clone(&network),
+                    turns: Arc::clone(&turns),
+                    times: Arc::new(road_times.clone()),
+                });
+                let (day, taxi_day) = crate::services::in_run::play(
+                    services,
+                    &self.layers,
+                    crate::services::in_run::DayLegs { share, taxi, roads },
+                    (start_s, f64::from(self.window.get())),
+                    self.master_seed,
+                );
+                // One engine day plays both services: its time is each one's.
+                let engine_s = day
+                    .as_ref()
+                    .map(|d| d.engine_s)
+                    .or_else(|| taxi_day.as_ref().map(|d| d.engine_s))
+                    .unwrap_or(0.0);
+                if let Some(services) = services_run.as_mut() {
+                    services.last = day;
+                    services.engine_s = engine_s;
+                }
+                if let Some(taxis) = taxis_run.as_mut() {
+                    taxis.last = taxi_day;
+                    taxis.engine_s = engine_s;
+                }
+            }
+            clock = timings.lap("service_day", None, clock);
+        }
         if let Some(services) = services_run.as_mut() {
-            services.last = loaded.share;
             services.expected = dock_costs;
         }
-        if let Some(taxis) = taxis_run.as_mut() {
-            taxis.last = loaded.taxi;
-            taxis.expected = taxi_costs;
-        }
-        self.taxi_setup = None;
         timings.lap("results_assembled", None, clock);
         self.timings = timings;
         Ok(RunResult {
@@ -2698,6 +2682,7 @@ impl Run {
             by_mode,
             services: services_run,
             taxis: taxis_run,
+            service_road_times,
             no_mode,
             fallback_car,
             no_alternative,
@@ -2794,13 +2779,12 @@ impl Run {
         let mut pending_itin: Vec<PendingItin> = Vec::new();
         let mut itin_cars: Vec<(usize, Vehicle)> = Vec::new();
         let mut parking_events: Vec<ParkingEvent> = Vec::new();
-        // Shared-bike trips (S302), played on the fleet engine once the loading is done: their
-        // walks and rides are static, only the docks' counts depend on the others. Each with
-        // its ride's links on the bike layer, and, for a shared bike to transit, its place in
-        // `pending_itin` (its transit part follows from where the engine left it).
-        let mut pending_share: Vec<(ShareLeg, Vec<LinkId>, Option<usize>)> = Vec::new();
-        // Taxi trips (S302), likewise played on the engine once the loading is done, on its
-        // link times.
+        // Shared-bike trips (S302): each ends as planned (S303), on its walks and ride (static)
+        // and the docks' expected extra walk; its leg is kept for the service day the run plays
+        // once it has stopped. A shared bike alone ends here; a shared bike to transit at the
+        // hub's dock, its transit part following from there.
+        let mut pending_share: Vec<ShareLeg> = Vec::new();
+        // Taxi trips (S302): likewise as planned, their legs kept for the service day.
         let mut pending_taxi: Vec<TaxiLeg> = Vec::new();
         // The services' places in the run's list: the engine's legs name them.
         let service_index = |kind: ServiceKind| {
@@ -2851,11 +2835,30 @@ impl Run {
                             ride_s: alt.vehicle_s,
                             egress_s: f64::from(alt.egress_walk_s),
                         };
-                        pending_share.push((
-                            ShareLeg { trip, leg, expected_dock_s: alt.dock_s },
-                            alt.vehicle_links.clone(),
-                            None,
-                        ));
+                        let share = ShareLeg {
+                            trip,
+                            leg,
+                            expected_dock_s: alt.dock_s,
+                            departure_s: f64::from(departure.get()),
+                        };
+                        let services = self.services.clone().expect("a shared bike's service");
+                        let setup = &services[usize::from(share_index)];
+                        self.end_as_planned(
+                            trip,
+                            departure,
+                            share.expected_end_s(setup),
+                            f64::from(self.travellers.weight(traveller)),
+                            &mut completion,
+                            &mut total_travel_time,
+                            &mut events,
+                            diagnostics,
+                        );
+                        // The ride on the bike layer's per-link results: between the planned
+                        // docks, leaving once the bike is taken.
+                        if record_bins.is_some() && !alt.vehicle_links.is_empty() {
+                            layer_vehicles[0].push(share_ride(&share, setup, &alt.vehicle_links));
+                        }
+                        pending_share.push(share);
                         if let Some(next) = self.next_trip_of(traveller, trip) {
                             self.enqueue(&mut queue, next);
                         }
@@ -2878,14 +2881,24 @@ impl Run {
                             ride_s: f64::NAN,
                             egress_s: f64::NAN,
                         };
-                        pending_taxi.push(TaxiLeg {
+                        let taxi = TaxiLeg {
                             trip,
                             leg,
                             expected_wait_s: alt.taxi_wait_s,
                             expected_fail: alt.taxi_fail,
                             expected_s: alt.total_s,
-                            walk_s: nodes.walk_all_s,
-                        });
+                        };
+                        self.end_as_planned(
+                            trip,
+                            departure,
+                            taxi.expected_end_s(),
+                            f64::from(self.travellers.weight(traveller)),
+                            &mut completion,
+                            &mut total_travel_time,
+                            &mut events,
+                            diagnostics,
+                        );
+                        pending_taxi.push(taxi);
                         if let Some(next) = self.next_trip_of(traveller, trip) {
                             self.enqueue(&mut queue, next);
                         }
@@ -2942,11 +2955,22 @@ impl Run {
                             ride_s: alt.vehicle_s,
                             egress_s: 0.0,
                         };
-                        pending_share.push((
-                            ShareLeg { trip, leg, expected_dock_s: alt.dock_s },
-                            alt.vehicle_links.clone(),
-                            Some(pending_itin.len() - 1),
-                        ));
+                        let share = ShareLeg {
+                            trip,
+                            leg,
+                            expected_dock_s: alt.dock_s,
+                            departure_s: f64::from(departure.get()),
+                        };
+                        let setup = &services[usize::from(share_index)];
+                        // As planned (S303): at the hub's dock when the choice expected.
+                        let at = share.expected_end_s(setup);
+                        let end = f64::from(self.window.get());
+                        pending_itin.last_mut().expect("just started").vehicle_arrival =
+                            (at.is_finite() && at <= end).then_some(at);
+                        if record_bins.is_some() && !alt.vehicle_links.is_empty() && at <= end {
+                            layer_vehicles[0].push(share_ride(&share, setup, &alt.vehicle_links));
+                        }
+                        pending_share.push(share);
                     }
                     if let Some(next) = self.next_trip_of(traveller, trip) {
                         self.enqueue(&mut queue, next);
@@ -3451,61 +3475,10 @@ impl Run {
             }
         }
 
-        // Shared bikes (S302): their legs on the fleet engine, with no operator, before the
-        // transit parts, which a shared bike to transit starts from where the engine left it; a
-        // pickup that fails walks on, to the destination or to the hub's dock.
-        // Taxis (S302) in the same engine day: driven on this loading's link times (the cars'
-        // entry times where the loading recorded them, else the times the travellers expected,
-        // else free flow), adding no traffic of their own.
-        let mut share_day: Option<(ShareDay, Vec<ShareRest>)> = None;
-        let mut taxi_day: Option<TaxiRunDay> = None;
-        if let (Some(services), false) =
-            (self.services.clone(), pending_share.is_empty() && pending_taxi.is_empty())
-        {
-            pending_share.sort_by_key(|(l, _, _)| l.trip.raw());
-            pending_taxi.sort_by_key(|l| l.trip.raw());
-            let (legs, rest): (Vec<ShareLeg>, Vec<ShareRest>) =
-                pending_share.into_iter().map(|(l, links, at)| (l, (links, at))).unzip();
-            let start = f64::from(self.window_start.get());
-            let end = f64::from(self.window.get());
-            let roads = match (&self.taxi_setup, pending_taxi.is_empty()) {
-                (Some((_, turns)), false) => {
-                    let times = match (&entry_bins, expected) {
-                        (Some(bins), _) => LinkTimes::from_tables(&self.network, bins),
-                        (None, Some(times)) => times.clone(),
-                        (None, None) => LinkTimes::free_flow(&self.network),
-                    };
-                    Some(crate::services::in_run::RunRoads {
-                        road: Arc::clone(&self.network),
-                        turns: Arc::clone(turns),
-                        times: Arc::new(times),
-                    })
-                }
-                _ => None,
-            };
-            let (day, taxis) = crate::services::in_run::play(
-                &services,
-                &self.layers,
-                crate::services::in_run::DayLegs {
-                    share: legs,
-                    taxi: pending_taxi,
-                    roads,
-                    taxi_estimate: self.taxi_setup.as_ref().map(|(e, _)| &**e),
-                },
-                (start, end),
-                self.master_seed,
-            );
-            if let Some(day) = day {
-                for ((_, o), (_, at)) in day.legs.iter().zip(&day.outcome.legs).zip(&rest) {
-                    if let Some(i) = *at {
-                        pending_itin[i].vehicle_arrival =
-                            (o.arrived_s.is_finite() && o.arrived_s <= end).then_some(o.arrived_s);
-                    }
-                }
-                share_day = Some((day, rest));
-            }
-            taxi_day = taxis;
-        }
+        // The service day's road times where the loading recorded no entry times of its own
+        // (S303): the times its travellers planned on, else free flow.
+        let service_planned_times = (entry_bins.is_none() && !pending_taxi.is_empty())
+            .then(|| expected.cloned().unwrap_or_else(|| LinkTimes::free_flow(&self.network)));
 
         // Transit, park-and-ride and bike-and-ride trips, on the day's times (M4).
         let mut transit_result = None;
@@ -3650,101 +3623,6 @@ impl Run {
             transit_result = Some(result);
         }
 
-        // The shared-bike trips' ends (S302): a shared bike alone ends where the engine left it;
-        // a shared bike to transit ended with its transit part, above.
-        let mut share = None;
-        if let (Some(services), Some((day, rest))) = (self.services.clone(), share_day) {
-            let end = f64::from(self.window.get());
-            let pickup_s = match services[usize::from(share_index)].parts() {
-                crate::services::ServiceParts::BikeDocked(_, d) => d.pickup_s,
-                crate::services::ServiceParts::Taxi(..) => 0.0,
-            };
-            for ((l, o), (links, at)) in day.legs.iter().zip(&day.outcome.legs).zip(rest) {
-                let trip = l.trip;
-                let weight = f64::from(l.leg.weight);
-                let departure = self.trips.departure(trip);
-                // The shared bike on the bike layer's per-link results, as one's own: a ride
-                // between the planned docks, with no redirection.
-                let planned = o.picked == Some(l.leg.pickup_dock)
-                    && o.returned == Some(l.leg.return_dock)
-                    && o.redirections == 0;
-                if at.is_some() {
-                    if record_bins.is_some() && planned && !links.is_empty() && o.arrived_s <= end {
-                        #[allow(
-                            clippy::cast_possible_truncation,
-                            clippy::cast_sign_loss,
-                            reason = "s"
-                        )]
-                        let leaves = Second((o.picked_s + pickup_s).floor() as u32);
-                        layer_vehicles[0].push(Vehicle::new(
-                            VehicleId::new(trip.raw()),
-                            links,
-                            Pcu(weight),
-                            leaves,
-                        ));
-                    }
-                    continue;
-                }
-                if o.arrived_s.is_finite() && o.arrived_s <= end {
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "s")]
-                    let at = Second((o.arrived_s.floor() as u32).max(departure.get()));
-                    completion.completed += 1;
-                    total_travel_time +=
-                        (Duration::from_clock(at) - Duration::from_clock(departure)) * weight;
-                    events.push(EventRow::trip(at, EventType::TripCompleted, trip));
-                    if record_bins.is_some() && planned && !links.is_empty() {
-                        #[allow(
-                            clippy::cast_possible_truncation,
-                            clippy::cast_sign_loss,
-                            reason = "s"
-                        )]
-                        let leaves = Second((o.picked_s + pickup_s).floor() as u32);
-                        layer_vehicles[0].push(Vehicle::new(
-                            VehicleId::new(trip.raw()),
-                            links,
-                            Pcu(weight),
-                            leaves,
-                        ));
-                    }
-                } else {
-                    completion.truncated += 1;
-                    diagnostics.record(DiagKey::new(
-                        Category::Modelling,
-                        codes::TRIP_TRUNCATED,
-                        Severity::Info,
-                        ElementRef::of(trip),
-                    ));
-                    events.push(EventRow::trip(self.window, EventType::TripTruncated, trip));
-                }
-            }
-            share = Some(day);
-        }
-        // The taxi trips' ends (S302): at the drop-off, or on foot after a failed request.
-        if let Some(day) = &taxi_day {
-            for (l, &at) in day.legs.iter().zip(&day.arrived_s) {
-                let trip = l.trip;
-                let weight = f64::from(l.leg.weight);
-                let departure = self.trips.departure(trip);
-                if at.is_finite() {
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "s")]
-                    let at = Second((at.floor() as u32).max(departure.get()));
-                    completion.completed += 1;
-                    total_travel_time +=
-                        (Duration::from_clock(at) - Duration::from_clock(departure)) * weight;
-                    events.push(EventRow::trip(at, EventType::TripCompleted, trip));
-                } else {
-                    completion.truncated += 1;
-                    diagnostics.record(DiagKey::new(
-                        Category::Modelling,
-                        codes::TRIP_TRUNCATED,
-                        Severity::Info,
-                        ElementRef::of(trip),
-                    ));
-                    events.push(EventRow::trip(self.window, EventType::TripTruncated, trip));
-                }
-            }
-        }
-
         // The bike and walk layers' vehicles, binned once the run knows which loading it keeps.
         let layer_vehicles = record_bins.map(|b| (b, layer_vehicles));
 
@@ -3767,8 +3645,42 @@ impl Run {
             reroute_searches,
             peak_pcu,
             at_end,
-            share,
-            taxi: taxi_day,
+            service_legs: (pending_share, pending_taxi),
+            service_planned_times,
+        }
+    }
+
+    /// End service trip `trip`, departed at `departure`, as planned (S303): completed at
+    /// `planned_s` (seconds from midnight, floored, not before the departure) if by the window's
+    /// end, else truncated; `weight` its people.
+    #[allow(clippy::too_many_arguments, reason = "the loading's tallies, named")]
+    fn end_as_planned(
+        &self,
+        trip: TripId,
+        departure: Second,
+        planned_s: f64,
+        weight: f64,
+        completion: &mut TripCompletionStats,
+        total_travel_time: &mut Duration,
+        events: &mut Vec<EventRow>,
+        diagnostics: &mut Diagnostics,
+    ) {
+        if planned_s.is_finite() && planned_s <= f64::from(self.window.get()) {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "s")]
+            let at = Second((planned_s.floor() as u32).max(departure.get()));
+            completion.completed += 1;
+            *total_travel_time +=
+                (Duration::from_clock(at) - Duration::from_clock(departure)) * weight;
+            events.push(EventRow::trip(at, EventType::TripCompleted, trip));
+        } else {
+            completion.truncated += 1;
+            diagnostics.record(DiagKey::new(
+                Category::Modelling,
+                codes::TRIP_TRUNCATED,
+                Severity::Info,
+                ElementRef::of(trip),
+            ));
+            events.push(EventRow::trip(self.window, EventType::TripTruncated, trip));
         }
     }
 
@@ -4339,68 +4251,31 @@ impl RunResult {
     }
 }
 
-/// The experiment's capacity-aware start of a taxi fleet's failure share, per bin of
-/// `estimate` (see [`crate::services::costs::experiment`]).
-fn capacity_fail(
-    road: &RoadNetwork,
-    trips: &Trips,
-    travellers: &Travellers,
-    itin: &Itineraries,
-    service: &ServiceSetup,
-    modes: &[Mode],
-    estimate: &TaxiCosts,
-) -> Vec<f64> {
-    let crate::services::ServiceParts::Taxi(fleet, d) = service.parts() else {
-        return Vec::new();
+/// A shared bike's planned ride as a vehicle of the bike layer's per-link results (S302): on
+/// `links`, leaving its pickup dock once the bike is taken, counting its people.
+fn share_ride(share: &ShareLeg, setup: &ServiceSetup, links: &[LinkId]) -> Vehicle {
+    let pickup_s = match setup.parts() {
+        crate::services::ServiceParts::BikeDocked(_, d) => d.pickup_s,
+        crate::services::ServiceParts::Taxi(..) => 0.0,
     };
-    let (bin_s, start_s, bins) = estimate.bins();
-    let mut demand = vec![0.0; bins];
-    let (mut metres, mut people) = (0.0, 0.0);
-    for i in 0..trips.len() {
-        let trip = TripId::new(i);
-        let Some(p) = itin.position(trip) else { continue };
-        if !itin.chooses(p) {
-            continue;
-        }
-        let w = f64::from(travellers.weight(trips.traveller(trip)));
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin")]
-        let b = (((f64::from(trips.departure(trip).get()) - start_s).max(0.0) / bin_s) as usize)
-            .min(bins - 1);
-        demand[b] += w;
-        metres += w * openmobisim_core_graph::geometry::ground_distance_metres(
-            trips.origin(trip),
-            trips.destination(trip),
-        );
-        people += w;
-    }
-    let (mut length, mut time) = (0.0, 0.0);
-    for l in 0..road.link_count() {
-        let link = LinkId::new(l);
-        if road.link_class(link).carries_motor_traffic() {
-            length += road.link_length(link).get();
-            time += road.free_flow_time(link).get();
-        }
-    }
-    let speed = if time > 0.0 { length / time } else { 10.0 };
-    let mean_m = if people > 0.0 { metres / people } else { 0.0 };
-    #[allow(clippy::cast_precision_loss, reason = "a count of vehicles")]
-    let rides = fleet.vehicle_ids.len() as f64 * bin_s / (d.board_s + 2.0 * mean_m / speed);
-    #[allow(clippy::cast_precision_loss, reason = "a count of modes")]
-    let split = modes.len().max(1) as f64;
-    demand
-        .iter()
-        .map(|&n| if n > 0.0 { (1.0 - rides / (n / split)).max(0.0) } else { 0.0 })
-        .collect()
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a second")]
+    let leaves = Second((share.leg.request_s + pickup_s).floor() as u32);
+    Vehicle::new(
+        VehicleId::new(share.trip.raw()),
+        links.to_vec(),
+        Pcu(f64::from(share.leg.weight)),
+        leaves,
+    )
 }
 
 /// A run's taxi fleet as the choice sees it (S302): `None` without one.
-fn taxi_context<'a>(
-    setup: Option<&'a ServiceSetup>,
-    costs: Option<&'a TaxiCosts>,
-) -> Option<itinerary_choice::TaxiContext<'a>> {
+fn taxi_context(
+    setup: Option<&ServiceSetup>,
+    costs: TaxiExpectation,
+) -> Option<itinerary_choice::TaxiContext<'_>> {
     match setup?.parts() {
         crate::services::ServiceParts::Taxi(_, d) => {
-            Some(itinerary_choice::TaxiContext { defaults: d, costs: costs? })
+            Some(itinerary_choice::TaxiContext { defaults: d, costs })
         }
         crate::services::ServiceParts::BikeDocked(..) => None,
     }

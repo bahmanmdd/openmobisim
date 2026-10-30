@@ -1459,25 +1459,24 @@ pub fn run_pipeline(
     // Python is called from that pool's thread, which takes the lock when it needs it.
     let result = py.detach(|| run.try_execute(&mut run_diagnostics)).map_err(to_value_error)?;
     let core_stages = run.timings().to_vec();
-    // A run with a service keeps its last loading's day, to freeze it (S302); one without keeps
+    // A run with a service keeps its service day, to freeze it (S302, S303); one without keeps
     // nothing.
-    let share = match &service_setups {
-        Some(setups) => Some(
-            crate::frozen_day::ShareFreeze::new(
-                Arc::clone(setups),
+    let share = service_setups.as_ref().map(|setups| {
+        crate::frozen_day::ShareFreeze::new(
+            Arc::clone(setups),
+            (
                 result.services.as_ref().and_then(|s| s.last.clone()),
-                &trips_used,
-                &travellers,
-                result.link_bins.as_ref(),
-                &network.inner,
-                (f64::from(window.start_s), f64::from(window.end_s)),
-                master_seed,
-                description.fingerprint_hex(),
-            )
-            .map_err(PyValueError::new_err)?,
-        ),
-        None => None,
-    };
+                result.taxis.as_ref().and_then(|t| t.last.clone()),
+            ),
+            &trips_used,
+            &travellers,
+            result.service_road_times.clone(),
+            &network.inner,
+            (f64::from(window.start_s), f64::from(window.end_s)),
+            master_seed,
+            description.fingerprint_hex(),
+        )
+    });
     // What a skim needs after the run (S238), kept with the summary.
     let skimmer = Arc::new(Skimmer::new(
         network.inner.clone(),

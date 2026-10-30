@@ -1,59 +1,168 @@
-//! A run's services inside it: the trips that chose a shared bike or a taxi in a loading,
-//! played on the fleet engine after it, in one day (both services, when the run has both, on
-//! one clock; they share nothing, so each plays as it would alone).
+//! A run's services after it (S303): the trips of the run's **last loading** that chose a shared
+//! bike or a taxi, played on the fleet engine **once, after the run has stopped**, in one day
+//! (both services, when the run has both, on one clock; they share nothing, so each plays as it
+//! would alone). The loadings never play the services, and what this day gives is never fed
+//! back: the travellers planned on fixed expectations ([`super::ServiceExpectations`]), and
+//! their trips keep the arrivals they planned.
 //!
-//! **Coupling** (level 1): the road loading never sees a shared bike. After each loading, the
-//! trips whose choice was a shared bike give the day's legs (their chosen pickup and return
-//! docks; a request at the departure plus the walk to the pickup dock); the engine plays them
-//! with no operator; a trip whose pickup fails walks on and arrives on foot, as the engine's
-//! day says. The docks' realised costs (what the legs met per dock and bin,
-//! [`DockCosts::with_legs`]; the counts' estimate where no leg went) are averaged into the
-//! expectation the next choice reads (the method of successive averages, [`DockCosts::absorb`]),
-//! so the expectation's fixed point is what the travellers met.
+//! **Shared bikes.** The road loading never sees one. Each leg is the trip's chosen pickup and
+//! return docks, a request when the traveller reaches the pickup dock, the ride and the walk
+//! on; the engine plays them with no operator: an empty dock sends the traveller on to another,
+//! a full one likewise, and a traveller who finds no bike at any dock tried walks on.
 //!
-//! **The mismatch** of a loading ([`ShareDay::mismatch_s`]): per leg that arrived, the absolute
-//! difference between the extra seconds it was expected to spend at the docks (its choice's
-//! `dock_min`, in seconds) and the extra seconds it spent (its arrival less its arrival had every
-//! dock had a bike and a free slot), averaged over the legs weighted by the people they stand
-//! for: how far the travellers' expectation was from what they met. Its signed mean
-//! ([`ShareDay::bias_s`]: realised less expected) says whether the expectation was too low or
-//! too high on the whole; the absolute one does not vanish even when the expectation is right on
-//! average, since travellers of one bin meet different outcomes (a share `p` failing at cost `F`
-//! and the rest at none, expected `pF`, leaves `2p(1 − p)F` per leg).
+//! **Taxis.** Their drives are not vehicles of the road loading: they are timed on the last
+//! loading's link times ([`RunRoads::times`], what its cars met, by the second they enter each
+//! link, as [`RoadTimes`]: the same road times a frozen day of the run holds, so a replay of the
+//! frozen day drives the same drives), so a taxi meets the day's congestion but adds none. A trip
+//! that chose a taxi asks for one at its departure, at its origin's road node; the engine's
+//! matching sends the nearest idle vehicle (see [`super::taxis`]); **a request no vehicle is sent
+//! to within the fleet's longest wait fails, and the trip ends there**, with no walk on.
 //!
-//! **Taxis** (S302), likewise at level 1: **their drives are not vehicles of the road
-//! loading**; they are timed on the loading's own link times ([`LinkTimes`], what the loading's
-//! cars met, by the second they enter each link), so a taxi meets the congestion of the day but
-//! adds none. A trip that chose a taxi asks for one at its departure, at its origin's road
-//! node; the engine's matching sends the nearest idle vehicle (see [`super::taxis`]); a request
-//! no vehicle is sent to within the fleet's longest wait fails, and **the traveller walks from
-//! the origin to the destination** on the walk layer, setting off when the wait ends (the
-//! shared bikes' rule for a traveller who finds no bike). The fleet's expected wait and failure
-//! share per zone and bin ([`TaxiCosts`]) are averaged as the docks' costs are. Its mismatch per
-//! leg is the door-to-door seconds met less those expected ([`TaxiLeg::expected_s`]).
+//! **Met against expected.** Each leg carries what its choice expected: the second its service
+//! leg was to end ([`ShareLeg::expected_end_s`], [`TaxiLeg::expected_end_s`]: the destination,
+//! or for a shared bike to transit the hub's dock). [`Met`] says what the day gave it, and
+//! [`ServiceSummary`] sums the day up per service: the counts, the expected and met door-to-door
+//! seconds (from the trip's departure to its service leg's end) and the mismatch (met less
+//! expected, positive when worse than expected), each over people.
 //!
-//! **Cost:** per loading one engine day (about 120 bytes and a few events per leg); per
+//! **Cost:** one engine day per run (about 120 bytes and a few events per leg); per
 //! redirection one walk or ride search on a static layer, rides kept per dock pair.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
-use openmobisim_core_routes::{Reach, Search, SearchContext};
-use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
+use openmobisim_core_routes::{Reach, SearchContext};
+use openmobisim_core_types::ids::{EntityId, NodeId, TripId};
 
-use super::costs::{DockCosts, TaxiCosts};
-use super::engine::{FleetDay, FleetEngine, Leg, NoRoads, ServiceLegs, ServiceRoads};
+use super::costs::{DockCosts, TaxiExpectation};
+use super::engine::{FleetDay, FleetEngine, Leg, NoRoads, ServiceLegs};
 use super::outcome::{FleetOutcome, LegOutcome, LegStatus, TaxiDay};
-use super::roads::DRIVE_BOUND_S;
+use super::roads::{FrozenRoads, RoadTimes};
 use super::world::ServiceWorld;
 use super::{ServiceKind, ServiceParts, ServiceSetup};
 use crate::layers::{LayerSetup, StaticLayers};
-use crate::link_times::LinkTimes;
 
-/// One trip's shared-bike leg in a loading, with what its choice expected.
+/// What the service day gave a trip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Met {
+    /// Carried to the end of its service leg (a shared bike docked, a taxi's drop-off).
+    Served,
+    /// No vehicle: a taxi sent to no request within the longest wait (the trip ends there), or
+    /// no bike at any dock tried (the traveller walked on).
+    Failed,
+    /// Still waiting or under way when the window ended, or asked after it.
+    Truncated,
+}
+
+impl Met {
+    /// The stable snake_case name, as `trip_results` writes it (`service_outcome`).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Met::Served => "served",
+            Met::Failed => "failed",
+            Met::Truncated => "truncated",
+        }
+    }
+
+    /// What a leg's engine outcome `o` says, and the second its service leg ended (`NaN`: it
+    /// did not, by the window's end `end_s`). A failed taxi leg never ends.
+    #[must_use]
+    pub fn of(o: &LegOutcome, taxi: bool, end_s: f64) -> (Self, f64) {
+        let ended = |t: f64| if t.is_finite() && t <= end_s { t } else { f64::NAN };
+        match o.status {
+            LegStatus::Served => (Met::Served, ended(o.arrived_s)),
+            LegStatus::Failed if taxi => (Met::Failed, f64::NAN),
+            LegStatus::Failed => (Met::Failed, ended(o.arrived_s)),
+            _ => (Met::Truncated, f64::NAN),
+        }
+    }
+}
+
+/// One service's day summed up, over people (the travellers' weights): see the
+/// [module docs](self). A mean with nobody to average is `NaN`.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct ServiceSummary {
+    /// The people of the trips that chose the service in the last loading.
+    pub trips: f64,
+    /// Of them, served.
+    pub served: f64,
+    /// Failed.
+    pub failed: f64,
+    /// Truncated.
+    pub truncated: f64,
+    /// The mean expected seconds from the departure to the service leg's end, over every trip.
+    pub expected_door_to_door_s: f64,
+    /// The mean met seconds, over the trips whose service leg ended.
+    pub met_door_to_door_s: f64,
+    /// The mean of met less expected, over the same trips.
+    pub mismatch_mean_s: f64,
+    /// The mean of its absolute value.
+    pub mismatch_abs_mean_s: f64,
+    /// A taxi fleet's mean wait of the trips served, in seconds (`NaN` for a docked service).
+    pub wait_mean_s: f64,
+}
+
+impl ServiceSummary {
+    /// The summary of legs given as `(people, departure, expected end, met, met end, wait)`
+    /// (the wait `NaN` where none is kept).
+    fn of(legs: impl Iterator<Item = (f64, f64, f64, Met, f64, f64)>) -> Self {
+        let mut s = Self::default();
+        let (mut expected, mut met, mut signed, mut abs, mut ended) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        let (mut waited, mut waits) = (0.0, 0.0);
+        for (w, departure, expected_end, m, met_end, wait) in legs {
+            s.trips += w;
+            match m {
+                Met::Served => s.served += w,
+                Met::Failed => s.failed += w,
+                Met::Truncated => s.truncated += w,
+            }
+            expected += w * (expected_end - departure);
+            if met_end.is_finite() {
+                met += w * (met_end - departure);
+                signed += w * (met_end - expected_end);
+                abs += w * (met_end - expected_end).abs();
+                ended += w;
+            }
+            if m == Met::Served && wait.is_finite() {
+                waited += w * wait;
+                waits += w;
+            }
+        }
+        let mean = |x: f64, n: f64| if n > 0.0 { x / n } else { f64::NAN };
+        s.expected_door_to_door_s = mean(expected, s.trips);
+        s.met_door_to_door_s = mean(met, ended);
+        s.mismatch_mean_s = mean(signed, ended);
+        s.mismatch_abs_mean_s = mean(abs, ended);
+        s.wait_mean_s = mean(waited, waits);
+        s
+    }
+
+    /// The rows `kpis.parquet` writes, by metric name, in order (a `NaN` mean has none).
+    #[must_use]
+    pub fn rows(&self) -> Vec<(&'static str, f64)> {
+        [
+            ("trips", self.trips),
+            ("served", self.served),
+            ("failed", self.failed),
+            ("truncated", self.truncated),
+            ("expected_door_to_door_s", self.expected_door_to_door_s),
+            ("met_door_to_door_s", self.met_door_to_door_s),
+            ("mismatch_mean_s", self.mismatch_mean_s),
+            ("mismatch_abs_mean_s", self.mismatch_abs_mean_s),
+            ("wait_mean_s", self.wait_mean_s),
+        ]
+        .into_iter()
+        .filter(|(_, v)| v.is_finite())
+        .collect()
+    }
+}
+
+/// One trip's shared-bike leg in the last loading, with what its choice expected.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ShareLeg {
     /// The trip.
@@ -62,6 +171,8 @@ pub struct ShareLeg {
     pub leg: Leg,
     /// The extra seconds at the docks its choice expected (`dock_min` × 60).
     pub expected_dock_s: f64,
+    /// The trip's departure, in seconds from midnight.
+    pub departure_s: f64,
 }
 
 impl ShareLeg {
@@ -74,49 +185,49 @@ impl ShareLeg {
         };
         self.leg.request_s + pickup_s + self.leg.ride_s + return_s + self.leg.egress_s
     }
+
+    /// The second its choice expected the leg to end: [`Self::planned_arrival_s`] and the
+    /// expected extra seconds at the docks (the trip's planned arrival; for a shared bike to
+    /// transit, its planned arrival at the hub's dock).
+    #[must_use]
+    pub fn expected_end_s(&self, setup: &ServiceSetup) -> f64 {
+        self.planned_arrival_s(setup) + self.expected_dock_s
+    }
 }
 
-/// One loading's engine day.
+/// The shared bikes' part of the service day.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShareDay {
     /// The legs, in trip order.
     pub legs: Vec<ShareLeg>,
     /// What became of them, and the docks' counts.
     pub outcome: FleetOutcome,
-    /// The docks' costs the day realised.
-    pub realised: DockCosts,
-    /// The mean absolute mismatch per leg, in seconds (see the [module docs](self)); `NaN`
-    /// with no leg that arrived.
-    pub mismatch_s: f64,
-    /// The signed mean per leg, realised less expected, in seconds; `NaN` likewise.
-    pub bias_s: f64,
+    /// Per leg, what the day gave it and the second its leg ended (`NaN`: it did not).
+    pub met: Vec<(Met, f64)>,
+    /// The day summed up.
+    pub summary: ServiceSummary,
     /// The mean extra seconds the legs that arrived met at the docks (their arrival less their
     /// arrival had the planned docks had a bike and a free slot), weighted by people; `NaN`
-    /// likewise.
+    /// with none.
     pub extra_mean_s: f64,
     /// The engine's wall-clock seconds.
     pub engine_s: f64,
 }
 
-/// What a run's services did: the numbers `kpis.parquet` carries per service, and the last
-/// loading's day `service_legs.parquet` and `hub_bins.parquet` are made of.
+/// What a run's docked service did: its service day, what `kpis.parquet`,
+/// `bike_share_*.parquet` and the trip rows are made of.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct ServicesRun {
     /// The service's name (the run's docked service).
     pub service: String,
     /// Its bikes at the start of the day.
     pub fleet: f64,
-    /// Per loading, its [`ShareDay::mismatch_s`].
-    pub mismatch_s: Vec<f64>,
-    /// Per loading, its [`ShareDay::bias_s`].
-    pub bias_s: Vec<f64>,
-    /// Per loading, its legs (people).
-    pub legs_people: Vec<f64>,
-    /// The engine's wall-clock seconds over the run.
+    /// The engine's wall-clock seconds (the whole service day, the taxis' included when both
+    /// services run).
     pub engine_s: f64,
-    /// The last loading's day: `None` if no trip took a shared bike in it.
+    /// The service day: `None` if no trip took a shared bike in the last loading.
     pub last: Option<ShareDay>,
-    /// The docks' expected costs as the run ended.
+    /// The docks' expected costs the travellers planned on, the whole run.
     pub expected: Option<DockCosts>,
 }
 
@@ -185,98 +296,20 @@ impl ServiceLegs for RunLegs {
     }
 }
 
-/// A loading's roads for its taxis: drives by the time-dependent fastest-route search on the
-/// loading's link times (turn rules kept), on the links motor traffic may use; the bounded
-/// free-flow searches the matching uses.
-struct LinkRoads<'a> {
-    road: &'a RoadNetwork,
-    times: &'a LinkTimes,
-    free: Vec<f64>,
-    every: Vec<bool>,
-    search: Mutex<Search<'a>>,
-}
-
-impl std::fmt::Debug for LinkRoads<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LinkRoads").finish_non_exhaustive()
-    }
-}
-
-impl<'a> LinkRoads<'a> {
-    fn new(road: &'a RoadNetwork, ctx: &'a SearchContext<'a>, times: &'a LinkTimes) -> Self {
-        let free = (0..road.link_count())
-            .map(|i| {
-                let link = LinkId::new(i);
-                if road.link_class(link).carries_motor_traffic() {
-                    road.free_flow_time(link).get()
-                } else {
-                    f64::INFINITY
-                }
-            })
-            .collect();
-        Self {
-            road,
-            times,
-            free,
-            every: vec![true; road.node_count() as usize],
-            search: Mutex::new(Search::new(ctx)),
-        }
-    }
-
-    fn reach(&self, node: NodeId, bound: f64, back: bool) -> Vec<(NodeId, f64)> {
-        let mut reach = Reach::new(self.road, &self.free);
-        let mut out = if back {
-            reach.backward(node, bound, &self.every)
-        } else {
-            reach.forward(node, bound, &self.every)
-        };
-        out.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.raw().cmp(&b.0.raw())));
-        out
-    }
-}
-
-impl ServiceRoads for LinkRoads<'_> {
-    fn drive(&self, from: NodeId, to: NodeId, t: f64) -> (f64, f64) {
-        if from == to {
-            return (0.0, 0.0);
-        }
-        let seconds = |l: u32, at: f64| {
-            if self.free[l as usize].is_finite() {
-                self.times.link_seconds(l, at)
-            } else {
-                f64::INFINITY
-            }
-        };
-        self.search
-            .lock()
-            .expect("a search not poisoned")
-            .fastest_route(from, to, t, DRIVE_BOUND_S, &|_, _| 0.0, &seconds)
-            .map_or((f64::INFINITY, f64::INFINITY), |(s, links)| {
-                (s, links.iter().map(|&l| self.road.link_length(l).get()).sum())
-            })
-    }
-    fn reach_to(&self, to: NodeId, bound: f64) -> Vec<(NodeId, f64)> {
-        self.reach(to, bound, true)
-    }
-    fn reach_from(&self, from: NodeId, bound: f64) -> Vec<(NodeId, f64)> {
-        self.reach(from, bound, false)
-    }
-}
-
-/// What a run's taxis drive on in a loading: the road network, its turns and the loading's
-/// link times.
+/// What a run's taxis drive on in its service day: the road network, its turns and the last
+/// loading's link times as road times.
 #[derive(Clone, Debug)]
 pub struct RunRoads {
     /// The road network.
     pub road: Arc<RoadNetwork>,
     /// Its turn rules.
     pub turns: Arc<TurnTable>,
-    /// The loading's link times.
-    pub times: Arc<LinkTimes>,
+    /// The last loading's link times, by the bin a vehicle enters a link.
+    pub times: Arc<RoadTimes>,
 }
 
-/// A loading's city for the engine: the rides and walks of its shared bikes, and its roads for
-/// its taxis (none without).
+/// The service day's city for the engine: the rides and walks of its shared bikes, and its
+/// roads for its taxis (none without).
 #[derive(Debug)]
 struct RunWorld {
     legs: RunLegs,
@@ -288,11 +321,11 @@ impl ServiceWorld for RunWorld {
         &self.legs
     }
 
-    fn with_roads(&self, f: &mut dyn FnMut(&dyn ServiceRoads)) {
+    fn with_roads(&self, f: &mut dyn FnMut(&dyn super::engine::ServiceRoads)) {
         match &self.roads {
             Some(r) => {
                 let ctx = SearchContext::new(&r.road, &r.turns);
-                let roads = LinkRoads::new(&r.road, &ctx, &r.times);
+                let roads = FrozenRoads::with_times(&r.road, &ctx, Cow::Borrowed(&*r.times));
                 f(&roads);
             }
             None => f(&NoRoads),
@@ -300,7 +333,7 @@ impl ServiceWorld for RunWorld {
     }
 }
 
-/// One trip's taxi leg in a loading, with what its choice expected.
+/// One trip's taxi leg in the last loading, with what its choice expected.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TaxiLeg {
     /// The trip.
@@ -310,18 +343,21 @@ pub struct TaxiLeg {
     pub leg: Leg,
     /// The wait its choice expected, should a vehicle come, in seconds.
     pub expected_wait_s: f64,
-    /// The share of such requests its choice expected to fail.
+    /// The share of such requests its choice expected to get no vehicle.
     pub expected_fail: f64,
-    /// The door-to-door seconds its choice expected: the expected wait, boarding and drive
-    /// should a vehicle come, and the longest wait then the walk should none, weighed by the
-    /// expected failure share.
+    /// The door-to-door seconds its choice expected (the alternative's total).
     pub expected_s: f64,
-    /// The walk from its origin to its destination, in seconds (the way on should no taxi
-    /// come; infinite with no walk path).
-    pub walk_s: f64,
 }
 
-/// One loading's taxi day.
+impl TaxiLeg {
+    /// The second its choice expected it to arrive: its departure and [`Self::expected_s`].
+    #[must_use]
+    pub fn expected_end_s(&self) -> f64 {
+        self.leg.request_s + self.expected_s
+    }
+}
+
+/// The taxis' part of the service day.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaxiRunDay {
     /// The legs, in trip order.
@@ -331,79 +367,47 @@ pub struct TaxiRunDay {
     pub offset: usize,
     /// What became of each, by the engine.
     pub outcome: Vec<LegOutcome>,
-    /// Per leg, the second the traveller reached the destination: the drop-off, or, for a
-    /// request that failed, the end of the longest wait and the walk (`NaN`: not by the
-    /// window's end).
+    /// Per leg, the second the traveller was dropped at the destination (`NaN`: a request that
+    /// failed, or not by the window's end).
     pub arrived_s: Vec<f64>,
+    /// Per leg, what the day gave it and the second it ended (`NaN`: it did not).
+    pub met: Vec<(Met, f64)>,
     /// The fleet's day: its unit requests, vehicles, bins and log.
     pub day: TaxiDay,
-    /// The fleet's costs the day realised.
-    pub realised: TaxiCosts,
-    /// The mean absolute mismatch per leg that arrived, door-to-door seconds met less those
-    /// expected, weighted by people; `NaN` with none.
-    pub mismatch_s: f64,
-    /// Its signed mean (positive: worse than expected); `NaN` likewise.
-    pub bias_s: f64,
-    /// The mean wait of the legs carried, in seconds, weighted by people; `NaN` with none.
-    pub wait_mean_s: f64,
-    /// The share of the legs that asked whose request failed, by people; `NaN` with none.
-    pub no_taxi_share: f64,
-    /// The failure share those legs' choices expected, their mean by people; `NaN` with none.
-    pub expected_no_taxi_share: f64,
+    /// The day summed up.
+    pub summary: ServiceSummary,
     /// The engine's wall-clock seconds for the whole day (the shared bikes' included when both
     /// services run).
     pub engine_s: f64,
 }
 
-/// What a run's taxi fleet did: per loading its mismatch, and the last loading's day.
+/// What a run's taxi fleet did: its service day, what `kpis.parquet`, `taxi_*.parquet` and the
+/// trip rows are made of.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaxisRun {
     /// The fleet's name.
     pub service: String,
     /// Its vehicles.
     pub fleet: f64,
-    /// Per loading, its [`TaxiRunDay::mismatch_s`].
-    pub mismatch_s: Vec<f64>,
-    /// Per loading, its [`TaxiRunDay::bias_s`].
-    pub bias_s: Vec<f64>,
-    /// Per loading, its legs (people).
-    pub legs_people: Vec<f64>,
-    /// Per loading, its [`TaxiRunDay::wait_mean_s`].
-    pub wait_mean_s: Vec<f64>,
-    /// Per loading, its [`TaxiRunDay::no_taxi_share`].
-    pub no_taxi_share: Vec<f64>,
-    /// Per loading, its [`TaxiRunDay::expected_no_taxi_share`].
-    pub expected_no_taxi_share: Vec<f64>,
-    /// The engine's wall-clock seconds over the run (shared with the docked service's).
+    /// The engine's wall-clock seconds (the whole service day, shared with the docked
+    /// service's).
     pub engine_s: f64,
-    /// The last loading's day: `None` if no trip took a taxi in it.
+    /// The service day: `None` if no trip took a taxi in the last loading.
     pub last: Option<TaxiRunDay>,
-    /// The expected costs as the run ended.
-    pub expected: Option<TaxiCosts>,
+    /// What the travellers expected of the fleet, the whole run.
+    pub expected: TaxiExpectation,
 }
 
 impl TaxisRun {
-    /// Nothing done yet by `setup`, the run's taxi fleet.
+    /// Nothing done yet by `setup`, the run's taxi fleet, expected as `expected`.
     #[must_use]
-    pub fn of(setup: &ServiceSetup) -> Self {
+    pub fn of(setup: &ServiceSetup, expected: TaxiExpectation) -> Self {
         #[allow(clippy::cast_precision_loss, reason = "a count of vehicles")]
         let fleet = match setup.parts() {
             ServiceParts::Taxi(fleet, _) => fleet.vehicle_ids.len() as f64,
             ServiceParts::BikeDocked(..) => 0.0,
         };
-        Self {
-            service: setup.name().to_string(),
-            fleet,
-            mismatch_s: Vec::new(),
-            bias_s: Vec::new(),
-            legs_people: Vec::new(),
-            wait_mean_s: Vec::new(),
-            no_taxi_share: Vec::new(),
-            expected_no_taxi_share: Vec::new(),
-            engine_s: 0.0,
-            last: None,
-            expected: None,
-        }
+        Self { service: setup.name().to_string(), fleet, engine_s: 0.0, last: None, expected }
     }
 }
 
@@ -413,43 +417,49 @@ pub fn index_of(setups: &[ServiceSetup], kind: ServiceKind) -> Option<usize> {
     setups.iter().position(|s| s.kind() == kind)
 }
 
-/// What one loading gives the engine: its shared-bike legs and its taxi legs (each in trip
-/// order), the roads its taxis drive on and the taxi fleet's expected costs the travellers chose
-/// on (kept where none of its requests went).
+/// What the service day is given: the last loading's shared-bike legs and taxi legs (each in
+/// trip order; each leg carries what its choice expected) and the roads its taxis drive on.
 #[derive(Debug, Default)]
-pub struct DayLegs<'a> {
+pub struct DayLegs {
     /// The shared-bike legs.
     pub share: Vec<ShareLeg>,
     /// The taxi legs.
     pub taxi: Vec<TaxiLeg>,
     /// The roads (none without taxi legs).
     pub roads: Option<RunRoads>,
-    /// The taxi fleet's expected costs, as the loading's choice read them.
-    pub taxi_estimate: Option<&'a TaxiCosts>,
 }
 
-/// Play one loading's `legs` of the run's services `setups` on the run's `layers`, over `window`
-/// (seconds from midnight), with no operator: the shared bikes' day and the taxis' day, each
-/// `None` without legs of its kind.
+impl DayLegs {
+    /// The engine's legs, in the day's order: the shared bikes' first, then the taxis'.
+    #[must_use]
+    pub fn engine_legs(&self) -> Vec<Leg> {
+        self.share.iter().map(|l| l.leg).chain(self.taxi.iter().map(|l| l.leg)).collect()
+    }
+}
+
+/// Play the service day of `legs` of the run's services `setups` on the run's `layers`, over
+/// `window` (seconds from midnight), with the built-in rules and no operator (the nearest idle
+/// taxi, the charging rule, no van moves): the shared bikes' day and the taxis' day, each `None`
+/// without legs of its kind. What each leg expected rides on the leg ([`ShareLeg`],
+/// [`TaxiLeg`]), so the mismatch is measured against it.
 ///
 /// # Panics
 ///
-/// If `setups` has no docked service while `legs` has shared-bike legs, or no taxi fleet (or
-/// no estimate of its costs) while it has taxi legs.
+/// If `setups` has no docked service while `legs` has shared-bike legs, or no taxi fleet while
+/// it has taxi legs.
 #[must_use]
 pub fn play(
     setups: &Arc<Vec<ServiceSetup>>,
     layers: &Arc<StaticLayers>,
-    legs: DayLegs<'_>,
+    legs: DayLegs,
     window: (f64, f64),
     seed: u64,
 ) -> (Option<ShareDay>, Option<TaxiRunDay>) {
     let started = Instant::now();
-    let DayLegs { share: share_legs, taxi: taxi_legs, roads, taxi_estimate } = legs;
+    let all = legs.engine_legs();
+    let DayLegs { share: share_legs, taxi: taxi_legs, roads } = legs;
     let n_share = share_legs.len();
-    let mut destinations: Vec<(u16, NodeId)> =
-        share_legs.iter().map(|l| (l.leg.service, l.leg.destination)).collect();
-    destinations.extend(taxi_legs.iter().map(|l| (l.leg.service, l.leg.destination)));
+    let destinations: Vec<(u16, NodeId)> = all.iter().map(|l| (l.service, l.destination)).collect();
     let world = RunWorld {
         legs: RunLegs {
             setups: Arc::clone(setups),
@@ -459,9 +469,6 @@ pub fn play(
         },
         roads: roads.filter(|_| !taxi_legs.is_empty()),
     };
-    // The shared bikes' legs first, then the taxis': each kind's outcomes are a slice.
-    let mut all: Vec<Leg> = share_legs.iter().map(|l| l.leg).collect();
-    all.extend(taxi_legs.iter().map(|l| l.leg));
     let day = FleetDay { window, legs: all, seed };
     let mut outcome =
         FleetEngine::in_world(Arc::clone(setups), Arc::new(day), Arc::new(world), None)
@@ -473,160 +480,57 @@ pub fn play(
     let taxi_day = taxi_index.and_then(|t| outcome.taxis[t].take());
     let share = (!share_legs.is_empty()).then(|| {
         let s = index_of(setups, ServiceKind::BikeDocked).expect("shared-bike legs need docks");
-        share_day(&setups[s], s, share_legs, outcome, engine_s)
+        share_day(&setups[s], share_legs, outcome, window, engine_s)
     });
     let taxi = (!taxi_legs.is_empty()).then(|| {
-        let estimate = taxi_estimate.expect("taxi legs need the fleet's estimate");
-        let t = taxi_index.expect("taxi legs need a taxi fleet");
+        taxi_index.expect("taxi legs need a taxi fleet");
         let day = taxi_day.expect("a taxi fleet's day");
-        taxi_run_day(&setups[t], n_share, taxi_legs, taxi_out, day, estimate, window, engine_s)
+        taxi_run_day(n_share, taxi_legs, taxi_out, day, window, engine_s)
     });
     (share, taxi)
 }
 
-/// The shared bikes' part of a day: what their legs met, the docks' realised costs, the
-/// mismatch.
+/// The shared bikes' part of a day: what their legs met, summed up.
 fn share_day(
     setup: &ServiceSetup,
-    s: usize,
     legs: Vec<ShareLeg>,
     outcome: FleetOutcome,
+    window: (f64, f64),
     engine_s: f64,
 ) -> ShareDay {
-    let bins = outcome.docks[s].as_ref().expect("the run's docked service has docks");
-    let (pickup_s, return_s) = match setup.parts() {
-        ServiceParts::BikeDocked(_, d) => (d.pickup_s, d.return_s),
-        ServiceParts::Taxi(..) => (0.0, 0.0),
-    };
-    let (mut met_pickup, mut met_return) = (Vec::new(), Vec::new());
-    for (l, o) in legs.iter().zip(&outcome.legs) {
-        if !(matches!(o.status, LegStatus::Served | LegStatus::Failed) && o.arrived_s.is_finite()) {
-            continue;
-        }
-        let w = f64::from(l.leg.weight);
-        let total = o.arrived_s - l.planned_arrival_s(setup);
-        // The pickup's part: the seconds until a bike was in hand past the planned ones; a
-        // pickup that failed met the whole of it.
-        let at_pickup = if o.picked.is_some() && o.picked_s.is_finite() {
-            (o.picked_s - l.leg.request_s - pickup_s).max(0.0)
-        } else {
-            total
-        };
-        met_pickup.push((l.leg.pickup_dock, l.leg.request_s, at_pickup, w));
-        if o.picked.is_some() {
-            let planned_return = l.leg.request_s + pickup_s + l.leg.ride_s + return_s;
-            met_return.push((l.leg.return_dock, planned_return, (total - at_pickup).max(0.0), w));
-        }
-    }
-    let realised = DockCosts::from_bins(setup, bins).with_legs(&met_pickup, &met_return);
-    let (mut sum, mut signed, mut people, mut met) = (0.0, 0.0, 0.0, 0.0);
+    let met: Vec<(Met, f64)> = outcome.legs.iter().map(|o| Met::of(o, false, window.1)).collect();
+    let summary = ServiceSummary::of(legs.iter().zip(&met).map(|(l, &(m, at))| {
+        (f64::from(l.leg.weight), l.departure_s, l.expected_end_s(setup), m, at, f64::NAN)
+    }));
+    let (mut extra, mut people) = (0.0, 0.0);
     for (l, o) in legs.iter().zip(&outcome.legs) {
         if matches!(o.status, LegStatus::Served | LegStatus::Failed) && o.arrived_s.is_finite() {
             let w = f64::from(l.leg.weight);
-            let extra = o.arrived_s - l.planned_arrival_s(setup);
-            sum += w * (extra - l.expected_dock_s).abs();
-            signed += w * (extra - l.expected_dock_s);
-            met += w * extra;
+            extra += w * (o.arrived_s - l.planned_arrival_s(setup));
             people += w;
         }
     }
-    let (mismatch_s, bias_s, extra_mean_s) = if people > 0.0 {
-        (sum / people, signed / people, met / people)
-    } else {
-        (f64::NAN, f64::NAN, f64::NAN)
-    };
-    ShareDay { legs, outcome, realised, mismatch_s, bias_s, extra_mean_s, engine_s }
+    let extra_mean_s = if people > 0.0 { extra / people } else { f64::NAN };
+    ShareDay { legs, outcome, met, summary, extra_mean_s, engine_s }
 }
 
-/// The taxis' part of a day: when each traveller arrived (a failed request walks on), the
-/// fleet's realised costs, the mismatch.
-#[allow(clippy::too_many_arguments, reason = "the parts of a day, named")]
+/// The taxis' part of a day: when each traveller arrived (a failed request does not), summed
+/// up.
 fn taxi_run_day(
-    setup: &ServiceSetup,
     offset: usize,
     legs: Vec<TaxiLeg>,
     outcome: Vec<LegOutcome>,
     day: TaxiDay,
-    estimate: &TaxiCosts,
     window: (f64, f64),
     engine_s: f64,
 ) -> TaxiRunDay {
-    let max_wait_s = match setup.parts() {
-        ServiceParts::Taxi(_, d) => d.max_wait_s,
-        ServiceParts::BikeDocked(..) => 0.0,
-    };
-    let arrived_s: Vec<f64> = legs
-        .iter()
-        .zip(&outcome)
-        .map(|(l, o)| match o.status {
-            LegStatus::Served => o.arrived_s,
-            LegStatus::Failed => {
-                let at = o.requested_s + max_wait_s + l.walk_s;
-                if at.is_finite() && at <= window.1 { at } else { f64::NAN }
-            }
-            _ => f64::NAN,
-        })
-        .collect();
-    // What the requests met, by the zone of their pickup and the bin they asked in: a unit
-    // request that failed, or one served (its wait); those still waiting at the window's end
-    // tell nothing yet.
-    let mut met = Vec::new();
-    for r in &day.requests {
-        let Some(l) = (r.leg as usize).checked_sub(offset).and_then(|i| legs.get(i)) else {
-            continue;
-        };
-        if r.failed {
-            met.push((l.leg.origin, r.requested_s, None, 1.0));
-        } else if r.picked_s.is_finite() {
-            met.push((l.leg.origin, r.requested_s, Some(r.picked_s - r.requested_s), 1.0));
-        }
-    }
-    let realised = estimate.clone().with_requests(&met);
-    let (mut sum, mut signed, mut people) = (0.0, 0.0, 0.0);
-    for (l, &at) in legs.iter().zip(&arrived_s) {
-        if at.is_finite() {
-            let w = f64::from(l.leg.weight);
-            let d = (at - l.leg.request_s) - l.expected_s;
-            sum += w * d.abs();
-            signed += w * d;
-            people += w;
-        }
-    }
-    let (mismatch_s, bias_s) =
-        if people > 0.0 { (sum / people, signed / people) } else { (f64::NAN, f64::NAN) };
-    let (mut asked, mut failed, mut carried, mut waited) = (0.0, 0.0, 0.0, 0.0);
-    let mut expected_failed = 0.0;
-    for (l, o) in legs.iter().zip(&outcome) {
-        let w = f64::from(l.leg.weight);
-        match o.status {
-            LegStatus::NotRequested => continue,
-            LegStatus::Failed => failed += w,
-            LegStatus::Served => {
-                carried += w;
-                waited += w * o.waited_s;
-            }
-            _ => {}
-        }
-        asked += w;
-        expected_failed += w * l.expected_fail;
-    }
-    let wait_mean_s = if carried > 0.0 { waited / carried } else { f64::NAN };
-    let no_taxi_share = if asked > 0.0 { failed / asked } else { f64::NAN };
-    let expected_no_taxi_share = if asked > 0.0 { expected_failed / asked } else { f64::NAN };
-    TaxiRunDay {
-        legs,
-        offset,
-        outcome,
-        arrived_s,
-        day,
-        realised,
-        mismatch_s,
-        bias_s,
-        wait_mean_s,
-        no_taxi_share,
-        expected_no_taxi_share,
-        engine_s,
-    }
+    let met: Vec<(Met, f64)> = outcome.iter().map(|o| Met::of(o, true, window.1)).collect();
+    let arrived_s = met.iter().map(|&(_, at)| at).collect();
+    let summary =
+        ServiceSummary::of(legs.iter().zip(&met).zip(&outcome).map(|((l, &(m, at)), o)| {
+            (f64::from(l.leg.weight), l.leg.request_s, l.expected_end_s(), m, at, o.waited_s)
+        }));
+    TaxiRunDay { legs, offset, outcome, arrived_s, met, day, summary, engine_s }
 }
 
 /// The day of the run's docked services `setups` over `window` (seconds from midnight) with no

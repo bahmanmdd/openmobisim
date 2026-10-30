@@ -1,4 +1,5 @@
-//! A run's taxi fleet, from its last loading's day (S302): three files, written only by a run
+//! A run's taxi fleet, from its service day (the last loading's taxi trips, played once after
+//! the run has stopped, S303): three files, written only by a run
 //! with a taxi fleet. Seconds count from midnight; a clock text beside them (`08:03:20`) is the
 //! same second. A trip standing for several people asks for that many vehicles (one seat each);
 //! each such unit request has its own events.
@@ -9,9 +10,8 @@
 //! vehicle, vehicle_state_after, charge_after, charger, drive_km`. `event` is one of
 //! `asked_for_taxi`, `waiting_for_taxi` (no idle vehicle could take it at once),
 //! `taxi_assigned`, `taxi_arrived_at_pickup`, `picked_up` (boarded, the drive starts),
-//! `dropped_off`, `no_taxi_within_wait_limit` (no vehicle sent within the fleet's `max_wait_s`),
-//! `gave_up_walking_to_destination` and `reached_destination` (that traveller walking from the
-//! origin, and arriving), `still_waiting_at_window_end`, `still_riding_at_window_end`, and the
+//! `dropped_off`, `no_taxi_within_wait_limit` (no vehicle sent within the fleet's `max_wait_s`:
+//! the trip's last event), `still_waiting_at_window_end`, `still_riding_at_window_end`, and the
 //! vehicles' own `vehicle_went_to_charge`, `queued_for_plug`, `started_charging`, `charged`
 //! (`traveller_id`, `trip_seq` and `travellers` null). `vehicle_state_after` is one of `idle`,
 //! `to_pickup`, `occupied`, `relocating`, `to_charger`, `charging`, `queued_at_charger`;
@@ -22,12 +22,12 @@
 //! **`taxi_trips.parquet`** — one row per trip that chose a taxi, in trip order: who (`run_id,
 //! service, traveller_id, trip_seq, travellers`); the plan (`requested_s, expected_wait_s,
 //! expected_no_taxi_share, expected_door_to_door_s`); what happened (`vehicle, assigned_s,
-//! taxi_at_pickup_s, waited_s, km_to_pickup, km_with_passenger, dropped_off_s, walk_s,
-//! arrived_s, door_to_door_s`); the difference (`waited_minus_expected_s`,
+//! taxi_at_pickup_s, waited_s, km_to_pickup, km_with_passenger, dropped_off_s, arrived_s,
+//! door_to_door_s`; a request with no vehicle within the longest wait ends there, so it has no
+//! arrival); the difference (`waited_minus_expected_s`,
 //! `met_minus_expected_s` = `door_to_door_s − expected_door_to_door_s`, positive when worse than
 //! expected); and `result`: `as_planned`, `waited_longer_than_expected` (by more than a
-//! minute), `no_taxi_walked_to_destination`, `no_taxi_still_walking_at_window_end`,
-//! `still_waiting_at_window_end`, `still_riding_at_window_end`, `not_started`.
+//! minute), `no_taxi`, `still_waiting_at_window_end`, `still_riding_at_window_end`, `not_started`.
 //!
 //! **`taxi_vehicles.parquet`** — one row per vehicle and 15-minute bin, vehicle by vehicle:
 //! `run_id, service, vehicle, bin_start, bin_end, bin_start_s, bin_end_s`; the seconds in each
@@ -112,7 +112,6 @@ pub fn write_taxi_trips(
         .maybe_number("km_to_pickup", &t.km_to_pickup)
         .maybe_number("km_with_passenger", &t.km_with_passenger)
         .maybe_number("dropped_off_s", &t.dropped_off_s)
-        .maybe_number("walk_s", &t.walk_s)
         .maybe_number("arrived_s", &t.arrived_s)
         .maybe_number("door_to_door_s", &t.door_to_door_s)
         .maybe_number("met_minus_expected_s", &t.met_minus_expected_s)
