@@ -26,6 +26,9 @@ engine, the taxis on that loading's road times, and what the fleet actually did 
   decision. `Run.operator_decisions()` returns its decisions (in memory), `Run.service_policy()` its name and
   parameters, which the fingerprint and `manifest.json` (`service_policy`) record. Travellers still choose on the
   assumptions. Refused without services.
+- `parameters()` lists the services too: a docked bike service's and a taxi fleet's `options`, the assumptions
+  (`service_assumptions`), the services' prices, the built-in policies' parameters (`policy.<name>`), the bike route
+  sets' options and the fleet environment's reward weights and zone grid.
 - A taxi fleet's options: `request_cancel_s` (600 s: a request is cancelled if no taxi can pick it up within this
   time; the trip ends there, with no walk on, in a run, in `fleet_day` and in `fleet_environment`),
   `dispatch_delay_s` (120 s: from a request being matched to the taxi setting off; the waiting time counts it, and a
