@@ -594,8 +594,9 @@ pub struct Run {
     /// What re-routing searches by in the execution under way (S299): `None` where the route
     /// cost is time alone.
     reroute_cost: Option<Arc<crate::reroute::RerouteCost>>,
-    /// The taxi fleet's start-of-day estimate of its costs for the execution under way, and the
-    /// turn rules its drives keep (S302): `None` without a taxi fleet in the run's choice.
+    /// The taxi fleet's expected costs the travellers choose on in the execution under way (the
+    /// start-of-day estimate, then the loadings' average), and the turn rules its drives keep
+    /// (S302): `None` without a taxi fleet in the run's choice.
     taxi_setup: Option<(Arc<TaxiCosts>, Arc<TurnTable>)>,
 }
 
@@ -1639,6 +1640,15 @@ impl Run {
         let model = self.choice_model.clone();
         // The prices (S248), each parking's fee resolved and the toll column found.
         let prices = PreparedPrices::new(self.prices, parking_arc.as_deref(), &link_values);
+        // The attributes the run's services add (S302): the docked service's and the taxi
+        // fleet's, offered by every alternative (0 where they do not apply).
+        let mut service_attributes: Vec<&str> = Vec::new();
+        if share_service.is_some() {
+            service_attributes.extend(itinerary_choice::SERVICE_ATTRIBUTES);
+        }
+        if taxi_service.is_some() {
+            service_attributes.extend(itinerary_choice::TAXI_ATTRIBUTES);
+        }
         let inputs = route_choice::Inputs {
             network: &network,
             travellers: &travellers,
@@ -1655,6 +1665,7 @@ impl Run {
             mode: Mode::Car,
             bike_layer: None,
             cost: Some(&road_cost),
+            service_attributes: &service_attributes,
         };
         let mut chooser = route_choice::Chooser::new(&inputs, route_sets.clone())?;
         // The bike route choice (S298): with bike route sets, every stated bike trip chooses its
@@ -1698,6 +1709,7 @@ impl Run {
                     mode: Mode::Bike,
                     bike_layer: Some(setup.network()),
                     cost: None,
+                    service_attributes: &service_attributes,
                 };
                 let bike_chooser = route_choice::Chooser::new(&bike_inputs, sets.clone())?;
                 let times = LinkTimes::constant(graph, setup.seconds().to_vec());
@@ -1728,12 +1740,7 @@ impl Run {
 
         // A run offering shared bikes offers their attributes too (S302); no other run does.
         let mut builtin_attributes = itinerary_choice::ATTRIBUTES.to_vec();
-        if share_service.is_some() {
-            builtin_attributes.extend(itinerary_choice::SERVICE_ATTRIBUTES);
-        }
-        if taxi_service.is_some() {
-            builtin_attributes.extend(itinerary_choice::TAXI_ATTRIBUTES);
-        }
+        builtin_attributes.extend(&service_attributes);
         let itinerary_wanted = match &itineraries {
             Some(_) => {
                 itinerary_choice::wanted(model.as_ref(), &builtin_attributes, &link_value_names)?
@@ -1846,7 +1853,6 @@ impl Run {
         });
         let mut taxi_costs: Option<TaxiCosts> =
             self.taxi_setup.as_ref().map(|(e, _)| TaxiCosts::clone(e));
-        let mut taxi_seen = 0_u32;
         let mut taxis_run = of_kind(ServiceKind::Taxi).map(TaxisRun::of);
         let choose_inputs = ChooseInputs {
             trips: &trips,
@@ -2181,6 +2187,8 @@ impl Run {
                 let day = loaded.taxi.as_ref();
                 taxis.mismatch_s.push(day.map_or(f64::NAN, |d| d.mismatch_s));
                 taxis.bias_s.push(day.map_or(f64::NAN, |d| d.bias_s));
+                taxis.wait_mean_s.push(day.map_or(f64::NAN, |d| d.wait_mean_s));
+                taxis.no_taxi_share.push(day.map_or(f64::NAN, |d| d.no_taxi_share));
                 taxis.legs_people.push(
                     day.map_or(0.0, |d| d.legs.iter().map(|l| f64::from(l.leg.weight)).sum()),
                 );
@@ -2242,14 +2250,13 @@ impl Run {
                         expected.absorb(&day.realised, dock_seen);
                         dock_seen += 1;
                     }
-                    // The taxi fleet's (S302): a loading without a taxi trip realised the
-                    // estimate everywhere.
-                    if let (Some(expected), Some((estimate, _))) =
-                        (taxi_costs.as_mut(), self.taxi_setup.as_ref())
+                    // The taxi fleet's (S302): what this loading's requests met, the expectation
+                    // kept where none asked; the next loading's requests are measured against it.
+                    if let (Some(expected), Some(day), Some((base, _))) =
+                        (taxi_costs.as_mut(), &loaded.taxi, self.taxi_setup.as_mut())
                     {
-                        let realised = loaded.taxi.as_ref().map_or(&**estimate, |d| &d.realised);
-                        expected.absorb(realised, taxi_seen);
-                        taxi_seen += 1;
+                        expected.absorb(&day.realised);
+                        *base = Arc::new(expected.clone());
                     }
                     // What the itinerary choice and the gap plan on, but the timetable and the
                     // car's route sets (set below, once the sets have grown).

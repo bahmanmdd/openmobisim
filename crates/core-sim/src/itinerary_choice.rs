@@ -389,9 +389,9 @@ pub(crate) struct TripNodes {
     pub share_o: NodeId,
     /// See [`Self::share_o`].
     pub share_d: NodeId,
-    /// The walk from origin to destination on the walk layer, in seconds, whatever its length:
-    /// the way on of a taxi request that fails (infinite without a walk path, or for a trip not
-    /// offered a taxi).
+    /// The walk from origin to destination on the walk layer (each snapped to its nearest walk
+    /// node), in seconds, whatever its length: the way on of a taxi request that fails (infinite
+    /// without a walk path, or for a trip not offered a taxi).
     pub walk_all_s: f64,
 }
 
@@ -2929,6 +2929,16 @@ impl Itineraries {
             .as_ref()
             .filter(|_| offered[Mode::BikeShare.index()] || offered[Mode::BikeShareTransit.index()])
             .map(|w| (w, NodeSnapper::every_node(w.network().network())));
+        // The walk of a taxi request that fails (S302): the walk layer's shortest time, whatever
+        // its length (the trips' own walk routes stop at the longest walk offered), one search
+        // per origin node to all its trips' destinations, once per run.
+        let taxi_walk = sim
+            .layers
+            .walk
+            .as_ref()
+            .filter(|_| offered[Mode::Taxi.index()])
+            .map(|w| (w, NodeSnapper::every_node(w.network().network())));
+        let mut taxi_pairs: HashMap<u32, Vec<(usize, NodeId)>> = HashMap::new();
         let null = NodeId::from_raw(NULL_ID);
         let mut out = Self {
             trips: Vec::new(),
@@ -2979,11 +2989,10 @@ impl Itineraries {
                 share_d: null,
                 walk_all_s: f64::INFINITY,
             };
-            if choosing && offered[Mode::Taxi.index()] {
-                nodes.walk_all_s = sim
-                    .static_routes
-                    .leg(sim.layers, trip, StaticLayer::Walk, f64::INFINITY)
-                    .map_or(f64::INFINITY, |l| l.seconds);
+            if let (true, Some((w, snapper))) = (choosing, &taxi_walk) {
+                let graph = w.network().network();
+                let (from, to) = (snapper.nearest(graph, o), snapper.nearest(graph, d));
+                taxi_pairs.entry(from.raw()).or_default().push((out.trips.len(), to));
             }
             if let (true, Some((w, snapper))) = (choosing, &share_walk) {
                 let graph = w.network().network();
@@ -3031,6 +3040,32 @@ impl Itineraries {
             out.choosing.push(choosing);
             out.legs.push(legs);
             out.car_keys.push(car_key);
+        }
+        if let Some((w, _)) = &taxi_walk {
+            let graph = w.network().network();
+            let mut reach = Reach::new(graph, w.seconds());
+            let mut wanted = vec![false; graph.node_count() as usize];
+            let mut origins: Vec<u32> = taxi_pairs.keys().copied().collect();
+            origins.sort_unstable();
+            for from in origins {
+                let pairs = &taxi_pairs[&from];
+                for &(_, to) in pairs {
+                    wanted[to.index()] = true;
+                }
+                let found: HashMap<u32, f64> = reach
+                    .forward(NodeId::from_raw(from), f64::INFINITY, &wanted)
+                    .into_iter()
+                    .map(|(n, s)| (n.raw(), s))
+                    .collect();
+                for &(p, to) in pairs {
+                    wanted[to.index()] = false;
+                    out.nodes[p].walk_all_s = if to.raw() == from {
+                        0.0
+                    } else {
+                        found.get(&to.raw()).copied().unwrap_or(f64::INFINITY)
+                    };
+                }
+            }
         }
         // Rounds: plain transit trips first; each traveller's other itinerary trips one
         // round each, in order, since each may move a vehicle the next one needs.

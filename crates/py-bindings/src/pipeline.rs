@@ -519,6 +519,24 @@ pub struct PyRunSummary {
     /// Path to the written `bike_share_docks.parquet`, if the run had a service.
     #[pyo3(get)]
     pub bike_share_docks_path: Option<String>,
+    /// The taxi fleet's events of the last loading, as columns; `None` without one (S302).
+    #[pyo3(get)]
+    pub taxi_events: Option<Py<PyDict>>,
+    /// Its trips, as columns; `None` without a taxi fleet.
+    #[pyo3(get)]
+    pub taxi_trips: Option<Py<PyDict>>,
+    /// Its vehicles bin by bin, as columns; `None` without a taxi fleet.
+    #[pyo3(get)]
+    pub taxi_vehicles: Option<Py<PyDict>>,
+    /// Path to the written `taxi_events.parquet`, if the run had a taxi fleet.
+    #[pyo3(get)]
+    pub taxi_events_path: Option<String>,
+    /// Path to the written `taxi_trips.parquet`, if the run had a taxi fleet.
+    #[pyo3(get)]
+    pub taxi_trips_path: Option<String>,
+    /// Path to the written `taxi_vehicles.parquet`, if the run had a taxi fleet.
+    #[pyo3(get)]
+    pub taxi_vehicles_path: Option<String>,
     /// Each transit, park-and-ride and bike-and-ride trip's choice, as columns;
     /// `None` without such trips.
     #[pyo3(get)]
@@ -1601,10 +1619,43 @@ pub fn run_pipeline(
         )?),
         _ => None,
     };
+    // A run's taxi fleet (S302): its trips, events and vehicles bin by bin; nothing without.
+    let taxi_setup = service_setups.as_deref().and_then(|s| {
+        s.iter().find(|s| s.kind() == openmobisim_core_sim::services::ServiceKind::Taxi)
+    });
+    let taxi_out = match (taxi_setup, &result.taxis) {
+        (Some(setup), Some(taxis)) => Some(crate::service_results::taxi_results(
+            py,
+            setup,
+            taxis,
+            (&trips_used, &travellers),
+            (f64::from(window.start_s), f64::from(window.end_s)),
+            (dir, run_id, &description, minimal),
+        )?),
+        _ => None,
+    };
     // Their own stage, so the time the service tables and files take is seen (none without).
-    if service_out.is_some() {
+    if service_out.is_some() || taxi_out.is_some() {
         clock = timings.lap("services_written", None, clock);
     }
+    let (
+        taxi_events,
+        taxi_trips,
+        taxi_vehicles,
+        taxi_events_path,
+        taxi_trips_path,
+        taxi_vehicles_path,
+    ) = match taxi_out {
+        Some(o) => (
+            Some(o.events),
+            Some(o.trips),
+            Some(o.vehicles),
+            o.events_path,
+            o.trips_path,
+            o.vehicles_path,
+        ),
+        None => (None, None, None, None, None, None),
+    };
     let (
         bike_share_events,
         bike_share_trips,
@@ -1817,6 +1868,12 @@ pub fn run_pipeline(
         bike_share_events_path,
         bike_share_trips_path,
         bike_share_docks_path,
+        taxi_events,
+        taxi_trips,
+        taxi_vehicles,
+        taxi_events_path,
+        taxi_trips_path,
+        taxi_vehicles_path,
         itinerary_choices: itinerary_table,
         trip_modes: trip_modes_table,
         trip_results: trip_results_table,

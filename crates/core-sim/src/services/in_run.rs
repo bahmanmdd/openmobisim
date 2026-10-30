@@ -344,6 +344,10 @@ pub struct TaxiRunDay {
     pub mismatch_s: f64,
     /// Its signed mean (positive: worse than expected); `NaN` likewise.
     pub bias_s: f64,
+    /// The mean wait of the legs carried, in seconds, weighted by people; `NaN` with none.
+    pub wait_mean_s: f64,
+    /// The share of the legs that asked whose request failed, by people; `NaN` with none.
+    pub no_taxi_share: f64,
     /// The engine's wall-clock seconds for the whole day (the shared bikes' included when both
     /// services run).
     pub engine_s: f64,
@@ -362,6 +366,10 @@ pub struct TaxisRun {
     pub bias_s: Vec<f64>,
     /// Per loading, its legs (people).
     pub legs_people: Vec<f64>,
+    /// Per loading, its [`TaxiRunDay::wait_mean_s`].
+    pub wait_mean_s: Vec<f64>,
+    /// Per loading, its [`TaxiRunDay::no_taxi_share`].
+    pub no_taxi_share: Vec<f64>,
     /// The engine's wall-clock seconds over the run (shared with the docked service's).
     pub engine_s: f64,
     /// The last loading's day: `None` if no trip took a taxi in it.
@@ -385,6 +393,8 @@ impl TaxisRun {
             mismatch_s: Vec::new(),
             bias_s: Vec::new(),
             legs_people: Vec::new(),
+            wait_mean_s: Vec::new(),
+            no_taxi_share: Vec::new(),
             engine_s: 0.0,
             last: None,
             expected: None,
@@ -399,8 +409,8 @@ pub fn index_of(setups: &[ServiceSetup], kind: ServiceKind) -> Option<usize> {
 }
 
 /// What one loading gives the engine: its shared-bike legs and its taxi legs (each in trip
-/// order), the roads its taxis drive on and the start-of-day estimate of the taxi fleet's costs
-/// (where none of its requests went).
+/// order), the roads its taxis drive on and the taxi fleet's expected costs the travellers chose
+/// on (kept where none of its requests went).
 #[derive(Debug, Default)]
 pub struct DayLegs<'a> {
     /// The shared-bike legs.
@@ -409,7 +419,7 @@ pub struct DayLegs<'a> {
     pub taxi: Vec<TaxiLeg>,
     /// The roads (none without taxi legs).
     pub roads: Option<RunRoads>,
-    /// The taxi fleet's start-of-day estimate.
+    /// The taxi fleet's expected costs, as the loading's choice read them.
     pub taxi_estimate: Option<&'a TaxiCosts>,
 }
 
@@ -579,7 +589,35 @@ fn taxi_run_day(
     }
     let (mismatch_s, bias_s) =
         if people > 0.0 { (sum / people, signed / people) } else { (f64::NAN, f64::NAN) };
-    TaxiRunDay { legs, offset, outcome, arrived_s, day, realised, mismatch_s, bias_s, engine_s }
+    let (mut asked, mut failed, mut carried, mut waited) = (0.0, 0.0, 0.0, 0.0);
+    for (l, o) in legs.iter().zip(&outcome) {
+        let w = f64::from(l.leg.weight);
+        match o.status {
+            LegStatus::NotRequested => continue,
+            LegStatus::Failed => failed += w,
+            LegStatus::Served => {
+                carried += w;
+                waited += w * o.waited_s;
+            }
+            _ => {}
+        }
+        asked += w;
+    }
+    let wait_mean_s = if carried > 0.0 { waited / carried } else { f64::NAN };
+    let no_taxi_share = if asked > 0.0 { failed / asked } else { f64::NAN };
+    TaxiRunDay {
+        legs,
+        offset,
+        outcome,
+        arrived_s,
+        day,
+        realised,
+        mismatch_s,
+        bias_s,
+        wait_mean_s,
+        no_taxi_share,
+        engine_s,
+    }
 }
 
 /// The day of the run's docked services `setups` over `window` (seconds from midnight) with no

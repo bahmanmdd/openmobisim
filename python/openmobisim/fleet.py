@@ -95,8 +95,9 @@ def service_taxi(
         name: Its name, unique among a day's services.
         options: Its options by name (``battery_kwh``, ``kwh_per_km``, ``soc_start``,
             ``reserve_soc``, ``charge_below``, ``charge_to``, ``charger_kw``, ``max_wait_s``,
-            ``board_s``, ``snap_m``, ``charger_reach_s``); a name not among them is refused with
-            the list.
+            ``board_s``, ``snap_m``, ``charger_reach_s``, and ``log_events``: 1 by default, 0
+            to keep no event log in a very large run, ``taxi_events.parquet`` then empty); a name
+            not among them is refused with the list.
     """
     return Service("taxi", name, vehicles=vehicles, chargers=chargers, options=dict(options or {}))
 

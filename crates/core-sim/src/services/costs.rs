@@ -176,14 +176,15 @@ impl DockCosts {
 ///
 /// **Per zone and bin**, what a day's requests met there (by the zone of their pickup and the
 /// bin of their request): the mean wait of the served ones and the share that failed, each
-/// weighted by people ([`TaxiCosts::with_requests`]). **Where no request went**, an estimate from
-/// the start of the day ([`TaxiCosts::initial`]): per zone, over its road nodes, the free-flow
-/// drive from the nearest vehicle where it stands at the start (the mean over the nodes some
-/// vehicle reaches within the longest wait), and the share of its nodes none reaches. The
-/// estimate ignores that vehicles move and get busy; it only starts the averaging, and stays
-/// where no traveller asked. **Choice reads the expected cost**, the average over the loadings
-/// so far (the method of successive averages, [`TaxiCosts::absorb`]); a traveller pays the
-/// realised one, on the engine.
+/// weighted by people ([`TaxiCosts::with_requests`]); **where no request went, the expectation
+/// is kept** (not an estimate from the vehicles' start-of-day places: those are stale once the
+/// day has moved the vehicles, and averaging them in where few ask would pull the expectation
+/// back towards the empty morning's short waits, loading after loading). **At the start**, before
+/// any loading ([`TaxiCosts::initial`]): per zone, over its road nodes, the free-flow drive from
+/// the nearest vehicle where it stands at the start (the mean over the nodes some vehicle
+/// reaches within the longest wait), and the share of its nodes none reaches. **Choice reads the
+/// expected cost**, the average over the loadings so far (the method of successive averages,
+/// [`TaxiCosts::absorb`]); a traveller pays the realised one, on the engine.
 ///
 /// **Zones** are the engine's ([`super::queries::Zones`]): squares of
 /// [`super::queries::ZONE_GRID_M`] metres over the road network's nodes. **Bins** start at the
@@ -202,6 +203,11 @@ pub struct TaxiCosts {
     /// `zone * bins + bin`.
     wait: Vec<f64>,
     fail: Vec<f64>,
+    /// Per cell, the loadings averaged into [`Self::wait`] and [`Self::fail`] (0: the
+    /// start-of-day estimate alone); in a day's realised costs, 1 where its requests met
+    /// something, 0 where the cell holds the expectation kept.
+    wait_n: Vec<u32>,
+    fail_n: Vec<u32>,
 }
 
 impl TaxiCosts {
@@ -278,6 +284,8 @@ impl TaxiCosts {
             bin_s: f64::from(super::taxis::FLEET_BIN_S),
             bins,
             node_zone,
+            wait_n: vec![0; wait.len()],
+            fail_n: vec![0; fail.len()],
             wait,
             fail,
         }
@@ -304,6 +312,8 @@ impl TaxiCosts {
             }
         }
         for c in 0..n {
+            self.wait_n[c] = u32::from(served[c] > 0.0);
+            self.fail_n[c] = u32::from(people[c] > 0.0);
             if served[c] > 0.0 {
                 self.wait[c] = waited[c] / served[c];
             }
@@ -314,15 +324,27 @@ impl TaxiCosts {
         self
     }
 
-    /// Average in a later loading's realised costs: the method of successive averages over
-    /// `seen + 1` loadings.
-    pub fn absorb(&mut self, realised: &TaxiCosts, seen: u32) {
-        let w = 1.0 / f64::from(seen + 1);
-        for (v, r) in self.wait.iter_mut().zip(&realised.wait) {
-            *v += w * (r - *v);
-        }
-        for (v, r) in self.fail.iter_mut().zip(&realised.fail) {
-            *v += w * (r - *v);
+    /// Average in a later loading's realised costs, cell by cell where its requests met
+    /// something: the method of successive averages over the loadings in which someone asked
+    /// there (the first replaces the start-of-day estimate; the `k`-th weighs `1 / k`). A cell
+    /// first asked from late is not held near the estimate by the loadings before, in which
+    /// nobody asked there.
+    pub fn absorb(&mut self, realised: &TaxiCosts) {
+        for (k, (v, r)) in [(&mut self.wait, &realised.wait), (&mut self.fail, &realised.fail)]
+            .into_iter()
+            .enumerate()
+        {
+            let (n, met) = if k == 0 {
+                (&mut self.wait_n, &realised.wait_n)
+            } else {
+                (&mut self.fail_n, &realised.fail_n)
+            };
+            for c in 0..v.len() {
+                if met[c] > 0 {
+                    n[c] += 1;
+                    v[c] += (r[c] - v[c]) / f64::from(n[c]);
+                }
+            }
         }
     }
 

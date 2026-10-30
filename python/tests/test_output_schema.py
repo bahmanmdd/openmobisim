@@ -3,7 +3,8 @@
 ``openmobisim/data/schema_v2.json`` lists, for every file a run writes, its columns in order with
 their Arrow type, whether they may be null and their unit, and the Parquet metadata keys it
 carries; for ``manifest.json`` its top-level keys; for ``timings.csv`` its header. A run of the toy
-network with transit, parkings, a docked bike service, classes and every mode writes them all,
+network with transit, parkings, a docked bike service, a taxi fleet, classes and every mode writes
+them all,
 and each must match: a column renamed, removed, reordered, retyped or made nullable fails here.
 Such a change is deliberate only with ``SCHEMA_VERSION`` raised (``io-parquet``) and the file
 rewritten: ``python python/tests/test_output_schema.py --write`` (the units of new columns are
@@ -41,13 +42,20 @@ def _run(folder: Path) -> Path:
             for i, p in enumerate(coords[[0, len(coords) // 2, -1]])
         ]
     )
+    # And a taxi fleet (S302): two vehicles and a charger, so its three files are checked too.
+    vehicles = ms.vehicle_read_table(
+        [{"vehicle_id": f"v{i}", "lon": p[0], "lat": p[1]} for i, p in enumerate(coords[[0, -1]])]
+    )
+    chargers = ms.charger_read_table(
+        [{"charger_id": "c", "lon": coords[0][0], "lat": coords[0][1], "plugs": 1}]
+    )
     ms.Scenario.from_parts(
         net,
         rows,
         classes=classes,
         transit=ms.examples.toy_network_transit(),
         parkings=ms.examples.toy_network_parkings(),
-        services=[ms.service_bike_docked(docks)],
+        services=[ms.service_bike_docked(docks), ms.service_taxi(vehicles, chargers)],
         link_bin_s=300,
     ).run("schema-run", output_dir=str(out), quiet=True)
     return out

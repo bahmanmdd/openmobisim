@@ -30,10 +30,11 @@
 //! scenario named it otherwise), counted in people: per iteration `taxi_travellers` (the
 //! loading's trips that chose a taxi), `mean_met_minus_expected_s` (over the trips that arrived,
 //! their door-to-door seconds less those their choice expected: positive when worse than
-//! expected) and `mean_abs_met_minus_expected_s`; for the last loading, over the trips that asked
-//! for a taxi, `share_no_taxi` (no vehicle sent within the longest wait: they walked),
+//! expected), `mean_abs_met_minus_expected_s`, `mean_wait_s` (over the trips carried) and
+//! `share_no_taxi` (over the trips that asked: no vehicle sent within the longest wait, they
+//! walked); for the last loading, over the trips that asked for a taxi,
 //! `share_waited_longer_than_expected` (carried, after a wait more than a minute longer than
-//! expected), `share_still_waiting_at_window_end`; over the trips carried `mean_wait_s` and
+//! expected), `share_still_waiting_at_window_end`; over the trips carried
 //! `mean_waited_minus_expected_s`; over the fleet `km_empty_share` (kilometres driven empty, to
 //! pickups and chargers, over all kilometres driven), `occupied_time_share` (vehicle-seconds with
 //! a passenger, boarding included, over all vehicle-seconds of the window) and `kwh_charged`. A
@@ -331,6 +332,8 @@ fn taxi_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow> {
         for (metric, v) in [
             ("mean_met_minus_expected_s", s.bias_s[k]),
             ("mean_abs_met_minus_expected_s", s.mismatch_s[k]),
+            ("mean_wait_s", s.wait_mean_s[k]),
+            ("share_no_taxi", s.no_taxi_share[k]),
         ] {
             if v.is_finite() {
                 rows.push((i, name(), metric, v));
@@ -338,8 +341,8 @@ fn taxi_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow> {
         }
     }
     if let Some(day) = &s.last {
-        let (mut asked, mut failed, mut longer, mut waiting) = (0.0, 0.0, 0.0, 0.0);
-        let (mut carried, mut wait, mut wait_diff) = (0.0, 0.0, 0.0);
+        let (mut asked, mut longer, mut waiting) = (0.0, 0.0, 0.0);
+        let (mut carried, mut wait_diff) = (0.0, 0.0);
         for (l, o) in day.legs.iter().zip(&day.outcome) {
             if o.status == LegStatus::NotRequested {
                 continue;
@@ -347,10 +350,9 @@ fn taxi_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow> {
             let w = f64::from(l.leg.weight);
             asked += w;
             match o.status {
-                LegStatus::Failed => failed += w,
+                LegStatus::Failed => {}
                 LegStatus::Served => {
                     carried += w;
-                    wait += w * o.waited_s;
                     let d = o.waited_s - l.expected_wait_s;
                     wait_diff += w * d;
                     if d > openmobisim_core_sim::services::taxi_tables::WAIT_TOLERANCE_S {
@@ -362,12 +364,10 @@ fn taxi_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow> {
             }
         }
         if asked > 0.0 {
-            rows.push((last, name(), "share_no_taxi", failed / asked));
             rows.push((last, name(), "share_waited_longer_than_expected", longer / asked));
             rows.push((last, name(), "share_still_waiting_at_window_end", waiting / asked));
         }
         if carried > 0.0 {
-            rows.push((last, name(), "mean_wait_s", wait / carried));
             rows.push((last, name(), "mean_waited_minus_expected_s", wait_diff / carried));
         }
         let vehicles = &day.day.vehicles;

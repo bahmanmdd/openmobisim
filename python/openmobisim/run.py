@@ -129,6 +129,9 @@ class _Files:
             "bike_share_events",
             "bike_share_trips",
             "bike_share_docks",
+            "taxi_events",
+            "taxi_trips",
+            "taxi_vehicles",
         ):
             path = folder / f"{name}.parquet"
             setattr(self, f"{name}_path", str(path) if path.exists() else None)
@@ -1500,6 +1503,98 @@ class Run:
         """
         t = self._summary.bike_share_dock_places
         return None if t is None else Columns(t)
+
+    def taxi_events(self) -> Columns | None:
+        """The taxi fleet's logbook over the last loading; ``None`` without a taxi fleet.
+
+        One row per event, in time order (one second's events in the order the simulation
+        handled them), so each traveller's and each vehicle's sequence can be followed:
+        ``service``, ``time_s`` (seconds from midnight) and ``time`` (the same as ``"08:03:20"``),
+        ``event``, ``traveller_id`` and ``trip_seq`` (as in ``trip_results()``; ``None`` for a
+        vehicle's own event), ``travellers`` (1: a trip standing for several people asks for that
+        many taxis, each with its own events; ``None`` for a vehicle's own event), ``vehicle``,
+        ``vehicle_state_after`` (``idle``, ``to_pickup``, ``occupied``, ``relocating``,
+        ``to_charger``, ``charging`` or ``queued_at_charger``), ``charge_after`` (its battery's
+        charge just after, a share; a drive's energy is taken as it starts), ``charger``, and
+        ``drive_km`` (the kilometres of the drive the event starts; ``NaN`` otherwise).
+
+        ``event`` is one of: ``asked_for_taxi`` (at the departure), ``waiting_for_taxi`` (no idle
+        vehicle could take it at once: it waits, offered to each vehicle freed), ``taxi_assigned``
+        (a vehicle sent; its drive to the pickup starts), ``taxi_arrived_at_pickup``, ``picked_up``
+        (boarded, the drive starts), ``dropped_off`` (at the destination),
+        ``no_taxi_within_wait_limit`` (no vehicle sent within the fleet's ``max_wait_s``),
+        ``gave_up_walking_to_destination`` and ``reached_destination`` (that traveller walking from
+        the origin, and arriving), ``still_waiting_at_window_end``, ``still_riding_at_window_end``;
+        and a vehicle's own ``vehicle_went_to_charge`` (below the fleet's ``charge_below`` after a
+        drop-off), ``queued_for_plug``, ``started_charging`` and ``charged``. A fleet with
+        ``options={"log_events": 0}`` keeps no log (for very large runs): no rows. The same table is
+        written to ``taxi_events.parquet``: read it with ``taxi_events_table()``.
+        """
+        t = self._summary.taxi_events
+        return None if t is None else Columns(t)
+
+    def taxi_events_table(self) -> Table | None:
+        """``taxi_events.parquet``: ``taxi_events()`` after ``run_id``.
+
+        ``None`` without a taxi fleet.
+        """
+        path = self._written(self._summary.taxi_events_path, "taxi_events.parquet")
+        return None if path is None else Table(path)
+
+    def taxi_trips(self) -> Columns | None:
+        """Every trip that chose a taxi, over the last loading; ``None`` without a taxi fleet.
+
+        Who: ``service``, ``traveller_id``, ``trip_seq``, ``travellers`` (the people, each
+        asking for a seat). The plan: ``requested_s`` (the departure), ``expected_wait_s`` (the
+        wait expected should a vehicle come), ``expected_no_taxi_share`` (the share of such
+        requests expected to get none within the longest wait) and ``expected_door_to_door_s``
+        (with the failures' longest wait and walk weighed in). What happened: ``vehicle``,
+        ``assigned_s``, ``taxi_at_pickup_s``, ``waited_s`` (until the vehicle reached the
+        pickup, the request failed or the window ended), ``km_to_pickup`` (driven empty),
+        ``km_with_passenger``, ``dropped_off_s``, ``walk_s`` (for a request that failed: the walk
+        from the origin), ``arrived_s`` and ``door_to_door_s``. The difference:
+        ``waited_minus_expected_s`` and ``met_minus_expected_s`` (``door_to_door_s`` less
+        ``expected_door_to_door_s``): met minus expected, positive when worse than expected.
+        ``result``: ``as_planned`` (carried, the wait within a minute of the one expected),
+        ``waited_longer_than_expected``, ``no_taxi_walked_to_destination``,
+        ``no_taxi_still_walking_at_window_end``, ``still_waiting_at_window_end``,
+        ``still_riding_at_window_end``, ``not_started``. Seconds count from midnight; what did
+        not happen is ``NaN`` (``None`` for a vehicle). The same table is written to
+        ``taxi_trips.parquet``: read it with ``taxi_trips_table()``.
+        """
+        t = self._summary.taxi_trips
+        return None if t is None else Columns(t)
+
+    def taxi_trips_table(self) -> Table | None:
+        """``taxi_trips.parquet``: ``taxi_trips()`` after ``run_id``.
+
+        ``None`` without a taxi fleet.
+        """
+        path = self._written(self._summary.taxi_trips_path, "taxi_trips.parquet")
+        return None if path is None else Table(path)
+
+    def taxi_vehicles(self) -> Columns | None:
+        """Each taxi of the fleet bin by bin (15 minutes), over the last loading; ``None`` without.
+
+        ``service``, ``vehicle``, ``bin_start`` and ``bin_end`` (``"08:00:00"``), ``bin_start_s``
+        and ``bin_end_s``; the seconds of the bin in each state (``seconds_idle``,
+        ``seconds_to_pickup``, ``seconds_occupied`` (boarding included), ``seconds_relocating``,
+        ``seconds_to_charger``, ``seconds_charging``, ``seconds_queued_at_charger``: they add up
+        to the bin's length); ``km_occupied`` and ``km_empty`` (a drive's kilometres spread over
+        its seconds), ``charge_at_start`` and ``charge_at_end`` (shares of the battery),
+        ``kwh_charged`` and ``passengers_dropped_off``. The same table is written to
+        ``taxi_vehicles.parquet``: read it with ``taxi_vehicles_table()``.
+        """
+        t = self._summary.taxi_vehicles
+        return None if t is None else Columns(t)
+
+    def taxi_vehicles_table(self) -> Table | None:
+        """``taxi_vehicles.parquet``: ``taxi_vehicles()`` after ``run_id``.
+
+        ``None`` without a taxi fleet.
+        """
+        path = self._written(self._summary.taxi_vehicles_path, "taxi_vehicles.parquet")
+        return None if path is None else Table(path)
 
     def parking_places(self) -> Columns | None:
         """Each parking the run kept, as columns; ``None`` without parkings.
