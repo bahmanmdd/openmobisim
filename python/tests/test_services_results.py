@@ -5,7 +5,8 @@
 ``bike_share_docks.parquet`` (one row per dock and time bin) are written only by a run with a
 service; the three reconcile with each other and with ``kpis.parquet``'s rows. A run without a
 service writes none of them. The network: the 10 x 10 grid of ``test_services_in_runs``, two
-bikes a dock, so that docks run empty, travellers go on to other docks and some give up.
+bikes a dock, so that docks run empty, travellers go on to other docks and some find no bike
+at all.
 """
 
 from __future__ import annotations
@@ -59,10 +60,11 @@ def test_the_files_hold_the_tables(run: ms.Run) -> None:
 def test_the_trips_docks_and_events_reconcile(run: ms.Run) -> None:
     ev, tr, dk = run.bike_share_events(), run.bike_share_trips(), run.bike_share_docks()
     w = np.asarray(tr["travellers"], dtype=float)
-    result: Counter[str] = Counter()
-    for r, x in zip(tr["result"], w, strict=True):
-        result[r] += x
-    assert result["bike_at_another_dock"] > 0 and result["no_bike_walked_to_destination"] > 0
+    outcome: Counter[str] = Counter()
+    for r, x in zip(tr["outcome"], w, strict=True):
+        outcome[r] += x
+    elsewhere = _elsewhere(tr)
+    assert w[elsewhere].sum() > 0 and outcome["cancelled"] > 0
     people: Counter[str] = Counter()
     for e, x in zip(ev["event"], ev["travellers"], strict=True):
         people[e] += float(x)
@@ -71,12 +73,12 @@ def test_the_trips_docks_and_events_reconcile(run: ms.Run) -> None:
     assert people["took_bike"] == pytest.approx(w[np.isfinite(tr["pickup_s"])].sum())
     returned = people["returned_bike"] + people["left_bike_over_capacity"]
     assert returned == pytest.approx(dk["bikes_returned"].sum())
-    # Empty docks: went on (the docks' failed attempts) and gave up.
+    # Empty docks: went on to another, or found no bike at any dock tried and walked.
     went_on = people["walking_to_next_dock"]
     assert went_on == pytest.approx(dk["people_failed_attempt_no_bike"].sum())
     gave_up = people["gave_up_walking_to_destination"]
     assert gave_up == pytest.approx(dk["people_gave_up_no_bike"].sum())
-    assert gave_up == pytest.approx(result["no_bike_walked_to_destination"])
+    assert gave_up == pytest.approx(outcome["cancelled"])
     assert people["found_no_bike"] == pytest.approx(np.sum(w * tr["failed_attempts_for_bike"]))
     assert people["arrived_for_bike"] == pytest.approx(np.sum(w * tr["docks_tried_for_bike"]))
     assert people["riding_to_next_dock"] == pytest.approx(dk["people_failed_attempt_no_slot"].sum())
@@ -87,20 +89,31 @@ def test_the_trips_docks_and_events_reconcile(run: ms.Run) -> None:
     assert ended == pytest.approx(w[np.isfinite(tr["leg_end_s"])].sum())
     # No operator in a run.
     assert not dk["bikes_brought_by_van"].any() and not dk["bikes_taken_by_van"].any()
-    # A bike_at_another_dock trip failed an attempt, then took a bike elsewhere.
-    for i, r in enumerate(tr["result"]):
-        if r == "bike_at_another_dock":
-            assert tr["failed_attempts_for_bike"][i] > 0
-            assert tr["pickup_dock"][i] != tr["planned_pickup_dock"][i]
+    # A ride that took its bike at another dock found the planned one empty first.
+    for i in np.flatnonzero(elsewhere):
+        assert tr["failed_attempts_for_bike"][i] > 0
     # The classes list walk alone, and still took shared bikes.
     assert set(tr["mode"]) == {"bike_share"}
+
+
+def _elsewhere(tr: object) -> np.ndarray:
+    """The rides that took their bike at a dock other than the planned one."""
+    return np.array(
+        [
+            o == "completed" and p is not None and p != q
+            for o, p, q in zip(
+                tr["outcome"], tr["pickup_dock"], tr["planned_pickup_dock"], strict=True
+            )
+        ],
+        dtype=bool,
+    )
 
 
 def test_a_travellers_events_follow_in_time(run: ms.Run) -> None:
     ev = run.bike_share_events()
     assert list(ev["time_s"]) == sorted(ev["time_s"])
     tr = run.bike_share_trips()
-    i = list(tr["result"]).index("bike_at_another_dock")
+    i = int(np.flatnonzero(_elsewhere(tr))[0])
     who = tr["traveller_id"][i]
     mine = [e for e, t in zip(ev["event"], ev["traveller_id"], strict=True) if t == who]
     assert mine[:4] == [
@@ -128,51 +141,61 @@ def test_the_docks_keep_their_bikes(run: ms.Run) -> None:
     tr = run.bike_share_trips()
     riding = sum(
         x
-        for x, r in zip(tr["travellers"], tr["result"], strict=True)
-        if r == "still_riding_at_window_end"
+        for x, r, p in zip(tr["travellers"], tr["outcome"], tr["pickup_s"], strict=True)
+        if r == "unfinished" and p == p
     )
     last = np.asarray(dk["bin_end_s"]) == np.max(dk["bin_end_s"])
     assert np.sum(np.asarray(dk["bikes_at_end"])[last]) + riding == fleet == 10
 
 
+DOCK_ROWS = [
+    "requests",
+    "rides",
+    "no_bike",
+    "unfinished",
+    "extra_walk_at_pickup_mean_s",
+    "extra_walk_at_return_mean_s",
+    "assumed_extra_walk_at_pickup_s",
+    "assumed_extra_walk_at_return_s",
+    "redirected_share",
+]
+
+
 def test_the_kpi_rows_are_the_trips(run: ms.Run) -> None:
     tr = run.bike_share_trips()
     w = np.asarray(tr["travellers"], dtype=float)
-    diff = np.asarray(tr["met_minus_expected_s"])
-    arrived = np.isfinite(diff)
-    trips = _kpi(run, "service_trips")
-    assert len(trips) == 1, "one row set, for the last iteration (S303)"
-    last = max(trips)
-    assert trips[last] == pytest.approx(w.sum())
-    wa = w[arrived]
-    assert _kpi(run, "mismatch_mean_s")[last] == pytest.approx(
-        np.sum(wa * diff[arrived]) / wa.sum()
-    )
-    assert _kpi(run, "mismatch_abs_mean_s")[last] == pytest.approx(
-        np.sum(wa * np.abs(diff[arrived])) / wa.sum()
-    )
-    counts = {m: _kpi(run, m).get(last, 0.0) for m in ("served", "failed", "truncated")}
-    assert sum(counts.values()) == pytest.approx(w.sum())
-    assert "bike_share_travellers" not in {
-        r["metric"] for r in pq.read_table(run._summary.kpis_path).to_pylist()
-    }
-    # The trip rows: as planned, each shared-bike trip with the service day's outcome.
+    k = pq.read_table(run._summary.kpis_path).to_pylist()
+    # The service's rows (under its name, here the mode's too): one row set, for the last
+    # iteration, in this order.
+    mine = [r for r in k if r["mode"] == "bike_share" and r["metric"] in DOCK_ROWS]
+    assert [r["metric"] for r in mine] == DOCK_ROWS
+    assert len({r["iteration"] for r in mine}) == 1, "one row set, for the last iteration (S303)"
+    rows = {r["metric"]: r["value"] for r in mine}
+    outcome = np.asarray(tr["outcome"])
+    assert rows["requests"] == pytest.approx(w.sum())
+    assert rows["rides"] == pytest.approx(w[outcome == "completed"].sum())
+    assert rows["no_bike"] == pytest.approx(w[outcome == "cancelled"].sum())
+    assert rows["requests"] == pytest.approx(rows["rides"] + rows["no_bike"] + rows["unfinished"])
+    ride = outcome == "completed"
+    for row, column in (
+        ("extra_walk_at_pickup_mean_s", "extra_walk_at_pickup_s"),
+        ("extra_walk_at_return_mean_s", "extra_walk_at_return_s"),
+    ):
+        x = np.asarray(tr[column], dtype=float)[ride]
+        assert rows[row] == pytest.approx(np.sum(w[ride] * x) / w[ride].sum()), row
+    assert np.isnan(rows["assumed_extra_walk_at_pickup_s"])
+    assert np.isnan(rows["assumed_extra_walk_at_return_s"])
+    tried = np.asarray(tr["docks_tried_for_bike"]) + np.asarray(tr["docks_tried_for_slot"])
+    redirected = ride & (tried > 2)
+    assert rows["redirected_share"] == pytest.approx(w[redirected].sum() / w[ride].sum())
+    gone = {"service_trips", "served", "failed", "truncated", "mean_extra_s", "mismatch_mean_s"}
+    assert not gone & {r["metric"] for r in k}
+    # The trip rows: the planned trip, each shared-bike trip with the service day's outcome.
     t = run.trip_results()
     share = np.asarray(t["mode"], dtype=object) == "bike_share"
-    outcome = np.asarray(t["service_outcome"])
-    assert (outcome[share] != "").all() and (outcome[~share] == "").all()
-    assert (outcome[share] == "failed").sum() == counts["failed"]
-    assert _kpi(run, "mean_extra_s")[last] == pytest.approx(
-        np.sum(wa * np.asarray(tr["extra_s"])[arrived]) / wa.sum()
-    )
-    gave_up = np.array([r == "no_bike_walked_to_destination" for r in tr["result"]])
-    went_on = (np.asarray(tr["failed_attempts_for_bike"]) - gave_up) > 0
-    assert _kpi(run, "share_gave_up_no_bike")[last] == pytest.approx(w[gave_up].sum() / w.sum())
-    assert _kpi(run, "share_failed_attempt_no_bike")[last] == pytest.approx(
-        w[went_on].sum() / w.sum()
-    )
-    k = pq.read_table(run._summary.kpis_path).to_pylist()
-    assert {r["mode"] for r in k if r["metric"] == "share_found_no_slot"} == {"bike_share"}
+    service = np.asarray(t["service_outcome"])
+    assert (service[share] != "").all() and (service[~share] == "").all()
+    assert (service[share] == "cancelled").sum() == (outcome == "cancelled").sum()
 
 
 def test_the_log_can_be_turned_off(tmp_path: Path) -> None:
@@ -188,7 +211,7 @@ def test_the_log_can_be_turned_off(tmp_path: Path) -> None:
     assert on.bike_share_events().row_count > 0 and off.bike_share_events().row_count == 0
     # The same run otherwise: its identity, its trips.
     assert on.fingerprint == off.fingerprint
-    assert list(on.bike_share_trips()["result"]) == list(off.bike_share_trips()["result"])
+    assert list(on.bike_share_trips()["outcome"]) == list(off.bike_share_trips()["outcome"])
     with pytest.raises(ValueError, match="log_events"):
         go({"log_events": 2}, "bad")
 

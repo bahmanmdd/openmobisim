@@ -121,7 +121,7 @@ def test_a_price_per_ride_lowers_the_shared_bikes_share() -> None:
     assert 0 < priced < free, (free, priced)
 
 
-def test_the_docks_expectations_are_seconds_and_service_met_gives_what_the_day_met(
+def test_the_docks_assumed_extra_walks_are_seconds_and_service_actual_gives_the_day_s(
     tmp_path: object,
 ) -> None:
     pytest.importorskip("pyarrow")  # the trip tables are read from parquet
@@ -131,66 +131,64 @@ def test_the_docks_expectations_are_seconds_and_service_met_gives_what_the_day_m
 
     net = grid()
     # Two bikes a dock for thirty trips of 2.2 km (walking is an alternative): most find a and b
-    # empty and walk on or give up.
+    # empty and walk on or find no bike at all.
     bikes = ms.service_bike_docked(docks(net, bikes=2))
     rows = trips(net, 30, (0, 0), (5, 6))
     prices = {"bike_share_eur_per_ride": 0.5}
     s = scenario(net, rows, services=[bikes], choice_model="logit", price_options=prices)
     share = {}
-    for preset in ("optimistic", "default", "pessimistic"):
-        r = s.run(
-            preset, output_dir=str(tmp_path / preset), quiet=True, service_expectations=preset
-        )
-        share[preset] = shares(r).get("bike_share", 0.0)
-    print(f"\nshared-bike share by preset: {share}")
-    assert share["optimistic"] >= share["default"] >= share["pessimistic"]
-    assert share["optimistic"] > share["pessimistic"], "the presets move the share"
+    for name, given in (
+        ("none", {"assumed_extra_walk_at_pickup_s": 0, "assumed_extra_walk_at_return_s": 0}),
+        ("start", None),
+        ("long", {"assumed_extra_walk_at_pickup_s": 900, "assumed_extra_walk_at_return_s": 900}),
+    ):
+        r = s.run(name, output_dir=str(tmp_path / name), quiet=True, service_assumptions=given)
+        share[name] = shares(r).get("bike_share", 0.0)
+    print(f"\nshared-bike share by assumed extra walk: {share}")
+    assert share["none"] >= share["start"] >= share["long"]
+    assert share["none"] > share["long"], "the assumed extra walks move the share"
     run = s.run("d", output_dir=str(tmp_path / "d"), quiet=True)
-    e = run.service_expectations()
-    assert e["dock_pickup_extra_s"] is None and e["dock_return_extra_s"] is None
-    # What the day met at the docks: the people-weighted means of the trips whose leg ended.
-    met = run.service_met()
+    e = run.service_assumptions()
+    assert e["assumed_extra_walk_at_pickup_s"] is None
+    assert e["assumed_extra_walk_at_return_s"] is None
+    # What the day actually gave at the docks: the people-weighted means over the rides.
+    actual = run.service_actual()
     t = run.bike_share_trips()
     w = np.asarray(t["travellers"], dtype=float)
+    ride = np.asarray(t["outcome"]) == "completed"
+    assert ride.any()
     for name, column in (
-        ("dock_pickup_extra_s", "pickup_extra_s"),
-        ("dock_return_extra_s", "return_extra_s"),
+        ("assumed_extra_walk_at_pickup_s", "extra_walk_at_pickup_s"),
+        ("assumed_extra_walk_at_return_s", "extra_walk_at_return_s"),
     ):
         v = np.asarray(t[column], dtype=float)
-        ended = np.isfinite(v)
-        assert ended.any()
-        assert met[name] == pytest.approx(float(np.sum(w[ended] * v[ended]) / np.sum(w[ended])))
+        assert actual[name] == pytest.approx(float(np.sum(w[ride] * v[ride]) / np.sum(w[ride])))
     extra = np.asarray(t["extra_s"], dtype=float)
-    split = np.asarray(t["pickup_extra_s"], dtype=float) + np.asarray(
-        t["return_extra_s"], dtype=float
+    split = np.asarray(t["extra_walk_at_pickup_s"], dtype=float) + np.asarray(
+        t["extra_walk_at_return_s"], dtype=float
     )
     assert np.allclose(split[np.isfinite(extra)], extra[np.isfinite(extra)])
-    assert met["dock_pickup_extra_s"] > 0, "empty pickup docks cost the travellers"
-    # Read back from its folder, the same; and a next run plans on it.
+    assert actual["assumed_extra_walk_at_pickup_s"] > 0, "empty pickup docks cost the travellers"
+    # Read back from its folder, the same; and a next run assumes it.
     opened = ms.Run.open(tmp_path / "d")
-    assert opened.service_met() == pytest.approx(met)
-    assert opened.service_expectations() == e
-    again = s.run("met", output_dir=str(tmp_path / "met"), quiet=True, service_expectations=met)
-    assert again.service_expectations()["dock_pickup_extra_s"] == met["dock_pickup_extra_s"]
+    assert opened.service_actual() == pytest.approx(actual)
+    assert opened.service_assumptions() == e
+    again = s.run("a", output_dir=str(tmp_path / "a"), quiet=True, service_assumptions=actual)
+    pickup = "assumed_extra_walk_at_pickup_s"
+    assert again.service_assumptions()[pickup] == actual[pickup]
     assert again.fingerprint != run.fingerprint
-    # A dock's extra walk is NaN or seconds, 0 or more.
+    # A dock's assumed extra walk is NaN or seconds, 0 or more.
     nan = s.run(
         "nan",
         output_dir=str(tmp_path / "nan"),
         quiet=True,
-        service_expectations={"dock_pickup_extra_s": math.nan},
+        service_assumptions={pickup: math.nan},
     )
     assert nan.fingerprint == run.fingerprint, "NaN is the default"
-    with pytest.raises(ValueError, match="dock_pickup_extra_s"):
-        s.run(
-            "bad",
-            output_dir=str(tmp_path / "bad"),
-            service_expectations={"dock_pickup_extra_s": -5},
-        )
-    with pytest.raises(ValueError, match="dock_return_extra_s"):
-        s.run(
-            "bad", output_dir=str(tmp_path / "bad"), service_expectations={"dock_return_factor": 1}
-        )
+    with pytest.raises(ValueError, match=pickup):
+        s.run("bad", output_dir=str(tmp_path / "bad"), service_assumptions={pickup: -5})
+    with pytest.raises(ValueError, match="assumed_extra_walk_at_return_s"):
+        s.run("bad", output_dir=str(tmp_path / "bad"), service_assumptions={"dock_worst_case": 1})
 
 
 def test_same_seed_same_results_and_the_service_is_in_the_fingerprint() -> None:

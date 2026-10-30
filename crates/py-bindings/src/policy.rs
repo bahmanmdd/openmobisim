@@ -338,7 +338,7 @@ pub(crate) fn view_to_py(
                 for (k, a) in [
                     ("pickups", v.pickups),
                     ("returns", v.returns),
-                    ("failed", v.failed),
+                    ("no_bike", v.no_bike),
                     ("redirected_in", v.redirected_in),
                     ("redirected_out", v.redirected_out),
                 ] {

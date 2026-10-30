@@ -2,7 +2,7 @@
 
 The network and docks of ``test_services_in_runs``: a 10 x 10 grid of 200 m blocks, docks of eight
 slots; travellers own nothing and choose between walking and a shared bike (or the line and the
-shared bike to its stop). Few bikes, so that pickups fail and travellers are redirected: a replay
+shared bike to its stop). Few bikes, so that some find none and travellers are redirected: a replay
 that reproduces the run then reproduces the engine's harder paths too.
 """
 
@@ -52,7 +52,7 @@ def assert_replays(run: ms.Run, network: object, services: list, folder: Path) -
     for name, bins in mine["dock_bins"].items():
         assert same_columns(bins, day.dock_bins[name]) == [], name
     assert day.counts["invariant_violations"] == 0
-    assert day.plan["legs"] == len(day.trips["status"]) == day.frozen["legs"]
+    assert day.plan["legs"] == len(day.trips["outcome"]) == day.frozen["legs"]
     return day
 
 
@@ -66,8 +66,8 @@ def test_a_run_s_frozen_day_replays_the_run_s_last_loading_exactly(tmp_path: Pat
     )
     run = s.run("frozen", quiet=True)
     day = assert_replays(run, net, [bikes], tmp_path / "day")
-    status = list(day.trips["status"])
-    assert "served" in status and "failed" in status, "pickups fail: the replay is not trivial"
+    status = list(day.trips["outcome"])
+    assert "completed" in status and "cancelled" in status, "no bike for some: not trivial"
     assert max(day.trips["redirections"]) > 0, "travellers are redirected"
     # The folder: its three files, and what setup.json says.
     assert sorted(p.name for p in (tmp_path / "day").iterdir()) == [
@@ -97,13 +97,13 @@ def test_a_run_s_taxis_replay_too(tmp_path: Path) -> None:
     """The service day of a run with both services replays, taxis too (S303).
 
     Its frozen day holds the taxi legs after the shared bikes' and the road times its taxis drove
-    on; a replay with no policy plays the same day, leg by leg, a failed request included.
+    on; a replay with no policy plays the same day, leg by leg, a cancelled request included.
     """
     from test_services_taxi_runs import FARE, fleet
 
     net = grid()
     bikes = ms.service_bike_docked(docks(net, bikes=2))
-    taxis = fleet(net, n=2, max_wait_s=300)
+    taxis = fleet(net, n=2, request_cancel_s=300)
     rows = trips(net, 30, (0, 0), (9, 9)) + trips(net, 10, (9, 9), (0, 1), "back")
     classes = {"c": (False, False, False), "back": (False, False, False)}
     s = scenario(
@@ -121,9 +121,9 @@ def test_a_run_s_taxis_replay_too(tmp_path: Path) -> None:
     services = list(day.trips["service"])
     assert "taxi" in services and "bike_share" in services, "both services in the day"
     taxi = np.asarray(services) == "taxi"
-    status = set(np.asarray(day.trips["status"])[taxi])
-    assert "served" in status and "failed" in status, "the replay is not trivial: {status}"
-    assert set(np.asarray(day.trips["status"])[~taxi]) >= {"served"}
+    status = set(np.asarray(day.trips["outcome"])[taxi])
+    assert "completed" in status and "cancelled" in status, "the replay is not trivial: {status}"
+    assert set(np.asarray(day.trips["outcome"])[~taxi]) >= {"completed"}
 
 
 def test_a_frozen_day_is_refused_with_other_services_another_network_or_window(

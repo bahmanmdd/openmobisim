@@ -17,7 +17,7 @@
 //! | [`roads`] | [`roads::RoadTimes`], [`roads::FrozenRoads`], [`roads::FrozenPaths`] — a day's road times and the drives, rides and walks on them, without a run |
 //! | [`tables`] | [`tables::BikeShareEventTable`], [`tables::BikeShareTripTable`], [`tables::BikeShareDockTable`] — the rows of `bike_share_events.parquet`, `bike_share_trips.parquet` and `bike_share_docks.parquet` |
 //! | [`docks`] | [`docks::DockBins`] — docked bikes' pickups, returns and redirections on the engine, bin by bin |
-//! | [`costs`] | [`costs::DockCosts`], [`costs::TaxiExpectation`] — what a dock and a taxi are expected to cost a traveller, fixed for the run ([`ServiceExpectations`]) |
+//! | [`costs`] | [`costs::DockCosts`], [`costs::TaxiAssumption`] — what travellers assume a dock and a taxi cost them, fixed for the run ([`ServiceAssumptions`]) |
 //! | [`taxi_tables`] | [`taxi_tables::TaxiEventTable`], [`taxi_tables::TaxiTripTable`], [`taxi_tables::TaxiVehicleTable`] — the rows of `taxi_events.parquet`, `taxi_trips.parquet` and `taxi_vehicles.parquet` |
 //! | [`taxis`] | electric taxis on the engine: matching, drives, energy, the charging rule and plug queues; [`taxis::TaxiDay`] |
 //! | [`policy`] | [`policy::Policy`] — an operator: called every few minutes with a [`view::View`], it returns [`decisions::Decision`]s; the built-in ones, by name ([`policy::policy_builtin`]): [`policy::NoOp`], [`policy::Reset`], [`policy::Threshold`], [`policy::ChargeRule`] |
@@ -156,7 +156,7 @@ pub struct DockDefaults {
     ///
     /// *An assumption.*
     pub start_share: f64,
-    /// What a dock costs a pickup when no dock near it has bikes, in seconds: the expected
+    /// What a dock costs a pickup when no dock near it has bikes, in seconds: the assumed
     /// cost of finding no bike (walking, or another mode).
     ///
     /// *An assumption. CITATION OWED.*
@@ -394,23 +394,24 @@ pub struct TaxiDefaults {
     ///
     /// *An assumption: a fast charger's.*
     pub charger_kw: f64,
-    /// The longest a request waits for a vehicle, in seconds; past it the trip is not made.
+    /// A request is cancelled if no taxi can pick it up within this time, in seconds: from the
+    /// request to the taxi reaching the pickup, the dispatch delay included.
     ///
-    /// *An assumption.*
-    pub max_wait_s: f64,
-    /// The time to board at the pickup, in seconds.
+    /// *An assumption: 600 s.*
+    pub request_cancel_s: f64,
+    /// The time to get in at the pickup, in seconds.
     ///
-    /// *An assumption.*
-    pub board_s: f64,
-    /// The hailing time, in seconds: from a request being matched to a vehicle to that vehicle
-    /// setting off to the pickup (the dispatch by the app and the driver's acceptance). The
-    /// vehicle is held for the request from the match; it drives no kilometre and uses no
-    /// energy during the hailing. A vehicle serves a request only if the hailing time and its
-    /// drive to the pickup fit within [`Self::max_wait_s`], so the hailing time must be below
-    /// the longest wait (or both 0).
+    /// *An assumption: 60 s.*
+    pub boarding_s: f64,
+    /// The time from a request being matched to a taxi to the taxi setting off to the pickup, in
+    /// seconds (the app's dispatch and the driver's acceptance). The taxi is held for the
+    /// request from the match; it drives no kilometre and uses no energy during the delay. A
+    /// taxi is matched to a request only if the dispatch delay and its drive to the pickup fit
+    /// within [`Self::request_cancel_s`], so the dispatch delay must be below the cancel limit
+    /// (or both 0).
     ///
     /// *An assumption: 120 s. CITATION OWED.*
-    pub hail_s: f64,
+    pub dispatch_delay_s: f64,
     /// The farthest a vehicle or charger may be from the road network, in metres.
     ///
     /// *An assumption, as for docks and parkings.*
@@ -437,9 +438,9 @@ impl TaxiDefaults {
         charge_below: 0.2,
         charge_to: 0.8,
         charger_kw: 50.0,
-        max_wait_s: 600.0,
-        board_s: 60.0,
-        hail_s: 120.0,
+        request_cancel_s: 600.0,
+        boarding_s: 60.0,
+        dispatch_delay_s: 120.0,
         snap_m: 300.0,
         charger_reach_s: 3600.0,
         log_events: true,
@@ -456,9 +457,9 @@ impl TaxiDefaults {
             ("charge_below", self.charge_below),
             ("charge_to", self.charge_to),
             ("charger_kw", self.charger_kw),
-            ("max_wait_s", self.max_wait_s),
-            ("board_s", self.board_s),
-            ("hail_s", self.hail_s),
+            ("request_cancel_s", self.request_cancel_s),
+            ("boarding_s", self.boarding_s),
+            ("dispatch_delay_s", self.dispatch_delay_s),
             ("snap_m", self.snap_m),
             ("charger_reach_s", self.charger_reach_s),
         ]
@@ -497,9 +498,9 @@ impl TaxiDefaults {
                 "charge_below" => &mut d.charge_below,
                 "charge_to" => &mut d.charge_to,
                 "charger_kw" => &mut d.charger_kw,
-                "max_wait_s" => &mut d.max_wait_s,
-                "board_s" => &mut d.board_s,
-                "hail_s" => &mut d.hail_s,
+                "request_cancel_s" => &mut d.request_cancel_s,
+                "boarding_s" => &mut d.boarding_s,
+                "dispatch_delay_s" => &mut d.dispatch_delay_s,
                 "snap_m" => &mut d.snap_m,
                 "charger_reach_s" => &mut d.charger_reach_s,
                 _ => {
@@ -535,9 +536,9 @@ impl TaxiDefaults {
             }
         }
         for (name, value) in [
-            ("max_wait_s", d.max_wait_s),
-            ("board_s", d.board_s),
-            ("hail_s", d.hail_s),
+            ("request_cancel_s", d.request_cancel_s),
+            ("boarding_s", d.boarding_s),
+            ("dispatch_delay_s", d.dispatch_delay_s),
             ("snap_m", d.snap_m),
             ("charger_reach_s", d.charger_reach_s),
         ] {
@@ -562,26 +563,28 @@ impl TaxiDefaults {
                 "needs reserve_soc <= charge_below < charge_to",
             );
         }
-        d.check_hail()?;
+        d.check_dispatch_delay()?;
         Ok(d)
     }
 
-    /// Refuse a hailing time at or above the longest wait (with no vehicle ever served).
+    /// Refuse a dispatch delay at or above the cancel limit (no request would ever get a taxi).
     ///
     /// # Errors
     ///
-    /// [`ServiceError::BadOption`] on `hail_s` when it is above 0 and at least `max_wait_s`.
-    pub fn check_hail(&self) -> Result<(), ServiceError> {
-        if self.hail_s > 0.0 && self.hail_s >= self.max_wait_s {
+    /// [`ServiceError::BadOption`] on `dispatch_delay_s` when it is above 0 and at least
+    /// `request_cancel_s`.
+    pub fn check_dispatch_delay(&self) -> Result<(), ServiceError> {
+        if self.dispatch_delay_s > 0.0 && self.dispatch_delay_s >= self.request_cancel_s {
             return Err(ServiceError::BadOption {
                 kind: ServiceKind::Taxi,
-                name: "hail_s".to_string(),
-                value: self.hail_s,
+                name: "dispatch_delay_s".to_string(),
+                value: self.dispatch_delay_s,
                 why: format!(
-                    "must be below max_wait_s ({} s): a vehicle serves a request only if the \
-                     hailing time and its drive to the pickup fit within the longest wait, so no \
-                     request would ever be served; lower hail_s or raise max_wait_s",
-                    self.max_wait_s
+                    "must be below request_cancel_s ({} s): a taxi is matched to a request only if \
+                     the dispatch delay and its drive to the pickup fit within the cancel limit, \
+                     so every request would be cancelled; lower dispatch_delay_s or raise \
+                     request_cancel_s",
+                    self.request_cancel_s
                 ),
             });
         }
@@ -595,124 +598,76 @@ impl Default for TaxiDefaults {
     }
 }
 
-// --- What travellers expect of the services ----------------------------------------------------
+// --- What travellers assume about the services -------------------------------------------------
 
-/// The level of service travellers plan on in a run with services (S303): **fixed for the whole
-/// run, set by name, never learned from a loading**. A taxi alternative expects a wait of
-/// [`Self::taxi_wait_s`] and a share [`Self::taxi_fail_share`] of requests with no vehicle; a
-/// shared bike expects, at each dock and time bin, an extra walk in seconds at the pickup and at
-/// the return: [`Self::dock_pickup_extra_s`] and [`Self::dock_return_extra_s`] where they are
-/// numbers (the same at every dock and bin), else (`NaN`) the extra walk the docks' start-of-day
-/// counts imply ([`costs::DockCosts::initial`]: an empty pickup dock or a full return dock costs
-/// the walk to its nearest neighbour, [`DockDefaults::fail_s`] with none), or, with
-/// [`Self::dock_worst_case`], the walk to the dock's nearest neighbour at every dock all day.
-/// The services' day is played once, after the run has stopped ([`in_run::play`]); what it gives
-/// is reported beside what was expected and never fed back. One value per run: a table by zone
-/// and time bin may be added later under the same names.
-///
-/// **Presets** ([`Self::preset`]): `default` (the shipped values), `optimistic` (better than what
-/// is likely met: a 120 s wait, no failure, no extra walk at the docks: both dock values 0) and
-/// `pessimistic` (a 600 s wait, a quarter of requests with no vehicle, every dock expected empty
-/// at the pickup and full at the return).
+/// What travellers assume about a service when they choose, fixed for the run (S303): set by
+/// name, never learned from a loading. A taxi alternative assumes a wait of
+/// [`Self::assumed_wait_s`] before a taxi picks the traveller up and a chance
+/// [`Self::assumed_no_taxi_share`] of getting no taxi; a shared bike assumes, at each dock and
+/// time bin, an extra walk in seconds at the pickup ([`Self::assumed_extra_walk_at_pickup_s`])
+/// and at the return ([`Self::assumed_extra_walk_at_return_s`]) where they are numbers (the
+/// same at every dock and bin), else (`NaN`) the extra walk the docks' start-of-day bikes imply
+/// ([`costs::DockCosts::initial`]: an empty pickup dock or a full return dock costs the walk to
+/// its nearest neighbour, [`DockDefaults::fail_s`] with none). The services are played once,
+/// after the run has stopped ([`in_run::play`]); what they actually gave is reported beside
+/// these assumptions and never fed back. One value per run: a table by zone and time bin may be
+/// added later under the same names.
 ///
 /// *Every value an assumption, uncalibrated. CITATION OWED.*
 ///
-/// Two expectations are equal when every value is, a `NaN` equal to a `NaN` (the same rule).
+/// Two sets of assumptions are equal when every value is, a `NaN` equal to a `NaN` (the same
+/// rule).
 #[derive(Clone, Copy, Debug)]
-pub struct ServiceExpectations {
-    /// The wait a traveller expects before a taxi reaches the pickup, in seconds. In the choice
-    /// it is read as at most the fleet's longest wait ([`TaxiDefaults::max_wait_s`]): nobody
-    /// plans on waiting longer than the fleet keeps a request.
+pub struct ServiceAssumptions {
+    /// The waiting time travellers assume before a taxi picks them up, in seconds, whatever the
+    /// fleet's [`TaxiDefaults::request_cancel_s`].
     ///
-    /// *An assumption: 600 s, the fleet's shipped longest wait, so a traveller plans on the
-    /// longest wait still served. CITATION OWED.*
-    pub taxi_wait_s: f64,
-    /// The share of taxi requests a traveller expects to get no vehicle within the fleet's
-    /// longest wait, from 0 to 1.
+    /// *An assumption: 600 s. CITATION OWED.*
+    pub assumed_wait_s: f64,
+    /// The chance of getting no taxi that travellers assume, from 0 to 1: a request cancelled
+    /// because no taxi could pick it up within the fleet's [`TaxiDefaults::request_cancel_s`].
     ///
     /// *An assumption: 0.*
-    pub taxi_fail_share: f64,
-    /// The extra walk, in seconds, a traveller expects at a pickup dock (finding it empty), the
-    /// same at every dock and time bin; `NaN`: from the docks' start-of-day counts (or
-    /// [`Self::dock_worst_case`]), dock by dock and bin by bin.
+    pub assumed_no_taxi_share: f64,
+    /// The extra walk a shared-bike user assumes if the pickup dock is empty, in seconds, the
+    /// same at every dock and time bin; `NaN`: from the docks' start-of-day bikes, dock by dock
+    /// and bin by bin.
     ///
-    /// *An assumption: `NaN`, the start-of-day counts.*
-    pub dock_pickup_extra_s: f64,
-    /// The extra walk, in seconds, a traveller expects at a return dock (finding it full), the
-    /// same at every dock and time bin; `NaN`: from the docks' start-of-day counts (or
-    /// [`Self::dock_worst_case`]), dock by dock and bin by bin.
+    /// *An assumption: `NaN`, the start-of-day bikes.*
+    pub assumed_extra_walk_at_pickup_s: f64,
+    /// The extra walk a shared-bike user assumes if the return dock is full, in seconds, the
+    /// same at every dock and time bin; `NaN`: from the docks' start-of-day bikes, dock by dock
+    /// and bin by bin.
     ///
-    /// *An assumption: `NaN`, the start-of-day counts.*
-    pub dock_return_extra_s: f64,
-    /// 1: every pickup dock is expected empty and every return dock full, all day, so a
-    /// shared bike expects the walk to the dock's nearest neighbour at both ends
-    /// ([`DockDefaults::fail_s`] for a dock with none), at an end whose extra walk is `NaN`;
-    /// 0: the start-of-day counts decide.
-    ///
-    /// *An assumption: 0.*
-    pub dock_worst_case: f64,
+    /// *An assumption: `NaN`, the start-of-day bikes.*
+    pub assumed_extra_walk_at_return_s: f64,
 }
 
-impl ServiceExpectations {
-    /// The shipped values: the preset `default`.
+impl ServiceAssumptions {
+    /// The shipped values.
     pub const SHIPPED: Self = Self {
-        taxi_wait_s: 600.0,
-        taxi_fail_share: 0.0,
-        dock_pickup_extra_s: f64::NAN,
-        dock_return_extra_s: f64::NAN,
-        dock_worst_case: 0.0,
+        assumed_wait_s: 600.0,
+        assumed_no_taxi_share: 0.0,
+        assumed_extra_walk_at_pickup_s: f64::NAN,
+        assumed_extra_walk_at_return_s: f64::NAN,
     };
 
     /// The names of the parameters, in the order [`Self::values`] gives them.
-    pub const NAMES: [&'static str; 5] = [
-        "taxi_wait_s",
-        "taxi_fail_share",
-        "dock_pickup_extra_s",
-        "dock_return_extra_s",
-        "dock_worst_case",
+    pub const NAMES: [&'static str; 4] = [
+        "assumed_wait_s",
+        "assumed_no_taxi_share",
+        "assumed_extra_walk_at_pickup_s",
+        "assumed_extra_walk_at_return_s",
     ];
-
-    /// The presets' names.
-    pub const PRESETS: [&'static str; 3] = ["default", "optimistic", "pessimistic"];
-
-    /// The preset `name` (see the [type's docs](Self)).
-    ///
-    /// # Errors
-    ///
-    /// A message naming the presets, for another name.
-    pub fn preset(name: &str) -> Result<Self, String> {
-        match name {
-            "default" => Ok(Self::SHIPPED),
-            "optimistic" => Ok(Self {
-                taxi_wait_s: 120.0,
-                taxi_fail_share: 0.0,
-                dock_pickup_extra_s: 0.0,
-                dock_return_extra_s: 0.0,
-                dock_worst_case: 0.0,
-            }),
-            "pessimistic" => Ok(Self {
-                taxi_wait_s: 600.0,
-                taxi_fail_share: 0.25,
-                dock_pickup_extra_s: f64::NAN,
-                dock_return_extra_s: f64::NAN,
-                dock_worst_case: 1.0,
-            }),
-            other => Err(format!(
-                "unknown service_expectations preset {other:?}; the presets are {}",
-                Self::PRESETS.join(", ")
-            )),
-        }
-    }
 
     /// Every parameter by name, in [`Self::NAMES`]' order (the fingerprint, the manifest).
     #[must_use]
     pub fn values(&self) -> Vec<(&'static str, f64)> {
         vec![
-            ("taxi_wait_s", self.taxi_wait_s),
-            ("taxi_fail_share", self.taxi_fail_share),
-            ("dock_pickup_extra_s", self.dock_pickup_extra_s),
-            ("dock_return_extra_s", self.dock_return_extra_s),
-            ("dock_worst_case", self.dock_worst_case),
+            ("assumed_wait_s", self.assumed_wait_s),
+            ("assumed_no_taxi_share", self.assumed_no_taxi_share),
+            ("assumed_extra_walk_at_pickup_s", self.assumed_extra_walk_at_pickup_s),
+            ("assumed_extra_walk_at_return_s", self.assumed_extra_walk_at_return_s),
         ]
     }
 
@@ -721,57 +676,47 @@ impl ServiceExpectations {
     /// # Errors
     ///
     /// A message naming the parameters for a name not among them, or saying the range for a
-    /// value out of it (`taxi_wait_s` finite and 0 or more, the docks' extra walks `NaN` or
-    /// finite and 0 or more, `taxi_fail_share` from 0 to 1, `dock_worst_case` 0 or 1).
+    /// value out of it (`assumed_wait_s` finite and 0 or more, the extra walks `NaN` or finite
+    /// and 0 or more, `assumed_no_taxi_share` from 0 to 1).
     pub fn with_options(mut self, options: &Options) -> Result<Self, String> {
         for (name, &value) in options {
             let slot = match name.as_str() {
-                "taxi_wait_s" => &mut self.taxi_wait_s,
-                "taxi_fail_share" => &mut self.taxi_fail_share,
-                "dock_pickup_extra_s" => &mut self.dock_pickup_extra_s,
-                "dock_return_extra_s" => &mut self.dock_return_extra_s,
-                "dock_worst_case" => &mut self.dock_worst_case,
+                "assumed_wait_s" => &mut self.assumed_wait_s,
+                "assumed_no_taxi_share" => &mut self.assumed_no_taxi_share,
+                "assumed_extra_walk_at_pickup_s" => &mut self.assumed_extra_walk_at_pickup_s,
+                "assumed_extra_walk_at_return_s" => &mut self.assumed_extra_walk_at_return_s,
                 _ => {
                     return Err(format!(
-                        "unknown service_expectations parameter {name:?}; the parameters are {}",
+                        "unknown service_assumptions parameter {name:?}; the parameters are {}",
                         Self::NAMES.join(", ")
                     ));
                 }
             };
-            #[allow(clippy::float_cmp, reason = "a switch: exactly 0 or 1")]
+            let walk = name.starts_with("assumed_extra_walk_");
             let ok = match name.as_str() {
-                "taxi_fail_share" => (0.0..=1.0).contains(&value),
-                "dock_worst_case" => value == 0.0 || value == 1.0,
-                "dock_pickup_extra_s" | "dock_return_extra_s" => {
-                    value.is_nan() || (value.is_finite() && value >= 0.0)
-                }
+                "assumed_no_taxi_share" => (0.0..=1.0).contains(&value),
+                _ if walk => value.is_nan() || (value.is_finite() && value >= 0.0),
                 _ => value.is_finite() && value >= 0.0,
             };
             if !ok {
                 let why = match name.as_str() {
-                    "taxi_fail_share" => "a share, from 0 to 1",
-                    "dock_worst_case" => "0 or 1",
-                    "dock_pickup_extra_s" | "dock_return_extra_s" => {
-                        "NaN (from the start-of-day counts) or a finite number of seconds, 0 or more"
+                    "assumed_no_taxi_share" => "a share, from 0 to 1",
+                    _ if walk => {
+                        "NaN (from the docks' start-of-day bikes) or a finite number of seconds, 0 \
+                         or more"
                     }
                     _ => "a finite number, 0 or more",
                 };
-                return Err(format!("service_expectations {name:?} = {value}: must be {why}"));
+                return Err(format!("service_assumptions {name:?} = {value}: must be {why}"));
             }
             // One NaN, whatever its sign or payload: the fingerprint hashes the bits.
             *slot = if value.is_nan() { f64::NAN } else { value };
         }
         Ok(self)
     }
-
-    /// Whether every dock is expected unavailable ([`Self::dock_worst_case`] 1).
-    #[must_use]
-    pub fn dock_worst(&self) -> bool {
-        self.dock_worst_case > 0.5
-    }
 }
 
-impl PartialEq for ServiceExpectations {
+impl PartialEq for ServiceAssumptions {
     fn eq(&self, other: &Self) -> bool {
         self.values()
             .iter()
@@ -780,7 +725,7 @@ impl PartialEq for ServiceExpectations {
     }
 }
 
-impl Default for ServiceExpectations {
+impl Default for ServiceAssumptions {
     fn default() -> Self {
         Self::SHIPPED
     }
@@ -1093,7 +1038,7 @@ impl ServiceSetup {
         chargers: &[ChargerRow],
         defaults: TaxiDefaults,
     ) -> Result<Self, ServiceError> {
-        defaults.check_hail()?;
+        defaults.check_dispatch_delay()?;
         let snapper = NodeSnapper::new(road);
         let far = |node: NodeId, at: LonLat| {
             ground_distance_metres(road.node_lonlat(node), at) > defaults.snap_m

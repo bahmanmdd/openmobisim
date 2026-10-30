@@ -4,8 +4,8 @@
 //! **The frozen day** is what the fleet engine needs to run alone: the legs (who asks for which
 //! service, when, from where to where, with what weight), the road times ([`super::roads`]), the
 //! window and a seed. It holds the travellers' choices fixed, and the traffic: **an
-//! approximation, labelled as such** in what it returns. A run's own choice reads the services'
-//! expected costs and may change its mind; here nobody does.
+//! approximation, labelled as such** in what it returns. A run's own choice reads what its
+//! travellers assume about the services and may change its mind; here nobody does.
 //!
 //! **Planning a leg** ([`plan_legs`]): a shared-bike trip takes the dock nearest its origin on
 //! foot within the service's `walk_max_s`, and returns at the dock nearest its destination on

@@ -22,7 +22,7 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults, StaticNetwork};
 use openmobisim_core_graph::manhattan_grid;
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_sim::services::{DockDefaults, DockRow, ServiceExpectations, ServiceSetup};
+use openmobisim_core_sim::services::{DockDefaults, DockRow, ServiceAssumptions, ServiceSetup};
 use openmobisim_core_sim::{LayerSetup, Prices, Run, RunResult, StaticLayers};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::ids::EntityId;
@@ -111,7 +111,7 @@ struct Setup {
     prices: Prices,
     walk_max_s: f64,
     fail_s: f64,
-    expectations: ServiceExpectations,
+    assumptions: ServiceAssumptions,
 }
 
 impl Default for Setup {
@@ -124,7 +124,7 @@ impl Default for Setup {
             prices: Prices::SHIPPED,
             walk_max_s: DockDefaults::SHIPPED.walk_max_s,
             fail_s: DockDefaults::SHIPPED.fail_s,
-            expectations: ServiceExpectations::SHIPPED,
+            assumptions: ServiceAssumptions::SHIPPED,
         }
     }
 }
@@ -138,7 +138,7 @@ fn run(rows: Vec<RawTrip>, s: &Setup) -> RunResult {
         .with_layers(layers)
         .with_choice_model(Arc::clone(&s.model))
         .with_prices(s.prices)
-        .with_service_expectations(s.expectations)
+        .with_service_assumptions(s.assumptions)
         .with_mode_choice(&[Mode::Walk, Mode::BikeShare]);
     if s.docks {
         run = run.with_services(Arc::new(vec![service]));
@@ -243,39 +243,39 @@ fn a_price_per_ride_moves_travellers_from_shared_bikes_to_walking() {
 }
 
 /// The shared-bike trips (people) of forty corner trips under logit at 3 € a ride, with `bikes`
-/// at the start and the expectations `e`.
-fn shared_under(bikes: [u32; 4], e: ServiceExpectations) -> u32 {
+/// at the start and the assumptions `e`.
+fn shared_under(bikes: [u32; 4], e: ServiceAssumptions) -> u32 {
     let road = grid();
     let model: Arc<dyn ChoiceModel> =
         Arc::from(openmobisim_core_choice::model("logit", &BTreeMap::new()).expect("logit"));
     // A fare that puts the shared bike near walking (as in the fare test above), so what is
     // expected at the docks shows in the share.
     let prices = Prices { bike_share_eur_per_ride: 3.0, ..Prices::SHIPPED };
-    let s = Setup { model, bikes, prices, expectations: e, ..Setup::default() };
+    let s = Setup { model, bikes, prices, assumptions: e, ..Setup::default() };
     let r = run(corner_trips(&road, 40, 15), &s);
     r.by_mode[Mode::BikeShare.index()].completion.total_trips
 }
 
 #[test]
-fn the_presets_order_the_shared_bike_share_and_a_dock_s_extra_walk_is_set_in_seconds() {
-    // Dock a starts empty: the default expects, at a, the walk to b (the start-of-day counts),
-    // the optimistic preset nothing, the pessimistic one the walk to the nearest neighbour at
-    // every dock, at both ends.
-    let preset = |name: &str| ServiceExpectations::preset(name).unwrap();
+fn a_dock_s_assumed_extra_walk_is_set_in_seconds_and_moves_the_shared_bike_share() {
+    // Dock a starts empty: the default assumes, at a, the walk to b (the start-of-day bikes);
+    // no extra walk assumed (0 s at both ends) draws at least as many.
     let bikes = [0, 2, 0, 0];
-    let optimistic = shared_under(bikes, preset("optimistic"));
-    let default = shared_under(bikes, preset("default"));
-    let pessimistic = shared_under(bikes, preset("pessimistic"));
-    println!(
-        "shared-bike trips: optimistic {optimistic}, default {default}, pessimistic {pessimistic}"
-    );
-    assert!(optimistic >= default && default >= pessimistic);
-    assert!(optimistic > pessimistic, "the presets move the share");
-    // a and b start full of bikes: the default expects no extra walk at the pickup; 300 s at
+    let zero = ServiceAssumptions {
+        assumed_extra_walk_at_pickup_s: 0.0,
+        assumed_extra_walk_at_return_s: 0.0,
+        ..ServiceAssumptions::SHIPPED
+    };
+    let none = shared_under(bikes, zero);
+    let default = shared_under(bikes, ServiceAssumptions::SHIPPED);
+    println!("shared-bike trips: no extra walk assumed {none}, start-of-day bikes {default}");
+    assert!(none >= default);
+    // a and b start full of bikes: the default assumes no extra walk at the pickup; 300 s at
     // every pickup dock lowers the share.
     let full = [4, 4, 0, 0];
-    let free = shared_under(full, ServiceExpectations::SHIPPED);
-    let walk = ServiceExpectations { dock_pickup_extra_s: 300.0, ..ServiceExpectations::SHIPPED };
+    let free = shared_under(full, ServiceAssumptions::SHIPPED);
+    let walk =
+        ServiceAssumptions { assumed_extra_walk_at_pickup_s: 300.0, ..ServiceAssumptions::SHIPPED };
     let slowed = shared_under(full, walk);
     println!("shared-bike trips with full docks: default {free}, 300 s at the pickup {slowed}");
     assert!(free > slowed, "default {free}, 300 s at the pickup {slowed}");
@@ -290,22 +290,22 @@ fn same_seed_same_day() {
     let (da, db) = (sa.last.unwrap(), sb.last.unwrap());
     // Compared as printed: a bike leg's outcome holds NaN (no taxi was sent), never equal to itself.
     assert_eq!(
-        format!("{:?}", (da.legs, da.outcome, da.met, da.summary)),
-        format!("{:?}", (db.legs, db.outcome, db.met, db.summary)),
+        format!("{:?}", (da.legs, da.outcome, da.outcomes, da.summary)),
+        format!("{:?}", (db.legs, db.outcome, db.outcomes, db.summary)),
         "the same days, but their clocks"
     );
-    assert_eq!(sa.expected, sb.expected);
+    assert_eq!(sa.assumed, sb.assumed);
     assert_eq!(a.events, b.events);
 }
 
-/// The expectations are fixed for the run (S303): whatever the loadings, the docks' expected
-/// costs are the start-of-day counts', and the trips end as planned on them; the service day,
-/// played once after the run, shows what they met. Twenty travellers over ten minutes from a's
-/// corner to z's, a and b holding four bikes between them: in the service day most find them
-/// empty and walk on to other docks or give up. Printed
+/// The assumptions are fixed for the run (S303): whatever the loadings, the docks' assumed
+/// costs are the start-of-day bikes', and the trips end as planned on them; the service day,
+/// played once after the run, shows what actually happened. Twenty travellers over ten minutes
+/// from a's corner to z's, a and b holding four bikes between them: in the service day most
+/// find them empty and walk on to other docks or find no bike at all. Printed
 /// (`cargo test --test services_in_runs -- --nocapture`): the service day's summary.
 #[test]
-fn the_expectations_stay_fixed_and_the_service_day_shows_what_was_met() {
+fn the_assumptions_stay_fixed_and_the_service_day_shows_what_actually_happened() {
     let road = grid();
     let options = BTreeMap::new();
     let model: Arc<dyn ChoiceModel> =
@@ -316,28 +316,40 @@ fn the_expectations_stay_fixed_and_the_service_day_shows_what_was_met() {
     let layers = layers(&road);
     let setup = service(&road, &layers, s.bikes, s.walk_max_s, s.fail_s);
     let start = openmobisim_core_sim::services::costs::DockCosts::initial(&setup, (0.0, 86_400.0));
-    assert_eq!(services.expected.as_ref(), Some(&start), "the start-of-day counts', unchanged");
+    assert_eq!(services.assumed.as_ref(), Some(&start), "the start-of-day bikes', unchanged");
     let day = services.last.as_ref().expect("shared bikes were ridden");
     println!("{:?}", day.summary);
     let share = result.by_mode[Mode::BikeShare.index()].completion;
-    assert_eq!(day.summary.trips, f64::from(share.total_trips));
-    assert_eq!(day.summary.trips, day.summary.served + day.summary.failed + day.summary.truncated);
-    assert!(day.summary.failed > 0.0, "some find no bike at any dock tried");
-    assert!(day.summary.mismatch_mean_s > 0.0, "worse than the start-of-day counts expected");
-    assert!(day.summary.mismatch_abs_mean_s >= day.summary.mismatch_mean_s);
-    // The extra seconds met, split at the pickup and at the return, add up to the whole; these
-    // corner trips find their pickup docks empty, so most of it is the pickup's.
-    let (p, r) = (day.summary.dock_pickup_extra_s, day.summary.dock_return_extra_s);
-    assert!((p + r - day.extra_mean_s).abs() < 1e-6, "{p} + {r} vs {}", day.extra_mean_s);
+    let sm = day.summary;
+    assert_eq!(sm.requests, f64::from(share.total_trips));
+    assert_eq!(sm.requests, sm.rides + sm.no_bike + sm.unfinished);
+    assert!(sm.no_bike > 0.0, "some find no bike at any dock tried");
+    // The extra walks of the rides: these corner trips find their pickup docks empty, so most
+    // of it is the pickup's; some rides were sent on to another dock.
+    let (p, r) = (sm.extra_walk_at_pickup_mean_s, sm.extra_walk_at_return_mean_s);
     assert!(p > 0.0 && r >= 0.0 && p > r, "pickup {p}, return {r}");
-    let rows: Vec<&str> = day.summary.rows().iter().map(|(n, _)| *n).collect();
-    assert!(rows.contains(&"dock_pickup_extra_s") && rows.contains(&"dock_return_extra_s"));
-    // Each trip's row is as planned: completed at its expected end, not at what it met.
-    for (l, &(_, met_end)) in day.legs.iter().zip(&day.met) {
+    assert!(sm.redirected_share > 0.0 && sm.redirected_share <= 1.0);
+    let rows: Vec<&str> = sm.rows((f64::NAN, f64::NAN)).iter().map(|(n, _)| *n).collect();
+    assert_eq!(
+        rows,
+        [
+            "requests",
+            "rides",
+            "no_bike",
+            "unfinished",
+            "extra_walk_at_pickup_mean_s",
+            "extra_walk_at_return_mean_s",
+            "assumed_extra_walk_at_pickup_s",
+            "assumed_extra_walk_at_return_s",
+            "redirected_share"
+        ]
+    );
+    // Each trip's row is as planned: completed at its planned end, not at what happened.
+    for (l, &(_, end)) in day.legs.iter().zip(&day.outcomes) {
         let done =
             result.events.iter().find(|e| e.entity_id == l.trip.raw()).expect("the trip's event");
-        assert_eq!(f64::from(done.second.get()), l.expected_end_s(&setup).floor());
-        assert!(met_end.is_nan() || met_end >= l.planned_arrival_s(&setup) - 1e-9);
+        assert_eq!(f64::from(done.second.get()), l.planned_end_s(&setup).floor());
+        assert!(end.is_nan() || end >= l.planned_arrival_s(&setup) - 1e-9);
     }
 }
 

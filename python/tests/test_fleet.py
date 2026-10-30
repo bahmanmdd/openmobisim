@@ -43,7 +43,7 @@ def docks(net, bikes=(1, 0)) -> object:
     )
 
 
-def test_two_travellers_ask_for_the_one_bike_and_the_second_fails():
+def test_two_travellers_ask_for_the_one_bike_and_the_second_finds_none():
     net = grid()
     bikes = ms.service_bike_docked(docks(net))
     day = ms.fleet_day(
@@ -53,7 +53,7 @@ def test_two_travellers_ask_for_the_one_bike_and_the_second_fails():
     )
     t = day.trip_results()
     assert day.fidelity == "frozen_day"
-    assert t["status"] == ["served", "failed"]
+    assert t["outcome"] == ["completed", "cancelled"]
     assert t["dock_from"] == ["a", None] and t["dock_to"] == ["z", None]
     assert t["requested_s"][0] == pytest.approx(8 * 3600), "the dock is at the origin's node"
     assert t["arrived_s"][0] > t["requested_s"][0]
@@ -72,7 +72,7 @@ def test_a_trip_without_a_dock_in_reach_is_not_planned_and_said_so():
     net = grid()
     bikes = ms.service_bike_docked(docks(net), options={"walk_max_s": 1.0})
     day = ms.fleet_day(net, [bikes], [trip(net, "far", "08:00", (2, 2), (4, 4))])
-    assert day.trip_results()["status"] == ["not_planned"]
+    assert day.trip_results()["outcome"] == ["not_planned"]
     assert day.plan["no_dock"] == 1
 
 
@@ -84,8 +84,8 @@ def test_a_taxi_drives_its_traveller_and_waits_are_counted():
     taxis = ms.service_taxi(v)
     day = ms.fleet_day(net, [taxis], [trip(net, "t1", "08:00", (0, 1), (4, 4))])
     t = day.trip_results()
-    assert t["status"] == ["served"] and t["vehicle_id"] == ["v1"]
-    assert t["waited_s"][0] > 0, "the vehicle drives one block to the pickup"
+    assert t["outcome"] == ["completed"] and t["vehicle_id"] == ["v1"]
+    assert t["waiting_s"][0] > 0, "the vehicle drives one block to the pickup"
     assert math.isfinite(t["arrived_s"][0])
 
 
@@ -127,8 +127,8 @@ def test_an_environment_steps_through_the_day_and_a_fork_leaves_it_alone():
         assert not truncated
     assert steps == 8, "two hours of 15 minutes"
     outcome = info["outcome"]["trips"]
-    failed = sum(1 for s in outcome["status"] if s == "failed")
-    assert total == pytest.approx(-failed - 0.1 * sum(outcome["extra_walk_s"]) / 60)
+    cancelled = sum(1 for s in outcome["outcome"] if s == "cancelled")
+    assert total == pytest.approx(-cancelled - 0.1 * sum(outcome["extra_walk_s"]) / 60)
     assert ahead.t == t_before, "the fork stayed where it was"
     # The fork goes on alone, with a decision of its own; a view ends at its own day's next step.
     first, _ = ahead.reset(seed=1)
@@ -302,7 +302,7 @@ def test_a_taxi_observation_counts_the_requests_waiting_within_reach():
     v = ms.vehicle_read_table(
         [{"vehicle_id": "v1", "lon": at(net, 0, 0)[0], "lat": at(net, 0, 0)[1]}]
     )
-    taxis = ms.service_taxi(v, options={"max_wait_s": 3600})
+    taxis = ms.service_taxi(v, options={"request_cancel_s": 3600})
     # Asked before the window: two requests one block from the vehicle, then two at the far
     # corner. The vehicle takes the first; its node in the view is where it is heading.
     trips = [trip(net, f"a{k}", 26_000, (0, 1), (2, 2)) for k in range(2)]
@@ -346,7 +346,7 @@ def test_a_driving_taxi_s_view_says_when_it_gets_to_its_node():
     v = ms.vehicle_read_table(
         [{"vehicle_id": "v1", "lon": at(net, 0, 0)[0], "lat": at(net, 0, 0)[1]}]
     )
-    taxis = ms.service_taxi(v, options={"max_wait_s": 3600})
+    taxis = ms.service_taxi(v, options={"request_cancel_s": 3600})
     env = ms.fleet_environment(net, [taxis], [trip(net, "a", 26_000, (0, 2), (2, 2))])
     view, _ = env.reset(0)
     # Sent at once to a pickup two blocks away: it gets there after the step's second.
@@ -357,24 +357,25 @@ def test_a_driving_taxi_s_view_says_when_it_gets_to_its_node():
     assert math.isnan(view["taxi"]["until_s"][0])
 
 
-def test_the_hailing_time_is_set_by_name_and_delays_the_vehicle_by_as_much():
+def test_the_dispatch_delay_is_set_by_name_and_delays_the_vehicle_by_as_much():
     net = grid()
     v = ms.vehicle_read_table(
         [{"vehicle_id": "v1", "lon": at(net, 0, 0)[0], "lat": at(net, 0, 0)[1]}]
     )
     until = {}
-    for hail in (0.0, 300.0):
-        taxis = ms.service_taxi(v, options={"max_wait_s": 3600, "hail_s": hail})
+    for delay in (0.0, 300.0):
+        taxis = ms.service_taxi(v, options={"request_cancel_s": 3600, "dispatch_delay_s": delay})
         env = ms.fleet_environment(net, [taxis], [trip(net, "a", 26_000, (0, 2), (2, 2))])
         view, _ = env.reset(0)
         assert view["taxi"]["state"] == ["to_pickup"], "held for the request from the match"
-        until[hail] = view["taxi"]["until_s"][0]
+        until[delay] = view["taxi"]["until_s"][0]
     # The same drive to the pickup, set off 300 s later.
     assert until[300.0] - until[0.0] == pytest.approx(300.0)
-    with pytest.raises(ValueError, match="hail_s"):
-        ms.fleet_day(net, [ms.service_taxi(v, options={"hail": 60})], [])
-    with pytest.raises(ValueError, match="max_wait_s"):
-        ms.fleet_day(net, [ms.service_taxi(v, options={"hail_s": 600, "max_wait_s": 600})], [])
+    with pytest.raises(ValueError, match="dispatch_delay_s"):
+        ms.fleet_day(net, [ms.service_taxi(v, options={"dispatch": 60})], [])
+    with pytest.raises(ValueError, match="request_cancel_s"):
+        options = {"dispatch_delay_s": 600, "request_cancel_s": 600}
+        ms.fleet_day(net, [ms.service_taxi(v, options=options)], [])
 
 
 def test_an_environment_s_view_counts_its_steps_and_the_counts_since_the_last_one():

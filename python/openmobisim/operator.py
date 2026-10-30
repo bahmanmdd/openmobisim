@@ -21,7 +21,8 @@ A policy is one of:
 ``view.services``) holds per service name a dict of arrays, one value per dock or vehicle:
 a docked service's ``dock_id``, ``node`` (its road node id), ``zone``, ``bikes``, ``slots``,
 ``incoming`` (bikes in vans on their way to the dock), ``lon``, ``lat``, and since the last
-step ``pickups``, ``returns``, ``failed``, ``redirected_in``, ``redirected_out`` (people), and
+step ``pickups``, ``returns``, ``no_bike`` (found no bike there nor near), ``redirected_in``,
+``redirected_out`` (people), and
 ``moving`` (bikes in vans now) and ``riding``; a taxi fleet's ``vehicle_id``, ``state`` (names:
 ``idle``, ``to_pickup``, ``occupied``, ``to_charger``, ``queued_at_charger``, ``charging``,
 ``relocating``), ``node`` (road node ids: where it is, or where it is driving to), ``until_s``

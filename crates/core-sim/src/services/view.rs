@@ -3,7 +3,7 @@
 //!
 //! The arrays the state already holds are borrowed, not copied: a docked service's bikes per
 //! dock, a taxi fleet's vehicles' states, nodes and charges. The counts since the last step
-//! (pickups, returns, failed pickups, redirections, per dock) are kept by the engine and
+//! (pickups, returns, travellers with no bike, redirections, per dock) are kept by the engine and
 //! cleared after each step. A taxi fleet's waiting requests and chargers' plugs in use and
 //! queues are gathered at the step (one pass over the waiting requests and the chargers).
 //! What a policy may ask besides (travel times, expected legs, nearest docks or vehicles, the
@@ -83,8 +83,9 @@ pub struct DockView<'a> {
     pub pickups: &'a [f64],
     /// Per dock, bikes returned since the last step (people).
     pub returns: &'a [f64],
-    /// Per dock, pickups that failed there (the last dock tried) since the last step (people).
-    pub failed: &'a [f64],
+    /// Per dock, travellers who found no bike there nor at the docks near (the last dock tried)
+    /// since the last step (people).
+    pub no_bike: &'a [f64],
     /// Per dock, travellers sent on to it from an empty or full dock since the last step
     /// (people; counted when they were sent).
     pub redirected_in: &'a [f64],

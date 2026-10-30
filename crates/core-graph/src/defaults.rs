@@ -328,22 +328,32 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// before): Delft's base reached its 10th still above the tolerance and now stops by it at 12 or
 /// 13. Every run that reached 10 loadings without converging moves.
 ///
-/// Version 44 (S303): **what travellers expect of a shared-mobility service is set by name,
-/// fixed for the run** (`core-sim`'s `ServiceExpectations`: `taxi_wait_s` 600, `taxi_fail_share`
-/// 0, `dock_pickup_factor` 1, `dock_return_factor` 1, `dock_worst_case` 0; presets `default`,
-/// `optimistic`, `pessimistic`), and the services' day is played once, after the run has stopped,
-/// on its last loading; a taxi request with no vehicle within the longest wait ends there, with
-/// no walk on. Runs without a service do not move.
+/// Version 44 (S303): **what travellers assume about a shared-mobility service is set by name,
+/// fixed for the run** (`core-sim`'s `ServiceAssumptions`), and the services' day is played
+/// once, after the run has stopped, on its last loading; a taxi request no taxi can pick up in
+/// time is cancelled there, with no walk on. Runs without a service do not move.
 ///
-/// Version 45 (S303): **a taxi sets off after a hailing time** (`service_taxi` option `hail_s`,
-/// 120 s): a vehicle matched to a request at second `t` drives to the pickup from `t + hail_s`,
-/// so every pickup and drop-off is that much later, and a vehicle serves a request only if the
-/// hailing time and its drive fit within `max_wait_s`. **The docks' expectations are seconds**:
-/// `dock_pickup_extra_s` and `dock_return_extra_s` replace the two factors, `NaN` by default
-/// (the start-of-day counts, as factor 1 gave), a number that constant at every dock and bin
-/// (the preset `optimistic`: 0, as factor 0 gave). Every run with a taxi fleet moves; runs with
-/// docks alone do not; runs without a service do not.
-pub const DEFAULTS_VERSION: u32 = 45;
+/// Version 45 (S303): **a taxi sets off after a dispatch delay** (`service_taxi` option
+/// `dispatch_delay_s`, 120 s): a vehicle matched to a request at second `t` drives to the pickup
+/// from `t + dispatch_delay_s`, so every pickup and drop-off is that much later, and a vehicle is
+/// matched to a request only if the dispatch delay and its drive fit within `request_cancel_s`.
+/// **The docks' assumed extra walks are seconds** (`NaN` by default: from the docks'
+/// start-of-day bikes). Every run with a taxi fleet moves; runs with docks alone do not; runs
+/// without a service do not.
+///
+/// Version 46 (S303): **the services in taxi operations' words, the cancel limit no longer caps
+/// the assumed wait.** `ServiceAssumptions` holds `assumed_wait_s` (600 s),
+/// `assumed_no_taxi_share` (0), `assumed_extra_walk_at_pickup_s` and
+/// `assumed_extra_walk_at_return_s` (`NaN`); a taxi fleet's `request_cancel_s` (600 s),
+/// `dispatch_delay_s` (120 s) and `boarding_s` (60 s). The assumed wait is what the traveller
+/// believes, whatever the fleet's cancel limit; with an assumed chance `p` of no taxi above 0,
+/// a taxi's time in the choice is `(1 − p)` × its planned time plus `p` × (the cancel limit plus
+/// the time of the traveller's best other alternative), and its planned time (the assumed
+/// wait, boarding and the drive) is what the trip records. Runs with a taxi fleet and the
+/// shipped values do not move (the cap never bit at 600 s against 600 s); runs with an assumed
+/// wait above the cancel limit or a chance of no taxi above 0 move; runs without a service do
+/// not.
+pub const DEFAULTS_VERSION: u32 = 46;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///

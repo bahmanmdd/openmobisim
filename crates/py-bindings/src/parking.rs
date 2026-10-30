@@ -557,10 +557,10 @@ pub(crate) fn trip_results<'py>(
     d.set_item("link_at_end", maybe(&table.link_at_end).into_pyarray(py))?;
     d.set_item("vehicle_s", maybe(&table.vehicle_s).into_pyarray(py))?;
     d.set_item("access_egress_s", maybe(&table.access_egress_s).into_pyarray(py))?;
-    // A run with a service (S303): what its service day gave each trip.
-    if let Some((met, at)) = &table.service_met {
-        d.set_item("service_outcome", met.clone())?;
-        d.set_item("service_met_arrival_s", at.clone().into_pyarray(py))?;
+    // A run with a service (S303): what its service day actually gave each trip.
+    if let Some((outcome, at)) = &table.service_outcome {
+        d.set_item("service_outcome", outcome.clone())?;
+        d.set_item("service_arrival_s", at.clone().into_pyarray(py))?;
     }
     Ok(d)
 }

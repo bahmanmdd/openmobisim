@@ -16,28 +16,27 @@
 //!
 //! **Each service** (S303), for a run with one, under `mode` the service's name (`bike_share`
 //! and `taxi` unless the scenario named them otherwise), for the last iteration: what the
-//! **service day** gave the last loading's trips that chose the service (the day played once
-//! after the run had stopped, on its last loading's road times, the demand fixed; the trips'
-//! own rows stay as planned), counted in people (the travellers' weights): `service_trips`,
-//! `served`,
-//! `failed` (a taxi: no vehicle within the longest wait, the trip ends there; a shared bike: no
-//! bike at any dock tried, the traveller walked on), `truncated` (still waiting or under way at
-//! the window's end); `expected_door_to_door_s` (over every such trip, the mean seconds from its
-//! departure to its service leg's end its choice expected: the destination, or for a shared
-//! bike to transit the hub's dock), `met_door_to_door_s` (the same met, over the trips whose
-//! service leg ended), `mismatch_mean_s` (their mean of met less expected, positive when worse
-//! than expected) and `mismatch_abs_mean_s` (the mean of its absolute value); a taxi fleet's
-//! `wait_mean_s` (over the trips served). A docked service adds, over the trips that asked for a
-//! bike, `share_failed_attempt_no_bike` (found a dock empty and went on to another, at least
-//! once), `share_gave_up_no_bike` (found no bike at any dock tried and walked to the
-//! destination), `share_found_no_slot` (found a return dock full at least once), and over the
-//! trips that arrived `mean_extra_s` (the mean extra seconds met at the docks). A taxi fleet
-//! adds, over the trips that asked, `share_waited_longer_than_expected` (carried, after a wait
-//! more than a minute longer than expected), `share_still_waiting_at_window_end`; over the trips
-//! carried `mean_waited_minus_expected_s`; over the fleet `km_empty_share` (kilometres driven
-//! empty, to pickups and chargers, over all kilometres driven), `occupied_time_share`
-//! (vehicle-seconds with a passenger, boarding included, over all vehicle-seconds of the window)
-//! and `kwh_charged`. A run without a service has none of these rows.
+//! **service day** actually gave the last loading's trips that chose the service (the day played
+//! once after the run had stopped, on its last loading's road times, the demand fixed; the
+//! trips' own rows show the planned trip), counted in people (the travellers' weights), in this
+//! order. A **taxi fleet** (one request per person): `requests`; `rides` (picked up and dropped
+//! off), `cancelled` (no taxi could pick them up within the cancel limit: the trip ends there),
+//! `unfinished` (still waiting or riding at the window's end, or requesting after it); over the
+//! rides, `waiting_mean_s`, `waiting_median_s`, `waiting_p90_s` (the 90th percentile; the
+//! waiting time runs from the request to the pickup, the dispatch delay included);
+//! `assumed_wait_s` (the waiting time the travellers assumed when choosing); over the rides,
+//! `in_vehicle_mean_s` (pickup to drop-off, boarding included) and `ride_km_mean` (kilometres
+//! with the passenger); `empty_km_per_ride` (the fleet's kilometres without a passenger, to
+//! pickups, chargers and relocations, per ride), `utilisation` (the share of the fleet's time in
+//! the window with a passenger on board, boarding included), `rides_per_taxi`, `kwh_charged`.
+//! A **docked bike service**: `requests` (people who planned a shared bike), `rides` (got a bike
+//! and returned it), `no_bike` (found none at any dock tried and walked on), `unfinished`; over
+//! the rides, `extra_walk_at_pickup_mean_s` and `extra_walk_at_return_mean_s` (the extra seconds
+//! at the docks against the planned docks having a bike and a free slot);
+//! `assumed_extra_walk_at_pickup_s`, `assumed_extra_walk_at_return_s` (what the travellers
+//! assumed; `NaN` when from the docks' start-of-day bikes); `redirected_share` (the share of the
+//! rides sent on to another dock at either end). A mean over nobody is `NaN`. A run without a
+//! service has none of these rows.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -45,7 +44,6 @@ use std::sync::Arc;
 use arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray, UInt32Array};
 use arrow_schema::{DataType, Field, Schema};
 use openmobisim_core_demand::Mode;
-use openmobisim_core_sim::services::outcome::LegStatus;
 use openmobisim_core_sim::{RunResult, TripCompletionStats};
 
 use crate::WriteError;
@@ -261,100 +259,28 @@ fn last_iteration(result: &RunResult, single_iteration: u32) -> u32 {
 
 /// A run's docked service rows (see the [module docs](self)); none without one.
 fn service_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow> {
+    use openmobisim_core_sim::services::in_run::DockSummary;
     let Some(s) = &result.services else { return Vec::new() };
-    let name = || s.service.clone();
     let last = last_iteration(result, single_iteration);
-    let Some(day) = &s.last else {
-        return vec![(last, name(), "service_trips", 0.0)];
-    };
-    let mut rows: Vec<ServiceRow> =
-        day.summary.rows().into_iter().map(|(metric, v)| (last, name(), metric, v)).collect();
-    let (mut requested, mut went_on, mut gave_up, mut no_slot) = (0.0, 0.0, 0.0, 0.0);
-    for (l, o) in day.legs.iter().zip(&day.outcome.legs) {
-        if o.status == LegStatus::NotRequested {
-            continue;
-        }
-        let w = f64::from(l.leg.weight);
-        requested += w;
-        let failed = o.status == LegStatus::Failed;
-        if o.failed_for_bike > u32::from(failed) {
-            went_on += w;
-        }
-        if failed {
-            gave_up += w;
-        }
-        if o.failed_for_slot > 0 {
-            no_slot += w;
-        }
-    }
-    if requested > 0.0 {
-        rows.push((last, name(), "share_failed_attempt_no_bike", went_on / requested));
-        rows.push((last, name(), "share_gave_up_no_bike", gave_up / requested));
-        rows.push((last, name(), "share_found_no_slot", no_slot / requested));
-    }
-    if day.extra_mean_s.is_finite() {
-        rows.push((last, name(), "mean_extra_s", day.extra_mean_s));
-    }
-    rows
+    let summary = s.last.as_ref().map_or_else(DockSummary::idle, |d| d.summary);
+    summary
+        .rows(s.assumed_extra_walk_s)
+        .into_iter()
+        .map(|(metric, v)| (last, s.service.clone(), metric, v))
+        .collect()
 }
 
 /// A run's taxi rows (see the [module docs](self)); none without a taxi fleet.
 fn taxi_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow> {
+    use openmobisim_core_sim::services::in_run::TaxiSummary;
     let Some(s) = &result.taxis else { return Vec::new() };
-    let name = || s.service.clone();
     let last = last_iteration(result, single_iteration);
-    let Some(day) = &s.last else {
-        return vec![(last, name(), "service_trips", 0.0)];
-    };
-    let mut rows: Vec<ServiceRow> =
-        day.summary.rows().into_iter().map(|(metric, v)| (last, name(), metric, v)).collect();
-    let (mut asked, mut longer, mut waiting) = (0.0, 0.0, 0.0);
-    let (mut carried, mut wait_diff) = (0.0, 0.0);
-    for (l, o) in day.legs.iter().zip(&day.outcome) {
-        if o.status == LegStatus::NotRequested {
-            continue;
-        }
-        let w = f64::from(l.leg.weight);
-        asked += w;
-        match o.status {
-            LegStatus::Failed => {}
-            LegStatus::Served => {
-                carried += w;
-                let d = o.waited_s - l.expected_wait_s;
-                wait_diff += w * d;
-                if d > openmobisim_core_sim::services::taxi_tables::WAIT_TOLERANCE_S {
-                    longer += w;
-                }
-            }
-            _ if o.picked_s.is_nan() => waiting += w,
-            _ => {}
-        }
-    }
-    if asked > 0.0 {
-        rows.push((last, name(), "share_waited_longer_than_expected", longer / asked));
-        rows.push((last, name(), "share_still_waiting_at_window_end", waiting / asked));
-    }
-    if carried > 0.0 {
-        rows.push((last, name(), "mean_waited_minus_expected_s", wait_diff / carried));
-    }
-    let vehicles = &day.day.vehicles;
-    let empty: f64 = vehicles.iter().map(|v| v.km_empty).sum();
-    let occupied: f64 = vehicles.iter().map(|v| v.km_occupied).sum();
-    if empty + occupied > 0.0 {
-        rows.push((last, name(), "km_empty_share", empty / (empty + occupied)));
-    }
-    let vb = &day.day.vehicle_bins;
-    let all: f64 = vb.state_s.iter().map(|c| c.iter().sum::<f64>()).sum();
-    let busy: f64 = vb
-        .state_s
-        .iter()
-        .map(|c| c[openmobisim_core_sim::services::engine::VehicleState::Occupied as usize])
-        .sum();
-    if all > 0.0 {
-        rows.push((last, name(), "occupied_time_share", busy / all));
-    }
-    rows.push((last, name(), "kwh_charged", vehicles.iter().map(|v| v.kwh_charged).sum()));
-    rows
+    let summary = s.last.as_ref().map_or_else(TaxiSummary::idle, |d| d.summary);
+    summary
+        .rows(s.assumed.wait_s)
+        .into_iter()
+        .map(|(metric, v)| (last, s.service.clone(), metric, v))
+        .collect()
 }
 
 /// Every row of `kpis.parquet`: the run's, then its services'.

@@ -8,9 +8,10 @@ earlier run (``road_times_read``), and returns what became of each trip and of e
 **A frozen day, an approximation:** the travellers' choices and the traffic are held fixed.
 Each trip's service is given; a shared-bike trip takes the dock nearest its origin on foot and
 returns at the dock nearest its destination on foot, whatever the docks hold; a taxi drives on
-the given road times and adds no traffic, and a request with no vehicle within the fleet's
-longest wait ends there. What a full run adds — travellers choosing among modes and docks — is
-not here; a run's own service day is played the same way, once the run has stopped. The result
+the given road times and adds no traffic, and a request no taxi can pick up within the fleet's
+cancel limit is cancelled and ends there. What a full run adds — travellers choosing among modes
+and docks — is not here; a run's own service day is played the same way, once the run has
+stopped. The result
 says so (``FleetDay.fidelity``).
 
 **An operator** (``policy=``, see ``openmobisim.operator``) may steer the services during the
@@ -95,14 +96,17 @@ def service_taxi(
         chargers: Its chargers (``charger_read_table``), or ``None``: its vehicles never charge.
         name: Its name, unique among a day's services.
         options: Its options by name (``battery_kwh``, ``kwh_per_km``, ``soc_start``,
-            ``reserve_soc``, ``charge_below``, ``charge_to``, ``charger_kw``, ``max_wait_s``,
-            ``board_s``, ``hail_s``, ``snap_m``, ``charger_reach_s``, and ``log_events``: 1 by
-            default, 0 to keep no event log in a very large run, ``taxi_events.parquet`` then
-            empty); a name not among them is refused with the list. ``hail_s`` (120 s, an
-            assumption) is the hailing time: a vehicle matched to a request sets off to the
-            pickup that many seconds later (the dispatch and the driver's acceptance), so the
-            wait counts it, and a vehicle serves a request only if the hailing time and its
-            drive fit within ``max_wait_s``; a ``hail_s`` at or above ``max_wait_s`` is refused.
+            ``reserve_soc``, ``charge_below``, ``charge_to``, ``charger_kw``,
+            ``request_cancel_s``, ``boarding_s``, ``dispatch_delay_s``, ``snap_m``,
+            ``charger_reach_s``, and ``log_events``: 1 by default, 0 to keep no event log in a
+            very large run, ``taxi_events.parquet`` then empty); a name not among them is
+            refused with the list. ``request_cancel_s`` (600 s, an assumption): a request is
+            cancelled if no taxi can pick it up within this time. ``dispatch_delay_s`` (120 s, an
+            assumption): the time from a request being matched to the taxi setting off (the
+            app's dispatch and the driver's acceptance), so the waiting time counts it, and a
+            taxi is matched to a request only if the dispatch delay and its drive fit within
+            ``request_cancel_s``; a ``dispatch_delay_s`` at or above ``request_cancel_s`` is
+            refused. ``boarding_s`` (60 s, an assumption): the time to get in at the pickup.
     """
     return Service("taxi", name, vehicles=vehicles, chargers=chargers, options=dict(options or {}))
 
@@ -168,8 +172,8 @@ class FleetDay:
     """What one fleet day did (``fleet_day``)."""
 
     #: ``"frozen_day"``: the travellers' choices and the traffic were held fixed. It says nothing
-    #: of what the travellers expected of the services: a frozen day holds the legs as chosen,
-    #: not the expectations they were chosen on.
+    #: of what the travellers assumed about the services: a frozen day holds the legs as chosen,
+    #: not the assumptions they were chosen on.
     fidelity: str
     #: The services' names, in the order given.
     services: list[str]
@@ -195,9 +199,15 @@ class FleetDay:
     def trip_results(self) -> Columns:
         """What became of each trip given, in the order given.
 
-        Columns: ``trip_id, service, status, requested_s, picked_s, arrived_s, dock_from,
-        dock_to, extra_walk_s, redirections, overflow`` (statuses: ``served``, ``failed``,
-        ``truncated``, ``not_requested``, ``not_planned``).
+        Columns: ``trip_id``, ``service``, ``outcome`` (``completed``; ``cancelled``: no taxi
+        within the cancel limit, or no bike at any dock tried; ``unfinished``: still waiting or
+        riding when the window ended; ``not_requested``: asking after the window;
+        ``not_planned``: no leg could be planned), ``requested_s``, ``pickup_s`` (a taxi at the
+        pickup; the bike taken), ``dropoff_s`` (a taxi's drop-off at the destination; the bike
+        returned), ``arrived_s`` (at the destination, a shared bike's walk on included),
+        ``waiting_s`` (a taxi's, from the request to the pickup, the dispatch delay included; 0
+        for a bike), ``dock_from``, ``dock_to``, ``vehicle_id``, ``extra_walk_s``,
+        ``redirections``, ``overflow``.
         """
         return self.trips
 
@@ -217,10 +227,10 @@ class FleetDay:
         return self.decision_rows
 
     def __repr__(self) -> str:
-        """The trips, how many were served, and the day's seconds."""
-        served = sum(1 for s in self.trips.get("status", []) if s == "served")
+        """The trips, how many were completed, and the day's seconds."""
+        completed = sum(1 for s in self.trips.get("outcome", []) if s == "completed")
         return (
-            f"FleetDay({self.fidelity}: {self.trips.row_count} trips, {served} served; "
+            f"FleetDay({self.fidelity}: {self.trips.row_count} trips, {completed} completed; "
             f"{self.seconds.get('day_s', float('nan')):.2f} s)"
         )
 
@@ -362,9 +372,10 @@ _DEFAULT_WINDOW: tuple[object, object] = ("07:30", "09:30")
 #: uncalibrated (``zone_grid_m`` of ``fleet_day`` and ``fleet_environment``).
 ZONE_GRID_M: float = 1000.0
 
-#: The standard reward's weights (``fleet_environment``): per failed leg, per minute waited, per
-#: extra minute walked, per van kilometre. Uncalibrated; named so a study sets its own.
-REWARD_WEIGHTS: dict[str, float] = {"w_fail": 1.0, "w_wait": 0.1, "w_walk": 0.1, "w_km": 0.1}
+#: The standard reward's weights (``fleet_environment``): per person whose request was cancelled,
+#: per minute waited, per extra minute walked, per van kilometre. Uncalibrated; named so a study
+#: sets its own.
+REWARD_WEIGHTS: dict[str, float] = {"w_cancelled": 1.0, "w_wait": 0.1, "w_walk": 0.1, "w_km": 0.1}
 
 
 def fleet_environment(
@@ -393,14 +404,13 @@ def fleet_environment(
     ``fork()`` copies the day at its clock, to simulate ahead without touching it. A view cannot
     be read after the next step.
 
-    The reward of a step is minus ``w_fail`` × the people of the legs that failed (a taxi
-    request with no vehicle within the longest wait, which ends there; a traveller who found no
-    bike at any dock tried), ``w_wait`` × the minutes they waited, ``w_walk`` × the extra minutes
-    they walked (between docks: shared bikes only), and ``w_km`` × the
-    kilometres the policy's decisions drove (vans moving bikes, taxis relocating or driving to
-    charge), each counted once, when its leg ends (``REWARD_WEIGHTS``,
-    uncalibrated). ``info["refused"]`` holds, per decision given at the step, why the engine
-    refused it (``None``: accepted).
+    The reward of a step is minus ``w_cancelled`` × the people whose request was cancelled (a taxi
+    request no taxi could pick up within the cancel limit, which ends there; a traveller who found
+    no bike at any dock tried), ``w_wait`` × the minutes they waited, ``w_walk`` × the extra minutes
+    they walked (between docks: shared bikes only), and ``w_km`` × the kilometres the policy's
+    decisions drove (vans moving bikes, taxis relocating or driving to charge), each counted once,
+    when its leg ends (``REWARD_WEIGHTS``, uncalibrated). ``info["refused"]`` holds, per decision
+    given at the step, why the engine refused it (``None``: accepted).
 
     With ``n`` above 1 the result is a ``FleetVectorEnvironment``: ``n`` days stepped together,
     in parallel, ``reset(seeds)`` taking one seed per day and ``step`` one list of decisions per
@@ -457,7 +467,7 @@ def fleet_environment(
         roads,
         frozen_span or span,
         float(step_s),
-        (weights["w_fail"], weights["w_wait"], weights["w_walk"], weights["w_km"]),
+        (weights["w_cancelled"], weights["w_wait"], weights["w_walk"], weights["w_km"]),
         float(legs_keep),
         float(departure_jitter_s),
         float(zone_grid_m),
@@ -518,7 +528,7 @@ class _Encoding:
         """A view as arrays of a fixed shape, for one service.
 
         A docked service gives ``{"docks": float32 [docks, 5], "time": float32 [3]}``: per dock
-        (in ``layout()``'s order) ``bikes, slots, pickups, returns, failed``, the last three
+        (in ``layout()``'s order) ``bikes, slots, pickups, returns, no_bike``, the last three
         counted since the previous step (people); the time is ``t_frac`` (the share of the
         window gone), and the sine and cosine of the hour of the day (2π · t / 86 400 s). A taxi
         fleet gives ``{"vehicles": float32 [vehicles, 3], "time": ...}``: per vehicle its state's
@@ -607,7 +617,7 @@ class _Encoding:
         return dict(self._inner.plan())
 
 
-_DOCK_COLUMNS = ("bikes", "slots", "pickups", "returns", "failed")
+_DOCK_COLUMNS = ("bikes", "slots", "pickups", "returns", "no_bike")
 
 
 class FleetEnvironment(_Encoding):
@@ -711,7 +721,7 @@ def fleet_day(
     run's service day as the run played them (its last loading's service trips: the docks the
     travellers chose, the second each asks for a bike or a taxi, its ride and walk), on the road
     times its taxis drove on, over its window. With no policy, the day replays the run's
-    service day: every leg's status, seconds, docks and vehicle, and the docks' bins, bikes and
+    service day: every leg's outcome, seconds, docks and vehicle, and the docks' bins, bikes and
     taxis, are the run's own. The services must be the run's (the same names, docks, bikes and
     options) and the network too: either differing is refused, saying what differs. Each trip of the
     result is a leg: its ``trip_id`` the trip's index in the run (``Run.trip_results()``'s

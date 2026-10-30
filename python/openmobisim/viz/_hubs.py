@@ -7,7 +7,7 @@ draws a docked bike service's day: the bikes docked and ridden, the docks withou
 travellers who found a dock empty, bin by bin.
 
 Both read the run's last loading (``Run.bike_share_docks()``, ``Run.bike_share_dock_places()``,
-``Run.bike_share_trips()``), the day the travellers met after the run settled.
+``Run.bike_share_trips()``), the day the travellers actually had after the run settled.
 """
 
 from __future__ import annotations
@@ -285,15 +285,15 @@ def chart_service(
     without a bike**: the mean number of docks empty over the bin (their seconds empty over the
     bin's length, summed), beside the docks: a fleet with many bikes docked can still have its
     busy docks empty. **Travellers who found a dock empty** (people): those who went on to
-    another dock, and those who gave up and walked to their destination.
+    another dock, and those who found no bike at any dock tried and walked to their
+    destination.
 
     **A taxi fleet** (``service="taxi"``, its name), bin by bin of ``Run.taxi_vehicles()`` and
     ``Run.taxi_trips()``: **vehicles** by state (the mean over the bin: carrying a passenger,
     driving empty to a pickup, idle, at or driving to a charger); **travellers waiting** for a
-    taxi (the mean over the bin, from each request until its vehicle reached the pickup, it
-    failed, or the window ended); **travellers who met trouble**, by the bin they asked in: no
-    taxi within the longest wait (they walked), and carried after a wait more than a minute
-    longer than expected.
+    taxi (the mean over the bin, from each request until the pickup, the cancellation, or the
+    window's end); **requests cancelled** (no taxi could pick them up within the fleet's cancel
+    limit), by the bin they were made in.
 
     Args:
         run: A ``Run`` of a scenario with a docked bike service or a taxi fleet.
@@ -402,7 +402,7 @@ def chart_service(
         (c_docked, "bikes docked (mean)"),
         (c_empty, "docks with no bike (mean)"),
         (c_went_on, "found a dock empty, went on"),
-        (c_gave_up, "found a dock empty, gave up"),
+        (c_gave_up, "found no bike, walked"),
     ):
         page.fig.add_artist(
             Rectangle(
@@ -416,17 +416,18 @@ def chart_service(
     if note is None and trips is not None:
         mine_trips = np.array([s == service for s in trips["service"]], dtype=bool)
         w = np.asarray(trips["travellers"], dtype=float)[mine_trips]
-        result = np.array(trips["result"], dtype=object)[mine_trips]
+        outcome = np.array(trips["outcome"], dtype=object)[mine_trips]
+        tried = np.asarray(trips["docks_tried_for_bike"], dtype=float)[mine_trips]
         total = w.sum()
 
-        def share(r: str) -> str:
-            v = float(w[result == r].sum())
+        def share(which: np.ndarray) -> str:
+            v = float(w[which].sum())
             return f"{v:,.0f} ({100 * v / total:.0f}%)" if total > 0 else "0"
 
         note = (
-            f"{total:,.0f} travellers chose a shared bike · {share('bike_at_another_dock')} took "
-            f"one at another dock · {share('no_bike_walked_to_destination')} found none and "
-            "walked"
+            f"{total:,.0f} travellers chose a shared bike · "
+            f"{share((outcome == 'completed') & (tried > 1))} took one at another dock · "
+            f"{share(outcome == 'cancelled')} found none and walked"
         )
     draw_furniture(
         page,
@@ -483,28 +484,42 @@ def _chart_taxi(
         + per_bin("seconds_queued_at_charger")
     )
     fleet = len(set(np.asarray(vb["vehicle"], dtype=object)[keep]))
-    # Travellers waiting (time-weighted over each bin) and in trouble (by the bin they asked).
+    # Travellers waiting (time-weighted over each bin) and requests cancelled (by the bin they
+    # were made in).
     waiting = np.zeros(len(times))
-    no_taxi = np.zeros(len(times))
-    longer = np.zeros(len(times))
+    cancelled = np.zeros(len(times))
     trips = run.taxi_trips()
     total = 0.0
     if trips is not None:
         mine = np.array([s == service for s in trips["service"]], dtype=bool)
         w = np.asarray(trips["travellers"], dtype=float)[mine]
         asked = np.asarray(trips["requested_s"], dtype=float)[mine]
-        waited = np.asarray(trips["waited_s"], dtype=float)[mine]
-        result = np.array(trips["result"], dtype=object)[mine]
+        outcome = np.array(trips["outcome"], dtype=object)[mine]
+        # Each request waits until its pickup, its cancellation (the event's second), or the
+        # window's end.
+        until = np.asarray(trips["pickup_s"], dtype=float)[mine].copy()
+        events = run.taxi_events()
+        cancel_s: dict[tuple[str, int], float] = {}
+        if events is not None:
+            for e, t, who, seq in zip(
+                events["event"],
+                events["time_s"],
+                events["traveller_id"],
+                events["trip_seq"],
+                strict=True,
+            ):
+                if e == "request_cancelled":
+                    cancel_s[(str(who), int(seq))] = float(t)
+        ids = np.array(trips["traveller_id"], dtype=object)[mine]
+        seqs = np.asarray(trips["trip_seq"])[mine]
+        for i in np.flatnonzero(np.isnan(until)):
+            until[i] = cancel_s.get((str(ids[i]), int(seqs[i])), float(ends.max()))
         total = float(w.sum())
         for b, (lo, hi) in enumerate(zip(times, ends, strict=True)):
-            overlap = np.clip(np.minimum(asked + waited, hi) - np.maximum(asked, lo), 0.0, None)
+            overlap = np.clip(np.minimum(until, hi) - np.maximum(asked, lo), 0.0, None)
             waiting[b] = float((w * overlap).sum()) / max(hi - lo, 1.0)
             inside = (asked >= lo) & (asked < hi)
-            walked = (result == "no_taxi_walked_to_destination") | (
-                result == "no_taxi_still_walking_at_window_end"
-            )
-            no_taxi[b] = float(w[inside & walked].sum())
-            longer[b] = float(w[inside & (result == "waited_longer_than_expected")].sum())
+            cancelled[b] = float(w[inside & (outcome == "cancelled")].sum())
 
     x, width = times / 3600.0, length / 3600.0
     bin_s = float(np.max(ends - times))
@@ -517,7 +532,7 @@ def _chart_taxi(
     low = page.fig.add_axes((0.07, 0.12, 0.74, 0.15), facecolor=th.surface, sharex=top)
     c_occupied, c_pickup = th.modes[0], th.ramp_delay[1]
     c_idle, c_charging = th.ramp_volume[1], th.ink2
-    c_waiting, c_no_taxi, c_longer = th.ink2, th.ramp_delay[2], th.ramp_delay[1]
+    c_waiting, c_cancelled = th.ink2, th.ramp_delay[2]
     bar = {"align": "edge", "linewidth": 0}
     bottom = np.zeros(len(times))
     for values, colour in (
@@ -529,13 +544,12 @@ def _chart_taxi(
         top.bar(x, values, width=width * 0.92, bottom=bottom, color=colour, **bar)
         bottom = bottom + values
     middle.bar(x, waiting, width=width * 0.92, color=c_waiting, **bar)
-    low.bar(x, no_taxi, width=width * 0.92, color=c_no_taxi, **bar)
-    low.bar(x, longer, width=width * 0.92, bottom=no_taxi, color=c_longer, **bar)
+    low.bar(x, cancelled, width=width * 0.92, color=c_cancelled, **bar)
     first, last = float(x.min()), float((ends.max()) / 3600.0)
     top.set_xlim(first, last)
     top.set_ylim(0, max(fleet, 1) * 1.05)
     middle.set_ylim(0, max(float(waiting.max()), 1.0) * 1.15)
-    low.set_ylim(0, max(float((no_taxi + longer).max()), 1.0) * 1.15)
+    low.set_ylim(0, max(float(cancelled.max()), 1.0) * 1.15)
     for ax in (top, middle, low):
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
@@ -553,7 +567,7 @@ def _chart_taxi(
     low.set_xlabel(f"time of day ({minutes}, the run's window)", color=th.ink2, fontsize=10 * k)
     top.set_ylabel("vehicles", color=th.ink2, fontsize=10 * k)
     middle.set_ylabel("travellers\nwaiting", color=th.ink2, fontsize=10 * k)
-    low.set_ylabel("travellers", color=th.ink2, fontsize=10 * k)
+    low.set_ylabel("requests", color=th.ink2, fontsize=10 * k)
 
     page.fig.text(0.835, 0.83, "per bin", color=th.ink2, fontsize=10 * k)
     y = 0.80
@@ -563,8 +577,7 @@ def _chart_taxi(
         (c_pickup, "driving to a pickup"),
         (c_occupied, "with a passenger"),
         (c_waiting, "travellers waiting"),
-        (c_longer, "waited > expected + 1 min"),
-        (c_no_taxi, "no taxi: walked"),
+        (c_cancelled, "requests cancelled"),
     ):
         page.fig.add_artist(
             Rectangle(
@@ -576,8 +589,8 @@ def _chart_taxi(
 
     if note is None and total > 0:
         note = (
-            f"{total:,.0f} travellers chose a taxi · {no_taxi.sum():,.0f} got none and walked · "
-            f"{longer.sum():,.0f} waited more than a minute longer than expected"
+            f"{total:,.0f} taxi requests · {cancelled.sum():,.0f} cancelled (no taxi within the "
+            "cancel limit)"
         )
     draw_furniture(
         page,

@@ -114,12 +114,12 @@ impl ShareFreeze {
         }
     }
 
-    /// The day's engine legs, in the order the run played them, each with what its choice
-    /// expected at the docks (`NaN` for a taxi leg).
+    /// The day's engine legs, in the order the run played them, each with the extra walk its
+    /// choice assumed at the docks (`NaN` for a taxi leg).
     fn legs(&self) -> Vec<(Leg, f64)> {
         self.day
             .iter()
-            .flat_map(|d| d.legs.iter().map(|l| (l.leg, l.expected_dock_s)))
+            .flat_map(|d| d.legs.iter().map(|l| (l.leg, l.assumed_extra_walk_s)))
             .chain(self.taxi.iter().flat_map(|d| d.legs.iter().map(|l| (l.leg, f64::NAN))))
             .collect()
     }
@@ -129,7 +129,7 @@ impl ShareFreeze {
         self.legs()
             .into_iter()
             .zip(&self.who)
-            .map(|((leg, expected_dock_s), (traveller, seq))| {
+            .map(|((leg, assumed_extra_walk_s), (traveller, seq))| {
                 let setup = &self.setups[usize::from(leg.service)];
                 let dock = |d: u32| match setup.parts() {
                     ServiceParts::BikeDocked(docks, _) => docks.external[d as usize].clone(),
@@ -148,7 +148,7 @@ impl ShareFreeze {
                     dock_to: dock(leg.return_dock),
                     ride_s: leg.ride_s,
                     egress_s: leg.egress_s,
-                    expected_dock_s,
+                    assumed_extra_walk_s,
                 }
             })
             .collect()

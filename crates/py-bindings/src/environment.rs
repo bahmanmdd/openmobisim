@@ -26,11 +26,11 @@ use crate::network::PyNetwork;
 use crate::policy::{PyPolicyView, decision_from_py, view_to_py};
 use crate::services::{Frozen, RoadTuple, ServiceTuple, TripTuple, frozen, outcome_dict};
 
-/// The standard reward's weights: per failed leg (by the people it stands for), per minute
+/// The standard reward's weights: per cancelled leg (by the people it stands for), per minute
 /// waited, per extra minute walked, per van kilometre.
 #[derive(Clone, Copy, Debug)]
 struct Weights {
-    fail: f64,
+    cancelled: f64,
     wait: f64,
     walk: f64,
     km: f64,
@@ -91,7 +91,7 @@ impl Setup {
     ) -> PyResult<Bound<'py, PyDict>> {
         let info = PyDict::new(py);
         info.set_item("t", t)?;
-        info.set_item("failed", counts[0])?;
+        info.set_item("cancelled", counts[0])?;
         info.set_item("waited_min", counts[1])?;
         info.set_item("extra_walk_min", counts[2])?;
         info.set_item("van_km", counts[3])?;
@@ -146,15 +146,15 @@ impl Episode {
     /// The reward of what ended since the last count, and the counts it is made of.
     fn reward(&mut self, setup: &Setup) -> (f64, [f64; 4]) {
         let legs = &setup.frozen.legs;
-        let (mut failed, mut wait_min, mut walk_min, mut km) = (0.0, 0.0, 0.0, 0.0);
+        let (mut cancelled, mut wait_min, mut walk_min, mut km) = (0.0, 0.0, 0.0, 0.0);
         for (i, o) in self.engine.state().legs.iter().enumerate() {
-            if self.counted[i] || !matches!(o.status, LegStatus::Served | LegStatus::Failed) {
+            if self.counted[i] || !matches!(o.status, LegStatus::Completed | LegStatus::Cancelled) {
                 continue;
             }
             self.counted[i] = true;
             let w = f64::from(legs[i].weight.max(1));
-            if o.status == LegStatus::Failed {
-                failed += w;
+            if o.status == LegStatus::Cancelled {
+                cancelled += w;
             }
             if o.waited_s.is_finite() {
                 wait_min += w * o.waited_s / 60.0;
@@ -169,8 +169,8 @@ impl Episode {
         }
         self.records_seen = records.len();
         let w = setup.weights;
-        let reward = -(w.fail * failed + w.wait * wait_min + w.walk * walk_min + w.km * km);
-        (reward, [failed, wait_min, walk_min, km])
+        let reward = -(w.cancelled * cancelled + w.wait * wait_min + w.walk * walk_min + w.km * km);
+        (reward, [cancelled, wait_min, walk_min, km])
     }
 
     /// Apply `decisions` at the clock and run to the next step.
@@ -479,7 +479,12 @@ pub fn fleet_environment(
             frozen: Arc::new(f),
             window,
             step_s,
-            weights: Weights { fail: weights.0, wait: weights.1, walk: weights.2, km: weights.3 },
+            weights: Weights {
+                cancelled: weights.0,
+                wait: weights.1,
+                walk: weights.2,
+                km: weights.3,
+            },
             keep,
             jitter_s,
         }),

@@ -227,11 +227,16 @@ fn a_shared_bike_to_the_stop_is_chosen_over_walking_to_it() {
         .find(|e| e.event_type == openmobisim_core_sim::EventType::TripCompleted)
         .map(|e| e.second.get());
     assert_eq!(arrival, Some(board + RIDE_S), "at the stop at {at_stop}");
-    // Its expected arrival, as the choice saw it, is the realised one: the docks had bikes and
-    // slots, and the expectation is the start-of-day counts'. The service day met it.
+    // Its planned arrival, as the choice saw it, is the realised one: the docks had bikes and
+    // slots, and the assumed extra walk is the start-of-day bikes' (none). The service day
+    // gave the same: no extra walk at either dock.
     assert_eq!(it.expected_s[0], f64::from(board + RIDE_S - 100));
-    assert_eq!(day.summary.mismatch_abs_mean_s, 0.0);
-    assert_eq!(day.met[0].0, openmobisim_core_sim::services::in_run::Met::Served);
+    assert_eq!(day.summary.extra_walk_at_pickup_mean_s, 0.0);
+    assert_eq!(day.summary.extra_walk_at_return_mean_s, 0.0);
+    assert_eq!(
+        day.outcomes[0].0,
+        openmobisim_core_sim::services::in_run::ServiceOutcome::Completed
+    );
     // Transit alone, for the comparison: later.
     let alone = run_on(&t, rows(), None, &[Mode::Walk, Mode::Transit], Arc::clone(&det), None);
     let walked = alone
