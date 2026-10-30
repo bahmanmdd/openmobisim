@@ -325,7 +325,7 @@ pub struct Alternative {
     pub assumed_wait_s: f64,
     /// A taxi's seconds of waiting added in the choice for an assumed chance `p` of no taxi:
     /// the fleet's cancel limit × `p / (1 − p)`, set once the set is planned
-    /// ([`finalise_taxi`]); 0 for any other alternative, or with no chance of no taxi.
+    /// (`finalise_taxi`); 0 for any other alternative, or with no chance of no taxi.
     pub cancel_penalty_s: f64,
 }
 
