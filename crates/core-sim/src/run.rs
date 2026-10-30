@@ -1851,6 +1851,17 @@ impl Run {
                 TaxiCosts::initial(s, &network, (Arc::new(node_zone), n), (start_s, window_s));
             (Arc::new(estimate), turns.clone())
         });
+        if let (true, Some((estimate, _)), Some(itin), Some(service), Some(modes)) = (
+            crate::services::costs::experiment::capacity_start(),
+            self.taxi_setup.as_mut(),
+            itineraries.as_ref(),
+            taxi_service,
+            mode_choice.as_deref(),
+        ) {
+            let floor =
+                capacity_fail(&network, &trips, &travellers, itin, service, modes, estimate);
+            *estimate = Arc::new(TaxiCosts::clone(estimate).with_fail_floor(&floor));
+        }
         let mut taxi_costs: Option<TaxiCosts> =
             self.taxi_setup.as_ref().map(|(e, _)| TaxiCosts::clone(e));
         let mut taxis_run = of_kind(ServiceKind::Taxi).map(TaxisRun::of);
@@ -2189,6 +2200,9 @@ impl Run {
                 taxis.bias_s.push(day.map_or(f64::NAN, |d| d.bias_s));
                 taxis.wait_mean_s.push(day.map_or(f64::NAN, |d| d.wait_mean_s));
                 taxis.no_taxi_share.push(day.map_or(f64::NAN, |d| d.no_taxi_share));
+                taxis
+                    .expected_no_taxi_share
+                    .push(day.map_or(f64::NAN, |d| d.expected_no_taxi_share));
                 taxis.legs_people.push(
                     day.map_or(0.0, |d| d.legs.iter().map(|l| f64::from(l.leg.weight)).sum()),
                 );
@@ -2246,14 +2260,17 @@ impl Run {
                         av.absorb(real);
                     }
                     // The docks' costs this loading realised (S302), averaged in.
-                    if let (Some(expected), Some(day)) = (dock_costs.as_mut(), &loaded.share) {
+                    let absorb = iteration > 0 || !crate::services::costs::experiment::skip_first();
+                    if let (Some(expected), Some(day), true) =
+                        (dock_costs.as_mut(), &loaded.share, absorb)
+                    {
                         expected.absorb(&day.realised, dock_seen);
                         dock_seen += 1;
                     }
                     // The taxi fleet's (S302): what this loading's requests met, the expectation
                     // kept where none asked; the next loading's requests are measured against it.
-                    if let (Some(expected), Some(day), Some((base, _))) =
-                        (taxi_costs.as_mut(), &loaded.taxi, self.taxi_setup.as_mut())
+                    if let (Some(expected), Some(day), Some((base, _)), true) =
+                        (taxi_costs.as_mut(), &loaded.taxi, self.taxi_setup.as_mut(), absorb)
                     {
                         expected.absorb(&day.realised);
                         *base = Arc::new(expected.clone());
@@ -4320,6 +4337,60 @@ impl RunResult {
     pub fn modes_listed(&self) -> Vec<Mode> {
         Mode::listed(self.services.is_some(), self.taxis.is_some())
     }
+}
+
+/// The experiment's capacity-aware start of a taxi fleet's failure share, per bin of
+/// `estimate` (see [`crate::services::costs::experiment`]).
+fn capacity_fail(
+    road: &RoadNetwork,
+    trips: &Trips,
+    travellers: &Travellers,
+    itin: &Itineraries,
+    service: &ServiceSetup,
+    modes: &[Mode],
+    estimate: &TaxiCosts,
+) -> Vec<f64> {
+    let crate::services::ServiceParts::Taxi(fleet, d) = service.parts() else {
+        return Vec::new();
+    };
+    let (bin_s, start_s, bins) = estimate.bins();
+    let mut demand = vec![0.0; bins];
+    let (mut metres, mut people) = (0.0, 0.0);
+    for i in 0..trips.len() {
+        let trip = TripId::new(i);
+        let Some(p) = itin.position(trip) else { continue };
+        if !itin.chooses(p) {
+            continue;
+        }
+        let w = f64::from(travellers.weight(trips.traveller(trip)));
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin")]
+        let b = (((f64::from(trips.departure(trip).get()) - start_s).max(0.0) / bin_s) as usize)
+            .min(bins - 1);
+        demand[b] += w;
+        metres += w * openmobisim_core_graph::geometry::ground_distance_metres(
+            trips.origin(trip),
+            trips.destination(trip),
+        );
+        people += w;
+    }
+    let (mut length, mut time) = (0.0, 0.0);
+    for l in 0..road.link_count() {
+        let link = LinkId::new(l);
+        if road.link_class(link).carries_motor_traffic() {
+            length += road.link_length(link).get();
+            time += road.free_flow_time(link).get();
+        }
+    }
+    let speed = if time > 0.0 { length / time } else { 10.0 };
+    let mean_m = if people > 0.0 { metres / people } else { 0.0 };
+    #[allow(clippy::cast_precision_loss, reason = "a count of vehicles")]
+    let rides = fleet.vehicle_ids.len() as f64 * bin_s / (d.board_s + 2.0 * mean_m / speed);
+    #[allow(clippy::cast_precision_loss, reason = "a count of modes")]
+    let split = modes.len().max(1) as f64;
+    demand
+        .iter()
+        .map(|&n| if n > 0.0 { (1.0 - rides / (n / split)).max(0.0) } else { 0.0 })
+        .collect()
 }
 
 /// A run's taxi fleet as the choice sees it (S302): `None` without one.

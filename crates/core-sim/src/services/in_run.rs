@@ -348,6 +348,8 @@ pub struct TaxiRunDay {
     pub wait_mean_s: f64,
     /// The share of the legs that asked whose request failed, by people; `NaN` with none.
     pub no_taxi_share: f64,
+    /// The failure share those legs' choices expected, their mean by people; `NaN` with none.
+    pub expected_no_taxi_share: f64,
     /// The engine's wall-clock seconds for the whole day (the shared bikes' included when both
     /// services run).
     pub engine_s: f64,
@@ -370,6 +372,8 @@ pub struct TaxisRun {
     pub wait_mean_s: Vec<f64>,
     /// Per loading, its [`TaxiRunDay::no_taxi_share`].
     pub no_taxi_share: Vec<f64>,
+    /// Per loading, its [`TaxiRunDay::expected_no_taxi_share`].
+    pub expected_no_taxi_share: Vec<f64>,
     /// The engine's wall-clock seconds over the run (shared with the docked service's).
     pub engine_s: f64,
     /// The last loading's day: `None` if no trip took a taxi in it.
@@ -395,6 +399,7 @@ impl TaxisRun {
             legs_people: Vec::new(),
             wait_mean_s: Vec::new(),
             no_taxi_share: Vec::new(),
+            expected_no_taxi_share: Vec::new(),
             engine_s: 0.0,
             last: None,
             expected: None,
@@ -590,6 +595,7 @@ fn taxi_run_day(
     let (mismatch_s, bias_s) =
         if people > 0.0 { (sum / people, signed / people) } else { (f64::NAN, f64::NAN) };
     let (mut asked, mut failed, mut carried, mut waited) = (0.0, 0.0, 0.0, 0.0);
+    let mut expected_failed = 0.0;
     for (l, o) in legs.iter().zip(&outcome) {
         let w = f64::from(l.leg.weight);
         match o.status {
@@ -602,9 +608,11 @@ fn taxi_run_day(
             _ => {}
         }
         asked += w;
+        expected_failed += w * l.expected_fail;
     }
     let wait_mean_s = if carried > 0.0 { waited / carried } else { f64::NAN };
     let no_taxi_share = if asked > 0.0 { failed / asked } else { f64::NAN };
+    let expected_no_taxi_share = if asked > 0.0 { expected_failed / asked } else { f64::NAN };
     TaxiRunDay {
         legs,
         offset,
@@ -616,6 +624,7 @@ fn taxi_run_day(
         bias_s,
         wait_mean_s,
         no_taxi_share,
+        expected_no_taxi_share,
         engine_s,
     }
 }

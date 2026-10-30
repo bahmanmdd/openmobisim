@@ -142,7 +142,7 @@ impl DockCosts {
     /// Average in a later loading's realised costs: the method of successive averages over
     /// `seen + 1` loadings.
     pub fn absorb(&mut self, realised: &DockCosts, seen: u32) {
-        let w = 1.0 / f64::from(seen + 1);
+        let w = (1.0 / f64::from(seen + 1)).max(experiment::cost_floor());
         for (v, r) in self.pickup.iter_mut().zip(&realised.pickup) {
             *v += w * (r - *v);
         }
@@ -342,10 +342,28 @@ impl TaxiCosts {
             for c in 0..v.len() {
                 if met[c] > 0 {
                     n[c] += 1;
-                    v[c] += (r[c] - v[c]) / f64::from(n[c]);
+                    let w = (1.0 / f64::from(n[c])).max(experiment::cost_floor());
+                    v[c] += w * (r[c] - v[c]);
                 }
             }
         }
+    }
+
+    /// Raise each bin's expected failure share to at least `per_bin[bin]` in every zone (the
+    /// experiment's capacity-aware start, [`experiment::capacity_start`]).
+    pub fn with_fail_floor(mut self, per_bin: &[f64]) -> Self {
+        for (c, f) in self.fail.iter_mut().enumerate() {
+            if let Some(&p) = per_bin.get(c % self.bins) {
+                *f = f.max(p);
+            }
+        }
+        self
+    }
+
+    /// The bins' length in seconds, their start and count.
+    #[must_use]
+    pub fn bins(&self) -> (f64, f64, usize) {
+        (self.bin_s, self.start_s, self.bins)
     }
 
     fn cell(&self, node: NodeId, t: f64) -> Option<usize> {
@@ -363,5 +381,41 @@ impl TaxiCosts {
     #[must_use]
     pub fn at(&self, node: NodeId, t: f64) -> Option<(f64, f64)> {
         self.cell(node, t).map(|c| (self.wait[c], self.fail[c]))
+    }
+}
+
+/// Experiment switches for the services' expected costs (S302), read from the environment; not
+/// defaults, not in a run's fingerprint: for comparing remedies only.
+///
+/// - `OPENMOBISIM_EXPERIMENT_COST_FLOOR` (a number, default 0): the averaging weight of a
+///   loading's realised costs is at least this.
+/// - `OPENMOBISIM_EXPERIMENT_SKIP_FIRST` (1): loading 0's realised costs are left out of the
+///   average.
+/// - `OPENMOBISIM_EXPERIMENT_CAPACITY_START` (1): the taxi fleet's start-of-day failure share is
+///   raised per bin to `max(0, 1 − C / D)`: `D` the people choosing their mode who depart in the
+///   bin, divided by the number of modes the run offers (an even split); `C` the fleet's rides in
+///   a bin, vehicles × bin length / (boarding + twice the mean crow-fly distance of those trips
+///   over the length-weighted mean free-flow speed of the motor links).
+pub mod experiment {
+    fn read(name: &str) -> Option<f64> {
+        std::env::var(name).ok().and_then(|v| v.parse().ok())
+    }
+
+    /// The floor on the averaging weight (0: none).
+    #[must_use]
+    pub fn cost_floor() -> f64 {
+        read("OPENMOBISIM_EXPERIMENT_COST_FLOOR").unwrap_or(0.0)
+    }
+
+    /// Whether loading 0's realised costs are left out of the average.
+    #[must_use]
+    pub fn skip_first() -> bool {
+        read("OPENMOBISIM_EXPERIMENT_SKIP_FIRST").is_some_and(|v| v > 0.0)
+    }
+
+    /// Whether the taxi fleet's start is capacity-aware.
+    #[must_use]
+    pub fn capacity_start() -> bool {
+        read("OPENMOBISIM_EXPERIMENT_CAPACITY_START").is_some_and(|v| v > 0.0)
     }
 }

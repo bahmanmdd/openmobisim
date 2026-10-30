@@ -32,7 +32,7 @@
 //! their door-to-door seconds less those their choice expected: positive when worse than
 //! expected), `mean_abs_met_minus_expected_s`, `mean_wait_s` (over the trips carried) and
 //! `share_no_taxi` (over the trips that asked: no vehicle sent within the longest wait, they
-//! walked); for the last loading, over the trips that asked for a taxi,
+//! walked), `expected_share_no_taxi` (the share their choices expected); for the last loading, over the trips that asked for a taxi,
 //! `share_waited_longer_than_expected` (carried, after a wait more than a minute longer than
 //! expected), `share_still_waiting_at_window_end`; over the trips carried
 //! `mean_waited_minus_expected_s`; over the fleet `km_empty_share` (kilometres driven empty, to
@@ -334,6 +334,7 @@ fn taxi_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow> {
             ("mean_abs_met_minus_expected_s", s.mismatch_s[k]),
             ("mean_wait_s", s.wait_mean_s[k]),
             ("share_no_taxi", s.no_taxi_share[k]),
+            ("expected_share_no_taxi", s.expected_no_taxi_share[k]),
         ] {
             if v.is_finite() {
                 rows.push((i, name(), metric, v));
