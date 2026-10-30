@@ -2168,6 +2168,25 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
         let m = openmobisim_core_choice::model(&name, &none).map_err(to_value_error)?;
         push(&format!("choice_model.{name}"), "choice_options", descriptor_values(&m.descriptor()));
     }
+    // The bike route sets of the doubly stochastic method (S298), `bike_route_options`.
+    let bike = openmobisim_core_routes::Sampled::from_options(&none).map_err(to_value_error)?;
+    push(
+        "bike_route.doubly_stochastic",
+        "bike_route_options",
+        descriptor_values(&openmobisim_core_routes::RouteSetGenerator::descriptor(&bike)),
+    );
+    // The services (S302, S303): their options, what travellers assume, the built-in policies'
+    // parameters (S304).
+    use openmobisim_core_sim::services::{DockDefaults, ServiceAssumptions, TaxiDefaults};
+    push("service.bike_docked", "options", owned(DockDefaults::SHIPPED.values()));
+    push("service.taxi", "options", owned(TaxiDefaults::SHIPPED.values()));
+    push("service_assumptions", "service_assumptions", owned(ServiceAssumptions::SHIPPED.values()));
+    push("service_prices", "price_options", owned(Prices::SHIPPED.service_values(true, true)));
+    for name in ["reset", "threshold", "charge_rule"] {
+        let p = openmobisim_core_sim::services::policy::policy_builtin(name, &none)
+            .map_err(PyValueError::new_err)?;
+        push(&format!("policy.{name}"), "policy_options", p.describe().parameters);
+    }
     Ok(rows)
 }
 

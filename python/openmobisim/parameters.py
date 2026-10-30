@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from openmobisim import _core
 from openmobisim.choice import ROUTE_ATTRIBUTES
+from openmobisim.fleet import REWARD_WEIGHTS, ZONE_GRID_M
 from openmobisim.table import Columns
 
 __all__ = ["parameters"]
@@ -19,6 +20,10 @@ _NOTES: dict[tuple[str, str], str] = {
     ("equilibration.sra", "increments"): "1 at flow_level 0 whatever is set",
     ("equilibration.free_flow", "increments"): "1 at flow_level 0 whatever is set",
     ("loading", "reroute"): "on at flow_level 3 and 4; off at 2 unless asked for (1)",
+    ("service_assumptions", "assumed_extra_walk_at_pickup_s"): "None: from the docks' "
+    "start-of-day bikes, dock by dock",
+    ("service_assumptions", "assumed_extra_walk_at_return_s"): "None: from the docks' "
+    "start-of-day bikes, dock by dock",
 }
 
 #: Scenario arguments that are numbers, with their defaults.
@@ -34,9 +39,28 @@ _SCENARIO = [
     ("hub_join_m", 150.0, "m", "the outputs' hub_id (Scenario.run); not in the fingerprint"),
 ]
 
+#: The fleet environment's and a fleet day's numbers (``fleet_environment``, ``fleet_day``).
+_FLEET = [
+    *(("fleet_environment", "reward_weights", k, v) for k, v in REWARD_WEIGHTS.items()),
+    ("fleet", "zone_grid_m", "zone_grid_m", ZONE_GRID_M),
+]
+
+#: Parameters that are shares from 0 to 1, whose names carry no unit (a state of charge too).
+_SHARES = ("low", "high", "charge_below", "charge_to", "charge_at", "reserve", "share")
+
+#: Units of names that carry none: the reward's weights per unit of their term, and counts.
+_UNITS = {
+    "w_cancelled": "per person",
+    "w_wait": "per person-minute",
+    "w_walk": "per person-minute",
+    "w_km": "per km",
+    "van_bikes": "bikes",
+    "kwh_per_km": "kWh/km",
+}
+
 _COUNTS = ("iterations", "max_paths", "max_attempts", "max_routes", "searches", "candidates",
            "lanes", "increments", "max_rides", "reroute_max", "draws", "gap_sample",
-           "itinerary_gap_sample", "warmup", "seed")  # fmt: skip
+           "itinerary_gap_sample", "warmup", "seed", "redirect_max")  # fmt: skip
 _FLAGS = ("priority", "reroute", "node_inflow", "origin_inflow", "biased", "fallback_car",
           "buses_on_roads")  # fmt: skip
 
@@ -47,6 +71,12 @@ def _unit(name: str) -> str:
     suffixes = [
         ("_veh_h_lane", "veh/h per lane"),
         ("_veh_km_lane", "veh/km per lane"),
+        ("_kwh_per_km", "kWh/km"),
+        ("_kwh", "kWh"),
+        ("_kw", "kW"),
+        ("_eur_per_ride", "EUR per ride"),
+        ("_eur_per_km", "EUR/km"),
+        ("_eur_per_min", "EUR/min"),
         ("_km_h", "km/h"),
         ("_eur_km", "EUR/km"),
         ("_km_eur", "EUR/km"),
@@ -63,8 +93,12 @@ def _unit(name: str) -> str:
             if attribute.endswith(suffix):
                 return f"per {unit}"
         return "per unit of the attribute"
+    if leaf in _UNITS:
+        return _UNITS[leaf]
     if leaf in _FLAGS:
         return "0 or 1"
+    if leaf in _SHARES or leaf.endswith(("_share", "_soc")) or leaf.startswith("soc_"):
+        return "share"
     if leaf in _COUNTS:
         return "count"
     for suffix, unit in suffixes:
@@ -78,11 +112,15 @@ def parameters() -> Columns:
 
     Columns by name, one row per parameter: ``group`` (``network``, ``loading``, ``modes``,
     ``transit``, ``parking``, ``prices``, ``scenario``, ``equilibration.<strategy>``,
-    ``route_method.<method>``, ``route_update.<update>``, ``choice_model.<model>``), ``argument``
+    ``route_method.<method>``, ``route_update.<update>``, ``choice_model.<model>``,
+    ``bike_route.doubly_stochastic``, ``service.bike_docked`` and ``service.taxi`` (a service's
+    ``options``), ``service_prices`` (``price_options``), ``service_assumptions`` and
+    ``policy.<policy>`` (``Scenario.run``'s), ``fleet_environment`` and ``fleet``), ``argument``
     (what overrides it by name: ``network_options`` of a network reader, ``loading_options``,
-    ``equilibration_options`` … of ``Scenario.from_parts``, or the argument itself for the
-    ``scenario`` group), ``name``, ``value``, ``unit`` (read from the name, which carries it) and
-    ``note`` (where a default is a rule of the run's level). Every value is an
+    ``equilibration_options`` … of ``Scenario.from_parts``, ``options`` of ``service_bike_docked``
+    or ``service_taxi``, ``policy_options``, ``reward_weights`` of ``fleet_environment``, or the
+    argument itself for the ``scenario`` group), ``name``, ``value``, ``unit`` (read from the name,
+    which carries it) and ``note`` (where a default is a rule of the run's level). Every value is an
     uncalibrated default; the documentation of each argument says where it comes from.
 
     Returns:
@@ -103,5 +141,7 @@ def parameters() -> Columns:
             name = f"beta_{attribute}"
             if attribute != "nest" and name not in listed.get(group, set()):
                 rows.append((group, "choice_options", name, 0.0, _unit(name), "0 unless set"))
+    for group, argument, name, value in _FLEET:
+        rows.append((group, argument, name, float(value), _unit(name), ""))
     columns = ("group", "argument", "name", "value", "unit", "note")
     return Columns({c: [r[i] for r in rows] for i, c in enumerate(columns)})

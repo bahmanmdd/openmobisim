@@ -63,3 +63,39 @@ def test_every_row_is_accepted_by_its_argument():
         run(choice_model=group.split(".", 1)[1], choice_options=options(group) or None)
     transit = options("transit")
     assert transit and all(v >= 0 for v in transit.values())
+
+
+def test_the_services_assumptions_policies_and_fleet_rows_are_accepted_as_listed():
+    rows = table()
+
+    def options(group):
+        return {r["name"]: r["value"] for r in rows if r["group"] == group}
+
+    net = ms.examples.manhattan_grid(3, 200.0, False)
+    at = ms._core.grid_node_lonlat(net, 0, 0)
+    docks = ms.dock_read_table([{"dock_id": "a", "lon": at[0], "lat": at[1], "capacity": 4}])
+    taxis = ms.vehicle_read_table([{"vehicle_id": "v", "lon": at[0], "lat": at[1]}])
+    bikes = ms.service_bike_docked(docks, options=options("service.bike_docked"))
+    fleet = ms.service_taxi(taxis, options=options("service.taxi"))
+    assert options("service.taxi")["request_cancel_s"] == 600.0
+    assumed = options("service_assumptions")
+    assert set(assumed) == {
+        "assumed_wait_s",
+        "assumed_no_taxi_share",
+        "assumed_extra_walk_at_pickup_s",
+        "assumed_extra_walk_at_return_s",
+    }
+    for name in ("reset", "threshold", "charge_rule"):
+        ms.fleet_day(net, [bikes, fleet], [], policy=name, policy_options=options(f"policy.{name}"))
+    ms.fleet_environment(
+        net, [bikes], [], reward_weights=options("fleet_environment"),
+        zone_grid_m=options("fleet")["zone_grid_m"],
+    )  # fmt: skip
+    assert options("bike_route.doubly_stochastic"), "the bike route sets' options"
+    units = {r["name"]: r["unit"] for r in rows if r["group"] == "service_prices"}
+    assert units == {
+        "bike_share_eur_per_ride": "EUR per ride",
+        "bike_share_eur_per_min": "EUR/min",
+        "taxi_eur_per_ride": "EUR per ride",
+        "taxi_eur_per_km": "EUR/km",
+    }
