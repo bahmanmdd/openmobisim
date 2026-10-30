@@ -120,6 +120,9 @@ pub struct RunDescription {
     /// What travellers assumed about the services, by name (S303), in a run with services;
     /// `None` without.
     pub service_assumptions: Option<Vec<(String, f64)>>,
+    /// The operator steering the service day, its name and parameters (S304), in a run with
+    /// services and an operator; `None` otherwise.
+    pub service_policy: Option<crate::services::policy::PolicyDescription>,
 }
 
 impl RunDescription {
@@ -178,6 +181,8 @@ pub(crate) struct Inputs<'a> {
     pub hub_join_m: f64,
     /// What travellers assume about the services (S303); hashed only with services.
     pub service_assumptions: &'a crate::services::ServiceAssumptions,
+    /// The operator steering the service day (S304); hashed only with services and an operator.
+    pub service_policy: Option<crate::services::policy::PolicyDescription>,
     /// The modes a trip without a stated mode chooses among, if the run offers a choice.
     pub mode_choice: Option<&'a [Mode]>,
     /// How long a walk or ride mode choice offers; hashed only with mode choice.
@@ -477,6 +482,15 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             h.write_str(name);
             h.write_f64(value);
         }
+        // An operator only when there is one (S304), so a run without hashes as before.
+        if let Some(policy) = &inputs.service_policy {
+            h.write_str("service_policy");
+            h.write_str(&policy.name);
+            for (name, value) in &policy.parameters {
+                h.write_str(name);
+                h.write_f64(*value);
+            }
+        }
     }
 
     RunDescription {
@@ -544,6 +558,7 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
                 .map(|(n, v)| (n.to_string(), v))
                 .collect()
         }),
+        service_policy: inputs.service_policy.clone().filter(|_| !inputs.services.is_empty()),
     }
 }
 

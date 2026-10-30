@@ -24,6 +24,11 @@
 //! service in a dispatcher's words (requests, rides, cancellations, waiting times, kilometres,
 //! utilisation; for docks the extra walks), each over people (the travellers' weights).
 //!
+//! **An operator** ([`super::policy::Policy`], [`crate::run::Run::with_service_policy`]) may
+//! steer the day as it steers a frozen day: the day is then played on the run's roads, with the
+//! zones a frozen day has (the default grid), so a frozen day of the run replayed with the same
+//! policy takes the same decisions. Without one, nothing is built for it.
+//!
 //! **Cost:** one engine day per run (about 120 bytes and a few events per leg); per
 //! redirection one walk or ride search on a static layer, rides kept per dock pair.
 
@@ -40,8 +45,11 @@ use openmobisim_core_routes::{Reach, SearchContext};
 use openmobisim_core_types::ids::{EntityId, NodeId, TripId};
 
 use super::costs::{DockCosts, TaxiAssumption};
+use super::decisions::DecisionRecord;
 use super::engine::{FleetDay, FleetEngine, Leg, NoRoads, ServiceLegs};
 use super::outcome::{FleetOutcome, LegOutcome, LegStatus, TaxiDay};
+use super::policy::Policy;
+use super::queries::{ZONE_GRID_M, Zones};
 use super::roads::{FrozenRoads, RoadTimes};
 use super::world::ServiceWorld;
 use super::{ServiceKind, ServiceParts, ServiceSetup};
@@ -413,11 +421,13 @@ pub struct RunRoads {
 }
 
 /// The service day's city for the engine: the rides and walks of its shared bikes, and its
-/// roads for its taxis (none without).
+/// roads for its taxis and an operator's vans (none without either), with the zones an
+/// operator's view groups places by (none without an operator).
 #[derive(Debug)]
 struct RunWorld {
     legs: RunLegs,
     roads: Option<RunRoads>,
+    zones: Option<Zones>,
 }
 
 impl ServiceWorld for RunWorld {
@@ -434,6 +444,10 @@ impl ServiceWorld for RunWorld {
             }
             None => f(&NoRoads),
         }
+    }
+
+    fn zones(&self) -> Option<&Zones> {
+        self.zones.as_ref()
     }
 }
 
@@ -527,7 +541,7 @@ pub struct DayLegs {
     pub share: Vec<ShareLeg>,
     /// The taxi legs.
     pub taxi: Vec<TaxiLeg>,
-    /// The roads (none without taxi legs).
+    /// The roads (none without taxi legs or an operator).
     pub roads: Option<RunRoads>,
 }
 
@@ -539,28 +553,60 @@ impl DayLegs {
     }
 }
 
+/// The service day's operator (S304): its policy, steering the day as it would a frozen day
+/// of the run.
+pub struct Steer {
+    /// The policy, called every `step_s` seconds from the window's start.
+    pub policy: Box<dyn Policy>,
+}
+
+/// What a service day gave: the shared bikes' day and the taxis' day, each `None` without legs
+/// of its kind, and an operator's decisions (empty without one).
+pub struct Played {
+    /// The shared bikes' day.
+    pub share: Option<ShareDay>,
+    /// The taxis' day.
+    pub taxi: Option<TaxiRunDay>,
+    /// The operator's decisions in the order taken, each with what became of it, and the
+    /// moves of the target solver.
+    pub decisions: Vec<DecisionRecord>,
+}
+
 /// Play the service day of `legs` of the run's services `setups` on the run's `layers`, over
-/// `window` (seconds from midnight), with the built-in rules and no operator (the nearest idle
-/// taxi, the charging rule, no van moves): the shared bikes' day and the taxis' day, each `None`
-/// without legs of its kind.
+/// `window` (seconds from midnight), with the built-in rules (the nearest idle taxi, the
+/// charging rule) and, with `steer`, its operator; without, no van moves. With an operator the
+/// day needs `legs.roads` (its vans and taxis drive on them) and has the zones of the default
+/// grid, as a frozen day of the run has.
+///
+/// # Errors
+///
+/// The operator's failure, which stops the day: its own error, or a step it could not take.
 ///
 /// # Panics
 ///
 /// If `setups` has no docked service while `legs` has shared-bike legs, or no taxi fleet while
-/// it has taxi legs.
-#[must_use]
+/// it has taxi legs, or with an operator and no roads.
 pub fn play(
     setups: &Arc<Vec<ServiceSetup>>,
     layers: &Arc<StaticLayers>,
     legs: DayLegs,
     window: (f64, f64),
     seed: u64,
-) -> (Option<ShareDay>, Option<TaxiRunDay>) {
+    steer: Option<Steer>,
+) -> Result<Played, String> {
     let started = Instant::now();
     let all = legs.engine_legs();
     let DayLegs { share: share_legs, taxi: taxi_legs, roads } = legs;
     let n_share = share_legs.len();
     let destinations: Vec<(u16, NodeId)> = all.iter().map(|l| (l.service, l.destination)).collect();
+    let (roads, zones, policy) = match steer {
+        Some(Steer { policy }) => {
+            let roads = roads.expect("an operator's day drives on the run's roads");
+            let zones = Zones::grid(&roads.road, ZONE_GRID_M)?;
+            (Some(roads), zones, Some(policy))
+        }
+        None => (roads.filter(|_| !taxi_legs.is_empty()), None, None),
+    };
     let world = RunWorld {
         legs: RunLegs {
             setups: Arc::clone(setups),
@@ -568,14 +614,15 @@ pub fn play(
             destinations,
             rides: Mutex::new(HashMap::new()),
         },
-        roads: roads.filter(|_| !taxi_legs.is_empty()),
+        roads,
+        zones,
     };
     let day = FleetDay { window, legs: all, seed };
     let mut outcome =
-        FleetEngine::in_world(Arc::clone(setups), Arc::new(day), Arc::new(world), None)
-            .run_day()
-            .expect("no policy, no policy failure");
+        FleetEngine::in_world(Arc::clone(setups), Arc::new(day), Arc::new(world), policy)
+            .run_day()?;
     let engine_s = started.elapsed().as_secs_f64();
+    let decisions = std::mem::take(&mut outcome.decisions);
     let taxi_out = outcome.legs.split_off(n_share);
     let taxi_index = index_of(setups, ServiceKind::Taxi);
     let taxi_day = taxi_index.and_then(|t| outcome.taxis[t].take());
@@ -588,7 +635,7 @@ pub fn play(
         let day = taxi_day.expect("a taxi fleet's day");
         taxi_run_day(&setups[t], n_share, taxi_legs, taxi_out, day, window, engine_s)
     });
-    (share, taxi)
+    Ok(Played { share, taxi, decisions })
 }
 
 /// The shared bikes' part of a day: what became of their legs, summed up.

@@ -8,9 +8,11 @@
 //! **Matching** (built in). At a request, the idle vehicles that can reach the pickup within
 //! the cancel limit [`TaxiDefaults::request_cancel_s`] less the dispatch delay
 //! [`TaxiDefaults::dispatch_delay_s`] are found by one bounded backward search on free-flow
-//! times from the pickup; the nearest by that estimate that has charge enough for the drive to
-//! the pickup and the trip, above [`TaxiDefaults::reserve_soc`], is sent (ties by vehicle
-//! index); its drives are timed on the day's roads ([`ServiceRoads::drive`]). With none, the
+//! times from the pickup; the nearest by that estimate whose drive on the day's roads
+//! ([`ServiceRoads::drive`]) reaches the pickup within the cancel limit of the request and that
+//! has charge enough for the drive to the pickup and the trip, above
+//! [`TaxiDefaults::reserve_soc`], is sent (ties by vehicle index). So no ride waits longer than
+//! the cancel limit. With none, the
 //! unit request **waits**, and is offered, oldest first, to every vehicle freed that can reach
 //! it, the dispatch delay included, within [`TaxiDefaults::request_cancel_s`] of its request;
 //! past [`TaxiDefaults::request_cancel_s`] it is **cancelled** (an `Expire` event, taken after
@@ -638,14 +640,17 @@ impl Taxis<'_> {
         self.run.range[u as usize].1 == u + 1
     }
 
-    /// Match vehicle `v` to unit request `u` at second `t`, if it has the charge: it is held
+    /// Match vehicle `v` to unit request `u` at second `t`, if it has the charge and its drive
+    /// on the day's roads reaches the pickup within the cancel limit of the request: it is held
     /// from `t` and drives from its node to the pickup from `t + dispatch_delay_s`.
     fn try_send(&mut self, v: u32, u: u32, t: f64) -> bool {
         let leg = *self.leg_of(u);
         let from = self.node[v as usize];
         let go = t + self.d.dispatch_delay_s;
         let (to_s, to_m) = self.roads.drive(from, leg.origin, go);
-        if !to_s.is_finite() {
+        // The candidates are found on free-flow times; the day's roads may be slower (S304).
+        let asked = self.run.requests[u as usize].requested_s;
+        if !to_s.is_finite() || go + to_s > asked + self.d.request_cancel_s {
             return false;
         }
         let (_, trip_m) = self.roads.drive(leg.origin, leg.destination, go + to_s);

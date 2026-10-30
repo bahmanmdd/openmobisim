@@ -112,6 +112,7 @@ struct Setup {
     walk_max_s: f64,
     fail_s: f64,
     assumptions: ServiceAssumptions,
+    policy: Option<Box<dyn openmobisim_core_sim::services::policy::Policy>>,
 }
 
 impl Default for Setup {
@@ -125,6 +126,7 @@ impl Default for Setup {
             walk_max_s: DockDefaults::SHIPPED.walk_max_s,
             fail_s: DockDefaults::SHIPPED.fail_s,
             assumptions: ServiceAssumptions::SHIPPED,
+            policy: None,
         }
     }
 }
@@ -142,6 +144,9 @@ fn run(rows: Vec<RawTrip>, s: &Setup) -> RunResult {
         .with_mode_choice(&[Mode::Walk, Mode::BikeShare]);
     if s.docks {
         run = run.with_services(Arc::new(vec![service]));
+    }
+    if let Some(p) = &s.policy {
+        run = run.with_service_policy(p.clone_box());
     }
     if s.iterations > 1 {
         // Every loading made: no stopping on the gap.
@@ -296,6 +301,26 @@ fn same_seed_same_day() {
     );
     assert_eq!(sa.assumed, sb.assumed);
     assert_eq!(a.events, b.events);
+}
+
+/// An operator that decides nothing (S304) steps through the service day and leaves it the day
+/// without an operator; its name is in the fingerprint and its (no) decisions in the result.
+#[test]
+fn an_operator_deciding_nothing_leaves_the_service_day_as_it_was() {
+    use openmobisim_core_sim::services::policy::NoOp;
+    let road = grid();
+    let plain = run(corner_trips(&road, 12, 20), &Setup::default());
+    let noop = Setup { policy: Some(Box::new(NoOp { step_s: 900.0 })), ..Setup::default() };
+    let steered = run(corner_trips(&road, 12, 20), &noop);
+    let (da, db) = (plain.services.unwrap().last.unwrap(), steered.services.unwrap().last.unwrap());
+    assert_eq!(
+        format!("{:?}", (da.legs, da.outcome.legs, da.outcomes, da.summary)),
+        format!("{:?}", (db.legs, db.outcome.legs, db.outcomes, db.summary)),
+    );
+    assert!(plain.service_decisions.is_none());
+    let (described, decisions) = steered.service_decisions.expect("an operator's decisions");
+    assert_eq!(described.name, "noop");
+    assert!(decisions.is_empty());
 }
 
 /// The assumptions are fixed for the run (S303): whatever the loadings, the docks' assumed

@@ -809,7 +809,9 @@ class Run:
         route), ``pair``, ``alternatives`` (how many it could choose from),
         ``probability`` (what the model gave the route taken; ``nan`` if it gave
         none) and ``weight`` (how many people the trip stands for). ``-1`` marks a
-        trip with no route. ``np.bincount(rc.route[rc.route >= 0], rc.weight[rc.route >= 0],
+        trip with no route, and every trip that chose its mode (``itinerary_choices()`` has its
+        mode; the car route of such a trip is not reported): the routes are those of the trips
+        of a stated mode. ``np.bincount(rc.route[rc.route >= 0], rc.weight[rc.route >= 0],
         minlength=route_sets.route_count)`` is each route's number of travellers.
         """
         return self._summary.route_choices
@@ -1849,6 +1851,44 @@ class Run:
         for k, v in dict(given).items():
             out[str(k)] = None if v is None or math.isnan(float(v)) else float(v)
         return out
+
+    def service_policy(self) -> dict[str, Any] | None:
+        """The operator that steered the run's service day; ``None`` without one.
+
+        ``{"name", "parameters"}``, as ``Scenario.run(policy=...)`` gave it and
+        ``manifest.json``'s ``service_policy`` records it.
+        """
+        if isinstance(self._summary, _Files):
+            given = self._summary._manifest.get("service_policy")
+        else:
+            given = self._summary.service_policy
+        if given is None:
+            return None
+        return {
+            "name": str(given["name"]),
+            "parameters": {str(k): float(v) for k, v in dict(given["parameters"]).items()},
+        }
+
+    def operator_decisions(self) -> Columns | None:
+        """Every decision the run's operator took in its service day, in the order taken.
+
+        Accepted or refused, as ``FleetDay.decisions()`` gives them; ``None`` without an
+        operator, and for a run opened from its folder (the decisions are kept in memory).
+
+        Columns: ``step`` (the policy step's index, 0 at the window's start), ``t_s`` (its
+        second), ``service``, ``kind`` (``move``, ``target``, ``relocate``, ``charge``), the
+        parameters by id (``from_dock``, ``to_dock``, ``n``, ``dock``, ``level``, ``vehicle``,
+        ``node``, ``charger``, ``to_soc``; ``None`` or NaN where a kind has none),
+        ``accepted``, ``reason`` (why it was refused, ``None`` if accepted), ``executed_s`` (the
+        second it started), ``finished_s`` (the van's or vehicle's arrival, the charge's end;
+        NaN if refused or not finished by the window's end), ``moved`` (a move's bikes in the
+        van), ``metres`` (the drive's), ``from_target`` (a move the solver made for the
+        step's targets).
+        """
+        if isinstance(self._summary, _Files):
+            return None
+        rows = self._summary.service_decisions
+        return None if rows is None else Columns(rows)
 
     def service_actual(self) -> dict[str, float] | None:
         """What the service day actually gave, as ``service_assumptions()``; ``None`` without one.

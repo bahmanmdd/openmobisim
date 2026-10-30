@@ -45,11 +45,13 @@ fn lonlat(i: u32) -> LonLat {
     LonLat::new(4.8 + 0.0128 * f64::from(i), 45.7)
 }
 
-/// The roads of the line: 60 s (or `s_km`) and 1 000 m a node, whatever the time.
+/// The roads of the line: 60 s (or `s_km`) and 1 000 m a node, whatever the time; a drive
+/// takes `slow` times as long as the reach (free flow) says (1: as long).
 #[derive(Debug)]
 struct Line {
     nodes: Vec<NodeId>,
     s_km: f64,
+    slow: f64,
 }
 
 impl Line {
@@ -57,7 +59,7 @@ impl Line {
         let ids = net.node_external_ids();
         let nodes =
             (0..10).map(|i| ids.typed_id_of::<NodeId>(&format!("n{i}")).expect("node")).collect();
-        Self { nodes, s_km: 60.0 }
+        Self { nodes, s_km: 60.0, slow: 1.0 }
     }
 
     fn at(&self, node: NodeId) -> i64 {
@@ -83,7 +85,7 @@ impl ServiceRoads for Line {
     fn drive(&self, from: NodeId, to: NodeId, _t: f64) -> (f64, f64) {
         #[allow(clippy::cast_precision_loss, reason = "small")]
         let k = (self.at(from) - self.at(to)).abs() as f64;
-        (self.s_km * k, 1000.0 * k)
+        (self.s_km * self.slow * k, 1000.0 * k)
     }
 
     fn reach_to(&self, to: NodeId, bound: f64) -> Vec<(NodeId, f64)> {
@@ -260,6 +262,27 @@ fn a_request_the_dispatch_delay_puts_past_the_cancel_limit_is_cancelled() {
     let literal = TaxiDefaults { request_cancel_s: 100.0, ..TaxiDefaults::SHIPPED };
     assert!(ServiceSetup::taxi("taxi", &net, &[vehicle("v", 0, None)], &[], literal).is_err());
     assert!(TaxiDefaults::from_options(&o(&[("dispatch_delay_s", -1.0)])).is_err());
+}
+
+#[test]
+fn a_taxi_whose_drive_on_the_day_s_roads_misses_the_cancel_limit_is_not_sent() {
+    // n0 to n8 is 480 s at free flow (within the 600 s limit, no dispatch delay) but 720 s on
+    // the day's roads (1.5 times): the vehicle could not pick the traveller up in time, so it
+    // is not sent and the request is cancelled; at 1.2 times (576 s) it is sent.
+    let net = line();
+    for (slow, sent) in [(1.5, false), (1.2, true)] {
+        let roads = Line { slow, ..Line::new(&net) };
+        let setup = fleet(&net, &[vehicle("v", 0, None)], &[], NO_DELAY);
+        let out = load(&setup, legs(&roads, &[(100.0, 8, 9)]), 3600.0, roads);
+        let l = out.legs[0];
+        if sent {
+            assert_eq!(l.status, LegStatus::Completed);
+            assert!(close(l.waited_s, 576.0) && l.waited_s <= 600.0);
+        } else {
+            assert_eq!((l.status, l.vehicle), (LegStatus::Cancelled, None));
+            assert!(close(l.waited_s, 600.0));
+        }
+    }
 }
 
 #[test]

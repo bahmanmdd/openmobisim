@@ -24,6 +24,7 @@ from typing import Any, TypeVar, cast
 from openmobisim import _core, choice
 from openmobisim._log import logger
 from openmobisim.demand import _class_table, _trips_checked, _zone_points, demand_read_trips
+from openmobisim.operator import _policy_for_binding
 from openmobisim.run import MODES, SERVICE_MODES, Run
 from openmobisim.table import Table
 
@@ -1182,8 +1183,9 @@ class Scenario:
                 Every value is an assumption, not a calibration.
                 Unknown names and out-of-range values are refused.
             transit: The timetable of a service day (``openmobisim.transit_read_gtfs``),
-                for the ``"transit"`` trips. A transit trip walks (4.8 km/h, at most 30
-                minutes, ``transit_options``' ``access_walk_max_s``) to a stop, rides one or more
+                for the ``"transit"`` trips. A transit trip walks (on the walk layer, at its
+                ``walk_km_h``, 4.8 km/h by default, a network option; at most 30 minutes,
+                ``transit_options``' ``access_walk_max_s``) to a stop, rides one or more
                 vehicles and walks on, boarding only if
                 at the stop a minute before a vehicle leaves; walks between stops are at most
                 5 minutes. **Its journey is chosen by** ``choice_model`` among the
@@ -1684,6 +1686,8 @@ class Scenario:
         outputs: str = "all",
         hub_join_m: float = 150.0,
         service_assumptions: Mapping[str, float | None] | None = None,
+        policy: Any = None,
+        policy_options: Mapping[str, float] | None = None,
     ) -> Run:
         """Run the scenario and write its output artifacts.
 
@@ -1741,6 +1745,19 @@ class Scenario:
                 (``Run.service_actual()``, ``kpis.parquet``, ``trip_results()``'s
                 ``service_outcome``). Recorded in the fingerprint and ``manifest.json`` of a run
                 with a service; read only then.
+            policy: An operator steering the scenario's services in the run's service day
+                (``openmobisim.operator``), as ``fleet_day(policy=...)`` takes it: a policy
+                object (``step(view)``), a built-in one (``policy_threshold(...)``), a name
+                (built-in or registered with ``policy_register``), or ``None`` (the default): no
+                operator. The day is the one ``fleet_day(frozen=run.freeze(...), policy=...)``
+                replays: the same decisions with the same policy (a Python policy that keeps a
+                state between steps given as a fresh object each time). Its name and parameters
+                are in the fingerprint and ``manifest.json`` (``service_policy``; a Python
+                policy without ``describe()`` is named ``python:<its class>``, and its behaviour
+                is not in the manifest); its decisions in ``Run.operator_decisions()``. Travellers
+                still choose on ``service_assumptions``: an operator changes what the services
+                deliver, not who asks for them. Refused without services.
+            policy_options: A named policy's options (``{"low": 0.1}`` for ``"threshold"``).
 
         Returns:
             A ``Run``: the results in memory, and the output files in ``output_dir``.
@@ -1777,6 +1794,7 @@ class Scenario:
             outputs=outputs,
             hub_join_m=hub_join_m,
             service_assumptions=_service_assumptions(service_assumptions),
+            policy=_policy_for_binding(policy, policy_options),
         )
         run = Run(
             summary,
