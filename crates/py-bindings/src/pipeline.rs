@@ -884,7 +884,7 @@ fn gap_trip_columns(py: Python<'_>, gap: &openmobisim_core_sim::GapTrips) -> PyR
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
     loading_options=None, price_options=None, threads=None, fingerprint_only=false,
     design_id="default", replication=0, outputs="all", hub_join_m=150.0,
-    services=None, class_no_bike_share=None,
+    services=None, class_no_bike_share=None, class_no_taxi=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -949,6 +949,7 @@ pub fn run_pipeline(
     hub_join_m: f64,
     services: Option<Vec<crate::services::ServiceTuple<'_>>>,
     class_no_bike_share: Option<Vec<String>>,
+    class_no_taxi: Option<Vec<String>>,
 ) -> PyResult<Py<PyAny>> {
     // Which files the run writes (C2): "all", or "minimal" (kpis.csv and manifest.json) for mass
     // runs; the results in memory are the same either way.
@@ -1185,10 +1186,11 @@ pub fn run_pipeline(
         let ids = travellers.class_external_ids();
         (0..ids.count()).map(|c| ids.external(c).to_string()).collect()
     };
-    // The service modes (S302) are governed by `has_bike_share` alone, not by a class's
-    // `modes` list (which names the ordinary modes): with a service every class is offered a
-    // shared bike, alone or to transit, unless its `has_bike_share` is 0.
+    // The service modes (S302) are governed by `has_bike_share` and `has_taxi` alone, not by a
+    // class's `modes` list (which names the ordinary modes): with a service every class is
+    // offered its modes (a shared bike alone or to transit; a taxi) unless the column is 0.
     let no_share = class_no_bike_share.unwrap_or_default();
+    let no_taxi = class_no_taxi.unwrap_or_default();
     let class_allowed: Vec<[bool; Mode::COUNT]> = class_names
         .iter()
         .map(|c| {
@@ -1196,6 +1198,7 @@ pub fn run_pipeline(
             let share = !no_share.contains(c);
             allowed[Mode::BikeShare.index()] = share;
             allowed[Mode::BikeShareTransit.index()] = share;
+            allowed[Mode::Taxi.index()] = !no_taxi.contains(c);
             allowed
         })
         .collect();
@@ -1316,11 +1319,12 @@ pub fn run_pipeline(
             network.inner.defaults().layers,
         ))
     };
-    // A timetable walks its passengers on the walk layer (S199), so the run needs it; a service's
-    // docks are snapped to both layers (S302).
+    // A timetable walks its passengers on the walk layer (S199), so the run needs it; a docked
+    // service's docks are snapped to both layers, and a taxi request that fails walks on (S302).
     let services = services.unwrap_or_default();
+    let docked = services.iter().any(|s| s.0 == "bike_docked");
     let layers = StaticLayers {
-        bike: if uses(Mode::Bike) || uses(Mode::BikeTransit) || !services.is_empty() {
+        bike: if uses(Mode::Bike) || uses(Mode::BikeTransit) || docked {
             Some(setup(StaticLayer::Bike)?)
         } else {
             None
@@ -1583,9 +1587,10 @@ pub fn run_pipeline(
         }
         _ => None,
     };
-    // A run's services (S302): its shared-bike legs and its docks bin by bin; nothing without.
+    // A run's docked service (S302): its shared-bike legs and its docks bin by bin; nothing
+    // without one.
     let service_out = match &service_setups {
-        Some(setups) => Some(crate::service_results::service_results(
+        Some(setups) if result.services.is_some() => Some(crate::service_results::service_results(
             py,
             setups,
             &run_hubs,
@@ -1594,7 +1599,7 @@ pub fn run_pipeline(
             (f64::from(window.start_s), f64::from(window.end_s)),
             (dir, run_id, &description, minimal),
         )?),
-        None => None,
+        _ => None,
     };
     // Their own stage, so the time the service tables and files take is seen (none without).
     if service_out.is_some() {
@@ -1831,7 +1836,7 @@ pub fn run_pipeline(
             &result.no_alternative,
             &trips_used,
             &travellers,
-            result.modes_listed(),
+            &result.modes_listed(),
         )?
         .unbind(),
         transit_calls: transit_calls_table,
@@ -1846,7 +1851,7 @@ pub fn run_pipeline(
         choice_model: description.choice_model.clone(),
         equilibration: description.equilibration.clone(),
         route_update: description.route_update.clone(),
-        convergence: convergence_arrays(py, &result.iterations, result.modes_listed())?,
+        convergence: convergence_arrays(py, &result.iterations, &result.modes_listed())?,
         converged: result.converged,
         fingerprint: description.fingerprint_hex(),
         total_trips: result.completion.total_trips,

@@ -20,6 +20,12 @@
 
 use std::sync::Arc;
 
+use openmobisim_core_graph::network::RoadNetwork;
+use openmobisim_core_routes::Reach;
+use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
+
+#[cfg(doc)]
+use super::TaxiDefaults;
 use super::docks::DockBins;
 use super::engine::{FleetDay, FleetEngine, NoLegs, NoRoads};
 use super::{ServiceParts, ServiceSetup};
@@ -161,5 +167,179 @@ impl DockCosts {
     #[must_use]
     pub fn return_s(&self, dock: u32, t: f64) -> f64 {
         self.ret[self.cell(dock, t)]
+    }
+}
+
+/// What a taxi fleet is expected to cost a traveller, per zone and time bin (S302): the wait for
+/// a vehicle of a request that is served, and the share of requests that fail (no vehicle sent
+/// within the fleet's longest wait, [`TaxiDefaults::max_wait_s`]).
+///
+/// **Per zone and bin**, what a day's requests met there (by the zone of their pickup and the
+/// bin of their request): the mean wait of the served ones and the share that failed, each
+/// weighted by people ([`TaxiCosts::with_requests`]). **Where no request went**, an estimate from
+/// the start of the day ([`TaxiCosts::initial`]): per zone, over its road nodes, the free-flow
+/// drive from the nearest vehicle where it stands at the start (the mean over the nodes some
+/// vehicle reaches within the longest wait), and the share of its nodes none reaches. The
+/// estimate ignores that vehicles move and get busy; it only starts the averaging, and stays
+/// where no traveller asked. **Choice reads the expected cost**, the average over the loadings
+/// so far (the method of successive averages, [`TaxiCosts::absorb`]); a traveller pays the
+/// realised one, on the engine.
+///
+/// **Zones** are the engine's ([`super::queries::Zones`]): squares of
+/// [`super::queries::ZONE_GRID_M`] metres over the road network's nodes. **Bins** start at the
+/// window's start, [`super::taxis::FLEET_BIN_S`] seconds long; a second before the window reads
+/// its first bin, one after it its last.
+///
+/// **Cost:** two `f64` per zone and bin; at the start one bounded free-flow search per distinct
+/// node a vehicle stands at.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaxiCosts {
+    start_s: f64,
+    bin_s: f64,
+    bins: usize,
+    /// Per road node, its zone.
+    node_zone: Arc<Vec<u32>>,
+    /// `zone * bins + bin`.
+    wait: Vec<f64>,
+    fail: Vec<f64>,
+}
+
+impl TaxiCosts {
+    /// The start-of-day estimate for the taxi fleet `setup` over `window` (seconds from
+    /// midnight), on `road` at free flow (the links motor traffic may use), with `zones` over its
+    /// nodes (`node_zone`: per road node, its zone; `zones`: how many).
+    ///
+    /// # Panics
+    ///
+    /// If `setup` is not a taxi fleet.
+    #[must_use]
+    pub fn initial(
+        setup: &ServiceSetup,
+        road: &RoadNetwork,
+        (node_zone, zones): (Arc<Vec<u32>>, usize),
+        window: (f64, f64),
+    ) -> Self {
+        let ServiceParts::Taxi(fleet, d) = setup.parts() else {
+            panic!("service `{}` is not a taxi fleet", setup.name());
+        };
+        let free: Vec<f64> = (0..road.link_count())
+            .map(|i| {
+                let link = LinkId::new(i);
+                if road.link_class(link).carries_motor_traffic() {
+                    road.free_flow_time(link).get()
+                } else {
+                    f64::INFINITY
+                }
+            })
+            .collect();
+        let every = vec![true; road.node_count() as usize];
+        let mut nearest = vec![f64::INFINITY; road.node_count() as usize];
+        let mut starts: Vec<NodeId> = fleet.vehicle_node.clone();
+        starts.sort_unstable_by_key(|n| n.raw());
+        starts.dedup();
+        let mut reach = Reach::new(road, &free);
+        for from in starts {
+            nearest[from.index()] = 0.0;
+            for (node, s) in reach.forward(from, d.max_wait_s, &every) {
+                let n = &mut nearest[node.index()];
+                *n = n.min(s);
+            }
+        }
+        let (mut sum, mut reached, mut nodes) =
+            (vec![0.0; zones], vec![0.0_f64; zones], vec![0.0_f64; zones]);
+        for (node, &z) in node_zone.iter().enumerate() {
+            if z == u32::MAX {
+                continue;
+            }
+            let z = z as usize;
+            nodes[z] += 1.0;
+            if nearest[node] <= d.max_wait_s {
+                sum[z] += nearest[node];
+                reached[z] += 1.0;
+            }
+        }
+        let window_s = (window.1 - window.0).max(0.0);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin count")]
+        let bins = ((window_s / f64::from(super::taxis::FLEET_BIN_S)).ceil() as usize).max(1);
+        let (mut wait, mut fail) = (vec![0.0; zones * bins], vec![0.0; zones * bins]);
+        for z in 0..zones {
+            let (w, f) = if nodes[z] > 0.0 && reached[z] > 0.0 {
+                (sum[z] / reached[z], 1.0 - reached[z] / nodes[z])
+            } else {
+                (d.max_wait_s, 1.0)
+            };
+            for b in 0..bins {
+                wait[z * bins + b] = w;
+                fail[z * bins + b] = f;
+            }
+        }
+        Self {
+            start_s: window.0,
+            bin_s: f64::from(super::taxis::FLEET_BIN_S),
+            bins,
+            node_zone,
+            wait,
+            fail,
+        }
+    }
+
+    /// The realised costs of a day whose requests met `met` (each: pickup road node, second of
+    /// the request, seconds waited if served (`None`: failed), people): in a zone and bin some
+    /// request asked from, the mean wait of the served ones (where one was) and the share that
+    /// failed, weighted by people; elsewhere what `self` says.
+    #[must_use]
+    pub fn with_requests(mut self, met: &[(NodeId, f64, Option<f64>, f64)]) -> Self {
+        let n = self.wait.len();
+        let (mut waited, mut served, mut people, mut failed) =
+            (vec![0.0; n], vec![0.0; n], vec![0.0; n], vec![0.0; n]);
+        for &(node, t, wait, w) in met {
+            let Some(c) = self.cell(node, t) else { continue };
+            people[c] += w;
+            match wait {
+                Some(s) => {
+                    waited[c] += w * s;
+                    served[c] += w;
+                }
+                None => failed[c] += w,
+            }
+        }
+        for c in 0..n {
+            if served[c] > 0.0 {
+                self.wait[c] = waited[c] / served[c];
+            }
+            if people[c] > 0.0 {
+                self.fail[c] = failed[c] / people[c];
+            }
+        }
+        self
+    }
+
+    /// Average in a later loading's realised costs: the method of successive averages over
+    /// `seen + 1` loadings.
+    pub fn absorb(&mut self, realised: &TaxiCosts, seen: u32) {
+        let w = 1.0 / f64::from(seen + 1);
+        for (v, r) in self.wait.iter_mut().zip(&realised.wait) {
+            *v += w * (r - *v);
+        }
+        for (v, r) in self.fail.iter_mut().zip(&realised.fail) {
+            *v += w * (r - *v);
+        }
+    }
+
+    fn cell(&self, node: NodeId, t: f64) -> Option<usize> {
+        let z = *self.node_zone.get(node.index())?;
+        if z == u32::MAX {
+            return None;
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin")]
+        let b = (((t - self.start_s).max(0.0) / self.bin_s) as usize).min(self.bins - 1);
+        Some(z as usize * self.bins + b)
+    }
+
+    /// The expected wait, in seconds, of a request served at road node `node` asked at second
+    /// `t`, and the expected share of such requests that fail; `None` for a node of no zone.
+    #[must_use]
+    pub fn at(&self, node: NodeId, t: f64) -> Option<(f64, f64)> {
+        self.cell(node, t).map(|c| (self.wait[c], self.fail[c]))
     }
 }

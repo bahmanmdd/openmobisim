@@ -18,6 +18,7 @@
 //! | [`tables`] | [`tables::BikeShareEventTable`], [`tables::BikeShareTripTable`], [`tables::BikeShareDockTable`] — the rows of `bike_share_events.parquet`, `bike_share_trips.parquet` and `bike_share_docks.parquet` |
 //! | [`docks`] | [`docks::DockBins`] — docked bikes' pickups, returns and redirections on the engine, bin by bin |
 //! | [`costs`] | [`costs::DockCosts`] — what a dock is expected to cost a pickup and a return, per bin |
+//! | [`taxi_tables`] | [`taxi_tables::TaxiEventTable`], [`taxi_tables::TaxiTripTable`], [`taxi_tables::TaxiVehicleTable`] — the rows of `taxi_events.parquet`, `taxi_trips.parquet` and `taxi_vehicles.parquet` |
 //! | [`taxis`] | electric taxis on the engine: matching, drives, energy, the charging rule and plug queues; [`taxis::TaxiDay`] |
 //! | [`policy`] | [`policy::Policy`] — an operator: called every few minutes with a [`view::View`], it returns [`decisions::Decision`]s; the built-in ones, by name ([`policy::policy_builtin`]): [`policy::NoOp`], [`policy::Reset`], [`policy::Threshold`], [`policy::ChargeRule`] |
 //! | [`view`] | [`view::View`] — what a policy sees at a step, read-only |
@@ -39,6 +40,7 @@ pub mod policy;
 pub mod queries;
 pub mod roads;
 pub mod tables;
+pub mod taxi_tables;
 pub mod taxis;
 pub mod view;
 pub mod world;
@@ -67,6 +69,16 @@ pub enum ServiceKind {
     BikeDocked,
     /// Electric taxis, tracked one by one; a leg waits for a vehicle and rides.
     Taxi,
+}
+
+/// Whether `setups` hold a docked bike service and a taxi fleet: which service modes a run lists
+/// ([`openmobisim_core_demand::Mode::listed`]).
+#[must_use]
+pub fn kinds(setups: &[ServiceSetup]) -> (bool, bool) {
+    (
+        setups.iter().any(|s| s.kind() == ServiceKind::BikeDocked),
+        setups.iter().any(|s| s.kind() == ServiceKind::Taxi),
+    )
 }
 
 impl ServiceKind {
@@ -398,6 +410,12 @@ pub struct TaxiDefaults {
     ///
     /// *An assumption: an hour's drive covers a city.*
     pub charger_reach_s: f64,
+    /// Whether the day keeps its log of events (every request, vehicle sent, pickup, drop-off,
+    /// failure and charge, with the vehicle's state and charge after each), the source of
+    /// `taxi_events.parquet`: on by default; off (option `log_events` 0) for a very large run,
+    /// whose results are otherwise the same. A switch of what is kept, not of what is simulated:
+    /// not among [`Self::values`] (the fingerprint), so it never changes a run's identity.
+    pub log_events: bool,
 }
 
 impl TaxiDefaults {
@@ -414,6 +432,7 @@ impl TaxiDefaults {
         board_s: 60.0,
         snap_m: 300.0,
         charger_reach_s: 3600.0,
+        log_events: true,
     };
 
     /// Every option, by name, with its value.
@@ -445,6 +464,20 @@ impl TaxiDefaults {
     pub fn from_options(options: &Options) -> Result<Self, ServiceError> {
         let mut d = Self::SHIPPED;
         for (name, &value) in options {
+            if name == "log_events" {
+                #[allow(clippy::float_cmp, reason = "a switch: exactly 0 or 1")]
+                let (off, on) = (value == 0.0, value == 1.0);
+                if !off && !on {
+                    return Err(ServiceError::BadOption {
+                        kind: ServiceKind::Taxi,
+                        name: name.clone(),
+                        value,
+                        why: "1 (keep the events) or 0 (do not)".to_string(),
+                    });
+                }
+                d.log_events = on;
+                continue;
+            }
             let slot = match name.as_str() {
                 "battery_kwh" => &mut d.battery_kwh,
                 "kwh_per_km" => &mut d.kwh_per_km,
@@ -461,7 +494,12 @@ impl TaxiDefaults {
                     return Err(ServiceError::UnknownOption {
                         kind: ServiceKind::Taxi,
                         name: name.clone(),
-                        known: Self::SHIPPED.values().iter().map(|(n, _)| *n).collect(),
+                        known: Self::SHIPPED
+                            .values()
+                            .iter()
+                            .map(|(n, _)| *n)
+                            .chain(["log_events"])
+                            .collect(),
                     });
                 }
             };

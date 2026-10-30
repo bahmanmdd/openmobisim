@@ -305,11 +305,12 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
         // fingerprint is what it was.
         // Only the modes the run lists (S302): a service's mode only in a run with a service, so
         // a run without one hashes as before services existed.
-        let listed = Mode::listed(!inputs.services.is_empty());
+        let (bikes, taxis) = crate::services::kinds(inputs.services);
+        let listed = Mode::listed(bikes, taxis);
         if inputs.class_modes.iter().any(|modes| listed.iter().any(|m| !modes[m.index()])) {
             for (class, modes) in inputs.class_modes.iter().enumerate() {
                 h.write_u32(u32::try_from(class).expect("few classes"));
-                for m in listed {
+                for &m in &listed {
                     h.write_bool(modes[m.index()]);
                 }
             }
@@ -443,8 +444,9 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             h.write_f64(value);
         }
         // The services' prices only with a service (S302).
+        let (bikes, taxis) = crate::services::kinds(inputs.services);
         if !inputs.services.is_empty() {
-            for (name, value) in prices.service_values() {
+            for (name, value) in prices.service_values(bikes, taxis) {
                 h.write_str(name);
                 h.write_f64(value);
             }
@@ -518,7 +520,8 @@ pub(crate) fn describe(inputs: &Inputs<'_>) -> RunDescription {
             .collect(),
         disruptions: (!d.is_empty()).then_some((d.road.len(), d.transit.len(), d.known)),
         prices: inputs.prices.map(|p| {
-            let services = if inputs.services.is_empty() { Vec::new() } else { p.service_values() };
+            let (bikes, taxis) = crate::services::kinds(inputs.services);
+            let services = p.service_values(bikes, taxis);
             p.values().into_iter().chain(services).map(|(n, v)| (n.to_string(), v)).collect()
         }),
         person_values: inputs.demand_values.persons().map(|(n, _)| n.to_string()).collect(),

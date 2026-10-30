@@ -25,6 +25,19 @@
 //! and walked to the destination), `share_found_no_slot` (found a return dock full at least
 //! once), and over the trips that arrived `mean_extra_s` (the mean extra seconds met at the
 //! docks). A run without a service has none of these rows.
+//!
+//! **A taxi fleet** (S302), for a run with one, under `mode` the fleet's name (`taxi` unless the
+//! scenario named it otherwise), counted in people: per iteration `taxi_travellers` (the
+//! loading's trips that chose a taxi), `mean_met_minus_expected_s` (over the trips that arrived,
+//! their door-to-door seconds less those their choice expected: positive when worse than
+//! expected) and `mean_abs_met_minus_expected_s`; for the last loading, over the trips that asked
+//! for a taxi, `share_no_taxi` (no vehicle sent within the longest wait: they walked),
+//! `share_waited_longer_than_expected` (carried, after a wait more than a minute longer than
+//! expected), `share_still_waiting_at_window_end`; over the trips carried `mean_wait_s` and
+//! `mean_waited_minus_expected_s`; over the fleet `km_empty_share` (kilometres driven empty, to
+//! pickups and chargers, over all kilometres driven), `occupied_time_share` (vehicle-seconds with
+//! a passenger, boarding included, over all vehicle-seconds of the window) and `kwh_charged`. A
+//! run without a taxi fleet has none of these rows.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -297,12 +310,94 @@ fn service_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow>
     rows
 }
 
+/// A run's taxi rows (see the [module docs](self)); none without a taxi fleet.
+fn taxi_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow> {
+    let Some(s) = &result.taxis else { return Vec::new() };
+    let name = || s.service.clone();
+    let mut rows: Vec<ServiceRow> = Vec::new();
+    let reports: Vec<u32> = if result.iterations.len() <= 1 {
+        vec![single_iteration]
+    } else {
+        result.iterations.iter().map(|r| r.iteration).collect()
+    };
+    let last = *reports.last().expect("one iteration at least");
+    let per = if reports.len() == s.legs_people.len() {
+        reports.iter().copied().zip(0..s.legs_people.len()).collect::<Vec<_>>()
+    } else {
+        s.legs_people.len().checked_sub(1).map(|k| vec![(last, k)]).unwrap_or_default()
+    };
+    for (i, k) in per {
+        rows.push((i, name(), "taxi_travellers", s.legs_people[k]));
+        for (metric, v) in [
+            ("mean_met_minus_expected_s", s.bias_s[k]),
+            ("mean_abs_met_minus_expected_s", s.mismatch_s[k]),
+        ] {
+            if v.is_finite() {
+                rows.push((i, name(), metric, v));
+            }
+        }
+    }
+    if let Some(day) = &s.last {
+        let (mut asked, mut failed, mut longer, mut waiting) = (0.0, 0.0, 0.0, 0.0);
+        let (mut carried, mut wait, mut wait_diff) = (0.0, 0.0, 0.0);
+        for (l, o) in day.legs.iter().zip(&day.outcome) {
+            if o.status == LegStatus::NotRequested {
+                continue;
+            }
+            let w = f64::from(l.leg.weight);
+            asked += w;
+            match o.status {
+                LegStatus::Failed => failed += w,
+                LegStatus::Served => {
+                    carried += w;
+                    wait += w * o.waited_s;
+                    let d = o.waited_s - l.expected_wait_s;
+                    wait_diff += w * d;
+                    if d > openmobisim_core_sim::services::taxi_tables::WAIT_TOLERANCE_S {
+                        longer += w;
+                    }
+                }
+                _ if o.picked_s.is_nan() => waiting += w,
+                _ => {}
+            }
+        }
+        if asked > 0.0 {
+            rows.push((last, name(), "share_no_taxi", failed / asked));
+            rows.push((last, name(), "share_waited_longer_than_expected", longer / asked));
+            rows.push((last, name(), "share_still_waiting_at_window_end", waiting / asked));
+        }
+        if carried > 0.0 {
+            rows.push((last, name(), "mean_wait_s", wait / carried));
+            rows.push((last, name(), "mean_waited_minus_expected_s", wait_diff / carried));
+        }
+        let vehicles = &day.day.vehicles;
+        let empty: f64 = vehicles.iter().map(|v| v.km_empty).sum();
+        let occupied: f64 = vehicles.iter().map(|v| v.km_occupied).sum();
+        if empty + occupied > 0.0 {
+            rows.push((last, name(), "km_empty_share", empty / (empty + occupied)));
+        }
+        let vb = &day.day.vehicle_bins;
+        let all: f64 = vb.state_s.iter().map(|c| c.iter().sum::<f64>()).sum();
+        let busy: f64 = vb
+            .state_s
+            .iter()
+            .map(|c| c[openmobisim_core_sim::services::engine::VehicleState::Occupied as usize])
+            .sum();
+        if all > 0.0 {
+            rows.push((last, name(), "occupied_time_share", busy / all));
+        }
+        rows.push((last, name(), "kwh_charged", vehicles.iter().map(|v| v.kwh_charged).sum()));
+    }
+    rows
+}
+
 /// Every row of `kpis.parquet`: the run's, then its services'.
 fn all_rows(result: &RunResult, single_iteration: u32) -> Vec<(u32, String, &'static str, f64)> {
     metrics(result, single_iteration)
         .into_iter()
         .map(|(i, mode, name, v)| (i, mode.to_string(), name, v))
         .chain(service_metrics(result, single_iteration))
+        .chain(taxi_metrics(result, single_iteration))
         .collect()
 }
 

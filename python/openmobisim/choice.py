@@ -92,6 +92,7 @@ import numpy as np
 __all__ = [
     "ROUTE_ATTRIBUTES",
     "SERVICE_ATTRIBUTES",
+    "TAXI_ATTRIBUTES",
     "ChoiceModel",
     "choice_model_register",
     "choice_models",
@@ -182,6 +183,15 @@ ROUTE_ATTRIBUTES: tuple[str, ...] = (
 #: ``mode_bike_share_transit`` (1 for a shared bike to a stop's hub then transit). A run without
 #: a service offers none.
 SERVICE_ATTRIBUTES: tuple[str, ...] = ("mode_bike_share", "dock_min", "mode_bike_share_transit")
+
+#: The attributes a taxi adds, in a run with a taxi fleet (``services``), after
+#: ``ROUTE_ATTRIBUTES`` (and ``SERVICE_ATTRIBUTES`` with a docked bike service too): ``mode_taxi``
+#: (1 for a taxi, 0 for the rest: its constant) and ``fail_prob`` (the expected share of requests
+#: from the trip's zone in its 15-minute bin that no vehicle reaches within the longest wait; 0
+#: for the other modes). A taxi's ``wait_min`` is its expected wait, its ``car_min`` its drive,
+#: its ``time_min`` the door-to-door expectation with the walk of a failed request. A run without
+#: a taxi fleet offers neither.
+TAXI_ATTRIBUTES: tuple[str, ...] = ("mode_taxi", "fail_prob")
 
 
 @runtime_checkable

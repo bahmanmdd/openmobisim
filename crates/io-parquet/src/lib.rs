@@ -1,7 +1,7 @@
 //! Output writers for openmobisim: `kpis.parquet`, `diagnostics.parquet`, `link_bins.parquet`,
 //! `transit_calls.parquet`, `parking_bins.parquet`, `trip_results.parquet`, `events.parquet`,
-//! `bike_share_events.parquet`, `bike_share_trips.parquet`, `bike_share_docks.parquet` and
-//! `manifest.json`.
+//! `bike_share_events.parquet`, `bike_share_trips.parquet`, `bike_share_docks.parquet`,
+//! `taxi_events.parquet`, `taxi_trips.parquet`, `taxi_vehicles.parquet` and `manifest.json`.
 //!
 //! | Module | What it writes |
 //! |---|---|
@@ -12,6 +12,7 @@
 //! | [`transit_calls`] | Every call of the timetable with its times and passengers, from [`openmobisim_core_sim::RunResult::transit`] |
 //! | [`parking_bins`] | Every parking's occupancy bin by bin, from [`openmobisim_core_sim::RunResult::parking`] |
 //! | [`bike_share`] | A run's docked bike service over its last loading: its events, its trips, its docks bin by bin (runs with a service only) |
+//! | [`taxi`] | A run's taxi fleet over its last loading: its events, its trips, its vehicles bin by bin (runs with a taxi fleet only) |
 //! | [`trip_results`] | Every trip and what became of it, from [`openmobisim_core_sim::TripTable`] |
 //! | [`frozen_legs`] | A frozen day's service legs (`legs.parquet`), written and read back |
 //! | [`manifest`] | [`manifest::Manifest`] — the file that makes a run reproducible |
@@ -48,6 +49,7 @@ pub mod kpis;
 pub mod link_bins;
 pub mod manifest;
 pub mod parking_bins;
+pub mod taxi;
 pub mod transit_calls;
 pub mod trip_results;
 
@@ -59,6 +61,7 @@ pub use kpis::{write_kpis, write_kpis_csv};
 pub use link_bins::{write_layer_link_bins, write_link_bins};
 pub use manifest::{Manifest, write_manifest};
 pub use parking_bins::write_parking_bins;
+pub use taxi::{write_taxi_events, write_taxi_trips, write_taxi_vehicles};
 pub use transit_calls::write_transit_calls;
 pub use trip_results::write_trip_results;
 

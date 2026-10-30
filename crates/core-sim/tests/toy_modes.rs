@@ -630,7 +630,7 @@ fn mc8_a_trip_with_no_alternative_is_reported_with_each_mode_s_reason() {
     let [none] = &r.no_alternative[..] else { panic!("one trip with no alternative") };
     assert!(none.choosing && !none.fallback_car);
     // In `Mode::ALL`'s order: car, bike, walk, transit, park-and-ride, bike-and-ride, bike
-    // sharing and bike sharing to transit (no service in this run).
+    // sharing, bike sharing to transit and the taxi (no service in this run).
     assert_eq!(
         none.reasons.map(NoAlternativeReason::as_str),
         [
@@ -640,6 +640,7 @@ fn mc8_a_trip_with_no_alternative_is_reported_with_each_mode_s_reason() {
             "no_transit_journey",
             "too_short",
             "too_short",
+            "",
             "",
             ""
         ]

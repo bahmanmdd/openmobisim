@@ -23,9 +23,9 @@ LAYERS = ("road", "bike", "walk")
 #: The modes a trip may have or choose (the ``mode`` column of ``trips.parquet``).
 MODES = ("car", "bike", "walk", "transit", "car_transit", "bike_transit")
 #: The modes a service of the run offers (``bike_share``, and ``bike_share_transit`` with a
-#: timetable: a docked bike service, ``service_bike_docked``): chosen, and listed in a run's
-#: results, only in a run that has the service.
-SERVICE_MODES = ("bike_share", "bike_share_transit")
+#: timetable: a docked bike service, ``service_bike_docked``; ``taxi``: a taxi fleet,
+#: ``service_taxi``): chosen, and listed in a run's results, only in a run that has the service.
+SERVICE_MODES = ("bike_share", "bike_share_transit", "taxi")
 #: A frozen day's ``setup.json``: its ``format`` and the ``version`` of its files' layout
 #: (``Run.freeze``).
 _FROZEN_DAY_FORMAT = "openmobisim.frozen_day"
