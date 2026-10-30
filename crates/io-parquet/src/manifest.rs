@@ -127,6 +127,9 @@ pub struct Manifest {
     /// with it the manifest's `service_day` says how the services' results were made. `None`
     /// without a service: neither key is written.
     pub service_assumptions: Option<Vec<(String, f64)>>,
+    /// The operator steering the service day (S304): its name and parameters; `None` without
+    /// one: the key is not written.
+    pub service_policy: Option<(String, Vec<(String, f64)>)>,
     /// How many loadings the run made.
     pub iterations_run: u32,
     /// Whether the strategy stopped before its most iterations because it had
@@ -214,6 +217,10 @@ impl Manifest {
             person_values: description.person_values.clone(),
             trip_values: description.trip_values.clone(),
             service_assumptions: description.service_assumptions.clone(),
+            service_policy: description
+                .service_policy
+                .as_ref()
+                .map(|p| (p.name.clone(), p.parameters.clone())),
             iterations_run: u32::try_from(result.iterations.len().max(1)).unwrap_or(u32::MAX),
             converged: result.converged,
             outputs: "all".to_string(),
@@ -341,6 +348,16 @@ impl Manifest {
                 e.iter().map(|(n, v)| format!("{}: {}", text(n), number(*v))).collect();
             body.push(format!("  \"service_assumptions\": {{{}}}", inner.join(", ")));
             body.push(format!("  \"service_day\": {}", text(SERVICE_DAY)));
+        }
+        // An operator of the service day (S304): its name and parameters.
+        if let Some((name, parameters)) = &self.service_policy {
+            let inner: Vec<String> =
+                parameters.iter().map(|(n, v)| format!("{}: {}", text(n), number(*v))).collect();
+            body.push(format!(
+                "  \"service_policy\": {{\"name\": {}, \"parameters\": {{{}}}}}",
+                text(name),
+                inner.join(", ")
+            ));
         }
         format!("{{\n{}\n}}\n", body.join(",\n"))
     }

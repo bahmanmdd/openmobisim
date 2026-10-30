@@ -217,6 +217,9 @@ pub enum RunError {
     /// An input does not fit the run: a link value's column is not as long as its
     /// layer.
     Input(String),
+    /// The operator of the service day stopped it (S304): its own error, or a step it could
+    /// not take.
+    Operator(String),
 }
 
 impl core::fmt::Display for RunError {
@@ -224,6 +227,7 @@ impl core::fmt::Display for RunError {
         match self {
             Self::Choice(e) => write!(f, "{e}"),
             Self::Input(e) => write!(f, "{e}"),
+            Self::Operator(e) => write!(f, "the service day's operator stopped it: {e}"),
         }
     }
 }
@@ -232,7 +236,7 @@ impl std::error::Error for RunError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Choice(e) => Some(e),
-            Self::Input(_) => None,
+            Self::Input(_) | Self::Operator(_) => None,
         }
     }
 }
@@ -302,6 +306,12 @@ pub struct RunResult {
     /// a vehicle enters a link), what a frozen day of the run keeps: `None` in a run without a
     /// service.
     pub service_road_times: Option<RoadTimes>,
+    /// The operator of the service day (S304), and its decisions in the order taken, each with
+    /// what became of it, with the target solver's moves: `None` in a run without one.
+    pub service_decisions: Option<(
+        crate::services::policy::PolicyDescription,
+        Vec<crate::services::decisions::DecisionRecord>,
+    )>,
     /// The trips that chose their mode and had none to choose (counted under the car
     /// before, a trip's stated mode).
     pub no_mode: ModeTotals,
@@ -598,6 +608,8 @@ pub struct Run {
     reroute_cost: Option<Arc<crate::reroute::RerouteCost>>,
     /// What travellers assume about the services (S303): the shipped values, by default.
     service_assumptions: ServiceAssumptions,
+    /// The operator steering the service day (S304): none, by default.
+    service_policy: Option<Box<dyn crate::services::policy::Policy>>,
 }
 
 /// Walk paths by (from, to) walk node: see [`Run`]'s `walk_paths`.
@@ -694,6 +706,7 @@ impl Run {
             static_solution: None,
             reroute_cost: None,
             service_assumptions: ServiceAssumptions::SHIPPED,
+            service_policy: None,
         }
     }
 
@@ -771,6 +784,17 @@ impl Run {
     #[must_use]
     pub fn with_service_assumptions(mut self, assumptions: ServiceAssumptions) -> Self {
         self.service_assumptions = assumptions;
+        self
+    }
+
+    /// The same run with `policy` steering its service day (S304), as it would steer a frozen
+    /// day of the run ([`crate::services::in_run::play`]): its decisions are in
+    /// [`RunResult::service_decisions`], its name and parameters in the fingerprint. Read only
+    /// in a run with services, so a run without one is what it was. Each execution steers with
+    /// a copy of `policy` ([`crate::services::policy::PolicyClone`]).
+    #[must_use]
+    pub fn with_service_policy(mut self, policy: Box<dyn crate::services::policy::Policy>) -> Self {
+        self.service_policy = Some(policy);
         self
     }
 
@@ -1237,6 +1261,7 @@ impl Run {
             services: self.services.as_deref().map_or(&[], Vec::as_slice),
             hub_join_m: self.hub_join_m,
             service_assumptions: &self.service_assumptions,
+            service_policy: self.service_policy.as_ref().map(|p| p.describe()),
             mode_choice: self.mode_choice.as_deref(),
             mode_defaults: &self.mode_defaults,
             class_modes: &self.class_modes,
@@ -2630,21 +2655,35 @@ impl Run {
             RoadTimes::from_rows(&network, times.bin_seconds(), &rows)
                 .expect("a loading's own link times make road times")
         });
+        let mut service_decisions = None;
         if let (Some(services), Some(road_times)) = (&services_arc, &service_road_times) {
             let (share, taxi) = loaded.service_legs;
-            if !share.is_empty() || !taxi.is_empty() {
-                let roads = (!taxi.is_empty()).then(|| crate::services::in_run::RunRoads {
-                    road: Arc::clone(&network),
-                    turns: Arc::clone(&turns),
-                    times: Arc::new(road_times.clone()),
+            // An operator steers the day even with no service trip (its vans move bikes), as it
+            // would a frozen day of the run (S304).
+            let steer = self
+                .service_policy
+                .as_ref()
+                .map(|p| crate::services::in_run::Steer { policy: p.clone_box() });
+            if !share.is_empty() || !taxi.is_empty() || steer.is_some() {
+                let roads = (!taxi.is_empty() || steer.is_some()).then(|| {
+                    crate::services::in_run::RunRoads {
+                        road: Arc::clone(&network),
+                        turns: Arc::clone(&turns),
+                        times: Arc::new(road_times.clone()),
+                    }
                 });
-                let (day, taxi_day) = crate::services::in_run::play(
+                let described = steer.as_ref().map(|s| s.policy.describe());
+                let played = crate::services::in_run::play(
                     services,
                     &self.layers,
                     crate::services::in_run::DayLegs { share, taxi, roads },
                     (start_s, f64::from(self.window.get())),
                     self.master_seed,
-                );
+                    steer,
+                )
+                .map_err(RunError::Operator)?;
+                let (day, taxi_day) = (played.share, played.taxi);
+                service_decisions = described.map(|d| (d, played.decisions));
                 // One engine day plays both services: its time is each one's.
                 let engine_s = day
                     .as_ref()
@@ -2687,6 +2726,7 @@ impl Run {
             services: services_run,
             taxis: taxis_run,
             service_road_times,
+            service_decisions,
             no_mode,
             fallback_car,
             no_alternative,

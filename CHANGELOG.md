@@ -20,6 +20,12 @@ engine, the taxis on that loading's road times, and what the fleet actually did 
   traveller's best other alternative; under the random utility model this is the ride, fare in full, with the cancel
   limit × `p / (1 − p)` added to its waiting in the choice, so a higher assumed chance always makes a taxi less
   likely to be chosen.
+- **An operator in a run:** `Scenario.run(policy=..., policy_options=...)` steers the run's service day with a
+  policy, as `fleet_day(policy=...)` takes it (a built-in one by name or object, a registered name, or a Python
+  object with `step(view)`); the day is the one `fleet_day(frozen=run.freeze(...), policy=...)` replays, decision for
+  decision. `Run.operator_decisions()` returns its decisions (in memory), `Run.service_policy()` its name and
+  parameters, which the fingerprint and `manifest.json` (`service_policy`) record. Travellers still choose on the
+  assumptions. Refused without services.
 - A taxi fleet's options: `request_cancel_s` (600 s: a request is cancelled if no taxi can pick it up within this
   time; the trip ends there, with no walk on, in a run, in `fleet_day` and in `fleet_environment`),
   `dispatch_delay_s` (120 s: from a request being matched to the taxi setting off; the waiting time counts it, and a

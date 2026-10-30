@@ -540,6 +540,13 @@ pub struct PyRunSummary {
     /// What travellers assumed about the services, by name (S303); `None` without a service.
     #[pyo3(get)]
     pub service_assumptions: Option<Py<PyDict>>,
+    /// The operator of the service day, `{"name", "parameters"}` (S304); `None` without one.
+    #[pyo3(get)]
+    pub service_policy: Option<Py<PyDict>>,
+    /// Its decisions as columns, as `FleetDay.decisions()` gives them (S304); `None` without an
+    /// operator.
+    #[pyo3(get)]
+    pub service_decisions: Option<Py<PyDict>>,
     /// Per service, by name: its kind and its service day's summary (`kpis.parquet`'s rows of
     /// the service, by metric), S303; `None` without a service.
     #[pyo3(get)]
@@ -910,6 +917,7 @@ fn gap_trip_columns(py: Python<'_>, gap: &openmobisim_core_sim::GapTrips) -> PyR
     loading_options=None, price_options=None, threads=None, fingerprint_only=false,
     design_id="default", replication=0, outputs="all", hub_join_m=150.0,
     services=None, class_no_bike_share=None, class_no_taxi=None, service_assumptions=None,
+    policy=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -976,6 +984,7 @@ pub fn run_pipeline(
     class_no_bike_share: Option<Vec<String>>,
     class_no_taxi: Option<Vec<String>>,
     service_assumptions: Option<std::collections::BTreeMap<String, f64>>,
+    policy: Option<crate::policy::PolicyTuple<'_>>,
 ) -> PyResult<Py<PyAny>> {
     // What travellers assume about the services (S303): the shipped values, those given by
     // name replacing them.
@@ -1431,6 +1440,24 @@ pub fn run_pipeline(
             .with_hub_join_m(hub_join_m)
             .with_service_assumptions(assumptions);
     }
+    // The operator of the service day (S304), as `fleet_day` takes it; the ids it names
+    // decisions by are the services' and the network's.
+    let (service_ids, raised) = match (&policy, &service_setups) {
+        (Some(_), None) => {
+            return Err(PyValueError::new_err(
+                "policy steers a run's services: give services too, or no policy",
+            ));
+        }
+        (_, Some(setups)) => {
+            let ids = Arc::new(crate::policy::Ids::new(setups.as_slice(), network.inner.clone()));
+            let (chosen, raised) = crate::policy::policy_from_py(policy, Arc::clone(&ids))?;
+            if let Some(p) = chosen {
+                run = run.with_service_policy(p);
+            }
+            (Some(ids), raised)
+        }
+        (None, None) => (None, Arc::new(std::sync::Mutex::new(None))),
+    };
     run = run
         .with_mode_choice(&modes)
         .with_class_modes(class_allowed)
@@ -1476,7 +1503,17 @@ pub fn run_pipeline(
     let mut run_diagnostics = Diagnostics::new();
     // Python's lock released (S277): the run works on a pool of its own, and a choice model in
     // Python is called from that pool's thread, which takes the lock when it needs it.
-    let result = py.detach(|| run.try_execute(&mut run_diagnostics)).map_err(to_value_error)?;
+    let result = py.detach(|| run.try_execute(&mut run_diagnostics)).map_err(|e| {
+        // A Python operator's own exception is raised as it was (S304).
+        match e {
+            openmobisim_core_sim::run::RunError::Operator(_) => raised
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+                .unwrap_or_else(|| to_value_error(e)),
+            e => to_value_error(e),
+        }
+    })?;
     let core_stages = run.timings().to_vec();
     // A run with a service keeps its service day, to freeze it (S302, S303); one without keeps
     // nothing.
@@ -1722,6 +1759,15 @@ pub fn run_pipeline(
             Ok(d.unbind())
         })
         .transpose()?;
+    // The operator's decisions (S304).
+    let (service_policy_out, service_decisions_out) =
+        match (&result.service_decisions, &service_ids) {
+            (Some((described, records)), Some(ids)) => (
+                crate::policy::description_to_py(py, Some(described))?.map(Bound::unbind),
+                Some(crate::policy::decision_columns(py, records, ids)?.unbind()),
+            ),
+            _ => (None, None),
+        };
     let service_summaries = (result.services.is_some() || result.taxis.is_some())
         .then(|| -> PyResult<Py<PyDict>> {
             use openmobisim_core_sim::services::in_run::{DockSummary, TaxiSummary};
@@ -1931,6 +1977,8 @@ pub fn run_pipeline(
         taxi_trips_path,
         taxi_vehicles_path,
         service_assumptions: service_assumptions_out,
+        service_policy: service_policy_out,
+        service_decisions: service_decisions_out,
         service_summaries,
         itinerary_choices: itinerary_table,
         trip_modes: trip_modes_table,
