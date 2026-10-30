@@ -124,6 +124,7 @@ def test_a_price_per_ride_lowers_the_shared_bikes_share() -> None:
 def test_the_docks_expectations_are_seconds_and_service_met_gives_what_the_day_met(
     tmp_path: object,
 ) -> None:
+    pytest.importorskip("pyarrow")  # the trip tables are read from parquet
     import math
 
     import numpy as np
