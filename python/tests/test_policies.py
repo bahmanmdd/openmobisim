@@ -100,7 +100,7 @@ def taxi_environment() -> object:
         )
         for k in range(30)
     ]
-    taxis = ms.service_taxi(vehicles, chargers, options={"max_wait_s": 120, "battery_kwh": 2})
+    taxis = ms.service_taxi(vehicles, chargers, options={"max_wait_s": 120, "battery_kwh": 2, "hail_s": 0})
     return ms.fleet_environment(
         net,
         [taxis],

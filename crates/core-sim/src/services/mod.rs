@@ -402,6 +402,15 @@ pub struct TaxiDefaults {
     ///
     /// *An assumption.*
     pub board_s: f64,
+    /// The hailing time, in seconds: from a request being matched to a vehicle to that vehicle
+    /// setting off to the pickup (the dispatch by the app and the driver's acceptance). The
+    /// vehicle is held for the request from the match; it drives no kilometre and uses no
+    /// energy during the hailing. A vehicle serves a request only if the hailing time and its
+    /// drive to the pickup fit within [`Self::max_wait_s`], so the hailing time must be below
+    /// the longest wait (or both 0).
+    ///
+    /// *An assumption: 120 s. CITATION OWED.*
+    pub hail_s: f64,
     /// The farthest a vehicle or charger may be from the road network, in metres.
     ///
     /// *An assumption, as for docks and parkings.*
@@ -430,6 +439,7 @@ impl TaxiDefaults {
         charger_kw: 50.0,
         max_wait_s: 600.0,
         board_s: 60.0,
+        hail_s: 120.0,
         snap_m: 300.0,
         charger_reach_s: 3600.0,
         log_events: true,
@@ -448,6 +458,7 @@ impl TaxiDefaults {
             ("charger_kw", self.charger_kw),
             ("max_wait_s", self.max_wait_s),
             ("board_s", self.board_s),
+            ("hail_s", self.hail_s),
             ("snap_m", self.snap_m),
             ("charger_reach_s", self.charger_reach_s),
         ]
@@ -488,6 +499,7 @@ impl TaxiDefaults {
                 "charger_kw" => &mut d.charger_kw,
                 "max_wait_s" => &mut d.max_wait_s,
                 "board_s" => &mut d.board_s,
+                "hail_s" => &mut d.hail_s,
                 "snap_m" => &mut d.snap_m,
                 "charger_reach_s" => &mut d.charger_reach_s,
                 _ => {
@@ -525,6 +537,7 @@ impl TaxiDefaults {
         for (name, value) in [
             ("max_wait_s", d.max_wait_s),
             ("board_s", d.board_s),
+            ("hail_s", d.hail_s),
             ("snap_m", d.snap_m),
             ("charger_reach_s", d.charger_reach_s),
         ] {
@@ -549,7 +562,30 @@ impl TaxiDefaults {
                 "needs reserve_soc <= charge_below < charge_to",
             );
         }
+        d.check_hail()?;
         Ok(d)
+    }
+
+    /// Refuse a hailing time at or above the longest wait (with no vehicle ever served).
+    ///
+    /// # Errors
+    ///
+    /// [`ServiceError::BadOption`] on `hail_s` when it is above 0 and at least `max_wait_s`.
+    pub fn check_hail(&self) -> Result<(), ServiceError> {
+        if self.hail_s > 0.0 && self.hail_s >= self.max_wait_s {
+            return Err(ServiceError::BadOption {
+                kind: ServiceKind::Taxi,
+                name: "hail_s".to_string(),
+                value: self.hail_s,
+                why: format!(
+                    "must be below max_wait_s ({} s): a vehicle serves a request only if the \
+                     hailing time and its drive to the pickup fit within the longest wait, so no \
+                     request would ever be served; lower hail_s or raise max_wait_s",
+                    self.max_wait_s
+                ),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -1035,6 +1071,7 @@ impl ServiceSetup {
         chargers: &[ChargerRow],
         defaults: TaxiDefaults,
     ) -> Result<Self, ServiceError> {
+        defaults.check_hail()?;
         let snapper = NodeSnapper::new(road);
         let far = |node: NodeId, at: LonLat| {
             ground_distance_metres(road.node_lonlat(node), at) > defaults.snap_m

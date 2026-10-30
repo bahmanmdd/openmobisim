@@ -22,6 +22,10 @@ and what they met is reported beside what they expected.
   form, so a next run can plan on it: `scenario.run(service_expectations=run.service_met())`.
 - A taxi request that gets no vehicle within the fleet's longest wait ends there, with no walk on: in a run, in
   `fleet_day` and in `fleet_environment`.
+- A taxi sets off after a hailing time: `service_taxi` option `hail_s` (120 s, an assumption), the seconds from a
+  request being matched to a vehicle to that vehicle driving to the pickup. The wait counts it, and a vehicle serves a
+  request only if the hailing time and its drive fit within `max_wait_s`; a `hail_s` at or above `max_wait_s` is
+  refused.
 - `Run.freeze` keeps the day's taxi legs and road times too: `fleet_day(frozen=...)` replays the run's day, bikes and
   taxis, leg by leg.
 

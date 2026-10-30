@@ -625,7 +625,9 @@ fn close(a: f64, b: f64) -> bool {
 fn a_relocated_taxi_drives_there_empty_and_waits_for_a_request() {
     let net = line();
     let nodes = Line::new(&net).nodes;
-    let setup = taxi_fleet(&net, &[("v", 0, 0.8)], &[]);
+    // No hailing time: the vehicle waiting at the pickup is there at the request.
+    let d = TaxiDefaults { hail_s: 0.0, ..TaxiDefaults::SHIPPED };
+    let setup = taxi_fleet_with(&net, &[("v", 0, 0.8)], &[], d);
     let relocate = Decision::Relocate { service: 0, vehicle: 0, node: nodes[5] };
     let (op, seen) = Fixed::boxed(900.0, vec![vec![relocate]]);
     let out = taxi_day(&net, &setup, &[(400.0, 5, 6)], Some(op)).unwrap();

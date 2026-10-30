@@ -334,7 +334,13 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// `optimistic`, `pessimistic`), and the services' day is played once, after the run has stopped,
 /// on its last loading; a taxi request with no vehicle within the longest wait ends there, with
 /// no walk on. Runs without a service do not move.
-pub const DEFAULTS_VERSION: u32 = 44;
+///
+/// Version 45 (S303): **a taxi sets off after a hailing time** (`service_taxi` option `hail_s`,
+/// 120 s): a vehicle matched to a request at second `t` drives to the pickup from `t + hail_s`,
+/// so every pickup and drop-off is that much later, and a vehicle serves a request only if the
+/// hailing time and its drive fit within `max_wait_s`. Every run with a taxi fleet moves; runs
+/// without a service do not.
+pub const DEFAULTS_VERSION: u32 = 45;
 
 /// The range a derived backward wave speed is allowed to fall in.
 ///
