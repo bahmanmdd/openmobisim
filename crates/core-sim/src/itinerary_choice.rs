@@ -171,10 +171,12 @@ pub const SERVICE_ATTRIBUTES: [&str; 3] =
 /// travellers assume ([`crate::services::ServiceAssumptions::assumed_no_taxi_share`], the same
 /// for every trip; 0 for every other mode). A taxi's `wait_min` is the assumed waiting time
 /// ([`crate::services::ServiceAssumptions::assumed_wait_s`]), its `parking_min` the boarding
-/// time, its `car_min` the drive; its `time_min` is its planned time (the three summed) when
-/// the assumed chance of no taxi `p` is 0, else `(1 − p)` × the planned time plus `p` × (the
-/// fleet's cancel limit plus the time of the traveller's best other alternative in the same
-/// choice set). A run without a taxi fleet offers neither.
+/// time, its `car_min` the drive; its `time_min` is its planned time (the three summed). With an
+/// assumed chance of no taxi `p` above 0, its `time_min` and `wait_min` also hold the fleet's
+/// cancel limit × `p / (1 − p)` ([`Alternative::cancel_penalty_s`]): asking for a taxi, then
+/// taking the traveller's best other alternative after a cancelled request, is chosen over that
+/// alternative exactly when the ride is, by that margin. A run without a taxi fleet offers
+/// neither.
 pub const TAXI_ATTRIBUTES: [&str; 2] = ["mode_taxi", "fail_prob"];
 
 /// The value of a mode attribute for an alternative of `mode`: `nest` is the mode's index
@@ -321,10 +323,10 @@ pub struct Alternative {
     /// A taxi's assumed waiting time before the pickup, in seconds; 0 for any other
     /// alternative.
     pub assumed_wait_s: f64,
-    /// A taxi's time in the choice should its request be cancelled, in seconds: the fleet's
-    /// cancel limit plus the time of the best other alternative of its set (set once the set is
-    /// planned, [`finalise_taxi`]); 0 for any other alternative, or with no chance of no taxi.
-    pub cancelled_s: f64,
+    /// A taxi's seconds of waiting added in the choice for an assumed chance `p` of no taxi:
+    /// the fleet's cancel limit × `p / (1 − p)`, set once the set is planned
+    /// ([`finalise_taxi`]); 0 for any other alternative, or with no chance of no taxi.
+    pub cancel_penalty_s: f64,
 }
 
 impl Alternative {
@@ -1621,7 +1623,7 @@ impl<'a> Planner<'a> {
     /// A trip's taxi alternative (S302): the fastest of its car pair's routes at the expected
     /// link times, leaving once the assumed wait and boarding are over (S303); its planned time
     /// is the assumed wait, boarding and the drive. With an assumed chance of no taxi above 0,
-    /// its time in the choice is finished once the whole set is planned ([`finalise_taxi`]).
+    /// its waiting in the choice is finished once the whole set is planned ([`finalise_taxi`]).
     /// None without a route.
     fn plan_taxi(
         &self,
@@ -2321,7 +2323,7 @@ fn blank(mode: Mode, shape: Shape) -> Alternative {
         dock_s: 0.0,
         no_taxi_share: 0.0,
         assumed_wait_s: 0.0,
-        cancelled_s: 0.0,
+        cancel_penalty_s: 0.0,
     }
 }
 
@@ -2460,38 +2462,34 @@ fn finalise(
     alts
 }
 
-/// Finish a set's taxi alternative (S303): with an assumed chance `p` of no taxi above 0, its
-/// time in the choice should the request be cancelled ([`Alternative::cancelled_s`]) is the
-/// fleet's cancel limit `request_cancel_s` plus the time of the traveller's best other
-/// alternative in the set, the taxi excluded; a set with no other alternative offers no taxi
-/// then (a cancelled request would leave the traveller no way on). With `p` 0 the set is
-/// unchanged.
+/// Finish a set's taxi alternative (S303): with an assumed chance `p` of no taxi above 0, a
+/// cancelled request is followed, after the fleet's cancel limit `request_cancel_s`, by the
+/// traveller's best other alternative. Under a random utility model with the taxi ride's own
+/// error term, asking for a taxi is then chosen over the best other alternative `b` exactly when
+/// `(1 − p)·U_taxi + p·(U_b − c) > U_b`, that is `U_taxi − c·p / (1 − p) > U_b`, `c` the cost of
+/// waiting `request_cancel_s`: so the taxi alternative is its ride, fare in full, plus that
+/// waiting × `p / (1 − p)` ([`Alternative::cancel_penalty_s`]), the expected waiting of the
+/// cancelled requests before a ride. With `p` of 1, or a set with no other alternative (a
+/// cancelled request would leave the traveller no way on), the set offers no taxi. With `p` 0
+/// the set is unchanged.
 fn finalise_taxi(mut alts: Vec<Alternative>, request_cancel_s: f64) -> Vec<Alternative> {
     let Some(i) = alts.iter().position(|a| a.mode == Mode::Taxi && a.no_taxi_share > 0.0) else {
         return alts;
     };
-    let best = alts
-        .iter()
-        .filter(|a| a.mode != Mode::Taxi)
-        .map(|a| a.total_s)
-        .fold(f64::INFINITY, f64::min);
-    if best.is_finite() {
-        alts[i].cancelled_s = request_cancel_s + best;
-    } else {
+    let p = alts[i].no_taxi_share;
+    if p >= 1.0 || alts.iter().all(|a| a.mode == Mode::Taxi) {
         alts.remove(i);
+    } else {
+        alts[i].cancel_penalty_s = request_cancel_s * p / (1.0 - p);
     }
     alts
 }
 
-/// The time the choice reads for `a` (`time_min` × 60): its planned time, or for a taxi with an
-/// assumed chance `p` of no taxi above 0, `(1 − p)` × that plus `p` × [`Alternative::cancelled_s`].
-/// Never written to a results table.
+/// The time the choice reads for `a` (`time_min` × 60): its planned time, plus for a taxi the
+/// waiting [`Alternative::cancel_penalty_s`] of its assumed chance of no taxi. Never written to a
+/// results table.
 fn choice_s(a: &Alternative) -> f64 {
-    if a.mode == Mode::Taxi && a.no_taxi_share > 0.0 {
-        (1.0 - a.no_taxi_share) * a.total_s + a.no_taxi_share * a.cancelled_s
-    } else {
-        a.total_s
-    }
+    a.total_s + a.cancel_penalty_s
 }
 
 /// The longest last walk of an itinerary, in whole seconds: the traveller's `access_walk_max_s`
@@ -2565,9 +2563,10 @@ fn cost(a: &Alternative, inputs: &ChooseInputs<'_>, trip: TripId) -> Cost {
         // A pass holder pays no fare (S279, CM-15): the pass is access, not money, and its own
         // price is not counted (Q-7).
         fare: if a.mode == Mode::Taxi {
-            // A taxi's fare (S302): every traveller pays it, a transit pass covers none; a
-            // cancelled request pays nothing.
-            (1.0 - a.no_taxi_share) * prices.taxi(a.vehicle_m)
+            // A taxi's fare (S302): every traveller pays it, a transit pass covers none; the
+            // ride's fare in full, as a cancelled request is priced by its waiting alone
+            // (`finalise_taxi`).
+            prices.taxi(a.vehicle_m)
         } else if a.mode == Mode::BikeShare {
             // A shared bike's price (S302): every traveller pays it, a transit pass covers none.
             prices.bike_share(a.vehicle_s)
@@ -2640,7 +2639,7 @@ fn attribute(
         }
         "dock_min" => a.dock_s / 60.0,
         "walk_min" => a.walk_s / 60.0,
-        "wait_min" => a.wait_s / 60.0,
+        "wait_min" => (a.wait_s + a.cancel_penalty_s) / 60.0,
         "ride_min" => a.ride_s / 60.0,
         "transfers" => f64::from(a.transfers()),
         "parking_min" => a.parking_s / 60.0,
@@ -4703,8 +4702,29 @@ mod tests {
             dock_s: 0.0,
             no_taxi_share: 0.0,
             assumed_wait_s: 0.0,
-            cancelled_s: 0.0,
+            cancel_penalty_s: 0.0,
         }
+    }
+
+    /// A taxi alternative with an assumed chance `p` of no taxi.
+    fn taxi(p: f64) -> Alternative {
+        Alternative { mode: Mode::Taxi, no_taxi_share: p, ..park_and_ride(0, &[]) }
+    }
+
+    #[test]
+    fn a_chance_of_no_taxi_adds_the_expected_waiting_of_cancelled_requests() {
+        // p / (1 - p) cancelled requests per ride, each waiting the cancel limit: rising in p.
+        let penalty = |p: f64| {
+            let set = finalise_taxi(vec![taxi(p), park_and_ride(1, &[3])], 600.0);
+            choice_s(&set[0]) - set[0].total_s
+        };
+        assert!(penalty(0.0).abs() < 1e-12);
+        assert!((penalty(0.25) - 200.0).abs() < 1e-9 && (penalty(0.5) - 600.0).abs() < 1e-9);
+        assert!(penalty(0.9) > penalty(0.5));
+        // Certain to be cancelled, or alone in its set: no taxi is offered.
+        assert_eq!(finalise_taxi(vec![taxi(1.0), park_and_ride(1, &[3])], 600.0).len(), 1);
+        assert!(finalise_taxi(vec![taxi(0.5)], 600.0).is_empty());
+        assert_eq!(finalise_taxi(vec![taxi(0.0)], 600.0).len(), 1);
     }
 
     #[test]

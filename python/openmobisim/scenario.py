@@ -1261,10 +1261,12 @@ class Scenario:
                 time, ``service_assumptions``' ``assumed_wait_s``, whatever the fleet's cancel
                 limit), ``parking_min`` (the fleet's ``boarding_s``), ``car_min`` (the drive),
                 ``fail_prob`` (the assumed chance of no taxi, ``assumed_no_taxi_share``),
-                ``mode_taxi`` and ``time_min``: its planned time (the three summed) or, with a
-                chance ``p`` of no taxi above 0, ``(1 − p)`` × the planned time plus ``p`` × (the
-                cancel limit ``request_cancel_s`` plus the time of the traveller's best other
-                alternative). Once the run has stopped, the last loading's taxi trips are played
+                ``mode_taxi`` and ``time_min``: its planned time (the three summed). With a
+                chance ``p`` of no taxi above 0, a cancelled request is followed, after the cancel
+                limit ``request_cancel_s``, by the traveller's best other alternative; under the
+                random utility model that is the ride, fare in full, with ``request_cancel_s`` ×
+                ``p / (1 − p)`` added to its ``time_min`` and ``wait_min``. Once the run has
+                stopped, the last loading's taxi trips are played
                 on the fleet engine (the built-in matching, the dispatch delay
                 ``dispatch_delay_s``, the charging rule): the vehicles drive on that loading's link
                 times without adding traffic, and a request no taxi can pick up within

@@ -89,6 +89,18 @@ def test_a_taxi_drives_its_traveller_and_waits_are_counted():
     assert math.isfinite(t["arrived_s"][0])
 
 
+def test_a_cancelled_taxi_request_has_no_waiting_time_and_no_arrival():
+    net = grid()
+    v = ms.vehicle_read_table(
+        [{"vehicle_id": "v1", "lon": at(net, 0, 0)[0], "lat": at(net, 0, 0)[1]}]
+    )
+    taxis = ms.service_taxi(v, options={"request_cancel_s": 1.0, "dispatch_delay_s": 0.0})
+    day = ms.fleet_day(net, [taxis], [trip(net, "far", "08:00", (4, 4), (0, 0))])
+    t = day.trip_results()
+    assert t["outcome"] == ["cancelled"] and t["vehicle_id"] == [None]
+    assert math.isnan(t["waiting_s"][0]) and math.isnan(t["arrived_s"][0])
+
+
 def test_inputs_that_are_not_valid_are_refused_with_why():
     net = grid()
     bikes = ms.service_bike_docked(docks(net))

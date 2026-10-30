@@ -347,9 +347,10 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// `assumed_extra_walk_at_return_s` (`NaN`); a taxi fleet's `request_cancel_s` (600 s),
 /// `dispatch_delay_s` (120 s) and `boarding_s` (60 s). The assumed wait is what the traveller
 /// believes, whatever the fleet's cancel limit; with an assumed chance `p` of no taxi above 0,
-/// a taxi's time in the choice is `(1 − p)` × its planned time plus `p` × (the cancel limit plus
-/// the time of the traveller's best other alternative), and its planned time (the assumed
-/// wait, boarding and the drive) is what the trip records. Runs with a taxi fleet and the
+/// a taxi's waiting in the choice gains the cancel limit × `p / (1 − p)` (a cancelled request
+/// followed by the traveller's best other alternative, under the random utility model) and its
+/// fare counts in full, and its planned time (the assumed wait, boarding and the drive) is what
+/// the trip records. Runs with a taxi fleet and the
 /// shipped values do not move (the cap never bit at 600 s against 600 s); runs with an assumed
 /// wait above the cancel limit or a chance of no taxi above 0 move; runs without a service do
 /// not.

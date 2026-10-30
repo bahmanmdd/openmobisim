@@ -204,10 +204,11 @@ class FleetDay:
         riding when the window ended; ``not_requested``: asking after the window;
         ``not_planned``: no leg could be planned), ``requested_s``, ``pickup_s`` (a taxi at the
         pickup; the bike taken), ``dropoff_s`` (a taxi's drop-off at the destination; the bike
-        returned), ``arrived_s`` (at the destination, a shared bike's walk on included),
-        ``waiting_s`` (a taxi's, from the request to the pickup, the dispatch delay included; 0
-        for a bike), ``dock_from``, ``dock_to``, ``vehicle_id``, ``extra_walk_s``,
-        ``redirections``, ``overflow``.
+        returned), ``arrived_s`` (at the destination, a shared bike's walk on included; after a
+        bike trip that found no bike, on foot from the last dock tried; NaN after a cancelled
+        taxi request), ``waiting_s`` (a taxi's, from the request to the pickup, the dispatch
+        delay included; NaN if never picked up; 0 for a bike), ``dock_from``, ``dock_to``,
+        ``vehicle_id``, ``extra_walk_s``, ``redirections``, ``overflow``.
         """
         return self.trips
 

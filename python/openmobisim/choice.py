@@ -189,9 +189,11 @@ SERVICE_ATTRIBUTES: tuple[str, ...] = ("mode_bike_share", "dock_min", "mode_bike
 #: (1 for a taxi, 0 for the rest: its constant) and ``fail_prob`` (the chance of getting no taxi
 #: the travellers assume, ``Scenario.run``'s ``assumed_no_taxi_share``; 0 for the other modes). A
 #: taxi's ``wait_min`` is the assumed waiting time, its ``parking_min`` the boarding, its
-#: ``car_min`` the drive; its ``time_min`` is their sum, or with a chance ``p`` of no taxi above
-#: 0, ``(1 − p)`` × that plus ``p`` × (the fleet's cancel limit plus the time of the traveller's
-#: best other alternative). A run without a taxi fleet offers neither.
+#: ``car_min`` the drive; its ``time_min`` is their sum. With a chance ``p`` of no taxi above 0,
+#: its ``time_min`` and ``wait_min`` also hold the fleet's cancel limit × ``p / (1 − p)``: asking
+#: for a taxi, then taking the best other alternative after a cancelled request, is chosen over
+#: that alternative exactly when the ride is, by that margin. A run without a taxi fleet offers
+#: neither.
 TAXI_ATTRIBUTES: tuple[str, ...] = ("mode_taxi", "fail_prob")
 
 

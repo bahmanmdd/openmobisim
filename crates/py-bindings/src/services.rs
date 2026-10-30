@@ -493,7 +493,12 @@ pub(crate) fn outcome_dict<'py>(
         picked_s.push(o.picked_s);
         arrived.push(o.arrived_s);
         extra.push(o.extra_walk_s);
-        waited.push(o.waited_s);
+        // A taxi trip's wait ends at its pickup: none for a request never picked up, as in
+        // `taxi_trips`.
+        waited.push(match setup.parts() {
+            ServiceParts::Taxi(..) if !o.picked_s.is_finite() => nan,
+            _ => o.waited_s,
+        });
         from.push(dock_id(o.picked));
         to.push(dock_id(o.returned));
         vehicle.push(match (setup.parts(), o.vehicle) {

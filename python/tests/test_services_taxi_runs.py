@@ -277,11 +277,11 @@ class _Recorder:
         return chosen
 
 
-def test_a_chance_of_no_taxi_prices_a_cancelled_request_as_the_best_other_alternative(
+def test_a_chance_of_no_taxi_adds_the_expected_waiting_of_cancelled_requests(
     tmp_path: object,
 ) -> None:
-    # The taxi's time in the choice: (1 - p) x (assumed wait + boarding + drive) + p x (the
-    # cancel limit + the best other alternative's time), here walking.
+    # A cancelled request followed by the best other alternative, under the random utility
+    # model: the ride with the cancel limit x p / (1 - p) added to its waiting.
     net = grid()
     rows = trips(net, 6, (0, 0), (3, 3))
     model = _Recorder()
@@ -293,10 +293,11 @@ def test_a_chance_of_no_taxi_prices_a_cancelled_request_as_the_best_other_altern
         service_assumptions={"assumed_no_taxi_share": 0.25},
     )
     assert model.seen, "the taxi was offered"
-    for time, wait, car, boarding, p, best in model.seen:
-        assert p == 0.25 and wait == 10.0 and boarding == 1.0
-        planned = wait + boarding + car
-        assert time == pytest.approx(0.75 * planned + 0.25 * (600 / 60 + best))
+    penalty = 600 / 60 * 0.25 / 0.75
+    for time, wait, car, boarding, p, _ in model.seen:
+        assert p == 0.25 and boarding == 1.0
+        assert wait == pytest.approx(10.0 + penalty)
+        assert time == pytest.approx(10.0 + boarding + car + penalty)
     # With no chance of no taxi the time is the planned one.
     model0 = _Recorder()
     taxi_scenario(net, rows, choice_model=model0).run(

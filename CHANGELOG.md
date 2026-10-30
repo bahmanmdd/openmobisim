@@ -16,8 +16,10 @@ start-of-day bikes). Every value is an assumption, uncalibrated, recorded in the
 trip arrives as planned. Once the run has stopped, its last loading's service trips are played in one day on the fleet
 engine, the taxis on that loading's road times, and what the fleet actually did is reported beside what was assumed.
 - A taxi alternative's planned time is the assumed wait, boarding and the drive, whatever the fleet's cancel limit.
-  With an assumed chance `p` of no taxi above 0, its time in the choice is `(1 − p)` × the planned time plus `p` ×
-  (the cancel limit plus the time of the traveller's best other alternative); the fare counts `1 − p` times.
+  With an assumed chance `p` of no taxi above 0, a cancelled request is followed, after the cancel limit, by the
+  traveller's best other alternative; under the random utility model this is the ride, fare in full, with the cancel
+  limit × `p / (1 − p)` added to its waiting in the choice, so a higher assumed chance always makes a taxi less
+  likely to be chosen.
 - A taxi fleet's options: `request_cancel_s` (600 s: a request is cancelled if no taxi can pick it up within this
   time; the trip ends there, with no walk on, in a run, in `fleet_day` and in `fleet_environment`),
   `dispatch_delay_s` (120 s: from a request being matched to the taxi setting off; the waiting time counts it, and a
