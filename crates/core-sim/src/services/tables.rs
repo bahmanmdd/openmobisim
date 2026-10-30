@@ -1,4 +1,5 @@
-//! The results tables of a run's docked bike service (S302), from its last loading's day:
+//! The results tables of a run's docked bike service (S302), from its service day (the last
+//! loading's shared-bike trips, played once after the run has stopped, S303):
 //!
 //! - [`BikeShareEventTable`] (`bike_share_events.parquet`): the day's log, one row per event in
 //!   time order, so the sequence of events and each dock's state after each can be followed;

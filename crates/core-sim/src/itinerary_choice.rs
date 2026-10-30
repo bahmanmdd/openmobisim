@@ -165,6 +165,17 @@ pub const ATTRIBUTES: [&str; 40] = [
 pub const SERVICE_ATTRIBUTES: [&str; 3] =
     ["mode_bike_share", "dock_min", "mode_bike_share_transit"];
 
+/// The attributes a taxi alternative adds, in a run with a taxi fleet (S302), after
+/// [`ATTRIBUTES`] (and [`SERVICE_ATTRIBUTES`] with a docked service too): `mode_taxi` (1 for a
+/// taxi, 0 for the rest: its constant) and `fail_prob`, the run's expected share of requests that
+/// get no vehicle within the fleet's longest wait
+/// ([`crate::services::ServiceExpectations::taxi_fail_share`], the same for every trip; 0 for
+/// every other mode). A taxi's `wait_min` is its expected wait (the run's
+/// [`crate::services::ServiceExpectations::taxi_wait_s`]; the longest wait for the share
+/// expected to fail), its `car_min` its drive and its `time_min` the door-to-door expectation,
+/// the walk of the share expected to fail included. A run without a taxi fleet offers neither.
+pub const TAXI_ATTRIBUTES: [&str; 2] = ["mode_taxi", "fail_prob"];
+
 /// The value of a mode attribute for an alternative of `mode`: `nest` is the mode's index
 /// ([`Mode::index`], the nest of a nested logit), `mode_<name>` is 1 for that mode's
 /// alternatives and 0 for the rest (so `beta_mode_bike` is the bike's constant, M5).
@@ -214,6 +225,9 @@ pub enum Shape {
     /// the bike at a dock of a hub with a stop, walk to the stop, ride(s), walk;
     /// [`Alternative::share_docks`] says which docks.
     ShareTransit,
+    /// A taxi of the run's taxi fleet (S302), door to door: its drive is the car's fastest
+    /// route at the expected link times.
+    Taxi,
 }
 
 /// A ride of a chosen journey: the line and the stops.
@@ -301,6 +315,11 @@ pub struct Alternative {
     /// A shared bike's expected seconds walked to other docks, the pickup dock empty or the
     /// return dock full (part of [`Self::walk_s`]); 0 for any other alternative.
     pub dock_s: f64,
+    /// A taxi's expected share of requests that fail (`fail_prob`); 0 for any other
+    /// alternative.
+    pub taxi_fail: f64,
+    /// A taxi's expected wait should a vehicle come, in seconds; 0 for any other alternative.
+    pub taxi_wait_s: f64,
 }
 
 impl Alternative {
@@ -327,6 +346,7 @@ impl Alternative {
                 h.write_u32(self.share_docks.0);
                 h.write_u32(self.share_docks.1);
             }
+            Shape::Taxi => h.write_u32(102),
         }
         h.write_u32(self.parking);
         for l in &self.vehicle_links {
@@ -370,6 +390,10 @@ pub(crate) struct TripNodes {
     pub share_o: NodeId,
     /// See [`Self::share_o`].
     pub share_d: NodeId,
+    /// The walk from origin to destination on the walk layer (each snapped to its nearest walk
+    /// node), in seconds, whatever its length: the way on of a taxi request that fails (infinite
+    /// without a walk path, or for a trip not offered a taxi).
+    pub walk_all_s: f64,
 }
 
 /// What a trip may choose from: each mode offered to it where it is.
@@ -391,6 +415,8 @@ pub(crate) struct Offer {
     pub bike_share: bool,
     /// A shared bike to a stop's hub, then transit (S302).
     pub bike_share_transit: bool,
+    /// A taxi (S302).
+    pub taxi: bool,
 }
 
 impl Offer {
@@ -421,6 +447,7 @@ impl Offer {
             Mode::BikeTransit => out.bike_transit = self.bike_transit,
             Mode::BikeShare => out.bike_share = self.bike_share,
             Mode::BikeShareTransit => out.bike_share_transit = self.bike_share_transit,
+            Mode::Taxi => out.taxi = self.taxi,
         }
         out
     }
@@ -479,6 +506,16 @@ pub(crate) struct Planner<'a> {
     /// The run's docked service and its docks' expected costs, for shared bikes (S302); `None`
     /// without one.
     pub share: Option<ShareContext<'a>>,
+    /// The run's taxi fleet and its expected costs (S302); `None` without one.
+    pub taxi: Option<TaxiContext<'a>>,
+}
+
+/// A run's taxi fleet as the choice sees it (S302): its defaults and what travellers expect of
+/// it (S303).
+#[derive(Clone, Copy)]
+pub(crate) struct TaxiContext<'a> {
+    pub defaults: &'a crate::services::TaxiDefaults,
+    pub costs: crate::services::costs::TaxiExpectation,
 }
 
 /// A run's docked bike service as the choice sees it (S302): the service, the walk layer its
@@ -1045,6 +1082,9 @@ impl<'a> Planner<'a> {
         if let (true, Some(memo)) = (offer.bike_share_transit, chains) {
             alts.extend(self.plan_share_transit(s, n, departure, destination, memo));
         }
+        if let (true, Some(key), Some(routes)) = (offer.taxi, car_key, &self.car_routes) {
+            alts.extend(self.plan_taxi(routes, key, n, departure));
+        }
         let far_enough = self.far_enough(&offer, origin, destination);
         for (shape, kind) in vehicles {
             if let (Some(Shape::Out), true) = (shape, far_enough) {
@@ -1575,6 +1615,52 @@ impl<'a> Planner<'a> {
             ParkingKind::Car => self.car_egress_s,
             ParkingKind::Bike => self.bike_egress_s,
         }
+    }
+
+    /// A trip's taxi alternative (S302): the fastest of its car pair's routes at the expected
+    /// link times, leaving once the expected wait and boarding are over; the run's expected wait
+    /// and failure share (S303); a failure is expected to cost the longest wait and the walk.
+    /// None if a failure would leave it no way on (no walk path) while failures are expected,
+    /// or without a route.
+    fn plan_taxi(
+        &self,
+        routes: &CarRoutes<'_>,
+        key: RouteKey,
+        n: &TripNodes,
+        departure: u32,
+    ) -> Option<Alternative> {
+        let taxi = self.taxi?;
+        let d = taxi.defaults;
+        let k = routes.sets.key_index(key)?;
+        let (wait, fail) = taxi.costs.at(n.road_o, f64::from(departure));
+        // A traveller never plans on waiting longer than the fleet keeps a request (S303): an
+        // expected wait above the fleet's longest wait is read as that longest wait, so the
+        // presets keep their order whatever the fleet's limit.
+        let wait = wait.min(d.max_wait_s);
+        let leave = f64::from(departure) + wait + d.board_s;
+        let (r, seconds) = routes
+            .sets
+            .route_range(k)
+            .map(|r| (r, self.times.route_seconds(routes.sets.route(r).links, leave)))
+            .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))?;
+        if !seconds.is_finite() || (fail > 0.0 && !n.walk_all_s.is_finite()) {
+            return None;
+        }
+        let mut a = blank(Mode::Taxi, Shape::Taxi);
+        a.vehicle_links = routes.sets.route(r).links.iter().map(|&l| LinkId::new(l)).collect();
+        a.vehicle_s = seconds;
+        a.vehicle_m = routes.sets.lengths_m()[r];
+        a.vehicle_departure = leave;
+        a.taxi_fail = fail;
+        a.taxi_wait_s = wait;
+        // Served (1 − p): the wait, boarding, the drive; failed (p): the longest wait, the walk.
+        a.wait_s = (1.0 - fail) * wait + fail * d.max_wait_s;
+        a.parking_s = (1.0 - fail) * d.board_s;
+        a.walk_s = if fail > 0.0 { fail * n.walk_all_s } else { 0.0 };
+        a.total_s = a.wait_s + a.parking_s + (1.0 - fail) * seconds + a.walk_s;
+        // One taxi alternative: a path size of its own.
+        a.fixed_ln_path_size = Some(0.0);
+        Some(a)
     }
 
     fn plan_car(&self, routes: &CarRoutes<'_>, key: RouteKey, departure: u32) -> Vec<Alternative> {
@@ -2237,6 +2323,8 @@ fn blank(mode: Mode, shape: Shape) -> Alternative {
         fallback: false,
         share_docks: (NO_PARKING, NO_PARKING),
         dock_s: 0.0,
+        taxi_fail: 0.0,
+        taxi_wait_s: 0.0,
     }
 }
 
@@ -2412,6 +2500,7 @@ fn leg_layer(mode: Mode) -> Option<ValueLayer> {
         }
         Mode::Walk => Some(ValueLayer::Walk),
         Mode::Transit => None,
+        Mode::Taxi => Some(ValueLayer::Road),
     }
 }
 
@@ -2444,7 +2533,11 @@ fn cost(a: &Alternative, inputs: &ChooseInputs<'_>, trip: TripId) -> Cost {
         },
         // A pass holder pays no fare (S279, CM-15): the pass is access, not money, and its own
         // price is not counted (Q-7).
-        fare: if a.mode == Mode::BikeShare {
+        fare: if a.mode == Mode::Taxi {
+            // A taxi's fare (S302): every traveller pays it, a transit pass covers none; the
+            // share that fails pays nothing.
+            (1.0 - a.taxi_fail) * prices.taxi(a.vehicle_m)
+        } else if a.mode == Mode::BikeShare {
             // A shared bike's price (S302): every traveller pays it, a transit pass covers none.
             prices.bike_share(a.vehicle_s)
         } else if inputs.travellers.ownership(inputs.trips.traveller(trip)).transit_pass {
@@ -2488,11 +2581,7 @@ fn attribute(
     if let Some(v) = mode_attribute(name, a.mode) {
         return v;
     }
-    let kind = match a.mode {
-        Mode::Car | Mode::CarTransit => Some(ParkingKind::Car),
-        Mode::Bike | Mode::BikeTransit => Some(ParkingKind::Bike),
-        Mode::Walk | Mode::Transit | Mode::BikeShare | Mode::BikeShareTransit => None,
-    };
+    let kind = vehicle_of(a.mode);
     let vehicle_min = a.vehicle_s / 60.0;
     match name {
         "time_min" => a.total_s / 60.0,
@@ -2510,7 +2599,8 @@ fn attribute(
             let n = a.vehicle_links.len() as f64;
             n
         }
-        "car_min" if kind == Some(ParkingKind::Car) => vehicle_min,
+        "car_min" if kind == Some(ParkingKind::Car) || a.mode == Mode::Taxi => vehicle_min,
+        "fail_prob" => a.taxi_fail,
         "bike_min"
             if kind == Some(ParkingKind::Bike)
                 || matches!(a.mode, Mode::BikeShare | Mode::BikeShareTransit) =>
@@ -2763,7 +2853,7 @@ fn vehicle_of(mode: Mode) -> Option<ParkingKind> {
     match mode {
         Mode::Car | Mode::CarTransit => Some(ParkingKind::Car),
         Mode::Bike | Mode::BikeTransit => Some(ParkingKind::Bike),
-        Mode::Walk | Mode::Transit | Mode::BikeShare | Mode::BikeShareTransit => None,
+        Mode::Walk | Mode::Transit | Mode::BikeShare | Mode::BikeShareTransit | Mode::Taxi => None,
     }
 }
 
@@ -2802,6 +2892,8 @@ pub(crate) struct Simulated<'a> {
     pub travellers: &'a Travellers,
     /// The run's docked bike service (S302), if it has one.
     pub share: Option<&'a ServiceSetup>,
+    /// The run's taxi fleet (S302), if it has one.
+    pub taxi: Option<&'a ServiceSetup>,
 }
 
 impl Itineraries {
@@ -2827,6 +2919,8 @@ impl Itineraries {
                     && bike.is_some()
                     && sim.layers.walk.is_some()
             }
+            // A taxi request that fails walks on: the walk layer is needed.
+            Mode::Taxi => sim.taxi.is_some() && sim.layers.walk.is_some(),
         };
         let mut offered = [false; Mode::COUNT];
         for &m in sim.choice.unwrap_or(&[]) {
@@ -2841,6 +2935,16 @@ impl Itineraries {
             .as_ref()
             .filter(|_| offered[Mode::BikeShare.index()] || offered[Mode::BikeShareTransit.index()])
             .map(|w| (w, NodeSnapper::every_node(w.network().network())));
+        // The walk of a taxi request that fails (S302): the walk layer's shortest time, whatever
+        // its length (the trips' own walk routes stop at the longest walk offered), one search
+        // per origin node to all its trips' destinations, once per run.
+        let taxi_walk = sim
+            .layers
+            .walk
+            .as_ref()
+            .filter(|_| offered[Mode::Taxi.index()])
+            .map(|w| (w, NodeSnapper::every_node(w.network().network())));
+        let mut taxi_pairs: HashMap<u32, Vec<(usize, NodeId)>> = HashMap::new();
         let null = NodeId::from_raw(NULL_ID);
         let mut out = Self {
             trips: Vec::new(),
@@ -2889,7 +2993,13 @@ impl Itineraries {
                 class: sim.travellers.user_class(trips.traveller(trip)).raw(),
                 share_o: null,
                 share_d: null,
+                walk_all_s: f64::INFINITY,
             };
+            if let (true, Some((w, snapper))) = (choosing, &taxi_walk) {
+                let graph = w.network().network();
+                let (from, to) = (snapper.nearest(graph, o), snapper.nearest(graph, d));
+                taxi_pairs.entry(from.raw()).or_default().push((out.trips.len(), to));
+            }
             if let (true, Some((w, snapper))) = (choosing, &share_walk) {
                 let graph = w.network().network();
                 nodes.share_o = snapper.nearest(graph, o);
@@ -2907,7 +3017,8 @@ impl Itineraries {
                 }
             }
             // The car pair: a chooser's, offered the car; with the fallback (S271), everyone's.
-            let key = ((choosing && offered[Mode::Car.index()]) || out.fallback_car)
+            let key = ((choosing && (offered[Mode::Car.index()] || offered[Mode::Taxi.index()]))
+                || out.fallback_car)
                 && nodes.road_o != nodes.road_d;
             let car_key = key.then(|| RouteKey::new(nodes.road_o, nodes.road_d));
             let legs = if choosing {
@@ -2935,6 +3046,32 @@ impl Itineraries {
             out.choosing.push(choosing);
             out.legs.push(legs);
             out.car_keys.push(car_key);
+        }
+        if let Some((w, _)) = &taxi_walk {
+            let graph = w.network().network();
+            let mut reach = Reach::new(graph, w.seconds());
+            let mut wanted = vec![false; graph.node_count() as usize];
+            let mut origins: Vec<u32> = taxi_pairs.keys().copied().collect();
+            origins.sort_unstable();
+            for from in origins {
+                let pairs = &taxi_pairs[&from];
+                for &(_, to) in pairs {
+                    wanted[to.index()] = true;
+                }
+                let found: HashMap<u32, f64> = reach
+                    .forward(NodeId::from_raw(from), f64::INFINITY, &wanted)
+                    .into_iter()
+                    .map(|(n, s)| (n.raw(), s))
+                    .collect();
+                for &(p, to) in pairs {
+                    wanted[to.index()] = false;
+                    out.nodes[p].walk_all_s = if to.raw() == from {
+                        0.0
+                    } else {
+                        found.get(&to.raw()).copied().unwrap_or(f64::INFINITY)
+                    };
+                }
+            }
         }
         // Rounds: plain transit trips first; each traveller's other itinerary trips one
         // round each, in order, since each may move a vehicle the next one needs.
@@ -3123,6 +3260,12 @@ impl Itineraries {
                             R::Unexplained
                         };
                 }
+                // A taxi gives nothing without a road route, or when a request is expected to
+                // fail with no walk to fall back on (S302).
+                if on(Mode::Taxi) {
+                    reasons[Mode::Taxi.index()] =
+                        if self.car_keys[p].is_none() { R::NoRoadRoute } else { R::Unexplained };
+                }
                 // A shared bike to transit: no dock in the walk with a hub's dock in the ride,
                 // else no journey from the hub (S302).
                 if on(Mode::BikeShareTransit) {
@@ -3275,6 +3418,7 @@ impl Itineraries {
             parking: None,
             bike_share: on(Mode::BikeShare),
             bike_share_transit: on(Mode::BikeShareTransit),
+            taxi: on(Mode::Taxi) && self.car_keys[position].is_some(),
         }
     }
 
@@ -4564,6 +4708,8 @@ mod tests {
             fallback: false,
             share_docks: (NO_PARKING, NO_PARKING),
             dock_s: 0.0,
+            taxi_fail: 0.0,
+            taxi_wait_s: 0.0,
         }
     }
 

@@ -1,5 +1,6 @@
-//! A run's docked bike service, from its last loading's day: three files, written only by a run
-//! with a service. Seconds count from midnight; a clock text beside them (`08:03:20`) is the
+//! A run's docked bike service, from its service day (the last loading's shared-bike trips,
+//! played once after the run has stopped, S303): three files, written only by a run with a
+//! service. Seconds count from midnight; a clock text beside them (`08:03:20`) is the
 //! same second. Counts of people are the travellers' weights (one simulated traveller may stand
 //! for several people, each taking a bike).
 //!
@@ -59,39 +60,43 @@ use crate::io::write_single_batch_with;
 
 /// Columns being gathered: each with its name, type and whether it may be null.
 #[derive(Default)]
-struct Columns {
+pub(crate) struct Columns {
     fields: Vec<Field>,
     arrays: Vec<ArrayRef>,
 }
 
 impl Columns {
-    fn text(&mut self, name: &str, v: impl IntoIterator<Item = impl AsRef<str>>) -> &mut Self {
+    pub(crate) fn text(
+        &mut self,
+        name: &str,
+        v: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> &mut Self {
         let v: Vec<String> = v.into_iter().map(|x| x.as_ref().to_string()).collect();
         self.push(name, DataType::Utf8, false, Arc::new(StringArray::from(v)))
     }
-    fn maybe_text(&mut self, name: &str, v: &[Option<String>]) -> &mut Self {
+    pub(crate) fn maybe_text(&mut self, name: &str, v: &[Option<String>]) -> &mut Self {
         let v: Vec<Option<&str>> = v.iter().map(Option::as_deref).collect();
         self.push(name, DataType::Utf8, true, Arc::new(StringArray::from(v)))
     }
-    fn count(&mut self, name: &str, v: &[u32]) -> &mut Self {
+    pub(crate) fn count(&mut self, name: &str, v: &[u32]) -> &mut Self {
         self.push(name, DataType::UInt32, false, Arc::new(UInt32Array::from(v.to_vec())))
     }
-    fn maybe_count(&mut self, name: &str, v: &[Option<u32>]) -> &mut Self {
+    pub(crate) fn maybe_count(&mut self, name: &str, v: &[Option<u32>]) -> &mut Self {
         self.push(name, DataType::UInt32, true, Arc::new(UInt32Array::from(v.to_vec())))
     }
-    fn number(&mut self, name: &str, v: &[f64]) -> &mut Self {
+    pub(crate) fn number(&mut self, name: &str, v: &[f64]) -> &mut Self {
         self.push(name, DataType::Float64, false, Arc::new(Float64Array::from(v.to_vec())))
     }
-    fn maybe_number(&mut self, name: &str, v: &[Option<f64>]) -> &mut Self {
+    pub(crate) fn maybe_number(&mut self, name: &str, v: &[Option<f64>]) -> &mut Self {
         self.push(name, DataType::Float64, true, Arc::new(Float64Array::from(v.to_vec())))
     }
-    fn push(&mut self, name: &str, t: DataType, null: bool, a: ArrayRef) -> &mut Self {
+    pub(crate) fn push(&mut self, name: &str, t: DataType, null: bool, a: ArrayRef) -> &mut Self {
         self.fields.push(Field::new(name, t, null));
         self.arrays.push(a);
         self
     }
 
-    fn write(
+    pub(crate) fn write(
         self,
         path: &Path,
         description: &RunDescription,

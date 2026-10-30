@@ -147,7 +147,7 @@ def _check_level(
 
 
 def _services_checked(services: Any) -> tuple[Any, ...] | None:
-    """A scenario's ``services``, checked: one docked bike service for now; ``None`` for none."""
+    """A scenario's ``services``, checked: one docked bike service and one taxi fleet at most."""
     if services is None:
         return None
     from openmobisim.fleet import Service
@@ -155,15 +155,94 @@ def _services_checked(services: Any) -> tuple[Any, ...] | None:
     services = tuple(services)
     for s in services:
         if not isinstance(s, Service):
-            raise ValueError(f"services: give service_bike_docked(...) objects, got {s!r}")
-        if s.kind != "bike_docked":
             raise ValueError(
-                f"services: {s.name!r} is a {s.kind} service; a run takes docked bike services "
-                "for now (fleet_day plays taxis on a day without a run)"
+                f"services: give service_bike_docked(...) or service_taxi(...) objects, got {s!r}"
             )
-    if len(services) > 1:
-        raise ValueError(f"services: one docked bike service per run for now, got {len(services)}")
+    for kind, what in (("bike_docked", "docked bike service"), ("taxi", "taxi fleet")):
+        n = sum(s.kind == kind for s in services)
+        if n > 1:
+            raise ValueError(f"services: one {what} per run, got {n}")
     return services or None
+
+
+#: The modes each kind of service offers (S302).
+_SERVICE_KIND_MODES = {"bike_docked": ("bike_share", "bike_share_transit"), "taxi": ("taxi",)}
+
+
+def _service_modes(services: tuple[Any, ...] | None) -> tuple[str, ...]:
+    """The service modes ``services`` offer, in ``SERVICE_MODES``' order."""
+    kinds = {s.kind for s in services or ()}
+    offered = {m for k in kinds for m in _SERVICE_KIND_MODES.get(k, ())}
+    return tuple(m for m in SERVICE_MODES if m in offered)
+
+
+def _check_taxi_priced(
+    modes: list[str] | None,
+    choice_model: Any,
+    choice_options: dict[str, float] | None,
+    classes: dict[str, dict[str, float]],
+    class_no_taxi: list[str] | None,
+    price_options: dict[str, float] | None,
+) -> None:
+    """Refuse a run offering ``"taxi"`` whose taxi has neither a constant nor a fare (S302).
+
+    A taxi comes to the door and is never slower than driving: with no constant
+    (``beta_mode_taxi``) and no fare (``taxi_eur_per_km``, ``taxi_eur_per_ride``) it would take
+    nearly every trip. ``classes`` are the class table's coefficients by class name (empty: no
+    class table). A built-in model needs a non-zero ``beta_mode_taxi`` for every class offered a
+    taxi, its own or ``choice_options``'; a model of one's own needs to read ``mode_taxi`` (its
+    ``attributes``).
+    """
+    if not modes or "taxi" not in modes:
+        return
+    prices = price_options or {}
+    if any(float(prices.get(k, 0.0)) > 0 for k in ("taxi_eur_per_km", "taxi_eur_per_ride")):
+        return
+    if isinstance(choice_model, str):
+        run_wide = float((choice_options or {}).get("beta_mode_taxi", 0.0))
+        offered = {n: b for n, b in classes.items() if n not in (class_no_taxi or [])}
+        # A trip of a class the table does not name reads the run-wide constant.
+        if run_wide != 0 or classes:
+            constants = [float(b.get("beta_mode_taxi", run_wide)) for b in offered.values()]
+            if all(c != 0 for c in constants) and (run_wide != 0 or constants):
+                return
+    elif "mode_taxi" in (getattr(choice_model, "attributes", None) or ()):
+        return
+    raise ValueError(
+        'modes: "taxi" needs a constant or a fare: a taxi comes to the door and is never slower '
+        "than driving, so with neither it would take nearly every trip. Give "
+        'choice_options={"beta_mode_taxi": ...} (or the classes\' beta_mode_taxi), or '
+        'price_options={"taxi_eur_per_km": ..., "taxi_eur_per_ride": ...}.'
+    )
+
+
+def _service_expectations(given: Any) -> tuple[str, dict[str, float]] | None:
+    """``Scenario.run``'s ``service_expectations`` as the core takes them.
+
+    A preset's name and values by name over it; the core checks both, naming what exists.
+    """
+    if given is None:
+        return None
+    if isinstance(given, str):
+        return (given, {})
+    if isinstance(given, Mapping):
+        values: dict[str, float] = {}
+        for name, value in given.items():
+            if not isinstance(name, str) or isinstance(value, bool):
+                raise ValueError(
+                    f"service_expectations: give numbers by parameter name, got {name!r}: {value!r}"
+                )
+            try:
+                values[name] = float(value)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"service_expectations {name!r}: a number, got {value!r}"
+                ) from None
+        return ("default", values)
+    raise ValueError(
+        'service_expectations: a preset ("default", "optimistic", "pessimistic") or a dict of '
+        f"values by name, got {given!r}"
+    )
 
 
 def _window(window: Any) -> tuple[int | None, int | None]:
@@ -209,7 +288,11 @@ def _renamed(argument: str, value: str | None, renamed: dict[str, str]) -> None:
 
 
 def _check_modes_can_run(
-    modes: list[str], has_transit: bool, has_parkings: bool, has_docks: bool = False
+    modes: list[str],
+    has_transit: bool,
+    has_parkings: bool,
+    has_docks: bool = False,
+    has_taxis: bool = False,
 ) -> None:
     """Refuse a mode asked for in ``modes=`` that the run has nothing to simulate it with.
 
@@ -226,6 +309,7 @@ def _check_modes_can_run(
             "services=[service_bike_docked(…)] and transit=…",
             has_docks and has_transit,
         ),
+        "taxi": ("services=[service_taxi(…)]", has_taxis),
     }
     for mode in modes:
         what, present = needs.get(mode, ("", True))
@@ -532,9 +616,13 @@ class Scenario:
         self._class_no_bike_share = [
             name for name, c in table.items() if not c.get("has_bike_share", True)
         ] or None
+        # And without taxis: ``has_taxi`` 0.
+        self._class_no_taxi = [
+            name for name, c in table.items() if not c.get("has_taxi", True)
+        ] or None
         self._services = _services_checked(services)
         # A service's mode is a mode of the run only with the service (S302).
-        known = MODES + SERVICE_MODES if self._services else MODES
+        known = MODES + _service_modes(self._services)
         modes_asked = modes is not None
         if modes is None and self._class_modes:
             # The classes say which modes their travellers may use: the run offers them all.
@@ -604,14 +692,27 @@ class Scenario:
             if unknown:
                 raise ValueError(f"modes must be among {MODES + SERVICE_MODES}, got {unknown}")
             if modes_asked:
+                kinds = {s.kind for s in self._services or ()}
                 _check_modes_can_run(
-                    modes, transit is not None, parkings is not None, self._services is not None
+                    modes,
+                    transit is not None,
+                    parkings is not None,
+                    "bike_docked" in kinds,
+                    "taxi" in kinds,
                 )
             if len(set(modes)) == 1 and modes[0] in SERVICE_MODES:
                 raise ValueError(
                     f'modes: "{modes[0]}" is chosen among other modes; give at least one more '
-                    "(a shared bike is offered as a choice, not as the only mode)"
+                    "(a service is offered as a choice, not as the only mode)"
                 )
+            _check_taxi_priced(
+                modes,
+                choice_model,
+                choice_options,
+                {name: c["betas"] for name, c in table.items()},
+                self._class_no_taxi,
+                price_options,
+            )
         self._modes = modes
         self._mode_options = mode_options
         # ``reroute`` unsaid is the core's rule: on at levels 3 and 4, off at the point queue,
@@ -716,7 +817,7 @@ class Scenario:
                 by the modes, so give ``has_transit_pass`` as 1 for a class that holds one; its
                 own price is not counted), ``has_bike_share`` (0: never offered a shared bike,
                 ``services``; unsaid: offered, whatever the class's ``modes``, which govern
-                the ordinary modes only) and any
+                the ordinary modes only), ``has_taxi`` (likewise for a taxi) and any
                 ``beta_*`` coefficient of the choice model (its own mode
                 constants, ``beta_mode_bike`` …, or its own value of time, ``beta_time_min``;
                 unsaid: ``choice_options``'), for ``"logit"`` and ``"nested_logit"``, and its own
@@ -1149,7 +1250,24 @@ class Scenario:
                 bike is a leg of the same day on the fleet engine, and its transit part starts
                 when the engine has the bike returned (or the traveller at the hub on foot). A
                 class with ``has_bike_share`` 0 is offered neither; every other class is offered
-                both, whatever its own ``modes`` list. Without a service, nothing changes.
+                both, whatever its own ``modes`` list. **A taxi fleet**,
+                ``service_taxi(vehicles, chargers, options=...)`` (one per run, beside a docked
+                bike service or alone): with ``"taxi"`` among ``modes`` a trip choosing its mode is
+                offered a taxi, door to door: it asks for one at its departure, waits, rides the
+                car's fastest route. Its alternative carries ``wait_min`` (the expected wait),
+                ``fail_prob`` (the expected share of requests from its zone, a 1 km square, in its
+                15-minute bin that no vehicle reaches within the fleet's ``max_wait_s``),
+                ``car_min`` (the drive), ``mode_taxi`` and a ``time_min`` that counts, for the share
+                that fails, the longest wait and the walk to the destination. After each loading
+                the taxi trips are played on the fleet engine (the built-in matching, the
+                charging rule): the vehicles drive on the loading's link times without adding
+                traffic, a request no vehicle reaches within ``max_wait_s`` fails and **the
+                traveller walks from the origin to the destination**; the waits and failures met
+                are averaged into what the next choice expects. **A run offering a taxi needs a
+                constant or a fare**: ``beta_mode_taxi`` (``choice_options`` or every class's) or
+                ``price_options``' ``taxi_eur_per_km`` or ``taxi_eur_per_ride``; it refuses to
+                start without, since a free taxi at the door would take nearly every trip. A class
+                with ``has_taxi`` 0 is never offered one. Without a service, nothing changes.
             parking_options: Parking's parameters by name, each replacing its default:
                 ``walk_max_s`` (300: the longest walk from a parking to a stop),
                 ``reach_car_s`` (1800) and ``reach_bike_s`` (1200: the longest drive or ride
@@ -1276,7 +1394,11 @@ class Scenario:
                 bike service (``services``), a shared bike's price is part of its
                 ``cost_fare_eur``: ``bike_share_eur_per_ride`` once and
                 ``bike_share_eur_per_min`` per minute ridden (0 by default; a transit pass does
-                not cover it), and, for a shared bike to transit, the journey's fare on top. The
+                not cover it), and, for a shared bike to transit, the journey's fare on top. With
+                a taxi fleet, a taxi's fare is its ``cost_fare_eur``: ``taxi_eur_per_ride`` once
+                and ``taxi_eur_per_km`` per kilometre driven with the passenger (0 by default; a
+                transit pass does not cover it; the share of requests expected to fail pays
+                nothing). The
                 built-in
                 models weigh money by ``beta_cost_eur`` (or a part's coefficient), **-1.2 per euro
                 by default** (0 drops it): a value of time of ``V`` euros per hour is
@@ -1529,6 +1651,8 @@ class Scenario:
             ]
         if self._class_no_bike_share:
             out["class_no_bike_share"] = self._class_no_bike_share
+        if self._class_no_taxi:
+            out["class_no_taxi"] = self._class_no_taxi
         return out
 
     def _fingerprint(self) -> str:
@@ -1551,6 +1675,7 @@ class Scenario:
         replication: int = 0,
         outputs: str = "all",
         hub_join_m: float = 150.0,
+        service_expectations: str | Mapping[str, float] | None = None,
     ) -> Run:
         """Run the scenario and write its output artifacts.
 
@@ -1590,6 +1715,24 @@ class Scenario:
                 names a hub is in that hub). Results do not depend on it, so it is not in the
                 fingerprint. 150 by default, a short walk across a station's forecourt (an
                 assumption).
+            service_expectations: What travellers expect of the scenario's services, fixed for the
+                whole run: a preset's name or values by name. ``None`` (the default) is the preset
+                ``"default"``. A taxi alternative plans on ``taxi_wait_s`` (600 s) and a share
+                ``taxi_fail_share`` (0) of requests with no vehicle within the fleet's longest wait;
+                a shared bike on the docks' start-of-day extra walks (an empty pickup dock costs the
+                walk to its nearest neighbour with bikes, a full return dock the walk to its nearest
+                with room) multiplied by ``dock_pickup_factor`` (1) and ``dock_return_factor`` (1),
+                or, with ``dock_worst_case`` 1 (0 by default), every dock expected empty and full
+                all day. The presets: ``"default"`` (those values), ``"optimistic"`` (120 s, no
+                failure, no extra walk: better than what is likely met), ``"pessimistic"`` (600 s, a
+                quarter of requests with no vehicle, every dock empty and full). A dict starts from
+                ``"default"`` and replaces the values it names; a misspelt name is refused with the
+                list of names. Every value is an assumption, uncalibrated. The services are not
+                played in the loadings: once the run has stopped, its last loading's service trips
+                are played in one day, and what they met is reported beside what they expected
+                (``Run.service_met()``, ``kpis.parquet``, ``trip_results()``'s ``service_outcome``).
+                Recorded in the fingerprint and ``manifest.json`` of a run with a service; read only
+                then.
 
         Returns:
             A ``Run``: the results in memory, and the output files in ``output_dir``.
@@ -1625,6 +1768,7 @@ class Scenario:
             replication=replication,
             outputs=outputs,
             hub_join_m=hub_join_m,
+            service_expectations=_service_expectations(service_expectations),
         )
         run = Run(
             summary,

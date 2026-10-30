@@ -809,6 +809,364 @@
     "openmobisim.schema_version"
    ]
   },
+  "taxi_events.parquet": {
+   "columns": [
+    {
+     "name": "run_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "service",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "time_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "time",
+     "type": "string",
+     "nullable": false,
+     "unit": "clock text"
+    },
+    {
+     "name": "event",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "traveller_id",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "trip_seq",
+     "type": "uint32",
+     "nullable": true,
+     "unit": "index"
+    },
+    {
+     "name": "travellers",
+     "type": "uint32",
+     "nullable": true,
+     "unit": "travellers"
+    },
+    {
+     "name": "vehicle",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "vehicle_state_after",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "charge_after",
+     "type": "double",
+     "nullable": true,
+     "unit": "share of the battery"
+    },
+    {
+     "name": "charger",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "drive_km",
+     "type": "double",
+     "nullable": true,
+     "unit": "km"
+    }
+   ],
+   "metadata": [
+    "openmobisim.master_seed",
+    "openmobisim.run_fingerprint",
+    "openmobisim.schema_version"
+   ]
+  },
+  "taxi_trips.parquet": {
+   "columns": [
+    {
+     "name": "run_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "service",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "traveller_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "trip_seq",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "index"
+    },
+    {
+     "name": "travellers",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "travellers"
+    },
+    {
+     "name": "requested_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "expected_wait_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "expected_no_taxi_share",
+     "type": "double",
+     "nullable": false,
+     "unit": "share"
+    },
+    {
+     "name": "expected_door_to_door_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "vehicle",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "assigned_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "taxi_at_pickup_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "waited_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "waited_minus_expected_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
+     "name": "km_to_pickup",
+     "type": "double",
+     "nullable": true,
+     "unit": "km"
+    },
+    {
+     "name": "km_with_passenger",
+     "type": "double",
+     "nullable": true,
+     "unit": "km"
+    },
+    {
+     "name": "dropped_off_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "walk_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
+     "name": "arrived_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "door_to_door_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
+     "name": "met_minus_expected_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
+     "name": "result",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    }
+   ],
+   "metadata": [
+    "openmobisim.master_seed",
+    "openmobisim.run_fingerprint",
+    "openmobisim.schema_version"
+   ]
+  },
+  "taxi_vehicles.parquet": {
+   "columns": [
+    {
+     "name": "run_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "service",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "vehicle",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "bin_start",
+     "type": "string",
+     "nullable": false,
+     "unit": "clock text"
+    },
+    {
+     "name": "bin_end",
+     "type": "string",
+     "nullable": false,
+     "unit": "clock text"
+    },
+    {
+     "name": "bin_start_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "bin_end_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "seconds_idle",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "seconds_to_pickup",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "seconds_occupied",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "seconds_relocating",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "seconds_to_charger",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "seconds_charging",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "seconds_queued_at_charger",
+     "type": "double",
+     "nullable": false,
+     "unit": "s"
+    },
+    {
+     "name": "km_occupied",
+     "type": "double",
+     "nullable": false,
+     "unit": "km"
+    },
+    {
+     "name": "km_empty",
+     "type": "double",
+     "nullable": false,
+     "unit": "km"
+    },
+    {
+     "name": "charge_at_start",
+     "type": "double",
+     "nullable": false,
+     "unit": "share of the battery"
+    },
+    {
+     "name": "charge_at_end",
+     "type": "double",
+     "nullable": false,
+     "unit": "share of the battery"
+    },
+    {
+     "name": "kwh_charged",
+     "type": "double",
+     "nullable": false,
+     "unit": "kWh"
+    },
+    {
+     "name": "passengers_dropped_off",
+     "type": "double",
+     "nullable": false,
+     "unit": "travellers"
+    }
+   ],
+   "metadata": [
+    "openmobisim.fleet_vehicles",
+    "openmobisim.master_seed",
+    "openmobisim.run_fingerprint",
+    "openmobisim.schema_version"
+   ]
+  },
   "transit_calls.parquet": {
    "columns": [
     {
@@ -1018,6 +1376,18 @@
      "type": "uint32",
      "nullable": true,
      "unit": "s"
+    },
+    {
+     "name": "service_outcome",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "service_met_arrival_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s after midnight"
     }
    ],
    "metadata": [
@@ -1065,6 +1435,8 @@
     "route_update",
     "route_update_descriptor",
     "run_fingerprint",
+    "service_day",
+    "service_expectations",
     "simulated_travellers",
     "threads",
     "total_trips",

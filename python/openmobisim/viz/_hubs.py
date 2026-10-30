@@ -277,7 +277,7 @@ def chart_service(
     logo: bool = True,
     path: str | None = None,
 ) -> Any:
-    """Draw a docked bike service's day, bin by bin of ``Run.bike_share_docks()``.
+    """Draw a docked bike service's day, or a taxi fleet's (``service`` naming one: see below).
 
     Three panels over the run's window. **Bikes**: one stacked bar per bin, the bikes docked
     (the docks' time-weighted means, summed) and the bikes ridden (the fleet less those docked;
@@ -287,8 +287,16 @@ def chart_service(
     busy docks empty. **Travellers who found a dock empty** (people): those who went on to
     another dock, and those who gave up and walked to their destination.
 
+    **A taxi fleet** (``service="taxi"``, its name), bin by bin of ``Run.taxi_vehicles()`` and
+    ``Run.taxi_trips()``: **vehicles** by state (the mean over the bin: carrying a passenger,
+    driving empty to a pickup, idle, at or driving to a charger); **travellers waiting** for a
+    taxi (the mean over the bin, from each request until its vehicle reached the pickup, it
+    failed, or the window ended); **travellers who met trouble**, by the bin they asked in: no
+    taxi within the longest wait (they walked), and carried after a wait more than a minute
+    longer than expected.
+
     Args:
-        run: A ``Run`` of a scenario with a docked bike service.
+        run: A ``Run`` of a scenario with a docked bike service or a taxi fleet.
         service: The service, by name.
         theme: ``"paper"`` or ``"night"``.
         title: Figure title.
@@ -307,6 +315,21 @@ def chart_service(
         ValueError: If the run had no service, or no service ``service``.
         ImportError: If matplotlib is not installed (``openmobisim[viz]``).
     """
+    taxis = run.taxi_vehicles() if hasattr(run, "taxi_vehicles") else None
+    if taxis is not None and service in set(taxis["service"]):
+        return _chart_taxi(
+            run,
+            service,
+            theme=theme,
+            title=title,
+            subtitle=subtitle,
+            note=note,
+            size_cm=size_cm,
+            dpi=dpi,
+            credit=credit,
+            logo=logo,
+            path=path,
+        )
     load_matplotlib()
     from matplotlib.patches import Rectangle
 
@@ -409,6 +432,157 @@ def chart_service(
         page,
         title=title or f"Shared bikes over the day: {service}",
         subtitle=subtitle or f"{fleet:,.0f} bikes at {n_docks:,} docks · {minutes}",
+        note=note,
+        provenance=f"{__version__} · {run_identity(run)}",
+        credit=credit,
+        logo=logo,
+        compass=False,
+    )
+    if path is not None:
+        save_figure(page.fig, path, th.surface)
+    return figure_for_pyplot(page.fig)
+
+
+def _chart_taxi(
+    run: Any,
+    service: str,
+    *,
+    theme: str | Theme,
+    title: str | None,
+    subtitle: str | None,
+    note: str | None,
+    size_cm: tuple[float, float],
+    dpi: int,
+    credit: str | None,
+    logo: bool,
+    path: str | None,
+) -> Any:
+    """``chart_service`` for a taxi fleet (see there)."""
+    load_matplotlib()
+    from matplotlib.patches import Rectangle
+
+    th = get_theme(theme)
+    vb = run.taxi_vehicles()
+    keep = np.array([s == service for s in vb["service"]], dtype=bool)
+    start = np.asarray(vb["bin_start_s"], dtype=float)[keep]
+    end = np.asarray(vb["bin_end_s"], dtype=float)[keep]
+    times, at = np.unique(start, return_inverse=True)
+    ends = np.zeros(len(times))
+    np.maximum.at(ends, at, end)
+    length = np.maximum(ends - times, 1.0)
+
+    def per_bin(column: str) -> np.ndarray:
+        return np.bincount(at, weights=np.asarray(vb[column], dtype=float)[keep]) / length
+
+    occupied = per_bin("seconds_occupied")
+    to_pickup = per_bin("seconds_to_pickup") + per_bin("seconds_relocating")
+    idle = per_bin("seconds_idle")
+    charging = (
+        per_bin("seconds_to_charger")
+        + per_bin("seconds_charging")
+        + per_bin("seconds_queued_at_charger")
+    )
+    fleet = len(set(np.asarray(vb["vehicle"], dtype=object)[keep]))
+    # Travellers waiting (time-weighted over each bin) and in trouble (by the bin they asked).
+    waiting = np.zeros(len(times))
+    no_taxi = np.zeros(len(times))
+    longer = np.zeros(len(times))
+    trips = run.taxi_trips()
+    total = 0.0
+    if trips is not None:
+        mine = np.array([s == service for s in trips["service"]], dtype=bool)
+        w = np.asarray(trips["travellers"], dtype=float)[mine]
+        asked = np.asarray(trips["requested_s"], dtype=float)[mine]
+        waited = np.asarray(trips["waited_s"], dtype=float)[mine]
+        result = np.array(trips["result"], dtype=object)[mine]
+        total = float(w.sum())
+        for b, (lo, hi) in enumerate(zip(times, ends, strict=True)):
+            overlap = np.clip(np.minimum(asked + waited, hi) - np.maximum(asked, lo), 0.0, None)
+            waiting[b] = float((w * overlap).sum()) / max(hi - lo, 1.0)
+            inside = (asked >= lo) & (asked < hi)
+            walked = (result == "no_taxi_walked_to_destination") | (
+                result == "no_taxi_still_walking_at_window_end"
+            )
+            no_taxi[b] = float(w[inside & walked].sum())
+            longer[b] = float(w[inside & (result == "waited_longer_than_expected")].sum())
+
+    x, width = times / 3600.0, length / 3600.0
+    bin_s = float(np.max(ends - times))
+    page = Page.new(th, size_cm, dpi, np.array([0.0, 0.0]), np.array([1.0, 1.0]))
+    page.fig.delaxes(page.ax)
+    k = page.k
+    mono = font_mono_name()
+    top = page.fig.add_axes((0.07, 0.53, 0.74, 0.30), facecolor=th.surface)
+    middle = page.fig.add_axes((0.07, 0.33, 0.74, 0.14), facecolor=th.surface, sharex=top)
+    low = page.fig.add_axes((0.07, 0.12, 0.74, 0.15), facecolor=th.surface, sharex=top)
+    c_occupied, c_pickup = th.modes[0], th.ramp_delay[1]
+    c_idle, c_charging = th.ramp_volume[1], th.ink2
+    c_waiting, c_no_taxi, c_longer = th.ink2, th.ramp_delay[2], th.ramp_delay[1]
+    bar = {"align": "edge", "linewidth": 0}
+    bottom = np.zeros(len(times))
+    for values, colour in (
+        (occupied, c_occupied),
+        (to_pickup, c_pickup),
+        (charging, c_charging),
+        (idle, c_idle),
+    ):
+        top.bar(x, values, width=width * 0.92, bottom=bottom, color=colour, **bar)
+        bottom = bottom + values
+    middle.bar(x, waiting, width=width * 0.92, color=c_waiting, **bar)
+    low.bar(x, no_taxi, width=width * 0.92, color=c_no_taxi, **bar)
+    low.bar(x, longer, width=width * 0.92, bottom=no_taxi, color=c_longer, **bar)
+    first, last = float(x.min()), float((ends.max()) / 3600.0)
+    top.set_xlim(first, last)
+    top.set_ylim(0, max(fleet, 1) * 1.05)
+    middle.set_ylim(0, max(float(waiting.max()), 1.0) * 1.15)
+    low.set_ylim(0, max(float((no_taxi + longer).max()), 1.0) * 1.15)
+    for ax in (top, middle, low):
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(th.base)
+        ax.tick_params(colors=th.muted, labelsize=9 * k)
+        for label in ax.get_yticklabels():
+            label.set_fontfamily(mono)
+    top.tick_params(labelbottom=False)
+    middle.tick_params(labelbottom=False)
+    hours = np.arange(np.ceil(first), np.floor(last) + 1)
+    hours = hours[:: max(int(np.ceil(len(hours) / 25)), 1)]
+    low.set_xticks(hours, [f"{int(h):02d}:00" for h in hours], fontfamily=mono)
+    minutes = f"{bin_s / 60:g}-minute bins"
+    low.set_xlabel(f"time of day ({minutes}, the run's window)", color=th.ink2, fontsize=10 * k)
+    top.set_ylabel("vehicles", color=th.ink2, fontsize=10 * k)
+    middle.set_ylabel("travellers\nwaiting", color=th.ink2, fontsize=10 * k)
+    low.set_ylabel("travellers", color=th.ink2, fontsize=10 * k)
+
+    page.fig.text(0.835, 0.83, "per bin", color=th.ink2, fontsize=10 * k)
+    y = 0.80
+    for colour, text in (
+        (c_idle, "idle (mean)"),
+        (c_charging, "charging or to it"),
+        (c_pickup, "driving to a pickup"),
+        (c_occupied, "with a passenger"),
+        (c_waiting, "travellers waiting"),
+        (c_longer, "waited > expected + 1 min"),
+        (c_no_taxi, "no taxi: walked"),
+    ):
+        page.fig.add_artist(
+            Rectangle(
+                (0.835, y - 0.004), 0.012, 0.018, transform=page.fig.transFigure, color=colour
+            )
+        )
+        page.fig.text(0.852, y, text, color=th.ink2, fontsize=9.5 * k, fontfamily=mono)
+        y -= 0.034
+
+    if note is None and total > 0:
+        note = (
+            f"{total:,.0f} travellers chose a taxi · {no_taxi.sum():,.0f} got none and walked · "
+            f"{longer.sum():,.0f} waited more than a minute longer than expected"
+        )
+    draw_furniture(
+        page,
+        title=title or f"Taxis over the day: {service}",
+        subtitle=subtitle or f"{fleet:,} vehicles · {minutes}",
         note=note,
         provenance=f"{__version__} · {run_identity(run)}",
         credit=credit,

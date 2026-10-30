@@ -192,6 +192,9 @@ pub(crate) struct Inputs<'a> {
     /// routes in, per coefficient vector, a trip's vector its class's. `None` (or a cost of time
     /// alone): travel time.
     pub cost: Option<&'a RouteCost>,
+    /// The attributes the run's services add (S302), offered by the routes too (as 0: a route
+    /// is no service's), so a model weighing a service's constant chooses routes as well.
+    pub service_attributes: &'a [&'a str],
 }
 
 /// When trip `trip`'s car enters the roads: its departure plus `car_start_s`
@@ -355,11 +358,10 @@ impl<'a> Chooser<'a> {
     ) -> Result<Self, ChoiceError> {
         let (trips, travellers) = (inputs.trips, inputs.travellers);
         // The attributes to fill: what the model reads, or all of them.
-        let wanted = crate::itinerary_choice::wanted(
-            inputs.model,
-            &ROUTE_ATTRIBUTES,
-            inputs.link_value_names,
-        )?;
+        let builtin: Vec<&str> =
+            ROUTE_ATTRIBUTES.iter().chain(inputs.service_attributes).copied().collect();
+        let wanted =
+            crate::itinerary_choice::wanted(inputs.model, &builtin, inputs.link_value_names)?;
         let needs = |name: &str| wanted.iter().any(|w| w == name);
         // Lengths for `length_km` and a route's running cost (S248); the path size is taken
         // per situation over the routes offered (S279, CM-3), not from the store.

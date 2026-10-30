@@ -23,6 +23,13 @@
 //!   its own (the car's drive, the bike's ride; 0 without one) and `access_egress_s` its fixed
 //!   seconds around it (reaching it, leaving it, its parking's time; 0 without one); both
 //!   **null** unless the trip completed.
+//! - In a run with a service (S303), two more columns at the end: `service_outcome`, what the
+//!   run's service day (the last loading's service trips, played once after the run had
+//!   stopped, the demand fixed) gave the trip: `served`, `failed` or `truncated`, empty for a
+//!   trip that took no service; and `service_met_arrival_s`, the second (from midnight) its
+//!   service leg ended (the destination; a shared bike to transit's hub dock), `NaN` if it did
+//!   not or for a trip without a service. The trip's other columns stay as planned. A run without
+//!   a service has neither.
 //! - The outcomes are those of the last loading. The key-value metadata carries
 //!   `openmobisim.run_fingerprint` and `openmobisim.master_seed`.
 //!
@@ -60,7 +67,7 @@ pub fn write_trip_results(
     let n = table.len();
     let index = u32::try_from(n).expect("the trips of a run fit u32");
     let floats = |v: Vec<f64>| -> ArrayRef { Arc::new(Float64Array::from(v)) };
-    let columns: Vec<ArrayRef> = vec![
+    let mut columns: Vec<ArrayRef> = vec![
         Arc::new(StringArray::from(vec![run_id; n])),
         Arc::new(UInt32Array::from((0..index).collect::<Vec<_>>())),
         Arc::new(StringArray::from(table.traveller_id.clone())),
@@ -83,34 +90,42 @@ pub fn write_trip_results(
         Arc::new(UInt32Array::from(table.vehicle_s.clone())),
         Arc::new(UInt32Array::from(table.access_egress_s.clone())),
     ];
+    if let Some((met, at)) = &table.service_met {
+        columns.push(Arc::new(StringArray::from(met.clone())));
+        columns.push(floats(at.clone()));
+    }
     let metadata = vec![
         ("openmobisim.run_fingerprint".to_string(), description.fingerprint_hex()),
         ("openmobisim.master_seed".to_string(), description.master_seed.to_string()),
     ];
     let field = |name: &str, t: DataType, nullable: bool| Field::new(name, t, nullable);
+    let mut fields = vec![
+        field("run_id", DataType::Utf8, false),
+        field("trip", DataType::UInt32, false),
+        field("traveller_id", DataType::Utf8, false),
+        field("trip_seq", DataType::UInt32, false),
+        field("user_class", DataType::Utf8, false),
+        field("weight", DataType::UInt32, false),
+        field("origin_lon", DataType::Float64, false),
+        field("origin_lat", DataType::Float64, false),
+        field("destination_lon", DataType::Float64, false),
+        field("destination_lat", DataType::Float64, false),
+        field("departure_s", DataType::UInt32, false),
+        field("mode", DataType::Utf8, true),
+        field("mode_choice", DataType::Boolean, false),
+        field("outcome", DataType::Utf8, false),
+        field("arrival_s", DataType::UInt32, true),
+        field("travel_time_s", DataType::UInt32, true),
+        field("link_at_end", DataType::UInt32, true),
+        field("vehicle_s", DataType::UInt32, true),
+        field("access_egress_s", DataType::UInt32, true),
+    ];
+    if table.service_met.is_some() {
+        fields.push(field("service_outcome", DataType::Utf8, false));
+        fields.push(field("service_met_arrival_s", DataType::Float64, false));
+    }
     let schema = Arc::new(
-        Schema::new(vec![
-            field("run_id", DataType::Utf8, false),
-            field("trip", DataType::UInt32, false),
-            field("traveller_id", DataType::Utf8, false),
-            field("trip_seq", DataType::UInt32, false),
-            field("user_class", DataType::Utf8, false),
-            field("weight", DataType::UInt32, false),
-            field("origin_lon", DataType::Float64, false),
-            field("origin_lat", DataType::Float64, false),
-            field("destination_lon", DataType::Float64, false),
-            field("destination_lat", DataType::Float64, false),
-            field("departure_s", DataType::UInt32, false),
-            field("mode", DataType::Utf8, true),
-            field("mode_choice", DataType::Boolean, false),
-            field("outcome", DataType::Utf8, false),
-            field("arrival_s", DataType::UInt32, true),
-            field("travel_time_s", DataType::UInt32, true),
-            field("link_at_end", DataType::UInt32, true),
-            field("vehicle_s", DataType::UInt32, true),
-            field("access_egress_s", DataType::UInt32, true),
-        ])
-        .with_metadata(metadata.iter().cloned().collect::<HashMap<_, _>>()),
+        Schema::new(fields).with_metadata(metadata.iter().cloned().collect::<HashMap<_, _>>()),
     );
     let batch = RecordBatch::try_new(schema.clone(), columns)?;
     write_single_batch_with(path.as_ref(), schema, &batch, &metadata, Compression::SNAPPY)

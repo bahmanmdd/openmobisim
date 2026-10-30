@@ -5,6 +5,26 @@ a minor version may change the interface, and says so here.
 
 ## Unreleased
 
+**Shared-mobility services in a run: planned on fixed expectations, played once after the run.** A run with a
+docked bike service or a taxi fleet (`services=`) offers them to the trips that choose their mode, priced on what
+travellers expect, fixed for the whole run: `Scenario.run(service_expectations=...)`, a preset (`"default"`,
+`"optimistic"`, `"pessimistic"`) or values by name (`taxi_wait_s` 600, `taxi_fail_share` 0, `dock_pickup_factor` 1,
+`dock_return_factor` 1, `dock_worst_case` 0; every value an assumption, uncalibrated), recorded in the fingerprint and
+`manifest.json`. The loadings do not play the services: a service trip arrives as planned. Once the run has stopped,
+its last loading's service trips are played in one day on the fleet engine, the taxis on that loading's road times,
+and what they met is reported beside what they expected.
+- `trip_results` of a run with a service has two more columns: `service_outcome` (`served`, `failed`, `truncated`;
+  empty for a trip without a service) and `service_met_arrival_s`.
+- `kpis.parquet` has one row set per service, under its name: `service_trips`, `served`, `failed`, `truncated`,
+  `expected_door_to_door_s`, `met_door_to_door_s`, `mismatch_mean_s`, `mismatch_abs_mean_s` and, for a taxi fleet,
+  `wait_mean_s`; `manifest.json` has `service_expectations` and `service_day`, which says how the day was played.
+- `Run.service_expectations()` returns what travellers planned on; `Run.service_met()` what the day gave, in the same
+  form, so a next run can plan on it: `scenario.run(service_expectations=run.service_met())`.
+- A taxi request that gets no vehicle within the fleet's longest wait ends there, with no walk on: in a run, in
+  `fleet_day` and in `fleet_environment`.
+- `Run.freeze` keeps the day's taxi legs and road times too: `fleet_day(frozen=...)` replays the run's day, bikes and
+  taxis, leg by leg.
+
 **Python 3.13 or newer.** openmobisim now needs Python 3.13 or later, following the scientific Python ecosystem's
 support policy ([SPEC 0](https://scientific-python.org/specs/spec-0000/)); one wheel per platform serves 3.13 and
 every later version, tested on 3.13 and 3.14. 0.1.0 accepted Python 3.11 and 3.12; on those, pip installs 0.1.0.

@@ -247,6 +247,27 @@ impl LinkTimes {
         self.bin_seconds
     }
 
+    /// The recorded and carried times as rows `(link, bin, seconds)`, bins of
+    /// [`Self::bin_seconds`] counted from midnight, by link then bin: what a link takes when
+    /// entered in a bin that has a row, free flow in one that has none (S303: the road times of a
+    /// run's service day). Closures and origin waits are not among them.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: a network's links and a day's bins fit `u32`.
+    #[must_use]
+    pub fn rows(&self) -> Vec<(u32, u32, f64)> {
+        let mut out = Vec::with_capacity(self.span.len());
+        for (l, &first) in self.span_first.iter().enumerate() {
+            let (a, z) = (self.span_start[l] as usize, self.span_start[l + 1] as usize);
+            let link = u32::try_from(l).expect("links fit u32");
+            for (k, &s) in self.span[a..z].iter().enumerate() {
+                out.push((link, first + u32::try_from(k).expect("bins fit u32"), s));
+            }
+        }
+        out
+    }
+
     fn bin_of(&self, at: f64) -> u32 {
         #[allow(
             clippy::cast_possible_truncation,

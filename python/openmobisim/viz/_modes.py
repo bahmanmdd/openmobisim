@@ -36,6 +36,7 @@ _STACK = (
     "bike_transit",
     "transit",
     "car_transit",
+    "taxi",
     "car",
 )
 _LABEL = {
@@ -46,13 +47,15 @@ _LABEL = {
     "bike_transit": "bike-and-ride",
     "transit": "transit",
     "car_transit": "park-and-ride",
+    "taxi": "taxi",
     "car": "car",
 }
 #: The shared bikes' colours (provisional, S302): the bike family's blue-green, deeper for a
-#: shared bike alone and paler for one to transit, per theme.
+#: shared bike alone and paler for one to transit, per theme; the taxi's (provisional): the car's
+#: ember, deeper (``EMBER[700]``, ``#9d0221``).
 _SERVICE_COLOURS = {
-    "paper": {"bike_share": "#036f6b", "bike_share_transit": "#b5e3e0"},
-    "night": {"bike_share": "#2aa39d", "bike_share_transit": "#c8f1ee"},
+    "paper": {"bike_share": "#036f6b", "bike_share_transit": "#b5e3e0", "taxi": "#9d0221"},
+    "night": {"bike_share": "#2aa39d", "bike_share_transit": "#c8f1ee", "taxi": "#9d0221"},
 }
 #: A bin with fewer trips than this share of the busiest bin's is left out: a handful of
 #: trips would draw a full bar of one mode.

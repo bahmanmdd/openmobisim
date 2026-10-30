@@ -6,7 +6,7 @@
 //! | `cost_running_eur` | the car or bike leg's kilometres times the vehicle's price per km ([`Prices::car_eur_km`], [`Prices::bike_eur_km`]) |
 //! | `cost_toll_eur` | the car leg's tolls: the road link value named `toll_eur` ([`TOLL_COLUMN`], given with the run's link values, [`crate::link_values`]) summed over its links, paid at each passage |
 //! | `cost_parking_eur` | the fee of the parking a park-and-ride or bike-and-ride trip leaves its vehicle at: the parking table's `fee_eur`, or the price for its kind ([`Prices::parking_car_eur`], [`Prices::parking_bike_eur`]); counted on the trip that parks, not on the one that fetches |
-//! | `cost_fare_eur` | a shared bike's price, in a run with a docked service: [`Prices::bike_share_eur_per_ride`] once and [`Prices::bike_share_eur_per_min`] per minute ridden, for every traveller (a transit pass does not cover it); and a transit journey's fare: [`Prices::fare_base_eur`] once, [`Prices::fare_km_eur`] per kilometre from each boarding stop to its alighting stop as the crow flies, and [`Prices::fare_transfer_eur`] per transfer; **0 for a traveller who holds a transit pass** (`has_transit_pass` of their class or person: the pass is access, not money, and its own price is not counted) |
+//! | `cost_fare_eur` | a shared bike's price, in a run with a docked service: [`Prices::bike_share_eur_per_ride`] once and [`Prices::bike_share_eur_per_min`] per minute ridden, for every traveller (a transit pass does not cover it); a taxi's fare, in a run with a taxi fleet: [`Prices::taxi_eur_per_ride`] once and [`Prices::taxi_eur_per_km`] per kilometre driven with the passenger, for every traveller; and a transit journey's fare: [`Prices::fare_base_eur`] once, [`Prices::fare_km_eur`] per kilometre from each boarding stop to its alighting stop as the crow flies, and [`Prices::fare_transfer_eur`] per transfer; **0 for a traveller who holds a transit pass** (`has_transit_pass` of their class or person: the pass is access, not money, and its own price is not counted) |
 //! | `cost_eur` | their sum |
 //!
 //! A car route of a trip given the car pays running costs and tolls; a walk pays nothing. Each
@@ -91,6 +91,15 @@ pub struct Prices {
     ///
     /// *Uncalibrated: 0.*
     pub bike_share_eur_per_min: f64,
+    /// A taxi's fare per ride, in euros, in a run with a taxi fleet (S302): part of the
+    /// alternative's fare.
+    ///
+    /// *Uncalibrated: 0.*
+    pub taxi_eur_per_ride: f64,
+    /// A taxi's fare per kilometre driven with the passenger, in euros.
+    ///
+    /// *Uncalibrated: 0.*
+    pub taxi_eur_per_km: f64,
 }
 
 impl Default for Prices {
@@ -111,11 +120,13 @@ impl Prices {
         parking_bike_eur: 0.0,
         bike_share_eur_per_ride: 0.0,
         bike_share_eur_per_min: 0.0,
+        taxi_eur_per_ride: 0.0,
+        taxi_eur_per_km: 0.0,
     };
 
     /// The names of the options: those of [`Self::values`], then those of
     /// [`Self::service_values`].
-    pub const NAMES: [&'static str; 9] = [
+    pub const NAMES: [&'static str; 11] = [
         "car_eur_km",
         "bike_eur_km",
         "fare_base_eur",
@@ -125,6 +136,8 @@ impl Prices {
         "parking_bike_eur",
         "bike_share_eur_per_ride",
         "bike_share_eur_per_min",
+        "taxi_eur_per_ride",
+        "taxi_eur_per_km",
     ];
 
     /// Every price that needs no service, by name, in [`Self::NAMES`]' order (the parameter
@@ -142,14 +155,21 @@ impl Prices {
         ]
     }
 
-    /// The prices of the services' modes, by name, in [`Self::NAMES`]' order: recorded only by a
-    /// run that has a service, so a run without one is described as before services existed.
+    /// The prices of the services' modes, by name, in [`Self::NAMES`]' order: a shared bike's
+    /// in a run with a docked bike service (`bike_share`), a taxi's in a run with a taxi fleet
+    /// (`taxi`), so a run is described only by the prices of the services it has.
     #[must_use]
-    pub fn service_values(&self) -> Vec<(&'static str, f64)> {
-        vec![
-            ("bike_share_eur_per_ride", self.bike_share_eur_per_ride),
-            ("bike_share_eur_per_min", self.bike_share_eur_per_min),
-        ]
+    pub fn service_values(&self, bike_share: bool, taxi: bool) -> Vec<(&'static str, f64)> {
+        let mut out = Vec::new();
+        if bike_share {
+            out.push(("bike_share_eur_per_ride", self.bike_share_eur_per_ride));
+            out.push(("bike_share_eur_per_min", self.bike_share_eur_per_min));
+        }
+        if taxi {
+            out.push(("taxi_eur_per_ride", self.taxi_eur_per_ride));
+            out.push(("taxi_eur_per_km", self.taxi_eur_per_km));
+        }
+        out
     }
 
     /// The shipped values with `options` in place of their namesakes.
@@ -171,6 +191,8 @@ impl Prices {
                 "parking_bike_eur" => &mut p.parking_bike_eur,
                 "bike_share_eur_per_ride" => &mut p.bike_share_eur_per_ride,
                 "bike_share_eur_per_min" => &mut p.bike_share_eur_per_min,
+                "taxi_eur_per_ride" => &mut p.taxi_eur_per_ride,
+                "taxi_eur_per_km" => &mut p.taxi_eur_per_km,
                 _ => {
                     return Err(format!(
                         "price_options has no {name:?}; the options are: {}",
@@ -272,6 +294,12 @@ impl PreparedPrices {
         self.prices.bike_share_eur_per_ride + self.prices.bike_share_eur_per_min * ride_s / 60.0
     }
 
+    /// A taxi ride's fare (S302): the per-ride part and the kilometres driven with the passenger,
+    /// `metres`.
+    pub(crate) fn taxi(&self, metres: f64) -> f64 {
+        self.prices.taxi_eur_per_ride + self.prices.taxi_eur_per_km * metres / 1000.0
+    }
+
     /// The fare of a journey of `rides` rides covering `ride_m` metres as the crow flies; 0
     /// without a ride. A pass holder pays none: the caller (`itinerary_choice`'s `cost`) does not
     /// ask.
@@ -302,8 +330,11 @@ mod tests {
         assert!(set(&[("fare", 1.0)]).unwrap_err().contains("fare_base_eur"));
         assert!(set(&[("car_eur_km", -0.1)]).unwrap_err().contains("0 or more"));
         assert!(set(&[("car_eur_km", f64::NAN)]).is_err());
-        let all: Vec<_> =
-            Prices::SHIPPED.values().into_iter().chain(Prices::SHIPPED.service_values()).collect();
+        let all: Vec<_> = Prices::SHIPPED
+            .values()
+            .into_iter()
+            .chain(Prices::SHIPPED.service_values(true, true))
+            .collect();
         assert_eq!(all.len(), Prices::NAMES.len());
         for ((name, _), known) in all.iter().zip(Prices::NAMES) {
             assert_eq!(*name, known);
@@ -343,7 +374,7 @@ mod tests {
             ..PreparedPrices::default()
         };
         assert_eq!(share.bike_share(600.0), 3.5);
-        assert!(Prices::SHIPPED.service_values().iter().all(|(_, v)| *v == 0.0));
+        assert!(Prices::SHIPPED.service_values(true, true).iter().all(|(_, v)| *v == 0.0));
         assert_eq!(prices.toll(&PreparedLinkValues::default(), &[LinkId::from_index(0)]), 0.0);
         let cost = Cost { running: 1.0, toll: 2.0, parking: 3.0, fare: 4.0 };
         assert_eq!(cost.attribute("cost_eur"), Some(10.0));

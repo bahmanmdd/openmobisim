@@ -162,6 +162,12 @@ impl Zones {
         &self.lat
     }
 
+    /// Per road node, its zone (the index [`Self::of_node`] reads).
+    #[must_use]
+    pub fn node_zones(&self) -> &[u32] {
+        &self.node_zone
+    }
+
     /// Road node `node`'s zone (`None`: not a node of the network).
     #[must_use]
     pub fn of_node(&self, node: NodeId) -> Option<u32> {

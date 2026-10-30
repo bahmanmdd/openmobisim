@@ -11,13 +11,14 @@
 //! | [`hubs`] | [`hubs::RunHubs`] — the run's one hub set: stops, parkings, docks, chargers and stands, joined by hub id or by distance |
 //! | [`engine`] | [`engine::FleetEngine`] — the services' day: legs, vehicles and docks, events in time order |
 //! | [`outcome`] | [`outcome::FleetOutcome`] — what became of each leg, and the day's counts |
-//! | [`in_run`] | [`in_run::play`] — a run's shared-bike trips of a loading on the engine, after it; [`in_run::ServicesRun`] |
+//! | [`in_run`] | [`in_run::play`] — a run's service trips of its last loading on the engine, once, after the run has stopped; [`in_run::ServicesRun`], [`in_run::TaxisRun`] |
 //! | [`frozen`] | [`frozen::plan_legs`], [`frozen::FrozenLegs`] — a fleet day without a run: trips as a table, legs planned by a fixed rule |
 //! | [`world`] | [`world::FrozenWorld`] — a fleet day's city, owned, lending the engine its roads one call at a time |
 //! | [`roads`] | [`roads::RoadTimes`], [`roads::FrozenRoads`], [`roads::FrozenPaths`] — a day's road times and the drives, rides and walks on them, without a run |
 //! | [`tables`] | [`tables::BikeShareEventTable`], [`tables::BikeShareTripTable`], [`tables::BikeShareDockTable`] — the rows of `bike_share_events.parquet`, `bike_share_trips.parquet` and `bike_share_docks.parquet` |
 //! | [`docks`] | [`docks::DockBins`] — docked bikes' pickups, returns and redirections on the engine, bin by bin |
-//! | [`costs`] | [`costs::DockCosts`] — what a dock is expected to cost a pickup and a return, per bin |
+//! | [`costs`] | [`costs::DockCosts`], [`costs::TaxiExpectation`] — what a dock and a taxi are expected to cost a traveller, fixed for the run ([`ServiceExpectations`]) |
+//! | [`taxi_tables`] | [`taxi_tables::TaxiEventTable`], [`taxi_tables::TaxiTripTable`], [`taxi_tables::TaxiVehicleTable`] — the rows of `taxi_events.parquet`, `taxi_trips.parquet` and `taxi_vehicles.parquet` |
 //! | [`taxis`] | electric taxis on the engine: matching, drives, energy, the charging rule and plug queues; [`taxis::TaxiDay`] |
 //! | [`policy`] | [`policy::Policy`] — an operator: called every few minutes with a [`view::View`], it returns [`decisions::Decision`]s; the built-in ones, by name ([`policy::policy_builtin`]): [`policy::NoOp`], [`policy::Reset`], [`policy::Threshold`], [`policy::ChargeRule`] |
 //! | [`view`] | [`view::View`] — what a policy sees at a step, read-only |
@@ -39,6 +40,7 @@ pub mod policy;
 pub mod queries;
 pub mod roads;
 pub mod tables;
+pub mod taxi_tables;
 pub mod taxis;
 pub mod view;
 pub mod world;
@@ -67,6 +69,16 @@ pub enum ServiceKind {
     BikeDocked,
     /// Electric taxis, tracked one by one; a leg waits for a vehicle and rides.
     Taxi,
+}
+
+/// Whether `setups` hold a docked bike service and a taxi fleet: which service modes a run lists
+/// ([`openmobisim_core_demand::Mode::listed`]).
+#[must_use]
+pub fn kinds(setups: &[ServiceSetup]) -> (bool, bool) {
+    (
+        setups.iter().any(|s| s.kind() == ServiceKind::BikeDocked),
+        setups.iter().any(|s| s.kind() == ServiceKind::Taxi),
+    )
 }
 
 impl ServiceKind {
@@ -398,6 +410,12 @@ pub struct TaxiDefaults {
     ///
     /// *An assumption: an hour's drive covers a city.*
     pub charger_reach_s: f64,
+    /// Whether the day keeps its log of events (every request, vehicle sent, pickup, drop-off,
+    /// failure and charge, with the vehicle's state and charge after each), the source of
+    /// `taxi_events.parquet`: on by default; off (option `log_events` 0) for a very large run,
+    /// whose results are otherwise the same. A switch of what is kept, not of what is simulated:
+    /// not among [`Self::values`] (the fingerprint), so it never changes a run's identity.
+    pub log_events: bool,
 }
 
 impl TaxiDefaults {
@@ -414,6 +432,7 @@ impl TaxiDefaults {
         board_s: 60.0,
         snap_m: 300.0,
         charger_reach_s: 3600.0,
+        log_events: true,
     };
 
     /// Every option, by name, with its value.
@@ -445,6 +464,20 @@ impl TaxiDefaults {
     pub fn from_options(options: &Options) -> Result<Self, ServiceError> {
         let mut d = Self::SHIPPED;
         for (name, &value) in options {
+            if name == "log_events" {
+                #[allow(clippy::float_cmp, reason = "a switch: exactly 0 or 1")]
+                let (off, on) = (value == 0.0, value == 1.0);
+                if !off && !on {
+                    return Err(ServiceError::BadOption {
+                        kind: ServiceKind::Taxi,
+                        name: name.clone(),
+                        value,
+                        why: "1 (keep the events) or 0 (do not)".to_string(),
+                    });
+                }
+                d.log_events = on;
+                continue;
+            }
             let slot = match name.as_str() {
                 "battery_kwh" => &mut d.battery_kwh,
                 "kwh_per_km" => &mut d.kwh_per_km,
@@ -461,7 +494,12 @@ impl TaxiDefaults {
                     return Err(ServiceError::UnknownOption {
                         kind: ServiceKind::Taxi,
                         name: name.clone(),
-                        known: Self::SHIPPED.values().iter().map(|(n, _)| *n).collect(),
+                        known: Self::SHIPPED
+                            .values()
+                            .iter()
+                            .map(|(n, _)| *n)
+                            .chain(["log_events"])
+                            .collect(),
                     });
                 }
             };
@@ -516,6 +554,175 @@ impl TaxiDefaults {
 }
 
 impl Default for TaxiDefaults {
+    fn default() -> Self {
+        Self::SHIPPED
+    }
+}
+
+// --- What travellers expect of the services ----------------------------------------------------
+
+/// The level of service travellers plan on in a run with services (S303): **fixed for the whole
+/// run, set by name, never learned from a loading**. A taxi alternative expects a wait of
+/// [`Self::taxi_wait_s`] and a share [`Self::taxi_fail_share`] of requests with no vehicle; a
+/// shared bike expects, at each dock and time bin, the extra walk the docks' start-of-day counts
+/// imply ([`costs::DockCosts::initial`]) multiplied by [`Self::dock_pickup_factor`] at the pickup
+/// and [`Self::dock_return_factor`] at the return, or, with [`Self::dock_worst_case`], the walk
+/// to the dock's nearest neighbour at every dock all day. The services' day is played once, after
+/// the run has stopped ([`in_run::play`]); what it gives is reported beside what was expected and
+/// never fed back. One value per run: a table by zone and time bin may be added later under the
+/// same names.
+///
+/// **Presets** ([`Self::preset`]): `default` (the shipped values), `optimistic` (better than what
+/// is likely met: a 120 s wait, no failure, no extra walk at the docks) and `pessimistic` (a
+/// 600 s wait, a quarter of requests with no vehicle, every dock expected empty at the pickup
+/// and full at the return).
+///
+/// *Every value an assumption, uncalibrated. CITATION OWED.*
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ServiceExpectations {
+    /// The wait a traveller expects before a taxi reaches the pickup, in seconds. In the choice
+    /// it is read as at most the fleet's longest wait ([`TaxiDefaults::max_wait_s`]): nobody
+    /// plans on waiting longer than the fleet keeps a request.
+    ///
+    /// *An assumption: 600 s, the fleet's shipped longest wait, so a traveller plans on the
+    /// longest wait still served. CITATION OWED.*
+    pub taxi_wait_s: f64,
+    /// The share of taxi requests a traveller expects to get no vehicle within the fleet's
+    /// longest wait, from 0 to 1.
+    ///
+    /// *An assumption: 0.*
+    pub taxi_fail_share: f64,
+    /// The multiplier of the docks' start-of-day extra walk at a pickup (0: no extra walk
+    /// expected).
+    ///
+    /// *An assumption: 1.*
+    pub dock_pickup_factor: f64,
+    /// The multiplier of the docks' start-of-day extra walk at a return (0: no extra walk
+    /// expected).
+    ///
+    /// *An assumption: 1.*
+    pub dock_return_factor: f64,
+    /// 1: every pickup dock is expected empty and every return dock full, all day, so a
+    /// shared bike expects the walk to the dock's nearest neighbour at both ends
+    /// ([`DockDefaults::fail_s`] for a dock with none), multiplied by the factors; 0: the
+    /// start-of-day counts decide.
+    ///
+    /// *An assumption: 0.*
+    pub dock_worst_case: f64,
+}
+
+impl ServiceExpectations {
+    /// The shipped values: the preset `default`.
+    pub const SHIPPED: Self = Self {
+        taxi_wait_s: 600.0,
+        taxi_fail_share: 0.0,
+        dock_pickup_factor: 1.0,
+        dock_return_factor: 1.0,
+        dock_worst_case: 0.0,
+    };
+
+    /// The names of the parameters, in the order [`Self::values`] gives them.
+    pub const NAMES: [&'static str; 5] = [
+        "taxi_wait_s",
+        "taxi_fail_share",
+        "dock_pickup_factor",
+        "dock_return_factor",
+        "dock_worst_case",
+    ];
+
+    /// The presets' names.
+    pub const PRESETS: [&'static str; 3] = ["default", "optimistic", "pessimistic"];
+
+    /// The preset `name` (see the [type's docs](Self)).
+    ///
+    /// # Errors
+    ///
+    /// A message naming the presets, for another name.
+    pub fn preset(name: &str) -> Result<Self, String> {
+        match name {
+            "default" => Ok(Self::SHIPPED),
+            "optimistic" => Ok(Self {
+                taxi_wait_s: 120.0,
+                taxi_fail_share: 0.0,
+                dock_pickup_factor: 0.0,
+                dock_return_factor: 0.0,
+                dock_worst_case: 0.0,
+            }),
+            "pessimistic" => Ok(Self {
+                taxi_wait_s: 600.0,
+                taxi_fail_share: 0.25,
+                dock_pickup_factor: 1.0,
+                dock_return_factor: 1.0,
+                dock_worst_case: 1.0,
+            }),
+            other => Err(format!(
+                "unknown service_expectations preset {other:?}; the presets are {}",
+                Self::PRESETS.join(", ")
+            )),
+        }
+    }
+
+    /// Every parameter by name, in [`Self::NAMES`]' order (the fingerprint, the manifest).
+    #[must_use]
+    pub fn values(&self) -> Vec<(&'static str, f64)> {
+        vec![
+            ("taxi_wait_s", self.taxi_wait_s),
+            ("taxi_fail_share", self.taxi_fail_share),
+            ("dock_pickup_factor", self.dock_pickup_factor),
+            ("dock_return_factor", self.dock_return_factor),
+            ("dock_worst_case", self.dock_worst_case),
+        ]
+    }
+
+    /// `self` with `options` in place of their namesakes.
+    ///
+    /// # Errors
+    ///
+    /// A message naming the parameters for a name not among them, or saying the range for a
+    /// value out of it (`taxi_wait_s` and the factors finite and 0 or more, `taxi_fail_share`
+    /// from 0 to 1, `dock_worst_case` 0 or 1).
+    pub fn with_options(mut self, options: &Options) -> Result<Self, String> {
+        for (name, &value) in options {
+            let slot = match name.as_str() {
+                "taxi_wait_s" => &mut self.taxi_wait_s,
+                "taxi_fail_share" => &mut self.taxi_fail_share,
+                "dock_pickup_factor" => &mut self.dock_pickup_factor,
+                "dock_return_factor" => &mut self.dock_return_factor,
+                "dock_worst_case" => &mut self.dock_worst_case,
+                _ => {
+                    return Err(format!(
+                        "unknown service_expectations parameter {name:?}; the parameters are {}",
+                        Self::NAMES.join(", ")
+                    ));
+                }
+            };
+            #[allow(clippy::float_cmp, reason = "a switch: exactly 0 or 1")]
+            let ok = match name.as_str() {
+                "taxi_fail_share" => (0.0..=1.0).contains(&value),
+                "dock_worst_case" => value == 0.0 || value == 1.0,
+                _ => value.is_finite() && value >= 0.0,
+            };
+            if !ok {
+                let why = match name.as_str() {
+                    "taxi_fail_share" => "a share, from 0 to 1",
+                    "dock_worst_case" => "0 or 1",
+                    _ => "a finite number, 0 or more",
+                };
+                return Err(format!("service_expectations {name:?} = {value}: must be {why}"));
+            }
+            *slot = value;
+        }
+        Ok(self)
+    }
+
+    /// Whether every dock is expected unavailable ([`Self::dock_worst_case`] 1).
+    #[must_use]
+    pub fn dock_worst(&self) -> bool {
+        self.dock_worst_case > 0.5
+    }
+}
+
+impl Default for ServiceExpectations {
     fn default() -> Self {
         Self::SHIPPED
     }

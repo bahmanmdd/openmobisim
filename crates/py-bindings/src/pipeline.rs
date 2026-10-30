@@ -519,6 +519,31 @@ pub struct PyRunSummary {
     /// Path to the written `bike_share_docks.parquet`, if the run had a service.
     #[pyo3(get)]
     pub bike_share_docks_path: Option<String>,
+    /// The taxi fleet's events of the last loading, as columns; `None` without one (S302).
+    #[pyo3(get)]
+    pub taxi_events: Option<Py<PyDict>>,
+    /// Its trips, as columns; `None` without a taxi fleet.
+    #[pyo3(get)]
+    pub taxi_trips: Option<Py<PyDict>>,
+    /// Its vehicles bin by bin, as columns; `None` without a taxi fleet.
+    #[pyo3(get)]
+    pub taxi_vehicles: Option<Py<PyDict>>,
+    /// Path to the written `taxi_events.parquet`, if the run had a taxi fleet.
+    #[pyo3(get)]
+    pub taxi_events_path: Option<String>,
+    /// Path to the written `taxi_trips.parquet`, if the run had a taxi fleet.
+    #[pyo3(get)]
+    pub taxi_trips_path: Option<String>,
+    /// Path to the written `taxi_vehicles.parquet`, if the run had a taxi fleet.
+    #[pyo3(get)]
+    pub taxi_vehicles_path: Option<String>,
+    /// What travellers expected of the services, by name (S303); `None` without a service.
+    #[pyo3(get)]
+    pub service_expectations: Option<Py<PyDict>>,
+    /// Per service, by name: its kind and its service day's summary (`kpis.parquet`'s rows of
+    /// the service, by metric), S303; `None` without a service.
+    #[pyo3(get)]
+    pub service_summaries: Option<Py<PyDict>>,
     /// Each transit, park-and-ride and bike-and-ride trip's choice, as columns;
     /// `None` without such trips.
     #[pyo3(get)]
@@ -884,7 +909,7 @@ fn gap_trip_columns(py: Python<'_>, gap: &openmobisim_core_sim::GapTrips) -> PyR
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
     loading_options=None, price_options=None, threads=None, fingerprint_only=false,
     design_id="default", replication=0, outputs="all", hub_join_m=150.0,
-    services=None, class_no_bike_share=None,
+    services=None, class_no_bike_share=None, class_no_taxi=None, service_expectations=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -949,7 +974,18 @@ pub fn run_pipeline(
     hub_join_m: f64,
     services: Option<Vec<crate::services::ServiceTuple<'_>>>,
     class_no_bike_share: Option<Vec<String>>,
+    class_no_taxi: Option<Vec<String>>,
+    service_expectations: Option<(String, std::collections::BTreeMap<String, f64>)>,
 ) -> PyResult<Py<PyAny>> {
+    // What travellers expect of the services (S303): a preset, then values by name over it.
+    let expectations = match &service_expectations {
+        None => openmobisim_core_sim::services::ServiceExpectations::SHIPPED,
+        Some((preset, values)) => {
+            openmobisim_core_sim::services::ServiceExpectations::preset(preset)
+                .and_then(|e| e.with_options(values))
+                .map_err(PyValueError::new_err)?
+        }
+    };
     // Which files the run writes (C2): "all", or "minimal" (kpis.csv and manifest.json) for mass
     // runs; the results in memory are the same either way.
     let minimal = match outputs {
@@ -1185,10 +1221,11 @@ pub fn run_pipeline(
         let ids = travellers.class_external_ids();
         (0..ids.count()).map(|c| ids.external(c).to_string()).collect()
     };
-    // The service modes (S302) are governed by `has_bike_share` alone, not by a class's
-    // `modes` list (which names the ordinary modes): with a service every class is offered a
-    // shared bike, alone or to transit, unless its `has_bike_share` is 0.
+    // The service modes (S302) are governed by `has_bike_share` and `has_taxi` alone, not by a
+    // class's `modes` list (which names the ordinary modes): with a service every class is
+    // offered its modes (a shared bike alone or to transit; a taxi) unless the column is 0.
     let no_share = class_no_bike_share.unwrap_or_default();
+    let no_taxi = class_no_taxi.unwrap_or_default();
     let class_allowed: Vec<[bool; Mode::COUNT]> = class_names
         .iter()
         .map(|c| {
@@ -1196,6 +1233,7 @@ pub fn run_pipeline(
             let share = !no_share.contains(c);
             allowed[Mode::BikeShare.index()] = share;
             allowed[Mode::BikeShareTransit.index()] = share;
+            allowed[Mode::Taxi.index()] = !no_taxi.contains(c);
             allowed
         })
         .collect();
@@ -1316,11 +1354,12 @@ pub fn run_pipeline(
             network.inner.defaults().layers,
         ))
     };
-    // A timetable walks its passengers on the walk layer (S199), so the run needs it; a service's
-    // docks are snapped to both layers (S302).
+    // A timetable walks its passengers on the walk layer (S199), so the run needs it; a docked
+    // service's docks are snapped to both layers, and a taxi request that fails walks on (S302).
     let services = services.unwrap_or_default();
+    let docked = services.iter().any(|s| s.0 == "bike_docked");
     let layers = StaticLayers {
-        bike: if uses(Mode::Bike) || uses(Mode::BikeTransit) || !services.is_empty() {
+        bike: if uses(Mode::Bike) || uses(Mode::BikeTransit) || docked {
             Some(setup(StaticLayer::Bike)?)
         } else {
             None
@@ -1388,7 +1427,10 @@ pub fn run_pipeline(
     }
     let service_setups = (!service_setups.is_empty()).then(|| Arc::new(service_setups));
     if let Some(setups) = &service_setups {
-        run = run.with_services(Arc::clone(setups)).with_hub_join_m(hub_join_m);
+        run = run
+            .with_services(Arc::clone(setups))
+            .with_hub_join_m(hub_join_m)
+            .with_service_expectations(expectations);
     }
     run = run
         .with_mode_choice(&modes)
@@ -1437,25 +1479,24 @@ pub fn run_pipeline(
     // Python is called from that pool's thread, which takes the lock when it needs it.
     let result = py.detach(|| run.try_execute(&mut run_diagnostics)).map_err(to_value_error)?;
     let core_stages = run.timings().to_vec();
-    // A run with a service keeps its last loading's day, to freeze it (S302); one without keeps
+    // A run with a service keeps its service day, to freeze it (S302, S303); one without keeps
     // nothing.
-    let share = match &service_setups {
-        Some(setups) => Some(
-            crate::frozen_day::ShareFreeze::new(
-                Arc::clone(setups),
+    let share = service_setups.as_ref().map(|setups| {
+        crate::frozen_day::ShareFreeze::new(
+            Arc::clone(setups),
+            (
                 result.services.as_ref().and_then(|s| s.last.clone()),
-                &trips_used,
-                &travellers,
-                result.link_bins.as_ref(),
-                &network.inner,
-                (f64::from(window.start_s), f64::from(window.end_s)),
-                master_seed,
-                description.fingerprint_hex(),
-            )
-            .map_err(PyValueError::new_err)?,
-        ),
-        None => None,
-    };
+                result.taxis.as_ref().and_then(|t| t.last.clone()),
+            ),
+            &trips_used,
+            &travellers,
+            result.service_road_times.clone(),
+            &network.inner,
+            (f64::from(window.start_s), f64::from(window.end_s)),
+            master_seed,
+            description.fingerprint_hex(),
+        )
+    });
     // What a skim needs after the run (S238), kept with the summary.
     let skimmer = Arc::new(Skimmer::new(
         network.inner.clone(),
@@ -1583,9 +1624,10 @@ pub fn run_pipeline(
         }
         _ => None,
     };
-    // A run's services (S302): its shared-bike legs and its docks bin by bin; nothing without.
+    // A run's docked service (S302): its shared-bike legs and its docks bin by bin; nothing
+    // without one.
     let service_out = match &service_setups {
-        Some(setups) => Some(crate::service_results::service_results(
+        Some(setups) if result.services.is_some() => Some(crate::service_results::service_results(
             py,
             setups,
             &run_hubs,
@@ -1594,12 +1636,45 @@ pub fn run_pipeline(
             (f64::from(window.start_s), f64::from(window.end_s)),
             (dir, run_id, &description, minimal),
         )?),
-        None => None,
+        _ => None,
+    };
+    // A run's taxi fleet (S302): its trips, events and vehicles bin by bin; nothing without.
+    let taxi_setup = service_setups.as_deref().and_then(|s| {
+        s.iter().find(|s| s.kind() == openmobisim_core_sim::services::ServiceKind::Taxi)
+    });
+    let taxi_out = match (taxi_setup, &result.taxis) {
+        (Some(setup), Some(taxis)) => Some(crate::service_results::taxi_results(
+            py,
+            setup,
+            taxis,
+            (&trips_used, &travellers),
+            (f64::from(window.start_s), f64::from(window.end_s)),
+            (dir, run_id, &description, minimal),
+        )?),
+        _ => None,
     };
     // Their own stage, so the time the service tables and files take is seen (none without).
-    if service_out.is_some() {
+    if service_out.is_some() || taxi_out.is_some() {
         clock = timings.lap("services_written", None, clock);
     }
+    let (
+        taxi_events,
+        taxi_trips,
+        taxi_vehicles,
+        taxi_events_path,
+        taxi_trips_path,
+        taxi_vehicles_path,
+    ) = match taxi_out {
+        Some(o) => (
+            Some(o.events),
+            Some(o.trips),
+            Some(o.vehicles),
+            o.events_path,
+            o.trips_path,
+            o.vehicles_path,
+        ),
+        None => (None, None, None, None, None, None),
+    };
     let (
         bike_share_events,
         bike_share_trips,
@@ -1636,6 +1711,41 @@ pub fn run_pipeline(
         None => None,
     };
     let trip_modes_table = trip_modes(py, &trip_table)?.unbind();
+    // What the services were expected to give and what their day gave (S303).
+    let service_expectations_out = description
+        .service_expectations
+        .as_ref()
+        .map(|e| -> PyResult<Py<PyDict>> {
+            let d = PyDict::new(py);
+            for (n, v) in e {
+                d.set_item(n, v)?;
+            }
+            Ok(d.unbind())
+        })
+        .transpose()?;
+    let service_summaries = (result.services.is_some() || result.taxis.is_some())
+        .then(|| -> PyResult<Py<PyDict>> {
+            let all = PyDict::new(py);
+            let one = |kind: &str,
+                       summary: Option<&openmobisim_core_sim::services::in_run::ServiceSummary>|
+             -> PyResult<Bound<'_, PyDict>> {
+                let d = PyDict::new(py);
+                d.set_item("kind", kind)?;
+                let rows = summary.map_or_else(|| vec![("service_trips", 0.0)], |s| s.rows());
+                for (n, v) in rows {
+                    d.set_item(n, v)?;
+                }
+                Ok(d)
+            };
+            if let Some(s) = &result.services {
+                all.set_item(&s.service, one("bike_docked", s.last.as_ref().map(|d| &d.summary))?)?;
+            }
+            if let Some(t) = &result.taxis {
+                all.set_item(&t.service, one("taxi", t.last.as_ref().map(|d| &d.summary))?)?;
+            }
+            Ok(all.unbind())
+        })
+        .transpose()?;
     let trip_results_table = trip_results(py, &trip_table)?.unbind();
     let gap_trips = result.gap_trips.as_ref().map(|g| gap_trip_columns(py, g)).transpose()?;
     let route_choices_py = match (&result.route_choices, &result.route_sets) {
@@ -1812,6 +1922,14 @@ pub fn run_pipeline(
         bike_share_events_path,
         bike_share_trips_path,
         bike_share_docks_path,
+        taxi_events,
+        taxi_trips,
+        taxi_vehicles,
+        taxi_events_path,
+        taxi_trips_path,
+        taxi_vehicles_path,
+        service_expectations: service_expectations_out,
+        service_summaries,
         itinerary_choices: itinerary_table,
         trip_modes: trip_modes_table,
         trip_results: trip_results_table,
@@ -1831,7 +1949,7 @@ pub fn run_pipeline(
             &result.no_alternative,
             &trips_used,
             &travellers,
-            result.modes_listed(),
+            &result.modes_listed(),
         )?
         .unbind(),
         transit_calls: transit_calls_table,
@@ -1846,7 +1964,7 @@ pub fn run_pipeline(
         choice_model: description.choice_model.clone(),
         equilibration: description.equilibration.clone(),
         route_update: description.route_update.clone(),
-        convergence: convergence_arrays(py, &result.iterations, result.modes_listed())?,
+        convergence: convergence_arrays(py, &result.iterations, &result.modes_listed())?,
         converged: result.converged,
         fingerprint: description.fingerprint_hex(),
         total_trips: result.completion.total_trips,

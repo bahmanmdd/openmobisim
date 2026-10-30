@@ -692,6 +692,7 @@ CLASS_KEYS = (
     "owns_bike",
     "has_transit_pass",
     "has_bike_share",
+    "has_taxi",
     *CLASS_LIMITS,
 )
 _OWNERSHIP = ("owns_car", "owns_bike", "has_transit_pass")
@@ -772,6 +773,9 @@ def _class_entry(name: str, spec: object) -> dict[str, Any]:
     # Shared bikes (S302): offered unless the class says 0; kept only when given.
     if "has_bike_share" in given:
         entry["has_bike_share"] = _flag(given["has_bike_share"], f"class {name!r}: has_bike_share")
+    # Taxis likewise (S302).
+    if "has_taxi" in given:
+        entry["has_taxi"] = _flag(given["has_taxi"], f"class {name!r}: has_taxi")
     limits = {}
     for key in CLASS_LIMITS:
         if key in given:
@@ -804,7 +808,8 @@ def demand_read_classes(path: str | Path) -> dict[str, dict[str, Any]]:
     or park and ride, a bike for one that may cycle, both when the modes are empty, and no pass — a
     pass only waives the fare, never gates transit), ``has_bike_share`` (``0``: the class is never
     offered a shared bike; empty: offered, in a run with a docked bike service, whatever its
-    ``modes``, which govern the ordinary modes only), any ``beta_*``
+    ``modes``, which govern the ordinary modes only), ``has_taxi`` (likewise for a taxi, in a run
+    with a taxi fleet), any ``beta_*``
     coefficient of the choice model (``beta_mode_bike``, ``beta_time_min`` …; empty: the model's
     own) and the class's own choice-set limits in seconds, ``walk_max_s``, ``bike_max_s`` and
     ``access_walk_max_s`` (empty: the run's ``mode_options`` and ``transit_options``). Every value

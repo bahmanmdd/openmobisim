@@ -1136,6 +1136,18 @@ class RunSummary:
     bike_share_trips_path: str | None
     #: The written ``bike_share_docks.parquet``, if the run had a service.
     bike_share_docks_path: str | None
+    #: The taxi fleet's events (see ``Run.taxi_events``).
+    taxi_events: dict[str, Any] | None
+    #: Its trips (see ``Run.taxi_trips``).
+    taxi_trips: dict[str, Any] | None
+    #: Its vehicles bin by bin (see ``Run.taxi_vehicles``).
+    taxi_vehicles: dict[str, Any] | None
+    #: The written ``taxi_events.parquet``, if the run had a taxi fleet.
+    taxi_events_path: str | None
+    #: The written ``taxi_trips.parquet``, if the run had a taxi fleet.
+    taxi_trips_path: str | None
+    #: The written ``taxi_vehicles.parquet``, if the run had a taxi fleet.
+    taxi_vehicles_path: str | None
     #: Each itinerary trip's choice (see ``Run.itinerary_choices``).
     itinerary_choices: dict[str, Any] | None
     #: Every trip's departure and the mode it took (see ``Run.trip_modes``).

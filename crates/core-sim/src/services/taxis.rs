@@ -117,6 +117,172 @@ pub struct TaxiDay {
     pub vehicles: Vec<VehicleDay>,
     /// The fleet bin by bin.
     pub bins: FleetBins,
+    /// Each vehicle bin by bin.
+    pub vehicle_bins: VehicleBins,
+    /// The day's events in time order (one second's in the order handled); `None` with the
+    /// fleet's `log_events` off.
+    pub log: Option<Vec<TaxiEvent>>,
+}
+
+/// No vehicle, unit request or charger, in a [`TaxiEvent`].
+pub const NO: u32 = u32::MAX;
+
+/// What happened, in a taxi fleet's log ([`TaxiEvent`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaxiEventKind {
+    /// A traveller asked for a taxi (one unit request: one seat).
+    AskedForTaxi,
+    /// No idle vehicle could take the request at once: it waits, offered to every vehicle freed.
+    WaitingForTaxi,
+    /// A vehicle was sent to the pickup (its drive there, `km`, starts).
+    TaxiAssigned,
+    /// The vehicle reached the pickup; boarding starts.
+    TaxiArrivedAtPickup,
+    /// Boarded, the vehicle leaves with the passenger (its drive, `km`, starts).
+    PickedUp,
+    /// The passenger reached the destination.
+    DroppedOff,
+    /// No vehicle was sent within the longest wait: the request failed.
+    NoTaxiWithinWaitLimit,
+    /// The window ended with the request still waiting (for a vehicle, or for the one sent).
+    StillWaitingAtWindowEnd,
+    /// The window ended with the passenger on board.
+    StillRidingAtWindowEnd,
+    /// The vehicle, low on charge, drives to a charger (`km`).
+    VehicleWentToCharge,
+    /// It reached the charger and every plug was taken: it queues.
+    QueuedForPlug,
+    /// It started charging.
+    StartedCharging,
+    /// It finished charging, and is idle.
+    Charged,
+    /// An operator's policy sent it, empty, elsewhere (`km`).
+    VehicleRelocating,
+    /// It arrived where the policy sent it, and is idle.
+    VehicleRelocated,
+}
+
+impl TaxiEventKind {
+    /// The stable snake_case name, as `taxi_events.parquet` writes it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AskedForTaxi => "asked_for_taxi",
+            Self::WaitingForTaxi => "waiting_for_taxi",
+            Self::TaxiAssigned => "taxi_assigned",
+            Self::TaxiArrivedAtPickup => "taxi_arrived_at_pickup",
+            Self::PickedUp => "picked_up",
+            Self::DroppedOff => "dropped_off",
+            Self::NoTaxiWithinWaitLimit => "no_taxi_within_wait_limit",
+            Self::StillWaitingAtWindowEnd => "still_waiting_at_window_end",
+            Self::StillRidingAtWindowEnd => "still_riding_at_window_end",
+            Self::VehicleWentToCharge => "vehicle_went_to_charge",
+            Self::QueuedForPlug => "queued_for_plug",
+            Self::StartedCharging => "started_charging",
+            Self::Charged => "charged",
+            Self::VehicleRelocating => "vehicle_relocating",
+            Self::VehicleRelocated => "vehicle_relocated",
+        }
+    }
+}
+
+/// One event of a taxi fleet's day: what happened, to which unit request and vehicle, and the
+/// vehicle's state and charge just after.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TaxiEvent {
+    /// When, in seconds from midnight.
+    pub t: f64,
+    /// What happened.
+    pub kind: TaxiEventKind,
+    /// The unit request ([`TaxiDay::requests`]' index), or [`NO`].
+    pub unit: u32,
+    /// The vehicle, by fleet index, or [`NO`].
+    pub vehicle: u32,
+    /// The charger, by index, or [`NO`].
+    pub charger: u32,
+    /// The vehicle's state just after (`None` without a vehicle).
+    pub state_after: Option<VehicleState>,
+    /// The vehicle's charge just after, as a share of its battery (`NaN` without a vehicle);
+    /// a drive's energy is taken as it starts.
+    pub soc_after: f64,
+    /// The kilometres of the drive that starts with this event (`NaN` for none).
+    pub km: f64,
+}
+
+/// Each vehicle of a taxi fleet bin by bin ([`FLEET_BIN_S`] seconds from the window's start):
+/// cell `vehicle * bins + bin`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VehicleBins {
+    /// The bin length, in seconds.
+    pub bin_s: u32,
+    /// The window's start, in seconds from midnight.
+    pub start_s: f64,
+    /// The window's end: the last bin ends there.
+    pub end_s: f64,
+    /// Bins per vehicle.
+    pub bins: usize,
+    /// Seconds in each [`VehicleState`] (in [`VehicleState::ALL`]'s order).
+    pub state_s: Vec<[f64; 7]>,
+    /// Kilometres driven with a passenger, a drive's spread over its seconds.
+    pub km_occupied: Vec<f64>,
+    /// Kilometres driven empty (to pickups, to chargers, relocations), likewise.
+    pub km_empty: Vec<f64>,
+    /// Energy charged, in kWh, a charge's spread over its seconds.
+    pub kwh_charged: Vec<f64>,
+    /// The charge at the bin's start, as a share of the battery.
+    pub soc_start: Vec<f64>,
+    /// The charge at the bin's end (the next bin's start; the last: the clock's).
+    pub soc_end: Vec<f64>,
+    /// Passengers dropped off.
+    pub dropped_off: Vec<f64>,
+}
+
+impl VehicleBins {
+    fn new(vehicles: usize, bins: usize, window: (f64, f64)) -> Self {
+        let n = vehicles * bins;
+        Self {
+            bin_s: FLEET_BIN_S,
+            start_s: window.0,
+            end_s: window.1,
+            bins,
+            state_s: vec![[0.0; 7]; n],
+            km_occupied: vec![0.0; n],
+            km_empty: vec![0.0; n],
+            kwh_charged: vec![0.0; n],
+            soc_start: vec![f64::NAN; n],
+            soc_end: vec![f64::NAN; n],
+            dropped_off: vec![0.0; n],
+        }
+    }
+
+    fn bin_of(&self, t: f64) -> usize {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin")]
+        let b = ((t - self.start_s).max(0.0) / f64::from(self.bin_s)) as usize;
+        b.min(self.bins - 1)
+    }
+
+    /// Spread `amount` over the seconds `from..to` of vehicle `v`'s bins, each bin's share by
+    /// its seconds (all of it in `from`'s bin for an instant); `put` adds a share to a cell.
+    fn spread(&mut self, v: u32, from: f64, to: f64, amount: f64, put: fn(&mut Self, usize, f64)) {
+        let base = v as usize * self.bins;
+        let (a, z) = (from.max(self.start_s), to.min(self.end_s.max(self.start_s)));
+        if z <= a {
+            let c = base + self.bin_of(from.min(self.end_s));
+            put(self, c, amount);
+            return;
+        }
+        let span = to - from;
+        let len = f64::from(self.bin_s);
+        for b in self.bin_of(a)..=self.bin_of(z) {
+            #[allow(clippy::cast_precision_loss, reason = "a bin index")]
+            let lo = self.start_s + len * b as f64;
+            let hi = if b + 1 == self.bins { f64::INFINITY } else { lo + len };
+            let part = (z.min(hi) - a.max(lo)).max(0.0);
+            if part > 0.0 {
+                put(self, base + b, amount * part / span);
+            }
+        }
+    }
 }
 
 /// What a vehicle's `Arrival` is, in the order they are taken at one second.
@@ -182,6 +348,10 @@ pub(crate) struct TaxiRun {
     pub(crate) days: Vec<VehicleDay>,
     pub(crate) bins: FleetBins,
     bins_n: usize,
+    /// Per vehicle: the second it entered its state.
+    state_since: Vec<f64>,
+    vehicle_bins: VehicleBins,
+    log: Option<Vec<TaxiEvent>>,
 }
 
 impl TaxiRun {
@@ -253,6 +423,9 @@ impl TaxiRun {
                 states: Vec::with_capacity(bins_n),
             },
             bins_n,
+            state_since: vec![window.0; n],
+            vehicle_bins: VehicleBins::new(n, bins_n, window),
+            log: d.log_events.then(Vec::new),
         }
     }
 
@@ -284,29 +457,82 @@ impl TaxiRun {
         (in_use, queued)
     }
 
-    /// Note the counts at the start of every bin starting at or before second `t`.
-    pub(crate) fn record(&mut self, t: f64, counts: &[u32; 7]) {
+    /// Note the counts, and each vehicle's charge `soc`, at the start of every bin starting at
+    /// or before second `t`.
+    pub(crate) fn record(&mut self, t: f64, counts: &[u32; 7], soc: &[f64]) {
         while self.bins.states.len() < self.bins_n {
+            let b = self.bins.states.len();
             #[allow(clippy::cast_precision_loss, reason = "a count of bins")]
-            let start = self.bins.start_s + f64::from(FLEET_BIN_S) * self.bins.states.len() as f64;
+            let start = self.bins.start_s + f64::from(FLEET_BIN_S) * b as f64;
             if start > t {
                 break;
             }
             self.bins.states.push(*counts);
+            for (v, &c) in soc.iter().enumerate() {
+                self.vehicle_bins.soc_start[v * self.bins_n + b] = c;
+            }
         }
     }
 
-    /// The day so far: the bins after the clock hold `counts`, each vehicle's charge is `soc`.
-    pub(crate) fn finish(&self, now: f64, counts: &[u32; 7], soc: &[f64]) -> TaxiDay {
+    /// The day so far: the bins after the clock hold `counts`, each vehicle's charge is `soc`
+    /// and its state `state` since its last change.
+    pub(crate) fn finish(
+        &self,
+        now: f64,
+        counts: &[u32; 7],
+        soc: &[f64],
+        state: &[VehicleState],
+    ) -> TaxiDay {
         let mut run = self.clone();
-        run.record(now, counts);
+        run.record(now, counts, soc);
         while run.bins.states.len() < run.bins_n {
+            let b = run.bins.states.len();
             run.bins.states.push(*counts);
+            for (v, &c) in soc.iter().enumerate() {
+                run.vehicle_bins.soc_start[v * run.bins_n + b] = c;
+            }
         }
         for (v, s) in run.days.iter_mut().zip(soc) {
             v.soc_end = *s;
         }
-        TaxiDay { requests: run.requests, vehicles: run.days, bins: run.bins }
+        for (v, &st) in (0_u32..).zip(state) {
+            let since = run.state_since[v as usize];
+            run.add_state_s(v, st, since, now);
+        }
+        let vb = &mut run.vehicle_bins;
+        for (v, &now_soc) in soc.iter().enumerate() {
+            for b in 0..vb.bins {
+                let c = v * vb.bins + b;
+                vb.soc_end[c] = if b + 1 < vb.bins { vb.soc_start[c + 1] } else { now_soc };
+            }
+        }
+        let mut log = run.log.take();
+        if let Some(log) = log.as_mut() {
+            log.sort_by(|a, b| a.t.total_cmp(&b.t));
+        }
+        TaxiDay {
+            requests: run.requests,
+            vehicles: run.days,
+            bins: run.bins,
+            vehicle_bins: run.vehicle_bins,
+            log,
+        }
+    }
+
+    fn add_state_s(&mut self, v: u32, s: VehicleState, from: f64, to: f64) {
+        if to > from {
+            let k = s as usize;
+            let put: fn(&mut VehicleBins, usize, f64) = match k {
+                0 => |b, c, x| b.state_s[c][0] += x,
+                1 => |b, c, x| b.state_s[c][1] += x,
+                2 => |b, c, x| b.state_s[c][2] += x,
+                3 => |b, c, x| b.state_s[c][3] += x,
+                4 => |b, c, x| b.state_s[c][4] += x,
+                5 => |b, c, x| b.state_s[c][5] += x,
+                _ => |b, c, x| b.state_s[c][6] += x,
+            };
+            self.vehicle_bins.spread(v, from, to, to - from, put);
+        }
     }
 }
 
@@ -323,14 +549,38 @@ pub(crate) struct Taxis<'a> {
     pub(crate) legs: &'a [Leg],
     pub(crate) out: &'a mut [LegOutcome],
     pub(crate) next: &'a mut Vec<Next>,
+    /// The engine's clock: the second of the event being handled.
+    pub(crate) now: f64,
 }
 
 impl Taxis<'_> {
     fn set_state(&mut self, v: u32, s: VehicleState) {
         let old = self.state[v as usize];
+        let since = std::mem::replace(&mut self.run.state_since[v as usize], self.now);
+        self.run.add_state_s(v, old, since, self.now);
         self.counts[old as usize] -= 1;
         self.counts[s as usize] += 1;
         self.state[v as usize] = s;
+    }
+
+    /// Log `kind` at second `t` about unit request `unit`, vehicle `v` and charger `charger`
+    /// ([`NO`] for none), with the drive of `km` starting then (`NaN`: none).
+    fn log(&mut self, t: f64, kind: TaxiEventKind, unit: u32, v: u32, charger: u32, km: f64) {
+        let (state_after, soc_after) = if v == NO {
+            (None, f64::NAN)
+        } else {
+            (Some(self.state[v as usize]), self.soc[v as usize])
+        };
+        if let Some(log) = self.run.log.as_mut() {
+            log.push(TaxiEvent { t, kind, unit, vehicle: v, charger, state_after, soc_after, km });
+        }
+    }
+
+    /// Kilometres `km` of vehicle `v`'s drive from `from` to `to`, spread over its bins.
+    fn drive_km(&mut self, v: u32, occupied: bool, from: f64, to: f64, km: f64) {
+        let put: fn(&mut VehicleBins, usize, f64) =
+            if occupied { |b, c, x| b.km_occupied[c] += x } else { |b, c, x| b.km_empty[c] += x };
+        self.run.vehicle_bins.spread(v, from, to, km, put);
     }
 
     /// Vehicle `v`'s drive or charge under way ends with `mv` at second `at`.
@@ -403,6 +653,8 @@ impl Taxis<'_> {
         self.run.days[v as usize].km_empty += to_m / 1000.0;
         self.use_energy(v, to_m);
         self.node[v as usize] = leg.origin;
+        self.drive_km(v, false, t, t + to_s, to_m / 1000.0);
+        self.log(t, TaxiEventKind::TaxiAssigned, u, v, NO, to_m / 1000.0);
         self.schedule(t + to_s, Move::AtPickup, v);
         true
     }
@@ -472,6 +724,8 @@ impl Taxis<'_> {
         self.run.days[v as usize].km_empty += m / 1000.0;
         self.use_energy(v, m);
         self.node[v as usize] = self.fleet.charger_node[c as usize];
+        self.drive_km(v, false, t, t + s, m / 1000.0);
+        self.log(t, TaxiEventKind::VehicleWentToCharge, NO, v, c, m / 1000.0);
         self.schedule(t + s, Move::AtCharger, v);
     }
 
@@ -515,6 +769,8 @@ impl Taxis<'_> {
         self.run.days[v as usize].km_empty += m / 1000.0;
         self.use_energy(v, m);
         self.node[v as usize] = node;
+        self.drive_km(v, false, t, t + s, m / 1000.0);
+        self.log(t, TaxiEventKind::VehicleRelocating, NO, v, NO, m / 1000.0);
         self.schedule(t + s, Move::Relocated, v);
         Ok((s, m))
     }
@@ -564,6 +820,8 @@ impl Taxis<'_> {
         let to = self.run.charge_target[v as usize];
         let kwh = ((to - self.soc[v as usize]) * self.d.battery_kwh).max(0.0);
         let s = kwh / self.fleet.charger_kw[c as usize] * 3600.0;
+        self.run.vehicle_bins.spread(v, t, t + s, kwh, |b, c, x| b.kwh_charged[c] += x);
+        self.log(t, TaxiEventKind::StartedCharging, NO, v, c, f64::NAN);
         self.schedule(t + s, Move::Charged, v);
     }
 
@@ -588,7 +846,9 @@ impl Taxis<'_> {
         debug_assert_eq!(self.run.requests[first as usize].leg as usize, leg);
         for u in first..end {
             self.run.requests[u as usize].requested_s = t;
+            self.log(t, TaxiEventKind::AskedForTaxi, u, NO, NO, f64::NAN);
             if !self.match_unit(u, t) {
+                self.log(t, TaxiEventKind::WaitingForTaxi, u, NO, NO, f64::NAN);
                 self.run.waiting.push_back(u);
                 self.next.push(Next::Expire(t + self.d.max_wait_s, u));
             }
@@ -605,6 +865,7 @@ impl Taxis<'_> {
         let leg = r.leg as usize;
         let asked = r.requested_s;
         self.run.waiting.retain(|&x| x != u);
+        self.log(t, TaxiEventKind::NoTaxiWithinWaitLimit, u, NO, NO, f64::NAN);
         let last = self.is_last(u);
         let o = &mut self.out[leg];
         o.status = LegStatus::Failed;
@@ -634,12 +895,15 @@ impl Taxis<'_> {
                     self.out[li].status = LegStatus::Riding;
                 }
                 self.set_state(v, VehicleState::Occupied);
+                self.log(t, TaxiEventKind::TaxiArrivedAtPickup, u, v, NO, f64::NAN);
                 let leave = t + self.d.board_s;
                 let (s, m) = self.roads.drive(leg.origin, leg.destination, leave);
                 self.run.requests[u as usize].trip_km = m / 1000.0;
                 self.run.days[i].km_occupied += m / 1000.0;
                 self.use_energy(v, m);
                 self.node[i] = leg.destination;
+                self.drive_km(v, true, leave, leave + s, m / 1000.0);
+                self.log(leave, TaxiEventKind::PickedUp, u, v, NO, m / 1000.0);
                 self.schedule(leave + s, Move::Dropoff, v);
             }
             Move::Dropoff => {
@@ -658,6 +922,9 @@ impl Taxis<'_> {
                 }
                 let node = self.node[i];
                 self.make_idle(v, node);
+                let c = v as usize * self.run.vehicle_bins.bins + self.run.vehicle_bins.bin_of(t);
+                self.run.vehicle_bins.dropped_off[c] += 1.0;
+                self.log(t, TaxiEventKind::DroppedOff, u, v, NO, f64::NAN);
                 if self.soc[i] < self.d.charge_below {
                     self.take_idle(v);
                     if self.go_charge(v, t) {
@@ -674,6 +941,7 @@ impl Taxis<'_> {
                     self.start_charge(v, c, t);
                 } else {
                     self.set_state(v, VehicleState::QueuedAtCharger);
+                    self.log(t, TaxiEventKind::QueuedForPlug, NO, v, c, f64::NAN);
                     self.run.charger_queue[c as usize].push_back(v);
                 }
             }
@@ -691,11 +959,13 @@ impl Taxis<'_> {
                 }
                 let node = self.node[i];
                 self.make_idle(v, node);
+                self.log(t, TaxiEventKind::Charged, NO, v, c, f64::NAN);
                 self.serve_waiting(v, t);
             }
             Move::Relocated => {
                 let node = self.node[i];
                 self.make_idle(v, node);
+                self.log(t, TaxiEventKind::VehicleRelocated, NO, v, NO, f64::NAN);
                 self.serve_waiting(v, t);
             }
         }
@@ -708,6 +978,16 @@ impl Taxis<'_> {
             let last = self.run.range[u].1 as usize == u + 1;
             if last && r.picked_s.is_nan() && !r.failed && !r.requested_s.is_nan() {
                 self.out[r.leg as usize].waited_s = t - r.requested_s;
+            }
+            let unit = u32::try_from(u).expect("unit requests fit u32");
+            let v = r.vehicle.unwrap_or(NO);
+            if r.requested_s.is_nan() || r.failed || !r.arrival_s.is_nan() {
+                continue;
+            }
+            if r.picked_s.is_nan() {
+                self.log(t, TaxiEventKind::StillWaitingAtWindowEnd, unit, v, NO, f64::NAN);
+            } else {
+                self.log(t, TaxiEventKind::StillRidingAtWindowEnd, unit, v, NO, f64::NAN);
             }
         }
     }

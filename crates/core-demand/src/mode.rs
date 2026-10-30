@@ -33,11 +33,14 @@ pub enum Mode {
     /// transport: walk to a dock, ride, return the bike at the hub's dock, walk to the stop,
     /// ride(s), walk. No bike of one's own.
     BikeShareTransit = 7,
+    /// By a taxi of the run's taxi fleet, door to door: ask for one at the departure, wait for
+    /// it, ride. No vehicle of one's own.
+    Taxi = 8,
 }
 
 impl Mode {
     /// Every mode, in discriminant order.
-    pub const ALL: [Mode; 8] = [
+    pub const ALL: [Mode; 9] = [
         Mode::Car,
         Mode::Bike,
         Mode::Walk,
@@ -46,6 +49,7 @@ impl Mode {
         Mode::BikeTransit,
         Mode::BikeShare,
         Mode::BikeShareTransit,
+        Mode::Taxi,
     ];
 
     /// How many modes there are.
@@ -57,10 +61,18 @@ impl Mode {
         [Mode::Car, Mode::Bike, Mode::Walk, Mode::Transit, Mode::CarTransit, Mode::BikeTransit];
 
     /// The modes a run's outputs list (its reasons per mode, its gaps per mode): the
-    /// [`Self::BASE`] modes, and the service modes too when the run has a service.
+    /// [`Self::BASE`] modes, the shared-bike modes when the run has a docked bike service
+    /// (`bike_share`), and the taxi when it has a taxi fleet (`taxi`), in [`Self::ALL`]'s order.
     #[must_use]
-    pub fn listed(with_services: bool) -> &'static [Mode] {
-        if with_services { &Mode::ALL } else { &Mode::BASE }
+    pub fn listed(bike_share: bool, taxi: bool) -> Vec<Mode> {
+        Mode::ALL
+            .into_iter()
+            .filter(|m| match m {
+                Mode::BikeShare | Mode::BikeShareTransit => bike_share,
+                Mode::Taxi => taxi,
+                _ => true,
+            })
+            .collect()
     }
 
     /// The stable snake_case name, as the `mode` column writes it.
@@ -75,6 +87,7 @@ impl Mode {
             Mode::BikeTransit => "bike_transit",
             Mode::BikeShare => "bike_share",
             Mode::BikeShareTransit => "bike_share_transit",
+            Mode::Taxi => "taxi",
         }
     }
 
@@ -108,15 +121,17 @@ impl Mode {
         match self {
             Mode::Car | Mode::CarTransit => Some(VehicleKind::Car),
             Mode::Bike | Mode::BikeTransit => Some(VehicleKind::Bike),
-            Mode::Walk | Mode::Transit | Mode::BikeShare | Mode::BikeShareTransit => None,
+            Mode::Walk | Mode::Transit | Mode::BikeShare | Mode::BikeShareTransit | Mode::Taxi => {
+                None
+            }
         }
     }
 
-    /// Whether the mode needs a service of the run (a shared bike): offered, and written in the
-    /// outputs, only in a run that has one.
+    /// Whether the mode needs a service of the run (a shared bike, a taxi): offered, and written
+    /// in the outputs, only in a run that has one.
     #[must_use]
     pub const fn is_service(self) -> bool {
-        matches!(self, Mode::BikeShare | Mode::BikeShareTransit)
+        matches!(self, Mode::BikeShare | Mode::BikeShareTransit | Mode::Taxi)
     }
 }
 
@@ -140,7 +155,9 @@ mod tests {
         assert!(Mode::BASE.iter().all(|m| !m.is_service()));
         assert_eq!(&Mode::ALL[..Mode::BASE.len()], &Mode::BASE);
         assert!(Mode::ALL[Mode::BASE.len()..].iter().all(|m| m.is_service()));
-        assert_eq!(Mode::listed(false), &Mode::BASE);
-        assert_eq!(Mode::listed(true), &Mode::ALL);
+        assert_eq!(Mode::listed(false, false), Mode::BASE.to_vec());
+        assert_eq!(Mode::listed(true, true), Mode::ALL.to_vec());
+        assert_eq!(Mode::listed(false, true), [&Mode::BASE[..], &[Mode::Taxi]].concat());
+        assert!(!Mode::listed(true, false).contains(&Mode::Taxi));
     }
 }

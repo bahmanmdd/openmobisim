@@ -18,7 +18,7 @@ use openmobisim_core_sim::services::costs::DockCosts;
 use openmobisim_core_sim::services::engine::{FleetDay, FleetEngine, Leg, NoRoads, ServiceLegs};
 use openmobisim_core_sim::services::outcome::{FleetOutcome, LegStatus};
 use openmobisim_core_sim::services::{
-    DockDefaults, DockRow, Docks, ServiceError, ServiceParts, ServiceSetup,
+    DockDefaults, DockRow, Docks, ServiceError, ServiceExpectations, ServiceParts, ServiceSetup,
 };
 use openmobisim_core_sim::{LayerSetup, StaticLayers};
 use openmobisim_core_types::diagnostics::Diagnostics;
@@ -321,11 +321,45 @@ fn a_dock_empty_at_the_start_costs_the_walk_to_its_nearest_neighbour_with_bikes(
     // C is full: a return there costs the walk to B, the nearest with room.
     let to_b = d.neighbours(C).iter().find(|n| n.0 == B).unwrap().1;
     assert_eq!(costs.return_s(C, 1000.0), to_b);
-    // Averaging in a loading with no cost halves it.
-    let mut avg = costs.clone();
-    let none = DockCosts::initial(&three([1, 1, 1], 2), (0.0, 3600.0));
-    avg.absorb(&none, 1);
-    assert_eq!(avg.pickup_s(A, 0.0), to_c / 2.0);
+    // The expectations scale them (S303): the default keeps them, the factors multiply each
+    // side, and the worst case expects every dock empty and full: the walk to the nearest
+    // neighbour at both ends.
+    let e = ServiceExpectations::SHIPPED;
+    assert_eq!(costs.clone().expected(&s, &e), costs);
+    let half = ServiceExpectations { dock_pickup_factor: 0.5, dock_return_factor: 0.0, ..e };
+    let scaled = costs.clone().expected(&s, &half);
+    assert_eq!(scaled.pickup_s(A, 0.0), to_c / 2.0);
+    assert_eq!(scaled.return_s(C, 1000.0), 0.0);
+    let worst = costs.expected(&s, &ServiceExpectations::preset("pessimistic").unwrap());
+    let nearest = |k: u32| d.neighbours(k)[0].1;
+    for k in [A, B, C] {
+        assert_eq!(worst.pickup_s(k, 0.0), nearest(k), "dock {k}");
+        assert_eq!(worst.return_s(k, 3000.0), nearest(k), "dock {k}");
+    }
+    let optimistic = ServiceExpectations::preset("optimistic").unwrap();
+    let none = DockCosts::initial(&s, (0.0, 3600.0)).expected(&s, &optimistic);
+    assert_eq!((none.pickup_s(A, 0.0), none.return_s(C, 1000.0)), (0.0, 0.0));
+}
+
+#[test]
+fn expectations_are_set_by_name_and_refused_with_the_names() {
+    use std::collections::BTreeMap;
+    let e = ServiceExpectations::SHIPPED
+        .with_options(&BTreeMap::from([("taxi_wait_s".to_string(), 300.0)]))
+        .unwrap();
+    assert_eq!(e.taxi_wait_s, 300.0);
+    let err = ServiceExpectations::SHIPPED
+        .with_options(&BTreeMap::from([("taxi_wait".to_string(), 300.0)]))
+        .unwrap_err();
+    assert!(err.contains("taxi_wait_s") && err.contains("dock_worst_case"), "{err}");
+    let err = ServiceExpectations::SHIPPED
+        .with_options(&BTreeMap::from([("taxi_fail_share".to_string(), 1.5)]))
+        .unwrap_err();
+    assert!(err.contains("from 0 to 1"), "{err}");
+    let err = ServiceExpectations::preset("cheerful").unwrap_err();
+    assert!(err.contains("optimistic") && err.contains("pessimistic"), "{err}");
+    assert_eq!(ServiceExpectations::preset("default").unwrap(), ServiceExpectations::SHIPPED);
+    assert_eq!(ServiceExpectations::SHIPPED.taxi_wait_s, 600.0);
 }
 
 #[test]

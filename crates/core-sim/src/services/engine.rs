@@ -634,6 +634,7 @@ impl FleetEngine {
             legs: &day.legs,
             out: &mut self.state.legs,
             next: &mut next,
+            now: self.now,
         };
         let r = f(&mut taxis);
         let service = u16::try_from(s).expect("services fit u16");
@@ -861,8 +862,8 @@ impl FleetEngine {
     /// Note every taxi fleet's counts at the start of each bin up to second `t`.
     fn record_bins(&mut self, t: f64) {
         for (run, state) in self.taxis.iter_mut().zip(&self.state.services) {
-            if let (Some(run), ServiceState::Taxi { counts, .. }) = (run, state) {
-                run.record(t, counts);
+            if let (Some(run), ServiceState::Taxi { counts, soc, .. }) = (run, state) {
+                run.record(t, counts, soc);
             }
         }
     }
@@ -1021,8 +1022,8 @@ impl FleetEngine {
             .iter()
             .zip(&self.state.services)
             .map(|(run, state)| match (run, state) {
-                (Some(run), ServiceState::Taxi { counts, soc, .. }) => {
-                    Some(run.finish(self.now, counts, soc))
+                (Some(run), ServiceState::Taxi { counts, soc, state, .. }) => {
+                    Some(run.finish(self.now, counts, soc, state))
                 }
                 _ => None,
             })

@@ -16,8 +16,9 @@ pub enum LegStatus {
     /// It was carried: a bike docked (its arrival, after the walk on, is [`LegOutcome::arrived_s`]),
     /// or every one of a taxi leg's unit requests dropped at its destination.
     Served,
-    /// No vehicle or bike was found: the leg was not ridden and the traveller walked on (a
-    /// taxi leg: one of its unit requests waited past the longest wait).
+    /// No vehicle or bike was found: a bike leg was not ridden and the traveller walked on; a
+    /// taxi leg: one of its unit requests waited past the longest wait, and the leg ends there,
+    /// with no walk on.
     Failed,
     /// Requested or under way when the window ended.
     Truncated,
