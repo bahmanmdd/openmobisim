@@ -229,6 +229,14 @@ pub struct BikeShareTripTable {
     pub leg_end_s: Vec<Option<f64>>,
     /// `leg_end_s − planned_leg_end_s`: the extra seconds it met at the docks.
     pub extra_s: Vec<Option<f64>>,
+    /// The part of `extra_s` met at the pickup: `extra_s − return_extra_s` (the walks between
+    /// docks looking for a bike, the ride's change from another pickup dock, or the walk on of
+    /// a traveller who gave up).
+    pub pickup_extra_s: Vec<Option<f64>>,
+    /// The part of `extra_s` met at the return: the rides between return docks after a full
+    /// one, plus the walk from the dock the bike was left at less the planned walk from the
+    /// planned return dock (0 when left at the planned return dock).
+    pub return_extra_s: Vec<Option<f64>>,
     /// Metres walked between docks looking for a bike, as the crow flies.
     pub extra_walk_m: Vec<f64>,
     /// `extra_s − expected_extra_s`: met minus expected (positive: worse than expected).
@@ -317,6 +325,9 @@ impl BikeShareTripTable {
             t.leg_end_s.push(arrived.then_some(o.arrived_s));
             let extra = arrived.then_some(o.arrived_s - planned);
             t.extra_s.push(extra);
+            let parts = l.dock_extra_s(setup, o);
+            t.pickup_extra_s.push(parts.map(|(p, _)| p));
+            t.return_extra_s.push(parts.map(|(_, r)| r));
             t.extra_walk_m.push(o.extra_walk_m);
             t.met_minus_expected_s.push(extra.map(|e| e - l.expected_dock_s));
             t.failed_attempts_for_bike.push(o.failed_for_bike);

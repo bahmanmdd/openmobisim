@@ -600,21 +600,25 @@ impl Default for TaxiDefaults {
 /// The level of service travellers plan on in a run with services (S303): **fixed for the whole
 /// run, set by name, never learned from a loading**. A taxi alternative expects a wait of
 /// [`Self::taxi_wait_s`] and a share [`Self::taxi_fail_share`] of requests with no vehicle; a
-/// shared bike expects, at each dock and time bin, the extra walk the docks' start-of-day counts
-/// imply ([`costs::DockCosts::initial`]) multiplied by [`Self::dock_pickup_factor`] at the pickup
-/// and [`Self::dock_return_factor`] at the return, or, with [`Self::dock_worst_case`], the walk
-/// to the dock's nearest neighbour at every dock all day. The services' day is played once, after
-/// the run has stopped ([`in_run::play`]); what it gives is reported beside what was expected and
-/// never fed back. One value per run: a table by zone and time bin may be added later under the
-/// same names.
+/// shared bike expects, at each dock and time bin, an extra walk in seconds at the pickup and at
+/// the return: [`Self::dock_pickup_extra_s`] and [`Self::dock_return_extra_s`] where they are
+/// numbers (the same at every dock and bin), else (`NaN`) the extra walk the docks' start-of-day
+/// counts imply ([`costs::DockCosts::initial`]: an empty pickup dock or a full return dock costs
+/// the walk to its nearest neighbour, [`DockDefaults::fail_s`] with none), or, with
+/// [`Self::dock_worst_case`], the walk to the dock's nearest neighbour at every dock all day.
+/// The services' day is played once, after the run has stopped ([`in_run::play`]); what it gives
+/// is reported beside what was expected and never fed back. One value per run: a table by zone
+/// and time bin may be added later under the same names.
 ///
 /// **Presets** ([`Self::preset`]): `default` (the shipped values), `optimistic` (better than what
-/// is likely met: a 120 s wait, no failure, no extra walk at the docks) and `pessimistic` (a
-/// 600 s wait, a quarter of requests with no vehicle, every dock expected empty at the pickup
-/// and full at the return).
+/// is likely met: a 120 s wait, no failure, no extra walk at the docks: both dock values 0) and
+/// `pessimistic` (a 600 s wait, a quarter of requests with no vehicle, every dock expected empty
+/// at the pickup and full at the return).
 ///
 /// *Every value an assumption, uncalibrated. CITATION OWED.*
-#[derive(Clone, Copy, Debug, PartialEq)]
+///
+/// Two expectations are equal when every value is, a `NaN` equal to a `NaN` (the same rule).
+#[derive(Clone, Copy, Debug)]
 pub struct ServiceExpectations {
     /// The wait a traveller expects before a taxi reaches the pickup, in seconds. In the choice
     /// it is read as at most the fleet's longest wait ([`TaxiDefaults::max_wait_s`]): nobody
@@ -628,20 +632,22 @@ pub struct ServiceExpectations {
     ///
     /// *An assumption: 0.*
     pub taxi_fail_share: f64,
-    /// The multiplier of the docks' start-of-day extra walk at a pickup (0: no extra walk
-    /// expected).
+    /// The extra walk, in seconds, a traveller expects at a pickup dock (finding it empty), the
+    /// same at every dock and time bin; `NaN`: from the docks' start-of-day counts (or
+    /// [`Self::dock_worst_case`]), dock by dock and bin by bin.
     ///
-    /// *An assumption: 1.*
-    pub dock_pickup_factor: f64,
-    /// The multiplier of the docks' start-of-day extra walk at a return (0: no extra walk
-    /// expected).
+    /// *An assumption: `NaN`, the start-of-day counts.*
+    pub dock_pickup_extra_s: f64,
+    /// The extra walk, in seconds, a traveller expects at a return dock (finding it full), the
+    /// same at every dock and time bin; `NaN`: from the docks' start-of-day counts (or
+    /// [`Self::dock_worst_case`]), dock by dock and bin by bin.
     ///
-    /// *An assumption: 1.*
-    pub dock_return_factor: f64,
+    /// *An assumption: `NaN`, the start-of-day counts.*
+    pub dock_return_extra_s: f64,
     /// 1: every pickup dock is expected empty and every return dock full, all day, so a
     /// shared bike expects the walk to the dock's nearest neighbour at both ends
-    /// ([`DockDefaults::fail_s`] for a dock with none), multiplied by the factors; 0: the
-    /// start-of-day counts decide.
+    /// ([`DockDefaults::fail_s`] for a dock with none), at an end whose extra walk is `NaN`;
+    /// 0: the start-of-day counts decide.
     ///
     /// *An assumption: 0.*
     pub dock_worst_case: f64,
@@ -652,8 +658,8 @@ impl ServiceExpectations {
     pub const SHIPPED: Self = Self {
         taxi_wait_s: 600.0,
         taxi_fail_share: 0.0,
-        dock_pickup_factor: 1.0,
-        dock_return_factor: 1.0,
+        dock_pickup_extra_s: f64::NAN,
+        dock_return_extra_s: f64::NAN,
         dock_worst_case: 0.0,
     };
 
@@ -661,8 +667,8 @@ impl ServiceExpectations {
     pub const NAMES: [&'static str; 5] = [
         "taxi_wait_s",
         "taxi_fail_share",
-        "dock_pickup_factor",
-        "dock_return_factor",
+        "dock_pickup_extra_s",
+        "dock_return_extra_s",
         "dock_worst_case",
     ];
 
@@ -680,15 +686,15 @@ impl ServiceExpectations {
             "optimistic" => Ok(Self {
                 taxi_wait_s: 120.0,
                 taxi_fail_share: 0.0,
-                dock_pickup_factor: 0.0,
-                dock_return_factor: 0.0,
+                dock_pickup_extra_s: 0.0,
+                dock_return_extra_s: 0.0,
                 dock_worst_case: 0.0,
             }),
             "pessimistic" => Ok(Self {
                 taxi_wait_s: 600.0,
                 taxi_fail_share: 0.25,
-                dock_pickup_factor: 1.0,
-                dock_return_factor: 1.0,
+                dock_pickup_extra_s: f64::NAN,
+                dock_return_extra_s: f64::NAN,
                 dock_worst_case: 1.0,
             }),
             other => Err(format!(
@@ -704,8 +710,8 @@ impl ServiceExpectations {
         vec![
             ("taxi_wait_s", self.taxi_wait_s),
             ("taxi_fail_share", self.taxi_fail_share),
-            ("dock_pickup_factor", self.dock_pickup_factor),
-            ("dock_return_factor", self.dock_return_factor),
+            ("dock_pickup_extra_s", self.dock_pickup_extra_s),
+            ("dock_return_extra_s", self.dock_return_extra_s),
             ("dock_worst_case", self.dock_worst_case),
         ]
     }
@@ -715,15 +721,15 @@ impl ServiceExpectations {
     /// # Errors
     ///
     /// A message naming the parameters for a name not among them, or saying the range for a
-    /// value out of it (`taxi_wait_s` and the factors finite and 0 or more, `taxi_fail_share`
-    /// from 0 to 1, `dock_worst_case` 0 or 1).
+    /// value out of it (`taxi_wait_s` finite and 0 or more, the docks' extra walks `NaN` or
+    /// finite and 0 or more, `taxi_fail_share` from 0 to 1, `dock_worst_case` 0 or 1).
     pub fn with_options(mut self, options: &Options) -> Result<Self, String> {
         for (name, &value) in options {
             let slot = match name.as_str() {
                 "taxi_wait_s" => &mut self.taxi_wait_s,
                 "taxi_fail_share" => &mut self.taxi_fail_share,
-                "dock_pickup_factor" => &mut self.dock_pickup_factor,
-                "dock_return_factor" => &mut self.dock_return_factor,
+                "dock_pickup_extra_s" => &mut self.dock_pickup_extra_s,
+                "dock_return_extra_s" => &mut self.dock_return_extra_s,
                 "dock_worst_case" => &mut self.dock_worst_case,
                 _ => {
                     return Err(format!(
@@ -736,17 +742,24 @@ impl ServiceExpectations {
             let ok = match name.as_str() {
                 "taxi_fail_share" => (0.0..=1.0).contains(&value),
                 "dock_worst_case" => value == 0.0 || value == 1.0,
+                "dock_pickup_extra_s" | "dock_return_extra_s" => {
+                    value.is_nan() || (value.is_finite() && value >= 0.0)
+                }
                 _ => value.is_finite() && value >= 0.0,
             };
             if !ok {
                 let why = match name.as_str() {
                     "taxi_fail_share" => "a share, from 0 to 1",
                     "dock_worst_case" => "0 or 1",
+                    "dock_pickup_extra_s" | "dock_return_extra_s" => {
+                        "NaN (from the start-of-day counts) or a finite number of seconds, 0 or more"
+                    }
                     _ => "a finite number, 0 or more",
                 };
                 return Err(format!("service_expectations {name:?} = {value}: must be {why}"));
             }
-            *slot = value;
+            // One NaN, whatever its sign or payload: the fingerprint hashes the bits.
+            *slot = if value.is_nan() { f64::NAN } else { value };
         }
         Ok(self)
     }
@@ -755,6 +768,15 @@ impl ServiceExpectations {
     #[must_use]
     pub fn dock_worst(&self) -> bool {
         self.dock_worst_case > 0.5
+    }
+}
+
+impl PartialEq for ServiceExpectations {
+    fn eq(&self, other: &Self) -> bool {
+        self.values()
+            .iter()
+            .zip(other.values())
+            .all(|(&(_, a), (_, b))| a.to_bits() == b.to_bits() || a == b)
     }
 }
 

@@ -58,6 +58,13 @@ pub struct LegOutcome {
     pub picked_s: f64,
     /// Seconds walked between docks looking for a bike.
     pub extra_walk_s: f64,
+    /// A bike leg's extra seconds at the return: the rides between return docks after a full
+    /// one, plus the walk from the dock the bike was left at less the planned walk from the
+    /// planned return dock (0 for a bike left at the planned return dock, above capacity
+    /// included, and for a leg that never returned one). The rest of a leg's extra seconds
+    /// (its arrival less its arrival had the planned docks had a bike and a free slot) is the
+    /// pickup's.
+    pub return_extra_s: f64,
     /// Docks tried after the planned one, at the pickup and at the return.
     pub redirections: u32,
     /// Whether the bike was docked above capacity, every dock near the return being full.
@@ -90,6 +97,7 @@ impl LegOutcome {
         returned: None,
         picked_s: f64::NAN,
         extra_walk_s: 0.0,
+        return_extra_s: 0.0,
         redirections: 0,
         overflow: false,
         vehicle: None,

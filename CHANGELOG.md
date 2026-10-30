@@ -8,8 +8,9 @@ a minor version may change the interface, and says so here.
 **Shared-mobility services in a run: planned on fixed expectations, played once after the run.** A run with a
 docked bike service or a taxi fleet (`services=`) offers them to the trips that choose their mode, priced on what
 travellers expect, fixed for the whole run: `Scenario.run(service_expectations=...)`, a preset (`"default"`,
-`"optimistic"`, `"pessimistic"`) or values by name (`taxi_wait_s` 600, `taxi_fail_share` 0, `dock_pickup_factor` 1,
-`dock_return_factor` 1, `dock_worst_case` 0; every value an assumption, uncalibrated), recorded in the fingerprint and
+`"optimistic"`, `"pessimistic"`) or values by name (`taxi_wait_s` 600, `taxi_fail_share` 0, `dock_pickup_extra_s`
+and `dock_return_extra_s`, the extra walk expected at a pickup and a return dock in seconds, `None` by default for the
+docks' start-of-day counts, `dock_worst_case` 0; every value an assumption, uncalibrated), recorded in the fingerprint and
 `manifest.json`. The loadings do not play the services: a service trip arrives as planned. Once the run has stopped,
 its last loading's service trips are played in one day on the fleet engine, the taxis on that loading's road times,
 and what they met is reported beside what they expected.
@@ -19,7 +20,10 @@ and what they met is reported beside what they expected.
   `expected_door_to_door_s`, `met_door_to_door_s`, `mismatch_mean_s`, `mismatch_abs_mean_s` and, for a taxi fleet,
   `wait_mean_s`; `manifest.json` has `service_expectations` and `service_day`, which says how the day was played.
 - `Run.service_expectations()` returns what travellers planned on; `Run.service_met()` what the day gave, in the same
-  form, so a next run can plan on it: `scenario.run(service_expectations=run.service_met())`.
+  form (the taxis' mean wait and failed share, the docks' mean extra seconds at the pickup and at the return), so a
+  next run can plan on it: `scenario.run(service_expectations=run.service_met())`. A docked service's KPI rows add
+  `dock_pickup_extra_s` and `dock_return_extra_s`, and `bike_share_trips` splits `extra_s` into `pickup_extra_s` and
+  `return_extra_s`.
 - A taxi request that gets no vehicle within the fleet's longest wait ends there, with no walk on: in a run, in
   `fleet_day` and in `fleet_environment`.
 - A taxi sets off after a hailing time: `service_taxi` option `hail_s` (120 s, an assumption), the seconds from a

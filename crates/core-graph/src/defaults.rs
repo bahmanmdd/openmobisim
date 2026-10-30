@@ -338,8 +338,11 @@ use openmobisim_core_types::units::{Density, Duration, Flow, Metres, Speed};
 /// Version 45 (S303): **a taxi sets off after a hailing time** (`service_taxi` option `hail_s`,
 /// 120 s): a vehicle matched to a request at second `t` drives to the pickup from `t + hail_s`,
 /// so every pickup and drop-off is that much later, and a vehicle serves a request only if the
-/// hailing time and its drive fit within `max_wait_s`. Every run with a taxi fleet moves; runs
-/// without a service do not.
+/// hailing time and its drive fit within `max_wait_s`. **The docks' expectations are seconds**:
+/// `dock_pickup_extra_s` and `dock_return_extra_s` replace the two factors, `NaN` by default
+/// (the start-of-day counts, as factor 1 gave), a number that constant at every dock and bin
+/// (the preset `optimistic`: 0, as factor 0 gave). Every run with a taxi fleet moves; runs with
+/// docks alone do not; runs without a service do not.
 pub const DEFAULTS_VERSION: u32 = 45;
 
 /// The range a derived backward wave speed is allowed to fall in.

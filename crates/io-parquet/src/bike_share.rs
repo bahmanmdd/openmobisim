@@ -24,7 +24,10 @@
 //! (`planned_pickup_dock, planned_return_dock, planned_at_pickup_dock_s, planned_leg_end_s,
 //! expected_extra_s`); what happened (`pickup_dock, pickup_s, docks_tried_for_bike,
 //! return_dock, return_s, docks_tried_for_slot, leg_end_s`); the difference (`extra_s` =
-//! `leg_end_s − planned_leg_end_s`, `extra_walk_m`, `met_minus_expected_s` = `extra_s −
+//! `leg_end_s − planned_leg_end_s`, split into `pickup_extra_s` and `return_extra_s`: the
+//! return's part is the rides between return docks after a full one plus the walk from the dock
+//! the bike was left at less the planned walk from the planned return dock, the pickup's the
+//! rest; `extra_walk_m`, `met_minus_expected_s` = `extra_s −
 //! expected_extra_s`: met minus expected, positive when worse than expected); `failed_attempts_for_bike`, `failed_attempts_for_slot`; and `result`:
 //! `as_planned`, `bike_at_another_dock` (found a dock empty, then a bike at another),
 //! `returned_at_another_dock`, `no_bike_walked_to_destination`, `left_over_capacity`,
@@ -176,6 +179,8 @@ pub fn write_bike_share_trips(
         .count("docks_tried_for_slot", &t.docks_tried_for_slot)
         .maybe_number("leg_end_s", &t.leg_end_s)
         .maybe_number("extra_s", &t.extra_s)
+        .maybe_number("pickup_extra_s", &t.pickup_extra_s)
+        .maybe_number("return_extra_s", &t.return_extra_s)
         .number("extra_walk_m", &t.extra_walk_m)
         .maybe_number("met_minus_expected_s", &t.met_minus_expected_s)
         .count("failed_attempts_for_bike", &t.failed_attempts_for_bike)

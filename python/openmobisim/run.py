@@ -1448,7 +1448,10 @@ class Run:
         ``pickup_s`` (``None`` and ``NaN``: no bike), ``docks_tried_for_bike``, ``return_dock`` and
         ``return_s``, ``docks_tried_for_slot``, ``leg_end_s`` (at the destination, or for
         ``bike_share_transit`` the dock at the stop's hub; riding, or on foot after giving up). The
-        difference: ``extra_s`` (``leg_end_s`` less ``planned_leg_end_s``), ``extra_walk_m`` (walked
+        difference: ``extra_s`` (``leg_end_s`` less ``planned_leg_end_s``), split into
+        ``pickup_extra_s`` and ``return_extra_s`` (the return's part: the rides between return
+        docks after a full one, plus the walk from the dock the bike was left at less the planned
+        walk from the planned return dock; the pickup's: the rest), ``extra_walk_m`` (walked
         between docks looking for a bike, metres as the crow flies), ``met_minus_expected_s``
         (``extra_s`` less ``expected_extra_s``: met minus expected, positive when worse than
         expected); ``failed_attempts_for_bike`` and ``failed_attempts_for_slot`` (docks found empty,
@@ -1830,19 +1833,26 @@ class Run:
         """The run's service day in ``fleet_day``'s tables (what a replay reproduces)."""
         return self._summary._share_day(self._network)
 
-    def service_expectations(self) -> dict[str, float] | None:
+    def service_expectations(self) -> dict[str, float | None] | None:
         """What the travellers planned the services on, by name: ``None`` without a service.
 
         Fixed for the whole run: the values ``Scenario.run(service_expectations=...)`` set (a
         preset's, or the ones given by name over ``"default"``): ``taxi_wait_s``,
-        ``taxi_fail_share``, ``dock_pickup_factor``, ``dock_return_factor``,
-        ``dock_worst_case``. The same as ``manifest.json``'s ``service_expectations``.
+        ``taxi_fail_share``, ``dock_pickup_extra_s``, ``dock_return_extra_s`` (``None``: from
+        the docks' start-of-day counts, dock by dock), ``dock_worst_case``. The same as
+        ``manifest.json``'s ``service_expectations`` (``null`` there for ``None``), and accepted
+        as it is by ``Scenario.run(service_expectations=...)``.
         """
         if isinstance(self._summary, _Files):
             given = self._summary._manifest.get("service_expectations")
         else:
             given = self._summary.service_expectations
-        return None if given is None else {str(k): float(v) for k, v in dict(given).items()}
+        if given is None:
+            return None
+        out: dict[str, float | None] = {}
+        for k, v in dict(given).items():
+            out[str(k)] = None if v is None or math.isnan(float(v)) else float(v)
+        return out
 
     def service_met(self) -> dict[str, float] | None:
         """What the service day gave, in ``service_expectations()``'s form: ``None`` without one.
@@ -1852,12 +1862,20 @@ class Run:
         ``service_trips``,
         ``served``, ``failed``, ``truncated``, the expected and met door-to-door seconds, the
         mismatch). Here, the values that have a name among the expectations: ``taxi_wait_s``,
-        the mean wait of the taxi trips served, in seconds, and ``taxi_fail_share``, the share
-        of the taxi trips (by people) that got no vehicle within the fleet's longest wait. A name
-        nothing measured is left out (no taxi trip, or none served); the docks' factors have no
-        met counterpart and are never here. So the next run can plan on what this one met:
-        ``scenario.run(..., service_expectations=run.service_met())``, one step of the travellers
-        learning the fleet's level of service, under the study's control.
+        the mean wait of the taxi trips served, in seconds (from the request to the vehicle at
+        the pickup, the hailing time included), and ``taxi_fail_share``, the share of the taxi
+        trips (by people) that got no vehicle within the fleet's longest wait; for a docked
+        service, ``dock_pickup_extra_s`` and ``dock_return_extra_s``, the mean extra seconds
+        met at the pickup and at the return over the shared-bike trips whose leg ended (served,
+        or given up and walked on), by people: ``bike_share_trips()``'s ``pickup_extra_s`` and
+        ``return_extra_s`` (their sum is ``extra_s``, the arrival less the arrival had the
+        planned docks had a bike and a free slot). A name nothing measured is left out (no trip
+        of that service, or none served or ended); ``dock_worst_case`` has no met counterpart
+        and is never here. So the next run can plan on what this one met:
+        ``scenario.run(..., service_expectations=run.service_met())``: its taxis expect this
+        wait and failure share, its docks these extra seconds at every dock and time (the
+        names left out keep the preset ``"default"``'s values), one step of the travellers
+        learning the services' level of service, under the study's control.
         """
         if self.service_expectations() is None:
             return None
@@ -1868,6 +1886,12 @@ class Run:
         out: dict[str, float] = {}
         for summary in dict(summaries).values():
             summary = dict(summary)
+            if summary.get("kind") == "bike_docked":
+                for name in ("dock_pickup_extra_s", "dock_return_extra_s"):
+                    value = summary.get(name)
+                    if value is not None and math.isfinite(float(value)):
+                        out[name] = float(value)
+                continue
             if summary.get("kind") != "taxi":
                 continue
             wait = summary.get("wait_mean_s")
@@ -1879,15 +1903,22 @@ class Run:
         return out
 
     def _service_rows_from_kpis(self) -> dict[str, dict[str, Any]]:
-        """A run read back: each taxi fleet's rows of ``kpis.parquet``, by its name.
+        """A run read back: each service's rows of ``kpis.parquet``, by its name.
 
         A taxi fleet's rows are those under a mode that has ``kwh_charged``, which only a taxi
-        fleet writes.
+        fleet writes; a docked service's those under a mode that has ``dock_pickup_extra_s``,
+        which only a docked service writes.
         """
         rows: dict[str, dict[str, Any]] = {}
         for _, mode, metric, value in self._summary._kpis():
             rows.setdefault(mode, {})[metric] = value
-        return {m: {"kind": "taxi", **r} for m, r in rows.items() if "kwh_charged" in r}
+        out: dict[str, dict[str, Any]] = {}
+        for m, r in rows.items():
+            if "kwh_charged" in r:
+                out[m] = {"kind": "taxi", **r}
+            elif "dock_pickup_extra_s" in r:
+                out[m] = {"kind": "bike_docked", **r}
+        return out
 
     def skim(
         self,

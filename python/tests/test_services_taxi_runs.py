@@ -46,7 +46,11 @@ def taxi_scenario(net: object, rows: list, **kwargs: object) -> ms.Scenario:
 def run(tmp_path_factory: pytest.TempPathFactory) -> ms.Run:
     net = grid()
     rows = trips(net, 30, (0, 0), (9, 9), "a")
-    s = taxi_scenario(net, rows, services=[fleet(net, soc=0.22, max_wait_s=300)], **MSA)
+    # No hailing time: each vehicle comes back from the far corner within the 300 s wait for a
+    # second trip and so drops below the charging threshold (with the 120 s hail, its reach of
+    # 180 s is too short for the drive back, and nobody charges).
+    taxis = fleet(net, soc=0.22, max_wait_s=300, hail_s=0)
+    s = taxi_scenario(net, rows, services=[taxis], **MSA)
     return s.run("taxi-results", output_dir=str(tmp_path_factory.mktemp("r")), quiet=True)
 
 
@@ -175,8 +179,8 @@ def test_the_presets_order_the_taxi_share_and_service_met_round_trips(tmp_path: 
     assert base.service_expectations() == {
         "taxi_wait_s": 600.0,
         "taxi_fail_share": 0.0,
-        "dock_pickup_factor": 1.0,
-        "dock_return_factor": 1.0,
+        "dock_pickup_extra_s": None,
+        "dock_return_extra_s": None,
         "dock_worst_case": 0.0,
     }
     met = base.service_met()

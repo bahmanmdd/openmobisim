@@ -365,6 +365,18 @@
      "unit": "s"
     },
     {
+     "name": "pickup_extra_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
+     "name": "return_extra_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
      "name": "extra_walk_m",
      "type": "double",
      "nullable": false,
