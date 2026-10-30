@@ -8,9 +8,10 @@ earlier run (``road_times_read``), and returns what became of each trip and of e
 **A frozen day, an approximation:** the travellers' choices and the traffic are held fixed.
 Each trip's service is given; a shared-bike trip takes the dock nearest its origin on foot and
 returns at the dock nearest its destination on foot, whatever the docks hold; a taxi drives on
-the given road times and adds no traffic. What a full run adds — travellers choosing among
-modes and docks by what they expect, the services' vehicles in the traffic — is not here. The
-result says so (``FleetDay.fidelity``).
+the given road times and adds no traffic, and a request with no vehicle within the fleet's
+longest wait ends there. What a full run adds — travellers choosing among modes and docks — is
+not here; a run's own service day is played the same way, once the run has stopped. The result
+says so (``FleetDay.fidelity``).
 
 **An operator** (``policy=``, see ``openmobisim.operator``) may steer the services during the
 day: move bikes between docks, set docks' target levels, relocate or charge taxis. Its
@@ -162,7 +163,9 @@ def road_times_read(link_bins: str | Any) -> RoadTimes:
 class FleetDay:
     """What one fleet day did (``fleet_day``)."""
 
-    #: ``"frozen_day"``: the travellers' choices and the traffic were held fixed.
+    #: ``"frozen_day"``: the travellers' choices and the traffic were held fixed. It says nothing
+    #: of what the travellers expected of the services: a frozen day holds the legs as chosen,
+    #: not the expectations they were chosen on.
     fidelity: str
     #: The services' names, in the order given.
     services: list[str]
@@ -386,8 +389,10 @@ def fleet_environment(
     ``fork()`` copies the day at its clock, to simulate ahead without touching it. A view cannot
     be read after the next step.
 
-    The reward of a step is minus ``w_fail`` × the people of the legs that failed, ``w_wait`` ×
-    the minutes they waited, ``w_walk`` × the extra minutes they walked, and ``w_km`` × the
+    The reward of a step is minus ``w_fail`` × the people of the legs that failed (a taxi
+    request with no vehicle within the longest wait, which ends there; a traveller who found no
+    bike at any dock tried), ``w_wait`` × the minutes they waited, ``w_walk`` × the extra minutes
+    they walked (between docks: shared bikes only), and ``w_km`` × the
     kilometres the policy's decisions drove (vans moving bikes, taxis relocating or driving to
     charge), each counted once, when its leg ends (``REWARD_WEIGHTS``,
     uncalibrated). ``info["refused"]`` holds, per decision given at the step, why the engine
@@ -699,11 +704,12 @@ def fleet_day(
     """Run every service's day together on the fleet engine, from a table of trips.
 
     **Or from a run's frozen day** (``frozen``, a folder ``Run.freeze`` wrote): the legs of the
-    run's last loading as the run played them (the docks the travellers chose, the second each
-    asks for a bike, its ride and walk), on that loading's road times, over its window. With no
-    policy, the day replays the run's: every leg's status, seconds and docks, and the docks' bins,
-    are the run's own. The services must be the run's (the same names, docks, bikes and options)
-    and the network too: either differing is refused, saying what differs. Each trip of the
+    run's service day as the run played them (its last loading's service trips: the docks the
+    travellers chose, the second each asks for a bike or a taxi, its ride and walk), on the road
+    times its taxis drove on, over its window. With no policy, the day replays the run's
+    service day: every leg's status, seconds, docks and vehicle, and the docks' bins, bikes and
+    taxis, are the run's own. The services must be the run's (the same names, docks, bikes and
+    options) and the network too: either differing is refused, saying what differs. Each trip of the
     result is a leg: its ``trip_id`` the trip's index in the run (``Run.trip_results()``'s
     ``trip``); ``FleetDay.frozen`` holds the day's ``setup.json``.
 

@@ -1376,6 +1376,18 @@
      "type": "uint32",
      "nullable": true,
      "unit": "s"
+    },
+    {
+     "name": "service_outcome",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "service_met_arrival_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s after midnight"
     }
    ],
    "metadata": [
@@ -1423,6 +1435,8 @@
     "route_update",
     "route_update_descriptor",
     "run_fingerprint",
+    "service_day",
+    "service_expectations",
     "simulated_travellers",
     "threads",
     "total_trips",

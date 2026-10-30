@@ -18,7 +18,8 @@
 //! and `taxi` unless the scenario named them otherwise), for the last iteration: what the
 //! **service day** gave the last loading's trips that chose the service (the day played once
 //! after the run had stopped, on its last loading's road times, the demand fixed; the trips'
-//! own rows stay as planned), counted in people (the travellers' weights): `trips`, `served`,
+//! own rows stay as planned), counted in people (the travellers' weights): `service_trips`,
+//! `served`,
 //! `failed` (a taxi: no vehicle within the longest wait, the trip ends there; a shared bike: no
 //! bike at any dock tried, the traveller walked on), `truncated` (still waiting or under way at
 //! the window's end); `expected_door_to_door_s` (over every such trip, the mean seconds from its
@@ -264,7 +265,7 @@ fn service_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow>
     let name = || s.service.clone();
     let last = last_iteration(result, single_iteration);
     let Some(day) = &s.last else {
-        return vec![(last, name(), "trips", 0.0)];
+        return vec![(last, name(), "service_trips", 0.0)];
     };
     let mut rows: Vec<ServiceRow> =
         day.summary.rows().into_iter().map(|(metric, v)| (last, name(), metric, v)).collect();
@@ -303,7 +304,7 @@ fn taxi_metrics(result: &RunResult, single_iteration: u32) -> Vec<ServiceRow> {
     let name = || s.service.clone();
     let last = last_iteration(result, single_iteration);
     let Some(day) = &s.last else {
-        return vec![(last, name(), "trips", 0.0)];
+        return vec![(last, name(), "service_trips", 0.0)];
     };
     let mut rows: Vec<ServiceRow> =
         day.summary.rows().into_iter().map(|(metric, v)| (last, name(), metric, v)).collect();

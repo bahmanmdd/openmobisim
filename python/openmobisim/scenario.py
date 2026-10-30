@@ -216,6 +216,35 @@ def _check_taxi_priced(
     )
 
 
+def _service_expectations(given: Any) -> tuple[str, dict[str, float]] | None:
+    """``Scenario.run``'s ``service_expectations`` as the core takes them.
+
+    A preset's name and values by name over it; the core checks both, naming what exists.
+    """
+    if given is None:
+        return None
+    if isinstance(given, str):
+        return (given, {})
+    if isinstance(given, Mapping):
+        values: dict[str, float] = {}
+        for name, value in given.items():
+            if not isinstance(name, str) or isinstance(value, bool):
+                raise ValueError(
+                    f"service_expectations: give numbers by parameter name, got {name!r}: {value!r}"
+                )
+            try:
+                values[name] = float(value)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"service_expectations {name!r}: a number, got {value!r}"
+                ) from None
+        return ("default", values)
+    raise ValueError(
+        'service_expectations: a preset ("default", "optimistic", "pessimistic") or a dict of '
+        f"values by name, got {given!r}"
+    )
+
+
 def _window(window: Any) -> tuple[int | None, int | None]:
     """A scenario's ``window`` as (start, end) seconds after midnight, ``None`` where not given."""
     if window is None:
@@ -1646,6 +1675,7 @@ class Scenario:
         replication: int = 0,
         outputs: str = "all",
         hub_join_m: float = 150.0,
+        service_expectations: str | Mapping[str, float] | None = None,
     ) -> Run:
         """Run the scenario and write its output artifacts.
 
@@ -1685,6 +1715,24 @@ class Scenario:
                 names a hub is in that hub). Results do not depend on it, so it is not in the
                 fingerprint. 150 by default, a short walk across a station's forecourt (an
                 assumption).
+            service_expectations: What travellers expect of the scenario's services, fixed for the
+                whole run: a preset's name or values by name. ``None`` (the default) is the preset
+                ``"default"``. A taxi alternative plans on ``taxi_wait_s`` (600 s) and a share
+                ``taxi_fail_share`` (0) of requests with no vehicle within the fleet's longest wait;
+                a shared bike on the docks' start-of-day extra walks (an empty pickup dock costs the
+                walk to its nearest neighbour with bikes, a full return dock the walk to its nearest
+                with room) multiplied by ``dock_pickup_factor`` (1) and ``dock_return_factor`` (1),
+                or, with ``dock_worst_case`` 1 (0 by default), every dock expected empty and full
+                all day. The presets: ``"default"`` (those values), ``"optimistic"`` (120 s, no
+                failure, no extra walk: better than what is likely met), ``"pessimistic"`` (600 s, a
+                quarter of requests with no vehicle, every dock empty and full). A dict starts from
+                ``"default"`` and replaces the values it names; a misspelt name is refused with the
+                list of names. Every value is an assumption, uncalibrated. The services are not
+                played in the loadings: once the run has stopped, its last loading's service trips
+                are played in one day, and what they met is reported beside what they expected
+                (``Run.service_met()``, ``kpis.parquet``, ``trip_results()``'s ``service_outcome``).
+                Recorded in the fingerprint and ``manifest.json`` of a run with a service; read only
+                then.
 
         Returns:
             A ``Run``: the results in memory, and the output files in ``output_dir``.
@@ -1720,6 +1768,7 @@ class Scenario:
             replication=replication,
             outputs=outputs,
             hub_join_m=hub_join_m,
+            service_expectations=_service_expectations(service_expectations),
         )
         run = Run(
             summary,

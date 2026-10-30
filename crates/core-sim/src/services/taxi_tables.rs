@@ -204,6 +204,9 @@ pub struct TaxiTripTable {
     pub km_with_passenger: Vec<Option<f64>>,
     /// When the passenger was dropped at the destination.
     pub dropped_off_s: Vec<Option<f64>>,
+    /// Always `None`: a request that failed ends with no walk on (the column keeps the file's
+    /// schema).
+    pub walk_s: Vec<Option<f64>>,
     /// When the traveller reached the destination (`None`: a request that failed, or not by the
     /// window's end).
     pub arrived_s: Vec<Option<f64>>,
@@ -267,6 +270,7 @@ impl TaxiTripTable {
             t.km_to_pickup.push(r.filter(|r| r.vehicle.is_some()).map(|r| r.empty_km));
             t.km_with_passenger.push(r.filter(|r| r.picked_s.is_finite()).map(|r| r.trip_km));
             t.dropped_off_s.push(served.then_some(o.arrived_s).and_then(finite));
+            t.walk_s.push(None);
             t.arrived_s.push(finite(at));
             let door = finite(at).map(|a| a - l.leg.request_s);
             t.door_to_door_s.push(door);

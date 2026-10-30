@@ -1,8 +1,8 @@
-"""A taxi fleet in a run (S302): its choice, its engine day, its files, its rows, its refusal.
+"""A taxi fleet in a run (S302, S303): its choice, service day, files, rows and refusal.
 
-Offered to trips choosing their mode, its requests played on the fleet engine after each
-loading; its three results files, its KPI rows; the refusal of a taxi without a constant or a
-fare; ``has_taxi``.
+Offered to trips choosing their mode on fixed expectations, its requests played on the fleet
+engine once, after the run has stopped; its three results files, its KPI rows; the refusal of a
+taxi without a constant or a fare; ``has_taxi``; the presets and ``Run.service_met()``.
 
 The network: the 10 x 10 grid of ``test_services_in_runs``; four vehicles at its first corner,
 one charger at its centre. Travellers own no car and no bike and choose between walking and a
@@ -88,10 +88,11 @@ def test_the_files_hold_the_tables_and_the_events_reconcile(run: ms.Run) -> None
     carried = results["as_planned"] + results["waited_longer_than_expected"]
     assert events["asked_for_taxi"] == w.sum()
     assert events["dropped_off"] == carried == np.sum(vb["passengers_dropped_off"])
-    walked = results["no_taxi_walked_to_destination"]
-    assert events["reached_destination"] == walked
-    gave_up = walked + results["no_taxi_still_walking_at_window_end"]
-    assert events["no_taxi_within_wait_limit"] == gave_up
+    # A request with no vehicle within the longest wait ends there: no walk, no arrival.
+    assert events["no_taxi_within_wait_limit"] == results["no_taxi"] > 0
+    assert "reached_destination" not in events and "gave_up_walking_to_destination" not in events
+    failed = np.asarray(tr["result"]) == "no_taxi"
+    assert np.isnan(np.asarray(tr["arrived_s"], dtype=float)[failed]).all()
     km = Counter()
     for e, k in zip(ev["event"], ev["drive_km"], strict=True):
         if k == k:
@@ -108,14 +109,90 @@ def test_the_kpi_rows_are_the_trips(run: ms.Run) -> None:
     k = pq.read_table(run._summary.kpis_path).to_pylist()
     rows = {(r["iteration"], r["metric"]): r["value"] for r in k if r["mode"] == "taxi"}
     last = max(i for i, _ in rows)
+    # One row set of the service day, for the last iteration; one row per metric.
+    assert len([r for r in k if r["mode"] == "taxi"]) == len(rows)
+    assert {i for i, m in rows if m == "service_trips"} == {last}
     tr = run.taxi_trips()
     w = np.asarray(tr["travellers"], dtype=float)
-    assert rows[(last, "taxi_travellers")] == w.sum()
-    no_taxi = np.isin(tr["result"], ["no_taxi_walked_to_destination"]).astype(float)
-    assert rows[(last, "share_no_taxi")] == pytest.approx(np.sum(w * no_taxi) / w.sum())
-    for i in range(last + 1):
-        assert (i, "taxi_travellers") in rows
+    assert rows[(last, "service_trips")] == w.sum()
+    result = np.asarray(tr["result"])
+    assert rows[(last, "failed")] == np.sum(w * (result == "no_taxi"))
+    served = np.isin(result, ["as_planned", "waited_longer_than_expected"])
+    assert rows[(last, "served")] == np.sum(w * served)
+    counts = sum(rows.get((last, m), 0.0) for m in ("served", "failed", "truncated"))
+    assert rows[(last, "service_trips")] == counts
+    waited = np.asarray(tr["waited_s"], dtype=float)
+    assert rows[(last, "wait_mean_s")] == pytest.approx(
+        np.sum((w * waited)[served]) / w[served].sum()
+    )
+    met = np.asarray(tr["met_minus_expected_s"], dtype=float)
+    ok = ~np.isnan(met)
+    assert rows[(last, "mismatch_mean_s")] == pytest.approx(np.sum((w * met)[ok]) / w[ok].sum())
+    assert rows[(last, "mismatch_abs_mean_s")] >= abs(rows[(last, "mismatch_mean_s")])
+    expected = np.asarray(tr["expected_door_to_door_s"], dtype=float)
+    assert rows[(last, "expected_door_to_door_s")] == pytest.approx(np.sum(w * expected) / w.sum())
     assert 0 <= rows[(last, "km_empty_share")] <= 1
+    for gone in ("taxi_travellers", "share_no_taxi", "expected_share_no_taxi"):
+        assert (last, gone) not in rows
+    # The trip rows: as planned, with the service day's outcome.
+    t = run.trip_results()
+    taxi = np.asarray(t["mode"], dtype=object) == "taxi"
+    assert set(np.asarray(t["service_outcome"])[taxi]) <= {"served", "failed", "truncated"}
+    assert set(np.asarray(t["service_outcome"])[~taxi]) <= {""}
+    assert (np.asarray(t["service_outcome"])[taxi] == "failed").sum() == failed_count(tr)
+    # A failed request: the trip completed as planned, its met arrival NaN.
+    gave_up = taxi & (np.asarray(t["service_outcome"]) == "failed")
+    assert np.isnan(np.asarray(t["service_met_arrival_s"])[gave_up]).all()
+    assert (np.asarray(t["outcome"])[gave_up] == "completed").all()
+    m = run.manifest()
+    assert m["service_expectations"]["taxi_wait_s"] == 600.0
+    assert "last loading" in m["service_day"] and "as planned" in m["service_day"]
+
+
+def failed_count(tr: object) -> int:
+    return int((np.asarray(tr["result"]) == "no_taxi").sum())
+
+
+def test_the_presets_order_the_taxi_share_and_service_met_round_trips(tmp_path: object) -> None:
+    # Trips short enough to walk, a fare so that some but not all take a taxi.
+    net = grid()
+    rows = trips(net, 30, (0, 0), (3, 3))
+    fare = {"taxi_eur_per_ride": 2.0, "taxi_eur_per_km": 0.5}
+    s = taxi_scenario(net, rows, price_options=fare)
+    share = {}
+    for preset in ("optimistic", "default", "pessimistic"):
+        r = s.run(
+            preset, output_dir=str(tmp_path / preset), quiet=True, service_expectations=preset
+        )
+        share[preset] = float(np.sum(np.asarray(r.trip_results()["mode"], dtype=object) == "taxi"))
+        assert r.service_expectations() == r.manifest()["service_expectations"]
+    print(f"\ntaxi trips of 30 by preset: {share}")
+    assert share["optimistic"] >= share["default"] >= share["pessimistic"]
+    assert share["optimistic"] > share["pessimistic"]
+    assert 0 < share["default"] < 30
+    # The fingerprint holds the expectations; a misspelt name is refused with the names.
+    base = s.run("d", output_dir=str(tmp_path / "d"), quiet=True)
+    assert base.service_expectations() == {
+        "taxi_wait_s": 600.0,
+        "taxi_fail_share": 0.0,
+        "dock_pickup_factor": 1.0,
+        "dock_return_factor": 1.0,
+        "dock_worst_case": 0.0,
+    }
+    met = base.service_met()
+    assert set(met) == {"taxi_wait_s", "taxi_fail_share"}
+    assert 0.0 <= met["taxi_fail_share"] <= 1.0
+    again = s.run("met", output_dir=str(tmp_path / "met"), quiet=True, service_expectations=met)
+    assert again.service_expectations()["taxi_wait_s"] == met["taxi_wait_s"]
+    assert again.fingerprint != base.fingerprint
+    with pytest.raises(ValueError, match="taxi_wait_s.*dock_worst_case"):
+        s.run("bad", output_dir=str(tmp_path / "bad"), service_expectations={"taxi_wait": 60})
+    with pytest.raises(ValueError, match="optimistic"):
+        s.run("bad2", output_dir=str(tmp_path / "bad2"), service_expectations="cheerful")
+    # Read back from its folder, the run gives the same.
+    opened = ms.Run.open(tmp_path / "d")
+    assert opened.service_expectations() == base.service_expectations()
+    assert opened.service_met() == pytest.approx(met)
 
 
 def test_without_a_fleet_no_taxi_file_nor_row(tmp_path: object) -> None:

@@ -140,17 +140,28 @@ def test_the_kpi_rows_are_the_trips(run: ms.Run) -> None:
     w = np.asarray(tr["travellers"], dtype=float)
     diff = np.asarray(tr["met_minus_expected_s"])
     arrived = np.isfinite(diff)
-    travellers = _kpi(run, "bike_share_travellers")
-    last = max(travellers)
-    assert len(travellers) == 4
-    assert travellers[last] == pytest.approx(w.sum())
+    trips = _kpi(run, "service_trips")
+    assert len(trips) == 1, "one row set, for the last iteration (S303)"
+    last = max(trips)
+    assert trips[last] == pytest.approx(w.sum())
     wa = w[arrived]
-    assert _kpi(run, "mean_met_minus_expected_s")[last] == pytest.approx(
+    assert _kpi(run, "mismatch_mean_s")[last] == pytest.approx(
         np.sum(wa * diff[arrived]) / wa.sum()
     )
-    assert _kpi(run, "mean_abs_met_minus_expected_s")[last] == pytest.approx(
+    assert _kpi(run, "mismatch_abs_mean_s")[last] == pytest.approx(
         np.sum(wa * np.abs(diff[arrived])) / wa.sum()
     )
+    counts = {m: _kpi(run, m).get(last, 0.0) for m in ("served", "failed", "truncated")}
+    assert sum(counts.values()) == pytest.approx(w.sum())
+    assert "bike_share_travellers" not in {
+        r["metric"] for r in pq.read_table(run._summary.kpis_path).to_pylist()
+    }
+    # The trip rows: as planned, each shared-bike trip with the service day's outcome.
+    t = run.trip_results()
+    share = np.asarray(t["mode"], dtype=object) == "bike_share"
+    outcome = np.asarray(t["service_outcome"])
+    assert (outcome[share] != "").all() and (outcome[~share] == "").all()
+    assert (outcome[share] == "failed").sum() == counts["failed"]
     assert _kpi(run, "mean_extra_s")[last] == pytest.approx(
         np.sum(wa * np.asarray(tr["extra_s"])[arrived]) / wa.sum()
     )

@@ -146,7 +146,7 @@ impl ServiceSummary {
     #[must_use]
     pub fn rows(&self) -> Vec<(&'static str, f64)> {
         [
-            ("trips", self.trips),
+            ("service_trips", self.trips),
             ("served", self.served),
             ("failed", self.failed),
             ("truncated", self.truncated),

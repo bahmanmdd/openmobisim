@@ -93,6 +93,39 @@ def test_the_chain_s_frozen_day_replays_too(tmp_path: Path) -> None:
     assert_replays(run, net, [bikes], tmp_path / "day")
 
 
+def test_a_run_s_taxis_replay_too(tmp_path: Path) -> None:
+    """The service day of a run with both services replays, taxis too (S303).
+
+    Its frozen day holds the taxi legs after the shared bikes' and the road times its taxis drove
+    on; a replay with no policy plays the same day, leg by leg, a failed request included.
+    """
+    from test_services_taxi_runs import FARE, fleet
+
+    net = grid()
+    bikes = ms.service_bike_docked(docks(net, bikes=2))
+    taxis = fleet(net, n=2, max_wait_s=300)
+    rows = trips(net, 30, (0, 0), (9, 9)) + trips(net, 10, (9, 9), (0, 1), "back")
+    classes = {"c": (False, False, False), "back": (False, False, False)}
+    s = scenario(
+        net,
+        rows,
+        modes=["walk", "bike_share", "taxi"],
+        services=[bikes, taxis],
+        classes=classes,
+        choice_model="logit",
+        price_options=FARE,
+        equilibration="msa",
+    )
+    run = s.run("frozen-taxi", quiet=True)
+    day = assert_replays(run, net, [bikes, taxis], tmp_path / "day")
+    services = list(day.trips["service"])
+    assert "taxi" in services and "bike_share" in services, "both services in the day"
+    taxi = np.asarray(services) == "taxi"
+    status = set(np.asarray(day.trips["status"])[taxi])
+    assert "served" in status and "failed" in status, "the replay is not trivial: {status}"
+    assert set(np.asarray(day.trips["status"])[~taxi]) >= {"served"}
+
+
 def test_a_frozen_day_is_refused_with_other_services_another_network_or_window(
     tmp_path: Path,
 ) -> None:
