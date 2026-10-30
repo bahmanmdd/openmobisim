@@ -30,6 +30,8 @@ and what they met is reported beside what they expected.
   request being matched to a vehicle to that vehicle driving to the pickup. The wait counts it, and a vehicle serves a
   request only if the hailing time and its drive fit within `max_wait_s`; a `hail_s` at or above `max_wait_s` is
   refused.
+- The output schema is version 3 (`openmobisim.schema_version` in every file, `manifest_version`): `taxi_trips` has
+  no `walk_s` column, since a taxi request with no vehicle ends with no walk on.
 - `Run.freeze` keeps the day's taxi legs and road times too: `fleet_day(frozen=...)` replays the run's day, bikes and
   taxis, leg by leg.
 

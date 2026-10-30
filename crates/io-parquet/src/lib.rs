@@ -119,8 +119,9 @@ impl From<arrow_schema::ArrowError> for WriteError {
 /// `manifest_version`. A reader checks it before trusting a column; it is raised when a column
 /// is renamed, removed or changes meaning. Version 2: one `hub_id`, the hub in the run's hub set,
 /// in `transit_calls` and `parking_bins` (version 1 wrote a `hub_group` beside the parking table's
-/// `hub_id`).
-pub const SCHEMA_VERSION: u32 = 2;
+/// `hub_id`). Version 3: `taxi_trips` has no `walk_s` (a taxi request with no vehicle ends with
+/// no walk on); `bike_share_trips` splits `extra_s` into `pickup_extra_s` and `return_extra_s`.
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// The Parquet key-value metadata key under which every file carries [`SCHEMA_VERSION`].
 pub const SCHEMA_VERSION_KEY: &str = "openmobisim.schema_version";

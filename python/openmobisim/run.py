@@ -1555,11 +1555,12 @@ class Run:
         asking for a seat). The plan: ``requested_s`` (the departure), ``expected_wait_s`` (the
         wait expected should a vehicle come), ``expected_no_taxi_share`` (the share of such
         requests expected to get none within the longest wait) and ``expected_door_to_door_s``
-        (the longest wait and the walk of the share expected to fail weighed in). What
-        happened: ``vehicle``, ``assigned_s``, ``taxi_at_pickup_s``, ``waited_s`` (until the
-        vehicle reached the pickup, the request failed or the window ended), ``km_to_pickup``
-        (driven empty), ``km_with_passenger``, ``dropped_off_s``, ``walk_s`` (always ``NaN``: a
-        request that failed ends with no walk on), ``arrived_s`` and ``door_to_door_s``
+        (the longest wait of the share expected to fail weighed in). What happened:
+        ``vehicle``, ``assigned_s`` (when a vehicle was matched; it sets off after the fleet's
+        hailing time ``hail_s``), ``taxi_at_pickup_s``, ``waited_s`` (from the request until the
+        vehicle reached the pickup, the hailing time included, the request failed or the window
+        ended), ``km_to_pickup`` (driven empty), ``km_with_passenger``, ``dropped_off_s``,
+        ``arrived_s`` and ``door_to_door_s``
         (``NaN`` for a request that failed: the trip ends there). The difference:
         ``waited_minus_expected_s`` and ``met_minus_expected_s`` (``door_to_door_s`` less
         ``expected_door_to_door_s``): met minus expected, positive when worse than expected.
