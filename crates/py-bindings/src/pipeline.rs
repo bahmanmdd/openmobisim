@@ -537,9 +537,9 @@ pub struct PyRunSummary {
     /// Path to the written `taxi_vehicles.parquet`, if the run had a taxi fleet.
     #[pyo3(get)]
     pub taxi_vehicles_path: Option<String>,
-    /// What travellers expected of the services, by name (S303); `None` without a service.
+    /// What travellers assumed about the services, by name (S303); `None` without a service.
     #[pyo3(get)]
-    pub service_expectations: Option<Py<PyDict>>,
+    pub service_assumptions: Option<Py<PyDict>>,
     /// Per service, by name: its kind and its service day's summary (`kpis.parquet`'s rows of
     /// the service, by metric), S303; `None` without a service.
     #[pyo3(get)]
@@ -909,7 +909,7 @@ fn gap_trip_columns(py: Python<'_>, gap: &openmobisim_core_sim::GapTrips) -> PyR
     parkings=None, parking_options=None, transit_options=None, modes=None, mode_options=None,
     loading_options=None, price_options=None, threads=None, fingerprint_only=false,
     design_id="default", replication=0, outputs="all", hub_join_m=150.0,
-    services=None, class_no_bike_share=None, class_no_taxi=None, service_expectations=None,
+    services=None, class_no_bike_share=None, class_no_taxi=None, service_assumptions=None,
 ))]
 #[allow(
     clippy::too_many_arguments,
@@ -975,16 +975,15 @@ pub fn run_pipeline(
     services: Option<Vec<crate::services::ServiceTuple<'_>>>,
     class_no_bike_share: Option<Vec<String>>,
     class_no_taxi: Option<Vec<String>>,
-    service_expectations: Option<(String, std::collections::BTreeMap<String, f64>)>,
+    service_assumptions: Option<std::collections::BTreeMap<String, f64>>,
 ) -> PyResult<Py<PyAny>> {
-    // What travellers expect of the services (S303): a preset, then values by name over it.
-    let expectations = match &service_expectations {
-        None => openmobisim_core_sim::services::ServiceExpectations::SHIPPED,
-        Some((preset, values)) => {
-            openmobisim_core_sim::services::ServiceExpectations::preset(preset)
-                .and_then(|e| e.with_options(values))
-                .map_err(PyValueError::new_err)?
-        }
+    // What travellers assume about the services (S303): the shipped values, those given by
+    // name replacing them.
+    let assumptions = match &service_assumptions {
+        None => openmobisim_core_sim::services::ServiceAssumptions::SHIPPED,
+        Some(values) => openmobisim_core_sim::services::ServiceAssumptions::SHIPPED
+            .with_options(values)
+            .map_err(PyValueError::new_err)?,
     };
     // Which files the run writes (C2): "all", or "minimal" (kpis.csv and manifest.json) for mass
     // runs; the results in memory are the same either way.
@@ -1430,7 +1429,7 @@ pub fn run_pipeline(
         run = run
             .with_services(Arc::clone(setups))
             .with_hub_join_m(hub_join_m)
-            .with_service_expectations(expectations);
+            .with_service_assumptions(assumptions);
     }
     run = run
         .with_mode_choice(&modes)
@@ -1712,8 +1711,8 @@ pub fn run_pipeline(
     };
     let trip_modes_table = trip_modes(py, &trip_table)?.unbind();
     // What the services were expected to give and what their day gave (S303).
-    let service_expectations_out = description
-        .service_expectations
+    let service_assumptions_out = description
+        .service_assumptions
         .as_ref()
         .map(|e| -> PyResult<Py<PyDict>> {
             let d = PyDict::new(py);
@@ -1725,23 +1724,26 @@ pub fn run_pipeline(
         .transpose()?;
     let service_summaries = (result.services.is_some() || result.taxis.is_some())
         .then(|| -> PyResult<Py<PyDict>> {
+            use openmobisim_core_sim::services::in_run::{DockSummary, TaxiSummary};
             let all = PyDict::new(py);
-            let one = |kind: &str,
-                       summary: Option<&openmobisim_core_sim::services::in_run::ServiceSummary>|
-             -> PyResult<Bound<'_, PyDict>> {
+            let one = |kind: &str, rows: Vec<(&str, f64)>| -> PyResult<Bound<'_, PyDict>> {
                 let d = PyDict::new(py);
                 d.set_item("kind", kind)?;
-                let rows = summary.map_or_else(|| vec![("service_trips", 0.0)], |s| s.rows());
                 for (n, v) in rows {
                     d.set_item(n, v)?;
                 }
                 Ok(d)
             };
             if let Some(s) = &result.services {
-                all.set_item(&s.service, one("bike_docked", s.last.as_ref().map(|d| &d.summary))?)?;
+                let summary = s.last.as_ref().map_or_else(DockSummary::idle, |d| d.summary);
+                all.set_item(
+                    &s.service,
+                    one("bike_docked", summary.rows(s.assumed_extra_walk_s))?,
+                )?;
             }
             if let Some(t) = &result.taxis {
-                all.set_item(&t.service, one("taxi", t.last.as_ref().map(|d| &d.summary))?)?;
+                let summary = t.last.as_ref().map_or_else(TaxiSummary::idle, |d| d.summary);
+                all.set_item(&t.service, one("taxi", summary.rows(t.assumed.wait_s))?)?;
             }
             Ok(all.unbind())
         })
@@ -1928,7 +1930,7 @@ pub fn run_pipeline(
         taxi_events_path,
         taxi_trips_path,
         taxi_vehicles_path,
-        service_expectations: service_expectations_out,
+        service_assumptions: service_assumptions_out,
         service_summaries,
         itinerary_choices: itinerary_table,
         trip_modes: trip_modes_table,

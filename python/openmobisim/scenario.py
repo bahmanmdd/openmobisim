@@ -217,22 +217,20 @@ def _check_taxi_priced(
     )
 
 
-def _service_expectations(given: Any) -> tuple[str, dict[str, float]] | None:
-    """``Scenario.run``'s ``service_expectations`` as the core takes them.
+def _service_assumptions(given: Any) -> dict[str, float] | None:
+    """``Scenario.run``'s ``service_assumptions`` as the core takes them.
 
-    A preset's name and values by name over it; the core checks both, naming what exists. A
-    value ``None`` is ``NaN`` (a dock's extra walk from the start-of-day counts).
+    Values by name over the shipped ones; the core checks them, naming what exists. A value
+    ``None`` is ``NaN`` (a dock's assumed extra walk from the docks' start-of-day bikes).
     """
     if given is None:
         return None
-    if isinstance(given, str):
-        return (given, {})
     if isinstance(given, Mapping):
         values: dict[str, float] = {}
         for name, value in given.items():
             if not isinstance(name, str) or isinstance(value, bool):
                 raise ValueError(
-                    f"service_expectations: give numbers by parameter name, got {name!r}: {value!r}"
+                    f"service_assumptions: give numbers by parameter name, got {name!r}: {value!r}"
                 )
             if value is None:
                 values[name] = math.nan
@@ -240,13 +238,11 @@ def _service_expectations(given: Any) -> tuple[str, dict[str, float]] | None:
             try:
                 values[name] = float(value)
             except (TypeError, ValueError):
-                raise ValueError(
-                    f"service_expectations {name!r}: a number, got {value!r}"
-                ) from None
-        return ("default", values)
+                raise ValueError(f"service_assumptions {name!r}: a number, got {value!r}") from None
+        return values
     raise ValueError(
-        'service_expectations: a preset ("default", "optimistic", "pessimistic") or a dict of '
-        f"values by name, got {given!r}"
+        "service_assumptions: a dict of values by name (assumed_wait_s, assumed_no_taxi_share, "
+        f"assumed_extra_walk_at_pickup_s, assumed_extra_walk_at_return_s), got {given!r}"
     )
 
 
@@ -1239,13 +1235,14 @@ class Scenario:
                 and costs, as one's own bike), return it at a dock and walk on. The pairs offered
                 are of the service's ``candidates`` (3) docks nearest the origin and the
                 destination within its ``walk_max_s`` (600 s) on foot, the ``candidates`` best
-                pairs; each carries ``dock_min`` (the minutes expected walking to another dock
-                when the pickup dock is empty or the return dock full, part of ``walk_min``) and
-                ``mode_bike_share``, priced on what travellers expect of the docks
-                (``service_expectations``). Once the run has stopped, the service's day is played
-                on the fleet engine with the last loading's trips that took a shared bike: a
-                traveller finding an empty dock walks to another, one whose pickup fails walks on
-                to the destination; what they met is reported, not fed back. With
+                pairs; each carries ``dock_min`` (the minutes of extra walk assumed to another
+                dock when the pickup dock is empty or the return dock full, part of
+                ``walk_min``) and ``mode_bike_share``, priced on what travellers assume about the
+                docks (``service_assumptions``). Once the run has stopped, the service's day is
+                played on the fleet engine with the last loading's trips that took a shared bike:
+                a traveller finding an empty dock walks to another, one who finds no bike at any
+                dock tried walks on to the destination (cancelled); what actually happened is
+                reported, not fed back. With
                 ``"bike_share_transit"`` among ``modes`` and a ``transit`` timetable, a trip is
                 also offered **a shared bike to a stop, then transit**: walk to a dock, ride to a
                 dock of a stop's hub (a dock within ``hub_join_m`` of a stop, or naming its
@@ -1259,16 +1256,21 @@ class Scenario:
                 both, whatever its own ``modes`` list. **A taxi fleet**,
                 ``service_taxi(vehicles, chargers, options=...)`` (one per run, beside a docked
                 bike service or alone): with ``"taxi"`` among ``modes`` a trip choosing its mode is
-                offered a taxi, door to door: it asks for one at its departure, waits, rides the
-                car's fastest route. Its alternative carries ``wait_min`` (the expected wait,
-                ``service_expectations``' ``taxi_wait_s``, at most the fleet's ``max_wait_s``),
-                ``fail_prob`` (the expected share of requests with no vehicle,
-                ``taxi_fail_share``), ``car_min`` (the drive), ``mode_taxi`` and a ``time_min``
-                that counts, for the share that fails, the longest wait. Once the run has
-                stopped, the last loading's taxi trips are played on the fleet engine (the
-                built-in matching, the hailing time ``hail_s``, the charging rule): the vehicles
-                drive on that loading's link times without adding traffic, and a request no
-                vehicle reaches within ``max_wait_s`` fails and the trip ends there; what they met
+                offered a taxi, door to door: it requests one at its departure, waits, rides the
+                car's fastest route. Its alternative carries ``wait_min`` (the assumed waiting
+                time, ``service_assumptions``' ``assumed_wait_s``, whatever the fleet's cancel
+                limit), ``parking_min`` (the fleet's ``boarding_s``), ``car_min`` (the drive),
+                ``fail_prob`` (the assumed chance of no taxi, ``assumed_no_taxi_share``),
+                ``mode_taxi`` and ``time_min``: its planned time (the three summed). With a
+                chance ``p`` of no taxi above 0, a cancelled request is followed, after the cancel
+                limit ``request_cancel_s``, by the traveller's best other alternative; under the
+                random utility model that is the ride, fare in full, with ``request_cancel_s`` ×
+                ``p / (1 − p)`` added to its ``time_min`` and ``wait_min``. Once the run has
+                stopped, the last loading's taxi trips are played
+                on the fleet engine (the built-in matching, the dispatch delay
+                ``dispatch_delay_s``, the charging rule): the vehicles drive on that loading's link
+                times without adding traffic, and a request no taxi can pick up within
+                ``request_cancel_s`` is cancelled and the trip ends there; what actually happened
                 is reported, not fed back. **A run offering a taxi needs a
                 constant or a fare**: ``beta_mode_taxi`` (``choice_options`` or every class's) or
                 ``price_options``' ``taxi_eur_per_km`` or ``taxi_eur_per_ride``; it refuses to
@@ -1403,8 +1405,8 @@ class Scenario:
                 not cover it), and, for a shared bike to transit, the journey's fare on top. With
                 a taxi fleet, a taxi's fare is its ``cost_fare_eur``: ``taxi_eur_per_ride`` once
                 and ``taxi_eur_per_km`` per kilometre driven with the passenger (0 by default; a
-                transit pass does not cover it; the share of requests expected to fail pays
-                nothing). The
+                transit pass does not cover it; a cancelled request pays nothing, so with a chance
+                ``p`` of no taxi the fare counts ``1 − p`` times). The
                 built-in
                 models weigh money by ``beta_cost_eur`` (or a part's coefficient), **-1.2 per euro
                 by default** (0 drops it): a value of time of ``V`` euros per hour is
@@ -1681,7 +1683,7 @@ class Scenario:
         replication: int = 0,
         outputs: str = "all",
         hub_join_m: float = 150.0,
-        service_expectations: str | Mapping[str, float | None] | None = None,
+        service_assumptions: Mapping[str, float | None] | None = None,
     ) -> Run:
         """Run the scenario and write its output artifacts.
 
@@ -1721,27 +1723,24 @@ class Scenario:
                 names a hub is in that hub). Results do not depend on it, so it is not in the
                 fingerprint. 150 by default, a short walk across a station's forecourt (an
                 assumption).
-            service_expectations: What travellers expect of the scenario's services, fixed for the
-                whole run: a preset's name or values by name. ``None`` (the default) is the preset
-                ``"default"``. A taxi alternative plans on ``taxi_wait_s`` (600 s) and a share
-                ``taxi_fail_share`` (0) of requests with no vehicle within the fleet's longest wait;
-                a shared bike on an extra walk at the pickup dock and at the return dock, in
-                seconds: ``dock_pickup_extra_s`` and ``dock_return_extra_s``, each the same at every
-                dock and time, or ``None`` (the default, ``NaN`` also accepted) for the docks'
-                start-of-day counts, dock by dock (an empty pickup dock costs the walk to its
-                nearest neighbour with bikes, a full return dock the walk to its nearest with room)
-                or, with ``dock_worst_case`` 1 (0 by default), every dock expected empty and full
-                all day. The presets: ``"default"`` (those values), ``"optimistic"`` (120 s, no
-                failure, both dock values 0: better than what is likely met), ``"pessimistic"``
-                (600 s, a quarter of requests with no vehicle, every dock empty and full). A dict
-                starts from ``"default"`` and replaces the values it names (``Run.service_met()``
-                of an earlier run is such a dict); a misspelt name is refused with the list of
-                names. Every value is an assumption, uncalibrated. The services are not
-                played in the loadings: once the run has stopped, its last loading's service trips
-                are played in one day, and what they met is reported beside what they expected
-                (``Run.service_met()``, ``kpis.parquet``, ``trip_results()``'s ``service_outcome``).
-                Recorded in the fingerprint and ``manifest.json`` of a run with a service; read only
-                then.
+            service_assumptions: What travellers assume about the scenario's services when
+                they choose, fixed for the whole run: a dict of values by name; ``None`` (the
+                default) keeps the shipped values. ``assumed_wait_s`` (600 s): the waiting time
+                travellers assume before a taxi picks them up, whatever the fleet's cancel limit;
+                ``assumed_no_taxi_share`` (0): the chance of getting no taxi they assume, from 0
+                to 1; ``assumed_extra_walk_at_pickup_s`` and ``assumed_extra_walk_at_return_s``:
+                the extra walk a shared-bike user assumes if the pickup dock is empty or the
+                return dock full, in seconds, the same at every dock and time, or ``None`` (the
+                default, ``NaN`` also accepted) for the docks' start-of-day bikes, dock by dock
+                (an empty pickup dock costs the walk to its nearest neighbour with bikes, a full
+                return dock the walk to its nearest with room). A misspelt name is refused with
+                the list of names; ``Run.service_actual()`` of an earlier run is such a dict.
+                Every value is an assumption, uncalibrated. The services are not played in the
+                loadings: once the run has stopped, its last loading's service trips are played
+                in one day, and what actually happened is reported beside what was assumed
+                (``Run.service_actual()``, ``kpis.parquet``, ``trip_results()``'s
+                ``service_outcome``). Recorded in the fingerprint and ``manifest.json`` of a run
+                with a service; read only then.
 
         Returns:
             A ``Run``: the results in memory, and the output files in ``output_dir``.
@@ -1777,7 +1776,7 @@ class Scenario:
             replication=replication,
             outputs=outputs,
             hub_join_m=hub_join_m,
-            service_expectations=_service_expectations(service_expectations),
+            service_assumptions=_service_assumptions(service_assumptions),
         )
         run = Run(
             summary,

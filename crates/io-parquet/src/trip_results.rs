@@ -25,11 +25,13 @@
 //!   **null** unless the trip completed.
 //! - In a run with a service (S303), two more columns at the end: `service_outcome`, what the
 //!   run's service day (the last loading's service trips, played once after the run had
-//!   stopped, the demand fixed) gave the trip: `served`, `failed` or `truncated`, empty for a
-//!   trip that took no service; and `service_met_arrival_s`, the second (from midnight) its
-//!   service leg ended (the destination; a shared bike to transit's hub dock), `NaN` if it did
-//!   not or for a trip without a service. The trip's other columns stay as planned. A run without
-//!   a service has neither.
+//!   stopped, the demand fixed) actually gave the trip: `completed`, `cancelled` (no taxi
+//!   within the cancel limit; no bike at any dock tried) or `unfinished` (still waiting or
+//!   riding at the window's end), empty for a trip that took no service; and
+//!   `service_arrival_s`, the second (from midnight) the service day actually brought the
+//!   traveller to the destination (for a shared bike to transit, the hub's dock), `NaN` if not
+//!   completed or for a trip without a service. The trip's other columns show the planned trip.
+//!   A run without a service has neither.
 //! - The outcomes are those of the last loading. The key-value metadata carries
 //!   `openmobisim.run_fingerprint` and `openmobisim.master_seed`.
 //!
@@ -90,8 +92,8 @@ pub fn write_trip_results(
         Arc::new(UInt32Array::from(table.vehicle_s.clone())),
         Arc::new(UInt32Array::from(table.access_egress_s.clone())),
     ];
-    if let Some((met, at)) = &table.service_met {
-        columns.push(Arc::new(StringArray::from(met.clone())));
+    if let Some((outcome, at)) = &table.service_outcome {
+        columns.push(Arc::new(StringArray::from(outcome.clone())));
         columns.push(floats(at.clone()));
     }
     let metadata = vec![
@@ -120,9 +122,9 @@ pub fn write_trip_results(
         field("vehicle_s", DataType::UInt32, true),
         field("access_egress_s", DataType::UInt32, true),
     ];
-    if table.service_met.is_some() {
+    if table.service_outcome.is_some() {
         fields.push(field("service_outcome", DataType::Utf8, false));
-        fields.push(field("service_met_arrival_s", DataType::Float64, false));
+        fields.push(field("service_arrival_s", DataType::Float64, false));
     }
     let schema = Arc::new(
         Schema::new(fields).with_metadata(metadata.iter().cloned().collect::<HashMap<_, _>>()),

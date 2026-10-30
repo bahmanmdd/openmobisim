@@ -1397,7 +1397,7 @@ class Run:
         """The docked bike service's logbook over its service day; ``None`` without a service.
 
         The service day: the last loading's shared-bike and taxi trips, played once after the
-        run had stopped, on its road times, the demand fixed (``Run.service_met()``).
+        run had stopped, on its road times, the demand fixed (``Run.service_actual()``).
 
         One row per event, in time order (one second's events in the order the simulation
         handled them), so each traveller's sequence and each dock's state after each event can
@@ -1443,25 +1443,22 @@ class Run:
         (``"bike_share"``, or ``"bike_share_transit"``: a shared bike to a stop's hub, transit on).
         The plan, as the trip's choice made it: ``planned_pickup_dock``, ``planned_return_dock``,
         ``planned_at_pickup_dock_s`` (when it was to reach that dock), ``planned_leg_end_s`` (when
-        it was to arrive had the planned docks had a bike and a free slot), ``expected_extra_s``
-        (the extra seconds at the docks the choice expected). What happened: ``pickup_dock`` and
-        ``pickup_s`` (``None`` and ``NaN``: no bike), ``docks_tried_for_bike``, ``return_dock`` and
-        ``return_s``, ``docks_tried_for_slot``, ``leg_end_s`` (at the destination, or for
-        ``bike_share_transit`` the dock at the stop's hub; riding, or on foot after giving up). The
-        difference: ``extra_s`` (``leg_end_s`` less ``planned_leg_end_s``), split into
-        ``pickup_extra_s`` and ``return_extra_s`` (the return's part: the rides between return
-        docks after a full one, plus the walk from the dock the bike was left at less the planned
-        walk from the planned return dock; the pickup's: the rest), ``extra_walk_m`` (walked
-        between docks looking for a bike, metres as the crow flies), ``met_minus_expected_s``
-        (``extra_s`` less ``expected_extra_s``: met minus expected, positive when worse than
-        expected); ``failed_attempts_for_bike`` and ``failed_attempts_for_slot`` (docks found empty,
-        and full; the last one included when it gave up or left the bike above capacity).
-        ``result``: ``"as_planned"``, ``"bike_at_another_dock"`` (found a dock empty, then took a
-        bike at another), ``"returned_at_another_dock"``, ``"no_bike_walked_to_destination"``,
-        ``"left_over_capacity"``, ``"still_riding_at_window_end"``,
-        ``"still_looking_for_bike_at_window_end"``, ``"not_started"`` (its time at the dock came
-        after the window's end); the first that applies, in the reverse of this order. The same
-        table is written to ``bike_share_trips.parquet``: read it with ``bike_share_trips_table()``.
+        it was to arrive had the planned docks had a bike and a free slot). What happened:
+        ``pickup_dock`` and ``pickup_s`` (``None`` and ``NaN``: no bike), ``docks_tried_for_bike``,
+        ``return_dock`` and ``return_s``, ``docks_tried_for_slot``, ``leg_end_s`` (at the
+        destination, or for ``bike_share_transit`` the dock at the stop's hub; riding, or on foot
+        after finding no bike). The extra time at the docks: ``extra_s`` (``leg_end_s`` less
+        ``planned_leg_end_s``), split into ``extra_walk_at_pickup_s`` and
+        ``extra_walk_at_return_s`` (the return's part: the rides between return docks after a full
+        one, plus the walk from the dock the bike was left at less the planned walk from the
+        planned return dock; the pickup's: the rest), ``extra_walk_m`` (walked between docks
+        looking for a bike, metres as the crow flies); ``failed_attempts_for_bike`` and
+        ``failed_attempts_for_slot`` (docks found empty, and full; the last one included when it
+        found no bike at all or left the bike above capacity). ``outcome``: ``"completed"`` (got a
+        bike and returned it), ``"cancelled"`` (no bike at any dock tried: walked to the
+        destination), ``"unfinished"`` (still looking for a bike or riding when the window ended),
+        ``"not_requested"`` (its time at the dock came after the window's end). The same table is
+        written to ``bike_share_trips.parquet``: read it with ``bike_share_trips_table()``.
         """
         t = self._summary.bike_share_trips
         return None if t is None else Columns(t)
@@ -1484,7 +1481,8 @@ class Run:
         (time-weighted), ``seconds_empty``, ``seconds_full``. Its flows: ``bikes_taken``,
         ``bikes_returned``. The travellers in trouble there (people):
         ``people_failed_attempt_no_bike`` (found it empty and went on to another dock),
-        ``people_gave_up_no_bike`` (found it empty and walked to their destination),
+        ``people_gave_up_no_bike`` (found no bike here nor at the docks near, and walked to their
+        destination),
         ``people_failed_attempt_no_slot`` (found it full and rode on),
         ``people_left_bike_over_capacity``, ``people_sent_here`` (from another dock, counted in the
         bin they were sent). An operator's: ``bikes_brought_by_van``, ``bikes_taken_by_van`` (0: a
@@ -1527,10 +1525,11 @@ class Run:
 
         ``event`` is one of: ``asked_for_taxi`` (at the departure), ``waiting_for_taxi`` (no idle
         vehicle could take it at once: it waits, offered to each vehicle freed), ``taxi_assigned``
-        (a vehicle sent; its drive to the pickup starts), ``taxi_arrived_at_pickup``, ``picked_up``
-        (boarded, the drive starts), ``dropped_off`` (at the destination),
-        ``no_taxi_within_wait_limit`` (no vehicle sent within the fleet's ``max_wait_s``: the
-        trip's last event, with no walk on), ``still_waiting_at_window_end``,
+        (a taxi matched; its drive to the pickup starts after the dispatch delay),
+        ``taxi_arrived_at_pickup``, ``picked_up`` (boarded, the drive starts), ``dropped_off`` (at
+        the destination), ``request_cancelled`` (no taxi could pick it up within the fleet's
+        cancel limit ``request_cancel_s``: the trip's last event, with no walk on),
+        ``still_waiting_at_window_end``,
         ``still_riding_at_window_end``;
         and a vehicle's own ``vehicle_went_to_charge`` (below the fleet's ``charge_below`` after a
         drop-off), ``queued_for_plug``, ``started_charging`` and ``charged``. A fleet with
@@ -1549,27 +1548,22 @@ class Run:
         return None if path is None else Table(path)
 
     def taxi_trips(self) -> Columns | None:
-        """Every trip that chose a taxi, over the service day; ``None`` without a taxi fleet.
+        """Every taxi request, over the service day; ``None`` without a taxi fleet.
 
-        Who: ``service``, ``traveller_id``, ``trip_seq``, ``travellers`` (the people, each
-        asking for a seat). The plan: ``requested_s`` (the departure), ``expected_wait_s`` (the
-        wait expected should a vehicle come), ``expected_no_taxi_share`` (the share of such
-        requests expected to get none within the longest wait) and ``expected_door_to_door_s``
-        (the longest wait of the share expected to fail weighed in). What happened:
-        ``vehicle``, ``assigned_s`` (when a vehicle was matched; it sets off after the fleet's
-        hailing time ``hail_s``), ``taxi_at_pickup_s``, ``waited_s`` (from the request until the
-        vehicle reached the pickup, the hailing time included, the request failed or the window
-        ended), ``km_to_pickup`` (driven empty), ``km_with_passenger``, ``dropped_off_s``,
-        ``arrived_s`` and ``door_to_door_s``
-        (``NaN`` for a request that failed: the trip ends there). The difference:
-        ``waited_minus_expected_s`` and ``met_minus_expected_s`` (``door_to_door_s`` less
-        ``expected_door_to_door_s``): met minus expected, positive when worse than expected.
-        ``result``: ``as_planned`` (carried, the wait within a minute of the one expected),
-        ``waited_longer_than_expected``, ``no_taxi`` (no vehicle within the fleet's longest
-        wait), ``still_waiting_at_window_end``,
-        ``still_riding_at_window_end``, ``not_started``. Seconds count from midnight; what did
-        not happen is ``NaN`` (``None`` for a vehicle). The same table is written to
-        ``taxi_trips.parquet``: read it with ``taxi_trips_table()``.
+        One row per request (a trip that chose a taxi), in trip order: ``service``,
+        ``traveller_id``, ``trip_seq``, ``travellers`` (the people, each asking for a seat),
+        ``requested_s`` (the departure), ``assumed_wait_s`` (the waiting time the traveller
+        assumed when choosing), ``outcome`` (``"completed"``: picked up and dropped off;
+        ``"cancelled"``: no taxi could pick it up within the fleet's cancel limit
+        ``request_cancel_s``, and the trip ends there; ``"unfinished"``: still waiting or riding
+        when the window ended; ``"not_requested"``: a departure after the window), ``vehicle``
+        (the taxi matched), ``pickup_s`` (the taxi at the pickup), ``dropoff_s``, ``waiting_s``
+        (from the request to the pickup, the fleet's dispatch delay ``dispatch_delay_s``
+        included), ``in_vehicle_s`` (from the pickup to the drop-off, boarding included),
+        ``ride_km`` (with the passenger on board) and ``empty_km`` (the taxi's drive to the
+        pickup). Seconds count from midnight; what did not happen is ``NaN`` (``None`` for a
+        vehicle). The same table is written to ``taxi_trips.parquet``: read it with
+        ``taxi_trips_table()``.
         """
         t = self._summary.taxi_trips
         return None if t is None else Columns(t)
@@ -1778,8 +1772,9 @@ class Run:
           walk layer for a shared bike, of the road network for a taxi), ``dock_from`` and
           ``dock_to`` (the docks it chose; empty for a taxi), ``ride_s`` (the planned ride
           between them, the service's ``ride_factor`` included), ``egress_s`` (the walk from the
-          return dock to the destination) and ``expected_dock_s`` (the extra seconds at the docks
-          its choice expected; ``NaN`` for a taxi); every number as the run held it, bit for bit;
+          return dock to the destination) and ``assumed_extra_walk_s`` (the extra walk at the
+          docks its choice assumed, in seconds; ``NaN`` for a taxi); every number as the run held
+          it, bit for bit;
           the shared bikes' legs first, then the taxis';
         * ``road_times.bin``: the road times the service day's taxis drove on, per link and time
           bin the seconds to cross it when entered in that bin (the last loading's link times;
@@ -1834,20 +1829,20 @@ class Run:
         """The run's service day in ``fleet_day``'s tables (what a replay reproduces)."""
         return self._summary._share_day(self._network)
 
-    def service_expectations(self) -> dict[str, float | None] | None:
-        """What the travellers planned the services on, by name: ``None`` without a service.
+    def service_assumptions(self) -> dict[str, float | None] | None:
+        """What the run's travellers assumed about the services, by name; ``None`` without one.
 
-        Fixed for the whole run: the values ``Scenario.run(service_expectations=...)`` set (a
-        preset's, or the ones given by name over ``"default"``): ``taxi_wait_s``,
-        ``taxi_fail_share``, ``dock_pickup_extra_s``, ``dock_return_extra_s`` (``None``: from
-        the docks' start-of-day counts, dock by dock), ``dock_worst_case``. The same as
-        ``manifest.json``'s ``service_expectations`` (``null`` there for ``None``), and accepted
-        as it is by ``Scenario.run(service_expectations=...)``.
+        Fixed for the whole run: the values ``Scenario.run(service_assumptions=...)`` set, the
+        shipped ones where it named none: ``assumed_wait_s``, ``assumed_no_taxi_share``,
+        ``assumed_extra_walk_at_pickup_s``, ``assumed_extra_walk_at_return_s`` (``None``: from the
+        docks' start-of-day bikes, dock by dock). The same as ``manifest.json``'s
+        ``service_assumptions`` (``null`` there for ``None``), and accepted as it is by
+        ``Scenario.run(service_assumptions=...)``.
         """
         if isinstance(self._summary, _Files):
-            given = self._summary._manifest.get("service_expectations")
+            given = self._summary._manifest.get("service_assumptions")
         else:
-            given = self._summary.service_expectations
+            given = self._summary.service_assumptions
         if given is None:
             return None
         out: dict[str, float | None] = {}
@@ -1855,69 +1850,72 @@ class Run:
             out[str(k)] = None if v is None or math.isnan(float(v)) else float(v)
         return out
 
-    def service_met(self) -> dict[str, float] | None:
-        """What the service day gave, in ``service_expectations()``'s form: ``None`` without one.
+    def service_actual(self) -> dict[str, float] | None:
+        """What the service day actually gave, as ``service_assumptions()``; ``None`` without one.
 
         The service day is the last loading's service trips played once after the run had
-        stopped (``kpis.parquet``'s rows under the service's name hold all of it:
-        ``service_trips``,
-        ``served``, ``failed``, ``truncated``, the expected and met door-to-door seconds, the
-        mismatch). Here, the values that have a name among the expectations: ``taxi_wait_s``,
-        the mean wait of the taxi trips served, in seconds (from the request to the vehicle at
-        the pickup, the hailing time included), and ``taxi_fail_share``, the share of the taxi
-        trips (by people) that got no vehicle within the fleet's longest wait; for a docked
-        service, ``dock_pickup_extra_s`` and ``dock_return_extra_s``, the mean extra seconds
-        met at the pickup and at the return over the shared-bike trips whose leg ended (served,
-        or given up and walked on), by people: ``bike_share_trips()``'s ``pickup_extra_s`` and
-        ``return_extra_s`` (their sum is ``extra_s``, the arrival less the arrival had the
-        planned docks had a bike and a free slot). A name nothing measured is left out (no trip
-        of that service, or none served or ended); ``dock_worst_case`` has no met counterpart
-        and is never here. So the next run can plan on what this one met:
-        ``scenario.run(..., service_expectations=run.service_met())``: its taxis expect this
-        wait and failure share, its docks these extra seconds at every dock and time (the
-        names left out keep the preset ``"default"``'s values), one step of the travellers
-        learning the services' level of service, under the study's control.
+        stopped (``kpis.parquet``'s rows under each service's name hold all of it). Here, the
+        actual value of each assumption, so a next run can assume it: ``assumed_wait_s``, the
+        actual mean waiting time of the taxi rides, in seconds (from the request to the pickup,
+        the dispatch delay included; ``waiting_mean_s``); ``assumed_no_taxi_share``, the actual
+        cancelled share of the taxi requests, by people (``cancelled`` over ``requests``); for a
+        docked service, ``assumed_extra_walk_at_pickup_s`` and
+        ``assumed_extra_walk_at_return_s``, the actual mean extra walks at the pickup and at the
+        return over the shared-bike rides, by people (``extra_walk_at_pickup_mean_s`` and
+        ``extra_walk_at_return_mean_s``; per trip, ``bike_share_trips()``'s
+        ``extra_walk_at_pickup_s`` and ``extra_walk_at_return_s``). A name nothing measured is
+        left out (no request of that service, or no ride). ``scenario.run(...,
+        service_assumptions=run.service_actual())`` runs again with travellers assuming what
+        this run's service day gave (the names left out keep their shipped values): one step of
+        the travellers learning the services' level of service, under the study's control.
         """
-        if self.service_expectations() is None:
+        if self.service_assumptions() is None:
             return None
         if isinstance(self._summary, _Files):
             summaries = self._service_rows_from_kpis()
         else:
             summaries = self._summary.service_summaries or {}
+
+        def finite(value: Any) -> float | None:
+            return float(value) if value is not None and math.isfinite(float(value)) else None
+
         out: dict[str, float] = {}
         for summary in dict(summaries).values():
             summary = dict(summary)
             if summary.get("kind") == "bike_docked":
-                for name in ("dock_pickup_extra_s", "dock_return_extra_s"):
-                    value = summary.get(name)
-                    if value is not None and math.isfinite(float(value)):
-                        out[name] = float(value)
+                for name, row in (
+                    ("assumed_extra_walk_at_pickup_s", "extra_walk_at_pickup_mean_s"),
+                    ("assumed_extra_walk_at_return_s", "extra_walk_at_return_mean_s"),
+                ):
+                    value = finite(summary.get(row))
+                    if value is not None:
+                        out[name] = value
                 continue
             if summary.get("kind") != "taxi":
                 continue
-            wait = summary.get("wait_mean_s")
-            if wait is not None and math.isfinite(float(wait)):
-                out["taxi_wait_s"] = float(wait)
-            trips = float(summary.get("service_trips", 0.0))
-            if trips > 0:
-                out["taxi_fail_share"] = float(summary.get("failed", 0.0)) / trips
+            wait = finite(summary.get("waiting_mean_s"))
+            if wait is not None:
+                out["assumed_wait_s"] = wait
+            requests = float(summary.get("requests", 0.0))
+            if requests > 0:
+                out["assumed_no_taxi_share"] = float(summary.get("cancelled", 0.0)) / requests
         return out
 
     def _service_rows_from_kpis(self) -> dict[str, dict[str, Any]]:
         """A run read back: each service's rows of ``kpis.parquet``, by its name.
 
-        A taxi fleet's rows are those under a mode that has ``kwh_charged``, which only a taxi
-        fleet writes; a docked service's those under a mode that has ``dock_pickup_extra_s``,
-        which only a docked service writes.
+        A taxi fleet's rows are those under a mode that has ``rides_per_taxi``, which only a taxi
+        fleet writes; a docked service's those under a mode that has ``no_bike``, which only a
+        docked service writes.
         """
         rows: dict[str, dict[str, Any]] = {}
         for _, mode, metric, value in self._summary._kpis():
             rows.setdefault(mode, {})[metric] = value
         out: dict[str, dict[str, Any]] = {}
         for m, r in rows.items():
-            if "kwh_charged" in r:
+            if "rides_per_taxi" in r:
                 out[m] = {"kind": "taxi", **r}
-            elif "dock_pickup_extra_s" in r:
+            elif "no_bike" in r:
                 out[m] = {"kind": "bike_docked", **r}
         return out
 
@@ -2076,15 +2074,15 @@ class Run:
           every other trip, and for one on foot, on a bike, in a transit vehicle or at a stop
           at the end;
         * in a run with a service (``services=``), last: ``service_outcome``, what the run's
-          service day gave the trip (the last loading's service trips played once after the run
-          had stopped, on its road times, the demand fixed): ``"served"``, ``"failed"`` (a taxi:
-          no vehicle within the fleet's longest wait, the trip ends there; a shared bike: no
-          bike at any dock tried, the traveller walked on) or ``"truncated"`` (still waiting or
-          under way at the window's end), ``""`` for a trip that took no service; and
-          ``service_met_arrival_s``, the second its service leg ended (its destination; for
-          ``bike_share_transit`` the hub's dock), ``NaN`` if it did not or for a trip without a
-          service. The trip's other columns stay as planned: a service trip arrives when its
-          choice expected.
+          service day actually gave the trip (the last loading's service trips played once after
+          the run had stopped, on its road times, the demand fixed): ``"completed"``,
+          ``"cancelled"`` (a taxi: no taxi could pick it up within the fleet's cancel limit, and
+          the trip ends there; a shared bike: no bike at any dock tried, the traveller walked
+          on) or ``"unfinished"`` (still waiting or riding when the window ended), ``""`` for a
+          trip that took no service; and ``service_arrival_s``, the second the service day
+          actually brought the traveller to the destination (for ``bike_share_transit`` the
+          hub's dock), ``NaN`` if not completed or for a trip without a service. The trip's
+          other columns show the planned trip: a service trip arrives when its choice planned.
 
         The outcomes are the last loading's. Counted by ``outcome``, the trips agree with
         ``completion``, the no-alternative trips aside.

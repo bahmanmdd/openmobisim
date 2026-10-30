@@ -1,8 +1,8 @@
 //! A taxi fleet in a run (S302, S303): trips choosing their mode are offered a taxi, door to
-//! door, planned on a fixed expected wait and failure share; once the run has stopped, the fleet
-//! engine plays the requests of its last loading's taxi trips (the built-in matching, the
-//! charging rule), on that loading's link times, and reports what they met beside what they
-//! planned.
+//! door, planned on a fixed assumed wait and chance of no taxi; once the run has stopped, the
+//! fleet engine plays the requests of its last loading's taxi trips (the built-in matching, the
+//! charging rule), on that loading's link times, and reports what actually happened beside what
+//! was planned.
 //!
 //! The network: a 5 × 5 two-way grid of 200 m blocks. Travellers own no car and no bike; they
 //! choose between walking and a taxi. The fleet's vehicles stand at grid corners.
@@ -26,7 +26,7 @@ use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults,
 use openmobisim_core_graph::manhattan_grid;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_sim::services::engine::{FleetDay, FleetEngine};
-use openmobisim_core_sim::services::in_run::Met;
+use openmobisim_core_sim::services::in_run::ServiceOutcome;
 use openmobisim_core_sim::services::outcome::LegStatus;
 use openmobisim_core_sim::services::taxi_tables::{
     TaxiEventTable, TaxiTripTable, TaxiVehicleTable,
@@ -34,7 +34,7 @@ use openmobisim_core_sim::services::taxi_tables::{
 use openmobisim_core_sim::services::taxis::TaxiEventKind;
 use openmobisim_core_sim::services::world::FrozenWorld;
 use openmobisim_core_sim::services::{
-    ChargerRow, DockDefaults, DockRow, ServiceExpectations, ServiceSetup, TaxiDefaults, VehicleRow,
+    ChargerRow, DockDefaults, DockRow, ServiceAssumptions, ServiceSetup, TaxiDefaults, VehicleRow,
 };
 use openmobisim_core_sim::{LayerSetup, Prices, Run, RunResult, StaticLayers};
 use openmobisim_core_types::diagnostics::Diagnostics;
@@ -122,7 +122,7 @@ struct Setup {
     iterations: u32,
     prices: Prices,
     class_taxi: bool,
-    expectations: ServiceExpectations,
+    assumptions: ServiceAssumptions,
 }
 
 impl Default for Setup {
@@ -137,7 +137,7 @@ impl Default for Setup {
             iterations: 1,
             prices: Prices::SHIPPED,
             class_taxi: true,
-            expectations: ServiceExpectations::SHIPPED,
+            assumptions: ServiceAssumptions::SHIPPED,
         }
     }
 }
@@ -188,7 +188,7 @@ fn run(rows: Vec<RawTrip>, s: &Setup) -> RunResult {
         .with_choice_model(Arc::clone(&s.model))
         .with_prices(s.prices)
         .with_mode_choice(&modes)
-        .with_service_expectations(s.expectations)
+        .with_service_assumptions(s.assumptions)
         .with_services(Arc::new(services));
     if !s.class_taxi {
         let mut allowed = [true; Mode::COUNT];
@@ -230,17 +230,17 @@ fn a_taxi_is_chosen_over_a_long_walk_and_its_requests_played_on_the_engine() {
     let taxis = result.taxis.as_ref().expect("the run has a taxi fleet");
     let day = taxis.last.as_ref().expect("taxis were taken");
     let status: Vec<LegStatus> = day.outcome.iter().map(|o| o.status).collect();
-    assert_eq!(status, [LegStatus::Served; 3]);
-    // The first two: matched at once, 0 km from the pickup, there after the hailing time,
+    assert_eq!(status, [LegStatus::Completed; 3]);
+    // The first two: matched at once, 0 km from the pickup, there after the dispatch delay,
     // boarded a minute later.
     let d = TaxiDefaults::SHIPPED;
     for o in &day.outcome[..2] {
-        assert_eq!(o.waited_s, d.hail_s);
-        assert!(o.arrived_s > o.requested_s + d.board_s);
+        assert_eq!(o.waited_s, d.dispatch_delay_s);
+        assert!(o.arrived_s > o.requested_s + d.boarding_s);
     }
     // The third waited for the first vehicle back: its whole round trip and more.
     let third = day.outcome[2];
-    assert!(third.waited_s > 2.0 * (day.outcome[0].arrived_s - 100.0 - d.board_s));
+    assert!(third.waited_s > 2.0 * (day.outcome[0].arrived_s - 100.0 - d.boarding_s));
     assert_eq!(third.vehicle, Some(0), "the first freed, the first offered");
     assert_eq!(day.day.requests.len(), 3, "one seat each");
     assert!(result.modes_listed().contains(&Mode::Taxi));
@@ -259,44 +259,52 @@ fn without_a_taxi_fleet_the_taxi_is_neither_offered_nor_listed() {
 }
 
 #[test]
-fn a_request_no_vehicle_reaches_fails_and_ends_there_with_no_walk_on() {
+fn a_request_no_taxi_can_pick_up_in_time_is_cancelled_and_ends_there_with_no_walk_on() {
     let road = grid();
-    // One vehicle at the far corner, a longest wait of 30 s: it cannot reach the pickup in
-    // time, so the request fails, and the trip ends there (S303): no walk on, no event after.
+    // One vehicle at the far corner, a cancel limit of 30 s: it cannot reach the pickup in
+    // time, so the request is cancelled, and the trip ends there (S303): no walk on, no event
+    // after.
     let s = Setup {
         places: vec![(4, 4)],
-        defaults: TaxiDefaults { max_wait_s: 30.0, hail_s: 0.0, ..TaxiDefaults::SHIPPED },
+        defaults: TaxiDefaults {
+            request_cancel_s: 30.0,
+            dispatch_delay_s: 0.0,
+            ..TaxiDefaults::SHIPPED
+        },
         ..Setup::default()
     };
     let rows = vec![trip("t", at(&road, 0, 0), at(&road, 4, 4), 100)];
-    // With the constant of the taxi made large (logit), it is taken, and fails.
+    // With the constant of the taxi made large (logit), it is taken, and cancelled.
     let options = BTreeMap::from([("beta_mode_taxi".to_string(), 50.0)]);
     let model: Arc<dyn ChoiceModel> =
         Arc::from(openmobisim_core_choice::model("logit", &options).expect("logit"));
     let (travellers, trips) = demand(rows.clone());
     let setup = fleet(&road, &s.places, s.soc, s.defaults);
     let result = run(rows, &Setup { model, ..s });
-    let day = result.taxis.as_ref().unwrap().last.as_ref().expect("a taxi asked for");
-    assert_eq!(day.outcome[0].status, LegStatus::Failed);
+    let day = result.taxis.as_ref().unwrap().last.as_ref().expect("a taxi requested");
+    assert_eq!(day.outcome[0].status, LegStatus::Cancelled);
     assert!(day.arrived_s[0].is_nan(), "no arrival: {}", day.arrived_s[0]);
-    assert_eq!(day.met[0].0, Met::Failed);
-    assert!(day.met[0].1.is_nan());
-    assert_eq!((day.summary.trips, day.summary.failed, day.summary.served), (1.0, 1.0, 0.0));
-    assert!(day.summary.mismatch_mean_s.is_nan(), "nothing met to compare");
-    // The trip row stays as planned: completed at its departure plus the door-to-door
-    // seconds its choice expected.
+    assert_eq!(day.outcomes[0].0, ServiceOutcome::Cancelled);
+    assert!(day.outcomes[0].1.is_nan());
+    let sm = day.summary;
+    assert_eq!((sm.requests, sm.cancelled, sm.rides, sm.unfinished), (1.0, 1.0, 0.0, 0.0));
+    assert!(sm.waiting_mean_s.is_nan() && sm.waiting_p90_s.is_nan(), "no ride to average");
+    // The trip row shows the planned trip: completed at its departure plus its planned time.
     assert_eq!(result.by_mode[Mode::Taxi.index()].completion.completed, 1);
-    let planned = (100.0 + day.legs[0].expected_s).floor();
+    let planned = (100.0_f64 + day.legs[0].planned_s).floor();
     let done = result.events.iter().find(|e| e.entity_id == 0).expect("the trip's event");
     assert_eq!(f64::from(done.second.get()), planned);
     let t = TaxiTripTable::new(day, &setup, &trips, &travellers);
-    assert_eq!(t.result, ["no_taxi"]);
-    assert_eq!(t.arrived_s, [None]);
+    assert_eq!(t.outcome, ["cancelled"]);
+    assert_eq!(
+        (t.pickup_s.clone(), t.dropoff_s.clone(), t.waiting_s.clone()),
+        (vec![None], vec![None], vec![None])
+    );
     let e = TaxiEventTable::new(day, &setup, &trips, &travellers);
-    assert_eq!(e.event, ["asked_for_taxi", "waiting_for_taxi", "no_taxi_within_wait_limit"]);
-    // In the engine's own log, nothing after the failure.
+    assert_eq!(e.event, ["asked_for_taxi", "waiting_for_taxi", "request_cancelled"]);
+    // In the engine's own log, nothing after the cancellation.
     let log = day.day.log.as_ref().expect("a log");
-    assert_eq!(log.last().map(|e| e.kind), Some(TaxiEventKind::NoTaxiWithinWaitLimit));
+    assert_eq!(log.last().map(|e| e.kind), Some(TaxiEventKind::RequestCancelled));
 }
 
 #[test]
@@ -336,7 +344,7 @@ fn same_seed_same_day() {
         format!("{:?}", (&da.legs, &da.outcome, &da.day, &da.summary)),
         format!("{:?}", (&db.legs, &db.outcome, &db.day, &db.summary)),
     );
-    assert_eq!(ta.expected, tb.expected);
+    assert_eq!(ta.assumed, tb.assumed);
     assert_eq!(a.events, b.events);
 }
 
@@ -354,11 +362,7 @@ fn the_events_add_up_to_the_trips_and_the_vehicles() {
     let trip_rows = TaxiTripTable::new(day, &setup, &trips, &travellers);
     let vehicles = TaxiVehicleTable::new(Some(day), &setup, (0.0, 86_400.0));
     let count = |e: &str| events.event.iter().filter(|&&x| x == e).count() as f64;
-    let carried = trip_rows
-        .result
-        .iter()
-        .filter(|r| matches!(**r, "as_planned" | "waited_longer_than_expected"))
-        .count() as f64;
+    let carried = trip_rows.outcome.iter().filter(|r| **r == "completed").count() as f64;
     assert_eq!(count("asked_for_taxi"), trip_rows.len() as f64);
     assert_eq!(count("dropped_off"), carried);
     assert_eq!(count("dropped_off"), vehicles.passengers_dropped_off.iter().sum::<f64>());
@@ -385,39 +389,101 @@ fn the_events_add_up_to_the_trips_and_the_vehicles() {
     let total: f64 = vehicles.seconds.iter().flatten().sum();
     assert!((total - 2.0 * 86_400.0).abs() < 1e-6, "{total}, {len} bins");
     assert_eq!(day.day.requests.len(), 12);
+    // The summary in a dispatcher's words adds up and agrees with the trip rows.
+    let sm = day.summary;
+    assert_eq!(sm.requests, 12.0);
+    assert_eq!(sm.rides + sm.cancelled + sm.unfinished, sm.requests);
+    assert_eq!(sm.rides, carried);
+    let waits: Vec<f64> = trip_rows
+        .outcome
+        .iter()
+        .zip(&trip_rows.waiting_s)
+        .filter(|(o, _)| **o == "completed")
+        .map(|(_, w)| w.expect("a ride waited"))
+        .collect();
+    let mean = waits.iter().sum::<f64>() / waits.len() as f64;
+    assert!((sm.waiting_mean_s - mean).abs() < 1e-9, "{} vs {mean}", sm.waiting_mean_s);
+    assert!(sm.waiting_median_s <= sm.waiting_p90_s);
+    assert!(waits.contains(&sm.waiting_median_s) && waits.contains(&sm.waiting_p90_s));
+    assert!((sm.empty_km_per_ride * sm.rides - empty).abs() < 1e-9);
+    assert!(sm.utilisation > 0.0 && sm.utilisation < 1.0, "{}", sm.utilisation);
+    assert!((sm.rides_per_taxi - sm.rides / 2.0).abs() < 1e-12);
 }
 
-/// The presets move the taxi share in the expected order (S303): on the corner trips, with a
-/// fare so that some but not all take a taxi, travellers expecting a short wait and no failure
-/// (`optimistic`) take a taxi at least as often as with the default, and those expecting the
-/// longest wait and a quarter of requests failing (`pessimistic`) at most as often. Printed
-/// (`cargo test --test services_taxi_runs -- --nocapture`): per preset the taxi trips and the
-/// service day's summary.
+/// The taxi trips of the corner trips (40, logit, a fare of 1 EUR so that some but not all take
+/// a taxi) when travellers assume `assumed` about the fleet whose defaults are `defaults`.
+fn taxi_share(road: &Arc<RoadNetwork>, assumed: ServiceAssumptions, defaults: TaxiDefaults) -> u32 {
+    let s = Setup {
+        model: logit(),
+        places: vec![(0, 0); 4],
+        prices: Prices { taxi_eur_per_ride: 1.0, ..Prices::SHIPPED },
+        assumptions: assumed,
+        defaults,
+        ..Setup::default()
+    };
+    let r = run(corner_trips(road, 40, 15), &s);
+    let taxi = r.by_mode[Mode::Taxi.index()].completion.total_trips;
+    let summary = r.taxis.as_ref().and_then(|t| t.last.as_ref()).map(|d| d.summary);
+    println!("{assumed:?} | taxi trips {taxi:2} of 40 | {summary:?}");
+    taxi
+}
+
+/// A shorter assumed wait draws more taxi trips, and a chance of no taxi fewer (S303). Printed
+/// (`cargo test --test services_taxi_runs -- --nocapture`): the taxi trips and the service
+/// day's summary.
 #[test]
-fn the_presets_order_the_taxi_share() {
+fn the_assumed_wait_and_chance_of_no_taxi_move_the_taxi_share() {
     let road = grid();
-    let share = |name: &str| {
+    let with = |wait: f64, p: f64| {
+        let a = ServiceAssumptions {
+            assumed_wait_s: wait,
+            assumed_no_taxi_share: p,
+            ..ServiceAssumptions::SHIPPED
+        };
+        taxi_share(&road, a, TaxiDefaults::SHIPPED)
+    };
+    let (short, shipped, unsure) = (with(300.0, 0.0), with(600.0, 0.0), with(600.0, 0.25));
+    assert!(short > shipped, "300 s {short}, 600 s {shipped}");
+    assert!(shipped > unsure, "p 0 {shipped}, p 0.25 {unsure}");
+    assert!(shipped > 0 && shipped < 40, "some but not all: {shipped}");
+}
+
+/// The assumed wait is what travellers believe, whatever the fleet's cancel limit (S303): above
+/// the limit it still lowers the taxi share (nothing caps it), and the engine never reads it:
+/// the same requests give the same service day whatever the travellers assumed.
+#[test]
+fn an_assumed_wait_above_the_cancel_limit_is_not_capped_and_the_engine_ignores_it() {
+    let road = grid();
+    let fleet_limit = TaxiDefaults { request_cancel_s: 600.0, ..TaxiDefaults::SHIPPED };
+    let at = |wait: f64| ServiceAssumptions { assumed_wait_s: wait, ..ServiceAssumptions::SHIPPED };
+    let (limit, above) =
+        (taxi_share(&road, at(600.0), fleet_limit), taxi_share(&road, at(900.0), fleet_limit));
+    assert!(above < limit, "900 s assumed {above}, 600 s {limit}: no cap");
+    // Every trip takes a taxi (a large constant): the same legs whatever the assumed wait, and
+    // the same day in the engine; only the planned arrivals differ.
+    let options = BTreeMap::from([("beta_mode_taxi".to_string(), 50.0)]);
+    let model: Arc<dyn ChoiceModel> =
+        Arc::from(openmobisim_core_choice::model("logit", &options).expect("logit"));
+    let day = |wait: f64| {
         let s = Setup {
-            model: logit(),
+            model: Arc::clone(&model),
             places: vec![(0, 0); 4],
-            prices: Prices { taxi_eur_per_ride: 1.0, ..Prices::SHIPPED },
-            expectations: ServiceExpectations::preset(name).unwrap(),
+            assumptions: at(wait),
+            defaults: fleet_limit,
             ..Setup::default()
         };
-        let r = run(corner_trips(&road, 40, 15), &s);
-        let taxi = r.by_mode[Mode::Taxi.index()].completion.total_trips;
-        let summary = r.taxis.as_ref().and_then(|t| t.last.as_ref()).map(|d| d.summary);
-        println!("{name:11} | taxi trips {taxi:2} of 40 | {summary:?}");
-        taxi
+        run(corner_trips(&road, 12, 15), &s).taxis.unwrap().last.expect("taxis requested")
     };
-    let (optimistic, default, pessimistic) =
-        (share("optimistic"), share("default"), share("pessimistic"));
-    assert!(
-        optimistic >= default && default >= pessimistic,
-        "optimistic {optimistic}, default {default}, pessimistic {pessimistic}"
+    let (a, b) = (day(600.0), day(900.0));
+    assert_eq!(a.legs.len(), 12);
+    assert_eq!(
+        format!("{:?}", (a.legs.iter().map(|l| l.leg).collect::<Vec<_>>(), &a.outcome, &a.day)),
+        format!("{:?}", (b.legs.iter().map(|l| l.leg).collect::<Vec<_>>(), &b.outcome, &b.day)),
     );
-    assert!(default > 0 && default < 40, "some but not all: {default}");
-    assert!(optimistic > pessimistic, "the presets move the share at all");
+    // 300 s later, to rounding (exact on one platform, a last digit off on another).
+    assert!(
+        a.legs.iter().zip(&b.legs).all(|(x, y)| (y.planned_s - x.planned_s - 300.0).abs() < 1e-6)
+    );
 }
 
 /// The run's service day is what an engine day of its legs on its road times plays (S303): the
@@ -474,19 +540,21 @@ fn the_service_day_is_the_replay_of_its_legs_on_its_road_times() {
 fn shared_bikes_and_taxis_play_in_one_day_and_the_bikes_as_alone() {
     let road = grid();
     // Walk, shared bike and taxi offered; the one vehicle stands at the far corner, the
-    // longest wait is 30 s and every request is expected to fail (the expectation's failure
-    // share 1), so the taxi is expected to cost that wait and the walk, slower than the shared
-    // bike: the same legs ride the bikes as without a taxi fleet, and their day must be the
-    // same in one engine day with the fleet.
-    let taxi = TaxiDefaults { max_wait_s: 30.0, hail_s: 0.0, ..TaxiDefaults::SHIPPED };
-    let expectations = ServiceExpectations { taxi_fail_share: 1.0, ..ServiceExpectations::SHIPPED };
+    // cancel limit is 30 s and every request is assumed cancelled (the assumed chance of no
+    // taxi 1), so the taxi costs the cancel limit plus the best other alternative in the
+    // choice, slower than the shared bike: the same legs ride the bikes as without a taxi
+    // fleet, and their day must be the same in one engine day with the fleet.
+    let taxi =
+        TaxiDefaults { request_cancel_s: 30.0, dispatch_delay_s: 0.0, ..TaxiDefaults::SHIPPED };
+    let assumptions =
+        ServiceAssumptions { assumed_no_taxi_share: 1.0, ..ServiceAssumptions::SHIPPED };
     let both = run(
         corner_trips(&road, 6, 5),
         &Setup {
             docks: true,
             places: vec![(4, 4)],
             defaults: taxi,
-            expectations,
+            assumptions,
             ..Setup::default()
         },
     );

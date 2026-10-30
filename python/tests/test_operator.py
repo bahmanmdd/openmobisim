@@ -104,7 +104,7 @@ def test_a_python_rule_equal_to_the_built_in_threshold_takes_the_same_decisions(
     d = rust.decisions()
     assert d.row_count > 0 and any(d["from_target"]) and any(d["moved"] > 0), "bikes moved"
     same(rust, python)
-    assert rust.trips["status"] == python.trips["status"]
+    assert rust.trips["outcome"] == python.trips["outcome"]
     assert rust.counts["invariant_violations"] == 0
 
 
@@ -183,7 +183,7 @@ def test_the_same_seed_gives_the_same_day():
 
     a, b, c = day(Random(), seed=1), day(Random(), seed=1), day(Random(), seed=2)
     same(a, b)
-    assert a.trips["status"] == b.trips["status"]
+    assert a.trips["outcome"] == b.trips["outcome"]
     assert a.decisions()["from_dock"] != c.decisions()["from_dock"], "another seed, another day"
     assert a.policy == {"name": "python:Random", "parameters": {}}
 

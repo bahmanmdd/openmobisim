@@ -13,15 +13,16 @@ pub enum LegStatus {
     Waiting,
     /// A vehicle or bike was taken and the leg is under way.
     Riding,
-    /// It was carried: a bike docked (its arrival, after the walk on, is [`LegOutcome::arrived_s`]),
-    /// or every one of a taxi leg's unit requests dropped at its destination.
-    Served,
-    /// No vehicle or bike was found: a bike leg was not ridden and the traveller walked on; a
-    /// taxi leg: one of its unit requests waited past the longest wait, and the leg ends there,
-    /// with no walk on.
-    Failed,
-    /// Requested or under way when the window ended.
-    Truncated,
+    /// Completed: a bike docked (its arrival, after the walk on, is [`LegOutcome::arrived_s`]),
+    /// or every one of a taxi leg's unit requests picked up and dropped off at its destination.
+    Completed,
+    /// Cancelled: a bike leg found no bike at any dock tried and the traveller walked on; a
+    /// taxi leg: one of its unit requests got no taxi within the fleet's
+    /// [`TaxiDefaults::request_cancel_s`](super::TaxiDefaults::request_cancel_s), and the leg
+    /// ends there, with no walk on.
+    Cancelled,
+    /// Unfinished: still waiting or riding when the simulation window ended.
+    Unfinished,
 }
 
 impl LegStatus {
@@ -32,9 +33,9 @@ impl LegStatus {
             LegStatus::NotRequested => "not_requested",
             LegStatus::Waiting => "waiting",
             LegStatus::Riding => "riding",
-            LegStatus::Served => "served",
-            LegStatus::Failed => "failed",
-            LegStatus::Truncated => "truncated",
+            LegStatus::Completed => "completed",
+            LegStatus::Cancelled => "cancelled",
+            LegStatus::Unfinished => "unfinished",
         }
     }
 }
@@ -46,8 +47,8 @@ pub struct LegOutcome {
     pub status: LegStatus,
     /// The second it asked for a vehicle (`NaN` if never).
     pub requested_s: f64,
-    /// The second it reached its destination, by the service or, if a bike leg failed, on
-    /// foot (a taxi leg: its last unit request's drop-off; `NaN` if it did not).
+    /// The second it reached its destination, by the service or, if a bike leg was cancelled,
+    /// on foot (a taxi leg: its last unit request's drop-off; `NaN` if it did not).
     pub arrived_s: f64,
     /// A bike leg's dock the bike was taken from (`None`: not taken).
     pub picked: Option<u32>,
@@ -64,7 +65,7 @@ pub struct LegOutcome {
     /// included, and for a leg that never returned one). The rest of a leg's extra seconds
     /// (its arrival less its arrival had the planned docks had a bike and a free slot) is the
     /// pickup's.
-    pub return_extra_s: f64,
+    pub extra_walk_at_return_s: f64,
     /// Docks tried after the planned one, at the pickup and at the return.
     pub redirections: u32,
     /// Whether the bike was docked above capacity, every dock near the return being full.
@@ -74,7 +75,8 @@ pub struct LegOutcome {
     /// The second that vehicle was sent (`NaN` if none was).
     pub assigned_s: f64,
     /// A taxi leg's wait, in seconds: from its request until its last unit request's vehicle
-    /// reached the pickup, that unit failed, or the window ended (0 for a bike leg).
+    /// reached the pickup, that unit was cancelled, or the window
+    /// ended (0 for a bike leg).
     pub waited_s: f64,
     /// A bike leg's docks found without a bike for it (the last one included when it gave up).
     pub failed_for_bike: u32,
@@ -97,7 +99,7 @@ impl LegOutcome {
         returned: None,
         picked_s: f64::NAN,
         extra_walk_s: 0.0,
-        return_extra_s: 0.0,
+        extra_walk_at_return_s: 0.0,
         redirections: 0,
         overflow: false,
         vehicle: None,

@@ -4,9 +4,10 @@
 //! - [`BikeShareEventTable`] (`bike_share_events.parquet`): the day's log, one row per event in
 //!   time order, so the sequence of events and each dock's state after each can be followed;
 //! - [`BikeShareTripTable`] (`bike_share_trips.parquet`): one row per trip that chose a shared
-//!   bike: its plan, what happened, the difference, and a result from a fixed list;
+//!   bike: its planned docks and times, what happened at the docks, the extra walks, and its
+//!   outcome ([`trip_outcome`]);
 //! - [`BikeShareDockTable`] (`bike_share_docks.parquet`): one row per dock and time bin: its
-//!   state, its flows, and the travellers who met trouble there.
+//!   state, its flows, and the travellers who had trouble there.
 //!
 //! **Which hub.** The run's hub set ([`RunHubs`]) is built with every service's resources in
 //! service and dock order ([`ServiceSetup::resource_rows`]); [`resource_hubs`] reads each dock's
@@ -210,8 +211,6 @@ pub struct BikeShareTripTable {
     pub planned_at_pickup_dock_s: Vec<f64>,
     /// When it was to arrive, had the planned docks had a bike and a free slot.
     pub planned_leg_end_s: Vec<f64>,
-    /// The extra seconds at the docks its choice expected (the docks' expected cost).
-    pub expected_extra_s: Vec<f64>,
     /// The dock the bike was taken from.
     pub pickup_dock: Vec<Option<String>>,
     /// When.
@@ -227,57 +226,38 @@ pub struct BikeShareTripTable {
     /// When it reached the leg's end (the destination, or for `bike_share_transit` the dock at
     /// the stop's hub), riding or on foot.
     pub leg_end_s: Vec<Option<f64>>,
-    /// `leg_end_s − planned_leg_end_s`: the extra seconds it met at the docks.
+    /// `leg_end_s − planned_leg_end_s`: the extra seconds it had at the docks.
     pub extra_s: Vec<Option<f64>>,
-    /// The part of `extra_s` met at the pickup: `extra_s − return_extra_s` (the walks between
-    /// docks looking for a bike, the ride's change from another pickup dock, or the walk on of
-    /// a traveller who gave up).
-    pub pickup_extra_s: Vec<Option<f64>>,
-    /// The part of `extra_s` met at the return: the rides between return docks after a full
-    /// one, plus the walk from the dock the bike was left at less the planned walk from the
-    /// planned return dock (0 when left at the planned return dock).
-    pub return_extra_s: Vec<Option<f64>>,
+    /// The part of `extra_s` at the pickup: `extra_s − extra_walk_at_return_s` (the walks
+    /// between docks looking for a bike, the ride's change from another pickup dock, or the
+    /// walk on of a traveller who found no bike).
+    pub extra_walk_at_pickup_s: Vec<Option<f64>>,
+    /// The part of `extra_s` at the return: the rides between return docks after a full one,
+    /// plus the walk from the dock the bike was left at less the planned walk from the planned
+    /// return dock (0 when left at the planned return dock).
+    pub extra_walk_at_return_s: Vec<Option<f64>>,
     /// Metres walked between docks looking for a bike, as the crow flies.
     pub extra_walk_m: Vec<f64>,
-    /// `extra_s − expected_extra_s`: met minus expected (positive: worse than expected).
-    pub met_minus_expected_s: Vec<Option<f64>>,
-    /// Docks found without a bike (the last one included when it gave up).
+    /// Docks found without a bike (the last one included when it found none at all).
     pub failed_attempts_for_bike: Vec<u32>,
     /// Docks found without a free slot (the last one included when it left the bike above
     /// capacity).
     pub failed_attempts_for_slot: Vec<u32>,
-    /// What became of it, from a fixed list (see [`trip_result`]).
-    pub result: Vec<&'static str>,
+    /// What became of it ([`trip_outcome`]).
+    pub outcome: Vec<&'static str>,
 }
 
-/// A trip's result, the first that applies: `not_started` (its request came after the window's
-/// end), `no_bike_walked_to_destination` (no bike at any dock tried: it walked from the last),
-/// `still_riding_at_window_end`, `still_looking_for_bike_at_window_end`, `left_over_capacity`
-/// (no free slot at any dock tried: the bike left above capacity at the last),
-/// `bike_at_another_dock` (a failed attempt, then a bike at another dock),
-/// `returned_at_another_dock` (a full dock, then a slot at another), `as_planned`.
+/// A shared-bike trip's outcome: `not_requested` (it reached the pickup dock after the
+/// window's end), `completed` (got a bike and returned it), `cancelled` (found no bike at any
+/// dock tried: it walked from the last), `unfinished` (still looking for a bike or riding when
+/// the window ended).
 #[must_use]
-pub fn trip_result(
-    status: LegStatus,
-    picked: Option<u32>,
-    overflow: bool,
-    failed_for_bike: u32,
-    failed_for_slot: u32,
-) -> &'static str {
+pub fn trip_outcome(status: LegStatus) -> &'static str {
     match status {
-        LegStatus::NotRequested => "not_started",
-        LegStatus::Failed => "no_bike_walked_to_destination",
-        LegStatus::Waiting | LegStatus::Riding | LegStatus::Truncated => {
-            if picked.is_some() {
-                "still_riding_at_window_end"
-            } else {
-                "still_looking_for_bike_at_window_end"
-            }
-        }
-        LegStatus::Served if overflow => "left_over_capacity",
-        LegStatus::Served if failed_for_bike > 0 => "bike_at_another_dock",
-        LegStatus::Served if failed_for_slot > 0 => "returned_at_another_dock",
-        LegStatus::Served => "as_planned",
+        LegStatus::NotRequested => "not_requested",
+        LegStatus::Completed => "completed",
+        LegStatus::Cancelled => "cancelled",
+        LegStatus::Waiting | LegStatus::Riding | LegStatus::Unfinished => "unfinished",
     }
 }
 
@@ -312,7 +292,6 @@ impl BikeShareTripTable {
             t.planned_at_pickup_dock_s.push(l.leg.request_s);
             let planned = l.planned_arrival_s(setup);
             t.planned_leg_end_s.push(planned);
-            t.expected_extra_s.push(l.expected_dock_s);
             t.pickup_dock.push(id(o.picked));
             t.pickup_s.push(o.picked.and(finite(o.picked_s)));
             t.docks_tried_for_bike.push(o.failed_for_bike + u32::from(o.picked.is_some()));
@@ -320,25 +299,18 @@ impl BikeShareTripTable {
             t.return_s.push(o.returned.and(finite(o.returned_s)));
             t.docks_tried_for_slot
                 .push(o.failed_for_slot + u32::from(o.returned.is_some() && !o.overflow));
-            let arrived = matches!(o.status, LegStatus::Served | LegStatus::Failed)
+            let arrived = matches!(o.status, LegStatus::Completed | LegStatus::Cancelled)
                 && o.arrived_s.is_finite();
             t.leg_end_s.push(arrived.then_some(o.arrived_s));
             let extra = arrived.then_some(o.arrived_s - planned);
             t.extra_s.push(extra);
             let parts = l.dock_extra_s(setup, o);
-            t.pickup_extra_s.push(parts.map(|(p, _)| p));
-            t.return_extra_s.push(parts.map(|(_, r)| r));
+            t.extra_walk_at_pickup_s.push(parts.map(|(p, _)| p));
+            t.extra_walk_at_return_s.push(parts.map(|(_, r)| r));
             t.extra_walk_m.push(o.extra_walk_m);
-            t.met_minus_expected_s.push(extra.map(|e| e - l.expected_dock_s));
             t.failed_attempts_for_bike.push(o.failed_for_bike);
             t.failed_attempts_for_slot.push(o.failed_for_slot);
-            t.result.push(trip_result(
-                o.status,
-                o.picked,
-                o.overflow,
-                o.failed_for_bike,
-                o.failed_for_slot,
-            ));
+            t.outcome.push(trip_outcome(o.status));
         }
         t
     }
@@ -392,7 +364,7 @@ pub struct BikeShareDockTable {
     pub bikes_returned: Vec<f64>,
     /// Travellers who found no bike here and went on to another dock.
     pub people_failed_attempt_no_bike: Vec<f64>,
-    /// Travellers who found no bike here and gave up, walking to their destination.
+    /// Travellers who found no bike here nor at the docks near, and walked to their destination.
     pub people_gave_up_no_bike: Vec<f64>,
     /// Travellers who found no free slot here and rode on to another dock.
     pub people_failed_attempt_no_slot: Vec<f64>,
@@ -454,7 +426,7 @@ impl BikeShareDockTable {
                     t.bikes_returned.push(b.returns[cell]);
                     t.people_failed_attempt_no_bike
                         .push(b.redirected[cell] - b.redirected_no_slot[cell]);
-                    t.people_gave_up_no_bike.push(b.failed[cell]);
+                    t.people_gave_up_no_bike.push(b.no_bike[cell]);
                     t.people_failed_attempt_no_slot.push(b.redirected_no_slot[cell]);
                     t.people_left_bike_over_capacity.push(b.over_capacity[cell]);
                     t.people_sent_here.push(b.redirected_in[cell]);

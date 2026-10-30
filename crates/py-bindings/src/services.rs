@@ -20,7 +20,7 @@ use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_sim::LayerSetup;
 use openmobisim_core_sim::services::engine::{FleetDay, FleetEngine, Leg};
 use openmobisim_core_sim::services::frozen::{PlanReport, TripRow, plan_legs};
-use openmobisim_core_sim::services::outcome::FleetOutcome;
+use openmobisim_core_sim::services::outcome::{FleetOutcome, LegStatus};
 use openmobisim_core_sim::services::roads::{FrozenPaths, RoadTimes};
 use openmobisim_core_sim::services::world::{FrozenWorld, ServiceWorld};
 use openmobisim_core_sim::services::{
@@ -447,6 +447,7 @@ pub(crate) fn outcome_dict<'py>(
     }
     let nan = f64::NAN;
     let mut status = Vec::with_capacity(n);
+    let mut dropoff = Vec::with_capacity(n);
     let (mut requested, mut picked_s, mut arrived, mut extra, mut waited) = (
         Vec::with_capacity(n),
         Vec::with_capacity(n),
@@ -460,6 +461,7 @@ pub(crate) fn outcome_dict<'py>(
     for (i, t) in trips.iter().enumerate() {
         let Some(k) = leg_of[i] else {
             status.push("not_planned");
+            dropoff.push(nan);
             requested.push(nan);
             picked_s.push(nan);
             arrived.push(nan);
@@ -481,11 +483,22 @@ pub(crate) fn outcome_dict<'py>(
             _ => None,
         };
         status.push(o.status.as_str());
+        // The drop-off: a taxi's at the destination, a bike's return at a dock.
+        dropoff.push(match setup.parts() {
+            ServiceParts::Taxi(..) if o.status == LegStatus::Completed => o.arrived_s,
+            ServiceParts::Taxi(..) => nan,
+            ServiceParts::BikeDocked(..) => o.returned_s,
+        });
         requested.push(o.requested_s);
         picked_s.push(o.picked_s);
         arrived.push(o.arrived_s);
         extra.push(o.extra_walk_s);
-        waited.push(o.waited_s);
+        // A taxi trip's wait ends at its pickup: none for a request never picked up, as in
+        // `taxi_trips`.
+        waited.push(match setup.parts() {
+            ServiceParts::Taxi(..) if !o.picked_s.is_finite() => nan,
+            _ => o.waited_s,
+        });
         from.push(dock_id(o.picked));
         to.push(dock_id(o.returned));
         vehicle.push(match (setup.parts(), o.vehicle) {
@@ -499,11 +512,12 @@ pub(crate) fn outcome_dict<'py>(
     let cols = PyDict::new(py);
     cols.set_item("trip_id", trips.iter().map(|t| t.0.clone()).collect::<Vec<_>>())?;
     cols.set_item("service", trips.iter().map(|t| names[usize::from(t.1)]).collect::<Vec<_>>())?;
-    cols.set_item("status", status)?;
+    cols.set_item("outcome", status)?;
     cols.set_item("requested_s", requested.into_pyarray(py))?;
-    cols.set_item("picked_s", picked_s.into_pyarray(py))?;
+    cols.set_item("pickup_s", picked_s.into_pyarray(py))?;
+    cols.set_item("dropoff_s", dropoff.into_pyarray(py))?;
     cols.set_item("arrived_s", arrived.into_pyarray(py))?;
-    cols.set_item("waited_s", waited.into_pyarray(py))?;
+    cols.set_item("waiting_s", waited.into_pyarray(py))?;
     cols.set_item("dock_from", from)?;
     cols.set_item("dock_to", to)?;
     cols.set_item("vehicle_id", vehicle)?;
@@ -536,7 +550,7 @@ pub(crate) fn outcome_dict<'py>(
             ("full_s", &b.full_s),
             ("pickups", &b.pickups),
             ("returns", &b.returns),
-            ("failed", &b.failed),
+            ("no_bike", &b.no_bike),
             ("redirected", &b.redirected),
         ] {
             d.set_item(name, v.clone().into_pyarray(py))?;

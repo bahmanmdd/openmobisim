@@ -190,7 +190,7 @@ def evaluate(policy: Any, environment: Any, seeds: Iterable[int]) -> dict[str, A
 
     Each seed's day is stepped from its start to its end, the policy deciding at every step of
     the environment (the environment's ``step_s`` rules, not the policy's). The reward is the
-    environment's standard one (``fleet_environment``: minus the failed legs, the minutes
+    environment's standard one (``fleet_environment``: minus the cancelled requests, the minutes
     waited and walked, the van kilometres, by their weights).
 
     Args:
@@ -538,25 +538,25 @@ def policy_assignment(
     """CFA for taxis: waiting requests matched to idle vehicles by an assignment each step.
 
     The engine matches a request to the nearest idle vehicle that can reach it within the
-    fleet's ``max_wait_s`` less its hailing time ``hail_s`` the moment it is made; a request no
-    vehicle can reach in time **waits**
+    fleet's cancel limit ``request_cancel_s`` less its dispatch delay ``dispatch_delay_s`` the
+    moment it is made; a request no vehicle can reach in time **waits**
     (``waiting_node`` in the view). Each step, this policy (1) sends every idle vehicle below
     ``charge_below`` to its nearest charger, to charge to ``charge_to``, and (2) assigns the
     other idle vehicles to the waiting requests, one each, minimising the seconds to the pickup
     (``view.travel_times``) plus ``soc_penalty_s`` × the share of battery used, by
     ``scipy.optimize.linear_sum_assignment``; each assigned vehicle is relocated to its
     request's road node. The engine offers waiting requests, oldest first, to a vehicle that
-    ends a relocation: the request is served if the vehicle, hailing time included, arrives
-    within the request's ``max_wait_s``. The engine does the match, so nothing is assigned
-    twice; the assignment
-    chooses which vehicle drives, not which request it takes on arrival.
+    ends a relocation: the request is picked up if the vehicle, the dispatch delay included,
+    arrives within the request's ``request_cancel_s``. The engine does the match, so nothing is
+    assigned twice; the assignment chooses which vehicle drives, not which request it takes on
+    arrival.
 
     Args:
         charge_below: Below this share of its battery, an idle vehicle is sent to charge.
         charge_to: The share it charges to (``0 <= charge_below < charge_to <= 1``).
         soc_penalty_s: The cost of a battery used up, in seconds of driving.
-        step_s: The seconds between its steps (300: a request waits ``max_wait_s``, 600 by
-            default, so a longer step reaches few in time).
+        step_s: The seconds between its steps (300: a request is cancelled after
+            ``request_cancel_s``, 600 by default, so a longer step reaches few in time).
 
     Raises:
         ImportError: Without SciPy (the ``policies`` extra).
@@ -687,8 +687,9 @@ class PolicyValueTable:
         bikes = np.asarray(d["bikes"], dtype=float) + np.asarray(d["incoming"], dtype=float)
         slots = np.maximum(np.asarray(d["slots"], dtype=float), 1.0)
         zones = [int(z) for z in d["zone"]]
-        # The gain of each dock since the last step: its failed pickups, by the reward's weight.
-        gains = -self.weights["w_fail"] * np.asarray(d["failed"], dtype=float)
+        # The gain of each dock since the last step: its travellers with no bike, by the reward's
+        # weight.
+        gains = -self.weights["w_cancelled"] * np.asarray(d["no_bike"], dtype=float)
         now = [(z, self._band(b / s), hour) for z, b, s in zip(zones, bikes, slots, strict=True)]
         self._learn(name, now, gains)
         options: list[tuple[float, list[tuple[int, int, int, float]], np.ndarray]] = []
@@ -721,12 +722,12 @@ class PolicyValueTable:
         soc = np.asarray(v["soc"], dtype=float)
         zones = [int(z) for z in v["zone"]]
         # The gain of each vehicle since the last step: a vehicle that has taken a traveller
-        # since (fetching or carrying one now, not at the last step) stands for a request
-        # served, by the reward's weight of a failed one (a proxy: requests taken and dropped
-        # within one step are missed).
+        # since (fetching or carrying one now, not at the last step) stands for a ride, by the
+        # reward's weight of a cancelled request (a proxy: requests taken and dropped within one
+        # step are missed).
         busy = np.array([s in ("to_pickup", "occupied") for s in v["state"]], dtype=bool)
         before = self._busy.get(name, np.zeros(len(busy), dtype=bool))
-        gains = self.weights["w_fail"] * (busy & ~before).astype(float)
+        gains = self.weights["w_cancelled"] * (busy & ~before).astype(float)
         self._busy[name] = busy
         # A vehicle on its way to charge, queued or charging is in one state of its own:
         # (-1, bands, hour), its zone and charge set aside.
@@ -805,8 +806,9 @@ class PolicyValueTable:
 
         Approximate dynamic programming with a lookup table: at each step, each dock's (or
         vehicle's) value of the state it was left in at the last step moves, by the learning
-        rate, toward its gain since (minus ``w_fail`` × its failed pickups; for a taxi, ``w_fail``
-        if it is fetching or carrying a traveller: a proxy for a request served) plus the value
+        rate, toward its gain since (minus ``w_cancelled`` × its travellers with no bike; for a
+        taxi, ``w_cancelled`` if it is fetching or carrying a traveller: a proxy for a ride) plus
+        the value
         of its state now. Decisions explore (a random candidate) with the share ``explore``,
         drawn by ``numpy.random.default_rng(seed)``: the same seed gives the same table.
         Episode ``k`` is the environment's day ``seed + k``.
@@ -956,8 +958,8 @@ class PolicyLookahead:
         """Moves x_pt (bikes) and van trips y_pt (0 to 1) per pair p and bin t, whole in bin 0.
 
         Stock b_it = b_i(t-1) + r_it - p_it + inflow - outflow + u_it - o_it in [0, slots]:
-        u_it the pickups that fail, o_it the returns that find the dock full. Minimise
-        w_fail sum(u) + w_walk·5 min sum(o) + w_km sum(km_p y_pt) + 1e-3 sum(x).
+        u_it the pickups that find no bike, o_it the returns that find the dock full. Minimise
+        w_cancelled sum(u) + w_walk·5 min sum(o) + w_km sum(km_p y_pt) + 1e-3 sum(x).
         """
         opt = self._opt
         from scipy.sparse import lil_matrix
@@ -986,10 +988,11 @@ class PolicyLookahead:
                     integ[ix(q, t)] = integ[iy(q, t)] = 1
         for i in range(n):
             for t in range(nb):
-                c[iu(i, t)] = w["w_fail"]
+                c[iu(i, t)] = w["w_cancelled"]
                 c[io(i, t)] = w["w_walk"] * 5.0
                 hi[ib(i, t)] = cap[i]
-                # Failures and overflows only of the people expected (no bikes made or lost).
+                # Pickups with no bike and overflows only of the people expected (no bikes made or
+                # lost).
                 hi[iu(i, t)] = p[i, t]
                 hi[io(i, t)] = r[i]
         rows = n * nb + nx
@@ -1063,11 +1066,12 @@ class PolicyLookahead:
         return decisions
 
     def _solve_taxis(self, v, name, idle, soc, tt, q, busy, zone_ids, nb):
-        """Each idle vehicle stays, drives to a zone, or charges: a 0/1 choice; served s_zt.
+        """Each idle vehicle stays, drives to a zone, or charges: a 0/1 choice; rides s_zt.
 
-        Maximise w_fail sum(s) - w_km sum(km a) - w_fail·(below charge_below and not charging)
-        with s_zt <= q_zt and s_zt <= cap (the vehicles there by the bin's end, each
-        ``vehicle_requests_bin`` requests a bin).
+        Maximise w_cancelled sum(s) - w_km sum(km a)
+        - w_cancelled·(below charge_below and not charging) with s_zt <= q_zt and
+        s_zt <= cap (the vehicles there by the bin's end, each ``vehicle_requests_bin``
+        requests a bin).
         """
         opt = self._opt
         nveh, nz = len(idle), len(zone_ids)
@@ -1083,8 +1087,8 @@ class PolicyLookahead:
         for k, veh in enumerate(idle):
             low = soc[veh] < self.charge_below
             has_charger = v["nearest_charger"][veh] is not None
-            # Not charging while low costs a failed request's weight.
-            c[ich(k)] = -w["w_fail"] if low else w["w_fail"]
+            # Not charging while low costs a cancelled request's weight.
+            c[ich(k)] = -w["w_cancelled"] if low else w["w_cancelled"]
             if not has_charger:
                 hi[ich(k)] = 0.0
             for z in range(nz):
@@ -1095,7 +1099,7 @@ class PolicyLookahead:
                 c[ia(k, z)] = w["w_km"] * s * _SPEED_M_S / 1000.0
         for z in range(nz):
             for t in range(nb):
-                c[isv(z, t)] = -w["w_fail"]
+                c[isv(z, t)] = -w["w_cancelled"]
                 hi[isv(z, t)] = q[z, t]
         rows: list[np.ndarray] = []
         lb: list[float] = []
@@ -1154,21 +1158,21 @@ def policy_lookahead(
 ) -> PolicyLookahead:
     """DLA: a mixed-integer program over the next ``horizon_s``, re-solved every step.
 
-    **Docked bikes.** Over the horizon's bins of ``bin_s``, each dock's stock follows the
-    pickups expected (``view.expected_legs``), the returns forecast at the rate the dock has
-    seen so far in the day, and the bikes moved; the stock stays within ``[0, slots]``, the
-    pickups that find it empty fail and the returns that find it full go elsewhere. Moves run
-    between each dock and its ``neighbours`` nearest by road (``view.travel_times``), whole
-    bikes, at most ``van_bikes`` a van trip. The program minimises ``w_fail`` × the failed
-    pickups, ``w_walk`` × 5 minutes per return gone elsewhere (an assumed walk), and ``w_km``
-    × the van kilometres (seconds driven at 8 m/s, an assumption); the first bin's moves are
-    applied. Moves arrive within their bin (the drive's time is left out).
+    **Docked bikes.** Over the horizon's bins of ``bin_s``, each dock's stock follows the pickups
+    expected (``view.expected_legs``), the returns forecast at the rate the dock has seen so far in
+    the day, and the bikes moved; the stock stays within ``[0, slots]``, the pickups that find it
+    empty find no bike and the returns that find it full go elsewhere. Moves run between each dock
+    and its ``neighbours`` nearest by road (``view.travel_times``), whole bikes, at most
+    ``van_bikes`` a van trip. The program minimises ``w_cancelled`` × the pickups with no bike,
+    ``w_walk`` × 5 minutes per return gone elsewhere (an assumed walk), and ``w_km`` × the van
+    kilometres (seconds driven at 8 m/s, an assumption); the first bin's moves are applied. Moves
+    arrive within their bin (the drive's time is left out).
 
     **Taxis.** Each idle vehicle stays, drives empty to a zone where a vehicle or request was
-    seen, or charges (when below ``charge_below`` not charging costs ``w_fail``); per zone and
-    bin the requests served are at most those expected (``view.expected_legs``) and
+    seen, or charges (when below ``charge_below`` not charging costs ``w_cancelled``); per zone and
+    bin the requests picked up are at most those expected (``view.expected_legs``) and
     ``vehicle_requests_bin`` per vehicle there by the bin's end (busy vehicles count from the
-    second bin, in their zone). The program maximises ``w_fail`` × the requests served less
+    second bin, in their zone). The program maximises ``w_cancelled`` × the requests picked up less
     the kilometres driven.
 
     Both solved by ``scipy.optimize.milp`` (HiGHS, at most 10 s a solve); the seconds of each
@@ -1180,8 +1184,8 @@ def policy_lookahead(
         bin_s: The program's bins, in seconds.
         neighbours: The docks each dock may send bikes to.
         van_bikes: The bikes a van carries (the service's option of that name, 20 by default).
-        vehicle_requests_bin: The requests a taxi serves per bin, in the program.
-        charge_below: Below this charge a taxi not sent to charge costs a failed request.
+        vehicle_requests_bin: The requests a taxi picks up per bin, in the program.
+        charge_below: Below this charge a taxi not sent to charge costs a cancelled request.
         charge_to: The share a taxi sent to charge charges to.
         step_s: The seconds between its steps.
         weights: Reward weights by name in place of ``fleet.REWARD_WEIGHTS``'.

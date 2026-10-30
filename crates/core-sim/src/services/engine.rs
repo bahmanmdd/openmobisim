@@ -302,7 +302,7 @@ pub enum EventKind {
     Arrival = 1,
     /// A leg asks for a vehicle.
     Request = 2,
-    /// A taxi request's longest wait ends.
+    /// A taxi request reaches its cancel limit.
     Expire = 3,
     /// A policy step.
     Step = 4,
@@ -731,7 +731,7 @@ impl FleetEngine {
                         road_node: &docks.road_node,
                         pickups: &since.pickups,
                         returns: &since.returns,
-                        failed: &since.failed,
+                        no_bike: &since.no_bike,
                         redirected_in: &since.redirected_in,
                         redirected_out: &since.redirected_out,
                         incoming: &run.incoming,
@@ -930,7 +930,7 @@ impl FleetEngine {
                 }
                 for leg in &mut self.state.legs {
                     if matches!(leg.status, LegStatus::Waiting | LegStatus::Riding) {
-                        leg.status = LegStatus::Truncated;
+                        leg.status = LegStatus::Unfinished;
                     }
                 }
             }
@@ -1144,10 +1144,10 @@ mod tests {
         let last = out.legs[2];
         assert_eq!(
             last.status,
-            LegStatus::Truncated,
+            LegStatus::Unfinished,
             "a request at the end is taken, then truncated"
         );
-        assert_eq!(out.legs[3].status, LegStatus::Truncated);
+        assert_eq!(out.legs[3].status, LegStatus::Unfinished);
         assert!(
             (out.legs[3].requested_s - 27_000.0).abs() < 1e-9,
             "an early leg asks at the start"

@@ -6,24 +6,26 @@
 //! no pooling; a weight of 0 counts as 1), matched one after the other.
 //!
 //! **Matching** (built in). At a request, the idle vehicles that can reach the pickup within
-//! [`TaxiDefaults::max_wait_s`] less the hailing time [`TaxiDefaults::hail_s`] are found by one
-//! bounded backward search on free-flow times from the pickup; the nearest by that estimate
-//! that has charge enough for the drive to the pickup and the trip, above
-//! [`TaxiDefaults::reserve_soc`], is sent (ties by vehicle index); its drives are timed on the
-//! day's roads ([`ServiceRoads::drive`]). With none, the unit request **waits**, and is
-//! offered, oldest first, to every vehicle freed that can reach it, hailing included, within
-//! [`TaxiDefaults::max_wait_s`] of its request; past [`TaxiDefaults::max_wait_s`] it **fails**
-//! (an `Expire` event, taken after the requests of its second and before the policy step).
+//! the cancel limit [`TaxiDefaults::request_cancel_s`] less the dispatch delay
+//! [`TaxiDefaults::dispatch_delay_s`] are found by one bounded backward search on free-flow
+//! times from the pickup; the nearest by that estimate that has charge enough for the drive to
+//! the pickup and the trip, above [`TaxiDefaults::reserve_soc`], is sent (ties by vehicle
+//! index); its drives are timed on the day's roads ([`ServiceRoads::drive`]). With none, the
+//! unit request **waits**, and is offered, oldest first, to every vehicle freed that can reach
+//! it, the dispatch delay included, within [`TaxiDefaults::request_cancel_s`] of its request;
+//! past [`TaxiDefaults::request_cancel_s`] it is **cancelled** (an `Expire` event, taken after
+//! the requests of its second and before the policy step).
 //!
-//! **Hailing.** A vehicle matched at second `t` is held for the request from `t` (state
-//! `to_pickup`, the request's `assigned_s` = `t`) and sets off at `t + hail_s`; it reaches the
-//! pickup at `t + hail_s` plus its drive, boards for [`TaxiDefaults::board_s`] and leaves. The
-//! request's wait runs from its request to the vehicle reaching the pickup, hailing included.
-//! No kilometre is driven during the hailing.
+//! **Dispatch delay.** A vehicle matched at second `t` is held for the request from `t` (state
+//! `to_pickup`, the request's `assigned_s` = `t`) and sets off at `t + dispatch_delay_s`; it
+//! reaches the pickup at `t + dispatch_delay_s` plus its drive, boards for
+//! [`TaxiDefaults::boarding_s`] and leaves. The request's waiting time runs from its request to
+//! the vehicle reaching the pickup, the dispatch delay included. No kilometre is driven during
+//! the dispatch delay.
 //!
 //! **Energy.** Each drive uses [`TaxiDefaults::kwh_per_km`] per kilometre, taken when the
-//! drive is decided (for a drive to a pickup: at the match, before the hailing; nothing is used
-//! during the hailing itself). **The default charging rule:** a vehicle that drops a passenger below
+//! drive is decided (for a drive to a pickup: at the match, before the dispatch delay; nothing
+//! is used during the delay itself). **The default charging rule:** a vehicle that drops a passenger below
 //! [`TaxiDefaults::charge_below`] (or starts the day below it) drives to the charger nearest
 //! it by free-flow time, within [`TaxiDefaults::charger_reach_s`], and charges to
 //! [`TaxiDefaults::charge_to`] at the charger's power, first come first served at its plugs. A
@@ -72,7 +74,7 @@ pub struct TaxiRequest {
     /// The second it asked (`NaN` if never).
     pub requested_s: f64,
     /// The second a vehicle was matched to it (`NaN` if none was); the vehicle sets off
-    /// [`TaxiDefaults::hail_s`] later.
+    /// [`TaxiDefaults::dispatch_delay_s`] later.
     pub assigned_s: f64,
     /// The second the vehicle reached the pickup (`NaN` if it did not).
     pub picked_s: f64,
@@ -82,15 +84,15 @@ pub struct TaxiRequest {
     pub empty_km: f64,
     /// The kilometres driven with the passenger (0 if not picked up).
     pub trip_km: f64,
-    /// Whether it waited past [`TaxiDefaults::max_wait_s`] and failed.
-    pub failed: bool,
+    /// Whether no taxi was sent within [`TaxiDefaults::request_cancel_s`]: cancelled.
+    pub cancelled: bool,
 }
 
 /// One vehicle's day.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct VehicleDay {
-    /// Unit requests carried to their destination.
-    pub served: u32,
+    /// Unit requests carried to their destination (rides).
+    pub rides: u32,
     /// Kilometres with a passenger.
     pub km_occupied: f64,
     /// Kilometres empty: to pickups and to chargers.
@@ -144,7 +146,7 @@ pub enum TaxiEventKind {
     /// No idle vehicle could take the request at once: it waits, offered to every vehicle freed.
     WaitingForTaxi,
     /// A vehicle was matched to the request and is held for it; its drive to the pickup, `km`,
-    /// starts after the hailing time ([`TaxiDefaults::hail_s`]).
+    /// starts after the dispatch delay ([`TaxiDefaults::dispatch_delay_s`]).
     TaxiAssigned,
     /// The vehicle reached the pickup; boarding starts.
     TaxiArrivedAtPickup,
@@ -152,8 +154,8 @@ pub enum TaxiEventKind {
     PickedUp,
     /// The passenger reached the destination.
     DroppedOff,
-    /// No vehicle was sent within the longest wait: the request failed.
-    NoTaxiWithinWaitLimit,
+    /// No taxi could pick the request up within the cancel limit: the request is cancelled.
+    RequestCancelled,
     /// The window ended with the request still waiting (for a vehicle, or for the one sent).
     StillWaitingAtWindowEnd,
     /// The window ended with the passenger on board.
@@ -183,7 +185,7 @@ impl TaxiEventKind {
             Self::TaxiArrivedAtPickup => "taxi_arrived_at_pickup",
             Self::PickedUp => "picked_up",
             Self::DroppedOff => "dropped_off",
-            Self::NoTaxiWithinWaitLimit => "no_taxi_within_wait_limit",
+            Self::RequestCancelled => "request_cancelled",
             Self::StillWaitingAtWindowEnd => "still_waiting_at_window_end",
             Self::StillRidingAtWindowEnd => "still_riding_at_window_end",
             Self::VehicleWentToCharge => "vehicle_went_to_charge",
@@ -404,7 +406,7 @@ impl TaxiRun {
                     arrival_s: f64::NAN,
                     empty_km: 0.0,
                     trip_km: 0.0,
-                    failed: false,
+                    cancelled: false,
                 });
                 range.push((first, end));
             }
@@ -637,11 +639,11 @@ impl Taxis<'_> {
     }
 
     /// Match vehicle `v` to unit request `u` at second `t`, if it has the charge: it is held
-    /// from `t` and drives from its node to the pickup from `t + hail_s`.
+    /// from `t` and drives from its node to the pickup from `t + dispatch_delay_s`.
     fn try_send(&mut self, v: u32, u: u32, t: f64) -> bool {
         let leg = *self.leg_of(u);
         let from = self.node[v as usize];
-        let go = t + self.d.hail_s;
+        let go = t + self.d.dispatch_delay_s;
         let (to_s, to_m) = self.roads.drive(from, leg.origin, go);
         if !to_s.is_finite() {
             return false;
@@ -671,13 +673,14 @@ impl Taxis<'_> {
         true
     }
 
-    /// The free-flow seconds of driving a vehicle may have to a pickup: the longest wait less
-    /// the hailing time.
+    /// The free-flow seconds of driving a vehicle may have to a pickup: the cancel limit less
+    /// the dispatch delay.
     fn reach_s(&self) -> f64 {
-        (self.d.max_wait_s - self.d.hail_s).max(0.0)
+        (self.d.request_cancel_s - self.d.dispatch_delay_s).max(0.0)
     }
 
-    /// Match unit request `u` at second `t` to the nearest idle vehicle that can serve it.
+    /// Match unit request `u` at second `t` to the nearest idle vehicle that can pick it up in
+    /// time.
     fn match_unit(&mut self, u: u32, t: f64) -> bool {
         let origin = self.leg_of(u).origin;
         for (node, _) in self.roads.reach_to(origin, self.reach_s()) {
@@ -708,9 +711,9 @@ impl Taxis<'_> {
         while let Some(u) = self.run.waiting.pop_front() {
             let asked = self.run.requests[u as usize].requested_s;
             let origin = self.leg_of(u).origin;
-            let in_time = reach
-                .get(&origin.raw())
-                .is_some_and(|&s| t + self.d.hail_s + s <= asked + self.d.max_wait_s);
+            let in_time = reach.get(&origin.raw()).is_some_and(|&s| {
+                t + self.d.dispatch_delay_s + s <= asked + self.d.request_cancel_s
+            });
             if !sent && in_time && self.try_send(v, u, t) {
                 sent = true;
             } else {
@@ -869,25 +872,26 @@ impl Taxis<'_> {
             if !self.match_unit(u, t) {
                 self.log(t, TaxiEventKind::WaitingForTaxi, u, NO, NO, f64::NAN);
                 self.run.waiting.push_back(u);
-                self.next.push(Next::Expire(t + self.d.max_wait_s, u));
+                self.next.push(Next::Expire(t + self.d.request_cancel_s, u));
             }
         }
     }
 
-    /// Unit request `u`'s wait ends at second `t`: it fails if no vehicle was sent.
+    /// Unit request `u`'s cancel limit is reached at second `t`: it is cancelled if no vehicle
+    /// was sent.
     pub(crate) fn expire(&mut self, u: u32, t: f64) {
         let r = &mut self.run.requests[u as usize];
-        if r.vehicle.is_some() || r.failed {
+        if r.vehicle.is_some() || r.cancelled {
             return;
         }
-        r.failed = true;
+        r.cancelled = true;
         let leg = r.leg as usize;
         let asked = r.requested_s;
         self.run.waiting.retain(|&x| x != u);
-        self.log(t, TaxiEventKind::NoTaxiWithinWaitLimit, u, NO, NO, f64::NAN);
+        self.log(t, TaxiEventKind::RequestCancelled, u, NO, NO, f64::NAN);
         let last = self.is_last(u);
         let o = &mut self.out[leg];
-        o.status = LegStatus::Failed;
+        o.status = LegStatus::Cancelled;
         if last {
             o.waited_s = t - asked;
         }
@@ -915,7 +919,7 @@ impl Taxis<'_> {
                 }
                 self.set_state(v, VehicleState::Occupied);
                 self.log(t, TaxiEventKind::TaxiArrivedAtPickup, u, v, NO, f64::NAN);
-                let leave = t + self.d.board_s;
+                let leave = t + self.d.boarding_s;
                 let (s, m) = self.roads.drive(leg.origin, leg.destination, leave);
                 self.run.requests[u as usize].trip_km = m / 1000.0;
                 self.run.days[i].km_occupied += m / 1000.0;
@@ -929,13 +933,13 @@ impl Taxis<'_> {
                 let u = self.run.task[i];
                 let li = self.run.requests[u as usize].leg as usize;
                 self.run.requests[u as usize].arrival_s = t;
-                self.run.days[i].served += 1;
+                self.run.days[i].rides += 1;
                 let (a, z) = self.run.range[u as usize];
                 let reqs = &self.run.requests[a as usize..z as usize];
-                if self.out[li].status != LegStatus::Failed
+                if self.out[li].status != LegStatus::Cancelled
                     && reqs.iter().all(|r| !r.arrival_s.is_nan())
                 {
-                    self.out[li].status = LegStatus::Served;
+                    self.out[li].status = LegStatus::Completed;
                     self.out[li].arrived_s =
                         reqs.iter().map(|r| r.arrival_s).fold(f64::NEG_INFINITY, f64::max);
                 }
@@ -995,12 +999,12 @@ impl Taxis<'_> {
         for u in 0..self.run.requests.len() {
             let r = self.run.requests[u];
             let last = self.run.range[u].1 as usize == u + 1;
-            if last && r.picked_s.is_nan() && !r.failed && !r.requested_s.is_nan() {
+            if last && r.picked_s.is_nan() && !r.cancelled && !r.requested_s.is_nan() {
                 self.out[r.leg as usize].waited_s = t - r.requested_s;
             }
             let unit = u32::try_from(u).expect("unit requests fit u32");
             let v = r.vehicle.unwrap_or(NO);
-            if r.requested_s.is_nan() || r.failed || !r.arrival_s.is_nan() {
+            if r.requested_s.is_nan() || r.cancelled || !r.arrival_s.is_nan() {
                 continue;
             }
             if r.picked_s.is_nan() {

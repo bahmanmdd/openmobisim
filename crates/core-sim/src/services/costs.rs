@@ -1,18 +1,17 @@
-//! What a service is expected to cost a traveller, fixed for the whole run
-//! ([`super::ServiceExpectations`], S303): never learned from a loading.
+//! What travellers assume a service costs them, fixed for the whole run
+//! ([`super::ServiceAssumptions`], S303): never learned from a loading.
 //!
-//! **A dock**, per dock and time bin ([`DockCosts`]): the extra walk expected at a pickup and at
-//! a return, from the dock's start-of-day counts ([`DockCosts::initial`], a day with no legs):
+//! **A dock**, per dock and time bin ([`DockCosts`]): the extra walk assumed at a pickup and at
+//! a return, from the dock's start-of-day bikes ([`DockCosts::initial`], a day with no legs):
 //! for a pickup, the share of the bin the dock is empty times the walk to its nearest neighbour
 //! that is empty for at most half of that bin (or [`DockDefaults::fail_s`](super::DockDefaults::fail_s)
-//! if none); for a return, the same with "full" in place of "empty". The expectations then set
-//! them ([`DockCosts::expected`]): in the worst case, every dock empty and full all day (the walk
-//! to its nearest neighbour, `fail_s` with none); and a side given in seconds
-//! ([`super::ServiceExpectations::dock_pickup_extra_s`],
-//! [`super::ServiceExpectations::dock_return_extra_s`]) that constant at every dock and bin.
+//! if none); for a return, the same with "full" in place of "empty". An extra walk given in
+//! seconds ([`super::ServiceAssumptions::assumed_extra_walk_at_pickup_s`],
+//! [`super::ServiceAssumptions::assumed_extra_walk_at_return_s`]) replaces its side by that
+//! constant at every dock and bin ([`DockCosts::assumed`]).
 //!
-//! **A taxi** ([`TaxiExpectation`]): one expected wait and one expected share of requests with no
-//! vehicle, the same everywhere and all day.
+//! **A taxi** ([`TaxiAssumption`]): one assumed wait and one assumed chance of getting no taxi,
+//! the same everywhere and all day.
 //!
 //! **Times** are seconds from midnight, as the engine's clock; the docks' bins start at the
 //! window's start ([`DockBins::start_s`]). A second before the window reads its first bin, one
@@ -26,9 +25,9 @@ use openmobisim_core_types::ids::NodeId;
 
 use super::docks::DockBins;
 use super::engine::{FleetDay, FleetEngine, NoLegs, NoRoads};
-use super::{ServiceExpectations, ServiceParts, ServiceSetup};
+use super::{ServiceAssumptions, ServiceParts, ServiceSetup};
 
-/// What a docked service's docks cost per time bin: per dock and bin, the expected extra
+/// What a docked service's docks cost per time bin: per dock and bin, the assumed extra
 /// seconds of a pickup and of a return. See the [module docs](self).
 #[derive(Clone, Debug, PartialEq)]
 pub struct DockCosts {
@@ -110,37 +109,17 @@ impl DockCosts {
         Self::from_bins(setup, bins)
     }
 
-    /// These costs as the run's travellers expect them under `e`: with
-    /// [`ServiceExpectations::dock_worst_case`], first every dock and bin set to the walk to the
-    /// dock's nearest neighbour ([`DockDefaults::fail_s`](super::DockDefaults::fail_s) with
-    /// none), at both ends; then a side whose extra walk `e` gives in seconds
-    /// ([`ServiceExpectations::dock_pickup_extra_s`],
-    /// [`ServiceExpectations::dock_return_extra_s`], not `NaN`) set to it at every dock and bin.
-    ///
-    /// # Panics
-    ///
-    /// If `setup` is not the docked service these costs are of.
+    /// These costs as the run's travellers assume them under `e`: a side whose extra walk `e`
+    /// gives in seconds ([`ServiceAssumptions::assumed_extra_walk_at_pickup_s`],
+    /// [`ServiceAssumptions::assumed_extra_walk_at_return_s`], not `NaN`) set to it at every dock
+    /// and bin; the other kept from the start-of-day bikes.
     #[must_use]
-    pub fn expected(mut self, setup: &ServiceSetup, e: &ServiceExpectations) -> Self {
-        let ServiceParts::BikeDocked(docks, defaults) = setup.parts() else {
-            panic!("service `{}` has no docks", setup.name());
-        };
-        assert_eq!(self.pickup.len(), docks.len() * self.bins, "costs of this service's docks");
-        if e.dock_worst() {
-            for k in 0..docks.len() {
-                let k32 = u32::try_from(k).expect("docks fit u32");
-                let walk = docks.neighbours(k32).first().map_or(defaults.fail_s, |&(_, w)| w);
-                for b in 0..self.bins {
-                    self.pickup[k * self.bins + b] = walk;
-                    self.ret[k * self.bins + b] = walk;
-                }
-            }
+    pub fn assumed(mut self, e: &ServiceAssumptions) -> Self {
+        if !e.assumed_extra_walk_at_pickup_s.is_nan() {
+            self.pickup.fill(e.assumed_extra_walk_at_pickup_s);
         }
-        if !e.dock_pickup_extra_s.is_nan() {
-            self.pickup.fill(e.dock_pickup_extra_s);
-        }
-        if !e.dock_return_extra_s.is_nan() {
-            self.ret.fill(e.dock_return_extra_s);
+        if !e.assumed_extra_walk_at_return_s.is_nan() {
+            self.ret.fill(e.assumed_extra_walk_at_return_s);
         }
         self
     }
@@ -151,42 +130,41 @@ impl DockCosts {
         dock as usize * self.bins + b
     }
 
-    /// The expected extra seconds of taking a bike at `dock` at second `t` (from midnight).
+    /// The assumed extra seconds of taking a bike at `dock` at second `t` (from midnight).
     #[must_use]
     pub fn pickup_s(&self, dock: u32, t: f64) -> f64 {
         self.pickup[self.cell(dock, t)]
     }
 
-    /// The expected extra seconds of returning a bike to `dock` at second `t` (from midnight).
+    /// The assumed extra seconds of returning a bike to `dock` at second `t` (from midnight).
     #[must_use]
     pub fn return_s(&self, dock: u32, t: f64) -> f64 {
         self.ret[self.cell(dock, t)]
     }
 }
 
-/// What a taxi fleet is expected to cost a traveller (S303): the wait for a vehicle and the
-/// share of requests with no vehicle within the fleet's longest wait, the same at every road
-/// node and second ([`ServiceExpectations::taxi_wait_s`],
-/// [`ServiceExpectations::taxi_fail_share`]).
+/// What travellers assume about a taxi fleet (S303): the wait before a taxi picks them up and
+/// the chance of getting no taxi, the same at every road node and second
+/// ([`ServiceAssumptions::assumed_wait_s`], [`ServiceAssumptions::assumed_no_taxi_share`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TaxiExpectation {
-    /// The expected wait, in seconds, of a request that is served.
+pub struct TaxiAssumption {
+    /// The assumed wait before a taxi picks the traveller up, in seconds.
     pub wait_s: f64,
-    /// The expected share of requests with no vehicle.
-    pub fail_share: f64,
+    /// The assumed chance of getting no taxi, from 0 to 1.
+    pub no_taxi_share: f64,
 }
 
-impl TaxiExpectation {
+impl TaxiAssumption {
     /// The taxi part of `e`.
     #[must_use]
-    pub fn of(e: &ServiceExpectations) -> Self {
-        Self { wait_s: e.taxi_wait_s, fail_share: e.taxi_fail_share }
+    pub fn of(e: &ServiceAssumptions) -> Self {
+        Self { wait_s: e.assumed_wait_s, no_taxi_share: e.assumed_no_taxi_share }
     }
 
-    /// The expected wait, in seconds, of a request at road node `node` asked at second `t`, and
-    /// the expected share of such requests with no vehicle: the same everywhere.
+    /// The assumed wait, in seconds, of a request at road node `node` asked at second `t`, and
+    /// the assumed chance of getting no taxi: the same everywhere.
     #[must_use]
     pub fn at(&self, _node: NodeId, _t: f64) -> (f64, f64) {
-        (self.wait_s, self.fail_share)
+        (self.wait_s, self.no_taxi_share)
     }
 }

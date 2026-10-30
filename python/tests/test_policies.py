@@ -101,7 +101,9 @@ def taxi_environment() -> object:
         for k in range(30)
     ]
     taxis = ms.service_taxi(
-        vehicles, chargers, options={"max_wait_s": 120, "battery_kwh": 2, "hail_s": 0}
+        vehicles,
+        chargers,
+        options={"request_cancel_s": 120, "battery_kwh": 2, "dispatch_delay_s": 0},
     )
     return ms.fleet_environment(
         net,
@@ -215,7 +217,7 @@ def test_the_python_forms_of_the_built_in_rules_decide_as_the_rules_do():
     for column in ("step", "kind", "dock", "level", "from_dock", "to_dock", "moved"):
         a, b = list(rust.decisions()[column]), list(python.decisions()[column])
         assert [str(x) for x in a] == [str(x) for x in b], column
-    assert rust.trips["status"] == python.trips["status"]
+    assert rust.trips["outcome"] == python.trips["outcome"]
     assert P._python_policy("noop").describe()["name"] == "noop"
 
 

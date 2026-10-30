@@ -74,11 +74,11 @@ use crate::reroute::Rerouter;
 use crate::route_cache::{RouteSetCache, generation_key};
 use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext, make_room, make_room_by};
-use crate::services::costs::{DockCosts, TaxiExpectation};
+use crate::services::costs::{DockCosts, TaxiAssumption};
 use crate::services::engine::Leg;
 use crate::services::in_run::{ServicesRun, ShareLeg, TaxiLeg, TaxisRun};
 use crate::services::roads::RoadTimes;
-use crate::services::{ServiceExpectations, ServiceKind, ServiceSetup};
+use crate::services::{ServiceAssumptions, ServiceKind, ServiceSetup};
 use crate::timings::{Stage, Timings};
 use crate::transit::{TransitResult, TransitSetup, par_map};
 use crate::trees::{SearchTrees, TreeCost};
@@ -596,8 +596,8 @@ pub struct Run {
     /// What re-routing searches by in the execution under way (S299): `None` where the route
     /// cost is time alone.
     reroute_cost: Option<Arc<crate::reroute::RerouteCost>>,
-    /// What travellers expect of the services (S303): the shipped values, by default.
-    service_expectations: ServiceExpectations,
+    /// What travellers assume about the services (S303): the shipped values, by default.
+    service_assumptions: ServiceAssumptions,
 }
 
 /// Walk paths by (from, to) walk node: see [`Run`]'s `walk_paths`.
@@ -693,7 +693,7 @@ impl Run {
             walk_paths: WalkPaths::new(),
             static_solution: None,
             reroute_cost: None,
-            service_expectations: ServiceExpectations::SHIPPED,
+            service_assumptions: ServiceAssumptions::SHIPPED,
         }
     }
 
@@ -765,12 +765,12 @@ impl Run {
         self
     }
 
-    /// The same run with travellers expecting `expectations` of its services (S303): the wait
-    /// and failure share of a taxi, the docks' extra walks, fixed for the whole run. Read only in
-    /// a run with services, so a run without one is what it was.
+    /// The same run with travellers assuming `assumptions` about its services when they choose
+    /// (S303): a taxi's waiting time and chance of no taxi, the docks' extra walks, fixed for the
+    /// whole run. Read only in a run with services, so a run without one is what it was.
     #[must_use]
-    pub fn with_service_expectations(mut self, expectations: ServiceExpectations) -> Self {
-        self.service_expectations = expectations;
+    pub fn with_service_assumptions(mut self, assumptions: ServiceAssumptions) -> Self {
+        self.service_assumptions = assumptions;
         self
     }
 
@@ -807,14 +807,14 @@ impl Run {
     /// The same run with shared-mobility services (S302): a docked bike service offers the mode
     /// [`Mode::BikeShare`] to the trips choosing their mode, when [`Self::with_mode_choice`]
     /// lists it and the run has the walk and bike layers. Its trips walk to a dock, ride a shared
-    /// bike on the bike layer, return it at a dock and walk on, planned on the docks' expected
-    /// extra walks ([`Self::with_service_expectations`]). A taxi fleet offers [`Mode::Taxi`]
-    /// likewise, planned on an expected wait and failure share. The loadings never play the
+    /// bike on the bike layer, return it at a dock and walk on, planned on the extra walks at
+    /// the docks the travellers assume ([`Self::with_service_assumptions`]). A taxi fleet offers
+    /// [`Mode::Taxi`] likewise, planned on an assumed wait and chance of no taxi. The loadings never play the
     /// services: their trips end as planned. Once the run has stopped, the fleet engine plays its
     /// last loading's service trips in one day ([`crate::services::in_run::play`]): the docks'
     /// redirections, the taxis' matching, drives timed on that loading's link times (not loaded
-    /// on the roads), a request no vehicle reaches within the longest wait failing there; what
-    /// it gives is reported beside what was planned ([`RunResult::services`],
+    /// on the roads), a request no taxi can pick up within the cancel limit cancelled there;
+    /// what it actually gives is reported beside what was planned ([`RunResult::services`],
     /// [`RunResult::taxis`]). At most one docked bike service and one taxi fleet per run
     /// ([`RunError::Input`] otherwise). An empty list is no service.
     #[must_use]
@@ -1236,7 +1236,7 @@ impl Run {
             parking: self.parking.as_deref(),
             services: self.services.as_deref().map_or(&[], Vec::as_slice),
             hub_join_m: self.hub_join_m,
-            service_expectations: &self.service_expectations,
+            service_assumptions: &self.service_assumptions,
             mode_choice: self.mode_choice.as_deref(),
             mode_defaults: &self.mode_defaults,
             class_modes: &self.class_modes,
@@ -1811,11 +1811,11 @@ impl Run {
         let dock_index = share_service
             .zip(share_walk)
             .map(|(s, w)| DockIndex::new(s, w.network().network().node_count()));
-        // The docks' expected costs (S303): the start-of-day counts', as the expectations scale
-        // them, fixed for the whole run.
-        let expectations = self.service_expectations;
-        let dock_costs = share_service
-            .map(|s| DockCosts::initial(s, (start_s, window_s)).expected(s, &expectations));
+        // The docks' costs the travellers assume (S303): the start-of-day bikes', a side given
+        // in seconds replaced by it, fixed for the whole run.
+        let assumptions = self.service_assumptions;
+        let dock_costs =
+            share_service.map(|s| DockCosts::initial(s, (start_s, window_s)).assumed(&assumptions));
         // The docks at stops' hubs (S302), when the run offers a shared bike to transit: the
         // run's one hub set, its stops and parkings first, then the service's docks.
         let hub_docks = match (share_service, transit_arc.as_deref(), share_walk, &layers_arc.bike)
@@ -1849,8 +1849,8 @@ impl Run {
             services_arc.as_deref().and_then(|s| s.iter().find(|s| s.kind() == kind))
         };
         let mut services_run = of_kind(ServiceKind::BikeDocked).map(ServicesRun::of);
-        // What travellers expect of the taxi fleet (S303): one wait and one failure share.
-        let taxi_costs = TaxiExpectation::of(&expectations);
+        // What travellers assume about the taxi fleet (S303): one wait and one chance of no taxi.
+        let taxi_costs = TaxiAssumption::of(&assumptions);
         let mut taxis_run = of_kind(ServiceKind::Taxi).map(|s| TaxisRun::of(s, taxi_costs));
         let choose_inputs = ChooseInputs {
             trips: &trips,
@@ -2663,7 +2663,11 @@ impl Run {
             clock = timings.lap("service_day", None, clock);
         }
         if let Some(services) = services_run.as_mut() {
-            services.expected = dock_costs;
+            services.assumed = dock_costs;
+            services.assumed_extra_walk_s = (
+                assumptions.assumed_extra_walk_at_pickup_s,
+                assumptions.assumed_extra_walk_at_return_s,
+            );
         }
         timings.lap("results_assembled", None, clock);
         self.timings = timings;
@@ -2838,7 +2842,7 @@ impl Run {
                         let share = ShareLeg {
                             trip,
                             leg,
-                            expected_dock_s: alt.dock_s,
+                            assumed_extra_walk_s: alt.dock_s,
                             departure_s: f64::from(departure.get()),
                         };
                         let services = self.services.clone().expect("a shared bike's service");
@@ -2846,7 +2850,7 @@ impl Run {
                         self.end_as_planned(
                             trip,
                             departure,
-                            share.expected_end_s(setup),
+                            share.planned_end_s(setup),
                             f64::from(self.travellers.weight(traveller)),
                             &mut completion,
                             &mut total_travel_time,
@@ -2884,14 +2888,13 @@ impl Run {
                         let taxi = TaxiLeg {
                             trip,
                             leg,
-                            expected_wait_s: alt.taxi_wait_s,
-                            expected_fail: alt.taxi_fail,
-                            expected_s: alt.total_s,
+                            assumed_wait_s: alt.assumed_wait_s,
+                            planned_s: alt.total_s,
                         };
                         self.end_as_planned(
                             trip,
                             departure,
-                            taxi.expected_end_s(),
+                            taxi.planned_end_s(),
                             f64::from(self.travellers.weight(traveller)),
                             &mut completion,
                             &mut total_travel_time,
@@ -2958,12 +2961,12 @@ impl Run {
                         let share = ShareLeg {
                             trip,
                             leg,
-                            expected_dock_s: alt.dock_s,
+                            assumed_extra_walk_s: alt.dock_s,
                             departure_s: f64::from(departure.get()),
                         };
                         let setup = &services[usize::from(share_index)];
-                        // As planned (S303): at the hub's dock when the choice expected.
-                        let at = share.expected_end_s(setup);
+                        // As planned (S303): at the hub's dock when the choice planned.
+                        let at = share.planned_end_s(setup);
                         let end = f64::from(self.window.get());
                         pending_itin.last_mut().expect("just started").vehicle_arrival =
                             (at.is_finite() && at <= end).then_some(at);
@@ -4271,7 +4274,7 @@ fn share_ride(share: &ShareLeg, setup: &ServiceSetup, links: &[LinkId]) -> Vehic
 /// A run's taxi fleet as the choice sees it (S302): `None` without one.
 fn taxi_context(
     setup: Option<&ServiceSetup>,
-    costs: TaxiExpectation,
+    costs: TaxiAssumption,
 ) -> Option<itinerary_choice::TaxiContext<'_>> {
     match setup?.parts() {
         crate::services::ServiceParts::Taxi(_, d) => {

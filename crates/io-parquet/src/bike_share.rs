@@ -21,17 +21,18 @@
 //!
 //! **`bike_share_trips.parquet`** — one row per trip that chose a shared bike, in trip order:
 //! who (`run_id, service, traveller_id, trip_seq, travellers, mode`); the plan
-//! (`planned_pickup_dock, planned_return_dock, planned_at_pickup_dock_s, planned_leg_end_s,
-//! expected_extra_s`); what happened (`pickup_dock, pickup_s, docks_tried_for_bike,
-//! return_dock, return_s, docks_tried_for_slot, leg_end_s`); the difference (`extra_s` =
-//! `leg_end_s − planned_leg_end_s`, split into `pickup_extra_s` and `return_extra_s`: the
-//! return's part is the rides between return docks after a full one plus the walk from the dock
-//! the bike was left at less the planned walk from the planned return dock, the pickup's the
-//! rest; `extra_walk_m`, `met_minus_expected_s` = `extra_s −
-//! expected_extra_s`: met minus expected, positive when worse than expected); `failed_attempts_for_bike`, `failed_attempts_for_slot`; and `result`:
-//! `as_planned`, `bike_at_another_dock` (found a dock empty, then a bike at another),
-//! `returned_at_another_dock`, `no_bike_walked_to_destination`, `left_over_capacity`,
-//! `still_riding_at_window_end`, `still_looking_for_bike_at_window_end`, `not_started`.
+//! (`planned_pickup_dock, planned_return_dock, planned_at_pickup_dock_s, planned_leg_end_s`:
+//! the leg's end had the planned docks had a bike and a free slot); what happened
+//! (`pickup_dock, pickup_s, docks_tried_for_bike, return_dock, return_s, docks_tried_for_slot,
+//! leg_end_s`); the extra time at the docks (`extra_s` = `leg_end_s − planned_leg_end_s`, split
+//! into `extra_walk_at_pickup_s` and `extra_walk_at_return_s`: the return's part is the rides
+//! between return docks after a full one plus the walk from the dock the bike was left at less
+//! the planned walk from the planned return dock, the pickup's the rest; `extra_walk_m`, metres
+//! walked between docks as the crow flies); `failed_attempts_for_bike`,
+//! `failed_attempts_for_slot` (docks found empty or full); and `outcome`: `completed` (got a
+//! bike and returned it), `cancelled` (no bike at any dock tried: walked to the destination),
+//! `unfinished` (still looking for a bike or riding at the window's end), `not_requested` (at
+//! the pickup dock after the window).
 //!
 //! **`bike_share_docks.parquet`** — one row per dock and time bin (the service's `bin_s`), dock by
 //! dock: `run_id, service, dock, hub_id, bin_start, bin_end, bin_start_s, bin_end_s`; its state
@@ -170,7 +171,6 @@ pub fn write_bike_share_trips(
         .text("planned_return_dock", &t.planned_return_dock)
         .number("planned_at_pickup_dock_s", &t.planned_at_pickup_dock_s)
         .number("planned_leg_end_s", &t.planned_leg_end_s)
-        .number("expected_extra_s", &t.expected_extra_s)
         .maybe_text("pickup_dock", &t.pickup_dock)
         .maybe_number("pickup_s", &t.pickup_s)
         .count("docks_tried_for_bike", &t.docks_tried_for_bike)
@@ -179,13 +179,12 @@ pub fn write_bike_share_trips(
         .count("docks_tried_for_slot", &t.docks_tried_for_slot)
         .maybe_number("leg_end_s", &t.leg_end_s)
         .maybe_number("extra_s", &t.extra_s)
-        .maybe_number("pickup_extra_s", &t.pickup_extra_s)
-        .maybe_number("return_extra_s", &t.return_extra_s)
+        .maybe_number("extra_walk_at_pickup_s", &t.extra_walk_at_pickup_s)
+        .maybe_number("extra_walk_at_return_s", &t.extra_walk_at_return_s)
         .number("extra_walk_m", &t.extra_walk_m)
-        .maybe_number("met_minus_expected_s", &t.met_minus_expected_s)
         .count("failed_attempts_for_bike", &t.failed_attempts_for_bike)
         .count("failed_attempts_for_slot", &t.failed_attempts_for_slot)
-        .text("result", &t.result);
+        .text("outcome", &t.outcome);
     c.write(path.as_ref(), description, &[])
 }
 

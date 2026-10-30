@@ -4,8 +4,10 @@
 //! - [`TaxiEventTable`] (`taxi_events.parquet`): the day's log, one row per event in time order,
 //!   with the vehicle's state and charge just after, so each traveller's and each vehicle's
 //!   sequence can be followed;
-//! - [`TaxiTripTable`] (`taxi_trips.parquet`): one row per trip that chose a taxi: its plan, what
-//!   happened, the difference, and a result from a fixed list ([`taxi_trip_result`]);
+//! - [`TaxiTripTable`] (`taxi_trips.parquet`): one row per request (a trip that chose a taxi):
+//!   when it was requested, the wait its traveller assumed, and what the dispatcher saw: its
+//!   outcome ([`taxi_trip_outcome`]), the taxi, the pickup and drop-off, the waiting and
+//!   in-vehicle times and the kilometres with and without the passenger;
 //! - [`TaxiVehicleTable`] (`taxi_vehicles.parquet`): one row per vehicle and time bin: the
 //!   seconds in each state, the kilometres occupied and empty, the charge and the charging.
 //!
@@ -25,10 +27,6 @@ use super::in_run::TaxiRunDay;
 use super::outcome::LegStatus;
 use super::taxis::NO;
 use super::{ServiceParts, TaxiDefaults};
-
-/// A wait within this many seconds of the one expected counts as expected (the trip's `result`
-/// `as_planned`): a reporting rule, not a parameter of the simulation.
-pub const WAIT_TOLERANCE_S: f64 = 60.0;
 
 fn finite(v: f64) -> Option<f64> {
     v.is_finite().then_some(v)
@@ -86,7 +84,8 @@ pub struct TaxiEventTable {
 
 impl TaxiEventTable {
     /// The events of `day` of the fleet `setup`, whose trips are `trips` of `travellers`; empty
-    /// if the day kept no log. A request that failed ends with `no_taxi_within_wait_limit`.
+    /// if the day kept no log. A request no taxi could pick up within the cancel limit ends with
+    /// `request_cancelled`.
     ///
     /// # Panics
     ///
@@ -138,36 +137,22 @@ impl TaxiEventTable {
     }
 }
 
-/// A taxi trip's result, the first that applies: `not_started` (its request came after the
-/// window's end), `no_taxi` (no vehicle was sent within the longest wait: the trip ends there),
-/// `still_waiting_at_window_end` (no vehicle, or the one sent not yet there),
-/// `still_riding_at_window_end`, `waited_longer_than_expected` (carried, its wait more than
-/// [`WAIT_TOLERANCE_S`] past the one expected), `as_planned` (carried, within it).
+/// A request's outcome: `not_requested` (its departure came after the window's end),
+/// `completed` (picked up and dropped off at the destination), `cancelled` (no taxi could pick
+/// it up within the cancel limit: the trip ends there), `unfinished` (still waiting or riding
+/// when the window ended).
 #[must_use]
-pub fn taxi_trip_result(
-    status: LegStatus,
-    picked: bool,
-    waited_minus_expected_s: f64,
-) -> &'static str {
+pub fn taxi_trip_outcome(status: LegStatus) -> &'static str {
     match status {
-        LegStatus::NotRequested => "not_started",
-        LegStatus::Failed => "no_taxi",
-        LegStatus::Waiting | LegStatus::Riding | LegStatus::Truncated => {
-            if picked {
-                "still_riding_at_window_end"
-            } else {
-                "still_waiting_at_window_end"
-            }
-        }
-        LegStatus::Served if waited_minus_expected_s > WAIT_TOLERANCE_S => {
-            "waited_longer_than_expected"
-        }
-        LegStatus::Served => "as_planned",
+        LegStatus::NotRequested => "not_requested",
+        LegStatus::Completed => "completed",
+        LegStatus::Cancelled => "cancelled",
+        LegStatus::Waiting | LegStatus::Riding | LegStatus::Unfinished => "unfinished",
     }
 }
 
-/// One row per trip that chose a taxi, in trip order: `taxi_trips.parquet`. Seconds count from
-/// midnight; `None` is what did not happen (written as null).
+/// One row per request (a trip that chose a taxi), in trip order: `taxi_trips.parquet`.
+/// Seconds count from midnight; `None` is what did not happen (written as null).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TaxiTripTable {
     /// The fleet's name.
@@ -178,41 +163,27 @@ pub struct TaxiTripTable {
     pub trip_seq: Vec<u32>,
     /// The people the traveller stands for: the seats the trip asks for.
     pub travellers: Vec<u32>,
-    /// When it asked for a taxi: its departure.
+    /// When the taxi was requested: the trip's departure.
     pub requested_s: Vec<f64>,
-    /// The wait its choice expected, should a vehicle come.
-    pub expected_wait_s: Vec<f64>,
-    /// The share of requests its choice expected to get no vehicle within the longest wait.
-    pub expected_no_taxi_share: Vec<f64>,
-    /// The door-to-door seconds its choice expected (the longest wait and the walk of the share
-    /// expected to fail weighed in).
-    pub expected_door_to_door_s: Vec<f64>,
-    /// The vehicle sent.
+    /// The waiting time its traveller assumed when choosing, in seconds.
+    pub assumed_wait_s: Vec<f64>,
+    /// What became of it ([`taxi_trip_outcome`]).
+    pub outcome: Vec<&'static str>,
+    /// The taxi matched to it.
     pub vehicle: Vec<Option<String>>,
-    /// When it was sent.
-    pub assigned_s: Vec<Option<f64>>,
-    /// When it reached the pickup.
-    pub taxi_at_pickup_s: Vec<Option<f64>>,
-    /// The seconds waited: until the vehicle reached the pickup, the request failed, or the
-    /// window ended.
-    pub waited_s: Vec<f64>,
-    /// `waited_s − expected_wait_s` for a trip carried (positive: longer than expected).
-    pub waited_minus_expected_s: Vec<Option<f64>>,
-    /// The kilometres the vehicle drove empty to the pickup.
-    pub km_to_pickup: Vec<Option<f64>>,
-    /// The kilometres with the passenger.
-    pub km_with_passenger: Vec<Option<f64>>,
-    /// When the passenger was dropped at the destination.
-    pub dropped_off_s: Vec<Option<f64>>,
-    /// When the traveller reached the destination (`None`: a request that failed, or not by the
-    /// window's end).
-    pub arrived_s: Vec<Option<f64>>,
-    /// `arrived_s − requested_s`.
-    pub door_to_door_s: Vec<Option<f64>>,
-    /// `door_to_door_s − expected_door_to_door_s`: met minus expected (positive: worse).
-    pub met_minus_expected_s: Vec<Option<f64>>,
-    /// What became of it, from a fixed list ([`taxi_trip_result`]).
-    pub result: Vec<&'static str>,
+    /// When the taxi reached the pickup.
+    pub pickup_s: Vec<Option<f64>>,
+    /// When the passenger was dropped off at the destination.
+    pub dropoff_s: Vec<Option<f64>>,
+    /// The waiting time, in seconds: from the request to the pickup, the dispatch delay
+    /// included (`None`: not picked up).
+    pub waiting_s: Vec<Option<f64>>,
+    /// The time in the vehicle, in seconds: from the pickup to the drop-off, boarding included.
+    pub in_vehicle_s: Vec<Option<f64>>,
+    /// The kilometres driven with the passenger on board.
+    pub ride_km: Vec<Option<f64>>,
+    /// The kilometres the taxi drove empty to the pickup.
+    pub empty_km: Vec<Option<f64>>,
 }
 
 impl TaxiTripTable {
@@ -229,7 +200,7 @@ impl TaxiTripTable {
         travellers: &Travellers,
     ) -> Self {
         let mut t = Self::default();
-        let Some((fleet, d)) = parts(setup) else { return t };
+        let Some((fleet, _)) = parts(setup) else { return t };
         // Each leg's last unit request: the one its outcome follows.
         let mut last_unit = vec![None; day.legs.len()];
         for r in &day.day.requests {
@@ -244,38 +215,23 @@ impl TaxiTripTable {
             day.legs.iter().zip(&day.outcome).zip(people).enumerate()
         {
             let r = last_unit[i];
-            let at = day.arrived_s[i];
             t.service.push(setup.name().to_string());
             t.traveller_id.push(traveller);
             t.trip_seq.push(seq);
             t.travellers.push(l.leg.weight);
             t.requested_s.push(l.leg.request_s);
-            t.expected_wait_s.push(l.expected_wait_s);
-            t.expected_no_taxi_share.push(l.expected_fail);
-            t.expected_door_to_door_s.push(l.expected_s);
+            t.assumed_wait_s.push(l.assumed_wait_s);
+            t.outcome.push(taxi_trip_outcome(o.status));
             t.vehicle.push(o.vehicle.map(|v| fleet.vehicle_ids[v as usize].clone()));
-            t.assigned_s.push(finite(o.assigned_s));
-            t.taxi_at_pickup_s.push(finite(o.picked_s));
-            let waited = match o.status {
-                LegStatus::Failed => d.max_wait_s,
-                _ => o.waited_s,
-            };
-            t.waited_s.push(waited);
-            let served = o.status == LegStatus::Served;
-            let wait_diff = served.then_some(waited - l.expected_wait_s);
-            t.waited_minus_expected_s.push(wait_diff);
-            t.km_to_pickup.push(r.filter(|r| r.vehicle.is_some()).map(|r| r.empty_km));
-            t.km_with_passenger.push(r.filter(|r| r.picked_s.is_finite()).map(|r| r.trip_km));
-            t.dropped_off_s.push(served.then_some(o.arrived_s).and_then(finite));
-            t.arrived_s.push(finite(at));
-            let door = finite(at).map(|a| a - l.leg.request_s);
-            t.door_to_door_s.push(door);
-            t.met_minus_expected_s.push(door.map(|x| x - l.expected_s));
-            t.result.push(taxi_trip_result(
-                o.status,
-                o.picked_s.is_finite(),
-                wait_diff.unwrap_or(0.0),
-            ));
+            let pickup = finite(o.picked_s);
+            t.pickup_s.push(pickup);
+            let dropoff =
+                (o.status == LegStatus::Completed).then_some(o.arrived_s).and_then(finite);
+            t.dropoff_s.push(dropoff);
+            t.waiting_s.push(pickup.map(|_| o.waited_s));
+            t.in_vehicle_s.push(pickup.zip(dropoff).map(|(p, d)| d - p));
+            t.ride_km.push(r.filter(|r| r.picked_s.is_finite()).map(|r| r.trip_km));
+            t.empty_km.push(r.filter(|r| r.vehicle.is_some()).map(|r| r.empty_km));
         }
         t
     }

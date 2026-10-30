@@ -120,8 +120,13 @@ impl From<arrow_schema::ArrowError> for WriteError {
 /// is renamed, removed or changes meaning. Version 2: one `hub_id`, the hub in the run's hub set,
 /// in `transit_calls` and `parking_bins` (version 1 wrote a `hub_group` beside the parking table's
 /// `hub_id`). Version 3: `taxi_trips` has no `walk_s` (a taxi request with no vehicle ends with
-/// no walk on); `bike_share_trips` splits `extra_s` into `pickup_extra_s` and `return_extra_s`.
-pub const SCHEMA_VERSION: u32 = 3;
+/// no walk on); `bike_share_trips` splits `extra_s` in two. Version 4: the services' results in
+/// taxi operations' words: `taxi_trips` holds one row per request (`assumed_wait_s`, `outcome`,
+/// `pickup_s`, `dropoff_s`, `waiting_s`, `in_vehicle_s`, `ride_km`, `empty_km`);
+/// `bike_share_trips` has `outcome`, `extra_walk_at_pickup_s` and `extra_walk_at_return_s`;
+/// `trip_results`' `service_outcome` is `completed`, `cancelled` or `unfinished`, beside
+/// `service_arrival_s`; the services' KPI rows are renamed.
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// The Parquet key-value metadata key under which every file carries [`SCHEMA_VERSION`].
 pub const SCHEMA_VERSION_KEY: &str = "openmobisim.schema_version";

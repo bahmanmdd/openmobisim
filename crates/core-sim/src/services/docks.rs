@@ -12,8 +12,8 @@
 //! [`DockDefaults::redirect_max_m`] of it as the crow flies, and asks again there (a further
 //! `Request`, after the walk); a neighbour is tried whether or not it has bikes, as the
 //! traveller cannot know. After [`DockDefaults::redirect_max`] docks tried after the planned
-//! one, or when no such neighbour is left, the pickup **fails** and the traveller walks from the
-//! last dock tried to the destination.
+//! one, or when no such neighbour is left, the traveller has **no bike** (the leg is cancelled) and
+//! walks from the last dock tried to the destination.
 //!
 //! **A full return dock** (fewer free slots than `w`): the bike is ridden on to the nearest
 //! neighbour not yet tried with room for `w` (a further `Return`, after the ride); with none,
@@ -60,8 +60,9 @@ pub struct DockBins {
     pub pickups: Vec<f64>,
     /// Bikes returned (people).
     pub returns: Vec<f64>,
-    /// Pickups that failed here, the last dock tried (people).
-    pub failed: Vec<f64>,
+    /// Travellers who found no bike here nor at the docks near, this the last dock tried
+    /// (people).
+    pub no_bike: Vec<f64>,
     /// Travellers who found the dock empty or full and went on to another (people).
     pub redirected: Vec<f64>,
     /// Travellers sent on to this dock from another that was empty or full (people), counted
@@ -103,7 +104,7 @@ impl DockBins {
             full_s: vec![0.0; cells],
             pickups: vec![0.0; cells],
             returns: vec![0.0; cells],
-            failed: vec![0.0; cells],
+            no_bike: vec![0.0; cells],
             redirected: vec![0.0; cells],
             redirected_in: vec![0.0; cells],
             redirected_no_slot: vec![0.0; cells],
@@ -224,7 +225,7 @@ pub const NONE: u32 = u32::MAX;
 pub(crate) struct SinceStep {
     pub(crate) pickups: Vec<f64>,
     pub(crate) returns: Vec<f64>,
-    pub(crate) failed: Vec<f64>,
+    pub(crate) no_bike: Vec<f64>,
     pub(crate) redirected_in: Vec<f64>,
     pub(crate) redirected_out: Vec<f64>,
 }
@@ -234,7 +235,7 @@ impl SinceStep {
         Self {
             pickups: vec![0.0; n],
             returns: vec![0.0; n],
-            failed: vec![0.0; n],
+            no_bike: vec![0.0; n],
             redirected_in: vec![0.0; n],
             redirected_out: vec![0.0; n],
         }
@@ -244,7 +245,7 @@ impl SinceStep {
         for v in [
             &mut self.pickups,
             &mut self.returns,
-            &mut self.failed,
+            &mut self.no_bike,
             &mut self.redirected_in,
             &mut self.redirected_out,
         ] {
@@ -516,9 +517,9 @@ impl DockRun {
             self.note(c.docks, fleet.bikes, what, dock, o, m);
             return Some((t + walk, EventKind::Request, o));
         }
-        self.bins.failed[cell] += wf;
-        self.since.failed[k] += wf;
-        c.out.status = LegStatus::Failed;
+        self.bins.no_bike[cell] += wf;
+        self.since.no_bike[k] += wf;
+        c.out.status = LegStatus::Cancelled;
         c.out.picked_s = t;
         c.out.arrived_s = t + c.legs.walk_to_destination_s(c.index, dock);
         let what = (t, me, DockEventKind::GaveUpWalkingToDestination);
@@ -600,7 +601,7 @@ impl DockRun {
                 let what = (t, me, DockEventKind::RidingToNextDock);
                 self.note(c.docks, fleet.bikes, what, dock, o, m);
                 let ride = c.legs.ride_s(leg.service, dock, o);
-                c.out.return_extra_s += ride;
+                c.out.extra_walk_at_return_s += ride;
                 return Some((t + ride, EventKind::Return, o));
             }
         }
@@ -620,10 +621,10 @@ impl DockRun {
             leg.egress_s
         } else {
             let walk = c.legs.walk_to_destination_s(c.index, dock);
-            c.out.return_extra_s += walk - leg.egress_s;
+            c.out.extra_walk_at_return_s += walk - leg.egress_s;
             walk
         };
-        c.out.status = LegStatus::Served;
+        c.out.status = LegStatus::Completed;
         c.out.returned = Some(dock);
         c.out.returned_s = t;
         c.out.overflow = !room;

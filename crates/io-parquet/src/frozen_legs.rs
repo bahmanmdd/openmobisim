@@ -2,7 +2,7 @@
 //!
 //! One row per leg, in the order the run played them (by `trip`):
 //! `trip, traveller_id, trip_seq, service, weight, request_s, origin_node, destination_node,
-//! dock_from, dock_to, ride_s, egress_s, expected_dock_s`.
+//! dock_from, dock_to, ride_s, egress_s, assumed_extra_walk_s`.
 //!
 //! - `trip` is the trip's index in the run (as in `trip_results.parquet`), the key the fleet
 //!   engine orders legs by at one second; `traveller_id` and `trip_seq` name it as the run's
@@ -14,8 +14,8 @@
 //!   layer (internal indices, meaningful only with the network the day was frozen on).
 //! - `dock_from` and `dock_to` are the docks the trip chose (dock ids); `ride_s` the planned
 //!   ride between them, the service's `ride_factor` included; `egress_s` the walk from the return
-//!   dock to the destination; `expected_dock_s` the extra seconds at the docks its choice
-//!   expected.
+//!   dock to the destination; `assumed_extra_walk_s` the extra walk at the docks its choice
+//!   assumed.
 //!
 //! Every number is written and read back bit for bit (Parquet's 64-bit floats), so a replay of
 //! the file plays the legs the run played. **Cost:** about 100 bytes per leg in memory while
@@ -60,8 +60,8 @@ pub struct FrozenLegRow {
     pub ride_s: f64,
     /// The walk from the return dock to the destination, in seconds.
     pub egress_s: f64,
-    /// The extra seconds at the docks its choice expected.
-    pub expected_dock_s: f64,
+    /// The extra walk at the docks its choice assumed, in seconds.
+    pub assumed_extra_walk_s: f64,
 }
 
 fn schema() -> Arc<Schema> {
@@ -81,7 +81,7 @@ fn schema() -> Arc<Schema> {
         s("dock_to"),
         f("ride_s"),
         f("egress_s"),
-        f("expected_dock_s"),
+        f("assumed_extra_walk_s"),
     ]))
 }
 
@@ -120,7 +120,7 @@ pub fn write_frozen_legs(
             strs(|r| &r.dock_to),
             f64s(|r| r.ride_s),
             f64s(|r| r.egress_s),
-            f64s(|r| r.expected_dock_s),
+            f64s(|r| r.assumed_extra_walk_s),
         ],
     )?;
     write_single_batch_with(path.as_ref(), schema, &batch, metadata, Compression::SNAPPY)
@@ -157,8 +157,8 @@ pub fn read_frozen_legs(path: impl AsRef<Path>) -> Result<Vec<FrozenLegRow>, Str
         let s = |n: &str| column::<StringArray>(&batch, n);
         let (trip, seq, weight, origin, destination) =
             (u("trip")?, u("trip_seq")?, u("weight")?, u("origin_node")?, u("destination_node")?);
-        let (request, ride, egress, expected) =
-            (f("request_s")?, f("ride_s")?, f("egress_s")?, f("expected_dock_s")?);
+        let (request, ride, egress, assumed) =
+            (f("request_s")?, f("ride_s")?, f("egress_s")?, f("assumed_extra_walk_s")?);
         let (traveller, service, from, to) =
             (s("traveller_id")?, s("service")?, s("dock_from")?, s("dock_to")?);
         for i in 0..batch.num_rows() {
@@ -175,7 +175,7 @@ pub fn read_frozen_legs(path: impl AsRef<Path>) -> Result<Vec<FrozenLegRow>, Str
                 dock_to: to.value(i).to_string(),
                 ride_s: ride.value(i),
                 egress_s: egress.value(i),
-                expected_dock_s: expected.value(i),
+                assumed_extra_walk_s: assumed.value(i),
             });
         }
     }
@@ -202,7 +202,7 @@ mod tests {
                 dock_to: format!("d{k}"),
                 ride_s: 0.1 + f64::from(k) * 1e-9,
                 egress_s: f64::from(k).sqrt(),
-                expected_dock_s: -0.0,
+                assumed_extra_walk_s: -0.0,
             })
             .collect();
         let dir = std::env::temp_dir().join(format!("oms-frozen-legs-{}", std::process::id()));
@@ -215,7 +215,7 @@ mod tests {
             assert_eq!(a, b);
             assert_eq!(a.request_s.to_bits(), b.request_s.to_bits());
             assert_eq!(a.ride_s.to_bits(), b.ride_s.to_bits());
-            assert_eq!(a.expected_dock_s.to_bits(), b.expected_dock_s.to_bits());
+            assert_eq!(a.assumed_extra_walk_s.to_bits(), b.assumed_extra_walk_s.to_bits());
         }
         std::fs::remove_dir_all(&dir).unwrap();
     }

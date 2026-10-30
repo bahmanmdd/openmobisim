@@ -1,6 +1,6 @@
 """The output files keep their schema: a contract checked against a versioned file.
 
-``openmobisim/data/schema_v3.json`` lists, for every file a run writes, its columns in order with
+``openmobisim/data/schema_v4.json`` lists, for every file a run writes, its columns in order with
 their Arrow type, whether they may be null and their unit, and the Parquet metadata keys it
 carries; for ``manifest.json`` its top-level keys; for ``timings.csv`` its header. A run of the toy
 network with transit, parkings, a docked bike service, a taxi fleet, classes and every mode writes
@@ -23,7 +23,7 @@ from typing import Any
 import openmobisim as ms
 import pytest
 
-SCHEMA = Path(ms.__file__).parent / "data" / "schema_v3.json"
+SCHEMA = Path(ms.__file__).parent / "data" / "schema_v4.json"
 VERSION_KEY = b"openmobisim.schema_version"
 
 

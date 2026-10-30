@@ -1,5 +1,5 @@
 {
- "schema_version": 3,
+ "schema_version": 4,
  "files": {
   "bike_share_docks.parquet": {
    "columns": [
@@ -311,12 +311,6 @@
      "unit": "s after midnight"
     },
     {
-     "name": "expected_extra_s",
-     "type": "double",
-     "nullable": false,
-     "unit": "s"
-    },
-    {
      "name": "pickup_dock",
      "type": "string",
      "nullable": true,
@@ -365,13 +359,13 @@
      "unit": "s"
     },
     {
-     "name": "pickup_extra_s",
+     "name": "extra_walk_at_pickup_s",
      "type": "double",
      "nullable": true,
      "unit": "s"
     },
     {
-     "name": "return_extra_s",
+     "name": "extra_walk_at_return_s",
      "type": "double",
      "nullable": true,
      "unit": "s"
@@ -381,12 +375,6 @@
      "type": "double",
      "nullable": false,
      "unit": "m"
-    },
-    {
-     "name": "met_minus_expected_s",
-     "type": "double",
-     "nullable": true,
-     "unit": "s"
     },
     {
      "name": "failed_attempts_for_bike",
@@ -401,7 +389,7 @@
      "unit": "docks"
     },
     {
-     "name": "result",
+     "name": "outcome",
      "type": "string",
      "nullable": false,
      "unit": "text"
@@ -947,22 +935,16 @@
      "unit": "s after midnight"
     },
     {
-     "name": "expected_wait_s",
+     "name": "assumed_wait_s",
      "type": "double",
      "nullable": false,
      "unit": "s"
     },
     {
-     "name": "expected_no_taxi_share",
-     "type": "double",
+     "name": "outcome",
+     "type": "string",
      "nullable": false,
-     "unit": "share"
-    },
-    {
-     "name": "expected_door_to_door_s",
-     "type": "double",
-     "nullable": false,
-     "unit": "s"
+     "unit": "text"
     },
     {
      "name": "vehicle",
@@ -971,70 +953,40 @@
      "unit": "text"
     },
     {
-     "name": "assigned_s",
+     "name": "pickup_s",
      "type": "double",
      "nullable": true,
      "unit": "s after midnight"
     },
     {
-     "name": "taxi_at_pickup_s",
+     "name": "dropoff_s",
      "type": "double",
      "nullable": true,
      "unit": "s after midnight"
     },
     {
-     "name": "waited_s",
-     "type": "double",
-     "nullable": false,
-     "unit": "s"
-    },
-    {
-     "name": "waited_minus_expected_s",
+     "name": "waiting_s",
      "type": "double",
      "nullable": true,
      "unit": "s"
     },
     {
-     "name": "km_to_pickup",
+     "name": "in_vehicle_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s"
+    },
+    {
+     "name": "ride_km",
      "type": "double",
      "nullable": true,
      "unit": "km"
     },
     {
-     "name": "km_with_passenger",
+     "name": "empty_km",
      "type": "double",
      "nullable": true,
      "unit": "km"
-    },
-    {
-     "name": "dropped_off_s",
-     "type": "double",
-     "nullable": true,
-     "unit": "s after midnight"
-    },
-    {
-     "name": "arrived_s",
-     "type": "double",
-     "nullable": true,
-     "unit": "s after midnight"
-    },
-    {
-     "name": "door_to_door_s",
-     "type": "double",
-     "nullable": true,
-     "unit": "s"
-    },
-    {
-     "name": "met_minus_expected_s",
-     "type": "double",
-     "nullable": true,
-     "unit": "s"
-    },
-    {
-     "name": "result",
-     "type": "string",
-     "nullable": false,
-     "unit": "text"
     }
    ],
    "metadata": [
@@ -1390,7 +1342,7 @@
      "unit": "text"
     },
     {
-     "name": "service_met_arrival_s",
+     "name": "service_arrival_s",
      "type": "double",
      "nullable": false,
      "unit": "s after midnight"
@@ -1441,8 +1393,8 @@
     "route_update",
     "route_update_descriptor",
     "run_fingerprint",
+    "service_assumptions",
     "service_day",
-    "service_expectations",
     "simulated_travellers",
     "threads",
     "total_trips",

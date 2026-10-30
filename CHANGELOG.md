@@ -5,33 +5,47 @@ a minor version may change the interface, and says so here.
 
 ## Unreleased
 
-**Shared-mobility services in a run: planned on fixed expectations, played once after the run.** A run with a
-docked bike service or a taxi fleet (`services=`) offers them to the trips that choose their mode, priced on what
-travellers expect, fixed for the whole run: `Scenario.run(service_expectations=...)`, a preset (`"default"`,
-`"optimistic"`, `"pessimistic"`) or values by name (`taxi_wait_s` 600, `taxi_fail_share` 0, `dock_pickup_extra_s`
-and `dock_return_extra_s`, the extra walk expected at a pickup and a return dock in seconds, `None` by default for the
-docks' start-of-day counts, `dock_worst_case` 0; every value an assumption, uncalibrated), recorded in the fingerprint and
-`manifest.json`. The loadings do not play the services: a service trip arrives as planned. Once the run has stopped,
-its last loading's service trips are played in one day on the fleet engine, the taxis on that loading's road times,
-and what they met is reported beside what they expected.
-- `trip_results` of a run with a service has two more columns: `service_outcome` (`served`, `failed`, `truncated`;
-  empty for a trip without a service) and `service_met_arrival_s`.
-- `kpis.parquet` has one row set per service, under its name: `service_trips`, `served`, `failed`, `truncated`,
-  `expected_door_to_door_s`, `met_door_to_door_s`, `mismatch_mean_s`, `mismatch_abs_mean_s` and, for a taxi fleet,
-  `wait_mean_s`; `manifest.json` has `service_expectations` and `service_day`, which says how the day was played.
-- `Run.service_expectations()` returns what travellers planned on; `Run.service_met()` what the day gave, in the same
-  form (the taxis' mean wait and failed share, the docks' mean extra seconds at the pickup and at the return), so a
-  next run can plan on it: `scenario.run(service_expectations=run.service_met())`. A docked service's KPI rows add
-  `dock_pickup_extra_s` and `dock_return_extra_s`, and `bike_share_trips` splits `extra_s` into `pickup_extra_s` and
-  `return_extra_s`.
-- A taxi request that gets no vehicle within the fleet's longest wait ends there, with no walk on: in a run, in
-  `fleet_day` and in `fleet_environment`.
-- A taxi sets off after a hailing time: `service_taxi` option `hail_s` (120 s, an assumption), the seconds from a
-  request being matched to a vehicle to that vehicle driving to the pickup. The wait counts it, and a vehicle serves a
-  request only if the hailing time and its drive fit within `max_wait_s`; a `hail_s` at or above `max_wait_s` is
-  refused.
-- The output schema is version 3 (`openmobisim.schema_version` in every file, `manifest_version`): `taxi_trips` has
-  no `walk_s` column, since a taxi request with no vehicle ends with no walk on.
+**Shared-mobility services in a run: chosen on fixed assumptions, played once after the run.** A run with a
+docked bike service or a taxi fleet (`services=`) offers them to the trips that choose their mode. What travellers
+assume when they choose is fixed for the whole run and set by name, `Scenario.run(service_assumptions={...})`:
+`assumed_wait_s` (600 s, the waiting time before a taxi picks them up), `assumed_no_taxi_share` (0, the chance of
+getting no taxi), `assumed_extra_walk_at_pickup_s` and `assumed_extra_walk_at_return_s` (the extra walk a shared-bike
+user assumes if the pickup dock is empty or the return dock full, in seconds; `None` by default: from the docks'
+start-of-day bikes). Every value is an assumption, uncalibrated, recorded in the fingerprint and `manifest.json`
+(`service_assumptions`); a misspelt name is refused with the list. The loadings do not play the services: a service
+trip arrives as planned. Once the run has stopped, its last loading's service trips are played in one day on the fleet
+engine, the taxis on that loading's road times, and what the fleet actually did is reported beside what was assumed.
+- A taxi alternative's planned time is the assumed wait, boarding and the drive, whatever the fleet's cancel limit.
+  With an assumed chance `p` of no taxi above 0, a cancelled request is followed, after the cancel limit, by the
+  traveller's best other alternative; under the random utility model this is the ride, fare in full, with the cancel
+  limit × `p / (1 − p)` added to its waiting in the choice, so a higher assumed chance always makes a taxi less
+  likely to be chosen.
+- A taxi fleet's options: `request_cancel_s` (600 s: a request is cancelled if no taxi can pick it up within this
+  time; the trip ends there, with no walk on, in a run, in `fleet_day` and in `fleet_environment`),
+  `dispatch_delay_s` (120 s: from a request being matched to the taxi setting off; the waiting time counts it, and a
+  `dispatch_delay_s` at or above `request_cancel_s` is refused) and `boarding_s` (60 s). Assumptions, uncalibrated.
+- `taxi_trips.parquet` holds one row per request: `requested_s`, `assumed_wait_s`, `outcome` (`completed`,
+  `cancelled`, `unfinished`, `not_requested`), `vehicle`, `pickup_s`, `dropoff_s`, `waiting_s`, `in_vehicle_s`,
+  `ride_km`, `empty_km`. `taxi_events.parquet` ends a cancelled request with `request_cancelled`.
+- `kpis.parquet` has one row set per service, under its name, for the last iteration. A taxi fleet: `requests`,
+  `rides`, `cancelled`, `unfinished`, `waiting_mean_s`, `waiting_median_s`, `waiting_p90_s`, `assumed_wait_s`,
+  `in_vehicle_mean_s`, `ride_km_mean`, `empty_km_per_ride`, `utilisation`, `rides_per_taxi`, `kwh_charged`. A docked
+  bike service: `requests`, `rides`, `no_bike`, `unfinished`, `extra_walk_at_pickup_mean_s`,
+  `extra_walk_at_return_mean_s`, `assumed_extra_walk_at_pickup_s`, `assumed_extra_walk_at_return_s`,
+  `redirected_share`.
+- `bike_share_trips.parquet` has `outcome` (`completed`, `cancelled`: no bike at any dock tried, `unfinished`,
+  `not_requested`) and splits `extra_s` into `extra_walk_at_pickup_s` and `extra_walk_at_return_s`.
+- `trip_results` of a run with a service has two more columns: `service_outcome` (`completed`, `cancelled`,
+  `unfinished`; empty for a trip without a service) and `service_arrival_s`, the second the service day actually
+  brought the traveller to the destination. `manifest.json` has `service_assumptions` and `service_day`, which says
+  how the day was played.
+- `Run.service_assumptions()` returns what the travellers assumed; `Run.service_actual()` what the service day
+  actually gave, in the same form (the taxis' mean waiting time and cancelled share, the docks' mean extra walks), so a
+  next run can assume it: `scenario.run(service_assumptions=run.service_actual())`.
+- `fleet_day`'s and `fleet_environment`'s trip tables have `outcome`, `pickup_s`, `dropoff_s` and `waiting_s`; the
+  standard reward's weight per cancelled request is `w_cancelled`; a docked service's view and observation count
+  `no_bike` per dock.
+- The output schema is version 4 (`openmobisim.schema_version` in every file, `manifest_version`).
 - `Run.freeze` keeps the day's taxi legs and road times too: `fleet_day(frozen=...)` replays the run's day, bikes and
   taxis, leg by leg.
 

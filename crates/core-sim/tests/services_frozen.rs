@@ -91,7 +91,7 @@ fn trips_ride_between_their_nearest_docks_and_the_second_walks_rather_than_ride_
         FleetEngine::in_world(setups, day, Arc::new(world), None).run_day().expect("no policy");
     let (first, second) = (out.legs[0], out.legs[1]);
     let s = DockDefaults::SHIPPED;
-    assert_eq!(first.status, LegStatus::Served);
+    assert_eq!(first.status, LegStatus::Completed);
     let expected = legs[0].request_s + s.pickup_s + legs[0].ride_s + s.return_s + legs[0].egress_s;
     assert!(
         (first.arrived_s - expected).abs() < 1e-6,
@@ -100,7 +100,7 @@ fn trips_ride_between_their_nearest_docks_and_the_second_walks_rather_than_ride_
     );
     // The second finds R2 empty. The nearest other dock, D2, is its return dock: from there a
     // bike would ride 0 m, so walking on is no slower and it gives up, walking from R2 (S302).
-    assert_eq!(second.status, LegStatus::Failed);
+    assert_eq!(second.status, LegStatus::Cancelled);
     assert_eq!((second.picked, second.redirections, second.failed_for_bike), (None, 0, 1));
     let walk_r2_d2 = paths.walk_s(
         walk.network().network().node_external_ids().typed_id_of("R2").unwrap(),

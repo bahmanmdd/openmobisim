@@ -10,8 +10,8 @@
 //! vehicle, vehicle_state_after, charge_after, charger, drive_km`. `event` is one of
 //! `asked_for_taxi`, `waiting_for_taxi` (no idle vehicle could take it at once),
 //! `taxi_assigned`, `taxi_arrived_at_pickup`, `picked_up` (boarded, the drive starts),
-//! `dropped_off`, `no_taxi_within_wait_limit` (no vehicle sent within the fleet's `max_wait_s`:
-//! the trip's last event), `still_waiting_at_window_end`, `still_riding_at_window_end`, and the
+//! `dropped_off`, `request_cancelled` (no taxi could pick it up within the fleet's cancel limit
+//! `request_cancel_s`: the trip's last event), `still_waiting_at_window_end`, `still_riding_at_window_end`, and the
 //! vehicles' own `vehicle_went_to_charge`, `queued_for_plug`, `started_charging`, `charged`
 //! (`traveller_id`, `trip_seq` and `travellers` null). `vehicle_state_after` is one of `idle`,
 //! `to_pickup`, `occupied`, `relocating`, `to_charger`, `charging`, `queued_at_charger`;
@@ -19,16 +19,16 @@
 //! kilometres of the drive the event starts. Without the fleet's log (`options={"log_events":
 //! 0}`) the file has no rows.
 //!
-//! **`taxi_trips.parquet`** — one row per trip that chose a taxi, in trip order: who (`run_id,
-//! service, traveller_id, trip_seq, travellers`); the plan (`requested_s, expected_wait_s,
-//! expected_no_taxi_share, expected_door_to_door_s`); what happened (`vehicle, assigned_s,
-//! taxi_at_pickup_s, waited_s, km_to_pickup, km_with_passenger, dropped_off_s, arrived_s,
-//! door_to_door_s`; `assigned_s` is when a vehicle was matched, which sets off after the
-//! fleet's hailing time `hail_s`; a request with no vehicle within the longest wait ends there,
-//! so it has no arrival); the difference (`waited_minus_expected_s`,
-//! `met_minus_expected_s` = `door_to_door_s − expected_door_to_door_s`, positive when worse than
-//! expected); and `result`: `as_planned`, `waited_longer_than_expected` (by more than a
-//! minute), `no_taxi`, `still_waiting_at_window_end`, `still_riding_at_window_end`, `not_started`.
+//! **`taxi_trips.parquet`** — one row per request (a trip that chose a taxi), in trip order:
+//! `run_id, service, traveller_id, trip_seq, travellers, requested_s` (the departure),
+//! `assumed_wait_s` (the waiting time the traveller assumed when choosing), `outcome`
+//! (`completed`: picked up and dropped off; `cancelled`: no taxi could pick it up within the
+//! fleet's cancel limit `request_cancel_s`, and the trip ends there; `unfinished`: still waiting
+//! or riding when the window ended; `not_requested`: a departure after the window), `vehicle`,
+//! `pickup_s` (the taxi at the pickup), `dropoff_s`, `waiting_s` (from the request to the
+//! pickup, the dispatch delay `dispatch_delay_s` included; null if not picked up),
+//! `in_vehicle_s` (from the pickup to the drop-off, boarding included), `ride_km` (with the
+//! passenger on board), `empty_km` (the taxi's drive to the pickup).
 //!
 //! **`taxi_vehicles.parquet`** — one row per vehicle and 15-minute bin, vehicle by vehicle:
 //! `run_id, service, vehicle, bin_start, bin_end, bin_start_s, bin_end_s`; the seconds in each
@@ -102,21 +102,15 @@ pub fn write_taxi_trips(
         .count("trip_seq", &t.trip_seq)
         .count("travellers", &t.travellers)
         .number("requested_s", &t.requested_s)
-        .number("expected_wait_s", &t.expected_wait_s)
-        .number("expected_no_taxi_share", &t.expected_no_taxi_share)
-        .number("expected_door_to_door_s", &t.expected_door_to_door_s)
+        .number("assumed_wait_s", &t.assumed_wait_s)
+        .text("outcome", &t.outcome)
         .maybe_text("vehicle", &t.vehicle)
-        .maybe_number("assigned_s", &t.assigned_s)
-        .maybe_number("taxi_at_pickup_s", &t.taxi_at_pickup_s)
-        .number("waited_s", &t.waited_s)
-        .maybe_number("waited_minus_expected_s", &t.waited_minus_expected_s)
-        .maybe_number("km_to_pickup", &t.km_to_pickup)
-        .maybe_number("km_with_passenger", &t.km_with_passenger)
-        .maybe_number("dropped_off_s", &t.dropped_off_s)
-        .maybe_number("arrived_s", &t.arrived_s)
-        .maybe_number("door_to_door_s", &t.door_to_door_s)
-        .maybe_number("met_minus_expected_s", &t.met_minus_expected_s)
-        .text("result", &t.result);
+        .maybe_number("pickup_s", &t.pickup_s)
+        .maybe_number("dropoff_s", &t.dropoff_s)
+        .maybe_number("waiting_s", &t.waiting_s)
+        .maybe_number("in_vehicle_s", &t.in_vehicle_s)
+        .maybe_number("ride_km", &t.ride_km)
+        .maybe_number("empty_km", &t.empty_km);
     c.write(path.as_ref(), description, &[])
 }
 

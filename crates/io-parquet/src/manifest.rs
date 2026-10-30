@@ -123,10 +123,10 @@ pub struct Manifest {
     pub person_values: Vec<String>,
     /// See [`Self::person_values`].
     pub trip_values: Vec<String>,
-    /// In a run with a service (S303), what travellers expected of the services, by name;
+    /// In a run with a service (S303), what travellers assumed about the services, by name;
     /// with it the manifest's `service_day` says how the services' results were made. `None`
     /// without a service: neither key is written.
-    pub service_expectations: Option<Vec<(String, f64)>>,
+    pub service_assumptions: Option<Vec<(String, f64)>>,
     /// How many loadings the run made.
     pub iterations_run: u32,
     /// Whether the strategy stopped before its most iterations because it had
@@ -213,7 +213,7 @@ impl Manifest {
             prices: description.prices.clone(),
             person_values: description.person_values.clone(),
             trip_values: description.trip_values.clone(),
-            service_expectations: description.service_expectations.clone(),
+            service_assumptions: description.service_assumptions.clone(),
             iterations_run: u32::try_from(result.iterations.len().max(1)).unwrap_or(u32::MAX),
             converged: result.converged,
             outputs: "all".to_string(),
@@ -335,11 +335,11 @@ impl Manifest {
         ];
         let mut body: Vec<String> =
             fields.iter().map(|(key, value)| format!("  \"{key}\": {value}")).collect();
-        // A run with a service (S303): its expectations and how its service results were made.
-        if let Some(e) = &self.service_expectations {
+        // A run with a service (S303): its assumptions and how its service results were made.
+        if let Some(e) = &self.service_assumptions {
             let inner: Vec<String> =
                 e.iter().map(|(n, v)| format!("{}: {}", text(n), number(*v))).collect();
-            body.push(format!("  \"service_expectations\": {{{}}}", inner.join(", ")));
+            body.push(format!("  \"service_assumptions\": {{{}}}", inner.join(", ")));
             body.push(format!("  \"service_day\": {}", text(SERVICE_DAY)));
         }
         format!("{{\n{}\n}}\n", body.join(",\n"))
@@ -347,8 +347,9 @@ impl Manifest {
 }
 
 /// What `manifest.json`'s `service_day` says of a run with a service (S303).
-pub const SERVICE_DAY: &str = "service day played after the run on its last loading's road \
-     times; demand fixed; trip rows as planned";
+pub const SERVICE_DAY: &str = "the services were played once after the run, on its last \
+     loading's road times; the travellers chose on fixed assumptions; trip rows show the planned \
+     trip and the actual outcome";
 
 /// A limit as JSON can hold it: an infinite one (every walk or ride offered) as the string
 /// `"inf"`, since JSON has no infinity (a bare `inf` made the file unreadable).

@@ -126,7 +126,6 @@ fn trips_dict<'py>(py: Python<'py>, t: &BikeShareTripTable) -> PyResult<Bound<'p
     d.set_item("planned_return_dock", t.planned_return_dock.clone())?;
     d.set_item("planned_at_pickup_dock_s", t.planned_at_pickup_dock_s.clone().into_pyarray(py))?;
     d.set_item("planned_leg_end_s", t.planned_leg_end_s.clone().into_pyarray(py))?;
-    d.set_item("expected_extra_s", t.expected_extra_s.clone().into_pyarray(py))?;
     d.set_item("pickup_dock", t.pickup_dock.clone())?;
     d.set_item("pickup_s", nan(&t.pickup_s).into_pyarray(py))?;
     d.set_item("docks_tried_for_bike", t.docks_tried_for_bike.clone().into_pyarray(py))?;
@@ -135,13 +134,12 @@ fn trips_dict<'py>(py: Python<'py>, t: &BikeShareTripTable) -> PyResult<Bound<'p
     d.set_item("docks_tried_for_slot", t.docks_tried_for_slot.clone().into_pyarray(py))?;
     d.set_item("leg_end_s", nan(&t.leg_end_s).into_pyarray(py))?;
     d.set_item("extra_s", nan(&t.extra_s).into_pyarray(py))?;
-    d.set_item("pickup_extra_s", nan(&t.pickup_extra_s).into_pyarray(py))?;
-    d.set_item("return_extra_s", nan(&t.return_extra_s).into_pyarray(py))?;
+    d.set_item("extra_walk_at_pickup_s", nan(&t.extra_walk_at_pickup_s).into_pyarray(py))?;
+    d.set_item("extra_walk_at_return_s", nan(&t.extra_walk_at_return_s).into_pyarray(py))?;
     d.set_item("extra_walk_m", t.extra_walk_m.clone().into_pyarray(py))?;
-    d.set_item("met_minus_expected_s", nan(&t.met_minus_expected_s).into_pyarray(py))?;
     d.set_item("failed_attempts_for_bike", t.failed_attempts_for_bike.clone().into_pyarray(py))?;
     d.set_item("failed_attempts_for_slot", t.failed_attempts_for_slot.clone().into_pyarray(py))?;
-    d.set_item("result", t.result.clone())?;
+    d.set_item("outcome", t.outcome.clone())?;
     Ok(d)
 }
 
@@ -291,30 +289,20 @@ fn taxi_trips_dict<'py>(py: Python<'py>, t: &TaxiTripTable) -> PyResult<Bound<'p
     d.set_item("traveller_id", t.traveller_id.clone())?;
     d.set_item("trip_seq", t.trip_seq.clone().into_pyarray(py))?;
     d.set_item("travellers", t.travellers.clone().into_pyarray(py))?;
-    for (name, v) in [
-        ("requested_s", &t.requested_s),
-        ("expected_wait_s", &t.expected_wait_s),
-        ("expected_no_taxi_share", &t.expected_no_taxi_share),
-        ("expected_door_to_door_s", &t.expected_door_to_door_s),
-    ] {
-        d.set_item(name, v.clone().into_pyarray(py))?;
-    }
+    d.set_item("requested_s", t.requested_s.clone().into_pyarray(py))?;
+    d.set_item("assumed_wait_s", t.assumed_wait_s.clone().into_pyarray(py))?;
+    d.set_item("outcome", t.outcome.clone())?;
     d.set_item("vehicle", t.vehicle.clone())?;
-    d.set_item("assigned_s", nan(&t.assigned_s).into_pyarray(py))?;
-    d.set_item("taxi_at_pickup_s", nan(&t.taxi_at_pickup_s).into_pyarray(py))?;
-    d.set_item("waited_s", t.waited_s.clone().into_pyarray(py))?;
     for (name, v) in [
-        ("waited_minus_expected_s", &t.waited_minus_expected_s),
-        ("km_to_pickup", &t.km_to_pickup),
-        ("km_with_passenger", &t.km_with_passenger),
-        ("dropped_off_s", &t.dropped_off_s),
-        ("arrived_s", &t.arrived_s),
-        ("door_to_door_s", &t.door_to_door_s),
-        ("met_minus_expected_s", &t.met_minus_expected_s),
+        ("pickup_s", &t.pickup_s),
+        ("dropoff_s", &t.dropoff_s),
+        ("waiting_s", &t.waiting_s),
+        ("in_vehicle_s", &t.in_vehicle_s),
+        ("ride_km", &t.ride_km),
+        ("empty_km", &t.empty_km),
     ] {
         d.set_item(name, nan(v).into_pyarray(py))?;
     }
-    d.set_item("result", t.result.clone())?;
     Ok(d)
 }
 

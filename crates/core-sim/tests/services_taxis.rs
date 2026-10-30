@@ -1,8 +1,8 @@
 //! Electric taxis on the fleet engine: on a line of ten nodes a kilometre apart, driven at 60 s
 //! a kilometre, every time, distance and charge has a closed form. What is defended: the times
-//! of a request served at once and of one that waits (the closed forms with no hailing time);
-//! the hailing time delays the pickup and the drop-off by as much and can put a request past the
-//! longest wait; a request that waits too long fails; a
+//! of a request picked up at once and of one that waits (the closed forms with no dispatch delay);
+//! the dispatch delay delays the pickup and the drop-off by as much and can put a request past the
+//! cancel limit; a request that waits too long is cancelled; a
 //! vehicle without charge enough is not sent; the default charging rule and a one-plug queue;
 //! vehicles conserved at every bin; a leg of two people; the same inputs give the same day, and
 //! a copy taken in the middle ends as the original; options and rows checked by name.
@@ -158,22 +158,22 @@ fn close(a: f64, b: f64) -> bool {
     (a - b).abs() < 1e-9
 }
 
-/// The shipped defaults with no hailing time: a vehicle sets off at the match, so the
+/// The shipped defaults with no dispatch delay: a vehicle sets off at the match, so the
 /// closed forms below hold as written.
-const NO_HAIL: TaxiDefaults = TaxiDefaults { hail_s: 0.0, ..TaxiDefaults::SHIPPED };
+const NO_DELAY: TaxiDefaults = TaxiDefaults { dispatch_delay_s: 0.0, ..TaxiDefaults::SHIPPED };
 
-/// [`NO_HAIL`] with `options` by name.
-fn no_hail_with(options: &[(&str, f64)]) -> TaxiDefaults {
+/// [`NO_DELAY`] with `options` by name.
+fn no_delay_with(options: &[(&str, f64)]) -> TaxiDefaults {
     let mut o: Options = options.iter().map(|&(n, v)| (n.to_string(), v)).collect();
-    o.insert("hail_s".to_string(), 0.0);
+    o.insert("dispatch_delay_s".to_string(), 0.0);
     TaxiDefaults::from_options(&o).unwrap()
 }
 
 #[test]
-fn a_request_is_served_at_once_with_closed_form_times_distances_and_charge() {
+fn a_request_is_picked_up_at_once_with_closed_form_times_distances_and_charge() {
     let net = line();
     let roads = Line::new(&net);
-    let setup = fleet(&net, &[vehicle("v", 0, None)], &[], NO_HAIL);
+    let setup = fleet(&net, &[vehicle("v", 0, None)], &[], NO_DELAY);
     let out = load(&setup, legs(&roads, &[(100.0, 2, 5)]), 3600.0, roads);
     let o = taxis(&out).requests[0];
     assert_eq!(o.vehicle, Some(0));
@@ -181,31 +181,31 @@ fn a_request_is_served_at_once_with_closed_form_times_distances_and_charge() {
     assert!(close(o.assigned_s, 100.0) && close(o.picked_s, 220.0) && close(o.arrival_s, 460.0));
     assert!(close(o.empty_km, 2.0) && close(o.trip_km, 3.0));
     let v = taxis(&out).vehicles[0];
-    assert_eq!(v.served, 1);
+    assert_eq!(v.rides, 1);
     assert!(close(v.kwh_used, 5.0 * 0.18) && close(v.soc_end, 0.8 - 0.9 / 60.0));
     assert!(close(v.km_empty, 2.0) && close(v.km_occupied, 3.0));
     let l = out.legs[0];
-    assert_eq!((l.status, l.vehicle), (LegStatus::Served, Some(0)));
+    assert_eq!((l.status, l.vehicle), (LegStatus::Completed, Some(0)));
     assert!(close(l.requested_s, 100.0) && close(l.assigned_s, 100.0));
     assert!(close(l.picked_s, 220.0) && close(l.arrived_s, 460.0) && close(l.waited_s, 120.0));
 }
 
 #[test]
-fn a_hailing_time_delays_the_pickup_and_the_drop_off_by_as_much() {
+fn a_dispatch_delay_delays_the_pickup_and_the_drop_off_by_as_much() {
     let net = line();
-    let hail = TaxiDefaults::SHIPPED;
-    assert!(close(hail.hail_s, 120.0), "the shipped hailing time");
+    let delay = TaxiDefaults::SHIPPED;
+    assert!(close(delay.dispatch_delay_s, 120.0), "the shipped dispatch delay");
     let mut times = Vec::new();
-    for d in [NO_HAIL, hail] {
+    for d in [NO_DELAY, delay] {
         let roads = Line::new(&net);
         let setup = fleet(&net, &[vehicle("v", 0, None)], &[], d);
         let out = load(&setup, legs(&roads, &[(100.0, 2, 5)]), 3600.0, roads);
         let o = taxis(&out).requests[0];
         let l = out.legs[0];
-        assert_eq!((l.status, l.vehicle), (LegStatus::Served, Some(0)));
+        assert_eq!((l.status, l.vehicle), (LegStatus::Completed, Some(0)));
         // Matched at the request either way: the vehicle is held from then.
         assert!(close(o.assigned_s, 100.0) && close(l.assigned_s, 100.0));
-        // The same kilometres and energy: nothing is driven during the hailing.
+        // The same kilometres and energy: nothing is driven during the dispatch delay.
         assert!(close(o.empty_km, 2.0) && close(o.trip_km, 3.0));
         assert!(close(taxis(&out).vehicles[0].kwh_used, 5.0 * 0.18));
         times.push((o.picked_s, o.arrival_s, l.waited_s));
@@ -213,69 +213,77 @@ fn a_hailing_time_delays_the_pickup_and_the_drop_off_by_as_much() {
         let assigned = log.iter().find(|e| e.kind == TaxiEventKind::TaxiAssigned).unwrap();
         assert!(close(assigned.t, 100.0), "the match is logged at the request");
     }
-    // 2 km (120 s) to the pickup, 60 s to board, 3 km (180 s) to the drop-off; with the hail,
+    // 2 km (120 s) to the pickup, 60 s to board, 3 km (180 s) to the drop-off; with the delay,
     // each 120 s later, and the wait (request to pickup) 120 s longer.
     assert!(close(times[0].0, 220.0) && close(times[0].1, 460.0) && close(times[0].2, 120.0));
     assert!(close(times[1].0, 340.0) && close(times[1].1, 580.0) && close(times[1].2, 240.0));
 }
 
 #[test]
-fn a_request_the_hailing_time_puts_past_the_longest_wait_fails() {
+fn a_request_the_dispatch_delay_puts_past_the_cancel_limit_is_cancelled() {
     let net = line();
     // At 62.5 s a kilometre the vehicle at n0 reaches n8 in 500 s: within the 600 s longest
-    // wait with no hailing time, not with 120 s of it (500 + 120 > 600).
+    // wait with no dispatch delay, not with 120 s of it (500 + 120 > 600).
     let slow = |net: &RoadNetwork| Line { s_km: 62.5, ..Line::new(net) };
     let roads = slow(&net);
-    let setup = fleet(&net, &[vehicle("v", 0, None)], &[], NO_HAIL);
+    let setup = fleet(&net, &[vehicle("v", 0, None)], &[], NO_DELAY);
     let out = load(&setup, legs(&roads, &[(100.0, 8, 9)]), 3600.0, roads);
-    assert_eq!(out.legs[0].status, LegStatus::Served);
+    assert_eq!(out.legs[0].status, LegStatus::Completed);
     assert!(close(out.legs[0].waited_s, 500.0));
     let roads = slow(&net);
     let setup = fleet(&net, &[vehicle("v", 0, None)], &[], TaxiDefaults::SHIPPED);
     let out = load(&setup, legs(&roads, &[(100.0, 8, 9)]), 3600.0, roads);
     let o = taxis(&out).requests[0];
     assert_eq!(o.vehicle, None);
-    assert!(o.failed && o.assigned_s.is_nan());
+    assert!(o.cancelled && o.assigned_s.is_nan());
     let l = out.legs[0];
-    assert_eq!((l.status, l.vehicle), (LegStatus::Failed, None));
+    assert_eq!((l.status, l.vehicle), (LegStatus::Cancelled, None));
     assert!(close(l.waited_s, 600.0));
-    // A hailing time at or above the longest wait would serve nobody: refused at setup.
+    // A dispatch delay at or above the cancel limit would cancel every request: refused at setup.
     let o = |pairs: &[(&str, f64)]| -> Options {
         pairs.iter().map(|&(n, v)| (n.to_string(), v)).collect()
     };
-    let refused = TaxiDefaults::from_options(&o(&[("hail_s", 600.0)]));
-    assert!(matches!(refused, Err(ServiceError::BadOption { ref name, .. }) if name == "hail_s"));
-    assert!(refused.unwrap_err().to_string().contains("max_wait_s"));
-    assert!(TaxiDefaults::from_options(&o(&[("max_wait_s", 60.0)])).is_err());
-    assert!(TaxiDefaults::from_options(&o(&[("max_wait_s", 60.0), ("hail_s", 30.0)])).is_ok());
-    assert!(TaxiDefaults::from_options(&o(&[("max_wait_s", 0.0), ("hail_s", 0.0)])).is_ok());
-    let literal = TaxiDefaults { max_wait_s: 100.0, ..TaxiDefaults::SHIPPED };
+    let refused = TaxiDefaults::from_options(&o(&[("dispatch_delay_s", 600.0)]));
+    assert!(
+        matches!(refused, Err(ServiceError::BadOption { ref name, .. }) if name == "dispatch_delay_s")
+    );
+    assert!(refused.unwrap_err().to_string().contains("request_cancel_s"));
+    assert!(TaxiDefaults::from_options(&o(&[("request_cancel_s", 60.0)])).is_err());
+    assert!(
+        TaxiDefaults::from_options(&o(&[("request_cancel_s", 60.0), ("dispatch_delay_s", 30.0)]))
+            .is_ok()
+    );
+    assert!(
+        TaxiDefaults::from_options(&o(&[("request_cancel_s", 0.0), ("dispatch_delay_s", 0.0)]))
+            .is_ok()
+    );
+    let literal = TaxiDefaults { request_cancel_s: 100.0, ..TaxiDefaults::SHIPPED };
     assert!(ServiceSetup::taxi("taxi", &net, &[vehicle("v", 0, None)], &[], literal).is_err());
-    assert!(TaxiDefaults::from_options(&o(&[("hail_s", -1.0)])).is_err());
+    assert!(TaxiDefaults::from_options(&o(&[("dispatch_delay_s", -1.0)])).is_err());
 }
 
 #[test]
-fn a_second_request_waits_for_the_vehicle_and_one_that_waits_too_long_fails() {
+fn a_second_request_waits_for_the_vehicle_and_one_that_waits_too_long_is_cancelled() {
     let net = line();
     let roads = Line::new(&net);
-    let setup = fleet(&net, &[vehicle("v", 0, None)], &[], NO_HAIL);
+    let setup = fleet(&net, &[vehicle("v", 0, None)], &[], NO_DELAY);
     let both = [(100.0, 2, 5), (100.0, 2, 4)];
     let out = load(&setup, legs(&roads, &both), 3600.0, roads);
     // Freed at n5 at 460 s, 3 km (180 s) from the second's pickup: within its 600 s wait.
     let o = taxis(&out).requests[1];
     assert!(close(o.assigned_s, 460.0) && close(o.picked_s, 640.0) && close(o.arrival_s, 820.0));
-    assert_eq!(out.legs[1].status, LegStatus::Served);
+    assert_eq!(out.legs[1].status, LegStatus::Completed);
     assert!(close(out.legs[1].waited_s, 540.0));
-    let d = no_hail_with(&[("max_wait_s", 300.0)]);
+    let d = no_delay_with(&[("request_cancel_s", 300.0)]);
     let setup = fleet(&net, &[vehicle("v", 0, None)], &[], d);
     let roads = Line::new(&net);
     let out = load(&setup, legs(&roads, &both), 3600.0, roads);
     // Now it would reach the pickup at 640 s, past 100 + 300: the trip is not made.
     let o = taxis(&out).requests[1];
     assert_eq!(o.vehicle, None);
-    assert!(o.failed && o.arrival_s.is_nan());
+    assert!(o.cancelled && o.arrival_s.is_nan());
     let l = out.legs[1];
-    assert_eq!((l.status, l.vehicle), (LegStatus::Failed, None));
+    assert_eq!((l.status, l.vehicle), (LegStatus::Cancelled, None));
     assert!(l.arrived_s.is_nan() && close(l.waited_s, 300.0));
 }
 
@@ -283,12 +291,12 @@ fn a_second_request_waits_for_the_vehicle_and_one_that_waits_too_long_fails() {
 fn a_vehicle_without_charge_enough_is_not_sent() {
     let net = line();
     let roads = Line::new(&net);
-    let d = no_hail_with(&[("charge_below", 0.155)]);
+    let d = no_delay_with(&[("charge_below", 0.155)]);
     // 5 km take 0.015 of the battery: from 0.16 the vehicle would end below the 0.15 reserve.
     let setup = fleet(&net, &[vehicle("v", 0, Some(0.16))], &[], d);
     let out = load(&setup, legs(&roads, &[(100.0, 2, 5)]), 3600.0, roads);
     assert_eq!(taxis(&out).requests[0].vehicle, None);
-    assert_eq!(out.legs[0].status, LegStatus::Failed);
+    assert_eq!(out.legs[0].status, LegStatus::Cancelled);
     assert!(close(taxis(&out).vehicles[0].soc_end, 0.16));
 }
 
@@ -297,12 +305,12 @@ fn below_the_threshold_a_vehicle_charges_and_a_second_waits_for_the_one_plug() {
     let net = line();
     let roads = Line::new(&net);
     let vehicles = [vehicle("a", 0, Some(0.21)), vehicle("b", 1, Some(0.21))];
-    let setup = fleet(&net, &vehicles, &[charger("c", 9, 1)], NO_HAIL);
+    let setup = fleet(&net, &vehicles, &[charger("c", 9, 1)], NO_DELAY);
     // Each takes a passenger to n5 and falls below 0.2: both drive to the one-plug charger.
     let out = load(&setup, legs(&roads, &[(100.0, 1, 5), (100.0, 2, 5)]), 86_400.0, roads);
     let day = taxis(&out);
     for v in &day.vehicles {
-        assert_eq!(v.served, 1);
+        assert_eq!(v.rides, 1);
         assert!(close(v.soc_end, 0.8), "charged to the target: {}", v.soc_end);
         assert!(v.kwh_charged > 0.0);
     }
@@ -323,7 +331,7 @@ fn below_the_threshold_a_vehicle_charges_and_a_second_waits_for_the_one_plug() {
 fn a_leg_of_two_is_two_unit_requests_and_arrives_with_the_last() {
     let net = line();
     let roads = Line::new(&net);
-    let setup = fleet(&net, &[vehicle("v", 0, None)], &[], NO_HAIL);
+    let setup = fleet(&net, &[vehicle("v", 0, None)], &[], NO_DELAY);
     let out = load(&setup, vec![leg(&roads, 0, 100.0, 2, 5, 2)], 3600.0, roads);
     let day = taxis(&out);
     assert_eq!(day.requests.len(), 2);
@@ -332,13 +340,13 @@ fn a_leg_of_two_is_two_unit_requests_and_arrives_with_the_last() {
     assert!(close(day.requests[0].arrival_s, 460.0));
     assert!(close(day.requests[1].assigned_s, 460.0) && close(day.requests[1].arrival_s, 880.0));
     let l = out.legs[0];
-    assert_eq!((l.status, l.vehicle), (LegStatus::Served, Some(0)));
+    assert_eq!((l.status, l.vehicle), (LegStatus::Completed, Some(0)));
     assert!(close(l.assigned_s, 460.0) && close(l.arrived_s, 880.0) && close(l.waited_s, 540.0));
-    assert_eq!(day.vehicles[0].served, 2);
+    assert_eq!(day.vehicles[0].rides, 2);
     // Ended before the second's drop-off: under way, truncated.
     let roads = Line::new(&net);
     let out = load(&setup, vec![leg(&roads, 0, 100.0, 2, 5, 2)], 700.0, roads);
-    assert_eq!(out.legs[0].status, LegStatus::Truncated);
+    assert_eq!(out.legs[0].status, LegStatus::Unfinished);
 }
 
 #[test]
@@ -351,7 +359,7 @@ fn the_same_inputs_give_the_same_day() {
         .collect();
     let a = load(&setup, legs(&Line::new(&net), &requests), 7200.0, Line::new(&net));
     let b = load(&setup, legs(&Line::new(&net), &requests), 7200.0, Line::new(&net));
-    // Compared as printed (exact to the bit), since a failed request's times are NaN.
+    // Compared as printed (exact to the bit), since a cancelled request's times are NaN.
     assert_eq!(format!("{a:?}"), format!("{b:?}"));
     let day = taxis(&a);
     assert!(day.requests.iter().any(|o| o.vehicle.is_none()), "some fail: the test covers both");
@@ -408,9 +416,9 @@ fn a_random_day_conserves_vehicles_and_charge_replays_and_a_copy_ends_as_the_ori
     assert!(td.vehicles.iter().all(|v| v.soc_end >= 0.0));
     assert!(td.bins.states.iter().all(|s| s.iter().sum::<u32>() == 3));
     assert!(td.vehicles.iter().any(|v| v.kwh_charged > 0.0), "someone charged");
-    let served = a.legs.iter().filter(|l| l.status == LegStatus::Served).count();
-    let failed = a.legs.iter().filter(|l| l.status == LegStatus::Failed).count();
-    assert!(served > 0 && failed > 0, "served {served}, failed {failed}");
+    let completed = a.legs.iter().filter(|l| l.status == LegStatus::Completed).count();
+    let cancelled = a.legs.iter().filter(|l| l.status == LegStatus::Cancelled).count();
+    assert!(completed > 0 && cancelled > 0, "completed {completed}, cancelled {cancelled}");
     let b = load(&setup, day(&Line::new(&net)), window, Line::new(&net));
     // Printed, so the times not yet known (`NaN`) compare equal.
     assert_eq!(format!("{a:?}"), format!("{b:?}"), "the same day twice");

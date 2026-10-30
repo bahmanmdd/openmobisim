@@ -421,7 +421,7 @@ fn sample_description(step: Option<f64>, bins: Option<u32>) -> RunDescription {
         prices: None,
         person_values: Vec::new(),
         trip_values: Vec::new(),
-        service_expectations: None,
+        service_assumptions: None,
     }
 }
 
@@ -779,7 +779,7 @@ fn every_parquet_file_carries_the_schema_version() {
     };
     let expected = Some(openmobisim_io_parquet::SCHEMA_VERSION.to_string());
     assert_eq!(openmobisim_io_parquet::SCHEMA_VERSION_KEY, "openmobisim.schema_version");
-    assert_eq!(expected.as_deref(), Some("3"));
+    assert_eq!(expected.as_deref(), Some("4"));
 
     let result = sample_result();
     let kpis = temp_path("version-kpis.parquet");
