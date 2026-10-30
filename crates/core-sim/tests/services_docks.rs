@@ -1,6 +1,6 @@
 //! Docked bikes on the fleet engine: docks snapped to the walk and bike layers, their
 //! neighbours, pickups and returns with counted bikes, a traveller redirected from an empty or
-//! full dock, a failed pickup, overflow, and the docks' expected costs.
+//! full dock, a pickup with no bike at any dock tried, overflow, and the docks' assumed costs.
 //!
 //! The network: a 5 × 5 two-way grid of 200 m blocks; three docks on its first row, at 0, 200
 //! and 600 m (A, B, C). Rides go at 4 m/s as the crow flies; every walk to a destination from a
@@ -226,7 +226,7 @@ fn a_traveller_at_an_empty_dock_walks_on_to_the_nearest_with_a_bike() {
 }
 
 #[test]
-fn a_pickup_fails_past_the_docks_near_the_planned_one_and_the_traveller_walks() {
+fn no_bike_past_the_docks_near_the_planned_one_cancels_the_leg_and_the_traveller_walks() {
     let s = three([0, 0, 0], 2);
     let t = trip(0, 100.0, A, C, &s);
     let out = load(&s, &[t], 3600.0);
@@ -427,7 +427,7 @@ fn a_day_of_200_random_legs_conserves_bikes_and_replays_exactly() {
     let out = load(&s, &legs, 7_200.0);
     let bins = out.docks[0].as_ref().unwrap();
     assert!(sum(&bins.pickups) > 0.0 && sum(&bins.no_bike) > 0.0, "a busy day: some fail");
-    // Every leg requested is served, failed or still riding at the end.
+    // Every leg requested is completed, cancelled or still riding at the end.
     for o in &out.legs {
         assert!(
             matches!(o.status, LegStatus::Completed | LegStatus::Cancelled | LegStatus::Unfinished),

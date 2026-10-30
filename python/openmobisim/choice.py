@@ -178,19 +178,20 @@ ROUTE_ATTRIBUTES: tuple[str, ...] = (
 
 #: The attributes a shared bike adds, in a run with a docked bike service (``services``), after
 #: ``ROUTE_ATTRIBUTES``: ``mode_bike_share`` (1 for a shared bike, 0 for the rest: its
-#: constant), ``dock_min`` (the minutes expected walking to another dock when the pickup dock is
-#: empty or the return dock full; part of ``walk_min``, 0 for the other modes) and
+#: constant), ``dock_min`` (the minutes of extra walk assumed to another dock when the pickup dock
+#: is empty or the return dock full; part of ``walk_min``, 0 for the other modes) and
 #: ``mode_bike_share_transit`` (1 for a shared bike to a stop's hub then transit). A run without
 #: a service offers none.
 SERVICE_ATTRIBUTES: tuple[str, ...] = ("mode_bike_share", "dock_min", "mode_bike_share_transit")
 
 #: The attributes a taxi adds, in a run with a taxi fleet (``services``), after
 #: ``ROUTE_ATTRIBUTES`` (and ``SERVICE_ATTRIBUTES`` with a docked bike service too): ``mode_taxi``
-#: (1 for a taxi, 0 for the rest: its constant) and ``fail_prob`` (the expected share of requests
-#: from the trip's zone in its 15-minute bin that no vehicle reaches within the longest wait; 0
-#: for the other modes). A taxi's ``wait_min`` is its expected wait, its ``car_min`` its drive,
-#: its ``time_min`` the door-to-door expectation with the walk of a failed request. A run without
-#: a taxi fleet offers neither.
+#: (1 for a taxi, 0 for the rest: its constant) and ``fail_prob`` (the chance of getting no taxi
+#: the travellers assume, ``Scenario.run``'s ``assumed_no_taxi_share``; 0 for the other modes). A
+#: taxi's ``wait_min`` is the assumed waiting time, its ``parking_min`` the boarding, its
+#: ``car_min`` the drive; its ``time_min`` is their sum, or with a chance ``p`` of no taxi above
+#: 0, ``(1 − p)`` × that plus ``p`` × (the fleet's cancel limit plus the time of the traveller's
+#: best other alternative). A run without a taxi fleet offers neither.
 TAXI_ATTRIBUTES: tuple[str, ...] = ("mode_taxi", "fail_prob")
 
 
