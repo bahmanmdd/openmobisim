@@ -321,7 +321,8 @@ def test_a_run_from_files_repeats_from_its_folder_alone(tmp_path, capsys) -> Non
     assert main(["config", "--from", str(tmp_path / "first")]) == 0
     printed = capsys.readouterr().out
     assert printed == (tmp_path / "first" / "run.toml").read_text()
-    assert f'network = "{tmp_path.resolve() / "network"}"' in printed
+    # The path as the file holds it, read back (on Windows its backslashes are escaped in the text).
+    assert tomllib.loads(printed)["inputs"]["network"] == str(tmp_path.resolve() / "network")
     assert main(["run", "--config", str(tmp_path / "first" / "run.toml"), "--output",
                  str(tmp_path / "second"), "--no-pages"]) == 0  # fmt: skip
     second = json.loads((tmp_path / "second" / "manifest.json").read_text())
