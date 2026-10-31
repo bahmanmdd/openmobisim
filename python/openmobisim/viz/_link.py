@@ -2,8 +2,8 @@
 
 A two-way street is two ribbons side by side, each on its own driver's side
 (right-hand traffic), so the two directions never overlap and both read.
-Width is volume, colour is delay over free flow; free flow recedes into the
-canvas and congestion glows.
+Width is volume, colour is the share of a link's crossing time lost to delay
+(beyond free flow); free flow recedes into the canvas and congestion glows.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from openmobisim.viz._style import Theme, get_theme
 __all__ = ["link_table", "map_link"]
 
 _COLOUR_WORDS = {
-    "delay": "delay over free flow",
+    "delay": "share of the crossing time lost to delay",
     "volume": "volume",
     "volume_capacity": "volume over capacity",
 }
@@ -242,7 +242,8 @@ def map_link(
 ) -> Any:
     """Draw a run's traffic on its network: one ribbon per direction of every link.
 
-    Width is volume; colour is delay over free flow (or volume, see `colour`).
+    Width is volume; colour is the share of each link's crossing time lost to delay,
+    beyond free flow (or volume, see `colour`).
     The two directions of a two-way street are drawn side by side, each on its
     own driver's side, so they never overlap. Free-flowing links recede and
     congestion glows.
@@ -394,7 +395,7 @@ def map_link(
         )
         low, high = DELAY_BAND_LABELS, ""
         legend_label = (  # a general title; the bands name only their ranges (S269)
-            "Colour: delay over free flow"
+            "Colour: share of the crossing time lost to delay"
         )
     elif colour == "volume_capacity":
         capacity, _ = capacity_passing(network)

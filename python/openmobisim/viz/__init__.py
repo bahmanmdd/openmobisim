@@ -5,7 +5,8 @@ so related ones sort and complete together: ``map_*`` draws on a map,
 ``chart_*`` draws a plot with axes.
 
 * :func:`map_link` — a run's traffic on its network: one ribbon per direction
-  of every link, width = volume, colour = delay over free flow.
+  of every link, width = volume, colour = share of the crossing time lost to
+  delay.
 * :func:`map_demand` — demand as origin-destination desire lines.
 * :func:`map_route` — the alternative routes of one origin-destination pair.
 * :func:`map_transit` — a run's transit: lines by kind, width = passengers on

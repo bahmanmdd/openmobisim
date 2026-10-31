@@ -343,7 +343,7 @@ def test_a_quantity_shown_by_width_and_colour_is_titled_once():
     # The delay's bands (S268): each labelled with its range only, under a general title (S269);
     # the titles say what encodes what (S281).
     assert all(label in words for label in viz._link.DELAY_BAND_LABELS)
-    assert "Colour: delay over free flow" in words
+    assert "Colour: share of the crossing time lost to delay" in words
 
 
 def test_the_logo_and_the_credit_are_optional_and_never_a_copyright_claim():
