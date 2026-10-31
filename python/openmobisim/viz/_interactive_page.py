@@ -962,7 +962,7 @@ function tripPanel() {
   if (usedCount > MAX_SHOWN) h += '<div class="more"><a id="toggleall">' + (S.allOpts ? "Show the " + MAX_SHOWN + " most travelled only" : "Show all " + usedCount + " journeys") + "</a></div>";
   if (A.qr[p] > 0) h += '<div class="more">' + fmt(A.qr[p]) + (A.qr[p] === 1 ? " traveller" : " travellers") + " took other ways, each under 1 % of the pair.</div>";
   if (unused) h += '<div class="more"><a id="togglecar">' + (S.allCar ? "Hide" : "Show") + " the " + unused + " car route" + (unused === 1 ? "" : "s") + " nobody took</a></div>";
-  h += '<div class="foot">Times are what the travellers expected door to door when they chose (for a trip given the car, its route's drive time), averaged over them; the strip splits it into walking, waiting, riding, driving and parking. Hover a journey to see it alone; click it to zoom to it.</div>';
+  h += '<div class="foot">Times are what the travellers expected door to door when they chose (for a trip given the car, the drive time of its route), averaged over them; the strip splits it into walking, waiting, riding, driving and parking. Hover a journey to see it alone; click it to zoom to it.</div>';
   box.innerHTML = h;
   box.querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => { const m = +c.dataset.m; if (S.hidden.has(m)) S.hidden.delete(m); else S.hidden.add(m); S.hoverOpt = -1; tripPanel(); redraw(false); writeHash(); }));
   box.querySelectorAll(".opt").forEach((row) => {
