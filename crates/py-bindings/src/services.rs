@@ -18,6 +18,7 @@ use openmobisim_core_graph::layers::{BikeCost, StaticLayer};
 use openmobisim_core_graph::link_geometry::NetworkFingerprint;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_sim::LayerSetup;
+use openmobisim_core_sim::services::decisions::OperatorTaskTable;
 use openmobisim_core_sim::services::engine::{FleetDay, FleetEngine, Leg};
 use openmobisim_core_sim::services::frozen::{PlanReport, TripRow, plan_legs};
 use openmobisim_core_sim::services::outcome::{FleetOutcome, LegStatus};
@@ -571,7 +572,8 @@ pub(crate) fn outcome_dict<'py>(
     result.set_item("dock_bins", dock_bins)?;
     result.set_item("plan", plan)?;
     result.set_item("counts", counts)?;
-    result.set_item("decisions", decision_columns(py, &out.decisions, &f.ids)?)?;
+    let tasks = OperatorTaskTable::new(&out.decisions, &f.setups, f.ids.network());
+    result.set_item("decisions", decision_columns(py, &tasks)?)?;
     Ok(result)
 }
 

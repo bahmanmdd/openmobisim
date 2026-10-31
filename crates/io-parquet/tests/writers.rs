@@ -781,7 +781,7 @@ fn every_parquet_file_carries_the_schema_version() {
     };
     let expected = Some(openmobisim_io_parquet::SCHEMA_VERSION.to_string());
     assert_eq!(openmobisim_io_parquet::SCHEMA_VERSION_KEY, "openmobisim.schema_version");
-    assert_eq!(expected.as_deref(), Some("4"));
+    assert_eq!(expected.as_deref(), Some("5"));
 
     let result = sample_result();
     let kpis = temp_path("version-kpis.parquet");
@@ -881,6 +881,72 @@ fn trip_results_round_trip_with_their_outcomes_and_nulls() {
         .downcast_ref::<Float64Array>()
         .unwrap();
     assert!((lat.value(0) - 45.71).abs() < 1e-12);
+    let reader = ParquetRecordBatchReaderBuilder::try_new(File::open(&path).unwrap()).unwrap();
+    let kv = reader.metadata().file_metadata().key_value_metadata().cloned().unwrap_or_default();
+    assert!(kv.iter().any(|e| e.key == "openmobisim.run_fingerprint"));
+    assert!(kv.iter().any(|e| e.key == openmobisim_io_parquet::SCHEMA_VERSION_KEY));
+}
+
+/// `operator_tasks.parquet`: one row per decision in the order taken, ids as text, a number a
+/// decision does not have (`NaN` in memory) null, the flags as booleans, the run's identity in
+/// the metadata.
+#[test]
+fn operator_tasks_round_trip_with_nulls_for_what_a_kind_has_not() {
+    use openmobisim_core_sim::services::decisions::OperatorTaskTable;
+    let nan = f64::NAN;
+    let id = |s: &str| Some(s.to_string());
+    let t = OperatorTaskTable {
+        step: vec![0, 1],
+        t_s: vec![28_800.0, 29_700.0],
+        service: vec!["bike_share".into(), "taxi".into()],
+        kind: vec!["move", "relocate"],
+        from_dock: vec![id("a"), None],
+        to_dock: vec![id("b"), None],
+        n: vec![3.0, nan],
+        dock: vec![None, None],
+        level: vec![nan, nan],
+        vehicle: vec![None, id("v0")],
+        node: vec![None, id("17")],
+        charger: vec![None, None],
+        to_soc: vec![nan, nan],
+        accepted: vec![true, false],
+        reason: vec![None, id("the vehicle is not idle")],
+        executed_s: vec![28_800.0, nan],
+        finished_s: vec![29_100.0, nan],
+        moved: vec![3, 0],
+        metres: vec![1_250.0, nan],
+        from_target: vec![false, false],
+    };
+    let path = temp_path("operator_tasks.parquet");
+    openmobisim_io_parquet::write_operator_tasks(&path, "r", &t, &sample_description(None, None))
+        .unwrap();
+    let batch = read_first_batch(&path);
+    assert_eq!(batch.num_rows(), 2);
+    let names: Vec<String> = batch.schema().fields().iter().map(|f| f.name().clone()).collect();
+    assert_eq!(names[..5], ["run_id", "step", "t_s", "service", "kind"]);
+    assert_eq!(names.len(), 21, "run_id and the 20 columns of Run.operator_decisions()");
+    let number = |name: &str| -> Vec<Option<f64>> {
+        let c =
+            batch.column_by_name(name).unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
+        (0..c.len()).map(|i| (!c.is_null(i)).then(|| c.value(i))).collect()
+    };
+    let text = |name: &str| -> Vec<Option<String>> {
+        let c = batch.column_by_name(name).unwrap().as_any().downcast_ref::<StringArray>().unwrap();
+        (0..c.len()).map(|i| (!c.is_null(i)).then(|| c.value(i).to_string())).collect()
+    };
+    let flag = |name: &str| -> Vec<bool> {
+        let c =
+            batch.column_by_name(name).unwrap().as_any().downcast_ref::<BooleanArray>().unwrap();
+        (0..c.len()).map(|i| c.value(i)).collect()
+    };
+    assert_eq!(number("n"), vec![Some(3.0), None]);
+    assert_eq!(number("metres"), vec![Some(1_250.0), None]);
+    assert_eq!(number("executed_s"), vec![Some(28_800.0), None]);
+    assert_eq!(text("from_dock"), vec![id("a"), None]);
+    assert_eq!(text("node"), vec![None, id("17")]);
+    assert_eq!(text("reason"), vec![None, id("the vehicle is not idle")]);
+    assert_eq!(flag("accepted"), vec![true, false]);
+    assert_eq!(flag("from_target"), vec![false, false]);
     let reader = ParquetRecordBatchReaderBuilder::try_new(File::open(&path).unwrap()).unwrap();
     let kv = reader.metadata().file_metadata().key_value_metadata().cloned().unwrap_or_default();
     assert!(kv.iter().any(|e| e.key == "openmobisim.run_fingerprint"));

@@ -547,6 +547,9 @@ pub struct PyRunSummary {
     /// operator.
     #[pyo3(get)]
     pub service_decisions: Option<Py<PyDict>>,
+    /// Path to the written `operator_tasks.parquet`, if the run had an operator.
+    #[pyo3(get)]
+    pub operator_tasks_path: Option<String>,
     /// Per service, by name: its kind and its service day's summary (`kpis.parquet`'s rows of
     /// the service, by metric), S303; `None` without a service.
     #[pyo3(get)]
@@ -1442,7 +1445,7 @@ pub fn run_pipeline(
     }
     // The operator of the service day (S304), as `fleet_day` takes it; the ids it names
     // decisions by are the services' and the network's.
-    let (service_ids, raised) = match (&policy, &service_setups) {
+    let raised = match (&policy, &service_setups) {
         (Some(_), None) => {
             return Err(PyValueError::new_err(
                 "policy steers a run's services: give services too, or no policy",
@@ -1454,9 +1457,9 @@ pub fn run_pipeline(
             if let Some(p) = chosen {
                 run = run.with_service_policy(p);
             }
-            (Some(ids), raised)
+            raised
         }
-        (None, None) => (None, Arc::new(std::sync::Mutex::new(None))),
+        (None, None) => Arc::new(std::sync::Mutex::new(None)),
     };
     run = run
         .with_mode_choice(&modes)
@@ -1689,6 +1692,27 @@ pub fn run_pipeline(
         )?),
         _ => None,
     };
+    // The operator's decisions (S304) as a table with ids, written to `operator_tasks.parquet`
+    // (S305); nothing without an operator.
+    let operator_tasks = match (&result.service_decisions, &service_setups) {
+        (Some((_, records)), Some(setups)) => {
+            Some(openmobisim_core_sim::services::decisions::OperatorTaskTable::new(
+                records,
+                setups,
+                &network.inner,
+            ))
+        }
+        _ => None,
+    };
+    let operator_tasks_path = match &operator_tasks {
+        Some(t) if !minimal => {
+            let path = dir.join("operator_tasks.parquet");
+            openmobisim_io_parquet::write_operator_tasks(&path, run_id, t, &description)
+                .map_err(to_value_error)?;
+            Some(path.to_string_lossy().into_owned())
+        }
+        _ => None,
+    };
     // Their own stage, so the time the service tables and files take is seen (none without).
     if service_out.is_some() || taxi_out.is_some() {
         clock = timings.lap("services_written", None, clock);
@@ -1761,10 +1785,10 @@ pub fn run_pipeline(
         .transpose()?;
     // The operator's decisions (S304).
     let (service_policy_out, service_decisions_out) =
-        match (&result.service_decisions, &service_ids) {
-            (Some((described, records)), Some(ids)) => (
+        match (&result.service_decisions, &operator_tasks) {
+            (Some((described, _)), Some(tasks)) => (
                 crate::policy::description_to_py(py, Some(described))?.map(Bound::unbind),
-                Some(crate::policy::decision_columns(py, records, ids)?.unbind()),
+                Some(crate::policy::decision_columns(py, tasks)?.unbind()),
             ),
             _ => (None, None),
         };
@@ -1979,6 +2003,7 @@ pub fn run_pipeline(
         service_assumptions: service_assumptions_out,
         service_policy: service_policy_out,
         service_decisions: service_decisions_out,
+        operator_tasks_path,
         service_summaries,
         itinerary_choices: itinerary_table,
         trip_modes: trip_modes_table,

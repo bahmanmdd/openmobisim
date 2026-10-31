@@ -1,7 +1,8 @@
 //! Output writers for openmobisim: `kpis.parquet`, `diagnostics.parquet`, `link_bins.parquet`,
 //! `transit_calls.parquet`, `parking_bins.parquet`, `trip_results.parquet`, `events.parquet`,
 //! `bike_share_events.parquet`, `bike_share_trips.parquet`, `bike_share_docks.parquet`,
-//! `taxi_events.parquet`, `taxi_trips.parquet`, `taxi_vehicles.parquet` and `manifest.json`.
+//! `taxi_events.parquet`, `taxi_trips.parquet`, `taxi_vehicles.parquet`,
+//! `operator_tasks.parquet` and `manifest.json`.
 //!
 //! | Module | What it writes |
 //! |---|---|
@@ -13,6 +14,7 @@
 //! | [`parking_bins`] | Every parking's occupancy bin by bin, from [`openmobisim_core_sim::RunResult::parking`] |
 //! | [`bike_share`] | A run's docked bike service over its last loading: its events, its trips, its docks bin by bin (runs with a service only) |
 //! | [`taxi`] | A run's taxi fleet over its last loading: its events, its trips, its vehicles bin by bin (runs with a taxi fleet only) |
+//! | [`operator_tasks`] | A run's operator's decisions in its service day, accepted or refused (runs with an operator only) |
 //! | [`trip_results`] | Every trip and what became of it, from [`openmobisim_core_sim::TripTable`] |
 //! | [`frozen_legs`] | A frozen day's service legs (`legs.parquet`), written and read back |
 //! | [`manifest`] | [`manifest::Manifest`] — the file that makes a run reproducible |
@@ -48,6 +50,7 @@ mod io;
 pub mod kpis;
 pub mod link_bins;
 pub mod manifest;
+pub mod operator_tasks;
 pub mod parking_bins;
 pub mod taxi;
 pub mod transit_calls;
@@ -60,6 +63,7 @@ pub use frozen_legs::{FrozenLegRow, read_frozen_legs, write_frozen_legs};
 pub use kpis::{write_kpis, write_kpis_csv};
 pub use link_bins::{write_layer_link_bins, write_link_bins};
 pub use manifest::{Manifest, write_manifest};
+pub use operator_tasks::write_operator_tasks;
 pub use parking_bins::write_parking_bins;
 pub use taxi::{write_taxi_events, write_taxi_trips, write_taxi_vehicles};
 pub use transit_calls::write_transit_calls;
@@ -125,8 +129,9 @@ impl From<arrow_schema::ArrowError> for WriteError {
 /// `pickup_s`, `dropoff_s`, `waiting_s`, `in_vehicle_s`, `ride_km`, `empty_km`);
 /// `bike_share_trips` has `outcome`, `extra_walk_at_pickup_s` and `extra_walk_at_return_s`;
 /// `trip_results`' `service_outcome` is `completed`, `cancelled` or `unfinished`, beside
-/// `service_arrival_s`; the services' KPI rows are renamed.
-pub const SCHEMA_VERSION: u32 = 4;
+/// `service_arrival_s`; the services' KPI rows are renamed. Version 5: a run with an operator
+/// writes `operator_tasks.parquet`.
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// The Parquet key-value metadata key under which every file carries [`SCHEMA_VERSION`].
 pub const SCHEMA_VERSION_KEY: &str = "openmobisim.schema_version";

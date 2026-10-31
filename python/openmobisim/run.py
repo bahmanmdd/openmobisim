@@ -105,6 +105,23 @@ def _run_ids(path: str | None) -> set[str]:
     return set(pq.read_table(path, columns=["run_id"]).column("run_id").to_pylist())
 
 
+def _operator_tasks_read(path: str) -> Columns:
+    """``operator_tasks.parquet`` as ``Run.operator_decisions()`` gives it: a null number NaN."""
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(path).drop(["run_id"])
+    out: dict[str, Any] = {}
+    for name, column in zip(table.column_names, table.columns, strict=True):
+        kind = column.type
+        if str(kind) in ("string", "large_string", "bool"):
+            out[name] = column.to_pylist()
+        elif str(kind) == "uint32":
+            out[name] = column.to_numpy().astype(np.uint32)
+        else:
+            out[name] = column.to_numpy(zero_copy_only=False).astype(float)
+    return Columns(out)
+
+
 class _Files:
     """A finished run's folder in place of the core's summary (``Run.open``, C2).
 
@@ -133,6 +150,7 @@ class _Files:
             "taxi_events",
             "taxi_trips",
             "taxi_vehicles",
+            "operator_tasks",
         ):
             path = folder / f"{name}.parquet"
             setattr(self, f"{name}_path", str(path) if path.exists() else None)
@@ -250,9 +268,11 @@ class Run:
         ``manifest.json``); ``completion``, ``completion_by_mode``, ``total_travel_time_s``,
         ``mean_travel_time_s``, ``convergence()``, ``convergence_gap`` and
         ``convergence_verdict`` (from ``kpis.parquet``); ``timings()``; ``trip_results()`` and
-        ``trip_modes()`` (from ``trip_results.parquet``); and every table (``kpis()``,
-        ``diagnostics()``, ``events()``, ``link_bins_table()``, ``parking_bins_table()``,
-        ``transit_calls_table()``, the ``bike_share_*_table()``). What only the
+        ``trip_modes()`` (from ``trip_results.parquet``); ``operator_decisions()`` (from
+        ``operator_tasks.parquet``); and every table (``kpis()``, ``diagnostics()``,
+        ``events()``, ``link_bins_table()``, ``parking_bins_table()``,
+        ``transit_calls_table()``, the ``bike_share_*_table()`` and ``taxi_*_table()``,
+        ``operator_tasks_table()``). What only the
         run in memory holds (the network, the route sets and choices, the per-link arrays, the
         itinerary choices) raises a ``RuntimeError`` that says so. Needs pyarrow.
 
@@ -1892,7 +1912,8 @@ class Run:
         """Every decision the run's operator took in its service day, in the order taken.
 
         Accepted or refused, as ``FleetDay.decisions()`` gives them; ``None`` without an
-        operator, and for a run opened from its folder (the decisions are kept in memory).
+        operator. The same table is written to ``operator_tasks.parquet`` (read it with
+        ``operator_tasks_table()``); a run opened from its folder reads it from there.
 
         Columns: ``step`` (the policy step's index, 0 at the window's start), ``t_s`` (its
         second), ``service``, ``kind`` (``move``, ``target``, ``relocate``, ``charge``), the
@@ -1905,9 +1926,18 @@ class Run:
         step's targets).
         """
         if isinstance(self._summary, _Files):
-            return None
+            path = self._summary.operator_tasks_path
+            return None if path is None else _operator_tasks_read(path)
         rows = self._summary.service_decisions
         return None if rows is None else Columns(rows)
+
+    def operator_tasks_table(self) -> Table | None:
+        """``operator_tasks.parquet``: ``operator_decisions()`` after ``run_id``.
+
+        ``None`` without an operator. A number a decision does not have is null in the file.
+        """
+        path = self._written(self._summary.operator_tasks_path, "operator_tasks.parquet")
+        return None if path is None else Table(path)
 
     def service_actual(self) -> dict[str, float] | None:
         """What the service day actually gave, as ``service_assumptions()``; ``None`` without one.

@@ -1,5 +1,5 @@
 {
- "schema_version": 4,
+ "schema_version": 5,
  "files": {
   "bike_share_docks.parquet": {
    "columns": [
@@ -715,6 +715,141 @@
     "openmobisim.schema_version"
    ]
   },
+  "operator_tasks.parquet": {
+   "columns": [
+    {
+     "name": "run_id",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "step",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "index"
+    },
+    {
+     "name": "t_s",
+     "type": "double",
+     "nullable": false,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "service",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "kind",
+     "type": "string",
+     "nullable": false,
+     "unit": "text"
+    },
+    {
+     "name": "from_dock",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "to_dock",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "n",
+     "type": "double",
+     "nullable": true,
+     "unit": "bikes"
+    },
+    {
+     "name": "dock",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "level",
+     "type": "double",
+     "nullable": true,
+     "unit": "bikes"
+    },
+    {
+     "name": "vehicle",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "node",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "charger",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "to_soc",
+     "type": "double",
+     "nullable": true,
+     "unit": "share of the battery"
+    },
+    {
+     "name": "accepted",
+     "type": "bool",
+     "nullable": false,
+     "unit": "true or false"
+    },
+    {
+     "name": "reason",
+     "type": "string",
+     "nullable": true,
+     "unit": "text"
+    },
+    {
+     "name": "executed_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "finished_s",
+     "type": "double",
+     "nullable": true,
+     "unit": "s after midnight"
+    },
+    {
+     "name": "moved",
+     "type": "uint32",
+     "nullable": false,
+     "unit": "bikes"
+    },
+    {
+     "name": "metres",
+     "type": "double",
+     "nullable": true,
+     "unit": "m"
+    },
+    {
+     "name": "from_target",
+     "type": "bool",
+     "nullable": false,
+     "unit": "true or false"
+    }
+   ],
+   "metadata": [
+    "openmobisim.master_seed",
+    "openmobisim.run_fingerprint",
+    "openmobisim.schema_version"
+   ]
+  },
   "parking_bins.parquet": {
    "columns": [
     {
@@ -1395,6 +1530,7 @@
     "run_fingerprint",
     "service_assumptions",
     "service_day",
+    "service_policy",
     "simulated_travellers",
     "threads",
     "total_trips",

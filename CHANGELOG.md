@@ -23,9 +23,12 @@ engine, the taxis on that loading's road times, and what the fleet actually did 
 - **An operator in a run:** `Scenario.run(policy=..., policy_options=...)` steers the run's service day with a
   policy, as `fleet_day(policy=...)` takes it (a built-in one by name or object, a registered name, or a Python
   object with `step(view)`); the day is the one `fleet_day(frozen=run.freeze(...), policy=...)` replays, decision for
-  decision. `Run.operator_decisions()` returns its decisions (in memory), `Run.service_policy()` its name and
-  parameters, which the fingerprint and `manifest.json` (`service_policy`) record. Travellers still choose on the
-  assumptions. Refused without services.
+  decision. `Run.operator_decisions()` returns its decisions, `Run.service_policy()` its name and parameters, which
+  the fingerprint and `manifest.json` (`service_policy`) record. Travellers still choose on the assumptions. Refused
+  without services.
+- A run with an operator writes its decisions to `operator_tasks.parquet`, one row per decision, with the columns of
+  `Run.operator_decisions()` (a number a decision does not have is null); `Run.operator_tasks_table()` reads it, and a
+  run read back with `Run.open` gives `operator_decisions()` from it. A run without an operator writes no such file.
 - `parameters()` lists the services too: a docked bike service's and a taxi fleet's `options`, the assumptions
   (`service_assumptions`), the services' prices, the built-in policies' parameters (`policy.<name>`), the bike route
   sets' options and the fleet environment's reward weights and zone grid.
@@ -60,7 +63,7 @@ engine, the taxis on that loading's road times, and what the fleet actually did 
 - `fleet_day`'s and `fleet_environment`'s trip tables have `outcome`, `pickup_s`, `dropoff_s` and `waiting_s`; the
   standard reward's weight per cancelled request is `w_cancelled`; a docked service's view and observation count
   `no_bike` per dock.
-- The output schema is version 4 (`openmobisim.schema_version` in every file, `manifest_version`).
+- The output schema is version 5 (`openmobisim.schema_version` in every file, `manifest_version`).
 - `Run.freeze` keeps the day's taxi legs and road times too: `fleet_day(frozen=...)` replays the run's day, bikes and
   taxis, leg by leg.
 
