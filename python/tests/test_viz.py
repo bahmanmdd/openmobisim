@@ -337,15 +337,43 @@ def test_a_quantity_shown_by_width_and_colour_is_titled_once():
     run, _ = toy_run()
     kwargs = {"size_cm": (20.32, 11.43), "dpi": 60}
     words = [t.get_text() for t in viz.map_link(run, colour="volume", **kwargs).texts]
-    assert sum(w.startswith("Width: volume per direction") for w in words) == 1
+    # On the road, the width is the road's capacity and the colour its volume (S308).
+    assert sum(w.startswith("Width: road capacity per direction") for w in words) == 1
+    assert sum(w.startswith("Colour: volume per direction") for w in words) == 1
+    assert not any(w.startswith("Width: volume") or "Grey margin" in w for w in words)
     words = [t.get_text() for t in viz.map_link(run, colour="delay", **kwargs).texts]
-    assert any(w.startswith("Width: volume per") for w in words)
+    assert any(w.startswith("Width: road capacity per") for w in words)
     # The delay's bands (S268): each labelled with its range only, under a general title (S269);
     # the titles say what encodes what (S281).
     assert all(label in words for label in viz._link.DELAY_BAND_LABELS)
     assert "Colour: delay over free flow" in words
     words = [t.get_text() for t in viz.map_link(run, colour="volume_capacity", **kwargs).texts]
     assert all(label in words for label in viz._link.VC_BAND_LABELS)
+
+
+def test_a_road_ribbon_s_width_is_its_road_s_capacity_not_its_traffic():
+    """Every road of one capacity is one width, whatever its volume; a larger road is wider."""
+    from matplotlib.collections import LineCollection
+    from openmobisim.viz._canvas import road_ratio
+    from openmobisim.viz._link import busiest_bins, link_table
+
+    run, _ = toy_run()
+    net = run.network
+    first, stop = busiest_bins(run.link_bins())
+    table = link_table(
+        run.link_bins(), net.link_count, net.link_free_flow_s(), first=first, stop=stop
+    )
+    drawn = table["volume"] > 0
+    ratio = np.minimum(np.nan_to_num(road_ratio(net)), 1.0)[drawn].round(9)
+    volume = table["volume"][drawn]
+    # Links of one capacity carry different volumes: a width by volume would split them.
+    assert any(len(set(volume[ratio == r].round(3))) > 1 for r in set(ratio))
+    fig = viz.map_link(run, size_cm=(20.32, 11.43), dpi=60, chevrons=False)
+    ribbons = [c for c in fig.axes[0].collections if isinstance(c, LineCollection)]
+    top = max((c for c in ribbons if c.get_zorder() == 3), key=lambda c: len(c.get_segments()))
+    widths = np.asarray(top.get_linewidths()).round(9)
+    assert len(widths) == drawn.sum()
+    assert len(set(widths)) == len(set(ratio)) >= 2, "one width per capacity"
 
 
 class _Bins:

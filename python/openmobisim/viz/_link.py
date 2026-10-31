@@ -2,7 +2,8 @@
 
 A two-way street is two ribbons side by side, each on its own driver's side
 (right-hand traffic), so the two directions never overlap and both read.
-Width is volume, colour is the delay over free flow (a link's mean crossing time over its
+On the road, width is the road's capacity per direction (on the bike and walk layers,
+volume), colour is the delay over free flow (a link's mean crossing time over its
 free-flow time, less one); free flow recedes into the canvas and congestion glows.
 """
 
@@ -15,7 +16,7 @@ import numpy as np
 from openmobisim import __version__
 from openmobisim.scenario import LEVEL_NAMES
 from openmobisim.viz import _geometry as geo
-from openmobisim.viz._canvas import Canvas
+from openmobisim.viz._canvas import Canvas, road_ratio
 from openmobisim.viz._figure import (
     SIZE_CM,
     Page,
@@ -273,8 +274,10 @@ def map_link(
 ) -> Any:
     """Draw a run's traffic on its network: one ribbon per direction of every link.
 
-    Width is volume; colour is the delay over free flow (each link's mean crossing time
-    over its free-flow time, less one), or volume, see `colour`.
+    Width is the road's capacity per direction, the same for every road of one capacity (on
+    the bike and walk layers, which have no capacity, volume); colour is the delay over free
+    flow (each link's mean crossing time over its free-flow time, less one), or volume, see
+    `colour`.
     The two directions of a two-way street are drawn side by side, each on its
     own driver's side, so they never overlap. Free-flowing links recede and
     congestion glows.
@@ -399,10 +402,23 @@ def map_link(
     page = Page.new(th, size_cm, dpi, lo, hi)
     mpp = page.metres_per_point
 
-    # Width: square root of volume up to the 99th percentile of active links.
+    # Width (S308): on the road, its capacity over the network's large roads' (linear, the
+    # largest and above the widest), so every road of one capacity is one width whatever its
+    # traffic; on the bike and walk layers, the square root of volume up to the 99th percentile.
     vmax = float(np.percentile(volume[active], 99)) if active.any() else 1.0
     vmax = max(vmax, min_volume)
-    frac = np.sqrt(np.minimum(volume, vmax) / vmax)
+    ratio = road_ratio(network) if road else None
+    by_capacity = ratio is not None and bool(np.isfinite(ratio).any())
+    if by_capacity:
+        frac = np.minimum(np.nan_to_num(ratio, nan=0.0), 1.0)
+        finite = np.isfinite(ratio) & (ratio > 0)
+        capacity_ref = float(
+            np.median(
+                np.asarray(network.link_capacity_pcu_h(), dtype=float)[finite] / ratio[finite]
+            )
+        )
+    else:
+        frac = np.sqrt(np.minimum(volume, vmax) / vmax)
     floor = _WIDTH_FLOOR_PT * page.k
     width_pt = np.where(
         active, np.maximum((_WIDTH_MIN_PT + _WIDTH_SPAN_PT * frac) * zs * page.k, floor), 0.0
@@ -445,7 +461,11 @@ def map_link(
         link_rgb = ramp_rgb(th.ramp_volume, t)
         severity = volume
         legend_stops, low, high = th.ramp_volume, "0", f"{vmax:,.0f}+"
-        legend_label = f"Width: volume per direction ({unit})"
+        legend_label = (
+            f"Colour: volume per direction ({unit})"
+            if by_capacity
+            else f"Width: volume per direction ({unit})"
+        )
     drawn = np.nonzero(active)[0]
     drawn = drawn[np.argsort(severity[drawn], kind="stable")]  # the worst on top
     lines = geo.polylines(ribbon_points, offsets, drawn)
@@ -473,8 +493,13 @@ def map_link(
                 zorder=2,
             )
         )
-    # The casing (S302): a grey margin around each ribbon, as wide as its road's capacity tier.
-    casing = canvas.casing(th.base, drawn, lines, line_width, zs * page.k, _CASING_CAP)
+    # The casing (S302): a grey margin around each ribbon, as wide as its road's capacity tier;
+    # not where the width itself is the capacity (S308).
+    casing = (
+        None
+        if by_capacity
+        else canvas.casing(th.base, drawn, lines, line_width, zs * page.k, _CASING_CAP)
+    )
     if casing is not None:
         page.ax.add_collection(casing)
     page.ax.add_collection(
@@ -515,18 +540,18 @@ def map_link(
         f"openmobisim {__version__} · level {run.flow_level} ({level}){stepping} · "
         f"bins of {step} s · {source}",
     ]
-    sample_values = [nice_number(vmax / 10), nice_number(vmax / 3), nice_number(vmax)]
+    if by_capacity:  # the legend's samples: capacities, as wide as their roads are drawn
+        top = capacity_ref
+        sample_values = [nice_number(top / 4), nice_number(top / 2), nice_number(top)]
+        share = [min(v / top, 1.0) for v in sample_values]
+        width_words, width_unit = "Width: road capacity per direction", "PCU/h"
+    else:
+        sample_values = [nice_number(vmax / 10), nice_number(vmax / 3), nice_number(vmax)]
+        share = [float(np.sqrt(min(v, vmax) / vmax)) for v in sample_values]
+        width_words, width_unit = "Width: volume per direction", unit
     samples = [
-        (
-            v,
-            max(
-                (_WIDTH_MIN_PT + _WIDTH_SPAN_PT * float(np.sqrt(min(v, vmax) / vmax)))
-                * zs
-                * page.k,
-                floor,
-            ),
-        )
-        for v in sample_values
+        (v, max((_WIDTH_MIN_PT + _WIDTH_SPAN_PT * f) * zs * page.k, floor))
+        for v, f in zip(sample_values, share, strict=True)
     ]
     draw_furniture(
         page,
@@ -534,9 +559,11 @@ def map_link(
         subtitle=subtitle or default_subtitle,
         note=note,
         provenance=provenance,
-        width_legend=("Width: volume per direction", samples, unit),
+        width_legend=(width_words, samples, width_unit),
         colour_legend=(legend_label, legend_stops, low, high),
-        band_legend="Grey margin: road capacity" if canvas.tier is not None else None,
+        band_legend=(
+            "Grey margin: road capacity" if canvas.tier is not None and not by_capacity else None
+        ),
         credit=credit,
         logo=logo,
         compass=True,
