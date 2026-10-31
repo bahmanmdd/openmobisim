@@ -505,6 +505,8 @@ function addLine(path, l, off, gap) {
   return n;
 }
 let DRAWN = 0, MOVING = false, LAYER_ALPHA = 1;
+// How strongly the road traffic and the other layers recede while a pair's trips are shown (S308).
+const DIM_ALPHA = 0.16;
 function draw() {
   DRAWN = 0; const t0 = performance.now();
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -539,14 +541,16 @@ function draw() {
   // The road hierarchy (S302): the minor tiers first, so the major roads sit on top.
   ctx.strokeStyle = TH.base; for (let t = 0; t < TIERS.length; t++) { const far = S.mpp > 6; ctx.lineWidth = Math.max(BASE_FLOOR[far ? 0 : 1], (far ? 0.5 : 0.9) * TIERS[t]); ctx.stroke(base[t]); }
   const keys = [...buckets.keys()].sort((a, b) => a - b), tbl = TABLES[S.colour];
-  ctx.globalAlpha = dimming ? 0.35 : 1;
-  if (TH.glow) { for (const k of keys) { const w = (k & 127) / 2; ctx.strokeStyle = tbl[k >> 7]; ctx.globalAlpha = (dimming ? 0.35 : 1) * 0.14; ctx.lineWidth = w + Math.min(w * 1.8, GAP * 0.8); ctx.stroke(buckets.get(k)); } ctx.globalAlpha = dimming ? 0.35 : 1; }
+  // While a pair's trips are shown, the road traffic is a faint background (S308: at 35 % it competed with the trips).
+  const back = dimming ? DIM_ALPHA : 1;
+  ctx.globalAlpha = back;
+  if (TH.glow && !dimming) { for (const k of keys) { const w = (k & 127) / 2; ctx.strokeStyle = tbl[k >> 7]; ctx.globalAlpha = 0.14; ctx.lineWidth = w + Math.min(w * 1.8, GAP * 0.8); ctx.stroke(buckets.get(k)); } ctx.globalAlpha = back; }
   else if (!MOVING) { for (const k of keys) { ctx.strokeStyle = TH.surface; ctx.lineWidth = (k & 127) / 2 + 1.4; ctx.stroke(buckets.get(k)); } }
   for (const k of keys) { ctx.strokeStyle = tbl[k >> 7]; ctx.lineWidth = (k & 127) / 2; ctx.stroke(buckets.get(k)); }
   ctx.globalAlpha = 1;
-  if (!MOVING && S.mpp < 3 && S.ly.road) drawChevrons(cand, lim);
+  if (!MOVING && S.mpp < 3 && S.ly.road && !dimming) drawChevrons(cand, lim);
   // The other layers recede while a pair's trips are shown (S305), as the road traffic does.
-  LAYER_ALPHA = dimming ? 0.3 : 1;
+  LAYER_ALPHA = dimming ? DIM_ALPHA : 1;
   if (S.ly.bike && FLOWS.bike) drawFlow(FLOWS.bike, TH.modes[1], [9, 5]);
   if (S.ly.walk && FLOWS.walk) drawFlow(FLOWS.walk, TH.modes[2], [2, 4]);
   ctx.globalAlpha = LAYER_ALPHA;
@@ -612,7 +616,8 @@ function drawTransit() {
     ctx.strokeStyle = TH.kinds[A.tk[i]]; ctx.lineWidth = w; ctx.stroke(p);
   }
   let most = 0; for (let i = 0; i < A.tsb.length; i++) most = Math.max(most, A.tsb[i]); most = most || 1;
-  const names = LY.transit.stops, label = names.length <= 40 || S.mpp < 3;
+  // Stop names only when few or zoomed in, and never under a pair's trips (S308: fewer labels).
+  const names = LY.transit.stops, label = (names.length <= 40 || S.mpp < 3) && LAYER_ALPHA === 1;
   ctx.font = "10.5px " + FONT; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
   for (let i = 0; i < A.tsx.length; i++) {
     if (show && !show[i]) continue;
@@ -914,9 +919,10 @@ function drawTrips() {
       if (pass === 1 && style === "share") stops.push({ at: sp.first, dim, kind: "dock" }, { at: sp.last, dim, kind: "dock" });
       if (pass === 1 && k === LEG.ride) {
         stops.push({ at: sp.first, dim, kind: "stop" }, { at: sp.last, dim, kind: "stop" });
-        if (!dim && sp.len > 34) badges.push([sp.mid, TR.lines[A.lline[g]] || "", c]);
+        if (!dim && sp.len > 60) badges.push([sp.mid, TR.lines[A.lline[g]] || "", c]);
       }
-      if (pass === 1 && k === LEG.drive && TR.modes[A.om[o]] === "car" && !dim && sp.len > 40 && (hl || opts.length <= 8)) badges.push([sp.mid, String(carRank(o)), c]);
+      // A car route's number only on the journey hovered (S308): the colour already ties a route to its row.
+      if (pass === 1 && k === LEG.drive && TR.modes[A.om[o]] === "car" && hl && sp.len > 40) badges.push([sp.mid, String(carRank(o)), c]);
       prevEnd = sp.last;
     }
   }
@@ -926,11 +932,13 @@ function drawTrips() {
   // (the car routes' ends around B) sits once beside its letter.
   const once = (list, r) => { const kept = []; for (const m of list) { const had = kept.find((k) => k.kind === m.kind && Math.hypot(k.at[0] - m.at[0], k.at[1] - m.at[1]) < r); if (!had) kept.push(m); else if (had.dim && !m.dim) had.dim = false; } return kept; };
   const doors = [[sx(A.qox[p] * 0.1), sy(A.qoy[p] * 0.1)], [sx(A.qdx[p] * 0.1), sy(A.qdy[p] * 0.1)]];
-  for (const m of parks) for (const [x, y] of doors) if (Math.hypot(m.at[0] - x, m.at[1] - y) < 28) m.at = [x + 15, y + (m.kind.endsWith("bike") ? 15 : -15)];
+  for (const m of parks) for (const [x, y] of doors) if (Math.hypot(m.at[0] - x, m.at[1] - y) < 40) m.at = [x + 15, y + (m.kind.endsWith("bike") ? 15 : -15)];
   for (const m of once(stops, 4)) { ctx.globalAlpha = m.dim ? 0.25 : 1; drawMark(ctx, m.kind, m.at[0], m.at[1]); }
-  for (const m of once(parks, 18)) { ctx.globalAlpha = m.dim ? 0.25 : 1; drawMark(ctx, m.kind, m.at[0], m.at[1]); }
+  for (const m of once(parks, 24)) { ctx.globalAlpha = m.dim ? 0.25 : 1; drawMark(ctx, m.kind, m.at[0], m.at[1]); }
   ctx.globalAlpha = 1;
-  for (const [at, text, fill] of badges) badge(at[0], at[1], text, fill);
+  // A line's name once where several journeys ride it side by side.
+  const named = []; for (const b of badges) if (!named.some((n) => n[1] === b[1] && Math.hypot(n[0][0] - b[0][0], n[0][1] - b[0][1]) < 80)) named.push(b);
+  for (const [at, text, fill] of named) badge(at[0], at[1], text, fill);
   drawMark(ctx, "A", sx(A.qox[p] * 0.1), sy(A.qoy[p] * 0.1)); drawMark(ctx, "B", sx(A.qdx[p] * 0.1), sy(A.qdy[p] * 0.1));
 }
 // Picking a pair on the map: the places pairs start from, then the destinations from the one picked.

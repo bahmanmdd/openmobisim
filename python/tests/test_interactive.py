@@ -733,6 +733,15 @@ def test_a_journey_s_row_is_kept_low(tmp_path):
     assert int(strip[1]) <= 8 and int(share[1]) <= 2
 
 
+def test_the_background_recedes_further_while_a_pair_is_shown(tmp_path):
+    """Less busy (S308): faint traffic and layers; no chevrons or stop names under the trips."""
+    text = viz.map_interactive(grid_run()[1], tmp_path / "map.html").read_text(encoding="utf-8")
+    assert float(re.search(r"const DIM_ALPHA = ([\d.]+);", text)[1]) <= 0.2
+    assert "S.ly.road && !dimming) drawChevrons" in text
+    assert "&& LAYER_ALPHA === 1;" in text  # stop names
+    assert '=== "car" && hl && sp.len > 40) badges.push' in text  # a route's number when hovered
+
+
 def test_the_delay_is_named_as_the_delay_over_free_flow(tmp_path):
     """The colour is mean time / free flow - 1, in four bands up to 100 % and over; v/c alike."""
     text, meta, _ = decode(viz.map_interactive(grid_run()[1], tmp_path / "map.html"))
