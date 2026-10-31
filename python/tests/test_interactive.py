@@ -534,6 +534,43 @@ def test_a_pair_s_trips_show_in_a_browser(tmp_path):
     assert "Trips between two places" in dom  # the legend's section, shown with the pair
 
 
+def pair_view(path, hash_):
+    """A pair's card and map in a browser.
+
+    Returns the page, its rows (class, journey, dot colour, row text, share-bar colour), the
+    colours drawn on the map (an SVG export of the view) and those in the export's legend.
+    """
+    import html
+
+    dom = subprocess.run(
+        [BROWSER, "--headless=new", "--disable-gpu", "--no-sandbox",
+         "--virtual-time-budget=3000", "--window-size=1400,900", "--dump-dom",
+         f"{path.as_uri()}#{hash_}&export=svg"],
+        capture_output=True, text=True, timeout=90,
+    ).stdout  # fmt: skip
+    rows = re.findall(
+        r'<div class="(opt[^"]*)" data-o="(\d+)"><div class="top"><i class="dot" '
+        r'style="background:(#[0-9a-f]{6})"></i>(.*?)<div class="share"><span style="width:[\d.]+%;'
+        r'background:(#[0-9a-f]{6})"',
+        dom,
+        re.S,
+    )
+    svg = html.unescape(re.search(r'<textarea id="exported"[^>]*>(.*?)</textarea>', dom, re.S)[1])
+    drawn = re.search(r'<g transform="translate\(0 \d+\)">(.*?)</g>', svg, re.S)[1]
+    strokes = set(re.findall(r'stroke="(#[0-9a-f]{6})"', drawn))
+    legend = set(re.findall(r'<line [^>]*stroke="(#[0-9a-f]{6})"', svg))
+    return dom, rows, strokes, legend
+
+
+def busiest_choosing_pair(tmp_path):
+    """The choosing run's map, its meta and arrays, and its pair with the most journeys."""
+    path = tmp_path / "map.html"
+    _, meta, a = decode(viz.map_interactive(choosing_run(), path))
+    p = int(np.argmax(np.diff(a["qs"].astype(np.int64))))
+    assert a["qs"][p + 1] - a["qs"][p] >= 3
+    return path, meta, a, p
+
+
 @pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
 @pytest.mark.parametrize("theme", ["paper", "night"])
 def test_each_journey_s_colour_in_the_list_is_its_colour_on_the_map(tmp_path, theme):
@@ -542,38 +579,41 @@ def test_each_journey_s_colour_in_the_list_is_its_colour_on_the_map(tmp_path, th
     The list's dot and share bar, the map's lines (an SVG export of the view) and the export's
     legend all carry the same colour for each journey, and no two journeys shown share one.
     """
-    import html
-
-    path = tmp_path / "map.html"
-    _, meta, a = decode(viz.map_interactive(choosing_run(), path))
-    p = int(np.argmax(np.diff(a["qs"].astype(np.int64))))  # the pair with the most journeys
-    assert a["qs"][p + 1] - a["qs"][p] >= 3
-    dom = subprocess.run(
-        [BROWSER, "--headless=new", "--disable-gpu", "--no-sandbox",
-         "--virtual-time-budget=3000", "--window-size=1400,900", "--dump-dom",
-         f"{path.as_uri()}#t={theme}&p={p}&export=svg"],
-        capture_output=True, text=True, timeout=90,
-    ).stdout  # fmt: skip
-    rows = re.findall(
-        r'<div class="opt[^"]*" data-o="(\d+)"><div class="top"><i class="dot" '
-        r'style="background:(#[0-9a-f]{6})"></i>(.*?)<div class="share"><span style="width:[\d.]+%;'
-        r'background:(#[0-9a-f]{6})"',
-        dom,
-        re.S,
-    )
+    path, meta, a, p = busiest_choosing_pair(tmp_path)
+    _, rows, strokes, legend = pair_view(path, f"t={theme}&p={p}")
     assert len(rows) >= 3, "the pair's journeys are listed"
     palette = meta["tokens"]["journeys"][theme]
-    for o, dot, _, bar in rows:
+    for _, o, dot, _, bar in rows:
         assert dot == bar == palette[(int(o) - int(a["qs"][p])) % len(palette)]
-    colours = [dot for _, dot, _, _ in rows]
+    colours = [dot for _, _, dot, _, _ in rows]
     assert len(set(colours)) == len(colours), "no two journeys shown share a colour"
-    svg = html.unescape(re.search(r'<textarea id="exported"[^>]*>(.*?)</textarea>', dom, re.S)[1])
-    drawn = re.search(r'<g transform="translate\(0 \d+\)">(.*?)</g>', svg, re.S)[1]
-    strokes = set(re.findall(r'stroke="(#[0-9a-f]{6})"', drawn))
-    legend = set(re.findall(r'<line [^>]*stroke="(#[0-9a-f]{6})"', svg))
     for c in colours:
         assert c in strokes, f"{c} is drawn on the map"
         assert c in legend, f"{c} is in the export's legend"
+
+
+@pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
+def test_the_list_holds_every_mode_and_the_modes_ticked_are_drawn(tmp_path):
+    """The list holds every mode's journeys, whatever layers are on.
+
+    Each row names its mode and its share of the pair; a mode unticked stays listed, marked,
+    and is not drawn.
+    """
+    path, meta, a, p = busiest_choosing_pair(tmp_path)
+    names = meta["trips"]["mode_names"]
+    top = int(a["om"][a["qs"][p]])  # the most travelled journey's mode
+    dom, rows, strokes, legend = pair_view(path, f"p={p}&ly=-&hm={top}")
+    assert "Every way this pair" in dom and "whatever layers are on" in dom
+    assert len(rows) >= 3, "the layers are all off, and the journeys are still listed"
+    for cls, o, dot, text, _ in rows:
+        mode = int(a["om"][int(o)])
+        assert f"<span>{names[mode]} · " in text, "the row names its mode first"
+        assert "% of the pair" in text or "not taken" in text
+        hidden = mode == top
+        assert ("off" in cls.split()) == hidden and ("not drawn" in text) == hidden
+        assert (dot in strokes) != hidden, "drawn on the map only if its mode is ticked"
+        assert (dot in legend) != hidden
+    assert any(int(a["om"][int(o)]) != top for _, o, *_ in rows)
 
 
 def test_the_page_knows_each_link_s_direction_and_its_other_direction(tmp_path):

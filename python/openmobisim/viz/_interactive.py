@@ -37,7 +37,6 @@ from openmobisim.viz._link import (
 )
 from openmobisim.viz._logo import LOGO_PATH
 from openmobisim.viz._modes import _LABEL as _MODE_LABELS
-from openmobisim.viz._modes import _SERVICE_COLOURS
 from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._route import _ROUTE_NIGHT, _ROUTE_PAPER
 from openmobisim.viz._style import KINDS, THEMES, get_theme
@@ -93,7 +92,6 @@ def _tokens() -> dict[str, Any]:
             "paper": [_ROUTE_PAPER[i] for i in _JOURNEY_ORDER],
             "night": [_ROUTE_NIGHT[i] for i in _JOURNEY_ORDER],
         },
-        "services": _SERVICE_COLOURS,
     }
 
 

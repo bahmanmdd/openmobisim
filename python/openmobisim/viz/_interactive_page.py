@@ -39,7 +39,7 @@ __CSS__
     <h2>Trips between two places</h2>
     <div class="row"><select id="pairpick" title="The pairs with the most travellers first"></select></div>
     <div class="row"><button id="prev" title="The pair before">‹</button><button id="next" title="The next pair">›</button><button id="pickmap" title="Click an origin on the map, then a destination">Pick on map</button><button id="clear">Clear</button></div>
-    <p id="routehint">Choose a pair above or pick one on the map: every way its travellers went, by every mode. Or click a road to see the pairs whose trips use it.</p>
+    <p id="routehint">Choose a pair above or pick one on the map: every way its travellers went, by every mode, whatever layers are on. Or click a road to see the pairs whose trips use it.</p>
     <div id="tripcard"></div>
   </div>
   <div id="trafficgroup">
@@ -155,12 +155,12 @@ footer #source { flex: none; white-space: nowrap; margin-right: 16px; }
 #tripcard .od b { font-weight: 650; }
 #tripcard .mk { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: var(--ink); color: var(--surface); font: 700 9.5px var(--sans); margin-right: 4px; vertical-align: 1px; }
 #tripcard .odsub { font-size: 11.5px; color: var(--muted); margin: 1px 0 8px; }
-#tripcard .split { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin: 2px 0 5px; background: var(--base); }
-#tripcard .split span { display: block; height: 100%; }
+#tripcard .scope { font-size: 11.5px; color: var(--ink2); line-height: 1.4; margin: 0 0 5px; }
 #tripcard .chips { display: flex; flex-wrap: wrap; gap: 4px 5px; margin-bottom: 8px; }
-#tripcard .chip { font-size: 11px; padding: 2px 7px 2px 5px; border-radius: 10px; border: 1px solid var(--base); display: inline-flex; align-items: center; gap: 5px; cursor: pointer; color: var(--ink2); user-select: none; }
-#tripcard .chip i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-#tripcard .chip.off { opacity: .4; text-decoration: line-through; }
+#tripcard .chip { font-size: 11px; padding: 2px 8px 2px 4px; border-radius: 10px; border: 1px solid var(--base); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; color: var(--ink); user-select: none; }
+#tripcard .chip input { margin: 0; width: 12px; height: 12px; accent-color: var(--ink2); }
+#tripcard .chip.off { color: var(--muted); }
+#tripcard .opt.off { opacity: .45; cursor: default; }
 #tripcard .opt { padding: 6px 6px 7px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
 #tripcard .opt:hover, #tripcard .opt.hl { background: color-mix(in srgb, var(--base) 38%, transparent); border-color: color-mix(in srgb, var(--base) 80%, transparent); }
 #tripcard .opt .top { display: flex; align-items: baseline; gap: 6px; font-size: 12px; }
@@ -654,8 +654,6 @@ function highlight(l, colour, w) {
 }
 // ---- trips between two places (S305) ----
 // A mode's colour, as the mode-share chart draws it; a leg's colour, by what it is.
-const MODE_INDEX = { car: 0, bike: 1, walk: 2, transit: 3, car_transit: 4, bike_transit: 5 };
-function modeColour(i) { const m = TR.modes[i], sv = TOK.services[S.theme] || {}; return sv[m] || TH.modes[MODE_INDEX[m] !== undefined ? MODE_INDEX[m] : 3]; }
 // One colour per journey (S307), and one source of it: the list's dot, share bar and strip, the map's legs, badges and
 // door links, and an export's legend all call journeyColour(o). The journeys' palette (the package's route figures'
 // categorical colours, per theme; META.tokens.journeys) by the journey's rank in its pair, the most travelled first, so a journey keeps
@@ -704,12 +702,13 @@ function pairOptions(p) { const out = []; for (let o = A.qs[p]; o < A.qs[p + 1];
 // A pair shows its most travelled journeys, MAX_SHOWN of them until asked for all (S305: fourteen car routes side
 // by side were a tangle); the car routes nobody took only when asked for.
 const MAX_SHOWN = 6;
-function shownOption(o) {
-  if (S.hidden.has(A.om[o])) return false;
+// The list holds every mode's journeys (S307), whatever modes are drawn; the map draws those of the modes ticked.
+function listedOption(o) {
   if (!(A.on[o] > 0)) return S.allCar;
   return S.allOpts || o - A.qs[OPT_PAIR[o]] < MAX_SHOWN;
 }
-// A car route's colour: the car's, paler the less it is travelled (by its rank among the pair's car routes).
+function shownOption(o) { return !S.hidden.has(A.om[o]) && listedOption(o); }
+// Colour `a` moved a share `f` of the way to colour `b`, as #rrggbb.
 function mixHex(a, b, f) { const x = hex(a), y = hex(b); return "#" + [0, 1, 2].map((i) => Math.round(x[i] + (y[i] - x[i]) * f).toString(16).padStart(2, "0")).join(""); }
 // The screen path of points `pts` (metres), moved `off` px to the right of travel; its middle.
 function screenPath(pts, off) {
@@ -1058,29 +1057,32 @@ function tripPanel() {
   h += '<div class="odsub">' + fmt(total) + (total === 1 ? " traveller" : " travellers") + " · " + km.toFixed(1) + " km apart as the crow flies</div>";
   const modes = [...byMode.entries()].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
   const all = total || 1;
-  h += '<div class="split" title="How the pair\'s travellers went, by mode">' + modes.map(([m, n]) => '<span style="width:' + (100 * n / all).toFixed(2) + "%;background:" + modeColour(m) + '" title="' + escHtml(TR.mode_names[m]) + " " + Math.round(100 * n / all) + '%"></span>').join("") + "</div>";
-  h += '<div class="chips">' + modes.map(([m, n]) => '<span class="chip' + (S.hidden.has(m) ? " off" : "") + '" data-m="' + m + '" title="Show or hide on the map"><i style="background:' + modeColour(m) + '"></i>' + escHtml(TR.mode_names[m]) + " " + Math.round(100 * n / all) + "%</span>").join("") + "</div>";
+  // What the list is (S307): every mode's journeys between the two places, whatever layers are on; the modes ticked
+  // are drawn on the map.
+  h += '<div class="scope">Every way this pair\'s travellers went, by every mode, whatever layers are on above. Tick the modes to draw:</div>';
+  h += '<div class="chips">' + modes.map(([m, n]) => '<label class="chip' + (S.hidden.has(m) ? " off" : "") + '" title="Draw this mode\'s journeys on the map, or not"><input type="checkbox" data-m="' + m + '"' + (S.hidden.has(m) ? "" : " checked") + "> " + escHtml(TR.mode_names[m]) + " " + Math.round(100 * n / all) + "%</label>").join("") + "</div>";
   const unused = opts.filter((o) => !(A.on[o] > 0)).length;
   let minCost = Infinity; for (const o of opts) if (isFinite(A.oc[o])) minCost = Math.min(minCost, A.oc[o]);
   for (const o of opts) {
-    if (!shownOption(o)) continue;
-    const n = A.on[o], share = n / all, used = n > 0;
-    let sub = used ? fmt(n) + (n === 1 ? " traveller" : " travellers") + " · " + Math.round(share * 100) + "%" : "in the route set, not taken";
+    if (!listedOption(o)) continue;
+    const n = A.on[o], share = n / all, used = n > 0, drawn = !S.hidden.has(A.om[o]);
+    // Each row names its mode and its share of the pair's travellers (S307).
+    let sub = escHtml(TR.mode_names[A.om[o]]) + " · " + (used ? fmt(n) + (n === 1 ? " traveller" : " travellers") + " · " + Math.round(share * 100) + "% of the pair" : "in the route set, not taken") + (drawn ? "" : " · not drawn");
     let right = "";
     if (isFinite(A.oc[o]) && A.oc[o] > 0 && TR.modes[A.om[o]] === "car") right = '<span title="The route\'s cost over the pair\'s cheapest car route; its overlap with the other routes, by length">+' + Math.round((A.oc[o] / minCost - 1) * 100) + "% · overlap " + Math.round(A.oo[o] * 100) + "%</span>";
-    h += '<div class="opt' + (used ? "" : " unused") + (S.hoverOpt === o ? " hl" : "") + '" data-o="' + o + '"><div class="top"><i class="dot" style="background:' + journeyColour(o) + '"></i><b>' + escHtml(optionTitle(o)) + '</b><span class="t">' + (used && isFinite(A.ot[o]) ? minutes(A.ot[o]) + " min" : "") + "</span></div>" +
+    h += '<div class="opt' + (used ? "" : " unused") + (drawn ? "" : " off") + (S.hoverOpt === o ? " hl" : "") + '" data-o="' + o + '"><div class="top"><i class="dot" style="background:' + journeyColour(o) + '"></i><b>' + escHtml(optionTitle(o)) + '</b><span class="t">' + (used && isFinite(A.ot[o]) ? minutes(A.ot[o]) + " min" : "") + "</span></div>" +
       (used ? strip(o) : "") + '<div class="sub"><span>' + sub + "</span>" + right + "</div>" + (used ? '<div class="share"><span style="width:' + (100 * share).toFixed(1) + "%;background:" + journeyColour(o) + '"></span></div>' : "") + "</div>";
   }
-  const usedCount = opts.filter((o) => A.on[o] > 0 && !S.hidden.has(A.om[o])).length;
+  const usedCount = opts.filter((o) => A.on[o] > 0).length;
   if (usedCount > MAX_SHOWN) h += '<div class="more"><a id="toggleall">' + (S.allOpts ? "Show the " + MAX_SHOWN + " most travelled only" : "Show all " + usedCount + " journeys") + "</a></div>";
   if (A.qr[p] > 0) h += '<div class="more">' + fmt(A.qr[p]) + (A.qr[p] === 1 ? " traveller" : " travellers") + " took other ways, each under 1 % of the pair.</div>";
   if (unused) h += '<div class="more"><a id="togglecar">' + (S.allCar ? "Hide" : "Show") + " the " + unused + " car route" + (unused === 1 ? "" : "s") + " nobody took</a></div>";
   h += '<div class="foot">Times are what the travellers expected door to door when they chose (for a trip given the car, the drive time of its route), averaged over them; the strip splits it into walking, waiting, riding, driving and parking. Hover a journey to see it alone; click it to zoom to it.</div>';
   box.innerHTML = h;
-  box.querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => { const m = +c.dataset.m; if (S.hidden.has(m)) S.hidden.delete(m); else S.hidden.add(m); S.hoverOpt = -1; tripPanel(); redraw(false); writeHash(); }));
+  box.querySelectorAll(".chip input").forEach((c) => c.addEventListener("change", () => { const m = +c.dataset.m; if (c.checked) S.hidden.delete(m); else S.hidden.add(m); S.hoverOpt = -1; tripPanel(); renderLegend(); redraw(false); writeHash(); }));
   box.querySelectorAll(".opt").forEach((row) => {
     const o = +row.dataset.o;
-    row.addEventListener("pointerenter", () => { S.hoverOpt = o; redraw(false); });
+    row.addEventListener("pointerenter", () => { if (S.hidden.has(A.om[o])) return; S.hoverOpt = o; redraw(false); });
     row.addEventListener("pointerleave", () => { S.hoverOpt = -1; redraw(false); });
     row.addEventListener("click", () => {
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
