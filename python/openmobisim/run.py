@@ -286,16 +286,25 @@ class Run:
         for i, mode, name, v in kpis:
             if mode != "all" and i == last:
                 by_mode.setdefault(mode, {})[name] = v
+        # A mode a service serves has no rows of how its trips went (the service's rows say
+        # it): its entry leaves those keys out rather than reading them as 0.
         files.completion_by_mode = {
             mode: {
-                **{key: int(row.get(metric, 0)) for key, metric in _FILE_COMPLETION.items()},
-                "total_travel_time_s": float(row.get("total_travel_time_s", 0.0)),
-                "people": float(row.get("people", 0.0)),
-                "completed_people": float(row.get("completed_people", 0.0)),
+                **{
+                    key: int(row[metric])
+                    for key, metric in _FILE_COMPLETION.items()
+                    if metric in row
+                },
+                **{
+                    key: float(row[key])
+                    for key in ("total_travel_time_s", "people", "completed_people")
+                    if key in row
+                },
             }
             for mode, row in sorted(by_mode.items())
             if "trips" in row
         }
+        files.completed_people = float(totals.get("completed_people", 0.0))
         iterations = sorted({i for i, mode, _, _ in kpis if mode == "all"})
         values = {(i, name): v for i, mode, name, v in kpis if mode == "all"}
         nan = float("nan")
@@ -901,6 +910,16 @@ class Run:
         choice (``modes``) each trip counts under the mode it took, each mode adds its
         ``mode_share`` (of the trips, weighted by the travellers), and every iteration adds
         ``mode_changed_share`` under ``"all"``.
+
+        A mode a service of the run serves (``"bike_share"`` and ``"bike_share_transit"`` with a
+        docked bike service, ``"taxi"`` with a taxi fleet) keeps only the rows of its trips'
+        choice: ``trips``, ``people``, ``mode_share``, ``gap`` and the three counts of trips
+        that could not travel. How its trips went is what the service day gave them, in the
+        rows under the service's name (``requests``, ``rides``, ``cancelled``, ``no_bike``,
+        ``unfinished``, the waiting times and the like); the planned trips'
+        ``completed_trips``, ``completed_people``, ``truncated_trips``, ``completion_rate`` and
+        ``total_travel_time_s`` are not written under the mode. The ``"all"`` rows count every
+        trip as planned, a service's trips included.
         """
         return Table(self._summary.kpis_path)  # kpis.csv for a run's minimal outputs
 
@@ -2162,7 +2181,7 @@ class Run:
         walks, waits and rides included); ``mean_vehicle_time_s`` is the part spent in the
         trips' own vehicles.
         """
-        people = sum(row["completed_people"] for row in self.completion_by_mode.values())
+        people = self._completed_people()
         return self.total_travel_time_s / people if people > 0 else float("nan")
 
     @property
@@ -2184,8 +2203,18 @@ class Run:
         ``mean_travel_time_s``; the trips without a vehicle of their own count with 0. ``nan``
         if no trip completed.
         """
-        people = sum(row["completed_people"] for row in self.completion_by_mode.values())
+        people = self._completed_people()
         return self.total_vehicle_time_s / people if people > 0 else float("nan")
+
+    def _completed_people(self) -> float:
+        """The people the completed trips stand for, the whole run's.
+
+        For a run read back, ``kpis.parquet``'s ``"all"`` row: a mode a service serves has no
+        ``completed_people`` row of its own.
+        """
+        if isinstance(self._summary, _Files):
+            return self._summary.completed_people
+        return sum(row["completed_people"] for row in self.completion_by_mode.values())
 
     def __repr__(self) -> str:
         """The completion counts, as a one-line summary."""

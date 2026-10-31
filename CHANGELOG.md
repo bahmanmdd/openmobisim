@@ -42,6 +42,12 @@ engine, the taxis on that loading's road times, and what the fleet actually did 
   bike service: `requests`, `rides`, `no_bike`, `unfinished`, `extra_walk_at_pickup_mean_s`,
   `extra_walk_at_return_mean_s`, `assumed_extra_walk_at_pickup_s`, `assumed_extra_walk_at_return_s`,
   `redirected_share`.
+- Under a mode a service serves (`bike_share` and `bike_share_transit` with a docked bike service, `taxi` with a taxi
+  fleet), `kpis.parquet` keeps the rows of the trips' choice (`trips`, `people`, `mode_share`, `gap`,
+  `no_vehicle_available_trips`, `no_feasible_path_trips`, `mode_not_available_trips`) and has no `completed_trips`,
+  `completed_people`, `truncated_trips`, `completion_rate` or `total_travel_time_s`: how those trips went is in the
+  service's rows. The `all` rows count every trip as planned, a service's included. `Run.open` leaves those keys out
+  of the mode's `completion_by_mode` entry.
 - `bike_share_trips.parquet` has `outcome` (`completed`, `cancelled`: no bike at any dock tried, `unfinished`,
   `not_requested`) and splits `extra_s` into `extra_walk_at_pickup_s` and `extra_walk_at_return_s`.
 - `trip_results` of a run with a service has two more columns: `service_outcome` (`completed`, `cancelled`,

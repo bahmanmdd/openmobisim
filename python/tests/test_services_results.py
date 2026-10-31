@@ -196,6 +196,12 @@ def test_the_kpi_rows_are_the_trips(run: ms.Run) -> None:
     service = np.asarray(t["service_outcome"])
     assert (service[share] != "").all() and (service[~share] == "").all()
     assert (service[share] == "cancelled").sum() == (outcome == "cancelled").sum()
+    # Under the service's mode, the rows of its trips' choice only: how they went is the
+    # service day's (the rows above), not the planned trips' (S305).
+    mode = {r["metric"] for r in k if r["mode"] == "bike_share" and r["metric"] not in DOCK_ROWS}
+    planned = {"completed_trips", "completed_people", "completion_rate", "truncated_trips"}
+    assert not (planned | {"total_travel_time_s"}) & mode, mode
+    assert {"trips", "people", "mode_share", "no_feasible_path_trips"} <= mode
 
 
 def test_the_log_can_be_turned_off(tmp_path: Path) -> None:
@@ -226,6 +232,10 @@ def test_a_run_without_a_service_writes_none_of_it(tmp_path: Path) -> None:
     assert not list(out.glob("bike_share_*.parquet"))
     k = pq.read_table(out / "kpis.parquet").to_pylist()
     assert not [r for r in k if r["mode"] == "bike_share"]
+    # Without a service every mode keeps the rows of how its trips went.
+    walk = {r["metric"] for r in k if r["mode"] == "walk"}
+    planned = {"completed_trips", "completed_people", "completion_rate", "truncated_trips"}
+    assert planned | {"trips", "people", "total_travel_time_s"} <= walk
     # A run at flow level 0 reads back from its folder (its manifest has no flow step).
     opened = ms.Run.open(out)
     assert opened.bike_share_trips_table() is None
