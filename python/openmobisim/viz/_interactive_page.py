@@ -1389,7 +1389,24 @@ function exportFrame() {
   if (HAS_ROUTES && S.pair >= 0 && S.routes) others.unshift({ title: "Trips " + placeName(S.pair, 0) + " → " + placeName(S.pair, 1) + " · colour: fastest green → slowest red, width = travellers", items: tripJourneyItems() }, { title: "Legs", items: tripLegendItems() }, { title: "Places", items: tripMarkItems().map(([name, m]) => [name, "", "mark:" + m]) });
   return { title: $("title").textContent, subtitle: $("subtitle").textContent, legend, others, provenance: $("provenance").textContent, source: $("source").textContent, credit: $("credit").hidden ? "" : $("credit").textContent };
 }
-const HEAD = 64, FOOT = 46;
+const HEAD = 64, FOOT = 46, ROW = 32;
+// Where an export's legends below the map go (S308: a pair's journeys, legs and places ran off the page and under the
+// provenance): each group of items placed left to right, a new row when the next would pass the right edge; then
+// the provenance and the wordmark on a line of their own. Returns each group's place, each item's x, and the foot's
+// height. Measured in the viewer's font, the same for the PNG and the SVG.
+function exportLayout(f) {
+  const m = document.createElement("canvas").getContext("2d"), top = HEAD + H + 18, groups = [];
+  let ox = 16, row = 0;
+  for (const g of f.others) {
+    m.font = "10px " + FONT; const tw = m.measureText(g.title).width; m.font = "9.5px " + FONT;
+    const xs = []; let w = 0; for (const [name] of g.items) { xs.push(w); w += 32 + m.measureText(name).width; }
+    const gw = Math.max(w, tw);
+    if (ox > 16 && ox + gw > W - 16) { row++; ox = 16; }
+    groups.push({ g, x: ox, y: top + row * ROW, xs }); ox += gw + 24;
+  }
+  const rows = groups.length ? row + 1 : 0, line = groups.length ? top + rows * ROW - 2 : top;
+  return { groups, line, foot: groups.length ? 18 + rows * ROW + 30 : FOOT };
+}
 // One item of an export's legend at (x, y), 16 px wide: a place's mark ("mark:<kind>", drawn small) or a leg's style.
 function exportItem(c2d, x, y, colour, style) {
   if (style.startsWith("mark:")) {
@@ -1419,17 +1436,17 @@ function exportSVG() {
   ctx = rec; window.Path2D = RecPath;
   try { viewWithMoving(draw); } finally { ctx = keep; window.Path2D = keepPath; draw(); }
   const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-  const total = H + HEAD + FOOT, parts = [];
+  const lay = exportLayout(f), total = H + HEAD + lay.foot, parts = [];
   // The SVG namespace from the page's own compass (the page names no address anywhere).
   const ns = $("compass").querySelector("svg").namespaceURI;
   parts.push(`<svg xmlns="${ns}" width="${W}" height="${total}" viewBox="0 0 ${W} ${total}" font-family="${esc(FONT)}">`);
   parts.push(`<rect width="${W}" height="${total}" fill="${TH.surface}"/>`);
   parts.push(`<g transform="translate(0 ${HEAD})">${rec.out.join("")}</g>`);
   // The bands above and below the map, painted over whatever of it runs past the view.
-  parts.push(`<rect width="${W}" height="${HEAD}" fill="${TH.surface}"/><rect y="${HEAD + H}" width="${W}" height="${FOOT}" fill="${TH.surface}"/>`);
+  parts.push(`<rect width="${W}" height="${HEAD}" fill="${TH.surface}"/><rect y="${HEAD + H}" width="${W}" height="${lay.foot}" fill="${TH.surface}"/>`);
   parts.push(`<text x="16" y="26" font-size="17" font-weight="700" fill="${TH.ink}">${esc(f.title)}</text>`);
   parts.push(`<text x="16" y="48" font-size="11.5" fill="${TH.ink2}">${esc(f.subtitle)}</text>`);
-  const y = HEAD + H + 18;
+  const y = lay.line;
   if (f.legend) {  // at the top right, as in the package's figures (S269)
     const n = f.legend.stops.length, w = 200, step = w / n, x0 = W - 16 - w, ly = 30;
     parts.push(`<text x="${x0 + w}" y="${ly - 8}" font-size="10.5" text-anchor="end" fill="${TH.ink2}">${esc(f.legend.label)}</text>`);  // right-aligned: a long title runs left, not off the page
@@ -1437,17 +1454,13 @@ function exportSVG() {
     if (f.legend.bands) parts.push(f.legend.bands.map((t, i) => `<text x="${(x0 + (i + 0.5) * step).toFixed(2)}" y="${ly + 19}" font-size="9.5" text-anchor="middle" fill="${TH.ink2}">${esc(t)}</text>`).join(""));
     else parts.push(`<text x="${x0}" y="${ly + 19}" font-size="9.5" fill="${TH.ink2}">${esc(f.legend.low)}</text><text x="${x0 + w}" y="${ly + 19}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc(f.legend.high)}</text>`);
   }
-  let ox = 16;  // the other layers' legends at the bottom left, side by side
-  for (const g of f.others) {
-    parts.push(`<text x="${ox}" y="${y - 2}" font-size="10" fill="${TH.ink2}">${esc(g.title)}</text>`);
-    let x = ox;
-    for (const [name, c, style] of g.items) {
+  for (const { g, x: gx, y: gy, xs } of lay.groups) {  // the other layers' legends below the map, in rows
+    parts.push(`<text x="${gx}" y="${gy - 2}" font-size="10" fill="${TH.ink2}">${esc(g.title)}</text>`);
+    g.items.forEach(([name, c, style], i) => {
       // Each item drawn by the map's own functions (S308): a leg's style, or a place's mark.
-      const rec = svgRecorder(); exportItem(rec, x, y + 11, c, style);
-      parts.push(rec.out.join("") + `<text x="${x + 21}" y="${y + 14}" font-size="9.5" fill="${TH.ink2}">${esc(name)}</text>`);
-      x += 32 + name.length * 6;
-    }
-    ox = Math.max(x, ox + g.title.length * 5.6) + 24;
+      const x = gx + xs[i], rec = svgRecorder(); exportItem(rec, x, gy + 11, c, style);
+      parts.push(rec.out.join("") + `<text x="${x + 21}" y="${gy + 14}" font-size="9.5" fill="${TH.ink2}">${esc(name)}</text>`);
+    });
   }
   parts.push(`<text x="${W - 16}" y="${y + 4}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc([f.provenance, f.source, f.credit].filter(Boolean).join(" · "))}</text>`);
   parts.push(`<text x="${W - 16}" y="${y + 20}" font-size="11" font-weight="700" text-anchor="end" fill="${TH.ink}">openmobisim</text>`);
@@ -1458,17 +1471,18 @@ function exportSVG() {
 }
 function exportPNG() {
   const f = exportFrame(), scale = 2, off = document.createElement("canvas");
-  off.width = Math.round(W * scale); off.height = Math.round((H + HEAD + FOOT) * scale);
+  const lay = exportLayout(f);
+  off.width = Math.round(W * scale); off.height = Math.round((H + HEAD + lay.foot) * scale);
   const o = off.getContext("2d"), map = document.createElement("canvas");
   map.width = Math.round(W * scale); map.height = Math.round(H * scale);
   const keep = ctx, keepDpr = DPR; ctx = map.getContext("2d"); DPR = scale;
   try { viewWithMoving(draw); } finally { ctx = keep; DPR = keepDpr; draw(); }
   o.setTransform(scale, 0, 0, scale, 0, 0);
-  o.fillStyle = TH.surface; o.fillRect(0, 0, W, H + HEAD + FOOT);
+  o.fillStyle = TH.surface; o.fillRect(0, 0, W, H + HEAD + lay.foot);
   o.drawImage(map, 0, HEAD, W, H);
   o.fillStyle = TH.ink; o.font = "700 17px " + FONT; o.fillText(f.title, 16, 26);
   o.fillStyle = TH.ink2; o.font = "11.5px " + FONT; o.fillText(f.subtitle, 16, 48);
-  const y = HEAD + H + 18;
+  const y = lay.line;
   if (f.legend) {  // at the top right, as in the package's figures (S269)
     const n = f.legend.stops.length, w = 200, step = w / n, x0 = W - 16 - w, ly = 30;
     o.textAlign = "right"; o.fillStyle = TH.ink2; o.font = "10.5px " + FONT; o.fillText(f.legend.label, x0 + w, ly - 8); o.textAlign = "left";
@@ -1483,16 +1497,12 @@ function exportPNG() {
       o.fillStyle = TH.ink2; o.font = "9.5px " + FONT; o.fillText(f.legend.low, x0, ly + 19); o.textAlign = "right"; o.fillText(f.legend.high, x0 + w, ly + 19);
     }
   }
-  let ox = 16;  // the other layers' legends at the bottom left, side by side
-  for (const g of f.others) {
-    o.textAlign = "left"; o.fillStyle = TH.ink2; o.font = "10px " + FONT; o.fillText(g.title, ox, y - 2);
-    const tw = o.measureText(g.title).width; o.font = "9.5px " + FONT;
-    let x = ox;
-    for (const [name, c, style] of g.items) {
-      exportItem(o, x, y + 11, c, style); o.textAlign = "left"; o.font = "9.5px " + FONT;
-      o.fillStyle = TH.ink2; o.fillText(name, x + 21, y + 14); x += 32 + o.measureText(name).width;
-    }
-    ox = Math.max(x, ox + tw) + 24;
+  for (const { g, x: gx, y: gy, xs } of lay.groups) {  // the other layers' legends below the map, in rows
+    o.textAlign = "left"; o.fillStyle = TH.ink2; o.font = "10px " + FONT; o.fillText(g.title, gx, gy - 2);
+    g.items.forEach(([name, c, style], i) => {
+      const x = gx + xs[i]; exportItem(o, x, gy + 11, c, style); o.textAlign = "left"; o.font = "9.5px " + FONT;
+      o.fillStyle = TH.ink2; o.fillText(name, x + 21, gy + 14);
+    });
   }
   o.textAlign = "right"; o.fillStyle = TH.ink2; o.font = "9.5px " + FONT;
   o.fillText([f.provenance, f.source, f.credit].filter(Boolean).join(" · "), W - 16, y + 4);
