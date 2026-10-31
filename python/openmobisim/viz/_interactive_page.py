@@ -431,9 +431,11 @@ function measureRoom(cand) {
   ROOM_M = 2 * C * C / used[Math.floor(0.75 * (used.length - 1))] * S.mpp;
 }
 function roomPx() { return ROOM_M > 0 ? ROOM_M / S.mpp : 40; }
-// The widest ribbon (a road of the network's largest capacity): a quarter of the room, so a two-way road of the
-// largest capacity takes half the space between it and the next road; between 2.5 and WCAP px.
-function ribbonMax() { return Math.max(2.5, Math.min(WCAP, ROOM_SHARE * roomPx())); }
+// The widest ribbon (a road of the network's largest capacity): a quarter of the room up to ROOM_KNEE px of room,
+// and beyond it growing with the room's square root only, between 2.5 and WCAP px (S308: on a sparse network, a
+// quarter of its wide room drew roads too wide; where the roads are dense, as in a city, nothing changes).
+const ROOM_KNEE = 32;
+function ribbonMax() { const r = roomPx(); return Math.max(2.5, Math.min(WCAP, ROOM_SHARE * Math.min(r, ROOM_KNEE) * Math.sqrt(Math.max(r, ROOM_KNEE) / ROOM_KNEE))); }
 // The space between a road's two directions (px): each ribbon sits on its own side of the centre line, to the
 // right of its travel, so the two read apart at every zoom (S306: 0.5 px between them read as one ribbon).
 let GAP = 2;  // set by each frame: a fifth of the widest ribbon, 1.5 to 6 px

@@ -737,6 +737,10 @@ def test_the_two_directions_of_a_road_are_drawn_apart(tmp_path):
     widths = [w for *_, w in ribbons(svg)]
     assert 2.5 <= wmax <= 30 and abs(max(widths) - wmax) <= 0.5
     assert max(widths) - min(widths) <= 0.5, "one capacity, one width"
+    # The widest: a quarter of the room up to 32 px of room, then growing with its square root.
+    room = float(re.search(r'data-room="([\d.]+)"', dom)[1])
+    expect = 0.25 * min(room, 32) * (max(room, 32) / 32) ** 0.5
+    assert abs(wmax - min(30, max(2.5, expect))) <= 0.1
 
 
 def test_a_ribbon_s_width_is_its_road_s_capacity(tmp_path):
