@@ -5,6 +5,15 @@ a minor version may change the interface, and says so here.
 
 ## Unreleased
 
+**The run configuration file, `run.toml`: every parameter of a run in one file.** `config_write_defaults(path)`
+writes the complete file at the shipped defaults: one table per group (`[inputs]`, `[run]`, `[equilibration]`,
+`[choice]`, `[modes]`, `[prices]`, `[services.<name>]`, `[service_assumptions]`, `[policy]`, `[network]`, `[loading]`,
+`[routes]`, `[route_update]`, `[transit]`, `[parking]`), a method's name and its options in the same table, every
+line's comment giving its default, its meaning and its unit, and a header naming the package version, the defaults
+version and the parameters that differ from the defaults. `Config.from_arguments(...)` makes one from a run's
+arguments, `config_read(path)` reads one back, every name checked (a misspelt one is refused with its table's names).
+The defaults are `parameters()`'s, so the file and the code cannot disagree.
+
 **Shared-mobility services in a run: chosen on fixed assumptions, played once after the run.** A run with a
 docked bike service or a taxi fleet (`services=`) offers them to the trips that choose their mode. What travellers
 assume when they choose is fixed for the whole run and set by name, `Scenario.run(service_assumptions={...})`:
