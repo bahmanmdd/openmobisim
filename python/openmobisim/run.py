@@ -10,13 +10,16 @@ import json
 import math
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from openmobisim import _core
 from openmobisim.demand import demand_read_trips
 from openmobisim.table import Columns, Table
+
+if TYPE_CHECKING:
+    from openmobisim.config import Config
 
 __all__ = ["LAYERS", "MODES", "NO_ALTERNATIVE_CHANGES", "SERVICE_MODES", "Run"]
 
@@ -247,15 +250,15 @@ class Run:
         self.flow_level = flow_level
         self.flow_step_s = flow_step_s
         self._files: _Files | None = None
-        # Which files the run wrote (C2): "all", or "minimal" (kpis.csv, manifest.json).
+        # Which files the run wrote (C2): "all", or "minimal" (kpis.csv, manifest.json, run.toml).
         self._outputs = "all"
 
     def _written(self, path: str | None, what: str) -> str | None:
         """``path``, or a clear refusal for a file the run's minimal outputs leave out."""
         if self._outputs == "minimal":
             raise RuntimeError(
-                f"this run wrote its minimal outputs (outputs='minimal': kpis.csv and "
-                f"manifest.json), so not {what}; run with outputs='all' for it"
+                f"this run wrote its minimal outputs (outputs='minimal': kpis.csv, "
+                f"manifest.json and run.toml), so not {what}; run with outputs='all' for it"
             )
         return path
 
@@ -956,6 +959,28 @@ class Run:
         with Path(self._summary.manifest_path).open(encoding="utf-8") as f:
             data: dict[str, Any] = json.load(f)
         return data
+
+    def config(self) -> Config:
+        """The run's ``run.toml``, the complete configuration it ran with, as a ``Config``.
+
+        Written by every run beside its ``manifest.json``: every parameter at the value the run
+        used. ``scenario.run(config=run.config())``, on the scenario it ran, repeats it with the
+        same fingerprint; ``openmobisim run --config <folder>/run.toml`` too when the file names
+        its inputs (a scenario built from files by ``Config.scenario``), else its header lists
+        what the run had in memory.
+
+        Raises:
+            FileNotFoundError: If the run's folder holds no ``run.toml`` (a run of an earlier
+                version).
+        """
+        from openmobisim.config import config_read
+
+        path = Path(self._summary.manifest_path).parent / "run.toml"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{str(path.parent)!r} holds no run.toml: a run of an earlier version wrote none"
+            )
+        return config_read(path)
 
     def timings(self) -> Columns:
         """Wall-clock time by stage, measured on this machine's clock.

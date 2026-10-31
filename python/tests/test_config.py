@@ -115,7 +115,10 @@ def test_a_changed_value_is_written_read_back_and_named_in_the_header(tmp_path) 
     assert read.values["services"]["taxi"]["request_cancel_s"] == 900
     assert read.values["policy"] == {"name": "charge_rule", "charge_below": 0.3,
                                      "charge_to": 0.8, "step_s": 900.0}  # fmt: skip
-    assert read.text() == text
+    # The same file again, but for the header's note on the taxis' table, given in memory.
+    note = "# Not in this file (given in Python; a run from this file alone lacks them): "
+    assert text.splitlines()[3] == note + "services.taxi.vehicles (in memory)."
+    assert read.text().splitlines() == text.splitlines()[:3] + text.splitlines()[4:]
 
 
 def test_the_writer_writes_every_kind_of_value_as_toml() -> None:
@@ -193,7 +196,6 @@ def _same_results(a: Path, b: Path) -> None:
 
 
 def test_a_run_from_a_written_file_is_the_run_from_the_arguments(tmp_path) -> None:
-    pytest.importorskip("pyarrow")
     direct = _toy(**SETTINGS).run("r", output_dir=str(tmp_path / "direct"), quiet=True,
                                   service_assumptions=None, design_id="d")  # fmt: skip
     path = ms.Config.from_arguments("r", design_id="d", **SETTINGS).write(tmp_path / "run.toml")
@@ -243,7 +245,6 @@ def _files(folder: Path) -> Path:
 
 
 def test_the_inputs_are_read_relative_to_the_file(tmp_path, monkeypatch) -> None:
-    pytest.importorskip("pyarrow")
     _files(tmp_path)
     (tmp_path / "run.toml").write_text(
         'name = "files"\n[inputs]\nnetwork = "network"\ndemand = "trips.csv"\n'
@@ -262,7 +263,6 @@ def test_the_inputs_are_read_relative_to_the_file(tmp_path, monkeypatch) -> None
 
 
 def test_the_command_line_runs_a_file_as_python_does(tmp_path, capsys) -> None:
-    pytest.importorskip("pyarrow")
     from openmobisim.__main__ import main
 
     _files(tmp_path)
@@ -284,3 +284,85 @@ def test_the_command_line_runs_a_file_as_python_does(tmp_path, capsys) -> None:
     assert main(["run", "delft", "--config", str(tmp_path / "run.toml")]) == 2
     assert main(["run"]) == 2
     assert main(["config", "--from", str(tmp_path / "network")]) == 1
+
+
+# --- (e) the run folder's copy -------------------------------------------------------------
+
+
+def test_every_run_writes_the_file_it_ran_with_and_it_repeats_the_run(tmp_path) -> None:
+    first = _toy(**SETTINGS).run("copy", output_dir=str(tmp_path / "first"), quiet=True)
+    text = (tmp_path / "first" / "run.toml").read_text()
+    assert 'name = "copy"' in text and "beta_time_min = -0.15" in text
+    assert "network (in memory)" in text.splitlines()[3]  # the inputs were objects
+    assert "this run: " in text  # what the rules chose, in the comments
+    copy = first.config()
+    assert copy.values["equilibration"]["iterations"] == 3
+    # On a scenario of the same inputs at its defaults, the copy is the whole run.
+    again = _toy().run(output_dir=str(tmp_path / "again"), quiet=True, config=copy)
+    assert again.fingerprint == first.fingerprint
+    _same_results(tmp_path / "first", tmp_path / "again")
+    assert (tmp_path / "again" / "run.toml").read_text() == text
+    try:
+        import pyarrow  # noqa: F401  (Run.open reads the results with it)
+    except ImportError:
+        return
+    assert ms.Run.open(tmp_path / "first").config().values == copy.values
+
+
+def test_a_run_from_files_repeats_from_its_folder_alone(tmp_path, capsys) -> None:
+    from openmobisim.__main__ import main
+
+    _files(tmp_path)
+    (tmp_path / "run.toml").write_text(
+        'name = "files"\n[inputs]\nnetwork = "network"\ndemand = "trips.csv"\n'
+        '[equilibration]\nmethod = "sra"\niterations = 3\n'
+    )
+    first = ms.config_read(tmp_path / "run.toml").run(str(tmp_path / "first"), quiet=True)
+    assert main(["config", "--from", str(tmp_path / "first")]) == 0
+    printed = capsys.readouterr().out
+    assert printed == (tmp_path / "first" / "run.toml").read_text()
+    assert f'network = "{tmp_path.resolve() / "network"}"' in printed
+    assert main(["run", "--config", str(tmp_path / "first" / "run.toml"), "--output",
+                 str(tmp_path / "second"), "--no-pages"]) == 0  # fmt: skip
+    second = json.loads((tmp_path / "second" / "manifest.json").read_text())
+    assert second["run_fingerprint"] == first.fingerprint
+
+
+def test_a_run_with_services_and_a_policy_repeats_from_its_copy(tmp_path) -> None:
+    net = ms.examples.toy_network()
+    rows = ms.examples.trips_random(net, 60, seed=3, min_m=100.0, max_m=2000.0, spread_s=1800)
+    coords, _ = net.link_geometry()
+    docks = ms.dock_read_table(
+        [{"dock_id": f"d{i}", "lon": p[0], "lat": p[1], "capacity": 6, "bikes": 3}
+         for i, p in enumerate(coords[[0, len(coords) // 2, -1]])]
+    )  # fmt: skip
+    taxis = ms.vehicle_read_table(
+        [{"vehicle_id": f"v{i}", "lon": p[0], "lat": p[1]} for i, p in enumerate(coords[[0, -1]])]
+    )
+
+    def scenario(**options: object) -> ms.Scenario:
+        return ms.Scenario.from_parts(
+            net,
+            rows,
+            modes=["car", "walk", "bike", "bike_share", "taxi"],
+            price_options={"taxi_eur_per_km": 1.0},
+            services=[
+                ms.service_bike_docked(docks, options=options.get("bikes")),
+                ms.service_taxi(taxis, options=options.get("taxis")),
+            ],  # fmt: skip
+        )
+
+    first = scenario(taxis={"request_cancel_s": 900}).run(
+        "services",
+        output_dir=str(tmp_path / "first"),
+        quiet=True,
+        service_assumptions={"assumed_wait_s": 300},
+        policy="threshold",
+        policy_options={"low": 0.1},
+    )
+    copy = first.config()
+    assert copy.values["services"]["taxi"]["request_cancel_s"] == 900
+    assert copy.values["policy"] == {"name": "threshold", "low": 0.1, "high": 0.8, "step_s": 900}
+    assert "policy" in copy.differences() and "services.taxi" in copy.differences()
+    again = scenario().run(output_dir=str(tmp_path / "again"), quiet=True, config=copy)
+    assert again.fingerprint == first.fingerprint

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import json
 import math
 import tempfile
 import warnings
@@ -1723,12 +1724,13 @@ class Scenario:
                 ``master_seed``. Like ``run_id``, both are labels, not in the fingerprint.
             outputs: Which files the run writes in ``output_dir``. ``"all"`` (the default):
                 ``kpis.parquet``, ``diagnostics.parquet``, ``events.parquet``, ``manifest.json``,
+                ``run.toml`` (the complete configuration it ran with, ``Run.config()``),
                 ``timings.csv`` and, as the run has them, the link bins, ``transit_calls.parquet``
                 and ``parking_bins.parquet``. ``"minimal"``, for mass runs (thousands of
-                scenarios, a design space): ``kpis.csv`` (the rows of ``kpis.parquet``) and
-                ``manifest.json`` only, a few kilobytes; the run's results in memory, its
-                fingerprint and ``Run.open`` are the same, and the files it left out are
-                refused by name. No page or figure is ever written by ``run``.
+                scenarios, a design space): ``kpis.csv`` (the rows of ``kpis.parquet``),
+                ``manifest.json`` and ``run.toml`` only, a few tens of kilobytes; the run's
+                results in memory, its fingerprint and ``Run.open`` are the same, and the files
+                it left out are refused by name. No page or figure is ever written by ``run``.
             hub_join_m: How far a parking may be from a stop, in metres in a straight line, to
                 join the stop's hub (``hub_id`` in ``transit_calls`` and ``parking_bins``: a
                 stop's hub is its station, or the stop itself without one; a parking whose table
@@ -1827,6 +1829,23 @@ class Scenario:
             car_snap_motorway_m=(self._mode_options or {}).get("car_snap_motorway_m"),
         )
         run._outputs = outputs
+        # The complete, effective configuration beside the manifest: the folder says how to
+        # run it again (``Run.config()``, ``openmobisim run --config <folder>/run.toml``).
+        from openmobisim.config import _config_of
+
+        arguments = {
+            "run_id": run_id,
+            "hub_join_m": hub_join_m,
+            "outputs": outputs,
+            "threads": threads,
+            "design_id": design_id,
+            "replication": replication,
+            "service_assumptions": service_assumptions,
+            "policy": policy,
+            "policy_options": policy_options,
+        }
+        manifest = json.loads(Path(summary.manifest_path).read_text(encoding="utf-8"))
+        _config_of(self, arguments, manifest).write(Path(output_dir) / "run.toml")
         if not quiet:
             logger.info(run._summary_line())
             logger.debug(run._timings_text())

@@ -23,6 +23,7 @@ from __future__ import annotations
 import functools
 import json
 import math
+import numbers
 import re
 import tomllib
 from collections.abc import Mapping
@@ -657,9 +658,10 @@ def _value(v: Any) -> str:
         return "true" if v else "false"
     if isinstance(v, str | Path):
         return json.dumps(str(v), ensure_ascii=False)
-    if isinstance(v, int):
-        return str(v)
-    if isinstance(v, float):
+    if isinstance(v, numbers.Integral):
+        return str(int(v))
+    if isinstance(v, numbers.Real):
+        v = float(v)
         if math.isnan(v):
             return "nan"
         if math.isinf(v):
@@ -1328,7 +1330,13 @@ _INPUT_PARTS = {
     "zones": "zones",
 }
 #: Arguments a file cannot hold, by what the header calls them, when set.
-_NOT_EXPRESSIBLE = ("link_values", "person_values", "trip_values", "disruptions")
+_NOT_EXPRESSIBLE = (
+    "link_values",
+    "person_values",
+    "trip_values",
+    "disruptions",
+    "disruptions_known",
+)
 #: The arguments of ``from_parts`` that ``Config.from_arguments`` takes.
 _ARGUMENTS = (
     "default_weight", "window", "flow_level", "flow_step_s", "link_bin_s", "route_method",
@@ -1436,7 +1444,11 @@ def _stated(
         put("network", k, v)
     for service in parts.get("services") or ():
         entry: dict[str, Any] = {"kind": service.kind}
-        entry.update((services_given or {}).get(service.name, {}))
+        tables = (services_given or {}).get(service.name, {})
+        entry.update(tables)
+        for t in _SERVICE_TABLES[service.kind]:
+            if t not in tables and getattr(service, t) is not None:
+                absent.append(f"services.{service.name}.{t} (in memory)")
         known = {x.key for x in _lines()["services"] if x.kind == service.kind}
         for k, v in service.options.items():
             if k in known:

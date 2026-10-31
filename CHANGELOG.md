@@ -13,6 +13,17 @@ line's comment giving its default, its meaning and its unit, and a header naming
 version and the parameters that differ from the defaults. `Config.from_arguments(...)` makes one from a run's
 arguments, `config_read(path)` reads one back, every name checked (a misspelt one is refused with its table's names).
 The defaults are `parameters()`'s, so the file and the code cannot disagree.
+- `Scenario.run(config="run.toml")` (or a `Config`) runs with the file's values as its arguments, in place of the
+  scenario's own of the same names; an argument given both in the file and in the call is refused, and so are
+  `[inputs]` or `[network]` values that are not the scenario's. `Config.scenario()` reads a file's `[inputs]` through
+  the package's readers, relative paths against the file, and `Config.run()` runs it.
+- The command line: `openmobisim run --config run.toml`, `openmobisim config --defaults` (the complete file at the
+  defaults) and `openmobisim config --from <run folder>`.
+- **Every run writes `run.toml`** beside its `manifest.json` (with `outputs="minimal"` too): the complete, effective
+  configuration it ran with, about a millisecond to write. `Run.config()` reads it back; on the scenario it ran,
+  `scenario.run(config=run.config())` gives the same fingerprint, and a run whose inputs came from a file is repeated
+  from its folder alone (`openmobisim run --config <folder>/run.toml`). What a file cannot hold (inputs given in
+  memory, link values, disruptions, a Python choice model or policy) is named in its header.
 
 **Shared-mobility services in a run: chosen on fixed assumptions, played once after the run.** A run with a
 docked bike service or a taxi fleet (`services=`) offers them to the trips that choose their mode. What travellers
