@@ -716,6 +716,15 @@ def test_each_leg_and_place_has_one_look_in_the_list_the_map_and_the_legend(tmp_
     assert "Places" in svg and "car park and ride" in svg, "and in the export's legend"
 
 
+def test_the_pointer_is_an_arrow_and_a_hand_only_over_something_to_pick(tmp_path):
+    """No open hand over the whole map (S308): the arrow, a pointing hand over an item."""
+    text = viz.map_interactive(grid_run()[1], tmp_path / "map.html").read_text(encoding="utf-8")
+    rule = re.search(r"canvas#map \{[^}]*\}", text)[0]
+    assert "cursor: default" in rule and "grab" not in rule
+    assert '"grabbing" : S.picking ? "crosshair" : it ? "pointer" : "default"' in text
+    assert "const it = pickItem(e.offsetX, e.offsetY), l = it && it.kind" in text
+
+
 def test_the_delay_is_named_as_the_delay_over_free_flow(tmp_path):
     """The colour is mean time / free flow - 1, in four bands up to 100 % and over; v/c alike."""
     text, meta, _ = decode(viz.map_interactive(grid_run()[1], tmp_path / "map.html"))
