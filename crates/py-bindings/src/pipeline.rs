@@ -2227,6 +2227,10 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
         if name == "least_cost" && !values.iter().any(|(n, _)| n == "until_iteration") {
             values.push(("until_iteration".to_string(), 0.0));
         }
+        // And for the least gain a route must bring (S307): 0, a tie counts.
+        if name == "least_cost" && !values.iter().any(|(n, _)| n == "min_gain_s") {
+            values.push(("min_gain_s".to_string(), 0.0));
+        }
         push(&format!("route_update.{name}"), "route_update_options", values);
     }
     for name in crate::choice::choice_models() {

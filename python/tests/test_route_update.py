@@ -214,7 +214,7 @@ def test_bad_settings_are_refused_before_any_work():
 
     with pytest.raises(ValueError, match='no route update called "nope".*none, least_cost'):
         build(route_update="nope")
-    with pytest.raises(ValueError, match="max_routes, searches"):
+    with pytest.raises(ValueError, match="max_routes, min_gain_s, searches"):
         build(route_update="best_response", route_update_options={"nope": 1})
     for name, value in [
         ("searches", 0),

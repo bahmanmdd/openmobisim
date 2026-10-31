@@ -414,7 +414,7 @@ fn updates_are_chosen_by_name_and_bad_options_say_what_is_wrong() {
     assert!(matches!(e, RouteUpdateError::UnknownUpdate { .. }));
     assert!(e.to_string().contains("none, least_cost, doubly_stochastic"), "{e}");
     let e = route_update::update("best_response", &options(&[("nope", 1.0)])).err().unwrap();
-    assert!(e.to_string().contains("max_routes, searches"), "{e}");
+    assert!(e.to_string().contains("max_routes, min_gain_s, searches"), "{e}");
     let e = route_update::update("none", &options(&[("searches", 1.0)])).err().unwrap();
     assert!(e.to_string().contains("no options"), "{e}");
     for (name, bad) in [
@@ -568,6 +568,70 @@ fn an_equally_good_route_is_added_and_a_route_the_set_holds_never_is() {
 }
 
 #[test]
+fn under_min_gain_a_tie_is_left_out_and_a_faster_road_still_enters() {
+    // S307: `min_gain_s` 1. On the twin roads the other road is as good as the set's and never
+    // better, so whichever road the set holds, nothing is added, read off the trees (the
+    // default) or searched per pair (`tree_step_s` 0); the descriptor says so. On the bottleneck
+    // the slow road beats the jammed one by minutes and still enters at the first loading.
+    for (pick, step) in [(0, 300.0), (1, 300.0), (0, 0.0), (1, 0.0)] {
+        let network = Arc::new(twin_roads());
+        let (travellers, raw) =
+            build_travellers(trips(20, 900), Vec::new(), &car_owning(), 1, &mut Diagnostics::new())
+                .unwrap();
+        let turns = Arc::new(TurnTable::build(&network, SignalDefaults::SHIPPED));
+        let mut run = Run::new(network, Arc::new(travellers), Arc::new(raw), Second(3600))
+            .with_mode_defaults(ModeDefaults::SHIPPED.without_fixed_times())
+            .with_flow_motor(FlowMotor::Ltm {
+                turns,
+                step: Duration(60.0),
+                level: FidelityLevel::Full,
+            })
+            .with_route_generator(Arc::new(OneOfTwo { pick }))
+            .with_equilibration(Arc::from(
+                strategy("msa", &[("iterations".to_string(), 3.0)].into_iter().collect()).unwrap(),
+            ))
+            .with_route_update(Arc::from(
+                route_update::update(
+                    "best_response",
+                    &options(&[("slack", 0.0), ("min_gain_s", 1.0), ("tree_step_s", step)]),
+                )
+                .unwrap(),
+            ));
+        let result = run.execute(&mut Diagnostics::new());
+        let sets = result.route_sets.as_ref().unwrap();
+        assert_eq!(sets.route_count(), 1, "pick {pick}, step {step}: the tie is not added");
+        assert!(
+            result.iterations.iter().all(|it| it.routes_added == 0),
+            "pick {pick}, step {step}"
+        );
+        assert_eq!(result.iterations[0].route_searches, 1, "it looked");
+    }
+    // The option is part of what the run was (the sets' own `update` is written only once they
+    // have grown); the default's descriptor is as before.
+    let descriptor = |pairs: &[(&str, f64)]| {
+        route_update::update("best_response", &options(pairs)).unwrap().descriptor()
+    };
+    assert_eq!(
+        descriptor(&[("slack", 0.0), ("min_gain_s", 1.0)]),
+        "best_response;max_routes=10;min_gain_s=1;searches=1;slack=0;tree_step_s=300"
+    );
+    assert_eq!(
+        descriptor(&[]),
+        "best_response;max_routes=10;searches=1;slack=0.02;tree_step_s=300"
+    );
+    let mut setup = Setup::new(1_500);
+    setup.update = ("best_response", vec![("min_gain_s", 1.0)]);
+    let r = setup.go();
+    assert_eq!(
+        (r.iterations[0].route_searches, r.iterations[0].routes_added),
+        (1, 1),
+        "the slow road"
+    );
+    // A negative gain is refused.
+    assert!(route_update::update("best_response", &options(&[("min_gain_s", -1.0)])).is_err());
+}
+
+#[test]
 fn a_run_stops_on_its_tolerance_only_after_the_routes_have_stopped_coming() {
     // A tolerance of 15% on the bottleneck: the jam shows the slow road at once, and the run stops
     // only after it is in the set, the travellers have moved onto it, and nothing more is added.
@@ -716,8 +780,14 @@ fn a_pair_within_the_slack_of_free_flow_is_not_searched_and_one_beyond_it_is() {
             &network,
             &EntryTables { entry: recorder.finish(), origin_wait: empty },
         );
-        let update =
-            BestResponse { searches: 1, max_routes: 10, slack, tree_step_s: 0, until_iteration: 0 };
+        let update = BestResponse {
+            searches: 1,
+            max_routes: 10,
+            slack,
+            tree_step_s: 0,
+            until_iteration: 0,
+            min_gain_s: 0.0,
+        };
         let trip_class = vec![0_u32; raw.len() as usize];
         let found = update.update(&UpdateContext {
             network: &network,
@@ -1131,6 +1201,7 @@ fn a_competitive_route_that_is_never_the_fastest_enters_only_with_sampled_draws(
         slack: 0.02,
         tree_step_s: 3_600,
         until_iteration: 0,
+        min_gain_s: 0.0,
     };
     let run = |update: &dyn RouteUpdate| {
         update.update(&UpdateContext {
@@ -1381,6 +1452,7 @@ fn a_toll_makes_the_column_generation_add_the_route_cheapest_in_its_class_s_cost
         slack: 0.0,
         tree_step_s: 3_600,
         until_iteration: 0,
+        min_gain_s: 0.0,
     };
     let run = |route_cost: Option<&RouteCost>, step: u32| {
         let update = BestResponse { tree_step_s: step, ..update };

@@ -6,6 +6,7 @@ a minor version may change the interface, and says so here.
 ## Unreleased
 
 - The route update can stop adding routes after a given iteration: `route_update_options={"until_iteration": k}` (0, the default, adds in every iteration). After it the route sets stay as they are and the remaining loadings settle the choices among them, without the jumps a route added late causes.
+- The route update can ask for a gain before it adds a route: `route_update_options={"min_gain_s": s}` adds a route only if it is at least `s` seconds cheaper than the set's best at the departure searched (0, the default, also adds a route as good as the set's best). On a grid of equal blocks the network's best route often ties with the set's best, and each tie added moves the choices for no gain.
 **A run with a service counts its service trips as the service day gave them.** `completion`, `completion_by_mode`, `total_travel_time_s`, `mean_travel_time_s`, the line a run prints and the last iteration's `kpis.parquet` rows (`all` and the service's modes) follow `trip_results`' `service_outcome` and `service_arrival_s`: a cancelled taxi request is counted under a new `cancelled` (`cancelled_trips`), a traveller who found no shared bike arrives when the walk on ends (`service_arrival_s` now gives that second). A run without a service is unchanged.
 
 **`parameters()` gives every parameter's meaning and source** (columns `meaning` and `source`), written once in the package's `data/parameters.csv`; `run.toml`'s comments show each meaning's first sentence from there.

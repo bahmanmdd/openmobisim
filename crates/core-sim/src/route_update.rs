@@ -17,7 +17,7 @@
 //! |---|---|
 //! | `none` (the default, [`DEFAULT_UPDATE`]) | Nothing: the sets stay as the generator made them, and the run costs nothing extra |
 //! | `doubly_stochastic` (`sampled`) | `least_cost` and, beside it, **doubly stochastic candidates** (S298): for each of `draws` preference draws per iteration, one perturbed generalised-cost tree per origin, departure bin and user class (the class's extra seconds per link for length, money and user values, drawn around its coefficients; every link's cost times a random factor), whose route to a pair is added if it is new and its cost at the bin's middle, in the class's generalised cost for the draw (its travel time where the class has no extras), is within `max_detour` of the set's best in that cost; never to a full set. The set then holds competitive routes, not only ones that were once the fastest |
-//! | `least_cost` (`best_response`) | **Column generation**: for every origin–destination pair, the least-cost route at the congested times (the time-dependent least-cost route by each user class's generalised cost, its travel time plus the seconds-equivalent of every per-link term its utility weighs; the fastest route where the utility weighs only time), read from the run's **shared search trees** (one bounded time-dependent search per origin, departure bin and coefficient vector, [`crate::trees`]; S294, S299) or, with `tree_step_s` 0, found by one bounded search per pair at the median departure of the pair's trips; it is **added if it is new and costs no more than the set's best route** in that cost: a tie counts, since an equally good alternative is one more to spread over. A route is a "column" of the route-flow problem; as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
+//! | `least_cost` (`best_response`) | **Column generation**: for every origin–destination pair, the least-cost route at the congested times (the time-dependent least-cost route by each user class's generalised cost, its travel time plus the seconds-equivalent of every per-link term its utility weighs; the fastest route where the utility weighs only time), read from the run's **shared search trees** (one bounded time-dependent search per origin, departure bin and coefficient vector, [`crate::trees`]; S294, S299) or, with `tree_step_s` 0, found by one bounded search per pair at the median departure of the pair's trips; it is **added if it is new and costs no more than the set's best route** in that cost: a tie counts, since an equally good alternative is one more to spread over (with `min_gain_s` above 0, only a route at least that many seconds cheaper than the set's best is added: on a grid of equal blocks the ties are many, and each one added moves the choices for no gain). A route is a "column" of the route-flow problem; as in MATSim's re-routing, SUMO's `duaIterate` and DTALite |
 //!
 //! **What `best_response` costs.** With the shared trees (the default) nothing is searched: the
 //! run builds the trees for its gap and the update reads each pair's route off its tree, at the
@@ -293,6 +293,15 @@ pub struct BestResponse {
     /// added late is chosen only by the few that choose again and moves the queues the gap is
     /// measured on (S306). The gaps still read the network's best route.
     pub until_iteration: u32,
+    /// How much cheaper than the set's best route a route must be to be added, in seconds of
+    /// the cost searched (0 by default: a tie counts, see the [module docs](self)). Above 0, a
+    /// route is added only if it beats the set's best at the departure searched by at least
+    /// this much; a full set keeps its own rule where that is stricter ([`REPLACE_GAIN_S`]).
+    /// On a grid of equal blocks the network's best route often ties with the set's best, or
+    /// beats it by a second or two, so the sets keep growing by near-twins once the queues have
+    /// settled, each chosen by the few who choose again, which moves the queues for little
+    /// gain (S307). The regret the gaps measure is unchanged by a tie left out.
+    pub min_gain_s: f64,
 }
 
 impl Default for BestResponse {
@@ -303,13 +312,14 @@ impl Default for BestResponse {
             slack: DEFAULT_SLACK,
             tree_step_s: DEFAULT_TREE_STEP_S,
             until_iteration: 0,
+            min_gain_s: 0.0,
         }
     }
 }
 
 impl BestResponse {
-    const OPTIONS: [&'static str; 5] =
-        ["max_routes", "searches", "slack", "tree_step_s", "until_iteration"];
+    const OPTIONS: [&'static str; 6] =
+        ["max_routes", "min_gain_s", "searches", "slack", "tree_step_s", "until_iteration"];
 
     /// Make the update from its options, defaults for those not given.
     ///
@@ -352,6 +362,16 @@ impl BestResponse {
                     }
                     m.slack = v;
                 }
+                "min_gain_s" => {
+                    if !(v.is_finite() && v >= 0.0) {
+                        return Err(RouteUpdateError::BadOption {
+                            update: "best_response".to_string(),
+                            option: option.to_string(),
+                            reason: format!("must be at least 0, got {v}"),
+                        });
+                    }
+                    m.min_gain_s = v;
+                }
                 _ => {
                     m.max_routes = whole(option, v, 1, MAX_ROUTES)?;
                 }
@@ -382,12 +402,17 @@ impl RouteUpdate for BestResponse {
 
     fn descriptor(&self) -> String {
         format!(
-            "best_response;max_routes={};searches={};slack={};tree_step_s={}{}",
+            "best_response;max_routes={}{};searches={};slack={};tree_step_s={}{}",
             self.max_routes,
+            // Only when set: the default's descriptor, and so every fingerprint, as before.
+            if self.min_gain_s > 0.0 {
+                format!(";min_gain_s={}", self.min_gain_s)
+            } else {
+                String::new()
+            },
             self.searches,
             self.slack,
             self.tree_step_s,
-            // Only when set: the default's descriptor, and so every fingerprint, as before.
             if self.until_iteration > 0 {
                 format!(";until_iteration={}", self.until_iteration)
             } else {
@@ -475,6 +500,9 @@ impl RouteUpdate for BestResponse {
                     continue;
                 };
                 if full && time >= best - REPLACE_GAIN_S {
+                    continue;
+                }
+                if self.min_gain_s > 0.0 && time > best - self.min_gain_s {
                     continue;
                 }
                 // The search was bounded by the set's best, so `links` is at least as good. A
@@ -592,6 +620,9 @@ impl BestResponse {
                     if links.is_empty() || (full && found_cost >= best - REPLACE_GAIN_S) {
                         continue;
                     }
+                    if self.min_gain_s > 0.0 && found_cost > best - self.min_gain_s {
+                        continue;
+                    }
                     if is_known(sets, job.key, &added, &links) {
                         continue;
                     }
@@ -681,9 +712,12 @@ impl BestResponse {
                     read = true;
                     let Some(found) = tree.route_to(key.destination) else { continue };
                     // At least as good as the set's best: a tie counts (S176), but for a full
-                    // set, which takes only a route that beats its best (S268).
+                    // set, which takes only a route that beats its best (S268), and under
+                    // `min_gain_s`, which asks for that much of a gain (S307).
                     let good = if full {
-                        found.cost < best - REPLACE_GAIN_S
+                        found.cost < best - REPLACE_GAIN_S.max(self.min_gain_s)
+                    } else if self.min_gain_s > 0.0 {
+                        found.cost <= best - self.min_gain_s
                     } else {
                         found.cost <= best + 1e-9
                     };

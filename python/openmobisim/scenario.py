@@ -1181,7 +1181,10 @@ class Scenario:
                 much is left to gain) and ``until_iteration`` (0: the last iteration whose
                 routes are added, 0 for every one; after it the sets stay as they are and the
                 remaining loadings settle the choices among them, without the jumps a route
-                added late causes when the few who choose again move to it).
+                added late causes when the few who choose again move to it) and ``min_gain_s``
+                (0: how many seconds cheaper than the set's best a route must be to be added;
+                at 0 a route as good as the set's best counts too, which on a grid of equal
+                blocks adds one equal twin after another, each moving the choices for no gain).
                 For ``"doubly_stochastic"``: those three, ``tree_step_s`` (300: the length in
                 seconds of the departure bins its searches are shared by; it must be above 0 here),
                 and ``draws`` (1: perturbed searches per origin,
