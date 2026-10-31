@@ -594,9 +594,10 @@ def pair_view(path, hash_):
         re.S,
     )
     svg = html.unescape(re.search(r'<textarea id="exported"[^>]*>(.*?)</textarea>', dom, re.S)[1])
-    drawn = re.search(r'<g transform="translate\(0 \d+\)">(.*?)</g>', svg, re.S)[1]
+    found = re.search(r'<g transform="translate\(0 \d+\)">(.*?)</g>', svg, re.S)
+    drawn = found[1]
     strokes = set(re.findall(r'stroke="(#[0-9a-f]{6})"', drawn))
-    legend = set(re.findall(r'<line [^>]*stroke="(#[0-9a-f]{6})"', svg))
+    legend = set(re.findall(r'stroke="(#[0-9a-f]{6})"', svg[found.end() :]))  # what follows the map
     return dom, rows, strokes, legend
 
 
@@ -671,6 +672,48 @@ def test_the_widest_journey_is_drawn_first_and_the_thinnest_on_top(tmp_path):
     order = sorted(rows, key=lambda r: first[r[2]])
     travellers = [float(a["on"][int(o)]) for _, o, *_ in order]
     assert len(order) >= 3 and travellers == sorted(travellers, reverse=True)
+
+
+@pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
+def test_each_leg_and_place_has_one_look_in_the_list_the_map_and_the_legend(tmp_path):
+    """One line style per kind of leg and one mark per kind of place, the same everywhere (S308).
+
+    A pair with a park-and-ride journey: its strip names each leg by its style, the legend draws
+    the styles and the marks it has (the park-and-ride's "P+R" sign among them), and the map
+    draws that sign in the parking blue.
+    """
+    import html
+
+    path = tmp_path / "map.html"
+    _, meta, a = decode(viz.map_interactive(layered_run(), path))
+    pr = meta["trips"]["modes"].index("car_transit")
+    p = next(
+        q
+        for q in range(len(a["qs"]) - 1)
+        if any(a["om"][o] == pr and a["on"][o] > 0 for o in range(a["qs"][q], a["qs"][q + 1]))
+    )
+    dom, _, _, _ = pair_view(path, f"p={p}&ly=-&ao=1")
+    strips = re.findall(r'<div class="strip">(.*?)</div>', dom, re.S)
+    kinds = {k for strip in strips for k in re.findall(r'<span class="(\w+)"', strip)}
+    assert kinds and kinds <= {
+        "drive",
+        "taxi",
+        "track",
+        "bus",
+        "bike",
+        "share",
+        "walk",
+        "wait",
+        "park",
+    }
+    assert "park" in kinds and ({"track", "bus"} & kinds), "the park-and-ride's parking and ride"
+    legend = re.search(r'<div id="legendbody"[^>]*>(.*?)<div id="compass">', dom, re.S)[1]
+    for words in ("drive", "walk", "origin", "destination", "stop", "car park and ride"):
+        assert f"</svg>{words}</span>" in legend, f"the legend draws {words}"
+    svg = html.unescape(re.search(r'<textarea id="exported"[^>]*>(.*?)</textarea>', dom, re.S)[1])
+    drawn = re.search(r'<g transform="translate\(0 \d+\)">(.*?)</g>', svg, re.S)[1]
+    assert 'fill="#1f5fbf"' in drawn and ">P+R</text>" in drawn, "the P+R sign on the map"
+    assert "Places" in svg and "car park and ride" in svg, "and in the export's legend"
 
 
 def test_the_delay_is_named_as_the_delay_over_free_flow(tmp_path):

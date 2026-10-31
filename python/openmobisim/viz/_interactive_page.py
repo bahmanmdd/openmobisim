@@ -173,11 +173,17 @@ footer #source { flex: none; white-space: nowrap; margin-right: 16px; }
 #tripcard .opt.unused .top b, #tripcard .opt.unused .top .t { color: var(--muted); font-weight: 500; }
 #tripcard .strip { display: flex; gap: 2px; height: 14px; margin-top: 5px; }
 #tripcard .strip span { display: block; height: 100%; min-width: 3px; border-radius: 3px; font: 600 9px/14px var(--sans); color: #fff; text-align: center; overflow: hidden; white-space: nowrap; }
-#tripcard .strip .walk { background-image: radial-gradient(circle, var(--c) 1.6px, transparent 1.8px); background-size: 6px 14px; background-position: center; }
-#tripcard .strip .wait { background: repeating-linear-gradient(135deg, var(--base) 0 3px, transparent 3px 6px); }
-#tripcard .strip .park { background: var(--base); }
+/* Each leg in its style, as on the map (S308): drive solid; taxi solid with a dotted centre; track a double line with
+   sleepers; bus a double line; bike dashes; share dash-dot; walk dots; waiting hatched; parking a light tint of the parking sign's blue. */
+#tripcard .strip .drive { background: var(--c); }
+#tripcard .strip .taxi { background: radial-gradient(circle, var(--surface) 1px, transparent 1.3px) center / 5px 100% repeat-x, var(--c); }
+#tripcard .strip .track { background: linear-gradient(180deg, var(--c) 0 30%, transparent 30% 70%, var(--c) 70%), repeating-linear-gradient(90deg, var(--c) 0 1.5px, transparent 1.5px 5px); border-radius: 0; }
+#tripcard .strip .bus { background: linear-gradient(180deg, var(--c) 0 36%, transparent 36% 64%, var(--c) 64%); }
 #tripcard .strip .bike { background: repeating-linear-gradient(90deg, var(--c) 0 7px, transparent 7px 10px); border-radius: 0; }
-#tripcard .strip .ride { background: linear-gradient(180deg, var(--c) 0 36%, transparent 36% 64%, var(--c) 64%); }
+#tripcard .strip .share { background: repeating-linear-gradient(90deg, var(--c) 0 7px, transparent 7px 9px, var(--c) 9px 11px, transparent 11px 13px); border-radius: 0; }
+#tripcard .strip .walk { background-image: radial-gradient(circle, var(--c) 1.5px, transparent 1.7px); background-size: 5px 100%; background-position: center; }
+#tripcard .strip .wait { background: repeating-linear-gradient(135deg, var(--base) 0 3px, transparent 3px 6px); }
+#tripcard .strip .park { background: var(--p); }
 #tripcard .group { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 8px 0 2px 6px; font-weight: 600; }
 #tripcard .more { font-size: 11px; color: var(--ink2); margin: 6px 6px 0; }
 #tripcard .more a { color: var(--ink); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
@@ -230,7 +236,7 @@ const LY = META.layers || {};
 const LAYER_ROWS = [
   ["road", "Road traffic", "ribbons: width = road capacity, colour as below"],
   ["transit", "Transit lines", "width = passengers on board, colour = kind of service"],
-  ["parking", "Parkings", "■ car, ● bike; size = capacity, colour = busiest share in use"],
+  ["parking", "Parkings", "● car, ■ bike; size = capacity, colour = busiest share in use"],
   ["bike", "Cyclists", "on the bike network, the whole run"],
   ["walk", "Walkers", "on the walk network, the whole run"],
 ];
@@ -621,7 +627,8 @@ function drawParking() {
   for (let i = 0; i < A.pc.length; i++) {
     const x = sx(A.px[i] * 0.1), y = sy(A.py[i] * 0.1), r = 3 + 6 * Math.sqrt(A.pc[i] / most);
     const fill = tbl[Math.min(tbl.length - 1, Math.floor(Math.min(1, A.po[i]) * tbl.length))];
-    ctx.beginPath(); if (A.pv[i]) ctx.arc(x + r * 0.9, y, r * 0.8, 0, 6.2832); else { ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y - r); ctx.lineTo(x + r, y + r); ctx.lineTo(x - r, y + r); ctx.closePath(); }
+    // A car park round, a bike park square, as the trips' parking signs (S308).
+    ctx.beginPath(); if (!A.pv[i]) ctx.arc(x, y, r, 0, 6.2832); else { const q = r * 0.8, bx = x + r * 0.9; ctx.moveTo(bx - q, y - q); ctx.lineTo(bx + q, y - q); ctx.lineTo(bx + q, y + q); ctx.lineTo(bx - q, y + q); ctx.closePath(); }
     ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = TH.ink; ctx.lineWidth = 1; ctx.stroke();
   }
 }
@@ -696,11 +703,80 @@ function inkOn(fill) {
   const f = lum(fill), dark = TOK.paper.ink, light = "#ffffff";
   return (f + 0.05) / (lum(dark) + 0.05) > (1.05) / (f + 0.05) ? dark : light;
 }
-// A journey's line style, by what it mostly is: a transit ride's double line, a drive's solid line, a bike ride's
-// dashes, a walk's dots (for an export's legend).
+// ---- the trips' visual identity (S308): one line style per kind of leg, one mark per kind of place, drawn by the same
+// functions on the map, in the list's strips, in the legend and in the exports ----
+// The line styles, each named by what the traveller does:
+//   drive: a solid line (the car's road);              taxi: a solid line with a dotted centre line;
+//   track: a double line with sleepers (train, metro, tram: a ride on rails);   bus: a double line (bus, ferry, other);
+//   bike: long dashes (a ride on one's own bike);      share: dash-dot (a ride on a shared bike);   walk: round dots.
+// The marks: A and B (origin, destination), dark discs; a stop, a small ring; a dock of shared bikes, a diamond; a
+// parking, the blue parking sign, round for cars and square for bikes, "P" where the trip ends parked and "P+R" where
+// it parks to ride transit.
+const LEG_STYLE_NAMES = { drive: "drive", taxi: "taxi ride", track: "train, metro or tram", bus: "bus or other transit", bike: "bike ride", share: "shared-bike ride", walk: "walk" };
+const RAIL_KINDS = new Set(["rail", "metro", "tram"]);
+function legStyle(o, g) {
+  const k = A.lk[g], mode = TR.modes[A.om[o]];
+  if (k === LEG.drive) return mode === "taxi" ? "taxi" : "drive";
+  if (k === LEG.bike) return mode === "bike_share" || mode === "bike_share_transit" ? "share" : "bike";
+  if (k === LEG.ride) return RAIL_KINDS.has((TR.line_kinds || [])[A.lline[g]]) ? "track" : "bus";
+  return "walk";
+}
+// The strokes that draw a style `lw` px wide: [width, dash or null, cap, "c" (the journey's colour) or "s" (the surface)].
+function legStrokes(style, lw) {
+  const thin = Math.max(1, 0.3 * lw);
+  switch (style) {
+    case "taxi": return [[lw, null, "round", "c"], [Math.max(1.2, 0.4 * lw), [0.1, Math.max(3.2, 1.1 * lw)], "round", "s"]];
+    case "track": return [[lw + 5, [1.6, 6], "butt", "c"], [lw, null, "round", "c"], [thin, null, "round", "s"]];
+    case "bus": return [[lw, null, "round", "c"], [thin, null, "round", "s"]];
+    case "bike": return [[lw, [Math.max(7, 2.4 * lw), Math.max(4, 1.2 * lw)], "butt", "c"]];
+    case "share": return [[lw, [Math.max(7, 2.4 * lw), 3, Math.max(2, 0.7 * lw), 3], "butt", "c"]];
+    case "walk": return [[lw, [0.1, lw + 2.6], "round", "c"]];
+    default: return [[lw, null, "round", "c"]];
+  }
+}
+// The least width a style is drawn at, so its pattern reads.
+const LEG_MIN_WIDTH = { drive: 0, taxi: 3, track: 3.4, bus: 3.6, bike: 2.4, share: 2.6, walk: 2.6 };
+// Stroke `path` (null: the context's current path) in a style: pass 0 its margin of the surface, pass 1 its strokes.
+function strokeLeg(c2d, path, style, colour, lw, pass) {
+  const go = () => (path ? c2d.stroke(path) : c2d.stroke());
+  const strokes = legStrokes(style, lw);
+  if (pass === 0) {
+    const wide = Math.max(...strokes.map((x) => x[0])), walk = style === "walk";
+    c2d.lineCap = "round"; c2d.setLineDash(walk ? strokes[0][1] : []); c2d.strokeStyle = TH.surface; c2d.lineWidth = (style === "track" ? lw : wide) + 2.4; go(); c2d.setLineDash([]);
+    return;
+  }
+  for (const [w, dash, cap, ink] of strokes) { c2d.lineCap = cap; c2d.setLineDash(dash || []); c2d.strokeStyle = ink === "s" ? TH.surface : colour; c2d.lineWidth = w; go(); }
+  c2d.setLineDash([]); c2d.lineCap = "round";
+}
+// A short sample of a style, `len` px long from (x, y): the legend's and the exports' swatch.
+function drawSwatch(c2d, x, y, len, style, colour) {
+  for (const pass of [0, 1]) { c2d.beginPath(); c2d.moveTo(x, y); c2d.lineTo(x + len, y); strokeLeg(c2d, null, style, colour, 3, pass); }
+}
+// The parking sign's blue, per theme: the colour parking is signed in.
+const PARK_SIGN = { paper: "#1f5fbf", night: "#3f80e0" };
+// A place's mark at (x, y): "A", "B", "stop", "dock", or a parking "P-car", "PR-car", "P-bike", "PR-bike".
+function drawMark(c2d, kind, x, y) {
+  const text = (t, size, ink) => { c2d.fillStyle = ink; c2d.font = "700 " + size + "px " + FONT; c2d.textAlign = "center"; c2d.textBaseline = "middle"; c2d.fillText(t, x, y + 0.5); };
+  const disc = (r, fill, line, lw) => { c2d.beginPath(); c2d.arc(x, y, r, 0, 6.2832); c2d.fillStyle = fill; c2d.fill(); c2d.strokeStyle = line; c2d.lineWidth = lw; c2d.stroke(); };
+  const poly = (pts, fill, line, lw) => { c2d.beginPath(); c2d.moveTo(x + pts[0][0], y + pts[0][1]); for (const [a, b] of pts.slice(1)) c2d.lineTo(x + a, y + b); c2d.closePath(); c2d.fillStyle = fill; c2d.fill(); c2d.strokeStyle = line; c2d.lineWidth = lw; c2d.stroke(); };
+  if (kind === "A" || kind === "B") { disc(9, TH.ink, TH.surface, 1.6); text(kind, 10, TH.surface); return; }
+  if (kind === "stop") { disc(3.6, TH.surface, TH.ink2, 1.6); return; }
+  if (kind === "dock") { const r = 5; poly([[0, -r], [r, 0], [0, r], [-r, 0]], TH.surface, TH.ink, 1.6); return; }
+  const pr = kind.startsWith("PR"), car = kind.endsWith("car"), blue = PARK_SIGN[S.theme] || PARK_SIGN.paper;
+  if (car) { disc(pr ? 11 : 8, blue, TH.surface, 1.5); }
+  else { const r = pr ? 10 : 7.5, q = 2; poly([[-r + q, -r], [r - q, -r], [r, -r + q], [r, r - q], [r - q, r], [-r + q, r], [-r, r - q], [-r, -r + q]], blue, TH.surface, 1.5); }
+  text(pr ? "P+R" : "P", pr ? 7.5 : 10, "#ffffff");
+}
+// A drawing of a mark or a swatch as inline SVG, by the same functions (the legend's).
+function svgOf(w, h, draw) { const rec = svgRecorder(); draw(rec); return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h + '" style="vertical-align:middle;margin-right:5px;overflow:visible">' + rec.out.join("") + "</svg>"; }
+// What a parking leg's mark is: its vehicle (a bike, or a car) and whether the trip goes on by transit (P+R).
+function parkKind(o) { const m = TR.modes[A.om[o]], bike = m === "bike" || m === "bike_transit"; return (m === "car_transit" || m === "bike_transit" ? "PR-" : "P-") + (bike ? "bike" : "car"); }
+// A journey's style, by its main leg: its first transit ride's, else its drive's, else its bike ride's, else a walk's
+// (an export's legend, one line per journey).
 function journeyStyle(o) {
-  const has = new Set(); for (let g = A.ol[o]; g < A.ol[o + 1]; g++) has.add(A.lk[g]);
-  return has.has(LEG.ride) ? "rail" : has.has(LEG.drive) ? "" : has.has(LEG.bike) ? "dash" : "dot";
+  const styles = []; for (let g = A.ol[o]; g < A.ol[o + 1]; g++) styles.push(legStyle(o, g));
+  for (const st of ["track", "bus", "taxi", "drive", "share", "bike"]) if (styles.includes(st)) return st;
+  return "walk";
 }
 // A leg's points in metres: along its links, its line's stops, or straight between two places. A walk to, from or
 // between stops, docks and parkings runs from the place it leaves, along its links, to the place it reaches.
@@ -826,50 +902,34 @@ function drawTrips() {
     let prevEnd = null;
     for (let g = A.ol[o]; g < A.ol[o + 1]; g++) {
       const k = A.lk[g];
-      if (k === LEG.park) { if (prevEnd && pass === 1) parks.push({ at: prevEnd, dim }); continue; }
+      if (k === LEG.park) { if (prevEnd && pass === 1) parks.push({ at: prevEnd, dim, kind: parkKind(o) }); continue; }
       const pts = LEGPTS.get(g); if (!pts || pts.length < 4) continue;
       const sp = screenPath(pts, k === LEG.connect ? 0 : f * fit); if (sp.n < 2) continue;
-      // Every leg in the journey's one colour; what the leg is, by its line (S307): a walk dotted, a bike ride
-      // dashed, a drive solid, a transit ride a double line (the colour with a thin line of the surface along it).
-      if (k === LEG.walk || k === LEG.connect) {
-        // A walk along its streets as wide as the option; one the walk network has no path for (straight)
-        // thinner.
-        const ww = k === LEG.connect ? 2.6 : Math.max(w, 2.6);
-        ctx.lineCap = "round"; ctx.setLineDash([0.1, ww + 2.6]);
-        if (pass === 0) { ctx.strokeStyle = TH.surface; ctx.lineWidth = ww + 2.2; } else { ctx.strokeStyle = c; ctx.lineWidth = ww; }
-        ctx.stroke(sp.path); ctx.setLineDash([]);
-      } else {
-        const lw = k === LEG.ride ? Math.max(w, 3.6) : k === LEG.bike ? Math.max(w, 2.4) : w;
-        if (pass === 0) { ctx.strokeStyle = TH.surface; ctx.lineWidth = lw + 2.6; ctx.stroke(sp.path); }
-        else {
-          if (k === LEG.bike) { ctx.lineCap = "butt"; ctx.setLineDash([Math.max(7, 2.4 * lw), Math.max(4, 1.2 * lw)]); }
-          ctx.strokeStyle = c; ctx.lineWidth = lw; ctx.stroke(sp.path); ctx.setLineDash([]); ctx.lineCap = "round";
-          if (k === LEG.ride) { ctx.strokeStyle = TH.surface; ctx.lineWidth = Math.max(1, 0.3 * lw); ctx.stroke(sp.path); }
-        }
-      }
+      // Every leg in the journey's one colour; what the leg is, by its line style (S308, legStrokes). A walk the walk
+      // network has no path for (a straight line) is thinner.
+      const style = legStyle(o, g), lw = k === LEG.connect ? 2.6 : Math.max(w, LEG_MIN_WIDTH[style]);
+      strokeLeg(ctx, sp.path, style, c, lw, pass);
+      if (pass === 1 && style === "share") stops.push({ at: sp.first, dim, kind: "dock" }, { at: sp.last, dim, kind: "dock" });
       if (pass === 1 && k === LEG.ride) {
-        stops.push({ at: sp.first, dim }, { at: sp.last, dim });
+        stops.push({ at: sp.first, dim, kind: "stop" }, { at: sp.last, dim, kind: "stop" });
         if (!dim && sp.len > 34) badges.push([sp.mid, TR.lines[A.lline[g]] || "", c]);
       }
       if (pass === 1 && k === LEG.drive && TR.modes[A.om[o]] === "car" && !dim && sp.len > 40 && (hl || opts.length <= 8)) badges.push([sp.mid, String(carRank(o)), c]);
       prevEnd = sp.last;
     }
   }
-  ctx.globalAlpha = 1;
-  for (const s0 of stops) { ctx.globalAlpha = s0.dim ? 0.25 : 1; ring(s0.at[0], s0.at[1], 3.6, TH.surface, TH.ink2); }
-  for (const pk of parks) {
-    ctx.globalAlpha = pk.dim ? 0.25 : 1; const [x, y] = pk.at, r = 7;
-    ctx.fillStyle = TH.ink; ctx.fillRect(x - r, y - r, 2 * r, 2 * r); ctx.strokeStyle = TH.surface; ctx.lineWidth = 1.5; ctx.strokeRect(x - r, y - r, 2 * r, 2 * r);
-    ctx.fillStyle = TH.surface; ctx.font = "700 10px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("P", x, y + 0.5);
-  }
+  // The places, each once where several journeys share it (S308: four car routes each drew a P at the destination):
+  // the stops and docks, then the parkings, then the badges, then the origin and destination on top.
+  // A mark within `r` px of one of its kind already kept is the same place; a parking at the origin or destination
+  // (the car routes' ends around B) sits once beside its letter.
+  const once = (list, r) => { const kept = []; for (const m of list) { const had = kept.find((k) => k.kind === m.kind && Math.hypot(k.at[0] - m.at[0], k.at[1] - m.at[1]) < r); if (!had) kept.push(m); else if (had.dim && !m.dim) had.dim = false; } return kept; };
+  const doors = [[sx(A.qox[p] * 0.1), sy(A.qoy[p] * 0.1)], [sx(A.qdx[p] * 0.1), sy(A.qdy[p] * 0.1)]];
+  for (const m of parks) for (const [x, y] of doors) if (Math.hypot(m.at[0] - x, m.at[1] - y) < 28) m.at = [x + 15, y + (m.kind.endsWith("bike") ? 15 : -15)];
+  for (const m of once(stops, 4)) { ctx.globalAlpha = m.dim ? 0.25 : 1; drawMark(ctx, m.kind, m.at[0], m.at[1]); }
+  for (const m of once(parks, 18)) { ctx.globalAlpha = m.dim ? 0.25 : 1; drawMark(ctx, m.kind, m.at[0], m.at[1]); }
   ctx.globalAlpha = 1;
   for (const [at, text, fill] of badges) badge(at[0], at[1], text, fill);
-  const ends = [[A.qox[p], A.qoy[p], "A"], [A.qdx[p], A.qdy[p], "B"]];
-  for (const [qx, qy, lab] of ends) {
-    const x = sx(qx * 0.1), y = sy(qy * 0.1);
-    ring(x, y, 9, TH.ink, TH.surface);
-    ctx.fillStyle = TH.surface; ctx.font = "bold 10px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(lab, x, y + 0.5);
-  }
+  drawMark(ctx, "A", sx(A.qox[p] * 0.1), sy(A.qoy[p] * 0.1)); drawMark(ctx, "B", sx(A.qdx[p] * 0.1), sy(A.qdy[p] * 0.1));
 }
 // Picking a pair on the map: the places pairs start from, then the destinations from the one picked.
 function pickPlaces() {
@@ -884,7 +944,7 @@ function pickPlaces() {
 function drawPick() {
   const places = pickPlaces(); let most = 1; for (const e of places) most = Math.max(most, e.n);
   for (const e of places) { const r = 3 + 5 * Math.sqrt(e.n / most); ring(sx(e.x * 0.1), sy(e.y * 0.1), r, S.picking === 1 ? TH.ink : TH.mark, TH.surface); }
-  if (S.picking === 2) { const x = sx(S.pickFrom[0] * 0.1), y = sy(S.pickFrom[1] * 0.1); ring(x, y, 9, TH.ink, TH.surface); ctx.fillStyle = TH.surface; ctx.font = "bold 10px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("A", x, y + 0.5); }
+  if (S.picking === 2) drawMark(ctx, "A", sx(S.pickFrom[0] * 0.1), sy(S.pickFrom[1] * 0.1));
 }
 function pickAt(px, py) {
   const places = pickPlaces(); let best = null, bd = 28;
@@ -1095,16 +1155,11 @@ function strip(o) {
   if (!total) return "";
   const word = { 0: "drive", 1: "ride a bike", 2: "walk", 3: "ride", 4: "walk", 5: "wait", 6: "park, or reach the parked vehicle" };
   return '<div class="strip">' + legs.map((g) => {
-    // The journey's colour, each leg drawn as on the map (S307): walks dotted, bike rides dashed, transit rides a
-    // double line, drives solid; waiting hatched and parking grey.
+    // The journey's colour, each leg in its style as on the map (S308, legStyle): drive, taxi, track, bus, bike, share,
+    // walk; waiting hatched and parking in a light tint of the parking sign's blue.
     const k = A.lk[g], c = journeyColour(o), sec = A.lsec[g], share = sec / total;
-    let cls = "", style = "flex:" + share.toFixed(4) + " 1 0;--c:" + c + ";", text = "";
-    if (k === LEG.walk || k === LEG.connect) cls = "walk";
-    else if (k === LEG.wait) cls = "wait";
-    else if (k === LEG.park) cls = "park";
-    else if (k === LEG.bike) cls = "bike";
-    else if (k === LEG.ride) cls = "ride";
-    else style += "background:" + c;
+    const cls = k === LEG.wait ? "wait" : k === LEG.park ? "park" : legStyle(o, g);
+    let style = "flex:" + share.toFixed(4) + " 1 0;--c:" + c + ";--p:" + mixHex(PARK_SIGN[S.theme] || PARK_SIGN.paper, TH.surface, 0.55) + ";", text = "";
     const what = k === LEG.ride ? "ride " + (TR.lines[A.lline[g]] || "") : word[k];
     return '<span class="' + cls + '" style="' + style + '" title="' + escHtml(what) + " · " + minutes(sec) + ' min">' + text + "</span>";
   }).join("") + "</div>";
@@ -1209,9 +1264,18 @@ function bandGradient(c) { const n = c.length; return "linear-gradient(90deg," +
 // kinds of leg the journeys drawn have.
 function tripLegendItems() {
   const has = new Set();
-  for (const o of pairOptions(S.pair).filter(shownOption)) for (let g = A.ol[o]; g < A.ol[o + 1]; g++) has.add(A.lk[g] === LEG.connect ? LEG.walk : A.lk[g]);
-  return [[LEG.drive, "drive", ""], [LEG.ride, "transit ride", "rail"], [LEG.bike, "bike ride", "dash"], [LEG.walk, "walk", "dot"]]
-    .filter(([k]) => has.has(k)).map(([, name, st]) => [name, TH.ink2, st]);
+  for (const o of pairOptions(S.pair).filter(shownOption)) for (let g = A.ol[o]; g < A.ol[o + 1]; g++) if (A.lk[g] !== LEG.wait && A.lk[g] !== LEG.park) has.add(legStyle(o, g));
+  return Object.keys(LEG_STYLE_NAMES).filter((st) => has.has(st)).map((st) => [LEG_STYLE_NAMES[st], TH.ink2, st]);
+}
+// The marks of the places the journeys drawn pass (S308), as [name, mark]: the origin and destination always.
+const MARK_NAMES = { A: "origin", B: "destination", stop: "stop", dock: "shared-bike dock", "P-car": "car park", "PR-car": "car park and ride", "P-bike": "bike park", "PR-bike": "bike park and ride" };
+function tripMarkItems() {
+  const has = new Set(["A", "B"]);
+  for (const o of pairOptions(S.pair).filter(shownOption)) for (let g = A.ol[o]; g < A.ol[o + 1]; g++) {
+    const k = A.lk[g];
+    if (k === LEG.ride) has.add("stop"); else if (k === LEG.park) has.add(parkKind(o)); else if (legStyle(o, g) === "share") has.add("dock");
+  }
+  return Object.keys(MARK_NAMES).filter((m) => has.has(m)).map((m) => [MARK_NAMES[m], m]);
 }
 // The journeys drawn, each with its colour and its style (an export's legend: it has no list beside it).
 function tripJourneyItems() {
@@ -1221,8 +1285,10 @@ function renderLegend() {
   const line = (c, style) => '<i style="border-top:' + (style === "dash" ? "3px dashed " : style === "dot" ? "3px dotted " : style === "rail" ? "5px double " : "4px solid ") + c + '"></i>';
   const parts = [];
   if (HAS_ROUTES && S.pair >= 0 && S.routes) {
-    parts.push('<div class="lg"><h3>Trips between two places</h3><div class="kinds">' + tripLegendItems().map(([name, c, st]) => "<span>" + line(c, st) + name + "</span>").join("") +
-      '</div><div class="kinds"><span><em class="mkr">A</em>origin</span><span><em class="mkr">B</em>destination</span><span><em class="stop"></em>stop</span><span><em class="badge" style="background:' + TH.ink2 + ";color:" + TH.surface + '">' + escHtml(TR.lines[0] || "M1") + '</em>line</span><span><em class="mkr" style="border-radius:2px">P</em>parking</span></div><div class="note">colour: fastest door to door green → slowest red, as in the list; width = travellers; thin and grey: a car route nobody took</div></div>');
+    // The legs' styles and the places' marks, drawn by the map's own functions (S308).
+    const swatch = (st) => svgOf(26, 10, (rec) => drawSwatch(rec, 2, 5, 22, st, TH.ink2)), mark = (m) => svgOf(24, 22, (rec) => drawMark(rec, m, 12, 11));
+    parts.push('<div class="lg"><h3>Trips between two places</h3><div class="kinds">' + tripLegendItems().map(([name, , st]) => "<span>" + swatch(st) + name + "</span>").join("") +
+      '</div><div class="kinds">' + tripMarkItems().map(([name, m]) => "<span>" + mark(m) + name + "</span>").join("") + '</div><div class="note">colour: fastest door to door green → slowest red, as in the list; width = travellers; thin and grey: a car route nobody took</div></div>');
   }
   if (HAS_TRAFFIC && S.ly.road) {
     const r = roadLegend();
@@ -1234,7 +1300,7 @@ function renderLegend() {
   if (S.ly.transit && LY.transit) parts.push('<div class="lg"><h3>Transit lines</h3><div class="kinds">' + transitKinds().map(([name, k]) => "<span>" + line(TH.kinds[k]) + name + "</span>").join("") + '</div><div class="note">width = passengers on board; ○ stops, size = boardings</div></div>');
   if (S.ly.bike && FLOWS.bike) parts.push('<div class="lg"><h3>Cyclists</h3><div class="kinds"><span>' + line(TH.modes[1], "dash") + 'cyclists</span></div><div class="note">width = cyclists; faint = the bike network</div></div>');
   if (S.ly.walk && FLOWS.walk) parts.push('<div class="lg"><h3>Walkers</h3><div class="kinds"><span>' + line(TH.modes[2], "dot") + 'walkers</span></div><div class="note">width = walkers; faint = the walk network</div></div>');
-  if (S.ly.parking && LY.parking) parts.push('<div class="lg"><h3>Parkings</h3><div class="kinds"><span><b></b>car</span><span><b class="ci"></b>bike</span></div><div class="bar" style="background:linear-gradient(90deg,' + TABLES.delay.join(",") + ')"></div><div class="ends"><span>empty</span><span>full</span></div><div class="note">size = capacity; colour = busiest share in use</div></div>');
+  if (S.ly.parking && LY.parking) parts.push('<div class="lg"><h3>Parkings</h3><div class="kinds"><span><b class="ci"></b>car</span><span><b></b>bike</span></div><div class="bar" style="background:linear-gradient(90deg,' + TABLES.delay.join(",") + ')"></div><div class="ends"><span>empty</span><span>full</span></div><div class="note">size = capacity; colour = busiest share in use</div></div>');
   $("legendbody").innerHTML = parts.join("");
   // The card always holds the compass and the scale (S306), the legend above them when a layer is on.
   $("legendbody").hidden = parts.length === 0;
@@ -1304,14 +1370,23 @@ function exportFrame() {
   const legend = HAS_TRAFFIC && S.ly.road ? roadLegend() : null;
   // The other layers shown, each a title and its swatches [name, colour, style] (S269).
   const others = [];
-  if (S.ly.transit && LY.transit) others.push({ title: "Transit lines · width = passengers on board", items: transitKinds().map(([name, k]) => [name, TH.kinds[k], ""]) });
-  if (S.ly.bike && FLOWS.bike) others.push({ title: "Cyclists · width = cyclists", items: [["cyclists", TH.modes[1], "dash"]] });
-  if (S.ly.walk && FLOWS.walk) others.push({ title: "Walkers · width = walkers", items: [["walkers", TH.modes[2], "dot"]] });
-  if (S.ly.parking && LY.parking) others.push({ title: "Parkings · size = capacity", items: [["car (■)", TH.ink2, ""], ["bike (●)", TH.ink2, ""]] });
-  if (HAS_ROUTES && S.pair >= 0 && S.routes) others.unshift({ title: "Trips " + placeName(S.pair, 0) + " → " + placeName(S.pair, 1) + " · colour: fastest green → slowest red, width = travellers", items: tripJourneyItems() }, { title: "Legs", items: tripLegendItems() });
+  if (S.ly.transit && LY.transit) others.push({ title: "Transit lines · width = passengers on board", items: transitKinds().map(([name, k]) => [name, TH.kinds[k], "drive"]) });
+  if (S.ly.bike && FLOWS.bike) others.push({ title: "Cyclists · width = cyclists", items: [["cyclists", TH.modes[1], "bike"]] });
+  if (S.ly.walk && FLOWS.walk) others.push({ title: "Walkers · width = walkers", items: [["walkers", TH.modes[2], "walk"]] });
+  if (S.ly.parking && LY.parking) others.push({ title: "Parkings · size = capacity", items: [["car (●)", TH.ink2, "drive"], ["bike (■)", TH.ink2, "drive"]] });
+  if (HAS_ROUTES && S.pair >= 0 && S.routes) others.unshift({ title: "Trips " + placeName(S.pair, 0) + " → " + placeName(S.pair, 1) + " · colour: fastest green → slowest red, width = travellers", items: tripJourneyItems() }, { title: "Legs", items: tripLegendItems() }, { title: "Places", items: tripMarkItems().map(([name, m]) => [name, "", "mark:" + m]) });
   return { title: $("title").textContent, subtitle: $("subtitle").textContent, legend, others, provenance: $("provenance").textContent, source: $("source").textContent, credit: $("credit").hidden ? "" : $("credit").textContent };
 }
 const HEAD = 64, FOOT = 46;
+// One item of an export's legend at (x, y), 16 px wide: a place's mark ("mark:<kind>", drawn small) or a leg's style.
+function exportItem(c2d, x, y, colour, style) {
+  if (style.startsWith("mark:")) {
+    if (c2d.save) { c2d.save(); c2d.translate(x + 8, y); c2d.scale(0.7, 0.7); drawMark(c2d, style.slice(5), 0, 0); c2d.restore(); }
+    else { const inner = svgRecorder(); drawMark(inner, style.slice(5), 0, 0); c2d.out.push(`<g transform="translate(${x + 8} ${y}) scale(0.7)">${inner.out.join("")}</g>`); }
+    return;
+  }
+  drawSwatch(c2d, x, y, 16, style || "drive", colour);
+}
 // An export has no panel: what the screen shows beside it is centred in the export's whole width, at the same
 // scale, instead of sitting left of centre beside an empty band where the panel was (R-10).
 function viewWithMoving(drawInto) {
@@ -1355,8 +1430,9 @@ function exportSVG() {
     parts.push(`<text x="${ox}" y="${y - 2}" font-size="10" fill="${TH.ink2}">${esc(g.title)}</text>`);
     let x = ox;
     for (const [name, c, style] of g.items) {
-      const dash = style === "dash" ? ' stroke-dasharray="5 3"' : style === "dot" ? ' stroke-dasharray="1.5 2.5"' : "";
-      parts.push(`<line x1="${x}" y1="${y + 11}" x2="${x + 16}" y2="${y + 11}" stroke="${c}" stroke-width="${style === "rail" ? 4 : 3}"${dash}/>` + (style === "rail" ? `<line x1="${x}" y1="${y + 11}" x2="${x + 16}" y2="${y + 11}" stroke="${TH.surface}" stroke-width="1.2"/>` : "") + `<text x="${x + 21}" y="${y + 14}" font-size="9.5" fill="${TH.ink2}">${esc(name)}</text>`);
+      // Each item drawn by the map's own functions (S308): a leg's style, or a place's mark.
+      const rec = svgRecorder(); exportItem(rec, x, y + 11, c, style);
+      parts.push(rec.out.join("") + `<text x="${x + 21}" y="${y + 14}" font-size="9.5" fill="${TH.ink2}">${esc(name)}</text>`);
       x += 32 + name.length * 6;
     }
     ox = Math.max(x, ox + g.title.length * 5.6) + 24;
@@ -1401,9 +1477,7 @@ function exportPNG() {
     const tw = o.measureText(g.title).width; o.font = "9.5px " + FONT;
     let x = ox;
     for (const [name, c, style] of g.items) {
-      o.strokeStyle = c; o.lineWidth = style === "rail" ? 4 : 3; o.setLineDash(style === "dash" ? [5, 3] : style === "dot" ? [1.5, 2.5] : []);
-      o.beginPath(); o.moveTo(x, y + 11); o.lineTo(x + 16, y + 11); o.stroke(); o.setLineDash([]);
-      if (style === "rail") { o.strokeStyle = TH.surface; o.lineWidth = 1.2; o.stroke(); }
+      exportItem(o, x, y + 11, c, style); o.textAlign = "left"; o.font = "9.5px " + FONT;
       o.fillStyle = TH.ink2; o.fillText(name, x + 21, y + 14); x += 32 + o.measureText(name).width;
     }
     ox = Math.max(x, ox + tw) + 24;
