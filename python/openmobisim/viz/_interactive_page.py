@@ -44,7 +44,7 @@ __CSS__
   </div>
   <div id="trafficgroup">
     <h2>Traffic</h2>
-    <div class="row"><label>Colour by <select id="colour"><option value="delay">Time lost to delay</option><option value="volume">Volume</option><option value="vc">Volume ÷ capacity</option></select></label></div>
+    <div class="row"><label>Colour by <select id="colour"><option value="delay">Delay over free flow</option><option value="volume">Volume</option><option value="vc">Volume ÷ capacity</option></select></label></div>
     <div class="row"><input id="bin" type="range" min="0" max="0" value="0" step="1"></div>
     <div class="row"><label><input id="allbins" type="checkbox" checked> All bins</label><button id="play">Play</button></div>
     <div class="row" id="spillrow" hidden><label title="Links whose queue would not have fitted on the road: where it would spill back (point queue)"><input id="spill" type="checkbox"> Spillback links <span id="spillcount"></span></label></div>
@@ -70,17 +70,18 @@ __JS__
 PAGE_CSS = r""":root { --surface:#fbfcfd; --ink:#0a1626; --ink2:#3d4c5f; --muted:#55657a; --base:#c5cfda; --mark:#04938e; --sans: Inter, "Helvetica Neue", "Segoe UI", system-ui, sans-serif; --mono: "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--surface); color: var(--ink); font-family: var(--sans); overflow: hidden; }
-canvas#map { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: grab; touch-action: none; }
-canvas#map:active { cursor: grabbing; }
+/* The pointer (S308): the arrow over the map, a pointing hand only over something to hover or click, a closed hand
+   while dragging, a crosshair while picking a pair's places (set by the script). */
+canvas#map { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: default; touch-action: none; }
 #error { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: #9d0221; color: #fff; padding: 10px 16px; border-radius: 8px; z-index: 20; font: 13px var(--mono); }
-.head { position: fixed; top: 8px; left: 10px; max-width: min(760px, calc(100vw - 350px)); padding: 8px 14px 9px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 84%, transparent); backdrop-filter: blur(3px); pointer-events: none; }
+.head { position: fixed; top: 8px; left: 10px; max-width: min(760px, calc(100vw - 390px)); padding: 8px 14px 9px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 84%, transparent); backdrop-filter: blur(3px); pointer-events: none; }
 .head .mark { width: 26px; height: 26px; vertical-align: middle; margin-right: 10px; fill: var(--mark); }
 .head h1 { display: inline; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; vertical-align: middle; }
 .head p { margin: 5px 0 0; font-size: 13px; color: var(--ink2); }
 .head p#note { font-style: italic; color: var(--muted); font-size: 12px; }
 /* Everything the reader uses in one column on the right (S306): the controls, then the legend with the compass and
    the scale, kept in view at the column's foot while the controls scroll. */
-#side { position: fixed; top: 14px; right: 14px; bottom: 40px; width: 306px; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+#side { position: fixed; top: 14px; right: 14px; bottom: 40px; width: 344px; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
 #side > * { pointer-events: auto; }
 aside#panel { flex: 0 1 auto; min-height: 0; overflow: auto; background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--base); border-radius: 12px; padding: 12px 14px 14px; box-shadow: 0 6px 26px rgba(0,0,0,.18); font-size: 12.5px; backdrop-filter: blur(6px); }
 aside h2 { margin: 12px 0 7px; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
@@ -161,23 +162,30 @@ footer #source { flex: none; white-space: nowrap; margin-right: 16px; }
 #tripcard .chip input { margin: 0; width: 12px; height: 12px; accent-color: var(--ink2); }
 #tripcard .chip.off { color: var(--muted); }
 #tripcard .opt.off { opacity: .45; cursor: default; }
-#tripcard .opt { padding: 6px 6px 7px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+/* A journey's row, kept low so more fit in view (S308): thin strip and share bar, little padding. */
+#tripcard .opt { padding: 4px 6px 4px; border-radius: 7px; cursor: pointer; border: 1px solid transparent; }
 #tripcard .opt:hover, #tripcard .opt.hl { background: color-mix(in srgb, var(--base) 38%, transparent); border-color: color-mix(in srgb, var(--base) 80%, transparent); }
 #tripcard .opt .top { display: flex; align-items: baseline; gap: 6px; font-size: 12px; }
 #tripcard .opt .top b { font-weight: 600; color: var(--ink); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #tripcard .opt .top .t { font: 600 12px var(--mono); color: var(--ink); white-space: nowrap; }
 #tripcard .opt .top .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; align-self: center; }
-#tripcard .opt .sub { font-size: 10.5px; color: var(--muted); margin-top: 3px; display: flex; justify-content: space-between; gap: 8px; }
-#tripcard .opt .share { height: 3px; border-radius: 2px; margin-top: 3px; background: var(--base); overflow: hidden; }
+#tripcard .opt .sub { font-size: 10.5px; line-height: 1.25; color: var(--muted); margin-top: 2px; display: flex; justify-content: space-between; gap: 8px; }
+#tripcard .opt .share { height: 2px; border-radius: 1px; margin-top: 2px; background: var(--base); overflow: hidden; }
 #tripcard .opt .share span { display: block; height: 100%; }
 #tripcard .opt.unused .top b, #tripcard .opt.unused .top .t { color: var(--muted); font-weight: 500; }
-#tripcard .strip { display: flex; gap: 2px; height: 14px; margin-top: 5px; }
-#tripcard .strip span { display: block; height: 100%; min-width: 3px; border-radius: 3px; font: 600 9px/14px var(--sans); color: #fff; text-align: center; overflow: hidden; white-space: nowrap; }
-#tripcard .strip .walk { background-image: radial-gradient(circle, var(--c) 1.6px, transparent 1.8px); background-size: 6px 14px; background-position: center; }
-#tripcard .strip .wait { background: repeating-linear-gradient(135deg, var(--base) 0 3px, transparent 3px 6px); }
-#tripcard .strip .park { background: var(--base); }
+#tripcard .strip { display: flex; gap: 2px; height: 8px; margin-top: 3px; }
+#tripcard .strip span { display: block; height: 100%; min-width: 3px; border-radius: 2px; overflow: hidden; }
+/* Each leg in its style, as on the map (S308): drive solid; taxi solid with a dotted centre; track a double line with
+   sleepers; bus a double line; bike dashes; share dash-dot; walk dots; waiting hatched; parking a light tint of the parking sign's blue. */
+#tripcard .strip .drive { background: var(--c); }
+#tripcard .strip .taxi { background: radial-gradient(circle, var(--surface) 1px, transparent 1.3px) center / 5px 100% repeat-x, var(--c); }
+#tripcard .strip .track { background: linear-gradient(180deg, var(--c) 0 30%, transparent 30% 70%, var(--c) 70%), repeating-linear-gradient(90deg, var(--c) 0 1.5px, transparent 1.5px 5px); border-radius: 0; }
+#tripcard .strip .bus { background: linear-gradient(180deg, var(--c) 0 36%, transparent 36% 64%, var(--c) 64%); }
 #tripcard .strip .bike { background: repeating-linear-gradient(90deg, var(--c) 0 7px, transparent 7px 10px); border-radius: 0; }
-#tripcard .strip .ride { background: linear-gradient(180deg, var(--c) 0 36%, transparent 36% 64%, var(--c) 64%); }
+#tripcard .strip .share { background: repeating-linear-gradient(90deg, var(--c) 0 7px, transparent 7px 9px, var(--c) 9px 11px, transparent 11px 13px); border-radius: 0; }
+#tripcard .strip .walk { background-image: radial-gradient(circle, var(--c) 1.5px, transparent 1.7px); background-size: 5px 100%; background-position: center; }
+#tripcard .strip .wait { background: repeating-linear-gradient(135deg, var(--base) 0 3px, transparent 3px 6px); }
+#tripcard .strip .park { background: var(--p); }
 #tripcard .group { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 8px 0 2px 6px; font-weight: 600; }
 #tripcard .more { font-size: 11px; color: var(--ink2); margin: 6px 6px 0; }
 #tripcard .more a { color: var(--ink); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
@@ -214,9 +222,9 @@ for (const a of META.arrays) A[a.n] = new CTOR[a.t](raw.buffer, a.o, a.c);
 const NL = META.n_links, NV = META.n_verts, NB = META.n_bins;
 const VS = A.vs, CLS = A.cls, LEN = A.len, FF = A.ff, CAP = A.cap, SG = A.sg || new Uint8Array(CAP.length), SW = A.sw || new Float32Array(CAP.length);
 const SB = A.sb || null;
-// Each link's road tier (S302): the base network's width by tier, as multiples of its base width, and the
-// grey margin around a ribbon (px at a zoom scale of 1). Without roads, one width and no margin.
-const RT = A.rt || null, TIERS = RT ? META.road_tiers : [1], CASING_PX = RT ? META.road_casings : [0];
+// Each link's road tier (S302): the base network's width by tier, as multiples of its base width. Without roads, one
+// width. (A ribbon's own width is its road's capacity, RR below.)
+const RT = A.rt || null, TIERS = RT ? META.road_tiers : [1];
 const tierOf = (l) => (RT ? RT[l] : 0);
 // Each link's upstream and downstream node (S306), and its other direction: the link between the same two nodes
 // the other way (-1 for a one-way link). A two-way road is two links on one geometry, each drawn on its own side.
@@ -228,9 +236,9 @@ if (NF && NT) {
 // The other layers (T-4), each drawn only when its box is ticked.
 const LY = META.layers || {};
 const LAYER_ROWS = [
-  ["road", "Road traffic", "ribbons: width = volume, colour as below"],
+  ["road", "Road traffic", "ribbons: width = road capacity, colour as below"],
   ["transit", "Transit lines", "width = passengers on board, colour = kind of service"],
-  ["parking", "Parkings", "■ car, ● bike; size = capacity, colour = busiest share in use"],
+  ["parking", "Parkings", "● car, ■ bike; size = capacity, colour = busiest share in use"],
   ["bike", "Cyclists", "on the bike network, the whole run"],
   ["walk", "Walkers", "on the walk network, the whole run"],
 ];
@@ -247,7 +255,14 @@ function flowLayer(prefix) {
     for (let k = vs[i]; k < vs[i + 1]; k++) { if (xs[k] < a) a = xs[k]; if (xs[k] > c) c = xs[k]; if (ys[k] < b) b = ys[k]; if (ys[k] > d) d = ys[k]; }
     x0[i] = a; y0[i] = b; x1[i] = c; y1[i] = d;
   }
-  return { n, vs, xs, ys, v, vmax: vmax || 1, x0, y0, x1, y1, len: A[prefix + "l"] || null, inf: A[prefix + "i"] || null };
+  // Each link's other direction (S308): the link between the same two nodes the other way (-1: one way). The two are
+  // drawn and picked apart, each on the right of its travel, as the road's are.
+  const nf = A[prefix + "nf"] || null, nt = A[prefix + "nt"] || null, twin = new Int32Array(n).fill(-1);
+  if (nf && nt) {
+    const at = new Map(); for (let i = 0; i < n; i++) at.set(nf[i] + ":" + nt[i], i);
+    for (let i = 0; i < n; i++) { const r = at.get(nt[i] + ":" + nf[i]); if (r !== undefined && r !== i) twin[i] = r; }
+  }
+  return { n, vs, xs, ys, v, vmax: vmax || 1, x0, y0, x1, y1, len: A[prefix + "l"] || null, inf: A[prefix + "i"] || null, nf, nt, twin };
 }
 const FLOWS = { bike: LY.bike ? flowLayer("b") : null, walk: LY.walk ? flowLayer("w") : null };
 const X = new Float64Array(NV), Y = new Float64Array(NV);
@@ -302,7 +317,8 @@ function aggregate(b0, b1) {
   const span = Math.max(1, b1 - Math.max(b0, FIRST)) * META.bin_seconds, pos = [];
   for (let l = 0; l < NL; l++) {
     vol[l] = tot[l] / span * 3600;
-    if (tot[l] > 0) { meanT[l] = sec[l] / tot[l]; delay[l] = 1 - Math.min((FF[l] + SW[l]) / Math.max(meanT[l], 1e-6), 1); pos.push(vol[l]); } else { meanT[l] = 0; delay[l] = 0; }
+    // The delay over free flow (S308): the mean crossing time over the free-flow time, less one (1 = twice free flow).
+    if (tot[l] > 0) { meanT[l] = sec[l] / tot[l]; const free = FF[l] + SW[l]; delay[l] = free > 0 ? Math.max(meanT[l] / free - 1, 0) : 0; pos.push(vol[l]); } else { meanT[l] = 0; delay[l] = 0; }
   }
   VMAX = (b1 - b0 === 1) ? GLOBAL_VMAX : Math.max(1, percentile(pos, 0.99));
   let hi = pos.length ? percentile(pos, 0.95) : 0; VHIGH = hi;
@@ -349,9 +365,10 @@ function rampTable(stops, n) {
 const NCOL = 24;
 // The first bin with traffic (S269): the slider and Play start there, not at midnight.
 const FIRST = META.first_bin || 0;
-// The delay's bands (S268): the upper edges of each, as META gives them, and their labels.
-const BANDS = META.delay_bands, BAND_LABELS = META.delay_band_labels;
-function band(d) { let b = 0; while (b < BANDS.length && d >= BANDS[b]) b++; return b; }
+// The delay's bands (S268): the upper edges of each, as META gives them, and their labels; volume over capacity's
+// four bands in the same four colours (S308), so the two read alike.
+const BANDS = META.delay_bands, BAND_LABELS = META.delay_band_labels, VC_BANDS = META.vc_bands, VC_LABELS = META.vc_band_labels;
+function band(d, edges) { const e = edges || BANDS; let b = 0; while (b < e.length && d >= e[b]) b++; return b; }
 function bandColours() { const n = BAND_LABELS.length; return BAND_LABELS.map((_, i) => TABLES.delay[Math.round(i / (n - 1) * (NCOL - 1))]); }
 const S = { theme: META.theme, colour: "delay", bin: -1, bins: [0, NB], playing: false, pair: -1, link: -1, hover: -1, hoverItem: null, lyOrder: [], hoverOpt: -1, routes: true, allCar: false, allOpts: false, hidden: new Set(), picking: 0, pickFrom: null, dim: true, spill: false, cx: 0, cy: 0, mpp: 1, ly: { road: true, transit: false, parking: false, bike: false, walk: false } };
 let TH = TOK[S.theme], TABLES = {};
@@ -376,7 +393,8 @@ function resize() {
   canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
 }
 // The right column's width over the map (the controls and the legend, S306): on the right of a wide window.
-function panelWidth() { return W > 760 ? 340 : 0; }
+// fitTo leaves it free: the column (344 px, S308: a little wider to keep more in it), its 14 px margin and 20 px more.
+function panelWidth() { return W > 760 ? 378 : 0; }
 function fitTo(x0, y0, x1, y1, pad) {
   // Fit into the part of the window the right column, the title above and the footer below leave free (S269: a
   // tall network ran under both); nothing is reserved on the left (S306).
@@ -422,28 +440,27 @@ function measureRoom(cand) {
   ROOM_M = 2 * C * C / used[Math.floor(0.75 * (used.length - 1))] * S.mpp;
 }
 function roomPx() { return ROOM_M > 0 ? ROOM_M / S.mpp : 40; }
-// The widest ribbon (the 99th percentile's volume): a quarter of the room, so a two-way road at its busiest takes
-// half the space between it and the next road; between 2.5 and WCAP px.
-function ribbonMax() { return Math.max(2.5, Math.min(WCAP, ROOM_SHARE * roomPx())); }
+// The widest ribbon (a road of the network's largest capacity): a quarter of the room up to ROOM_KNEE px of room,
+// and beyond it growing with the room's square root only, between 2.5 and WCAP px (S308: on a sparse network, a
+// quarter of its wide room drew roads too wide; where the roads are dense, as in a city, nothing changes).
+const ROOM_KNEE = 32;
+function ribbonMax() { const r = roomPx(); return Math.max(2.5, Math.min(WCAP, ROOM_SHARE * Math.min(r, ROOM_KNEE) * Math.sqrt(Math.max(r, ROOM_KNEE) / ROOM_KNEE))); }
 // The space between a road's two directions (px): each ribbon sits on its own side of the centre line, to the
 // right of its travel, so the two read apart at every zoom (S306: 0.5 px between them read as one ribbon).
 let GAP = 2;  // set by each frame: a fifth of the widest ribbon, 1.5 to 6 px
 function ribbonOffset(l, w) { return GAP / 2 + w / 2; }
 // Whether link l is drawn as a ribbon of road traffic now.
 function hasRibbon(l) { return S.ly.road && HAS_TRAFFIC && vol[l] > 0; }
-// The grey margin (capacity) on a ribbon's outer side only, so it never fills the space between the directions;
-// the major roads' margin is 40 % of the widest ribbon, the other tiers' in proportion.
-const CASING_TOP = Math.max(...CASING_PX) || 1;
-function casingSide(l) { return casingOf(tierOf(l)); }
-function casingOf(tier) { return CASING_PX[tier] / CASING_TOP * 0.4 * ribbonMax(); }
-// A ribbon's width grows linearly with its volume (S306: the square root's range was too small to read): from
-// WFLOOR at no traffic to ribbonMax() at the 99th percentile's volume and above.
+// A ribbon's width is its road's capacity (S308: "the width should be based on capacity and road type, not flow"),
+// linear from WFLOOR to ribbonMax() at the network's large roads' capacity and above: every road of one capacity is
+// one width, whatever its traffic; the traffic is the colour and the hover. Without capacities, one width.
+const RR = A.rr || null;
 function ribbonWidthOf(f) { const top = ribbonMax(); return WFLOOR + (top - WFLOOR) * f; }
-function ribbonWidth(l) { return ribbonWidthOf(Math.min(vol[l], VMAX) / VMAX); }
+function ribbonWidth(l) { return ribbonWidthOf(RR ? Math.min(1, RR[l]) : 1); }
 function colourIndex(l) {
   let t;
   if (S.colour === "delay") t = band(delay[l]) / (BANDS.length);
-  else if (S.colour === "vc") t = CAP[l] > 0 ? vol[l] / CAP[l] : 0;
+  else if (S.colour === "vc") t = band(CAP[l] > 0 ? vol[l] / CAP[l] : 0, VC_BANDS) / VC_BANDS.length;
   else t = Math.sqrt(Math.min(vol[l], VMAX) / VMAX);
   return Math.max(0, Math.min(NCOL - 1, Math.round(t * (NCOL - 1))));
 }
@@ -489,6 +506,8 @@ function addLine(path, l, off, gap) {
   return n;
 }
 let DRAWN = 0, MOVING = false, LAYER_ALPHA = 1;
+// How strongly the road traffic and the other layers recede while a pair's trips are shown (S308).
+const DIM_ALPHA = 0.16;
 function draw() {
   DRAWN = 0; const t0 = performance.now();
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -499,7 +518,7 @@ function draw() {
   const showAll = classLimit() >= 16;
   if (!MOVING && !EXPORTING) measureRoom(cand);  // an export keeps the screen's widths
   GAP = Math.max(1.5, Math.min(6, ribbonMax() / 5));
-  const base = TIERS.map(() => new Path2D()), casings = new Map(), faint = new Path2D(), buckets = new Map();
+  const base = TIERS.map(() => new Path2D()), faint = new Path2D(), buckets = new Map();
   const dimming = S.pair >= 0 && S.routes && S.dim;
   for (const l of cand) {
     const busy = HAS_TRAFFIC && vol[l] > 0 && (vol[l] >= VHIGH * (S.mpp > 8 ? 1 : 0.4) || CLS[l] <= lim);
@@ -514,7 +533,6 @@ function draw() {
       const w = ribbonWidth(l), wi = Math.min(127, Math.round(w * 2)), key = colourIndex(l) * 128 + wi;
       let b = buckets.get(key); if (!b) { b = new Path2D(); buckets.set(key, b); }
       addLine(b, l, ribbonOffset(l, w), gap);
-      if (CASING_PX[tierOf(l)] > 0) { const ck = tierOf(l) * 128 + wi; let c = casings.get(ck); if (!c) { c = new Path2D(); casings.set(ck, c); } addLine(c, l, ribbonOffset(l, w) + casingSide(l) / 2, gap); }
     }
   }
   ctx.lineCap = "round"; ctx.lineJoin = "round";
@@ -524,19 +542,16 @@ function draw() {
   // The road hierarchy (S302): the minor tiers first, so the major roads sit on top.
   ctx.strokeStyle = TH.base; for (let t = 0; t < TIERS.length; t++) { const far = S.mpp > 6; ctx.lineWidth = Math.max(BASE_FLOOR[far ? 0 : 1], (far ? 0.5 : 0.9) * TIERS[t]); ctx.stroke(base[t]); }
   const keys = [...buckets.keys()].sort((a, b) => a - b), tbl = TABLES[S.colour];
-  ctx.globalAlpha = dimming ? 0.35 : 1;
-  if (TH.glow) { for (const k of keys) { const w = (k & 127) / 2; ctx.strokeStyle = tbl[k >> 7]; ctx.globalAlpha = (dimming ? 0.35 : 1) * 0.14; ctx.lineWidth = w + Math.min(w * 1.8, GAP * 0.8); ctx.stroke(buckets.get(k)); } ctx.globalAlpha = dimming ? 0.35 : 1; }
+  // While a pair's trips are shown, the road traffic is a faint background (S308: at 35 % it competed with the trips).
+  const back = dimming ? DIM_ALPHA : 1;
+  ctx.globalAlpha = back;
+  if (TH.glow && !dimming) { for (const k of keys) { const w = (k & 127) / 2; ctx.strokeStyle = tbl[k >> 7]; ctx.globalAlpha = 0.14; ctx.lineWidth = w + Math.min(w * 1.8, GAP * 0.8); ctx.stroke(buckets.get(k)); } ctx.globalAlpha = back; }
   else if (!MOVING) { for (const k of keys) { ctx.strokeStyle = TH.surface; ctx.lineWidth = (k & 127) / 2 + 1.4; ctx.stroke(buckets.get(k)); } }
-  // The casing (S302): each ribbon widened on its outer side by its road's tier, a grey margin = capacity; major
-  // roads on top.
-  { const a = ctx.globalAlpha; ctx.globalAlpha = 1; ctx.strokeStyle = TH.base; ctx.lineCap = "butt";
-    for (const k of [...casings.keys()].sort((x, y) => x - y)) { ctx.lineWidth = (k & 127) / 2 + casingOf(k >> 7); ctx.stroke(casings.get(k)); }
-    ctx.lineCap = "round"; ctx.globalAlpha = a; }
   for (const k of keys) { ctx.strokeStyle = tbl[k >> 7]; ctx.lineWidth = (k & 127) / 2; ctx.stroke(buckets.get(k)); }
   ctx.globalAlpha = 1;
-  if (!MOVING && S.mpp < 3 && S.ly.road) drawChevrons(cand, lim);
+  if (!MOVING && S.mpp < 3 && S.ly.road && !dimming) drawChevrons(cand, lim);
   // The other layers recede while a pair's trips are shown (S305), as the road traffic does.
-  LAYER_ALPHA = dimming ? 0.3 : 1;
+  LAYER_ALPHA = dimming ? DIM_ALPHA : 1;
   if (S.ly.bike && FLOWS.bike) drawFlow(FLOWS.bike, TH.modes[1], [9, 5]);
   if (S.ly.walk && FLOWS.walk) drawFlow(FLOWS.walk, TH.modes[2], [2, 4]);
   ctx.globalAlpha = LAYER_ALPHA;
@@ -552,19 +567,27 @@ function draw() {
   document.body.dataset.room = roomPx().toFixed(1); document.body.dataset.wmax = ribbonMax().toFixed(1);
   document.body.dataset.drawms = (performance.now() - t0).toFixed(1); document.body.dataset.drawn = DRAWN; document.body.dataset.level = LEVELS[currentLevel()];
 }
-function flowLine(p, f, i) {
-  p.moveTo(sx(f.xs[f.vs[i]]), sy(f.ys[f.vs[i]]));
-  for (let v = f.vs[i] + 1; v < f.vs[i + 1]; v++) p.lineTo(sx(f.xs[v]), sy(f.ys[v]));
+// A bike or walk link's width (px) and its offset to the right of its travel (S308): a link whose other direction is
+// on the layer too sits on its own side, FLOW_GAP px from the centre line, as the road's ribbons do; a one-way link
+// on the line.
+const FLOW_GAP = 1.5;
+function flowWidth(f, i) { return Math.min(15.5, 1 + 7 * Math.sqrt(f.v[i] / f.vmax)); }
+function flowOffset(f, i, w) { return f.twin[i] >= 0 ? FLOW_GAP / 2 + w / 2 : 0; }
+function flowLine(p, f, i, off) {
+  const v0 = f.vs[i], v1 = f.vs[i + 1]; ensure(v1 - v0 + 2);
+  let n = 0; for (let v = v0; v < v1; v++) { PX[n] = sx(f.xs[v]); PY[n] = sy(f.ys[v]); n++; }
+  offsetLine(n, off || 0);
+  if (n < 2) return; p.moveTo(PX[0], PY[0]); for (let k = 1; k < n; k++) p.lineTo(PX[k], PY[k]);
 }
 function drawFlow(f, colour, dash) {
   const hw = W / 2 * S.mpp, hh = H / 2 * S.mpp, vx0 = S.cx - hw, vx1 = S.cx + hw, vy0 = S.cy - hh, vy1 = S.cy + hh;
   const faint = new Path2D(), buckets = new Map();
   for (let i = 0; i < f.n; i++) {
     if (f.x1[i] < vx0 || f.x0[i] > vx1 || f.y1[i] < vy0 || f.y0[i] > vy1) continue;
-    if (!(f.v[i] > 0)) { if (!MOVING) flowLine(faint, f, i); continue; }  // the layer's network, faint (S269)
-    const w = Math.min(15.5, 1 + 7 * Math.sqrt(f.v[i] / f.vmax)), key = Math.round(w * 2);
+    if (!(f.v[i] > 0)) { if (!MOVING) flowLine(faint, f, i, 0); continue; }  // the layer's network, faint (S269)
+    const w = flowWidth(f, i), key = Math.round(w * 2);
     let p = buckets.get(key); if (!p) { p = new Path2D(); buckets.set(key, p); }
-    flowLine(p, f, i);
+    flowLine(p, f, i, flowOffset(f, i, key / 2));
   }
   ctx.globalAlpha = 0.45 * LAYER_ALPHA; ctx.strokeStyle = colour; ctx.lineWidth = 0.6; ctx.stroke(faint); ctx.globalAlpha = LAYER_ALPHA;
   const keys = [...buckets.keys()].sort((a, b) => a - b);
@@ -574,19 +597,28 @@ function drawFlow(f, colour, dash) {
   for (const k of keys) { ctx.strokeStyle = colour; ctx.lineWidth = k / 2; ctx.stroke(buckets.get(k)); }
   ctx.setLineDash([]); ctx.globalAlpha = 1;
 }
+// A transit hop between two stops: its width (px), and its ends on screen moved to the right of its travel, so a line
+// run both ways shows, and is picked, as two hops side by side (S308).
+let HOP_TOP = 0;
+function hopTop() { if (!HOP_TOP) { for (let i = 0; i < A.tl.length; i++) HOP_TOP = Math.max(HOP_TOP, A.tl[i]); HOP_TOP = HOP_TOP || 1; } return HOP_TOP; }
+function hopWidth(i, top) { return 1.2 + 6 * Math.sqrt(A.tl[i] / (top || hopTop())); }
+function hopScreen(i, w) {
+  const a = A.ta[i], b = A.tb[i], x0 = sx(A.tsx[a] * 0.1), y0 = sy(A.tsy[a] * 0.1), x1 = sx(A.tsx[b] * 0.1), y1 = sy(A.tsy[b] * 0.1);
+  const d = Math.hypot(x1 - x0, y1 - y0) || 1, ox = -(y1 - y0) / d * (w / 2 + 0.5), oy = (x1 - x0) / d * (w / 2 + 0.5);
+  return [x0 + ox, y0 + oy, x1 + ox, y1 + oy];
+}
 function drawTransit() {
   const sxs = A.tsx, sys = A.tsy, n = A.tl.length, show = LY.transit.shown;
-  let top = 0; for (let i = 0; i < n; i++) top = Math.max(top, A.tl[i]); top = top || 1;
+  const top = hopTop();
   for (let i = 0; i < n; i++) {  // busiest last, on top
-    const a = A.ta[i], b = A.tb[i], w = 1.2 + 6 * Math.sqrt(A.tl[i] / top);
-    const x0 = sx(sxs[a] * 0.1), y0 = sy(sys[a] * 0.1), x1 = sx(sxs[b] * 0.1), y1 = sy(sys[b] * 0.1);
-    const d = Math.hypot(x1 - x0, y1 - y0) || 1, ox = -(y1 - y0) / d * (w / 2 + 0.5), oy = (x1 - x0) / d * (w / 2 + 0.5);
-    const p = new Path2D(); p.moveTo(x0 + ox, y0 + oy); p.lineTo(x1 + ox, y1 + oy);
+    const w = hopWidth(i, top), [x0, y0, x1, y1] = hopScreen(i, w);
+    const p = new Path2D(); p.moveTo(x0, y0); p.lineTo(x1, y1);
     ctx.strokeStyle = TH.surface; ctx.lineWidth = w + 1.4; ctx.stroke(p);
     ctx.strokeStyle = TH.kinds[A.tk[i]]; ctx.lineWidth = w; ctx.stroke(p);
   }
   let most = 0; for (let i = 0; i < A.tsb.length; i++) most = Math.max(most, A.tsb[i]); most = most || 1;
-  const names = LY.transit.stops, label = names.length <= 40 || S.mpp < 3;
+  // Stop names only when few or zoomed in, and never under a pair's trips (S308: fewer labels).
+  const names = LY.transit.stops, label = (names.length <= 40 || S.mpp < 3) && LAYER_ALPHA === 1;
   ctx.font = "10.5px " + FONT; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
   for (let i = 0; i < A.tsx.length; i++) {
     if (show && !show[i]) continue;
@@ -603,7 +635,8 @@ function drawParking() {
   for (let i = 0; i < A.pc.length; i++) {
     const x = sx(A.px[i] * 0.1), y = sy(A.py[i] * 0.1), r = 3 + 6 * Math.sqrt(A.pc[i] / most);
     const fill = tbl[Math.min(tbl.length - 1, Math.floor(Math.min(1, A.po[i]) * tbl.length))];
-    ctx.beginPath(); if (A.pv[i]) ctx.arc(x + r * 0.9, y, r * 0.8, 0, 6.2832); else { ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y - r); ctx.lineTo(x + r, y + r); ctx.lineTo(x - r, y + r); ctx.closePath(); }
+    // A car park round, a bike park square, as the trips' parking signs (S308).
+    ctx.beginPath(); if (!A.pv[i]) ctx.arc(x, y, r, 0, 6.2832); else { const q = r * 0.8, bx = x + r * 0.9; ctx.moveTo(bx - q, y - q); ctx.lineTo(bx + q, y - q); ctx.lineTo(bx + q, y + q); ctx.lineTo(bx - q, y + q); ctx.closePath(); }
     ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = TH.ink; ctx.lineWidth = 1; ctx.stroke();
   }
 }
@@ -654,14 +687,24 @@ function highlight(l, colour, w) {
 }
 // ---- trips between two places (S305) ----
 // A mode's colour, as the mode-share chart draws it; a leg's colour, by what it is.
-// One colour per journey (S307), and one source of it: the list's dot, share bar and strip, the map's legs, badges and
-// door links, and an export's legend all call journeyColour(o). The journeys' palette (the package's route figures'
-// categorical colours, per theme; META.tokens.journeys) by the journey's rank in its pair, the most travelled first, so a journey keeps
-// its colour whatever is hidden or opened; past the palette's eight, the palette again, lighter, then darker. What
-// a leg is (a drive, a bike ride, a walk, a transit ride) is its line's style, not its colour.
+// One colour per journey, and one source of it (S307): the list's dot, share bar and strip, the map's legs, badges and
+// door links, and an export's legend all call journeyColour(o). The colour is the journey's rank in its pair (S308),
+// fastest door to door first (ties: the most travelled first): green, light green, yellow, orange, red, and dark red
+// for the sixth and every one after it, so the slowest is always the darkest red (META.tokens.journeys, per theme).
+// A car route nobody took is not ranked: pale grey.
+let RANKS = { pair: -1, of: new Map() };
+function journeyRank(o) {
+  const p = OPT_PAIR[o];
+  if (RANKS.pair !== p || RANKS.theme !== S.theme) {
+    const used = pairOptions(p).filter((q) => A.on[q] > 0), t = (q) => (isFinite(A.ot[q]) ? A.ot[q] : Infinity);
+    used.sort((a, b) => t(a) - t(b) || A.on[b] - A.on[a] || a - b);
+    RANKS = { pair: p, theme: S.theme, of: new Map(used.map((q, r) => [q, r])) };
+  }
+  const r = RANKS.of.get(o); return r === undefined ? -1 : r;
+}
 function journeyColour(o) {
-  const pal = TOK.journeys[S.theme] || TOK.journeys.paper, r = o - A.qs[OPT_PAIR[o]], c = pal[r % pal.length], turn = Math.floor(r / pal.length) % 3;
-  return turn === 0 ? c : turn === 1 ? mixHex(c, TH.surface, 0.45) : mixHex(c, TH.ink, 0.35);
+  const pal = TOK.journeys[S.theme] || TOK.journeys.paper, r = journeyRank(o);
+  return r < 0 ? mixHex(TH.muted, TH.surface, 0.25) : pal[Math.min(r, pal.length - 1)];
 }
 // The ink that reads on a fill: the darker or the lighter of the two themes' inks, whichever contrasts more.
 function inkOn(fill) {
@@ -669,11 +712,80 @@ function inkOn(fill) {
   const f = lum(fill), dark = TOK.paper.ink, light = "#ffffff";
   return (f + 0.05) / (lum(dark) + 0.05) > (1.05) / (f + 0.05) ? dark : light;
 }
-// A journey's line style, by what it mostly is: a transit ride's double line, a drive's solid line, a bike ride's
-// dashes, a walk's dots (for an export's legend).
+// ---- the trips' visual identity (S308): one line style per kind of leg, one mark per kind of place, drawn by the same
+// functions on the map, in the list's strips, in the legend and in the exports ----
+// The line styles, each named by what the traveller does:
+//   drive: a solid line (the car's road);              taxi: a solid line with a dotted centre line;
+//   track: a double line with sleepers (train, metro, tram: a ride on rails);   bus: a double line (bus, ferry, other);
+//   bike: long dashes (a ride on one's own bike);      share: dash-dot (a ride on a shared bike);   walk: round dots.
+// The marks: A and B (origin, destination), dark discs; a stop, a small ring; a dock of shared bikes, a diamond; a
+// parking, the blue parking sign, round for cars and square for bikes, "P" where the trip ends parked and "P+R" where
+// it parks to ride transit.
+const LEG_STYLE_NAMES = { drive: "drive", taxi: "taxi ride", track: "train, metro or tram", bus: "bus or other transit", bike: "bike ride", share: "shared-bike ride", walk: "walk" };
+const RAIL_KINDS = new Set(["rail", "metro", "tram"]);
+function legStyle(o, g) {
+  const k = A.lk[g], mode = TR.modes[A.om[o]];
+  if (k === LEG.drive) return mode === "taxi" ? "taxi" : "drive";
+  if (k === LEG.bike) return mode === "bike_share" || mode === "bike_share_transit" ? "share" : "bike";
+  if (k === LEG.ride) return RAIL_KINDS.has((TR.line_kinds || [])[A.lline[g]]) ? "track" : "bus";
+  return "walk";
+}
+// The strokes that draw a style `lw` px wide: [width, dash or null, cap, "c" (the journey's colour) or "s" (the surface)].
+function legStrokes(style, lw) {
+  const thin = Math.max(1, 0.3 * lw);
+  switch (style) {
+    case "taxi": return [[lw, null, "round", "c"], [Math.max(1.2, 0.4 * lw), [0.1, Math.max(3.2, 1.1 * lw)], "round", "s"]];
+    case "track": return [[lw + 5, [1.6, 6], "butt", "c"], [lw, null, "round", "c"], [thin, null, "round", "s"]];
+    case "bus": return [[lw, null, "round", "c"], [thin, null, "round", "s"]];
+    case "bike": return [[lw, [Math.max(7, 2.4 * lw), Math.max(4, 1.2 * lw)], "butt", "c"]];
+    case "share": return [[lw, [Math.max(7, 2.4 * lw), 3, Math.max(2, 0.7 * lw), 3], "butt", "c"]];
+    case "walk": return [[lw, [0.1, lw + 2.6], "round", "c"]];
+    default: return [[lw, null, "round", "c"]];
+  }
+}
+// The least width a style is drawn at, so its pattern reads.
+const LEG_MIN_WIDTH = { drive: 0, taxi: 3, track: 3.4, bus: 3.6, bike: 2.4, share: 2.6, walk: 2.6 };
+// Stroke `path` (null: the context's current path) in a style: pass 0 its margin of the surface, pass 1 its strokes.
+function strokeLeg(c2d, path, style, colour, lw, pass) {
+  const go = () => (path ? c2d.stroke(path) : c2d.stroke());
+  const strokes = legStrokes(style, lw);
+  if (pass === 0) {
+    const wide = Math.max(...strokes.map((x) => x[0])), walk = style === "walk";
+    c2d.lineCap = "round"; c2d.setLineDash(walk ? strokes[0][1] : []); c2d.strokeStyle = TH.surface; c2d.lineWidth = (style === "track" ? lw : wide) + 2.4; go(); c2d.setLineDash([]);
+    return;
+  }
+  for (const [w, dash, cap, ink] of strokes) { c2d.lineCap = cap; c2d.setLineDash(dash || []); c2d.strokeStyle = ink === "s" ? TH.surface : colour; c2d.lineWidth = w; go(); }
+  c2d.setLineDash([]); c2d.lineCap = "round";
+}
+// A short sample of a style, `len` px long from (x, y): the legend's and the exports' swatch.
+function drawSwatch(c2d, x, y, len, style, colour) {
+  for (const pass of [0, 1]) { c2d.beginPath(); c2d.moveTo(x, y); c2d.lineTo(x + len, y); strokeLeg(c2d, null, style, colour, 3, pass); }
+}
+// The parking sign's blue, per theme: the colour parking is signed in.
+const PARK_SIGN = { paper: "#1f5fbf", night: "#3f80e0" };
+// A place's mark at (x, y): "A", "B", "stop", "dock", or a parking "P-car", "PR-car", "P-bike", "PR-bike".
+function drawMark(c2d, kind, x, y) {
+  const text = (t, size, ink) => { c2d.fillStyle = ink; c2d.font = "700 " + size + "px " + FONT; c2d.textAlign = "center"; c2d.textBaseline = "middle"; c2d.fillText(t, x, y + 0.5); };
+  const disc = (r, fill, line, lw) => { c2d.beginPath(); c2d.arc(x, y, r, 0, 6.2832); c2d.fillStyle = fill; c2d.fill(); c2d.strokeStyle = line; c2d.lineWidth = lw; c2d.stroke(); };
+  const poly = (pts, fill, line, lw) => { c2d.beginPath(); c2d.moveTo(x + pts[0][0], y + pts[0][1]); for (const [a, b] of pts.slice(1)) c2d.lineTo(x + a, y + b); c2d.closePath(); c2d.fillStyle = fill; c2d.fill(); c2d.strokeStyle = line; c2d.lineWidth = lw; c2d.stroke(); };
+  if (kind === "A" || kind === "B") { disc(9, TH.ink, TH.surface, 1.6); text(kind, 10, TH.surface); return; }
+  if (kind === "stop") { disc(3.6, TH.surface, TH.ink2, 1.6); return; }
+  if (kind === "dock") { const r = 5; poly([[0, -r], [r, 0], [0, r], [-r, 0]], TH.surface, TH.ink, 1.6); return; }
+  const pr = kind.startsWith("PR"), car = kind.endsWith("car"), blue = PARK_SIGN[S.theme] || PARK_SIGN.paper;
+  if (car) { disc(pr ? 11 : 8, blue, TH.surface, 1.5); }
+  else { const r = pr ? 10 : 7.5, q = 2; poly([[-r + q, -r], [r - q, -r], [r, -r + q], [r, r - q], [r - q, r], [-r + q, r], [-r, r - q], [-r, -r + q]], blue, TH.surface, 1.5); }
+  text(pr ? "P+R" : "P", pr ? 7.5 : 10, "#ffffff");
+}
+// A drawing of a mark or a swatch as inline SVG, by the same functions (the legend's).
+function svgOf(w, h, draw) { const rec = svgRecorder(); draw(rec); return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h + '" style="vertical-align:middle;margin-right:5px;overflow:visible">' + rec.out.join("") + "</svg>"; }
+// What a parking leg's mark is: its vehicle (a bike, or a car) and whether the trip goes on by transit (P+R).
+function parkKind(o) { const m = TR.modes[A.om[o]], bike = m === "bike" || m === "bike_transit"; return (m === "car_transit" || m === "bike_transit" ? "PR-" : "P-") + (bike ? "bike" : "car"); }
+// A journey's style, by its main leg: its first transit ride's, else its drive's, else its bike ride's, else a walk's
+// (an export's legend, one line per journey).
 function journeyStyle(o) {
-  const has = new Set(); for (let g = A.ol[o]; g < A.ol[o + 1]; g++) has.add(A.lk[g]);
-  return has.has(LEG.ride) ? "rail" : has.has(LEG.drive) ? "" : has.has(LEG.bike) ? "dash" : "dot";
+  const styles = []; for (let g = A.ol[o]; g < A.ol[o + 1]; g++) styles.push(legStyle(o, g));
+  for (const st of ["track", "bus", "taxi", "drive", "share", "bike"]) if (styles.includes(st)) return st;
+  return "walk";
 }
 // A leg's points in metres: along its links, its line's stops, or straight between two places. A walk to, from or
 // between stops, docks and parkings runs from the place it leaves, along its links, to the place it reaches.
@@ -799,50 +911,37 @@ function drawTrips() {
     let prevEnd = null;
     for (let g = A.ol[o]; g < A.ol[o + 1]; g++) {
       const k = A.lk[g];
-      if (k === LEG.park) { if (prevEnd && pass === 1) parks.push({ at: prevEnd, dim }); continue; }
+      if (k === LEG.park) { if (prevEnd && pass === 1) parks.push({ at: prevEnd, dim, kind: parkKind(o) }); continue; }
       const pts = LEGPTS.get(g); if (!pts || pts.length < 4) continue;
       const sp = screenPath(pts, k === LEG.connect ? 0 : f * fit); if (sp.n < 2) continue;
-      // Every leg in the journey's one colour; what the leg is, by its line (S307): a walk dotted, a bike ride
-      // dashed, a drive solid, a transit ride a double line (the colour with a thin line of the surface along it).
-      if (k === LEG.walk || k === LEG.connect) {
-        // A walk along its streets as wide as the option; one the walk network has no path for (straight)
-        // thinner.
-        const ww = k === LEG.connect ? 2.6 : Math.max(w, 2.6);
-        ctx.lineCap = "round"; ctx.setLineDash([0.1, ww + 2.6]);
-        if (pass === 0) { ctx.strokeStyle = TH.surface; ctx.lineWidth = ww + 2.2; } else { ctx.strokeStyle = c; ctx.lineWidth = ww; }
-        ctx.stroke(sp.path); ctx.setLineDash([]);
-      } else {
-        const lw = k === LEG.ride ? Math.max(w, 3.6) : k === LEG.bike ? Math.max(w, 2.4) : w;
-        if (pass === 0) { ctx.strokeStyle = TH.surface; ctx.lineWidth = lw + 2.6; ctx.stroke(sp.path); }
-        else {
-          if (k === LEG.bike) { ctx.lineCap = "butt"; ctx.setLineDash([Math.max(7, 2.4 * lw), Math.max(4, 1.2 * lw)]); }
-          ctx.strokeStyle = c; ctx.lineWidth = lw; ctx.stroke(sp.path); ctx.setLineDash([]); ctx.lineCap = "round";
-          if (k === LEG.ride) { ctx.strokeStyle = TH.surface; ctx.lineWidth = Math.max(1, 0.3 * lw); ctx.stroke(sp.path); }
-        }
-      }
+      // Every leg in the journey's one colour; what the leg is, by its line style (S308, legStrokes). A walk the walk
+      // network has no path for (a straight line) is thinner.
+      const style = legStyle(o, g), lw = k === LEG.connect ? 2.6 : Math.max(w, LEG_MIN_WIDTH[style]);
+      strokeLeg(ctx, sp.path, style, c, lw, pass);
+      if (pass === 1 && style === "share") stops.push({ at: sp.first, dim, kind: "dock" }, { at: sp.last, dim, kind: "dock" });
       if (pass === 1 && k === LEG.ride) {
-        stops.push({ at: sp.first, dim }, { at: sp.last, dim });
-        if (!dim && sp.len > 34) badges.push([sp.mid, TR.lines[A.lline[g]] || "", c]);
+        stops.push({ at: sp.first, dim, kind: "stop" }, { at: sp.last, dim, kind: "stop" });
+        if (!dim && sp.len > 60) badges.push([sp.mid, TR.lines[A.lline[g]] || "", c]);
       }
-      if (pass === 1 && k === LEG.drive && TR.modes[A.om[o]] === "car" && !dim && sp.len > 40 && (hl || opts.length <= 8)) badges.push([sp.mid, String(carRank(o)), c]);
+      // A car route's number only on the journey hovered (S308): the colour already ties a route to its row.
+      if (pass === 1 && k === LEG.drive && TR.modes[A.om[o]] === "car" && hl && sp.len > 40) badges.push([sp.mid, String(carRank(o)), c]);
       prevEnd = sp.last;
     }
   }
+  // The places, each once where several journeys share it (S308: four car routes each drew a P at the destination):
+  // the stops and docks, then the parkings, then the badges, then the origin and destination on top.
+  // A mark within `r` px of one of its kind already kept is the same place; a parking at the origin or destination
+  // (the car routes' ends around B) sits once beside its letter.
+  const once = (list, r) => { const kept = []; for (const m of list) { const had = kept.find((k) => k.kind === m.kind && Math.hypot(k.at[0] - m.at[0], k.at[1] - m.at[1]) < r); if (!had) kept.push(m); else if (had.dim && !m.dim) had.dim = false; } return kept; };
+  const doors = [[sx(A.qox[p] * 0.1), sy(A.qoy[p] * 0.1)], [sx(A.qdx[p] * 0.1), sy(A.qdy[p] * 0.1)]];
+  for (const m of parks) for (const [x, y] of doors) if (Math.hypot(m.at[0] - x, m.at[1] - y) < 40) m.at = [x + 15, y + (m.kind.endsWith("bike") ? 15 : -15)];
+  for (const m of once(stops, 4)) { ctx.globalAlpha = m.dim ? 0.25 : 1; drawMark(ctx, m.kind, m.at[0], m.at[1]); }
+  for (const m of once(parks, 24)) { ctx.globalAlpha = m.dim ? 0.25 : 1; drawMark(ctx, m.kind, m.at[0], m.at[1]); }
   ctx.globalAlpha = 1;
-  for (const s0 of stops) { ctx.globalAlpha = s0.dim ? 0.25 : 1; ring(s0.at[0], s0.at[1], 3.6, TH.surface, TH.ink2); }
-  for (const pk of parks) {
-    ctx.globalAlpha = pk.dim ? 0.25 : 1; const [x, y] = pk.at, r = 7;
-    ctx.fillStyle = TH.ink; ctx.fillRect(x - r, y - r, 2 * r, 2 * r); ctx.strokeStyle = TH.surface; ctx.lineWidth = 1.5; ctx.strokeRect(x - r, y - r, 2 * r, 2 * r);
-    ctx.fillStyle = TH.surface; ctx.font = "700 10px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("P", x, y + 0.5);
-  }
-  ctx.globalAlpha = 1;
-  for (const [at, text, fill] of badges) badge(at[0], at[1], text, fill);
-  const ends = [[A.qox[p], A.qoy[p], "A"], [A.qdx[p], A.qdy[p], "B"]];
-  for (const [qx, qy, lab] of ends) {
-    const x = sx(qx * 0.1), y = sy(qy * 0.1);
-    ring(x, y, 9, TH.ink, TH.surface);
-    ctx.fillStyle = TH.surface; ctx.font = "bold 10px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(lab, x, y + 0.5);
-  }
+  // A line's name once where several journeys ride it side by side.
+  const named = []; for (const b of badges) if (!named.some((n) => n[1] === b[1] && Math.hypot(n[0][0] - b[0][0], n[0][1] - b[0][1]) < 80)) named.push(b);
+  for (const [at, text, fill] of named) badge(at[0], at[1], text, fill);
+  drawMark(ctx, "A", sx(A.qox[p] * 0.1), sy(A.qoy[p] * 0.1)); drawMark(ctx, "B", sx(A.qdx[p] * 0.1), sy(A.qdy[p] * 0.1));
 }
 // Picking a pair on the map: the places pairs start from, then the destinations from the one picked.
 function pickPlaces() {
@@ -857,7 +956,7 @@ function pickPlaces() {
 function drawPick() {
   const places = pickPlaces(); let most = 1; for (const e of places) most = Math.max(most, e.n);
   for (const e of places) { const r = 3 + 5 * Math.sqrt(e.n / most); ring(sx(e.x * 0.1), sy(e.y * 0.1), r, S.picking === 1 ? TH.ink : TH.mark, TH.surface); }
-  if (S.picking === 2) { const x = sx(S.pickFrom[0] * 0.1), y = sy(S.pickFrom[1] * 0.1); ring(x, y, 9, TH.ink, TH.surface); ctx.fillStyle = TH.surface; ctx.font = "bold 10px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("A", x, y + 0.5); }
+  if (S.picking === 2) drawMark(ctx, "A", sx(S.pickFrom[0] * 0.1), sy(S.pickFrom[1] * 0.1));
 }
 function pickAt(px, py) {
   const places = pickPlaces(); let best = null, bd = 28;
@@ -880,10 +979,12 @@ function drawScale() {
 // ---------------------------------------------------------- interaction ----
 // The distance (m) from (mx, my) to link l's line moved `off` metres to the right of its travel (S306: each
 // direction of a two-way road is picked on its own side).
-function distToLink(l, mx, my, off) {
+function distToLink(l, mx, my, off) { return distToPoly(VS[l], VS[l + 1], X, Y, mx, my, off); }
+// The same for any polyline: the points v0 to v1 - 1 of xs, ys (metres).
+function distToPoly(v0, v1, xs, ys, mx, my, off) {
   let best = Infinity;
-  for (let v = VS[l]; v < VS[l + 1] - 1; v++) {
-    let ax = X[v], ay = Y[v], bx = X[v + 1], by = Y[v + 1]; const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+  for (let v = v0; v < v1 - 1; v++) {
+    let ax = xs[v], ay = ys[v], bx = xs[v + 1], by = ys[v + 1]; const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
     if (off && L > 0) { const m = Math.sqrt(L), nx = dy / m * off, ny = -dx / m * off; ax += nx; ay += ny; bx += nx; by += ny; }
     let t = L > 0 ? ((mx - ax) * dx + (my - ay) * dy) / L : 0; t = Math.max(0, Math.min(1, t));
     const d = Math.hypot(mx - (ax + t * dx), my - (ay + t * dy)); if (d < best) best = d;
@@ -917,10 +1018,14 @@ function pickItem(px, py) {
   if (kind === "road") { const l = pick(px, py); return l >= 0 ? { kind, id: l } : null; }
   let best = -1, bd = tol;
   if (kind === "bike" || kind === "walk") {
-    const f = FLOWS[kind];
+    // Each direction on its own side (S308): the distance to the line moved to the right of its travel, less half
+    // its width, so the pointer picks the direction it is on.
+    const f = FLOWS[kind], reach = tol + (FLOW_GAP + 15.5) * S.mpp;
     for (let i = 0; i < f.n; i++) {
-      if (f.x1[i] < mx - tol || f.x0[i] > mx + tol || f.y1[i] < my - tol || f.y0[i] > my + tol) continue;
-      for (let v = f.vs[i]; v + 1 < f.vs[i + 1]; v++) { const d = segDist(mx, my, f.xs[v], f.ys[v], f.xs[v + 1], f.ys[v + 1]); if (d < bd) { bd = d; best = i; } }
+      if (f.x1[i] < mx - reach || f.x0[i] > mx + reach || f.y1[i] < my - reach || f.y0[i] > my + reach) continue;
+      const used = f.v[i] > 0, w = used ? Math.round(flowWidth(f, i) * 2) / 2 : 0, off = used ? flowOffset(f, i, w) * S.mpp : 0;
+      const d = distToPoly(f.vs[i], f.vs[i + 1], f.xs, f.ys, mx, my, off) - w / 2 * S.mpp;
+      if (d < bd) { bd = d; best = i; }
     }
     return best >= 0 ? { kind, id: best } : null;
   }
@@ -931,9 +1036,11 @@ function pickItem(px, py) {
       const d = Math.hypot(A.tsx[i] * 0.1 - mx, A.tsy[i] * 0.1 - my); if (d < bd) { bd = d; best = i; }
     }
     if (best >= 0) return { kind, stop: true, id: best };
+    // A hop on its own side of the line (S308): picked in screen space, where it is drawn.
+    let hd = 7;
     for (let i = 0; i < A.ta.length; i++) {
-      const a = A.ta[i], b = A.tb[i], d = segDist(mx, my, A.tsx[a] * 0.1, A.tsy[a] * 0.1, A.tsx[b] * 0.1, A.tsy[b] * 0.1);
-      if (d < bd) { bd = d; best = i; }
+      const w = hopWidth(i), [x0, y0, x1, y1] = hopScreen(i, w), d = segDist(px, py, x0, y0, x1, y1) - w / 2;
+      if (d < hd) { hd = d; best = i; }
     }
     return best >= 0 ? { kind, stop: false, id: best } : null;
   }
@@ -953,7 +1060,11 @@ function tipItem(it, ev) {
     head = (it.kind === "bike" ? "bike" : "walk") + " link";
     if (f.inf) rows.push(["Infrastructure", INFRA[f.inf[i]] || "—"]);
     if (f.len) rows.push(["Length", fmt(f.len[i]) + " m"]);
-    rows.push([it.kind === "bike" ? "Cyclists" : "Walkers", fmt(f.v[i]) + " over the run"]);
+    // Which direction (S308), as the road's hover names it.
+    if (f.nf) rows.push(["Direction", "from node " + f.nf[i] + " to node " + f.nt[i]]);
+    const who = it.kind === "bike" ? "Cyclists" : "Walkers";
+    rows.push([who, fmt(f.v[i]) + " over the run"]);
+    if (f.twin[i] >= 0) rows.push(["Other direction", fmt(f.v[f.twin[i]]) + " " + who.toLowerCase()]);
   } else if (it.kind === "transit" && it.stop) {
     head = "stop " + LY.transit.stops[i];
     rows.push(["Boardings", fmt(A.tsb[i]) + " over the run"]);
@@ -962,6 +1073,8 @@ function tipItem(it, ev) {
     head = LY.transit.kinds[A.tk[i]] + " between two stops";
     rows.push(["From", LY.transit.stops[a]]); rows.push(["To", LY.transit.stops[b]]);
     rows.push(["Passengers", fmt(A.tl[i]) + " on board, over the day's runs"]);
+    let back = -1; for (let j = 0; j < A.ta.length; j++) if (A.ta[j] === b && A.tb[j] === a && A.tk[j] === A.tk[i]) { back = j; break; }
+    if (back >= 0) rows.push(["Other direction", fmt(A.tl[back]) + " on board"]);
   } else {
     head = (A.pv[i] ? "bike" : "car") + " parking " + LY.parking.ids[i];
     rows.push(["Capacity", fmt(A.pc[i]) + (A.pv[i] ? " bikes" : " cars")]);
@@ -974,8 +1087,9 @@ function tipItem(it, ev) {
 function highlightItem(it) {
   if (!it || it.kind === "road") return;
   const p = new Path2D(); let ring = null;
-  if (it.kind === "bike" || it.kind === "walk") flowLine(p, FLOWS[it.kind], it.id);
-  else if (it.kind === "transit" && !it.stop) { const a = A.ta[it.id], b = A.tb[it.id]; p.moveTo(sx(A.tsx[a] * 0.1), sy(A.tsy[a] * 0.1)); p.lineTo(sx(A.tsx[b] * 0.1), sy(A.tsy[b] * 0.1)); }
+  // Outlined on its own side (S308), so the direction picked shows.
+  if (it.kind === "bike" || it.kind === "walk") { const f = FLOWS[it.kind], i = it.id; flowLine(p, f, i, f.v[i] > 0 ? flowOffset(f, i, Math.round(flowWidth(f, i) * 2) / 2) : 0); }
+  else if (it.kind === "transit" && !it.stop) { const [x0, y0, x1, y1] = hopScreen(it.id, hopWidth(it.id)); p.moveTo(x0, y0); p.lineTo(x1, y1); }
   else if (it.kind === "transit") ring = [sx(A.tsx[it.id] * 0.1), sy(A.tsy[it.id] * 0.1)];
   else ring = [sx(A.px[it.id] * 0.1), sy(A.py[it.id] * 0.1)];
   if (ring) { ctx.beginPath(); ctx.arc(ring[0], ring[1], 9, 0, 6.2832); ctx.strokeStyle = TH.ink; ctx.lineWidth = 2; ctx.stroke(); return; }
@@ -990,10 +1104,9 @@ function tip(l, ev) {
   if (NF) rows.push(["Direction", "from node " + NF[l] + " to node " + NT[l]]);
   if (TWIN[l] >= 0) rows.push(["Other direction", "link " + TWIN[l] + (HAS_TRAFFIC ? ", " + fmt(vol[TWIN[l]]) + " PCU/h" : "")]);
   if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " PCU/h"]); if (vol[l] > 0) { const free = FF[l] + SW[l];
-    // The colour's quantity in words that say what it is (S307): the share of the mean crossing time beyond free
-    // flow, 1 - free flow / mean time; and the mean time as a multiple of free flow beside it.
-    rows.push(["Time lost to delay", fmt(delay[l] * 100) + "% of the crossing time"]);
-    rows.push(["Mean time", meanT[l].toFixed(1) + " s, " + (meanT[l] / Math.max(free, 1e-6)).toFixed(1) + " × free flow"]);
+    // The colour's quantity (S308): the delay over free flow, mean time / free flow - 1; both times in seconds.
+    rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]);
+    rows.push(["Mean time", meanT[l].toFixed(1) + " s"]);
     rows.push(["Free flow", free.toFixed(1) + " s" + (SW[l] > 0 ? " (the signal's mean wait of " + SW[l].toFixed(1) + " s included)" : "")]); } }
   if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " PCU/h" + (SG[l] ? " at its signal" : "") + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used)" : "")]);
   if (HAS_ROUTES) { let n = 0; for (let i = LOPT_START[l]; i < LOPT_START[l + 1]; i++) n += A.on[LOPTS[i]]; if (n) rows.push(["Trips shown", fmt(n) + " travellers drive on it (click for their pairs)"]); }
@@ -1008,16 +1121,17 @@ function redraw(moving) {
 }
 let drag = null;
 canvas.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY, cx: S.cx, cy: S.cy, moved: false }; canvas.setPointerCapture(e.pointerId); });
+function setCursor(it) { canvas.style.cursor = drag && drag.moved ? "grabbing" : S.picking ? "crosshair" : it ? "pointer" : "default"; }
 canvas.addEventListener("pointermove", (e) => {
-  if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true; S.cx = drag.cx - dx * S.mpp; S.cy = drag.cy + dy * S.mpp; redraw(true); return; }
-  const it = pickItem(e.offsetX, e.offsetY), l = it && it.kind === "road" ? it.id : -1;
+  if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true; S.cx = drag.cx - dx * S.mpp; S.cy = drag.cy + dy * S.mpp; setCursor(null); redraw(true); return; }
+  const it = pickItem(e.offsetX, e.offsetY), l = it && it.kind === "road" ? it.id : -1; setCursor(it);
   if (l !== S.hover || !sameItem(it, S.hoverItem)) { S.hover = l; S.hoverItem = it; redraw(false); }
   tipItem(it, e);
 });
 canvas.addEventListener("pointerup", (e) => {
   if (drag && !drag.moved && S.picking) pickAt(e.offsetX, e.offsetY);
   else if (drag && !drag.moved && hoverLayer() === "road") selectLink(pick(e.offsetX, e.offsetY));
-  drag = null; writeHash();
+  drag = null; setCursor(null); writeHash();
 });
 canvas.addEventListener("pointerleave", () => { S.hover = -1; S.hoverItem = null; $("tip").hidden = true; redraw(false); });
 canvas.addEventListener("wheel", (e) => { e.preventDefault(); zoomAt(e.offsetX, e.offsetY, Math.exp(e.deltaY * 0.0015)); }, { passive: false });
@@ -1054,16 +1168,11 @@ function strip(o) {
   if (!total) return "";
   const word = { 0: "drive", 1: "ride a bike", 2: "walk", 3: "ride", 4: "walk", 5: "wait", 6: "park, or reach the parked vehicle" };
   return '<div class="strip">' + legs.map((g) => {
-    // The journey's colour, each leg drawn as on the map (S307): walks dotted, bike rides dashed, transit rides a
-    // double line, drives solid; waiting hatched and parking grey.
+    // The journey's colour, each leg in its style as on the map (S308, legStyle): drive, taxi, track, bus, bike, share,
+    // walk; waiting hatched and parking in a light tint of the parking sign's blue.
     const k = A.lk[g], c = journeyColour(o), sec = A.lsec[g], share = sec / total;
-    let cls = "", style = "flex:" + share.toFixed(4) + " 1 0;--c:" + c + ";", text = "";
-    if (k === LEG.walk || k === LEG.connect) cls = "walk";
-    else if (k === LEG.wait) cls = "wait";
-    else if (k === LEG.park) cls = "park";
-    else if (k === LEG.bike) cls = "bike";
-    else if (k === LEG.ride) cls = "ride";
-    else style += "background:" + c;
+    const cls = k === LEG.wait ? "wait" : k === LEG.park ? "park" : legStyle(o, g);
+    let style = "flex:" + share.toFixed(4) + " 1 0;--c:" + c + ";--p:" + mixHex(PARK_SIGN[S.theme] || PARK_SIGN.paper, TH.surface, 0.55) + ";", text = "";
     const what = k === LEG.ride ? "ride " + (TR.lines[A.lline[g]] || "") : word[k];
     return '<span class="' + cls + '" style="' + style + '" title="' + escHtml(what) + " · " + minutes(sec) + ' min">' + text + "</span>";
   }).join("") + "</div>";
@@ -1086,7 +1195,7 @@ function tripPanel() {
   const all = total || 1;
   // What the list is (S307): every mode's journeys between the two places, whatever layers are on; the modes ticked
   // are drawn on the map.
-  h += '<div class="scope">Every way this pair\'s travellers went, by every mode, whatever layers are on above. Tick the modes to draw:</div>';
+  h += '<div class="scope">Every way this pair\'s travellers went, by every mode, whatever layers are on above. Colour: fastest door to door green → slowest red. Tick the modes to draw:</div>';
   h += '<div class="chips">' + modes.map(([m, n]) => '<label class="chip' + (S.hidden.has(m) ? " off" : "") + '" title="Draw this mode\'s journeys on the map, or not"><input type="checkbox" data-m="' + m + '"' + (S.hidden.has(m) ? "" : " checked") + "> " + escHtml(TR.mode_names[m]) + " " + Math.round(100 * n / all) + "%</label>").join("") + "</div>";
   const unused = opts.filter((o) => !(A.on[o] > 0)).length;
   let minCost = Infinity; for (const o of opts) if (isFinite(A.oc[o])) minCost = Math.min(minCost, A.oc[o]);
@@ -1149,17 +1258,17 @@ function binLabel() {
   return b - a === NB && NB > 1 ? "all bins, " + clock((META.first_bin || 0) * s) + "–" + clock(b * s) : clock(a * s) + "–" + clock(b * s);
 }
 function setBins(a, b) { S.bins = [a, b]; aggregate(a, b); subtitle(); redraw(false); writeHash(); }
-const COLOUR_WORDS = { delay: "share of the crossing time lost to delay", volume: "volume", vc: "volume over capacity" };
+const COLOUR_WORDS = { delay: "delay over free flow", volume: "volume", vc: "volume over capacity" };
 function subtitle() {
-  $("subtitle").textContent = binLabel() + " · one ribbon per direction · width = volume, colour = " + COLOUR_WORDS[S.colour];
+  $("subtitle").textContent = binLabel() + " · one ribbon per direction · width = road capacity, colour = " + COLOUR_WORDS[S.colour];
   renderLegend();
 }
 // The kinds of transit service the run has, by name and index.
 function transitKinds() { if (!LY.transit) return []; const seen = new Set(A.tk); return LY.transit.kinds.map((name, k) => [name, k]).filter(([, k]) => seen.has(k)); }
 // What the road's colour shows now (S268, S269): its title, its bands or ramp.
 function roadLegend() {
-  if (S.colour === "delay") return { label: "Time lost to delay: share of the crossing time beyond free flow", bands: BAND_LABELS, stops: bandColours() };
-  if (S.colour === "vc") return { label: "Volume over capacity", low: "0", high: "1.0+", stops: TABLES.vc };
+  if (S.colour === "delay") return { label: "Delay over free flow: mean time ÷ free-flow time − 1", bands: BAND_LABELS, stops: bandColours() };
+  if (S.colour === "vc") return { label: "Volume over capacity", bands: VC_LABELS, stops: bandColours() };
   return { label: "Volume per direction (PCU/h)", low: "0", high: fmt(VMAX) + "+", stops: TABLES.volume };
 }
 function bandGradient(c) { const n = c.length; return "linear-gradient(90deg," + c.map((x, i) => x + " " + (100 * i / n).toFixed(2) + "% " + (100 * (i + 1) / n).toFixed(2) + "%").join(",") + ")"; }
@@ -1168,9 +1277,18 @@ function bandGradient(c) { const n = c.length; return "linear-gradient(90deg," +
 // kinds of leg the journeys drawn have.
 function tripLegendItems() {
   const has = new Set();
-  for (const o of pairOptions(S.pair).filter(shownOption)) for (let g = A.ol[o]; g < A.ol[o + 1]; g++) has.add(A.lk[g] === LEG.connect ? LEG.walk : A.lk[g]);
-  return [[LEG.drive, "drive", ""], [LEG.ride, "transit ride", "rail"], [LEG.bike, "bike ride", "dash"], [LEG.walk, "walk", "dot"]]
-    .filter(([k]) => has.has(k)).map(([, name, st]) => [name, TH.ink2, st]);
+  for (const o of pairOptions(S.pair).filter(shownOption)) for (let g = A.ol[o]; g < A.ol[o + 1]; g++) if (A.lk[g] !== LEG.wait && A.lk[g] !== LEG.park) has.add(legStyle(o, g));
+  return Object.keys(LEG_STYLE_NAMES).filter((st) => has.has(st)).map((st) => [LEG_STYLE_NAMES[st], TH.ink2, st]);
+}
+// The marks of the places the journeys drawn pass (S308), as [name, mark]: the origin and destination always.
+const MARK_NAMES = { A: "origin", B: "destination", stop: "stop", dock: "shared-bike dock", "P-car": "car park", "PR-car": "car park and ride", "P-bike": "bike park", "PR-bike": "bike park and ride" };
+function tripMarkItems() {
+  const has = new Set(["A", "B"]);
+  for (const o of pairOptions(S.pair).filter(shownOption)) for (let g = A.ol[o]; g < A.ol[o + 1]; g++) {
+    const k = A.lk[g];
+    if (k === LEG.ride) has.add("stop"); else if (k === LEG.park) has.add(parkKind(o)); else if (legStyle(o, g) === "share") has.add("dock");
+  }
+  return Object.keys(MARK_NAMES).filter((m) => has.has(m)).map((m) => [MARK_NAMES[m], m]);
 }
 // The journeys drawn, each with its colour and its style (an export's legend: it has no list beside it).
 function tripJourneyItems() {
@@ -1180,20 +1298,22 @@ function renderLegend() {
   const line = (c, style) => '<i style="border-top:' + (style === "dash" ? "3px dashed " : style === "dot" ? "3px dotted " : style === "rail" ? "5px double " : "4px solid ") + c + '"></i>';
   const parts = [];
   if (HAS_ROUTES && S.pair >= 0 && S.routes) {
-    parts.push('<div class="lg"><h3>Trips between two places</h3><div class="kinds">' + tripLegendItems().map(([name, c, st]) => "<span>" + line(c, st) + name + "</span>").join("") +
-      '</div><div class="kinds"><span><em class="mkr">A</em>origin</span><span><em class="mkr">B</em>destination</span><span><em class="stop"></em>stop</span><span><em class="badge" style="background:' + TH.ink2 + ";color:" + TH.surface + '">' + escHtml(TR.lines[0] || "M1") + '</em>line</span><span><em class="mkr" style="border-radius:2px">P</em>parking</span></div><div class="note">colour: one per journey, as in the list; width = travellers; thin and pale: a car route nobody took</div></div>');
+    // The legs' styles and the places' marks, drawn by the map's own functions (S308).
+    const swatch = (st) => svgOf(26, 10, (rec) => drawSwatch(rec, 2, 5, 22, st, TH.ink2)), mark = (m) => svgOf(24, 22, (rec) => drawMark(rec, m, 12, 11));
+    parts.push('<div class="lg"><h3>Trips between two places</h3><div class="kinds">' + tripLegendItems().map(([name, , st]) => "<span>" + swatch(st) + name + "</span>").join("") +
+      '</div><div class="kinds">' + tripMarkItems().map(([name, m]) => "<span>" + mark(m) + name + "</span>").join("") + '</div><div class="note">colour: fastest door to door green → slowest red, as in the list; width = travellers; thin and grey: a car route nobody took</div></div>');
   }
   if (HAS_TRAFFIC && S.ly.road) {
     const r = roadLegend();
     const ramp = r.bands
       ? '<div class="bar" style="background:' + bandGradient(r.stops) + '"></div><div class="bands">' + r.bands.map((t) => "<span>" + t + "</span>").join("") + "</div>"
       : '<div class="bar" style="background:linear-gradient(90deg,' + r.stops.join(",") + ')"></div><div class="ends"><span>' + r.low + "</span><span>" + r.high + "</span></div>";
-    parts.push('<div class="lg"><h3>Road traffic</h3><div class="sub">' + r.label + "</div>" + ramp + '<div class="note">width = volume per direction' + (RT ? "; grey margin: road capacity" : "") + "</div></div>");
+    parts.push('<div class="lg"><h3>Road traffic</h3><div class="sub">' + r.label + "</div>" + ramp + '<div class="note">' + (RR ? "width = road capacity per direction, the widest " + fmt(META.road_capacity_ref) + " PCU/h and over; volume in the hover" : "width: one for every road") + "</div></div>");
   }
   if (S.ly.transit && LY.transit) parts.push('<div class="lg"><h3>Transit lines</h3><div class="kinds">' + transitKinds().map(([name, k]) => "<span>" + line(TH.kinds[k]) + name + "</span>").join("") + '</div><div class="note">width = passengers on board; ○ stops, size = boardings</div></div>');
   if (S.ly.bike && FLOWS.bike) parts.push('<div class="lg"><h3>Cyclists</h3><div class="kinds"><span>' + line(TH.modes[1], "dash") + 'cyclists</span></div><div class="note">width = cyclists; faint = the bike network</div></div>');
   if (S.ly.walk && FLOWS.walk) parts.push('<div class="lg"><h3>Walkers</h3><div class="kinds"><span>' + line(TH.modes[2], "dot") + 'walkers</span></div><div class="note">width = walkers; faint = the walk network</div></div>');
-  if (S.ly.parking && LY.parking) parts.push('<div class="lg"><h3>Parkings</h3><div class="kinds"><span><b></b>car</span><span><b class="ci"></b>bike</span></div><div class="bar" style="background:linear-gradient(90deg,' + TABLES.delay.join(",") + ')"></div><div class="ends"><span>empty</span><span>full</span></div><div class="note">size = capacity; colour = busiest share in use</div></div>');
+  if (S.ly.parking && LY.parking) parts.push('<div class="lg"><h3>Parkings</h3><div class="kinds"><span><b class="ci"></b>car</span><span><b></b>bike</span></div><div class="bar" style="background:linear-gradient(90deg,' + TABLES.delay.join(",") + ')"></div><div class="ends"><span>empty</span><span>full</span></div><div class="note">size = capacity; colour = busiest share in use</div></div>');
   $("legendbody").innerHTML = parts.join("");
   // The card always holds the compass and the scale (S306), the legend above them when a layer is on.
   $("legendbody").hidden = parts.length === 0;
@@ -1263,14 +1383,40 @@ function exportFrame() {
   const legend = HAS_TRAFFIC && S.ly.road ? roadLegend() : null;
   // The other layers shown, each a title and its swatches [name, colour, style] (S269).
   const others = [];
-  if (S.ly.transit && LY.transit) others.push({ title: "Transit lines · width = passengers on board", items: transitKinds().map(([name, k]) => [name, TH.kinds[k], ""]) });
-  if (S.ly.bike && FLOWS.bike) others.push({ title: "Cyclists · width = cyclists", items: [["cyclists", TH.modes[1], "dash"]] });
-  if (S.ly.walk && FLOWS.walk) others.push({ title: "Walkers · width = walkers", items: [["walkers", TH.modes[2], "dot"]] });
-  if (S.ly.parking && LY.parking) others.push({ title: "Parkings · size = capacity", items: [["car (■)", TH.ink2, ""], ["bike (●)", TH.ink2, ""]] });
-  if (HAS_ROUTES && S.pair >= 0 && S.routes) others.unshift({ title: "Trips " + placeName(S.pair, 0) + " → " + placeName(S.pair, 1) + " · colour = journey, width = travellers", items: tripJourneyItems() }, { title: "Legs", items: tripLegendItems() });
+  if (S.ly.transit && LY.transit) others.push({ title: "Transit lines · width = passengers on board", items: transitKinds().map(([name, k]) => [name, TH.kinds[k], "drive"]) });
+  if (S.ly.bike && FLOWS.bike) others.push({ title: "Cyclists · width = cyclists", items: [["cyclists", TH.modes[1], "bike"]] });
+  if (S.ly.walk && FLOWS.walk) others.push({ title: "Walkers · width = walkers", items: [["walkers", TH.modes[2], "walk"]] });
+  if (S.ly.parking && LY.parking) others.push({ title: "Parkings · size = capacity", items: [["car (●)", TH.ink2, "drive"], ["bike (■)", TH.ink2, "drive"]] });
+  if (HAS_ROUTES && S.pair >= 0 && S.routes) others.unshift({ title: "Trips " + placeName(S.pair, 0) + " → " + placeName(S.pair, 1) + " · colour: fastest green → slowest red, width = travellers", items: tripJourneyItems() }, { title: "Legs", items: tripLegendItems() }, { title: "Places", items: tripMarkItems().map(([name, m]) => [name, "", "mark:" + m]) });
   return { title: $("title").textContent, subtitle: $("subtitle").textContent, legend, others, provenance: $("provenance").textContent, source: $("source").textContent, credit: $("credit").hidden ? "" : $("credit").textContent };
 }
-const HEAD = 64, FOOT = 46;
+const HEAD = 64, FOOT = 46, ROW = 32;
+// Where an export's legends below the map go (S308: a pair's journeys, legs and places ran off the page and under the
+// provenance): each group of items placed left to right, a new row when the next would pass the right edge; then
+// the provenance and the wordmark on a line of their own. Returns each group's place, each item's x, and the foot's
+// height. Measured in the viewer's font, the same for the PNG and the SVG.
+function exportLayout(f) {
+  const m = document.createElement("canvas").getContext("2d"), top = HEAD + H + 18, groups = [];
+  let ox = 16, row = 0;
+  for (const g of f.others) {
+    m.font = "10px " + FONT; const tw = m.measureText(g.title).width; m.font = "9.5px " + FONT;
+    const xs = []; let w = 0; for (const [name] of g.items) { xs.push(w); w += 32 + m.measureText(name).width; }
+    const gw = Math.max(w, tw);
+    if (ox > 16 && ox + gw > W - 16) { row++; ox = 16; }
+    groups.push({ g, x: ox, y: top + row * ROW, xs }); ox += gw + 24;
+  }
+  const rows = groups.length ? row + 1 : 0, line = groups.length ? top + rows * ROW - 2 : top;
+  return { groups, line, foot: groups.length ? 18 + rows * ROW + 30 : FOOT };
+}
+// One item of an export's legend at (x, y), 16 px wide: a place's mark ("mark:<kind>", drawn small) or a leg's style.
+function exportItem(c2d, x, y, colour, style) {
+  if (style.startsWith("mark:")) {
+    if (c2d.save) { c2d.save(); c2d.translate(x + 8, y); c2d.scale(0.7, 0.7); drawMark(c2d, style.slice(5), 0, 0); c2d.restore(); }
+    else { const inner = svgRecorder(); drawMark(inner, style.slice(5), 0, 0); c2d.out.push(`<g transform="translate(${x + 8} ${y}) scale(0.7)">${inner.out.join("")}</g>`); }
+    return;
+  }
+  drawSwatch(c2d, x, y, 16, style || "drive", colour);
+}
 // An export has no panel: what the screen shows beside it is centred in the export's whole width, at the same
 // scale, instead of sitting left of centre beside an empty band where the panel was (R-10).
 function viewWithMoving(drawInto) {
@@ -1291,17 +1437,17 @@ function exportSVG() {
   ctx = rec; window.Path2D = RecPath;
   try { viewWithMoving(draw); } finally { ctx = keep; window.Path2D = keepPath; draw(); }
   const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-  const total = H + HEAD + FOOT, parts = [];
+  const lay = exportLayout(f), total = H + HEAD + lay.foot, parts = [];
   // The SVG namespace from the page's own compass (the page names no address anywhere).
   const ns = $("compass").querySelector("svg").namespaceURI;
   parts.push(`<svg xmlns="${ns}" width="${W}" height="${total}" viewBox="0 0 ${W} ${total}" font-family="${esc(FONT)}">`);
   parts.push(`<rect width="${W}" height="${total}" fill="${TH.surface}"/>`);
   parts.push(`<g transform="translate(0 ${HEAD})">${rec.out.join("")}</g>`);
   // The bands above and below the map, painted over whatever of it runs past the view.
-  parts.push(`<rect width="${W}" height="${HEAD}" fill="${TH.surface}"/><rect y="${HEAD + H}" width="${W}" height="${FOOT}" fill="${TH.surface}"/>`);
+  parts.push(`<rect width="${W}" height="${HEAD}" fill="${TH.surface}"/><rect y="${HEAD + H}" width="${W}" height="${lay.foot}" fill="${TH.surface}"/>`);
   parts.push(`<text x="16" y="26" font-size="17" font-weight="700" fill="${TH.ink}">${esc(f.title)}</text>`);
   parts.push(`<text x="16" y="48" font-size="11.5" fill="${TH.ink2}">${esc(f.subtitle)}</text>`);
-  const y = HEAD + H + 18;
+  const y = lay.line;
   if (f.legend) {  // at the top right, as in the package's figures (S269)
     const n = f.legend.stops.length, w = 200, step = w / n, x0 = W - 16 - w, ly = 30;
     parts.push(`<text x="${x0 + w}" y="${ly - 8}" font-size="10.5" text-anchor="end" fill="${TH.ink2}">${esc(f.legend.label)}</text>`);  // right-aligned: a long title runs left, not off the page
@@ -1309,16 +1455,13 @@ function exportSVG() {
     if (f.legend.bands) parts.push(f.legend.bands.map((t, i) => `<text x="${(x0 + (i + 0.5) * step).toFixed(2)}" y="${ly + 19}" font-size="9.5" text-anchor="middle" fill="${TH.ink2}">${esc(t)}</text>`).join(""));
     else parts.push(`<text x="${x0}" y="${ly + 19}" font-size="9.5" fill="${TH.ink2}">${esc(f.legend.low)}</text><text x="${x0 + w}" y="${ly + 19}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc(f.legend.high)}</text>`);
   }
-  let ox = 16;  // the other layers' legends at the bottom left, side by side
-  for (const g of f.others) {
-    parts.push(`<text x="${ox}" y="${y - 2}" font-size="10" fill="${TH.ink2}">${esc(g.title)}</text>`);
-    let x = ox;
-    for (const [name, c, style] of g.items) {
-      const dash = style === "dash" ? ' stroke-dasharray="5 3"' : style === "dot" ? ' stroke-dasharray="1.5 2.5"' : "";
-      parts.push(`<line x1="${x}" y1="${y + 11}" x2="${x + 16}" y2="${y + 11}" stroke="${c}" stroke-width="${style === "rail" ? 4 : 3}"${dash}/>` + (style === "rail" ? `<line x1="${x}" y1="${y + 11}" x2="${x + 16}" y2="${y + 11}" stroke="${TH.surface}" stroke-width="1.2"/>` : "") + `<text x="${x + 21}" y="${y + 14}" font-size="9.5" fill="${TH.ink2}">${esc(name)}</text>`);
-      x += 32 + name.length * 6;
-    }
-    ox = Math.max(x, ox + g.title.length * 5.6) + 24;
+  for (const { g, x: gx, y: gy, xs } of lay.groups) {  // the other layers' legends below the map, in rows
+    parts.push(`<text x="${gx}" y="${gy - 2}" font-size="10" fill="${TH.ink2}">${esc(g.title)}</text>`);
+    g.items.forEach(([name, c, style], i) => {
+      // Each item drawn by the map's own functions (S308): a leg's style, or a place's mark.
+      const x = gx + xs[i], rec = svgRecorder(); exportItem(rec, x, gy + 11, c, style);
+      parts.push(rec.out.join("") + `<text x="${x + 21}" y="${gy + 14}" font-size="9.5" fill="${TH.ink2}">${esc(name)}</text>`);
+    });
   }
   parts.push(`<text x="${W - 16}" y="${y + 4}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc([f.provenance, f.source, f.credit].filter(Boolean).join(" · "))}</text>`);
   parts.push(`<text x="${W - 16}" y="${y + 20}" font-size="11" font-weight="700" text-anchor="end" fill="${TH.ink}">openmobisim</text>`);
@@ -1329,17 +1472,18 @@ function exportSVG() {
 }
 function exportPNG() {
   const f = exportFrame(), scale = 2, off = document.createElement("canvas");
-  off.width = Math.round(W * scale); off.height = Math.round((H + HEAD + FOOT) * scale);
+  const lay = exportLayout(f);
+  off.width = Math.round(W * scale); off.height = Math.round((H + HEAD + lay.foot) * scale);
   const o = off.getContext("2d"), map = document.createElement("canvas");
   map.width = Math.round(W * scale); map.height = Math.round(H * scale);
   const keep = ctx, keepDpr = DPR; ctx = map.getContext("2d"); DPR = scale;
   try { viewWithMoving(draw); } finally { ctx = keep; DPR = keepDpr; draw(); }
   o.setTransform(scale, 0, 0, scale, 0, 0);
-  o.fillStyle = TH.surface; o.fillRect(0, 0, W, H + HEAD + FOOT);
+  o.fillStyle = TH.surface; o.fillRect(0, 0, W, H + HEAD + lay.foot);
   o.drawImage(map, 0, HEAD, W, H);
   o.fillStyle = TH.ink; o.font = "700 17px " + FONT; o.fillText(f.title, 16, 26);
   o.fillStyle = TH.ink2; o.font = "11.5px " + FONT; o.fillText(f.subtitle, 16, 48);
-  const y = HEAD + H + 18;
+  const y = lay.line;
   if (f.legend) {  // at the top right, as in the package's figures (S269)
     const n = f.legend.stops.length, w = 200, step = w / n, x0 = W - 16 - w, ly = 30;
     o.textAlign = "right"; o.fillStyle = TH.ink2; o.font = "10.5px " + FONT; o.fillText(f.legend.label, x0 + w, ly - 8); o.textAlign = "left";
@@ -1354,18 +1498,12 @@ function exportPNG() {
       o.fillStyle = TH.ink2; o.font = "9.5px " + FONT; o.fillText(f.legend.low, x0, ly + 19); o.textAlign = "right"; o.fillText(f.legend.high, x0 + w, ly + 19);
     }
   }
-  let ox = 16;  // the other layers' legends at the bottom left, side by side
-  for (const g of f.others) {
-    o.textAlign = "left"; o.fillStyle = TH.ink2; o.font = "10px " + FONT; o.fillText(g.title, ox, y - 2);
-    const tw = o.measureText(g.title).width; o.font = "9.5px " + FONT;
-    let x = ox;
-    for (const [name, c, style] of g.items) {
-      o.strokeStyle = c; o.lineWidth = style === "rail" ? 4 : 3; o.setLineDash(style === "dash" ? [5, 3] : style === "dot" ? [1.5, 2.5] : []);
-      o.beginPath(); o.moveTo(x, y + 11); o.lineTo(x + 16, y + 11); o.stroke(); o.setLineDash([]);
-      if (style === "rail") { o.strokeStyle = TH.surface; o.lineWidth = 1.2; o.stroke(); }
-      o.fillStyle = TH.ink2; o.fillText(name, x + 21, y + 14); x += 32 + o.measureText(name).width;
-    }
-    ox = Math.max(x, ox + tw) + 24;
+  for (const { g, x: gx, y: gy, xs } of lay.groups) {  // the other layers' legends below the map, in rows
+    o.textAlign = "left"; o.fillStyle = TH.ink2; o.font = "10px " + FONT; o.fillText(g.title, gx, gy - 2);
+    g.items.forEach(([name, c, style], i) => {
+      const x = gx + xs[i]; exportItem(o, x, gy + 11, c, style); o.textAlign = "left"; o.font = "9.5px " + FONT;
+      o.fillStyle = TH.ink2; o.fillText(name, x + 21, gy + 14);
+    });
   }
   o.textAlign = "right"; o.fillStyle = TH.ink2; o.font = "9.5px " + FONT;
   o.fillText([f.provenance, f.source, f.credit].filter(Boolean).join(" · "), W - 16, y + 4);
@@ -1373,6 +1511,26 @@ function exportPNG() {
   const m = markPlace(y);
   o.save(); o.translate(m.x, m.y); o.scale(m.s, m.s); o.fillStyle = TH.mark; o.fill(new Path2D(LOGO)); o.restore();
   return off.toDataURL("image/png");
+}
+// A check (`#probe=bike`, `walk` or `transit`): for every drawn link or hop of the layer whose other direction is on
+// it too, the pointer at the middle of each direction's drawn line picks that direction. Writes "checked:right:apart"
+// to the page (apart: the two directions' middles more than 1 px from each other).
+function probeDirections(kind) {
+  const keep = S.lyOrder; S.ly[kind] = true; S.lyOrder = [kind]; let checked = 0, right = 0, apart = 0;
+  const middle = (i) => {
+    if (kind === "transit") { const [x0, y0, x1, y1] = hopScreen(i, hopWidth(i)); return [(x0 + x1) / 2, (y0 + y1) / 2]; }
+    const f = FLOWS[kind], p = { moveTo() {}, lineTo() {} }; flowLine(p, f, i, f.v[i] > 0 ? flowOffset(f, i, Math.round(flowWidth(f, i) * 2) / 2) : 0);
+    const n = f.vs[i + 1] - f.vs[i], m = (n - 1) >> 1; return n > 2 ? [PX[m], PY[m]] : [(PX[0] + PX[1]) / 2, (PY[0] + PY[1]) / 2];
+  };
+  const pairs = [];
+  if (kind === "transit") { for (let i = 0; i < A.ta.length; i++) for (let j = 0; j < A.ta.length; j++) if (A.ta[j] === A.tb[i] && A.tb[j] === A.ta[i]) pairs.push([i, j]); }
+  else { const f = FLOWS[kind]; for (let i = 0; i < f.n; i++) if (f.v[i] > 0 && f.twin[i] >= 0 && f.v[f.twin[i]] > 0) pairs.push([i, f.twin[i]]); }
+  for (const [i, j] of pairs) {
+    const a = middle(i), b = middle(j), it = pickItem(a[0], a[1]); checked++;
+    if (it && it.kind === kind && it.id === i && !it.stop) right++;
+    if (Math.hypot(a[0] - b[0], a[1] - b[1]) > 1) apart++;
+  }
+  S.lyOrder = keep; document.body.dataset.probe = checked + ":" + right + ":" + apart;
 }
 function download(name, url) { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
 function exportName(ext) { return (META.title || "openmobisim map").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_") + "." + ext; }
@@ -1435,6 +1593,7 @@ function start() {
   levelButtons(); draw(); writeHash();
   document.body.dataset.state = "ready"; document.body.dataset.links = NL; document.body.dataset.rows = RL ? RL.length : 0;
   if (["png", "svg"].includes(p.get("export"))) exportAs(p.get("export"), false);  // `#export=svg`: made, not saved (a check)
+  if (["bike", "walk", "transit"].includes(p.get("probe"))) probeDirections(p.get("probe"));  // a check (S308)
 }
 start();
 })();

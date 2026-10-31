@@ -337,13 +337,85 @@ def test_a_quantity_shown_by_width_and_colour_is_titled_once():
     run, _ = toy_run()
     kwargs = {"size_cm": (20.32, 11.43), "dpi": 60}
     words = [t.get_text() for t in viz.map_link(run, colour="volume", **kwargs).texts]
-    assert sum(w.startswith("Width: volume per direction") for w in words) == 1
+    # On the road, the width is the road's capacity and the colour its volume (S308).
+    assert sum(w.startswith("Width: road capacity per direction") for w in words) == 1
+    assert sum(w.startswith("Colour: volume per direction") for w in words) == 1
+    assert not any(w.startswith("Width: volume") or "Grey margin" in w for w in words)
     words = [t.get_text() for t in viz.map_link(run, colour="delay", **kwargs).texts]
-    assert any(w.startswith("Width: volume per") for w in words)
+    assert any(w.startswith("Width: road capacity per") for w in words)
     # The delay's bands (S268): each labelled with its range only, under a general title (S269);
     # the titles say what encodes what (S281).
     assert all(label in words for label in viz._link.DELAY_BAND_LABELS)
-    assert "Colour: share of the crossing time lost to delay" in words
+    assert "Colour: delay over free flow" in words
+    words = [t.get_text() for t in viz.map_link(run, colour="volume_capacity", **kwargs).texts]
+    assert all(label in words for label in viz._link.VC_BAND_LABELS)
+
+
+def test_a_road_ribbon_s_width_is_its_road_s_capacity_not_its_traffic():
+    """Every road of one capacity is one width, whatever its volume; a larger road is wider."""
+    from matplotlib.collections import LineCollection
+    from openmobisim.viz._canvas import road_ratio
+    from openmobisim.viz._link import busiest_bins, link_table
+
+    run, _ = toy_run()
+    net = run.network
+    first, stop = busiest_bins(run.link_bins())
+    table = link_table(
+        run.link_bins(), net.link_count, net.link_free_flow_s(), first=first, stop=stop
+    )
+    drawn = table["volume"] > 0
+    ratio = np.minimum(np.nan_to_num(road_ratio(net)), 1.0)[drawn].round(9)
+    volume = table["volume"][drawn]
+    # Links of one capacity carry different volumes: a width by volume would split them.
+    assert any(len(set(volume[ratio == r].round(3))) > 1 for r in set(ratio))
+    fig = viz.map_link(run, size_cm=(20.32, 11.43), dpi=60, chevrons=False)
+    ribbons = [c for c in fig.axes[0].collections if isinstance(c, LineCollection)]
+    top = max((c for c in ribbons if c.get_zorder() == 3), key=lambda c: len(c.get_segments()))
+    widths = np.asarray(top.get_linewidths()).round(9)
+    assert len(widths) == drawn.sum()
+    assert len(set(widths)) == len(set(ratio)) >= 2, "one width per capacity"
+
+
+class _Bins:
+    """Per-link bins of one link crossed in a given time: what ``link_table`` reads."""
+
+    bin_seconds = 60
+
+    def __init__(self, seconds):
+        self.seconds = seconds
+
+    def bins(self):
+        return np.array([0])
+
+    def links(self):
+        return np.array([0])
+
+    def pcu(self):
+        return np.array([2.0])
+
+    def pcu_seconds(self):
+        return np.array([2.0 * self.seconds])
+
+
+def test_the_delay_is_the_time_over_free_flow_and_twice_free_flow_is_the_top_band():
+    """Delay over free flow: mean time / free-flow time - 1; 100 % and over is the darkest band."""
+    from openmobisim.viz._link import delay_band, delay_time_share, link_table, vc_band
+
+    free = np.array([30.0])
+    cases = ((30.0, 0.0, 0), (34.0, 4 / 30, 0), (45.0, 0.5, 2), (59.0, 29 / 30, 2),
+             (60.0, 1.0, 3), (90.0, 2.0, 3))  # fmt: skip
+    for seconds, delay, band in cases:
+        d = link_table(_Bins(seconds), 1, free, first=None, stop=None)["delay"]
+        assert d[0] == pytest.approx(delay)
+        assert int(delay_band(d)[0]) == band, (seconds, d)
+    assert int(delay_band(np.array([0.15]))[0]) == 1 and int(delay_band(np.array([0.149]))[0]) == 0
+    # Faster than free flow is no delay; the share of the crossing time that is delay, d / (1 + d).
+    assert link_table(_Bins(20.0), 1, free, first=None, stop=None)["delay"][0] == 0.0
+    assert delay_time_share(np.array([1.0]))[0] == pytest.approx(0.5)
+    # Volume over capacity: four bands at 0.6, 0.8 and 1.0, the last over capacity.
+    assert vc_band(np.array([0.0, 0.59, 0.6, 0.79, 0.8, 0.99, 1.0, 1.7])).tolist() == [
+        0, 0, 1, 1, 2, 2, 3, 3,
+    ]  # fmt: skip
 
 
 def test_the_logo_and_the_credit_are_optional_and_never_a_copyright_claim():

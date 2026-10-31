@@ -2,8 +2,9 @@
 
 A two-way street is two ribbons side by side, each on its own driver's side
 (right-hand traffic), so the two directions never overlap and both read.
-Width is volume, colour is the share of a link's crossing time lost to delay
-(beyond free flow); free flow recedes into the canvas and congestion glows.
+On the road, width is the road's capacity per direction (on the bike and walk layers,
+volume), colour is the delay over free flow (a link's mean crossing time over its
+free-flow time, less one); free flow recedes into the canvas and congestion glows.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import numpy as np
 from openmobisim import __version__
 from openmobisim.scenario import LEVEL_NAMES
 from openmobisim.viz import _geometry as geo
-from openmobisim.viz._canvas import Canvas
+from openmobisim.viz._canvas import Canvas, road_ratio
 from openmobisim.viz._figure import (
     SIZE_CM,
     Page,
@@ -33,7 +34,7 @@ from openmobisim.viz._style import Theme, get_theme
 __all__ = ["link_table", "map_link"]
 
 _COLOUR_WORDS = {
-    "delay": "share of the crossing time lost to delay",
+    "delay": "delay over free flow",
     "volume": "volume",
     "volume_capacity": "volume over capacity",
 }
@@ -44,20 +45,47 @@ _WIDTH_MIN_PT, _WIDTH_SPAN_PT = 0.5, 5.2
 _WIDTH_FLOOR_PT = 0.9
 #: The casing's line ends (``Canvas.casing``).
 _CASING_CAP = "butt"
-#: The delay colours' bands, as the upper
-#: edges of the share of a link's mean time that is not free flow: the Highway Capacity Manual's
-#: urban-street levels of service by travel speed over free-flow speed (A above 85 %, B-C 50-85 %,
-#: D-E 30-50 %, F 30 % or less; TRB, *HCM 2010*, ch. 16, as tabulated in
-#: https://etrr.springeropen.com/articles/10.1186/s12544-024-00701-w/tables/4).
+#: The delay colours' bands, as the upper edges of the delay over free flow (a link's mean
+#: crossing time over its free-flow time, less one): 0-15 %, 15-50 %, 50-100 % and 100 % or more
+#: (twice the free-flow time), the darkest red. The two upper edges are the Highway Capacity
+#: Manual's urban-street level-of-service thresholds on travel speed, two thirds (B/C) and one
+#: half (C/D) of the base free-flow speed, a time 1.5 and 2 times free flow (TRB, *HCM*, 7th ed.,
+#: urban street facilities, as tabulated in the Texas DOT's Traffic Safety Program manual, table
+#: 9-12: https://www.txdot.gov/manuals/des/tsp/chapter-9-segment-analysis--freeways--multi-lane-h/9-3-hcm-based--mesoscopic--analysis/9-3-4-measures-of-effectiveness--moes-/9-3-4-4-arterials--or-urban-streets-.html);
+#: the lowest edge, 15 %, about its level A (above 85 % of the free-flow speed in *HCM 2010*).
 #: Free flow counts a signal's mean wait: only the waiting beyond it is delay.
-DELAY_BANDS = (0.15, 0.50, 0.70)
+DELAY_BANDS = (0.15, 0.50, 1.00)
 #: Each band's label: its range, nothing else.
-DELAY_BAND_LABELS = ("0–15%", "15–50%", "50–70%", "70%+")
+DELAY_BAND_LABELS = ("0–15%", "15–50%", "50–100%", "100%+")
+#: The bands of volume over capacity, as their upper edges, coloured as the delay's four: under
+#: 0.6 (level of service A), 0.6-0.8 (B-C), 0.8-1.0 (D-E) and over capacity (F), from the
+#: planning-level table of levels of service by volume over capacity (A under 0.60, B 0.61-0.70,
+#: C 0.71-0.80, D 0.81-0.90, E 0.91-1.00, F over 1.0; Kittitas MPO, 2010 Metropolitan
+#: Transportation Plan, table 3.4, p. 3-36:
+#: https://www.kmpo.net/wp-content/uploads/2019/02/KMPO_Section_3_2010_Final_pgs35-88.pdf), whose
+#: F, over 1.0, is the Highway Capacity Manual's.
+VC_BANDS = (0.6, 0.8, 1.0)
+#: Each band's label: its range, nothing else.
+VC_BAND_LABELS = ("0–0.6", "0.6–0.8", "0.8–1.0", "1.0+")
 
 
 def delay_band(delay: np.ndarray) -> np.ndarray:
     """Each delay's band, 0 (free) to 3 (the worst): :data:`DELAY_BANDS`'s edges."""
     return np.searchsorted(np.asarray(DELAY_BANDS), np.asarray(delay), side="right")
+
+
+def vc_band(ratio: np.ndarray) -> np.ndarray:
+    """Each volume over capacity's band, 0 (under 0.6) to 3 (over capacity): :data:`VC_BANDS`."""
+    return np.searchsorted(np.asarray(VC_BANDS), np.asarray(ratio), side="right")
+
+
+def delay_time_share(delay: np.ndarray) -> np.ndarray:
+    """The share of the crossing time that is delay, from the delay over free flow ``d``.
+
+    ``d / (1 + d)``: a link crossed in twice its free-flow time spends half of it delayed.
+    """
+    d = np.asarray(delay, dtype=float)
+    return d / (1.0 + d)
 
 
 def free_flow_moving_s(network: Any) -> np.ndarray:
@@ -97,8 +125,9 @@ def link_table(
 
     Returns arrays of length `n_links`: ``volume`` in PCU/h averaged over the
     selected bins, ``mean_s`` the PCU-weighted mean traversal time (NaN where
-    nothing crossed), and ``delay`` in ``[0, 1)`` as the share of the mean time
-    that is not free flow. ``first``/``stop`` of ``None`` select every bin from
+    nothing crossed), and ``delay`` the delay over free flow, ``mean_s / free_flow_s - 1``
+    (0 at free flow, 1 at twice the free-flow time; never below 0; 0 where nothing crossed
+    or the free-flow time is 0). ``first``/``stop`` of ``None`` select every bin from
     the first to the last that saw traffic.
     """
     b, link = bins.bins().astype(np.int64), bins.links().astype(np.int64)
@@ -114,7 +143,9 @@ def link_table(
     volume = total / span_s * 3600.0
     with np.errstate(invalid="ignore", divide="ignore"):
         mean_s = np.where(total > 0, seconds / total, np.nan)
-        delay = np.where(total > 0, 1.0 - np.minimum(free_flow_s / mean_s, 1.0), 0.0)
+        delay = np.where(
+            (total > 0) & (free_flow_s > 0), np.maximum(mean_s / free_flow_s - 1.0, 0.0), 0.0
+        )
     return {"volume": volume, "mean_s": mean_s, "delay": delay}
 
 
@@ -132,7 +163,8 @@ def flow_summary(network: Any, table: dict[str, np.ndarray], unit: str, active: 
         return "no traffic on this layer"
     veh_km = float((volume[drawn] * length_km[drawn]).sum())
     hours = float((volume[drawn] * np.nan_to_num(mean_s[drawn]) / 3600.0).sum())
-    delay_h = float((volume[drawn] * np.nan_to_num(mean_s[drawn]) * delay[drawn] / 3600.0).sum())
+    lost = delay_time_share(delay[drawn])
+    delay_h = float((volume[drawn] * np.nan_to_num(mean_s[drawn]) * lost / 3600.0).sum())
     what = "PCU" if unit.startswith("PCU") else "traveller"
     speed = veh_km / hours if hours > 0 else 0.0
     parts = [
@@ -242,8 +274,10 @@ def map_link(
 ) -> Any:
     """Draw a run's traffic on its network: one ribbon per direction of every link.
 
-    Width is volume; colour is the share of each link's crossing time lost to delay,
-    beyond free flow (or volume, see `colour`).
+    Width is the road's capacity per direction, the same for every road of one capacity (on
+    the bike and walk layers, which have no capacity, volume); colour is the delay over free
+    flow (each link's mean crossing time over its free-flow time, less one), or volume, see
+    `colour`.
     The two directions of a two-way street are drawn side by side, each on its
     own driver's side, so they never overlap. Free-flowing links recede and
     congestion glows.
@@ -261,16 +295,17 @@ def map_link(
         layer: Which layer's traffic to draw: ``"road"`` (default: cars, on the
             road network), ``"bike"`` or ``"walk"`` (each on its own layer's links,
             ``network.layer(...)``; volume counts travellers, not PCU).
-        colour: What the colour shows: ``"delay"`` (the share of a link's mean
-            time that is not free flow, in four bands, 0-15 %, 15-50 %, 50-70 % and
-            70 % or more, the Highway Capacity Manual's levels of service; free flow
-            counts a signal's mean wait, so only waiting beyond it is delay;
-            the default on the road), ``"volume"`` (the default on the bike and walk
-            layers, where nothing is delayed), or ``"volume_capacity"`` (volume
-            over the link's capacity as it passes traffic — at a signal, times the
-            green fraction — so 1 is a link at capacity and beyond it is
-            over; the road only).
-        ramp: For delay and volume-over-capacity, ``"spectrum"`` (default:
+        colour: What the colour shows: ``"delay"`` (the delay over free flow, a
+            link's mean crossing time over its free-flow time less one, in four
+            bands, 0-15 %, 15-50 %, 50-100 % and 100 % or more, after the Highway
+            Capacity Manual's levels of service; free flow counts a signal's mean
+            wait, so only waiting beyond it is delay; the default on the road),
+            ``"volume"`` (the default on the bike and walk layers, where nothing is
+            delayed), or ``"volume_capacity"`` (volume over the link's capacity as it
+            passes traffic — at a signal, times the green fraction — in four bands
+            coloured as the delay's: under 0.6, 0.6-0.8, 0.8-1.0 and over capacity;
+            the road only).
+        ramp: For delay and volume over capacity, ``"spectrum"`` (default:
             blue-green for little, gold in the middle, deeper red for more) or
             ``"ember"`` (the single-hue ramp of the first version).
         theme: ``"paper"`` (print, slides) or ``"night"`` (screens, video).
@@ -367,10 +402,23 @@ def map_link(
     page = Page.new(th, size_cm, dpi, lo, hi)
     mpp = page.metres_per_point
 
-    # Width: square root of volume up to the 99th percentile of active links.
+    # Width (S308): on the road, its capacity over the network's large roads' (linear, the
+    # largest and above the widest), so every road of one capacity is one width whatever its
+    # traffic; on the bike and walk layers, the square root of volume up to the 99th percentile.
     vmax = float(np.percentile(volume[active], 99)) if active.any() else 1.0
     vmax = max(vmax, min_volume)
-    frac = np.sqrt(np.minimum(volume, vmax) / vmax)
+    ratio = road_ratio(network) if road else None
+    by_capacity = ratio is not None and bool(np.isfinite(ratio).any())
+    if by_capacity:
+        frac = np.minimum(np.nan_to_num(ratio, nan=0.0), 1.0)
+        finite = np.isfinite(ratio) & (ratio > 0)
+        capacity_ref = float(
+            np.median(
+                np.asarray(network.link_capacity_pcu_h(), dtype=float)[finite] / ratio[finite]
+            )
+        )
+    else:
+        frac = np.sqrt(np.minimum(volume, vmax) / vmax)
     floor = _WIDTH_FLOOR_PT * page.k
     width_pt = np.where(
         active, np.maximum((_WIDTH_MIN_PT + _WIDTH_SPAN_PT * frac) * zs * page.k, floor), 0.0
@@ -394,22 +442,30 @@ def map_link(
             "#" + "".join(f"{round(float(v) * 255):02x}" for v in c) for c in band_rgb
         )
         low, high = DELAY_BAND_LABELS, ""
-        legend_label = (  # a general title; the bands name only their ranges (S269)
-            "Colour: share of the crossing time lost to delay"
-        )
+        legend_label = "Colour: delay over free flow"  # the bands name only their ranges (S269)
     elif colour == "volume_capacity":
         capacity, _ = capacity_passing(network)
         ratio = np.where(capacity > 0, volume / np.maximum(capacity, 1e-9), 0.0)
-        link_rgb = ramp_rgb(stops, np.clip(ratio, 0.0, 1.0))
+        # The delay's four colours in four bands, so the two read alike (S308).
+        band = vc_band(ratio)
+        band_rgb = ramp_rgb(stops, np.linspace(0.0, 1.0, len(VC_BAND_LABELS)))
+        link_rgb = band_rgb[band]
         severity = ratio
-        legend_stops, low, high = stops, "0", "1.0+"
+        legend_stops = tuple(
+            "#" + "".join(f"{round(float(v) * 255):02x}" for v in c) for c in band_rgb
+        )
+        low, high = VC_BAND_LABELS, ""
         legend_label = "Colour: volume over capacity"
     else:
         t = np.sqrt(np.minimum(volume, vmax) / vmax)
         link_rgb = ramp_rgb(th.ramp_volume, t)
         severity = volume
         legend_stops, low, high = th.ramp_volume, "0", f"{vmax:,.0f}+"
-        legend_label = f"Width: volume per direction ({unit})"
+        legend_label = (
+            f"Colour: volume per direction ({unit})"
+            if by_capacity
+            else f"Width: volume per direction ({unit})"
+        )
     drawn = np.nonzero(active)[0]
     drawn = drawn[np.argsort(severity[drawn], kind="stable")]  # the worst on top
     lines = geo.polylines(ribbon_points, offsets, drawn)
@@ -437,8 +493,13 @@ def map_link(
                 zorder=2,
             )
         )
-    # The casing (S302): a grey margin around each ribbon, as wide as its road's capacity tier.
-    casing = canvas.casing(th.base, drawn, lines, line_width, zs * page.k, _CASING_CAP)
+    # The casing (S302): a grey margin around each ribbon, as wide as its road's capacity tier;
+    # not where the width itself is the capacity (S308).
+    casing = (
+        None
+        if by_capacity
+        else canvas.casing(th.base, drawn, lines, line_width, zs * page.k, _CASING_CAP)
+    )
     if casing is not None:
         page.ax.add_collection(casing)
     page.ax.add_collection(
@@ -479,18 +540,18 @@ def map_link(
         f"openmobisim {__version__} · level {run.flow_level} ({level}){stepping} · "
         f"bins of {step} s · {source}",
     ]
-    sample_values = [nice_number(vmax / 10), nice_number(vmax / 3), nice_number(vmax)]
+    if by_capacity:  # the legend's samples: capacities, as wide as their roads are drawn
+        top = capacity_ref
+        sample_values = [nice_number(top / 4), nice_number(top / 2), nice_number(top)]
+        share = [min(v / top, 1.0) for v in sample_values]
+        width_words, width_unit = "Width: road capacity per direction", "PCU/h"
+    else:
+        sample_values = [nice_number(vmax / 10), nice_number(vmax / 3), nice_number(vmax)]
+        share = [float(np.sqrt(min(v, vmax) / vmax)) for v in sample_values]
+        width_words, width_unit = "Width: volume per direction", unit
     samples = [
-        (
-            v,
-            max(
-                (_WIDTH_MIN_PT + _WIDTH_SPAN_PT * float(np.sqrt(min(v, vmax) / vmax)))
-                * zs
-                * page.k,
-                floor,
-            ),
-        )
-        for v in sample_values
+        (v, max((_WIDTH_MIN_PT + _WIDTH_SPAN_PT * f) * zs * page.k, floor))
+        for v, f in zip(sample_values, share, strict=True)
     ]
     draw_furniture(
         page,
@@ -498,9 +559,11 @@ def map_link(
         subtitle=subtitle or default_subtitle,
         note=note,
         provenance=provenance,
-        width_legend=("Width: volume per direction", samples, unit),
+        width_legend=(width_words, samples, width_unit),
         colour_legend=(legend_label, legend_stops, low, high),
-        band_legend="Grey margin: road capacity" if canvas.tier is not None else None,
+        band_legend=(
+            "Grey margin: road capacity" if canvas.tier is not None and not by_capacity else None
+        ),
         credit=credit,
         logo=logo,
         compass=True,
