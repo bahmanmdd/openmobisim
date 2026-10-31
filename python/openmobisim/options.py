@@ -777,6 +777,7 @@ class LeastCostOptions(_Options):
         searches: count; ``1``.
         slack: —; ``0.02``.
         tree_step_s: s; ``300.0``.
+        until_iteration: count; ``0``.
     """
 
     _argument: ClassVar[str] = "route_update_options"
@@ -785,6 +786,7 @@ class LeastCostOptions(_Options):
         "searches": 1,
         "slack": 0.02,
         "tree_step_s": 300.0,
+        "until_iteration": 0,
     }
 
     def __init__(
@@ -794,6 +796,7 @@ class LeastCostOptions(_Options):
         searches: int = 1,
         slack: float = 0.02,
         tree_step_s: float = 300.0,
+        until_iteration: int = 0,
     ) -> None:
         """Keep the options given that differ from their defaults."""
         given = dict(locals())
