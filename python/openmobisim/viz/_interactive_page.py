@@ -172,6 +172,7 @@ footer #source { flex: none; white-space: nowrap; margin-right: 16px; }
 #tripcard .more { font-size: 11px; color: var(--ink2); margin: 6px 6px 0; }
 #tripcard .more a { color: var(--ink); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 #tripcard .foot { font-size: 10.5px; color: var(--muted); margin: 8px 6px 0; line-height: 1.4; }
+#legendbody .kinds em { font-style: normal; }
 #legendbody .kinds .mkr { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; border-radius: 50%; background: var(--ink); color: var(--surface); font: 700 8px var(--sans); margin-right: 4px; }
 #legendbody .kinds .stop { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--ink2); background: var(--surface); margin-right: 4px; vertical-align: -1px; }
 #legendbody .kinds .badge { display: inline-block; padding: 0 4px; border-radius: 4px; font: 700 9px/13px var(--sans); color: #fff; margin-right: 4px; }
@@ -1033,7 +1034,7 @@ function renderLegend() {
   const parts = [];
   if (HAS_ROUTES && S.pair >= 0 && S.routes) {
     parts.push('<div class="lg"><h3>Trips between two places</h3><div class="kinds">' + tripLegendItems().map(([name, c, st]) => "<span>" + line(c, st) + name + "</span>").join("") +
-      '</div><div class="kinds"><span><b class="mkr">A</b>origin</span><span><b class="mkr">B</b>destination</span><span><b class="stop"></b>stop</span><span><b class="badge" style="background:' + TH.kinds[1] + '">M1</b>line</span><span><b class="mkr" style="border-radius:2px">P</b>parking</span></div><div class="note">width = travellers; a walk to or from a stop is drawn straight; dashed: a car route nobody took</div></div>');
+      '</div><div class="kinds"><span><em class="mkr">A</em>origin</span><span><em class="mkr">B</em>destination</span><span><em class="stop"></em>stop</span><span><em class="badge" style="background:' + (TR.lines.length ? kindColour(0) : TH.kinds[1]) + '">' + escHtml(TR.lines[0] || "M1") + '</em>line</span><span><em class="mkr" style="border-radius:2px">P</em>parking</span></div><div class="note">width = travellers; a walk to or from a stop is drawn straight; dashed: a car route nobody took</div></div>');
   }
   if (HAS_TRAFFIC && S.ly.road) {
     const r = roadLegend();
