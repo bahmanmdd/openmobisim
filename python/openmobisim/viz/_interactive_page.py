@@ -214,9 +214,9 @@ for (const a of META.arrays) A[a.n] = new CTOR[a.t](raw.buffer, a.o, a.c);
 const NL = META.n_links, NV = META.n_verts, NB = META.n_bins;
 const VS = A.vs, CLS = A.cls, LEN = A.len, FF = A.ff, CAP = A.cap, SG = A.sg || new Uint8Array(CAP.length), SW = A.sw || new Float32Array(CAP.length);
 const SB = A.sb || null;
-// Each link's road tier (S302): the base network's width by tier, as multiples of its base width, and the
-// grey margin around a ribbon (px at a zoom scale of 1). Without roads, one width and no margin.
-const RT = A.rt || null, TIERS = RT ? META.road_tiers : [1], CASING_PX = RT ? META.road_casings : [0];
+// Each link's road tier (S302): the base network's width by tier, as multiples of its base width. Without roads, one
+// width. (A ribbon's own width is its road's capacity, RR below.)
+const RT = A.rt || null, TIERS = RT ? META.road_tiers : [1];
 const tierOf = (l) => (RT ? RT[l] : 0);
 // Each link's upstream and downstream node (S306), and its other direction: the link between the same two nodes
 // the other way (-1 for a one-way link). A two-way road is two links on one geometry, each drawn on its own side.
@@ -228,7 +228,7 @@ if (NF && NT) {
 // The other layers (T-4), each drawn only when its box is ticked.
 const LY = META.layers || {};
 const LAYER_ROWS = [
-  ["road", "Road traffic", "ribbons: width = volume, colour as below"],
+  ["road", "Road traffic", "ribbons: width = road capacity, colour as below"],
   ["transit", "Transit lines", "width = passengers on board, colour = kind of service"],
   ["parking", "Parkings", "■ car, ● bike; size = capacity, colour = busiest share in use"],
   ["bike", "Cyclists", "on the bike network, the whole run"],
@@ -431,8 +431,8 @@ function measureRoom(cand) {
   ROOM_M = 2 * C * C / used[Math.floor(0.75 * (used.length - 1))] * S.mpp;
 }
 function roomPx() { return ROOM_M > 0 ? ROOM_M / S.mpp : 40; }
-// The widest ribbon (the 99th percentile's volume): a quarter of the room, so a two-way road at its busiest takes
-// half the space between it and the next road; between 2.5 and WCAP px.
+// The widest ribbon (a road of the network's largest capacity): a quarter of the room, so a two-way road of the
+// largest capacity takes half the space between it and the next road; between 2.5 and WCAP px.
 function ribbonMax() { return Math.max(2.5, Math.min(WCAP, ROOM_SHARE * roomPx())); }
 // The space between a road's two directions (px): each ribbon sits on its own side of the centre line, to the
 // right of its travel, so the two read apart at every zoom (S306: 0.5 px between them read as one ribbon).
@@ -440,15 +440,12 @@ let GAP = 2;  // set by each frame: a fifth of the widest ribbon, 1.5 to 6 px
 function ribbonOffset(l, w) { return GAP / 2 + w / 2; }
 // Whether link l is drawn as a ribbon of road traffic now.
 function hasRibbon(l) { return S.ly.road && HAS_TRAFFIC && vol[l] > 0; }
-// The grey margin (capacity) on a ribbon's outer side only, so it never fills the space between the directions;
-// the major roads' margin is 40 % of the widest ribbon, the other tiers' in proportion.
-const CASING_TOP = Math.max(...CASING_PX) || 1;
-function casingSide(l) { return casingOf(tierOf(l)); }
-function casingOf(tier) { return CASING_PX[tier] / CASING_TOP * 0.4 * ribbonMax(); }
-// A ribbon's width grows linearly with its volume (S306: the square root's range was too small to read): from
-// WFLOOR at no traffic to ribbonMax() at the 99th percentile's volume and above.
+// A ribbon's width is its road's capacity (S308: "the width should be based on capacity and road type, not flow"),
+// linear from WFLOOR to ribbonMax() at the network's large roads' capacity and above: every road of one capacity is
+// one width, whatever its traffic; the traffic is the colour and the hover. Without capacities, one width.
+const RR = A.rr || null;
 function ribbonWidthOf(f) { const top = ribbonMax(); return WFLOOR + (top - WFLOOR) * f; }
-function ribbonWidth(l) { return ribbonWidthOf(Math.min(vol[l], VMAX) / VMAX); }
+function ribbonWidth(l) { return ribbonWidthOf(RR ? Math.min(1, RR[l]) : 1); }
 function colourIndex(l) {
   let t;
   if (S.colour === "delay") t = band(delay[l]) / (BANDS.length);
@@ -508,7 +505,7 @@ function draw() {
   const showAll = classLimit() >= 16;
   if (!MOVING && !EXPORTING) measureRoom(cand);  // an export keeps the screen's widths
   GAP = Math.max(1.5, Math.min(6, ribbonMax() / 5));
-  const base = TIERS.map(() => new Path2D()), casings = new Map(), faint = new Path2D(), buckets = new Map();
+  const base = TIERS.map(() => new Path2D()), faint = new Path2D(), buckets = new Map();
   const dimming = S.pair >= 0 && S.routes && S.dim;
   for (const l of cand) {
     const busy = HAS_TRAFFIC && vol[l] > 0 && (vol[l] >= VHIGH * (S.mpp > 8 ? 1 : 0.4) || CLS[l] <= lim);
@@ -523,7 +520,6 @@ function draw() {
       const w = ribbonWidth(l), wi = Math.min(127, Math.round(w * 2)), key = colourIndex(l) * 128 + wi;
       let b = buckets.get(key); if (!b) { b = new Path2D(); buckets.set(key, b); }
       addLine(b, l, ribbonOffset(l, w), gap);
-      if (CASING_PX[tierOf(l)] > 0) { const ck = tierOf(l) * 128 + wi; let c = casings.get(ck); if (!c) { c = new Path2D(); casings.set(ck, c); } addLine(c, l, ribbonOffset(l, w) + casingSide(l) / 2, gap); }
     }
   }
   ctx.lineCap = "round"; ctx.lineJoin = "round";
@@ -536,11 +532,6 @@ function draw() {
   ctx.globalAlpha = dimming ? 0.35 : 1;
   if (TH.glow) { for (const k of keys) { const w = (k & 127) / 2; ctx.strokeStyle = tbl[k >> 7]; ctx.globalAlpha = (dimming ? 0.35 : 1) * 0.14; ctx.lineWidth = w + Math.min(w * 1.8, GAP * 0.8); ctx.stroke(buckets.get(k)); } ctx.globalAlpha = dimming ? 0.35 : 1; }
   else if (!MOVING) { for (const k of keys) { ctx.strokeStyle = TH.surface; ctx.lineWidth = (k & 127) / 2 + 1.4; ctx.stroke(buckets.get(k)); } }
-  // The casing (S302): each ribbon widened on its outer side by its road's tier, a grey margin = capacity; major
-  // roads on top.
-  { const a = ctx.globalAlpha; ctx.globalAlpha = 1; ctx.strokeStyle = TH.base; ctx.lineCap = "butt";
-    for (const k of [...casings.keys()].sort((x, y) => x - y)) { ctx.lineWidth = (k & 127) / 2 + casingOf(k >> 7); ctx.stroke(casings.get(k)); }
-    ctx.lineCap = "round"; ctx.globalAlpha = a; }
   for (const k of keys) { ctx.strokeStyle = tbl[k >> 7]; ctx.lineWidth = (k & 127) / 2; ctx.stroke(buckets.get(k)); }
   ctx.globalAlpha = 1;
   if (!MOVING && S.mpp < 3 && S.ly.road) drawChevrons(cand, lim);
@@ -1190,7 +1181,7 @@ function binLabel() {
 function setBins(a, b) { S.bins = [a, b]; aggregate(a, b); subtitle(); redraw(false); writeHash(); }
 const COLOUR_WORDS = { delay: "delay over free flow", volume: "volume", vc: "volume over capacity" };
 function subtitle() {
-  $("subtitle").textContent = binLabel() + " · one ribbon per direction · width = volume, colour = " + COLOUR_WORDS[S.colour];
+  $("subtitle").textContent = binLabel() + " · one ribbon per direction · width = road capacity, colour = " + COLOUR_WORDS[S.colour];
   renderLegend();
 }
 // The kinds of transit service the run has, by name and index.
@@ -1227,7 +1218,7 @@ function renderLegend() {
     const ramp = r.bands
       ? '<div class="bar" style="background:' + bandGradient(r.stops) + '"></div><div class="bands">' + r.bands.map((t) => "<span>" + t + "</span>").join("") + "</div>"
       : '<div class="bar" style="background:linear-gradient(90deg,' + r.stops.join(",") + ')"></div><div class="ends"><span>' + r.low + "</span><span>" + r.high + "</span></div>";
-    parts.push('<div class="lg"><h3>Road traffic</h3><div class="sub">' + r.label + "</div>" + ramp + '<div class="note">width = volume per direction' + (RT ? "; grey margin: road capacity" : "") + "</div></div>");
+    parts.push('<div class="lg"><h3>Road traffic</h3><div class="sub">' + r.label + "</div>" + ramp + '<div class="note">' + (RR ? "width = road capacity per direction, the widest " + fmt(META.road_capacity_ref) + " PCU/h and over; volume in the hover" : "width: one for every road") + "</div></div>");
   }
   if (S.ly.transit && LY.transit) parts.push('<div class="lg"><h3>Transit lines</h3><div class="kinds">' + transitKinds().map(([name, k]) => "<span>" + line(TH.kinds[k]) + name + "</span>").join("") + '</div><div class="note">width = passengers on board; ○ stops, size = boardings</div></div>');
   if (S.ly.bike && FLOWS.bike) parts.push('<div class="lg"><h3>Cyclists</h3><div class="kinds"><span>' + line(TH.modes[1], "dash") + 'cyclists</span></div><div class="note">width = cyclists; faint = the bike network</div></div>');

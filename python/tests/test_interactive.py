@@ -731,11 +731,26 @@ def test_the_two_directions_of_a_road_are_drawn_apart(tmp_path):
             assert apart >= 1.0, f"two ribbons overlap or touch: {apart:.2f} px apart"
             side_by_side += apart < 12
     assert side_by_side > 10, "the two directions of the streets, side by side"
-    # The widths grow linearly with volume up to the widest the room on screen allows (S306).
+    # The width is the road's capacity, not its traffic (S308): the grid's streets all have one
+    # capacity, so every ribbon is the widest the room on screen allows, however loaded.
     wmax = float(re.search(r'data-wmax="([\d.]+)"', dom)[1])
     widths = [w for *_, w in ribbons(svg)]
     assert 2.5 <= wmax <= 30 and abs(max(widths) - wmax) <= 0.5
-    assert max(widths) / min(widths) > 4, "the least and the most loaded read apart"
+    assert max(widths) - min(widths) <= 0.5, "one capacity, one width"
+
+
+def test_a_ribbon_s_width_is_its_road_s_capacity(tmp_path):
+    """Each road link carries its capacity over the large roads': its ribbon's width (S308)."""
+    from openmobisim.viz._canvas import road_ratio
+
+    run = layered_run()
+    text, meta, a = decode(viz.map_interactive(run, tmp_path / "map.html"))
+    ratio = np.nan_to_num(road_ratio(run.network), nan=0.0)
+    assert np.allclose(a["rr"], ratio, rtol=1e-6) and len(set(ratio.round(6))) >= 2
+    capacity = np.asarray(run.network.link_capacity_pcu_h(), dtype=float)
+    road = ratio > 0
+    assert np.allclose(capacity[road] / ratio[road], meta["road_capacity_ref"], rtol=1e-3)
+    assert "ribbonWidthOf(RR ? Math.min(1, RR[l]) : 1)" in text, "no volume in the width"
 
 
 def test_the_controls_legend_compass_and_scale_share_the_right_column(tmp_path):
