@@ -1541,6 +1541,26 @@
     "window_start_seconds"
    ]
   },
+  "run.toml": {
+   "keys": [
+    "choice",
+    "equilibration",
+    "inputs",
+    "loading",
+    "modes",
+    "name",
+    "network",
+    "parking",
+    "policy",
+    "prices",
+    "route_update",
+    "routes",
+    "run",
+    "service_assumptions",
+    "services",
+    "transit"
+   ]
+  },
   "timings.csv": {
    "columns": [
     "stage",
