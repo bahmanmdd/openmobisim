@@ -416,9 +416,11 @@ def map_interactive(
         journeys = run.itinerary_journeys() if given is None else None
         if journeys is not None:
             taken = {m for m in journeys["mode"] if m is not None}
+            shared = {"bike_share", "bike_share_transit"}
+            by_transit = {"transit", "car_transit", "bike_transit", "bike_share_transit"}
             for name, modes in (
-                ("bike", {"bike", "bike_transit", "bike_share", "bike_share_transit"}),
-                ("walk", {"walk"}),
+                ("bike", {"bike", "bike_transit"} | shared),
+                ("walk", {"walk"} | shared | by_transit),  # walks to stops and docks too
             ):
                 if name not in layer_index and taken & modes:
                     found = _layer_geometry(blob, network, name, lon0, lat0, box)

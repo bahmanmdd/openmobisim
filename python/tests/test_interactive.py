@@ -24,6 +24,7 @@ from openmobisim.viz import _geometry as geo
 
 CAR = {"commuter": (True, False, False)}
 DTYPES = {"u8": "<u1", "u32": "<u4", "i32": "<i4", "f32": "<f4"}
+NONE = 2**32 - 1
 
 
 def grid_run(n=8, trips=120, seed=5, **kwargs):
@@ -268,10 +269,9 @@ def test_the_page_carries_how_many_travellers_took_each_route(tmp_path):
             assert max(used) > 1, "someone takes a second route"
 
 
-def choosing_run():
+def choosing_run(pairs=(("W", "N1"), ("S", "D2"), ("W", "M"), ("W", "D1"))):
     """The toy network, everyone choosing among car, bike, walk, transit and park-and-ride."""
     net = ms.examples.toy_network()
-    pairs = [("W", "N1"), ("S", "D2"), ("W", "M"), ("W", "D1")]
     rows = []
     for k in range(80):
         frm, to = pairs[k % len(pairs)]
@@ -355,6 +355,76 @@ def test_the_page_shows_every_mode_a_pair_took(tmp_path):
     for p in range(meta["n_pairs"]):
         assert np.isclose(a["on"][a["qs"][p] : a["qs"][p + 1]].sum() + a["qr"][p], a["qn"][p])
     assert len(meta["trips"]["places"]) == meta["n_pairs"] and meta["trips"]["has_journeys"]
+
+
+def test_a_walk_to_from_or_between_stops_runs_along_its_streets(tmp_path):
+    """Each walk to, from or between stops, docks and parkings (S306) runs along its streets.
+
+    It is drawn along walk links that join end to end, from the place the journey's previous leg
+    ends at to the place its next leg starts from (the pair's origin and destination at either
+    end); its links begin and end within a few metres of those places (on this network each is a
+    node, or a stop 3 m from one).
+    """
+    # Origins and destinations away from the stops, so that the journeys by transit walk.
+    run = choosing_run((("S", "D1"), ("N2", "D1"), ("S", "D2"), ("W", "N1"), ("N2", "D2")))
+    _, meta, a = decode(viz.map_interactive(run, tmp_path / "map.html"))
+
+    def geometry(prefix):
+        return a[prefix + "vs"], np.column_stack(
+            [np.cumsum(a[prefix + "dx"]) * 0.1, np.cumsum(a[prefix + "dy"]) * 0.1]
+        )
+
+    layer = {0: geometry(""), 1: geometry("b"), 2: geometry("w")}
+
+    def link_points(kind, links):
+        vs, xy = layer[kind]
+        return np.concatenate([xy[vs[x] : vs[x + 1]] for x in links])
+
+    def point(i):
+        return np.array([a["ptx"][i], a["pty"][i]]) * 0.1
+
+    def stop(s):
+        return np.array([a["tsx"][s], a["tsy"][s]]) * 0.1
+
+    def ends(g):
+        """Where a drawn leg starts and ends (None for a wait, a park or a strip-only walk)."""
+        k = a["lk"][g]
+        if k in (0, 1, 2) and a["lb"][g] > a["la"][g]:
+            pts = link_points(k, a["pl"][a["la"][g] : a["lb"][g]])
+            first = point(a["lpa"][g]) if a["lpa"][g] != NONE else pts[0]
+            last = point(a["lpb"][g]) if a["lpb"][g] != NONE else pts[-1]
+            return first, last
+        if k == 3:
+            return stop(a["pst"][a["la"][g]]), stop(a["pst"][a["lb"][g] - 1])
+        if k == 4 and a["la"][g] != NONE:
+            return point(a["la"][g]), point(a["lb"][g])
+        return None
+
+    near = 5.0  # metres
+    walked = 0
+    for p in range(meta["n_pairs"]):
+        origin = np.array([a["qox"][p], a["qoy"][p]]) * 0.1
+        destination = np.array([a["qdx"][p], a["qdy"][p]]) * 0.1
+        for o in range(a["qs"][p], a["qs"][p + 1]):
+            legs = [g for g in range(a["ol"][o], a["ol"][o + 1]) if ends(g) is not None]
+            for i, g in enumerate(legs):
+                if a["lk"][g] != 2 or a["lpa"][g] == NONE:
+                    continue  # not a walk between places
+                links = a["pl"][a["la"][g] : a["lb"][g]]
+                pieces = [link_points(2, [x]) for x in links]
+                for one, two in zip(pieces[:-1], pieces[1:], strict=True):
+                    assert np.hypot(*(one[-1] - two[0])) < 0.2, "the links join end to end"
+                start, end = point(a["lpa"][g]), point(a["lpb"][g])
+                assert np.hypot(*(pieces[0][0] - start)) < near, "the links start at the place left"
+                assert np.hypot(*(pieces[-1][-1] - end)) < near, "and end at the place reached"
+                before = ends(legs[i - 1])[1] if i > 0 else origin
+                after = ends(legs[i + 1])[0] if i + 1 < len(legs) else destination
+                assert np.hypot(*(start - before)) < near, "where the previous leg ends"
+                assert np.hypot(*(end - after)) < near, "where the next leg starts"
+                walked += 1
+    assert walked >= 4, walked
+    # The legend no longer says the walks to stops are straight.
+    assert "drawn straight" not in (tmp_path / "map.html").read_text(encoding="utf-8")
 
 
 def test_the_page_offers_png_and_vector_exports(tmp_path):

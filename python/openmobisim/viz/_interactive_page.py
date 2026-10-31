@@ -659,13 +659,16 @@ function legColour(g, o) {
   return TH.modes[2];
 }
 function kindColour(line) { const k = KIND_NAMES.indexOf(TR.line_kinds[line]); return TH.kinds[k >= 0 ? k : 5]; }
-// A leg's points in metres: along its links, its line's stops, or straight between two places.
+// A leg's points in metres: along its links, its line's stops, or straight between two places. A walk to, from or
+// between stops, docks and parkings runs from the place it leaves, along its links, to the place it reaches.
 function legPoints(g) {
   const k = A.lk[g], out = [];
   if (k === LEG.drive || k === LEG.bike || k === LEG.walk) {
     const G = k === LEG.drive ? { vs: VS, xs: X, ys: Y } : GEO[k === LEG.bike ? "bike" : "walk"];
     if (!G) return out;
     let wx = NaN, wy = NaN;
+    const at = (pt) => { if (pt !== NONE) { out.push(A.ptx[pt] * 0.1, A.pty[pt] * 0.1); wx = out[out.length - 2]; wy = out[out.length - 1]; } };
+    at(A.lpa[g]);
     for (let i = A.la[g]; i < A.lb[g]; i++) {
       const l = A.pl[i];
       for (let v = G.vs[l]; v < G.vs[l + 1]; v++) {
@@ -673,6 +676,7 @@ function legPoints(g) {
         out.push(G.xs[v], G.ys[v]); wx = G.xs[v]; wy = G.ys[v];
       }
     }
+    at(A.lpb[g]);
   } else if (k === LEG.ride) { for (let i = A.la[g]; i < A.lb[g]; i++) { const st = A.pst[i]; out.push(A.tsx[st] * 0.1, A.tsy[st] * 0.1); } }
   else if (k === LEG.connect && A.la[g] !== NONE) out.push(A.ptx[A.la[g]] * 0.1, A.pty[A.la[g]] * 0.1, A.ptx[A.lb[g]] * 0.1, A.pty[A.lb[g]] * 0.1);
   return out;
@@ -761,8 +765,8 @@ function drawTrips() {
       const sp = screenPath(pts, k === LEG.connect ? 0 : fi * fit); if (sp.n < 2) continue;
       const c = legColour(g, o), dotted = k === LEG.walk || k === LEG.connect;
       if (dotted) {
-        // A walk along its streets as wide as the option; a walk to or from a stop (straight: its streets
-        // are not stored) thinner.
+        // A walk along its streets as wide as the option; one the walk network has no path for (straight)
+        // thinner.
         const ww = k === LEG.connect ? 2.6 : Math.max(w, 2.6);
         ctx.lineCap = "round"; ctx.setLineDash([0.1, ww + 2.6]);
         ctx.strokeStyle = TH.surface; ctx.lineWidth = ww + 2.2; ctx.stroke(sp.path);
@@ -1116,7 +1120,7 @@ function renderLegend() {
   const parts = [];
   if (HAS_ROUTES && S.pair >= 0 && S.routes) {
     parts.push('<div class="lg"><h3>Trips between two places</h3><div class="kinds">' + tripLegendItems().map(([name, c, st]) => "<span>" + line(c, st) + name + "</span>").join("") +
-      '</div><div class="kinds"><span><em class="mkr">A</em>origin</span><span><em class="mkr">B</em>destination</span><span><em class="stop"></em>stop</span><span><em class="badge" style="background:' + (TR.lines.length ? kindColour(0) : TH.kinds[1]) + '">' + escHtml(TR.lines[0] || "M1") + '</em>line</span><span><em class="mkr" style="border-radius:2px">P</em>parking</span></div><div class="note">width = travellers; a walk to or from a stop is drawn straight; dashed: a car route nobody took</div></div>');
+      '</div><div class="kinds"><span><em class="mkr">A</em>origin</span><span><em class="mkr">B</em>destination</span><span><em class="stop"></em>stop</span><span><em class="badge" style="background:' + (TR.lines.length ? kindColour(0) : TH.kinds[1]) + '">' + escHtml(TR.lines[0] || "M1") + '</em>line</span><span><em class="mkr" style="border-radius:2px">P</em>parking</span></div><div class="note">width = travellers; dashed: a car route nobody took</div></div>');
   }
   if (HAS_TRAFFIC && S.ly.road) {
     const r = roadLegend();
