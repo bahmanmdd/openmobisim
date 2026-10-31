@@ -7,6 +7,7 @@ fingerprint); a changed value is written, read back and named in the header.
 
 from __future__ import annotations
 
+import json
 import math
 import tomllib
 from pathlib import Path
@@ -255,3 +256,31 @@ def test_the_inputs_are_read_relative_to_the_file(tmp_path, monkeypatch) -> None
         net, str(tmp_path / "trips.csv"), equilibration_options={"iterations": 2}
     ).run("files", output_dir=str(tmp_path / "direct"), quiet=True)
     assert run.fingerprint == direct.fingerprint
+
+
+# --- (d) the command line ------------------------------------------------------------------
+
+
+def test_the_command_line_runs_a_file_as_python_does(tmp_path, capsys) -> None:
+    pytest.importorskip("pyarrow")
+    from openmobisim.__main__ import main
+
+    _files(tmp_path)
+    (tmp_path / "run.toml").write_text(
+        'name = "cli"\n[inputs]\nnetwork = "network"\ndemand = "trips.csv"\n'
+        "[equilibration]\niterations = 2\n[choice]\nbeta_time_min = -0.25\n"
+    )
+    out = tmp_path / "cli"
+    assert main(["run", "--config", str(tmp_path / "run.toml"), "--output", str(out),
+                 "--no-pages"]) == 0  # fmt: skip
+    assert "cli: " in capsys.readouterr().out
+    python = ms.config_read(tmp_path / "run.toml").run(str(tmp_path / "python"), quiet=True)
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["run_fingerprint"] == python.fingerprint
+    # The defaults file, printed.
+    assert main(["config", "--defaults"]) == 0
+    assert capsys.readouterr().out == ms.Config().text()
+    # A case and a file at once, or neither, is refused.
+    assert main(["run", "delft", "--config", str(tmp_path / "run.toml")]) == 2
+    assert main(["run"]) == 2
+    assert main(["config", "--from", str(tmp_path / "network")]) == 1

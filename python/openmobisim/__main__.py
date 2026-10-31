@@ -1,9 +1,12 @@
-"""The command line: the tutorials and the starter cases.
+"""The command line: the tutorials, the starter cases and the run configuration files.
 
     python -m openmobisim                        # what this is and what to run first
     python -m openmobisim notebooks [folder]     # the tutorial notebooks, opened in JupyterLab
     python -m openmobisim cases                  # the starter cases and their scenarios
     python -m openmobisim run amsterdam [base]   # run one case: its numbers, page and map
+    python -m openmobisim run --config run.toml  # run a configuration file (its [inputs])
+    python -m openmobisim config --defaults      # print the complete run.toml at the defaults
+    python -m openmobisim config --from FOLDER   # print the run.toml a run's folder holds
     python -m openmobisim check [siouxfalls ...] # run the default scenarios, compare them
 
 ``--root`` names a folder holding the bundle (else ``OPENMOBISIM_DATA``, else the cache).
@@ -22,6 +25,7 @@ from openmobisim import __version__
 from openmobisim._cases import case, case_check, case_names, case_summary
 from openmobisim._paths import show_path
 from openmobisim._start import DOCS_URL, FIRST, FOLDER, notebooks, welcome
+from openmobisim.config import Config, config_read
 
 
 def _notebooks(args: argparse.Namespace) -> int:
@@ -68,17 +72,32 @@ def _cases(args: argparse.Namespace) -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
-    c = case(args.case, args.root)
-    out = Path(args.output or Path("openmobisim-runs") / f"{args.case}-{args.scenario}")
-    # Per-link results in 15-minute bins, so the page and the map show the traffic, unless the
-    # case's scenario records them already (then its fingerprint is the reference's).
-    settings = c.info.get("scenarios", {}).get(args.scenario, {})
-    bins = {} if "link_bin_s" in settings or args.no_pages else {"link_bin_s": 900}
-    scenario = c.scenario(args.scenario, **bins)
-    run = scenario.run(f"{args.case}-{args.scenario}", output_dir=str(out), overwrite=True)
+    if args.config is not None:
+        if args.case is not None:
+            print("give a case or --config, not both")
+            return 2
+        config = config_read(args.config)
+        label = config.name or "run"
+        out = Path(args.output or Path("openmobisim-runs") / label)
+        run = config.run(str(out), overwrite=True)
+        title = label
+    else:
+        if args.case is None:
+            print(f"give a case ({', '.join(case_names())}) or --config run.toml")
+            return 2
+        c = case(args.case, args.root)
+        label = f"{args.case} / {args.scenario}"
+        out = Path(args.output or Path("openmobisim-runs") / f"{args.case}-{args.scenario}")
+        # Per-link results in 15-minute bins, so the page and the map show the traffic, unless
+        # the case's scenario records them already (then its fingerprint is the reference's).
+        settings = c.info.get("scenarios", {}).get(args.scenario, {})
+        bins = {} if "link_bin_s" in settings or args.no_pages else {"link_bin_s": 900}
+        scenario = c.scenario(args.scenario, **bins)
+        run = scenario.run(f"{args.case}-{args.scenario}", output_dir=str(out), overwrite=True)
+        title = f"{c.info.get('title', args.case)}: {args.scenario}"
     s = case_summary(run)
     print(
-        f"\n{args.case} / {args.scenario}: {s['completed']} of {s['trips']} trips completed, "
+        f"\n{label}: {s['completed']} of {s['trips']} trips completed, "
         f"mean trip {s['mean_trip_s'] / 60:.2f} min, {s['loadings']} loadings"
     )
     shares = ", ".join(f"{m} {v:.2f}" for m, v in s["mode_share_pct"].items())
@@ -89,12 +108,23 @@ def _run(args: argparse.Namespace) -> int:
         return 0
     from openmobisim import viz
 
-    title = c.info.get("title", args.case)
-    viz.map_interactive(run, out / "map.html", title=f"{title}: {args.scenario}")
+    viz.map_interactive(run, out / "map.html", title=title)
     try:
-        viz.summary(run, str(out / "summary.html"), title=f"{title}: {args.scenario}")
+        viz.summary(run, str(out / "summary.html"), title=title)
     except ImportError:
         print('The summary page needs matplotlib: pip install "openmobisim[viz]"')
+    return 0
+
+
+def _config(args: argparse.Namespace) -> int:
+    if args.defaults:
+        print(Config().text(), end="")
+        return 0
+    path = Path(args.source) / "run.toml"
+    if not path.exists():
+        print(f"{str(args.source)!r} holds no run.toml (a run writes it beside its manifest.json)")
+        return 1
+    print(path.read_text(encoding="utf-8"), end="")
     return 0
 
 
@@ -113,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run the command line; returns the exit code."""
     p = argparse.ArgumentParser(
         prog="openmobisim",
-        description=f"openmobisim {__version__}: the tutorials and the starter cases",
+        description=f"openmobisim {__version__}: the tutorials, the starter cases and run files",
         epilog=f"Documentation: {DOCS_URL}",
     )
     sub = p.add_subparsers(dest="command")
@@ -125,15 +155,23 @@ def main(argv: list[str] | None = None) -> int:
     listing = sub.add_parser("cases", help="list the starter cases and their scenarios")
     listing.add_argument("--root", help="a folder holding the bundle")
     listing.set_defaults(go=_cases)
-    r = sub.add_parser("run", help="run one starter case's scenario")
-    r.add_argument("case", choices=case_names())
+    r = sub.add_parser("run", help="run one starter case's scenario, or a run.toml")
+    r.add_argument("case", nargs="?", choices=case_names())
     r.add_argument("scenario", nargs="?", default="base")
+    r.add_argument("--config", help="a run configuration file, run.toml, in place of a case")
     r.add_argument("--root", help="a folder holding the bundle")
     r.add_argument(
-        "--output", help="where the run's files go (default: ./openmobisim-runs/<case>-<scenario>)"
+        "--output",
+        help="where the run's files go (default: ./openmobisim-runs/<case>-<scenario>, or "
+        "./openmobisim-runs/<name> for --config)",
     )
     r.add_argument("--no-pages", action="store_true", help="no summary page and no map")
     r.set_defaults(go=_run)
+    f = sub.add_parser("config", help="print a run configuration file, run.toml")
+    which = f.add_mutually_exclusive_group(required=True)
+    which.add_argument("--defaults", action="store_true", help="the complete file at the defaults")
+    which.add_argument("--from", dest="source", help="the run.toml of a run's folder")
+    f.set_defaults(go=_config)
     k = sub.add_parser("check", help="run the default scenarios, compare them with the reference")
     k.add_argument("cases", nargs="*", help="the cases (default: all)")
     k.add_argument("--root", help="a folder holding the bundle")
