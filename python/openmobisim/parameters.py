@@ -69,7 +69,7 @@ _COUNTS = ("iterations", "max_paths", "max_attempts", "max_routes", "searches", 
            "lanes", "increments", "max_rides", "reroute_max", "draws", "gap_sample",
            "itinerary_gap_sample", "warmup", "seed", "redirect_max")  # fmt: skip
 _FLAGS = ("priority", "reroute", "node_inflow", "origin_inflow", "biased", "fallback_car",
-          "buses_on_roads")  # fmt: skip
+          "buses_on_roads", "log_events")  # fmt: skip
 
 
 @functools.cache
@@ -149,6 +149,8 @@ def parameters() -> Columns:
     listed: dict[str, set[str]] = {}
     for group, argument, name, value in _core.parameter_rows():
         note = _NOTES.get((group, name), "")
+        if group == "loading" and name.endswith((".bpr_alpha", ".bpr_beta")):
+            note = f"{name.split('.')[1]}'s value unless set"
         rows.append((group, argument, name, float(value), _unit(name), note))
         listed.setdefault(group, set()).add(name)
     # A random-utility model weighs every attribute an alternative carries; those it does not

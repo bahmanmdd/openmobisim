@@ -85,8 +85,16 @@ def test_the_services_assumptions_policies_and_fleet_rows_are_accepted_as_listed
         "assumed_extra_walk_at_pickup_s",
         "assumed_extra_walk_at_return_s",
     }
-    for name in ("reset", "threshold", "charge_rule"):
+    for name in ("noop", "reset", "threshold", "charge_rule"):
         ms.fleet_day(net, [bikes, fleet], [], policy=name, policy_options=options(f"policy.{name}"))
+    # The three listed from S306: a service's log switch, noop's step, each class's BPR pair.
+    assert (
+        options("service.bike_docked")["log_events"] == options("service.taxi")["log_events"] == 1
+    )
+    assert options("policy.noop") == {"step_s": 900.0}
+    loading = options("loading")
+    assert loading["motorway.bpr_alpha"] == loading["bpr_alpha"]
+    assert loading["service.bpr_beta"] == loading["bpr_beta"]
     ms.fleet_environment(
         net, [bikes], [], reward_weights=options("fleet_environment"),
         zone_grid_m=options("fleet")["zone_grid_m"],

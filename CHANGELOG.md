@@ -10,6 +10,8 @@ a minor version may change the interface, and says so here.
 
 **`parameters()` gives every parameter's meaning and source** (columns `meaning` and `source`), written once in the package's `data/parameters.csv`; `run.toml`'s comments show each meaning's first sentence from there.
 
+**Three parameters their arguments took are now in `parameters()` and `run.toml`:** a service's `log_events` (`[services.<name>]`), the `noop` policy's `step_s` (`[policy]`), and each road class's own volume-delay pair, `<class>.bpr_alpha` and `<class>.bpr_beta` (`[loading]`, written as comments: a class's pair wins over the pair for every class, so it is passed only when stated).
+
 **The run configuration file, `run.toml`: every parameter of a run in one file.** `config_write_defaults(path)`
 writes the complete file at the shipped defaults: one table per group (`[inputs]`, `[run]`, `[equilibration]`,
 `[choice]`, `[modes]`, `[prices]`, `[services.<name>]`, `[service_assumptions]`, `[policy]`, `[network]`, `[loading]`,

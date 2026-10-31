@@ -309,6 +309,8 @@ _RULES = {
     ("loading", "reroute"): "on at flow_level 3 and 4, off at 2",
     ("scenario", "window"): "3 h from the earliest departure, rounded down to the quarter hour",
 }
+#: The road classes' own volume-delay parameters of ``[loading]`` (``motorway.bpr_alpha``).
+_PER_CLASS = (".bpr_alpha", ".bpr_beta")
 #: The order of a table's first lines (the rest follow in the registry's order).
 _FIRST = {
     "run": ("flow_level", "flow_step_s", "window", "master_seed", "default_weight", "link_bin_s",
@@ -349,6 +351,10 @@ def _lines() -> dict[str, list[_Line]]:
             continue
         note = "" if note == "0 unless set" or name == "hub_join_m" else note
         rule = _RULES.get((group, name), note.removeprefix("None: ") if math.isnan(value) else "")
+        if group == "loading" and name.endswith(_PER_CLASS):
+            # A road class's own pair: given, it wins over the pair for every class, so it is
+            # written as a comment and passed only when stated.
+            rule = f"{name.split('.')[1]} above, every class's"
         default: Any = None if rule else value
         if rule:
             note = ""
@@ -502,6 +508,8 @@ def _example(line: _Line) -> Any:
         "assumed_extra_walk_at_pickup_s": 300,
         "assumed_extra_walk_at_return_s": 300,
     }
+    if line.key.endswith(_PER_CLASS):
+        return 0.15 if line.key.endswith("alpha") else 4
     return examples.get(line.key, 0)
 
 
@@ -638,7 +646,7 @@ class Config:
             if key not in known:
                 out.append(_entry(key, value, "an option of the method named above"))
         if table == "policy" and method is None:
-            for name in ("reset", "threshold", "charge_rule"):
+            for name in ("noop", "reset", "threshold", "charge_rule"):
                 options = ", ".join(
                     f"{x.key} {_value(x.default)}" for x in _lines()["policy"] if x.method == name
                 )

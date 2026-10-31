@@ -2174,6 +2174,20 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
         openmobisim_core_graph::network_options::NetworkDefaults::shipped().values(),
     );
     push("loading", "loading_options", LoadingOptions::SHIPPED.values());
+    // Each road class's own volume-delay pair (S306): `<class>.bpr_alpha`, `<class>.bpr_beta`, at
+    // the pair for every class unless given.
+    let shipped = LoadingOptions::SHIPPED.bpr;
+    let per_class = openmobisim_core_sim::loading_rules::BPR_CLASSES
+        .iter()
+        .flat_map(|&class| {
+            let i = class as usize;
+            [
+                (format!("{}.bpr_alpha", class.as_str()), shipped.alpha[i]),
+                (format!("{}.bpr_beta", class.as_str()), shipped.beta[i]),
+            ]
+        })
+        .collect();
+    push("loading", "loading_options", per_class);
     push("modes", "mode_options", owned(ModeDefaults::SHIPPED.values()));
     push("transit", "transit_options", owned(TransitDefaults::SHIPPED.values()));
     push("parking", "parking_options", owned(ParkingDefaults::SHIPPED.values()));
@@ -2229,11 +2243,25 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
     // The services (S302, S303): their options, what travellers assume, the built-in policies'
     // parameters (S304).
     use openmobisim_core_sim::services::{DockDefaults, ServiceAssumptions, TaxiDefaults};
-    push("service.bike_docked", "options", owned(DockDefaults::SHIPPED.values()));
-    push("service.taxi", "options", owned(TaxiDefaults::SHIPPED.values()));
+    // `log_events` (S306): a switch of what the day keeps, not of what it simulates, so not among
+    // the values a run's fingerprint holds; 1 by default.
+    let logged = |on: bool, mut values: Vec<(String, f64)>| {
+        values.push(("log_events".to_string(), if on { 1.0 } else { 0.0 }));
+        values
+    };
+    push(
+        "service.bike_docked",
+        "options",
+        logged(DockDefaults::SHIPPED.log_events, owned(DockDefaults::SHIPPED.values())),
+    );
+    push(
+        "service.taxi",
+        "options",
+        logged(TaxiDefaults::SHIPPED.log_events, owned(TaxiDefaults::SHIPPED.values())),
+    );
     push("service_assumptions", "service_assumptions", owned(ServiceAssumptions::SHIPPED.values()));
     push("service_prices", "price_options", owned(Prices::SHIPPED.service_values(true, true)));
-    for name in ["reset", "threshold", "charge_rule"] {
+    for name in ["noop", "reset", "threshold", "charge_rule"] {
         let p = openmobisim_core_sim::services::policy::policy_builtin(name, &none)
             .map_err(PyValueError::new_err)?;
         push(&format!("policy.{name}"), "policy_options", p.describe().parameters);

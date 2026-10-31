@@ -80,7 +80,8 @@ def test_every_parameter_the_run_uses_changes_its_fingerprint() -> None:
             "biased",
         )
         values = (0.0, 1.0) if flag else (_changed(float(value)),)
-        static = group == "equilibration.frank_wolfe" or name in STATIC
+        # A road class's own pair (``residential.bpr_beta``) is the static assignment's too.
+        static = group == "equilibration.frank_wolfe" or name.split(".")[-1] in STATIC
         make, against = (_static, static_base) if static else (_scenario, base)
         got = set()
         for new in values:

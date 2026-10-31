@@ -367,3 +367,48 @@ def test_a_run_with_services_and_a_policy_repeats_from_its_copy(tmp_path) -> Non
     assert "policy" in copy.differences() and "services.taxi" in copy.differences()
     again = scenario().run(output_dir=str(tmp_path / "again"), quiet=True, config=copy)
     assert again.fingerprint == first.fingerprint
+
+
+def test_the_file_sets_log_events_the_noop_step_and_a_road_class_s_bpr_pair(tmp_path) -> None:
+    # Three parameters their arguments always took are registry rows, so lines of the file
+    # (S306): a service's `log_events`, the `noop` policy's `step_s`, and a road class's own
+    # volume-delay pair in [loading], written as a comment (a class's pair wins over the pair
+    # for every class, so it is passed only when stated).
+    defaults = ms.config_write_defaults(tmp_path / "defaults.toml").read_text()
+    assert "# residential.bpr_beta = 4" in defaults
+    assert '#   name = "noop" takes step_s 900' in defaults
+    stated = ms.config_read(tmp_path / "defaults.toml")._arguments()[0]
+    assert not [k for k in stated.get("loading_options", {}) if "." in k], "commented: not passed"
+    # A road class's pair: read, passed as `loading_options`, changing the run's identity.
+    (tmp_path / "bpr.toml").write_text("[loading]\nresidential.bpr_beta = 2\n")
+    bpr = ms.config_read(tmp_path / "bpr.toml")
+    assert bpr._arguments()[0]["loading_options"] == {"residential.bpr_beta": 2.0}
+    assert "\nresidential.bpr_beta = 2 " in bpr.text()
+    assert "loading.residential.bpr_beta" in bpr.differences()
+    options = cfg._scenario_arguments(bpr._arguments()[0], {})["loading_options"]
+    net = ms.examples.toy_network()
+    cars = ms.examples.trips_random(net, 40, seed=3, min_m=100.0, max_m=2000.0, spread_s=1800)
+
+    def static(**kwargs: object) -> ms.Scenario:
+        return ms.Scenario.from_parts(net, cars, flow_level=1, **kwargs)
+
+    assert static(loading_options=options)._fingerprint() != static()._fingerprint()
+    # A docked service's log of events off, and the noop policy at its own step, from the file.
+    from test_services_in_runs import docks, grid, scenario, trips
+
+    net = grid()
+    bikes = ms.service_bike_docked(docks(net, 2))
+    s = scenario(net, trips(net, 12, (0, 0), (9, 9)), services=[bikes],
+                 choice_model="deterministic")  # fmt: skip
+    (tmp_path / "run.toml").write_text(
+        '[services.bike_share]\nkind = "bike_docked"\nlog_events = 0\n\n'
+        '[policy]\nname = "noop"\nstep_s = 300\n'
+    )
+    run = s.run(output_dir=str(tmp_path / "r"), quiet=True, config=tmp_path / "run.toml")
+    assert run.bike_share_events().row_count == 0, "no log kept"
+    plain = s.run(output_dir=str(tmp_path / "plain"), quiet=True)
+    assert plain.bike_share_events().row_count > 0
+    copy = run.config()
+    assert copy.values["services"]["bike_share"]["log_events"] == 0
+    assert copy.values["policy"] == {"name": "noop", "step_s": 300}
+    assert plain.config().values["services"]["bike_share"]["log_events"] == 1
