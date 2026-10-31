@@ -25,6 +25,18 @@ The defaults are `parameters()`'s, so the file and the code cannot disagree.
   from its folder alone (`openmobisim run --config <folder>/run.toml`). What a file cannot hold (inputs given in
   memory, link values, disruptions, a Python choice model or policy) is named in its header.
 
+**The interactive map shows every mode's trips between two places.** `viz.map_interactive` groups a run's trips by
+origin-destination pair (the car route sets' pairs) and shows, for a pair, how its travellers split by mode and each
+way they went: car routes, transit journeys line by line, park-and-ride and bike-and-ride, bike routes, walks, shared
+bikes and taxis, each with its travellers, its expected door-to-door time and a strip of its legs (walking, waiting,
+riding, driving, parking), drawn leg by leg on the map. Pick a pair from the busiest, step through them, pick an
+origin and a destination on the map, or click a road for the pairs whose trips use it. The legend shows only the
+layers that are on, in a card at the bottom left. `max_route_pairs` keeps the pairs with the most travellers.
+- `Run.itinerary_journeys()`: each trip's chosen journey (of the trips `itinerary_choices()` lists), leg by leg: its
+  links on its mode's layer, its rides (line, stops, seconds), its walks, waits and parking times.
+- `Transit.line_patterns()`: each line's stop sequences.
+- An SVG export with the transit lines on no longer fails.
+
 **Shared-mobility services in a run: chosen on fixed assumptions, played once after the run.** A run with a
 docked bike service or a taxi fleet (`services=`) offers them to the trips that choose their mode. What travellers
 assume when they choose is fixed for the whole run and set by name, `Scenario.run(service_assumptions={...})`:

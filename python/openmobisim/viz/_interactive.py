@@ -25,6 +25,7 @@ from openmobisim._paths import show_path
 from openmobisim.network import LINK_CLASSES
 from openmobisim.scenario import LEVEL_NAMES
 from openmobisim.viz import _geometry as geo
+from openmobisim.viz import _trips
 from openmobisim.viz._canvas import ROAD_CASING_PT, ROAD_TIER_WIDTHS, road_tier
 from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._interactive_page import PAGE_CSS, PAGE_HTML, PAGE_JS
@@ -35,6 +36,8 @@ from openmobisim.viz._link import (
     free_flow_moving_s,
 )
 from openmobisim.viz._logo import LOGO_PATH
+from openmobisim.viz._modes import _LABEL as _MODE_LABELS
+from openmobisim.viz._modes import _SERVICE_COLOURS
 from openmobisim.viz._provenance import network_source, run_identity
 from openmobisim.viz._route import _ROUTE_NIGHT, _ROUTE_PAPER
 from openmobisim.viz._style import KINDS, THEMES, get_theme
@@ -64,6 +67,9 @@ class _Blob:
         self.parts.append(data + b"\0" * pad)
         self.size += len(data) + pad
 
+    def has(self, name: str) -> bool:
+        return any(entry["n"] == name for entry in self.table)
+
     def packed(self) -> str:
         return base64.b64encode(zlib.compress(b"".join(self.parts), 6)).decode("ascii")
 
@@ -78,7 +84,11 @@ def _tokens() -> dict[str, Any]:
         }
         for name, t in THEMES.items()
     }  # fmt: skip
-    return {**themes, "route": {"paper": list(_ROUTE_PAPER), "night": list(_ROUTE_NIGHT)}}
+    return {
+        **themes,
+        "route": {"paper": list(_ROUTE_PAPER), "night": list(_ROUTE_NIGHT)},
+        "services": _SERVICE_COLOURS,
+    }
 
 
 def _quantise(points: np.ndarray) -> np.ndarray:
@@ -102,8 +112,10 @@ def _add_layers(
     lon0: float,
     lat0: float,
     box: tuple[np.ndarray, np.ndarray] | None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     """Add the optional layers the run has data for; return what the page needs to know of them.
+
+    Also returned: for the bike and walk layers embedded, each link's position among their links.
 
     **Transit** (stop-to-stop hops, as wide as the passengers on board over the day, coloured by
     the kind of service; stops sized by boardings), **parkings** (each a mark sized by capacity,
@@ -113,6 +125,7 @@ def _add_layers(
     click away).
     """
     layers: dict[str, Any] = {}
+    index: dict[str, np.ndarray] = {}
     calls = run.transit_calls()
     transit = getattr(run, "transit", None)
     if calls is not None and transit is not None and len(calls["run"]):
@@ -186,20 +199,49 @@ def _add_layers(
             shown = shown[((hi_box[shown] >= box[0]) & (lo_box[shown] <= box[1])).all(axis=1)]
         if not len(shown) or not (total[shown] > 0).any():
             continue
-        parts = [pts[int(offsets[i]) : int(offsets[i + 1])] for i in shown]
-        counts = np.array([len(x) for x in parts])
-        q = _quantise(np.concatenate(parts))
-        delta = np.diff(q, axis=0, prepend=np.zeros((1, 2), dtype=np.int64))
-        prefix = name[0]
-        blob.add(prefix + "vs", np.concatenate([[0], np.cumsum(counts)]), "u32")
-        blob.add(prefix + "dx", delta[:, 0], "i32")
-        blob.add(prefix + "dy", delta[:, 1], "i32")
-        blob.add(prefix + "v", total[shown], "f32")
-        blob.add(prefix + "l", np.asarray(layer.link_length_m())[shown], "f32")
+        index[name] = _embed_layer(blob, name, pts, offsets, shown, int(layer.link_count))
+        blob.add(name[0] + "v", total[shown], "f32")
+        blob.add(name[0] + "l", np.asarray(layer.link_length_m())[shown], "f32")
         if name == "bike":
             blob.add("bi", np.asarray(layer.link_infrastructure())[shown], "u8")
         layers[name] = {"links": int(len(shown)), "used": int((total[shown] > 0).sum())}
-    return layers
+    return layers, index
+
+
+def _embed_layer(
+    blob: _Blob, name: str, pts: np.ndarray, offsets: np.ndarray, shown: np.ndarray, n_links: int
+) -> np.ndarray:
+    """Embed the `shown` links of the bike or walk layer; return each link's position among them."""
+    parts = [pts[int(offsets[i]) : int(offsets[i + 1])] for i in shown]
+    counts = np.array([len(x) for x in parts])
+    q = _quantise(np.concatenate(parts))
+    delta = np.diff(q, axis=0, prepend=np.zeros((1, 2), dtype=np.int64))
+    prefix = name[0]
+    blob.add(prefix + "vs", np.concatenate([[0], np.cumsum(counts)]), "u32")
+    blob.add(prefix + "dx", delta[:, 0], "i32")
+    blob.add(prefix + "dy", delta[:, 1], "i32")
+    position = np.full(n_links, -1, dtype=np.int64)
+    position[shown] = np.arange(len(shown))
+    return position
+
+
+def _layer_geometry(
+    blob: _Blob, network: Any, name: str, lon0: float, lat0: float, box: Any
+) -> np.ndarray | None:
+    """Embed the bike or walk layer's links for the trips' legs when no flow layer did."""
+    try:
+        layer = network.layer(name)
+    except (KeyError, ValueError):
+        return None
+    coords, offsets = layer.link_geometry()
+    pts = geo.project_lonlat(coords, lon0, lat0)
+    shown = np.arange(int(layer.link_count))
+    if box is not None:
+        lo_box, hi_box = _link_boxes(pts, offsets)
+        shown = shown[((hi_box[shown] >= box[0]) & (lo_box[shown] <= box[1])).all(axis=1)]
+    if not len(shown):
+        return None
+    return _embed_layer(blob, name, pts, offsets, shown, int(layer.link_count))
 
 
 def _link_boxes(points: np.ndarray, offsets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -361,14 +403,31 @@ def map_interactive(
             geo.project_lonlat(np.array([view[0]]), lon0, lat0)[0],
             geo.project_lonlat(np.array([view[1]]), lon0, lat0)[0],
         )
-    layers = _add_layers(blob, run, network, lon0, lat0, box)
+    layers, layer_index = _add_layers(blob, run, network, lon0, lat0, box)
 
+    # The trips between two places (S305): every mode's journeys by origin-destination pair.
+    trips = None
+    if routes is not False and routes is not None:
+        given = None if routes is True else routes
+        journeys = run.itinerary_journeys() if given is None else None
+        if journeys is not None:
+            taken = {m for m in journeys["mode"] if m is not None}
+            for name, modes in (
+                ("bike", {"bike", "bike_transit", "bike_share", "bike_share_transit"}),
+                ("walk", {"walk"}),
+            ):
+                if name not in layer_index and taken & modes:
+                    found = _layer_geometry(blob, network, name, lon0, lat0, box)
+                    if found is not None:
+                        layer_index[name] = found
+        trips = _trips.add_trips(
+            blob, run, network, keep, new_id, max_route_pairs, lon0, lat0, layer_index, given
+        )
+        if trips is not None:
+            trips["mode_names"] = [_MODE_LABELS.get(m, m) for m in trips["modes"]]
+    has_routes = trips is not None
+    n_pairs = trips["n_pairs"] if trips is not None else 0
     route_sets = run.route_sets() if routes is True else (routes or None)
-    n_pairs = n_routes = 0
-    if route_sets is not None and route_sets.key_count:
-        usage = _route_usage(run) if routes is True else None
-        n_pairs, n_routes = _add_routes(blob, route_sets, keep, new_id, max_route_pairs, usage)
-    has_routes = n_pairs > 0
 
     level = LEVEL_NAMES.get(run.flow_level, str(run.flow_level))
     source = network_source(network)
@@ -377,7 +436,11 @@ def map_interactive(
         + (f" · step {run.flow_step_s} s" if run.flow_level else "")
         + (f" · bin {bin_seconds} s" if bin_seconds else "")
         + f" · {run_identity(run)}"
-        + (f" · route set {route_sets.identity[:8]} ({route_sets.method})" if has_routes else "")
+        + (
+            f" · route set {route_sets.identity[:8]} ({route_sets.method})"
+            if has_routes and route_sets is not None and route_sets.key_count
+            else ""
+        )
     )
     payload = blob.packed()
     meta: dict[str, Any] = {
@@ -385,7 +448,7 @@ def map_interactive(
         "n_bins": n_bins, "bin_seconds": bin_seconds, "has_routes": has_routes,
         "delay_bands": list(DELAY_BANDS), "delay_band_labels": list(DELAY_BAND_LABELS),
         "routes_shown": MAP_ROUTES, "first_bin": first_bin,
-        "n_pairs": n_pairs, "n_routes": n_routes, "class_names": _CLASS_NAMES,
+        "n_pairs": n_pairs, "trips": trips, "class_names": _CLASS_NAMES,
         "title": title or _default_title(bins is not None and n_bins > 0, has_routes),
         "note": note, "credit": credit, "logo": bool(logo),
         "provenance": provenance, "source": source, "n_spillback": n_spill,
@@ -421,19 +484,6 @@ def map_interactive(
 MAP_ROUTES = 5
 
 
-def _route_usage(run: Any) -> np.ndarray | None:
-    """How many travellers took each route of the run's route sets, or ``None``."""
-    choices = run.route_choices()
-    if choices is None:
-        return None
-    routed = choices.route >= 0
-    return np.bincount(
-        choices.route[routed],
-        weights=choices.weight[routed],
-        minlength=run.route_sets().route_count,
-    )
-
-
 def _default_title(has_traffic: bool, has_routes: bool) -> str:
     if has_traffic and has_routes:
         return "Traffic and route alternatives"
@@ -442,48 +492,3 @@ def _default_title(has_traffic: bool, has_routes: bool) -> str:
 
 def _html_text(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _add_routes(
-    blob: _Blob,
-    sets: Any,
-    keep: np.ndarray,
-    new_id: np.ndarray,
-    max_pairs: int,
-    usage: np.ndarray | None = None,
-) -> tuple[int, int]:
-    """Embed the route sets: only routes wholly inside `keep`, the richest pairs first."""
-    set_off = sets.set_offsets().astype(np.int64)
-    route_off = sets.route_offsets().astype(np.int64)
-    links = sets.links().astype(np.int64)
-    n_keys, n_routes = len(set_off) - 1, len(route_off) - 1
-    route_len = np.diff(route_off)
-    key_of_route = np.repeat(np.arange(n_keys), np.diff(set_off))
-    inside = np.add.reduceat(keep[links].astype(np.int64), route_off[:-1]) == route_len
-    inside &= route_len > 0
-    per_key = np.bincount(key_of_route[inside], minlength=n_keys)
-    candidates = np.nonzero(per_key > 0)[0]
-    if not len(candidates):
-        return 0, 0
-    richest = candidates[np.argsort(-per_key[candidates], kind="stable")][: max(max_pairs, 1)]
-    chosen = np.zeros(n_keys, dtype=bool)
-    chosen[richest] = True
-    take = inside & chosen[key_of_route]
-    # Each pair's routes the most chosen first, then the cheapest, then the first (S269): the page
-    # shows the first MAP_ROUTES of them unless asked for all.
-    used = usage if usage is not None else np.zeros(n_routes)
-    order = np.lexsort((np.arange(n_routes), sets.costs(), -used, key_of_route))
-    order = order[take[order]]
-    lengths = route_len[order]
-    starts = route_off[:-1][order]
-    at = np.repeat(starts - np.concatenate([[0], np.cumsum(lengths)[:-1]]), lengths) + np.arange(
-        lengths.sum()
-    )
-    blob.add("ss", np.concatenate([[0], np.cumsum(per_key[chosen])]), "u32")
-    blob.add("rst", np.concatenate([[0], np.cumsum(lengths)]), "u32")
-    blob.add("rlk", new_id[links[at]], "u32")
-    blob.add("rc", sets.costs()[order], "f32")
-    blob.add("ro", sets.overlaps()[order], "f32")
-    if usage is not None:
-        blob.add("ru", usage[order], "f32")
-    return int(chosen.sum()), int(take.sum())

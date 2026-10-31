@@ -29,33 +29,30 @@ __CSS__
   <h2>Zoom</h2>
   <div id="levels"><button>Overview</button><button>Region</button><button>District</button><button>Street</button><button>Detail</button></div>
   <div class="row"><button id="zout" title="Zoom out">−</button><button id="zin" title="Zoom in">+</button><button id="fit">Fit</button><span id="levelname"></span></div>
-  <div class="row"><span>Export the view</span><button id="exportpng" title="An image at twice the screen's resolution">PNG</button><button id="exportsvg" title="Vector graphics, for print and editing">SVG</button></div>
+  <div class="row"><span>Export</span><button id="exportpng" title="An image at twice the screen's resolution">PNG</button><button id="exportsvg" title="Vector graphics, for print and editing">SVG</button><span class="grow"></span><button id="theme">Night</button></div>
   <div id="layergroup" hidden>
     <h2>Layers</h2>
     <div class="layers" id="layerrows"></div>
   </div>
+  <div id="routegroup">
+    <h2>Trips between two places</h2>
+    <div class="row"><select id="pairpick" title="The pairs with the most travellers first"></select></div>
+    <div class="row"><button id="prev" title="The pair before">‹</button><button id="next" title="The next pair">›</button><button id="pickmap" title="Click an origin on the map, then a destination">Pick on map</button><button id="clear">Clear</button></div>
+    <p id="routehint">Choose a pair above or pick one on the map: every way its travellers went, by every mode. Or click a road to see the pairs whose trips use it.</p>
+    <div id="tripcard"></div>
+  </div>
   <div id="trafficgroup">
     <h2>Traffic</h2>
-    <div class="row"><label>Colour by <select id="colour"><option value="delay">Delay</option><option value="volume">Volume</option><option value="vc">Volume ÷ capacity</option></select></label><button id="theme">Night</button></div>
+    <div class="row"><label>Colour by <select id="colour"><option value="delay">Delay</option><option value="volume">Volume</option><option value="vc">Volume ÷ capacity</option></select></label></div>
     <div class="row"><input id="bin" type="range" min="0" max="0" value="0" step="1"></div>
     <div class="row"><label><input id="allbins" type="checkbox" checked> All bins</label><button id="play">Play</button></div>
     <div class="row" id="spillrow" hidden><label title="Links whose queue would not have fitted on the road: where it would spill back (point queue)"><input id="spill" type="checkbox"> Spillback links <span id="spillcount"></span></label></div>
   </div>
-  <div id="routegroup">
-    <h2>Route alternatives</h2>
-    <div class="row"><label>Pair <input id="pairno" type="number" min="1" value=""></label><span id="pairs"></span></div>
-    <div class="row"><button id="prev">‹</button><button id="next">›</button><button id="richest">Most alternatives</button><button id="clear">Clear</button></div>
-    <div class="row"><label><input id="showroutes" type="checkbox" checked> Show routes</label><label><input id="dim" type="checkbox" checked> Dim traffic</label></div>
-    <div class="row"><label title="A pair's routes, the most chosen first">Routes <select id="nroutes"><option value="5">5 most chosen</option><option value="0">All</option></select></label></div>
-    <p id="routehint">Pick a pair above, or click a link and choose one of the pairs that use it.</p>
-    <div id="routelist"></div>
-  </div>
   <div id="linkinfo" hidden></div>
-  <div id="legendgroup">
-    <h2>Legend</h2>
-    <div id="legendbody"></div>
-  </div>
 </aside>
+<div id="legendgroup" class="card">
+  <div id="legendbody"></div>
+</div>
 <div id="compass"><svg width="22" height="34" viewBox="0 0 22 34"><path d="M11 2 L17 20 L11 16 L5 20 Z" fill="currentColor"/><text x="11" y="32" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" font-family="sans-serif">N</text></svg><div id="scalelabel"></div><div id="scalebar"></div></div>
 <footer><span id="provenance"></span><span id="source"></span><span class="right"><span id="budget"></span><span id="credit" hidden></span><span id="logo"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="__LOGO__"/></svg><b>openmobisim</b></span></span></footer>
 <div id="tip" hidden></div>
@@ -101,6 +98,7 @@ label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2);
 .legend .kinds i { width: 18px; height: 4px; border-radius: 2px; display: inline-block; margin-right: 5px; vertical-align: middle; }
 .legend .note { font: 11px var(--mono); color: var(--muted); margin-top: 3px; }
 /* The legend, a section per mode (S269) */
+#legendgroup.card { position: fixed; left: 12px; bottom: 40px; width: 268px; max-height: calc(100vh - 200px); overflow: auto; padding: 10px 12px 2px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 90%, transparent); border: 1px solid color-mix(in srgb, var(--base) 70%, transparent); backdrop-filter: blur(4px); font-size: 12px; box-shadow: 0 3px 14px rgba(0,0,0,.10); }
 #legendbody .lg { margin: 0 0 10px; }
 #legendbody h3 { margin: 0 0 3px; font-size: 11.5px; font-weight: 600; color: var(--ink); }
 #legendbody .sub { font-size: 11px; color: var(--ink2); }
@@ -117,7 +115,7 @@ label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2);
 .route:hover { background: color-mix(in srgb, var(--base) 45%, transparent); }
 .route i { width: 22px; height: 4px; border-radius: 2px; display: inline-block; }
 .route span { color: var(--muted); }
-.layers { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; } .layers label { margin: 2px 0; }
+.layers { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; margin-bottom: 4px; } .layers label { margin: 2px 0; }
 .route small { display: block; margin-top: 1px; font-size: 10.5px; color: var(--ink); font-weight: 600; }
 .route { align-items: flex-start; }
 .route i { margin-top: 6px; flex: none; }
@@ -138,7 +136,47 @@ footer #source { flex: none; white-space: nowrap; margin-right: 16px; }
 #credit { color: var(--ink2); font-size: 12px; padding-right: 10px; border-right: 1px solid var(--base); }
 #logo { display: inline-flex; align-items: center; gap: 4px; color: var(--ink); font-weight: 700; font-size: 13px; }
 #logo .mark { width: 16px; height: 16px; fill: var(--mark); } #logo b { margin-left: 3px; position: relative; top: -0.1em; }  /* the lowercase body centred on the mark, not the line box */
-@media (max-width: 760px) { .head { max-width: calc(100vw - 20px); } aside#panel { top: auto; bottom: 40px; max-height: 42vh; width: calc(100vw - 28px); } #compass { display: none; } }
+.grow { flex: 1; }
+/* The layers, each with its mark (S305) */
+.layers label .sw { width: 18px; height: 0; display: inline-block; vertical-align: middle; }
+.layers label .sw.box { width: 9px; height: 9px; border: 1.5px solid var(--ink2); border-radius: 2px; }
+.layers label .sw.ramp { height: 5px; border-radius: 2px; }
+/* Trips between two places (S305) */
+#pairpick { width: 100%; font-size: 11.5px; padding: 4px 6px; }
+#tripcard .od { font-size: 13px; color: var(--ink); line-height: 1.45; margin-top: 4px; }
+#tripcard .od b { font-weight: 650; }
+#tripcard .mk { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: var(--ink); color: var(--surface); font: 700 9.5px var(--sans); margin-right: 4px; vertical-align: 1px; }
+#tripcard .odsub { font-size: 11.5px; color: var(--muted); margin: 1px 0 8px; }
+#tripcard .split { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin: 2px 0 5px; background: var(--base); }
+#tripcard .split span { display: block; height: 100%; }
+#tripcard .chips { display: flex; flex-wrap: wrap; gap: 4px 5px; margin-bottom: 8px; }
+#tripcard .chip { font-size: 11px; padding: 2px 7px 2px 5px; border-radius: 10px; border: 1px solid var(--base); display: inline-flex; align-items: center; gap: 5px; cursor: pointer; color: var(--ink2); user-select: none; }
+#tripcard .chip i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+#tripcard .chip.off { opacity: .4; text-decoration: line-through; }
+#tripcard .opt { padding: 6px 6px 7px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+#tripcard .opt:hover, #tripcard .opt.hl { background: color-mix(in srgb, var(--base) 38%, transparent); border-color: color-mix(in srgb, var(--base) 80%, transparent); }
+#tripcard .opt .top { display: flex; align-items: baseline; gap: 6px; font-size: 12px; }
+#tripcard .opt .top b { font-weight: 600; color: var(--ink); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#tripcard .opt .top .t { font: 600 12px var(--mono); color: var(--ink); white-space: nowrap; }
+#tripcard .opt .top .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; align-self: center; }
+#tripcard .opt .sub { font-size: 10.5px; color: var(--muted); margin-top: 3px; display: flex; justify-content: space-between; gap: 8px; }
+#tripcard .opt .share { height: 3px; border-radius: 2px; margin-top: 3px; background: var(--base); overflow: hidden; }
+#tripcard .opt .share span { display: block; height: 100%; }
+#tripcard .opt.unused .top b, #tripcard .opt.unused .top .t { color: var(--muted); font-weight: 500; }
+#tripcard .strip { display: flex; gap: 2px; height: 14px; margin-top: 5px; }
+#tripcard .strip span { display: block; height: 100%; min-width: 3px; border-radius: 3px; font: 600 9px/14px var(--sans); color: #fff; text-align: center; overflow: hidden; white-space: nowrap; }
+#tripcard .strip .walk { background-image: radial-gradient(circle, var(--c) 1.6px, transparent 1.8px); background-size: 6px 14px; background-position: center; }
+#tripcard .strip .wait { background: repeating-linear-gradient(135deg, var(--base) 0 3px, transparent 3px 6px); }
+#tripcard .strip .park { background: var(--base); }
+#tripcard .group { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 8px 0 2px 6px; font-weight: 600; }
+#tripcard .more { font-size: 11px; color: var(--ink2); margin: 6px 6px 0; }
+#tripcard .more a { color: var(--ink); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+#tripcard .foot { font-size: 10.5px; color: var(--muted); margin: 8px 6px 0; line-height: 1.4; }
+#legendbody .kinds .mkr { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; border-radius: 50%; background: var(--ink); color: var(--surface); font: 700 8px var(--sans); margin-right: 4px; }
+#legendbody .kinds .stop { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--ink2); background: var(--surface); margin-right: 4px; vertical-align: -1px; }
+#legendbody .kinds .badge { display: inline-block; padding: 0 4px; border-radius: 4px; font: 700 9px/13px var(--sans); color: #fff; margin-right: 4px; }
+body[data-picking] canvas#map { cursor: crosshair; }
+@media (max-width: 760px) { .head { max-width: calc(100vw - 20px); } aside#panel { top: auto; bottom: 40px; max-height: 42vh; width: calc(100vw - 28px); } #compass, #legendgroup.card { display: none; } }
 """
 
 PAGE_JS = r"""(async function () {
@@ -251,19 +289,32 @@ function aggregate(b0, b1) {
 }
 let VHIGH = 0;
 
-// routes
-const HAS_ROUTES = !!META.has_routes;
-let SS, RST, RLK, RC, RO, RU, ROUTE_KEY, LROUTE_START, LROUTES;
+// trips between two places (S305): each origin-destination pair's journeys, by every mode
+const TR = META.trips || null, HAS_ROUTES = !!TR;
+const LEG = { drive: 0, bike: 1, walk: 2, ride: 3, connect: 4, wait: 5, park: 6 }, NONE = 4294967295;
+const KIND_NAMES = ["rail", "metro", "tram", "bus", "ferry", "other"];
+let NP = 0, OPT_PAIR = null, LOPT_START = null, LOPTS = null;
+// The bike and walk layers' links, for the legs ridden or walked on them (the flow layers' own when drawn).
+function layerXY(prefix) {
+  const vs = A[prefix + "vs"], dx = A[prefix + "dx"], dy = A[prefix + "dy"];
+  if (!vs) return null;
+  const xs = new Float64Array(dx.length), ys = new Float64Array(dy.length);
+  let cx = 0, cy = 0; for (let i = 0; i < dx.length; i++) { cx += dx[i]; cy += dy[i]; xs[i] = cx * 0.1; ys[i] = cy * 0.1; }
+  return { vs, xs, ys };
+}
+let GEO = {};
 if (HAS_ROUTES) {
-  SS = A.ss; RST = A.rst; RLK = A.rlk; RC = A.rc; RO = A.ro; RU = A.ru || null;
-  const nk = SS.length - 1, nr = RC.length;
-  ROUTE_KEY = new Uint32Array(nr);
-  for (let k = 0; k < nk; k++) for (let r = SS[k]; r < SS[k + 1]; r++) ROUTE_KEY[r] = k;
+  NP = A.qs.length - 1;
+  OPT_PAIR = new Uint32Array(A.om.length);
+  for (let p = 0; p < NP; p++) for (let o = A.qs[p]; o < A.qs[p + 1]; o++) OPT_PAIR[o] = p;
+  // Which options drive on each road link: a clicked road lists the pairs whose trips use it.
   const cnt = new Uint32Array(NL + 1);
-  for (let i = 0; i < RLK.length; i++) cnt[RLK[i] + 1]++;
+  const each = (f) => { for (let o = 0; o < A.om.length; o++) for (let g = A.ol[o]; g < A.ol[o + 1]; g++) if (A.lk[g] === LEG.drive) for (let i = A.la[g]; i < A.lb[g]; i++) f(A.pl[i], o); };
+  each((l) => cnt[l + 1]++);
   for (let i = 1; i <= NL; i++) cnt[i] += cnt[i - 1];
-  LROUTE_START = cnt; const fill = cnt.slice(); LROUTES = new Uint32Array(RLK.length);
-  for (let r = 0; r < nr; r++) for (let i = RST[r]; i < RST[r + 1]; i++) LROUTES[fill[RLK[i]]++] = r;
+  LOPT_START = cnt; const fill = cnt.slice(); LOPTS = new Uint32Array(cnt[NL]);
+  each((l, o) => { LOPTS[fill[l]++] = o; });
+  GEO = { bike: FLOWS.bike || layerXY("b"), walk: FLOWS.walk || layerXY("w") };
 }
 
 // ------------------------------------------------------------- colours ----
@@ -283,7 +334,7 @@ const FIRST = META.first_bin || 0;
 const BANDS = META.delay_bands, BAND_LABELS = META.delay_band_labels;
 function band(d) { let b = 0; while (b < BANDS.length && d >= BANDS[b]) b++; return b; }
 function bandColours() { const n = BAND_LABELS.length; return BAND_LABELS.map((_, i) => TABLES.delay[Math.round(i / (n - 1) * (NCOL - 1))]); }
-const S = { theme: META.theme, colour: "delay", bin: -1, bins: [0, NB], playing: false, pair: -1, link: -1, hover: -1, hoverItem: null, lyOrder: [], hoverRoute: -1, routes: true, nroutes: META.routes_shown || 0, dim: true, spill: false, cx: 0, cy: 0, mpp: 1, ly: { road: true, transit: false, parking: false, bike: false, walk: false } };
+const S = { theme: META.theme, colour: "delay", bin: -1, bins: [0, NB], playing: false, pair: -1, link: -1, hover: -1, hoverItem: null, lyOrder: [], hoverOpt: -1, routes: true, allCar: false, allOpts: false, hidden: new Set(), picking: 0, pickFrom: null, dim: true, spill: false, cx: 0, cy: 0, mpp: 1, ly: { road: true, transit: false, parking: false, bike: false, walk: false } };
 let TH = TOK[S.theme], TABLES = {};
 function setTheme(name) {
   S.theme = name; TH = TOK[name]; document.documentElement.dataset.theme = name;
@@ -311,9 +362,11 @@ function fitTo(x0, y0, x1, y1, pad) {
   // Fit into the part of the window the panel, the title above and the footer below leave free (S269: a tall
   // network ran under both).
   const top = 78, bottom = 34;
-  const w = Math.max(x1 - x0, 60), h = Math.max(y1 - y0, 60), reserve = panelWidth();
+  // The legend card at the bottom left (S305) is left free too on a wide window.
+  const card = $("legendgroup"), left = card && !card.hidden && W > 1100 ? card.offsetWidth + 16 : 0;
+  const w = Math.max(x1 - x0, 60), h = Math.max(y1 - y0, 60), reserve = panelWidth() + left;
   S.mpp = Math.max(w / ((W - reserve) * (1 - pad)), h / ((H - top - bottom) * (1 - pad)));
-  S.cx = (x0 + x1) / 2 + reserve / 2 * S.mpp; S.cy = (y0 + y1) / 2 + (top - bottom) / 2 * S.mpp;
+  S.cx = (x0 + x1) / 2 + (panelWidth() - left) / 2 * S.mpp; S.cy = (y0 + y1) / 2 + (top - bottom) / 2 * S.mpp;
 }
 function levelMpp(i) { return Math.max(MIN_MPP, FIT.mpp / Math.pow(3.2, i)); }
 function currentLevel() { let best = 0, bd = 1e9; for (let i = 0; i < LEVELS.length; i++) { const d = Math.abs(Math.log(S.mpp / levelMpp(i))); if (d < bd) { bd = d; best = i; } } return best; }
@@ -369,30 +422,13 @@ function screenLine(l, off, gap) {
   offsetLine(n, off);
   return n;
 }
-// One route as a single polyline, so a turn is offset like a bend and never leaves a gap or a spike.
-function routeLine(r, off, gap) {
-  let total = 0; for (let i = RST[r]; i < RST[r + 1]; i++) total += VS[RLK[i] + 1] - VS[RLK[i]];
-  ensure(total + 2);
-  let n = 0, lx = 0, ly = 0, wx = NaN, wy = NaN;
-  for (let i = RST[r]; i < RST[r + 1]; i++) {
-    const l = RLK[i], v0 = VS[l], v1 = VS[l + 1];
-    for (let v = v0; v < v1; v++) {
-      if (v === v0 && X[v] === wx && Y[v] === wy) continue;   // the node this link shares with the last one
-      const x = sx(X[v]), y = sy(Y[v]);
-      if (n === 0 || v === v0 || v === v1 - 1 || Math.abs(x - lx) + Math.abs(y - ly) >= gap) { PX[n] = x; PY[n] = y; n++; lx = x; ly = y; }
-      wx = X[v]; wy = Y[v];
-    }
-  }
-  offsetLine(n, off);
-  return n;
-}
 function addLine(path, l, off, gap) {
   const n = screenLine(l, off, gap);
   if (n < 2) return 0;
   path.moveTo(PX[0], PY[0]); for (let i = 1; i < n; i++) path.lineTo(PX[i], PY[i]);
   return n;
 }
-let DRAWN = 0, MOVING = false;
+let DRAWN = 0, MOVING = false, LAYER_ALPHA = 1;
 function draw() {
   DRAWN = 0; const t0 = performance.now();
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -434,11 +470,16 @@ function draw() {
   for (const k of keys) { ctx.strokeStyle = tbl[k >> 5]; ctx.lineWidth = (k & 31) / 2; ctx.stroke(buckets.get(k)); }
   ctx.globalAlpha = 1;
   if (!MOVING && S.mpp < 3 && S.ly.road) drawChevrons(cand, lim);
+  // The other layers recede while a pair's trips are shown (S305), as the road traffic does.
+  LAYER_ALPHA = dimming ? 0.3 : 1;
   if (S.ly.bike && FLOWS.bike) drawFlow(FLOWS.bike, TH.modes[1], [9, 5]);
   if (S.ly.walk && FLOWS.walk) drawFlow(FLOWS.walk, TH.modes[2], [2, 4]);
+  ctx.globalAlpha = LAYER_ALPHA;
   if (S.ly.transit && LY.transit) drawTransit();
   if (S.ly.parking && LY.parking) drawParking();
-  if (S.pair >= 0 && S.routes && HAS_ROUTES) drawRoutes();
+  ctx.globalAlpha = 1; LAYER_ALPHA = 1;
+  if (S.pair >= 0 && S.routes && HAS_ROUTES) drawTrips();
+  if (S.picking) drawPick();
   if (S.spill && SB) drawSpill(cand);
   highlight(S.link, TH.ink, 3); if (S.hover !== S.link) highlight(S.hover, TH.ink2, 2);
   highlightItem(S.hoverItem);
@@ -459,13 +500,13 @@ function drawFlow(f, colour, dash) {
     let p = buckets.get(key); if (!p) { p = new Path2D(); buckets.set(key, p); }
     flowLine(p, f, i);
   }
-  ctx.globalAlpha = 0.45; ctx.strokeStyle = colour; ctx.lineWidth = 0.6; ctx.stroke(faint); ctx.globalAlpha = 1;
+  ctx.globalAlpha = 0.45 * LAYER_ALPHA; ctx.strokeStyle = colour; ctx.lineWidth = 0.6; ctx.stroke(faint); ctx.globalAlpha = LAYER_ALPHA;
   const keys = [...buckets.keys()].sort((a, b) => a - b);
   for (const k of keys) { ctx.strokeStyle = TH.surface; ctx.lineWidth = k / 2 + 1.4; ctx.stroke(buckets.get(k)); }
   // Over road traffic, dashed (cyclists) or dotted (walkers): another mode, not another road colour.
   ctx.setLineDash(S.ly.road && HAS_TRAFFIC ? dash : []);
   for (const k of keys) { ctx.strokeStyle = colour; ctx.lineWidth = k / 2; ctx.stroke(buckets.get(k)); }
-  ctx.setLineDash([]);
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
 }
 function drawTransit() {
   const sxs = A.tsx, sys = A.tsy, n = A.tl.length, show = LY.transit.shown;
@@ -504,9 +545,11 @@ function layerRows() {
   const present = { road: HAS_TRAFFIC, transit: !!LY.transit, parking: !!LY.parking, bike: !!FLOWS.bike, walk: !!FLOWS.walk };
   const rows = LAYER_ROWS.filter(([k]) => present[k]);
   $("layergroup").hidden = rows.length < 2;  // one layer alone needs no switch
-  $("layerrows").innerHTML = rows.map(([k, name, hint]) => `<label title="${hint}"><input type="checkbox" data-layer="${k}"${S.ly[k] ? " checked" : ""}> ${name}</label>`).join("");
+  const mark = { road: '<i class="sw ramp" style="background:linear-gradient(90deg,' + TH.ramp_delay.join(",") + ')"></i>', transit: '<i class="sw" style="border-top:3px solid ' + TH.modes[3] + '"></i>', parking: '<i class="sw box"></i>', bike: '<i class="sw" style="border-top:3px dashed ' + TH.modes[1] + '"></i>', walk: '<i class="sw" style="border-top:3px dotted ' + TH.modes[2] + '"></i>' };
+  $("layerrows").innerHTML = rows.map(([k, name, hint]) => `<label title="${hint}"><input type="checkbox" data-layer="${k}"${S.ly[k] ? " checked" : ""}> ${mark[k]} ${name}</label>`).join("");
   document.querySelectorAll("#layerrows input").forEach((box) => box.addEventListener("change", (e) => {
     const k = e.target.dataset.layer; S.ly[k] = e.target.checked;
+    $("trafficgroup").hidden = !HAS_TRAFFIC || !S.ly.road; renderLegend();
     // The pointer picks in the layer ticked last that is still on (S269).
     S.lyOrder = S.lyOrder.filter((x) => x !== k); if (e.target.checked) S.lyOrder.push(k);
     S.hover = -1; S.hoverItem = null; redraw(false); writeHash();
@@ -536,25 +579,173 @@ function highlight(l, colour, w) {
   const p = new Path2D(); if (!addLine(p, l, 0, 0.5)) return;
   ctx.strokeStyle = TH.surface; ctx.lineWidth = w + 3; ctx.stroke(p); ctx.strokeStyle = colour; ctx.lineWidth = w; ctx.stroke(p);
 }
-function routeColour(r) { const p = TOK.route[S.theme]; return p[r % p.length]; }
-function drawRoutes() {
-  const k = S.pair, r0 = SS[k], r1 = r0 + shownRoutes(k), step = 3.8;
-  for (let r = r0; r < r1; r++) {
-    const own = r - r0, path = new Path2D(), off = (own + 0.5) * step;
-    const n = routeLine(r, off, 1.2);
-    if (n >= 2) { path.moveTo(PX[0], PY[0]); for (let j = 1; j < n; j++) path.lineTo(PX[j], PY[j]); }
-    const hl = S.hoverRoute === own, dim = S.hoverRoute >= 0 && !hl;
-    ctx.globalAlpha = dim ? 0.3 : 1;
-    ctx.strokeStyle = TH.surface; ctx.lineWidth = (hl ? 6 : 4.6); ctx.stroke(path);
-    ctx.strokeStyle = routeColour(own); ctx.lineWidth = hl ? 4.4 : 3; ctx.stroke(path);
+// ---- trips between two places (S305) ----
+// A mode's colour, as the mode-share chart draws it; a leg's colour, by what it is.
+const MODE_INDEX = { car: 0, bike: 1, walk: 2, transit: 3, car_transit: 4, bike_transit: 5 };
+function modeColour(i) { const m = TR.modes[i], sv = TOK.services[S.theme] || {}; return sv[m] || TH.modes[MODE_INDEX[m] !== undefined ? MODE_INDEX[m] : 3]; }
+function legColour(g, o) {
+  const k = A.lk[g], m = TR.modes[A.om[o]], sv = TOK.services[S.theme] || {};
+  if (k === LEG.drive) return m === "taxi" ? sv.taxi : m === "car" ? carShade(o) : TH.modes[0];
+  if (k === LEG.bike) return m.startsWith("bike_share") ? sv.bike_share : TH.modes[1];
+  if (k === LEG.ride) return TH.modes[3];
+  return TH.modes[2];
+}
+function kindColour(line) { const k = KIND_NAMES.indexOf(TR.line_kinds[line]); return TH.kinds[k >= 0 ? k : 5]; }
+// A leg's points in metres: along its links, its line's stops, or straight between two places.
+function legPoints(g) {
+  const k = A.lk[g], out = [];
+  if (k === LEG.drive || k === LEG.bike || k === LEG.walk) {
+    const G = k === LEG.drive ? { vs: VS, xs: X, ys: Y } : GEO[k === LEG.bike ? "bike" : "walk"];
+    if (!G) return out;
+    let wx = NaN, wy = NaN;
+    for (let i = A.la[g]; i < A.lb[g]; i++) {
+      const l = A.pl[i];
+      for (let v = G.vs[l]; v < G.vs[l + 1]; v++) {
+        if (v === G.vs[l] && G.xs[v] === wx && G.ys[v] === wy) continue;
+        out.push(G.xs[v], G.ys[v]); wx = G.xs[v]; wy = G.ys[v];
+      }
+    }
+  } else if (k === LEG.ride) { for (let i = A.la[g]; i < A.lb[g]; i++) { const st = A.pst[i]; out.push(A.tsx[st] * 0.1, A.tsy[st] * 0.1); } }
+  else if (k === LEG.connect && A.la[g] !== NONE) out.push(A.ptx[A.la[g]] * 0.1, A.pty[A.la[g]] * 0.1, A.ptx[A.lb[g]] * 0.1, A.pty[A.lb[g]] * 0.1);
+  return out;
+}
+let LEGPTS = new Map();   // the selected pair's legs' points, made once per pair
+function pairOptions(p) { const out = []; for (let o = A.qs[p]; o < A.qs[p + 1]; o++) out.push(o); return out; }
+// A pair shows its most travelled journeys, MAX_SHOWN of them until asked for all (S305: fourteen car routes side
+// by side were a tangle); the car routes nobody took only when asked for.
+const MAX_SHOWN = 6;
+function shownOption(o) {
+  if (S.hidden.has(A.om[o])) return false;
+  if (!(A.on[o] > 0)) return S.allCar;
+  return S.allOpts || o - A.qs[OPT_PAIR[o]] < MAX_SHOWN;
+}
+// A car route's colour: the car's, paler the less it is travelled (by its rank among the pair's car routes).
+function carShade(o) { const r = carRank(o) - 1; return r === 0 ? TH.modes[0] : mix(TH.modes[0], TH.surface, Math.min(0.55, 0.12 * r)); }
+function optColour(o) { return TR.modes[A.om[o]] === "car" ? carShade(o) : modeColour(A.om[o]); }
+function mix(a, b, f) { const x = hex(a), y = hex(b); return "rgb(" + [0, 1, 2].map((i) => Math.round(x[i] + (y[i] - x[i]) * f)).join(",") + ")"; }
+// The screen path of points `pts` (metres), moved `off` px to the right of travel; its middle.
+function screenPath(pts, off) {
+  const n0 = pts.length / 2; ensure(n0 + 2);
+  let n = 0, lx = 0, ly = 0;
+  for (let i = 0; i < n0; i++) {
+    const x = sx(pts[2 * i]), y = sy(pts[2 * i + 1]);
+    if (n === 0 || i === n0 - 1 || Math.abs(x - lx) + Math.abs(y - ly) >= 1.2) { PX[n] = x; PY[n] = y; n++; lx = x; ly = y; }
+  }
+  offsetLine(n, off);
+  const path = new Path2D(); if (n < 2) return { path, n, mid: null };
+  path.moveTo(PX[0], PY[0]); for (let i = 1; i < n; i++) path.lineTo(PX[i], PY[i]);
+  // The point halfway along, for a badge.
+  let len = 0; for (let i = 0; i < n - 1; i++) len += Math.hypot(PX[i + 1] - PX[i], PY[i + 1] - PY[i]);
+  let half = len / 2, mid = [PX[0], PY[0]];
+  for (let i = 0; i < n - 1; i++) { const d = Math.hypot(PX[i + 1] - PX[i], PY[i + 1] - PY[i]); if (half <= d) { const f = d ? half / d : 0; mid = [PX[i] + (PX[i + 1] - PX[i]) * f, PY[i] + (PY[i + 1] - PY[i]) * f]; break; } half -= d; }
+  return { path, n, mid, first: [PX[0], PY[0]], last: [PX[n - 1], PY[n - 1]], len };
+}
+function badge(x, y, text, fill) {
+  ctx.font = "700 10px " + FONT; const w = Math.max(16, ctx.measureText(text).width + 8), h = 15;
+  // Corners cut, not rounded: straight segments draw alike on the screen and in a vector export.
+  ctx.beginPath(); const r = 3, x0 = x - w / 2, y0 = y - h / 2;
+  ctx.moveTo(x0 + r, y0); ctx.lineTo(x0 + w - r, y0); ctx.lineTo(x0 + w, y0 + r); ctx.lineTo(x0 + w, y0 + h - r); ctx.lineTo(x0 + w - r, y0 + h); ctx.lineTo(x0 + r, y0 + h); ctx.lineTo(x0, y0 + h - r); ctx.lineTo(x0, y0 + r); ctx.closePath();
+  ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = TH.surface; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(text, x, y + 0.5);
+}
+function ring(x, y, r, fill, line) { ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = line; ctx.lineWidth = 1.6; ctx.stroke(); }
+function carRank(o) { let r = 0; for (let q = A.qs[OPT_PAIR[o]]; q < o; q++) if (TR.modes[A.om[q]] === "car") r++; return r + 1; }
+function drawTrips() {
+  const p = S.pair, opts = pairOptions(p).filter(shownOption);
+  let most = 1; for (const o of opts) most = Math.max(most, A.on[o]);
+  // The order drawn: nobody's routes first, the most travelled last, the hovered on top.
+  opts.sort((a, b) => (a === S.hoverOpt) - (b === S.hoverOpt) || A.on[a] - A.on[b]);
+  // Options on the same network side by side: each family's k-th option moved k steps to the right.
+  const fam = new Map(); let fr = 0, fb = 0, fw = 0, ft = 0;
+  for (const o of [...opts].sort((a, b) => A.on[b] - A.on[a] || a - b)) {
+    let r = 0, b = 0, w = 0, t = 0;
+    for (let g = A.ol[o]; g < A.ol[o + 1]; g++) { const k = A.lk[g]; if (k === LEG.drive) r = 1; else if (k === LEG.bike) b = 1; else if (k === LEG.walk) w = 1; else if (k === LEG.ride) t = 1; }
+    fam.set(o, { r: r ? fr++ : 0, b: b ? fb++ : 0, w: w ? fw++ : 0, t: t ? ft++ : 0 });
+  }
+  const most_f = Math.max(fr, fb, fw, ft, 1), step = Math.min(4.2, 15 / most_f);
+  const badges = [], stops = [], parks = [];
+  for (const o of opts) {
+    const hl = S.hoverOpt === o, dim = S.hoverOpt >= 0 && !hl, unused = !(A.on[o] > 0);
+    const w = unused ? 1.6 : Math.min(2 + 5 * Math.sqrt(A.on[o] / most), step * 1.6 + 1.5) + (hl ? 1.2 : 0), f = fam.get(o);
+    ctx.globalAlpha = dim ? 0.16 : 1;
+    // From the door to where the journey meets its network, and from there to the door, when they are apart:
+    // a thin dotted straight line (S305).
+    let firstPt = null, lastPt = null;
+    for (let g = A.ol[o]; g < A.ol[o + 1]; g++) { const pts = LEGPTS.get(g); if (pts && pts.length >= 2) { if (!firstPt) firstPt = [pts[0], pts[1]]; lastPt = [pts[pts.length - 2], pts[pts.length - 1]]; } }
+    for (const [door, at] of [[[A.qox[p] * 0.1, A.qoy[p] * 0.1], firstPt], [[A.qdx[p] * 0.1, A.qdy[p] * 0.1], lastPt]]) {
+      if (!at || Math.hypot(door[0] - at[0], door[1] - at[1]) < 25) continue;
+      const path = new Path2D(); path.moveTo(sx(door[0]), sy(door[1])); path.lineTo(sx(at[0]), sy(at[1]));
+      ctx.lineCap = "round"; ctx.setLineDash([0.1, 4.6]); ctx.strokeStyle = TH.modes[2]; ctx.lineWidth = 2; ctx.stroke(path); ctx.setLineDash([]);
+    }
+    let prevEnd = null;
+    for (let g = A.ol[o]; g < A.ol[o + 1]; g++) {
+      const k = A.lk[g];
+      if (k === LEG.park) { if (prevEnd) parks.push({ at: prevEnd, dim }); continue; }
+      const pts = LEGPTS.get(g); if (!pts || pts.length < 4) continue;
+      const fi = k === LEG.drive ? f.r : k === LEG.bike ? f.b : k === LEG.walk ? f.w : k === LEG.ride ? f.t : 0;
+      const sp = screenPath(pts, k === LEG.connect ? 0 : (fi + 0.5) * step); if (sp.n < 2) continue;
+      const c = legColour(g, o), dotted = k === LEG.walk || k === LEG.connect;
+      if (dotted) {
+        // A walk along its streets as wide as the option; a walk to or from a stop (straight: its streets
+        // are not stored) thinner.
+        const ww = k === LEG.connect ? 2.6 : Math.max(w, 2.6);
+        ctx.lineCap = "round"; ctx.setLineDash([0.1, ww + 2.6]);
+        ctx.strokeStyle = TH.surface; ctx.lineWidth = ww + 2.2; ctx.stroke(sp.path);
+        ctx.strokeStyle = c; ctx.lineWidth = ww; ctx.stroke(sp.path); ctx.setLineDash([]);
+      } else {
+        if (unused) ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = TH.surface; ctx.lineWidth = w + 2.6; ctx.stroke(sp.path);
+        ctx.strokeStyle = c; ctx.lineWidth = w; ctx.stroke(sp.path); ctx.setLineDash([]);
+      }
+      if (k === LEG.ride) {
+        stops.push({ at: sp.first, dim }, { at: sp.last, dim });
+        if (!dim && sp.len > 34) badges.push([sp.mid, TR.lines[A.lline[g]] || "", kindColour(A.lline[g])]);
+      }
+      if (k === LEG.drive && TR.modes[A.om[o]] === "car" && !dim && sp.len > 40 && (hl || opts.length <= 8)) badges.push([sp.mid, String(carRank(o)), TH.modes[0]]);
+      prevEnd = sp.last;
+    }
   }
   ctx.globalAlpha = 1;
-  const first = RLK[RST[r0]], last = RLK[RST[r0 + 1] - 1];
-  for (const [l, end, lab] of [[first, 0, "A"], [last, 1, "B"]]) {
-    const v = end ? VS[l + 1] - 1 : VS[l], x = sx(X[v]), y = sy(Y[v]);
-    ctx.beginPath(); ctx.arc(x, y, 8, 0, 6.2832); ctx.fillStyle = TH.ink; ctx.fill(); ctx.strokeStyle = TH.surface; ctx.lineWidth = 1.5; ctx.stroke();
+  for (const s0 of stops) { ctx.globalAlpha = s0.dim ? 0.25 : 1; ring(s0.at[0], s0.at[1], 3.6, TH.surface, TH.ink2); }
+  for (const pk of parks) {
+    ctx.globalAlpha = pk.dim ? 0.25 : 1; const [x, y] = pk.at, r = 7;
+    ctx.fillStyle = TH.ink; ctx.fillRect(x - r, y - r, 2 * r, 2 * r); ctx.strokeStyle = TH.surface; ctx.lineWidth = 1.5; ctx.strokeRect(x - r, y - r, 2 * r, 2 * r);
+    ctx.fillStyle = TH.surface; ctx.font = "700 10px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("P", x, y + 0.5);
+  }
+  ctx.globalAlpha = 1;
+  for (const [at, text, fill] of badges) badge(at[0], at[1], text, fill);
+  const ends = [[A.qox[p], A.qoy[p], "A"], [A.qdx[p], A.qdy[p], "B"]];
+  for (const [qx, qy, lab] of ends) {
+    const x = sx(qx * 0.1), y = sy(qy * 0.1);
+    ring(x, y, 9, TH.ink, TH.surface);
     ctx.fillStyle = TH.surface; ctx.font = "bold 10px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(lab, x, y + 0.5);
   }
+}
+// Picking a pair on the map: the places pairs start from, then the destinations from the one picked.
+function pickPlaces() {
+  const out = new Map();
+  for (let p = 0; p < NP; p++) {
+    if (S.picking === 2 && (A.qox[p] !== S.pickFrom[0] || A.qoy[p] !== S.pickFrom[1])) continue;
+    const x = S.picking === 1 ? A.qox[p] : A.qdx[p], y = S.picking === 1 ? A.qoy[p] : A.qdy[p], key = x + "," + y;
+    const e = out.get(key); if (e) e.n += A.qn[p]; else out.set(key, { x, y, n: A.qn[p], p });
+  }
+  return [...out.values()];
+}
+function drawPick() {
+  const places = pickPlaces(); let most = 1; for (const e of places) most = Math.max(most, e.n);
+  for (const e of places) { const r = 3 + 5 * Math.sqrt(e.n / most); ring(sx(e.x * 0.1), sy(e.y * 0.1), r, S.picking === 1 ? TH.ink : TH.mark, TH.surface); }
+  if (S.picking === 2) { const x = sx(S.pickFrom[0] * 0.1), y = sy(S.pickFrom[1] * 0.1); ring(x, y, 9, TH.ink, TH.surface); ctx.fillStyle = TH.surface; ctx.font = "bold 10px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("A", x, y + 0.5); }
+}
+function pickAt(px, py) {
+  const places = pickPlaces(); let best = null, bd = 28;
+  for (const e of places) { const d = Math.hypot(sx(e.x * 0.1) - px, sy(e.y * 0.1) - py); if (d < bd) { bd = d; best = e; } }
+  if (!best) return;
+  if (S.picking === 1) { S.picking = 2; S.pickFrom = [best.x, best.y]; pickHint(); redraw(false); return; }
+  S.picking = 0; S.pickFrom = null; delete document.body.dataset.picking; selectPair(best.p, true);
+}
+function pickHint() {
+  $("routehint").hidden = false;
+  $("routehint").textContent = S.picking === 1 ? "Click where the trips start (dots: the places, sized by travellers; Esc to stop)." : S.picking === 2 ? "Now click where they end." : $("routehint").dataset.text;
 }
 const FONT = getComputedStyle(document.body).fontFamily;
 function niceNumber(x) { const p = Math.pow(10, Math.floor(Math.log10(x))); for (const m of [5, 2, 1]) if (m * p <= x) return m * p; return p; }
@@ -669,7 +860,7 @@ function tip(l, ev) {
   const rows = [["Class", CLASSES[CLS[l]] + " · " + LEN[l].toFixed(0) + " m"]];
   if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " PCU/h"]); if (vol[l] > 0) { rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]); rows.push(["Mean time", meanT[l].toFixed(1) + " s (free flow " + (FF[l] + SW[l]).toFixed(1) + " s" + (SW[l] > 0 ? ", the signal's mean wait of " + SW[l].toFixed(1) + " s included" : "") + ")"]); } }
   if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " PCU/h" + (SG[l] ? " at its signal" : "") + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used)" : "")]);
-  if (HAS_ROUTES) { const n = LROUTE_START[l + 1] - LROUTE_START[l]; if (n) rows.push(["Routes", n + " use it"]); }
+  if (HAS_ROUTES) { let n = 0; for (let i = LOPT_START[l]; i < LOPT_START[l + 1]; i++) n += A.on[LOPTS[i]]; if (n) rows.push(["Trips shown", fmt(n) + " travellers drive on it (click for their pairs)"]); }
   t.innerHTML = tipHtml("link " + l, rows);
   t.hidden = false; t.style.left = Math.min(W - 250, ev.clientX + 14) + "px"; t.style.top = Math.min(H - 150, ev.clientY + 14) + "px";
 }
@@ -687,7 +878,11 @@ canvas.addEventListener("pointermove", (e) => {
   if (l !== S.hover || !sameItem(it, S.hoverItem)) { S.hover = l; S.hoverItem = it; redraw(false); }
   tipItem(it, e);
 });
-canvas.addEventListener("pointerup", (e) => { if (drag && !drag.moved && hoverLayer() === "road") selectLink(pick(e.offsetX, e.offsetY)); drag = null; writeHash(); });
+canvas.addEventListener("pointerup", (e) => {
+  if (drag && !drag.moved && S.picking) pickAt(e.offsetX, e.offsetY);
+  else if (drag && !drag.moved && hoverLayer() === "road") selectLink(pick(e.offsetX, e.offsetY));
+  drag = null; writeHash();
+});
 canvas.addEventListener("pointerleave", () => { S.hover = -1; S.hoverItem = null; $("tip").hidden = true; redraw(false); });
 canvas.addEventListener("wheel", (e) => { e.preventDefault(); zoomAt(e.offsetX, e.offsetY, Math.exp(e.deltaY * 0.0015)); }, { passive: false });
 canvas.addEventListener("dblclick", (e) => zoomAt(e.offsetX, e.offsetY, 0.4));
@@ -700,36 +895,87 @@ function goLevel(i) { S.mpp = levelMpp(i); redraw(false); levelButtons(); writeH
 function levelButtons() { const cur = currentLevel(); document.querySelectorAll("#levels button").forEach((b, i) => { b.classList.toggle("on", i === cur); b.disabled = i > 0 && levelMpp(i) <= MIN_MPP && levelMpp(i - 1) <= MIN_MPP; }); $("levelname").textContent = LEVELS[cur]; }
 
 // ---------------------------------------------------------- selection ----
-function pairRoutes(k) { return SS[k + 1] - SS[k]; }
-// The routes shown of pair k: its first S.nroutes (the most chosen; the page holds them in that order, S269), or all.
-function shownRoutes(k) { const n = pairRoutes(k); return S.nroutes > 0 ? Math.min(n, S.nroutes) : n; }
+function minutes(sec) { const m = sec / 60; return m < 10 ? m.toFixed(1) : String(Math.round(m)); }
+function placeName(p, end) { const n = TR.places[p][end]; return n || (end ? "destination" : "origin"); }
+function pairText(p) { return "#" + (p + 1) + " · " + placeName(p, 0) + " → " + placeName(p, 1) + " · " + fmt(A.qn[p]) + (A.qn[p] === 1 ? " traveller" : " travellers"); }
 function selectPair(k, fit) {
   if (!HAS_ROUTES) return;
-  S.pair = k; S.hoverRoute = -1;
-  if (k >= 0 && fit !== false) {
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (let r = SS[k]; r < SS[k] + shownRoutes(k); r++) for (let i = RST[r]; i < RST[r + 1]; i++) { const l = RLK[i]; if (BX0[l] < x0) x0 = BX0[l]; if (BY0[l] < y0) y0 = BY0[l]; if (BX1[l] > x1) x1 = BX1[l]; if (BY1[l] > y1) y1 = BY1[l]; }
-    fitTo(x0, y0, x1, y1, 0.3); S.mpp = Math.max(MIN_MPP, Math.min(MAX_MPP, S.mpp));
+  S.pair = k; S.hoverOpt = -1; LEGPTS = new Map(); renderLegend();
+  if (k >= 0) {
+    let x0 = Math.min(A.qox[k], A.qdx[k]) * 0.1, x1 = Math.max(A.qox[k], A.qdx[k]) * 0.1, y0 = Math.min(A.qoy[k], A.qdy[k]) * 0.1, y1 = Math.max(A.qoy[k], A.qdy[k]) * 0.1;
+    for (const o of pairOptions(k)) for (let g = A.ol[o]; g < A.ol[o + 1]; g++) {
+      const pts = legPoints(g); LEGPTS.set(g, pts);
+      if (A.on[o] > 0) for (let i = 0; i < pts.length; i += 2) { x0 = Math.min(x0, pts[i]); x1 = Math.max(x1, pts[i]); y0 = Math.min(y0, pts[i + 1]); y1 = Math.max(y1, pts[i + 1]); }
+    }
+    if (fit !== false) { fitTo(x0, y0, x1, y1, 0.22); S.mpp = Math.max(MIN_MPP, Math.min(MAX_MPP, S.mpp)); }
   }
-  $("pairno").value = k >= 0 ? k + 1 : ""; routePanel(); redraw(false); levelButtons(); writeHash();
+  $("pairpick").value = String(k); tripPanel(); renderLegend(); redraw(false); levelButtons(); writeHash();
 }
-function routePanel() {
-  const box = $("routelist"); box.innerHTML = "";
-  if (S.pair < 0) { $("routehint").hidden = false; return; }
+// A journey's legs as a strip, each as wide as its share of the time (S305: as a journey planner shows them).
+function strip(o) {
+  const legs = []; let total = 0;
+  for (let g = A.ol[o]; g < A.ol[o + 1]; g++) { const sec = A.lsec[g]; if (sec > 0) { legs.push(g); total += sec; } }
+  if (!total) return "";
+  const word = { 0: "drive", 1: "ride a bike", 2: "walk", 3: "ride", 4: "walk", 5: "wait", 6: "park, or reach the parked vehicle" };
+  return '<div class="strip">' + legs.map((g) => {
+    const k = A.lk[g], c = legColour(g, o), sec = A.lsec[g], share = sec / total;
+    let cls = "", style = "flex:" + share.toFixed(4) + " 1 0;", text = "";
+    if (k === LEG.walk || k === LEG.connect) { cls = "walk"; style += "--c:" + c; }
+    else if (k === LEG.wait) cls = "wait";
+    else if (k === LEG.park) cls = "park";
+    else { style += "background:" + c; if (k === LEG.ride && share > 0.12) text = escHtml(TR.lines[A.lline[g]] || ""); }
+    const what = k === LEG.ride ? "ride " + (TR.lines[A.lline[g]] || "") : word[k];
+    return '<span class="' + cls + '" style="' + style + '" title="' + escHtml(what) + " · " + minutes(sec) + ' min">' + text + "</span>";
+  }).join("") + "</div>";
+}
+function optionTitle(o) {
+  const m = TR.modes[A.om[o]];
+  if (m === "car") return "Car · route " + carRank(o);
+  return TR.labels[o];
+}
+function tripPanel() {
+  const box = $("tripcard");
+  if (S.pair < 0) { box.innerHTML = ""; $("routehint").hidden = false; pickHint(); return; }
   $("routehint").hidden = true;
-  const k = S.pair, r0 = SS[k], all = pairRoutes(k), n = shownRoutes(k);
-  if (all === 0) { box.textContent = "No route between this pair."; return; }
-  let best = Infinity, used = 0;
-  for (let i = 0; i < all; i++) { best = Math.min(best, RC[r0 + i]); if (RU) used += RU[r0 + i]; }
-  for (let i = 0; i < n; i++) {
-    const r = r0 + i, row = document.createElement("div"); row.className = "route";
-    const u = RU ? RU[r] : 0;
-    row.innerHTML = '<i style="background:' + routeColour(i) + '"></i><div><b>' + (i + 1) + "</b> " + (RC[r] / 60).toFixed(1) + " min <span>+" + Math.round((RC[r] / best - 1) * 100) + "% · overlap " + Math.round(RO[r] * 100) + "%</span>" +
-      (RU ? "<small>" + fmt(u) + (u === 1 ? " traveller" : " travellers") + (used > 0 ? " · " + Math.round(u / used * 100) + "%" : "") + "</small>" : "") + "</div>";
-    row.addEventListener("pointerenter", () => { S.hoverRoute = i; redraw(false); }); row.addEventListener("pointerleave", () => { S.hoverRoute = -1; redraw(false); });
-    box.appendChild(row);
+  const p = S.pair, total = A.qn[p], opts = pairOptions(p), byMode = new Map();
+  for (const o of opts) byMode.set(A.om[o], (byMode.get(A.om[o]) || 0) + A.on[o]);
+  const km = Math.hypot(A.qdx[p] - A.qox[p], A.qdy[p] - A.qoy[p]) * 0.1 / 1000;
+  let h = '<div class="od"><span class="mk">A</span><b>' + escHtml(placeName(p, 0)) + '</b> → <span class="mk">B</span><b>' + escHtml(placeName(p, 1)) + "</b></div>";
+  h += '<div class="odsub">' + fmt(total) + (total === 1 ? " traveller" : " travellers") + " · " + km.toFixed(1) + " km apart as the crow flies</div>";
+  const modes = [...byMode.entries()].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+  const all = total || 1;
+  h += '<div class="split" title="How the pair\'s travellers went, by mode">' + modes.map(([m, n]) => '<span style="width:' + (100 * n / all).toFixed(2) + "%;background:" + modeColour(m) + '" title="' + escHtml(TR.mode_names[m]) + " " + Math.round(100 * n / all) + '%"></span>').join("") + "</div>";
+  h += '<div class="chips">' + modes.map(([m, n]) => '<span class="chip' + (S.hidden.has(m) ? " off" : "") + '" data-m="' + m + '" title="Show or hide on the map"><i style="background:' + modeColour(m) + '"></i>' + escHtml(TR.mode_names[m]) + " " + Math.round(100 * n / all) + "%</span>").join("") + "</div>";
+  const unused = opts.filter((o) => !(A.on[o] > 0)).length;
+  let minCost = Infinity; for (const o of opts) if (isFinite(A.oc[o])) minCost = Math.min(minCost, A.oc[o]);
+  for (const o of opts) {
+    if (!shownOption(o)) continue;
+    const n = A.on[o], share = n / all, used = n > 0;
+    let sub = used ? fmt(n) + (n === 1 ? " traveller" : " travellers") + " · " + Math.round(share * 100) + "%" : "in the route set, not taken";
+    let right = "";
+    if (isFinite(A.oc[o]) && A.oc[o] > 0 && TR.modes[A.om[o]] === "car") right = '<span title="The route\'s cost over the pair\'s cheapest car route; its overlap with the other routes, by length">+' + Math.round((A.oc[o] / minCost - 1) * 100) + "% · overlap " + Math.round(A.oo[o] * 100) + "%</span>";
+    h += '<div class="opt' + (used ? "" : " unused") + (S.hoverOpt === o ? " hl" : "") + '" data-o="' + o + '"><div class="top"><i class="dot" style="background:' + optColour(o) + '"></i><b>' + escHtml(optionTitle(o)) + '</b><span class="t">' + (used && isFinite(A.ot[o]) ? minutes(A.ot[o]) + " min" : "") + "</span></div>" +
+      (used ? strip(o) : "") + '<div class="sub"><span>' + sub + "</span>" + right + "</div>" + (used ? '<div class="share"><span style="width:' + (100 * share).toFixed(1) + "%;background:" + optColour(o) + '"></span></div>' : "") + "</div>";
   }
-  if (n < all) { const more = document.createElement("small"); more.className = "note"; more.textContent = (all - n) + " more, less chosen: Routes → All"; box.appendChild(more); }
+  const usedCount = opts.filter((o) => A.on[o] > 0 && !S.hidden.has(A.om[o])).length;
+  if (usedCount > MAX_SHOWN) h += '<div class="more"><a id="toggleall">' + (S.allOpts ? "Show the " + MAX_SHOWN + " most travelled only" : "Show all " + usedCount + " journeys") + "</a></div>";
+  if (A.qr[p] > 0) h += '<div class="more">' + fmt(A.qr[p]) + (A.qr[p] === 1 ? " traveller" : " travellers") + " took other ways, each under 1 % of the pair.</div>";
+  if (unused) h += '<div class="more"><a id="togglecar">' + (S.allCar ? "Hide" : "Show") + " the " + unused + " car route" + (unused === 1 ? "" : "s") + " nobody took</a></div>";
+  h += '<div class="foot">Times are what the travellers expected door to door when they chose, averaged over them; the strip splits it into walking, waiting, riding, driving and parking. Hover a journey to see it alone; click it to zoom to it.</div>';
+  box.innerHTML = h;
+  box.querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => { const m = +c.dataset.m; if (S.hidden.has(m)) S.hidden.delete(m); else S.hidden.add(m); S.hoverOpt = -1; tripPanel(); redraw(false); writeHash(); }));
+  box.querySelectorAll(".opt").forEach((row) => {
+    const o = +row.dataset.o;
+    row.addEventListener("pointerenter", () => { S.hoverOpt = o; redraw(false); });
+    row.addEventListener("pointerleave", () => { S.hoverOpt = -1; redraw(false); });
+    row.addEventListener("click", () => {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (let g = A.ol[o]; g < A.ol[o + 1]; g++) { const pts = LEGPTS.get(g) || []; for (let i = 0; i < pts.length; i += 2) { x0 = Math.min(x0, pts[i]); x1 = Math.max(x1, pts[i]); y0 = Math.min(y0, pts[i + 1]); y1 = Math.max(y1, pts[i + 1]); } }
+      if (isFinite(x0)) { fitTo(x0, y0, x1, y1, 0.25); S.mpp = Math.max(MIN_MPP, Math.min(MAX_MPP, S.mpp)); redraw(false); levelButtons(); writeHash(); }
+    });
+  });
+  const ta = $("toggleall"); if (ta) ta.addEventListener("click", () => { S.allOpts = !S.allOpts; S.hoverOpt = -1; tripPanel(); redraw(false); writeHash(); });
+  const t = $("togglecar"); if (t) t.addEventListener("click", () => { S.allCar = !S.allCar; tripPanel(); redraw(false); writeHash(); });
 }
 function selectLink(l) {
   S.link = l; const box = $("linkinfo");
@@ -737,13 +983,14 @@ function selectLink(l) {
   box.hidden = false;
   let h = "<b>link " + l + "</b> · " + CLASSES[CLS[l]] + " · " + LEN[l].toFixed(0) + " m";
   if (HAS_ROUTES) {
-    const rs = LROUTES.subarray(LROUTE_START[l], LROUTE_START[l + 1]), byPair = new Map();
-    for (const r of rs) byPair.set(ROUTE_KEY[r], (byPair.get(ROUTE_KEY[r]) || 0) + 1);
-    h += "<div>" + rs.length + " route" + (rs.length === 1 ? "" : "s") + " of " + byPair.size + " pair" + (byPair.size === 1 ? "" : "s") + " use it</div>";
+    const os = LOPTS.subarray(LOPT_START[l], LOPT_START[l + 1]), byPair = new Map();
+    for (const o of os) if (A.on[o] > 0) byPair.set(OPT_PAIR[o], (byPair.get(OPT_PAIR[o]) || 0) + A.on[o]);
+    let n = 0; for (const v of byPair.values()) n += v;
+    h += "<div>" + fmt(n) + " travellers of " + byPair.size + " pair" + (byPair.size === 1 ? "" : "s") + " shown drive on it</div>";
     box.innerHTML = h;
     const list = document.createElement("div"); list.className = "pairs";
     [...byPair.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 12).forEach(([k, c]) => {
-      const b = document.createElement("button"); b.textContent = "pair " + (k + 1) + " · " + c + " of " + pairRoutes(k); b.addEventListener("click", () => selectPair(k, true)); list.appendChild(b);
+      const b = document.createElement("button"); b.textContent = placeName(k, 0) + " → " + placeName(k, 1) + " · " + fmt(c); b.title = pairText(k); b.addEventListener("click", () => selectPair(k, true)); list.appendChild(b);
     });
     box.appendChild(list);
   } else box.innerHTML = h;
@@ -773,29 +1020,42 @@ function roadLegend() {
   return { label: "Volume per direction (PCU/h)", low: "0", high: fmt(VMAX) + "+", stops: TABLES.volume };
 }
 function bandGradient(c) { const n = c.length; return "linear-gradient(90deg," + c.map((x, i) => x + " " + (100 * i / n).toFixed(2) + "% " + (100 * (i + 1) / n).toFixed(2) + "%").join(",") + ")"; }
-// The legend: a section per mode the page has, always all of them, in the colours drawn (S269).
+// The legend (S305): a section for each layer that is on, and the trips' marks while a pair is shown.
+function tripLegendItems() {
+  const items = [["car", TH.modes[0], ""], ["transit ride", TH.modes[3], ""], ["bike", TH.modes[1], ""], ["walk", TH.modes[2], "dot"]];
+  const sv = TOK.services[S.theme] || {}, present = new Set(pairOptions(S.pair).filter((o) => A.on[o] > 0).map((o) => TR.modes[A.om[o]]));
+  if (present.has("taxi")) items.splice(1, 0, ["taxi", sv.taxi, ""]);
+  if (present.has("bike_share") || present.has("bike_share_transit")) items.splice(items.length - 1, 0, ["shared bike", sv.bike_share, ""]);
+  return items;
+}
 function renderLegend() {
   const line = (c, style) => '<i style="border-top:' + (style === "dash" ? "3px dashed " : style === "dot" ? "3px dotted " : "4px solid ") + c + '"></i>';
   const parts = [];
-  if (HAS_TRAFFIC) {
+  if (HAS_ROUTES && S.pair >= 0 && S.routes) {
+    parts.push('<div class="lg"><h3>Trips between two places</h3><div class="kinds">' + tripLegendItems().map(([name, c, st]) => "<span>" + line(c, st) + name + "</span>").join("") +
+      '</div><div class="kinds"><span><b class="mkr">A</b>origin</span><span><b class="mkr">B</b>destination</span><span><b class="stop"></b>stop</span><span><b class="badge" style="background:' + TH.kinds[1] + '">M1</b>line</span><span><b class="mkr" style="border-radius:2px">P</b>parking</span></div><div class="note">width = travellers; a walk to or from a stop is drawn straight; dashed: a car route nobody took</div></div>');
+  }
+  if (HAS_TRAFFIC && S.ly.road) {
     const r = roadLegend();
     const ramp = r.bands
       ? '<div class="bar" style="background:' + bandGradient(r.stops) + '"></div><div class="bands">' + r.bands.map((t) => "<span>" + t + "</span>").join("") + "</div>"
       : '<div class="bar" style="background:linear-gradient(90deg,' + r.stops.join(",") + ')"></div><div class="ends"><span>' + r.low + "</span><span>" + r.high + "</span></div>";
     parts.push('<div class="lg"><h3>Road traffic</h3><div class="sub">' + r.label + "</div>" + ramp + '<div class="note">width = volume per direction' + (RT ? "; grey margin: road capacity" : "") + "</div></div>");
   }
-  if (LY.transit) parts.push('<div class="lg"><h3>Transit lines</h3><div class="kinds">' + transitKinds().map(([name, k]) => "<span>" + line(TH.kinds[k]) + name + "</span>").join("") + '</div><div class="note">width = passengers on board; ○ stops, size = boardings</div></div>');
-  if (FLOWS.bike) parts.push('<div class="lg"><h3>Cyclists</h3><div class="kinds"><span>' + line(TH.modes[1], "dash") + 'cyclists</span></div><div class="note">width = cyclists; faint = the bike network</div></div>');
-  if (FLOWS.walk) parts.push('<div class="lg"><h3>Walkers</h3><div class="kinds"><span>' + line(TH.modes[2], "dot") + 'walkers</span></div><div class="note">width = walkers; faint = the walk network</div></div>');
-  if (LY.parking) parts.push('<div class="lg"><h3>Parkings</h3><div class="kinds"><span><b></b>car</span><span><b class="ci"></b>bike</span></div><div class="bar" style="background:linear-gradient(90deg,' + TABLES.delay.join(",") + ')"></div><div class="ends"><span>empty</span><span>full</span></div><div class="note">size = capacity; colour = busiest share in use</div></div>');
-  if (HAS_ROUTES) parts.push('<div class="lg"><h3>Route alternatives</h3><div class="kinds">' + [0, 1, 2, 3, 4].map((i) => "<span>" + line(routeColour(i)) + (i + 1) + "</span>").join("") + '</div><div class="note">most chosen first; A origin, B destination</div></div>');
+  if (S.ly.transit && LY.transit) parts.push('<div class="lg"><h3>Transit lines</h3><div class="kinds">' + transitKinds().map(([name, k]) => "<span>" + line(TH.kinds[k]) + name + "</span>").join("") + '</div><div class="note">width = passengers on board; ○ stops, size = boardings</div></div>');
+  if (S.ly.bike && FLOWS.bike) parts.push('<div class="lg"><h3>Cyclists</h3><div class="kinds"><span>' + line(TH.modes[1], "dash") + 'cyclists</span></div><div class="note">width = cyclists; faint = the bike network</div></div>');
+  if (S.ly.walk && FLOWS.walk) parts.push('<div class="lg"><h3>Walkers</h3><div class="kinds"><span>' + line(TH.modes[2], "dot") + 'walkers</span></div><div class="note">width = walkers; faint = the walk network</div></div>');
+  if (S.ly.parking && LY.parking) parts.push('<div class="lg"><h3>Parkings</h3><div class="kinds"><span><b></b>car</span><span><b class="ci"></b>bike</span></div><div class="bar" style="background:linear-gradient(90deg,' + TABLES.delay.join(",") + ')"></div><div class="ends"><span>empty</span><span>full</span></div><div class="note">size = capacity; colour = busiest share in use</div></div>');
   $("legendbody").innerHTML = parts.join("");
   $("legendgroup").hidden = parts.length === 0;
+  // The compass and the scale sit above the legend card (S305), both at the bottom left.
+  $("compass").style.bottom = (parts.length ? 40 + $("legendgroup").offsetHeight + 8 : 40) + "px";
 }
 function writeHash() {
   const p = new URLSearchParams(); p.set("t", S.theme); p.set("c", S.colour);
   p.set("b", S.bins[1] - S.bins[0] === NB ? "all" : S.bins[0] + (S.bins[1] - S.bins[0] > 1 ? "-" + S.bins[1] : ""));
   if (S.pair >= 0) p.set("p", S.pair); if (S.link >= 0) p.set("l", S.link);
+  if (S.hidden.size) p.set("hm", [...S.hidden].join(".")); if (S.allCar) p.set("ac", "1"); if (S.allOpts) p.set("ao", "1");
   const on = Object.keys(LAYER_KEY).filter((k) => S.ly[k]).map((k) => LAYER_KEY[k]).join(""); if (on !== "r") p.set("ly", on || "-");
   p.set("z", [S.cx.toFixed(1), S.cy.toFixed(1), S.mpp.toFixed(3)].join(","));
   history.replaceState(null, "", "#" + p.toString()); document.body.dataset.view = p.toString();
@@ -805,6 +1065,9 @@ function readHash() {
   if (p.get("t") && TOK[p.get("t")]) S.theme = p.get("t");
   if (["delay", "volume", "vc"].includes(p.get("c"))) S.colour = p.get("c");
   if (p.get("ly") !== null) for (const k of Object.keys(LAYER_KEY)) S.ly[k] = p.get("ly").includes(LAYER_KEY[k]);
+  if (p.get("hm")) for (const m of p.get("hm").split(".")) if (m !== "") S.hidden.add(+m);
+  if (p.get("ac") === "1") S.allCar = true;
+  if (p.get("ao") === "1") S.allOpts = true;
   const b = p.get("b"); if (b && b !== "all" && HAS_TRAFFIC) { const [x, y] = b.split("-").map(Number); S.bins = [Math.max(0, Math.min(NB - 1, x)), Math.min(NB, y || x + 1)]; }
   return p;
 }
@@ -838,6 +1101,13 @@ function svgRecorder() {
       const anchor = { center: "middle", right: "end", end: "end" }[r.textAlign] || "start";
       out.push(`<text x="${x}" y="${y}" fill="${r.fillStyle}" text-anchor="${anchor}" dominant-baseline="central" style="font:${esc(r.font)}">${esc(t)}</text>`);
     },
+    // A halo behind a label (the transit stops' names, S305: missing, an SVG export with transit on failed).
+    strokeText(t, x, y) {
+      const anchor = { center: "middle", right: "end", end: "end" }[r.textAlign] || "start";
+      out.push(`<text x="${x}" y="${y}" fill="none" stroke="${r.strokeStyle}" stroke-width="${r.lineWidth}" stroke-linejoin="round" text-anchor="${anchor}" dominant-baseline="central" style="font:${esc(r.font)}"${style(r)}>${esc(t)}</text>`);
+    },
+    strokeRect(x, y, w, h) { out.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="${r.strokeStyle}" stroke-width="${r.lineWidth}"${style(r)}/>`); },
+    measureText(t) { const c = document.createElement("canvas").getContext("2d"); c.font = r.font; return c.measureText(t); },
   };
   return r;
 }
@@ -850,6 +1120,7 @@ function exportFrame() {
   if (S.ly.bike && FLOWS.bike) others.push({ title: "Cyclists · width = cyclists", items: [["cyclists", TH.modes[1], "dash"]] });
   if (S.ly.walk && FLOWS.walk) others.push({ title: "Walkers · width = walkers", items: [["walkers", TH.modes[2], "dot"]] });
   if (S.ly.parking && LY.parking) others.push({ title: "Parkings · size = capacity", items: [["car (■)", TH.ink2, ""], ["bike (●)", TH.ink2, ""]] });
+  if (HAS_ROUTES && S.pair >= 0 && S.routes) others.unshift({ title: "Trips " + placeName(S.pair, 0) + " → " + placeName(S.pair, 1) + " · width = travellers", items: tripLegendItems() });
   return { title: $("title").textContent, subtitle: $("subtitle").textContent, legend, others, provenance: $("provenance").textContent, source: $("source").textContent, credit: $("credit").hidden ? "" : $("credit").textContent };
 }
 const HEAD = 64, FOOT = 46;
@@ -979,28 +1250,16 @@ function wire() {
   $("fit").addEventListener("click", () => { fitTo(EX0, EY0, EX1, EY1, 0.06); redraw(false); levelButtons(); writeHash(); });
   $("exportpng").addEventListener("click", () => exportAs("png")); $("exportsvg").addEventListener("click", () => exportAs("svg"));
   if (HAS_ROUTES) {
-    const nk = SS.length - 1;
-    $("pairno").max = nk; $("pairs").textContent = "of " + fmt(nk);
-    $("pairno").addEventListener("change", (e) => { const k = +e.target.value - 1; selectPair(k >= 0 && k < nk ? k : -1, true); });
-    $("prev").addEventListener("click", () => selectPair((S.pair - 1 + nk) % nk, true)); $("next").addEventListener("click", () => selectPair((S.pair + 1) % nk, true));
-    // The pair with the most routes; among equals, the most travellers (S269: a pair everyone left shows nothing).
-    $("richest").addEventListener("click", () => {
-      let b = 0, bn = -1, bu = -1;
-      for (let k = 0; k < nk; k++) {
-        const n = pairRoutes(k); let u = 0; if (RU) for (let r = SS[k]; r < SS[k + 1]; r++) u += RU[r];
-        if (n > bn || (n === bn && u > bu)) { bn = n; bu = u; b = k; }
-      }
-      selectPair(b, true);
-    });
-    $("clear").addEventListener("click", () => { selectPair(-1, false); selectLink(-1); });
-    $("showroutes").addEventListener("change", (e) => { S.routes = e.target.checked; redraw(false); });
-    $("nroutes").value = String(S.nroutes); if ($("nroutes").value !== String(S.nroutes)) $("nroutes").value = "0";
-    $("nroutes").addEventListener("change", (e) => { S.nroutes = +e.target.value; routePanel(); redraw(false); });
-    $("dim").addEventListener("change", (e) => { S.dim = e.target.checked; redraw(false); });
+    const pick = $("pairpick"), shown = Math.min(NP, 500);
+    pick.innerHTML = '<option value="-1">' + fmt(NP) + " pairs, the busiest first…</option>" + Array.from({ length: shown }, (_, k) => '<option value="' + k + '">' + escHtml(pairText(k)) + "</option>").join("");
+    pick.addEventListener("change", (e) => selectPair(+e.target.value, true));
+    $("prev").addEventListener("click", () => selectPair(S.pair <= 0 ? NP - 1 : S.pair - 1, true)); $("next").addEventListener("click", () => selectPair((S.pair + 1) % NP, true));
+    $("pickmap").addEventListener("click", () => { S.picking = S.picking ? 0 : 1; S.pickFrom = null; if (S.picking) document.body.dataset.picking = "1"; else delete document.body.dataset.picking; pickHint(); redraw(false); });
+    $("clear").addEventListener("click", () => { S.picking = 0; delete document.body.dataset.picking; selectPair(-1, false); selectLink(-1); });
   }
   if (SB) $("spill").addEventListener("change", (e) => { S.spill = e.target.checked; redraw(false); });
   window.addEventListener("resize", () => { resize(); redraw(false); });
-  window.addEventListener("keydown", (e) => { if (e.key === "Escape") { selectLink(-1); if (S.pair >= 0) selectPair(-1, false); } });
+  window.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (S.picking) { S.picking = 0; S.pickFrom = null; delete document.body.dataset.picking; pickHint(); redraw(false); return; } selectLink(-1); if (S.pair >= 0) selectPair(-1, false); } });
 }
 
 // ---------------------------------------------------------------- start ----
@@ -1013,14 +1272,14 @@ function start() {
   const icon = document.createElement("link"); icon.rel = "icon";
   icon.href = "data:image/svg+xml," + encodeURIComponent(`<svg xmlns="${$("compass").querySelector("svg").namespaceURI}" viewBox="0 0 64 64"><path d="${LOGO}" fill="${TOK.paper.mark}"/></svg>`);
   document.head.appendChild(icon);
-  $("trafficgroup").hidden = !HAS_TRAFFIC; $("routegroup").hidden = !HAS_ROUTES;
+  $("routegroup").hidden = !HAS_ROUTES; $("routehint").dataset.text = $("routehint").textContent;
   $("spillrow").hidden = !SB; if (SB) $("spillcount").textContent = "(" + fmt(META.n_spillback) + ")";
   if (HAS_TRAFFIC) { $("bin").min = FIRST; $("bin").max = NB - 1; $("bin").value = FIRST; $("bin").disabled = true; }
   const p = readHash(); setTheme(S.theme); $("colour").value = S.colour; resize();
   if (HAS_TRAFFIC) { const all = S.bins[1] - S.bins[0] === NB; $("allbins").checked = all; $("bin").disabled = all; $("bin").value = all ? FIRST : S.bins[0]; }
   fitTo(EX0, EY0, EX1, EY1, 0.06); FIT.mpp = S.mpp; MAX_MPP = FIT.mpp * 1.6; MIN_MPP = Math.max(0.25, Math.min(0.5, FIT.mpp / 200));
   if (HAS_TRAFFIC) aggregate(S.bins[0], S.bins[1]); subtitle();
-  layerRows(); wire();
+  layerRows(); wire(); $("trafficgroup").hidden = !HAS_TRAFFIC || !S.ly.road;
   S.lyOrder = Object.keys(LAYER_KEY).filter((k) => S.ly[k]);
   if (p.get("z")) { const [x, y, m] = p.get("z").split(",").map(Number); if (isFinite(m)) { S.cx = x; S.cy = y; S.mpp = Math.max(MIN_MPP, Math.min(MAX_MPP, m)); } }
   if (p.get("p") !== null && HAS_ROUTES) selectPair(+p.get("p"), !p.get("z"));
