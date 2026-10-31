@@ -55,6 +55,17 @@ def test_the_files_hold_the_tables(run: ms.Run) -> None:
         t = pq.read_table(table.path)
         assert t.column_names[1:] == list(columns)
         assert t.num_rows == columns.row_count > 0
+    # The docks found empty or full, by trip and by dock, in plain words (S305).
+    trips = pq.read_table(run.bike_share_trips_table().path).column_names
+    docks = pq.read_table(run.bike_share_docks_table().path).column_names
+    assert {"docks_found_empty", "docks_found_full"} <= set(trips)
+    went_on, gave_up, full = (
+        "people_found_empty_went_on",
+        "people_found_empty_gave_up",
+        "people_found_full_went_on",
+    )
+    assert docks.index(went_on) + 1 == docks.index(gave_up) == docks.index(full) - 1
+    assert not [c for c in trips + docks if "failed" in c or c.endswith("_no_bike")]
 
 
 def test_the_trips_docks_and_events_reconcile(run: ms.Run) -> None:
@@ -75,13 +86,13 @@ def test_the_trips_docks_and_events_reconcile(run: ms.Run) -> None:
     assert returned == pytest.approx(dk["bikes_returned"].sum())
     # Empty docks: went on to another, or found no bike at any dock tried and walked.
     went_on = people["walking_to_next_dock"]
-    assert went_on == pytest.approx(dk["people_failed_attempt_no_bike"].sum())
+    assert went_on == pytest.approx(dk["people_found_empty_went_on"].sum())
     gave_up = people["gave_up_walking_to_destination"]
-    assert gave_up == pytest.approx(dk["people_gave_up_no_bike"].sum())
+    assert gave_up == pytest.approx(dk["people_found_empty_gave_up"].sum())
     assert gave_up == pytest.approx(outcome["cancelled"])
-    assert people["found_no_bike"] == pytest.approx(np.sum(w * tr["failed_attempts_for_bike"]))
+    assert people["found_no_bike"] == pytest.approx(np.sum(w * tr["docks_found_empty"]))
     assert people["arrived_for_bike"] == pytest.approx(np.sum(w * tr["docks_tried_for_bike"]))
-    assert people["riding_to_next_dock"] == pytest.approx(dk["people_failed_attempt_no_slot"].sum())
+    assert people["riding_to_next_dock"] == pytest.approx(dk["people_found_full_went_on"].sum())
     sent = people["walking_to_next_dock"] + people["riding_to_next_dock"]
     assert sent == pytest.approx(dk["people_sent_here"].sum())
     # Every trip that arrived reached its destination once.
@@ -91,7 +102,7 @@ def test_the_trips_docks_and_events_reconcile(run: ms.Run) -> None:
     assert not dk["bikes_brought_by_van"].any() and not dk["bikes_taken_by_van"].any()
     # A ride that took its bike at another dock found the planned one empty first.
     for i in np.flatnonzero(elsewhere):
-        assert tr["failed_attempts_for_bike"][i] > 0
+        assert tr["docks_found_empty"][i] > 0
     # The classes list walk alone, and still took shared bikes.
     assert set(tr["mode"]) == {"bike_share"}
 

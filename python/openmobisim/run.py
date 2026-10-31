@@ -1493,8 +1493,8 @@ class Run:
         ``extra_walk_at_return_s`` (the return's part: the rides between return docks after a full
         one, plus the walk from the dock the bike was left at less the planned walk from the
         planned return dock; the pickup's: the rest), ``extra_walk_m`` (walked between docks
-        looking for a bike, metres as the crow flies); ``failed_attempts_for_bike`` and
-        ``failed_attempts_for_slot`` (docks found empty, and full; the last one included when it
+        looking for a bike, metres as the crow flies); ``docks_found_empty`` and
+        ``docks_found_full`` (docks found empty, and full; the last one included when it
         found no bike at all or left the bike above capacity). ``outcome``: ``"completed"`` (got a
         bike and returned it), ``"cancelled"`` (no bike at any dock tried: walked to the
         destination), ``"unfinished"`` (still looking for a bike or riding when the window ended),
@@ -1521,14 +1521,13 @@ class Run:
         state: ``slots``, ``bikes_at_start``, ``bikes_at_end``, ``bikes_min``, ``bikes_mean``
         (time-weighted), ``seconds_empty``, ``seconds_full``. Its flows: ``bikes_taken``,
         ``bikes_returned``. The travellers in trouble there (people):
-        ``people_failed_attempt_no_bike`` (found it empty and went on to another dock),
-        ``people_gave_up_no_bike`` (found no bike here nor at the docks near, and walked to their
-        destination),
-        ``people_failed_attempt_no_slot`` (found it full and rode on),
+        ``people_found_empty_went_on`` (found it empty and went on to another dock),
+        ``people_found_empty_gave_up`` (found no bike here nor at the docks near, and walked to
+        their destination), ``people_found_full_went_on`` (found it full and rode on),
         ``people_left_bike_over_capacity``, ``people_sent_here`` (from another dock, counted in the
-        bin they were sent). An operator's: ``bikes_brought_by_van``, ``bikes_taken_by_van`` (0: a
-        run has no operator yet). The same table is written to ``bike_share_docks.parquet``: read it
-        with ``bike_share_docks_table()``.
+        bin they were sent). An operator's: ``bikes_brought_by_van``, ``bikes_taken_by_van`` (0
+        without an operator, ``Scenario.run(policy=...)``). The same table is written to
+        ``bike_share_docks.parquet``: read it with ``bike_share_docks_table()``.
         """
         t = self._summary.bike_share_docks
         return None if t is None else Columns(t)

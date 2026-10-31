@@ -239,10 +239,10 @@ pub struct BikeShareTripTable {
     /// Metres walked between docks looking for a bike, as the crow flies.
     pub extra_walk_m: Vec<f64>,
     /// Docks found without a bike (the last one included when it found none at all).
-    pub failed_attempts_for_bike: Vec<u32>,
+    pub docks_found_empty: Vec<u32>,
     /// Docks found without a free slot (the last one included when it left the bike above
     /// capacity).
-    pub failed_attempts_for_slot: Vec<u32>,
+    pub docks_found_full: Vec<u32>,
     /// What became of it ([`trip_outcome`]).
     pub outcome: Vec<&'static str>,
 }
@@ -308,8 +308,8 @@ impl BikeShareTripTable {
             t.extra_walk_at_pickup_s.push(parts.map(|(p, _)| p));
             t.extra_walk_at_return_s.push(parts.map(|(_, r)| r));
             t.extra_walk_m.push(o.extra_walk_m);
-            t.failed_attempts_for_bike.push(o.failed_for_bike);
-            t.failed_attempts_for_slot.push(o.failed_for_slot);
+            t.docks_found_empty.push(o.failed_for_bike);
+            t.docks_found_full.push(o.failed_for_slot);
             t.outcome.push(trip_outcome(o.status));
         }
         t
@@ -363,11 +363,11 @@ pub struct BikeShareDockTable {
     /// Bikes returned (above capacity included).
     pub bikes_returned: Vec<f64>,
     /// Travellers who found no bike here and went on to another dock.
-    pub people_failed_attempt_no_bike: Vec<f64>,
+    pub people_found_empty_went_on: Vec<f64>,
     /// Travellers who found no bike here nor at the docks near, and walked to their destination.
-    pub people_gave_up_no_bike: Vec<f64>,
+    pub people_found_empty_gave_up: Vec<f64>,
     /// Travellers who found no free slot here and rode on to another dock.
-    pub people_failed_attempt_no_slot: Vec<f64>,
+    pub people_found_full_went_on: Vec<f64>,
     /// Travellers who found no free slot here, nor at the docks near, and left the bike here
     /// above capacity.
     pub people_left_bike_over_capacity: Vec<f64>,
@@ -424,10 +424,10 @@ impl BikeShareDockTable {
                     t.seconds_full.push(b.full_s[cell]);
                     t.bikes_taken.push(b.pickups[cell]);
                     t.bikes_returned.push(b.returns[cell]);
-                    t.people_failed_attempt_no_bike
+                    t.people_found_empty_went_on
                         .push(b.redirected[cell] - b.redirected_no_slot[cell]);
-                    t.people_gave_up_no_bike.push(b.no_bike[cell]);
-                    t.people_failed_attempt_no_slot.push(b.redirected_no_slot[cell]);
+                    t.people_found_empty_gave_up.push(b.no_bike[cell]);
+                    t.people_found_full_went_on.push(b.redirected_no_slot[cell]);
                     t.people_left_bike_over_capacity.push(b.over_capacity[cell]);
                     t.people_sent_here.push(b.redirected_in[cell]);
                     t.bikes_brought_by_van.push(b.moved_in[cell]);

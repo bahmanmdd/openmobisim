@@ -53,6 +53,11 @@ engine, the taxis on that loading's road times, and what the fleet actually did 
   of the mode's `completion_by_mode` entry.
 - `bike_share_trips.parquet` has `outcome` (`completed`, `cancelled`: no bike at any dock tried, `unfinished`,
   `not_requested`) and splits `extra_s` into `extra_walk_at_pickup_s` and `extra_walk_at_return_s`.
+- The docked service's counts of docks found empty or full, in plain words: `bike_share_trips.parquet`'s
+  `docks_found_empty` and `docks_found_full` (the docks a trip found without a bike, and without a free slot);
+  `bike_share_docks.parquet`'s `people_found_empty_went_on` (found the dock empty and walked on to another),
+  `people_found_empty_gave_up` (found it empty, none near had a bike, and walked to the destination) and
+  `people_found_full_went_on` (found it full and rode on to another).
 - `trip_results` of a run with a service has two more columns: `service_outcome` (`completed`, `cancelled`,
   `unfinished`; empty for a trip without a service) and `service_arrival_s`, the second the service day actually
   brought the traveller to the destination. `manifest.json` has `service_assumptions` and `service_day`, which says

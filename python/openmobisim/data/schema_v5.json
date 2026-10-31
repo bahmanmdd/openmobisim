@@ -106,19 +106,19 @@
      "unit": "bikes"
     },
     {
-     "name": "people_failed_attempt_no_bike",
+     "name": "people_found_empty_went_on",
      "type": "double",
      "nullable": false,
      "unit": "travellers"
     },
     {
-     "name": "people_gave_up_no_bike",
+     "name": "people_found_empty_gave_up",
      "type": "double",
      "nullable": false,
      "unit": "travellers"
     },
     {
-     "name": "people_failed_attempt_no_slot",
+     "name": "people_found_full_went_on",
      "type": "double",
      "nullable": false,
      "unit": "travellers"
@@ -377,13 +377,13 @@
      "unit": "m"
     },
     {
-     "name": "failed_attempts_for_bike",
+     "name": "docks_found_empty",
      "type": "uint32",
      "nullable": false,
      "unit": "docks"
     },
     {
-     "name": "failed_attempts_for_slot",
+     "name": "docks_found_full",
      "type": "uint32",
      "nullable": false,
      "unit": "docks"

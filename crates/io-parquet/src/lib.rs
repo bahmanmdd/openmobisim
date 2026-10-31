@@ -130,7 +130,10 @@ impl From<arrow_schema::ArrowError> for WriteError {
 /// `bike_share_trips` has `outcome`, `extra_walk_at_pickup_s` and `extra_walk_at_return_s`;
 /// `trip_results`' `service_outcome` is `completed`, `cancelled` or `unfinished`, beside
 /// `service_arrival_s`; the services' KPI rows are renamed. Version 5: a run with an operator
-/// writes `operator_tasks.parquet`.
+/// writes `operator_tasks.parquet`; the docked service's counts of docks found empty or full are
+/// renamed: `docks_found_empty` and `docks_found_full` in `bike_share_trips`,
+/// `people_found_empty_went_on`, `people_found_empty_gave_up` and `people_found_full_went_on` in
+/// `bike_share_docks`.
 pub const SCHEMA_VERSION: u32 = 5;
 
 /// The Parquet key-value metadata key under which every file carries [`SCHEMA_VERSION`].
