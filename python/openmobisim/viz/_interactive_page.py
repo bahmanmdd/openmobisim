@@ -44,7 +44,7 @@ __CSS__
   </div>
   <div id="trafficgroup">
     <h2>Traffic</h2>
-    <div class="row"><label>Colour by <select id="colour"><option value="delay">Time lost to delay</option><option value="volume">Volume</option><option value="vc">Volume ÷ capacity</option></select></label></div>
+    <div class="row"><label>Colour by <select id="colour"><option value="delay">Delay over free flow</option><option value="volume">Volume</option><option value="vc">Volume ÷ capacity</option></select></label></div>
     <div class="row"><input id="bin" type="range" min="0" max="0" value="0" step="1"></div>
     <div class="row"><label><input id="allbins" type="checkbox" checked> All bins</label><button id="play">Play</button></div>
     <div class="row" id="spillrow" hidden><label title="Links whose queue would not have fitted on the road: where it would spill back (point queue)"><input id="spill" type="checkbox"> Spillback links <span id="spillcount"></span></label></div>
@@ -302,7 +302,8 @@ function aggregate(b0, b1) {
   const span = Math.max(1, b1 - Math.max(b0, FIRST)) * META.bin_seconds, pos = [];
   for (let l = 0; l < NL; l++) {
     vol[l] = tot[l] / span * 3600;
-    if (tot[l] > 0) { meanT[l] = sec[l] / tot[l]; delay[l] = 1 - Math.min((FF[l] + SW[l]) / Math.max(meanT[l], 1e-6), 1); pos.push(vol[l]); } else { meanT[l] = 0; delay[l] = 0; }
+    // The delay over free flow (S308): the mean crossing time over the free-flow time, less one (1 = twice free flow).
+    if (tot[l] > 0) { meanT[l] = sec[l] / tot[l]; const free = FF[l] + SW[l]; delay[l] = free > 0 ? Math.max(meanT[l] / free - 1, 0) : 0; pos.push(vol[l]); } else { meanT[l] = 0; delay[l] = 0; }
   }
   VMAX = (b1 - b0 === 1) ? GLOBAL_VMAX : Math.max(1, percentile(pos, 0.99));
   let hi = pos.length ? percentile(pos, 0.95) : 0; VHIGH = hi;
@@ -349,9 +350,10 @@ function rampTable(stops, n) {
 const NCOL = 24;
 // The first bin with traffic (S269): the slider and Play start there, not at midnight.
 const FIRST = META.first_bin || 0;
-// The delay's bands (S268): the upper edges of each, as META gives them, and their labels.
-const BANDS = META.delay_bands, BAND_LABELS = META.delay_band_labels;
-function band(d) { let b = 0; while (b < BANDS.length && d >= BANDS[b]) b++; return b; }
+// The delay's bands (S268): the upper edges of each, as META gives them, and their labels; volume over capacity's
+// four bands in the same four colours (S308), so the two read alike.
+const BANDS = META.delay_bands, BAND_LABELS = META.delay_band_labels, VC_BANDS = META.vc_bands, VC_LABELS = META.vc_band_labels;
+function band(d, edges) { const e = edges || BANDS; let b = 0; while (b < e.length && d >= e[b]) b++; return b; }
 function bandColours() { const n = BAND_LABELS.length; return BAND_LABELS.map((_, i) => TABLES.delay[Math.round(i / (n - 1) * (NCOL - 1))]); }
 const S = { theme: META.theme, colour: "delay", bin: -1, bins: [0, NB], playing: false, pair: -1, link: -1, hover: -1, hoverItem: null, lyOrder: [], hoverOpt: -1, routes: true, allCar: false, allOpts: false, hidden: new Set(), picking: 0, pickFrom: null, dim: true, spill: false, cx: 0, cy: 0, mpp: 1, ly: { road: true, transit: false, parking: false, bike: false, walk: false } };
 let TH = TOK[S.theme], TABLES = {};
@@ -443,7 +445,7 @@ function ribbonWidth(l) { return ribbonWidthOf(Math.min(vol[l], VMAX) / VMAX); }
 function colourIndex(l) {
   let t;
   if (S.colour === "delay") t = band(delay[l]) / (BANDS.length);
-  else if (S.colour === "vc") t = CAP[l] > 0 ? vol[l] / CAP[l] : 0;
+  else if (S.colour === "vc") t = band(CAP[l] > 0 ? vol[l] / CAP[l] : 0, VC_BANDS) / VC_BANDS.length;
   else t = Math.sqrt(Math.min(vol[l], VMAX) / VMAX);
   return Math.max(0, Math.min(NCOL - 1, Math.round(t * (NCOL - 1))));
 }
@@ -990,10 +992,9 @@ function tip(l, ev) {
   if (NF) rows.push(["Direction", "from node " + NF[l] + " to node " + NT[l]]);
   if (TWIN[l] >= 0) rows.push(["Other direction", "link " + TWIN[l] + (HAS_TRAFFIC ? ", " + fmt(vol[TWIN[l]]) + " PCU/h" : "")]);
   if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " PCU/h"]); if (vol[l] > 0) { const free = FF[l] + SW[l];
-    // The colour's quantity in words that say what it is (S307): the share of the mean crossing time beyond free
-    // flow, 1 - free flow / mean time; and the mean time as a multiple of free flow beside it.
-    rows.push(["Time lost to delay", fmt(delay[l] * 100) + "% of the crossing time"]);
-    rows.push(["Mean time", meanT[l].toFixed(1) + " s, " + (meanT[l] / Math.max(free, 1e-6)).toFixed(1) + " × free flow"]);
+    // The colour's quantity (S308): the delay over free flow, mean time / free flow - 1; both times in seconds.
+    rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]);
+    rows.push(["Mean time", meanT[l].toFixed(1) + " s"]);
     rows.push(["Free flow", free.toFixed(1) + " s" + (SW[l] > 0 ? " (the signal's mean wait of " + SW[l].toFixed(1) + " s included)" : "")]); } }
   if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " PCU/h" + (SG[l] ? " at its signal" : "") + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used)" : "")]);
   if (HAS_ROUTES) { let n = 0; for (let i = LOPT_START[l]; i < LOPT_START[l + 1]; i++) n += A.on[LOPTS[i]]; if (n) rows.push(["Trips shown", fmt(n) + " travellers drive on it (click for their pairs)"]); }
@@ -1149,7 +1150,7 @@ function binLabel() {
   return b - a === NB && NB > 1 ? "all bins, " + clock((META.first_bin || 0) * s) + "–" + clock(b * s) : clock(a * s) + "–" + clock(b * s);
 }
 function setBins(a, b) { S.bins = [a, b]; aggregate(a, b); subtitle(); redraw(false); writeHash(); }
-const COLOUR_WORDS = { delay: "share of the crossing time lost to delay", volume: "volume", vc: "volume over capacity" };
+const COLOUR_WORDS = { delay: "delay over free flow", volume: "volume", vc: "volume over capacity" };
 function subtitle() {
   $("subtitle").textContent = binLabel() + " · one ribbon per direction · width = volume, colour = " + COLOUR_WORDS[S.colour];
   renderLegend();
@@ -1158,8 +1159,8 @@ function subtitle() {
 function transitKinds() { if (!LY.transit) return []; const seen = new Set(A.tk); return LY.transit.kinds.map((name, k) => [name, k]).filter(([, k]) => seen.has(k)); }
 // What the road's colour shows now (S268, S269): its title, its bands or ramp.
 function roadLegend() {
-  if (S.colour === "delay") return { label: "Time lost to delay: share of the crossing time beyond free flow", bands: BAND_LABELS, stops: bandColours() };
-  if (S.colour === "vc") return { label: "Volume over capacity", low: "0", high: "1.0+", stops: TABLES.vc };
+  if (S.colour === "delay") return { label: "Delay over free flow: mean time ÷ free-flow time − 1", bands: BAND_LABELS, stops: bandColours() };
+  if (S.colour === "vc") return { label: "Volume over capacity", bands: VC_LABELS, stops: bandColours() };
   return { label: "Volume per direction (PCU/h)", low: "0", high: fmt(VMAX) + "+", stops: TABLES.volume };
 }
 function bandGradient(c) { const n = c.length; return "linear-gradient(90deg," + c.map((x, i) => x + " " + (100 * i / n).toFixed(2) + "% " + (100 * (i + 1) / n).toFixed(2) + "%").join(",") + ")"; }

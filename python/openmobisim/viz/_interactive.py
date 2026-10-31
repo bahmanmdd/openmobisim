@@ -32,6 +32,8 @@ from openmobisim.viz._interactive_page import PAGE_CSS, PAGE_HTML, PAGE_JS
 from openmobisim.viz._link import (
     DELAY_BAND_LABELS,
     DELAY_BANDS,
+    VC_BAND_LABELS,
+    VC_BANDS,
     capacity_passing,
     free_flow_moving_s,
 )
@@ -277,7 +279,8 @@ def map_interactive(
     (Overview, Region, District, Street, Detail): a large network shows its
     major roads first and adds minor streets as you zoom in, so it stays fast
     and readable at every scale. **Time**: a slider over the run's time bins,
-    all bins together, or play. **Colour** links by delay, volume, or volume
+    all bins together, or play. **Colour** links by delay over free flow (the
+    mean crossing time over the free-flow time, less one), volume, or volume
     over capacity. **Hover** a link to read it; **click** it to see how many
     routes and pairs use it and jump to one of them. **Pick a pair** to see
     its alternatives side by side, with each route's time, detour and overlap.
@@ -457,6 +460,7 @@ def map_interactive(
         "version": __version__, "theme": theme, "n_links": n_links, "n_verts": int(len(pts)),
         "n_bins": n_bins, "bin_seconds": bin_seconds, "has_routes": has_routes,
         "delay_bands": list(DELAY_BANDS), "delay_band_labels": list(DELAY_BAND_LABELS),
+        "vc_bands": list(VC_BANDS), "vc_band_labels": list(VC_BAND_LABELS),
         "routes_shown": MAP_ROUTES, "first_bin": first_bin,
         "n_pairs": n_pairs, "trips": trips, "class_names": _CLASS_NAMES,
         "title": title or _default_title(bins is not None and n_bins > 0, has_routes),

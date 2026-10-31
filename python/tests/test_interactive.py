@@ -631,12 +631,16 @@ def test_the_widest_journey_is_drawn_first_and_the_thinnest_on_top(tmp_path):
     assert len(order) >= 3 and travellers == sorted(travellers, reverse=True)
 
 
-def test_the_delay_is_named_as_the_share_of_the_crossing_time_it_is(tmp_path):
-    """The colour is 1 - free flow / mean time: never worded as the time over free flow."""
-    text = viz.map_interactive(grid_run()[1], tmp_path / "map.html").read_text(encoding="utf-8")
-    assert "Time lost to delay: share of the crossing time beyond free flow" in text
-    assert '"% of the crossing time"' in text and '" × free flow"' in text
-    assert "over free flow" not in text
+def test_the_delay_is_named_as_the_delay_over_free_flow(tmp_path):
+    """The colour is mean time / free flow - 1, in four bands up to 100 % and over; v/c alike."""
+    text, meta, _ = decode(viz.map_interactive(grid_run()[1], tmp_path / "map.html"))
+    assert '<option value="delay">Delay over free flow</option>' in text
+    assert "Delay over free flow: mean time ÷ free-flow time − 1" in text
+    assert '"% over free flow"' in text
+    assert "lost to delay" not in text and "of the crossing time" not in text
+    assert meta["delay_bands"] == [0.15, 0.5, 1.0]
+    assert meta["delay_band_labels"] == ["0–15%", "15–50%", "50–100%", "100%+"]
+    assert meta["vc_bands"] == [0.6, 0.8, 1.0] and len(meta["vc_band_labels"]) == 4
 
 
 def test_the_page_knows_each_link_s_direction_and_its_other_direction(tmp_path):
