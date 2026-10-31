@@ -170,3 +170,88 @@ def test_writing_the_file_costs_milliseconds(tmp_path) -> None:
         ms.config_write_defaults(tmp_path / f"run{i}.toml")
     # A loose floor (each write is about a millisecond): a run's copy must cost nothing beside it.
     assert (time.perf_counter() - started) / 20 < 0.05
+
+
+# --- (c) the reader and the run ------------------------------------------------------------
+
+#: A run's arguments, from both calls: the scenario's and the run's.
+SETTINGS = {
+    "flow_level": 2,
+    "choice_options": {"beta_time_min": -0.15, "beta_wait_min": -0.1},
+    "equilibration_options": {"iterations": 3},
+    "loading_options": {"reroute_after_s": 240},
+    "mode_options": {"car_egress_s": 200},
+    "price_options": {"car_eur_km": 0.2},
+    "modes": ["car", "bike", "walk", "transit"],
+}
+
+
+def _same_results(a: Path, b: Path) -> None:
+    for name in ("kpis.parquet", "trip_results.parquet", "events.parquet"):
+        assert (a / name).read_bytes() == (b / name).read_bytes(), name
+
+
+def test_a_run_from_a_written_file_is_the_run_from_the_arguments(tmp_path) -> None:
+    pytest.importorskip("pyarrow")
+    direct = _toy(**SETTINGS).run("r", output_dir=str(tmp_path / "direct"), quiet=True,
+                                  service_assumptions=None, design_id="d")  # fmt: skip
+    path = ms.Config.from_arguments("r", design_id="d", **SETTINGS).write(tmp_path / "run.toml")
+    filed = _toy().run(output_dir=str(tmp_path / "filed"), quiet=True, config=path)
+    assert filed.fingerprint == direct.fingerprint
+    assert filed.run_id == "r"
+    _same_results(tmp_path / "direct", tmp_path / "filed")
+    # The scenario's own values stay where the file says nothing; the file's replace them.
+    partial = tmp_path / "partial.toml"
+    partial.write_text("[equilibration]\niterations = 3\n")
+    built = _toy(**{k: v for k, v in SETTINGS.items() if k != "equilibration_options"})
+    again = built.run("r", output_dir=str(tmp_path / "partial"), quiet=True, config=partial,
+                      design_id="d")  # fmt: skip
+    assert again.fingerprint == direct.fingerprint
+
+
+def test_a_name_given_in_the_file_and_the_call_is_refused(tmp_path) -> None:
+    path = ms.Config.from_arguments("r", design_id="a").write(tmp_path / "run.toml")
+    with pytest.raises(ValueError, match=r"\['design_id'\] given both in the call and in the file"):
+        _toy().run(config=path, design_id="b", quiet=True)
+    with pytest.raises(ValueError, match=r"run_id \(the file's name\)"):
+        _toy().run("other", config=path, quiet=True)
+
+
+def test_a_file_whose_inputs_are_not_the_scenario_s_is_refused(tmp_path) -> None:
+    (tmp_path / "run.toml").write_text('[inputs]\ndemand = "trips.csv"\n')
+    with pytest.raises(ValueError, match=r"\[inputs\] \['demand'\] are not this scenario's"):
+        _toy().run(config=tmp_path / "run.toml", quiet=True)
+    (tmp_path / "run.toml").write_text("[network]\nwalk_km_h = 5.5\n")
+    with pytest.raises(ValueError, match=r"\[network\] is applied when the network is read"):
+        _toy().run(config=tmp_path / "run.toml", quiet=True)
+    (tmp_path / "run.toml").write_text("[routes]\nmax_paths = 4\n")
+    with pytest.raises(ValueError, match=r"\[routes\]: options without a method"):
+        _toy().run(config=tmp_path / "run.toml", quiet=True)
+    (tmp_path / "run.toml").write_text('[services.taxi]\nkind = "taxi"\n')
+    with pytest.raises(ValueError, match=r"this scenario has no service 'taxi'"):
+        _toy().run(config=tmp_path / "run.toml", quiet=True)
+
+
+def _files(folder: Path) -> Path:
+    """The toy scenario's inputs as files: a GMNS network and a trips.csv."""
+    net = ms.examples.toy_network()
+    ms.network_write_gmns(net, str(folder / "network"))
+    rows = ms.examples.trips_random(net, 40, seed=5, min_m=100.0, max_m=2000.0, spread_s=1200)
+    ms.demand_write_trips(rows, folder / "trips.csv")
+    return folder
+
+
+def test_the_inputs_are_read_relative_to_the_file(tmp_path, monkeypatch) -> None:
+    pytest.importorskip("pyarrow")
+    _files(tmp_path)
+    (tmp_path / "run.toml").write_text(
+        'name = "files"\n[inputs]\nnetwork = "network"\ndemand = "trips.csv"\n'
+        "[network]\nwalk_km_h = 5.0\n[equilibration]\niterations = 2\n"
+    )
+    monkeypatch.chdir(tmp_path.parent)
+    run = ms.config_read(tmp_path / "run.toml").run(str(tmp_path / "out"), quiet=True)
+    net = ms.network_read_gmns(str(tmp_path / "network"), network_options={"walk_km_h": 5.0})
+    direct = ms.Scenario.from_parts(
+        net, str(tmp_path / "trips.csv"), equilibration_options={"iterations": 2}
+    ).run("files", output_dir=str(tmp_path / "direct"), quiet=True)
+    assert run.fingerprint == direct.fingerprint

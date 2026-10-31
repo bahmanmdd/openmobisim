@@ -558,6 +558,9 @@ class Scenario:
             "persons": persons_given if persons_given is not None else persons_path_given,
             **given,
         }
+        # The files the inputs were read from, by ``run.toml``'s ``[inputs]`` names, when a
+        # configuration file built the scenario (``Config.scenario``): its run's copy names them.
+        self._inputs: dict[str, Any] = {}
         if preset is not None:
             if preset not in PRESETS:
                 raise ValueError(f"preset must be one of {sorted(PRESETS)} or None, got {preset!r}")
@@ -1586,7 +1589,11 @@ class Scenario:
                 f"replace() takes the arguments of from_parts; no {unknown}. They are: "
                 f"{sorted(self._parts)}"
             )
-        return Scenario.from_parts(**{**self._parts, **changes})
+        new = Scenario.from_parts(**{**self._parts, **changes})
+        new._inputs = {
+            k: v for k, v in self._inputs.items() if _INPUT_PARTS.get(k, k) not in changes
+        }
+        return new
 
     def _pipeline(self, run_id: str, output_dir: str, **extra: Any) -> Any:
         """The core's run, with this scenario's parts and ``extra``."""
@@ -1688,6 +1695,7 @@ class Scenario:
         service_assumptions: Mapping[str, float | None] | None = None,
         policy: Any = None,
         policy_options: Mapping[str, float] | None = None,
+        config: str | Path | Any = None,
     ) -> Run:
         """Run the scenario and write its output artifacts.
 
@@ -1758,6 +1766,13 @@ class Scenario:
                 still choose on ``service_assumptions``: an operator changes what the services
                 deliver, not who asks for them. Refused without services.
             policy_options: A named policy's options (``{"low": 0.1}`` for ``"threshold"``).
+            config: A run configuration file, ``run.toml`` (its path, or a ``Config`` from
+                ``config_read``): its values are this run's arguments and replace the scenario's
+                own of the same names, every one not in the file staying as it is. An argument
+                given both in the file and in this call (other than at its default) is refused
+                (one source), and so is a file
+                whose ``[inputs]`` or ``[network]`` are not this scenario's (a scenario runs on its
+                own inputs). ``None`` (the default): no file is read.
 
         Returns:
             A ``Run``: the results in memory, and the output files in ``output_dir``.
@@ -1765,6 +1780,11 @@ class Scenario:
         Raises:
             FileExistsError: If ``output_dir`` already holds a run and ``overwrite`` is false.
         """
+        if config is not None:
+            call = {k: v for k, v in locals().items() if k not in ("self", "config")}
+            from openmobisim.config import _run_with
+
+            return _run_with(self, config, call)
         default_dir = output_dir is None
         if output_dir is None:
             output_dir = str(Path.cwd() / "openmobisim-runs" / run_id)
@@ -1821,6 +1841,9 @@ class Scenario:
             warnings.warn(stranded, NoAlternativeWarning, stacklevel=2)
         return run
 
+
+#: The ``from_parts`` argument each ``[inputs]`` name of ``run.toml`` is read into.
+_INPUT_PARTS = {"transit_date": "transit"}
 
 #: The arguments of ``Scenario.run``, refused with a pointer to it when a scenario is built.
 _RUN_ARGUMENTS = frozenset(inspect.signature(Scenario.run).parameters) - {"self"}

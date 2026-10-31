@@ -1586,7 +1586,9 @@ def _configured(scenario: Scenario, config: Config) -> Scenario:
     changes = {k: v for k, v in changes.items() if parts.get(k) != v}
     if not changes:
         return scenario
-    return scenario.replace(**changes)
+    new = scenario.replace(**changes)
+    new._inputs = dict(getattr(scenario, "_inputs", {}))  # the file changes no input
+    return new
 
 
 def _given(call: Mapping[str, Any], defaults: Mapping[str, Any]) -> list[str]:
