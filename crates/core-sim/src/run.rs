@@ -76,13 +76,13 @@ use crate::route_choice::{self, NO_ROUTE, RouteChoices};
 use crate::route_update::{NoRouteUpdate, RouteUpdate, UpdateContext, make_room, make_room_by};
 use crate::services::costs::{DockCosts, TaxiAssumption};
 use crate::services::engine::Leg;
-use crate::services::in_run::{ServicesRun, ShareLeg, TaxiLeg, TaxisRun};
+use crate::services::in_run::{ServiceOutcome, ServicesRun, ShareLeg, TaxiLeg, TaxisRun};
 use crate::services::roads::RoadTimes;
 use crate::services::{ServiceAssumptions, ServiceKind, ServiceSetup};
 use crate::timings::{Stage, Timings};
 use crate::transit::{TransitResult, TransitSetup, par_map};
 use crate::trees::{SearchTrees, TreeCost};
-use crate::trip_results::TripOutcomes;
+use crate::trip_results::{TripOutcome, TripOutcomes};
 use openmobisim_core_graph::hubs::ParkingKind;
 use openmobisim_core_graph::layers::StaticLayer;
 use openmobisim_core_routes::{Reach, Route, SearchContext};
@@ -149,8 +149,9 @@ pub mod local_codes {
 ///
 /// `total_trips` is every trip in the demand; `no_vehicle_available`,
 /// `no_feasible_path` and `mode_not_available` are trips that never travel;
-/// `completed` and `truncated` are the statistics proper, over trips that
-/// *did* set off.
+/// `completed`, `truncated` and `cancelled` are the statistics proper, over trips that
+/// *did* set off. In a run with a service, a trip the service carried counts as the run's
+/// service day gave it ([`crate::services::in_run`]), not as its choice planned.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct TripCompletionStats {
     /// Every trip in the demand.
@@ -166,16 +167,19 @@ pub struct TripCompletionStats {
     /// The trip's mode cannot be simulated by this run: what it needs
     /// (a layer, a timetable, parkings) is missing.
     pub mode_not_available: u32,
+    /// Its taxi request was cancelled in the service day (no taxi could pick it up within the
+    /// fleet's cancel limit): the trip ends there. 0 in a run without a taxi fleet.
+    pub cancelled: u32,
 }
 
 impl TripCompletionStats {
-    /// Trips that actually entered the network: `completed + truncated`.
+    /// Trips that actually set off: `completed + truncated + cancelled`.
     #[must_use]
     pub fn attempted(&self) -> u32 {
-        self.completed + self.truncated
+        self.completed + self.truncated + self.cancelled
     }
 
-    /// `completed / attempted`, among trips that entered the network.
+    /// `completed / attempted`, among trips that set off.
     ///
     /// `1.0` if none did — vacuously, nothing was left incomplete — rather
     /// than a division by zero.
@@ -202,9 +206,11 @@ pub struct ModeTotals {
     pub weighted_completed: f64,
     /// Its trips still under way at the end, weighted the same way.
     pub weighted_truncated: f64,
+    /// Its trips whose taxi request was cancelled in the service day, weighted the same way.
+    pub weighted_cancelled: f64,
     /// Its trips that were never simulated (no vehicle, no feasible path, the mode not
-    /// available), weighted the same way: with the completed and the truncated, all of
-    /// its people.
+    /// available), weighted the same way: with the completed, the truncated and the
+    /// cancelled, all of its people.
     pub weighted_not_run: f64,
 }
 
@@ -2708,12 +2714,38 @@ impl Run {
                 assumptions.assumed_extra_walk_at_return_s,
             );
         }
+        // The whole run's counts follow the service day (S306): a trip a service carried counts
+        // as the day gave it. A run without a service day is untouched.
+        let (mut completion, mut total_travel_time, mut by_mode) =
+            (loaded.completion, loaded.total_travel_time, by_mode);
+        if let Some(setups) = &services_arc {
+            let delivered = service_day_trips(
+                services_run.as_ref(),
+                taxis_run.as_ref(),
+                setups,
+                &taken,
+                &trip_outcomes,
+                f64::from(self.window.get()),
+            );
+            follow_service_day(
+                &delivered,
+                &self.trips,
+                &taken,
+                &trip_outcomes,
+                &mut Counts {
+                    completion: &mut completion,
+                    total_travel_time: &mut total_travel_time,
+                    by_mode: &mut by_mode,
+                    report: reports.last_mut(),
+                },
+            );
+        }
         timings.lap("results_assembled", None, clock);
         self.timings = timings;
         Ok(RunResult {
-            total_travel_time: loaded.total_travel_time,
+            total_travel_time,
             total_vehicle_time: loaded.total_vehicle_time,
-            completion: loaded.completion,
+            completion,
             events: loaded.events,
             link_bins,
             route_sets: Some(route_sets),
@@ -4350,6 +4382,152 @@ fn completed_people(events: &[EventRow], trips: &Trips, travellers: &Travellers)
 /// trips' departures: the same travel time a trip adds to the run's
 /// total, filed under its mode.
 /// Each mode's outcomes, and those of the trips with no mode.
+/// What the service day gave one trip a service carried, for the whole run's counts (S306).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Delivered {
+    /// At its destination at this second from midnight: carried by the service, or on foot
+    /// after finding no shared bike.
+    Arrived(f64),
+    /// Still under way when the window ended.
+    Unfinished,
+    /// Its taxi request was cancelled: the trip ends there.
+    Cancelled,
+}
+
+/// Each trip the run's service day carried, with what the day gave it: the shared bikes' legs
+/// ([`ServicesRun::last`]) and the taxis' ([`TaxisRun::last`]), `end_s` the window's end.
+///
+/// A shared bike to transit reaches the hub's dock by the day's second; its transit part, which
+/// the loading played from the planned second at the dock, is shifted by the difference (its
+/// timetable not searched again). Such a trip whose planned transit part did not arrive is left
+/// as planned.
+fn service_day_trips(
+    services: Option<&ServicesRun>,
+    taxis: Option<&TaxisRun>,
+    setups: &[ServiceSetup],
+    taken: &[Option<Mode>],
+    planned: &TripOutcomes,
+    end_s: f64,
+) -> Vec<(TripId, f64, Delivered)> {
+    let mut out = Vec::new();
+    if let Some(day) = services.and_then(|s| s.last.as_ref()) {
+        for (l, &(_, at)) in day.legs.iter().zip(&day.outcomes) {
+            let t = l.trip.index();
+            let delivered = if taken[t] == Some(Mode::BikeShareTransit) {
+                let (TripOutcome::Completed, Some(arrival)) =
+                    (planned.outcome[t], planned.arrival[t])
+                else {
+                    continue;
+                };
+                let shifted = f64::from(arrival.get())
+                    + (at - l.planned_end_s(&setups[usize::from(l.leg.service)]));
+                if shifted.is_finite() && shifted <= end_s {
+                    Delivered::Arrived(shifted.max(l.departure_s))
+                } else {
+                    Delivered::Unfinished
+                }
+            } else if at.is_finite() {
+                Delivered::Arrived(at)
+            } else {
+                // No bike and the walk on not ended, or still riding: under way at the end.
+                Delivered::Unfinished
+            };
+            out.push((l.trip, f64::from(l.leg.weight), delivered));
+        }
+    }
+    if let Some(day) = taxis.and_then(|t| t.last.as_ref()) {
+        for (l, &(m, at)) in day.legs.iter().zip(&day.outcomes) {
+            let delivered = match m {
+                ServiceOutcome::Cancelled => Delivered::Cancelled,
+                _ if at.is_finite() => Delivered::Arrived(at),
+                _ => Delivered::Unfinished,
+            };
+            out.push((l.trip, f64::from(l.leg.weight), delivered));
+        }
+    }
+    out
+}
+
+/// The counts [`follow_service_day`] corrects: the run's, its modes' and its last report's.
+struct Counts<'a> {
+    completion: &'a mut TripCompletionStats,
+    total_travel_time: &'a mut Duration,
+    by_mode: &'a mut [ModeTotals; Mode::COUNT],
+    report: Option<&'a mut IterationReport>,
+}
+
+/// Each trip of `delivered` (its weight and what the service day gave it) counted as the day gave
+/// it in place of its planned outcome (`planned`, the last loading's): out of the completed or
+/// the truncated it was, its planned travel time taken off, into the completed (with the day's
+/// travel time), the truncated or the cancelled. A trip planned neither completed nor truncated
+/// is left as it was.
+fn follow_service_day(
+    delivered: &[(TripId, f64, Delivered)],
+    trips: &Trips,
+    taken: &[Option<Mode>],
+    planned: &TripOutcomes,
+    c: &mut Counts<'_>,
+) {
+    for &(trip, w, delivered) in delivered {
+        let t = trip.index();
+        let Some(mode) = taken[t] else { continue };
+        let departure = Duration::from_clock(trips.departure(trip));
+        let m = &mut c.by_mode[mode.index()];
+        match (planned.outcome[t], planned.arrival[t]) {
+            (TripOutcome::Completed, Some(at)) => {
+                let time = (Duration::from_clock(at) - departure) * w;
+                c.completion.completed -= 1;
+                *c.total_travel_time -= time;
+                m.completion.completed -= 1;
+                m.weighted_completed -= w;
+                m.total_travel_time -= time;
+                if let Some(r) = c.report.as_deref_mut() {
+                    r.completed -= 1;
+                    r.completed_people -= w;
+                    r.total_travel_time_s -= time.get();
+                }
+            }
+            (TripOutcome::Truncated, _) => {
+                c.completion.truncated -= 1;
+                m.completion.truncated -= 1;
+                m.weighted_truncated -= w;
+                if let Some(r) = c.report.as_deref_mut() {
+                    r.truncated -= 1;
+                }
+            }
+            _ => continue,
+        }
+        match delivered {
+            Delivered::Arrived(at_s) => {
+                let time = (Duration(at_s) - departure).non_negative() * w;
+                c.completion.completed += 1;
+                *c.total_travel_time += time;
+                m.completion.completed += 1;
+                m.weighted_completed += w;
+                m.total_travel_time += time;
+                if let Some(r) = c.report.as_deref_mut() {
+                    r.completed += 1;
+                    r.completed_people += w;
+                    r.total_travel_time_s += time.get();
+                }
+            }
+            Delivered::Unfinished => {
+                c.completion.truncated += 1;
+                m.completion.truncated += 1;
+                m.weighted_truncated += w;
+                if let Some(r) = c.report.as_deref_mut() {
+                    r.truncated += 1;
+                }
+            }
+            Delivered::Cancelled => {
+                c.completion.cancelled += 1;
+                m.completion.cancelled += 1;
+                m.weighted_cancelled += w;
+            }
+        }
+    }
+}
+
 fn mode_totals(
     events: &[EventRow],
     trips: &Trips,

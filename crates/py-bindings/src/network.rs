@@ -27,7 +27,7 @@ use openmobisim_core_graph::network::{
 };
 use openmobisim_core_graph::network_options::NetworkDefaults;
 use openmobisim_core_graph::turns::TurnTable;
-use openmobisim_core_routes::{NodeSnapper, TripSnapper};
+use openmobisim_core_routes::{NodeSnapper, Reach, TripSnapper};
 use openmobisim_core_sim::ModeDefaults;
 use openmobisim_core_types::diagnostics::{Category, Diagnostics, Severity};
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
@@ -228,6 +228,116 @@ impl PyNetwork {
         }
         let within = car_snap_motorway_m.unwrap_or(ModeDefaults::SHIPPED.car_snap_motorway_m);
         self.trip_snapper(within).nearest(&self.inner, LonLat::new(lon, lat)).raw()
+    }
+
+    /// The fastest path from each node `origins[i]` to node `destinations[i]` of this bike or
+    /// walk layer, at the layer's travel times (each link's length over its speed): the search a
+    /// run walks to, from and between stops with, over nodes (a pedestrian may turn back), so on
+    /// the walk layer it finds the walks the run's travellers took. A bike route of a run is
+    /// searched by the bike cost instead.
+    ///
+    /// Returns `(links, offsets, seconds)`: pair `i`'s links in travel order are
+    /// `links[offsets[i]:offsets[i + 1]]` (uint32, this layer's link indices) and its time
+    /// `seconds[i]` (float64): 0 with no links where the two nodes are one, infinite with no
+    /// links where no path takes at most `bound_s` seconds (one number for every pair, or one
+    /// per pair; an hour if not given). **Cost:** one search per distinct origin, as far as the
+    /// longest bound of its pairs (16 bytes per node of scratch).
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` on the road network (whose times depend on the traffic: its routes are
+    /// route sets'), for lists of different lengths, a node index out of range, or a bound that
+    /// is not positive.
+    #[pyo3(signature = (origins, destinations, bound_s = None))]
+    #[allow(clippy::type_complexity, reason = "three arrays")]
+    fn path_shortest<'py>(
+        &self,
+        py: Python<'py>,
+        origins: Vec<u32>,
+        destinations: Vec<u32>,
+        bound_s: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<(Bound<'py, PyArray1<u32>>, Bound<'py, PyArray1<u32>>, Bound<'py, PyArray1<f64>>)>
+    {
+        let Some(layer) = &self.static_network else {
+            return Err(PyValueError::new_err(
+                "path_shortest searches a bike or walk layer (network.layer(\"walk\")); a road \
+                 route depends on the traffic: see route_sets_build",
+            ));
+        };
+        if origins.len() != destinations.len() {
+            return Err(PyValueError::new_err(format!(
+                "{} origins but {} destinations",
+                origins.len(),
+                destinations.len()
+            )));
+        }
+        let bounds: Vec<f64> = match bound_s {
+            None => vec![3600.0; origins.len()],
+            Some(b) => match b.extract::<f64>() {
+                Ok(one) => vec![one; origins.len()],
+                Err(_) => b.extract::<Vec<f64>>().map_err(|_| {
+                    PyValueError::new_err("bound_s: seconds, one number or one per pair")
+                })?,
+            },
+        };
+        if bounds.len() != origins.len() {
+            return Err(PyValueError::new_err(format!(
+                "{} bounds for {} pairs",
+                bounds.len(),
+                origins.len()
+            )));
+        }
+        if let Some(bad) = bounds.iter().find(|b| b.is_nan() || **b <= 0.0) {
+            return Err(PyValueError::new_err(format!("bound_s must be positive, not {bad}")));
+        }
+        let n = self.inner.node_count();
+        if let Some(bad) = origins.iter().chain(&destinations).find(|&&x| x >= n) {
+            return Err(PyValueError::new_err(format!(
+                "node {bad} is not on this layer ({n} nodes)"
+            )));
+        }
+        let graph = &*self.inner;
+        let (paths, seconds) = py.detach(|| {
+            let costs = layer.link_seconds();
+            let mut reach = Reach::new(graph, &costs);
+            let mut wanted = vec![false; n as usize];
+            let mut paths: Vec<Vec<LinkId>> = vec![Vec::new(); origins.len()];
+            let mut seconds = vec![f64::INFINITY; origins.len()];
+            // By origin, then position: one search each, its destinations marked.
+            let mut order: Vec<usize> = (0..origins.len()).collect();
+            order.sort_unstable_by_key(|&i| (origins[i], i));
+            for group in order.chunk_by(|&a, &b| origins[a] == origins[b]) {
+                let mut bound = 0.0_f64;
+                for &i in group {
+                    wanted[destinations[i] as usize] = true;
+                    bound = bound.max(bounds[i]);
+                }
+                let found: HashMap<u32, f64> = reach
+                    .forward(NodeId::new(origins[group[0]]), bound, &wanted)
+                    .into_iter()
+                    .map(|(node, s)| (node.raw(), s))
+                    .collect();
+                for &i in group {
+                    let to = destinations[i];
+                    wanted[to as usize] = false;
+                    if let Some(&s) = found.get(&to).filter(|&&s| s <= bounds[i]) {
+                        seconds[i] = s;
+                        paths[i] = reach.path(NodeId::new(to));
+                    }
+                }
+            }
+            (paths, seconds)
+        });
+        let mut offsets = Vec::with_capacity(paths.len() + 1);
+        offsets.push(0u32);
+        let mut links = Vec::new();
+        for path in &paths {
+            links.extend(path.iter().map(|l| l.raw()));
+            offsets.push(u32::try_from(links.len()).map_err(|_| {
+                PyValueError::new_err("more path links than an index holds; ask for fewer pairs")
+            })?);
+        }
+        Ok((links.into_pyarray(py), offsets.into_pyarray(py), seconds.into_pyarray(py)))
     }
 
     /// The WGS84 `(lon, lat)` of the node with external id `name` — for

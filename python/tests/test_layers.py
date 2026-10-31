@@ -67,6 +67,50 @@ def test_the_toy_network_has_its_own_hand_checkable_layers() -> None:
     assert walk.link_count == 2 * net.link_count + 4
 
 
+def test_a_layer_s_fastest_paths_are_the_hand_derived_ones() -> None:
+    """`path_shortest` on the toy walk layer finds the paths worked out by hand.
+
+    W to N1 by the diagonal `w1` (424 m), not the 600 m of streets; S to D1 along the streets; a
+    node to itself, no links; out of reach, none.
+    """
+    net = ms.examples.toy_network()
+    walk = net.layer("walk")
+    node = {n: walk.node_nearest(*net.node_lonlat(n)) for n in ("W", "N1", "S", "D1")}
+    origins = [node["W"], node["S"], node["S"], node["S"]]
+    links, offsets, seconds = walk.path_shortest(
+        origins, [node["N1"], node["D1"], node["S"], node["D1"]]
+    )
+    ids = walk.link_ids()
+    path = [[ids[x] for x in links[offsets[i] : offsets[i + 1]]] for i in range(4)]
+    assert path[0] == ["w1"], path[0]
+    length = walk.link_length_m()
+    assert np.isclose(length[links[offsets[0] : offsets[1]]].sum(), 300 * 2**0.5)
+    assert np.isclose(seconds[0], walk.link_free_flow_s()[links[0]])
+    frm, to = walk.link_from(), walk.link_to()
+    legs = links[offsets[1] : offsets[2]]
+    assert frm[legs[0]] == node["S"] and to[legs[-1]] == node["D1"], "from S, to D1"
+    assert (to[legs[:-1]] == frm[legs[1:]]).all(), "the links join end to end"
+    assert np.isclose(length[legs].sum(), 200 + 400 + 12 + 300)
+    assert path[2] == [] and seconds[2] == 0, "a node to itself"
+    # The same pair asked twice gets the same answer (one search per origin).
+    assert path[3] == path[1] and seconds[3] == seconds[1]
+    links, offsets, seconds = walk.path_shortest([node["S"]], [node["D1"]], bound_s=60.0)
+    assert len(links) == 0 and np.isinf(seconds[0]), "beyond the bound: none"
+    # A bound per pair, the same origin searched once as far as the longest: each pair its own.
+    links, offsets, seconds = walk.path_shortest(
+        [node["S"], node["S"]], [node["D1"], node["D1"]], bound_s=[60.0, 3600.0]
+    )
+    assert np.isinf(seconds[0]) and offsets[1] == 0 and np.isfinite(seconds[1]) and len(links)
+    with pytest.raises(ValueError, match="bike or walk layer"):
+        net.path_shortest([0], [1])
+    with pytest.raises(ValueError, match="not on this layer"):
+        walk.path_shortest([0], [walk.node_count])
+    with pytest.raises(ValueError, match="positive"):
+        walk.path_shortest([0], [1], bound_s=0.0)
+    with pytest.raises(ValueError, match="1 bounds for 2 pairs"):
+        walk.path_shortest([0, 0], [1, 2], bound_s=[60.0])
+
+
 def test_layer_questions_asked_of_the_wrong_network_are_refused() -> None:
     net = grid()
     with pytest.raises(ValueError, match="bike layer"):

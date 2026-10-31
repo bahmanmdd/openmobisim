@@ -25,6 +25,7 @@ __CSS__
   <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="__LOGO__"/></svg><h1 id="title"></h1>
   <p id="subtitle"></p><p id="note" hidden></p>
 </header>
+<div id="side">
 <aside id="panel">
   <h2>Zoom</h2>
   <div id="levels"><button>Overview</button><button>Region</button><button>District</button><button>Street</button><button>Detail</button></div>
@@ -52,8 +53,9 @@ __CSS__
 </aside>
 <div id="legendgroup" class="card">
   <div id="legendbody"></div>
+  <div id="compass"><svg width="18" height="28" viewBox="0 0 22 34"><path d="M11 2 L17 20 L11 16 L5 20 Z" fill="currentColor"/><text x="11" y="32" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" font-family="sans-serif">N</text></svg><div><div id="scalelabel"></div><div id="scalebar"></div></div></div>
 </div>
-<div id="compass"><svg width="22" height="34" viewBox="0 0 22 34"><path d="M11 2 L17 20 L11 16 L5 20 Z" fill="currentColor"/><text x="11" y="32" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" font-family="sans-serif">N</text></svg><div id="scalelabel"></div><div id="scalebar"></div></div>
+</div>
 <footer><span id="provenance"></span><span id="source"></span><span class="right"><span id="budget"></span><span id="credit" hidden></span><span id="logo"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="__LOGO__"/></svg><b>openmobisim</b></span></span></footer>
 <div id="tip" hidden></div>
 <script id="meta" type="application/json">__META__</script>
@@ -76,7 +78,11 @@ canvas#map:active { cursor: grabbing; }
 .head h1 { display: inline; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; vertical-align: middle; }
 .head p { margin: 5px 0 0; font-size: 13px; color: var(--ink2); }
 .head p#note { font-style: italic; color: var(--muted); font-size: 12px; }
-aside#panel { position: fixed; top: 14px; right: 14px; width: 306px; max-height: calc(100vh - 60px); overflow: auto; background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--base); border-radius: 12px; padding: 12px 14px 14px; box-shadow: 0 6px 26px rgba(0,0,0,.18); font-size: 12.5px; backdrop-filter: blur(6px); }
+/* Everything the reader uses in one column on the right (S306): the controls, then the legend with the compass and
+   the scale, kept in view at the column's foot while the controls scroll. */
+#side { position: fixed; top: 14px; right: 14px; bottom: 40px; width: 306px; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+#side > * { pointer-events: auto; }
+aside#panel { flex: 0 1 auto; min-height: 0; overflow: auto; background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--base); border-radius: 12px; padding: 12px 14px 14px; box-shadow: 0 6px 26px rgba(0,0,0,.18); font-size: 12.5px; backdrop-filter: blur(6px); }
 aside h2 { margin: 12px 0 7px; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 aside h2:first-child { margin-top: 0; }
 button, select, input[type=number] { font: inherit; color: var(--ink); background: transparent; border: 1px solid var(--base); border-radius: 7px; padding: 4px 9px; cursor: pointer; }
@@ -98,7 +104,7 @@ label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2);
 .legend .kinds i { width: 18px; height: 4px; border-radius: 2px; display: inline-block; margin-right: 5px; vertical-align: middle; }
 .legend .note { font: 11px var(--mono); color: var(--muted); margin-top: 3px; }
 /* The legend, a section per mode (S269) */
-#legendgroup.card { position: fixed; left: 12px; bottom: 40px; width: 268px; max-height: calc(100vh - 200px); overflow: auto; padding: 10px 12px 2px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 90%, transparent); border: 1px solid color-mix(in srgb, var(--base) 70%, transparent); backdrop-filter: blur(4px); font-size: 12px; box-shadow: 0 3px 14px rgba(0,0,0,.10); }
+#legendgroup.card { flex: 0 1 auto; margin-top: auto; max-height: 48%; display: flex; flex-direction: column; overflow: hidden; padding: 10px 14px 8px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 90%, transparent); border: 1px solid color-mix(in srgb, var(--base) 70%, transparent); backdrop-filter: blur(4px); font-size: 12px; box-shadow: 0 3px 14px rgba(0,0,0,.10); }
 #legendbody .lg { margin: 0 0 10px; }
 #legendbody h3 { margin: 0 0 3px; font-size: 11.5px; font-weight: 600; color: var(--ink); }
 #legendbody .sub { font-size: 11px; color: var(--ink2); }
@@ -126,8 +132,10 @@ label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2);
 #tip { position: fixed; pointer-events: none; z-index: 10; background: var(--ink); color: var(--surface); padding: 8px 10px; border-radius: 8px; font-size: 12px; min-width: 190px; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
 #tip b { display: block; margin-bottom: 3px; font-family: var(--mono); }
 #tip div { display: flex; justify-content: space-between; gap: 14px; } #tip span { opacity: .65; }
-#compass { position: fixed; left: 12px; bottom: 40px; padding: 8px 10px 7px; border-radius: 10px; background: color-mix(in srgb, var(--surface) 84%, transparent); color: var(--ink); font: 11.5px var(--mono); pointer-events: none; }
-#compass svg { display: block; margin: 0 0 6px 2px; }
+#legendbody { overflow: auto; min-height: 0; }
+#compass { flex: none; display: flex; align-items: flex-end; gap: 12px; color: var(--ink); font: 11px var(--mono); }
+#legendbody:not([hidden]) + #compass { border-top: 1px solid color-mix(in srgb, var(--base) 70%, transparent); padding-top: 8px; }
+#compass svg { display: block; flex: none; }
 #scalebar { height: 6px; border: 2px solid var(--ink); border-top: 0; margin-top: 3px; }
 footer { position: fixed; left: 0; right: 0; bottom: 0; height: 30px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-top: 1px solid var(--base); background: color-mix(in srgb, var(--surface) 92%, transparent); font: 11px var(--mono); color: var(--muted); }
 footer .right { display: flex; align-items: center; gap: 10px; font-family: var(--sans); flex: none; white-space: nowrap; }
@@ -177,7 +185,7 @@ footer #source { flex: none; white-space: nowrap; margin-right: 16px; }
 #legendbody .kinds .stop { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--ink2); background: var(--surface); margin-right: 4px; vertical-align: -1px; }
 #legendbody .kinds .badge { display: inline-block; padding: 0 4px; border-radius: 4px; font: 700 9px/13px var(--sans); color: #fff; margin-right: 4px; }
 body[data-picking] canvas#map { cursor: crosshair; }
-@media (max-width: 760px) { .head { max-width: calc(100vw - 20px); } aside#panel { top: auto; bottom: 40px; max-height: 42vh; width: calc(100vw - 28px); } #compass, #legendgroup.card { display: none; } }
+@media (max-width: 760px) { .head { max-width: calc(100vw - 20px); } #side { top: auto; max-height: 42vh; width: calc(100vw - 28px); } #legendgroup.card { display: none; } }
 """
 
 PAGE_JS = r"""(async function () {
@@ -208,6 +216,13 @@ const SB = A.sb || null;
 // grey margin around a ribbon (px at a zoom scale of 1). Without roads, one width and no margin.
 const RT = A.rt || null, TIERS = RT ? META.road_tiers : [1], CASING_PX = RT ? META.road_casings : [0];
 const tierOf = (l) => (RT ? RT[l] : 0);
+// Each link's upstream and downstream node (S306), and its other direction: the link between the same two nodes
+// the other way (-1 for a one-way link). A two-way road is two links on one geometry, each drawn on its own side.
+const NF = A.nf || null, NT = A.nt || null, TWIN = new Int32Array(NL).fill(-1);
+if (NF && NT) {
+  const at = new Map(); for (let l = 0; l < NL; l++) at.set(NF[l] + ":" + NT[l], l);
+  for (let l = 0; l < NL; l++) { const r = at.get(NT[l] + ":" + NF[l]); if (r !== undefined && r !== l) TWIN[l] = r; }
+}
 // The other layers (T-4), each drawn only when its box is ticked.
 const LY = META.layers || {};
 const LAYER_ROWS = [
@@ -280,7 +295,9 @@ if (HAS_TRAFFIC) { const v = []; for (let r = 0; r < RL.length; r++) v.push(RP[r
 function aggregate(b0, b1) {
   const tot = new Float32Array(NL), sec = new Float32Array(NL);
   for (let b = b0; b < b1; b++) for (let r = BS[b]; r < BS[b + 1]; r++) { tot[RL[r]] += RP[r]; sec[RL[r]] += RS[r]; }
-  const span = Math.max(1, b1 - b0) * META.bin_seconds, pos = [];
+  // The hours the volumes are per: the bins asked for within the run's window (S306: "all bins" counted the
+  // hours from midnight, the volumes 3 to 5 times too low).
+  const span = Math.max(1, b1 - Math.max(b0, FIRST)) * META.bin_seconds, pos = [];
   for (let l = 0; l < NL; l++) {
     vol[l] = tot[l] / span * 3600;
     if (tot[l] > 0) { meanT[l] = sec[l] / tot[l]; delay[l] = 1 - Math.min((FF[l] + SW[l]) / Math.max(meanT[l], 1e-6), 1); pos.push(vol[l]); } else { meanT[l] = 0; delay[l] = 0; }
@@ -357,17 +374,15 @@ function resize() {
   DPR = window.devicePixelRatio || 1; W = canvas.clientWidth; H = canvas.clientHeight;
   canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
 }
-// The panel's width over the map: it sits on the right of a wide window.
+// The right column's width over the map (the controls and the legend, S306): on the right of a wide window.
 function panelWidth() { return W > 760 ? 340 : 0; }
 function fitTo(x0, y0, x1, y1, pad) {
-  // Fit into the part of the window the panel, the title above and the footer below leave free (S269: a tall
-  // network ran under both).
+  // Fit into the part of the window the right column, the title above and the footer below leave free (S269: a
+  // tall network ran under both); nothing is reserved on the left (S306).
   const top = 78, bottom = 34;
-  // The legend card at the bottom left (S305) is left free too on a wide window.
-  const card = $("legendgroup"), left = card && !card.hidden && W > 1100 ? card.offsetWidth + 16 : 0;
-  const w = Math.max(x1 - x0, 60), h = Math.max(y1 - y0, 60), reserve = panelWidth() + left;
+  const w = Math.max(x1 - x0, 60), h = Math.max(y1 - y0, 60), reserve = panelWidth();
   S.mpp = Math.max(w / ((W - reserve) * (1 - pad)), h / ((H - top - bottom) * (1 - pad)));
-  S.cx = (x0 + x1) / 2 + (panelWidth() - left) / 2 * S.mpp; S.cy = (y0 + y1) / 2 + (top - bottom) / 2 * S.mpp;
+  S.cx = (x0 + x1) / 2 + reserve / 2 * S.mpp; S.cy = (y0 + y1) / 2 + (top - bottom) / 2 * S.mpp;
 }
 function levelMpp(i) { return Math.max(MIN_MPP, FIT.mpp / Math.pow(3.2, i)); }
 function currentLevel() { let best = 0, bd = 1e9; for (let i = 0; i < LEVELS.length; i++) { const d = Math.abs(Math.log(S.mpp / levelMpp(i))); if (d < bd) { bd = d; best = i; } } return best; }
@@ -377,13 +392,51 @@ function classLimit() { return NL < 5000 ? 16 : S.mpp > 25 ? 5 : S.mpp > 8 ? 9 :
 const sx = (x) => (x - S.cx) / S.mpp + W / 2, sy = (y) => H / 2 - (y - S.cy) / S.mpp;
 
 // ---------------------------------------------------------------- draw ----
-const WFLOOR = 0.9;
-function zoomScale() { return Math.min(2.2, Math.max(0.2, 1.15 * Math.sqrt(2600 / (W * S.mpp)))); }
-function ribbonWidth(l) {
-  const zs = zoomScale();
-  const f = Math.sqrt(Math.min(vol[l], VMAX) / VMAX);
-  return Math.max((0.5 + 5.2 * f) * zs, WFLOOR);
+// ---- the widths, from the room the roads leave on screen (S306) ----
+// ROOM: the screen space (px) each drawn road direction has around it where the roads are dense: the screen is cut
+// into cells of ROOM_CELL px, each cell's length of drawn road directions summed, and the room is 2 x cell area
+// / that length at the cells' 75th percentile (a grid of streets s px apart, two directions each, gives s / 2).
+// Kept in metres from the last still frame, so it scales with the zoom while moving.
+const ROOM_CELL = 128, ROOM_SHARE = 0.25, WFLOOR = 0.9, WCAP = 30;
+let ROOM_M = 0, EXPORTING = false;
+function measureRoom(cand) {
+  const C = ROOM_CELL, nx = Math.ceil(W / C), ny = Math.ceil(H / C), cells = new Float64Array(nx * ny);
+  const lim = Math.min(classLimit(), 13);  // the drivable roads drawn at this zoom: those that carry ribbons
+  for (const l of cand) {
+    if (CLS[l] > lim) continue;
+    for (let v = VS[l]; v < VS[l + 1] - 1; v++) {
+      const ax = sx(X[v]), ay = sy(Y[v]), bx = sx(X[v + 1]), by = sy(Y[v + 1]), d = Math.hypot(bx - ax, by - ay);
+      const n = Math.max(1, Math.ceil(d / (C / 2)));
+      for (let i = 0; i < n; i++) {
+        const t = (i + 0.5) / n, x = ax + (bx - ax) * t, y = ay + (by - ay) * t;
+        if (x >= 0 && y >= 0 && x < W && y < H) cells[Math.floor(y / C) * nx + Math.floor(x / C)] += d / n;
+      }
+    }
+  }
+  const used = []; for (const c of cells) if (c > 0) used.push(c);
+  if (!used.length) return;
+  used.sort((a, b) => a - b);
+  ROOM_M = 2 * C * C / used[Math.floor(0.75 * (used.length - 1))] * S.mpp;
 }
+function roomPx() { return ROOM_M > 0 ? ROOM_M / S.mpp : 40; }
+// The widest ribbon (the 99th percentile's volume): a quarter of the room, so a two-way road at its busiest takes
+// half the space between it and the next road; between 2.5 and WCAP px.
+function ribbonMax() { return Math.max(2.5, Math.min(WCAP, ROOM_SHARE * roomPx())); }
+// The space between a road's two directions (px): each ribbon sits on its own side of the centre line, to the
+// right of its travel, so the two read apart at every zoom (S306: 0.5 px between them read as one ribbon).
+let GAP = 2;  // set by each frame: a fifth of the widest ribbon, 1.5 to 6 px
+function ribbonOffset(l, w) { return GAP / 2 + w / 2; }
+// Whether link l is drawn as a ribbon of road traffic now.
+function hasRibbon(l) { return S.ly.road && HAS_TRAFFIC && vol[l] > 0; }
+// The grey margin (capacity) on a ribbon's outer side only, so it never fills the space between the directions;
+// the major roads' margin is 40 % of the widest ribbon, the other tiers' in proportion.
+const CASING_TOP = Math.max(...CASING_PX) || 1;
+function casingSide(l) { return casingOf(tierOf(l)); }
+function casingOf(tier) { return CASING_PX[tier] / CASING_TOP * 0.4 * ribbonMax(); }
+// A ribbon's width grows linearly with its volume (S306: the square root's range was too small to read): from
+// WFLOOR at no traffic to ribbonMax() at the 99th percentile's volume and above.
+function ribbonWidthOf(f) { const top = ribbonMax(); return WFLOOR + (top - WFLOOR) * f; }
+function ribbonWidth(l) { return ribbonWidthOf(Math.min(vol[l], VMAX) / VMAX); }
 function colourIndex(l) {
   let t;
   if (S.colour === "delay") t = band(delay[l]) / (BANDS.length);
@@ -407,9 +460,12 @@ function offsetLine(n, off) {
     fx[i + 1] = ux; fy[i + 1] = uy;
   }
   for (let i = 0; i < n; i++) {
-    let m = Math.hypot(nx[i], ny[i]), ax = nx[i], ay = ny[i];
+    let m = Math.hypot(nx[i], ny[i]), ax = nx[i], ay = ny[i], k = 1;
     if (m < 0.35) { ax = fx[i]; ay = fy[i]; m = Math.hypot(ax, ay) || 1; }   // a U-turn cancels the normals: keep the last segment's
-    PX[i] += ax / m * off; PY[i] += ay / m * off;
+    // At a bend between two segments, the mitre: as far out as keeps both offset segments `off` from their line
+    // (at most twice `off`), so the two directions of a road stay apart around a corner too (S306).
+    else if (i > 0 && i < n - 1) k = Math.min(2, 2 / m);
+    PX[i] += ax / m * off * k; PY[i] += ay / m * off * k;
   }
 }
 // Screen-space polyline of link l, offset to the driver's right by `off` pixels, thinned to ~`gap` px.
@@ -438,6 +494,8 @@ function draw() {
   const cand = candidates(S.cx - hw - pad, S.cy - hh - pad, S.cx + hw + pad, S.cy + hh + pad);
   const lim = classLimit() - (MOVING ? 3 : 0), gap = MOVING ? 3 : 1.2;
   const showAll = classLimit() >= 16;
+  if (!MOVING && !EXPORTING) measureRoom(cand);  // an export keeps the screen's widths
+  GAP = Math.max(1.5, Math.min(6, ribbonMax() / 5));
   const base = TIERS.map(() => new Path2D()), casings = new Map(), faint = new Path2D(), buckets = new Map();
   const dimming = S.pair >= 0 && S.routes && S.dim;
   for (const l of cand) {
@@ -450,10 +508,10 @@ function draw() {
     }
     addLine(base[tierOf(l)], l, 0, gap); DRAWN++;
     if (S.ly.road && HAS_TRAFFIC && vol[l] > 0 && CLS[l] <= Math.max(lim, 16) && (CLS[l] <= lim || busy)) {
-      const w = ribbonWidth(l), wi = Math.min(31, Math.round(w * 2)), key = colourIndex(l) * 32 + wi;
+      const w = ribbonWidth(l), wi = Math.min(127, Math.round(w * 2)), key = colourIndex(l) * 128 + wi;
       let b = buckets.get(key); if (!b) { b = new Path2D(); buckets.set(key, b); }
-      addLine(b, l, w / 2 + 0.25, gap);
-      if (CASING_PX[tierOf(l)] > 0) { const ck = tierOf(l) * 32 + wi; let c = casings.get(ck); if (!c) { c = new Path2D(); casings.set(ck, c); } addLine(c, l, w / 2 + 0.25, gap); }
+      addLine(b, l, ribbonOffset(l, w), gap);
+      if (CASING_PX[tierOf(l)] > 0) { const ck = tierOf(l) * 128 + wi; let c = casings.get(ck); if (!c) { c = new Path2D(); casings.set(ck, c); } addLine(c, l, ribbonOffset(l, w) + casingSide(l) / 2, gap); }
     }
   }
   ctx.lineCap = "round"; ctx.lineJoin = "round";
@@ -462,13 +520,14 @@ function draw() {
   ctx.strokeStyle = TH.base; for (let t = 0; t < TIERS.length; t++) { ctx.lineWidth = (S.mpp > 6 ? 0.5 : 0.9) * TIERS[t]; ctx.stroke(base[t]); }
   const keys = [...buckets.keys()].sort((a, b) => a - b), tbl = TABLES[S.colour];
   ctx.globalAlpha = dimming ? 0.35 : 1;
-  if (TH.glow) { for (const k of keys) { ctx.strokeStyle = tbl[k >> 5]; ctx.globalAlpha = (dimming ? 0.35 : 1) * 0.14; ctx.lineWidth = (k & 31) / 2 * 2.8 + 1.2; ctx.stroke(buckets.get(k)); } ctx.globalAlpha = dimming ? 0.35 : 1; }
-  else if (!MOVING) { for (const k of keys) { ctx.strokeStyle = TH.surface; ctx.lineWidth = (k & 31) / 2 + 1.4; ctx.stroke(buckets.get(k)); } }
-  // The casing (S302): each ribbon widened by its road's tier, a grey margin = capacity; major roads on top.
-  { const a = ctx.globalAlpha, zs = zoomScale(); ctx.globalAlpha = 1; ctx.strokeStyle = TH.base; ctx.lineCap = "butt";
-    for (const k of [...casings.keys()].sort((x, y) => x - y)) { ctx.lineWidth = (k & 31) / 2 + CASING_PX[k >> 5] * zs; ctx.stroke(casings.get(k)); }
+  if (TH.glow) { for (const k of keys) { const w = (k & 127) / 2; ctx.strokeStyle = tbl[k >> 7]; ctx.globalAlpha = (dimming ? 0.35 : 1) * 0.14; ctx.lineWidth = w + Math.min(w * 1.8, GAP * 0.8); ctx.stroke(buckets.get(k)); } ctx.globalAlpha = dimming ? 0.35 : 1; }
+  else if (!MOVING) { for (const k of keys) { ctx.strokeStyle = TH.surface; ctx.lineWidth = (k & 127) / 2 + 1.4; ctx.stroke(buckets.get(k)); } }
+  // The casing (S302): each ribbon widened on its outer side by its road's tier, a grey margin = capacity; major
+  // roads on top.
+  { const a = ctx.globalAlpha; ctx.globalAlpha = 1; ctx.strokeStyle = TH.base; ctx.lineCap = "butt";
+    for (const k of [...casings.keys()].sort((x, y) => x - y)) { ctx.lineWidth = (k & 127) / 2 + casingOf(k >> 7); ctx.stroke(casings.get(k)); }
     ctx.lineCap = "round"; ctx.globalAlpha = a; }
-  for (const k of keys) { ctx.strokeStyle = tbl[k >> 5]; ctx.lineWidth = (k & 31) / 2; ctx.stroke(buckets.get(k)); }
+  for (const k of keys) { ctx.strokeStyle = tbl[k >> 7]; ctx.lineWidth = (k & 127) / 2; ctx.stroke(buckets.get(k)); }
   ctx.globalAlpha = 1;
   if (!MOVING && S.mpp < 3 && S.ly.road) drawChevrons(cand, lim);
   // The other layers recede while a pair's trips are shown (S305), as the road traffic does.
@@ -485,6 +544,7 @@ function draw() {
   highlight(S.link, TH.ink, 3); if (S.hover !== S.link) highlight(S.hover, TH.ink2, 2);
   highlightItem(S.hoverItem);
   drawScale();
+  document.body.dataset.room = roomPx().toFixed(1); document.body.dataset.wmax = ribbonMax().toFixed(1);
   document.body.dataset.drawms = (performance.now() - t0).toFixed(1); document.body.dataset.drawn = DRAWN; document.body.dataset.level = LEVELS[currentLevel()];
 }
 function flowLine(p, f, i) {
@@ -560,7 +620,7 @@ function drawChevrons(cand, lim) {
   ctx.fillStyle = TH.surface; ctx.globalAlpha = 0.9;
   for (const l of cand) {
     if (!(vol[l] > 0) || CLS[l] > lim) continue;
-    const n = screenLine(l, ribbonWidth(l) / 2 + 0.25, 1.2); if (n < 2) continue;
+    const n = screenLine(l, ribbonOffset(l, ribbonWidth(l)), 1.2); if (n < 2) continue;
     let len = 0; for (let i = 0; i < n - 1; i++) len += Math.hypot(PX[i + 1] - PX[i], PY[i + 1] - PY[i]); if (len < 26) continue;
     const m = (n - 1) >> 1, dx = PX[m + 1] - PX[m], dy = PY[m + 1] - PY[m], d = Math.hypot(dx, dy) || 1, tx = dx / d, ty = dy / d;
     const cx = (PX[m] + PX[m + 1]) / 2, cy = (PY[m] + PY[m + 1]) / 2, s = ribbonWidth(l) * 0.42 + 0.9;
@@ -570,13 +630,20 @@ function drawChevrons(cand, lim) {
 }
 function drawSpill(cand) {
   const p = new Path2D(); let any = false;
-  for (const l of cand) if (SB[l] && addLine(p, l, 0, 0.5)) any = true;
+  for (const l of cand) if (SB[l] && addLine(p, l, hasRibbon(l) ? ribbonOffset(l, ribbonWidth(l)) : 0, 0.5)) any = true;
   if (!any) return;
   ctx.setLineDash([5, 4]); ctx.strokeStyle = TH.surface; ctx.lineWidth = 5; ctx.stroke(p);
   ctx.strokeStyle = TH.ink; ctx.lineWidth = 2.5; ctx.stroke(p); ctx.setLineDash([]);
 }
 function highlight(l, colour, w) {
   if (l < 0) return;
+  // A ribbon is outlined on its own side, so the direction picked shows (S306); a link without one, on its line.
+  if (hasRibbon(l)) {
+    const rw = ribbonWidth(l), p = new Path2D(); if (!addLine(p, l, ribbonOffset(l, rw), 0.5)) return;
+    ctx.lineCap = "butt"; ctx.strokeStyle = colour; ctx.lineWidth = rw + 2 * w; ctx.stroke(p);
+    ctx.strokeStyle = TABLES[S.colour][colourIndex(l)]; ctx.lineWidth = rw; ctx.stroke(p); ctx.lineCap = "round";
+    return;
+  }
   const p = new Path2D(); if (!addLine(p, l, 0, 0.5)) return;
   ctx.strokeStyle = TH.surface; ctx.lineWidth = w + 3; ctx.stroke(p); ctx.strokeStyle = colour; ctx.lineWidth = w; ctx.stroke(p);
 }
@@ -592,13 +659,16 @@ function legColour(g, o) {
   return TH.modes[2];
 }
 function kindColour(line) { const k = KIND_NAMES.indexOf(TR.line_kinds[line]); return TH.kinds[k >= 0 ? k : 5]; }
-// A leg's points in metres: along its links, its line's stops, or straight between two places.
+// A leg's points in metres: along its links, its line's stops, or straight between two places. A walk to, from or
+// between stops, docks and parkings runs from the place it leaves, along its links, to the place it reaches.
 function legPoints(g) {
   const k = A.lk[g], out = [];
   if (k === LEG.drive || k === LEG.bike || k === LEG.walk) {
     const G = k === LEG.drive ? { vs: VS, xs: X, ys: Y } : GEO[k === LEG.bike ? "bike" : "walk"];
     if (!G) return out;
     let wx = NaN, wy = NaN;
+    const at = (pt) => { if (pt !== NONE) { out.push(A.ptx[pt] * 0.1, A.pty[pt] * 0.1); wx = out[out.length - 2]; wy = out[out.length - 1]; } };
+    at(A.lpa[g]);
     for (let i = A.la[g]; i < A.lb[g]; i++) {
       const l = A.pl[i];
       for (let v = G.vs[l]; v < G.vs[l + 1]; v++) {
@@ -606,6 +676,7 @@ function legPoints(g) {
         out.push(G.xs[v], G.ys[v]); wx = G.xs[v]; wy = G.ys[v];
       }
     }
+    at(A.lpb[g]);
   } else if (k === LEG.ride) { for (let i = A.la[g]; i < A.lb[g]; i++) { const st = A.pst[i]; out.push(A.tsx[st] * 0.1, A.tsy[st] * 0.1); } }
   else if (k === LEG.connect && A.la[g] !== NONE) out.push(A.ptx[A.la[g]] * 0.1, A.pty[A.la[g]] * 0.1, A.ptx[A.lb[g]] * 0.1, A.pty[A.lb[g]] * 0.1);
   return out;
@@ -656,18 +727,25 @@ function drawTrips() {
   let most = 1; for (const o of opts) most = Math.max(most, A.on[o]);
   // The order drawn: nobody's routes first, the most travelled last, the hovered on top.
   opts.sort((a, b) => (a === S.hoverOpt) - (b === S.hoverOpt) || A.on[a] - A.on[b]);
-  // Options on the same network side by side: each family's k-th option moved k steps to the right.
-  const fam = new Map(); let fr = 0, fb = 0, fw = 0, ft = 0;
+  // Each option's width grows linearly with its travellers (S306), the widest a quarter of the room the roads leave
+  // on screen (as the ribbons'), 4 to 16 px; a route nobody took 1.6 px.
+  const room = roomPx(), top = Math.max(4, Math.min(16, 0.25 * room));
+  const width = (o) => (A.on[o] > 0 ? 1.5 + (top - 1.5) * A.on[o] / most : 1.6);
+  // Options on the same network side by side, the most travelled nearest the line, each beside the one before by
+  // its own width and 1.5 px (S306: fixed steps let a wide option cover its neighbours); all of them within a third
+  // of the room (16 px at least), narrower in proportion if not.
+  const fam = new Map(), acc = { r: 0, b: 0, w: 0, t: 0 };
   for (const o of [...opts].sort((a, b) => A.on[b] - A.on[a] || a - b)) {
-    let r = 0, b = 0, w = 0, t = 0;
-    for (let g = A.ol[o]; g < A.ol[o + 1]; g++) { const k = A.lk[g]; if (k === LEG.drive) r = 1; else if (k === LEG.bike) b = 1; else if (k === LEG.walk) w = 1; else if (k === LEG.ride) t = 1; }
-    fam.set(o, { r: r ? fr++ : 0, b: b ? fb++ : 0, w: w ? fw++ : 0, t: t ? ft++ : 0 });
+    const uses = { r: 0, b: 0, w: 0, t: 0 }, f = { r: 0, b: 0, w: 0, t: 0 };
+    for (let g = A.ol[o]; g < A.ol[o + 1]; g++) { const k = A.lk[g]; if (k === LEG.drive) uses.r = 1; else if (k === LEG.bike) uses.b = 1; else if (k === LEG.walk) uses.w = 1; else if (k === LEG.ride) uses.t = 1; }
+    for (const x in uses) if (uses[x]) { f[x] = acc[x] + width(o) / 2 + 1; acc[x] += width(o) + 1.5; }
+    fam.set(o, f);
   }
-  const most_f = Math.max(fr, fb, fw, ft, 1), step = Math.min(4.2, 15 / most_f);
+  const fit = Math.min(1, Math.max(16, 0.35 * room) / Math.max(acc.r, acc.b, acc.w, acc.t, 1));
   const badges = [], stops = [], parks = [];
   for (const o of opts) {
     const hl = S.hoverOpt === o, dim = S.hoverOpt >= 0 && !hl, unused = !(A.on[o] > 0);
-    const w = unused ? 1.6 : Math.min(2 + 5 * Math.sqrt(A.on[o] / most), step * 1.6 + 1.5) + (hl ? 1.2 : 0), f = fam.get(o);
+    const w = Math.max(1.2, width(o) * fit) + (hl ? 1.2 : 0), f = fam.get(o);
     ctx.globalAlpha = dim ? 0.16 : 1;
     // From the door to where the journey meets its network, and from there to the door, when they are apart:
     // a thin dotted straight line (S305).
@@ -684,11 +762,11 @@ function drawTrips() {
       if (k === LEG.park) { if (prevEnd) parks.push({ at: prevEnd, dim }); continue; }
       const pts = LEGPTS.get(g); if (!pts || pts.length < 4) continue;
       const fi = k === LEG.drive ? f.r : k === LEG.bike ? f.b : k === LEG.walk ? f.w : k === LEG.ride ? f.t : 0;
-      const sp = screenPath(pts, k === LEG.connect ? 0 : (fi + 0.5) * step); if (sp.n < 2) continue;
+      const sp = screenPath(pts, k === LEG.connect ? 0 : fi * fit); if (sp.n < 2) continue;
       const c = legColour(g, o), dotted = k === LEG.walk || k === LEG.connect;
       if (dotted) {
-        // A walk along its streets as wide as the option; a walk to or from a stop (straight: its streets
-        // are not stored) thinner.
+        // A walk along its streets as wide as the option; one the walk network has no path for (straight)
+        // thinner.
         const ww = k === LEG.connect ? 2.6 : Math.max(w, 2.6);
         ctx.lineCap = "round"; ctx.setLineDash([0.1, ww + 2.6]);
         ctx.strokeStyle = TH.surface; ctx.lineWidth = ww + 2.2; ctx.stroke(sp.path);
@@ -756,21 +834,27 @@ function drawScale() {
 }
 
 // ---------------------------------------------------------- interaction ----
-function distToLink(l, mx, my) {
+// The distance (m) from (mx, my) to link l's line moved `off` metres to the right of its travel (S306: each
+// direction of a two-way road is picked on its own side).
+function distToLink(l, mx, my, off) {
   let best = Infinity;
   for (let v = VS[l]; v < VS[l + 1] - 1; v++) {
-    const ax = X[v], ay = Y[v], bx = X[v + 1], by = Y[v + 1], dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+    let ax = X[v], ay = Y[v], bx = X[v + 1], by = Y[v + 1]; const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+    if (off && L > 0) { const m = Math.sqrt(L), nx = dy / m * off, ny = -dx / m * off; ax += nx; ay += ny; bx += nx; by += ny; }
     let t = L > 0 ? ((mx - ax) * dx + (my - ay) * dy) / L : 0; t = Math.max(0, Math.min(1, t));
     const d = Math.hypot(mx - (ax + t * dx), my - (ay + t * dy)); if (d < best) best = d;
   }
   return best;
 }
 function pick(px, py) {
-  const mx = S.cx + (px - W / 2) * S.mpp, my = S.cy - (py - H / 2) * S.mpp, tol = 7 * S.mpp;
-  let best = -1, bd = tol; const lim = classLimit();
-  for (const l of candidates(mx - tol, my - tol, mx + tol, my + tol)) {
+  const mx = S.cx + (px - W / 2) * S.mpp, my = S.cy - (py - H / 2) * S.mpp;
+  // A ribbon is picked anywhere on it or within a few px of its edge; a bare line within 7 px.
+  let best = -1, bd = Infinity; const lim = classLimit(), reach = (7 + (HAS_TRAFFIC ? GAP / 2 + ribbonWidthOf(1) : 0)) * S.mpp;
+  for (const l of candidates(mx - reach, my - reach, mx + reach, my + reach)) {
     if (CLS[l] > lim && !(vol[l] > 0)) continue; if (CLS[l] >= 14 && S.mpp > 2.5) continue;
-    const d = distToLink(l, mx, my); if (d < bd) { bd = d; best = l; }
+    const ribbon = hasRibbon(l), w = ribbon ? ribbonWidth(l) : 0;
+    const d = distToLink(l, mx, my, ribbon ? ribbonOffset(l, w) * S.mpp : 0) - (ribbon ? w / 2 * S.mpp : 0);
+    if (d < bd && d < (ribbon ? 4 : 7) * S.mpp) { bd = d; best = l; }
   }
   return best;
 }
@@ -859,6 +943,8 @@ function tip(l, ev) {
   const t = $("tip");
   if (l < 0) { t.hidden = true; return; }
   const rows = [["Class", CLASSES[CLS[l]] + " · " + LEN[l].toFixed(0) + " m"]];
+  if (NF) rows.push(["Direction", "from node " + NF[l] + " to node " + NT[l]]);
+  if (TWIN[l] >= 0) rows.push(["Other direction", "link " + TWIN[l] + (HAS_TRAFFIC ? ", " + fmt(vol[TWIN[l]]) + " PCU/h" : "")]);
   if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " PCU/h"]); if (vol[l] > 0) { rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]); rows.push(["Mean time", meanT[l].toFixed(1) + " s (free flow " + (FF[l] + SW[l]).toFixed(1) + " s" + (SW[l] > 0 ? ", the signal's mean wait of " + SW[l].toFixed(1) + " s included" : "") + ")"]); } }
   if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " PCU/h" + (SG[l] ? " at its signal" : "") + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used)" : "")]);
   if (HAS_ROUTES) { let n = 0; for (let i = LOPT_START[l]; i < LOPT_START[l + 1]; i++) n += A.on[LOPTS[i]]; if (n) rows.push(["Trips shown", fmt(n) + " travellers drive on it (click for their pairs)"]); }
@@ -982,7 +1068,7 @@ function selectLink(l) {
   S.link = l; const box = $("linkinfo");
   if (l < 0) { box.hidden = true; redraw(false); writeHash(); return; }
   box.hidden = false;
-  let h = "<b>link " + l + "</b> · " + CLASSES[CLS[l]] + " · " + LEN[l].toFixed(0) + " m";
+  let h = "<b>link " + l + "</b> · " + CLASSES[CLS[l]] + " · " + LEN[l].toFixed(0) + " m" + (NF ? "<div>from node " + NF[l] + " to node " + NT[l] + "</div>" : "");
   if (HAS_ROUTES) {
     const os = LOPTS.subarray(LOPT_START[l], LOPT_START[l + 1]), byPair = new Map();
     for (const o of os) if (A.on[o] > 0) byPair.set(OPT_PAIR[o], (byPair.get(OPT_PAIR[o]) || 0) + A.on[o]);
@@ -1034,7 +1120,7 @@ function renderLegend() {
   const parts = [];
   if (HAS_ROUTES && S.pair >= 0 && S.routes) {
     parts.push('<div class="lg"><h3>Trips between two places</h3><div class="kinds">' + tripLegendItems().map(([name, c, st]) => "<span>" + line(c, st) + name + "</span>").join("") +
-      '</div><div class="kinds"><span><em class="mkr">A</em>origin</span><span><em class="mkr">B</em>destination</span><span><em class="stop"></em>stop</span><span><em class="badge" style="background:' + (TR.lines.length ? kindColour(0) : TH.kinds[1]) + '">' + escHtml(TR.lines[0] || "M1") + '</em>line</span><span><em class="mkr" style="border-radius:2px">P</em>parking</span></div><div class="note">width = travellers; a walk to or from a stop is drawn straight; dashed: a car route nobody took</div></div>');
+      '</div><div class="kinds"><span><em class="mkr">A</em>origin</span><span><em class="mkr">B</em>destination</span><span><em class="stop"></em>stop</span><span><em class="badge" style="background:' + (TR.lines.length ? kindColour(0) : TH.kinds[1]) + '">' + escHtml(TR.lines[0] || "M1") + '</em>line</span><span><em class="mkr" style="border-radius:2px">P</em>parking</span></div><div class="note">width = travellers; dashed: a car route nobody took</div></div>');
   }
   if (HAS_TRAFFIC && S.ly.road) {
     const r = roadLegend();
@@ -1048,9 +1134,8 @@ function renderLegend() {
   if (S.ly.walk && FLOWS.walk) parts.push('<div class="lg"><h3>Walkers</h3><div class="kinds"><span>' + line(TH.modes[2], "dot") + 'walkers</span></div><div class="note">width = walkers; faint = the walk network</div></div>');
   if (S.ly.parking && LY.parking) parts.push('<div class="lg"><h3>Parkings</h3><div class="kinds"><span><b></b>car</span><span><b class="ci"></b>bike</span></div><div class="bar" style="background:linear-gradient(90deg,' + TABLES.delay.join(",") + ')"></div><div class="ends"><span>empty</span><span>full</span></div><div class="note">size = capacity; colour = busiest share in use</div></div>');
   $("legendbody").innerHTML = parts.join("");
-  $("legendgroup").hidden = parts.length === 0;
-  // The compass and the scale sit above the legend card (S305), both at the bottom left.
-  $("compass").style.bottom = (parts.length ? 40 + $("legendgroup").offsetHeight + 8 : 40) + "px";
+  // The card always holds the compass and the scale (S306), the legend above them when a layer is on.
+  $("legendbody").hidden = parts.length === 0;
 }
 function writeHash() {
   const p = new URLSearchParams(); p.set("t", S.theme); p.set("c", S.colour);
@@ -1129,8 +1214,8 @@ const HEAD = 64, FOOT = 46;
 // scale, instead of sitting left of centre beside an empty band where the panel was (R-10).
 function viewWithMoving(drawInto) {
   const moving = MOVING, hover = S.hover, item = S.hoverItem, cx = S.cx; MOVING = false; S.hover = -1; S.hoverItem = null;
-  S.cx -= panelWidth() / 2 * S.mpp;
-  try { drawInto(); } finally { MOVING = moving; S.hover = hover; S.hoverItem = item; S.cx = cx; }
+  S.cx -= panelWidth() / 2 * S.mpp; EXPORTING = true;
+  try { drawInto(); } finally { MOVING = moving; S.hover = hover; S.hoverItem = item; S.cx = cx; EXPORTING = false; }
 }
 // Where an export's mark goes: before the wordmark (right-aligned at W - 16, baseline y + 20, bold
 // 11 px), as measured in the viewer's font, and centred on its lowercase body (an "x"'s height).

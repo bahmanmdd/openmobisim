@@ -189,6 +189,11 @@ def _default(group: str, name: str, value: float) -> str:
     )
 
 
+def _per_class_bpr(group: str, name: str) -> bool:
+    """A road class's own volume-delay parameter of ``loading_options`` (S306)."""
+    return group == "loading" and name.endswith((".bpr_alpha", ".bpr_beta"))
+
+
 def generate() -> str:
     rows: dict[str, list[tuple[str, float]]] = {}
     for group, _argument, name, value in _core.parameter_rows():
@@ -205,7 +210,9 @@ def generate() -> str:
     names = "".join(f'    "{cls}",\n' for cls in classes)
     out = [HEADER.format(names=names)]
     for group, cls, argument, what in CLASSES:
-        fields = sorted(rows[group])
+        # A road class's own BPR pair (``motorway.bpr_alpha``) is given in the dict form of
+        # ``loading_options`` (or ``run.toml``'s ``[loading]``), not as a field.
+        fields = sorted((n, v) for n, v in rows[group] if not _per_class_bpr(group, n))
         link_classes = sorted({n.split(".")[0] for n, _ in fields if "." in n})
         fields = [(n, v) for n, v in fields if "." not in n]
         lines = [f"\n\nclass {cls}(_Options):"]
@@ -292,7 +299,11 @@ def test_the_options_classes_are_the_core_s_parameter_table() -> None:
 
     table = ms.parameters()
     for group, cls, argument, _ in CLASSES:
-        listed = {n for g, n in zip(table["group"], table["name"], strict=True) if g == group}
+        listed = {
+            n
+            for g, n in zip(table["group"], table["name"], strict=True)
+            if g == group and not _per_class_bpr(g, n)
+        }
         klass = getattr(options, cls)
         link_classes = getattr(klass, "_link_classes", ())
         fields = {n for n in klass._defaults if n not in link_classes}

@@ -445,6 +445,10 @@ pub struct PyRunSummary {
     /// Trips whose mode this run cannot simulate.
     #[pyo3(get)]
     pub mode_not_available: u32,
+    /// In a run with a service, the trips whose taxi request was cancelled in its service day
+    /// (the trip ends there); `None` in a run without one.
+    #[pyo3(get)]
+    pub cancelled: Option<u32>,
     /// The outcomes by mode, for each mode that has trips: a dict of the
     /// completion counts and `total_travel_time_s`.
     #[pyo3(get)]
@@ -1842,6 +1846,8 @@ pub fn run_pipeline(
         .as_ref()
         .map_or((0, f64::NAN), |it| (it.replanned, it.return_mismatch_s));
     let completion_by_mode = PyDict::new(py);
+    // A run with a service counts its cancelled taxi requests (S306).
+    let service = result.services.is_some() || result.taxis.is_some();
     // The modes, and "none": the trips that chose and had no mode to choose (S269).
     let rows = Mode::ALL
         .iter()
@@ -1855,6 +1861,9 @@ pub fn run_pipeline(
         row.set_item("total_trips", m.completion.total_trips)?;
         row.set_item("completed", m.completion.completed)?;
         row.set_item("truncated", m.completion.truncated)?;
+        if service {
+            row.set_item("cancelled", m.completion.cancelled)?;
+        }
         row.set_item("no_vehicle_available", m.completion.no_vehicle_available)?;
         row.set_item("no_feasible_path", m.completion.no_feasible_path)?;
         row.set_item("mode_not_available", m.completion.mode_not_available)?;
@@ -1862,6 +1871,9 @@ pub fn run_pipeline(
         row.set_item("people", m.weighted_trips)?;
         row.set_item("completed_people", m.weighted_completed)?;
         row.set_item("truncated_people", m.weighted_truncated)?;
+        if service {
+            row.set_item("cancelled_people", m.weighted_cancelled)?;
+        }
         row.set_item("not_run_people", m.weighted_not_run)?;
         completion_by_mode.set_item(name, row)?;
     }
@@ -2070,6 +2082,7 @@ pub fn run_pipeline(
         link_bins_bike_path,
         link_bins_walk_path,
         mode_not_available: result.completion.mode_not_available,
+        cancelled: service.then_some(result.completion.cancelled),
         completion_by_mode: completion_by_mode.unbind(),
         route_choices: route_choices_py,
         route_sets: result
@@ -2161,6 +2174,20 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
         openmobisim_core_graph::network_options::NetworkDefaults::shipped().values(),
     );
     push("loading", "loading_options", LoadingOptions::SHIPPED.values());
+    // Each road class's own volume-delay pair (S306): `<class>.bpr_alpha`, `<class>.bpr_beta`, at
+    // the pair for every class unless given.
+    let shipped = LoadingOptions::SHIPPED.bpr;
+    let per_class = openmobisim_core_sim::loading_rules::BPR_CLASSES
+        .iter()
+        .flat_map(|&class| {
+            let i = class as usize;
+            [
+                (format!("{}.bpr_alpha", class.as_str()), shipped.alpha[i]),
+                (format!("{}.bpr_beta", class.as_str()), shipped.beta[i]),
+            ]
+        })
+        .collect();
+    push("loading", "loading_options", per_class);
     push("modes", "mode_options", owned(ModeDefaults::SHIPPED.values()));
     push("transit", "transit_options", owned(TransitDefaults::SHIPPED.values()));
     push("parking", "parking_options", owned(ParkingDefaults::SHIPPED.values()));
@@ -2196,6 +2223,10 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
                 f64::from(openmobisim_core_sim::route_update::DEFAULT_TREE_STEP_S),
             ));
         }
+        // The same for the iteration the sets stop growing after (S306): 0, every iteration.
+        if name == "least_cost" && !values.iter().any(|(n, _)| n == "until_iteration") {
+            values.push(("until_iteration".to_string(), 0.0));
+        }
         push(&format!("route_update.{name}"), "route_update_options", values);
     }
     for name in crate::choice::choice_models() {
@@ -2212,11 +2243,25 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
     // The services (S302, S303): their options, what travellers assume, the built-in policies'
     // parameters (S304).
     use openmobisim_core_sim::services::{DockDefaults, ServiceAssumptions, TaxiDefaults};
-    push("service.bike_docked", "options", owned(DockDefaults::SHIPPED.values()));
-    push("service.taxi", "options", owned(TaxiDefaults::SHIPPED.values()));
+    // `log_events` (S306): a switch of what the day keeps, not of what it simulates, so not among
+    // the values a run's fingerprint holds; 1 by default.
+    let logged = |on: bool, mut values: Vec<(String, f64)>| {
+        values.push(("log_events".to_string(), if on { 1.0 } else { 0.0 }));
+        values
+    };
+    push(
+        "service.bike_docked",
+        "options",
+        logged(DockDefaults::SHIPPED.log_events, owned(DockDefaults::SHIPPED.values())),
+    );
+    push(
+        "service.taxi",
+        "options",
+        logged(TaxiDefaults::SHIPPED.log_events, owned(TaxiDefaults::SHIPPED.values())),
+    );
     push("service_assumptions", "service_assumptions", owned(ServiceAssumptions::SHIPPED.values()));
     push("service_prices", "price_options", owned(Prices::SHIPPED.service_values(true, true)));
-    for name in ["reset", "threshold", "charge_rule"] {
+    for name in ["noop", "reset", "threshold", "charge_rule"] {
         let p = openmobisim_core_sim::services::policy::policy_builtin(name, &none)
             .map_err(PyValueError::new_err)?;
         push(&format!("policy.{name}"), "policy_options", p.describe().parameters);

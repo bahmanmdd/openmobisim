@@ -207,12 +207,18 @@ def test_the_kpi_rows_are_the_trips(run: ms.Run) -> None:
     service = np.asarray(t["service_outcome"])
     assert (service[share] != "").all() and (service[~share] == "").all()
     assert (service[share] == "cancelled").sum() == (outcome == "cancelled").sum()
-    # Under the service's mode, the rows of its trips' choice only: how they went is the
-    # service day's (the rows above), not the planned trips' (S305).
-    mode = {r["metric"] for r in k if r["mode"] == "bike_share" and r["metric"] not in DOCK_ROWS}
-    planned = {"completed_trips", "completed_people", "completion_rate", "truncated_trips"}
-    assert not (planned | {"total_travel_time_s"}) & mode, mode
-    assert {"trips", "people", "mode_share", "no_feasible_path_trips"} <= mode
+    # Under the service's mode, its trips as the service day gave them (S306): a traveller who
+    # found no bike walked on and arrived, so every trip that ended by the window's end counts.
+    mode = {
+        r["metric"]: r["value"]
+        for r in k
+        if r["mode"] == "bike_share" and r["metric"] not in DOCK_ROWS
+    }
+    arrived = share & np.isfinite(np.asarray(t["service_arrival_s"], dtype=float))
+    assert mode["completed_trips"] == arrived.sum()
+    assert mode["completed_trips"] == pytest.approx(rows["rides"] + rows["no_bike"])
+    assert mode["cancelled_trips"] == 0, "a shared-bike trip is never cancelled: it walks on"
+    assert {"trips", "people", "mode_share", "no_feasible_path_trips"} <= set(mode)
 
 
 def test_the_log_can_be_turned_off(tmp_path: Path) -> None:

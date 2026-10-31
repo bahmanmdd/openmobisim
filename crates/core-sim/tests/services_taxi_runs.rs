@@ -289,8 +289,14 @@ fn a_request_no_taxi_can_pick_up_in_time_is_cancelled_and_ends_there_with_no_wal
     let sm = day.summary;
     assert_eq!((sm.requests, sm.cancelled, sm.rides, sm.unfinished), (1.0, 1.0, 0.0, 0.0));
     assert!(sm.waiting_mean_s.is_nan() && sm.waiting_p90_s.is_nan(), "no ride to average");
-    // The trip row shows the planned trip: completed at its departure plus its planned time.
-    assert_eq!(result.by_mode[Mode::Taxi.index()].completion.completed, 1);
+    // The run's counts follow the service day (S306): the trip is cancelled, not completed,
+    // and adds no travel time.
+    let taxi = &result.by_mode[Mode::Taxi.index()];
+    assert_eq!((taxi.completion.completed, taxi.completion.cancelled), (0, 1));
+    assert_eq!((result.completion.completed, result.completion.cancelled), (0, 1));
+    assert!((taxi.weighted_cancelled - 1.0).abs() < 1e-12 && taxi.weighted_completed == 0.0);
+    assert!(result.total_travel_time.get().abs() < 1e-9, "{}", result.total_travel_time.get());
+    // The trip's event shows the planned trip: completed at its departure plus its planned time.
     let planned = (100.0_f64 + day.legs[0].planned_s).floor();
     let done = result.events.iter().find(|e| e.entity_id == 0).expect("the trip's event");
     assert_eq!(f64::from(done.second.get()), planned);

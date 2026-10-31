@@ -353,6 +353,10 @@ def map_interactive(
     blob.add("dx", delta[:, 0], "i32")
     blob.add("dy", delta[:, 1], "i32")
     blob.add("cls", network.link_class()[keep], "u8")
+    # Each link's upstream and downstream node (S306): the hover names a link's direction, and the
+    # page finds a two-way road's other direction from them.
+    blob.add("nf", np.asarray(network.link_from())[keep], "u32")
+    blob.add("nt", np.asarray(network.link_to())[keep], "u32")
     # The road hierarchy (S302): each link's tier, from its capacity (none without roads).
     tier = road_tier(network)
     if tier is not None:
@@ -412,9 +416,11 @@ def map_interactive(
         journeys = run.itinerary_journeys() if given is None else None
         if journeys is not None:
             taken = {m for m in journeys["mode"] if m is not None}
+            shared = {"bike_share", "bike_share_transit"}
+            by_transit = {"transit", "car_transit", "bike_transit", "bike_share_transit"}
             for name, modes in (
-                ("bike", {"bike", "bike_transit", "bike_share", "bike_share_transit"}),
-                ("walk", {"walk"}),
+                ("bike", {"bike", "bike_transit"} | shared),
+                ("walk", {"walk"} | shared | by_transit),  # walks to stops and docks too
             ):
                 if name not in layer_index and taken & modes:
                     found = _layer_geometry(blob, network, name, lon0, lat0, box)

@@ -288,6 +288,11 @@ pub struct BestResponse {
     /// pair per iteration, which costs more than the trees wherever pairs share origins), and the
     /// run bins the gaps' trees by the cost bin.
     pub tree_step_s: u32,
+    /// The last iteration whose routes the update adds (0: every iteration). After it, the sets
+    /// stay as they are and the remaining loadings settle the choices among them: a route
+    /// added late is chosen only by the few that choose again and moves the queues the gap is
+    /// measured on (S306). The gaps still read the network's best route.
+    pub until_iteration: u32,
 }
 
 impl Default for BestResponse {
@@ -297,12 +302,14 @@ impl Default for BestResponse {
             max_routes: DEFAULT_MAX_ROUTES,
             slack: DEFAULT_SLACK,
             tree_step_s: DEFAULT_TREE_STEP_S,
+            until_iteration: 0,
         }
     }
 }
 
 impl BestResponse {
-    const OPTIONS: [&'static str; 4] = ["max_routes", "searches", "slack", "tree_step_s"];
+    const OPTIONS: [&'static str; 5] =
+        ["max_routes", "searches", "slack", "tree_step_s", "until_iteration"];
 
     /// Make the update from its options, defaults for those not given.
     ///
@@ -334,6 +341,7 @@ impl BestResponse {
             match option.as_str() {
                 "searches" => m.searches = whole(option, v, 1, 16)?,
                 "tree_step_s" => m.tree_step_s = whole(option, v, 0, 86_400)?,
+                "until_iteration" => m.until_iteration = whole(option, v, 0, 100_000)?,
                 "slack" => {
                     if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
                         return Err(RouteUpdateError::BadOption {
@@ -374,12 +382,24 @@ impl RouteUpdate for BestResponse {
 
     fn descriptor(&self) -> String {
         format!(
-            "best_response;max_routes={};searches={};slack={};tree_step_s={}",
-            self.max_routes, self.searches, self.slack, self.tree_step_s
+            "best_response;max_routes={};searches={};slack={};tree_step_s={}{}",
+            self.max_routes,
+            self.searches,
+            self.slack,
+            self.tree_step_s,
+            // Only when set: the default's descriptor, and so every fingerprint, as before.
+            if self.until_iteration > 0 {
+                format!(";until_iteration={}", self.until_iteration)
+            } else {
+                String::new()
+            }
         )
     }
 
     fn update(&self, cx: &UpdateContext<'_>) -> Additions {
+        if self.until_iteration > 0 && cx.iteration > self.until_iteration {
+            return Additions::default();
+        }
         if self.tree_step_s > 0 {
             let step = f64::from(self.tree_step_s);
             // The run's shared trees, binned by this step; the update's own if the run built

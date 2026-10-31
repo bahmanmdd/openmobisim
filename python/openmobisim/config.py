@@ -260,227 +260,17 @@ _INTEGERS = {
 }
 _TEXTS = {"outputs", "design_id", "bike_cost", "bike_route_choice", "transit_date"}
 
-#: One clause per parameter for the file's comments, by ``table.key`` (a service's as
-#: ``services.<kind>.key``), else by ``key``. ``test_config`` checks every parameter has one.
-_MEANING: dict[str, str] = {
-    # run
-    "flow_level": "how vehicles load the network: 0 free flow, 1 static, 2 the point queue, 3 a "
-    "spatial queue, 4 the full link transmission model",
-    "flow_step_s": "the loading's time step at flow levels 2 to 4",
-    "window": "the simulation window: its start and end as clock times",
-    "default_weight": "how many people one simulated traveller stands for, where a trip gives none",
-    "master_seed": "the seed of every random draw",
-    "hub_join_m": "how far a parking may be from a stop to join its hub in the outputs (not in "
-    "the fingerprint)",
-    # choice
-    "choice_detour_limit": "a route is offered only if at most this share slower than the best",
-    "choice_max_routes": "the most routes a traveller is offered (0: every route within the limit)",
-    "model": "how each trip picks an alternative: logit, nested_logit, deterministic or a "
-    "registered model",
-    "beta_time_min": "weighs the expected time, door to door",
-    "beta_wait_min": "weighs minutes waiting at stops, on top of the time",
-    "beta_walk_min": "weighs minutes walking, on top of the time",
-    "beta_cost_eur": "weighs what an alternative costs",
-    "beta_transfers": "weighs each change of vehicle",
-    "beta_ln_path_size": "weighs the logarithm of the path-size factor: routes sharing links "
-    "split their share",
-    "beta_bike_mixed_km": "weighs each km of a bike leg in mixed traffic, on top of its time",
-    "beta_length_km": "weighs a route's length",
-    "beta_detour": "weighs an alternative's time over the best alternative's, minus one",
-    "beta_overlap": "weighs a route's largest share of cost shared with an earlier route",
-    "beta_n_links": "weighs a route's number of links",
-    "beta_car_min": "weighs minutes driving",
-    "beta_bike_min": "weighs minutes riding a bike",
-    "beta_ride_min": "weighs minutes on board transit vehicles",
-    "beta_parking_min": "weighs minutes parking or fetching a car or bike",
-    "beta_bike_separated_km": "weighs a bike leg's km on separate tracks",
-    "beta_bike_lane_km": "weighs a bike leg's km on painted lanes or cycle streets",
-    "beta_walk_access_min": "weighs minutes walking to the first stop",
-    "beta_walk_egress_min": "weighs minutes walking from the last stop",
-    "beta_walk_transfer_min": "weighs minutes walking between stops in a change",
-    "beta_wait_first_min": "weighs minutes waiting at the first stop",
-    "beta_wait_transfer_min": "weighs minutes waiting at changes",
-    "beta_ride_rail_min": "weighs minutes on board rail services",
-    "beta_ride_metro_min": "weighs minutes on board metro services",
-    "beta_ride_tram_min": "weighs minutes on board trams",
-    "beta_ride_bus_min": "weighs minutes on board buses",
-    "beta_ride_ferry_min": "weighs minutes on board ferries",
-    "beta_ride_other_min": "weighs minutes on board other transit services",
-    "beta_cost_running_eur": "weighs a car or bike leg's running cost",
-    "beta_cost_toll_eur": "weighs a car leg's tolls",
-    "beta_cost_parking_eur": "weighs the parking fee",
-    "beta_cost_fare_eur": "weighs a transit journey's fare",
-    "beta_trip_departure_h": "weighs the departure hour (alone it changes no probability)",
-    "mu": "the nested logit's nest scale, above 0 and at most 1 (nested_logit only)",
-    # modes
-    "modes.walk_max_s": "the longest walk offered to a trip choosing its mode",
-    "bike_max_s": "the longest bike ride offered to a trip choosing its mode",
-    "fallback_car": "1: a trip with no alternative at all travels by car (experimental)",
-    "car_access_s": "from the door to the car, setting off",
-    "car_egress_s": "from the parked car to the door",
-    "bike_access_s": "from the door to the bike, unlocked",
-    "bike_egress_s": "from the parked bike to the door",
-    "car_snap_motorway_m": "how close to a motorway-only node a trip's end must be to join the "
-    "roads there",
-    # prices
-    "car_eur_km": "what driving costs per km (fuel)",
-    "bike_eur_km": "what riding one's own bike costs per km",
-    "fare_base_eur": "a transit journey's fare, once per journey",
-    "fare_km_eur": "a transit fare per km ridden, as the crow flies",
-    "fare_transfer_eur": "a transit fare per change of vehicle",
-    "parking_car_eur": "a car park's fee per stay, where its table gives none",
-    "parking_bike_eur": "a bike parking's fee per stay, where its table gives none",
-    "bike_share_eur_per_ride": "a shared bike's fare per ride",
-    "bike_share_eur_per_min": "a shared bike's fare per minute ridden",
-    "taxi_eur_per_ride": "a taxi's fare per ride",
-    "taxi_eur_per_km": "a taxi's fare per km",
-    # services
+#: The file's own keys that are not parameters of the registry: a service's ``kind`` and tables, and
+#: the choice table's method. Every parameter's meaning is the registry's (``parameters()``'s
+#: ``meaning``, one copy in the package's ``data/parameters.csv``).
+_FILE_KEYS = {
     "kind": '"taxi", an electric taxi fleet, or "bike_docked", docked bike sharing',
     "docks": "the docks: dock_id, lon, lat, capacity (name, hub_id, bikes optional)",
     "vehicles": "the vehicles: vehicle_id, lon, lat (soc optional)",
     "chargers": "the chargers: charger_id, lon, lat, plugs (kw, hub_id optional); none: they "
     "never charge",
-    "services.bike_docked.walk_max_s": "the longest walk to a dock, or from one to the destination",
-    "services.bike_docked.candidates": "the most dock pairs a trip chooses among",
-    "services.bike_docked.snap_m": "the farthest a dock may be from its layers' nearest node",
-    "redirect_max": "the most other docks a traveller tries when theirs is empty or full",
-    "redirect_max_m": "how far from the planned dock a traveller looks for another",
-    "pickup_s": "the time to take a bike from a dock",
-    "return_s": "the time to dock a bike",
-    "ride_factor": "a shared bike's ride time over the bike layer's (below 1: e-bikes)",
-    "start_share": "the share of a dock's slots holding a bike when the day starts, where its "
-    "table gives no count",
-    "fail_s": "what finding no bike near a dock costs a pickup, assumed",
-    "services.bike_docked.bin_s": "the time bins dock counts and costs are kept in",
-    "handling_s": "an operator's move's time per bike, on top of the drive",
-    "van_bikes": "the most bikes an operator's van carries in one move",
-    "battery_kwh": "a vehicle's battery",
-    "kwh_per_km": "a vehicle's energy use per km driven",
-    "soc_start": "a vehicle's charge when the day starts, where its table gives none",
-    "reserve_soc": "the charge a vehicle keeps after a trip: a request that would end below it "
-    "is not sent",
-    "services.taxi.charge_below": "a vehicle dropping a passenger below this charge drives to "
-    "charge",
-    "services.taxi.charge_to": "the charge a vehicle charges to",
-    "charger_kw": "a charger's power per plug, where its table gives none",
-    "request_cancel_s": "a request no taxi can pick up within it is cancelled",
-    "boarding_s": "the time to get in at the pickup",
-    "dispatch_delay_s": "from the match to the taxi setting off",
-    "services.taxi.snap_m": "the farthest a vehicle or charger may be from the roads",
-    "charger_reach_s": "the farthest, by free-flow time, a vehicle is sent to charge",
-    # service assumptions
-    "assumed_wait_s": "the waiting time travellers assume before a taxi picks them up",
-    "assumed_no_taxi_share": "the chance of getting no taxi travellers assume",
-    "assumed_extra_walk_at_pickup_s": "the extra walk a shared-bike user assumes if the pickup "
-    "dock is empty",
-    "assumed_extra_walk_at_return_s": "the extra walk a shared-bike user assumes if the return "
-    "dock is full",
-    # policy
-    "name": "an operator steering the services in the run's service day",
-    "step_s": "the time between the policy's steps",
-    "from_s": "the second of the day the reset starts acting at",
-    "low": "below this share of its slots, a dock is topped up",
-    "high": "above this share of its slots, a dock gives bikes away",
-    "policy.charge_below": "below this charge, an idle vehicle is sent to charge",
-    "policy.charge_to": "the charge it charges to",
-    # network
-    "bike_dedicated_km_h": "a bike's speed on a lane, cycle street or track",
-    "bike_lane_cost_factor": 'with bike_cost "dedicated", multiplies a painted lane\'s time in '
-    "the search",
-    "bike_mixed_cost_factor": 'with bike_cost "dedicated", multiplies a mixed-traffic link\'s '
-    "time in the search",
-    "bike_mixed_km_h": "a bike's speed in mixed traffic, stops included",
-    "capacity_factor": "multiplies every road link's capacity",
-    "control_delay_factor": "multiplies the control delay at signals",
-    "ferry_km_h": "a ferry's speed where its way gives no duration",
-    "ferry_wait_s": "the expected wait for a ferry",
-    "free_flow_speed_factor": "multiplies every road link's free-flow speed",
-    "green_fraction_factor": "multiplies signal_green_fraction",
-    "jam_density_factor": "multiplies every road link's jam density",
-    "signal_cycle_s": "every signal's cycle length",
-    "signal_degree_of_saturation": "the degree of saturation the signals' control delay is "
-    "computed at",
-    "signal_green_fraction": "the effective green time as a share of the cycle",
-    "signal_merge_m": "how far along its street a signal belongs to a junction",
-    "walk_km_h": "the walking speed",
-    # loading
-    "priority": "1: priority at unsignalised merges by road class",
-    "reroute": "1: en-route rerouting of vehicles blocked at a link's downstream end",
-    "reroute_after_s": "how long a blocked vehicle waits before it re-routes",
-    "reroute_max": "the most times one trip re-routes",
-    "reroute_min_gain": "how much faster, as a share, the new route must be",
-    "pocket_length_m": "turn pockets per lane on approaches of two lanes or more",
-    "node_inflow": "1: at the point queue, entering the next link waits for its inflow headway",
-    "origin_inflow": "1: a departure enters its first link no faster than its capacity",
-    "reroute_tree_s": "how long one rerouting search tree serves the next vehicles there",
-    "period_s": "flow level 1: the period the demand's hourly flows are of (0: from the "
-    "departures)",
-    "bpr_alpha": "flow level 1: the volume-delay function's alpha",
-    "bpr_beta": "flow level 1: the volume-delay function's beta",
-    # transit
-    "board_slack_s": "how long before a vehicle leaves a passenger must be at the stop",
-    "max_rides": "the most vehicles one journey takes",
-    "access_walk_max_s": "the longest walk to or from a stop",
-    "journey_max_s": "the longest journey with transit offered, door to door",
-    "transfer_walk_max_s": "the longest walk between two stops in a change",
-    "stop_walk_snap_m": "the farthest a stop may be from the walk layer",
-    "stop_transfer_s": "the time a change at a stop takes between its access points",
-    "buses_on_roads": "1: buses ride the roads among the cars; 0: they keep to the timetable",
-    "bus_dwell_s": "how long a bus stays at each stop",
-    "bus_pcu": "passenger car units a bus counts for",
-    "bus_plausibility_ratio": "a bus pattern slower than its schedule by more runs by the schedule",
-    "bus_stop_snap_m": "the farthest a bus stop may be from the roads for its buses to ride them",
-    # parking
-    "parking.walk_max_s": "the longest walk from a parking to a stop",
-    "reach_car_s": "the longest drive to a park-and-ride car park",
-    "reach_bike_s": "the longest ride to a bike parking for bike-and-ride",
-    "parking.candidates": "how many parkings a park-and-ride or bike-and-ride trip weighs",
-    "rank_speed_km_h": "the speed candidate parkings are ranked by, straight line to the "
-    "destination",
-    "slope_car_s": "the time a car park full for a whole bin adds to parking",
-    "slope_bike_s": "the time a bike parking full for a whole bin adds to parking",
-    "parking.snap_m": "the farthest a parking may be from its layers' nearest node",
-    "parking.bin_s": "the time bins parking availability is measured in",
-    "pr_min_km": "the shortest trip, as the crow flies, offered park-and-ride and bike-and-ride",
-    "reach_car_step_s": "for computation: park-and-ride drives shared within steps of this length",
-    # equilibration
-    "method": "the method",
-    "iterations": "the most loadings",
-    "gap_tolerance": "stop when the deterministic part of the duality gap is below it",
-    "cost_bin_s": "the time bins link times are recorded in for the next choice",
-    "gap_every": "1: the full gap after every loading; 0: after the last",
-    "gap_sample": "how many trips are tested against the whole network for the network gap",
-    "increments": "the groups the free-flow loading is built up in",
-    "itinerary_gap_sample": "how many itinerary trips are tested for the itinerary gap",
-    "route_growth_tolerance": "stopping needs the route update to grow at most this share of pairs",
-    "warmup": "how many first loadings use the point queue",
-    "eta_fell": "how much the step's divisor grows after a loading whose disequilibrium fell",
-    "eta_rose": "how much the step's divisor grows after a loading whose disequilibrium rose",
-    # routes and the route update
-    "max_cost_vectors": "the most coefficient vectors route searches are made by",
-    "max_attempts": "the most searches for one origin-destination pair",
-    "max_detour": "no route kept costs more than this multiple of the pair's best",
-    "max_overlap": "a new route may share at most this share of its cost with each kept",
-    "max_paths": "the most routes kept for one pair",
-    "penalty": "the factor a found route's links' cost is multiplied by before the next search",
-    "draws": "how many random cost draws per pair",
-    "seed": "which draws are made (independent of master_seed)",
-    "sigma": "how far a link's cost may rise in a draw",
-    "tau": "the spread of the preference draws",
-    "twin_tolerance": "how much more than the least cost a tied route may cost, as a share",
-    "biased": "1: a draw raises a link's cost by its propensity to congest",
-    "max_routes": "the most routes a pair's set may hold",
-    "searches": "least-cost searches per pair per iteration",
-    "slack": "a pair is not searched while its best route is within this share of free flow",
-    "tree_step_s": "departures rounded to this step share one search tree per origin",
-}
-#: The road classes whose rows nothing reads (their links are on the bike or walk layer).
-_UNUSED_CLASSES = ("cycleway", "ferry", "footway", "pedestrian")
-_CLASS_PARAMETERS = {
-    "free_flow_km_h": "free-flow speed",
-    "jam_density_veh_km_lane": "jam density per lane",
-    "lanes": "lanes per direction",
-    "saturation_flow_veh_h_lane": "capacity per lane",
+    "model": "how each trip picks an alternative: logit, nested_logit, deterministic or a "
+    "registered model",
 }
 #: Unit words in a comment: none for the units a number carries in its name only.
 _UNIT_WORDS = {
@@ -505,28 +295,12 @@ class _Line:
     note: str = ""  # a default's exception, for its comment
 
 
-def _meaning(table: str, key: str, kind: str | None = None) -> str:
-    if table == "network" and "." in key:
-        road, what = key.split(".", 1)
-        if road in _UNUSED_CLASSES:
-            return f"not read: {road} links are on the bike or walk layer"
-        if road.startswith("street_"):
-            return f"the capacity per lane at a signal in the {road[7:]} km/h speed band"
-        article = "an" if road[0] in "aeiou" else "a"
-        what = _CLASS_PARAMETERS.get(what, what)
-        return f"the {what} of {article} {road} road where the data gives none"
-    if (
-        table == "routes"
-        and key.startswith(_BIKE)
-        and key not in ("bike_cost", "bike_route_choice")
-    ):
-        key = key[len(_BIKE) :]
-    if key.startswith("beta_mode_"):
-        return f"the constant of the {key[len('beta_mode_') :]} mode"
-    for k in (f"services.{kind}.{key}" if kind else "", f"{table}.{key}", key):
-        if k and k in _MEANING:
-            return _MEANING[k]
-    return ""
+def _clause(meaning: str) -> str:
+    """A registry meaning as a comment's clause: its first sentence (the registry holds it all)."""
+    first = re.split(r"(?<=\.)\s+(?=[A-Z0-9`(])", meaning, maxsplit=1)[0].rstrip(".")
+    if first[:1].isupper() and first[1:2] in (" ", *"abcdefghijklmnopqrstuvwxyz"):
+        first = first[0].lower() + first[1:]
+    return first
 
 
 #: Registry rows whose default is a rule of the run, not their listed number: written as a
@@ -535,6 +309,8 @@ _RULES = {
     ("loading", "reroute"): "on at flow_level 3 and 4, off at 2",
     ("scenario", "window"): "3 h from the earliest departure, rounded down to the quarter hour",
 }
+#: The road classes' own volume-delay parameters of ``[loading]`` (``motorway.bpr_alpha``).
+_PER_CLASS = (".bpr_alpha", ".bpr_beta")
 #: The order of a table's first lines (the rest follow in the registry's order).
 _FIRST = {
     "run": ("flow_level", "flow_step_s", "window", "master_seed", "default_weight", "link_bin_s",
@@ -545,7 +321,7 @@ _FIRST = {
 _METHOD_MEANING = {
     "equilibration": "how choice and loading are repeated: msa, sra, frank_wolfe (flow_level 1) "
     "or free_flow",
-    "choice": _MEANING["model"],
+    "choice": _FILE_KEYS["model"],
     "routes": "how route sets are generated: shortest, link_penalty, simulation or "
     "doubly_stochastic",
     "route_update": "how route sets grow between iterations: least_cost, doubly_stochastic or none",
@@ -565,14 +341,20 @@ def _lines() -> dict[str, list[_Line]]:
             argument = "inputs" if table == "inputs" else {"name": "policy"}.get(key, key)
             out[table].append(_Line(table, key, argument, default, unit, meaning, rule))
     rows = parameters()
-    for group, name, value, unit, note in zip(
-        rows["group"], rows["name"], rows["value"], rows["unit"], rows["note"], strict=True
-    ):
+    for group, name, value, unit, note, meaning in zip(
+        rows["group"], rows["name"], rows["value"], rows["unit"], rows["note"], rows["meaning"],
+        strict=True,
+    ):  # fmt: skip
+        meaning = _clause(meaning)
         prefix, _, method = group.partition(".")
         if prefix in NOT_IN_A_RUN:
             continue
         note = "" if note == "0 unless set" or name == "hub_join_m" else note
         rule = _RULES.get((group, name), note.removeprefix("None: ") if math.isnan(value) else "")
+        if group == "loading" and name.endswith(_PER_CLASS):
+            # A road class's own pair: given, it wins over the pair for every class, so it is
+            # written as a comment and passed only when stated.
+            rule = f"{name.split('.')[1]} above, every class's"
         default: Any = None if rule else value
         if rule:
             note = ""
@@ -580,21 +362,19 @@ def _lines() -> dict[str, list[_Line]]:
             table = _SCENARIO_TABLES[name]
             if name in _INTEGERS:
                 default = int(value)
-            line = _Line(table, name, name, default, unit, _meaning(table, name), rule, note=note)
+            line = _Line(table, name, name, default, unit, meaning, rule, note=note)
         elif prefix == "service":
-            line = _Line("services", name, "options", default, unit,
-                         _meaning("services", name, method), rule, kind=method)  # fmt: skip
+            line = _Line("services", name, "options", default, unit, meaning, rule, kind=method)
         elif prefix == "policy":
-            line = _Line("policy", name, "policy_options", default, unit,
-                         _meaning("policy", name), rule, method=method)  # fmt: skip
+            line = _Line("policy", name, "policy_options", default, unit, meaning, rule,
+                         method=method)  # fmt: skip
         elif prefix == "bike_route":
             key = _BIKE + name
-            line = _Line("routes", key, "bike_route_options", default, unit,
-                         _meaning("routes", key), rule)  # fmt: skip
+            line = _Line("routes", key, "bike_route_options", default, unit, meaning, rule)
         else:
             table = GROUP_TABLES[prefix]
             argument = _METHODS[table][3] if table in _METHODS else _OPTIONS[table]
-            line = _Line(table, name, argument, default, unit, _meaning(table, name), rule,
+            line = _Line(table, name, argument, default, unit, meaning, rule,
                          method=method or None, note=note)  # fmt: skip
         out[line.table].append(line)
     for table, first in _FIRST.items():
@@ -728,6 +508,8 @@ def _example(line: _Line) -> Any:
         "assumed_extra_walk_at_pickup_s": 300,
         "assumed_extra_walk_at_return_s": 300,
     }
+    if line.key.endswith(_PER_CLASS):
+        return 0.15 if line.key.endswith("alpha") else 4
     return examples.get(line.key, 0)
 
 
@@ -864,7 +646,7 @@ class Config:
             if key not in known:
                 out.append(_entry(key, value, "an option of the method named above"))
         if table == "policy" and method is None:
-            for name in ("reset", "threshold", "charge_rule"):
+            for name in ("noop", "reset", "threshold", "charge_rule"):
                 options = ", ".join(
                     f"{x.key} {_value(x.default)}" for x in _lines()["policy"] if x.method == name
                 )
@@ -881,12 +663,12 @@ class Config:
             out.append(
                 _aligned(f"[services.{_key(name)}]", f"{what}; the table's name is its name")
             )
-            out.append(_entry("kind", kind, _meaning("services", "kind")))
+            out.append(_entry("kind", kind, _FILE_KEYS["kind"]))
             for t in _SERVICE_TABLES[kind]:
                 if service.get(t) is not None:
-                    out.append(_entry(t, service[t], _meaning("services", t)))
+                    out.append(_entry(t, service[t], _FILE_KEYS[t]))
                 else:
-                    about = f"a path; {_meaning('services', t)} (this run's was in memory)"
+                    about = f"a path; {_FILE_KEYS[t]} (this run's was in memory)"
                     out.append(_entry(t, f"{t}.csv", about, commented=True))
             for line in _lines()["services"]:
                 if line.kind == kind:

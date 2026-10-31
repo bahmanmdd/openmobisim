@@ -6,8 +6,16 @@ from the same stops; a car or bike to a parking, then transit; a bike route; a w
 bike; a taxi), each with its travellers and its expected times, plus the car routes of the
 pair's route set nobody took. Each option is a list of **legs** the page draws and lays out as
 a strip: a drive, a ride on a bike or a walk along the links of its layer, a ride on a transit
-line from stop to stop, a walk to or from a stop, a dock or a parking (a straight line), a wait,
-and the time to park or fetch the vehicle.
+line from stop to stop, a wait, and the time to park or fetch the vehicle.
+
+**A walk to or from a stop, a dock or a parking** (and between two stops) is found when the map
+is written, on the walk layer, by the search the run walks with: from the walk node nearest the
+place it leaves to the one nearest the place it reaches (the pair's origin or destination, the
+stop, the parking, the dock), as the run snaps them. The walk layer's times are fixed for a run,
+so this is the path the run's walkers took (for a pair's origin and destination, from the pair's
+road nodes, which stand for its travellers' doors). It is drawn along its links, from the place
+it leaves to the place it reaches, and as a straight line only where the walk layer has no path
+(or its links are not on the page).
 """
 
 from __future__ import annotations
@@ -38,14 +46,18 @@ OPTION_MODES = (
 _MIN_SHARE = 0.01
 _MAX_OPTIONS = 14
 _NONE = 2**32 - 1
+#: How far a walk between places is searched on the walk layer: twice its mean seconds and this
+#: slack (a pair's road node stands for its travellers' doors, a little off them), at most an
+#: hour. A walk not found within it is drawn straight.
+_WALK_SEARCH_SLACK_S = 600.0
+_WALK_SEARCH_MAX_S = 3600.0
 
 
-def _node_points(network: Any, lon0: float, lat0: float) -> np.ndarray:
-    """Each road node's position in the page's metres, from the links' first and last vertices."""
+def _node_lonlat(network: Any) -> np.ndarray:
+    """Each road node's WGS84 ``(lon, lat)``, from the links' first and last vertices."""
     coords, offsets = network.link_geometry()
-    pts = geo.project_lonlat(coords, lon0, lat0)
-    first = pts[offsets[:-1].astype(np.int64)]
-    last = pts[offsets[1:].astype(np.int64) - 1]
+    first = coords[offsets[:-1].astype(np.int64)]
+    last = coords[offsets[1:].astype(np.int64) - 1]
     n = int(max(network.link_from().max(), network.link_to().max())) + 1
     out = np.full((n, 2), np.nan)
     out[network.link_from()] = first
@@ -232,7 +244,8 @@ def add_trips(
             by_pair[(o, d)]  # noqa: B018  (the pair, with its routes only)
     if not travellers:
         return None
-    nodes = _node_points(network, lon0, lat0)
+    node_ll = _node_lonlat(network)
+    nodes = geo.project_lonlat(node_ll, lon0, lat0)
     order = sorted(travellers, key=lambda p: (-travellers[p], key_of.get(p, 1 << 62), p))
     order = [p for p in order if np.isfinite(nodes[p[0]]).all() and np.isfinite(nodes[p[1]]).all()]
     if not keep.all():
@@ -255,13 +268,40 @@ def add_trips(
         else []
     )
 
+    # The places a walk leaves or reaches, as (kind, index): a road node (a pair's origin or
+    # destination), a stop, a parking, a dock. Their positions on the page and on the map.
+    place_xy = {"node": nodes, "stop": stop_xy, "parking": parking_xy, "dock": dock_xy}
+    place_ll = {
+        "node": node_ll,
+        "stop": np.column_stack([stops["lon"], stops["lat"]]) if stop_xy is not None else None,
+        "parking": np.column_stack([places["lon"], places["lat"]])
+        if parking_xy is not None
+        else None,
+        "dock": np.column_stack([docks["lon"], docks["lat"]]) if dock_xy is not None else None,
+    }
+
+    def xy_of(place: tuple[str, int] | None) -> np.ndarray | None:
+        if place is None or place_xy[place[0]] is None:
+            return None
+        return place_xy[place[0]][place[1]]
+
+    # The walk layer, for the walks to, from and between stops, docks and parkings.
+    walk_layer = None
+    if "walk" in layer_index:
+        try:
+            walk_layer = network.layer("walk")
+        except (KeyError, ValueError):
+            walk_layer = None
+
     # The arrays: pairs, options, legs.
     pair_xy, pair_n, pair_opt, pair_other = [], [], [0], []
     opt_mode, opt_n, opt_t, opt_cost, opt_overlap, opt_label, opt_leg = [], [], [], [], [], [], [0]
-    leg_kind, leg_s, leg_a, leg_b, leg_line = [], [], [], [], []
+    leg_kind, leg_s, leg_a, leg_b, leg_line, leg_from, leg_to = [], [], [], [], [], [], []
     pool_links: list[int] = []
     pool_stops: list[int] = []
     pts: list[tuple[float, float]] = []
+    # The walks between places, found on the walk layer once every leg is known: (leg, from, to).
+    walks: list[tuple[int, tuple[str, int], tuple[str, int]]] = []
 
     def point(xy: np.ndarray | tuple[float, float]) -> int:
         pts.append((float(xy[0]), float(xy[1])))
@@ -273,6 +313,8 @@ def add_trips(
         leg_a.append(a)
         leg_b.append(b)
         leg_line.append(line)
+        leg_from.append(_NONE)
+        leg_to.append(_NONE)
 
     def link_leg(kind: int, seconds: float, layer: str | None, links: tuple[int, ...]) -> bool:
         if layer is None:
@@ -297,20 +339,30 @@ def add_trips(
             return
         leg(LEG_CONNECT, seconds, point(a), point(b))
 
-    def rides_legs(rides: tuple, mean: dict[str, float], start: Any) -> Any:
-        """The rides and the walks between them; returns where the last ride ends."""
+    def walk(seconds: float, a: tuple[str, int] | None, b: tuple[str, int] | None) -> None:
+        """A walk from place `a` to place `b`: along the walk layer once found, else straight."""
+        if walk_layer is None or xy_of(a) is None or xy_of(b) is None:
+            connect(seconds, xy_of(a), xy_of(b))
+            return
+        assert a is not None and b is not None
+        leg(LEG_WALK, seconds)
+        walks.append((len(leg_kind) - 1, a, b))
+
+    def rides_legs(
+        rides: tuple, mean: dict[str, float], start: tuple[str, int] | None
+    ) -> tuple[str, int] | None:
+        """The rides and the walks between them; returns the stop the last ride ends at."""
         at = start
         if mean.get("wait", 0) > 0:
             leg(LEG_WAIT, mean["wait"])
         for k, (line, board, alight) in enumerate(rides):
-            board_xy = stop_xy[board] if stop_xy is not None else None
             if k > 0 and mean.get(f"transfer{k}", 0) > 0:
-                connect(mean[f"transfer{k}"], at, board_xy)
+                walk(mean[f"transfer{k}"], at, ("stop", board))
             seq = ride_stops(line, board, alight)
             a = len(pool_stops)
             pool_stops.extend(seq)
             leg(LEG_RIDE, mean.get(f"ride{k}", 0.0), a, len(pool_stops), line)
-            at = stop_xy[alight] if stop_xy is not None else None
+            at = ("stop", alight)
         return at
 
     for p in order:
@@ -353,29 +405,30 @@ def add_trips(
             mean = {key: v / w for key, v in o["sum"].items()} if w > 0 else {}
             start = len(leg_kind)
             ok = True
-            park_xy = (
-                parking_xy[parking_index[parking]]
-                if parking is not None and parking in parking_index and parking_xy is not None
+            park = (
+                ("parking", parking_index[parking])
+                if parking is not None and parking in parking_index
                 else None
             )
-            first = stop_xy[rides[0][1]] if rides and stop_xy is not None else None
+            origin, destination = ("node", p[0]), ("node", p[1])
+            first = ("stop", rides[0][1]) if rides else None
             vehicle_layer = None if mode in ("car", "taxi", "car_transit") else "bike"
             vehicle_kind = LEG_DRIVE if vehicle_layer is None else LEG_BIKE
             if shape == 0:  # walk, ride(s), walk
-                connect(mean.get("access", 0.0), o_xy, first)
+                walk(mean.get("access", 0.0), origin, first)
                 end = rides_legs(rides, mean, first)
-                connect(mean.get("egress", 0.0), end, d_xy)
+                walk(mean.get("egress", 0.0), end, destination)
             elif shape == 1:  # the vehicle to a parking, then transit
                 ok = link_leg(vehicle_kind, mean.get("vehicle", 0.0), vehicle_layer, links)
                 if mean.get("parking", 0) > 0:
                     leg(LEG_PARK, mean["parking"])
-                connect(mean.get("access", 0.0), park_xy, first)
+                walk(mean.get("access", 0.0), park, first)
                 end = rides_legs(rides, mean, first)
-                connect(mean.get("egress", 0.0), end, d_xy)
+                walk(mean.get("egress", 0.0), end, destination)
             elif shape == 2:  # transit to the parked vehicle, then home
-                connect(mean.get("access", 0.0), o_xy, first)
+                walk(mean.get("access", 0.0), origin, first)
                 end = rides_legs(rides, mean, first)
-                connect(mean.get("egress", 0.0), end, park_xy)
+                walk(mean.get("egress", 0.0), end, park)
                 if mean.get("parking", 0) > 0:
                     leg(LEG_PARK, mean["parking"])
                 ok = link_leg(vehicle_kind, mean.get("vehicle", 0.0), vehicle_layer, links)
@@ -390,33 +443,28 @@ def add_trips(
                     if mean.get("parking", 0) > 0:
                         leg(LEG_PARK, mean["parking"])
             elif shape in (4, 5):  # a shared bike (then transit)
-                pick = (
-                    dock_xy[docks_used[0]]
-                    if dock_xy is not None and docks_used[0] != _NONE
-                    else None
-                )
-                drop = (
-                    dock_xy[docks_used[1]]
-                    if dock_xy is not None and docks_used[1] != _NONE
-                    else None
-                )
+                pick = ("dock", docks_used[0]) if docks_used[0] != _NONE else None
+                drop = ("dock", docks_used[1]) if docks_used[1] != _NONE else None
                 walk_left = max(
                     mean.get("walk", 0.0) - mean.get("access", 0.0) - mean.get("egress", 0.0), 0.0
                 )
-                connect(walk_left / 2 if shape == 4 else walk_left, o_xy, pick)
+                walk(walk_left / 2 if shape == 4 else walk_left, origin, pick)
                 ok = link_leg(LEG_BIKE, mean.get("vehicle", 0.0), "bike", links)
                 if shape == 4:
-                    connect(walk_left / 2, drop, d_xy)
+                    walk(walk_left / 2, drop, destination)
                 else:
-                    connect(mean.get("access", 0.0), drop, first)
+                    walk(mean.get("access", 0.0), drop, first)
                     end = rides_legs(rides, mean, first)
-                    connect(mean.get("egress", 0.0), end, d_xy)
+                    walk(mean.get("egress", 0.0), end, destination)
             elif shape == 6:  # a taxi
                 if mean.get("wait", 0) > 0:
                     leg(LEG_WAIT, mean["wait"])
                 ok = link_leg(LEG_DRIVE, mean.get("vehicle", 0.0), None, links)
             if not ok:  # its geometry is not on the page: leave the option out
-                del leg_kind[start:], leg_s[start:], leg_a[start:], leg_b[start:], leg_line[start:]
+                for column in (leg_kind, leg_s, leg_a, leg_b, leg_line, leg_from, leg_to):
+                    del column[start:]
+                while walks and walks[-1][0] >= start:
+                    walks.pop()
                 other += w
                 continue
             opt_leg.append(len(leg_kind))
@@ -449,6 +497,45 @@ def add_trips(
     if not pair_n:
         return None
 
+    # The walks between places, on the walk layer: each place at its nearest walk node, as the run
+    # snaps it, and the path the run's own search finds between them (one search per place left).
+    if walks:
+        assert walk_layer is not None
+        index = layer_index["walk"]
+        snapped: dict[tuple[str, int], int] = {}
+
+        def node_of(place: tuple[str, int]) -> int:
+            if place not in snapped:
+                lon, lat = place_ll[place[0]][place[1]]
+                snapped[place] = int(walk_layer.node_nearest(float(lon), float(lat)))
+            return snapped[place]
+
+        walk_ends = [(node_of(a), node_of(b)) for _, a, b in walks]
+        bound: dict[tuple[int, int], float] = {}
+        for (g, _, _), pair in zip(walks, walk_ends, strict=True):
+            bound[pair] = max(bound.get(pair, 0.0), 2 * leg_s[g] + _WALK_SEARCH_SLACK_S)
+        pairs = sorted(bound)
+        links, offsets, seconds = walk_layer.path_shortest(
+            [a for a, _ in pairs],
+            [b for _, b in pairs],
+            bound_s=[min(_WALK_SEARCH_MAX_S, bound[pair]) for pair in pairs],
+        )
+        offsets = offsets.astype(np.int64)
+        found = {pair: i for i, pair in enumerate(pairs)}
+        for (g, a, b), pair in zip(walks, walk_ends, strict=True):
+            i = found[pair]
+            ids = index[links[offsets[i] : offsets[i + 1]].astype(np.int64)]
+            a_xy, b_xy = xy_of(a), xy_of(b)
+            assert a_xy is not None and b_xy is not None
+            if len(ids) and np.isfinite(seconds[i]) and (ids >= 0).all():
+                leg_a[g] = len(pool_links)
+                pool_links.extend(int(x) for x in ids)
+                leg_b[g] = len(pool_links)
+                leg_from[g], leg_to[g] = point(a_xy), point(b_xy)
+            else:  # no path on the walk layer (or one leaving the page): a straight line
+                leg_kind[g] = LEG_CONNECT
+                leg_a[g], leg_b[g] = point(a_xy), point(b_xy)
+
     q = lambda a: np.round(np.asarray(a, dtype=float) / 0.1).astype(np.int64)  # noqa: E731
     ends = np.array([[a[0], a[1], b[0], b[1]] for a, b in pair_xy])
     blob.add("qox", q(ends[:, 0]), "i32")
@@ -469,6 +556,8 @@ def add_trips(
     blob.add("la", np.asarray(leg_a), "u32")
     blob.add("lb", np.asarray(leg_b), "u32")
     blob.add("lline", np.asarray(leg_line), "u32")
+    blob.add("lpa", np.asarray(leg_from), "u32")
+    blob.add("lpb", np.asarray(leg_to), "u32")
     blob.add("pl", np.asarray(pool_links or [0]), "u32")
     blob.add("pst", np.asarray(pool_stops or [0]), "u32")
     pq = np.asarray(pts or [(0.0, 0.0)])

@@ -1,10 +1,17 @@
 """Every parameter in one table: the place to start a calibration.
 
 Every number openmobisim assumes has a name, an uncalibrated default and an argument that
-overrides it by name. ``parameters()`` lists them all, at the defaults a ``Scenario`` uses.
+overrides it by name. ``parameters()`` lists them all, at the defaults a ``Scenario`` uses, each
+with its meaning and its source. The meanings and sources are written once, in the package's
+``data/parameters.csv`` (``group``, ``name``, ``meaning``, ``source``): the run configuration
+file's comments and the manual's parameters page read them from here.
 """
 
 from __future__ import annotations
+
+import csv
+import functools
+from pathlib import Path
 
 from openmobisim import _core
 from openmobisim.choice import ROUTE_ATTRIBUTES
@@ -62,7 +69,15 @@ _COUNTS = ("iterations", "max_paths", "max_attempts", "max_routes", "searches", 
            "lanes", "increments", "max_rides", "reroute_max", "draws", "gap_sample",
            "itinerary_gap_sample", "warmup", "seed", "redirect_max")  # fmt: skip
 _FLAGS = ("priority", "reroute", "node_inflow", "origin_inflow", "biased", "fallback_car",
-          "buses_on_roads")  # fmt: skip
+          "buses_on_roads", "log_events")  # fmt: skip
+
+
+@functools.cache
+def _texts() -> dict[tuple[str, str], tuple[str, str]]:
+    """Every parameter's meaning and source, by ``(group, name)``: the one copy."""
+    path = Path(__file__).parent / "data" / "parameters.csv"
+    with path.open(newline="", encoding="utf-8") as f:
+        return {(r["group"], r["name"]): (r["meaning"], r["source"]) for r in csv.DictReader(f)}
 
 
 def _unit(name: str) -> str:
@@ -120,8 +135,10 @@ def parameters() -> Columns:
     ``equilibration_options`` … of ``Scenario.from_parts``, ``options`` of ``service_bike_docked``
     or ``service_taxi``, ``policy_options``, ``reward_weights`` of ``fleet_environment``, or the
     argument itself for the ``scenario`` group), ``name``, ``value``, ``unit`` (read from the name,
-    which carries it) and ``note`` (where a default is a rule of the run's level). Every value is an
-    uncalibrated default; the documentation of each argument says where it comes from.
+    which carries it), ``note`` (where a default is a rule of the run's level), ``meaning`` (what
+    the parameter does, in a few sentences) and ``source`` (where its default comes from, with a
+    reference where there is one; "uncalibrated" where none is known). Every value is an
+    uncalibrated default.
 
     Returns:
         The table, as ``Columns`` (a dict of lists by column, with ``to_pandas()`` …).
@@ -132,6 +149,8 @@ def parameters() -> Columns:
     listed: dict[str, set[str]] = {}
     for group, argument, name, value in _core.parameter_rows():
         note = _NOTES.get((group, name), "")
+        if group == "loading" and name.endswith((".bpr_alpha", ".bpr_beta")):
+            note = f"{name.split('.')[1]}'s value unless set"
         rows.append((group, argument, name, float(value), _unit(name), note))
         listed.setdefault(group, set()).add(name)
     # A random-utility model weighs every attribute an alternative carries; those it does not
@@ -143,5 +162,7 @@ def parameters() -> Columns:
                 rows.append((group, "choice_options", name, 0.0, _unit(name), "0 unless set"))
     for group, argument, name, value in _FLEET:
         rows.append((group, argument, name, float(value), _unit(name), ""))
-    columns = ("group", "argument", "name", "value", "unit", "note")
+    texts = _texts()
+    rows = [(*r, *texts.get((r[0], r[2]), ("", ""))) for r in rows]
+    columns = ("group", "argument", "name", "value", "unit", "note", "meaning", "source")
     return Columns({c: [r[i] for r in rows] for i, c in enumerate(columns)})

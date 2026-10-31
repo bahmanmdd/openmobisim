@@ -116,15 +116,29 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_utf8(text: str) -> None:
+    """Print a run.toml as UTF-8, whatever the console's encoding.
+
+    A Windows console's cannot hold every character of the parameters' meanings.
+    """
+    stream = getattr(sys.stdout, "buffer", None)
+    if stream is None:
+        print(text, end="")
+        return
+    sys.stdout.flush()
+    stream.write(text.encode("utf-8"))
+    stream.flush()
+
+
 def _config(args: argparse.Namespace) -> int:
     if args.defaults:
-        print(Config().text(), end="")
+        _print_utf8(Config().text())
         return 0
     path = Path(args.source) / "run.toml"
     if not path.exists():
         print(f"{str(args.source)!r} holds no run.toml (a run writes it beside its manifest.json)")
         return 1
-    print(path.read_text(encoding="utf-8"), end="")
+    _print_utf8(path.read_text(encoding="utf-8"))
     return 0
 
 

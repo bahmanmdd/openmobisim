@@ -24,6 +24,7 @@ from openmobisim.viz import _geometry as geo
 
 CAR = {"commuter": (True, False, False)}
 DTYPES = {"u8": "<u1", "u32": "<u4", "i32": "<i4", "f32": "<f4"}
+NONE = 2**32 - 1
 
 
 def grid_run(n=8, trips=120, seed=5, **kwargs):
@@ -268,10 +269,9 @@ def test_the_page_carries_how_many_travellers_took_each_route(tmp_path):
             assert max(used) > 1, "someone takes a second route"
 
 
-def choosing_run():
+def choosing_run(pairs=(("W", "N1"), ("S", "D2"), ("W", "M"), ("W", "D1"))):
     """The toy network, everyone choosing among car, bike, walk, transit and park-and-ride."""
     net = ms.examples.toy_network()
-    pairs = [("W", "N1"), ("S", "D2"), ("W", "M"), ("W", "D1")]
     rows = []
     for k in range(80):
         frm, to = pairs[k % len(pairs)]
@@ -355,6 +355,76 @@ def test_the_page_shows_every_mode_a_pair_took(tmp_path):
     for p in range(meta["n_pairs"]):
         assert np.isclose(a["on"][a["qs"][p] : a["qs"][p + 1]].sum() + a["qr"][p], a["qn"][p])
     assert len(meta["trips"]["places"]) == meta["n_pairs"] and meta["trips"]["has_journeys"]
+
+
+def test_a_walk_to_from_or_between_stops_runs_along_its_streets(tmp_path):
+    """Each walk to, from or between stops, docks and parkings (S306) runs along its streets.
+
+    It is drawn along walk links that join end to end, from the place the journey's previous leg
+    ends at to the place its next leg starts from (the pair's origin and destination at either
+    end); its links begin and end within a few metres of those places (on this network each is a
+    node, or a stop 3 m from one).
+    """
+    # Origins and destinations away from the stops, so that the journeys by transit walk.
+    run = choosing_run((("S", "D1"), ("N2", "D1"), ("S", "D2"), ("W", "N1"), ("N2", "D2")))
+    _, meta, a = decode(viz.map_interactive(run, tmp_path / "map.html"))
+
+    def geometry(prefix):
+        return a[prefix + "vs"], np.column_stack(
+            [np.cumsum(a[prefix + "dx"]) * 0.1, np.cumsum(a[prefix + "dy"]) * 0.1]
+        )
+
+    layer = {0: geometry(""), 1: geometry("b"), 2: geometry("w")}
+
+    def link_points(kind, links):
+        vs, xy = layer[kind]
+        return np.concatenate([xy[vs[x] : vs[x + 1]] for x in links])
+
+    def point(i):
+        return np.array([a["ptx"][i], a["pty"][i]]) * 0.1
+
+    def stop(s):
+        return np.array([a["tsx"][s], a["tsy"][s]]) * 0.1
+
+    def ends(g):
+        """Where a drawn leg starts and ends (None for a wait, a park or a strip-only walk)."""
+        k = a["lk"][g]
+        if k in (0, 1, 2) and a["lb"][g] > a["la"][g]:
+            pts = link_points(k, a["pl"][a["la"][g] : a["lb"][g]])
+            first = point(a["lpa"][g]) if a["lpa"][g] != NONE else pts[0]
+            last = point(a["lpb"][g]) if a["lpb"][g] != NONE else pts[-1]
+            return first, last
+        if k == 3:
+            return stop(a["pst"][a["la"][g]]), stop(a["pst"][a["lb"][g] - 1])
+        if k == 4 and a["la"][g] != NONE:
+            return point(a["la"][g]), point(a["lb"][g])
+        return None
+
+    near = 5.0  # metres
+    walked = 0
+    for p in range(meta["n_pairs"]):
+        origin = np.array([a["qox"][p], a["qoy"][p]]) * 0.1
+        destination = np.array([a["qdx"][p], a["qdy"][p]]) * 0.1
+        for o in range(a["qs"][p], a["qs"][p + 1]):
+            legs = [g for g in range(a["ol"][o], a["ol"][o + 1]) if ends(g) is not None]
+            for i, g in enumerate(legs):
+                if a["lk"][g] != 2 or a["lpa"][g] == NONE:
+                    continue  # not a walk between places
+                links = a["pl"][a["la"][g] : a["lb"][g]]
+                pieces = [link_points(2, [x]) for x in links]
+                for one, two in zip(pieces[:-1], pieces[1:], strict=True):
+                    assert np.hypot(*(one[-1] - two[0])) < 0.2, "the links join end to end"
+                start, end = point(a["lpa"][g]), point(a["lpb"][g])
+                assert np.hypot(*(pieces[0][0] - start)) < near, "the links start at the place left"
+                assert np.hypot(*(pieces[-1][-1] - end)) < near, "and end at the place reached"
+                before = ends(legs[i - 1])[1] if i > 0 else origin
+                after = ends(legs[i + 1])[0] if i + 1 < len(legs) else destination
+                assert np.hypot(*(start - before)) < near, "where the previous leg ends"
+                assert np.hypot(*(end - after)) < near, "where the next leg starts"
+                walked += 1
+    assert walked >= 4, walked
+    # The legend no longer says the walks to stops are straight.
+    assert "drawn straight" not in (tmp_path / "map.html").read_text(encoding="utf-8")
 
 
 def test_the_page_offers_png_and_vector_exports(tmp_path):
@@ -462,3 +532,70 @@ def test_a_pair_s_trips_show_in_a_browser(tmp_path):
     card = re.search(r'<div id="tripcard">(.*?)<div class="foot">', dom, re.S)
     assert card and "travellers" in card.group(1) and 'class="strip"' in card.group(1)
     assert "Trips between two places" in dom  # the legend's section, shown with the pair
+
+
+def test_the_page_knows_each_link_s_direction_and_its_other_direction(tmp_path):
+    """A two-way road is two links between the same nodes; the page carries both ends of each."""
+    net, run = grid_run()
+    _, _, a = decode(viz.map_interactive(run, tmp_path / "map.html"))
+    assert (a["nf"] == net.link_from()).all() and (a["nt"] == net.link_to()).all()
+    ends = set(zip(a["nf"].tolist(), a["nt"].tolist(), strict=True))
+    assert all((t, f) in ends for f, t in ends)  # the grid's roads are all two-way
+
+
+def ribbons(svg):
+    """The road-traffic ribbons of an SVG export: (x0, y0, x1, y1, width) of each straight piece."""
+    out = []
+    for attrs in re.findall(r"<path ([^>]*)/>", svg):
+        stroke = re.search(r'stroke="([^"]*)"', attrs)
+        if not stroke or not stroke[1].startswith("rgb(") or 'stroke-linecap="round"' not in attrs:
+            continue  # ribbons are in the colour ramp's rgb(); the base, casings and halos are not
+        width = float(re.search(r'stroke-width="([^"]*)"', attrs)[1])
+        d = re.search(r'(?:^| )d="([^"]*)"', attrs)[1]
+        for sub in re.findall(r"M[^M]*", d):
+            pts = [tuple(map(float, p.split())) for p in re.findall(r"[ML]([-\d.]+ [-\d.]+)", sub)]
+            out += [(*pts[i], *pts[i + 1], width) for i in range(len(pts) - 1)]
+    return out
+
+
+@pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
+def test_the_two_directions_of_a_road_are_drawn_apart(tmp_path):
+    """No two ribbons overlap; a two-way street shows two, one on each side of its centre line."""
+    path = tmp_path / "map.html"
+    viz.map_interactive(grid_run()[1], str(path))
+    dom = subprocess.run(
+        [BROWSER, "--headless=new", "--disable-gpu", "--no-sandbox",
+         "--virtual-time-budget=3000", "--window-size=1200,900", "--dump-dom",
+         f"{path.as_uri()}#export=svg"],
+        capture_output=True, text=True, timeout=90,
+    ).stdout  # fmt: skip
+    import html
+
+    svg = html.unescape(re.search(r'<textarea id="exported"[^>]*>(.*?)</textarea>', dom, re.S)[1])
+    flat = [r for r in ribbons(svg) if abs(r[1] - r[3]) < 0.01 and abs(r[0] - r[2]) > 5]
+    assert len(flat) > 20, "the east-west ribbons"
+    side_by_side = 0
+    for i, (ax0, ay, ax1, _, aw) in enumerate(flat):
+        for bx0, by, bx1, _, bw in flat[i + 1 :]:
+            overlap = min(max(ax0, ax1), max(bx0, bx1)) - max(min(ax0, ax1), min(bx0, bx1))
+            if overlap < 2:
+                continue
+            apart = abs(ay - by) - (aw + bw) / 2  # the space between their edges, px
+            assert apart >= 1.0, f"two ribbons overlap or touch: {apart:.2f} px apart"
+            side_by_side += apart < 12
+    assert side_by_side > 10, "the two directions of the streets, side by side"
+    # The widths grow linearly with volume up to the widest the room on screen allows (S306).
+    wmax = float(re.search(r'data-wmax="([\d.]+)"', dom)[1])
+    widths = [w for *_, w in ribbons(svg)]
+    assert 2.5 <= wmax <= 30 and abs(max(widths) - wmax) <= 0.5
+    assert max(widths) / min(widths) > 4, "the least and the most loaded read apart"
+
+
+def test_the_controls_legend_compass_and_scale_share_the_right_column(tmp_path):
+    """Everything the reader uses on the right (S306): only the title stays on the left."""
+    text = viz.map_interactive(grid_run()[1], tmp_path / "map.html").read_text(encoding="utf-8")
+    side = re.search(r'<div id="side">(.*?)\n</div>\n<footer>', text, re.S)
+    assert side, "the right column"
+    for part in ('<aside id="panel">', 'id="legendgroup"', 'id="compass"', 'id="scalebar"'):
+        assert part in side[1]
+    assert "left: 12px" not in text  # nothing pinned to the left edge but the title

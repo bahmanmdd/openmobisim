@@ -304,18 +304,20 @@ class Run:
         files.total_trips, files.total_travel_time_s = int(totals.get("trips", 0)), 0.0
         for key, metric in _FILE_COMPLETION.items():
             setattr(files, key, int(totals.get(metric, 0)))
+        # A run with a service writes its cancelled taxi requests; one without has no row.
+        cancelled = totals.get("cancelled_trips")
+        files.cancelled = None if cancelled is None else int(cancelled)
         files.total_travel_time_s = float(totals.get("total_travel_time_s", 0.0))
         by_mode: dict[str, dict[str, float]] = {}
         for i, mode, name, v in kpis:
             if mode != "all" and i == last:
                 by_mode.setdefault(mode, {})[name] = v
-        # A mode a service serves has no rows of how its trips went (the service's rows say
-        # it): its entry leaves those keys out rather than reading them as 0.
+        # A key whose row the file lacks is left out rather than read as 0.
         files.completion_by_mode = {
             mode: {
                 **{
                     key: int(row[metric])
-                    for key, metric in _FILE_COMPLETION.items()
+                    for key, metric in {**_FILE_COMPLETION, "cancelled": "cancelled_trips"}.items()
                     if metric in row
                 },
                 **{
@@ -934,15 +936,17 @@ class Run:
         ``mode_share`` (of the trips, weighted by the travellers), and every iteration adds
         ``mode_changed_share`` under ``"all"``.
 
-        A mode a service of the run serves (``"bike_share"`` and ``"bike_share_transit"`` with a
-        docked bike service, ``"taxi"`` with a taxi fleet) keeps only the rows of its trips'
-        choice: ``trips``, ``people``, ``mode_share``, ``gap`` and the three counts of trips
-        that could not travel. How its trips went is what the service day gave them, in the
-        rows under the service's name (``requests``, ``rides``, ``cancelled``, ``no_bike``,
-        ``unfinished``, the waiting times and the like); the planned trips'
-        ``completed_trips``, ``completed_people``, ``truncated_trips``, ``completion_rate`` and
-        ``total_travel_time_s`` are not written under the mode. The ``"all"`` rows count every
-        trip as planned, a service's trips included.
+        In a run with a service (``services=``), the trips that took it in the last loading count
+        in the last iteration's ``"all"`` rows and under their mode (``"bike_share"``,
+        ``"bike_share_transit"``, ``"taxi"``) as the service day gave them, as ``completion``
+        does: ``completed_trips``, ``completed_people`` and ``total_travel_time_s`` by the second
+        each arrived, ``truncated_trips`` those still under way at the window's end, and
+        ``cancelled_trips`` (written in a run with a service only) the cancelled taxi requests;
+        a shared bike to transit's transit part is shifted by the day's difference at the hub's
+        dock from the planned second. The earlier iterations, which no service day followed,
+        count them as planned. What the day was like is in the rows under the service's name
+        (``requests``, ``rides``, ``cancelled``, ``no_bike``, ``unfinished``, the waiting times
+        and the like).
         """
         return Table(self._summary.kpis_path)  # kpis.csv for a run's minimal outputs
 
@@ -1303,9 +1307,16 @@ class Run:
         ``no_vehicle_available``, ``no_feasible_path``, ``mode_not_available``
         (a trip whose mode this run cannot simulate: transit without a timetable,
         park-and-ride and bike-and-ride without parkings).
+
+        In a run with a service (``services=``), a trip that took the service in the last loading
+        counts as the run's service day gave it (``trip_results``' ``service_outcome`` and
+        ``service_arrival_s``): ``completed`` if carried to its destination by the window's end
+        (a shared-bike traveller who found no bike: if the walk on ended by then),
+        ``truncated`` if still under way then, and a key of its own, ``cancelled``, if its taxi
+        request was cancelled (the trip ends there).
         """
         s = self._summary
-        return {
+        out = {
             "total_trips": s.total_trips,
             "completed": s.completed,
             "truncated": s.truncated,
@@ -1313,6 +1324,9 @@ class Run:
             "no_feasible_path": s.no_feasible_path,
             "mode_not_available": s.mode_not_available,
         }
+        if s.cancelled is not None:
+            out["cancelled"] = s.cancelled
+        return out
 
     @property
     def completion_by_mode(self) -> dict[str, dict[str, float]]:
@@ -1323,7 +1337,8 @@ class Run:
         traveller weight, ``people`` (the people its trips stand for: their travellers'
         weights, summed) and ``completed_people`` (the same for its completed trips). The
         counts of ``completion`` are of simulated trips; a mode's mean trip is
-        ``total_travel_time_s / completed_people``. They add up to the run's.
+        ``total_travel_time_s / completed_people``. They add up to the run's. A service's
+        modes count their trips as the service day gave them, as ``completion`` does.
         """
         return {mode: dict(row) for mode, row in self._summary.completion_by_mode.items()}
 
@@ -2224,13 +2239,17 @@ class Run:
           ``"cancelled"`` (a taxi: no taxi could pick it up within the fleet's cancel limit, and
           the trip ends there; a shared bike: no bike at any dock tried, the traveller walked
           on) or ``"unfinished"`` (still waiting or riding when the window ended), ``""`` for a
-          trip that took no service; and ``service_arrival_s``, the second the service day
-          actually brought the traveller to the destination (for ``bike_share_transit`` the
-          hub's dock), ``NaN`` if not completed or for a trip without a service. The trip's
-          other columns show the planned trip: a service trip arrives when its choice planned.
+          trip that took no service; and ``service_arrival_s``, the second the traveller actually
+          reached the destination (for ``bike_share_transit`` the hub's dock): by the service, or
+          on foot after finding no shared bike; ``NaN`` if not by the window's end, after a
+          cancelled taxi request, or for a trip without a service. The trip's other columns show
+          the planned trip: a service trip arrives when its choice planned.
 
         The outcomes are the last loading's. Counted by ``outcome``, the trips agree with
-        ``completion``, the no-alternative trips aside.
+        ``completion``, the no-alternative trips aside, and a service's trips counted by
+        ``service_outcome`` instead: completed where ``service_arrival_s`` is a number (for
+        ``bike_share_transit``, a planned arrival shifted by the day's difference at the hub's
+        dock), cancelled where a taxi request was, truncated otherwise.
         """
         return Columns(self._summary.trip_results)
 
@@ -2252,7 +2271,8 @@ class Run:
 
         Each trip counts as many times as the people it stands for (its
         traveller weight): the population's total, not the sum over simulated
-        travellers.
+        travellers. A trip a service carried counts by the second its service day brought it
+        to the destination (``completion`` says which trips count).
         """
         return self._summary.total_travel_time_s
 

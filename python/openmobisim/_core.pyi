@@ -6,6 +6,7 @@ the Python side.
 """
 
 import os
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -110,6 +111,33 @@ class Network:
         On the road network the nearest street node — a motorway-only node only within
         ``car_snap_motorway_m`` (the run's ``mode_options`` value; 50 m unless given) — and on a
         bike or walk layer the nearest node. Node indices key :class:`RouteSets`.
+        """
+
+    def path_shortest(
+        self,
+        origins: Sequence[int] | npt.NDArray[np.uint32],
+        destinations: Sequence[int] | npt.NDArray[np.uint32],
+        bound_s: float | Sequence[float] | npt.NDArray[np.float64] | None = None,
+    ) -> tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.float64]]:
+        """The fastest path from node ``origins[i]`` to ``destinations[i]`` of a bike or walk layer.
+
+        At the layer's travel times (each link's length over its speed), by the search a run walks
+        to, from and between stops with, over nodes (a pedestrian may turn back): on the walk
+        layer it finds the walks the run's travellers took. A bike route of a run is searched by
+        the bike cost instead. Nodes are indices, as :meth:`node_nearest` gives them.
+
+        Returns:
+            ``(links, offsets, seconds)``: pair ``i``'s links in travel order are
+            ``links[offsets[i]:offsets[i + 1]]`` (this layer's link indices) and its time
+            ``seconds[i]``: 0 with no links where the two nodes are one, infinite with no links
+            where no path takes at most ``bound_s`` seconds (one number for every pair, or one
+            per pair; an hour if not given). One search per distinct origin, as far as the
+            longest bound of its pairs.
+
+        Raises:
+            ValueError: On the road network (its routes depend on the traffic: see
+                :func:`route_sets_build`), for lists of different lengths, a node index out of
+                range, or a bound that is not positive.
         """
 
     def node_lonlat(self, name: str) -> tuple[float, float]:
@@ -1075,6 +1103,8 @@ class RunSummary:
     truncated: int
     no_vehicle_available: int
     no_feasible_path: int
+    #: In a run with a service, the trips whose taxi request was cancelled; ``None`` without one.
+    cancelled: int | None
     total_travel_time_s: float
     #: The completed trips' time in their own vehicles (the drives and the bike rides),
     #: traveller-weight-scaled: the total travel time less the fixed times, walks, waits and rides.

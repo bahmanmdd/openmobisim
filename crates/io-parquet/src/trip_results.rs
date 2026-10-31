@@ -28,10 +28,12 @@
 //!   stopped, the demand fixed) actually gave the trip: `completed`, `cancelled` (no taxi
 //!   within the cancel limit; no bike at any dock tried) or `unfinished` (still waiting or
 //!   riding at the window's end), empty for a trip that took no service; and
-//!   `service_arrival_s`, the second (from midnight) the service day actually brought the
-//!   traveller to the destination (for a shared bike to transit, the hub's dock), `NaN` if not
-//!   completed or for a trip without a service. The trip's other columns show the planned trip.
-//!   A run without a service has neither.
+//!   `service_arrival_s`, the second (from midnight) the traveller actually reached the
+//!   destination (for a shared bike to transit, the hub's dock) in the service day, by the
+//!   service or on foot after finding no shared bike; `NaN` if not by the window's end, after a
+//!   cancelled taxi request, or for a trip without a service. The trip's other columns show the
+//!   planned trip; `kpis.parquet` counts a service's trips by these two. A run without a service
+//!   has neither.
 //! - The outcomes are those of the last loading. The key-value metadata carries
 //!   `openmobisim.run_fingerprint` and `openmobisim.master_seed`.
 //!

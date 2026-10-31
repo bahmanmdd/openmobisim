@@ -85,8 +85,16 @@ def test_the_services_assumptions_policies_and_fleet_rows_are_accepted_as_listed
         "assumed_extra_walk_at_pickup_s",
         "assumed_extra_walk_at_return_s",
     }
-    for name in ("reset", "threshold", "charge_rule"):
+    for name in ("noop", "reset", "threshold", "charge_rule"):
         ms.fleet_day(net, [bikes, fleet], [], policy=name, policy_options=options(f"policy.{name}"))
+    # The three listed from S306: a service's log switch, noop's step, each class's BPR pair.
+    assert (
+        options("service.bike_docked")["log_events"] == options("service.taxi")["log_events"] == 1
+    )
+    assert options("policy.noop") == {"step_s": 900.0}
+    loading = options("loading")
+    assert loading["motorway.bpr_alpha"] == loading["bpr_alpha"]
+    assert loading["service.bpr_beta"] == loading["bpr_beta"]
     ms.fleet_environment(
         net, [bikes], [], reward_weights=options("fleet_environment"),
         zone_grid_m=options("fleet")["zone_grid_m"],
@@ -99,3 +107,28 @@ def test_the_services_assumptions_policies_and_fleet_rows_are_accepted_as_listed
         "taxi_eur_per_ride": "EUR per ride",
         "taxi_eur_per_km": "EUR/km",
     }
+
+
+def test_every_row_has_a_meaning_and_a_source_written_once():
+    # The meanings and sources are one copy, the package's data/parameters.csv: every row of
+    # the registry has both, the file names no row the registry lacks, and the run configuration
+    # file's comments are the registry's meanings, not a second copy (S306).
+    import csv
+    from pathlib import Path
+
+    from openmobisim import config as cfg
+
+    rows = table()
+    empty = [(r["group"], r["name"]) for r in rows if not r["meaning"].strip()]
+    assert not empty, f"parameters without a meaning: {empty}"
+    unsourced = [(r["group"], r["name"]) for r in rows if not r["source"].strip()]
+    assert not unsourced, f"parameters without a source: {unsourced}"
+    path = Path(ms.__file__).parent / "data" / "parameters.csv"
+    with path.open(newline="", encoding="utf-8") as f:
+        written = [(r["group"], r["name"]) for r in csv.DictReader(f)]
+    assert len(written) == len(set(written)), "each parameter once"
+    assert set(written) == {(r["group"], r["name"]) for r in rows}
+    assert not hasattr(cfg, "_MEANING"), "no second copy of the meanings"
+    meaning = {(r["group"], r["name"]): r["meaning"] for r in rows}
+    line = next(x for x in cfg._lines()["choice"] if x.key == "beta_time_min")
+    assert meaning[("choice_model.logit", "beta_time_min")].lower().startswith(line.meaning)

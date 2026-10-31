@@ -79,16 +79,16 @@ impl ServiceOutcome {
         }
     }
 
-    /// What a leg's engine outcome `o` says, and the second the service brought the traveller
-    /// to the end of the leg (`NaN`: not completed by the window's end `end_s`).
+    /// What a leg's engine outcome `o` says, and the second the traveller reached the end of
+    /// the leg: by the service, or on foot after a shared-bike leg found no bike (`NaN`: not by
+    /// the window's end `end_s`, and always for a cancelled taxi request, which ends the trip).
     #[must_use]
     pub fn of(o: &LegOutcome, end_s: f64) -> (Self, f64) {
+        let at =
+            if o.arrived_s.is_finite() && o.arrived_s <= end_s { o.arrived_s } else { f64::NAN };
         match o.status {
-            LegStatus::Completed if o.arrived_s.is_finite() && o.arrived_s <= end_s => {
-                (ServiceOutcome::Completed, o.arrived_s)
-            }
-            LegStatus::Completed => (ServiceOutcome::Completed, f64::NAN),
-            LegStatus::Cancelled => (ServiceOutcome::Cancelled, f64::NAN),
+            LegStatus::Completed => (ServiceOutcome::Completed, at),
+            LegStatus::Cancelled => (ServiceOutcome::Cancelled, at),
             _ => (ServiceOutcome::Unfinished, f64::NAN),
         }
     }
@@ -310,7 +310,8 @@ pub struct ShareDay {
     pub legs: Vec<ShareLeg>,
     /// What became of them, and the docks' counts.
     pub outcome: FleetOutcome,
-    /// Per leg, what the day gave it and the second its leg ended (`NaN`: it did not).
+    /// Per leg, what the day gave it and the second its leg ended, on a bike or on foot after
+    /// finding none (`NaN`: not by the window's end).
     pub outcomes: Vec<(ServiceOutcome, f64)>,
     /// The day summed up.
     pub summary: DockSummary,
@@ -686,8 +687,15 @@ fn taxi_run_day(
     window: (f64, f64),
     engine_s: f64,
 ) -> TaxiRunDay {
-    let outcomes: Vec<(ServiceOutcome, f64)> =
-        outcome.iter().map(|o| ServiceOutcome::of(o, window.1)).collect();
+    // A cancelled request ends the trip: no second it reached the destination, whatever an
+    // earlier unit request of the leg did.
+    let outcomes: Vec<(ServiceOutcome, f64)> = outcome
+        .iter()
+        .map(|o| match ServiceOutcome::of(o, window.1) {
+            (ServiceOutcome::Cancelled, _) => (ServiceOutcome::Cancelled, f64::NAN),
+            other => other,
+        })
+        .collect();
     let arrived_s = outcomes.iter().map(|&(_, at)| at).collect();
     let summary = taxi_summary(setup, offset, &legs, &outcome, &outcomes, &day);
     TaxiRunDay { legs, offset, outcome, arrived_s, outcomes, day, summary, engine_s }
