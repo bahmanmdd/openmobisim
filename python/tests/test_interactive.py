@@ -514,3 +514,8 @@ def test_the_two_directions_of_a_road_are_drawn_apart(tmp_path):
             assert apart >= 1.0, f"two ribbons overlap or touch: {apart:.2f} px apart"
             side_by_side += apart < 12
     assert side_by_side > 10, "the two directions of the streets, side by side"
+    # The widths grow linearly with volume up to the widest the room on screen allows (S306).
+    wmax = float(re.search(r'data-wmax="([\d.]+)"', dom)[1])
+    widths = [w for *_, w in ribbons(svg)]
+    assert 2.5 <= wmax <= 30 and abs(max(widths) - wmax) <= 0.5
+    assert max(widths) / min(widths) > 4, "the least and the most loaded read apart"

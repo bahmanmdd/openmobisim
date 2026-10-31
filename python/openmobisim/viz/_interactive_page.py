@@ -384,18 +384,51 @@ function classLimit() { return NL < 5000 ? 16 : S.mpp > 25 ? 5 : S.mpp > 8 ? 9 :
 const sx = (x) => (x - S.cx) / S.mpp + W / 2, sy = (y) => H / 2 - (y - S.cy) / S.mpp;
 
 // ---------------------------------------------------------------- draw ----
-const WFLOOR = 0.9;
+// ---- the widths, from the room the roads leave on screen (S306) ----
+// ROOM: the screen space (px) each drawn road direction has around it where the roads are dense: the screen is cut
+// into cells of ROOM_CELL px, each cell's length of drawn road directions summed, and the room is 2 x cell area
+// / that length at the cells' 75th percentile (a grid of streets s px apart, two directions each, gives s / 2).
+// Kept in metres from the last still frame, so it scales with the zoom while moving.
+const ROOM_CELL = 128, ROOM_SHARE = 0.25, WFLOOR = 0.9, WCAP = 30;
+let ROOM_M = 0, EXPORTING = false;
+function measureRoom(cand) {
+  const C = ROOM_CELL, nx = Math.ceil(W / C), ny = Math.ceil(H / C), cells = new Float64Array(nx * ny);
+  const lim = Math.min(classLimit(), 13);  // the drivable roads drawn at this zoom: those that carry ribbons
+  for (const l of cand) {
+    if (CLS[l] > lim) continue;
+    for (let v = VS[l]; v < VS[l + 1] - 1; v++) {
+      const ax = sx(X[v]), ay = sy(Y[v]), bx = sx(X[v + 1]), by = sy(Y[v + 1]), d = Math.hypot(bx - ax, by - ay);
+      const n = Math.max(1, Math.ceil(d / (C / 2)));
+      for (let i = 0; i < n; i++) {
+        const t = (i + 0.5) / n, x = ax + (bx - ax) * t, y = ay + (by - ay) * t;
+        if (x >= 0 && y >= 0 && x < W && y < H) cells[Math.floor(y / C) * nx + Math.floor(x / C)] += d / n;
+      }
+    }
+  }
+  const used = []; for (const c of cells) if (c > 0) used.push(c);
+  if (!used.length) return;
+  used.sort((a, b) => a - b);
+  ROOM_M = 2 * C * C / used[Math.floor(0.75 * (used.length - 1))] * S.mpp;
+}
+function roomPx() { return ROOM_M > 0 ? ROOM_M / S.mpp : 40; }
+// The widest ribbon (the 99th percentile's volume): a quarter of the room, so a two-way road at its busiest takes
+// half the space between it and the next road; between 2.5 and WCAP px.
+function ribbonMax() { return Math.max(2.5, Math.min(WCAP, ROOM_SHARE * roomPx())); }
 // The space between a road's two directions (px): each ribbon sits on its own side of the centre line, to the
 // right of its travel, so the two read apart at every zoom (S306: 0.5 px between them read as one ribbon).
-let GAP = 2;
+let GAP = 2;  // set by each frame: a fifth of the widest ribbon, 1.5 to 6 px
 function ribbonOffset(l, w) { return GAP / 2 + w / 2; }
 // Whether link l is drawn as a ribbon of road traffic now.
 function hasRibbon(l) { return S.ly.road && HAS_TRAFFIC && vol[l] > 0; }
-// The grey margin (capacity) on a ribbon's outer side only, so it never fills the space between the directions.
-function casingSide(l) { return CASING_PX[tierOf(l)] * zoomScale() / 2; }
-function zoomScale() { return Math.min(2.2, Math.max(0.2, 1.15 * Math.sqrt(2600 / (W * S.mpp)))); }
-function ribbonWidthOf(f) { return Math.max((0.5 + 5.2 * f) * zoomScale(), WFLOOR); }
-function ribbonWidth(l) { return ribbonWidthOf(Math.sqrt(Math.min(vol[l], VMAX) / VMAX)); }
+// The grey margin (capacity) on a ribbon's outer side only, so it never fills the space between the directions;
+// the major roads' margin is 40 % of the widest ribbon, the other tiers' in proportion.
+const CASING_TOP = Math.max(...CASING_PX) || 1;
+function casingSide(l) { return casingOf(tierOf(l)); }
+function casingOf(tier) { return CASING_PX[tier] / CASING_TOP * 0.4 * ribbonMax(); }
+// A ribbon's width grows linearly with its volume (S306: the square root's range was too small to read): from
+// WFLOOR at no traffic to ribbonMax() at the 99th percentile's volume and above.
+function ribbonWidthOf(f) { const top = ribbonMax(); return WFLOOR + (top - WFLOOR) * f; }
+function ribbonWidth(l) { return ribbonWidthOf(Math.min(vol[l], VMAX) / VMAX); }
 function colourIndex(l) {
   let t;
   if (S.colour === "delay") t = band(delay[l]) / (BANDS.length);
@@ -419,9 +452,12 @@ function offsetLine(n, off) {
     fx[i + 1] = ux; fy[i + 1] = uy;
   }
   for (let i = 0; i < n; i++) {
-    let m = Math.hypot(nx[i], ny[i]), ax = nx[i], ay = ny[i];
+    let m = Math.hypot(nx[i], ny[i]), ax = nx[i], ay = ny[i], k = 1;
     if (m < 0.35) { ax = fx[i]; ay = fy[i]; m = Math.hypot(ax, ay) || 1; }   // a U-turn cancels the normals: keep the last segment's
-    PX[i] += ax / m * off; PY[i] += ay / m * off;
+    // At a bend between two segments, the mitre: as far out as keeps both offset segments `off` from their line
+    // (at most twice `off`), so the two directions of a road stay apart around a corner too (S306).
+    else if (i > 0 && i < n - 1) k = Math.min(2, 2 / m);
+    PX[i] += ax / m * off * k; PY[i] += ay / m * off * k;
   }
 }
 // Screen-space polyline of link l, offset to the driver's right by `off` pixels, thinned to ~`gap` px.
@@ -450,6 +486,8 @@ function draw() {
   const cand = candidates(S.cx - hw - pad, S.cy - hh - pad, S.cx + hw + pad, S.cy + hh + pad);
   const lim = classLimit() - (MOVING ? 3 : 0), gap = MOVING ? 3 : 1.2;
   const showAll = classLimit() >= 16;
+  if (!MOVING && !EXPORTING) measureRoom(cand);  // an export keeps the screen's widths
+  GAP = Math.max(1.5, Math.min(6, ribbonMax() / 5));
   const base = TIERS.map(() => new Path2D()), casings = new Map(), faint = new Path2D(), buckets = new Map();
   const dimming = S.pair >= 0 && S.routes && S.dim;
   for (const l of cand) {
@@ -462,10 +500,10 @@ function draw() {
     }
     addLine(base[tierOf(l)], l, 0, gap); DRAWN++;
     if (S.ly.road && HAS_TRAFFIC && vol[l] > 0 && CLS[l] <= Math.max(lim, 16) && (CLS[l] <= lim || busy)) {
-      const w = ribbonWidth(l), wi = Math.min(31, Math.round(w * 2)), key = colourIndex(l) * 32 + wi;
+      const w = ribbonWidth(l), wi = Math.min(127, Math.round(w * 2)), key = colourIndex(l) * 128 + wi;
       let b = buckets.get(key); if (!b) { b = new Path2D(); buckets.set(key, b); }
       addLine(b, l, ribbonOffset(l, w), gap);
-      if (CASING_PX[tierOf(l)] > 0) { const ck = tierOf(l) * 32 + wi; let c = casings.get(ck); if (!c) { c = new Path2D(); casings.set(ck, c); } addLine(c, l, ribbonOffset(l, w) + casingSide(l) / 2, gap); }
+      if (CASING_PX[tierOf(l)] > 0) { const ck = tierOf(l) * 128 + wi; let c = casings.get(ck); if (!c) { c = new Path2D(); casings.set(ck, c); } addLine(c, l, ribbonOffset(l, w) + casingSide(l) / 2, gap); }
     }
   }
   ctx.lineCap = "round"; ctx.lineJoin = "round";
@@ -474,14 +512,14 @@ function draw() {
   ctx.strokeStyle = TH.base; for (let t = 0; t < TIERS.length; t++) { ctx.lineWidth = (S.mpp > 6 ? 0.5 : 0.9) * TIERS[t]; ctx.stroke(base[t]); }
   const keys = [...buckets.keys()].sort((a, b) => a - b), tbl = TABLES[S.colour];
   ctx.globalAlpha = dimming ? 0.35 : 1;
-  if (TH.glow) { for (const k of keys) { ctx.strokeStyle = tbl[k >> 5]; ctx.globalAlpha = (dimming ? 0.35 : 1) * 0.14; ctx.lineWidth = (k & 31) / 2 * 2.8 + 1.2; ctx.stroke(buckets.get(k)); } ctx.globalAlpha = dimming ? 0.35 : 1; }
-  else if (!MOVING) { for (const k of keys) { ctx.strokeStyle = TH.surface; ctx.lineWidth = (k & 31) / 2 + 1.4; ctx.stroke(buckets.get(k)); } }
+  if (TH.glow) { for (const k of keys) { const w = (k & 127) / 2; ctx.strokeStyle = tbl[k >> 7]; ctx.globalAlpha = (dimming ? 0.35 : 1) * 0.14; ctx.lineWidth = w + Math.min(w * 1.8, GAP * 0.8); ctx.stroke(buckets.get(k)); } ctx.globalAlpha = dimming ? 0.35 : 1; }
+  else if (!MOVING) { for (const k of keys) { ctx.strokeStyle = TH.surface; ctx.lineWidth = (k & 127) / 2 + 1.4; ctx.stroke(buckets.get(k)); } }
   // The casing (S302): each ribbon widened on its outer side by its road's tier, a grey margin = capacity; major
   // roads on top.
-  { const a = ctx.globalAlpha, zs = zoomScale(); ctx.globalAlpha = 1; ctx.strokeStyle = TH.base; ctx.lineCap = "butt";
-    for (const k of [...casings.keys()].sort((x, y) => x - y)) { ctx.lineWidth = (k & 31) / 2 + CASING_PX[k >> 5] * zs / 2; ctx.stroke(casings.get(k)); }
+  { const a = ctx.globalAlpha; ctx.globalAlpha = 1; ctx.strokeStyle = TH.base; ctx.lineCap = "butt";
+    for (const k of [...casings.keys()].sort((x, y) => x - y)) { ctx.lineWidth = (k & 127) / 2 + casingOf(k >> 7); ctx.stroke(casings.get(k)); }
     ctx.lineCap = "round"; ctx.globalAlpha = a; }
-  for (const k of keys) { ctx.strokeStyle = tbl[k >> 5]; ctx.lineWidth = (k & 31) / 2; ctx.stroke(buckets.get(k)); }
+  for (const k of keys) { ctx.strokeStyle = tbl[k >> 7]; ctx.lineWidth = (k & 127) / 2; ctx.stroke(buckets.get(k)); }
   ctx.globalAlpha = 1;
   if (!MOVING && S.mpp < 3 && S.ly.road) drawChevrons(cand, lim);
   // The other layers recede while a pair's trips are shown (S305), as the road traffic does.
@@ -498,6 +536,7 @@ function draw() {
   highlight(S.link, TH.ink, 3); if (S.hover !== S.link) highlight(S.hover, TH.ink2, 2);
   highlightItem(S.hoverItem);
   drawScale();
+  document.body.dataset.room = roomPx().toFixed(1); document.body.dataset.wmax = ribbonMax().toFixed(1);
   document.body.dataset.drawms = (performance.now() - t0).toFixed(1); document.body.dataset.drawn = DRAWN; document.body.dataset.level = LEVELS[currentLevel()];
 }
 function flowLine(p, f, i) {
@@ -676,18 +715,25 @@ function drawTrips() {
   let most = 1; for (const o of opts) most = Math.max(most, A.on[o]);
   // The order drawn: nobody's routes first, the most travelled last, the hovered on top.
   opts.sort((a, b) => (a === S.hoverOpt) - (b === S.hoverOpt) || A.on[a] - A.on[b]);
-  // Options on the same network side by side: each family's k-th option moved k steps to the right.
-  const fam = new Map(); let fr = 0, fb = 0, fw = 0, ft = 0;
+  // Each option's width grows linearly with its travellers (S306), the widest a quarter of the room the roads leave
+  // on screen (as the ribbons'), 4 to 16 px; a route nobody took 1.6 px.
+  const room = roomPx(), top = Math.max(4, Math.min(16, 0.25 * room));
+  const width = (o) => (A.on[o] > 0 ? 1.5 + (top - 1.5) * A.on[o] / most : 1.6);
+  // Options on the same network side by side, the most travelled nearest the line, each beside the one before by
+  // its own width and 1.5 px (S306: fixed steps let a wide option cover its neighbours); all of them within a third
+  // of the room (16 px at least), narrower in proportion if not.
+  const fam = new Map(), acc = { r: 0, b: 0, w: 0, t: 0 };
   for (const o of [...opts].sort((a, b) => A.on[b] - A.on[a] || a - b)) {
-    let r = 0, b = 0, w = 0, t = 0;
-    for (let g = A.ol[o]; g < A.ol[o + 1]; g++) { const k = A.lk[g]; if (k === LEG.drive) r = 1; else if (k === LEG.bike) b = 1; else if (k === LEG.walk) w = 1; else if (k === LEG.ride) t = 1; }
-    fam.set(o, { r: r ? fr++ : 0, b: b ? fb++ : 0, w: w ? fw++ : 0, t: t ? ft++ : 0 });
+    const uses = { r: 0, b: 0, w: 0, t: 0 }, f = { r: 0, b: 0, w: 0, t: 0 };
+    for (let g = A.ol[o]; g < A.ol[o + 1]; g++) { const k = A.lk[g]; if (k === LEG.drive) uses.r = 1; else if (k === LEG.bike) uses.b = 1; else if (k === LEG.walk) uses.w = 1; else if (k === LEG.ride) uses.t = 1; }
+    for (const x in uses) if (uses[x]) { f[x] = acc[x] + width(o) / 2 + 1; acc[x] += width(o) + 1.5; }
+    fam.set(o, f);
   }
-  const most_f = Math.max(fr, fb, fw, ft, 1), step = Math.min(4.2, 15 / most_f);
+  const fit = Math.min(1, Math.max(16, 0.35 * room) / Math.max(acc.r, acc.b, acc.w, acc.t, 1));
   const badges = [], stops = [], parks = [];
   for (const o of opts) {
     const hl = S.hoverOpt === o, dim = S.hoverOpt >= 0 && !hl, unused = !(A.on[o] > 0);
-    const w = unused ? 1.6 : Math.min(2 + 5 * Math.sqrt(A.on[o] / most), step * 1.6 + 1.5) + (hl ? 1.2 : 0), f = fam.get(o);
+    const w = Math.max(1.2, width(o) * fit) + (hl ? 1.2 : 0), f = fam.get(o);
     ctx.globalAlpha = dim ? 0.16 : 1;
     // From the door to where the journey meets its network, and from there to the door, when they are apart:
     // a thin dotted straight line (S305).
@@ -704,7 +750,7 @@ function drawTrips() {
       if (k === LEG.park) { if (prevEnd) parks.push({ at: prevEnd, dim }); continue; }
       const pts = LEGPTS.get(g); if (!pts || pts.length < 4) continue;
       const fi = k === LEG.drive ? f.r : k === LEG.bike ? f.b : k === LEG.walk ? f.w : k === LEG.ride ? f.t : 0;
-      const sp = screenPath(pts, k === LEG.connect ? 0 : (fi + 0.5) * step); if (sp.n < 2) continue;
+      const sp = screenPath(pts, k === LEG.connect ? 0 : fi * fit); if (sp.n < 2) continue;
       const c = legColour(g, o), dotted = k === LEG.walk || k === LEG.connect;
       if (dotted) {
         // A walk along its streets as wide as the option; a walk to or from a stop (straight: its streets
@@ -1157,8 +1203,8 @@ const HEAD = 64, FOOT = 46;
 // scale, instead of sitting left of centre beside an empty band where the panel was (R-10).
 function viewWithMoving(drawInto) {
   const moving = MOVING, hover = S.hover, item = S.hoverItem, cx = S.cx; MOVING = false; S.hover = -1; S.hoverItem = null;
-  S.cx -= panelWidth() / 2 * S.mpp;
-  try { drawInto(); } finally { MOVING = moving; S.hover = hover; S.hoverItem = item; S.cx = cx; }
+  S.cx -= panelWidth() / 2 * S.mpp; EXPORTING = true;
+  try { drawInto(); } finally { MOVING = moving; S.hover = hover; S.hoverItem = item; S.cx = cx; EXPORTING = false; }
 }
 // Where an export's mark goes: before the wordmark (right-aligned at W - 16, baseline y + 20, bold
 // 11 px), as measured in the viewer's font, and centred on its lowercase body (an "x"'s height).
