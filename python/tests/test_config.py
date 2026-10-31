@@ -35,7 +35,7 @@ def _toy(**kwargs: object) -> ms.Scenario:
 
 def test_the_defaults_file_lists_every_parameter_with_its_default_and_meaning(tmp_path) -> None:
     path = ms.config_write_defaults(tmp_path / "run.toml")
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     data = tomllib.loads(text)
     t = ms.parameters()
     missing, meaningless = [], []
@@ -99,7 +99,7 @@ def test_a_changed_value_is_written_read_back_and_named_in_the_header(tmp_path) 
         service_assumptions={"assumed_wait_s": 300},
         policy=ms.operator.policy_charge_rule(0.3),
     )
-    text = config.write(tmp_path / "run.toml").read_text()
+    text = config.write(tmp_path / "run.toml").read_text(encoding="utf-8")
     header = text.splitlines()[1]
     assert header == (
         "# Differs from the defaults: run.flow_level, run.window, choice.beta_time_min, "
@@ -275,7 +275,7 @@ def test_the_command_line_runs_a_file_as_python_does(tmp_path, capsys) -> None:
                  "--no-pages"]) == 0  # fmt: skip
     assert "cli: " in capsys.readouterr().out
     python = ms.config_read(tmp_path / "run.toml").run(str(tmp_path / "python"), quiet=True)
-    manifest = json.loads((out / "manifest.json").read_text())
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["run_fingerprint"] == python.fingerprint
     # The defaults file, printed.
     assert main(["config", "--defaults"]) == 0
@@ -291,7 +291,7 @@ def test_the_command_line_runs_a_file_as_python_does(tmp_path, capsys) -> None:
 
 def test_every_run_writes_the_file_it_ran_with_and_it_repeats_the_run(tmp_path) -> None:
     first = _toy(**SETTINGS).run("copy", output_dir=str(tmp_path / "first"), quiet=True)
-    text = (tmp_path / "first" / "run.toml").read_text()
+    text = (tmp_path / "first" / "run.toml").read_text(encoding="utf-8")
     assert 'name = "copy"' in text and "beta_time_min = -0.15" in text
     assert "network (in memory)" in text.splitlines()[3]  # the inputs were objects
     assert "this run: " in text  # what the rules chose, in the comments
@@ -301,7 +301,7 @@ def test_every_run_writes_the_file_it_ran_with_and_it_repeats_the_run(tmp_path) 
     again = _toy().run(output_dir=str(tmp_path / "again"), quiet=True, config=copy)
     assert again.fingerprint == first.fingerprint
     _same_results(tmp_path / "first", tmp_path / "again")
-    assert (tmp_path / "again" / "run.toml").read_text() == text
+    assert (tmp_path / "again" / "run.toml").read_text(encoding="utf-8") == text
     try:
         import pyarrow  # noqa: F401  (Run.open reads the results with it)
     except ImportError:
@@ -320,12 +320,12 @@ def test_a_run_from_files_repeats_from_its_folder_alone(tmp_path, capsys) -> Non
     first = ms.config_read(tmp_path / "run.toml").run(str(tmp_path / "first"), quiet=True)
     assert main(["config", "--from", str(tmp_path / "first")]) == 0
     printed = capsys.readouterr().out
-    assert printed == (tmp_path / "first" / "run.toml").read_text()
+    assert printed == (tmp_path / "first" / "run.toml").read_text(encoding="utf-8")
     # The path as the file holds it, read back (on Windows its backslashes are escaped in the text).
     assert tomllib.loads(printed)["inputs"]["network"] == str(tmp_path.resolve() / "network")
     assert main(["run", "--config", str(tmp_path / "first" / "run.toml"), "--output",
                  str(tmp_path / "second"), "--no-pages"]) == 0  # fmt: skip
-    second = json.loads((tmp_path / "second" / "manifest.json").read_text())
+    second = json.loads((tmp_path / "second" / "manifest.json").read_text(encoding="utf-8"))
     assert second["run_fingerprint"] == first.fingerprint
 
 
@@ -374,7 +374,7 @@ def test_the_file_sets_log_events_the_noop_step_and_a_road_class_s_bpr_pair(tmp_
     # (S306): a service's `log_events`, the `noop` policy's `step_s`, and a road class's own
     # volume-delay pair in [loading], written as a comment (a class's pair wins over the pair
     # for every class, so it is passed only when stated).
-    defaults = ms.config_write_defaults(tmp_path / "defaults.toml").read_text()
+    defaults = ms.config_write_defaults(tmp_path / "defaults.toml").read_text(encoding="utf-8")
     assert "# residential.bpr_beta = 4" in defaults
     assert '#   name = "noop" takes step_s 900' in defaults
     stated = ms.config_read(tmp_path / "defaults.toml")._arguments()[0]
