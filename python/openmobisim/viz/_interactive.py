@@ -47,29 +47,11 @@ __all__ = ["map_interactive"]
 
 #: The road classes' names as the page shows them, in the order of their numbers.
 _CLASS_NAMES = [name.replace("_", " ") for name in LINK_CLASSES]
-#: The trips' colours by rank (S308): a pair's journeys from the fastest door to door, green, to the
-#: slowest, dark red, then on through plum and violet for an eighth and beyond; per theme.
+#: The trips' colours by rank (S308): a pair's journeys from the fastest door to door, green, to
+#: dark red, which every journey from the sixth on keeps, so the slowest is always the darkest red.
 _JOURNEY_RANK = {
-    "paper": (
-        "#1a9641",
-        "#66bd63",
-        "#d4a106",
-        "#f07f1f",
-        "#d7301f",
-        "#8f0d1e",
-        "#7a2a6e",
-        "#4a3aa7",
-    ),
-    "night": (
-        "#2fbf6a",
-        "#9bd96f",
-        "#f0cc3a",
-        "#ff9a3c",
-        "#ff5a4a",
-        "#d0304a",
-        "#c55aa8",
-        "#9085e9",
-    ),
+    "paper": ("#1a9641", "#66bd63", "#d4a106", "#f07f1f", "#d7301f", "#8f0d1e"),
+    "night": ("#2fbf6a", "#9bd96f", "#f0cc3a", "#ff9a3c", "#ff5a4a", "#d0304a"),
 }
 #: The earlier colours, one per journey by its share of travellers (S307), kept as the alternative:
 #: the route figures' palette, its sixth and seventh swapped.

@@ -629,7 +629,11 @@ def test_each_journey_s_colour_in_the_list_is_its_colour_on_the_map(tmp_path, th
         assert dot == bar == palette[min(ranked.index(int(o)), len(palette) - 1)]
     assert palette[0] in [dot for _, _, dot, _, _ in rows], "the fastest is green"
     colours = [dot for _, _, dot, _, _ in rows]
-    assert len(set(colours)) == len(colours), "no two journeys shown share a colour"
+    first = [dot for _, o, dot, _, _ in rows if ranked.index(int(o)) < len(palette) - 1]
+    assert len(set(first)) == len(first), "the five fastest each have a colour of their own"
+    # From the sixth on, dark red: the slowest is always the darkest red (S308).
+    assert len(palette) == 6 and palette[-1] in ("#8f0d1e", "#d0304a")
+    assert "pal[Math.min(r, pal.length - 1)]" in path.read_text(encoding="utf-8")
     for c in colours:
         assert c in strokes, f"{c} is drawn on the map"
         assert c in legend, f"{c} is in the export's legend"

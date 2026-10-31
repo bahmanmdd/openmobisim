@@ -689,8 +689,9 @@ function highlight(l, colour, w) {
 // A mode's colour, as the mode-share chart draws it; a leg's colour, by what it is.
 // One colour per journey, and one source of it (S307): the list's dot, share bar and strip, the map's legs, badges and
 // door links, and an export's legend all call journeyColour(o). The colour is the journey's rank in its pair (S308),
-// fastest door to door first (ties: the most travelled first): green, light green, yellow, orange, red, dark red, then
-// plum and violet (META.tokens.journeys, per theme). A car route nobody took is not ranked: pale grey.
+// fastest door to door first (ties: the most travelled first): green, light green, yellow, orange, red, and dark red
+// for the sixth and every one after it, so the slowest is always the darkest red (META.tokens.journeys, per theme).
+// A car route nobody took is not ranked: pale grey.
 let RANKS = { pair: -1, of: new Map() };
 function journeyRank(o) {
   const p = OPT_PAIR[o];
