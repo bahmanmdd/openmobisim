@@ -725,6 +725,14 @@ def test_the_pointer_is_an_arrow_and_a_hand_only_over_something_to_pick(tmp_path
     assert "const it = pickItem(e.offsetX, e.offsetY), l = it && it.kind" in text
 
 
+def test_a_journey_s_row_is_kept_low(tmp_path):
+    """Thin strips and share bars, so more of a pair's journeys fit in view (S308)."""
+    text = viz.map_interactive(grid_run()[1], tmp_path / "map.html").read_text(encoding="utf-8")
+    strip = re.search(r"#tripcard \.strip \{[^}]*height: (\d+)px", text)
+    share = re.search(r"#tripcard \.opt \.share \{[^}]*height: (\d+)px", text)
+    assert int(strip[1]) <= 8 and int(share[1]) <= 2
+
+
 def test_the_delay_is_named_as_the_delay_over_free_flow(tmp_path):
     """The colour is mean time / free flow - 1, in four bands up to 100 % and over; v/c alike."""
     text, meta, _ = decode(viz.map_interactive(grid_run()[1], tmp_path / "map.html"))

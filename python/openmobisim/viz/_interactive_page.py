@@ -162,18 +162,19 @@ footer #source { flex: none; white-space: nowrap; margin-right: 16px; }
 #tripcard .chip input { margin: 0; width: 12px; height: 12px; accent-color: var(--ink2); }
 #tripcard .chip.off { color: var(--muted); }
 #tripcard .opt.off { opacity: .45; cursor: default; }
-#tripcard .opt { padding: 6px 6px 7px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+/* A journey's row, kept low so more fit in view (S308): thin strip and share bar, little padding. */
+#tripcard .opt { padding: 4px 6px 4px; border-radius: 7px; cursor: pointer; border: 1px solid transparent; }
 #tripcard .opt:hover, #tripcard .opt.hl { background: color-mix(in srgb, var(--base) 38%, transparent); border-color: color-mix(in srgb, var(--base) 80%, transparent); }
 #tripcard .opt .top { display: flex; align-items: baseline; gap: 6px; font-size: 12px; }
 #tripcard .opt .top b { font-weight: 600; color: var(--ink); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #tripcard .opt .top .t { font: 600 12px var(--mono); color: var(--ink); white-space: nowrap; }
 #tripcard .opt .top .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; align-self: center; }
-#tripcard .opt .sub { font-size: 10.5px; color: var(--muted); margin-top: 3px; display: flex; justify-content: space-between; gap: 8px; }
-#tripcard .opt .share { height: 3px; border-radius: 2px; margin-top: 3px; background: var(--base); overflow: hidden; }
+#tripcard .opt .sub { font-size: 10.5px; line-height: 1.25; color: var(--muted); margin-top: 2px; display: flex; justify-content: space-between; gap: 8px; }
+#tripcard .opt .share { height: 2px; border-radius: 1px; margin-top: 2px; background: var(--base); overflow: hidden; }
 #tripcard .opt .share span { display: block; height: 100%; }
 #tripcard .opt.unused .top b, #tripcard .opt.unused .top .t { color: var(--muted); font-weight: 500; }
-#tripcard .strip { display: flex; gap: 2px; height: 14px; margin-top: 5px; }
-#tripcard .strip span { display: block; height: 100%; min-width: 3px; border-radius: 3px; font: 600 9px/14px var(--sans); color: #fff; text-align: center; overflow: hidden; white-space: nowrap; }
+#tripcard .strip { display: flex; gap: 2px; height: 8px; margin-top: 3px; }
+#tripcard .strip span { display: block; height: 100%; min-width: 3px; border-radius: 2px; overflow: hidden; }
 /* Each leg in its style, as on the map (S308): drive solid; taxi solid with a dotted centre; track a double line with
    sleepers; bus a double line; bike dashes; share dash-dot; walk dots; waiting hatched; parking a light tint of the parking sign's blue. */
 #tripcard .strip .drive { background: var(--c); }
