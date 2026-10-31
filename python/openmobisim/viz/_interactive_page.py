@@ -247,7 +247,14 @@ function flowLayer(prefix) {
     for (let k = vs[i]; k < vs[i + 1]; k++) { if (xs[k] < a) a = xs[k]; if (xs[k] > c) c = xs[k]; if (ys[k] < b) b = ys[k]; if (ys[k] > d) d = ys[k]; }
     x0[i] = a; y0[i] = b; x1[i] = c; y1[i] = d;
   }
-  return { n, vs, xs, ys, v, vmax: vmax || 1, x0, y0, x1, y1, len: A[prefix + "l"] || null, inf: A[prefix + "i"] || null };
+  // Each link's other direction (S308): the link between the same two nodes the other way (-1: one way). The two are
+  // drawn and picked apart, each on the right of its travel, as the road's are.
+  const nf = A[prefix + "nf"] || null, nt = A[prefix + "nt"] || null, twin = new Int32Array(n).fill(-1);
+  if (nf && nt) {
+    const at = new Map(); for (let i = 0; i < n; i++) at.set(nf[i] + ":" + nt[i], i);
+    for (let i = 0; i < n; i++) { const r = at.get(nt[i] + ":" + nf[i]); if (r !== undefined && r !== i) twin[i] = r; }
+  }
+  return { n, vs, xs, ys, v, vmax: vmax || 1, x0, y0, x1, y1, len: A[prefix + "l"] || null, inf: A[prefix + "i"] || null, nf, nt, twin };
 }
 const FLOWS = { bike: LY.bike ? flowLayer("b") : null, walk: LY.walk ? flowLayer("w") : null };
 const X = new Float64Array(NV), Y = new Float64Array(NV);
@@ -554,19 +561,27 @@ function draw() {
   document.body.dataset.room = roomPx().toFixed(1); document.body.dataset.wmax = ribbonMax().toFixed(1);
   document.body.dataset.drawms = (performance.now() - t0).toFixed(1); document.body.dataset.drawn = DRAWN; document.body.dataset.level = LEVELS[currentLevel()];
 }
-function flowLine(p, f, i) {
-  p.moveTo(sx(f.xs[f.vs[i]]), sy(f.ys[f.vs[i]]));
-  for (let v = f.vs[i] + 1; v < f.vs[i + 1]; v++) p.lineTo(sx(f.xs[v]), sy(f.ys[v]));
+// A bike or walk link's width (px) and its offset to the right of its travel (S308): a link whose other direction is
+// on the layer too sits on its own side, FLOW_GAP px from the centre line, as the road's ribbons do; a one-way link
+// on the line.
+const FLOW_GAP = 1.5;
+function flowWidth(f, i) { return Math.min(15.5, 1 + 7 * Math.sqrt(f.v[i] / f.vmax)); }
+function flowOffset(f, i, w) { return f.twin[i] >= 0 ? FLOW_GAP / 2 + w / 2 : 0; }
+function flowLine(p, f, i, off) {
+  const v0 = f.vs[i], v1 = f.vs[i + 1]; ensure(v1 - v0 + 2);
+  let n = 0; for (let v = v0; v < v1; v++) { PX[n] = sx(f.xs[v]); PY[n] = sy(f.ys[v]); n++; }
+  offsetLine(n, off || 0);
+  if (n < 2) return; p.moveTo(PX[0], PY[0]); for (let k = 1; k < n; k++) p.lineTo(PX[k], PY[k]);
 }
 function drawFlow(f, colour, dash) {
   const hw = W / 2 * S.mpp, hh = H / 2 * S.mpp, vx0 = S.cx - hw, vx1 = S.cx + hw, vy0 = S.cy - hh, vy1 = S.cy + hh;
   const faint = new Path2D(), buckets = new Map();
   for (let i = 0; i < f.n; i++) {
     if (f.x1[i] < vx0 || f.x0[i] > vx1 || f.y1[i] < vy0 || f.y0[i] > vy1) continue;
-    if (!(f.v[i] > 0)) { if (!MOVING) flowLine(faint, f, i); continue; }  // the layer's network, faint (S269)
-    const w = Math.min(15.5, 1 + 7 * Math.sqrt(f.v[i] / f.vmax)), key = Math.round(w * 2);
+    if (!(f.v[i] > 0)) { if (!MOVING) flowLine(faint, f, i, 0); continue; }  // the layer's network, faint (S269)
+    const w = flowWidth(f, i), key = Math.round(w * 2);
     let p = buckets.get(key); if (!p) { p = new Path2D(); buckets.set(key, p); }
-    flowLine(p, f, i);
+    flowLine(p, f, i, flowOffset(f, i, key / 2));
   }
   ctx.globalAlpha = 0.45 * LAYER_ALPHA; ctx.strokeStyle = colour; ctx.lineWidth = 0.6; ctx.stroke(faint); ctx.globalAlpha = LAYER_ALPHA;
   const keys = [...buckets.keys()].sort((a, b) => a - b);
@@ -576,14 +591,22 @@ function drawFlow(f, colour, dash) {
   for (const k of keys) { ctx.strokeStyle = colour; ctx.lineWidth = k / 2; ctx.stroke(buckets.get(k)); }
   ctx.setLineDash([]); ctx.globalAlpha = 1;
 }
+// A transit hop between two stops: its width (px), and its ends on screen moved to the right of its travel, so a line
+// run both ways shows, and is picked, as two hops side by side (S308).
+let HOP_TOP = 0;
+function hopTop() { if (!HOP_TOP) { for (let i = 0; i < A.tl.length; i++) HOP_TOP = Math.max(HOP_TOP, A.tl[i]); HOP_TOP = HOP_TOP || 1; } return HOP_TOP; }
+function hopWidth(i, top) { return 1.2 + 6 * Math.sqrt(A.tl[i] / (top || hopTop())); }
+function hopScreen(i, w) {
+  const a = A.ta[i], b = A.tb[i], x0 = sx(A.tsx[a] * 0.1), y0 = sy(A.tsy[a] * 0.1), x1 = sx(A.tsx[b] * 0.1), y1 = sy(A.tsy[b] * 0.1);
+  const d = Math.hypot(x1 - x0, y1 - y0) || 1, ox = -(y1 - y0) / d * (w / 2 + 0.5), oy = (x1 - x0) / d * (w / 2 + 0.5);
+  return [x0 + ox, y0 + oy, x1 + ox, y1 + oy];
+}
 function drawTransit() {
   const sxs = A.tsx, sys = A.tsy, n = A.tl.length, show = LY.transit.shown;
-  let top = 0; for (let i = 0; i < n; i++) top = Math.max(top, A.tl[i]); top = top || 1;
+  const top = hopTop();
   for (let i = 0; i < n; i++) {  // busiest last, on top
-    const a = A.ta[i], b = A.tb[i], w = 1.2 + 6 * Math.sqrt(A.tl[i] / top);
-    const x0 = sx(sxs[a] * 0.1), y0 = sy(sys[a] * 0.1), x1 = sx(sxs[b] * 0.1), y1 = sy(sys[b] * 0.1);
-    const d = Math.hypot(x1 - x0, y1 - y0) || 1, ox = -(y1 - y0) / d * (w / 2 + 0.5), oy = (x1 - x0) / d * (w / 2 + 0.5);
-    const p = new Path2D(); p.moveTo(x0 + ox, y0 + oy); p.lineTo(x1 + ox, y1 + oy);
+    const w = hopWidth(i, top), [x0, y0, x1, y1] = hopScreen(i, w);
+    const p = new Path2D(); p.moveTo(x0, y0); p.lineTo(x1, y1);
     ctx.strokeStyle = TH.surface; ctx.lineWidth = w + 1.4; ctx.stroke(p);
     ctx.strokeStyle = TH.kinds[A.tk[i]]; ctx.lineWidth = w; ctx.stroke(p);
   }
@@ -882,10 +905,12 @@ function drawScale() {
 // ---------------------------------------------------------- interaction ----
 // The distance (m) from (mx, my) to link l's line moved `off` metres to the right of its travel (S306: each
 // direction of a two-way road is picked on its own side).
-function distToLink(l, mx, my, off) {
+function distToLink(l, mx, my, off) { return distToPoly(VS[l], VS[l + 1], X, Y, mx, my, off); }
+// The same for any polyline: the points v0 to v1 - 1 of xs, ys (metres).
+function distToPoly(v0, v1, xs, ys, mx, my, off) {
   let best = Infinity;
-  for (let v = VS[l]; v < VS[l + 1] - 1; v++) {
-    let ax = X[v], ay = Y[v], bx = X[v + 1], by = Y[v + 1]; const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+  for (let v = v0; v < v1 - 1; v++) {
+    let ax = xs[v], ay = ys[v], bx = xs[v + 1], by = ys[v + 1]; const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
     if (off && L > 0) { const m = Math.sqrt(L), nx = dy / m * off, ny = -dx / m * off; ax += nx; ay += ny; bx += nx; by += ny; }
     let t = L > 0 ? ((mx - ax) * dx + (my - ay) * dy) / L : 0; t = Math.max(0, Math.min(1, t));
     const d = Math.hypot(mx - (ax + t * dx), my - (ay + t * dy)); if (d < best) best = d;
@@ -919,10 +944,14 @@ function pickItem(px, py) {
   if (kind === "road") { const l = pick(px, py); return l >= 0 ? { kind, id: l } : null; }
   let best = -1, bd = tol;
   if (kind === "bike" || kind === "walk") {
-    const f = FLOWS[kind];
+    // Each direction on its own side (S308): the distance to the line moved to the right of its travel, less half
+    // its width, so the pointer picks the direction it is on.
+    const f = FLOWS[kind], reach = tol + (FLOW_GAP + 15.5) * S.mpp;
     for (let i = 0; i < f.n; i++) {
-      if (f.x1[i] < mx - tol || f.x0[i] > mx + tol || f.y1[i] < my - tol || f.y0[i] > my + tol) continue;
-      for (let v = f.vs[i]; v + 1 < f.vs[i + 1]; v++) { const d = segDist(mx, my, f.xs[v], f.ys[v], f.xs[v + 1], f.ys[v + 1]); if (d < bd) { bd = d; best = i; } }
+      if (f.x1[i] < mx - reach || f.x0[i] > mx + reach || f.y1[i] < my - reach || f.y0[i] > my + reach) continue;
+      const used = f.v[i] > 0, w = used ? Math.round(flowWidth(f, i) * 2) / 2 : 0, off = used ? flowOffset(f, i, w) * S.mpp : 0;
+      const d = distToPoly(f.vs[i], f.vs[i + 1], f.xs, f.ys, mx, my, off) - w / 2 * S.mpp;
+      if (d < bd) { bd = d; best = i; }
     }
     return best >= 0 ? { kind, id: best } : null;
   }
@@ -933,9 +962,11 @@ function pickItem(px, py) {
       const d = Math.hypot(A.tsx[i] * 0.1 - mx, A.tsy[i] * 0.1 - my); if (d < bd) { bd = d; best = i; }
     }
     if (best >= 0) return { kind, stop: true, id: best };
+    // A hop on its own side of the line (S308): picked in screen space, where it is drawn.
+    let hd = 7;
     for (let i = 0; i < A.ta.length; i++) {
-      const a = A.ta[i], b = A.tb[i], d = segDist(mx, my, A.tsx[a] * 0.1, A.tsy[a] * 0.1, A.tsx[b] * 0.1, A.tsy[b] * 0.1);
-      if (d < bd) { bd = d; best = i; }
+      const w = hopWidth(i), [x0, y0, x1, y1] = hopScreen(i, w), d = segDist(px, py, x0, y0, x1, y1) - w / 2;
+      if (d < hd) { hd = d; best = i; }
     }
     return best >= 0 ? { kind, stop: false, id: best } : null;
   }
@@ -955,7 +986,11 @@ function tipItem(it, ev) {
     head = (it.kind === "bike" ? "bike" : "walk") + " link";
     if (f.inf) rows.push(["Infrastructure", INFRA[f.inf[i]] || "—"]);
     if (f.len) rows.push(["Length", fmt(f.len[i]) + " m"]);
-    rows.push([it.kind === "bike" ? "Cyclists" : "Walkers", fmt(f.v[i]) + " over the run"]);
+    // Which direction (S308), as the road's hover names it.
+    if (f.nf) rows.push(["Direction", "from node " + f.nf[i] + " to node " + f.nt[i]]);
+    const who = it.kind === "bike" ? "Cyclists" : "Walkers";
+    rows.push([who, fmt(f.v[i]) + " over the run"]);
+    if (f.twin[i] >= 0) rows.push(["Other direction", fmt(f.v[f.twin[i]]) + " " + who.toLowerCase()]);
   } else if (it.kind === "transit" && it.stop) {
     head = "stop " + LY.transit.stops[i];
     rows.push(["Boardings", fmt(A.tsb[i]) + " over the run"]);
@@ -964,6 +999,8 @@ function tipItem(it, ev) {
     head = LY.transit.kinds[A.tk[i]] + " between two stops";
     rows.push(["From", LY.transit.stops[a]]); rows.push(["To", LY.transit.stops[b]]);
     rows.push(["Passengers", fmt(A.tl[i]) + " on board, over the day's runs"]);
+    let back = -1; for (let j = 0; j < A.ta.length; j++) if (A.ta[j] === b && A.tb[j] === a && A.tk[j] === A.tk[i]) { back = j; break; }
+    if (back >= 0) rows.push(["Other direction", fmt(A.tl[back]) + " on board"]);
   } else {
     head = (A.pv[i] ? "bike" : "car") + " parking " + LY.parking.ids[i];
     rows.push(["Capacity", fmt(A.pc[i]) + (A.pv[i] ? " bikes" : " cars")]);
@@ -976,8 +1013,9 @@ function tipItem(it, ev) {
 function highlightItem(it) {
   if (!it || it.kind === "road") return;
   const p = new Path2D(); let ring = null;
-  if (it.kind === "bike" || it.kind === "walk") flowLine(p, FLOWS[it.kind], it.id);
-  else if (it.kind === "transit" && !it.stop) { const a = A.ta[it.id], b = A.tb[it.id]; p.moveTo(sx(A.tsx[a] * 0.1), sy(A.tsy[a] * 0.1)); p.lineTo(sx(A.tsx[b] * 0.1), sy(A.tsy[b] * 0.1)); }
+  // Outlined on its own side (S308), so the direction picked shows.
+  if (it.kind === "bike" || it.kind === "walk") { const f = FLOWS[it.kind], i = it.id; flowLine(p, f, i, f.v[i] > 0 ? flowOffset(f, i, Math.round(flowWidth(f, i) * 2) / 2) : 0); }
+  else if (it.kind === "transit" && !it.stop) { const [x0, y0, x1, y1] = hopScreen(it.id, hopWidth(it.id)); p.moveTo(x0, y0); p.lineTo(x1, y1); }
   else if (it.kind === "transit") ring = [sx(A.tsx[it.id] * 0.1), sy(A.tsy[it.id] * 0.1)];
   else ring = [sx(A.px[it.id] * 0.1), sy(A.py[it.id] * 0.1)];
   if (ring) { ctx.beginPath(); ctx.arc(ring[0], ring[1], 9, 0, 6.2832); ctx.strokeStyle = TH.ink; ctx.lineWidth = 2; ctx.stroke(); return; }
@@ -1375,6 +1413,26 @@ function exportPNG() {
   o.save(); o.translate(m.x, m.y); o.scale(m.s, m.s); o.fillStyle = TH.mark; o.fill(new Path2D(LOGO)); o.restore();
   return off.toDataURL("image/png");
 }
+// A check (`#probe=bike`, `walk` or `transit`): for every drawn link or hop of the layer whose other direction is on
+// it too, the pointer at the middle of each direction's drawn line picks that direction. Writes "checked:right:apart"
+// to the page (apart: the two directions' middles more than 1 px from each other).
+function probeDirections(kind) {
+  const keep = S.lyOrder; S.ly[kind] = true; S.lyOrder = [kind]; let checked = 0, right = 0, apart = 0;
+  const middle = (i) => {
+    if (kind === "transit") { const [x0, y0, x1, y1] = hopScreen(i, hopWidth(i)); return [(x0 + x1) / 2, (y0 + y1) / 2]; }
+    const f = FLOWS[kind], p = { moveTo() {}, lineTo() {} }; flowLine(p, f, i, f.v[i] > 0 ? flowOffset(f, i, Math.round(flowWidth(f, i) * 2) / 2) : 0);
+    const n = f.vs[i + 1] - f.vs[i], m = (n - 1) >> 1; return n > 2 ? [PX[m], PY[m]] : [(PX[0] + PX[1]) / 2, (PY[0] + PY[1]) / 2];
+  };
+  const pairs = [];
+  if (kind === "transit") { for (let i = 0; i < A.ta.length; i++) for (let j = 0; j < A.ta.length; j++) if (A.ta[j] === A.tb[i] && A.tb[j] === A.ta[i]) pairs.push([i, j]); }
+  else { const f = FLOWS[kind]; for (let i = 0; i < f.n; i++) if (f.v[i] > 0 && f.twin[i] >= 0 && f.v[f.twin[i]] > 0) pairs.push([i, f.twin[i]]); }
+  for (const [i, j] of pairs) {
+    const a = middle(i), b = middle(j), it = pickItem(a[0], a[1]); checked++;
+    if (it && it.kind === kind && it.id === i && !it.stop) right++;
+    if (Math.hypot(a[0] - b[0], a[1] - b[1]) > 1) apart++;
+  }
+  S.lyOrder = keep; document.body.dataset.probe = checked + ":" + right + ":" + apart;
+}
 function download(name, url) { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
 function exportName(ext) { return (META.title || "openmobisim map").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_") + "." + ext; }
 function exportAs(kind, save = true) {
@@ -1436,6 +1494,7 @@ function start() {
   levelButtons(); draw(); writeHash();
   document.body.dataset.state = "ready"; document.body.dataset.links = NL; document.body.dataset.rows = RL ? RL.length : 0;
   if (["png", "svg"].includes(p.get("export"))) exportAs(p.get("export"), false);  // `#export=svg`: made, not saved (a check)
+  if (["bike", "walk", "transit"].includes(p.get("probe"))) probeDirections(p.get("probe"));  // a check (S308)
 }
 start();
 })();

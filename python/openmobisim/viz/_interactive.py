@@ -205,7 +205,7 @@ def _add_layers(
             shown = shown[((hi_box[shown] >= box[0]) & (lo_box[shown] <= box[1])).all(axis=1)]
         if not len(shown) or not (total[shown] > 0).any():
             continue
-        index[name] = _embed_layer(blob, name, pts, offsets, shown, int(layer.link_count))
+        index[name] = _embed_layer(blob, name, layer, pts, offsets, shown)
         blob.add(name[0] + "v", total[shown], "f32")
         blob.add(name[0] + "l", np.asarray(layer.link_length_m())[shown], "f32")
         if name == "bike":
@@ -215,9 +215,14 @@ def _add_layers(
 
 
 def _embed_layer(
-    blob: _Blob, name: str, pts: np.ndarray, offsets: np.ndarray, shown: np.ndarray, n_links: int
+    blob: _Blob, name: str, layer: Any, pts: np.ndarray, offsets: np.ndarray, shown: np.ndarray
 ) -> np.ndarray:
-    """Embed the `shown` links of the bike or walk layer; return each link's position among them."""
+    """Embed the `shown` links of the bike or walk layer; return each link's position among them.
+
+    With each link's upstream and downstream node, so the page draws and picks the two directions
+    of a two-way link apart, as it does the road's.
+    """
+    n_links = int(layer.link_count)
     parts = [pts[int(offsets[i]) : int(offsets[i + 1])] for i in shown]
     counts = np.array([len(x) for x in parts])
     q = _quantise(np.concatenate(parts))
@@ -226,6 +231,8 @@ def _embed_layer(
     blob.add(prefix + "vs", np.concatenate([[0], np.cumsum(counts)]), "u32")
     blob.add(prefix + "dx", delta[:, 0], "i32")
     blob.add(prefix + "dy", delta[:, 1], "i32")
+    blob.add(prefix + "nf", np.asarray(layer.link_from())[shown], "u32")
+    blob.add(prefix + "nt", np.asarray(layer.link_to())[shown], "u32")
     position = np.full(n_links, -1, dtype=np.int64)
     position[shown] = np.arange(len(shown))
     return position
@@ -247,7 +254,7 @@ def _layer_geometry(
         shown = shown[((hi_box[shown] >= box[0]) & (lo_box[shown] <= box[1])).all(axis=1)]
     if not len(shown):
         return None
-    return _embed_layer(blob, name, pts, offsets, shown, int(layer.link_count))
+    return _embed_layer(blob, name, layer, pts, offsets, shown)
 
 
 def _link_boxes(points: np.ndarray, offsets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

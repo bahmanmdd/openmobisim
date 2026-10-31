@@ -467,8 +467,11 @@ def test_the_exports_run_in_a_browser_and_carry_the_credit(tmp_path, bins):
     assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 10_000
 
 
-def layered_run():
-    """The toy network with every kind of traveller: cars, transit, park-and-ride, bikes, walks."""
+def layered_run(both_ways=False):
+    """The toy network with every kind of traveller: cars, transit, park-and-ride, bikes, walks.
+
+    `both_ways`: the cyclists and walkers also go back, so their streets carry both directions.
+    """
     net = ms.examples.toy_network()
 
     def trip(who, frm, to, depart, mode):
@@ -481,6 +484,18 @@ def layered_run():
         + [trip(f"d{i}", "W", "M", 15 * i, "walk") for i in range(10)]
         + [trip(f"e{i}", "W", "D1", 5 * i, "car") for i in range(50)]
     )
+    if both_ways:  # between the ends of a two-way bike link, both ways; walkers back from M to W
+        bike = net.layer("bike")
+        ends = [(int(f), int(t)) for f, t in zip(bike.link_from(), bike.link_to(), strict=True)]
+        link = next(i for i, e in enumerate(ends) if e[::-1] in ends)
+        coords, offsets = bike.link_geometry()
+        a, b = coords[offsets[link]], coords[offsets[link + 1] - 1]
+        for k, (o, d) in enumerate(((a, b), (b, a))):
+            rows += [
+                (f"f{k}{i}", 0, o[0], o[1], d[0], d[1], 12 * i, "everyone", None, "bike")
+                for i in range(6)
+            ]
+        rows += [trip(f"g{i}", "M", "W", 17 * i, "walk") for i in range(6)]
     return ms.Scenario.from_parts(
         network=net,
         demand=rows,
@@ -532,6 +547,29 @@ def test_a_pair_s_trips_show_in_a_browser(tmp_path):
     card = re.search(r'<div id="tripcard">(.*?)<div class="foot">', dom, re.S)
     assert card and "travellers" in card.group(1) and 'class="strip"' in card.group(1)
     assert "Trips between two places" in dom  # the legend's section, shown with the pair
+
+
+@pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
+@pytest.mark.parametrize("layer", ["bike", "walk", "transit"])
+def test_each_direction_of_a_bike_walk_or_transit_link_is_drawn_and_picked_apart(tmp_path, layer):
+    """As the road's: the pointer on one direction's line picks that direction, not the other."""
+    path = tmp_path / "map.html"
+    _, _, a = decode(viz.map_interactive(layered_run(both_ways=True), str(path)))
+    if layer != "transit":
+        p = layer[0]  # each embedded link's two nodes, the run's own
+        net = ms.examples.toy_network().layer(layer)
+        assert len(a[p + "nf"]) == len(a[p + "v"]) == net.link_count
+        assert (a[p + "nf"] == net.link_from()).all() and (a[p + "nt"] == net.link_to()).all()
+    dom = subprocess.run(
+        [BROWSER, "--headless=new", "--disable-gpu", "--no-sandbox",
+         "--virtual-time-budget=3000", "--window-size=1400,900", "--dump-dom",
+         f"{path.as_uri()}#ly=r{layer[0]}&probe={layer}"],
+        capture_output=True, text=True, timeout=90,
+    ).stdout  # fmt: skip
+    checked, right, apart = map(int, re.search(r'data-probe="(\d+):(\d+):(\d+)"', dom).groups())
+    assert checked >= 2, "links used both ways"
+    assert right == checked, "the pointer on a direction's line picks that direction"
+    assert apart == checked, "the two directions are drawn apart"
 
 
 def pair_view(path, hash_):
