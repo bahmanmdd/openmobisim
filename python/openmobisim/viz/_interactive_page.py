@@ -711,6 +711,27 @@ function shownOption(o) { return !S.hidden.has(A.om[o]) && listedOption(o); }
 // Colour `a` moved a share `f` of the way to colour `b`, as #rrggbb.
 function mixHex(a, b, f) { const x = hex(a), y = hex(b); return "#" + [0, 1, 2].map((i) => Math.round(x[i] + (y[i] - x[i]) * f).toString(16).padStart(2, "0")).join(""); }
 // The screen path of points `pts` (metres), moved `off` px to the right of travel; its middle.
+// A journey's n points in PX/PY moved `off` px to the right of travel (S307): each straight piece parallel to its own
+// line, joined by a mitre at a bend up to about 105 degrees and a bevel at a sharper one (a mitre, capped, at a sharp
+// bend tilted a whole long piece once the journeys took one lane each and the offsets grew). Returns the new number
+// of points.
+function offsetJourney(n, off) {
+  if (off === 0 || n < 2) return n;
+  const seg = [];
+  for (let i = 0; i < n - 1; i++) { const dx = PX[i + 1] - PX[i], dy = PY[i + 1] - PY[i], m = Math.hypot(dx, dy); if (m > 1e-6) seg.push([PX[i], PY[i], PX[i + 1], PY[i + 1], -dy / m, dx / m]); }
+  if (!seg.length) return n;
+  const ox = [], oy = [];
+  for (let j = 0; j < seg.length; j++) {
+    const [x, y, , , ux, uy] = seg[j];
+    if (j === 0) { ox.push(x + ux * off); oy.push(y + uy * off); continue; }
+    const vx = seg[j - 1][4], vy = seg[j - 1][5], d = vx * ux + vy * uy;
+    if (d > -0.3) { const mx = vx + ux, my = vy + uy, k = 2 * off / (mx * mx + my * my); ox.push(x + mx * k); oy.push(y + my * k); }
+    else { ox.push(x + vx * off, x + ux * off); oy.push(y + vy * off, y + uy * off); }
+  }
+  const last = seg[seg.length - 1]; ox.push(last[2] + last[4] * off); oy.push(last[3] + last[5] * off);
+  ensure(ox.length); for (let i = 0; i < ox.length; i++) { PX[i] = ox[i]; PY[i] = oy[i]; }
+  return ox.length;
+}
 function screenPath(pts, off) {
   const n0 = pts.length / 2; ensure(n0 + 2);
   let n = 0, lx = 0, ly = 0;
@@ -718,7 +739,7 @@ function screenPath(pts, off) {
     const x = sx(pts[2 * i]), y = sy(pts[2 * i + 1]);
     if (n === 0 || i === n0 - 1 || Math.abs(x - lx) + Math.abs(y - ly) >= 1.2) { PX[n] = x; PY[n] = y; n++; lx = x; ly = y; }
   }
-  offsetLine(n, off);
+  n = offsetJourney(n, off);
   const path = new Path2D(); if (n < 2) return { path, n, mid: null };
   path.moveTo(PX[0], PY[0]); for (let i = 1; i < n; i++) path.lineTo(PX[i], PY[i]);
   // The point halfway along, for a badge.
@@ -740,69 +761,70 @@ function carRank(o) { let r = 0; for (let q = A.qs[OPT_PAIR[o]]; q < o; q++) if 
 function drawTrips() {
   const p = S.pair, opts = pairOptions(p).filter(shownOption);
   let most = 1; for (const o of opts) most = Math.max(most, A.on[o]);
-  // The order drawn: nobody's routes first, the most travelled last, the hovered on top.
-  opts.sort((a, b) => (a === S.hoverOpt) - (b === S.hoverOpt) || A.on[a] - A.on[b]);
+  // The order drawn (S307): the most travelled (the widest) first, so a thinner journey along the same streets, a walk
+  // beside a bike route, stays on top and in sight; the hovered on top of all.
+  opts.sort((a, b) => (a === S.hoverOpt) - (b === S.hoverOpt) || A.on[b] - A.on[a] || a - b);
   // Each option's width grows linearly with its travellers (S306), the widest a quarter of the room the roads leave
   // on screen (as the ribbons'), 4 to 16 px; a route nobody took 1.6 px.
   const room = roomPx(), top = Math.max(4, Math.min(16, 0.25 * room));
   const width = (o) => (A.on[o] > 0 ? 1.5 + (top - 1.5) * A.on[o] / most : 1.6);
-  // Options on the same network side by side, the most travelled nearest the line, each beside the one before by
-  // its own width and 1.5 px (S306: fixed steps let a wide option cover its neighbours); all of them within a third
-  // of the room (16 px at least), narrower in proportion if not.
-  const fam = new Map(), acc = { r: 0, b: 0, w: 0, t: 0 };
-  for (const o of [...opts].sort((a, b) => A.on[b] - A.on[a] || a - b)) {
-    const uses = { r: 0, b: 0, w: 0, t: 0 }, f = { r: 0, b: 0, w: 0, t: 0 };
-    for (let g = A.ol[o]; g < A.ol[o + 1]; g++) { const k = A.lk[g]; if (k === LEG.drive) uses.r = 1; else if (k === LEG.bike) uses.b = 1; else if (k === LEG.walk) uses.w = 1; else if (k === LEG.ride) uses.t = 1; }
-    for (const x in uses) if (uses[x]) { f[x] = acc[x] + width(o) / 2 + 1; acc[x] += width(o) + 1.5; }
-    fam.set(o, f);
-  }
-  const fit = Math.min(1, Math.max(16, 0.35 * room) / Math.max(acc.r, acc.b, acc.w, acc.t, 1));
+  // The journeys side by side, the most travelled nearest the line, each beside the one before by its own width and
+  // 1.5 px (S306: fixed steps let a wide option cover its neighbours). One lane per journey whatever network its legs
+  // are on (S307: the road, bike and walk layers follow the same streets, and a walk was drawn under a bike route on
+  // the same street); all of them within half the room (22 px at least: one bundle for every network now, where each
+  // had a third), narrower in proportion if not.
+  const lane = new Map(); let acc = 0;
+  for (const o of [...opts].sort((a, b) => A.on[b] - A.on[a] || a - b)) { lane.set(o, acc + width(o) / 2 + 1); acc += width(o) + 1.5; }
+  const fit = Math.min(1, Math.max(22, 0.5 * room) / Math.max(acc, 1));
   const badges = [], stops = [], parks = [];
-  for (const o of opts) {
+  // Two passes (S307): every journey's margin of the surface first, then their colours, so that a thinner journey on
+  // top hides no more of a wider one than its own line; the hovered journey after all the others, alone on top.
+  const groups = S.hoverOpt >= 0 && opts.includes(S.hoverOpt) ? [opts.filter((o) => o !== S.hoverOpt), [S.hoverOpt]] : [opts];
+  for (const group of groups) for (const pass of [0, 1]) for (const o of group) {
     const hl = S.hoverOpt === o, dim = S.hoverOpt >= 0 && !hl, unused = !(A.on[o] > 0);
-    const w = Math.max(1.2, width(o) * fit) + (hl ? 1.2 : 0), f = fam.get(o);
-    ctx.globalAlpha = dim ? 0.16 : 1;
+    const w = Math.max(1.2, width(o) * fit) + (hl ? 1.2 : 0), f = lane.get(o), c = journeyColour(o);
+    const alpha = dim ? 0.16 : unused ? 0.6 : 1;  // a car route nobody took: thin and pale
+    ctx.globalAlpha = alpha;
     // From the door to where the journey meets its network, and from there to the door, when they are apart:
     // a thin dotted straight line (S305).
-    let firstPt = null, lastPt = null;
-    for (let g = A.ol[o]; g < A.ol[o + 1]; g++) { const pts = LEGPTS.get(g); if (pts && pts.length >= 2) { if (!firstPt) firstPt = [pts[0], pts[1]]; lastPt = [pts[pts.length - 2], pts[pts.length - 1]]; } }
-    for (const [door, at] of [[[A.qox[p] * 0.1, A.qoy[p] * 0.1], firstPt], [[A.qdx[p] * 0.1, A.qdy[p] * 0.1], lastPt]]) {
-      if (!at || Math.hypot(door[0] - at[0], door[1] - at[1]) < 25) continue;
-      const path = new Path2D(); path.moveTo(sx(door[0]), sy(door[1])); path.lineTo(sx(at[0]), sy(at[1]));
-      ctx.lineCap = "round"; ctx.setLineDash([0.1, 4.6]); ctx.strokeStyle = journeyColour(o); ctx.lineWidth = 2; ctx.stroke(path); ctx.setLineDash([]);
+    if (pass === 1) {
+      let firstPt = null, lastPt = null;
+      for (let g = A.ol[o]; g < A.ol[o + 1]; g++) { const pts = LEGPTS.get(g); if (pts && pts.length >= 2) { if (!firstPt) firstPt = [pts[0], pts[1]]; lastPt = [pts[pts.length - 2], pts[pts.length - 1]]; } }
+      for (const [door, at] of [[[A.qox[p] * 0.1, A.qoy[p] * 0.1], firstPt], [[A.qdx[p] * 0.1, A.qdy[p] * 0.1], lastPt]]) {
+        if (!at || Math.hypot(door[0] - at[0], door[1] - at[1]) < 25) continue;
+        const path = new Path2D(); path.moveTo(sx(door[0]), sy(door[1])); path.lineTo(sx(at[0]), sy(at[1]));
+        ctx.lineCap = "round"; ctx.setLineDash([0.1, 4.6]); ctx.strokeStyle = c; ctx.lineWidth = 2; ctx.stroke(path); ctx.setLineDash([]);
+      }
     }
     let prevEnd = null;
     for (let g = A.ol[o]; g < A.ol[o + 1]; g++) {
       const k = A.lk[g];
-      if (k === LEG.park) { if (prevEnd) parks.push({ at: prevEnd, dim }); continue; }
+      if (k === LEG.park) { if (prevEnd && pass === 1) parks.push({ at: prevEnd, dim }); continue; }
       const pts = LEGPTS.get(g); if (!pts || pts.length < 4) continue;
-      const fi = k === LEG.drive ? f.r : k === LEG.bike ? f.b : k === LEG.walk ? f.w : k === LEG.ride ? f.t : 0;
-      const sp = screenPath(pts, k === LEG.connect ? 0 : fi * fit); if (sp.n < 2) continue;
+      const sp = screenPath(pts, k === LEG.connect ? 0 : f * fit); if (sp.n < 2) continue;
       // Every leg in the journey's one colour; what the leg is, by its line (S307): a walk dotted, a bike ride
       // dashed, a drive solid, a transit ride a double line (the colour with a thin line of the surface along it).
-      const c = journeyColour(o), dotted = k === LEG.walk || k === LEG.connect;
-      if (dotted) {
+      if (k === LEG.walk || k === LEG.connect) {
         // A walk along its streets as wide as the option; one the walk network has no path for (straight)
         // thinner.
         const ww = k === LEG.connect ? 2.6 : Math.max(w, 2.6);
         ctx.lineCap = "round"; ctx.setLineDash([0.1, ww + 2.6]);
-        ctx.strokeStyle = TH.surface; ctx.lineWidth = ww + 2.2; ctx.stroke(sp.path);
-        ctx.strokeStyle = c; ctx.lineWidth = ww; ctx.stroke(sp.path); ctx.setLineDash([]);
+        if (pass === 0) { ctx.strokeStyle = TH.surface; ctx.lineWidth = ww + 2.2; } else { ctx.strokeStyle = c; ctx.lineWidth = ww; }
+        ctx.stroke(sp.path); ctx.setLineDash([]);
       } else {
-        // A car route nobody took: thin and pale.
-        if (unused && !dim) ctx.globalAlpha = 0.6;
         const lw = k === LEG.ride ? Math.max(w, 3.6) : k === LEG.bike ? Math.max(w, 2.4) : w;
-        ctx.strokeStyle = TH.surface; ctx.lineWidth = lw + 2.6; ctx.stroke(sp.path);
-        if (k === LEG.bike) { ctx.lineCap = "butt"; ctx.setLineDash([Math.max(7, 2.4 * lw), Math.max(4, 1.2 * lw)]); }
-        ctx.strokeStyle = c; ctx.lineWidth = lw; ctx.stroke(sp.path); ctx.setLineDash([]); ctx.lineCap = "round";
-        if (k === LEG.ride) { ctx.strokeStyle = TH.surface; ctx.lineWidth = Math.max(1, 0.3 * lw); ctx.stroke(sp.path); }
-        ctx.globalAlpha = dim ? 0.16 : 1;
+        if (pass === 0) { ctx.strokeStyle = TH.surface; ctx.lineWidth = lw + 2.6; ctx.stroke(sp.path); }
+        else {
+          if (k === LEG.bike) { ctx.lineCap = "butt"; ctx.setLineDash([Math.max(7, 2.4 * lw), Math.max(4, 1.2 * lw)]); }
+          ctx.strokeStyle = c; ctx.lineWidth = lw; ctx.stroke(sp.path); ctx.setLineDash([]); ctx.lineCap = "round";
+          if (k === LEG.ride) { ctx.strokeStyle = TH.surface; ctx.lineWidth = Math.max(1, 0.3 * lw); ctx.stroke(sp.path); }
+        }
       }
-      if (k === LEG.ride) {
+      if (pass === 1 && k === LEG.ride) {
         stops.push({ at: sp.first, dim }, { at: sp.last, dim });
         if (!dim && sp.len > 34) badges.push([sp.mid, TR.lines[A.lline[g]] || "", c]);
       }
-      if (k === LEG.drive && TR.modes[A.om[o]] === "car" && !dim && sp.len > 40 && (hl || opts.length <= 8)) badges.push([sp.mid, String(carRank(o)), c]);
+      if (pass === 1 && k === LEG.drive && TR.modes[A.om[o]] === "car" && !dim && sp.len > 40 && (hl || opts.length <= 8)) badges.push([sp.mid, String(carRank(o)), c]);
       prevEnd = sp.last;
     }
   }

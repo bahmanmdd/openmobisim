@@ -616,6 +616,21 @@ def test_the_list_holds_every_mode_and_the_modes_ticked_are_drawn(tmp_path):
     assert any(int(a["om"][int(o)]) != top for _, o, *_ in rows)
 
 
+@pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
+def test_the_widest_journey_is_drawn_first_and_the_thinnest_on_top(tmp_path):
+    """A walk or any thinner journey along the same streets as a wider one stays in sight."""
+    path, _, a, p = busiest_choosing_pair(tmp_path)
+    import html
+
+    dom, rows, _, _ = pair_view(path, f"p={p}&ly=-")
+    svg = html.unescape(re.search(r'<textarea id="exported"[^>]*>(.*?)</textarea>', dom, re.S)[1])
+    drawn = re.search(r'<g transform="translate\(0 \d+\)">(.*?)</g>', svg, re.S)[1]
+    first = {c: drawn.index(f'stroke="{c}"') for _, _, c, _, _ in rows}
+    order = sorted(rows, key=lambda r: first[r[2]])
+    travellers = [float(a["on"][int(o)]) for _, o, *_ in order]
+    assert len(order) >= 3 and travellers == sorted(travellers, reverse=True)
+
+
 def test_the_page_knows_each_link_s_direction_and_its_other_direction(tmp_path):
     """A two-way road is two links between the same nodes; the page carries both ends of each."""
     net, run = grid_run()
