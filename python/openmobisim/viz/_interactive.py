@@ -46,6 +46,9 @@ __all__ = ["map_interactive"]
 
 #: The road classes' names as the page shows them, in the order of their numbers.
 _CLASS_NAMES = [name.replace("_", " ") for name in LINK_CLASSES]
+#: The trips' colours, one per journey of a pair (S307): the route figures' palette, its sixth and
+#: seventh swapped so that the six journeys a pair shows first take six hues (its two greens apart).
+_JOURNEY_ORDER = (0, 1, 2, 3, 4, 6, 5, 7)
 #: Coordinates are stored in tenths of a metre as 32-bit integers: good to ~214 km.
 _UNIT_M = 0.1
 _LIMIT = 2**31 - 1
@@ -86,7 +89,10 @@ def _tokens() -> dict[str, Any]:
     }  # fmt: skip
     return {
         **themes,
-        "route": {"paper": list(_ROUTE_PAPER), "night": list(_ROUTE_NIGHT)},
+        "journeys": {
+            "paper": [_ROUTE_PAPER[i] for i in _JOURNEY_ORDER],
+            "night": [_ROUTE_NIGHT[i] for i in _JOURNEY_ORDER],
+        },
         "services": _SERVICE_COLOURS,
     }
 

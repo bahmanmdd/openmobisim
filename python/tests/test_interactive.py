@@ -214,7 +214,7 @@ def test_the_page_starts_in_the_asked_theme_and_names_its_source(tmp_path):
     _, run = grid_run(choice_model="deterministic", equilibration="free_flow")
     _, meta, _ = decode(viz.map_interactive(run, tmp_path / "n.html", theme="night", logo=False))
     assert meta["theme"] == "night" and meta["logo"] is False
-    assert set(meta["tokens"]) >= {"paper", "night", "route"}
+    assert set(meta["tokens"]) >= {"paper", "night", "journeys"}
     assert "run interactive-test" in meta["provenance"] and "level 4 (full)" in meta["provenance"]
     assert (
         f"choice deterministic · seed 0 · fingerprint {run.fingerprint[:8]}" in meta["provenance"]
@@ -532,6 +532,48 @@ def test_a_pair_s_trips_show_in_a_browser(tmp_path):
     card = re.search(r'<div id="tripcard">(.*?)<div class="foot">', dom, re.S)
     assert card and "travellers" in card.group(1) and 'class="strip"' in card.group(1)
     assert "Trips between two places" in dom  # the legend's section, shown with the pair
+
+
+@pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
+@pytest.mark.parametrize("theme", ["paper", "night"])
+def test_each_journey_s_colour_in_the_list_is_its_colour_on_the_map(tmp_path, theme):
+    """One colour per journey, from one value: the page's palette by the journey's rank in its pair.
+
+    The list's dot and share bar, the map's lines (an SVG export of the view) and the export's
+    legend all carry the same colour for each journey, and no two journeys shown share one.
+    """
+    import html
+
+    path = tmp_path / "map.html"
+    _, meta, a = decode(viz.map_interactive(choosing_run(), path))
+    p = int(np.argmax(np.diff(a["qs"].astype(np.int64))))  # the pair with the most journeys
+    assert a["qs"][p + 1] - a["qs"][p] >= 3
+    dom = subprocess.run(
+        [BROWSER, "--headless=new", "--disable-gpu", "--no-sandbox",
+         "--virtual-time-budget=3000", "--window-size=1400,900", "--dump-dom",
+         f"{path.as_uri()}#t={theme}&p={p}&export=svg"],
+        capture_output=True, text=True, timeout=90,
+    ).stdout  # fmt: skip
+    rows = re.findall(
+        r'<div class="opt[^"]*" data-o="(\d+)"><div class="top"><i class="dot" '
+        r'style="background:(#[0-9a-f]{6})"></i>(.*?)<div class="share"><span style="width:[\d.]+%;'
+        r'background:(#[0-9a-f]{6})"',
+        dom,
+        re.S,
+    )
+    assert len(rows) >= 3, "the pair's journeys are listed"
+    palette = meta["tokens"]["journeys"][theme]
+    for o, dot, _, bar in rows:
+        assert dot == bar == palette[(int(o) - int(a["qs"][p])) % len(palette)]
+    colours = [dot for _, dot, _, _ in rows]
+    assert len(set(colours)) == len(colours), "no two journeys shown share a colour"
+    svg = html.unescape(re.search(r'<textarea id="exported"[^>]*>(.*?)</textarea>', dom, re.S)[1])
+    drawn = re.search(r'<g transform="translate\(0 \d+\)">(.*?)</g>', svg, re.S)[1]
+    strokes = set(re.findall(r'stroke="(#[0-9a-f]{6})"', drawn))
+    legend = set(re.findall(r'<line [^>]*stroke="(#[0-9a-f]{6})"', svg))
+    for c in colours:
+        assert c in strokes, f"{c} is drawn on the map"
+        assert c in legend, f"{c} is in the export's legend"
 
 
 def test_the_page_knows_each_link_s_direction_and_its_other_direction(tmp_path):
