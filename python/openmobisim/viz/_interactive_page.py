@@ -397,8 +397,10 @@ const sx = (x) => (x - S.cx) / S.mpp + W / 2, sy = (y) => H / 2 - (y - S.cy) / S
 // into cells of ROOM_CELL px, each cell's length of drawn road directions summed, and the room is 2 x cell area
 // / that length at the cells' 75th percentile (a grid of streets s px apart, two directions each, gives s / 2).
 // Kept in metres from the last still frame, so it scales with the zoom while moving.
-const ROOM_CELL = 128, ROOM_SHARE = 0.25, WFLOOR = 0.9, WCAP = 30;
+const ROOM_CELL = 128, ROOM_SHARE = 0.25, WFLOOR = 1.1, WCAP = 30;
 let ROOM_M = 0, EXPORTING = false;
+// The thinnest base line (px), at an overview and zoomed in: the minor roads read on both themes (S307).
+const BASE_FLOOR = [0.6, 0.85];
 function measureRoom(cand) {
   const C = ROOM_CELL, nx = Math.ceil(W / C), ny = Math.ceil(H / C), cells = new Float64Array(nx * ny);
   const lim = Math.min(classLimit(), 13);  // the drivable roads drawn at this zoom: those that carry ribbons
@@ -515,9 +517,11 @@ function draw() {
     }
   }
   ctx.lineCap = "round"; ctx.lineJoin = "round";
-  ctx.globalAlpha = 0.55; ctx.strokeStyle = TH.base; ctx.lineWidth = 0.4; ctx.stroke(faint); ctx.globalAlpha = 1;
+  // The streets this zoom leaves out, and the minor roads, a little stronger than a hairline so they read on both
+  // themes; no base line is thinner than BASE_FLOOR.
+  ctx.globalAlpha = 0.8; ctx.strokeStyle = TH.base; ctx.lineWidth = 0.55; ctx.stroke(faint); ctx.globalAlpha = 1;
   // The road hierarchy (S302): the minor tiers first, so the major roads sit on top.
-  ctx.strokeStyle = TH.base; for (let t = 0; t < TIERS.length; t++) { ctx.lineWidth = (S.mpp > 6 ? 0.5 : 0.9) * TIERS[t]; ctx.stroke(base[t]); }
+  ctx.strokeStyle = TH.base; for (let t = 0; t < TIERS.length; t++) { const far = S.mpp > 6; ctx.lineWidth = Math.max(BASE_FLOOR[far ? 0 : 1], (far ? 0.5 : 0.9) * TIERS[t]); ctx.stroke(base[t]); }
   const keys = [...buckets.keys()].sort((a, b) => a - b), tbl = TABLES[S.colour];
   ctx.globalAlpha = dimming ? 0.35 : 1;
   if (TH.glow) { for (const k of keys) { const w = (k & 127) / 2; ctx.strokeStyle = tbl[k >> 7]; ctx.globalAlpha = (dimming ? 0.35 : 1) * 0.14; ctx.lineWidth = w + Math.min(w * 1.8, GAP * 0.8); ctx.stroke(buckets.get(k)); } ctx.globalAlpha = dimming ? 0.35 : 1; }
