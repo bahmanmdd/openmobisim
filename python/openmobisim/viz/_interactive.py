@@ -47,9 +47,37 @@ __all__ = ["map_interactive"]
 
 #: The road classes' names as the page shows them, in the order of their numbers.
 _CLASS_NAMES = [name.replace("_", " ") for name in LINK_CLASSES]
-#: The trips' colours, one per journey of a pair (S307): the route figures' palette, its sixth and
-#: seventh swapped so that the six journeys a pair shows first take six hues (its two greens apart).
+#: The trips' colours by rank (S308): a pair's journeys from the fastest door to door, green, to the
+#: slowest, dark red, then on through plum and violet for an eighth and beyond; per theme.
+_JOURNEY_RANK = {
+    "paper": (
+        "#1a9641",
+        "#66bd63",
+        "#d4a106",
+        "#f07f1f",
+        "#d7301f",
+        "#8f0d1e",
+        "#7a2a6e",
+        "#4a3aa7",
+    ),
+    "night": (
+        "#2fbf6a",
+        "#9bd96f",
+        "#f0cc3a",
+        "#ff9a3c",
+        "#ff5a4a",
+        "#d0304a",
+        "#c55aa8",
+        "#9085e9",
+    ),
+}
+#: The earlier colours, one per journey by its share of travellers (S307), kept as the alternative:
+#: the route figures' palette, its sixth and seventh swapped.
 _JOURNEY_ORDER = (0, 1, 2, 3, 4, 6, 5, 7)
+_JOURNEY_IDENTITY = {
+    "paper": [_ROUTE_PAPER[i] for i in _JOURNEY_ORDER],
+    "night": [_ROUTE_NIGHT[i] for i in _JOURNEY_ORDER],
+}
 #: Coordinates are stored in tenths of a metre as 32-bit integers: good to ~214 km.
 _UNIT_M = 0.1
 _LIMIT = 2**31 - 1
@@ -90,10 +118,7 @@ def _tokens() -> dict[str, Any]:
     }  # fmt: skip
     return {
         **themes,
-        "journeys": {
-            "paper": [_ROUTE_PAPER[i] for i in _JOURNEY_ORDER],
-            "night": [_ROUTE_NIGHT[i] for i in _JOURNEY_ORDER],
-        },
+        "journeys": {name: list(colours) for name, colours in _JOURNEY_RANK.items()},
     }
 
 

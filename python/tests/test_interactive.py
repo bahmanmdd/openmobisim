@@ -612,17 +612,21 @@ def busiest_choosing_pair(tmp_path):
 @pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
 @pytest.mark.parametrize("theme", ["paper", "night"])
 def test_each_journey_s_colour_in_the_list_is_its_colour_on_the_map(tmp_path, theme):
-    """One colour per journey, from one value: the page's palette by the journey's rank in its pair.
+    """One colour per journey, from one value: its rank in its pair, the fastest door to door first.
 
     The list's dot and share bar, the map's lines (an SVG export of the view) and the export's
-    legend all carry the same colour for each journey, and no two journeys shown share one.
+    legend all carry the same colour for each journey, and no two journeys shown share one. The
+    fastest is green, the slowest the furthest down the palette (S308).
     """
     path, meta, a, p = busiest_choosing_pair(tmp_path)
     _, rows, strokes, legend = pair_view(path, f"t={theme}&p={p}")
     assert len(rows) >= 3, "the pair's journeys are listed"
     palette = meta["tokens"]["journeys"][theme]
+    used = [o for o in range(int(a["qs"][p]), int(a["qs"][p + 1])) if a["on"][o] > 0]
+    ranked = sorted(used, key=lambda o: (a["ot"][o], -a["on"][o], o))
     for _, o, dot, _, bar in rows:
-        assert dot == bar == palette[(int(o) - int(a["qs"][p])) % len(palette)]
+        assert dot == bar == palette[min(ranked.index(int(o)), len(palette) - 1)]
+    assert palette[0] in [dot for _, _, dot, _, _ in rows], "the fastest is green"
     colours = [dot for _, _, dot, _, _ in rows]
     assert len(set(colours)) == len(colours), "no two journeys shown share a colour"
     for c in colours:

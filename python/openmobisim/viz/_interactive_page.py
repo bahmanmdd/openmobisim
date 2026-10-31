@@ -672,14 +672,23 @@ function highlight(l, colour, w) {
 }
 // ---- trips between two places (S305) ----
 // A mode's colour, as the mode-share chart draws it; a leg's colour, by what it is.
-// One colour per journey (S307), and one source of it: the list's dot, share bar and strip, the map's legs, badges and
-// door links, and an export's legend all call journeyColour(o). The journeys' palette (the package's route figures'
-// categorical colours, per theme; META.tokens.journeys) by the journey's rank in its pair, the most travelled first, so a journey keeps
-// its colour whatever is hidden or opened; past the palette's eight, the palette again, lighter, then darker. What
-// a leg is (a drive, a bike ride, a walk, a transit ride) is its line's style, not its colour.
+// One colour per journey, and one source of it (S307): the list's dot, share bar and strip, the map's legs, badges and
+// door links, and an export's legend all call journeyColour(o). The colour is the journey's rank in its pair (S308),
+// fastest door to door first (ties: the most travelled first): green, light green, yellow, orange, red, dark red, then
+// plum and violet (META.tokens.journeys, per theme). A car route nobody took is not ranked: pale grey.
+let RANKS = { pair: -1, of: new Map() };
+function journeyRank(o) {
+  const p = OPT_PAIR[o];
+  if (RANKS.pair !== p || RANKS.theme !== S.theme) {
+    const used = pairOptions(p).filter((q) => A.on[q] > 0), t = (q) => (isFinite(A.ot[q]) ? A.ot[q] : Infinity);
+    used.sort((a, b) => t(a) - t(b) || A.on[b] - A.on[a] || a - b);
+    RANKS = { pair: p, theme: S.theme, of: new Map(used.map((q, r) => [q, r])) };
+  }
+  const r = RANKS.of.get(o); return r === undefined ? -1 : r;
+}
 function journeyColour(o) {
-  const pal = TOK.journeys[S.theme] || TOK.journeys.paper, r = o - A.qs[OPT_PAIR[o]], c = pal[r % pal.length], turn = Math.floor(r / pal.length) % 3;
-  return turn === 0 ? c : turn === 1 ? mixHex(c, TH.surface, 0.45) : mixHex(c, TH.ink, 0.35);
+  const pal = TOK.journeys[S.theme] || TOK.journeys.paper, r = journeyRank(o);
+  return r < 0 ? mixHex(TH.muted, TH.surface, 0.25) : pal[Math.min(r, pal.length - 1)];
 }
 // The ink that reads on a fill: the darker or the lighter of the two themes' inks, whichever contrasts more.
 function inkOn(fill) {
@@ -1118,7 +1127,7 @@ function tripPanel() {
   const all = total || 1;
   // What the list is (S307): every mode's journeys between the two places, whatever layers are on; the modes ticked
   // are drawn on the map.
-  h += '<div class="scope">Every way this pair\'s travellers went, by every mode, whatever layers are on above. Tick the modes to draw:</div>';
+  h += '<div class="scope">Every way this pair\'s travellers went, by every mode, whatever layers are on above. Colour: fastest door to door green → slowest red. Tick the modes to draw:</div>';
   h += '<div class="chips">' + modes.map(([m, n]) => '<label class="chip' + (S.hidden.has(m) ? " off" : "") + '" title="Draw this mode\'s journeys on the map, or not"><input type="checkbox" data-m="' + m + '"' + (S.hidden.has(m) ? "" : " checked") + "> " + escHtml(TR.mode_names[m]) + " " + Math.round(100 * n / all) + "%</label>").join("") + "</div>";
   const unused = opts.filter((o) => !(A.on[o] > 0)).length;
   let minCost = Infinity; for (const o of opts) if (isFinite(A.oc[o])) minCost = Math.min(minCost, A.oc[o]);
@@ -1213,7 +1222,7 @@ function renderLegend() {
   const parts = [];
   if (HAS_ROUTES && S.pair >= 0 && S.routes) {
     parts.push('<div class="lg"><h3>Trips between two places</h3><div class="kinds">' + tripLegendItems().map(([name, c, st]) => "<span>" + line(c, st) + name + "</span>").join("") +
-      '</div><div class="kinds"><span><em class="mkr">A</em>origin</span><span><em class="mkr">B</em>destination</span><span><em class="stop"></em>stop</span><span><em class="badge" style="background:' + TH.ink2 + ";color:" + TH.surface + '">' + escHtml(TR.lines[0] || "M1") + '</em>line</span><span><em class="mkr" style="border-radius:2px">P</em>parking</span></div><div class="note">colour: one per journey, as in the list; width = travellers; thin and pale: a car route nobody took</div></div>');
+      '</div><div class="kinds"><span><em class="mkr">A</em>origin</span><span><em class="mkr">B</em>destination</span><span><em class="stop"></em>stop</span><span><em class="badge" style="background:' + TH.ink2 + ";color:" + TH.surface + '">' + escHtml(TR.lines[0] || "M1") + '</em>line</span><span><em class="mkr" style="border-radius:2px">P</em>parking</span></div><div class="note">colour: fastest door to door green → slowest red, as in the list; width = travellers; thin and grey: a car route nobody took</div></div>');
   }
   if (HAS_TRAFFIC && S.ly.road) {
     const r = roadLegend();
@@ -1299,7 +1308,7 @@ function exportFrame() {
   if (S.ly.bike && FLOWS.bike) others.push({ title: "Cyclists · width = cyclists", items: [["cyclists", TH.modes[1], "dash"]] });
   if (S.ly.walk && FLOWS.walk) others.push({ title: "Walkers · width = walkers", items: [["walkers", TH.modes[2], "dot"]] });
   if (S.ly.parking && LY.parking) others.push({ title: "Parkings · size = capacity", items: [["car (■)", TH.ink2, ""], ["bike (●)", TH.ink2, ""]] });
-  if (HAS_ROUTES && S.pair >= 0 && S.routes) others.unshift({ title: "Trips " + placeName(S.pair, 0) + " → " + placeName(S.pair, 1) + " · colour = journey, width = travellers", items: tripJourneyItems() }, { title: "Legs", items: tripLegendItems() });
+  if (HAS_ROUTES && S.pair >= 0 && S.routes) others.unshift({ title: "Trips " + placeName(S.pair, 0) + " → " + placeName(S.pair, 1) + " · colour: fastest green → slowest red, width = travellers", items: tripJourneyItems() }, { title: "Legs", items: tripLegendItems() });
   return { title: $("title").textContent, subtitle: $("subtitle").textContent, legend, others, provenance: $("provenance").textContent, source: $("source").textContent, credit: $("credit").hidden ? "" : $("credit").textContent };
 }
 const HEAD = 64, FOOT = 46;
