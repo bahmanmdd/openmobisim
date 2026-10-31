@@ -1178,7 +1178,10 @@ class Scenario:
                 never its free-flow shortest; if all are in use it waits) and
                 ``slack`` (0.02: a pair is not searched while its set's best route is within this
                 share of free flow, since nothing is faster than free flow and so at most that
-                much is left to gain).
+                much is left to gain) and ``until_iteration`` (0: the last iteration whose
+                routes are added, 0 for every one; after it the sets stay as they are and the
+                remaining loadings settle the choices among them, without the jumps a route
+                added late causes when the few who choose again move to it).
                 For ``"doubly_stochastic"``: those three, ``tree_step_s`` (300: the length in
                 seconds of the departure bins its searches are shared by; it must be above 0 here),
                 and ``draws`` (1: perturbed searches per origin,

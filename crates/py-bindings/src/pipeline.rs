@@ -2196,6 +2196,10 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
                 f64::from(openmobisim_core_sim::route_update::DEFAULT_TREE_STEP_S),
             ));
         }
+        // The same for the iteration the sets stop growing after (S306): 0, every iteration.
+        if name == "least_cost" && !values.iter().any(|(n, _)| n == "until_iteration") {
+            values.push(("until_iteration".to_string(), 0.0));
+        }
         push(&format!("route_update.{name}"), "route_update_options", values);
     }
     for name in crate::choice::choice_models() {
