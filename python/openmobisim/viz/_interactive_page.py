@@ -208,6 +208,13 @@ const SB = A.sb || null;
 // grey margin around a ribbon (px at a zoom scale of 1). Without roads, one width and no margin.
 const RT = A.rt || null, TIERS = RT ? META.road_tiers : [1], CASING_PX = RT ? META.road_casings : [0];
 const tierOf = (l) => (RT ? RT[l] : 0);
+// Each link's upstream and downstream node (S306), and its other direction: the link between the same two nodes
+// the other way (-1 for a one-way link). A two-way road is two links on one geometry, each drawn on its own side.
+const NF = A.nf || null, NT = A.nt || null, TWIN = new Int32Array(NL).fill(-1);
+if (NF && NT) {
+  const at = new Map(); for (let l = 0; l < NL; l++) at.set(NF[l] + ":" + NT[l], l);
+  for (let l = 0; l < NL; l++) { const r = at.get(NT[l] + ":" + NF[l]); if (r !== undefined && r !== l) TWIN[l] = r; }
+}
 // The other layers (T-4), each drawn only when its box is ticked.
 const LY = META.layers || {};
 const LAYER_ROWS = [
@@ -378,12 +385,17 @@ const sx = (x) => (x - S.cx) / S.mpp + W / 2, sy = (y) => H / 2 - (y - S.cy) / S
 
 // ---------------------------------------------------------------- draw ----
 const WFLOOR = 0.9;
+// The space between a road's two directions (px): each ribbon sits on its own side of the centre line, to the
+// right of its travel, so the two read apart at every zoom (S306: 0.5 px between them read as one ribbon).
+let GAP = 2;
+function ribbonOffset(l, w) { return GAP / 2 + w / 2; }
+// Whether link l is drawn as a ribbon of road traffic now.
+function hasRibbon(l) { return S.ly.road && HAS_TRAFFIC && vol[l] > 0; }
+// The grey margin (capacity) on a ribbon's outer side only, so it never fills the space between the directions.
+function casingSide(l) { return CASING_PX[tierOf(l)] * zoomScale() / 2; }
 function zoomScale() { return Math.min(2.2, Math.max(0.2, 1.15 * Math.sqrt(2600 / (W * S.mpp)))); }
-function ribbonWidth(l) {
-  const zs = zoomScale();
-  const f = Math.sqrt(Math.min(vol[l], VMAX) / VMAX);
-  return Math.max((0.5 + 5.2 * f) * zs, WFLOOR);
-}
+function ribbonWidthOf(f) { return Math.max((0.5 + 5.2 * f) * zoomScale(), WFLOOR); }
+function ribbonWidth(l) { return ribbonWidthOf(Math.sqrt(Math.min(vol[l], VMAX) / VMAX)); }
 function colourIndex(l) {
   let t;
   if (S.colour === "delay") t = band(delay[l]) / (BANDS.length);
@@ -452,8 +464,8 @@ function draw() {
     if (S.ly.road && HAS_TRAFFIC && vol[l] > 0 && CLS[l] <= Math.max(lim, 16) && (CLS[l] <= lim || busy)) {
       const w = ribbonWidth(l), wi = Math.min(31, Math.round(w * 2)), key = colourIndex(l) * 32 + wi;
       let b = buckets.get(key); if (!b) { b = new Path2D(); buckets.set(key, b); }
-      addLine(b, l, w / 2 + 0.25, gap);
-      if (CASING_PX[tierOf(l)] > 0) { const ck = tierOf(l) * 32 + wi; let c = casings.get(ck); if (!c) { c = new Path2D(); casings.set(ck, c); } addLine(c, l, w / 2 + 0.25, gap); }
+      addLine(b, l, ribbonOffset(l, w), gap);
+      if (CASING_PX[tierOf(l)] > 0) { const ck = tierOf(l) * 32 + wi; let c = casings.get(ck); if (!c) { c = new Path2D(); casings.set(ck, c); } addLine(c, l, ribbonOffset(l, w) + casingSide(l) / 2, gap); }
     }
   }
   ctx.lineCap = "round"; ctx.lineJoin = "round";
@@ -464,9 +476,10 @@ function draw() {
   ctx.globalAlpha = dimming ? 0.35 : 1;
   if (TH.glow) { for (const k of keys) { ctx.strokeStyle = tbl[k >> 5]; ctx.globalAlpha = (dimming ? 0.35 : 1) * 0.14; ctx.lineWidth = (k & 31) / 2 * 2.8 + 1.2; ctx.stroke(buckets.get(k)); } ctx.globalAlpha = dimming ? 0.35 : 1; }
   else if (!MOVING) { for (const k of keys) { ctx.strokeStyle = TH.surface; ctx.lineWidth = (k & 31) / 2 + 1.4; ctx.stroke(buckets.get(k)); } }
-  // The casing (S302): each ribbon widened by its road's tier, a grey margin = capacity; major roads on top.
+  // The casing (S302): each ribbon widened on its outer side by its road's tier, a grey margin = capacity; major
+  // roads on top.
   { const a = ctx.globalAlpha, zs = zoomScale(); ctx.globalAlpha = 1; ctx.strokeStyle = TH.base; ctx.lineCap = "butt";
-    for (const k of [...casings.keys()].sort((x, y) => x - y)) { ctx.lineWidth = (k & 31) / 2 + CASING_PX[k >> 5] * zs; ctx.stroke(casings.get(k)); }
+    for (const k of [...casings.keys()].sort((x, y) => x - y)) { ctx.lineWidth = (k & 31) / 2 + CASING_PX[k >> 5] * zs / 2; ctx.stroke(casings.get(k)); }
     ctx.lineCap = "round"; ctx.globalAlpha = a; }
   for (const k of keys) { ctx.strokeStyle = tbl[k >> 5]; ctx.lineWidth = (k & 31) / 2; ctx.stroke(buckets.get(k)); }
   ctx.globalAlpha = 1;
@@ -560,7 +573,7 @@ function drawChevrons(cand, lim) {
   ctx.fillStyle = TH.surface; ctx.globalAlpha = 0.9;
   for (const l of cand) {
     if (!(vol[l] > 0) || CLS[l] > lim) continue;
-    const n = screenLine(l, ribbonWidth(l) / 2 + 0.25, 1.2); if (n < 2) continue;
+    const n = screenLine(l, ribbonOffset(l, ribbonWidth(l)), 1.2); if (n < 2) continue;
     let len = 0; for (let i = 0; i < n - 1; i++) len += Math.hypot(PX[i + 1] - PX[i], PY[i + 1] - PY[i]); if (len < 26) continue;
     const m = (n - 1) >> 1, dx = PX[m + 1] - PX[m], dy = PY[m + 1] - PY[m], d = Math.hypot(dx, dy) || 1, tx = dx / d, ty = dy / d;
     const cx = (PX[m] + PX[m + 1]) / 2, cy = (PY[m] + PY[m + 1]) / 2, s = ribbonWidth(l) * 0.42 + 0.9;
@@ -570,13 +583,20 @@ function drawChevrons(cand, lim) {
 }
 function drawSpill(cand) {
   const p = new Path2D(); let any = false;
-  for (const l of cand) if (SB[l] && addLine(p, l, 0, 0.5)) any = true;
+  for (const l of cand) if (SB[l] && addLine(p, l, hasRibbon(l) ? ribbonOffset(l, ribbonWidth(l)) : 0, 0.5)) any = true;
   if (!any) return;
   ctx.setLineDash([5, 4]); ctx.strokeStyle = TH.surface; ctx.lineWidth = 5; ctx.stroke(p);
   ctx.strokeStyle = TH.ink; ctx.lineWidth = 2.5; ctx.stroke(p); ctx.setLineDash([]);
 }
 function highlight(l, colour, w) {
   if (l < 0) return;
+  // A ribbon is outlined on its own side, so the direction picked shows (S306); a link without one, on its line.
+  if (hasRibbon(l)) {
+    const rw = ribbonWidth(l), p = new Path2D(); if (!addLine(p, l, ribbonOffset(l, rw), 0.5)) return;
+    ctx.lineCap = "butt"; ctx.strokeStyle = colour; ctx.lineWidth = rw + 2 * w; ctx.stroke(p);
+    ctx.strokeStyle = TABLES[S.colour][colourIndex(l)]; ctx.lineWidth = rw; ctx.stroke(p); ctx.lineCap = "round";
+    return;
+  }
   const p = new Path2D(); if (!addLine(p, l, 0, 0.5)) return;
   ctx.strokeStyle = TH.surface; ctx.lineWidth = w + 3; ctx.stroke(p); ctx.strokeStyle = colour; ctx.lineWidth = w; ctx.stroke(p);
 }
@@ -756,21 +776,27 @@ function drawScale() {
 }
 
 // ---------------------------------------------------------- interaction ----
-function distToLink(l, mx, my) {
+// The distance (m) from (mx, my) to link l's line moved `off` metres to the right of its travel (S306: each
+// direction of a two-way road is picked on its own side).
+function distToLink(l, mx, my, off) {
   let best = Infinity;
   for (let v = VS[l]; v < VS[l + 1] - 1; v++) {
-    const ax = X[v], ay = Y[v], bx = X[v + 1], by = Y[v + 1], dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+    let ax = X[v], ay = Y[v], bx = X[v + 1], by = Y[v + 1]; const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+    if (off && L > 0) { const m = Math.sqrt(L), nx = dy / m * off, ny = -dx / m * off; ax += nx; ay += ny; bx += nx; by += ny; }
     let t = L > 0 ? ((mx - ax) * dx + (my - ay) * dy) / L : 0; t = Math.max(0, Math.min(1, t));
     const d = Math.hypot(mx - (ax + t * dx), my - (ay + t * dy)); if (d < best) best = d;
   }
   return best;
 }
 function pick(px, py) {
-  const mx = S.cx + (px - W / 2) * S.mpp, my = S.cy - (py - H / 2) * S.mpp, tol = 7 * S.mpp;
-  let best = -1, bd = tol; const lim = classLimit();
-  for (const l of candidates(mx - tol, my - tol, mx + tol, my + tol)) {
+  const mx = S.cx + (px - W / 2) * S.mpp, my = S.cy - (py - H / 2) * S.mpp;
+  // A ribbon is picked anywhere on it or within a few px of its edge; a bare line within 7 px.
+  let best = -1, bd = Infinity; const lim = classLimit(), reach = (7 + (HAS_TRAFFIC ? GAP / 2 + ribbonWidthOf(1) : 0)) * S.mpp;
+  for (const l of candidates(mx - reach, my - reach, mx + reach, my + reach)) {
     if (CLS[l] > lim && !(vol[l] > 0)) continue; if (CLS[l] >= 14 && S.mpp > 2.5) continue;
-    const d = distToLink(l, mx, my); if (d < bd) { bd = d; best = l; }
+    const ribbon = hasRibbon(l), w = ribbon ? ribbonWidth(l) : 0;
+    const d = distToLink(l, mx, my, ribbon ? ribbonOffset(l, w) * S.mpp : 0) - (ribbon ? w / 2 * S.mpp : 0);
+    if (d < bd && d < (ribbon ? 4 : 7) * S.mpp) { bd = d; best = l; }
   }
   return best;
 }
@@ -859,6 +885,8 @@ function tip(l, ev) {
   const t = $("tip");
   if (l < 0) { t.hidden = true; return; }
   const rows = [["Class", CLASSES[CLS[l]] + " · " + LEN[l].toFixed(0) + " m"]];
+  if (NF) rows.push(["Direction", "from node " + NF[l] + " to node " + NT[l]]);
+  if (TWIN[l] >= 0) rows.push(["Other direction", "link " + TWIN[l] + (HAS_TRAFFIC ? ", " + fmt(vol[TWIN[l]]) + " PCU/h" : "")]);
   if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " PCU/h"]); if (vol[l] > 0) { rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]); rows.push(["Mean time", meanT[l].toFixed(1) + " s (free flow " + (FF[l] + SW[l]).toFixed(1) + " s" + (SW[l] > 0 ? ", the signal's mean wait of " + SW[l].toFixed(1) + " s included" : "") + ")"]); } }
   if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " PCU/h" + (SG[l] ? " at its signal" : "") + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used)" : "")]);
   if (HAS_ROUTES) { let n = 0; for (let i = LOPT_START[l]; i < LOPT_START[l + 1]; i++) n += A.on[LOPTS[i]]; if (n) rows.push(["Trips shown", fmt(n) + " travellers drive on it (click for their pairs)"]); }
@@ -982,7 +1010,7 @@ function selectLink(l) {
   S.link = l; const box = $("linkinfo");
   if (l < 0) { box.hidden = true; redraw(false); writeHash(); return; }
   box.hidden = false;
-  let h = "<b>link " + l + "</b> · " + CLASSES[CLS[l]] + " · " + LEN[l].toFixed(0) + " m";
+  let h = "<b>link " + l + "</b> · " + CLASSES[CLS[l]] + " · " + LEN[l].toFixed(0) + " m" + (NF ? "<div>from node " + NF[l] + " to node " + NT[l] + "</div>" : "");
   if (HAS_ROUTES) {
     const os = LOPTS.subarray(LOPT_START[l], LOPT_START[l + 1]), byPair = new Map();
     for (const o of os) if (A.on[o] > 0) byPair.set(OPT_PAIR[o], (byPair.get(OPT_PAIR[o]) || 0) + A.on[o]);

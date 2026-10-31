@@ -353,6 +353,10 @@ def map_interactive(
     blob.add("dx", delta[:, 0], "i32")
     blob.add("dy", delta[:, 1], "i32")
     blob.add("cls", network.link_class()[keep], "u8")
+    # Each link's upstream and downstream node (S306): the hover names a link's direction, and the
+    # page finds a two-way road's other direction from them.
+    blob.add("nf", np.asarray(network.link_from())[keep], "u32")
+    blob.add("nt", np.asarray(network.link_to())[keep], "u32")
     # The road hierarchy (S302): each link's tier, from its capacity (none without roads).
     tier = road_tier(network)
     if tier is not None:

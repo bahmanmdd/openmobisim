@@ -462,3 +462,55 @@ def test_a_pair_s_trips_show_in_a_browser(tmp_path):
     card = re.search(r'<div id="tripcard">(.*?)<div class="foot">', dom, re.S)
     assert card and "travellers" in card.group(1) and 'class="strip"' in card.group(1)
     assert "Trips between two places" in dom  # the legend's section, shown with the pair
+
+
+def test_the_page_knows_each_link_s_direction_and_its_other_direction(tmp_path):
+    """A two-way road is two links between the same nodes; the page carries both ends of each."""
+    net, run = grid_run()
+    _, _, a = decode(viz.map_interactive(run, tmp_path / "map.html"))
+    assert (a["nf"] == net.link_from()).all() and (a["nt"] == net.link_to()).all()
+    ends = set(zip(a["nf"].tolist(), a["nt"].tolist(), strict=True))
+    assert all((t, f) in ends for f, t in ends)  # the grid's roads are all two-way
+
+
+def ribbons(svg):
+    """The road-traffic ribbons of an SVG export: (x0, y0, x1, y1, width) of each straight piece."""
+    out = []
+    for attrs in re.findall(r"<path ([^>]*)/>", svg):
+        stroke = re.search(r'stroke="([^"]*)"', attrs)
+        if not stroke or not stroke[1].startswith("rgb(") or 'stroke-linecap="round"' not in attrs:
+            continue  # ribbons are in the colour ramp's rgb(); the base, casings and halos are not
+        width = float(re.search(r'stroke-width="([^"]*)"', attrs)[1])
+        d = re.search(r'(?:^| )d="([^"]*)"', attrs)[1]
+        for sub in re.findall(r"M[^M]*", d):
+            pts = [tuple(map(float, p.split())) for p in re.findall(r"[ML]([-\d.]+ [-\d.]+)", sub)]
+            out += [(*pts[i], *pts[i + 1], width) for i in range(len(pts) - 1)]
+    return out
+
+
+@pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
+def test_the_two_directions_of_a_road_are_drawn_apart(tmp_path):
+    """No two ribbons overlap; a two-way street shows two, one on each side of its centre line."""
+    path = tmp_path / "map.html"
+    viz.map_interactive(grid_run()[1], str(path))
+    dom = subprocess.run(
+        [BROWSER, "--headless=new", "--disable-gpu", "--no-sandbox",
+         "--virtual-time-budget=3000", "--window-size=1200,900", "--dump-dom",
+         f"{path.as_uri()}#export=svg"],
+        capture_output=True, text=True, timeout=90,
+    ).stdout  # fmt: skip
+    import html
+
+    svg = html.unescape(re.search(r'<textarea id="exported"[^>]*>(.*?)</textarea>', dom, re.S)[1])
+    flat = [r for r in ribbons(svg) if abs(r[1] - r[3]) < 0.01 and abs(r[0] - r[2]) > 5]
+    assert len(flat) > 20, "the east-west ribbons"
+    side_by_side = 0
+    for i, (ax0, ay, ax1, _, aw) in enumerate(flat):
+        for bx0, by, bx1, _, bw in flat[i + 1 :]:
+            overlap = min(max(ax0, ax1), max(bx0, bx1)) - max(min(ax0, ax1), min(bx0, bx1))
+            if overlap < 2:
+                continue
+            apart = abs(ay - by) - (aw + bw) / 2  # the space between their edges, px
+            assert apart >= 1.0, f"two ribbons overlap or touch: {apart:.2f} px apart"
+            side_by_side += apart < 12
+    assert side_by_side > 10, "the two directions of the streets, side by side"
