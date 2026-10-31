@@ -141,6 +141,34 @@ impl PyTransit {
         Ok(d)
     }
 
+    /// Every line's stop patterns: ``{"line", "stops"}``, one entry per distinct sequence of stops
+    /// a run of the line calls at, in the order of the lines (``line`` an index into
+    /// ``lines()``) and then of their first run; ``stops`` a list of stop indices (into
+    /// ``stops()``). For maps: a ride from one stop to another follows a pattern holding both.
+    fn line_patterns<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let t = &self.timetable;
+        let mut seen: Vec<Vec<Vec<u32>>> = vec![Vec::new(); t.route_count() as usize];
+        for r in 0..t.run_count() {
+            let run = TransitRunId::new(r);
+            let stops: Vec<u32> = t.run_calls(run).map(|c| t.call_stop(c).raw()).collect();
+            let line = &mut seen[t.run_route(run) as usize];
+            if !line.contains(&stops) {
+                line.push(stops);
+            }
+        }
+        let (mut line, mut stops) = (Vec::new(), Vec::new());
+        for (r, patterns) in seen.into_iter().enumerate() {
+            for p in patterns {
+                line.push(u32::try_from(r).expect("lines fit u32"));
+                stops.push(p);
+            }
+        }
+        let d = PyDict::new(py);
+        d.set_item("line", line.into_pyarray(py))?;
+        d.set_item("stops", stops)?;
+        Ok(d)
+    }
+
     /// Every stop: ``{"stop_id", "name", "lon", "lat"}``, lists and arrays by stop.
     fn stops<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let t = &self.timetable;

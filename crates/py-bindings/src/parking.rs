@@ -396,6 +396,55 @@ pub(crate) fn itinerary_choices<'py>(
     Ok(d)
 }
 
+/// Each itinerary trip's chosen journey, leg by leg: what `Run.itinerary_journeys` returns (the
+/// arrays of the core's `JourneyLegs`, by the names of its fields, and `trip`).
+pub(crate) fn itinerary_journeys<'py>(
+    py: Python<'py>,
+    result: &ItineraryResult,
+) -> PyResult<Bound<'py, PyDict>> {
+    let j = &result.journeys;
+    let d = PyDict::new(py);
+    d.set_item("trip", result.trip.clone().into_pyarray(py))?;
+    for (name, v) in [
+        ("road_origin", &j.road_origin),
+        ("road_destination", &j.road_destination),
+        ("links", &j.links),
+        ("link_offsets", &j.link_offsets),
+        ("first_stop", &j.first_stop),
+        ("last_stop", &j.last_stop),
+        ("ride_line", &j.ride_line),
+        ("ride_board", &j.ride_board),
+        ("ride_alight", &j.ride_alight),
+        ("ride_s", &j.ride_s),
+        ("ride_transfer_walk_s", &j.ride_transfer_walk_s),
+        ("ride_offsets", &j.ride_offsets),
+        ("access_walk_s", &j.access_walk_s),
+        ("egress_walk_s", &j.egress_walk_s),
+        ("dock_pickup", &j.dock_pickup),
+        ("dock_return", &j.dock_return),
+    ] {
+        d.set_item(name, v.clone().into_pyarray(py))?;
+    }
+    d.set_item("shape", j.shape.clone().into_pyarray(py))?;
+    for (name, v) in [
+        ("walk_s", &j.walk_s),
+        ("wait_s", &j.wait_s),
+        ("ride_total_s", &j.ride_total_s),
+        ("vehicle_s", &j.vehicle_s),
+        ("parking_s", &j.parking_s),
+    ] {
+        d.set_item(name, v.clone().into_pyarray(py))?;
+    }
+    d.set_item("expected_s", result.expected_s.clone().into_pyarray(py))?;
+    let mode: Vec<Option<&str>> = result
+        .mode
+        .iter()
+        .map(|&m| (m != NO_MODE).then(|| Mode::ALL[m as usize].as_str()))
+        .collect();
+    d.set_item("mode", mode)?;
+    Ok(d)
+}
+
 /// The trips that had no alternative and travelled by car, as columns: who, when,
 /// from where to where, and how many people each stands for.
 pub(crate) fn fallback_car<'py>(

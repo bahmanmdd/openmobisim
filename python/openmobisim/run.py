@@ -1714,6 +1714,38 @@ class Run:
         choices = self._summary.itinerary_choices
         return None if choices is None else Columns(choices)
 
+    def itinerary_journeys(self) -> dict[str, Any] | None:
+        """Each itinerary trip's chosen journey, leg by leg; ``None`` without any.
+
+        The journey each row of ``itinerary_choices()`` planned at its last choice, in the same
+        order (``trip`` is the same column), as NumPy arrays; a list per trip (its links, its
+        rides) is given flat with offsets, one more entry than trips: trip ``i``'s links are
+        ``links[link_offsets[i]:link_offsets[i + 1]]``. Kept in memory: ``None`` for a run
+        opened from its folder.
+
+        Columns: ``road_origin`` and ``road_destination`` (the trip's origin and destination
+        nodes on the road layer, the pair of ``route_sets()``; ``2**32 - 1`` for none),
+        ``shape`` (0 walk, ride(s), walk; 1 vehicle then transit; 2 transit then vehicle; 3 one
+        leg: a car, a bike or a walk; 4 a shared bike; 5 a shared bike then transit; 6 a taxi; 255
+        no journey), ``mode`` (the mode taken, ``None`` for no journey), ``links`` and
+        ``link_offsets`` (the vehicle leg's links, or a walk's, on its mode's layer: the road
+        layer for a car or a taxi, ``network.layer("bike")`` for a bike or a shared bike,
+        ``network.layer("walk")`` for a walk), ``first_stop`` and ``last_stop`` (indices into
+        ``transit.stops()``; ``2**32 - 1`` without transit), the rides ``ride_line`` (an index
+        into ``transit.lines()``), ``ride_board`` and ``ride_alight``
+        (stop indices), ``ride_s`` (expected seconds on board) and ``ride_transfer_walk_s`` (the
+        walk before it from the stop last left, 0 for the first ride), by ``ride_offsets``;
+        ``access_walk_s`` and ``egress_walk_s`` (the walks to the first stop and from the last);
+        the expected seconds ``walk_s``, ``wait_s``, ``ride_total_s`` (on board), ``vehicle_s``
+        (driving or cycling) and ``parking_s`` (parking, or reaching the parked vehicle), and
+        ``expected_s`` (door to door); ``dock_pickup`` and ``dock_return`` (a shared bike's
+        docks, by the docked service's dock index; ``2**32 - 1`` otherwise).
+        ``viz.map_interactive`` draws them, by origin-destination pair.
+        """
+        if isinstance(self._summary, _Files):
+            return None
+        return self._summary.itinerary_journeys
+
     def logsum_od(
         self,
         trips: Any,
