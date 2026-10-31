@@ -467,8 +467,11 @@ def test_the_exports_run_in_a_browser_and_carry_the_credit(tmp_path, bins):
     assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 10_000
 
 
-def layered_run():
-    """The toy network with every kind of traveller: cars, transit, park-and-ride, bikes, walks."""
+def layered_run(both_ways=False):
+    """The toy network with every kind of traveller: cars, transit, park-and-ride, bikes, walks.
+
+    `both_ways`: the cyclists and walkers also go back, so their streets carry both directions.
+    """
     net = ms.examples.toy_network()
 
     def trip(who, frm, to, depart, mode):
@@ -481,6 +484,18 @@ def layered_run():
         + [trip(f"d{i}", "W", "M", 15 * i, "walk") for i in range(10)]
         + [trip(f"e{i}", "W", "D1", 5 * i, "car") for i in range(50)]
     )
+    if both_ways:  # between the ends of a two-way bike link, both ways; walkers back from M to W
+        bike = net.layer("bike")
+        ends = [(int(f), int(t)) for f, t in zip(bike.link_from(), bike.link_to(), strict=True)]
+        link = next(i for i, e in enumerate(ends) if e[::-1] in ends)
+        coords, offsets = bike.link_geometry()
+        a, b = coords[offsets[link]], coords[offsets[link + 1] - 1]
+        for k, (o, d) in enumerate(((a, b), (b, a))):
+            rows += [
+                (f"f{k}{i}", 0, o[0], o[1], d[0], d[1], 12 * i, "everyone", None, "bike")
+                for i in range(6)
+            ]
+        rows += [trip(f"g{i}", "M", "W", 17 * i, "walk") for i in range(6)]
     return ms.Scenario.from_parts(
         network=net,
         demand=rows,
@@ -534,6 +549,29 @@ def test_a_pair_s_trips_show_in_a_browser(tmp_path):
     assert "Trips between two places" in dom  # the legend's section, shown with the pair
 
 
+@pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
+@pytest.mark.parametrize("layer", ["bike", "walk", "transit"])
+def test_each_direction_of_a_bike_walk_or_transit_link_is_drawn_and_picked_apart(tmp_path, layer):
+    """As the road's: the pointer on one direction's line picks that direction, not the other."""
+    path = tmp_path / "map.html"
+    _, _, a = decode(viz.map_interactive(layered_run(both_ways=True), str(path)))
+    if layer != "transit":
+        p = layer[0]  # each embedded link's two nodes, the run's own
+        net = ms.examples.toy_network().layer(layer)
+        assert len(a[p + "nf"]) == len(a[p + "v"]) == net.link_count
+        assert (a[p + "nf"] == net.link_from()).all() and (a[p + "nt"] == net.link_to()).all()
+    dom = subprocess.run(
+        [BROWSER, "--headless=new", "--disable-gpu", "--no-sandbox",
+         "--virtual-time-budget=3000", "--window-size=1400,900", "--dump-dom",
+         f"{path.as_uri()}#ly=r{layer[0]}&probe={layer}"],
+        capture_output=True, text=True, timeout=90,
+    ).stdout  # fmt: skip
+    checked, right, apart = map(int, re.search(r'data-probe="(\d+):(\d+):(\d+)"', dom).groups())
+    assert checked >= 2, "links used both ways"
+    assert right == checked, "the pointer on a direction's line picks that direction"
+    assert apart == checked, "the two directions are drawn apart"
+
+
 def pair_view(path, hash_):
     """A pair's card and map in a browser.
 
@@ -556,9 +594,10 @@ def pair_view(path, hash_):
         re.S,
     )
     svg = html.unescape(re.search(r'<textarea id="exported"[^>]*>(.*?)</textarea>', dom, re.S)[1])
-    drawn = re.search(r'<g transform="translate\(0 \d+\)">(.*?)</g>', svg, re.S)[1]
+    found = re.search(r'<g transform="translate\(0 \d+\)">(.*?)</g>', svg, re.S)
+    drawn = found[1]
     strokes = set(re.findall(r'stroke="(#[0-9a-f]{6})"', drawn))
-    legend = set(re.findall(r'<line [^>]*stroke="(#[0-9a-f]{6})"', svg))
+    legend = set(re.findall(r'stroke="(#[0-9a-f]{6})"', svg[found.end() :]))  # what follows the map
     return dom, rows, strokes, legend
 
 
@@ -574,19 +613,27 @@ def busiest_choosing_pair(tmp_path):
 @pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
 @pytest.mark.parametrize("theme", ["paper", "night"])
 def test_each_journey_s_colour_in_the_list_is_its_colour_on_the_map(tmp_path, theme):
-    """One colour per journey, from one value: the page's palette by the journey's rank in its pair.
+    """One colour per journey, from one value: its rank in its pair, the fastest door to door first.
 
     The list's dot and share bar, the map's lines (an SVG export of the view) and the export's
-    legend all carry the same colour for each journey, and no two journeys shown share one.
+    legend all carry the same colour for each journey, and no two journeys shown share one. The
+    fastest is green, the slowest the furthest down the palette (S308).
     """
     path, meta, a, p = busiest_choosing_pair(tmp_path)
     _, rows, strokes, legend = pair_view(path, f"t={theme}&p={p}")
     assert len(rows) >= 3, "the pair's journeys are listed"
     palette = meta["tokens"]["journeys"][theme]
+    used = [o for o in range(int(a["qs"][p]), int(a["qs"][p + 1])) if a["on"][o] > 0]
+    ranked = sorted(used, key=lambda o: (a["ot"][o], -a["on"][o], o))
     for _, o, dot, _, bar in rows:
-        assert dot == bar == palette[(int(o) - int(a["qs"][p])) % len(palette)]
+        assert dot == bar == palette[min(ranked.index(int(o)), len(palette) - 1)]
+    assert palette[0] in [dot for _, _, dot, _, _ in rows], "the fastest is green"
     colours = [dot for _, _, dot, _, _ in rows]
-    assert len(set(colours)) == len(colours), "no two journeys shown share a colour"
+    first = [dot for _, o, dot, _, _ in rows if ranked.index(int(o)) < len(palette) - 1]
+    assert len(set(first)) == len(first), "the five fastest each have a colour of their own"
+    # From the sixth on, dark red: the slowest is always the darkest red (S308).
+    assert len(palette) == 6 and palette[-1] in ("#8f0d1e", "#d0304a")
+    assert "pal[Math.min(r, pal.length - 1)]" in path.read_text(encoding="utf-8")
     for c in colours:
         assert c in strokes, f"{c} is drawn on the map"
         assert c in legend, f"{c} is in the export's legend"
@@ -631,12 +678,84 @@ def test_the_widest_journey_is_drawn_first_and_the_thinnest_on_top(tmp_path):
     assert len(order) >= 3 and travellers == sorted(travellers, reverse=True)
 
 
-def test_the_delay_is_named_as_the_share_of_the_crossing_time_it_is(tmp_path):
-    """The colour is 1 - free flow / mean time: never worded as the time over free flow."""
+@pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
+def test_each_leg_and_place_has_one_look_in_the_list_the_map_and_the_legend(tmp_path):
+    """One line style per kind of leg and one mark per kind of place, the same everywhere (S308).
+
+    A pair with a park-and-ride journey: its strip names each leg by its style, the legend draws
+    the styles and the marks it has (the park-and-ride's "P+R" sign among them), and the map
+    draws that sign in the parking blue.
+    """
+    import html
+
+    path = tmp_path / "map.html"
+    _, meta, a = decode(viz.map_interactive(layered_run(), path))
+    pr = meta["trips"]["modes"].index("car_transit")
+    p = next(
+        q
+        for q in range(len(a["qs"]) - 1)
+        if any(a["om"][o] == pr and a["on"][o] > 0 for o in range(a["qs"][q], a["qs"][q + 1]))
+    )
+    dom, _, _, _ = pair_view(path, f"p={p}&ly=-&ao=1")
+    strips = re.findall(r'<div class="strip">(.*?)</div>', dom, re.S)
+    kinds = {k for strip in strips for k in re.findall(r'<span class="(\w+)"', strip)}
+    assert kinds and kinds <= {
+        "drive",
+        "taxi",
+        "track",
+        "bus",
+        "bike",
+        "share",
+        "walk",
+        "wait",
+        "park",
+    }
+    assert "park" in kinds and ({"track", "bus"} & kinds), "the park-and-ride's parking and ride"
+    legend = re.search(r'<div id="legendbody"[^>]*>(.*?)<div id="compass">', dom, re.S)[1]
+    for words in ("drive", "walk", "origin", "destination", "stop", "car park and ride"):
+        assert f"</svg>{words}</span>" in legend, f"the legend draws {words}"
+    svg = html.unescape(re.search(r'<textarea id="exported"[^>]*>(.*?)</textarea>', dom, re.S)[1])
+    drawn = re.search(r'<g transform="translate\(0 \d+\)">(.*?)</g>', svg, re.S)[1]
+    assert 'fill="#1f5fbf"' in drawn and ">P+R</text>" in drawn, "the P+R sign on the map"
+    assert "Places" in svg and "car park and ride" in svg, "and in the export's legend"
+
+
+def test_the_pointer_is_an_arrow_and_a_hand_only_over_something_to_pick(tmp_path):
+    """No open hand over the whole map (S308): the arrow, a pointing hand over an item."""
     text = viz.map_interactive(grid_run()[1], tmp_path / "map.html").read_text(encoding="utf-8")
-    assert "Time lost to delay: share of the crossing time beyond free flow" in text
-    assert '"% of the crossing time"' in text and '" × free flow"' in text
-    assert "over free flow" not in text
+    rule = re.search(r"canvas#map \{[^}]*\}", text)[0]
+    assert "cursor: default" in rule and "grab" not in rule
+    assert '"grabbing" : S.picking ? "crosshair" : it ? "pointer" : "default"' in text
+    assert "const it = pickItem(e.offsetX, e.offsetY), l = it && it.kind" in text
+
+
+def test_a_journey_s_row_is_kept_low(tmp_path):
+    """Thin strips and share bars, so more of a pair's journeys fit in view (S308)."""
+    text = viz.map_interactive(grid_run()[1], tmp_path / "map.html").read_text(encoding="utf-8")
+    strip = re.search(r"#tripcard \.strip \{[^}]*height: (\d+)px", text)
+    share = re.search(r"#tripcard \.opt \.share \{[^}]*height: (\d+)px", text)
+    assert int(strip[1]) <= 8 and int(share[1]) <= 2
+
+
+def test_the_background_recedes_further_while_a_pair_is_shown(tmp_path):
+    """Less busy (S308): faint traffic and layers; no chevrons or stop names under the trips."""
+    text = viz.map_interactive(grid_run()[1], tmp_path / "map.html").read_text(encoding="utf-8")
+    assert float(re.search(r"const DIM_ALPHA = ([\d.]+);", text)[1]) <= 0.2
+    assert "S.ly.road && !dimming) drawChevrons" in text
+    assert "&& LAYER_ALPHA === 1;" in text  # stop names
+    assert '=== "car" && hl && sp.len > 40) badges.push' in text  # a route's number when hovered
+
+
+def test_the_delay_is_named_as_the_delay_over_free_flow(tmp_path):
+    """The colour is mean time / free flow - 1, in four bands up to 100 % and over; v/c alike."""
+    text, meta, _ = decode(viz.map_interactive(grid_run()[1], tmp_path / "map.html"))
+    assert '<option value="delay">Delay over free flow</option>' in text
+    assert "Delay over free flow: mean time ÷ free-flow time − 1" in text
+    assert '"% over free flow"' in text
+    assert "lost to delay" not in text and "of the crossing time" not in text
+    assert meta["delay_bands"] == [0.15, 0.5, 1.0]
+    assert meta["delay_band_labels"] == ["0–15%", "15–50%", "50–100%", "100%+"]
+    assert meta["vc_bands"] == [0.6, 0.8, 1.0] and len(meta["vc_band_labels"]) == 4
 
 
 def test_the_page_knows_each_link_s_direction_and_its_other_direction(tmp_path):
@@ -689,11 +808,30 @@ def test_the_two_directions_of_a_road_are_drawn_apart(tmp_path):
             assert apart >= 1.0, f"two ribbons overlap or touch: {apart:.2f} px apart"
             side_by_side += apart < 12
     assert side_by_side > 10, "the two directions of the streets, side by side"
-    # The widths grow linearly with volume up to the widest the room on screen allows (S306).
+    # The width is the road's capacity, not its traffic (S308): the grid's streets all have one
+    # capacity, so every ribbon is the widest the room on screen allows, however loaded.
     wmax = float(re.search(r'data-wmax="([\d.]+)"', dom)[1])
     widths = [w for *_, w in ribbons(svg)]
     assert 2.5 <= wmax <= 30 and abs(max(widths) - wmax) <= 0.5
-    assert max(widths) / min(widths) > 4, "the least and the most loaded read apart"
+    assert max(widths) - min(widths) <= 0.5, "one capacity, one width"
+    # The widest: a quarter of the room up to 32 px of room, then growing with its square root.
+    room = float(re.search(r'data-room="([\d.]+)"', dom)[1])
+    expect = 0.25 * min(room, 32) * (max(room, 32) / 32) ** 0.5
+    assert abs(wmax - min(30, max(2.5, expect))) <= 0.1
+
+
+def test_a_ribbon_s_width_is_its_road_s_capacity(tmp_path):
+    """Each road link carries its capacity over the large roads': its ribbon's width (S308)."""
+    from openmobisim.viz._canvas import road_ratio
+
+    run = layered_run()
+    text, meta, a = decode(viz.map_interactive(run, tmp_path / "map.html"))
+    ratio = np.nan_to_num(road_ratio(run.network), nan=0.0)
+    assert np.allclose(a["rr"], ratio, rtol=1e-6) and len(set(ratio.round(6))) >= 2
+    capacity = np.asarray(run.network.link_capacity_pcu_h(), dtype=float)
+    road = ratio > 0
+    assert np.allclose(capacity[road] / ratio[road], meta["road_capacity_ref"], rtol=1e-3)
+    assert "ribbonWidthOf(RR ? Math.min(1, RR[l]) : 1)" in text, "no volume in the width"
 
 
 def test_the_controls_legend_compass_and_scale_share_the_right_column(tmp_path):
@@ -704,3 +842,7 @@ def test_the_controls_legend_compass_and_scale_share_the_right_column(tmp_path):
     for part in ('<aside id="panel">', 'id="legendgroup"', 'id="compass"', 'id="scalebar"'):
         assert part in side[1]
     assert "left: 12px" not in text  # nothing pinned to the left edge but the title
+    # A little wider (S308), and a view is fitted to the map beside it, not under it.
+    width = int(re.search(r"#side \{[^}]*width: (\d+)px", text)[1])
+    reserve = int(re.search(r"function panelWidth\(\) \{ return W > 760 \? (\d+) : 0; \}", text)[1])
+    assert width >= 340 and reserve >= width + 14

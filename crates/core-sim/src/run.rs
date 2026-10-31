@@ -4308,12 +4308,14 @@ impl Run {
 impl Run {
     /// A dock's node on the walk layer, of the run's docked service (S302).
     fn dock_walk_node(&self, dock: u32) -> Option<NodeId> {
-        match self.services.as_deref()?.first()?.parts() {
+        // The docked service wherever it stands among the run's (S308: the first was read, so a
+        // taxi fleet given before the docks left every shared bike to transit truncated).
+        self.services.as_deref()?.iter().find_map(|s| match s.parts() {
             crate::services::ServiceParts::BikeDocked(docks, _) => {
                 docks.walk_node.get(dock as usize).copied()
             }
             crate::services::ServiceParts::Taxi(..) => None,
-        }
+        })
     }
 }
 

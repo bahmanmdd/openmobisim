@@ -26,12 +26,14 @@ from openmobisim.network import LINK_CLASSES
 from openmobisim.scenario import LEVEL_NAMES
 from openmobisim.viz import _geometry as geo
 from openmobisim.viz import _trips
-from openmobisim.viz._canvas import ROAD_CASING_PT, ROAD_TIER_WIDTHS, road_tier
+from openmobisim.viz._canvas import ROAD_TIER_WIDTHS, road_ratio, road_tier
 from openmobisim.viz._figure import CREATOR
 from openmobisim.viz._interactive_page import PAGE_CSS, PAGE_HTML, PAGE_JS
 from openmobisim.viz._link import (
     DELAY_BAND_LABELS,
     DELAY_BANDS,
+    VC_BAND_LABELS,
+    VC_BANDS,
     capacity_passing,
     free_flow_moving_s,
 )
@@ -45,9 +47,19 @@ __all__ = ["map_interactive"]
 
 #: The road classes' names as the page shows them, in the order of their numbers.
 _CLASS_NAMES = [name.replace("_", " ") for name in LINK_CLASSES]
-#: The trips' colours, one per journey of a pair (S307): the route figures' palette, its sixth and
-#: seventh swapped so that the six journeys a pair shows first take six hues (its two greens apart).
+#: The trips' colours by rank (S308): a pair's journeys from the fastest door to door, green, to
+#: dark red, which every journey from the sixth on keeps, so the slowest is always the darkest red.
+_JOURNEY_RANK = {
+    "paper": ("#1a9641", "#66bd63", "#d4a106", "#f07f1f", "#d7301f", "#8f0d1e"),
+    "night": ("#2fbf6a", "#9bd96f", "#f0cc3a", "#ff9a3c", "#ff5a4a", "#d0304a"),
+}
+#: The earlier colours, one per journey by its share of travellers (S307), kept as the alternative:
+#: the route figures' palette, its sixth and seventh swapped.
 _JOURNEY_ORDER = (0, 1, 2, 3, 4, 6, 5, 7)
+_JOURNEY_IDENTITY = {
+    "paper": [_ROUTE_PAPER[i] for i in _JOURNEY_ORDER],
+    "night": [_ROUTE_NIGHT[i] for i in _JOURNEY_ORDER],
+}
 #: Coordinates are stored in tenths of a metre as 32-bit integers: good to ~214 km.
 _UNIT_M = 0.1
 _LIMIT = 2**31 - 1
@@ -88,10 +100,7 @@ def _tokens() -> dict[str, Any]:
     }  # fmt: skip
     return {
         **themes,
-        "journeys": {
-            "paper": [_ROUTE_PAPER[i] for i in _JOURNEY_ORDER],
-            "night": [_ROUTE_NIGHT[i] for i in _JOURNEY_ORDER],
-        },
+        "journeys": {name: list(colours) for name, colours in _JOURNEY_RANK.items()},
     }
 
 
@@ -203,7 +212,7 @@ def _add_layers(
             shown = shown[((hi_box[shown] >= box[0]) & (lo_box[shown] <= box[1])).all(axis=1)]
         if not len(shown) or not (total[shown] > 0).any():
             continue
-        index[name] = _embed_layer(blob, name, pts, offsets, shown, int(layer.link_count))
+        index[name] = _embed_layer(blob, name, layer, pts, offsets, shown)
         blob.add(name[0] + "v", total[shown], "f32")
         blob.add(name[0] + "l", np.asarray(layer.link_length_m())[shown], "f32")
         if name == "bike":
@@ -213,9 +222,14 @@ def _add_layers(
 
 
 def _embed_layer(
-    blob: _Blob, name: str, pts: np.ndarray, offsets: np.ndarray, shown: np.ndarray, n_links: int
+    blob: _Blob, name: str, layer: Any, pts: np.ndarray, offsets: np.ndarray, shown: np.ndarray
 ) -> np.ndarray:
-    """Embed the `shown` links of the bike or walk layer; return each link's position among them."""
+    """Embed the `shown` links of the bike or walk layer; return each link's position among them.
+
+    With each link's upstream and downstream node, so the page draws and picks the two directions
+    of a two-way link apart, as it does the road's.
+    """
+    n_links = int(layer.link_count)
     parts = [pts[int(offsets[i]) : int(offsets[i + 1])] for i in shown]
     counts = np.array([len(x) for x in parts])
     q = _quantise(np.concatenate(parts))
@@ -224,6 +238,8 @@ def _embed_layer(
     blob.add(prefix + "vs", np.concatenate([[0], np.cumsum(counts)]), "u32")
     blob.add(prefix + "dx", delta[:, 0], "i32")
     blob.add(prefix + "dy", delta[:, 1], "i32")
+    blob.add(prefix + "nf", np.asarray(layer.link_from())[shown], "u32")
+    blob.add(prefix + "nt", np.asarray(layer.link_to())[shown], "u32")
     position = np.full(n_links, -1, dtype=np.int64)
     position[shown] = np.arange(len(shown))
     return position
@@ -245,7 +261,7 @@ def _layer_geometry(
         shown = shown[((hi_box[shown] >= box[0]) & (lo_box[shown] <= box[1])).all(axis=1)]
     if not len(shown):
         return None
-    return _embed_layer(blob, name, pts, offsets, shown, int(layer.link_count))
+    return _embed_layer(blob, name, layer, pts, offsets, shown)
 
 
 def _link_boxes(points: np.ndarray, offsets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -277,7 +293,8 @@ def map_interactive(
     (Overview, Region, District, Street, Detail): a large network shows its
     major roads first and adds minor streets as you zoom in, so it stays fast
     and readable at every scale. **Time**: a slider over the run's time bins,
-    all bins together, or play. **Colour** links by delay, volume, or volume
+    all bins together, or play. **Colour** links by delay over free flow (the
+    mean crossing time over the free-flow time, less one), volume, or volume
     over capacity. **Hover** a link to read it; **click** it to see how many
     routes and pairs use it and jump to one of them. **Pick a pair** to see
     its alternatives side by side, with each route's time, detour and overlap.
@@ -363,8 +380,17 @@ def map_interactive(
     blob.add("nt", np.asarray(network.link_to())[keep], "u32")
     # The road hierarchy (S302): each link's tier, from its capacity (none without roads).
     tier = road_tier(network)
+    capacity_ref = 0.0
     if tier is not None:
         blob.add("rt", tier[keep], "u8")
+        # Each road link's capacity over the network's large roads' (S308): its ribbon's width,
+        # so every road of one capacity is drawn one width, whatever its traffic.
+        ratio = road_ratio(network)
+        blob.add("rr", np.nan_to_num(ratio, nan=0.0)[keep], "f32")
+        finite = np.isfinite(ratio) & (ratio > 0)
+        if finite.any():
+            capacity = np.asarray(network.link_capacity_pcu_h(), dtype=float)
+            capacity_ref = float(np.median(capacity[finite] / ratio[finite]))
     blob.add("len", network.link_length_m()[keep], "f32")
     # Free flow is the moving time plus a signal's mean wait (S268): the wait apart, for the hover.
     moving = free_flow_moving_s(network)
@@ -457,13 +483,15 @@ def map_interactive(
         "version": __version__, "theme": theme, "n_links": n_links, "n_verts": int(len(pts)),
         "n_bins": n_bins, "bin_seconds": bin_seconds, "has_routes": has_routes,
         "delay_bands": list(DELAY_BANDS), "delay_band_labels": list(DELAY_BAND_LABELS),
+        "vc_bands": list(VC_BANDS), "vc_band_labels": list(VC_BAND_LABELS),
         "routes_shown": MAP_ROUTES, "first_bin": first_bin,
         "n_pairs": n_pairs, "trips": trips, "class_names": _CLASS_NAMES,
         "title": title or _default_title(bins is not None and n_bins > 0, has_routes),
         "note": note, "credit": credit, "logo": bool(logo),
         "provenance": provenance, "source": source, "n_spillback": n_spill,
         "arrays": blob.table, "tokens": _tokens(), "layers": layers,
-        "road_tiers": list(ROAD_TIER_WIDTHS), "road_casings": list(ROAD_CASING_PT),
+        "road_tiers": list(ROAD_TIER_WIDTHS),
+        "road_capacity_ref": round(capacity_ref),
     }  # fmt: skip
     body = len(payload) + len(PAGE_JS) + len(PAGE_CSS) + len(PAGE_HTML)
     meta["size_note"] = f"{n_links:,} links · {body / 1e6:.1f} MB"

@@ -25,7 +25,14 @@ from openmobisim import __version__
 from openmobisim._paths import show_path
 from openmobisim.run import MODES
 from openmobisim.viz._figure import CREATOR
-from openmobisim.viz._link import DELAY_BAND_LABELS, _clock, delay_band, link_table, map_link
+from openmobisim.viz._link import (
+    DELAY_BAND_LABELS,
+    _clock,
+    delay_band,
+    delay_time_share,
+    link_table,
+    map_link,
+)
 from openmobisim.viz._style import ION, THEMES
 from openmobisim.viz._transit import map_transit
 
@@ -341,14 +348,14 @@ def _roads(run: Any, paper: Any, night: Any) -> tuple[str, list[str]]:
     pcu_km = volume * length_km * hours_shown  # over the bins that saw traffic
     pcu_h = volume * mean_s / 3600.0 * hours_shown
     total_km, total_h = float(pcu_km.sum()), float(pcu_h.sum())
-    total_delay = float((pcu_h * delay).sum())
+    total_delay = float((pcu_h * delay_time_share(delay)).sum())
     speed = total_km / total_h if total_h > 0 else 0.0
     bands = delay_band(delay)
     by_band = [float(pcu_km[bands == i].sum()) for i in range(len(DELAY_BAND_LABELS))]
     day, dark = _band_colours(paper), _band_colours(night)
     stack = "".join(
         f'<div class="seg" style="flex:{v / max(total_km, 1):.4f};--c:{day[i]};--cn:{dark[i]}" '
-        f'title="{DELAY_BAND_LABELS[i]} delay: {_fmt(v, 0)} PCU-km"></div>'
+        f'title="{DELAY_BAND_LABELS[i]} delay over free flow: {_fmt(v, 0)} PCU-km"></div>'
         for i, v in enumerate(by_band)
     )
     band_rows = [
@@ -377,7 +384,7 @@ def _roads(run: Any, paper: Any, night: Any) -> tuple[str, list[str]]:
     section = (
         '<div class="grid2"><div>'
         + f'<div class="stack">{stack}</div>'
-        + _table(["delay band", "PCU-km", "share (%)"], band_rows)
+        + _table(["delay over free flow", "PCU-km", "share (%)"], band_rows)
         + f'<p class="note">Over {_clock(first * step)}–{_clock(stop * step)}, the bins that '
         f"saw traffic: <b>{_fmt(total_km, 0)}</b> PCU-km in <b>{_fmt(total_h, 0)}</b> PCU-hours, "
         f"a mean speed of <b>{_fmt(speed)}</b> km/h; "
@@ -387,7 +394,7 @@ def _roads(run: Any, paper: Any, night: Any) -> tuple[str, list[str]]:
         + _series(clock, on_road, "vehicles on the roads (PCU), by bin", "PCU")
         + "</div></div>"
         + "<h3>Busiest links, by volume per direction</h3>"
-        + _table(["link", "length (m)", "volume (PCU/h)", "delay (%)"], busy_rows)
+        + _table(["link", "length (m)", "volume (PCU/h)", "delay over free flow (%)"], busy_rows)
     )
     return section, [_fmt(total_km, 0), f"{_fmt(speed)} km/h mean speed"]
 

@@ -26,7 +26,9 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults, StaticNetwork};
 use openmobisim_core_graph::manhattan_grid;
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_sim::services::{DockDefaults, DockRow, ServiceSetup};
+use openmobisim_core_sim::services::{
+    ChargerRow, DockDefaults, DockRow, ServiceSetup, TaxiDefaults, VehicleRow,
+};
 use openmobisim_core_sim::{
     LayerSetup, NoAlternativeReason, Run, RunResult, StaticLayers, TransitSetup,
 };
@@ -425,4 +427,37 @@ fn run_time_on_the_10_by_10_grid_with_and_without_the_chain() {
             n(Mode::Transit)
         );
     }
+}
+
+/// A taxi fleet listed before the docks (S308): the chain still ends at the destination. Before
+/// the fix the hub's dock was looked up in the first service only, the fleet, and every shared
+/// bike to transit was left truncated.
+#[test]
+fn a_taxi_fleet_listed_first_leaves_the_shared_bike_to_transit_whole() {
+    let t = line_toy();
+    let rows = vec![trip("t", at(&t.road, 0, 0), at(&t.road, 4, 4), 100)];
+    let fleet = ServiceSetup::taxi(
+        "taxi",
+        &t.road,
+        &[VehicleRow { vehicle_id: "v".to_string(), position: at(&t.road, 4, 0), soc: Some(0.8) }],
+        &[ChargerRow {
+            charger_id: "c".to_string(),
+            hub_id: None,
+            position: at(&t.road, 2, 2),
+            plugs: 1,
+            kw: None,
+        }],
+        TaxiDefaults::SHIPPED,
+    )
+    .expect("set up");
+    let (travellers, trips) = demand(rows);
+    let r = Run::new(Arc::clone(&t.road), travellers, trips, Second(86_400))
+        .with_layers(Arc::clone(&t.layers))
+        .with_transit(Arc::clone(&t.transit))
+        .with_choice_model(Arc::new(Deterministic))
+        .with_mode_choice(&MODES)
+        .with_services(Arc::new(vec![fleet, service(&t, &docks(&t, true))]))
+        .execute(&mut Diagnostics::new());
+    assert_eq!(completed(&r, Mode::BikeShareTransit), 1, "{:?}", r.by_mode);
+    assert_eq!(r.by_mode[Mode::BikeShareTransit.index()].completion.truncated, 0);
 }
