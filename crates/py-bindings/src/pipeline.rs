@@ -47,8 +47,8 @@ use openmobisim_core_sim::{
 use openmobisim_core_transit::{TransitDefaults, WindowCut};
 
 use crate::parking::{
-    PyParkings, itinerary_choices, parking_bins, parking_places, parking_summary, trip_modes,
-    trip_results,
+    PyParkings, itinerary_choices, itinerary_journeys, parking_bins, parking_places,
+    parking_summary, trip_modes, trip_results,
 };
 use crate::transit::{PyTransit, transit_calls, transit_summary};
 use openmobisim_core_types::diagnostics::{Category, DiagKey, Diagnostics, Severity};
@@ -558,6 +558,10 @@ pub struct PyRunSummary {
     /// `None` without such trips.
     #[pyo3(get)]
     pub itinerary_choices: Option<Py<PyDict>>,
+    /// Each itinerary trip's chosen journey, leg by leg (`Run.itinerary_journeys`); `None`
+    /// without such trips.
+    #[pyo3(get)]
+    pub itinerary_journeys: Option<Py<PyDict>>,
     /// Every trip's departure and the mode it took, as columns.
     #[pyo3(get)]
     pub trip_modes: Py<PyDict>,
@@ -1770,6 +1774,10 @@ pub fn run_pipeline(
         ),
         None => None,
     };
+    let journeys_table = match &result.itineraries {
+        Some(it) => Some(itinerary_journeys(py, it)?.unbind()),
+        None => None,
+    };
     let trip_modes_table = trip_modes(py, &trip_table)?.unbind();
     // What the services were expected to give and what their day gave (S303).
     let service_assumptions_out = description
@@ -2006,6 +2014,7 @@ pub fn run_pipeline(
         operator_tasks_path,
         service_summaries,
         itinerary_choices: itinerary_table,
+        itinerary_journeys: journeys_table,
         trip_modes: trip_modes_table,
         trip_results: trip_results_table,
         itinerary_replanned,

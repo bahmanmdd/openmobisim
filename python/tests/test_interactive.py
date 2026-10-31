@@ -98,28 +98,43 @@ def test_embedded_results_are_the_runs_bins(tmp_path):
         assert (bins.bins()[a["bs"][k] : a["bs"][k + 1]] == k).all()
 
 
+def options(meta, a):
+    """Each pair's options as (mode, travellers, drive links, legs), as the page reads them."""
+    out = []
+    for p in range(meta["n_pairs"]):
+        opts = []
+        for o in range(a["qs"][p], a["qs"][p + 1]):
+            legs = list(range(a["ol"][o], a["ol"][o + 1]))
+            drive = [tuple(a["pl"][a["la"][g] : a["lb"][g]]) for g in legs if a["lk"][g] == 0]
+            opts.append((meta["trips"]["modes"][a["om"][o]], float(a["on"][o]), drive, legs))
+        out.append(opts)
+    return out
+
+
 def test_embedded_routes_are_the_run_route_sets(tmp_path):
     _, run = grid_run()
     sets = run.route_sets()
     _, meta, a = decode(viz.map_interactive(run, tmp_path / "map.html", max_route_pairs=10_000))
     assert meta["has_routes"] and meta["n_pairs"] <= sets.key_count
-    # Every embedded route is a route of the store, whole and in order.
+    # Every car option drives a route of the store, whole and in order.
     store = {
         tuple(sets.links()[sets.route_offsets()[r] : sets.route_offsets()[r + 1]])
         for r in range(sets.route_count)
     }
-    for r in range(len(a["rst"]) - 1):
-        assert tuple(a["rlk"][a["rst"][r] : a["rst"][r + 1]]) in store
-    assert len(a["rc"]) == len(a["ro"]) == len(a["rst"]) - 1 == meta["n_routes"]
-    assert a["ss"][-1] == meta["n_routes"] and len(a["ss"]) == meta["n_pairs"] + 1
-    assert (a["ro"] >= 0).all() and (a["ro"] <= 1).all()
-    # Within a pair: the most chosen first, then the cheapest (a pair's equal-cost twins can be
-    # chosen more than its first route, S302).
-    for k in range(meta["n_pairs"]):
-        costs = a["rc"][a["ss"][k] : a["ss"][k + 1]]
-        used = a["ru"][a["ss"][k] : a["ss"][k + 1]]
-        for i in range(len(costs) - 1):
-            assert used[i] > used[i + 1] or (used[i] == used[i + 1] and costs[i] <= costs[i + 1])
+    every = options(meta, a)
+    for opts in every:
+        for mode, _, drive, _ in opts:
+            assert mode == "car" and len(drive) == 1 and drive[0] in store
+    assert len(a["qs"]) == meta["n_pairs"] + 1 and a["qs"][-1] == len(a["om"]) == len(
+        meta["trips"]["labels"]
+    )
+    finite = np.isfinite(a["oo"])
+    assert (a["oo"][finite] >= 0).all() and (a["oo"][finite] <= 1).all()
+    # Within a pair: the most travelled first; the routes nobody took last; the pairs by travellers.
+    for p, opts in enumerate(every):
+        n = [t for _, t, _, _ in opts]
+        assert n == sorted(n, reverse=True) and sum(n) <= a["qn"][p] + 1e-6
+    assert (np.diff(a["qn"]) <= 1e-6).all()
 
 
 def test_a_build_is_repeatable_byte_for_byte(tmp_path):
@@ -139,27 +154,29 @@ def test_a_view_keeps_whole_routes_and_consistent_links(tmp_path):
     _, part, ap = decode(viz.map_interactive(run, tmp_path / "part.html", view=half))
     assert 0 < part["n_links"] < whole["n_links"]
     # Every referenced link exists in the clipped network, and results follow the new numbering.
-    assert ap["rl"].max() < part["n_links"] and ap["rlk"].max() < part["n_links"]
+    drive = [link for opts in options(part, ap) for _, _, d, _ in opts for leg in d for link in leg]
+    assert ap["rl"].max() < part["n_links"] and max(drive) < part["n_links"]
     assert len(ap["bs"]) == part["n_bins"] + 1 and ap["bs"][-1] == len(ap["rl"])
-    assert part["n_pairs"] <= whole["n_pairs"] and part["n_routes"] <= whole["n_routes"]
+    assert part["n_pairs"] <= whole["n_pairs"] and len(part["trips"]["labels"]) <= len(
+        whole["trips"]["labels"]
+    )
     with pytest.raises(ValueError, match="no links"):
         viz.map_interactive(run, tmp_path / "none.html", view=((0.0, 0.0), (0.001, 0.001)))
 
 
-def test_the_route_budget_keeps_the_richest_pairs(tmp_path):
+def test_the_pair_budget_keeps_the_busiest_pairs(tmp_path):
     _, run = grid_run(trips=200)
     _, all_, a_all = decode(viz.map_interactive(run, tmp_path / "all.html", max_route_pairs=10_000))
     _, few, a_few = decode(viz.map_interactive(run, tmp_path / "few.html", max_route_pairs=5))
     assert few["n_pairs"] == 5 < all_["n_pairs"]
-    per_pair_all = np.diff(a_all["ss"])
-    assert np.diff(a_few["ss"]).min() >= np.sort(per_pair_all)[-5]
+    assert np.allclose(a_few["qn"], a_all["qn"][:5])
 
 
 def test_without_traffic_or_routes_the_page_still_stands(tmp_path):
     net, run = grid_run(link_bin_s=None)
     _, meta, a = decode(viz.map_interactive(run, tmp_path / "quiet.html", routes=False))
     assert meta["n_bins"] == 0 and not meta["has_routes"]
-    assert "rl" not in a and "ss" not in a and len(a["vs"]) == net.link_count + 1
+    assert "rl" not in a and "qs" not in a and len(a["vs"]) == net.link_count + 1
     assert meta["title"] == "Network and route alternatives"
     # The same run with its results and its route sets on.
     _, run2 = grid_run()
@@ -240,21 +257,104 @@ def test_the_page_carries_how_many_travellers_took_each_route(tmp_path):
         _, meta, a = decode(
             viz.map_interactive(run, tmp_path / f"{model}.html", max_route_pairs=10_000)
         )
-        assert "ru" in a and len(a["ru"]) == meta["n_routes"]
-        rc, sets = run.route_choices(), run.route_sets()
+        rc = run.route_choices()
         routed = rc.route >= 0
-        taken = np.bincount(rc.route[routed], weights=rc.weight[routed], minlength=sets.route_count)
-        assert a["ru"].sum() <= taken.sum() + 1e-6 and a["ru"].sum() > 0
+        assert np.isclose(a["on"].sum() + a["qr"].sum(), rc.weight[routed].sum())
+        assert np.isclose(a["qn"].sum(), rc.weight[routed].sum())
+        used = [sum(1 for _, t, _, _ in opts if t > 0) for opts in options(meta, a)]
         if model == "deterministic":
-            # Everyone takes the first route of their pair.
-            for k in range(meta["n_pairs"]):
-                use = a["ru"][a["ss"][k] : a["ss"][k + 1]]
-                assert (use[1:] == 0).all()
+            assert max(used) == 1  # everyone takes the first route of their pair
         else:
-            second = [
-                a["ru"][a["ss"][k] + 1 : a["ss"][k + 1]].sum() for k in range(meta["n_pairs"])
-            ]
-            assert max(second) > 0, "someone takes a second route"
+            assert max(used) > 1, "someone takes a second route"
+
+
+def choosing_run():
+    """The toy network, everyone choosing among car, bike, walk, transit and park-and-ride."""
+    net = ms.examples.toy_network()
+    pairs = [("W", "N1"), ("S", "D2"), ("W", "M"), ("W", "D1")]
+    rows = []
+    for k in range(80):
+        frm, to = pairs[k % len(pairs)]
+        o, d = net.node_lonlat(frm), net.node_lonlat(to)
+        rows.append((f"t{k}", 0, o[0], o[1], d[0], d[1], 25 * k, "everyone", None, None))
+    return ms.Scenario.from_parts(
+        network=net,
+        demand=rows,
+        classes={"everyone": (True, True, False)},
+        transit=ms.examples.toy_network_transit(),
+        parkings=ms.examples.toy_network_parkings(),
+        modes=["car", "bike", "walk", "transit", "car_transit"],
+        choice_model="logit",
+        equilibration="free_flow",
+        link_bin_s=300,
+    ).run(run_id="choosing", quiet=True)
+
+
+def test_each_trip_keeps_its_chosen_journey_leg_by_leg():
+    run = choosing_run()
+    j, c = run.itinerary_journeys(), run.itinerary_choices()
+    n = len(j["trip"])
+    assert (
+        n == len(c["trip"])
+        and (j["trip"] == c["trip"]).all()
+        and list(j["mode"]) == list(c["mode"])
+    )
+    assert len(j["link_offsets"]) == len(j["ride_offsets"]) == n + 1
+    assert (np.diff(j["link_offsets"].astype(np.int64)) >= 0).all() and j["link_offsets"][
+        -1
+    ] == len(j["links"])
+    assert j["ride_offsets"][-1] == len(j["ride_line"]) == len(j["ride_board"]) == len(j["ride_s"])
+    layers = {
+        "car": run.network,
+        "bike": run.network.layer("bike"),
+        "walk": run.network.layer("walk"),
+    }
+    for i in range(n):
+        links = j["links"][j["link_offsets"][i] : j["link_offsets"][i + 1]]
+        mode = j["mode"][i]
+        layer = (
+            layers["car" if mode in ("car", "car_transit") else mode]
+            if mode in ("car", "car_transit", "bike", "walk")
+            else None
+        )
+        if layer is not None and len(links):
+            frm, to = layer.link_from(), layer.link_to()
+            assert links.max() < layer.link_count
+            assert (to[links[:-1]] == frm[links[1:]]).all(), "a leg's links join end to end"
+        rides = range(j["ride_offsets"][i], j["ride_offsets"][i + 1])
+        assert (mode in ("transit", "car_transit")) == (len(rides) > 0) or mode is None
+        if len(rides):
+            assert j["first_stop"][i] == j["ride_board"][rides[0]] or j["access_walk_s"][i] >= 0
+    stops = run.transit.stops()
+    assert (
+        j["ride_board"].max() < len(stops["stop_id"])
+        and j["ride_line"].max() < run.transit.route_count
+    )
+    assert run.network.link_count and set(j["mode"]) - {None} >= {"car", "transit"}
+
+
+def test_the_page_shows_every_mode_a_pair_took(tmp_path):
+    run = choosing_run()
+    _, meta, a = decode(viz.map_interactive(run, tmp_path / "map.html"))
+    taken = {m for opts in options(meta, a) for m, t, _, _ in opts if t > 0}
+    assert len(taken) >= 3, taken
+    n_stops = len(run.transit.stops()["stop_id"])
+    for g in range(len(a["lk"])):
+        if a["lk"][g] == 3:  # a ride: its line's stops, at least the two it joins
+            stops = a["pst"][a["la"][g] : a["lb"][g]]
+            assert (
+                len(stops) >= 2
+                and stops.max() < n_stops
+                and a["lline"][g] < run.transit.route_count
+            )
+        if a["lk"][g] in (1, 2):  # a ride on a bike or a walk: links of its layer, as embedded
+            prefix = "b" if a["lk"][g] == 1 else "w"
+            assert a["pl"][a["la"][g] : a["lb"][g]].max() < len(a[prefix + "vs"]) - 1
+        assert a["lsec"][g] >= 0
+    # The travellers of a pair's options and its other ways add up to the pair's.
+    for p in range(meta["n_pairs"]):
+        assert np.isclose(a["on"][a["qs"][p] : a["qs"][p + 1]].sum() + a["qr"][p], a["qn"][p])
+    assert len(meta["trips"]["places"]) == meta["n_pairs"] and meta["trips"]["has_journeys"]
 
 
 def test_the_page_offers_png_and_vector_exports(tmp_path):
@@ -346,3 +446,19 @@ def test_the_page_carries_each_layer_the_run_has_and_shows_only_road_traffic_at_
     # A run with none of them carries none.
     _, plain, _ = decode(viz.map_interactive(grid_run()[1], tmp_path / "plain.html"))
     assert plain["layers"] == {}
+
+
+@pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
+def test_a_pair_s_trips_show_in_a_browser(tmp_path):
+    path = tmp_path / "map.html"
+    viz.map_interactive(choosing_run(), str(path))
+    dom = subprocess.run(
+        [BROWSER, "--headless=new", "--disable-gpu", "--no-sandbox",
+         "--virtual-time-budget=3000", "--window-size=1400,900", "--dump-dom",
+         f"{path.as_uri()}#p=0&ly=rtpbw&export=svg"],
+        capture_output=True, text=True, timeout=90,
+    ).stdout  # fmt: skip
+    assert 'data-state="ready"' in dom, "the page started"
+    card = re.search(r'<div id="tripcard">(.*?)<div class="foot">', dom, re.S)
+    assert card and "travellers" in card.group(1) and 'class="strip"' in card.group(1)
+    assert "Trips between two places" in dom  # the legend's section, shown with the pair

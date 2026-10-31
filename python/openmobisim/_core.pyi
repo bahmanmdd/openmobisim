@@ -591,6 +591,9 @@ class Transit:
     def lines(self) -> dict[str, Any]:
         """Every line: ``{"route_id", "name", "kind", "runs", "first_s", "last_s"}``."""
 
+    def line_patterns(self) -> dict[str, Any]:
+        """Every line's stop patterns: ``line`` (into ``lines()``) and ``stops`` (stop indices)."""
+
     def stops(self) -> dict[str, Any]:
         """Every stop: ``stop_id`` and ``name`` (lists), ``lon`` and ``lat`` (arrays)."""
 
@@ -1152,6 +1155,8 @@ class RunSummary:
     operator_tasks_path: str | None
     #: Each itinerary trip's choice (see ``Run.itinerary_choices``).
     itinerary_choices: dict[str, Any] | None
+    #: Each itinerary trip's chosen journey, leg by leg (see ``Run.itinerary_journeys``).
+    itinerary_journeys: dict[str, Any] | None
     #: Every trip's departure and the mode it took (see ``Run.trip_modes``).
     trip_modes: dict[str, Any]
     #: Every trip and what became of it (see ``Run.trip_results``).

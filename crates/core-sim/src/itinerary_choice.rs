@@ -4384,6 +4384,150 @@ pub struct ItineraryResult {
     pub logsum: Vec<f64>,
     /// How the run's planning searched the timetable, and what it kept.
     pub timetable_searches: TimetableSearches,
+    /// Each trip's chosen journey, leg by leg, for maps and per-trip analysis.
+    pub journeys: JourneyLegs,
+}
+
+/// Each itinerary trip's chosen journey, leg by leg (one entry per itinerary trip, in the order of
+/// [`ItineraryResult::trip`]; ragged lists by offsets). What the trip planned at its last choice,
+/// not what the loading made of it: a ride whose run could not be followed was replanned there.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct JourneyLegs {
+    /// The trip's origin and destination nodes on the road layer: the pair of the car route sets
+    /// (`u32::MAX`: none, as for a trip whose origin and destination share a node).
+    pub road_origin: Vec<u32>,
+    /// See [`Self::road_origin`].
+    pub road_destination: Vec<u32>,
+    /// The shape: 0 walk, ride(s), walk; 1 vehicle then transit; 2 transit then vehicle; 3 one
+    /// leg (car, bike or walk); 4 shared bike; 5 shared bike then transit; 6 taxi; `u8::MAX` none.
+    pub shape: Vec<u8>,
+    /// The vehicle leg's links (or a walk's), on its mode's layer: the road layer for a car or a
+    /// taxi, the bike layer for a bike or a shared bike, the walk layer for a walk. By
+    /// [`Self::link_offsets`] (one more entry than trips).
+    pub links: Vec<u32>,
+    /// See [`Self::links`].
+    pub link_offsets: Vec<u32>,
+    /// The first and last stop (transit stop indices; `u32::MAX` without transit).
+    pub first_stop: Vec<u32>,
+    /// See [`Self::first_stop`].
+    pub last_stop: Vec<u32>,
+    /// The rides: the line (the timetable's route index), the stops boarded and left, the
+    /// expected seconds on board, and the walk before it from the last stop left (0 for the
+    /// first). By [`Self::ride_offsets`] (one more entry than trips).
+    pub ride_line: Vec<u32>,
+    /// See [`Self::ride_line`].
+    pub ride_board: Vec<u32>,
+    /// See [`Self::ride_line`].
+    pub ride_alight: Vec<u32>,
+    /// See [`Self::ride_line`].
+    pub ride_s: Vec<u32>,
+    /// See [`Self::ride_line`].
+    pub ride_transfer_walk_s: Vec<u32>,
+    /// See [`Self::ride_line`].
+    pub ride_offsets: Vec<u32>,
+    /// The walk to the first stop and from the last, in seconds (0 without transit).
+    pub access_walk_s: Vec<u32>,
+    /// See [`Self::access_walk_s`].
+    pub egress_walk_s: Vec<u32>,
+    /// Expected seconds walking, waiting, riding transit, in the vehicle (driving or cycling),
+    /// and parking or fetching the vehicle (`NaN` without a journey).
+    pub walk_s: Vec<f64>,
+    /// See [`Self::walk_s`].
+    pub wait_s: Vec<f64>,
+    /// See [`Self::walk_s`].
+    pub ride_total_s: Vec<f64>,
+    /// See [`Self::walk_s`].
+    pub vehicle_s: Vec<f64>,
+    /// See [`Self::walk_s`].
+    pub parking_s: Vec<f64>,
+    /// A shared bike's pickup and return docks (the docked service's dock indices; `u32::MAX`
+    /// for any other journey).
+    pub dock_pickup: Vec<u32>,
+    /// See [`Self::dock_pickup`].
+    pub dock_return: Vec<u32>,
+}
+
+impl JourneyLegs {
+    fn of(nodes: &[TripNodes], chosen: &[Option<Alternative>]) -> Self {
+        let n = chosen.len();
+        let mut out = Self {
+            link_offsets: Vec::with_capacity(n + 1),
+            ride_offsets: Vec::with_capacity(n + 1),
+            ..Self::default()
+        };
+        out.link_offsets.push(0);
+        out.ride_offsets.push(0);
+        let raw = |id: NodeId| if id.is_null() { u32::MAX } else { id.raw() };
+        for (i, alt) in chosen.iter().enumerate() {
+            let at = nodes.get(i);
+            out.road_origin.push(at.map_or(u32::MAX, |t| raw(t.road_o)));
+            out.road_destination.push(at.map_or(u32::MAX, |t| raw(t.road_d)));
+            let Some(a) = alt else {
+                out.shape.push(u8::MAX);
+                for v in [
+                    &mut out.first_stop,
+                    &mut out.last_stop,
+                    &mut out.dock_pickup,
+                    &mut out.dock_return,
+                ] {
+                    v.push(u32::MAX);
+                }
+                out.access_walk_s.push(0);
+                out.egress_walk_s.push(0);
+                for v in [
+                    &mut out.walk_s,
+                    &mut out.wait_s,
+                    &mut out.ride_total_s,
+                    &mut out.vehicle_s,
+                    &mut out.parking_s,
+                ] {
+                    v.push(f64::NAN);
+                }
+                #[allow(clippy::cast_possible_truncation, reason = "links of one run")]
+                out.link_offsets.push(out.links.len() as u32);
+                #[allow(clippy::cast_possible_truncation, reason = "rides of one run")]
+                out.ride_offsets.push(out.ride_line.len() as u32);
+                continue;
+            };
+            out.shape.push(match a.shape {
+                Shape::Transit => 0,
+                Shape::Out => 1,
+                Shape::Back(_) => 2,
+                Shape::Direct => 3,
+                Shape::Share => 4,
+                Shape::ShareTransit => 5,
+                Shape::Taxi => 6,
+            });
+            out.links.extend(a.vehicle_links.iter().map(|l| l.raw()));
+            #[allow(clippy::cast_possible_truncation, reason = "links of one run")]
+            out.link_offsets.push(out.links.len() as u32);
+            out.first_stop.push(raw(a.first_stop));
+            out.last_stop.push(raw(a.last_stop));
+            for (k, ride) in a.rides.iter().enumerate() {
+                out.ride_line.push(ride.route);
+                out.ride_board.push(ride.board.raw());
+                out.ride_alight.push(ride.alight.raw());
+                out.ride_s.push(a.ride_seconds.get(k).copied().unwrap_or(0));
+                out.ride_transfer_walk_s.push(if k == 0 {
+                    0
+                } else {
+                    a.transfer_walks.get(k - 1).copied().unwrap_or(0)
+                });
+            }
+            #[allow(clippy::cast_possible_truncation, reason = "rides of one run")]
+            out.ride_offsets.push(out.ride_line.len() as u32);
+            out.access_walk_s.push(a.access_walk_s);
+            out.egress_walk_s.push(a.egress_walk_s);
+            out.walk_s.push(a.walk_s);
+            out.wait_s.push(a.wait_s);
+            out.ride_total_s.push(a.ride_s);
+            out.vehicle_s.push(a.vehicle_s);
+            out.parking_s.push(a.parking_s);
+            out.dock_pickup.push(a.share_docks.0);
+            out.dock_return.push(a.share_docks.1);
+        }
+        out
+    }
 }
 
 /// No mode: a trip that had no alternative.
@@ -4477,6 +4621,7 @@ impl ItineraryResult {
             choosing: itineraries.choosing.clone(),
             logsum: chosen.logsum.clone(),
             timetable_searches: itineraries.timetable_searches(),
+            journeys: JourneyLegs::of(&itineraries.nodes, &chosen.alt),
         };
         for alt in &chosen.alt {
             #[allow(clippy::cast_possible_truncation, reason = "six modes")]

@@ -75,8 +75,8 @@ pub use gap::GapTrips;
 pub use identity::RunDescription;
 pub use itinerary::{Itinerary, LegRoute, Networks};
 pub use itinerary_choice::{
-    ATTRIBUTES, ItineraryResult, NO_MODE, NO_PARKING, NoAlternative, NoAlternativeReason,
-    TimetableSearches,
+    ATTRIBUTES, ItineraryResult, JourneyLegs, NO_MODE, NO_PARKING, NoAlternative,
+    NoAlternativeReason, TimetableSearches,
 };
 pub use layers::{ClassLimits, LayerSetup, ModeDefaults, StaticLayers};
 pub use link_times::{LinkTimes, relative_time_change};
