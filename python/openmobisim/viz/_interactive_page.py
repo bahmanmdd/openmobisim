@@ -295,7 +295,9 @@ if (HAS_TRAFFIC) { const v = []; for (let r = 0; r < RL.length; r++) v.push(RP[r
 function aggregate(b0, b1) {
   const tot = new Float32Array(NL), sec = new Float32Array(NL);
   for (let b = b0; b < b1; b++) for (let r = BS[b]; r < BS[b + 1]; r++) { tot[RL[r]] += RP[r]; sec[RL[r]] += RS[r]; }
-  const span = Math.max(1, b1 - b0) * META.bin_seconds, pos = [];
+  // The hours the volumes are per: the bins asked for within the run's window (S306: "all bins" counted the
+  // hours from midnight, the volumes 3 to 5 times too low).
+  const span = Math.max(1, b1 - Math.max(b0, FIRST)) * META.bin_seconds, pos = [];
   for (let l = 0; l < NL; l++) {
     vol[l] = tot[l] / span * 3600;
     if (tot[l] > 0) { meanT[l] = sec[l] / tot[l]; delay[l] = 1 - Math.min((FF[l] + SW[l]) / Math.max(meanT[l], 1e-6), 1); pos.push(vol[l]); } else { meanT[l] = 0; delay[l] = 0; }
