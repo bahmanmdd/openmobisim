@@ -5,6 +5,8 @@ a minor version may change the interface, and says so here.
 
 ## Unreleased
 
+- The route update can stop adding routes after a given iteration: `route_update_options={"until_iteration": k}` (0, the default, adds in every iteration). After it the route sets stay as they are and the remaining loadings settle the choices among them, without the jumps a route added late causes.
+
 **The run configuration file, `run.toml`: every parameter of a run in one file.** `config_write_defaults(path)`
 writes the complete file at the shipped defaults: one table per group (`[inputs]`, `[run]`, `[equilibration]`,
 `[choice]`, `[modes]`, `[prices]`, `[services.<name>]`, `[service_assumptions]`, `[policy]`, `[network]`, `[loading]`,
