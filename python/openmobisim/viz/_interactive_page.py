@@ -74,14 +74,14 @@ html, body { margin: 0; height: 100%; background: var(--surface); color: var(--i
    while dragging, a crosshair while picking a pair's places (set by the script). */
 canvas#map { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: default; touch-action: none; }
 #error { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: #9d0221; color: #fff; padding: 10px 16px; border-radius: 8px; z-index: 20; font: 13px var(--mono); }
-.head { position: fixed; top: 8px; left: 10px; max-width: min(760px, calc(100vw - 350px)); padding: 8px 14px 9px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 84%, transparent); backdrop-filter: blur(3px); pointer-events: none; }
+.head { position: fixed; top: 8px; left: 10px; max-width: min(760px, calc(100vw - 390px)); padding: 8px 14px 9px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 84%, transparent); backdrop-filter: blur(3px); pointer-events: none; }
 .head .mark { width: 26px; height: 26px; vertical-align: middle; margin-right: 10px; fill: var(--mark); }
 .head h1 { display: inline; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; vertical-align: middle; }
 .head p { margin: 5px 0 0; font-size: 13px; color: var(--ink2); }
 .head p#note { font-style: italic; color: var(--muted); font-size: 12px; }
 /* Everything the reader uses in one column on the right (S306): the controls, then the legend with the compass and
    the scale, kept in view at the column's foot while the controls scroll. */
-#side { position: fixed; top: 14px; right: 14px; bottom: 40px; width: 306px; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+#side { position: fixed; top: 14px; right: 14px; bottom: 40px; width: 344px; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
 #side > * { pointer-events: auto; }
 aside#panel { flex: 0 1 auto; min-height: 0; overflow: auto; background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--base); border-radius: 12px; padding: 12px 14px 14px; box-shadow: 0 6px 26px rgba(0,0,0,.18); font-size: 12.5px; backdrop-filter: blur(6px); }
 aside h2 { margin: 12px 0 7px; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
@@ -393,7 +393,8 @@ function resize() {
   canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
 }
 // The right column's width over the map (the controls and the legend, S306): on the right of a wide window.
-function panelWidth() { return W > 760 ? 340 : 0; }
+// fitTo leaves it free: the column (344 px, S308: a little wider to keep more in it), its 14 px margin and 20 px more.
+function panelWidth() { return W > 760 ? 378 : 0; }
 function fitTo(x0, y0, x1, y1, pad) {
   // Fit into the part of the window the right column, the title above and the footer below leave free (S269: a
   // tall network ran under both); nothing is reserved on the left (S306).

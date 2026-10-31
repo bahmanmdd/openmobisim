@@ -838,3 +838,7 @@ def test_the_controls_legend_compass_and_scale_share_the_right_column(tmp_path):
     for part in ('<aside id="panel">', 'id="legendgroup"', 'id="compass"', 'id="scalebar"'):
         assert part in side[1]
     assert "left: 12px" not in text  # nothing pinned to the left edge but the title
+    # A little wider (S308), and a view is fitted to the map beside it, not under it.
+    width = int(re.search(r"#side \{[^}]*width: (\d+)px", text)[1])
+    reserve = int(re.search(r"function panelWidth\(\) \{ return W > 760 \? (\d+) : 0; \}", text)[1])
+    assert width >= 340 and reserve >= width + 14
