@@ -15,10 +15,11 @@
 use std::sync::Arc;
 
 use openmobisim_core_graph::geometry::{LonLat, ground_distance_metres};
+use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_types::ids::{EntityId, NodeId};
 
-use super::ServiceParts;
 use super::engine::{FleetEngine, ServiceRoads, ServiceState, Van};
+use super::{ServiceParts, ServiceSetup};
 
 /// What a policy asks for. Services are named by their index in the run's order, docks,
 /// vehicles and chargers by their index in the service.
@@ -185,6 +186,113 @@ impl DecisionRecord {
             metres: f64::NAN,
             from_target: false,
         }
+    }
+}
+
+/// An operator's decisions as a table: one row per decision, in the order taken, every index
+/// turned into its id. The rows of `operator_tasks.parquet` and of `Run.operator_decisions()`.
+///
+/// A parameter a kind does not have is `None` (an id) or `NaN` (a number); so are the times and
+/// metres a refused decision has not. **Cost:** about 150 bytes per decision while held.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OperatorTaskTable {
+    /// The policy step's index (0 at the window's start).
+    pub step: Vec<u32>,
+    /// The step's second, from midnight.
+    pub t_s: Vec<f64>,
+    /// The service's name.
+    pub service: Vec<String>,
+    /// [`DecisionKind::as_str`]: `move`, `relocate`, `charge` or `target`.
+    pub kind: Vec<&'static str>,
+    /// A move's dock the bikes are taken from.
+    pub from_dock: Vec<Option<String>>,
+    /// A move's dock they are brought to.
+    pub to_dock: Vec<Option<String>>,
+    /// A move's bikes asked for.
+    pub n: Vec<f64>,
+    /// A target's dock.
+    pub dock: Vec<Option<String>>,
+    /// A target's bikes the dock should hold.
+    pub level: Vec<f64>,
+    /// A relocation's or a charge's vehicle.
+    pub vehicle: Vec<Option<String>>,
+    /// A relocation's road node.
+    pub node: Vec<Option<String>>,
+    /// A charge's charger.
+    pub charger: Vec<Option<String>>,
+    /// A charge's battery share to charge to.
+    pub to_soc: Vec<f64>,
+    /// Whether it was carried out.
+    pub accepted: Vec<bool>,
+    /// Why it was refused (`None` if accepted).
+    pub reason: Vec<Option<String>>,
+    /// The second it started.
+    pub executed_s: Vec<f64>,
+    /// The second it finished: the van's or vehicle's arrival, the charge's end.
+    pub finished_s: Vec<f64>,
+    /// A move's bikes in the van.
+    pub moved: Vec<u32>,
+    /// The drive's metres.
+    pub metres: Vec<f64>,
+    /// A move made by the solver for the step's targets.
+    pub from_target: Vec<bool>,
+}
+
+impl OperatorTaskTable {
+    /// The table of `records`, taken on `setups` (the services, in the run's order, whose docks,
+    /// vehicles and chargers the records name by index) and `road` (the network whose nodes
+    /// they name).
+    #[must_use]
+    pub fn new(records: &[DecisionRecord], setups: &[ServiceSetup], road: &RoadNetwork) -> Self {
+        let mut t = Self::default();
+        for r in records {
+            let setup = &setups[usize::from(r.service)];
+            let param = |k: &str| r.parameters.iter().find(|p| p.0 == k).map(|p| p.1);
+            let none: &[String] = &[];
+            let (docks, vehicles, chargers) = match setup.parts() {
+                ServiceParts::BikeDocked(d, _) => (&d.external[..], none, none),
+                ServiceParts::Taxi(f, _) => (none, &f.vehicle_ids[..], &f.charger_ids[..]),
+            };
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "an index")]
+            let id = |ids: &[String], k: &str| param(k).and_then(|x| ids.get(x as usize).cloned());
+            t.step.push(r.step);
+            t.t_s.push(r.t_s);
+            t.service.push(setup.name().to_string());
+            t.kind.push(r.kind.as_str());
+            t.from_dock.push(id(docks, "from_dock"));
+            t.to_dock.push(id(docks, "to_dock"));
+            t.n.push(param("n").unwrap_or(f64::NAN));
+            t.dock.push(id(docks, "dock"));
+            t.level.push(param("level").unwrap_or(f64::NAN));
+            t.vehicle.push(id(vehicles, "vehicle"));
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a node")]
+            t.node.push(param("node").map(|x| {
+                let n = NodeId::new(x as u32);
+                road.node_external_ids().external_of(n).unwrap_or_default().to_string()
+            }));
+            t.charger.push(id(chargers, "charger"));
+            t.to_soc.push(param("to_soc").unwrap_or(f64::NAN));
+            t.accepted.push(r.accepted);
+            t.reason.push(r.reason.clone());
+            t.executed_s.push(r.executed_s);
+            t.finished_s.push(r.finished_s);
+            t.moved.push(r.moved);
+            t.metres.push(r.metres);
+            t.from_target.push(r.from_target);
+        }
+        t
+    }
+
+    /// Its rows.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.step.len()
+    }
+
+    /// Whether it has no row.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.step.is_empty()
     }
 }
 

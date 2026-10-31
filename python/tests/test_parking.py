@@ -152,7 +152,7 @@ def test_the_parking_bins_file_and_the_kpis_rows() -> None:
     ]
     assert t.schema.metadata[b"openmobisim.run_fingerprint"].decode() == run.fingerprint
     kv = pa.read_metadata(table.path).metadata  # the file's key-values, every writer's
-    assert kv[b"openmobisim.schema_version"] == b"4"
+    assert kv[b"openmobisim.schema_version"] == b"5"
     assert kv[b"openmobisim.bin_seconds"] == b"900"
     kpis = pa.read_table(run.kpis().path).to_pylist()
     got = {(r["mode"], r["metric"]): r["value"] for r in kpis}

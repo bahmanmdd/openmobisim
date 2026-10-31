@@ -1,4 +1,4 @@
-"""The minimal outputs for mass runs: ``kpis.csv`` and ``manifest.json``, the same run."""
+"""The minimal outputs for mass runs: kpis.csv, manifest.json and run.toml, the same run."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _scenario() -> ms.Scenario:
     )
 
 
-def test_minimal_outputs_are_two_text_files_of_the_same_run(tmp_path) -> None:
+def test_minimal_outputs_are_three_text_files_of_the_same_run(tmp_path) -> None:
     pytest.importorskip("pyarrow")
     import pyarrow.parquet as pq
 
@@ -36,6 +36,7 @@ def test_minimal_outputs_are_two_text_files_of_the_same_run(tmp_path) -> None:
     assert sorted(p.name for p in (tmp_path / "run-0001").iterdir()) == [
         "kpis.csv",
         "manifest.json",
+        "run.toml",
     ]
     manifest = json.loads((tmp_path / "run-0001" / "manifest.json").read_text())
     assert manifest["outputs"] == "minimal" and manifest["link_bins_file"] is None

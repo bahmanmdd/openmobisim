@@ -1148,6 +1148,8 @@ class RunSummary:
     taxi_trips_path: str | None
     #: The written ``taxi_vehicles.parquet``, if the run had a taxi fleet.
     taxi_vehicles_path: str | None
+    #: The written ``operator_tasks.parquet``, if the run had an operator.
+    operator_tasks_path: str | None
     #: Each itinerary trip's choice (see ``Run.itinerary_choices``).
     itinerary_choices: dict[str, Any] | None
     #: Every trip's departure and the mode it took (see ``Run.trip_modes``).

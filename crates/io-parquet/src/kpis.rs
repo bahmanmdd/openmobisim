@@ -9,6 +9,15 @@
 //! `walk`, …), so a mode's numbers are a filter away. The metrics of how a run
 //! settled (the gaps, the shares, the time change) are the whole run's.
 //!
+//! **A mode a service of the run serves** (`bike_share` and `bike_share_transit` with a docked
+//! bike service, `taxi` with a taxi fleet) has only the rows of its trips' choice: `trips`,
+//! `people`, `mode_share`, `gap` and the counts `no_vehicle_available_trips`,
+//! `no_feasible_path_trips` and `mode_not_available_trips`. How its trips went (completed or
+//! not, and in what time) is what the service day gave them, in the service's rows below; the
+//! planned trips' `completed_trips`, `completed_people`, `truncated_trips`, `completion_rate`
+//! and `total_travel_time_s` are not written under it. The `all` rows count every trip as
+//! planned, a service's trips included.
+//!
 //! **Transit**, for a run with a timetable, under `mode` `transit`:
 //! `boardings` (weighted by traveller weight) and, if its buses rode the roads,
 //! `bus_runs_on_roads`, `bus_runs_arrived` and `bus_delay_mean_s` (the mean
@@ -68,7 +77,8 @@ type Row = (u32, &'static str, &'static str, f64);
 /// (`trips`, `no_vehicle_available_trips`, `no_feasible_path_trips`,
 /// `mode_not_available_trips`, `completion_rate`) are written once, for the last.
 /// All of these are `mode` `all`; the last loading's trip metrics are also written
-/// per mode that has trips.
+/// per mode that has trips (for a mode a service serves, only its choice's: see the
+/// [module docs](self)).
 ///
 /// `people` and `completed_people` are the trips and the completed trips weighted by
 /// their travellers' weights: the people they stand for.
@@ -79,13 +89,24 @@ type Row = (u32, &'static str, &'static str, f64);
 /// once comprehensive KPIs exist.
 fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
     let all = "all";
-    let fixed = |iteration: u32, mode: &'static str, c: &TripCompletionStats| {
-        vec![
+    // The counts of the choice and, with `planned`, the completion rate of the planned trips.
+    let fixed = |iteration: u32, mode: &'static str, c: &TripCompletionStats, planned: bool| {
+        let mut rows = vec![
             (iteration, mode, "no_vehicle_available_trips", f64::from(c.no_vehicle_available)),
             (iteration, mode, "no_feasible_path_trips", f64::from(c.no_feasible_path)),
             (iteration, mode, "mode_not_available_trips", f64::from(c.mode_not_available)),
-            (iteration, mode, "completion_rate", c.completion_rate()),
-        ]
+        ];
+        if planned {
+            rows.push((iteration, mode, "completion_rate", c.completion_rate()));
+        }
+        rows
+    };
+    // A mode a service of the run serves: its trips' completions and times are what the
+    // service day gave (the rows under the service's name), not the planned trips' (S305).
+    let served = |mode: Mode| match mode {
+        Mode::BikeShare | Mode::BikeShareTransit => result.services.is_some(),
+        Mode::Taxi => result.taxis.is_some(),
+        _ => false,
     };
     // The last loading's trip metrics, per mode that has trips (S195); and transit's
     // boardings and how the buses kept time (S199).
@@ -148,13 +169,18 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
             if choosing && weighted > 0.0 {
                 rows.push((iteration, name, "mode_share", m.weighted_trips / weighted));
             }
+            let planned = !served(mode);
             rows.push((iteration, name, "trips", f64::from(m.completion.total_trips)));
-            rows.push((iteration, name, "total_travel_time_s", m.total_travel_time.get()));
-            rows.push((iteration, name, "completed_trips", f64::from(m.completion.completed)));
-            rows.push((iteration, name, "truncated_trips", f64::from(m.completion.truncated)));
+            if planned {
+                rows.push((iteration, name, "total_travel_time_s", m.total_travel_time.get()));
+                rows.push((iteration, name, "completed_trips", f64::from(m.completion.completed)));
+                rows.push((iteration, name, "truncated_trips", f64::from(m.completion.truncated)));
+            }
             rows.push((iteration, name, "people", m.weighted_trips));
-            rows.push((iteration, name, "completed_people", m.weighted_completed));
-            rows.extend(fixed(iteration, name, &m.completion));
+            if planned {
+                rows.push((iteration, name, "completed_people", m.weighted_completed));
+            }
+            rows.extend(fixed(iteration, name, &m.completion, planned));
         }
         rows
     };
@@ -173,7 +199,7 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
             (single_iteration, all, "people", people),
             (single_iteration, all, "completed_people", completed_people),
         ];
-        rows.extend(fixed(single_iteration, all, c));
+        rows.extend(fixed(single_iteration, all, c, true));
         rows.extend(by_mode(single_iteration));
         return rows;
     }
@@ -238,7 +264,7 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
         if i == last {
             rows.push((i, all, "trips", f64::from(c.total_trips)));
             rows.push((i, all, "people", people));
-            rows.extend(fixed(i, all, c));
+            rows.extend(fixed(i, all, c, true));
             rows.extend(by_mode(i));
         }
     }

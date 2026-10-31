@@ -24,12 +24,12 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_sim::services::decisions::{Decision, DecisionRecord};
+use openmobisim_core_sim::services::decisions::{Decision, OperatorTaskTable};
 use openmobisim_core_sim::services::policy::{DayInfo, Policy, PolicyDescription, policy_builtin};
 use openmobisim_core_sim::services::queries::{NearestKind, Queries};
 use openmobisim_core_sim::services::view::{ServiceView, View};
 use openmobisim_core_sim::services::{ServiceParts, ServiceSetup};
-use openmobisim_core_types::ids::{EntityId, NodeId};
+use openmobisim_core_types::ids::NodeId;
 
 /// One service's ids, for converting between Python's ids and the engine's indices.
 struct ServiceIds {
@@ -107,13 +107,6 @@ impl Ids {
             .position(|n| *n == name)
             .ok_or_else(|| format!("no service {name:?}; the services are {names:?}"))?;
         Ok((u16::try_from(k).expect("services fit u16"), &self.services[k]))
-    }
-
-    /// An id at `index` of `ids`, or `None`.
-    fn id(ids: &[String], index: f64) -> Option<String> {
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "an index")]
-        let k = index as usize;
-        ids.get(k).cloned()
     }
 }
 
@@ -614,78 +607,33 @@ pub(crate) fn policy_from_py(
     Ok((Some(policy), error))
 }
 
-/// The decisions taken, as columns with ids.
+/// The decisions taken, as columns with ids: `t`'s columns, a number a row does not have `NaN`,
+/// an id `None`.
 pub(crate) fn decision_columns<'py>(
     py: Python<'py>,
-    records: &[DecisionRecord],
-    ids: &Ids,
+    t: &OperatorTaskTable,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let n = records.len();
-    let param = |r: &DecisionRecord, k: &str| r.parameters.iter().find(|p| p.0 == k).map(|p| p.1);
-    let mut text: BTreeMap<&str, Vec<Option<String>>> = BTreeMap::new();
-    let mut numbers: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
-    for key in ["from_dock", "to_dock", "dock", "vehicle", "node", "charger"] {
-        text.insert(key, Vec::with_capacity(n));
-    }
-    for key in ["n", "level", "to_soc"] {
-        numbers.insert(key, Vec::with_capacity(n));
-    }
-    for r in records {
-        let s = &ids.services[usize::from(r.service)];
-        for (key, list) in &mut text {
-            let id = param(r, key).and_then(|x| match *key {
-                "from_dock" | "to_dock" | "dock" => Ids::id(&s.docks, x),
-                "vehicle" => Ids::id(&s.vehicles, x),
-                "charger" => Ids::id(&s.chargers, x),
-                _ => {
-                    #[allow(
-                        clippy::cast_possible_truncation,
-                        clippy::cast_sign_loss,
-                        reason = "a node index"
-                    )]
-                    let k = x as u32;
-                    Some(ids.node(NodeId::new(k)))
-                }
-            });
-            list.push(id);
-        }
-        for (key, list) in &mut numbers {
-            list.push(param(r, key).unwrap_or(f64::NAN));
-        }
-    }
     let d = PyDict::new(py);
-    d.set_item("step", records.iter().map(|r| r.step).collect::<Vec<_>>().into_pyarray(py))?;
-    d.set_item("t_s", records.iter().map(|r| r.t_s).collect::<Vec<_>>().into_pyarray(py))?;
-    d.set_item(
-        "service",
-        records
-            .iter()
-            .map(|r| ids.services[usize::from(r.service)].name.clone())
-            .collect::<Vec<_>>(),
-    )?;
-    d.set_item("kind", records.iter().map(|r| r.kind.as_str()).collect::<Vec<_>>())?;
-    d.set_item("from_dock", text.remove("from_dock"))?;
-    d.set_item("to_dock", text.remove("to_dock"))?;
-    d.set_item("n", numbers.remove("n").unwrap_or_default().into_pyarray(py))?;
-    d.set_item("dock", text.remove("dock"))?;
-    d.set_item("level", numbers.remove("level").unwrap_or_default().into_pyarray(py))?;
-    d.set_item("vehicle", text.remove("vehicle"))?;
-    d.set_item("node", text.remove("node"))?;
-    d.set_item("charger", text.remove("charger"))?;
-    d.set_item("to_soc", numbers.remove("to_soc").unwrap_or_default().into_pyarray(py))?;
-    d.set_item("accepted", records.iter().map(|r| r.accepted).collect::<Vec<_>>())?;
-    d.set_item("reason", records.iter().map(|r| r.reason.clone()).collect::<Vec<_>>())?;
-    d.set_item(
-        "executed_s",
-        records.iter().map(|r| r.executed_s).collect::<Vec<_>>().into_pyarray(py),
-    )?;
-    d.set_item(
-        "finished_s",
-        records.iter().map(|r| r.finished_s).collect::<Vec<_>>().into_pyarray(py),
-    )?;
-    d.set_item("moved", records.iter().map(|r| r.moved).collect::<Vec<_>>().into_pyarray(py))?;
-    d.set_item("metres", records.iter().map(|r| r.metres).collect::<Vec<_>>().into_pyarray(py))?;
-    d.set_item("from_target", records.iter().map(|r| r.from_target).collect::<Vec<_>>())?;
+    d.set_item("step", t.step.clone().into_pyarray(py))?;
+    d.set_item("t_s", t.t_s.clone().into_pyarray(py))?;
+    d.set_item("service", t.service.clone())?;
+    d.set_item("kind", t.kind.clone())?;
+    d.set_item("from_dock", t.from_dock.clone())?;
+    d.set_item("to_dock", t.to_dock.clone())?;
+    d.set_item("n", t.n.clone().into_pyarray(py))?;
+    d.set_item("dock", t.dock.clone())?;
+    d.set_item("level", t.level.clone().into_pyarray(py))?;
+    d.set_item("vehicle", t.vehicle.clone())?;
+    d.set_item("node", t.node.clone())?;
+    d.set_item("charger", t.charger.clone())?;
+    d.set_item("to_soc", t.to_soc.clone().into_pyarray(py))?;
+    d.set_item("accepted", t.accepted.clone())?;
+    d.set_item("reason", t.reason.clone())?;
+    d.set_item("executed_s", t.executed_s.clone().into_pyarray(py))?;
+    d.set_item("finished_s", t.finished_s.clone().into_pyarray(py))?;
+    d.set_item("moved", t.moved.clone().into_pyarray(py))?;
+    d.set_item("metres", t.metres.clone().into_pyarray(py))?;
+    d.set_item("from_target", t.from_target.clone())?;
     Ok(d)
 }
 

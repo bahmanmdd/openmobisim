@@ -13,6 +13,7 @@ taxi.
 from __future__ import annotations
 
 from collections import Counter
+from pathlib import Path
 
 import numpy as np
 import openmobisim as ms
@@ -192,6 +193,46 @@ def test_the_kpi_rows_are_the_trips(run: ms.Run) -> None:
     m = run.manifest()
     assert m["service_assumptions"]["assumed_wait_s"] == 600.0
     assert "last loading" in m["service_day"] and "fixed assumptions" in m["service_day"]
+
+
+# The rows of a mode that only a planned trip has: under a mode a service serves, the service's
+# own rows say how its trips went instead (S305).
+PLANNED_ROWS = {
+    "completed_trips",
+    "completed_people",
+    "completion_rate",
+    "truncated_trips",
+    "total_travel_time_s",
+}
+
+
+def test_the_taxi_mode_keeps_its_choice_rows_and_none_the_service_day_contradicts(
+    run: ms.Run,
+) -> None:
+    # A cheap fare and a short cancel limit: many choose a taxi and many requests are cancelled,
+    # so a planned-trip row under `taxi` would count as completed what the fleet cancelled.
+    k = pq.read_table(run._summary.kpis_path).to_pylist()
+    last = max(r["iteration"] for r in k)
+    taxi = {r["metric"]: r["value"] for r in k if r["mode"] == "taxi" and r["iteration"] == last}
+    assert taxi["cancelled"] > 0.25 * taxi["requests"], "the fixture cancels many requests"
+    assert not PLANNED_ROWS & set(taxi), sorted(PLANNED_ROWS & set(taxi))
+    for kept in ("trips", "people", "mode_share", "mode_not_available_trips"):
+        assert kept in taxi, kept
+    assert taxi["people"] == taxi["requests"], "every person who chose a taxi requested one"
+    # The whole run keeps them (its trips counted as planned, the taxi's included).
+    whole = {r["metric"] for r in k if r["mode"] == "all" and r["iteration"] == last}
+    assert not PLANNED_ROWS - whole
+    # Read back, the taxi's entry holds what the file holds, and the mean trip is the run's.
+    back = ms.Run.open(Path(run._summary.kpis_path).parent)
+    entry = back.completion_by_mode["taxi"]
+    assert set(entry) == {
+        "total_trips",
+        "no_vehicle_available",
+        "no_feasible_path",
+        "mode_not_available",
+        "people",
+    }
+    assert back.mean_travel_time_s == pytest.approx(run.mean_travel_time_s, rel=1e-12)
 
 
 def cancelled_count(tr: object) -> int:

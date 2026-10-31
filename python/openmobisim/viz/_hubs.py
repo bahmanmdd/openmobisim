@@ -213,7 +213,7 @@ def map_hubs(
     def total(column: str) -> float:
         return float(np.asarray(bins[column], dtype=float)[rows].sum())
 
-    found_empty = total("people_failed_attempt_no_bike") + total("people_gave_up_no_bike")
+    found_empty = total("people_found_empty_went_on") + total("people_found_empty_gave_up")
     span = f"{_clock(t0)}–{_clock(t1)}"
     draw_furniture(
         page,
@@ -227,7 +227,7 @@ def map_hubs(
         or (
             f"in the bin: {total('bikes_taken'):,.0f} bikes taken, "
             f"{total('bikes_returned'):,.0f} returned · {found_empty:,.0f} travellers found a "
-            f"dock empty, {total('people_gave_up_no_bike'):,.0f} of them gave up and walked"
+            f"dock empty, {total('people_found_empty_gave_up'):,.0f} of them gave up and walked"
         ),
         provenance=f"{__version__} · {run_identity(run)} · {network_source(network)}",
         colour_legend=("bikes docked / slots", ramp, "empty", "full"),
@@ -347,8 +347,8 @@ def chart_service(
 
     docked = per_bin("bikes_mean")
     docks_empty = per_bin("seconds_empty") / length
-    went_on = per_bin("people_failed_attempt_no_bike")
-    gave_up = per_bin("people_gave_up_no_bike")
+    went_on = per_bin("people_found_empty_went_on")
+    gave_up = per_bin("people_found_empty_gave_up")
     mine = np.array([s == service for s in places["service"]], dtype=bool)
     fleet = float(np.asarray(places["bikes_start"], dtype=float)[mine].sum())
     riding = np.maximum(fleet - docked, 0.0)

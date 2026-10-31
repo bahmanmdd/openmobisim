@@ -5,6 +5,26 @@ a minor version may change the interface, and says so here.
 
 ## Unreleased
 
+**The run configuration file, `run.toml`: every parameter of a run in one file.** `config_write_defaults(path)`
+writes the complete file at the shipped defaults: one table per group (`[inputs]`, `[run]`, `[equilibration]`,
+`[choice]`, `[modes]`, `[prices]`, `[services.<name>]`, `[service_assumptions]`, `[policy]`, `[network]`, `[loading]`,
+`[routes]`, `[route_update]`, `[transit]`, `[parking]`), a method's name and its options in the same table, every
+line's comment giving its default, its meaning and its unit, and a header naming the package version, the defaults
+version and the parameters that differ from the defaults. `Config.from_arguments(...)` makes one from a run's
+arguments, `config_read(path)` reads one back, every name checked (a misspelt one is refused with its table's names).
+The defaults are `parameters()`'s, so the file and the code cannot disagree.
+- `Scenario.run(config="run.toml")` (or a `Config`) runs with the file's values as its arguments, in place of the
+  scenario's own of the same names; an argument given both in the file and in the call is refused, and so are
+  `[inputs]` or `[network]` values that are not the scenario's. `Config.scenario()` reads a file's `[inputs]` through
+  the package's readers, relative paths against the file, and `Config.run()` runs it.
+- The command line: `openmobisim run --config run.toml`, `openmobisim config --defaults` (the complete file at the
+  defaults) and `openmobisim config --from <run folder>`.
+- **Every run writes `run.toml`** beside its `manifest.json` (with `outputs="minimal"` too): the complete, effective
+  configuration it ran with, about a millisecond to write. `Run.config()` reads it back; on the scenario it ran,
+  `scenario.run(config=run.config())` gives the same fingerprint, and a run whose inputs came from a file is repeated
+  from its folder alone (`openmobisim run --config <folder>/run.toml`). What a file cannot hold (inputs given in
+  memory, link values, disruptions, a Python choice model or policy) is named in its header.
+
 **Shared-mobility services in a run: chosen on fixed assumptions, played once after the run.** A run with a
 docked bike service or a taxi fleet (`services=`) offers them to the trips that choose their mode. What travellers
 assume when they choose is fixed for the whole run and set by name, `Scenario.run(service_assumptions={...})`:
@@ -23,9 +43,12 @@ engine, the taxis on that loading's road times, and what the fleet actually did 
 - **An operator in a run:** `Scenario.run(policy=..., policy_options=...)` steers the run's service day with a
   policy, as `fleet_day(policy=...)` takes it (a built-in one by name or object, a registered name, or a Python
   object with `step(view)`); the day is the one `fleet_day(frozen=run.freeze(...), policy=...)` replays, decision for
-  decision. `Run.operator_decisions()` returns its decisions (in memory), `Run.service_policy()` its name and
-  parameters, which the fingerprint and `manifest.json` (`service_policy`) record. Travellers still choose on the
-  assumptions. Refused without services.
+  decision. `Run.operator_decisions()` returns its decisions, `Run.service_policy()` its name and parameters, which
+  the fingerprint and `manifest.json` (`service_policy`) record. Travellers still choose on the assumptions. Refused
+  without services.
+- A run with an operator writes its decisions to `operator_tasks.parquet`, one row per decision, with the columns of
+  `Run.operator_decisions()` (a number a decision does not have is null); `Run.operator_tasks_table()` reads it, and a
+  run read back with `Run.open` gives `operator_decisions()` from it. A run without an operator writes no such file.
 - `parameters()` lists the services too: a docked bike service's and a taxi fleet's `options`, the assumptions
   (`service_assumptions`), the services' prices, the built-in policies' parameters (`policy.<name>`), the bike route
   sets' options and the fleet environment's reward weights and zone grid.
@@ -42,8 +65,19 @@ engine, the taxis on that loading's road times, and what the fleet actually did 
   bike service: `requests`, `rides`, `no_bike`, `unfinished`, `extra_walk_at_pickup_mean_s`,
   `extra_walk_at_return_mean_s`, `assumed_extra_walk_at_pickup_s`, `assumed_extra_walk_at_return_s`,
   `redirected_share`.
+- Under a mode a service serves (`bike_share` and `bike_share_transit` with a docked bike service, `taxi` with a taxi
+  fleet), `kpis.parquet` keeps the rows of the trips' choice (`trips`, `people`, `mode_share`, `gap`,
+  `no_vehicle_available_trips`, `no_feasible_path_trips`, `mode_not_available_trips`) and has no `completed_trips`,
+  `completed_people`, `truncated_trips`, `completion_rate` or `total_travel_time_s`: how those trips went is in the
+  service's rows. The `all` rows count every trip as planned, a service's included. `Run.open` leaves those keys out
+  of the mode's `completion_by_mode` entry.
 - `bike_share_trips.parquet` has `outcome` (`completed`, `cancelled`: no bike at any dock tried, `unfinished`,
   `not_requested`) and splits `extra_s` into `extra_walk_at_pickup_s` and `extra_walk_at_return_s`.
+- The docked service's counts of docks found empty or full, in plain words: `bike_share_trips.parquet`'s
+  `docks_found_empty` and `docks_found_full` (the docks a trip found without a bike, and without a free slot);
+  `bike_share_docks.parquet`'s `people_found_empty_went_on` (found the dock empty and walked on to another),
+  `people_found_empty_gave_up` (found it empty, none near had a bike, and walked to the destination) and
+  `people_found_full_went_on` (found it full and rode on to another).
 - `trip_results` of a run with a service has two more columns: `service_outcome` (`completed`, `cancelled`,
   `unfinished`; empty for a trip without a service) and `service_arrival_s`, the second the service day actually
   brought the traveller to the destination. `manifest.json` has `service_assumptions` and `service_day`, which says
@@ -54,7 +88,7 @@ engine, the taxis on that loading's road times, and what the fleet actually did 
 - `fleet_day`'s and `fleet_environment`'s trip tables have `outcome`, `pickup_s`, `dropoff_s` and `waiting_s`; the
   standard reward's weight per cancelled request is `w_cancelled`; a docked service's view and observation count
   `no_bike` per dock.
-- The output schema is version 4 (`openmobisim.schema_version` in every file, `manifest_version`).
+- The output schema is version 5 (`openmobisim.schema_version` in every file, `manifest_version`).
 - `Run.freeze` keeps the day's taxi legs and road times too: `fleet_day(frozen=...)` replays the run's day, bikes and
   taxis, leg by leg.
 

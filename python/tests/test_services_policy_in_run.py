@@ -82,11 +82,24 @@ def test_a_built_in_policy_steers_the_run_s_day_as_it_steers_its_frozen_day(
     plain = s.run("plain", output_dir=str(tmp_path / "plain"), quiet=True)
     assert plain.operator_decisions() is None and plain.service_policy() is None
     assert "service_policy" not in json.loads((tmp_path / "plain" / "manifest.json").read_text())
-    # Opening a run's folder reads its parquet tables.
-    pytest.importorskip("pyarrow")
+    # The decisions are written to operator_tasks.parquet, by a run with an operator only.
+    assert (tmp_path / "run" / "operator_tasks.parquet").exists()
+    assert not (tmp_path / "plain" / "operator_tasks.parquet").exists()
+    assert plain.operator_tasks_table() is None
+    # Opening a run's folder reads its parquet tables, the operator's decisions among them:
+    # the same columns, in the same order, of the same types, with the same values.
+    pq = pytest.importorskip("pyarrow.parquet")
     opened = ms.Run.open(tmp_path / "run")
     assert opened.service_policy() == run.service_policy()
-    assert opened.operator_decisions() is None, "kept in memory"
+    back, live = opened.operator_decisions(), run.operator_decisions()
+    same_decisions(back, live)
+    for name in live:
+        assert type(back[name]) is type(live[name]), name
+        assert getattr(back[name], "dtype", None) == getattr(live[name], "dtype", None), name
+    table = pq.read_table(run.operator_tasks_table().path)
+    assert table.column_names == ["run_id", *live]
+    assert set(table.column("run_id").to_pylist()) == {"steered"}
+    assert ms.Run.open(tmp_path / "plain").operator_decisions() is None
 
 
 def test_a_python_policy_in_a_run_takes_the_decisions_it_takes_on_the_frozen_day(

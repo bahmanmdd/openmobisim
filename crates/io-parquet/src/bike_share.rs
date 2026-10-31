@@ -28,8 +28,8 @@
 //! into `extra_walk_at_pickup_s` and `extra_walk_at_return_s`: the return's part is the rides
 //! between return docks after a full one plus the walk from the dock the bike was left at less
 //! the planned walk from the planned return dock, the pickup's the rest; `extra_walk_m`, metres
-//! walked between docks as the crow flies); `failed_attempts_for_bike`,
-//! `failed_attempts_for_slot` (docks found empty or full); and `outcome`: `completed` (got a
+//! walked between docks as the crow flies); `docks_found_empty` and `docks_found_full` (the
+//! docks the trip found without a bike, and without a free slot); and `outcome`: `completed` (got a
 //! bike and returned it), `cancelled` (no bike at any dock tried: walked to the destination),
 //! `unfinished` (still looking for a bike or riding at the window's end), `not_requested` (at
 //! the pickup dock after the window).
@@ -38,10 +38,10 @@
 //! dock: `run_id, service, dock, hub_id, bin_start, bin_end, bin_start_s, bin_end_s`; its state
 //! (`slots, bikes_at_start, bikes_at_end, bikes_min, bikes_mean, seconds_empty, seconds_full`);
 //! its flows (`bikes_taken, bikes_returned`); the travellers in trouble there
-//! (`people_failed_attempt_no_bike` found it empty and went on, `people_gave_up_no_bike` found it
-//! empty and walked to their destination, `people_failed_attempt_no_slot`,
+//! (`people_found_empty_went_on` found it empty and went on, `people_found_empty_gave_up` found it
+//! empty and walked to their destination, `people_found_full_went_on`,
 //! `people_left_bike_over_capacity`, `people_sent_here` from another dock); and an operator's
-//! (`bikes_brought_by_van, bikes_taken_by_van`, 0 in a run).
+//! (`bikes_brought_by_van, bikes_taken_by_van`, 0 without an operator).
 //!
 //! Each file's key-value metadata carries `openmobisim.run_fingerprint` and
 //! `openmobisim.master_seed`; `bike_share_docks.parquet`'s also `openmobisim.fleet_bikes`, the
@@ -182,8 +182,8 @@ pub fn write_bike_share_trips(
         .maybe_number("extra_walk_at_pickup_s", &t.extra_walk_at_pickup_s)
         .maybe_number("extra_walk_at_return_s", &t.extra_walk_at_return_s)
         .number("extra_walk_m", &t.extra_walk_m)
-        .count("failed_attempts_for_bike", &t.failed_attempts_for_bike)
-        .count("failed_attempts_for_slot", &t.failed_attempts_for_slot)
+        .count("docks_found_empty", &t.docks_found_empty)
+        .count("docks_found_full", &t.docks_found_full)
         .text("outcome", &t.outcome);
     c.write(path.as_ref(), description, &[])
 }
@@ -218,9 +218,9 @@ pub fn write_bike_share_docks(
         ("seconds_full", &t.seconds_full),
         ("bikes_taken", &t.bikes_taken),
         ("bikes_returned", &t.bikes_returned),
-        ("people_failed_attempt_no_bike", &t.people_failed_attempt_no_bike),
-        ("people_gave_up_no_bike", &t.people_gave_up_no_bike),
-        ("people_failed_attempt_no_slot", &t.people_failed_attempt_no_slot),
+        ("people_found_empty_went_on", &t.people_found_empty_went_on),
+        ("people_found_empty_gave_up", &t.people_found_empty_gave_up),
+        ("people_found_full_went_on", &t.people_found_full_went_on),
         ("people_left_bike_over_capacity", &t.people_left_bike_over_capacity),
         ("people_sent_here", &t.people_sent_here),
         ("bikes_brought_by_van", &t.bikes_brought_by_van),

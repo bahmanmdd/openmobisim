@@ -10,13 +10,16 @@ import json
 import math
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from openmobisim import _core
 from openmobisim.demand import demand_read_trips
 from openmobisim.table import Columns, Table
+
+if TYPE_CHECKING:
+    from openmobisim.config import Config
 
 __all__ = ["LAYERS", "MODES", "NO_ALTERNATIVE_CHANGES", "SERVICE_MODES", "Run"]
 
@@ -105,6 +108,23 @@ def _run_ids(path: str | None) -> set[str]:
     return set(pq.read_table(path, columns=["run_id"]).column("run_id").to_pylist())
 
 
+def _operator_tasks_read(path: str) -> Columns:
+    """``operator_tasks.parquet`` as ``Run.operator_decisions()`` gives it: a null number NaN."""
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(path).drop(["run_id"])
+    out: dict[str, Any] = {}
+    for name, column in zip(table.column_names, table.columns, strict=True):
+        kind = column.type
+        if str(kind) in ("string", "large_string", "bool"):
+            out[name] = column.to_pylist()
+        elif str(kind) == "uint32":
+            out[name] = column.to_numpy().astype(np.uint32)
+        else:
+            out[name] = column.to_numpy(zero_copy_only=False).astype(float)
+    return Columns(out)
+
+
 class _Files:
     """A finished run's folder in place of the core's summary (``Run.open``, C2).
 
@@ -133,6 +153,7 @@ class _Files:
             "taxi_events",
             "taxi_trips",
             "taxi_vehicles",
+            "operator_tasks",
         ):
             path = folder / f"{name}.parquet"
             setattr(self, f"{name}_path", str(path) if path.exists() else None)
@@ -229,15 +250,15 @@ class Run:
         self.flow_level = flow_level
         self.flow_step_s = flow_step_s
         self._files: _Files | None = None
-        # Which files the run wrote (C2): "all", or "minimal" (kpis.csv, manifest.json).
+        # Which files the run wrote (C2): "all", or "minimal" (kpis.csv, manifest.json, run.toml).
         self._outputs = "all"
 
     def _written(self, path: str | None, what: str) -> str | None:
         """``path``, or a clear refusal for a file the run's minimal outputs leave out."""
         if self._outputs == "minimal":
             raise RuntimeError(
-                f"this run wrote its minimal outputs (outputs='minimal': kpis.csv and "
-                f"manifest.json), so not {what}; run with outputs='all' for it"
+                f"this run wrote its minimal outputs (outputs='minimal': kpis.csv, "
+                f"manifest.json and run.toml), so not {what}; run with outputs='all' for it"
             )
         return path
 
@@ -250,9 +271,11 @@ class Run:
         ``manifest.json``); ``completion``, ``completion_by_mode``, ``total_travel_time_s``,
         ``mean_travel_time_s``, ``convergence()``, ``convergence_gap`` and
         ``convergence_verdict`` (from ``kpis.parquet``); ``timings()``; ``trip_results()`` and
-        ``trip_modes()`` (from ``trip_results.parquet``); and every table (``kpis()``,
-        ``diagnostics()``, ``events()``, ``link_bins_table()``, ``parking_bins_table()``,
-        ``transit_calls_table()``, the ``bike_share_*_table()``). What only the
+        ``trip_modes()`` (from ``trip_results.parquet``); ``operator_decisions()`` (from
+        ``operator_tasks.parquet``); and every table (``kpis()``, ``diagnostics()``,
+        ``events()``, ``link_bins_table()``, ``parking_bins_table()``,
+        ``transit_calls_table()``, the ``bike_share_*_table()`` and ``taxi_*_table()``,
+        ``operator_tasks_table()``). What only the
         run in memory holds (the network, the route sets and choices, the per-link arrays, the
         itinerary choices) raises a ``RuntimeError`` that says so. Needs pyarrow.
 
@@ -286,16 +309,25 @@ class Run:
         for i, mode, name, v in kpis:
             if mode != "all" and i == last:
                 by_mode.setdefault(mode, {})[name] = v
+        # A mode a service serves has no rows of how its trips went (the service's rows say
+        # it): its entry leaves those keys out rather than reading them as 0.
         files.completion_by_mode = {
             mode: {
-                **{key: int(row.get(metric, 0)) for key, metric in _FILE_COMPLETION.items()},
-                "total_travel_time_s": float(row.get("total_travel_time_s", 0.0)),
-                "people": float(row.get("people", 0.0)),
-                "completed_people": float(row.get("completed_people", 0.0)),
+                **{
+                    key: int(row[metric])
+                    for key, metric in _FILE_COMPLETION.items()
+                    if metric in row
+                },
+                **{
+                    key: float(row[key])
+                    for key in ("total_travel_time_s", "people", "completed_people")
+                    if key in row
+                },
             }
             for mode, row in sorted(by_mode.items())
             if "trips" in row
         }
+        files.completed_people = float(totals.get("completed_people", 0.0))
         iterations = sorted({i for i, mode, _, _ in kpis if mode == "all"})
         values = {(i, name): v for i, mode, name, v in kpis if mode == "all"}
         nan = float("nan")
@@ -901,6 +933,16 @@ class Run:
         choice (``modes``) each trip counts under the mode it took, each mode adds its
         ``mode_share`` (of the trips, weighted by the travellers), and every iteration adds
         ``mode_changed_share`` under ``"all"``.
+
+        A mode a service of the run serves (``"bike_share"`` and ``"bike_share_transit"`` with a
+        docked bike service, ``"taxi"`` with a taxi fleet) keeps only the rows of its trips'
+        choice: ``trips``, ``people``, ``mode_share``, ``gap`` and the three counts of trips
+        that could not travel. How its trips went is what the service day gave them, in the
+        rows under the service's name (``requests``, ``rides``, ``cancelled``, ``no_bike``,
+        ``unfinished``, the waiting times and the like); the planned trips'
+        ``completed_trips``, ``completed_people``, ``truncated_trips``, ``completion_rate`` and
+        ``total_travel_time_s`` are not written under the mode. The ``"all"`` rows count every
+        trip as planned, a service's trips included.
         """
         return Table(self._summary.kpis_path)  # kpis.csv for a run's minimal outputs
 
@@ -917,6 +959,28 @@ class Run:
         with Path(self._summary.manifest_path).open(encoding="utf-8") as f:
             data: dict[str, Any] = json.load(f)
         return data
+
+    def config(self) -> Config:
+        """The run's ``run.toml``, the complete configuration it ran with, as a ``Config``.
+
+        Written by every run beside its ``manifest.json``: every parameter at the value the run
+        used. ``scenario.run(config=run.config())``, on the scenario it ran, repeats it with the
+        same fingerprint; ``openmobisim run --config <folder>/run.toml`` too when the file names
+        its inputs (a scenario built from files by ``Config.scenario``), else its header lists
+        what the run had in memory.
+
+        Raises:
+            FileNotFoundError: If the run's folder holds no ``run.toml`` (a run of an earlier
+                version).
+        """
+        from openmobisim.config import config_read
+
+        path = Path(self._summary.manifest_path).parent / "run.toml"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{str(path.parent)!r} holds no run.toml: a run of an earlier version wrote none"
+            )
+        return config_read(path)
 
     def timings(self) -> Columns:
         """Wall-clock time by stage, measured on this machine's clock.
@@ -1454,8 +1518,8 @@ class Run:
         ``extra_walk_at_return_s`` (the return's part: the rides between return docks after a full
         one, plus the walk from the dock the bike was left at less the planned walk from the
         planned return dock; the pickup's: the rest), ``extra_walk_m`` (walked between docks
-        looking for a bike, metres as the crow flies); ``failed_attempts_for_bike`` and
-        ``failed_attempts_for_slot`` (docks found empty, and full; the last one included when it
+        looking for a bike, metres as the crow flies); ``docks_found_empty`` and
+        ``docks_found_full`` (docks found empty, and full; the last one included when it
         found no bike at all or left the bike above capacity). ``outcome``: ``"completed"`` (got a
         bike and returned it), ``"cancelled"`` (no bike at any dock tried: walked to the
         destination), ``"unfinished"`` (still looking for a bike or riding when the window ended),
@@ -1482,14 +1546,13 @@ class Run:
         state: ``slots``, ``bikes_at_start``, ``bikes_at_end``, ``bikes_min``, ``bikes_mean``
         (time-weighted), ``seconds_empty``, ``seconds_full``. Its flows: ``bikes_taken``,
         ``bikes_returned``. The travellers in trouble there (people):
-        ``people_failed_attempt_no_bike`` (found it empty and went on to another dock),
-        ``people_gave_up_no_bike`` (found no bike here nor at the docks near, and walked to their
-        destination),
-        ``people_failed_attempt_no_slot`` (found it full and rode on),
+        ``people_found_empty_went_on`` (found it empty and went on to another dock),
+        ``people_found_empty_gave_up`` (found no bike here nor at the docks near, and walked to
+        their destination), ``people_found_full_went_on`` (found it full and rode on),
         ``people_left_bike_over_capacity``, ``people_sent_here`` (from another dock, counted in the
-        bin they were sent). An operator's: ``bikes_brought_by_van``, ``bikes_taken_by_van`` (0: a
-        run has no operator yet). The same table is written to ``bike_share_docks.parquet``: read it
-        with ``bike_share_docks_table()``.
+        bin they were sent). An operator's: ``bikes_brought_by_van``, ``bikes_taken_by_van`` (0
+        without an operator, ``Scenario.run(policy=...)``). The same table is written to
+        ``bike_share_docks.parquet``: read it with ``bike_share_docks_table()``.
         """
         t = self._summary.bike_share_docks
         return None if t is None else Columns(t)
@@ -1873,7 +1936,8 @@ class Run:
         """Every decision the run's operator took in its service day, in the order taken.
 
         Accepted or refused, as ``FleetDay.decisions()`` gives them; ``None`` without an
-        operator, and for a run opened from its folder (the decisions are kept in memory).
+        operator. The same table is written to ``operator_tasks.parquet`` (read it with
+        ``operator_tasks_table()``); a run opened from its folder reads it from there.
 
         Columns: ``step`` (the policy step's index, 0 at the window's start), ``t_s`` (its
         second), ``service``, ``kind`` (``move``, ``target``, ``relocate``, ``charge``), the
@@ -1886,9 +1950,18 @@ class Run:
         step's targets).
         """
         if isinstance(self._summary, _Files):
-            return None
+            path = self._summary.operator_tasks_path
+            return None if path is None else _operator_tasks_read(path)
         rows = self._summary.service_decisions
         return None if rows is None else Columns(rows)
+
+    def operator_tasks_table(self) -> Table | None:
+        """``operator_tasks.parquet``: ``operator_decisions()`` after ``run_id``.
+
+        ``None`` without an operator. A number a decision does not have is null in the file.
+        """
+        path = self._written(self._summary.operator_tasks_path, "operator_tasks.parquet")
+        return None if path is None else Table(path)
 
     def service_actual(self) -> dict[str, float] | None:
         """What the service day actually gave, as ``service_assumptions()``; ``None`` without one.
@@ -2162,7 +2235,7 @@ class Run:
         walks, waits and rides included); ``mean_vehicle_time_s`` is the part spent in the
         trips' own vehicles.
         """
-        people = sum(row["completed_people"] for row in self.completion_by_mode.values())
+        people = self._completed_people()
         return self.total_travel_time_s / people if people > 0 else float("nan")
 
     @property
@@ -2184,8 +2257,18 @@ class Run:
         ``mean_travel_time_s``; the trips without a vehicle of their own count with 0. ``nan``
         if no trip completed.
         """
-        people = sum(row["completed_people"] for row in self.completion_by_mode.values())
+        people = self._completed_people()
         return self.total_vehicle_time_s / people if people > 0 else float("nan")
+
+    def _completed_people(self) -> float:
+        """The people the completed trips stand for, the whole run's.
+
+        For a run read back, ``kpis.parquet``'s ``"all"`` row: a mode a service serves has no
+        ``completed_people`` row of its own.
+        """
+        if isinstance(self._summary, _Files):
+            return self._summary.completed_people
+        return sum(row["completed_people"] for row in self.completion_by_mode.values())
 
     def __repr__(self) -> str:
         """The completion counts, as a one-line summary."""

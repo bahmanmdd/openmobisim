@@ -137,8 +137,8 @@ fn trips_dict<'py>(py: Python<'py>, t: &BikeShareTripTable) -> PyResult<Bound<'p
     d.set_item("extra_walk_at_pickup_s", nan(&t.extra_walk_at_pickup_s).into_pyarray(py))?;
     d.set_item("extra_walk_at_return_s", nan(&t.extra_walk_at_return_s).into_pyarray(py))?;
     d.set_item("extra_walk_m", t.extra_walk_m.clone().into_pyarray(py))?;
-    d.set_item("failed_attempts_for_bike", t.failed_attempts_for_bike.clone().into_pyarray(py))?;
-    d.set_item("failed_attempts_for_slot", t.failed_attempts_for_slot.clone().into_pyarray(py))?;
+    d.set_item("docks_found_empty", t.docks_found_empty.clone().into_pyarray(py))?;
+    d.set_item("docks_found_full", t.docks_found_full.clone().into_pyarray(py))?;
     d.set_item("outcome", t.outcome.clone())?;
     Ok(d)
 }
@@ -163,9 +163,9 @@ fn docks_dict<'py>(py: Python<'py>, t: &BikeShareDockTable) -> PyResult<Bound<'p
         ("seconds_full", &t.seconds_full),
         ("bikes_taken", &t.bikes_taken),
         ("bikes_returned", &t.bikes_returned),
-        ("people_failed_attempt_no_bike", &t.people_failed_attempt_no_bike),
-        ("people_gave_up_no_bike", &t.people_gave_up_no_bike),
-        ("people_failed_attempt_no_slot", &t.people_failed_attempt_no_slot),
+        ("people_found_empty_went_on", &t.people_found_empty_went_on),
+        ("people_found_empty_gave_up", &t.people_found_empty_gave_up),
+        ("people_found_full_went_on", &t.people_found_full_went_on),
         ("people_left_bike_over_capacity", &t.people_left_bike_over_capacity),
         ("people_sent_here", &t.people_sent_here),
         ("bikes_brought_by_van", &t.bikes_brought_by_van),

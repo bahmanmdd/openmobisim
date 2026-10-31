@@ -1,10 +1,11 @@
 """The output files keep their schema: a contract checked against a versioned file.
 
-``openmobisim/data/schema_v4.json`` lists, for every file a run writes, its columns in order with
+``openmobisim/data/schema_v5.json`` lists, for every file a run writes, its columns in order with
 their Arrow type, whether they may be null and their unit, and the Parquet metadata keys it
-carries; for ``manifest.json`` its top-level keys; for ``timings.csv`` its header. A run of the toy
-network with transit, parkings, a docked bike service, a taxi fleet, classes and every mode writes
-them all,
+carries; for ``manifest.json`` and ``run.toml`` their top-level keys; for ``timings.csv`` its
+header. A run of the toy
+network with transit, parkings, a docked bike service, a taxi fleet steered by an operator, classes
+and every mode writes them all,
 and each must match: a column renamed, removed, reordered, retyped or made nullable fails here.
 Such a change is deliberate only with ``SCHEMA_VERSION`` raised (``io-parquet``) and the file
 rewritten: ``python python/tests/test_output_schema.py --write`` (the units of new columns are
@@ -17,13 +18,14 @@ import csv
 import json
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import openmobisim as ms
 import pytest
 
-SCHEMA = Path(ms.__file__).parent / "data" / "schema_v4.json"
+SCHEMA = Path(ms.__file__).parent / "data" / "schema_v5.json"
 VERSION_KEY = b"openmobisim.schema_version"
 
 
@@ -57,7 +59,7 @@ def _run(folder: Path) -> Path:
         parkings=ms.examples.toy_network_parkings(),
         services=[ms.service_bike_docked(docks), ms.service_taxi(vehicles, chargers)],
         link_bin_s=300,
-    ).run("schema-run", output_dir=str(out), quiet=True)
+    ).run("schema-run", output_dir=str(out), quiet=True, policy="threshold")
     return out
 
 
@@ -77,6 +79,7 @@ def _written(out: Path) -> dict[str, Any]:
             "schema_version": meta.get(VERSION_KEY, b"").decode(),
         }
     files["manifest.json"] = {"keys": sorted(json.loads((out / "manifest.json").read_text()))}
+    files["run.toml"] = {"keys": sorted(tomllib.loads((out / "run.toml").read_text()))}
     with (out / "timings.csv").open() as f:
         files["timings.csv"] = {"columns": next(csv.reader(f))}
     return files

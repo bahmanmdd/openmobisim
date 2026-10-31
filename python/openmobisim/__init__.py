@@ -62,6 +62,7 @@ from openmobisim._core import (
 from openmobisim._start import notebooks, pointer_on_import
 from openmobisim.audit import network_check
 from openmobisim.choice import choice_model_register, choice_models
+from openmobisim.config import Config, config_read, config_write_defaults
 from openmobisim.demand import (
     Trip,
     demand_aggregate_space,
@@ -138,6 +139,7 @@ __all__ = [
     "LeastCostOptions",
     "LinkPenaltyOptions",
     "Columns",
+    "Config",
     "FallbackWarning",
     "FrankWolfeOptions",
     "FreeFlowOptions",
@@ -173,6 +175,8 @@ __all__ = [
     "choice_draw",
     "choice_model_register",
     "choice_models",
+    "config_read",
+    "config_write_defaults",
     "demand_aggregate_space",
     "demand_aggregate_time",
     "demand_assign_classes",
