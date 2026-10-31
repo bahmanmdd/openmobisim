@@ -1075,6 +1075,8 @@ class RunSummary:
     truncated: int
     no_vehicle_available: int
     no_feasible_path: int
+    #: In a run with a service, the trips whose taxi request was cancelled; ``None`` without one.
+    cancelled: int | None
     total_travel_time_s: float
     #: The completed trips' time in their own vehicles (the drives and the bike rides),
     #: traveller-weight-scaled: the total travel time less the fixed times, walks, waits and rides.

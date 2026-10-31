@@ -445,6 +445,10 @@ pub struct PyRunSummary {
     /// Trips whose mode this run cannot simulate.
     #[pyo3(get)]
     pub mode_not_available: u32,
+    /// In a run with a service, the trips whose taxi request was cancelled in its service day
+    /// (the trip ends there); `None` in a run without one.
+    #[pyo3(get)]
+    pub cancelled: Option<u32>,
     /// The outcomes by mode, for each mode that has trips: a dict of the
     /// completion counts and `total_travel_time_s`.
     #[pyo3(get)]
@@ -1842,6 +1846,8 @@ pub fn run_pipeline(
         .as_ref()
         .map_or((0, f64::NAN), |it| (it.replanned, it.return_mismatch_s));
     let completion_by_mode = PyDict::new(py);
+    // A run with a service counts its cancelled taxi requests (S306).
+    let service = result.services.is_some() || result.taxis.is_some();
     // The modes, and "none": the trips that chose and had no mode to choose (S269).
     let rows = Mode::ALL
         .iter()
@@ -1855,6 +1861,9 @@ pub fn run_pipeline(
         row.set_item("total_trips", m.completion.total_trips)?;
         row.set_item("completed", m.completion.completed)?;
         row.set_item("truncated", m.completion.truncated)?;
+        if service {
+            row.set_item("cancelled", m.completion.cancelled)?;
+        }
         row.set_item("no_vehicle_available", m.completion.no_vehicle_available)?;
         row.set_item("no_feasible_path", m.completion.no_feasible_path)?;
         row.set_item("mode_not_available", m.completion.mode_not_available)?;
@@ -1862,6 +1871,9 @@ pub fn run_pipeline(
         row.set_item("people", m.weighted_trips)?;
         row.set_item("completed_people", m.weighted_completed)?;
         row.set_item("truncated_people", m.weighted_truncated)?;
+        if service {
+            row.set_item("cancelled_people", m.weighted_cancelled)?;
+        }
         row.set_item("not_run_people", m.weighted_not_run)?;
         completion_by_mode.set_item(name, row)?;
     }
@@ -2070,6 +2082,7 @@ pub fn run_pipeline(
         link_bins_bike_path,
         link_bins_walk_path,
         mode_not_available: result.completion.mode_not_available,
+        cancelled: service.then_some(result.completion.cancelled),
         completion_by_mode: completion_by_mode.unbind(),
         route_choices: route_choices_py,
         route_sets: result

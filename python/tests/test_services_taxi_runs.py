@@ -195,44 +195,69 @@ def test_the_kpi_rows_are_the_trips(run: ms.Run) -> None:
     assert "last loading" in m["service_day"] and "fixed assumptions" in m["service_day"]
 
 
-# The rows of a mode that only a planned trip has: under a mode a service serves, the service's
-# own rows say how its trips went instead (S305).
-PLANNED_ROWS = {
-    "completed_trips",
-    "completed_people",
-    "completion_rate",
-    "truncated_trips",
-    "total_travel_time_s",
-}
+def counted(t: object, among: np.ndarray) -> dict[str, float]:
+    """The whole-run counts of ``among``'s trips, read from ``trip_results``.
+
+    A trip that took a service counts by ``service_outcome`` and ``service_arrival_s`` (what the
+    service day gave it), any other by ``outcome`` and ``arrival_s``.
+    """
+    service = np.asarray(t["service_outcome"])
+    took = service != ""
+    arrival = np.where(took, t["service_arrival_s"], t["arrival_s"]).astype(float)
+    done = np.isfinite(arrival) & among
+    cancelled = took & (service == "cancelled") & ~np.isfinite(arrival) & among
+    outcome = np.asarray(t["outcome"])
+    truncated = among & ~done & ~cancelled & (took | (outcome == "truncated"))
+    w = np.asarray(t["weight"], dtype=float)
+    time = arrival - np.asarray(t["departure_s"], dtype=float)
+    return {
+        "completed_trips": float(done.sum()),
+        "completed_people": float(w[done].sum()),
+        "cancelled_trips": float(cancelled.sum()),
+        "truncated_trips": float(truncated.sum()),
+        "total_travel_time_s": float(np.sum(w[done] * time[done])),
+    }
 
 
-def test_the_taxi_mode_keeps_its_choice_rows_and_none_the_service_day_contradicts(
-    run: ms.Run,
-) -> None:
-    # A cheap fare and a short cancel limit: many choose a taxi and many requests are cancelled,
-    # so a planned-trip row under `taxi` would count as completed what the fleet cancelled.
+def test_the_whole_run_rows_count_each_taxi_trip_as_the_service_day_gave_it(run: ms.Run) -> None:
+    # A short cancel limit: many requests are cancelled. The `all` rows and the taxi's own
+    # trip rows count a cancelled request as cancelled, not completed as planned, and a ride by
+    # its drop-off: as `trip_results` gives them, exactly (S306).
     k = pq.read_table(run._summary.kpis_path).to_pylist()
     last = max(r["iteration"] for r in k)
-    taxi = {r["metric"]: r["value"] for r in k if r["mode"] == "taxi" and r["iteration"] == last}
-    assert taxi["cancelled"] > 0.25 * taxi["requests"], "the fixture cancels many requests"
-    assert not PLANNED_ROWS & set(taxi), sorted(PLANNED_ROWS & set(taxi))
-    for kept in ("trips", "people", "mode_share", "mode_not_available_trips"):
-        assert kept in taxi, kept
-    assert taxi["people"] == taxi["requests"], "every person who chose a taxi requested one"
-    # The whole run keeps them (its trips counted as planned, the taxi's included).
-    whole = {r["metric"] for r in k if r["mode"] == "all" and r["iteration"] == last}
-    assert not PLANNED_ROWS - whole
-    # Read back, the taxi's entry holds what the file holds, and the mean trip is the run's.
-    back = ms.Run.open(Path(run._summary.kpis_path).parent)
-    entry = back.completion_by_mode["taxi"]
-    assert set(entry) == {
-        "total_trips",
-        "no_vehicle_available",
-        "no_feasible_path",
-        "mode_not_available",
-        "people",
+    rows = {
+        mode: {r["metric"]: r["value"] for r in k if r["mode"] == mode and r["iteration"] == last}
+        for mode in ("all", "taxi")
     }
+    assert rows["taxi"]["cancelled"] > 0.25 * rows["taxi"]["requests"], "many are cancelled"
+    t = run.trip_results()
+    by_taxi = np.asarray(t["mode"], dtype=object) == "taxi"
+    for mode, among in (("all", np.ones(len(by_taxi), dtype=bool)), ("taxi", by_taxi)):
+        expected = counted(t, among)
+        for metric, value in expected.items():
+            assert rows[mode][metric] == pytest.approx(value, rel=1e-12, abs=1e-9), (mode, metric)
+        settled = sum(expected[f"{m}_trips"] for m in ("completed", "truncated", "cancelled"))
+        assert rows[mode]["completion_rate"] == expected["completed_trips"] / settled
+    assert rows["taxi"]["cancelled_trips"] == rows["taxi"]["cancelled"], "one person per trip"
+    assert rows["taxi"]["completed_trips"] == rows["taxi"]["rides"]
+    # In memory, read back and in the line a run prints: the same counts and mean trip.
+    c = run.completion
+    assert c["completed"] == rows["all"]["completed_trips"]
+    assert c["cancelled"] == rows["all"]["cancelled_trips"] > 0
+    mean = rows["all"]["total_travel_time_s"] / rows["all"]["completed_people"]
+    assert run.mean_travel_time_s == pytest.approx(mean, rel=1e-12)
+    assert f"{c['completed']:,} of {c['total_trips']:,} trips completed" in run._summary_line()
+    back = ms.Run.open(Path(run._summary.kpis_path).parent)
+    assert back.completion == c
     assert back.mean_travel_time_s == pytest.approx(run.mean_travel_time_s, rel=1e-12)
+    for mode, entry in back.completion_by_mode.items():
+        memory = run.completion_by_mode[mode]
+        assert {key: memory[key] for key in entry} == pytest.approx(entry), mode
+    assert back.completion_by_mode["taxi"]["cancelled"] == c["cancelled"]
+    # The iterations before the last had no service day: their taxi trips count as planned.
+    conv = run.convergence()
+    assert conv["completed"][-1] == c["completed"]
+    assert (conv["completed"][:-1] > c["completed"]).all()
 
 
 def cancelled_count(tr: object) -> int:

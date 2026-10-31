@@ -172,9 +172,10 @@ pub struct TripTable {
     /// In a run with a service (S303), what its service day actually gave each trip: the
     /// outcome ([`crate::services::in_run::ServiceOutcome::as_str`]: `completed`, `cancelled`,
     /// `unfinished`; empty for a trip that took no service in the last loading) and the second
-    /// the service actually brought the traveller to the end of the service leg (the
-    /// destination, or a shared bike to transit's hub dock; `NaN` if not completed, or for a
-    /// trip without a service). `None` in a run without a service, whose table is what it was.
+    /// the traveller actually reached the end of the service leg (the destination, or a shared
+    /// bike to transit's hub dock), by the service or on foot after finding no shared bike
+    /// (`NaN` if not by the window's end, after a cancelled taxi request, or for a trip without a
+    /// service). `None` in a run without a service, whose table is what it was.
     pub service_outcome: Option<(Vec<&'static str>, Vec<f64>)>,
 }
 

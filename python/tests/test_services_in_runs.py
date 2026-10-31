@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 
+import numpy as np
 import openmobisim as ms
 import pytest
 
@@ -85,9 +86,39 @@ def test_without_a_service_nothing_lists_bike_sharing_and_the_mode_is_refused() 
     rows = trips(net, 3, (0, 0), (9, 9))
     run = scenario(net, rows, modes=["walk", "bike"]).run("share-none", quiet=True)
     assert "gap_bike_share" not in run.convergence()
+    # No service day: no cancelled trips to count, in the run or its modes (S306).
+    assert "cancelled" not in run.completion
+    assert all("cancelled" not in m for m in run.completion_by_mode.values())
     assert "reason_bike_share" not in run.report_no_alternative()
     with pytest.raises(ValueError, match="bike_share.*services"):
         scenario(net, rows)
+
+
+def test_a_traveller_who_finds_no_bike_and_walks_on_arrives_when_the_walk_ends(
+    tmp_path: object,
+) -> None:
+    # One bike per dock and twenty travellers: most find no bike and walk on. The whole run
+    # counts each as arriving when the walk on ended (`service_arrival_s`), not when the bike
+    # ride planned (S306).
+    net = grid()
+    bikes = ms.service_bike_docked(docks(net, bikes=1))
+    rows = trips(net, 20, (0, 0), (9, 9))
+    s = scenario(net, rows, services=[bikes], choice_model="deterministic")
+    run = s.run("share-walk-on", output_dir=str(tmp_path / "r"), quiet=True)
+    t = run.trip_results()
+    service = np.asarray(t["service_outcome"])
+    arrival = np.asarray(t["service_arrival_s"], dtype=float)
+    walked = service == "cancelled"
+    assert walked.sum() >= 10, "most find no bike"
+    assert np.isfinite(arrival).all(), "each arrives by the window's end, walking or riding"
+    planned = np.asarray(t["arrival_s"], dtype=float)
+    assert (arrival[walked] > planned[walked]).all(), "a walk on takes longer than the ride"
+    departure = np.asarray(t["departure_s"], dtype=float)
+    c = run.completion
+    assert c["completed"] == 20 and c["cancelled"] == 0
+    assert run.total_travel_time_s == pytest.approx(np.sum(arrival - departure), rel=1e-12)
+    assert run.mean_travel_time_s == pytest.approx(np.mean(arrival - departure), rel=1e-12)
+    assert run.completion_by_mode["bike_share"]["completed"] == 20
 
 
 def test_a_class_without_shared_bikes_never_takes_one() -> None:

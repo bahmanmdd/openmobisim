@@ -65,6 +65,7 @@ fn sample_result() -> RunResult {
             completed: 3,
             truncated: 1,
             mode_not_available: 0,
+            cancelled: 0,
         },
         events: vec![
             EventRow::trip(Second(100), EventType::TripCompleted, TripId::new(0)),
@@ -102,6 +103,7 @@ fn sample_result() -> RunResult {
                 weighted_completed: 2.0,
                 weighted_truncated: 1.0,
                 weighted_not_run: 1.0,
+                ..ModeTotals::default()
             };
             by_mode[Mode::Bike.index()] = ModeTotals {
                 completion: TripCompletionStats {

@@ -6,6 +6,7 @@ a minor version may change the interface, and says so here.
 ## Unreleased
 
 - The route update can stop adding routes after a given iteration: `route_update_options={"until_iteration": k}` (0, the default, adds in every iteration). After it the route sets stay as they are and the remaining loadings settle the choices among them, without the jumps a route added late causes.
+**A run with a service counts its service trips as the service day gave them.** `completion`, `completion_by_mode`, `total_travel_time_s`, `mean_travel_time_s`, the line a run prints and the last iteration's `kpis.parquet` rows (`all` and the service's modes) follow `trip_results`' `service_outcome` and `service_arrival_s`: a cancelled taxi request is counted under a new `cancelled` (`cancelled_trips`), a traveller who found no shared bike arrives when the walk on ends (`service_arrival_s` now gives that second). A run without a service is unchanged.
 
 **The run configuration file, `run.toml`: every parameter of a run in one file.** `config_write_defaults(path)`
 writes the complete file at the shipped defaults: one table per group (`[inputs]`, `[run]`, `[equilibration]`,
