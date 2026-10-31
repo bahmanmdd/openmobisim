@@ -44,7 +44,7 @@ __CSS__
   </div>
   <div id="trafficgroup">
     <h2>Traffic</h2>
-    <div class="row"><label>Colour by <select id="colour"><option value="delay">Delay</option><option value="volume">Volume</option><option value="vc">Volume ÷ capacity</option></select></label></div>
+    <div class="row"><label>Colour by <select id="colour"><option value="delay">Time lost to delay</option><option value="volume">Volume</option><option value="vc">Volume ÷ capacity</option></select></label></div>
     <div class="row"><input id="bin" type="range" min="0" max="0" value="0" step="1"></div>
     <div class="row"><label><input id="allbins" type="checkbox" checked> All bins</label><button id="play">Play</button></div>
     <div class="row" id="spillrow" hidden><label title="Links whose queue would not have fitted on the road: where it would spill back (point queue)"><input id="spill" type="checkbox"> Spillback links <span id="spillcount"></span></label></div>
@@ -989,7 +989,12 @@ function tip(l, ev) {
   const rows = [["Class", CLASSES[CLS[l]] + " · " + LEN[l].toFixed(0) + " m"]];
   if (NF) rows.push(["Direction", "from node " + NF[l] + " to node " + NT[l]]);
   if (TWIN[l] >= 0) rows.push(["Other direction", "link " + TWIN[l] + (HAS_TRAFFIC ? ", " + fmt(vol[TWIN[l]]) + " PCU/h" : "")]);
-  if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " PCU/h"]); if (vol[l] > 0) { rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]); rows.push(["Mean time", meanT[l].toFixed(1) + " s (free flow " + (FF[l] + SW[l]).toFixed(1) + " s" + (SW[l] > 0 ? ", the signal's mean wait of " + SW[l].toFixed(1) + " s included" : "") + ")"]); } }
+  if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " PCU/h"]); if (vol[l] > 0) { const free = FF[l] + SW[l];
+    // The colour's quantity in words that say what it is (S307): the share of the mean crossing time beyond free
+    // flow, 1 - free flow / mean time; and the mean time as a multiple of free flow beside it.
+    rows.push(["Time lost to delay", fmt(delay[l] * 100) + "% of the crossing time"]);
+    rows.push(["Mean time", meanT[l].toFixed(1) + " s, " + (meanT[l] / Math.max(free, 1e-6)).toFixed(1) + " × free flow"]);
+    rows.push(["Free flow", free.toFixed(1) + " s" + (SW[l] > 0 ? " (the signal's mean wait of " + SW[l].toFixed(1) + " s included)" : "")]); } }
   if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " PCU/h" + (SG[l] ? " at its signal" : "") + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used)" : "")]);
   if (HAS_ROUTES) { let n = 0; for (let i = LOPT_START[l]; i < LOPT_START[l + 1]; i++) n += A.on[LOPTS[i]]; if (n) rows.push(["Trips shown", fmt(n) + " travellers drive on it (click for their pairs)"]); }
   t.innerHTML = tipHtml("link " + l, rows);
@@ -1144,7 +1149,7 @@ function binLabel() {
   return b - a === NB && NB > 1 ? "all bins, " + clock((META.first_bin || 0) * s) + "–" + clock(b * s) : clock(a * s) + "–" + clock(b * s);
 }
 function setBins(a, b) { S.bins = [a, b]; aggregate(a, b); subtitle(); redraw(false); writeHash(); }
-const COLOUR_WORDS = { delay: "delay over free flow", volume: "volume", vc: "volume over capacity" };
+const COLOUR_WORDS = { delay: "share of the crossing time lost to delay", volume: "volume", vc: "volume over capacity" };
 function subtitle() {
   $("subtitle").textContent = binLabel() + " · one ribbon per direction · width = volume, colour = " + COLOUR_WORDS[S.colour];
   renderLegend();
@@ -1153,7 +1158,7 @@ function subtitle() {
 function transitKinds() { if (!LY.transit) return []; const seen = new Set(A.tk); return LY.transit.kinds.map((name, k) => [name, k]).filter(([, k]) => seen.has(k)); }
 // What the road's colour shows now (S268, S269): its title, its bands or ramp.
 function roadLegend() {
-  if (S.colour === "delay") return { label: "Delay over free flow", bands: BAND_LABELS, stops: bandColours() };
+  if (S.colour === "delay") return { label: "Time lost to delay: share of the crossing time beyond free flow", bands: BAND_LABELS, stops: bandColours() };
   if (S.colour === "vc") return { label: "Volume over capacity", low: "0", high: "1.0+", stops: TABLES.vc };
   return { label: "Volume per direction (PCU/h)", low: "0", high: fmt(VMAX) + "+", stops: TABLES.volume };
 }
@@ -1299,7 +1304,7 @@ function exportSVG() {
   const y = HEAD + H + 18;
   if (f.legend) {  // at the top right, as in the package's figures (S269)
     const n = f.legend.stops.length, w = 200, step = w / n, x0 = W - 16 - w, ly = 30;
-    parts.push(`<text x="${x0}" y="${ly - 8}" font-size="10.5" fill="${TH.ink2}">${esc(f.legend.label)}</text>`);
+    parts.push(`<text x="${x0 + w}" y="${ly - 8}" font-size="10.5" text-anchor="end" fill="${TH.ink2}">${esc(f.legend.label)}</text>`);  // right-aligned: a long title runs left, not off the page
     parts.push(f.legend.stops.map((c, i) => `<rect x="${(x0 + i * step).toFixed(2)}" y="${ly}" width="${(f.legend.bands ? step - 1.5 : step + 0.3).toFixed(2)}" height="7" fill="${c}"/>`).join(""));
     if (f.legend.bands) parts.push(f.legend.bands.map((t, i) => `<text x="${(x0 + (i + 0.5) * step).toFixed(2)}" y="${ly + 19}" font-size="9.5" text-anchor="middle" fill="${TH.ink2}">${esc(t)}</text>`).join(""));
     else parts.push(`<text x="${x0}" y="${ly + 19}" font-size="9.5" fill="${TH.ink2}">${esc(f.legend.low)}</text><text x="${x0 + w}" y="${ly + 19}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc(f.legend.high)}</text>`);
@@ -1337,7 +1342,7 @@ function exportPNG() {
   const y = HEAD + H + 18;
   if (f.legend) {  // at the top right, as in the package's figures (S269)
     const n = f.legend.stops.length, w = 200, step = w / n, x0 = W - 16 - w, ly = 30;
-    o.textAlign = "left"; o.fillStyle = TH.ink2; o.font = "10.5px " + FONT; o.fillText(f.legend.label, x0, ly - 8);
+    o.textAlign = "right"; o.fillStyle = TH.ink2; o.font = "10.5px " + FONT; o.fillText(f.legend.label, x0 + w, ly - 8); o.textAlign = "left";
     if (f.legend.bands) {
       f.legend.stops.forEach((c, i) => { o.fillStyle = c; o.fillRect(x0 + i * step, ly, step - 1.5, 7); });
       o.fillStyle = TH.ink2; o.font = "9.5px " + FONT; o.textAlign = "center";
