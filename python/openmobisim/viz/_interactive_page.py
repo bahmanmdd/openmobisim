@@ -25,6 +25,7 @@ __CSS__
   <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="__LOGO__"/></svg><h1 id="title"></h1>
   <p id="subtitle"></p><p id="note" hidden></p>
 </header>
+<div id="side">
 <aside id="panel">
   <h2>Zoom</h2>
   <div id="levels"><button>Overview</button><button>Region</button><button>District</button><button>Street</button><button>Detail</button></div>
@@ -52,8 +53,9 @@ __CSS__
 </aside>
 <div id="legendgroup" class="card">
   <div id="legendbody"></div>
+  <div id="compass"><svg width="18" height="28" viewBox="0 0 22 34"><path d="M11 2 L17 20 L11 16 L5 20 Z" fill="currentColor"/><text x="11" y="32" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" font-family="sans-serif">N</text></svg><div><div id="scalelabel"></div><div id="scalebar"></div></div></div>
 </div>
-<div id="compass"><svg width="22" height="34" viewBox="0 0 22 34"><path d="M11 2 L17 20 L11 16 L5 20 Z" fill="currentColor"/><text x="11" y="32" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" font-family="sans-serif">N</text></svg><div id="scalelabel"></div><div id="scalebar"></div></div>
+</div>
 <footer><span id="provenance"></span><span id="source"></span><span class="right"><span id="budget"></span><span id="credit" hidden></span><span id="logo"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="__LOGO__"/></svg><b>openmobisim</b></span></span></footer>
 <div id="tip" hidden></div>
 <script id="meta" type="application/json">__META__</script>
@@ -76,7 +78,11 @@ canvas#map:active { cursor: grabbing; }
 .head h1 { display: inline; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; vertical-align: middle; }
 .head p { margin: 5px 0 0; font-size: 13px; color: var(--ink2); }
 .head p#note { font-style: italic; color: var(--muted); font-size: 12px; }
-aside#panel { position: fixed; top: 14px; right: 14px; width: 306px; max-height: calc(100vh - 60px); overflow: auto; background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--base); border-radius: 12px; padding: 12px 14px 14px; box-shadow: 0 6px 26px rgba(0,0,0,.18); font-size: 12.5px; backdrop-filter: blur(6px); }
+/* Everything the reader uses in one column on the right (S306): the controls, then the legend with the compass and
+   the scale, kept in view at the column's foot while the controls scroll. */
+#side { position: fixed; top: 14px; right: 14px; bottom: 40px; width: 306px; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+#side > * { pointer-events: auto; }
+aside#panel { flex: 0 1 auto; min-height: 0; overflow: auto; background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--base); border-radius: 12px; padding: 12px 14px 14px; box-shadow: 0 6px 26px rgba(0,0,0,.18); font-size: 12.5px; backdrop-filter: blur(6px); }
 aside h2 { margin: 12px 0 7px; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 aside h2:first-child { margin-top: 0; }
 button, select, input[type=number] { font: inherit; color: var(--ink); background: transparent; border: 1px solid var(--base); border-radius: 7px; padding: 4px 9px; cursor: pointer; }
@@ -98,7 +104,7 @@ label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2);
 .legend .kinds i { width: 18px; height: 4px; border-radius: 2px; display: inline-block; margin-right: 5px; vertical-align: middle; }
 .legend .note { font: 11px var(--mono); color: var(--muted); margin-top: 3px; }
 /* The legend, a section per mode (S269) */
-#legendgroup.card { position: fixed; left: 12px; bottom: 40px; width: 268px; max-height: calc(100vh - 200px); overflow: auto; padding: 10px 12px 2px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 90%, transparent); border: 1px solid color-mix(in srgb, var(--base) 70%, transparent); backdrop-filter: blur(4px); font-size: 12px; box-shadow: 0 3px 14px rgba(0,0,0,.10); }
+#legendgroup.card { flex: 0 1 auto; margin-top: auto; max-height: 48%; display: flex; flex-direction: column; overflow: hidden; padding: 10px 14px 8px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 90%, transparent); border: 1px solid color-mix(in srgb, var(--base) 70%, transparent); backdrop-filter: blur(4px); font-size: 12px; box-shadow: 0 3px 14px rgba(0,0,0,.10); }
 #legendbody .lg { margin: 0 0 10px; }
 #legendbody h3 { margin: 0 0 3px; font-size: 11.5px; font-weight: 600; color: var(--ink); }
 #legendbody .sub { font-size: 11px; color: var(--ink2); }
@@ -126,8 +132,10 @@ label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2);
 #tip { position: fixed; pointer-events: none; z-index: 10; background: var(--ink); color: var(--surface); padding: 8px 10px; border-radius: 8px; font-size: 12px; min-width: 190px; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
 #tip b { display: block; margin-bottom: 3px; font-family: var(--mono); }
 #tip div { display: flex; justify-content: space-between; gap: 14px; } #tip span { opacity: .65; }
-#compass { position: fixed; left: 12px; bottom: 40px; padding: 8px 10px 7px; border-radius: 10px; background: color-mix(in srgb, var(--surface) 84%, transparent); color: var(--ink); font: 11.5px var(--mono); pointer-events: none; }
-#compass svg { display: block; margin: 0 0 6px 2px; }
+#legendbody { overflow: auto; min-height: 0; }
+#compass { flex: none; display: flex; align-items: flex-end; gap: 12px; color: var(--ink); font: 11px var(--mono); }
+#legendbody:not([hidden]) + #compass { border-top: 1px solid color-mix(in srgb, var(--base) 70%, transparent); padding-top: 8px; }
+#compass svg { display: block; flex: none; }
 #scalebar { height: 6px; border: 2px solid var(--ink); border-top: 0; margin-top: 3px; }
 footer { position: fixed; left: 0; right: 0; bottom: 0; height: 30px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-top: 1px solid var(--base); background: color-mix(in srgb, var(--surface) 92%, transparent); font: 11px var(--mono); color: var(--muted); }
 footer .right { display: flex; align-items: center; gap: 10px; font-family: var(--sans); flex: none; white-space: nowrap; }
@@ -177,7 +185,7 @@ footer #source { flex: none; white-space: nowrap; margin-right: 16px; }
 #legendbody .kinds .stop { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--ink2); background: var(--surface); margin-right: 4px; vertical-align: -1px; }
 #legendbody .kinds .badge { display: inline-block; padding: 0 4px; border-radius: 4px; font: 700 9px/13px var(--sans); color: #fff; margin-right: 4px; }
 body[data-picking] canvas#map { cursor: crosshair; }
-@media (max-width: 760px) { .head { max-width: calc(100vw - 20px); } aside#panel { top: auto; bottom: 40px; max-height: 42vh; width: calc(100vw - 28px); } #compass, #legendgroup.card { display: none; } }
+@media (max-width: 760px) { .head { max-width: calc(100vw - 20px); } #side { top: auto; max-height: 42vh; width: calc(100vw - 28px); } #legendgroup.card { display: none; } }
 """
 
 PAGE_JS = r"""(async function () {
@@ -364,17 +372,15 @@ function resize() {
   DPR = window.devicePixelRatio || 1; W = canvas.clientWidth; H = canvas.clientHeight;
   canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
 }
-// The panel's width over the map: it sits on the right of a wide window.
+// The right column's width over the map (the controls and the legend, S306): on the right of a wide window.
 function panelWidth() { return W > 760 ? 340 : 0; }
 function fitTo(x0, y0, x1, y1, pad) {
-  // Fit into the part of the window the panel, the title above and the footer below leave free (S269: a tall
-  // network ran under both).
+  // Fit into the part of the window the right column, the title above and the footer below leave free (S269: a
+  // tall network ran under both); nothing is reserved on the left (S306).
   const top = 78, bottom = 34;
-  // The legend card at the bottom left (S305) is left free too on a wide window.
-  const card = $("legendgroup"), left = card && !card.hidden && W > 1100 ? card.offsetWidth + 16 : 0;
-  const w = Math.max(x1 - x0, 60), h = Math.max(y1 - y0, 60), reserve = panelWidth() + left;
+  const w = Math.max(x1 - x0, 60), h = Math.max(y1 - y0, 60), reserve = panelWidth();
   S.mpp = Math.max(w / ((W - reserve) * (1 - pad)), h / ((H - top - bottom) * (1 - pad)));
-  S.cx = (x0 + x1) / 2 + (panelWidth() - left) / 2 * S.mpp; S.cy = (y0 + y1) / 2 + (top - bottom) / 2 * S.mpp;
+  S.cx = (x0 + x1) / 2 + reserve / 2 * S.mpp; S.cy = (y0 + y1) / 2 + (top - bottom) / 2 * S.mpp;
 }
 function levelMpp(i) { return Math.max(MIN_MPP, FIT.mpp / Math.pow(3.2, i)); }
 function currentLevel() { let best = 0, bd = 1e9; for (let i = 0; i < LEVELS.length; i++) { const d = Math.abs(Math.log(S.mpp / levelMpp(i))); if (d < bd) { bd = d; best = i; } } return best; }
@@ -1122,9 +1128,8 @@ function renderLegend() {
   if (S.ly.walk && FLOWS.walk) parts.push('<div class="lg"><h3>Walkers</h3><div class="kinds"><span>' + line(TH.modes[2], "dot") + 'walkers</span></div><div class="note">width = walkers; faint = the walk network</div></div>');
   if (S.ly.parking && LY.parking) parts.push('<div class="lg"><h3>Parkings</h3><div class="kinds"><span><b></b>car</span><span><b class="ci"></b>bike</span></div><div class="bar" style="background:linear-gradient(90deg,' + TABLES.delay.join(",") + ')"></div><div class="ends"><span>empty</span><span>full</span></div><div class="note">size = capacity; colour = busiest share in use</div></div>');
   $("legendbody").innerHTML = parts.join("");
-  $("legendgroup").hidden = parts.length === 0;
-  // The compass and the scale sit above the legend card (S305), both at the bottom left.
-  $("compass").style.bottom = (parts.length ? 40 + $("legendgroup").offsetHeight + 8 : 40) + "px";
+  // The card always holds the compass and the scale (S306), the legend above them when a layer is on.
+  $("legendbody").hidden = parts.length === 0;
 }
 function writeHash() {
   const p = new URLSearchParams(); p.set("t", S.theme); p.set("c", S.colour);

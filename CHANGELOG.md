@@ -31,7 +31,11 @@ way they went: car routes, transit journeys line by line, park-and-ride and bike
 bikes and taxis, each with its travellers, its expected door-to-door time and a strip of its legs (walking, waiting,
 riding, driving, parking), drawn leg by leg on the map. Pick a pair from the busiest, step through them, pick an
 origin and a destination on the map, or click a road for the pairs whose trips use it. The legend shows only the
-layers that are on, in a card at the bottom left. `max_route_pairs` keeps the pairs with the most travellers.
+layers that are on, under the controls in the right-hand column with the compass and the scale. `max_route_pairs`
+keeps the pairs with the most travellers.
+- The two directions of a two-way road are drawn apart, each hovered and picked on its own side (the hover names its
+  upstream and downstream nodes), and the widths of the road traffic and of the trips grow linearly with volume and
+  travellers, up to a width set by the room between the roads on screen.
 - `Run.itinerary_journeys()`: each trip's chosen journey (of the trips `itinerary_choices()` lists), leg by leg: its
   links on its mode's layer, its rides (line, stops, seconds), its walks, waits and parking times.
 - `Transit.line_patterns()`: each line's stop sequences.

@@ -519,3 +519,13 @@ def test_the_two_directions_of_a_road_are_drawn_apart(tmp_path):
     widths = [w for *_, w in ribbons(svg)]
     assert 2.5 <= wmax <= 30 and abs(max(widths) - wmax) <= 0.5
     assert max(widths) / min(widths) > 4, "the least and the most loaded read apart"
+
+
+def test_the_controls_legend_compass_and_scale_share_the_right_column(tmp_path):
+    """Everything the reader uses on the right (S306): only the title stays on the left."""
+    text = viz.map_interactive(grid_run()[1], tmp_path / "map.html").read_text(encoding="utf-8")
+    side = re.search(r'<div id="side">(.*?)\n</div>\n<footer>', text, re.S)
+    assert side, "the right column"
+    for part in ('<aside id="panel">', 'id="legendgroup"', 'id="compass"', 'id="scalebar"'):
+        assert part in side[1]
+    assert "left: 12px" not in text  # nothing pinned to the left edge but the title
