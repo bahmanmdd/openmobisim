@@ -75,7 +75,8 @@ type Row = (u32, &'static str, &'static str, f64);
 /// `incomplete_share`, `gap_network`, `gap_network_excess`, `gap_flow`, `gap_flow_floor`,
 /// `gap_flow_excess`, `itinerary_gap_excess`, `gap_generalised_excess`, and the full gaps
 /// `gap_route`, `gap_route_expected`, `gap_route_excess`, `gap_route_network`,
-/// `gap_route_network_excess`, `gap_mode`, `gap_mode_expected`, `gap_mode_excess`,
+/// `gap_route_network_excess`, `gap_mode`, `gap_mode_expected`, `gap_mode_excess`, the spreads
+/// of the choices `spread_route` and `spread_mode`,
 /// `excess_min_route`, `excess_min_mode`, `unfinished_cost_share`; a number that was not measured has no row); the
 /// counts that cannot change from one loading to the next
 /// (`trips`, `no_vehicle_available_trips`, `no_feasible_path_trips`,
@@ -238,6 +239,10 @@ fn metrics(result: &RunResult, single_iteration: u32) -> Vec<Row> {
             ("gap_mode", r.gap_mode),
             ("gap_mode_expected", r.gap_mode_expected),
             ("gap_mode_excess", r.gap_mode_excess),
+            // The spreads of the route and mode choices (S309): beside the full gaps, not a
+            // convergence measure.
+            ("spread_route", r.spread_route),
+            ("spread_mode", r.spread_mode),
             ("excess_min_route", r.excess_min_route),
             ("excess_min_mode", r.excess_min_mode),
             ("unfinished_cost_share", r.unfinished_cost_share),
@@ -328,7 +333,8 @@ fn all_rows(result: &RunResult, single_iteration: u32) -> Vec<(u32, String, &'st
 /// `gap`, `gap_expected`, `gap_excess` (the disequilibrium), `incomplete_share`,
 /// `gap_network`, `gap_network_excess`, `gap_flow`, `gap_flow_floor`, `gap_flow_excess`,
 /// `itinerary_gap_excess`, `gap_generalised_excess`, and the full gaps `gap_route`, `gap_route_expected`, `gap_route_excess`, `gap_route_network`,
-/// `gap_route_network_excess`, `gap_mode`, `gap_mode_expected`, `gap_mode_excess`,
+/// `gap_route_network_excess`, `gap_mode`, `gap_mode_expected`, `gap_mode_excess`, the spreads
+/// of the choices `spread_route` and `spread_mode`,
 /// `excess_min_route`, `excess_min_mode`, `unfinished_cost_share`; a number that was not
 /// measured has no row). The counts that cannot change from one loading to the
 /// next (`no_vehicle_available_trips`, `no_feasible_path_trips`,

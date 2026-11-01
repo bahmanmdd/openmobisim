@@ -236,6 +236,18 @@ pub struct IterationReport {
     pub gap_mode_expected: f64,
     /// `gap_mode − gap_mode_expected`.
     pub gap_mode_excess: f64,
+    /// **The spread of the route choice** (S309): over every car trip of [`Self::gap_route`]
+    /// that arrived on a route it was offered, by traveller weight, one less the choice model's
+    /// probability of the route taken over the highest probability among the routes offered,
+    /// `Σ w (1 − p / p*) / Σ w`, at this loading's costs. 0 only when every trip is on its most
+    /// probable route; at an exact logit equilibrium it is above 0, because the logit spreads
+    /// travellers over routes that are not the best. It measures that spread, **not
+    /// convergence** (which [`Self::gap_route_excess`] measures). `NaN` for a model that gives
+    /// no probabilities, and where [`Self::gap_route`] is.
+    pub spread_route: f64,
+    /// The same for the mode choice: over every trip choosing its mode that arrived on an
+    /// alternative of its choice set, over the whole set, every mode; `NaN` without mode choice.
+    pub spread_mode: f64,
     /// The deterministic part of the route gap as a cost per traveller:
     /// `Σ w (g_chosen − g_expected) / Σ w`,
     /// in generalised minutes (the average excess cost less what the model expects).
@@ -353,6 +365,8 @@ impl PartialEq for IterationReport {
             gap_mode,
             gap_mode_expected,
             gap_mode_excess,
+            spread_route,
+            spread_mode,
             excess_min_route,
             excess_min_mode,
             unfinished_cost_share,
@@ -389,6 +403,8 @@ impl PartialEq for IterationReport {
             (*gap_mode, other.gap_mode),
             (*gap_mode_expected, other.gap_mode_expected),
             (*gap_mode_excess, other.gap_mode_excess),
+            (*spread_route, other.spread_route),
+            (*spread_mode, other.spread_mode),
             (*excess_min_route, other.excess_min_route),
             (*excess_min_mode, other.excess_min_mode),
             (*unfinished_cost_share, other.unfinished_cost_share),
@@ -474,6 +490,8 @@ impl IterationReport {
             gap_mode: f64::NAN,
             gap_mode_expected: f64::NAN,
             gap_mode_excess: f64::NAN,
+            spread_route: f64::NAN,
+            spread_mode: f64::NAN,
             excess_min_route: f64::NAN,
             excess_min_mode: f64::NAN,
             unfinished_cost_share: f64::NAN,
