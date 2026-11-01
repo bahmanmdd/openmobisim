@@ -304,7 +304,7 @@ function candidates(x0, y0, x1, y1) {
 // per-bin traffic
 const BS = A.bs, RL = A.rl, RP = A.rp, RS = A.rs;
 const HAS_TRAFFIC = NB > 0 && RL.length > 0;
-const vol = new Float32Array(NL), delay = new Float32Array(NL), meanT = new Float32Array(NL);
+const vol = new Float32Array(NL), peak = new Float32Array(NL), delay = new Float32Array(NL), meanT = new Float32Array(NL);
 let VMAX = 1;
 function percentile(values, p) { if (!values.length) return 1; const s = Float32Array.from(values).sort(); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; }
 let GLOBAL_VMAX = 1;
@@ -315,6 +315,16 @@ function aggregate(b0, b1) {
   // The hours the volumes are per: the bins asked for within the run's window (S306: "all bins" counted the
   // hours from midnight, the volumes 3 to 5 times too low).
   const span = Math.max(1, b1 - Math.max(b0, FIRST)) * META.bin_seconds, pos = [];
+  // The busiest quarter hour's volume per hour (S309): volume over capacity is coloured from it, so a road full
+  // for an hour of a two-hour window reads full, not half used. A quarter hour is k consecutive bins.
+  const a0 = Math.max(b0, FIRST), k = Math.max(1, Math.min(b1 - a0, Math.round(900 / META.bin_seconds)));
+  peak.fill(0);
+  const run = new Float32Array(NL), perBin = (b, f) => { for (let r = BS[b]; r < BS[b + 1]; r++) f(RL[r], RP[r]); };
+  for (let b = a0; b < b1; b++) {
+    perBin(b, (l, p) => { run[l] += p; });
+    if (b - k >= a0) perBin(b - k, (l, p) => { run[l] -= p; });
+    if (b - a0 + 1 >= k) for (let l = 0; l < NL; l++) peak[l] = Math.max(peak[l], run[l] / (k * META.bin_seconds) * 3600);
+  }
   for (let l = 0; l < NL; l++) {
     vol[l] = tot[l] / span * 3600;
     // The delay over free flow (S308): the mean crossing time over the free-flow time, less one (1 = twice free flow).
@@ -460,7 +470,7 @@ function ribbonWidth(l) { return ribbonWidthOf(RR ? Math.min(1, RR[l]) : 1); }
 function colourIndex(l) {
   let t;
   if (S.colour === "delay") t = band(delay[l]) / (BANDS.length);
-  else if (S.colour === "vc") t = band(CAP[l] > 0 ? vol[l] / CAP[l] : 0, VC_BANDS) / VC_BANDS.length;
+  else if (S.colour === "vc") t = band(CAP[l] > 0 ? peak[l] / CAP[l] : 0, VC_BANDS) / VC_BANDS.length;
   else t = Math.sqrt(Math.min(vol[l], VMAX) / VMAX);
   return Math.max(0, Math.min(NCOL - 1, Math.round(t * (NCOL - 1))));
 }
@@ -1108,7 +1118,7 @@ function tip(l, ev) {
     rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]);
     rows.push(["Mean time", meanT[l].toFixed(1) + " s"]);
     rows.push(["Free flow", free.toFixed(1) + " s" + (SW[l] > 0 ? " (the signal's mean wait of " + SW[l].toFixed(1) + " s included)" : "")]); } }
-  if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " PCU/h" + (SG[l] ? " at its signal" : "") + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used)" : "")]);
+  if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " PCU/h" + (SG[l] ? " at its signal" : "") + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used" + (S.bins[1] - S.bins[0] > 1 ? ", " + fmt(peak[l] / CAP[l] * 100) + "% in its busiest quarter hour" : "") + ")" : "")]);
   if (HAS_ROUTES) { let n = 0; for (let i = LOPT_START[l]; i < LOPT_START[l + 1]; i++) n += A.on[LOPTS[i]]; if (n) rows.push(["Trips shown", fmt(n) + " travellers drive on it (click for their pairs)"]); }
   t.innerHTML = tipHtml("link " + l, rows);
   t.hidden = false; t.style.left = Math.min(W - 250, ev.clientX + 14) + "px"; t.style.top = Math.min(H - 150, ev.clientY + 14) + "px";
@@ -1268,7 +1278,7 @@ function transitKinds() { if (!LY.transit) return []; const seen = new Set(A.tk)
 // What the road's colour shows now (S268, S269): its title, its bands or ramp.
 function roadLegend() {
   if (S.colour === "delay") return { label: "Delay over free flow: mean time ÷ free-flow time − 1", bands: BAND_LABELS, stops: bandColours() };
-  if (S.colour === "vc") return { label: "Volume over capacity", bands: VC_LABELS, stops: bandColours() };
+  if (S.colour === "vc") return { label: "Volume over capacity" + (S.bins[1] - S.bins[0] > 1 ? ", the busiest quarter hour" : ""), bands: VC_LABELS, stops: bandColours() };
   return { label: "Volume per direction (PCU/h)", low: "0", high: fmt(VMAX) + "+", stops: TABLES.volume };
 }
 function bandGradient(c) { const n = c.length; return "linear-gradient(90deg," + c.map((x, i) => x + " " + (100 * i / n).toFixed(2) + "% " + (100 * (i + 1) / n).toFixed(2) + "%").join(",") + ")"; }
