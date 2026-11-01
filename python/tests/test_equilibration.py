@@ -515,6 +515,40 @@ def test_a_run_where_trips_choose_their_mode_gets_a_verdict():
     assert np.isfinite(share).all()
 
 
+def test_a_driver_who_does_not_choose_again_keeps_its_itinerary_when_its_route_leaves_the_offer():
+    # Only the best car route is offered (a detour limit of almost 0), so after a congested
+    # loading most drivers' routes are no longer on offer. A driver who does not choose again
+    # keeps its route, re-timed: only those who choose again (1/8 at loading 7) may change.
+    net = ms.examples.manhattan_grid(n=8, block_metres=200.0, signals=False)
+    rows = ms.examples.trips_random(net, 2_000, seed=5, min_m=300.0, max_m=1400.0, spread_s=600)
+
+    def journeys(iterations):
+        run = ms.Scenario.from_parts(
+            net,
+            rows,
+            classes={"commuter": (True, True, False)},
+            modes=("car", "bike", "walk"),
+            window=(0, 7_200),
+            flow_level=2,
+            link_bin_s=300,
+            choice_model="logit",
+            equilibration="msa",
+            equilibration_options={"iterations": iterations, "gap_tolerance": 0},
+            choice_detour_limit=1e-9,
+            master_seed=3,
+        ).run("eq-keep", overwrite=True)
+        j = run.itinerary_journeys()
+        at = j["link_offsets"]
+        return [(j["mode"][i], tuple(j["links"][at[i] : at[i + 1]])) for i in range(len(j["trip"]))]
+
+    # Same seed, the same first seven loadings: what differs is who changed at loading 7.
+    before, after = journeys(7), journeys(8)
+    drove = [i for i, (mode, _) in enumerate(before) if mode == "car"]
+    changed = sum(before[i] != after[i] for i in drove) / len(drove)
+    share = 1 / 8
+    assert changed <= share + 3 * np.sqrt(share * (1 - share) / len(drove)), changed
+
+
 def test_a_run_whose_trips_all_choose_their_mode_stops_on_its_car_routes_too():
     # S302: no trip is given the car, so before, the stopping rule read the itineraries' gap
     # alone, which pools the car routes with the walks and rides and stopped this run after 4
