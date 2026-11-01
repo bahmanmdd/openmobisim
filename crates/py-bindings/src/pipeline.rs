@@ -833,6 +833,9 @@ fn convergence_arrays(
     dict.set_item("gap_mode", floats(|r| r.gap_mode).into_pyarray(py))?;
     dict.set_item("gap_mode_expected", floats(|r| r.gap_mode_expected).into_pyarray(py))?;
     dict.set_item("gap_mode_excess", floats(|r| r.gap_mode_excess).into_pyarray(py))?;
+    // The spreads of the choices (S309): beside the full gaps, not a convergence measure.
+    dict.set_item("spread_route", floats(|r| r.spread_route).into_pyarray(py))?;
+    dict.set_item("spread_mode", floats(|r| r.spread_mode).into_pyarray(py))?;
     dict.set_item("excess_min_route", floats(|r| r.excess_min_route).into_pyarray(py))?;
     dict.set_item("excess_min_mode", floats(|r| r.excess_min_mode).into_pyarray(py))?;
     dict.set_item("unfinished_cost_share", floats(|r| r.unfinished_cost_share).into_pyarray(py))?;
@@ -859,7 +862,9 @@ fn convergence_arrays(
 /// measured, in trip order (`trip`, its index in the demand), its generalised minutes in the
 /// alternative taken, the best car route offered, the best over the network, what the model
 /// expects (over every mode for a trip choosing its mode, over its car routes for the others) and
-/// the best over every mode (`NaN` for a trip given its mode), and whether it was unfinished.
+/// the best over every mode (`NaN` for a trip given its mode), the probability ratios of the
+/// spreads (S309: the alternative taken's probability over the highest, among the car routes and
+/// over every mode), and whether it was unfinished.
 fn gap_trip_columns(py: Python<'_>, gap: &openmobisim_core_sim::GapTrips) -> PyResult<Py<PyDict>> {
     let rows: Vec<usize> = (0..gap.len()).filter(|&t| !gap.g_chosen[t].is_nan()).collect();
     let column = |v: &[f64]| rows.iter().map(|&t| v[t]).collect::<Vec<f64>>();
@@ -886,6 +891,8 @@ fn gap_trip_columns(py: Python<'_>, gap: &openmobisim_core_sim::GapTrips) -> PyR
     d.set_item("g_best_network_min", column(&gap.g_best_network).into_pyarray(py))?;
     d.set_item("g_expected_min", expected.into_pyarray(py))?;
     d.set_item("g_best_all_min", column(&gap.g_best_all).into_pyarray(py))?;
+    d.set_item("p_ratio_route", column(&gap.p_ratio_set).into_pyarray(py))?;
+    d.set_item("p_ratio_mode", column(&gap.p_ratio_all).into_pyarray(py))?;
     d.set_item(
         "unfinished",
         rows.iter().map(|&t| gap.unfinished[t]).collect::<Vec<bool>>().into_pyarray(py),

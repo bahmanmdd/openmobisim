@@ -26,12 +26,13 @@ FIELDS = [
     "itinerary_gap_excess", "gap_generalised_excess", "completed_people", "gap_route",
     "gap_route_expected",
     "gap_route_excess", "gap_route_network", "gap_route_network_excess", "gap_mode",
-    "gap_mode_expected", "gap_mode_excess", "excess_min_route", "excess_min_mode",
+    "gap_mode_expected", "gap_mode_excess", "spread_route", "spread_mode", "excess_min_route",
+    "excess_min_mode",
     "unfinished_cost_share", "gap_transit_plan_s", "gap_transit_plan_share",
 ]  # fmt: skip
 GAP_TRIPS = [
     "trip", "g_chosen_min", "g_best_set_min", "g_best_network_min", "g_expected_min",
-    "g_best_all_min", "unfinished",
+    "g_best_all_min", "p_ratio_route", "p_ratio_mode", "unfinished",
 ]  # fmt: skip
 
 
@@ -605,6 +606,37 @@ def test_the_full_mode_gap_covers_every_trip_choosing_its_mode():
     assert sorted(g["trip"][measured].tolist()) == chose
     assert (g["g_best_all_min"][measured] <= g["g_chosen_min"][measured]).all()
     assert abs(c["gap_mode_excess"][-1]) < 0.05, c["gap_mode_excess"]
+
+
+def test_the_spreads_are_the_probability_ratios_of_the_trips(tmp_path):
+    pytest.importorskip("pyarrow")  # the run read back from its files
+
+    # S309: the spread of the route choice and of the mode choice, at every loading, are one less
+    # each trip's probability ratio (the alternative taken over the most probable), averaged over
+    # the trips measured (one person each here); finite, at least 0 and below 1, and in
+    # kpis.parquet for Run.open.
+    run = scenario(
+        trips=500,
+        classes={"commuter": (True, True, False)},
+        modes=("car", "bike", "walk"),
+        equilibration_options={"iterations": 4, "gap_every": 1},
+        choice_model="logit",
+        master_seed=3,
+    ).run("eq-spread", output_dir=str(tmp_path / "eq-spread"), quiet=True)
+    c, g = run.convergence(), run.gap_trips()
+    for name, ratio in (("spread_route", "p_ratio_route"), ("spread_mode", "p_ratio_mode")):
+        spread = c[name]
+        assert np.isfinite(spread).all() and (spread >= 0).all() and (spread < 1).all(), name
+        r = g[ratio][np.isfinite(g[ratio])]
+        assert len(r) > 0 and ((r > 0) & (r <= 1)).all(), ratio
+        assert abs(spread[-1] - (1.0 - r).mean()) < 1e-9, (name, spread[-1], (1.0 - r).mean())
+    # A trip has a route ratio exactly where it drove, a mode ratio where it chose its mode.
+    drove = np.isfinite(g["g_best_set_min"]) & ~g["unfinished"]
+    assert (np.isfinite(g["p_ratio_route"]) <= drove).all()
+    assert (np.isfinite(g["p_ratio_mode"]) <= np.isfinite(g["g_best_all_min"])).all()
+    back = ms.Run.open(tmp_path / "eq-spread").convergence()
+    for name in ("spread_route", "spread_mode"):
+        assert np.array_equal(back[name], c[name]), name
 
 
 def test_a_model_without_utilities_measures_the_full_gaps_in_time(tmp_path):

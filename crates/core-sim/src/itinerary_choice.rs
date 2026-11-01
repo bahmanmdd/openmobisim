@@ -85,7 +85,7 @@ use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
 use crate::demand_values::DemandValues;
 use crate::equilibration::Equilibration;
-use crate::gap::{Currency, Ended, GapTrips, RouteGapSums};
+use crate::gap::{Currency, Ended, GapTrips, RouteGapSums, p_ratio};
 use crate::generalised_cost::RouteCost;
 use crate::layers::{LayerSetup, StaticLayers, StaticRoutes};
 use crate::link_times::LinkTimes;
@@ -4266,6 +4266,19 @@ impl Itineraries {
                 }
                 let kept = set.iter().position(|a| a.identity == old.identity);
                 let unfinished_car = drove && ended.unfinished[t];
+                // The spreads (S309): the alternative taken's probability over the highest,
+                // among the car alternatives for a trip that drove and over the whole set for a
+                // trip choosing its mode, where it is in the set and the trip arrived.
+                if let Some(pr) = probabilities.as_ref() {
+                    let finished = kept.filter(|_| !ended.unfinished[t]).map(|i| start + i);
+                    if self.choosing[p] {
+                        out.p_ratio_all[t] = p_ratio(pr, range.clone(), finished);
+                    }
+                    if drove && !car.is_empty() {
+                        let cars = car.iter().map(|&i| start + i);
+                        out.p_ratio_set[t] = p_ratio(pr, cars, finished);
+                    }
+                }
                 match kept {
                     Some(i) if !unfinished_car => {
                         out.g_chosen[t] = gs[i];

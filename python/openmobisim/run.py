@@ -86,7 +86,7 @@ _FILE_CONVERGENCE = (
     "gap_flow_excess", "mode_changed_share", "itinerary_gap_excess", "gap_generalised_excess",
     "gap_route", "gap_route_expected", "gap_route_excess", "gap_route_network",
     "gap_route_network_excess", "gap_mode", "gap_mode_expected", "gap_mode_excess",
-    "excess_min_route", "excess_min_mode", "unfinished_cost_share",
+    "spread_route", "spread_mode", "excess_min_route", "excess_min_mode", "unfinished_cost_share",
 )  # fmt: skip
 #: ``completion``'s keys and the ``kpis.parquet`` metrics they are.
 _FILE_COMPLETION = {
@@ -648,6 +648,19 @@ class Run:
         * ``gap_mode_expected`` — what the choice model expects ``gap_mode`` to be, from its
           probabilities over the whole choice set.
         * ``gap_mode_excess`` — ``gap_mode − gap_mode_expected``.
+        * ``spread_route`` — **the spread of the route choice**, a measure built on the choice
+          model's probabilities rather than on costs: for each car trip of ``gap_route`` that
+          arrived on a route it was offered, ``p`` is the probability the model gives the route
+          it took and ``p*`` the highest probability among the routes it was offered, both at
+          this loading's costs; the spread is ``Σ w (1 − p / p*) / Σ w``, ``w`` the trip's
+          people. It is 0 only when every trip is on its most probable route, and below 1.
+          **It is not a convergence measure**: a logit spreads travellers over
+          routes that are not the best on purpose (each traveller's unobserved preferences), so
+          at an exact logit equilibrium the spread is above 0 and stays there however long the
+          run iterates; it says how dispersed the choice is, while ``gap_route_excess`` says how
+          far the run is from equilibrium. ``nan`` for a model that gives no probabilities.
+        * ``spread_mode`` — the same for the trips choosing their mode, ``p*`` the highest
+          probability over the whole choice set, every mode; ``nan`` without mode choice.
         * ``excess_min_route`` — the deterministic part of the route gap as minutes per
           traveller: what the average traveller pays, in ``g``, above what the model expects of
           them.
@@ -686,9 +699,16 @@ class Run:
         best over the whole network (the fastest route a time-dependent search finds, if
         better); ``g_expected_min`` what the choice model expects of it (over every mode for a
         trip choosing its mode, over its car routes for the others); ``g_best_all_min`` the best
-        of its whole choice set, every mode (``nan`` for a trip given its mode); ``unfinished``
-        whether it was still under way at the end. The units are ``gap_currency``'s; the sums
-        are ``convergence()``'s ``gap_route`` and ``gap_mode``, at its last row.
+        of its whole choice set, every mode (``nan`` for a trip given its mode);
+        ``p_ratio_route`` the choice model's probability of the car route it took over the
+        highest probability among the car routes it was offered, and ``p_ratio_mode`` the same
+        for the alternative it took over its whole choice set (a trip choosing its mode), each
+        ``nan`` where the alternative taken was not offered, the trip was still under way at the
+        end, or the model gives no probabilities; ``unfinished`` whether it was still under way
+        at the end. The units are ``gap_currency``'s; the sums
+        are ``convergence()``'s ``gap_route`` and ``gap_mode``, and ``1 − p_ratio_route`` and
+        ``1 − p_ratio_mode`` averaged by traveller weight its ``spread_route`` and
+        ``spread_mode``, at its last row.
 
         In memory, from the run that produced it: ``None`` for a run of one loading, and a run
         read back with ``Run.open`` has none.

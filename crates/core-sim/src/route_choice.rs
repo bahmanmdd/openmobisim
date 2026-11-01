@@ -44,7 +44,7 @@ use openmobisim_core_types::ids::{EntityId, LinkId, TravellerId, TripId};
 
 use crate::demand_values::DemandValues;
 use crate::equilibration::Equilibration;
-use crate::gap::{Currency, Ended, GapTrips, RouteGapSums};
+use crate::gap::{Currency, Ended, GapTrips, RouteGapSums, p_ratio};
 use crate::generalised_cost::RouteCost;
 use crate::link_times::LinkTimes;
 use crate::link_values::{PreparedLinkValues, ValueLayer};
@@ -798,6 +798,12 @@ impl<'a> Chooser<'a> {
                     .map_or(f64::NAN, |p| range.clone().map(|a| p[a] * g[a]).sum());
                 let taken = current.route[t] as usize;
                 let offered = range.clone().find(|&a| filled.alt_route[a] as usize == taken);
+                // The spread (S309): the route taken's probability over the highest offered,
+                // where it was offered and the trip arrived.
+                let finished = offered.filter(|_| !ended.unfinished[t]);
+                out.p_ratio_set[t] = probabilities
+                    .as_ref()
+                    .map_or(f64::NAN, |p| p_ratio(p, range.clone(), finished));
                 match offered {
                     Some(a) if !ended.unfinished[t] => {
                         out.g_chosen[t] = g[a];

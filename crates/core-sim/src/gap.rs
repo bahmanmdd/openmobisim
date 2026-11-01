@@ -260,6 +260,16 @@ pub struct GapTrips {
     pub g_best_all: Vec<f64>,
     /// What the choice model expects of it over its whole choice set: `Σ p g`, every mode.
     pub g_expected_all: Vec<f64>,
+    /// The choice model's probability of the car route the trip took over the highest
+    /// probability among the car routes it was offered (`p / p*`, in (0, 1]; for a trip choosing
+    /// its mode the same over its car alternatives, which renormalising does not change). `NaN`
+    /// where the route taken was not offered, the trip was still under way at the window's end,
+    /// or the model gives no probabilities. What [`IterationReport::spread_route`] sums.
+    pub p_ratio_set: Vec<f64>,
+    /// The same over the whole choice set, every mode, for a trip choosing its mode: the
+    /// probability of the alternative it took over the highest. What
+    /// [`IterationReport::spread_mode`] sums.
+    pub p_ratio_all: Vec<f64>,
     /// Of [`Self::g_chosen`], the minutes a trip still under way at the end had still to pay
     /// beyond what it paid by then; 0 for a trip that arrived.
     pub g_remaining: Vec<f64>,
@@ -280,6 +290,8 @@ impl PartialEq for GapTrips {
             g_expected_set,
             g_best_all,
             g_expected_all,
+            p_ratio_set,
+            p_ratio_all,
             g_remaining,
             unfinished,
             weight,
@@ -293,6 +305,8 @@ impl PartialEq for GapTrips {
             && same(g_expected_set, &other.g_expected_set)
             && same(g_best_all, &other.g_best_all)
             && same(g_expected_all, &other.g_expected_all)
+            && same(p_ratio_set, &other.p_ratio_set)
+            && same(p_ratio_all, &other.p_ratio_all)
             && same(g_remaining, &other.g_remaining)
             && same(weight, &other.weight)
             && *unfinished == other.unfinished
@@ -312,6 +326,8 @@ impl GapTrips {
             g_expected_set: nan.clone(),
             g_best_all: nan.clone(),
             g_expected_all: nan.clone(),
+            p_ratio_set: nan.clone(),
+            p_ratio_all: nan.clone(),
             g_remaining: nan,
             unfinished: unfinished.to_vec(),
             weight: (0..n)
@@ -335,7 +351,10 @@ impl GapTrips {
     /// The loading's full gaps, summed over the trips in trip order into `report`'s
     /// [`IterationReport::gap_route`] to [`IterationReport::unfinished_cost_share`]: the route gap
     /// over every trip with a [`Self::g_best_set`], the mode gap over every trip with a
-    /// [`Self::g_best_all`], each weighted by its people. `NaN` where no trip is measured.
+    /// [`Self::g_best_all`], each weighted by its people; and the spreads of the choices,
+    /// [`IterationReport::spread_route`] over every trip with a finite [`Self::p_ratio_set`] and
+    /// [`IterationReport::spread_mode`] over every trip with a finite [`Self::p_ratio_all`].
+    /// `NaN` where no trip is measured.
     pub(crate) fn report_into(&self, report: &mut IterationReport) {
         let ratio = |a: f64, b: f64| if b > 0.0 { a / b } else { f64::NAN };
         // The route gap.
@@ -376,12 +395,70 @@ impl GapTrips {
         report.gap_mode_expected = ratio(expected - best, best);
         report.gap_mode_excess = report.gap_mode - report.gap_mode_expected;
         report.excess_min_mode = ratio(excess, people);
+        // The spreads: `Σ w (1 − p / p*) / Σ w`.
+        let spread = |p_ratio: &[f64]| {
+            let (mut people, mut spread) = (0.0, 0.0);
+            for (&r, &w) in p_ratio.iter().zip(&self.weight).filter(|(r, _)| r.is_finite()) {
+                people += w;
+                spread += w * (1.0 - r);
+            }
+            ratio(spread, people)
+        };
+        report.spread_route = spread(&self.p_ratio_set);
+        report.spread_mode = spread(&self.p_ratio_all);
     }
+}
+
+/// The probability `p[taken]` over the highest of `p[range]` (`p / p*`): `NaN` if `taken` is
+/// `None` or the highest is not above 0.
+pub(crate) fn p_ratio(p: &[f64], range: impl Iterator<Item = usize>, taken: Option<usize>) -> f64 {
+    let Some(taken) = taken else { return f64::NAN };
+    let highest = range.map(|a| p[a]).fold(f64::NEG_INFINITY, f64::max);
+    if highest > 0.0 { p[taken] / highest } else { f64::NAN }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::RouteGapSums;
+    use super::{GapTrips, RouteGapSums, p_ratio};
+    use crate::equilibration::IterationReport;
+
+    #[test]
+    fn the_spread_is_one_less_the_probability_ratio_by_people() {
+        // Three trips with ratios 1, 0.5 and not measured, standing for 1, 2 and 5 people:
+        // (1 × 0 + 2 × 0.5) / (1 + 2) = 1/3; the trip not measured is out of both sums.
+        let nan = f64::NAN;
+        let gap = GapTrips {
+            g_chosen: vec![nan; 3],
+            g_best_set: vec![nan; 3],
+            g_best_network: vec![nan; 3],
+            g_expected_set: vec![nan; 3],
+            g_best_all: vec![nan; 3],
+            g_expected_all: vec![nan; 3],
+            p_ratio_set: vec![1.0, 0.5, nan],
+            p_ratio_all: vec![nan, 0.25, 1.0],
+            g_remaining: vec![nan; 3],
+            unfinished: vec![false; 3],
+            weight: vec![1.0, 2.0, 5.0],
+        };
+        let mut report = IterationReport::unmeasured(1);
+        gap.report_into(&mut report);
+        assert!((report.spread_route - 1.0 / 3.0).abs() < 1e-15, "{}", report.spread_route);
+        // (2 × 0.75 + 5 × 0) / 7.
+        assert!((report.spread_mode - 1.5 / 7.0).abs() < 1e-15, "{}", report.spread_mode);
+        // No trip measured: not measured.
+        let none = GapTrips { p_ratio_set: vec![nan; 3], ..gap };
+        none.report_into(&mut report);
+        assert!(report.spread_route.is_nan());
+    }
+
+    #[test]
+    fn the_probability_ratio_is_over_the_highest_of_the_range() {
+        let p = [0.1, 0.6, 0.3, 0.9];
+        assert!((p_ratio(&p, 0..3, Some(2)) - 0.5).abs() < 1e-15);
+        assert!((p_ratio(&p, 0..3, Some(1)) - 1.0).abs() < 1e-15);
+        assert!(p_ratio(&p, 0..3, None).is_nan(), "the taken one not offered");
+        assert!(p_ratio(&[0.0, 0.0], 0..2, Some(0)).is_nan());
+    }
 
     fn sums(paid: f64, least: f64, expected: f64) -> RouteGapSums {
         RouteGapSums { weight: 2.0, paid, least, expected, ..RouteGapSums::new(false) }

@@ -770,6 +770,41 @@ fn on_time_alone_the_full_route_gap_is_the_gap() {
 }
 
 #[test]
+fn the_spread_of_the_route_choice_is_the_logits_own_on_two_routes() {
+    // S309. Level 0, the two roads of the bottleneck (no link shared, so no overlap term), the
+    // logit at -0.2 a minute and no money: the probability of a route over the most probable
+    // one is exp(-0.2 (g − g_best)), from its generalised minutes against the best of the two.
+    // The spread, Σ w (1 − p / p*) / Σ w, is that over every trip: finite, in [0, 1), positive
+    // (the logit puts some trips on the slower road), and the same as the per-trip ratios give.
+    let beta = -0.2;
+    let result =
+        setup_level0(6_000, "logit", &[("beta_time_min", beta), ("beta_cost_eur", 0.0)]).go();
+    let gap = result.gap_trips.as_ref().expect("measured");
+    let last = result.iterations.last().expect("iterations");
+    let (mut people, mut spread, mut from_costs) = (0.0, 0.0, 0.0);
+    for t in (0..gap.len()).filter(|&t| !gap.g_best_set[t].is_nan()) {
+        let ratio = gap.p_ratio_set[t];
+        assert!(ratio.is_finite() && ratio > 0.0 && ratio <= 1.0, "trip {t}: {ratio}");
+        let costs = (beta * (gap.g_chosen[t] - gap.g_best_set[t])).exp();
+        assert!((ratio - costs).abs() < 1e-9, "trip {t}: {ratio} against {costs}");
+        people += gap.weight[t];
+        spread += gap.weight[t] * (1.0 - ratio);
+        from_costs += gap.weight[t] * (1.0 - costs);
+    }
+    assert!(people > 0.0);
+    let s = last.spread_route;
+    assert!(s.is_finite() && (0.0..1.0).contains(&s) && s > 0.0, "{s}");
+    assert!((s - spread / people).abs() < 1e-9, "{s} against {}", spread / people);
+    assert!((s - from_costs / people).abs() < 1e-9, "{s} against {}", from_costs / people);
+    assert!(last.spread_mode.is_nan(), "no trip chooses its mode");
+    assert!(gap.p_ratio_all.iter().all(|r| r.is_nan()));
+    // Measured at every loading the full gaps are, and nowhere else.
+    for it in &result.iterations {
+        assert_eq!(it.spread_route.is_nan(), it.gap_route.is_nan(), "{}", it.iteration);
+    }
+}
+
+#[test]
 fn money_moves_the_generalised_minutes_and_not_the_time() {
     // Two cents of toll on the fast road and the default logit (-0.2 per minute, -1.2 per euro):
     // the fast road is still the best (its time plus 0.12 minutes against the slow road's time),
