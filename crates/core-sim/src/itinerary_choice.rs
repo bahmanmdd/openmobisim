@@ -3818,6 +3818,44 @@ impl Itineraries {
                     }
                     // Keep, or choose again.
                     let kept = old.and_then(|old| set.iter().find(|a| a.identity == old.identity));
+                    // A driver who does not choose again keeps the route it drives, re-timed on
+                    // these times, when the route is no longer among those offered (S308): only
+                    // the strategy's share moves, as the method of successive averages has it,
+                    // and as the route choice of trips given the car does. Otherwise, on a
+                    // congested loading, every driver whose route left the offer would move at
+                    // once, on top of that share.
+                    let retimed = kept
+                        .is_none()
+                        .then_some(old)
+                        .flatten()
+                        .filter(|old| {
+                            old.mode == Mode::Car
+                                && old.shape == Shape::Direct
+                                && !old.fallback
+                                && !old.vehicle_links.is_empty()
+                                && set.iter().any(|a| a.mode == Mode::Car)
+                                && !strategy.is_some_and(|(strategy, msa, share)| {
+                                    strategy.reselects(msa, traveller.raw(), iteration, share)
+                                })
+                        })
+                        .map(|old| {
+                            let mut a = old.clone();
+                            let links: Vec<u32> = a.vehicle_links.iter().map(|l| l.raw()).collect();
+                            let at = f64::from(trips.departure(trip).get()) + planner.car_start_s();
+                            a.vehicle_s = planner.times.route_seconds(&links, at);
+                            a.total_s = a.vehicle_s + a.walk_s + a.parking_s;
+                            a
+                        });
+                    if let Some(a) = retimed {
+                        let m = a.mode.index();
+                        assessment.paid[m] += weight * a.total_s;
+                        assessment.least[m] += weight * best[m].min(a.total_s);
+                        assessment.weight[m] += weight;
+                        assessment.w_all += weight;
+                        in_gap.push((s, m, weight));
+                        next.alt[p] = Some(a);
+                        continue;
+                    }
                     let Some(kept) = kept else {
                         if current.is_some() {
                             assessment.w_forced += weight;
