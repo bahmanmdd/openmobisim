@@ -123,3 +123,113 @@ def test_a_facility_edit_never_rides_above_the_way_s_speed_limit() -> None:
     speed2 = np.asarray(edited.layer("bike").link_speed_km_h())
     assert speed2[slow] == pytest.approx(12.0), "the way's limit still caps the track"
     assert speed2[fast] == pytest.approx(ms.network_options()["bike_dedicated_km_h"])
+
+
+# Signals ignored. On a 5 × 5 grid with signals at the 9 interior junctions, every block is 200 m
+# of a secondary road and every signalised approach has Webster's control delay (about 20.6 s at
+# the shipped values) and passes 0.48 of its saturation flow through its turns.
+
+
+N10, N11, N14 = "n_001_000", "n_001_001", "n_001_004"
+
+
+def signal_grid(signals: bool) -> ms._core.Network:
+    return ms.examples.manhattan_grid(n=5, block_metres=200.0, signals=signals)
+
+
+def test_every_signal_ignored_runs_as_the_grid_built_without_signals_at_every_level() -> None:
+    # The edited network is the unsignalised one, so every trip's result must be equal to the
+    # bit at each flow level. 6 000 cars in 30 minutes queue at the signals' reduced capacity
+    # (0.48 of 1 800 PCU/h) when they are there: at level 2 the queues add about 6 s to the mean
+    # trip with signals and under 2 s without.
+    plain = signal_grid(False)
+    off = ms.network_edit(signal_grid(True), signal_off=True)
+    assert not np.asarray(off.link_signalised()).any()
+    assert not np.asarray(off.node_signalised()).any()
+    np.testing.assert_array_equal(off.link_free_flow_s(), plain.link_free_flow_s())
+    rows = ms.examples.trips_random(plain, 6000, seed=3, spread_s=1800, min_m=400.0, max_m=1200.0)
+    means = {}
+    for level in (0, 1, 2, 3, 4):
+        results = []
+        for net, name in ((plain, "plain"), (off, "off"), (signal_grid(True), "on")):
+            r = ms.Scenario.from_parts(
+                net,
+                rows,
+                classes=CAR_ONLY,
+                window=(0, 10_800),
+                flow_level=level,
+                equilibration="msa",
+                equilibration_options={"iterations": 3, "gap_tolerance": 0},
+                mode_options=DRIVES_ONLY,
+            ).run(f"sig-{name}-{level}", quiet=True)
+            assert r.completion["completed"] == 6000, f"level {level} {name}"
+            results.append(r)
+        p, o, s = (np.asarray(r.trip_results()["travel_time_s"]) for r in results)
+        np.testing.assert_array_equal(o, p, err_msg=f"level {level}")
+        assert results[1].fingerprint == results[0].fingerprint, f"level {level}"
+        means[level] = (p.mean(), s.mean())
+        assert s.mean() > p.mean() + 20.0, f"level {level}: the control delays slow the trips"
+    queued = {k: means[2][k] - means[0][k] for k in (0, 1)}
+    assert queued[1] > queued[0] + 2.0, f"the signals' capacity adds queueing at level 2: {queued}"
+
+
+CAR_ONLY = {"x": (True, False, False)}
+
+
+def test_a_driver_avoids_three_signals_and_goes_straight_once_they_are_ignored() -> None:
+    # From the west edge's junction (row 1, column 0) to the east edge's (row 1, column 4) at
+    # free flow (level 0): straight along row 1 is 4 blocks through 3 signalised junctions,
+    # 4t + 3d; along the unsignalised edge row 0 it is 6 blocks, 6t (t one block's time, d the
+    # control delay). With signals 6t < 4t + 3d (2t ≈ 29 s against 3d ≈ 62 s): the edge route.
+    # Without: 4t, straight. The deterministic choice takes the fastest route of the set.
+    on = signal_grid(True)
+    off = ms.network_edit(on, signal_off=True)
+    ids = on.link_ids()
+    into = ids.index(f"l_{N10}__{N11}")
+    t = float(np.asarray(off.link_free_flow_s())[into])
+    d = float(np.asarray(on.link_free_flow_s())[into]) - t
+    assert 20.0 < d < 21.0, d
+    a, b = on.node_lonlat(N10), on.node_lonlat(N14)
+    rows = [("a", 0, a[0], a[1], b[0], b[1], 0, "x", None, "car")]
+
+    def free_flow(net: ms._core.Network, name: str) -> float:
+        return (
+            ms.Scenario.from_parts(
+                net,
+                rows,
+                classes=CAR_ONLY,
+                equilibration="free_flow",
+                flow_level=0,
+                choice_model="deterministic",
+                mode_options=DRIVES_ONLY,
+            )
+            .run(name, quiet=True)
+            .mean_travel_time_s
+        )
+
+    # A trip's times are reported in whole seconds.
+    assert free_flow(on, "sig-route-on") == pytest.approx(6 * t, abs=1.0)
+    assert free_flow(off, "sig-route-off") == pytest.approx(4 * t, abs=1.0)
+    assert 6 * t < 4 * t + 3 * d
+
+
+def test_one_junctions_signal_ignored_and_wrong_values_refused() -> None:
+    on = signal_grid(True)
+    ids = on.link_ids()
+    into = [i for i, name in enumerate(ids) if name.endswith("__n_002_002")]
+    assert len(into) == 4
+    one = ms.network_edit(on, signal_off=[ids[i] for i in into])
+    flags = np.asarray(one.link_signalised())
+    assert not flags[into].any()
+    assert flags.sum() == np.asarray(on.link_signalised()).sum() - 4
+    to = np.asarray(on.link_to())
+    centre = int(to[into[0]])
+    beside = int(to[ids.index("l_n_002_000__n_002_001")])
+    assert not np.asarray(one.node_signalised())[centre]
+    assert np.asarray(one.node_signalised())[beside], "the next junction keeps its signal"
+    same = ms.network_edit(on, signal_off=False)
+    np.testing.assert_array_equal(same.link_free_flow_s(), on.link_free_flow_s())
+    with pytest.raises(ValueError, match="signal_off"):
+        ms.network_edit(on, signal_off="l_n_001_000__n_001_001")
+    with pytest.raises(ValueError, match="no link"):
+        ms.network_edit(on, signal_off=["nowhere"])
