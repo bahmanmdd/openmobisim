@@ -15,7 +15,7 @@ import math
 import numbers
 import time
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -504,6 +504,7 @@ def network_edit(
     lanes: Mapping[str | int, int] | None = None,
     capacity_factor: Mapping[str | int, float] | None = None,
     bike_facility: Mapping[str | int, str] | None = None,
+    signal_off: bool | Sequence[str | int] = False,
 ) -> _core.Network:
     """The same network with a scenario's changes made, for a study to compare.
 
@@ -527,6 +528,14 @@ def network_edit(
             ``bike_dedicated_km_h`` or ``bike_mixed_km_h``), its route cost follows
             (``bike_lane_cost_factor``, ``bike_mixed_cost_factor``), and so do the attributes
             choice models see (``bike_separated_km`` …).
+        signal_off: ``True`` to ignore every traffic signal, or the road links (the approaches)
+            whose signal is ignored. Such a link loses its signal's control delay (its
+            free-flow time becomes its length over its free-flow speed) and its turns get the
+            full saturation flow, as at a junction without a signal: the network is then the
+            one built without those signals. A link without a signal is left as it is. Meant
+            for flow levels 0 to 2, where a signal is only that delay and that share of
+            capacity; at levels 3 and 4 such a junction also follows the merge and priority
+            rules of a junction without a signal.
 
     A link is named by its id (``network.link_ids()``, ``network.layer("bike").link_ids()``
     for a bike link) or by its index (an integer, Python's or NumPy's, as in the per-link arrays).
@@ -535,8 +544,8 @@ def network_edit(
         The changed network.
 
     Raises:
-        ValueError: For an unknown link, 0 lanes, a factor not above 0, an unknown facility
-            or a ferry crossing given a bike facility.
+        ValueError: For an unknown link, 0 lanes, a factor not above 0, an unknown facility,
+            a ferry crossing given a bike facility, or ``signal_off`` neither a bool nor links.
     """
 
     def indices(graph: _core.Network, links: Sequence[str | int] | Mapping, what: str) -> list:
@@ -570,10 +579,18 @@ def network_edit(
             return []
         return list(zip(indices(graph, given, what), map(cast, given.values()), strict=True))
 
+    if isinstance(signal_off, bool):
+        signals = [int(i) for i in np.flatnonzero(network.link_signalised())] if signal_off else []
+    elif isinstance(signal_off, (str, bytes)) or not isinstance(signal_off, Iterable):
+        raise ValueError("signal_off: True, False or a list of road links")
+    else:
+        signals = indices(network, list(signal_off), "signal_off")
+
     return _core.network_edit(
         network,
         closed=indices(network, list(close or []), "close"),
         lanes=pairs(network, lanes, int, "lanes"),
         capacity_factor=pairs(network, factors, float, "capacity_factor"),
         bike_facility=pairs(bike, facilities, str, "bike_facility"),
+        signal_off=signals,
     )

@@ -1114,6 +1114,9 @@ class Scenario:
                 stops early), ``route_growth_tolerance`` (1: and only while the last route update
                 added routes for at most this share of the pairs it searched; 1 lets the gap
                 alone decide, since it is measured against the sets as grown),
+                ``step_offset`` (0: at iteration i a share 1/(i + 1 + step_offset) of the
+                travellers chooses again; a larger offset makes the first steps smaller, so the
+                first choices after the free-flow loading overshoot less),
                 ``gap_sample`` (300; whether the trips are tested against the whole
                 network at the last iteration: 0 for none, any other value every finished trip,
                 read off the run's shared search trees), ``itinerary_gap_sample``

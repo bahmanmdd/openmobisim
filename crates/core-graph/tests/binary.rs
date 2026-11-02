@@ -68,6 +68,7 @@ fn an_edited_network_keeps_its_closures_lanes_and_capacities() {
             closed: vec![id("a2")],
             lanes: vec![(id("a1"), 3)],
             capacity_factor: vec![(id("s1"), 0.5)],
+            signal_off: vec![],
         })
         .unwrap();
     let back = round_trip(&edited);

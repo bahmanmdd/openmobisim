@@ -740,3 +740,24 @@ def test_the_verdict_reads_the_gap_the_stopping_rule_reads(tmp_path):
     assert np.isnan(t["gap_generalised_excess"]).all()
     assert timed.convergence_gap == max(t["gap_excess"][-1], t["gap_network_excess"][-1])
     assert timed.convergence_verdict == "good"
+
+
+def test_a_step_offset_makes_fewer_travellers_choose_again_and_0_changes_nothing():
+    # At iteration i a share 1/(i + 1 + k) of the travellers chooses again (a keyed draw per
+    # traveller, so the realised share scatters around it with 600 trips): k = 3 gives 1/5 at
+    # iteration 1 against msa's 1/2. k = 0 is msa itself: the same fingerprint and results.
+    opts = {"iterations": 4, "gap_tolerance": 0}
+    plain = go("eq-step-0", equilibration_options=opts, **MSA)
+    zero = go("eq-step-0b", equilibration_options={**opts, "step_offset": 0}, **MSA)
+    three = go("eq-step-3", equilibration_options={**opts, "step_offset": 3}, **MSA)
+    assert zero.fingerprint == plain.fingerprint
+    assert zero.total_travel_time_s == plain.total_travel_time_s
+    assert three.fingerprint != plain.fingerprint
+    a, b = plain.convergence()["reselected_share"], three.convergence()["reselected_share"]
+    for i, (pa, pb) in enumerate(zip(a[1:], b[1:], strict=True), start=1):
+        assert pa == pytest.approx(1 / (i + 1), abs=0.06), i
+        assert pb == pytest.approx(1 / (i + 4), abs=0.06), i
+    assert "step_offset=3" in three.manifest()["equilibration_descriptor"]
+    assert "step_offset" not in plain.manifest()["equilibration_descriptor"]
+    with pytest.raises(ValueError, match="step_offset"):
+        go("eq-step-bad", equilibration_options={"step_offset": -1}, **MSA)

@@ -1243,8 +1243,8 @@ pub fn network_options(network: Option<PyRef<'_, PyNetwork>>) -> Vec<(String, f6
 }
 
 /// The same road network with a scenario's changes made: links closed to motor
-/// traffic, lanes changed, capacities multiplied, and bike links given another bike
-/// infrastructure, every link named by its index. Link indices stay as they were, so the
+/// traffic, lanes changed, capacities multiplied, signals ignored, and bike links given
+/// another bike infrastructure, every link named by its index. Link indices stay as they were, so the
 /// per-link results of the two networks line up. `openmobisim.network_edit` is the Python face.
 ///
 /// # Errors
@@ -1252,13 +1252,14 @@ pub fn network_options(network: Option<PyRef<'_, PyNetwork>>) -> Vec<(String, f6
 /// `ValueError` for a layer handle, a link index out of range, 0 lanes, a capacity factor
 /// that is not above 0, an unknown infrastructure name or a ferry link.
 #[pyfunction]
-#[pyo3(signature = (network, closed=Vec::new(), lanes=Vec::new(), capacity_factor=Vec::new(), bike_facility=Vec::new()))]
+#[pyo3(signature = (network, closed=Vec::new(), lanes=Vec::new(), capacity_factor=Vec::new(), bike_facility=Vec::new(), signal_off=Vec::new()))]
 pub fn network_edit(
     network: PyRef<'_, PyNetwork>,
     closed: Vec<u32>,
     lanes: Vec<(u32, u8)>,
     capacity_factor: Vec<(u32, f64)>,
     bike_facility: Vec<(u32, String)>,
+    signal_off: Vec<u32>,
 ) -> PyResult<PyNetwork> {
     use openmobisim_core_graph::layers::BikeInfrastructure;
     use openmobisim_core_graph::network::LinkChanges;
@@ -1271,6 +1272,7 @@ pub fn network_edit(
         closed: closed.into_iter().map(LinkId::new).collect(),
         lanes: lanes.into_iter().map(|(l, n)| (LinkId::new(l), n)).collect(),
         capacity_factor: capacity_factor.into_iter().map(|(l, f)| (LinkId::new(l), f)).collect(),
+        signal_off: signal_off.into_iter().map(LinkId::new).collect(),
     };
     let inner = if changes.is_empty() {
         network.inner.clone()

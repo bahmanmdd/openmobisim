@@ -476,13 +476,22 @@ pub struct LinkChanges {
     /// beside the road, a narrowed junction). The backward wave speed is derived again from
     /// the triangle, with [`crate::defaults::LinkParameters::from_defaults`]' rule.
     pub capacity_factor: Vec<(LinkId, f64)>,
+    /// Links whose signal is ignored: the link gets no control delay and its turns the
+    /// full saturation flow, as at a junction without a signal. A link without a signal is
+    /// left as it is. Meant for flow levels 0 to 2, where a signal is only that delay and that
+    /// share of capacity; at levels 3 and 4 the junction then also follows the rules of an
+    /// unsignalised junction (priority, when the loading gives it).
+    pub signal_off: Vec<LinkId>,
 }
 
 impl LinkChanges {
     /// Whether nothing changes.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.closed.is_empty() && self.lanes.is_empty() && self.capacity_factor.is_empty()
+        self.closed.is_empty()
+            && self.lanes.is_empty()
+            && self.capacity_factor.is_empty()
+            && self.signal_off.is_empty()
     }
 }
 
@@ -591,7 +600,13 @@ impl RoadNetwork {
 
     /// The same network with `changes` made: closed links taken out of every node's
     /// links (their index and data kept, so per-link results line up with the original's),
-    /// lanes and capacities changed. Changes add to those the network already has.
+    /// lanes and capacities changed, signals ignored. Changes add to those the network
+    /// already has.
+    ///
+    /// A link whose signal is ignored loses its control delay (its free-flow time becomes
+    /// its length over its free-flow speed, as on a link built without a signal) and its
+    /// signal flag, so its turns get the full saturation flow; a node keeps its signal flag
+    /// only while a link into it still has one.
     ///
     /// # Errors
     ///
@@ -630,6 +645,32 @@ impl RoadNetwork {
             }
             params[l.index()] = params[l.index()].with_capacity_times(factor);
         }
+        let mut link_signalised = self.link_signalised.clone();
+        let mut node_signalised = self.node_signalised.clone();
+        let mut free_flow_time = self.link_free_flow_time.clone();
+        let mut touched_nodes = Vec::new();
+        for &l in &changes.signal_off {
+            check(l)?;
+            if !link_signalised[l.index()] {
+                continue;
+            }
+            link_signalised[l.index()] = false;
+            params[l.index()].control_delay = Duration::ZERO;
+            free_flow_time[l.index()] =
+                params[l.index()].free_flow_time(self.link_length[l.index()]);
+            touched_nodes.push(self.link_to[l.index()]);
+        }
+        if !touched_nodes.is_empty() {
+            let mut still = vec![false; self.node_count() as usize];
+            for (i, &s) in link_signalised.iter().enumerate() {
+                if s {
+                    still[self.link_to[i].index()] = true;
+                }
+            }
+            for node in touched_nodes {
+                node_signalised[node.index()] = still[node.index()];
+            }
+        }
         let mut closed = if self.link_closed.is_empty() && !changes.closed.is_empty() {
             vec![false; n]
         } else {
@@ -662,8 +703,8 @@ impl RoadNetwork {
             node_x: self.node_x.clone(),
             node_y: self.node_y.clone(),
             node_lonlat: self.node_lonlat.clone(),
-            node_signalised: self.node_signalised.clone(),
-            link_signalised: self.link_signalised.clone(),
+            node_signalised,
+            link_signalised,
             link_from: self.link_from.clone(),
             link_to: self.link_to.clone(),
             link_class: self.link_class.clone(),
@@ -671,7 +712,7 @@ impl RoadNetwork {
             link_lanes: lanes,
             link_bus_lanes: self.link_bus_lanes.clone(),
             link_length: self.link_length.clone(),
-            link_free_flow_time: self.link_free_flow_time.clone(),
+            link_free_flow_time: free_flow_time,
             link_params: params,
             link_storage,
             out_links,
