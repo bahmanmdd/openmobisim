@@ -222,6 +222,12 @@ const FLOOR_KEY: u32 = 0x8000_0000;
 pub(crate) struct Assessment {
     pub reselected_share: f64,
     pub changed_share: f64,
+    /// What `changed_share` would be from the model's own randomness alone at a stationary
+    /// state: `Σ w (1 − Σ_j q_j²) / Σ w` over the same trips, the sum over those that chose again,
+    /// `q_j` the model's probability of route `j` offered at the times they chose on (`1 − Σ_j
+    /// q_j²`: the chance that two independent draws from those probabilities differ). `NaN`
+    /// without trips, or for a model that gives no probabilities.
+    pub route_changed_floor: f64,
     /// The relative gap to the least-cost route of the choice set, over the trips that
     /// finished, the gap the model itself expects, and the difference.
     pub gap: f64,
@@ -1040,6 +1046,8 @@ impl<'a> Chooser<'a> {
         let (mut observed, mut expected, mut sample) =
             (vec![0.0; routes], vec![0.0; routes], vec![0.0; routes]);
         let (mut w_all, mut w_reselected, mut w_changed, mut w_unfinished) = (0.0, 0.0, 0.0, 0.0);
+        // What chance alone would change among those who choose again, at a stationary state.
+        let mut w_floor = 0.0;
         let (mut paid, mut least, mut expected_paid) = (0.0, 0.0, 0.0);
         // The same in generalised minutes, when asked (S299).
         let (mut g_paid, mut g_least, mut g_expected) = (0.0, 0.0, 0.0);
@@ -1117,8 +1125,11 @@ impl<'a> Chooser<'a> {
                     let mut cumulative = 0.0;
                     let mut drawn = false;
                     let mut expected_here = 0.0;
+                    // Σ_j q_j²: the chance that two independent draws land on the same route.
+                    let mut same_twice = 0.0;
                     for (a, r) in range.clone().enumerate() {
                         let route = filled.alt_route[r] as usize;
+                        same_twice += p[r] * p[r];
                         expected[route] += w * p[r];
                         expected_here += p[r] * filled.alt_seconds[r];
                         cumulative += p[r];
@@ -1130,6 +1141,9 @@ impl<'a> Chooser<'a> {
                     expected_seconds[t] = expected_here;
                     if finished {
                         expected_paid += w * expected_here;
+                    }
+                    if again {
+                        w_floor += w * (1.0 - same_twice);
                     }
                 }
                 if again {
@@ -1173,6 +1187,7 @@ impl<'a> Chooser<'a> {
         let assessment = Assessment {
             reselected_share: share(w_reselected),
             changed_share: share(w_changed),
+            route_changed_floor: if measured && w_all > 0.0 { w_floor / w_all } else { f64::NAN },
             gap,
             gap_expected,
             gap_excess,

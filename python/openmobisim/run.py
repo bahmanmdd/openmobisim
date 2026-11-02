@@ -495,6 +495,15 @@ class Run:
           on the congestion of those before it (``increments``), loaded with the point queue.
         * ``reselected_share``, ``changed_share`` — the share of trips (by weight) that
           chose again on the way to this iteration, and the share whose route changed.
+        * ``route_changed_floor`` — what ``changed_share`` would be from the choice model's own
+          randomness alone at a stationary state, where every trip already stands on a route
+          drawn from the model's probabilities: over the same trips, the sum over those that
+          chose again of ``1 − Σ q²`` (``q`` the model's probability of each route offered, at
+          the times they chose on: the chance that two independent draws differ), over the
+          weight of all of them. At a logit equilibrium ``changed_share`` sits near it;
+          travellers still moving towards better routes put the share above it. ``nan`` at the
+          first iteration, without trips given the car, and for a model that gives no
+          probabilities. Not in ``kpis.parquet``.
         * ``total_travel_time_s``, ``completed``, ``truncated`` — this loading's;
           ``completed_people``, the people its completed trips stand for (their travellers'
           weights, summed), so its mean trip is ``total_travel_time_s / completed_people``.

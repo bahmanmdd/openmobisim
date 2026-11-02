@@ -1978,6 +1978,8 @@ impl Run {
         let mut previous_bins: Option<EntryTables> = None;
         // Who moved on the way to this iteration: (share that chose again, share that changed).
         let mut arrived_by = (1.0, f64::NAN);
+        // What chance alone would change of the routes of the trips given the car on the way.
+        let mut route_floor_by = f64::NAN;
         // Of the trips choosing their mode, the share whose mode changed on the way (M5), and
         // what chance alone would change (I-al).
         let mut mode_changed_by = f64::NAN;
@@ -2210,6 +2212,7 @@ impl Run {
             report.stop_generalised = !road_cost.is_time_only();
             report.reselected_share = arrived_by.0;
             report.changed_share = arrived_by.1;
+            report.route_changed_floor = route_floor_by;
             report.mode_changed_share = mode_changed_by;
             report.mode_changed_floor = mode_floor_by;
             report.total_travel_time_s = loaded.total_travel_time.get();
@@ -2496,6 +2499,7 @@ impl Run {
                     trees_now = Some(trees);
                     arrived_by =
                         (update.assessment.reselected_share, update.assessment.changed_share);
+                    route_floor_by = update.assessment.route_changed_floor;
                     changes = update.changes;
                     assessed = Some((unfinished, update.expected_seconds));
                 }

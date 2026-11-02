@@ -76,6 +76,15 @@ pub struct IterationReport {
     pub reselected_share: f64,
     /// The share of travellers whose route changed.
     pub changed_share: f64,
+    /// The floor of [`Self::changed_share`]: what it would be from the choice model's own
+    /// randomness alone at a stationary state, where each trip already stands on a route drawn
+    /// from the model's probabilities: `Σ w (1 − Σ_j q_j²) / Σ w` over the same trips (those given
+    /// the car), the sum over those that chose again, `q_j` the model's probability of route `j`
+    /// offered, at the times they chose on (`1 − Σ_j q_j²` is the chance that two independent
+    /// draws from those probabilities differ). At a logit equilibrium the share sits near it;
+    /// travellers still moving towards better routes put the share above it. `NaN` at the first
+    /// iteration, without trips given the car, or for a model that gives no probabilities.
+    pub route_changed_floor: f64,
     /// Total travel time of this iteration's loading (traveller-weight scaled).
     pub total_travel_time_s: f64,
     /// Trips that arrived inside the window.
@@ -331,6 +340,7 @@ impl PartialEq for IterationReport {
             iteration,
             reselected_share,
             changed_share,
+            route_changed_floor,
             total_travel_time_s,
             completed,
             completed_people,
@@ -377,6 +387,7 @@ impl PartialEq for IterationReport {
         let floats = [
             (*reselected_share, other.reselected_share),
             (*changed_share, other.changed_share),
+            (*route_changed_floor, other.route_changed_floor),
             (*total_travel_time_s, other.total_travel_time_s),
             (*completed_people, other.completed_people),
             (*time_change, other.time_change),
@@ -456,6 +467,7 @@ impl IterationReport {
             iteration,
             reselected_share: f64::NAN,
             changed_share: f64::NAN,
+            route_changed_floor: f64::NAN,
             total_travel_time_s: f64::NAN,
             completed: 0,
             completed_people: f64::NAN,
