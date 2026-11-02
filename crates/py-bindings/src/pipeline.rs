@@ -780,6 +780,7 @@ fn convergence_arrays(
     )?;
     dict.set_item("reselected_share", floats(|r| r.reselected_share).into_pyarray(py))?;
     dict.set_item("changed_share", floats(|r| r.changed_share).into_pyarray(py))?;
+    dict.set_item("route_changed_floor", floats(|r| r.route_changed_floor).into_pyarray(py))?;
     dict.set_item("total_travel_time_s", floats(|r| r.total_travel_time_s).into_pyarray(py))?;
     dict.set_item(
         "completed",

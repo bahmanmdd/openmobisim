@@ -29,6 +29,7 @@ FIELDS = [
     "gap_mode_expected", "gap_mode_excess", "spread_route", "spread_mode", "excess_min_route",
     "excess_min_mode",
     "unfinished_cost_share", "gap_transit_plan_s", "gap_transit_plan_share",
+    "route_changed_floor",
 ]  # fmt: skip
 GAP_TRIPS = [
     "trip", "g_chosen_min", "g_best_set_min", "g_best_network_min", "g_expected_min",

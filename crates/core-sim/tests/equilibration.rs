@@ -439,6 +439,59 @@ fn a_share_of_one_over_i_plus_one_chooses_again_at_iteration_i() {
 }
 
 #[test]
+fn on_two_routes_at_a_stationary_state_the_route_changes_sit_on_their_floor() {
+    // Level 0 (free flow: the times never change), the two roads of the bottleneck (no link
+    // shared, no money), a logit at `beta` per minute: each loading's probabilities are the same,
+    // `p_a = 1 / (1 + exp(beta (t_b − t_a) / 60))` for road `a` and `p_b = 1 − p_a`, from the two
+    // roads' free-flow seconds. At loading 0 every trip draws its road from them, so the state is
+    // already stationary: a share `p_r` is on road `r`. On the way to loading 1, `msa` has a share
+    // `ρ = 1 / 2` choose again; one that does lands on the other road with the chance of that road,
+    // `1 − p_r`. So the share whose route changed is expected at `ρ (p_a p_b + p_b p_a) = 2 ρ p_a
+    // p_b`, and so is the floor, `ρ' (1 − p_a² − p_b²) = 2 ρ' p_a p_b` with `ρ'` the share that
+    // actually chose again. Each trip changes or not independently, with that chance `q`, so over
+    // `n` trips the share has the standard deviation `sqrt(q (1 − q) / n)`.
+    let (n, beta) = (8_000, -2.0);
+    let result = Setup {
+        choice: ("logit", vec![("beta_time_min", beta), ("beta_cost_eur", 0.0)]),
+        ..setup_level0(n, "logit", &[])
+    }
+    .go();
+    let sets = result.route_sets.as_ref().expect("sets");
+    let range = sets.route_range(0);
+    assert_eq!(range.len(), 2, "the two roads");
+    let (t_a, t_b) =
+        (f64::from(sets.route(range.start).cost), f64::from(sets.route(range.start + 1).cost));
+    let p_a = 1.0 / (1.0 + (beta * (t_b - t_a) / 60.0).exp());
+    let q = 2.0 * 0.5 * p_a * (1.0 - p_a);
+    let sigma = (q * (1.0 - q) / f64::from(n)).sqrt();
+    let it = &result.iterations;
+    assert!(it[0].route_changed_floor.is_nan(), "nothing chose before loading 0");
+    let (share, floor) = (it[1].changed_share, it[1].route_changed_floor);
+    assert!((share - q).abs() < 5.0 * sigma, "{share} against {q} (σ {sigma})");
+    assert!((floor - q).abs() < 5.0 * sigma, "floor {floor} against {q} (σ {sigma})");
+    for r in &it[1..] {
+        // Every trip has the same two probabilities: the floor is who chose again times 2 p_a p_b.
+        let exact = r.reselected_share * 2.0 * p_a * (1.0 - p_a);
+        assert!((r.route_changed_floor - exact).abs() < 1e-9, "{}: {exact}", r.iteration);
+    }
+}
+
+#[test]
+fn at_an_all_or_nothing_equilibrium_on_one_route_the_route_change_floor_is_zero() {
+    // Level 0, no route update, the deterministic model: every trip takes the fast road at
+    // loading 0 and, the times unchanged, chooses it again at every loading after, with
+    // probability 1 (`1 − Σ q² = 1 − 1 = 0`): no route changes, and chance would change none.
+    let result = setup_level0(500, "deterministic", &[]).go();
+    let it = &result.iterations;
+    assert!(took(&result, 0) == 500 || took(&result, 1) == 500, "one route");
+    for r in &it[1..] {
+        assert!(r.reselected_share > 0.0, "{}: some chose again", r.iteration);
+        assert_eq!(r.changed_share.to_bits(), 0.0_f64.to_bits(), "{}", r.iteration);
+        assert_eq!(r.route_changed_floor.to_bits(), 0.0_f64.to_bits(), "{}", r.iteration);
+    }
+}
+
+#[test]
 fn everyone_who_did_not_choose_again_keeps_their_route() {
     let setup = |iterations: f64| Setup {
         equilibration: ("msa", vec![("iterations", iterations)]),
