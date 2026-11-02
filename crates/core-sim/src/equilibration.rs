@@ -796,6 +796,18 @@ pub struct Msa {
     /// or after the last loading alone (0, the default; see
     /// [`Equilibration::full_gap_every_loading`]).
     pub gap_every: u32,
+    /// Shifts the averaging's steps: at iteration `i` a share `1/(i + 1 + step_offset)` of the
+    /// travellers chooses again (0 to 100). 0, the default, is the method of successive
+    /// averages' `1/(i + 1)`: half the travellers choose again at iteration 1, on the times of a
+    /// free-flow loading built up in groups, which on a congested network sends too many to the
+    /// routes that loading left fast. A larger offset makes the first steps smaller and every
+    /// later one too (3: a fifth at iteration 1, a sixth at 2). The steps still sum to
+    /// infinity and their squares to a finite sum, the conditions the averaging's convergence
+    /// rests on (Robbins and Monro 1951, *A stochastic approximation method*, *Annals of
+    /// Mathematical Statistics* 22, 400–407, <https://doi.org/10.1214/aoms/1177729586>).
+    ///
+    /// *A setting of the computation; 0 keeps the classic method.*
+    pub step_offset: f64,
 }
 
 impl Default for Msa {
@@ -810,12 +822,13 @@ impl Default for Msa {
             increments: 5,
             route_growth_tolerance: 1.0,
             gap_every: 0,
+            step_offset: 0.0,
         }
     }
 }
 
 impl Msa {
-    const OPTIONS: [&'static str; 9] = [
+    const OPTIONS: [&'static str; 10] = [
         "cost_bin_s",
         "gap_every",
         "gap_sample",
@@ -824,6 +837,7 @@ impl Msa {
         "itinerary_gap_sample",
         "iterations",
         "route_growth_tolerance",
+        "step_offset",
         "warmup",
     ];
 
@@ -871,6 +885,12 @@ impl Msa {
                     }
                     m.gap_tolerance = v;
                 }
+                "step_offset" => {
+                    if !(v.is_finite() && (0.0..=100.0).contains(&v)) {
+                        return Err(bad(option, &format!("must be from 0 to 100, got {v}")));
+                    }
+                    m.step_offset = v;
+                }
                 _ => {}
             }
         }
@@ -883,9 +903,16 @@ impl Equilibration for Msa {
         "msa"
     }
     fn descriptor(&self) -> String {
+        // `step_offset` is written only when set, so the classic method's descriptor and every
+        // fingerprint made with it stay as they were.
+        let offset = if self.step_offset == 0.0 {
+            String::new()
+        } else {
+            format!("step_offset={};", self.step_offset)
+        };
         format!(
             "msa;cost_bin_s={};gap_every={};gap_sample={};gap_tolerance={};increments={};\
-             itinerary_gap_sample={};iterations={};route_growth_tolerance={};warmup={}",
+             itinerary_gap_sample={};iterations={};route_growth_tolerance={};{offset}warmup={}",
             self.cost_bin_s,
             self.gap_every,
             self.gap_sample,
@@ -920,6 +947,9 @@ impl Equilibration for Msa {
     }
     fn increments(&self) -> u32 {
         self.increments
+    }
+    fn reselect_share(&self, iteration: u32, _reports: &[IterationReport]) -> f64 {
+        1.0 / (f64::from(iteration) + 1.0 + self.step_offset)
     }
     fn reselects(&self, rng: &StreamRng, traveller: u32, iteration: u32, share: f64) -> bool {
         rng.unit(DrawAddress::from_pair(traveller, iteration)) < share

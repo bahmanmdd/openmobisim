@@ -1418,3 +1418,46 @@ fn a_run_by_the_route_cost_is_judged_in_generalised_minutes() {
     let unmeasured = IterationReport { gap_generalised_excess: f64::NAN, ..by_cost };
     assert!((unmeasured.disequilibrium() - 0.02).abs() < 1e-12, "not measured: the time gap");
 }
+
+/// **Property:** `msa`'s `step_offset` k makes the share choosing again at iteration i
+/// `1/(i + 1 + k)` (k = 3: a fifth at iteration 1, a sixth at 2), is 0 by default with the share
+/// `1/(i + 1)` and the descriptor as before (no fingerprint changes), is written in the
+/// descriptor only when set, is refused outside 0 to 100, and is not an option of `sra`.
+#[test]
+fn msa_s_step_offset_shifts_the_share_choosing_again_and_is_written_only_when_set() {
+    let opts = |pairs: &[(&str, f64)]| -> Options {
+        pairs.iter().map(|&(k, v)| (k.to_string(), v)).collect()
+    };
+    let classic = Msa::from_options(&Options::new()).expect("the defaults");
+    let shifted = Msa::from_options(&opts(&[("step_offset", 3.0)])).expect("in range");
+    for i in 1..=30u32 {
+        let (a, b) = (classic.reselect_share(i, &[]), shifted.reselect_share(i, &[]));
+        assert_eq!(a.to_bits(), (1.0 / (f64::from(i) + 1.0)).to_bits(), "iteration {i}");
+        assert_eq!(b.to_bits(), (1.0 / (f64::from(i) + 4.0)).to_bits(), "iteration {i}");
+    }
+    assert!((shifted.reselect_share(1, &[]) - 0.2).abs() < 1e-15);
+    assert!(!classic.descriptor().contains("step_offset"));
+    assert_eq!(
+        classic.descriptor(),
+        "msa;cost_bin_s=300;gap_every=0;gap_sample=300;gap_tolerance=0.05;increments=5;\
+         itinerary_gap_sample=100000000;iterations=15;route_growth_tolerance=1;warmup=1"
+    );
+    assert_eq!(
+        shifted.descriptor(),
+        "msa;cost_bin_s=300;gap_every=0;gap_sample=300;gap_tolerance=0.05;increments=5;\
+         itinerary_gap_sample=100000000;iterations=15;route_growth_tolerance=1;step_offset=3;\
+         warmup=1"
+    );
+    let zero = Msa::from_options(&opts(&[("step_offset", 0.0)])).expect("0 is the default");
+    assert_eq!(zero.descriptor(), classic.descriptor());
+    for bad in [-0.5, 100.5, f64::NAN, f64::INFINITY] {
+        let err = Msa::from_options(&opts(&[("step_offset", bad)])).expect_err("refused");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "equilibration \"msa\", option \"step_offset\": must be from 0 to 100, got {bad}"
+            )
+        );
+    }
+    assert!(Sra::from_options(&opts(&[("step_offset", 3.0)])).is_err(), "sra has its own steps");
+}

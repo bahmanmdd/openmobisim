@@ -2211,7 +2211,13 @@ pub fn parameter_rows() -> PyResult<Vec<(String, String, String, f64)>> {
                 ("warmup".to_string(), f64::from(d.warmup)),
             ]
         } else {
-            descriptor_values(&s.descriptor())
+            let mut values = descriptor_values(&s.descriptor());
+            // `msa` writes `step_offset` only when set (S310): its default by hand.
+            if name == "msa" && !values.iter().any(|(n, _)| n == "step_offset") {
+                values.push(("step_offset".to_string(), 0.0));
+                values.sort_by(|a, b| a.0.cmp(&b.0));
+            }
+            values
         };
         push(&format!("equilibration.{name}"), "equilibration_options", values);
     }

@@ -5,6 +5,7 @@ a minor version may change the interface, and says so here.
 
 ## Unreleased
 
+- `msa` can make its first steps smaller: `equilibration_options={"step_offset": k}` lets a share 1/(i + 1 + k) of the travellers choose again at iteration i (0, the default, is the classic 1/(i + 1): half at iteration 1). On a congested network the first choices after the free-flow loading then send fewer travellers onto the routes that loading left fast. No result changes unless it is set.
 - Signals can be ignored: `network_edit(network, signal_off=True)` gives the same network with every traffic signal ignored, or `signal_off=[...]` those of the road links named (the approaches). Such a link has no control delay and its turns pass the full saturation flow, as at a junction without a signal, so a study can see what the signals cost, and a run on the edited network gives the same results as on the network built without those signals. Meant for flow levels 0 to 2; at levels 3 and 4 the junction also follows the merge and priority rules of a junction without a signal.
 - Fixed: a driver who was not choosing again in an iteration was made to choose again when the route set no longer offered the route it had; it now keeps its route, re-timed for its departure. Results of runs with mode choice change slightly.
 - The maps' volume over capacity over a whole run ("all bins") is each road's busiest quarter hour (the highest flow over any 15 consecutive minutes), not the run's average; the hover gives both.

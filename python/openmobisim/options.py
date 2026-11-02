@@ -271,9 +271,8 @@ class LoadingOptions(_Options):
         period_s: s; ``0.0``.
         pocket_length_m: m; ``50.0``.
         priority: 0 or 1; ``0``.
-        reroute: 0 or 1; by default ``None``: on at flow_level 3 and 4; at 2 only for road
-            disruptions the travellers did not know of, offering a new route to a vehicle whose
-            next link is closed; 0 turns it off.
+        reroute: 0 or 1; by default ``None``: on at flow_level 3 and 4; off at 2 unless asked for
+            (1).
         reroute_after_s: s; ``300.0``.
         reroute_max: count; ``3``.
         reroute_min_gain: —; ``0.1``.
@@ -368,7 +367,7 @@ class TransitOptions(_Options):
     Attributes:
         access_walk_max_s: s; ``1800.0``.
         board_slack_s: s; ``60.0``.
-        bus_dwell_s: s; ``0.0``: added to the feed's own dwell at each stop (uncalibrated).
+        bus_dwell_s: s; ``0.0``.
         bus_pcu: PCU; ``2.0``.
         bus_plausibility_ratio: —; ``1.6``.
         bus_stop_snap_m: m; ``300.0``.
@@ -524,6 +523,7 @@ class MsaOptions(_Options):
         iterations: count; ``15``.
         itinerary_gap_sample: count; ``100000000``.
         route_growth_tolerance: —; ``1.0``.
+        step_offset: —; ``0.0``.
         warmup: count; ``1``.
     """
 
@@ -537,6 +537,7 @@ class MsaOptions(_Options):
         "iterations": 15,
         "itinerary_gap_sample": 100000000,
         "route_growth_tolerance": 1.0,
+        "step_offset": 0.0,
         "warmup": 1,
     }
 
@@ -551,6 +552,7 @@ class MsaOptions(_Options):
         iterations: int = 15,
         itinerary_gap_sample: int = 100000000,
         route_growth_tolerance: float = 1.0,
+        step_offset: float = 0.0,
         warmup: int = 1,
     ) -> None:
         """Keep the options given that differ from their defaults."""
@@ -777,7 +779,7 @@ class LeastCostOptions(_Options):
         searches: count; ``1``.
         slack: —; ``0.02``.
         tree_step_s: s; ``300.0``.
-        until_iteration: count; ``0``.
+        until_iteration: —; ``0.0``.
     """
 
     _argument: ClassVar[str] = "route_update_options"
@@ -786,7 +788,7 @@ class LeastCostOptions(_Options):
         "searches": 1,
         "slack": 0.02,
         "tree_step_s": 300.0,
-        "until_iteration": 0,
+        "until_iteration": 0.0,
     }
 
     def __init__(
@@ -796,7 +798,7 @@ class LeastCostOptions(_Options):
         searches: int = 1,
         slack: float = 0.02,
         tree_step_s: float = 300.0,
-        until_iteration: int = 0,
+        until_iteration: float = 0.0,
     ) -> None:
         """Keep the options given that differ from their defaults."""
         given = dict(locals())
