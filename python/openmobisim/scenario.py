@@ -1796,7 +1796,7 @@ class Scenario:
                     if float(value) != int(value) or value < 0:
                         raise ValueError(f"equilibration_options {name} must be a whole number")
                     loop[key] = int(value)
-            for name in ("switch_tolerance", "found_tolerance"):
+            for name in ("switch_tolerance", "found_tolerance", "indifference_band"):
                 if name in options:
                     loop[name] = float(options.pop(name))
             if "cost_bin_s" in options:
@@ -2023,8 +2023,16 @@ class Scenario:
                 demand, the classes' car ownership and coefficients, the window, the flow
                 level and step, ``link_bin_s``, the seed, the choice model (``"deterministic"``
                 or ``"logit"``) and the equilibration (``"free_flow"``: one loading;
-                ``"msa"``: its ``iterations``, ``step_offset`` and ``cost_bin_s``, and the
-                loop's ``min_iterations``, ``switch_tolerance`` and ``found_tolerance``). The
+                ``"msa"``: its ``iterations`` (50 by default), ``step_offset`` and
+                ``cost_bin_s``, and the loop's ``min_iterations``, ``switch_tolerance`` (the
+                largest share of trips that would change chain beyond chance if everyone
+                reconsidered at the current costs, over the last three iterations, at which the
+                loop stops: 0.05 by default),
+                ``found_tolerance`` and ``indifference_band``: the relative cost difference,
+                0.01 by default and uncalibrated, below which two chains count as equal; the
+                deterministic choice splits the trips facing such a tie evenly over its chains,
+                in trip order, with no random draw, and the route search counts a new chain as
+                found only if it is cheaper than the trip's best by more than the band). The
                 fixed times of reaching and leaving the car must be given as 0
                 (``mode_options`` ``car_access_s`` and ``car_egress_s``). Anything else the
                 scenario asks for that it does not have (another mode, a timetable, parkings,

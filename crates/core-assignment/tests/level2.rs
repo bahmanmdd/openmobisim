@@ -6,10 +6,12 @@
 //! |---|---|---|---|
 //! | 1 | a line of three links, the middle one a bottleneck | the deterministic queue (Newell 1982) | the total delay `½ (λ − μ) T T'`, its change when demand rises by a fifth, when the queue clears |
 //! | 2 | two routes, the short one with a bottleneck | dynamic user equilibrium of the bottleneck (Vickrey 1969) | when the long route comes into use, the mean trip, the short route's share after that |
-//! | 3 | the Braess network | the steady state of the point-queue equilibrium (Cominetti, Correa and Olver 2022) | route shares, queue delays and trip times in the second hour, with and without the middle link, and below capacity |
+//! | 3 | the Braess network | the steady state of the point-queue equilibrium (Cominetti, Correa and Olver 2022) | route shares, queue delays and trip times in the second hour, with and without the middle link (with it, the mean over master seeds 1–5), and below capacity |
 //! | 4 | a 3 × 3 grid with a signal at its centre | Webster's uniform delay; the deterministic queue at the green share of the capacity | one car's time; the total delay of 1 200 cars an hour |
 //! | 5 | the line of test 1 below capacity | free flow | every trip at its free-flow time; a second iteration changes nothing |
 //! | 6 | a line whose first link is the bottleneck; two routes, one behind a metered origin | the deterministic queue; the wait at an origin | a late car's measured time against its planned time; the route chosen with the wait counted |
+//! | 7 | the two routes of test 2, logit and deterministic, run to the rule's stop | the fixed point of the loop | a run continued from its final state finds nothing beyond the band and keeps the expected switch excess within the tolerance |
+//! | 8 | the two routes; the Braess network | the stopping rule, at most 200 iterations | where the loop stops and the mean trip's error there (printed only) |
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -24,8 +26,9 @@ use std::time::Instant;
 
 use openmobisim_core_assignment::{
     CarPlanner, Coefficients, CostSource, FreeFlow, HighestUtility, Inputs, IterationReport,
-    LegPlanner, Loaded, Loader, Params, Place, PointQueue, StageHook, State, assign,
+    LegPlanner, Loaded, Loader, Params, Place, PointQueue, StageHook, State, assign, logit,
 };
+use openmobisim_core_choice::ChoiceModel;
 use openmobisim_core_demand::{
     ClassDefaults, Ownership, RawTrip, Travellers, Trips, build_travellers,
 };
@@ -222,6 +225,18 @@ struct Run {
 }
 
 fn run(c: &Case, loader: &dyn Loader, params: &Params, keep_states: bool) -> Run {
+    run_with(c, loader, params, keep_states, &HighestUtility, 2026)
+}
+
+/// [`run`] with another choice model and master seed.
+fn run_with(
+    c: &Case,
+    loader: &dyn Loader,
+    params: &Params,
+    keep_states: bool,
+    model: &dyn ChoiceModel,
+    seed: u64,
+) -> Run {
     let inputs = Inputs {
         network: &c.net,
         turns: &c.turns,
@@ -229,9 +244,9 @@ fn run(c: &Case, loader: &dyn Loader, params: &Params, keep_states: bool) -> Run
         trips: &c.trips,
         classes: &c.classes,
         money_per_link: &c.money,
-        model: &HighestUtility,
+        model,
         loader,
-        seed: RngKey::from_seed(2026),
+        seed: RngKey::from_seed(seed),
         initial: None,
     };
     let mut recorder = Recorder { keep_states, ..Recorder::default() };
@@ -461,20 +476,109 @@ fn two_routes_reach_the_bottleneck_equilibrium() {
     }
 }
 
-/// The stopping rule is not blind: with a deterministic choice the switch excess is the share of
-/// trips not on their best chain, so the two-route case at 1 800 veh/h, which is far from its
+/// The closed-form mean trip of the two-route case (Vickrey 1969) at `q_h` veh/h for an hour:
+/// the short route alone until `t* = (t2 − t1) c1 / (q − c1)`, its queue growing at `q − c1`,
+/// then both routes at the cost `t2`.
+fn two_route_mean(q_h: u64) -> f64 {
+    let v = metres_per_second(TWO_KM_H);
+    let (t1, t2) = (2.0 * 1440.0 / v, 2.0 * 2305.0 / v);
+    let (q, big_t, c1) = (q_h as f64 / 3600.0, 3600.0, C1_VEH_H / 3600.0);
+    let t_star = (t2 - t1) * c1 / (q - c1);
+    (t1 * t_star + (q - c1) * t_star * t_star / (2.0 * c1) + (big_t - t_star) * t2) / big_t
+}
+
+/// The mean of the last three reports' values of `f`.
+fn tail_mean(reports: &[IterationReport], f: fn(&IterationReport) -> f64) -> f64 {
+    let tail = &reports[reports.len().saturating_sub(3)..];
+    tail.iter().map(f).sum::<f64>() / tail.len() as f64
+}
+
+/// Where the switch share above its floor over all trips would have stopped the loop (its mean
+/// over three iterations at most 0.01, after the minimum iterations and with nothing found),
+/// read from the reports of a run: a measurement for comparison, not the rule.
+fn stop_by_above_floor(reports: &[IterationReport], params: &Params) -> Option<usize> {
+    (params.min_iterations.max(1) as usize..reports.len()).find(|&k| {
+        tail_mean(&reports[..k], |r| r.switch_above_floor) <= 0.01 && reports[k].found_share == 0.0
+    })
+}
+
+/// The stopping rule at its defaults but with at most 200 iterations: where the loop stops on
+/// the two-route case, and the mean trip's error there against the closed form, printed (with,
+/// for comparison, where the switch share above its floor over all trips would have stopped it).
+#[test]
+fn where_the_loop_stops_on_the_two_routes() {
+    let net = two_routes();
+    let params = Params { max_iterations: 200, ..Params::default() };
+    for q_h in [1800_u64, 2400] {
+        let c = case(two_routes(), trips(&net, "o", "d", &departures(q_h, 0, 3600)));
+        let loader = PointQueue::after_last_departure(&c.turns, &c.trips, 3600.0);
+        let r = run(&c, &loader, &params, false);
+        timing(&format!("two routes at {q_h} veh/h, at most 200 iterations"), &r);
+        let last = r.reports.last().expect("reports");
+        let mean = two_route_mean(q_h);
+        let other = stop_by_above_floor(&r.reports, &params);
+        println!(
+            "q = {q_h} veh/h: stopped by the rule: {} ({} iterations, most {}); expected switch \
+             excess, last three {:.4}; realised excess, last {:.4}; switch above floor, last three {:.5}; found share {:.4}; mean \
+             trip {:.2} s against {mean:.2} s ({:+.2} %); duality gap {:.5}; the above-floor \
+             measure would have stopped at {other:?} (mean trip then {:?} s)",
+            r.reports.len() < params.max_iterations as usize,
+            r.reports.len(),
+            params.max_iterations,
+            tail_mean(&r.reports, |x| x.switch_excess_expected),
+            last.switch_excess,
+            tail_mean(&r.reports, |x| x.switch_above_floor),
+            last.found_share,
+            last.mean_trip_seconds,
+            100.0 * (last.mean_trip_seconds / mean - 1.0),
+            last.duality_gap,
+            other.map(|k| r.reports[k - 1].mean_trip_seconds)
+        );
+    }
+}
+
+/// As above, on the Braess network with its middle link at 1 500 veh/h: the second hour's mean
+/// trip against 19 min and its queues against 8 min at the stop, printed.
+#[test]
+fn where_the_loop_stops_on_the_braess_network() {
+    let net = braess(true);
+    let c = case(braess(true), trips(&net, "s", "t", &departures(1500, 0, 3 * 3600)));
+    let loader = PointQueue::after_last_departure(&c.turns, &c.trips, 3600.0);
+    let params = Params { max_iterations: 200, ..Params::default() };
+    let r = run(&c, &loader, &params, false);
+    timing("Braess, middle link, 1 500 veh/h, at most 200 iterations", &r);
+    let s = steady_state(&c, &r);
+    let last = r.reports.last().expect("reports");
+    println!(
+        "Braess: stopped by the rule: {} ({} iterations, most {}); expected switch excess, \
+         last three {:.4}; realised excess, last {:.4}; switch above floor, last three {:.5}; found share {:.4}; mean trip, second hour \
+         {:.1} s against 1 140 s ({:+.2} %); queues s→a {:.1} s, b→t {:.1} s against 480 s; \
+         routes {:?}; the above-floor measure would have stopped at {:?}",
+        r.reports.len() < params.max_iterations as usize,
+        r.reports.len(),
+        params.max_iterations,
+        tail_mean(&r.reports, |x| x.switch_excess_expected),
+        last.switch_excess,
+        tail_mean(&r.reports, |x| x.switch_above_floor),
+        last.found_share,
+        s.mean_trip,
+        100.0 * (s.mean_trip / 1140.0 - 1.0),
+        s.queue_sa,
+        s.queue_bt,
+        s.routes,
+        stop_by_above_floor(&r.reports, &params)
+    );
+}
+
+/// The stopping rule is not blind: with a deterministic choice the expected switch excess is the
+/// share of trips on a chain beyond the indifference band of their best, so the two-route case at 1 800 veh/h, which is far from its
 /// equilibrium after the minimum iterations (both routes are in every set by iteration 1, so
 /// nothing new is found from then on), runs past the minimum; and when it does stop, the mean
 /// trip is within 3 % of the closed form, as after 100 iterations.
 #[test]
 fn the_loop_does_not_stop_while_the_deterministic_choice_still_moves_travellers() {
+    let mean = two_route_mean(1800);
     let net = two_routes();
-    let v = metres_per_second(TWO_KM_H);
-    let (t1, t2) = (2.0 * 1440.0 / v, 2.0 * 2305.0 / v);
-    let (q, big_t, c1) = (1800.0 / 3600.0, 3600.0, C1_VEH_H / 3600.0);
-    let t_star = (t2 - t1) * c1 / (q - c1);
-    let mean =
-        (t1 * t_star + (q - c1) * t_star * t_star / (2.0 * c1) + (big_t - t_star) * t2) / big_t;
     let c = case(two_routes(), trips(&net, "o", "d", &departures(1800, 0, 3600)));
     let loader = PointQueue::after_last_departure(&c.turns, &c.trips, 3600.0);
     let params = Params { max_iterations: 100, ..Params::default() };
@@ -490,8 +594,102 @@ fn the_loop_does_not_stop_while_the_deterministic_choice_still_moves_travellers(
         r.reports.len() > params.min_iterations as usize,
         "the rule did not stop at the minimum"
     );
-    assert!(last.switch_excess <= params.switch_tolerance || r.reports.len() == 100);
+    assert!(
+        tail_mean(&r.reports, |x| x.switch_excess_expected).abs() <= params.switch_tolerance
+            || r.reports.len() == 100
+    );
     assert!((last.mean_trip_seconds / mean - 1.0).abs() <= 0.03, "the mean trip within 3 %");
+}
+
+/// Idempotence: a run that stopped by its own rule, continued from its final state, goes on
+/// where it stopped (the state carries its iteration count, so the averaging step goes on).
+/// The rule stopped because the search found nothing beyond the band and the expected switch
+/// excess (the share of trips that would change chain beyond the stationary chance if everyone
+/// reconsidered, a quantity with no sampling noise) averaged at most the tolerance; at a fixed
+/// point of the loop each continued iteration again finds nothing (`found` 0) and keeps the
+/// expected excess within the tolerance in absolute value, an exact check. The two routes at
+/// 1 800 veh/h, given at most 200 iterations; the logit here, the deterministic choice below.
+#[test]
+fn a_run_continued_from_its_final_state_finds_nothing_and_moves_nobody_beyond_chance() {
+    let the_logit = logit();
+    continued_from_the_stop("logit", &the_logit, true);
+}
+
+/// [`a_run_continued_from_its_final_state_finds_nothing_and_moves_nobody_beyond_chance`] with
+/// the deterministic choice. The row is a property of the rule's stop: it is asserted when the
+/// rule stops within 200 iterations; otherwise where the run stood is printed and nothing is
+/// asserted (on this case a quarter of the trips are still beyond the band at 200 iterations).
+#[test]
+fn a_deterministic_run_continued_from_its_final_state_moves_nobody_beyond_chance() {
+    continued_from_the_stop("deterministic", &HighestUtility, false);
+}
+
+/// The two routes at 1 800 veh/h run with `model` until the rule stops them (at most 200
+/// iterations), continued 3 iterations, checked as above; a run that does not stop fails the
+/// row when `must_stop`, and is only printed otherwise.
+fn continued_from_the_stop(name: &str, model: &dyn ChoiceModel, must_stop: bool) {
+    let net = two_routes();
+    let c = case(two_routes(), trips(&net, "o", "d", &departures(1800, 0, 3600)));
+    let loader = PointQueue::after_last_departure(&c.turns, &c.trips, 3600.0);
+    let params = Params { max_iterations: 200, ..Params::default() };
+    let first = run_with(&c, &loader, &params, false, model, 2026);
+    let stopped = first.reports.len() < params.max_iterations as usize;
+    let inputs = Inputs {
+        network: &c.net,
+        turns: &c.turns,
+        travellers: &c.travellers,
+        trips: &c.trips,
+        classes: &c.classes,
+        money_per_link: &c.money,
+        model,
+        loader: &loader,
+        seed: RngKey::from_seed(2026),
+        initial: Some(first.state.clone()),
+    };
+    let start = first.state.iterations();
+    let clock = Instant::now();
+    let (_, again) = assign(&inputs, &exactly(3), &mut Recorder::default()).expect("the run");
+    let seconds = clock.elapsed().as_secs_f64();
+    let last = first.reports.last().expect("reports");
+    println!(
+        "{name}: first run {} iterations ({:.3} s), stopped by the rule: {stopped}; expected \
+         excess, last three {:.4}; mean trip {:.2} s against {:.2} s; continued 3 iterations \
+         ({seconds:.3} s)",
+        first.reports.len(),
+        first.seconds,
+        tail_mean(&first.reports, |x| x.switch_excess_expected),
+        last.mean_trip_seconds,
+        two_route_mean(1800)
+    );
+    for x in &again {
+        println!(
+            "  iteration {}: found {}, added {}, expected excess {:.5}, realised excess {:.4}, \
+             above floor {:.5}, gap {:.5}",
+            x.iteration,
+            x.found,
+            x.added,
+            x.switch_excess_expected,
+            x.switch_excess,
+            x.switch_above_floor,
+            x.duality_gap
+        );
+    }
+    if !stopped && !must_stop {
+        println!("{name}: no stop within 200 iterations; the row is not asserted");
+        return;
+    }
+    assert!(stopped, "{name}: the first run stops by its own rule within 200 iterations");
+    for (k, x) in again.iter().enumerate() {
+        assert_eq!(x.iteration, start + k as u32, "{name}: the numbering goes on");
+        assert_eq!(x.found, 0, "{name}, iteration {}: nothing beyond the band", x.iteration);
+        assert!(
+            x.switch_excess_expected.abs() <= params.switch_tolerance,
+            "{name}, iteration {}: expected excess {} beyond {}",
+            x.iteration,
+            x.switch_excess_expected,
+            params.switch_tolerance
+        );
+    }
 }
 
 // --- 3. the Braess paradox at steady state ------------------------------------------------
@@ -573,17 +771,27 @@ fn steady_state(c: &Case, r: &Run) -> SteadyState {
 }
 
 fn braess_run(middle: bool, per_hour: u64) -> (SteadyState, Run) {
+    braess_run_seeded(middle, per_hour, 2026)
+}
+
+fn braess_run_seeded(middle: bool, per_hour: u64, seed: u64) -> (SteadyState, Run) {
     let net = braess(middle);
     check_free_flow(&net, &braess_links(middle));
     let c = case(braess(middle), trips(&net, "s", "t", &departures(per_hour, 0, 3 * 3600)));
     let loader = PointQueue::after_last_departure(&c.turns, &c.trips, 3600.0);
-    let r = run(&c, &loader, &exactly(100), false);
+    let r = run_with(&c, &loader, &exactly(100), false, &HighestUtility, seed);
     let s = steady_state(&c, &r);
-    timing(&format!("Braess, middle link {middle}, {per_hour} veh/h"), &r);
+    timing(&format!("Braess, middle link {middle}, {per_hour} veh/h, seed {seed}"), &r);
     for x in r.reports.iter().filter(|x| [0, 9, 24, 49, 99].contains(&x.iteration)) {
         println!(
-            "  iteration {}: switch share {:.4}, duality gap {:.5}, mean trip {:.1} s",
-            x.iteration, x.switch_share, x.duality_gap, x.mean_trip_seconds
+            "  iteration {}: switch share {:.4}, excess {:.4}, found share {:.4}, duality gap \
+             {:.5}, mean trip {:.1} s",
+            x.iteration,
+            x.switch_share,
+            x.switch_excess,
+            x.found_share,
+            x.duality_gap,
+            x.mean_trip_seconds
         );
     }
     println!(
@@ -611,6 +819,12 @@ fn share_of(s: &SteadyState, route: &str) -> (f64, f64) {
 ///   route; equal costs `11 + q_sa = 11 + q_bt = 3 + q_sa + q_bt` give queues of 8 min at
 ///   `s → a` and at `b → t`, and 19 min for everyone;
 /// - **with `a → b`, 900 veh/h**: below both capacities, everyone on s-a-b-t, 3 min.
+///
+/// With the middle link, the queues, the shares and the trip times are judged on their mean
+/// over master seeds 1 to 5. The discretised point-queue process is stochastic in who
+/// reconsiders (the averaging rule's draws), so the theorem's steady state is its expectation:
+/// one seed can sit 7 % off while the mean sits within 1 %. The five values and their standard
+/// deviation are printed.
 #[test]
 fn the_braess_network_reaches_the_linear_programs_steady_state() {
     let minute = 60.0;
@@ -626,18 +840,31 @@ fn the_braess_network_reaches_the_linear_programs_steady_state() {
         );
         assert!((mean / derived - 1.0).abs() <= 0.02, "{route}: {mean} s");
     }
-    // With it.
-    let (s, _) = braess_run(true, 1500);
+    // With it, over master seeds 1 to 5.
+    let runs: Vec<SteadyState> =
+        (1..=5).map(|seed| braess_run_seeded(true, 1500, seed).0).collect();
     let derived = 19.0 * minute;
     let queue = 8.0 * minute;
-    assert!((s.mean_trip / derived - 1.0).abs() <= 0.02, "19 min within 2 %");
+    // The mean and the standard deviation (n − 1) of a value over the seeds, printed.
+    let over_seeds = |name: &str, f: &dyn Fn(&SteadyState) -> f64| {
+        let v: Vec<f64> = runs.iter().map(f).collect();
+        let m = v.iter().sum::<f64>() / v.len() as f64;
+        let sd = (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (v.len() - 1) as f64).sqrt();
+        println!("  seeds 1–5, {name}: {v:.4?}; mean {m:.4}, standard deviation {sd:.4}");
+        m
+    };
+    let mean_trip = over_seeds("mean trip (s)", &|s| s.mean_trip);
+    assert!((mean_trip / derived - 1.0).abs() <= 0.02, "19 min within 2 %: {mean_trip} s");
     for route in ["sa-at", "sb-bt", "sa-ab-bt"] {
-        let (share, mean) = share_of(&s, route);
+        let share = over_seeds(&format!("{route} share"), &|s| share_of(s, route).0);
+        let mean = over_seeds(&format!("{route} mean trip (s)"), &|s| share_of(s, route).1);
         assert!((share - 1.0 / 3.0).abs() <= 0.03, "{route}: share {share}");
         assert!((mean / derived - 1.0).abs() <= 0.02, "{route}: {mean} s");
     }
-    assert!((s.queue_sa / queue - 1.0).abs() <= 0.05, "the queue at s → a: {} s", s.queue_sa);
-    assert!((s.queue_bt / queue - 1.0).abs() <= 0.05, "the queue at b → t: {} s", s.queue_bt);
+    let sa = over_seeds("queue at s → a (s)", &|s| s.queue_sa);
+    let bt = over_seeds("queue at b → t (s)", &|s| s.queue_bt);
+    assert!((sa / queue - 1.0).abs() <= 0.05, "the queue at s → a: {sa} s");
+    assert!((bt / queue - 1.0).abs() <= 0.05, "the queue at b → t: {bt} s");
     // Below capacity.
     let (s, _) = braess_run(true, 900);
     let derived = 3.0 * minute;

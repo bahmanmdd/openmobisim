@@ -8,9 +8,12 @@
 //! ([`assign()`]; details in [`mod@assign`]):
 //!
 //! 1. **search**: the cheapest chain of every trip at the current link travel times, added to
-//!    the trip's choice set if new; the stopping check;
+//!    the trip's choice set if new, and counted as found only if it is cheaper than the set's
+//!    best by more than the indifference band ([`Params::indifference_band`]); the stopping
+//!    check;
 //! 2. **choose**: one choice over every trip's set by the choice model, the averaging rule
-//!    deciding who re-chooses;
+//!    deciding who re-chooses; the deterministic choice treats the chains within the band of
+//!    the best as tied and splits the trips facing a tie evenly over them, by trip id;
 //! 3. **load**: the chosen chains' vehicles moved on the network by the loader;
 //! 4. **measure**: the link travel times by time of day built from what the loading recorded,
 //!    and every chain of every set priced again on them;

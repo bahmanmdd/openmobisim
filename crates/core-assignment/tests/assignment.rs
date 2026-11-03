@@ -8,7 +8,9 @@
 //! | 2 | the 3 × 3 grid, nine trips | a second iteration changes nothing: found 0, switch share 0, gaps 0, the same state |
 //! | 3 | the toy network, 50 trips | departed = arrived + unfinished (weighted), who is unfinished at the loading's end |
 //! | 4 | the grid, and a diamond of two roads | money on the links weighed 0 changes nothing; a toll that outweighs the detour moves the choice |
-//! | 5 | the diamond with two equal roads, 2 000 travellers | the switch share against its floor `α_i · ½`, the split ½, the deterministic tie rule |
+//! | 5 | the diamond with two equal roads, 2 000 travellers | the switch share against its floor `α_i · ½`, the split ½, the deterministic even split by trip id |
+//! | 5c | two diamonds, three trips | the expected switch excess: one trip off its best beyond the band, two on a tie: ⅓ |
+//! | 5b | batches built by hand | the indifference band's ties and probabilities, the even split by trip id, turned by the iteration |
 //! | 6 | as 5 | the same seed gives the same run, another seed another logit choice |
 //! | stop | the grid, nine trips | the loop stops at the first check its rule allows, or at the most iterations |
 
@@ -511,20 +513,218 @@ fn the_switch_share_sits_on_its_floor_and_the_split_is_even() {
     }
 }
 
-/// The deterministic choice between two chains of exactly equal utility takes the first in the
-/// set, the one found earliest, whichever road that is.
+/// The deterministic choice between two chains of equal utility splits the trips evenly, by
+/// trip id: in iteration 0 every trip chooses, all 2 000 face the same tie, and the n-th by trip
+/// id takes the tie's chain `n mod 2` in the order of the first trip's set (the order of every
+/// set here). So trip `t` takes the set's first chain when `t` is even: exactly 1 000 trips on
+/// each road, whichever road is first, each chain with probability ½. In iteration 1 a
+/// traveller re-chooses with probability `α_1 = 1 / 5` and the floor is `α_1 · (1 − ¼ − ¼)`.
 #[test]
-fn the_deterministic_tie_goes_to_the_first_chain_of_the_set() {
-    for (first, top_share) in [("top", 1.0), ("bottom", 0.0)] {
+fn the_deterministic_tie_is_split_evenly_by_trip_id() {
+    for first in ["top", "bottom"] {
         let (c, initial) = two_equal_roads(first);
-        let (state, reports, _) = run(&c, &HighestUtility, &exactly(2), 5, Some(initial));
-        assert_eq!(on_top(&c, &state), top_share, "the first chain is the {first} road");
-        assert!(state.trips().iter().all(|t| t.current == Some(0)));
-        assert_eq!(reports[1].switch_share, 0.0);
-        assert_eq!(
-            reports[1].switch_floor, 0.0,
-            "the deterministic model gives the kept chain probability 1"
+        let (_, reports, states) = run(&c, &HighestUtility, &exactly(2), 5, Some(initial));
+        let after_0 = &states[0];
+        for (t, entry) in after_0.trips().iter().enumerate() {
+            assert_eq!(entry.current, Some(t % 2), "trip {t}: the {}-th of the tie", t % 2);
+            assert_eq!(entry.probabilities, vec![0.5, 0.5]);
+        }
+        assert_eq!(on_top(&c, after_0), 0.5, "1 000 trips on each road");
+        assert_eq!(reports[0].switch_floor, 1.0, "no trip had a chain: all switch");
+        let alpha = 1.0 / (1.0 + 1.0 + 3.0);
+        assert!((reports[1].switch_floor - alpha * 0.5).abs() < 1e-12);
+        println!(
+            "first {first}: iteration 1 switch share {:.4}, floor {:.4}, excess {:.4}; on the \
+             top road after it {:.4}",
+            reports[1].switch_share,
+            reports[1].switch_floor,
+            reports[1].switch_excess,
+            on_top(&c, &states[1])
         );
+    }
+}
+
+/// Two diamonds side by side: `A → D` by a top road of 2 × 100 m or a bottom one of 2 × 300 m,
+/// and `E → H` by two equal roads of 2 × 100 m, all residential streets.
+fn two_diamonds() -> RoadNetwork {
+    let mut b = RoadNetworkBuilder::new();
+    for (n, x, y) in [
+        ("A", 0.0, 0.0),
+        ("B", 100.0, 60.0),
+        ("C", 100.0, -60.0),
+        ("D", 200.0, 0.0),
+        ("E", 0.0, 1000.0),
+        ("F", 100.0, 1060.0),
+        ("G", 100.0, 940.0),
+        ("H", 200.0, 1000.0),
+    ] {
+        b.add_node(n, LonLat::new(4.8 + x / 77_800.0, 45.7 + y / 110_574.0));
+    }
+    for (name, from, to, len) in [
+        ("ab", "A", "B", 100.0),
+        ("bd", "B", "D", 100.0),
+        ("ac", "A", "C", 300.0),
+        ("cd", "C", "D", 300.0),
+        ("ef", "E", "F", 100.0),
+        ("fh", "F", "H", 100.0),
+        ("eg", "E", "G", 100.0),
+        ("gh", "G", "H", 100.0),
+    ] {
+        let mut spec = LinkSpec::new(RoadClass::Residential);
+        spec.length_m = Some(len);
+        b.add_link(name, from, to, spec);
+    }
+    b.build(GlobalMultipliers::default(), SignalDefaults::SHIPPED, &mut Diagnostics::new())
+        .expect("buildable")
+}
+
+/// The expected switch excess, `Σ w (Σ_k P_k² − P_current) / Σ w`, on three trips under the
+/// deterministic choice: trip 0 (`A → D`) holds the bottom road, 1.2 min against the top
+/// road's 0.4 (beyond the 1 % band), so `P = (1, 0)` and it contributes `1 − 0 = 1`; trips 1 and
+/// 2 (`E → H`) face a two-way tie, `P = (½, ½)`, each on one of the tied roads, contributing
+/// `½ − ½ = 0`. The excess is `(1 + 0 + 0) / 3 = ⅓`: the share of trips off their best
+/// beyond the band.
+#[test]
+fn the_expected_excess_is_the_share_of_trips_off_their_best_beyond_the_band() {
+    let net = two_diamonds();
+    let raw = vec![
+        trip(&net, "t0", "A", "D", 0, 1),
+        trip(&net, "t1", "E", "H", 0, 1),
+        trip(&net, "t2", "E", "H", 0, 1),
+    ];
+    let c = case(two_diamonds(), raw);
+    let mut state = State::initial(&c.net, &c.travellers, &c.trips);
+    let planner = CarPlanner::new(&c.net, &c.turns, &c.classes, &c.money).expect("planner");
+    let roads: [(&str, &str, [[&str; 2]; 2], usize); 3] = [
+        ("A", "D", [["ab", "bd"], ["ac", "cd"]], 1),
+        ("E", "H", [["ef", "fh"], ["eg", "gh"]], 0),
+        ("E", "H", [["ef", "fh"], ["eg", "gh"]], 1),
+    ];
+    for (t, (from, to, pair, held)) in roads.into_iter().enumerate() {
+        let (o, d) = (Place::Road(node(&c.net, from)), Place::Road(node(&c.net, to)));
+        let trip = TripId::from_index(t);
+        for road in pair {
+            let links = road.iter().map(|n| link(&c.net, n)).collect();
+            let leg = planner.leg_along(o, d, 0.0, links, &state);
+            assert!(state.trip_mut(trip).add(Chain::new(vec![leg])));
+        }
+        state.trip_mut(trip).current = Some(held);
+    }
+    let (_, reports, _) = run(&c, &HighestUtility, &exactly(1), 1, Some(state));
+    let derived = 1.0 / 3.0;
+    println!("expected switch excess {}, derived {derived}", reports[0].switch_excess_expected);
+    assert!((reports[0].switch_excess_expected - derived).abs() < 1e-12);
+}
+
+/// The deterministic model on batches built by hand, with the chooser's attributes.
+mod deterministic_model {
+    use openmobisim_core_assignment::HighestUtility;
+    use openmobisim_core_assignment::chooser::{
+        CHAIN_HIGH, CHAIN_LOW, INDIFFERENCE_BAND, LN_PATH_SIZE, UTILITY,
+    };
+    use openmobisim_core_choice::{ChoiceBatch, ChoiceModel};
+    use openmobisim_core_types::rng::{RngKey, Stream, StreamRng};
+
+    /// One situation per `(trip, chains)`, each chain `(identity, cost)`, in `iteration`.
+    fn batch(iteration: u32, band: f64, situations: &[(u32, &[(u64, f64)])]) -> ChoiceBatch {
+        let mut b = ChoiceBatch::new(
+            iteration,
+            &[UTILITY, LN_PATH_SIZE, INDIFFERENCE_BAND, CHAIN_HIGH, CHAIN_LOW],
+        );
+        for &(trip, chains) in situations {
+            b.begin_situation(trip, trip);
+            for (i, &(id, cost)) in chains.iter().enumerate() {
+                let (high, low) = ((id >> 32) as f64, (id & 0xFFFF_FFFF) as f64);
+                b.push_alternative(i as u32, &[-cost, 0.0, band, high, low]);
+            }
+        }
+        b
+    }
+
+    fn rng() -> StreamRng {
+        StreamRng::new(RngKey::from_seed(1), Stream::Choice)
+    }
+
+    /// Costs 10, 10.05 and 10.2 with a band of 1 %: the band reaches 10 · 1.01 = 10.1, so the
+    /// first two tie and the third does not; each tied chain has probability ½. With a band of
+    /// 3 % (10.3) all three tie, each ⅓; with no band only the least cost, probability 1.
+    #[test]
+    fn the_chains_within_the_band_tie_with_equal_probability() {
+        let chains: &[(u64, f64)] = &[(7, 10.0), (8, 10.05), (9, 10.2)];
+        for (band, derived) in [
+            (0.01, vec![0.5, 0.5, 0.0]),
+            (0.03, vec![1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0]),
+            (0.0, vec![1.0, 0.0, 0.0]),
+        ] {
+            let p = HighestUtility.probabilities(&batch(0, band, &[(0, chains)])).unwrap().unwrap();
+            assert_eq!(p, derived, "band {band}");
+        }
+    }
+
+    /// Seven trips face the same tie of chains `a` and `b`, given in a shuffled trip order and
+    /// with the two chains in either order in their sets; an eighth trip has a chain cheaper
+    /// beyond the band and takes it. In iteration 0 the n-th trip by id takes the tie's chain
+    /// `n mod 2` in the order of the first trip's set (`a`, `b`): trips 0, 2, 4, 6 take `a`,
+    /// trips 1, 3, 5 take `b`, four and three. In iteration 1 the order turns by one: trips 0,
+    /// 2, 4, 6 take `b`. The split depends on which chains tie, not on their identities' values.
+    #[test]
+    fn the_trips_facing_one_tie_are_split_evenly_by_trip_id() {
+        let (a, b) = (0xAAAA_0000_0001_u64, 0x0000_BBBB_0002_u64);
+        let ab: &[(u64, f64)] = &[(a, 100.0), (b, 100.5)];
+        let ba: &[(u64, f64)] = &[(b, 100.4), (a, 100.0)];
+        let clear: &[(u64, f64)] = &[(a, 100.0), (b, 90.0)];
+        let trips: [(u32, &[(u64, f64)]); 8] =
+            [(5, ba), (0, ab), (3, ab), (7, clear), (6, ba), (1, ba), (4, ab), (2, ab)];
+        for (iteration, even_takes) in [(0, a), (1, b), (2, a)] {
+            let batch = batch(iteration, 0.01, &trips);
+            let choices = HighestUtility.choose(&batch, &rng()).unwrap();
+            let mut taken = [0_u32; 2];
+            for (s, &(trip, chains)) in trips.iter().enumerate() {
+                let id = chains[choices.chosen[s] as usize].0;
+                if trip == 7 {
+                    assert_eq!(id, b, "the chain cheaper beyond the band");
+                    assert_eq!(choices.probability[s], 1.0);
+                    continue;
+                }
+                let odd_takes = if even_takes == a { b } else { a };
+                let wanted = if trip % 2 == 0 { even_takes } else { odd_takes };
+                assert_eq!(id, wanted, "iteration {iteration}, trip {trip}");
+                assert_eq!(choices.probability[s], 0.5);
+                taken[usize::from(id == b)] += 1;
+            }
+            let (on_a, on_b) = (taken[0], taken[1]);
+            assert_eq!(on_a.max(on_b), 4);
+            assert_eq!(on_a.min(on_b), 3);
+        }
+        // The same chains under other identities: the same picks, by position.
+        let (x, y) = (3_u64, 0xFFFF_FFFF_FFFF_u64);
+        let renamed = |c: &[(u64, f64)]| -> Vec<(u64, f64)> {
+            c.iter().map(|&(id, cost)| (if id == a { x } else { y }, cost)).collect()
+        };
+        let lists: Vec<(u32, Vec<(u64, f64)>)> =
+            trips.iter().map(|&(t, c)| (t, renamed(c))).collect();
+        let again: Vec<(u32, &[(u64, f64)])> =
+            lists.iter().map(|(t, c)| (*t, c.as_slice())).collect();
+        let before = HighestUtility.choose(&batch(0, 0.01, &trips), &rng()).unwrap();
+        let after = HighestUtility.choose(&batch(0, 0.01, &again), &rng()).unwrap();
+        assert_eq!(before.chosen, after.chosen);
+    }
+
+    /// A batch without the band and the identities (made by hand for another use): only equal
+    /// utilities tie, and the alternatives are known by their identity in the batch.
+    #[test]
+    fn a_batch_without_the_band_ties_only_equal_utilities() {
+        let mut b = ChoiceBatch::new(0, &[UTILITY]);
+        for trip in 0..4 {
+            b.begin_situation(trip, trip);
+            b.push_alternative(0, &[-10.0]);
+            b.push_alternative(1, &[-10.0]);
+            b.push_alternative(2, &[-10.01]);
+        }
+        let choices = HighestUtility.choose(&b, &rng()).unwrap();
+        assert_eq!(choices.chosen, vec![0, 1, 0, 1]);
+        let p = HighestUtility.probabilities(&b).unwrap().unwrap();
+        assert_eq!(&p[..3], &[0.5, 0.5, 0.0]);
     }
 }
 

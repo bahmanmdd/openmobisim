@@ -104,7 +104,7 @@ const FINGERPRINT_COVERS: [&str; 12] = [
     "each user class's coefficients",
     "the choice model and its path-size weight",
     "the loop's parameters: minimum and maximum iterations, the switch and found tolerances, the \
-     averaging offset, the cost source, the snapping distance to motorways",
+     indifference band, the averaging offset, the cost source, the snapping distance to motorways",
     "the flow level",
     "the loading step",
     "the width of the bins the link travel times are read in",
@@ -288,6 +288,7 @@ fn fingerprint(
     h.write_u32(params.max_iterations);
     h.write_f64(params.switch_tolerance);
     h.write_f64(params.found_tolerance);
+    h.write_f64(params.indifference_band);
     h.write_u32(params.step_offset);
     h.write_str(&format!("{:?}", params.cost_source));
     h.write_f64(params.motorway_snap_metres);
@@ -621,14 +622,18 @@ fn write_trip_results(
     write_batch(path, fields, columns, metadata)
 }
 
-/// The convergence table's columns, as real numbers but the first two.
+/// The convergence table's columns that are real numbers (the iteration and the counts of
+/// trips found and added are whole numbers, written apart).
 fn convergence_columns(reports: &[IterationReport]) -> Vec<(&'static str, Vec<f64>)> {
     let col = |f: &dyn Fn(&IterationReport) -> f64| reports.iter().map(f).collect::<Vec<f64>>();
     vec![
         ("found_share", col(&|r| r.found_share)),
+        ("added_share", col(&|r| r.added_share)),
         ("switch_share", col(&|r| r.switch_share)),
         ("switch_floor", col(&|r| r.switch_floor)),
         ("switch_excess", col(&|r| r.switch_excess)),
+        ("switch_above_floor", col(&|r| r.switch_above_floor)),
+        ("switch_excess_expected", col(&|r| r.switch_excess_expected)),
         ("departed", col(&|r| r.departed)),
         ("arrived", col(&|r| r.arrived)),
         ("unfinished", col(&|r| r.unfinished)),
@@ -657,11 +662,13 @@ fn write_convergence(
         Field::new("run_id", DataType::Utf8, false),
         Field::new("iteration", DataType::UInt32, false),
         Field::new("found", DataType::UInt32, false),
+        Field::new("added", DataType::UInt32, false),
     ];
     let mut columns: Vec<ArrayRef> = vec![
         Arc::new(StringArray::from(vec![run_id; n])),
         whole(reports.iter().map(|r| r.iteration).collect()),
         whole(reports.iter().map(|r| r.found).collect()),
+        whole(reports.iter().map(|r| r.added).collect()),
     ];
     for (name, values) in convergence_columns(reports) {
         fields.push(Field::new(name, DataType::Float64, false));
@@ -773,7 +780,7 @@ fn write_link_bins(
     window_start_s=None, window_end_s=None, flow_level=2, flow_step_s=300, cost_bin_s=300,
     link_bin_s=None, master_seed=0, choice_model="logit", choice_options=None,
     min_iterations=None, max_iterations=None, step_offset=None, switch_tolerance=None,
-    found_tolerance=None, motorway_snap_m=None
+    found_tolerance=None, indifference_band=None, motorway_snap_m=None
 ))]
 #[allow(clippy::too_many_arguments, reason = "the scenario's parts, by name, as Python gives them")]
 #[allow(clippy::too_many_lines, reason = "the steps of one run, in order")]
@@ -803,6 +810,7 @@ pub fn run_one_loop(
     step_offset: Option<u32>,
     switch_tolerance: Option<f64>,
     found_tolerance: Option<f64>,
+    indifference_band: Option<f64>,
     motorway_snap_m: Option<f64>,
 ) -> PyResult<Py<PyDict>> {
     let started = Instant::now();
@@ -914,6 +922,14 @@ pub fn run_one_loop(
     if let Some(v) = found_tolerance {
         params.found_tolerance = v;
     }
+    if let Some(v) = indifference_band {
+        if !(v.is_finite() && v >= 0.0) {
+            return Err(PyValueError::new_err(format!(
+                "indifference_band must be a finite number of at least 0, got {v}"
+            )));
+        }
+        params.indifference_band = v;
+    }
     if let Some(v) = motorway_snap_m {
         params.motorway_snap_metres = v;
     }
@@ -1020,6 +1036,7 @@ pub fn run_one_loop(
     p.set_item("max_iterations", params.max_iterations)?;
     p.set_item("switch_tolerance", params.switch_tolerance)?;
     p.set_item("found_tolerance", params.found_tolerance)?;
+    p.set_item("indifference_band", params.indifference_band)?;
     p.set_item("step_offset", params.step_offset)?;
     p.set_item("cost_source", format!("{:?}", params.cost_source).to_lowercase())?;
     p.set_item("motorway_snap_m", params.motorway_snap_metres)?;
@@ -1050,6 +1067,7 @@ pub fn run_one_loop(
         reports.iter().map(|r| r.iteration).collect::<Vec<_>>().into_pyarray(py),
     )?;
     conv.set_item("found", reports.iter().map(|r| r.found).collect::<Vec<_>>().into_pyarray(py))?;
+    conv.set_item("added", reports.iter().map(|r| r.added).collect::<Vec<_>>().into_pyarray(py))?;
     for (name, values) in convergence_columns(&reports) {
         conv.set_item(name, values.into_pyarray(py))?;
     }

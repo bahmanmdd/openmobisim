@@ -120,8 +120,13 @@ def test_the_convergence_table_has_the_measures_and_no_verdict(tmp_path):
     for name in (
         "iteration",
         "found_share",
+        "added",
+        "added_share",
         "switch_share",
         "switch_floor",
+        "switch_excess",
+        "switch_above_floor",
+        "switch_excess_expected",
         "unfinished_share",
         "gap",
         "gap_deterministic",
@@ -207,3 +212,32 @@ def test_the_run_configuration_file_carries_the_engine(tmp_path):
         output_dir=str(tmp_path / "b"), quiet=True, config=str(tmp_path / "a" / "run.toml")
     )
     assert again.engine == "one-loop" and again.fingerprint == first.fingerprint
+
+
+def test_the_indifference_band_is_passed_through_and_in_the_fingerprint(tmp_path):
+    net = two_routes()
+    trips = cars(net, 900, 2)
+
+    def run(name, **options):
+        s = scenario(
+            net,
+            trips,
+            equilibration="msa",
+            equilibration_options={"iterations": 3, "min_iterations": 3, **options},
+        )
+        return s.run(name, output_dir=str(tmp_path / name), quiet=True, engine="one-loop")
+
+    default, wide = run("default"), run("wide", indifference_band=0.05)
+    bands = []
+    for r, name in ((default, "default"), (wide, "wide")):
+        manifest = json.loads((tmp_path / name / "manifest.json").read_text())
+        bands.append(manifest["parameters"]["indifference_band"])
+        c = r.convergence()
+        # A chain counts as found only if it beats the set's best by more than the band: never
+        # more trips found than had a chain added.
+        assert np.all(np.asarray(c["found"]) <= np.asarray(c["added"]))
+        assert c["found"][0] == c["added"][0] == len(trips), "every set is empty at first"
+    assert bands == [0.01, 0.05]
+    assert default.fingerprint != wide.fingerprint
+    with pytest.raises(ValueError, match="indifference_band"):
+        run("negative", indifference_band=-0.1)

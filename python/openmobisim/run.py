@@ -687,11 +687,23 @@ class Run:
         utility units (minus the systematic utility of the trip's user class), read on the link
         travel times the iteration's loading produced: ``iteration``; ``found`` and
         ``found_share`` (the trips the route search found a chain for that was not yet in their
-        choice set: how many, and their share); ``switch_share`` (the share of trips whose
+        choice set and is cheaper than the cheapest chain of the set by more than the
+        indifference band, ``indifference_band``: how many, and their share; the stopping
+        rule reads the share); ``added`` and ``added_share`` (the trips that had a chain added
+        to their set, within the band or beyond it); ``switch_share`` (the share of trips whose
         chain after the choice differs from the one before) and ``switch_floor`` (what it would
-        be by the choice model's randomness alone at a stationary state) and ``switch_excess``
-        (of the trips that reconsidered, the share that moved beyond that chance: the stopping
-        rule's stability measure, 0 at a stationary state); ``departed``,
+        be by the choice model's randomness alone at a stationary state; under the
+        deterministic choice, the chance that the even split moves a trip facing a tie within
+        the band to another of the tied chains) and ``switch_excess``
+        (of the trips that reconsidered, the share that moved beyond that chance: a noisy
+        estimate, reported only), ``switch_excess_expected`` (before the choice, the share of
+        all trips that would change chain beyond the stationary chance if everyone
+        reconsidered, ``Σ w (Σ P² − P of the chain held) / Σ w``: 0 at a stationary state, the
+        stopping rule's stability measure; the loop stops when its mean over the last three
+        iterations is in absolute value at most ``switch_tolerance``, 0.05 by default) and
+        ``switch_above_floor``
+        (``switch_share − switch_floor``: the share of all trips that changed chain beyond
+        chance, reported only); ``departed``,
         ``arrived``, ``unfinished`` (people) and ``unfinished_share``; ``without_chain``
         (people whose trip had no chain: no car, or no route); ``gap`` (the relative duality
         gap within the choice sets, ``(Σ w·paid − Σ w·least) / Σ w·least``, paid the cost of the

@@ -29,10 +29,18 @@ pub struct StageSeconds {
 pub struct IterationReport {
     /// The iteration, from 0.
     pub iteration: u32,
-    /// How many trips the search found a chain for that was not yet in their choice set.
+    /// How many trips the search found a chain for that was not yet in their choice set and
+    /// that beats the cheapest chain of the set by more than the indifference band,
+    /// `cost_new < cost_best − ε · |cost_best|` ([`crate::Params::indifference_band`]; every
+    /// chain of a trip whose set was empty).
     pub found: u32,
-    /// The share of trips (weighted) the search found a new chain for.
+    /// The share of trips (weighted) of [`Self::found`]: what the stopping rule reads.
     pub found_share: f64,
+    /// How many trips had a chain added to their choice set (every chain not yet in it,
+    /// within the band or beyond it): at least [`Self::found`].
+    pub added: u32,
+    /// The share of trips (weighted) of [`Self::added`].
+    pub added_share: f64,
     /// The share of trips facing a choice (weighted) whose chain after this iteration's choice
     /// differs from the one before it; a trip that had no chain before counts as switching.
     pub switch_share: f64,
@@ -43,9 +51,29 @@ pub struct IterationReport {
     pub switch_floor: f64,
     /// The switch share's excess over its floor per re-chooser, `(switch share − floor) /
     /// (Σ w · α / Σ w)`: the share of the trips that reconsidered which moved beyond chance; 0
-    /// at a stationary state, and under a deterministic model the share of trips that were not
-    /// on their best chain. The stopping rule reads it.
+    /// at a stationary state. Reported only: a share among the travellers who happened to
+    /// reconsider, it is a noisy estimate of [`Self::switch_excess_expected`], which the
+    /// stopping rule reads.
+    ///
+    /// Under the deterministic choice with its indifference band the floor counts the tie
+    /// chance (`α · (1 − 1 / k)` for a trip facing `k` tied chains), so the excess is the
+    /// share of re-choosers that were on a chain beyond the band of their best (or that the even
+    /// split moved more often than chance would): the excess beyond the band, 0 at a stationary
+    /// state within the even split's rounding.
     pub switch_excess: f64,
+    /// The switch share above its floor over all trips, `switch share − floor`: the share of
+    /// all trips (weighted) that changed chain beyond chance, which is [`Self::switch_excess`]
+    /// times the share that reconsidered. Reported, not read by the stopping rule: it shrinks
+    /// with the averaging step whether or not the re-choosers are near a stationary state.
+    pub switch_above_floor: f64,
+    /// The expected switch excess over the whole population, before this iteration's choice:
+    /// `Σ w (Σ_k P_k² − P_current) / Σ w` over the trips facing a choice, `P` the model's
+    /// probabilities at the costs the last loading produced, `P_current` that of the chain the
+    /// trip has (a trip with no chain yet contributes 0, as in the realised excess): the share of trips that would change chain beyond the
+    /// stationary chance if everyone reconsidered. 0 at a stationary state; under the
+    /// deterministic choice the share of trips on a chain beyond the band of their best; it can
+    /// be negative for the logit. The stopping rule reads it ([`crate::Params::switch_tolerance`]).
+    pub switch_excess_expected: f64,
     /// The summed weight of the trips that set out (every trip with a chain).
     pub departed: f64,
     /// The summed weight of the trips that reached their destination before the loading ended.

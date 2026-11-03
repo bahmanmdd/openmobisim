@@ -5,13 +5,22 @@
 //!
 //! 1. **Search** (`search_stage`): the chain search at the current state (the link travel
 //!    times of the last loading, free flow before the first); a chain not yet in the trip's
-//!    choice set is added to it, at most one per trip per iteration. The trips something new
-//!    was found for are counted. **The stopping check** runs here, from iteration 1 on, after
+//!    choice set is added to it, at most one per trip per iteration (the trips with an addition
+//!    are counted as **added**). An addition counts as **found** only when it beats the
+//!    cheapest chain already in the trip's set by more than the indifference band:
+//!    `cost_new < cost_best − ε · |cost_best|` (`cost_best · (1 − ε)` for a positive cost),
+//!    ε = [`Params::indifference_band`], both costs read on the same link travel times (a trip
+//!    with an empty set counts as found). A chain within the band is still added, since a
+//!    choice model wants near-equal alternatives in the set, but it is no evidence that the
+//!    search missed a better route. **The stopping check** runs here, from iteration 1 on, after
 //!    the search and before anything is added: the loop stops when the share of trips with a
-//!    new chain is at most [`Params::found_tolerance`], the mean switch excess of the last three
-//!    iterations (the share of the trips that reconsidered which moved beyond chance) is at
-//!    most [`Params::switch_tolerance`], and at least
-//!    [`Params::min_iterations`] iterations are done. It always stops after
+//!    found chain is at most [`Params::found_tolerance`], the expected switch excess
+//!    ([`IterationReport::switch_excess_expected`]), averaged over the last three iterations,
+//!    is in absolute value at most [`Params::switch_tolerance`], and at least
+//!    [`Params::min_iterations`] iterations are done. In the words of the field: the loop stops
+//!    when, at the current costs, fewer than one trip in twenty (the default tolerance 0.05)
+//!    would change chain beyond chance if everyone reconsidered, and the route search finds
+//!    nothing better beyond the indifference band. It always stops after
 //!    [`Params::max_iterations`] iterations. When it stops, the state returned is the one the
 //!    last completed iteration left, without the stopped search's chains.
 //! 2. **Choose** (`choose_stage`): one choice over every trip's set by the run's choice
@@ -28,6 +37,11 @@
 //!
 //! Each iteration finishes its own work: nothing of iteration `i` is computed after `i + 1` has
 //! begun, and the next iteration starts from the state this one returned.
+//!
+//! **Iteration numbers.** A run from [`State::initial`] numbers its iterations from 0; a run
+//! continued from a state another run returned ([`Inputs::initial`]) numbers its first iteration
+//! [`State::iterations`], so the averaging rule goes on with the step it had reached. The
+//! minimum and most iterations count the iterations of this run.
 //!
 //! **Reproducibility.** Every random draw is addressed by identity (the re-choice draws by
 //! traveller and iteration, the choice model's by traveller, trip, iteration and chain), so
@@ -75,10 +89,40 @@ const TRIPS_PER_CHUNK: usize = 512;
 pub struct Params {
     /// The fewest iterations before the loop may stop (default 3).
     pub min_iterations: u32,
-    /// The most iterations the loop runs (default 20).
+    /// The most iterations the loop runs (default 50).
     pub max_iterations: u32,
-    /// The largest switch excess (the share of the trips that reconsidered which moved beyond
-    /// chance, [`IterationReport::switch_excess`]) at which the loop may stop (default 0.05).
+    /// The indifference band ε, relative (default 0.01, an uncalibrated default): two chains
+    /// whose costs differ by at most ε times the lesser cost count as equal. It is used in
+    /// exactly three places: the deterministic choice ties every chain within the band of the
+    /// best, `cost_k ≤ cost_best + ε · |cost_best|`, and splits the trips facing a tie evenly
+    /// over its chains ([`crate::HighestUtility`]); a chain the search adds counts as found only
+    /// when it beats the trip's cheapest chain by more than the band (the stopping rule's found
+    /// share, [`IterationReport::found_share`]); and, through the deterministic choice's
+    /// probabilities (`1 / k` over the `k` tied chains), the switch floor counts the chance of a
+    /// tie, so the switch excess is the excess beyond the band. The logit does not read it. 0:
+    /// only chains of exactly equal cost tie, and every chain cheaper than the set's best
+    /// counts as found.
+    pub indifference_band: f64,
+    /// The largest expected switch excess ([`IterationReport::switch_excess_expected`]: the
+    /// share of trips that would change chain beyond the stationary chance if everyone
+    /// reconsidered, at the current costs), in absolute value and averaged over the last three
+    /// iterations, at which the loop may stop (default 0.05: one trip in twenty).
+    ///
+    /// The rule reads an expectation over the whole population, not a realised share: the
+    /// realised excess ([`IterationReport::switch_excess`]) and the switch share above its floor
+    /// ([`IterationReport::switch_above_floor`]) are reported only. The realised excess is a
+    /// share among the travellers who happened to reconsider, whose sampling noise grows as
+    /// the averaging step falls, so a rule on it either stops on a low draw or, given a noise
+    /// margin, cannot stop late in a run; the switch share above its floor shrinks with the
+    /// step whether or not the assignment is stationary. The expected excess has neither
+    /// fault: it is 0 exactly at a stationary state, whatever the step.
+    ///
+    /// **Under the deterministic choice** it is the share of trips on a chain beyond the
+    /// indifference band of their best, which falls only as the averaging moves a bin's costs by
+    /// less than the band; the travellers of one bin of departure time who reconsider read the
+    /// same costs and move as one block. On a bottleneck with 150 cars a bin a quarter of the
+    /// trips are still beyond the band after 200 iterations, so such a run goes to
+    /// [`Self::max_iterations`]. A run that reaches it did not stop by the rule.
     pub switch_tolerance: f64,
     /// The largest share of trips (weighted) the search may still find a new chain for when
     /// the loop stops (default 0: nothing new).
@@ -97,7 +141,8 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             min_iterations: 3,
-            max_iterations: 20,
+            max_iterations: 50,
+            indifference_band: 0.01,
             switch_tolerance: 0.05,
             found_tolerance: 0.0,
             step_offset: 3,
@@ -137,7 +182,17 @@ struct Found {
     /// `(trip, chain)` for every trip something new was found for, in trip order.
     additions: Vec<(TripId, Chain)>,
     /// The share of trips (weighted) with an addition.
+    added_share: f64,
+    /// How many additions beat the trip's cheapest chain by more than the band.
+    found: u32,
+    /// The share of trips (weighted) with such an addition: what the stopping rule reads.
     share: f64,
+}
+
+/// Whether a chain of cost `new` beats a set whose cheapest chain costs `best` by more than
+/// the indifference `band`; any chain beats an empty set (`best` infinite).
+fn beyond_band(new: f64, best: f64, band: f64) -> bool {
+    best.is_infinite() || new < best - band * best.abs()
 }
 
 /// Stage 1 without the stopping check: the chain search of every trip at `state`.
@@ -147,26 +202,37 @@ fn search_stage(
     state: &State,
     params: &Params,
 ) -> Found {
-    let (mut total, mut new) = (0.0, 0.0);
+    let demand = demand(inputs);
+    let (mut total, mut added, mut beyond) = (0.0, 0.0, 0.0);
+    let mut found = 0_u32;
     let mut additions = Vec::new();
     for (t, fresh) in search.fresh_chains(state, params).into_iter().enumerate() {
         let trip = TripId::from_index(t);
         let traveller = inputs.trips.traveller(trip);
-        let w = f64::from(inputs.travellers.weight(traveller));
+        let w = demand.weight(traveller);
         total += w;
         if let Some(chain) = fresh {
-            new += w;
+            let k = demand.coefficients(traveller);
+            let best = state
+                .trip(trip)
+                .set
+                .iter()
+                .map(|c| k.cost(c.total()))
+                .fold(f64::INFINITY, f64::min);
+            if beyond_band(k.cost(chain.total()), best, params.indifference_band) {
+                beyond += w;
+                found += 1;
+            }
+            added += w;
             additions.push((trip, chain));
         }
     }
-    Found { additions, share: if total > 0.0 { new / total } else { 0.0 } }
+    let share = |x: f64| if total > 0.0 { x / total } else { 0.0 };
+    Found { additions, added_share: share(added), found, share: share(beyond) }
 }
 
-/// Whether the loop stops at the search stage of `iteration`, given what the search found and
-/// the last iteration's report.
-/// The mean switch excess of the last three iterations (fewer at the start), `None` before any.
-/// Three, because the excess is a share among the few trips that reconsider late in a run and
-/// one iteration's value is noisy.
+/// The rule's stability term: the absolute value of the mean expected switch excess of the last
+/// three reports (fewer at the start), `None` before any.
 fn tail_excess(reports: &[IterationReport]) -> Option<f64> {
     let tail = &reports[reports.len().saturating_sub(3)..];
     if tail.is_empty() {
@@ -174,13 +240,15 @@ fn tail_excess(reports: &[IterationReport]) -> Option<f64> {
     }
     #[allow(clippy::cast_precision_loss, reason = "at most three reports")]
     let n = tail.len() as f64;
-    Some(tail.iter().map(|r| r.switch_excess).sum::<f64>() / n)
+    Some((tail.iter().map(|r| r.switch_excess_expected).sum::<f64>() / n).abs())
 }
 
-fn should_stop(iteration: u32, found: &Found, last: Option<f64>, params: &Params) -> bool {
+/// Whether the loop stops at a search stage, given what the search found and the stability
+/// term of the last iterations; `done` is the number of iterations this run has completed.
+fn should_stop(done: u32, found: &Found, last: Option<f64>, params: &Params) -> bool {
     let Some(last) = last else { return false };
-    iteration >= 1
-        && iteration >= params.min_iterations
+    done >= 1
+        && done >= params.min_iterations
         && found.share <= params.found_tolerance
         && last <= params.switch_tolerance
 }
@@ -210,6 +278,7 @@ fn choose_stage(
         &rngs.1,
         iteration,
         params.step_offset,
+        params.indifference_band,
     )
 }
 
@@ -302,6 +371,7 @@ fn assess_stage(
     loaded: &Loaded,
     of_trip: &[TripId],
     iteration: u32,
+    band: f64,
 ) -> Result<IterationReport, AssignError> {
     let demand = demand(inputs);
     let weight = |trip: TripId| demand.weight(inputs.trips.traveller(trip));
@@ -341,7 +411,7 @@ fn assess_stage(
     let unfinished = departed - arrived;
     // The gaps and the spread, on the re-priced sets.
     let situations = chooser::situations(state);
-    let batch = chooser::batch(&demand, state, sizes, &situations, iteration);
+    let batch = chooser::batch(&demand, state, sizes, &situations, iteration, band);
     let probabilities = chooser::probabilities(inputs.model, &batch)?;
     // Per situation with a chain: the cost of the chain taken, the least cost of the set and the
     // expected cost under the model, unweighted; summed below in trip order.
@@ -379,9 +449,13 @@ fn assess_stage(
         iteration,
         found: 0,
         found_share: 0.0,
+        added: 0,
+        added_share: 0.0,
         switch_share: 0.0,
         switch_floor: 0.0,
         switch_excess: 0.0,
+        switch_above_floor: 0.0,
+        switch_excess_expected: 0.0,
         departed,
         arrived,
         unfinished,
@@ -400,7 +474,13 @@ fn demand<'a>(inputs: &Inputs<'a>) -> Demand<'a> {
 }
 
 /// Check the inputs fit together before anything runs.
-fn check(inputs: &Inputs<'_>, state: &State) -> Result<(), AssignError> {
+fn check(inputs: &Inputs<'_>, state: &State, params: &Params) -> Result<(), AssignError> {
+    let band = params.indifference_band;
+    if !(band.is_finite() && band >= 0.0) {
+        return Err(AssignError::Input(format!(
+            "the indifference band must be a finite number of at least 0, not {band}"
+        )));
+    }
     let classes = inputs.travellers.class_external_ids().count() as usize;
     if inputs.classes.len() < classes {
         return Err(AssignError::Input(format!(
@@ -442,7 +522,7 @@ pub fn assign(
         Some(s) => s.clone(),
         None => State::initial(inputs.network, inputs.travellers, inputs.trips),
     };
-    check(inputs, &state)?;
+    check(inputs, &state, params)?;
     let rngs = (
         StreamRng::new(inputs.seed, Stream::Choice),
         StreamRng::new(inputs.seed, Stream::MsaReselection),
@@ -450,13 +530,16 @@ pub fn assign(
     hooks.before_loop(&state);
     let mut sizes = PathSizes::default();
     let mut reports: Vec<IterationReport> = Vec::new();
-    for iteration in 0..params.max_iterations {
+    let first = state.iterations();
+    for done in 0..params.max_iterations {
+        let iteration = first + done;
         let clock = Instant::now();
         let found = search_stage(&search, inputs, &state, params);
-        if should_stop(iteration, &found, tail_excess(&reports), params) {
+        if should_stop(done, &found, tail_excess(&reports), params) {
             break;
         }
-        let count = u32::try_from(found.additions.len()).expect("fewer than 2^32 trips");
+        let added = u32::try_from(found.additions.len()).expect("fewer than 2^32 trips");
+        let (count, found_share, added_share) = (found.found, found.share, found.added_share);
         for (trip, chain) in found.additions {
             state.trip_mut(trip).add(chain);
         }
@@ -476,12 +559,24 @@ pub fn assign(
         let t_measure = clock.elapsed().as_secs_f64();
 
         let clock = Instant::now();
-        let mut report = assess_stage(inputs, &state, &sizes, &loaded, &of_trip, iteration)?;
+        let mut report = assess_stage(
+            inputs,
+            &state,
+            &sizes,
+            &loaded,
+            &of_trip,
+            iteration,
+            params.indifference_band,
+        )?;
         report.found = count;
-        report.found_share = found.share;
+        report.found_share = found_share;
+        report.added = added;
+        report.added_share = added_share;
         report.switch_share = switching.share;
         report.switch_floor = switching.floor;
         report.switch_excess = switching.excess;
+        report.switch_above_floor = switching.share - switching.floor;
+        report.switch_excess_expected = switching.expected;
         report.stage_seconds = StageSeconds {
             search: t_search,
             choose: t_choose,
@@ -490,6 +585,7 @@ pub fn assign(
             assess: clock.elapsed().as_secs_f64(),
         };
         reports.push(report);
+        state.complete_iteration();
     }
     Ok((state, reports))
 }

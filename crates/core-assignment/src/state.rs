@@ -10,7 +10,10 @@
 //!   **probabilities of the last choice** (what the choice model gave each chain of the set
 //!   when the trip last faced a choice);
 //! - per traveller, the **vehicles** they can use: for now, whether they have a car (from their
-//!   class's ownership). Where each vehicle is during the day is not tracked.
+//!   class's ownership). Where each vehicle is during the day is not tracked;
+//! - the number of **assignment iterations completed** on the way to it, which sets the
+//!   averaging rule's step: a run continued from a state (`Inputs::initial`) goes on with the
+//!   next iteration's step, not with the first one's.
 //!
 //! **Sets only grow.** A chain, once in a set, keeps its position, so its index is a stable
 //! identity across iterations: the choice model's random draws are addressed by it, and a
@@ -67,6 +70,7 @@ pub struct State {
     links: u32,
     trips: Vec<TripState>,
     has_car: Vec<bool>,
+    iterations: u32,
 }
 
 impl State {
@@ -81,6 +85,7 @@ impl State {
             has_car: (0..travellers.len())
                 .map(|t| travellers.ownership(TravellerId::new(t)).car)
                 .collect(),
+            iterations: 0,
         }
     }
 
@@ -124,6 +129,18 @@ impl State {
         &mut self.trips
     }
 
+    /// How many assignment iterations were completed on the way to this state (0 for
+    /// [`Self::initial`]); a run started from it numbers its first iteration so.
+    #[must_use]
+    pub fn iterations(&self) -> u32 {
+        self.iterations
+    }
+
+    /// Count one more completed iteration.
+    pub(crate) fn complete_iteration(&mut self) {
+        self.iterations += 1;
+    }
+
     /// Whether `traveller` has a car to drive.
     ///
     /// # Panics
@@ -151,7 +168,9 @@ fn same_link_times(a: &LinkTimes, b: &LinkTimes, links: u32) -> bool {
 }
 
 impl PartialEq for State {
-    /// Equal sets, current chains, probabilities and vehicles, and link times equal to the bit.
+    /// Equal sets, current chains, probabilities and vehicles, and link times equal to the bit;
+    /// the count of iterations completed is not compared (two states are the same assignment
+    /// however many iterations led to them).
     fn eq(&self, other: &Self) -> bool {
         self.links == other.links
             && self.trips == other.trips
