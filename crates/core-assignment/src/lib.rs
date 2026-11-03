@@ -51,9 +51,16 @@
 //! queues at the links' downstream ends discharging at capacity, signals included): the chain
 //! search finds one route per trip per iteration, so a choice set grows by at most one chain per
 //! iteration and nothing is enumerated in advance. A further mode is a further [`LegPlanner`],
-//! a further loading a further [`Loader`], behind the same contracts. Everything runs on one
-//! thread; every random draw is addressed by identity, so splitting the stages over threads
-//! would change no result.
+//! a further loading a further [`Loader`], behind the same contracts.
+//!
+//! **Threads and shared searches.** The car planner answers the trips of one origin, user class
+//! and departure window with as few searches as give every trip, link for link, the route its
+//! own search would give ([`planner`], *shared searches*). The search, the choice's draws and
+//! path sizes, the re-pricing and the per-trip terms of the convergence measures run in
+//! parallel in fixed chunks, joined in order; every random draw is addressed by identity and
+//! every sum over trips is taken in trip order, so the results are the same, to the bit, on one
+//! thread or on many (the `parallel` feature, on by default; without it everything runs on the
+//! calling thread).
 //!
 //! Nothing in the loop is specific to the car: a bicycle leg would be planned by a planner of
 //! its own on the bicycle layer, and chosen, loaded and measured by the same stages.
@@ -65,6 +72,7 @@ pub mod chooser;
 pub mod error;
 pub mod hooks;
 pub mod loader;
+mod parallel;
 pub mod planner;
 pub mod report;
 pub mod search;

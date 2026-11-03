@@ -668,6 +668,7 @@ dependencies = [
  "openmobisim-core-loading",
  "openmobisim-core-routes",
  "openmobisim-core-types",
+ "rayon",
 ]
 
 [[package]]

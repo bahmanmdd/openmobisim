@@ -191,12 +191,22 @@ impl Loader for PointQueue<'_> {
             FidelityLevel::PointQueue,
             self.bin_seconds,
         );
-        let position: HashMap<VehicleId, usize> =
-            vehicles.iter().enumerate().map(|(i, v)| (v.id, i)).collect();
         let mut arrival = vec![None; vehicles.len()];
-        for t in &trajectories {
-            if let Some(&i) = position.get(&t.vehicle) {
-                arrival[i] = Some(f64::from(t.arrival().get()));
+        // The loop numbers its vehicles 0, 1, 2, … in order, so a vehicle's number is its place;
+        // other numberings are looked up.
+        if vehicles.iter().enumerate().all(|(i, v)| v.id.index() == i) {
+            for t in &trajectories {
+                if let Some(slot) = arrival.get_mut(t.vehicle.index()) {
+                    *slot = Some(f64::from(t.arrival().get()));
+                }
+            }
+        } else {
+            let position: HashMap<VehicleId, usize> =
+                vehicles.iter().enumerate().map(|(i, v)| (v.id, i)).collect();
+            for t in &trajectories {
+                if let Some(&i) = position.get(&t.vehicle) {
+                    arrival[i] = Some(f64::from(t.arrival().get()));
+                }
             }
         }
         Loaded { arrival, entry: Some(tables) }

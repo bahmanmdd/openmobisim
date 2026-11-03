@@ -13,6 +13,12 @@ categories.workspace = true
 [lints]
 workspace = true
 
+[features]
+# The stages' work on every logical core. Results are identical either way: the work is split
+# into fixed chunks and joined in order, and every random draw is addressed by identity.
+default = ["parallel"]
+parallel = ["dep:rayon"]
+
 [dependencies]
 openmobisim-core-types = { workspace = true }
 openmobisim-core-graph = { workspace = true }
@@ -20,3 +26,8 @@ openmobisim-core-demand = { workspace = true }
 openmobisim-core-loading = { workspace = true }
 openmobisim-core-routes = { workspace = true }
 openmobisim-core-choice = { workspace = true }
+rayon = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Runs at other thread counts, to check they agree.
+rayon = { workspace = true }

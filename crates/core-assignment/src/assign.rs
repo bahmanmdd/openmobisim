@@ -32,7 +32,14 @@
 //! **Reproducibility.** Every random draw is addressed by identity (the re-choice draws by
 //! traveller and iteration, the choice model's by traveller, trip, iteration and chain), so
 //! the same inputs and seed give the same states and reports, to the bit, on any machine of the
-//! same platform. The loop runs on one thread.
+//! same platform.
+//!
+//! **Threads.** The search, the choice's draws and path sizes, the re-pricing and the per-trip
+//! terms of the convergence measures run on the threads of the calling thread's pool (rayon's
+//! global pool, unless the caller installs one), in fixed chunks of trips or of groups of
+//! trips, joined in order. Each trip's result depends only on the trip and the state, and every
+//! sum over trips is taken trip after trip in trip order, so a run gives the same states and
+//! reports, to the bit, on one thread or on many. The loading runs as its loader runs it.
 //!
 //! [`LinkTimes::route_seconds`]: openmobisim_core_loading::LinkTimes::route_seconds
 
@@ -50,14 +57,18 @@ use openmobisim_core_types::units::Pcu;
 
 use crate::attributes::Coefficients;
 use crate::chain::Chain;
-use crate::chooser::{self, Demand, Switching};
+use crate::chooser::{self, Demand, PathSizes, Switching};
 use crate::error::AssignError;
 use crate::hooks::StageHook;
 use crate::loader::{Loaded, Loader};
+use crate::parallel;
 use crate::planner::{CarPlanner, CostSource};
 use crate::report::{IterationReport, StageSeconds};
 use crate::search::ChainSearch;
-use crate::state::State;
+use crate::state::{State, TripState};
+
+/// The trips a thread takes at a time in the measure and assess stages.
+const TRIPS_PER_CHUNK: usize = 512;
 
 /// The loop's parameters. The defaults are proposals, each one named so it is easy to change.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -138,16 +149,11 @@ fn search_stage(
 ) -> Found {
     let (mut total, mut new) = (0.0, 0.0);
     let mut additions = Vec::new();
-    for t in 0..inputs.trips.len() {
-        let trip = TripId::new(t);
+    for (t, fresh) in search.fresh_chains(state, params).into_iter().enumerate() {
+        let trip = TripId::from_index(t);
         let traveller = inputs.trips.traveller(trip);
         let w = f64::from(inputs.travellers.weight(traveller));
         total += w;
-        let set = &state.trip(trip).set;
-        let fresh = search
-            .search(traveller, trip, state, params)
-            .into_iter()
-            .find(|c| !set.iter().any(|k| k.same_alternative(c)));
         if let Some(chain) = fresh {
             new += w;
             additions.push((trip, chain));
@@ -188,12 +194,23 @@ fn should_stop(iteration: u32, found: &Found, last: Option<f64>, params: &Params
 fn choose_stage(
     inputs: &Inputs<'_>,
     state: &mut State,
+    sizes: &mut PathSizes,
     rngs: &(StreamRng, StreamRng),
     iteration: u32,
     params: &Params,
 ) -> Result<Switching, AssignError> {
     let demand = demand(inputs);
-    chooser::choose(&demand, state, inputs.model, &rngs.0, &rngs.1, iteration, params.step_offset)
+    sizes.refresh(inputs.network, state);
+    chooser::choose(
+        &demand,
+        state,
+        sizes,
+        inputs.model,
+        &rngs.0,
+        &rngs.1,
+        iteration,
+        params.step_offset,
+    )
 }
 
 /// Stage 3: the vehicles of every trip's current chain (one per car leg that uses a link,
@@ -249,24 +266,28 @@ fn measure_stage(
     loaded: &Loaded,
 ) {
     state.set_link_times(loaded.link_times(network));
-    for t in 0..state.trips().len() {
-        for c in 0..state.trips()[t].set.len() {
-            // Priced on a copy, so the planner reads the whole state, then put back.
-            let mut chain = state.trips()[t].set[c].clone();
-            let mut clock = None;
-            for leg in chain.legs_mut() {
-                if let Some(at) = clock {
-                    leg.departure = at;
+    // The sets are moved out while they are priced, so the planners read the rest of the state
+    // (its link times) while every set is changed in place, trip by trip, in parallel.
+    let mut trips: Vec<TripState> = std::mem::take(state.trips_mut());
+    {
+        let state = &*state;
+        parallel::for_each_mut(&mut trips, TRIPS_PER_CHUNK, |entry| {
+            for chain in &mut entry.set {
+                let mut clock = None;
+                for leg in chain.legs_mut() {
+                    if let Some(at) = clock {
+                        leg.departure = at;
+                    }
+                    if let Some(planner) = search.planner(leg.mode) {
+                        planner.reprice(leg, state);
+                    }
+                    clock = Some(leg.departure + leg.attributes.total_seconds());
                 }
-                if let Some(planner) = search.planner(leg.mode) {
-                    planner.reprice(leg, state);
-                }
-                clock = Some(leg.departure + leg.attributes.total_seconds());
+                chain.refresh_total();
             }
-            chain.refresh_total();
-            state.trips_mut()[t].set[c] = chain;
-        }
+        });
     }
+    *state.trips_mut() = trips;
 }
 
 /// Stage 5: the convergence measures of `iteration`.
@@ -277,6 +298,7 @@ fn measure_stage(
 fn assess_stage(
     inputs: &Inputs<'_>,
     state: &State,
+    sizes: &PathSizes,
     loaded: &Loaded,
     of_trip: &[TripId],
     iteration: u32,
@@ -319,22 +341,36 @@ fn assess_stage(
     let unfinished = departed - arrived;
     // The gaps and the spread, on the re-priced sets.
     let situations = chooser::situations(state);
-    let batch = chooser::batch(&demand, state, &situations, iteration);
+    let batch = chooser::batch(&demand, state, sizes, &situations, iteration);
     let probabilities = chooser::probabilities(inputs.model, &batch)?;
+    // Per situation with a chain: the cost of the chain taken, the least cost of the set and the
+    // expected cost under the model, unweighted; summed below in trip order.
+    let index: Vec<usize> = (0..situations.len()).collect();
+    let terms: Vec<Option<(f64, f64, f64)>> = parallel::map(
+        &index,
+        TRIPS_PER_CHUNK,
+        || (),
+        |(), &s| {
+            let trip = situations[s];
+            let entry = state.trip(trip);
+            let current = entry.current?;
+            let k = demand.coefficients(inputs.trips.traveller(trip));
+            let cost = |c: &Chain| k.cost(c.total());
+            let low = entry.set.iter().map(cost).fold(f64::INFINITY, f64::min);
+            let mean: f64 =
+                entry.set.iter().map(cost).zip(probabilities.of(s)).map(|(c, p)| c * p).sum();
+            Some((cost(&entry.set[current]), low, mean))
+        },
+    );
     let (mut paid, mut least, mut expected, mut cheapest, mut chosen) = (0.0, 0.0, 0.0, 0.0, 0.0);
-    for (s, &trip) in situations.iter().enumerate() {
-        let entry = state.trip(trip);
-        let Some(current) = entry.current else { continue };
+    for (&trip, term) in situations.iter().zip(terms) {
+        let Some((taken, low, mean)) = term else { continue };
         let w = weight(trip);
-        let k = demand.coefficients(inputs.trips.traveller(trip));
-        let costs: Vec<f64> = entry.set.iter().map(|c| k.cost(c.total())).collect();
-        let low = costs.iter().copied().fold(f64::INFINITY, f64::min);
-        let mean: f64 = costs.iter().zip(&probabilities[s]).map(|(c, p)| c * p).sum();
-        paid += w * costs[current];
+        paid += w * taken;
         least += w * low;
         expected += w * mean;
         chosen += w;
-        if costs[current] <= low {
+        if taken <= low {
             cheapest += w;
         }
     }
@@ -360,12 +396,7 @@ fn assess_stage(
 }
 
 fn demand<'a>(inputs: &Inputs<'a>) -> Demand<'a> {
-    Demand {
-        network: inputs.network,
-        travellers: inputs.travellers,
-        trips: inputs.trips,
-        classes: inputs.classes,
-    }
+    Demand { travellers: inputs.travellers, trips: inputs.trips, classes: inputs.classes }
 }
 
 /// Check the inputs fit together before anything runs.
@@ -417,6 +448,7 @@ pub fn assign(
         StreamRng::new(inputs.seed, Stream::MsaReselection),
     );
     hooks.before_loop(&state);
+    let mut sizes = PathSizes::default();
     let mut reports: Vec<IterationReport> = Vec::new();
     for iteration in 0..params.max_iterations {
         let clock = Instant::now();
@@ -431,7 +463,7 @@ pub fn assign(
         let t_search = clock.elapsed().as_secs_f64();
 
         let clock = Instant::now();
-        let switching = choose_stage(inputs, &mut state, &rngs, iteration, params)?;
+        let switching = choose_stage(inputs, &mut state, &mut sizes, &rngs, iteration, params)?;
         let t_choose = clock.elapsed().as_secs_f64();
 
         let clock = Instant::now();
@@ -444,7 +476,7 @@ pub fn assign(
         let t_measure = clock.elapsed().as_secs_f64();
 
         let clock = Instant::now();
-        let mut report = assess_stage(inputs, &state, &loaded, &of_trip, iteration)?;
+        let mut report = assess_stage(inputs, &state, &sizes, &loaded, &of_trip, iteration)?;
         report.found = count;
         report.found_share = found.share;
         report.switch_share = switching.share;

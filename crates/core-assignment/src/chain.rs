@@ -112,6 +112,13 @@ impl Chain {
                 .all(|(a, b)| a.mode == b.mode && a.links == b.links)
     }
 
+    /// Whether the chain is one leg of `mode` along `links`: [`Self::same_alternative`] as the
+    /// chain that leg would make, without making it.
+    #[must_use]
+    pub fn is_single_leg(&self, mode: Mode, links: &[LinkId]) -> bool {
+        matches!(self.legs.as_slice(), [leg] if leg.mode == mode && leg.links == links)
+    }
+
     /// Every road link of the chain, leg after leg, as raw link numbers.
     #[must_use]
     pub fn road_links(&self) -> Vec<u32> {

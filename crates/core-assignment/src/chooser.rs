@@ -48,8 +48,15 @@
 //! from the chain a trip had before (that would make the switch share equal the floor by
 //! construction, whatever the state).
 //!
-//! The chooser runs on one thread; every draw is addressed by identity, so splitting it over
-//! threads would change no result.
+//! **Threads.** The re-choice draws and each set's path-size factors are worked out in
+//! parallel, in fixed chunks of trips; every draw is addressed by identity and every factor
+//! depends on its set alone, so the answers do not depend on the thread count. The choice model
+//! is called once per stage with the whole batch, and the sums (switch share, floor) are taken
+//! trip after trip in trip order, so their rounding is that of one thread.
+//!
+//! **Path sizes are kept.** A set's path-size factors depend only on its chains' links, which
+//! never change, so they are computed when a set grows and kept between iterations
+//! (`PathSizes`), not computed again for every batch.
 
 use openmobisim_core_choice::model::first_argmax;
 use openmobisim_core_choice::{ChoiceBatch, ChoiceError, ChoiceModel, Choices, Logit, Options};
@@ -60,8 +67,13 @@ use openmobisim_core_types::ids::{EntityId, LinkId, TravellerId, TripId};
 use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 
 use crate::attributes::Coefficients;
+use crate::chain::Chain;
 use crate::error::AssignError;
+use crate::parallel;
 use crate::state::State;
+
+/// The trips a thread takes at a time in the chooser's parallel work.
+const TRIPS_PER_CHUNK: usize = 512;
 
 /// The name of the batch attribute holding a chain's systematic utility.
 pub const UTILITY: &str = "utility";
@@ -150,7 +162,6 @@ pub fn rechooses(rng: &StreamRng, traveller: TravellerId, iteration: u32, offset
 
 /// What the run's fixed inputs give the chooser.
 pub(crate) struct Demand<'a> {
-    pub network: &'a RoadNetwork,
     pub travellers: &'a Travellers,
     pub trips: &'a Trips,
     pub classes: &'a [Coefficients],
@@ -179,46 +190,90 @@ pub(crate) fn situations(state: &State) -> Vec<TripId> {
         .collect()
 }
 
-/// The batch of `situations` at `iteration`: each set's chains with their utility and path size
-/// at the state's current attributes.
+/// The logarithm of the path-size factor of every chain of every trip's set, kept between
+/// iterations and computed again only for a set that grew (see the [module docs](self)).
+#[derive(Debug, Default)]
+pub(crate) struct PathSizes {
+    ln: Vec<Vec<f64>>,
+}
+
+impl PathSizes {
+    /// Bring the factors up to date with the sets of `state`.
+    pub(crate) fn refresh(&mut self, network: &RoadNetwork, state: &State) {
+        let trips = state.trips();
+        self.ln.resize(trips.len(), Vec::new());
+        let grown: Vec<usize> =
+            (0..trips.len()).filter(|&t| self.ln[t].len() != trips[t].set.len()).collect();
+        let fresh = parallel::map(
+            &grown,
+            TRIPS_PER_CHUNK,
+            || (),
+            |(), &t| ln_path_sizes(network, &trips[t].set),
+        );
+        for (t, ln) in grown.into_iter().zip(fresh) {
+            self.ln[t] = ln;
+        }
+    }
+
+    /// The factors of `trip`'s set, one per chain.
+    fn of(&self, trip: TripId) -> &[f64] {
+        &self.ln[trip.index()]
+    }
+}
+
+/// The logarithm of each chain's path-size factor over `set`, by the length of its road links.
+fn ln_path_sizes(network: &RoadNetwork, set: &[Chain]) -> Vec<f64> {
+    let length = |l: u32| network.link_length(LinkId::new(l)).get();
+    let links: Vec<Vec<u32>> = set.iter().map(Chain::road_links).collect();
+    let routes: Vec<&[u32]> = links.iter().map(Vec::as_slice).collect();
+    path_sizes(&routes, length).into_iter().map(f64::ln).collect()
+}
+
+/// The batch of `situations` at `iteration`: each set's chains with their utility at the
+/// state's current attributes and their path size (`sizes`, up to date with the sets).
 pub(crate) fn batch(
     demand: &Demand<'_>,
     state: &State,
+    sizes: &PathSizes,
     situations: &[TripId],
     iteration: u32,
 ) -> ChoiceBatch {
     let mut batch = ChoiceBatch::new(iteration, &[UTILITY, LN_PATH_SIZE]);
-    let length = |l: u32| demand.network.link_length(LinkId::new(l)).get();
     for &trip in situations {
         let traveller = demand.trips.traveller(trip);
         let class = demand.travellers.user_class(traveller);
         batch.begin_situation_in(traveller.raw(), trip.raw(), class.raw());
         let set = &state.trip(trip).set;
-        let links: Vec<Vec<u32>> = set.iter().map(crate::chain::Chain::road_links).collect();
-        let routes: Vec<&[u32]> = links.iter().map(Vec::as_slice).collect();
-        let sizes = path_sizes(&routes, length);
         let k = demand.coefficients(traveller);
-        for (i, (chain, size)) in set.iter().zip(sizes).enumerate() {
+        for (i, (chain, &ln_size)) in set.iter().zip(sizes.of(trip)).enumerate() {
             let identity = u32::try_from(i).expect("fewer than 2^32 chains in a set");
-            batch.push_alternative(identity, &[k.utility(chain.total()), size.ln()]);
+            batch.push_alternative(identity, &[k.utility(chain.total()), ln_size]);
         }
     }
     batch
 }
 
-/// The model's probability of every alternative of `batch`, by situation; `NaN` everywhere if
-/// the model has none to give.
+/// The model's probability of every alternative of a batch, read by situation.
+pub(crate) struct Probabilities {
+    flat: Vec<f64>,
+    offsets: Vec<u32>,
+}
+
+impl Probabilities {
+    /// The probabilities of situation `s`'s alternatives.
+    pub(crate) fn of(&self, s: usize) -> &[f64] {
+        &self.flat[self.offsets[s] as usize..self.offsets[s + 1] as usize]
+    }
+}
+
+/// The model's probability of every alternative of `batch`; `NaN` everywhere if the model has
+/// none to give.
 pub(crate) fn probabilities(
     model: &dyn ChoiceModel,
     batch: &ChoiceBatch,
-) -> Result<Vec<Vec<f64>>, AssignError> {
-    let flat = model.probabilities(batch)?;
-    Ok((0..batch.situations())
-        .map(|s| match &flat {
-            Some(p) => p[batch.range(s)].to_vec(),
-            None => vec![f64::NAN; batch.range(s).len()],
-        })
-        .collect())
+) -> Result<Probabilities, AssignError> {
+    let flat = model.probabilities(batch)?.unwrap_or_else(|| vec![f64::NAN; batch.alternatives()]);
+    Ok(Probabilities { flat, offsets: batch.offsets().to_vec() })
 }
 
 /// What the choose stage measured: the switch share, its floor and the excess per re-chooser.
@@ -232,9 +287,11 @@ pub(crate) struct Switching {
 /// The choose stage: every trip facing a choice is offered its set; the travellers the
 /// averaging rule selects (and every trip without a chain) take the model's choice, the others
 /// keep theirs. Writes the new current chains and the probabilities into `state`.
+#[allow(clippy::too_many_arguments, reason = "the stage's inputs, each named")]
 pub(crate) fn choose(
     demand: &Demand<'_>,
     state: &mut State,
+    sizes: &PathSizes,
     model: &dyn ChoiceModel,
     choice_rng: &StreamRng,
     reselection_rng: &StreamRng,
@@ -242,16 +299,27 @@ pub(crate) fn choose(
     offset: u32,
 ) -> Result<Switching, AssignError> {
     let situations = situations(state);
-    let batch = batch(demand, state, &situations, iteration);
+    let batch = batch(demand, state, sizes, &situations, iteration);
     batch.validate()?;
     let probabilities = probabilities(model, &batch)?;
     let alpha = rechoice_probability(iteration, offset);
+    // Per situation, whether its trip had no chain and whether it chooses now.
+    let drawn: Vec<(bool, bool)> = {
+        let state = &*state;
+        parallel::map(
+            &situations,
+            TRIPS_PER_CHUNK,
+            || (),
+            |(), &trip| {
+                let none = state.trip(trip).current.is_none();
+                let traveller = demand.trips.traveller(trip);
+                (none, none || rechooses(reselection_rng, traveller, iteration, offset))
+            },
+        )
+    };
     let mut choosing: Vec<usize> = Vec::new();
     let mut chance: Vec<f64> = Vec::with_capacity(situations.len());
-    for (s, &trip) in situations.iter().enumerate() {
-        let traveller = demand.trips.traveller(trip);
-        let none = state.trip(trip).current.is_none();
-        let chooses = none || rechooses(reselection_rng, traveller, iteration, offset);
+    for (s, &(none, chooses)) in drawn.iter().enumerate() {
         chance.push(if none { 1.0 } else { alpha });
         if chooses {
             choosing.push(s);
@@ -271,7 +339,7 @@ pub(crate) fn choose(
         let before = entry.current;
         let after = picked[s].or(before);
         // The chance that two independent draws from the model's probabilities differ.
-        let differs = 1.0 - probabilities[s].iter().map(|p| p * p).sum::<f64>();
+        let differs = 1.0 - probabilities.of(s).iter().map(|p| p * p).sum::<f64>();
         total += w;
         reconsidering += w * chance[s];
         floor += w * chance[s] * if before.is_none() { 1.0 } else { differs };
@@ -279,7 +347,8 @@ pub(crate) fn choose(
             switched += w;
         }
         entry.current = after;
-        entry.probabilities.clone_from(&probabilities[s]);
+        entry.probabilities.clear();
+        entry.probabilities.extend_from_slice(probabilities.of(s));
     }
     let share = |x: f64| if total > 0.0 { x / total } else { 0.0 };
     let excess = if reconsidering > 0.0 { (switched - floor) / reconsidering } else { 0.0 };
