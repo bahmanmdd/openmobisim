@@ -13,7 +13,8 @@
 //!
 //! Handles to the immutable inputs (the network and its layers, a timetable,
 //! parkings, route sets), the run (`run_pipeline`, which takes the scenario's
-//! settings by name and returns the run's summary and the paths of its files),
+//! settings by name and returns the run's summary and the paths of its files;
+//! `run_one_loop`, the same for the one-loop assignment of car trips),
 //! and the choice models written in Python, called once per batch. Arguments
 //! are checked here, so an error names the Python argument; the semantics live
 //! in the core crates, which never see Python.
@@ -39,6 +40,7 @@ mod choice;
 mod environment;
 mod frozen_day;
 mod network;
+mod one_loop;
 mod parking;
 mod pipeline;
 mod policy;
@@ -214,6 +216,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(network_edit, m)?)?;
     m.add_function(wrap_pyfunction!(grid_node_lonlat, m)?)?;
     m.add_function(wrap_pyfunction!(run_pipeline, m)?)?;
+    m.add_function(wrap_pyfunction!(one_loop::run_one_loop, m)?)?;
     m.add_function(wrap_pyfunction!(pipeline::equilibration_strategies, m)?)?;
     m.add_function(wrap_pyfunction!(pipeline::demand_aggregate_space, m)?)?;
     m.add_function(wrap_pyfunction!(pipeline::demand_aggregate_time, m)?)?;

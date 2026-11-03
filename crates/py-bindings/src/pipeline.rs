@@ -68,9 +68,10 @@ use openmobisim_io_parquet::{
 
 /// One `trips.parquet` row, as a plain tuple in `RawTrip`'s field order; the
 /// last field is the optional `mode`, by name.
-type TripRow = (String, u32, f64, f64, f64, f64, u32, String, Option<u32>, Option<String>);
+pub(crate) type TripRow =
+    (String, u32, f64, f64, f64, f64, u32, String, Option<u32>, Option<String>);
 
-fn trip_from_row(row: TripRow) -> PyResult<RawTrip> {
+pub(crate) fn trip_from_row(row: TripRow) -> PyResult<RawTrip> {
     let (
         traveller_id,
         trip_seq,
@@ -144,9 +145,9 @@ pub fn demand_aggregate_time(trips: Vec<TripRow>, start: Option<u32>) -> PyResul
 }
 
 /// One `persons.parquet` row, as a plain tuple in `RawPerson`'s field order.
-type PersonRow = (String, Option<bool>, Option<bool>, Option<bool>, Option<String>);
+pub(crate) type PersonRow = (String, Option<bool>, Option<bool>, Option<bool>, Option<String>);
 
-fn person_from_row(row: PersonRow) -> RawPerson {
+pub(crate) fn person_from_row(row: PersonRow) -> RawPerson {
     let (traveller_id, owns_car, owns_bike, has_transit_pass, user_class) = row;
     RawPerson { traveller_id, owns_car, owns_bike, has_transit_pass, user_class }
 }
@@ -264,9 +265,9 @@ impl Outside {
 
 /// The run's simulation window and what in the demand departs outside it.
 #[derive(Clone, Copy, Debug)]
-struct Window {
-    start_s: u32,
-    end_s: u32,
+pub(crate) struct Window {
+    pub(crate) start_s: u32,
+    pub(crate) end_s: u32,
     /// Whether the scenario gave the start, and the end.
     start_given: bool,
     end_given: bool,
@@ -278,7 +279,7 @@ struct Window {
 }
 
 impl Window {
-    fn resolve(
+    pub(crate) fn resolve(
         trips: &[RawTrip],
         start: Option<u32>,
         end: Option<u32>,
@@ -315,12 +316,16 @@ impl Window {
         Ok(w)
     }
 
-    fn contains(&self, at: Second) -> bool {
+    pub(crate) fn contains(&self, at: Second) -> bool {
         (self.start_s..self.end_s).contains(&at.get())
     }
 
     /// As a dict for Python, with what the timetable's cut took off, if there was one.
-    fn to_dict<'py>(self, py: Python<'py>, cut: Option<WindowCut>) -> PyResult<Bound<'py, PyDict>> {
+    pub(crate) fn to_dict<'py>(
+        self,
+        py: Python<'py>,
+        cut: Option<WindowCut>,
+    ) -> PyResult<Bound<'py, PyDict>> {
         let d = PyDict::new(py);
         d.set_item("start_s", self.start_s)?;
         d.set_item("end_s", self.end_s)?;
@@ -623,6 +628,13 @@ pub struct PyRunSummary {
 #[pyclass(name = "LinkBins", module = "openmobisim._core")]
 pub struct PyLinkBins {
     inner: LinkBins,
+}
+
+impl PyLinkBins {
+    /// The table `inner`, for Python.
+    pub(crate) fn new(inner: LinkBins) -> Self {
+        Self { inner }
+    }
 }
 
 #[pymethods]
@@ -2109,7 +2121,10 @@ pub fn run_pipeline(
 
 /// Write the run's time by stage as `stage,iteration,seconds`; an empty iteration is a
 /// stage outside the iterations.
-fn write_timings(path: &Path, rows: &[(String, Option<u32>, f64)]) -> std::io::Result<()> {
+pub(crate) fn write_timings(
+    path: &Path,
+    rows: &[(String, Option<u32>, f64)],
+) -> std::io::Result<()> {
     use std::fmt::Write as _;
     let mut text = String::from("stage,iteration,seconds\n");
     for (stage, iteration, seconds) in rows {

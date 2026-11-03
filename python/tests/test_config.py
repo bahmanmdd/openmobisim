@@ -76,6 +76,7 @@ def test_the_defaults_file_reads_back_to_the_defaults(tmp_path) -> None:
     assert all(v is None for k, v in arguments.items() if k.endswith("_options"))
     assert _toy(**arguments)._fingerprint() == _toy()._fingerprint()
     assert cfg._run_arguments(run) == {
+        "engine": "current",
         "hub_join_m": 150.0,
         "outputs": "all",
         "design_id": "default",

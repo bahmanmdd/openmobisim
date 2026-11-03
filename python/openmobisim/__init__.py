@@ -114,8 +114,10 @@ from openmobisim.parameters import parameters
 from openmobisim.parking import parking_read_table
 from openmobisim.run import SERVICE_MODES
 from openmobisim.scenario import (
+    ENGINES,
     MODES,
     PRESETS,
+    EngineNotSupportedError,
     FallbackWarning,
     NoAlternativeWarning,
     Run,
@@ -140,6 +142,8 @@ __all__ = [
     "LinkPenaltyOptions",
     "Columns",
     "Config",
+    "ENGINES",
+    "EngineNotSupportedError",
     "FallbackWarning",
     "FrankWolfeOptions",
     "FreeFlowOptions",

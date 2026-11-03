@@ -29,6 +29,7 @@ openmobisim-core-types = { workspace = true }
 openmobisim-core-graph = { workspace = true }
 openmobisim-core-demand = { workspace = true }
 openmobisim-core-sim = { workspace = true }
+openmobisim-core-assignment = { path = "../core-assignment", version = "0.1.0" }
 openmobisim-core-loading = { workspace = true }
 openmobisim-core-routes = { workspace = true }
 openmobisim-core-choice = { workspace = true }
@@ -41,3 +42,14 @@ openmobisim-io-gtfs = { workspace = true }
 pyo3 = { workspace = true, features = ["abi3-py313"] }
 numpy = { workspace = true }
 rayon = { workspace = true }
+# The one-loop assignment's tables are written here, in the same codec choice as
+# `io-parquet`, whose writers take the other engine's types.
+parquet = { version = "59", default-features = false, features = [
+    "arrow",
+    "snap",
+    "lz4",
+    "flate2-zlib-rs",
+    "brotli",
+] }
+arrow-array = { version = "59", default-features = false }
+arrow-schema = { version = "59", default-features = false }
