@@ -32,6 +32,7 @@ mod events;
 pub mod level0;
 pub mod level1;
 pub mod link_bins;
+pub mod link_times;
 pub mod ltm;
 pub mod node_model;
 pub mod vehicle;
@@ -46,6 +47,7 @@ pub use level1::{
     solve_static,
 };
 pub use link_bins::{EntryTables, LinkBinRecorder, LinkBins};
+pub use link_times::{LinkTimes, relative_time_change};
 pub use ltm::{
     CapacityChange, Chain, FidelityLevel, LiveTimes, LockReport, LtmNetwork, LtmOutput, Recording,
     Reroute, RerouteFrom, RerouteReason, RerouteRecord, RerouteRule, Rules, run_ltm,
