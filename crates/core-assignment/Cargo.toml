@@ -1,0 +1,22 @@
+[package]
+name = "openmobisim-core-assignment"
+description = "The iterated dynamic traffic assignment for openmobisim: chains of legs, one choice set per trip, five stages per assignment iteration (search, choose, load, measure, assess)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+openmobisim-core-types = { workspace = true }
+openmobisim-core-graph = { workspace = true }
+openmobisim-core-demand = { workspace = true }
+openmobisim-core-loading = { workspace = true }
+openmobisim-core-routes = { workspace = true }
+openmobisim-core-choice = { workspace = true }
