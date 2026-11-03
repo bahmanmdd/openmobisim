@@ -17,9 +17,12 @@
 //!    model, with the averaging rule deciding who re-chooses ([`crate::chooser`]).
 //! 3. **Load** (`load_stage`): every chosen chain's car legs become vehicles, which the
 //!    run's [`Loader`] moves on the network.
-//! 4. **Measure** (`measure_stage`): the loaded link travel times become the state's, and
-//!    every chain of every set (taken or not) is priced again on them by the planner of each
-//!    leg's mode, the car's driven link by link with [`LinkTimes::route_seconds`].
+//! 4. **Measure** (`measure_stage`): the loading's entry-time tables become the state's link
+//!    travel times by time of day ([`Loaded::link_times`]: per link and bin of entry time, the
+//!    mean time of the vehicles that entered then; free flow for a loading that records none),
+//!    and every chain of every set (taken or not) is priced again on them by the planner of
+//!    each leg's mode, the car's driven link by link with [`LinkTimes::route_seconds`] (the
+//!    wait to get onto the first link included).
 //! 5. **Assess** (`assess_stage`): the convergence measures of the [`IterationReport`].
 //!
 //! Each iteration finishes its own work: nothing of iteration `i` is computed after `i + 1` has
@@ -227,10 +230,15 @@ fn load_stage(
     Ok((loaded, of_trip))
 }
 
-/// Stage 4: the loaded link times become the state's, and every chain of every set is priced
-/// again on them, its legs timed one after the other from the trip's departure.
-fn measure_stage(search: &ChainSearch<'_>, state: &mut State, loaded: &Loaded) {
-    state.set_link_times(loaded.link_times.clone());
+/// Stage 4: the link times the loading measured become the state's, and every chain of every
+/// set is priced again on them, its legs timed one after the other from the trip's departure.
+fn measure_stage(
+    search: &ChainSearch<'_>,
+    network: &RoadNetwork,
+    state: &mut State,
+    loaded: &Loaded,
+) {
+    state.set_link_times(loaded.link_times(network));
     for t in 0..state.trips().len() {
         for c in 0..state.trips()[t].set.len() {
             // Priced on a copy, so the planner reads the whole state, then put back.
@@ -420,7 +428,7 @@ pub fn assign(
         let t_load = clock.elapsed().as_secs_f64();
 
         let clock = Instant::now();
-        measure_stage(&search, &mut state, &loaded);
+        measure_stage(&search, inputs.network, &mut state, &loaded);
         hooks.after_measure(iteration, &state);
         let t_measure = clock.elapsed().as_secs_f64();
 

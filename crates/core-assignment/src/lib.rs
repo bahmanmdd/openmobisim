@@ -12,7 +12,8 @@
 //! 2. **choose**: one choice over every trip's set by the choice model, the averaging rule
 //!    deciding who re-chooses;
 //! 3. **load**: the chosen chains' vehicles moved on the network by the loader;
-//! 4. **measure**: every chain of every set priced again on the loaded link times;
+//! 4. **measure**: the link travel times by time of day built from what the loading recorded,
+//!    and every chain of every set priced again on them;
 //! 5. **assess**: the convergence measures ([`IterationReport`]).
 //!
 //! The [`State`] (link travel times, and per trip the choice set, the current chain and the
@@ -38,7 +39,7 @@
 //! | [`planner`] | the [`LegPlanner`] contract, the [`CarPlanner`], the [`CostSource`] |
 //! | [`search`] | the [`ChainSearch`] and the one feasibility rule, [`feasible`] |
 //! | [`chooser`] | what the choice model is handed, [`HighestUtility`], [`logit`], the averaging rule |
-//! | [`loader`] | the [`Loader`] contract, [`Loaded`], level 0 [`FreeFlow`] |
+//! | [`loader`] | the [`Loader`] contract, [`Loaded`], level 0 [`FreeFlow`], level 2 [`PointQueue`] |
 //! | [`hooks`] | [`StageHook`], code run at fixed points of the loop, and [`NoHooks`] |
 //! | [`report`] | [`IterationReport`], the convergence measures of one iteration |
 //! | [`mod@assign`] | [`assign()`], its [`Inputs`] and [`Params`], the five stages |
@@ -46,11 +47,13 @@
 //!
 //! # What exists so far
 //!
-//! Car trips only, one leg each, loaded at free flow (level 0): the chain search finds one route
-//! per trip per iteration, so a choice set grows by at most one chain per iteration and nothing
-//! is enumerated in advance. A further mode is a further [`LegPlanner`], a further loading a
-//! further [`Loader`], behind the same contracts. Everything runs on one thread; every random
-//! draw is addressed by identity, so splitting the stages over threads would change no result.
+//! Car trips only, one leg each, loaded at free flow (level 0) or by the point queue (level 2,
+//! queues at the links' downstream ends discharging at capacity, signals included): the chain
+//! search finds one route per trip per iteration, so a choice set grows by at most one chain per
+//! iteration and nothing is enumerated in advance. A further mode is a further [`LegPlanner`],
+//! a further loading a further [`Loader`], behind the same contracts. Everything runs on one
+//! thread; every random draw is addressed by identity, so splitting the stages over threads
+//! would change no result.
 //!
 //! Nothing in the loop is specific to the car: a bicycle leg would be planned by a planner of
 //! its own on the bicycle layer, and chosen, loaded and measured by the same stages.
@@ -73,7 +76,7 @@ pub use chain::{Chain, Leg, Place};
 pub use chooser::{HighestUtility, logit, rechoice_probability, rechooses};
 pub use error::AssignError;
 pub use hooks::{NoHooks, StageHook};
-pub use loader::{FreeFlow, Loaded, Loader};
+pub use loader::{FreeFlow, Loaded, Loader, PointQueue};
 pub use planner::{CarPlanner, CostSource, LegPlanner};
 pub use report::{IterationReport, StageSeconds};
 pub use search::{ChainSearch, feasible};

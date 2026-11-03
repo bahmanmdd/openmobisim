@@ -17,25 +17,38 @@
 //!
 //! where `τ_a(t)` is the link's travel time in seconds when entered at `t` (from the state's
 //! [`LinkTimes`]), `m_a` the money charged on the link and `ℓ_a` its length in metres; the clock
-//! advances by `τ_a(t)` along the route (first-in-first-out link times keep this exact). The
-//! search itself is the label-setting search over links of `core-routes`
-//! ([`Search::cheapest_route_from`]), which minimises `τ_a(t) + e_a` with a static extra `e_a`
-//! per link; the planner hands it `e_a = (β_money · m_a + β_km · ℓ_a / 1000) · 60 / β_ivt`, so
-//! the route it returns minimises the cost above (divided by the positive `β_ivt / 60`). A run
-//! without tolls has `m_a = 0` everywhere: the same search, the same code.
+//! advances by `τ_a(t)` along the route (first-in-first-out link times keep this exact).
+//!
+//! **The wait at the origin.** A vehicle setting out at `t₀` onto first link `a` may have to
+//! wait `w_a(t₀)` outside the network before the link takes it (a loading that meters entries
+//! from origins records this wait by the bin of departure,
+//! [`LinkTimes::origin_wait_seconds`]); the wait is time spent in the vehicle, so it costs
+//! `β_ivt / 60` per second like a link's time, and the first link is entered at `t₀ + w_a(t₀)`.
+//! The search counts it for every first link it tries, so a route is never chosen blind to a
+//! queue at its origin. (The classic point queue records no such wait: its storage is infinite
+//! and a departing vehicle enters its first link at once, queueing at that link's downstream
+//! end instead.)
+//!
+//! The search itself is the label-setting search over links of `core-routes`
+//! ([`Search::cheapest_routes_to`] with one target), which minimises
+//! `w_a(t₀) + Σ (τ_a(t) + e_a)` with a static extra `e_a` per link; the planner hands it
+//! `e_a = (β_money · m_a + β_km · ℓ_a / 1000) · 60 / β_ivt`, so the route it returns minimises
+//! the cost above (divided by the positive `β_ivt / 60`). A run without tolls has `m_a = 0`
+//! everywhere: the same search, the same code.
 //!
 //! The leg's attributes are then priced from its links: the in-vehicle seconds are the route
 //! driven link by link from the departure time on the state's link times
-//! ([`LinkTimes::route_seconds`], which adds any wait to get onto the first link), the money
-//! and the length are summed over the links.
+//! ([`LinkTimes::route_seconds`], the wait to get onto the first link included, read the way
+//! the search read it), the money and the length are summed over the links. So the time the
+//! search minimised and the time the leg is priced at are one number.
 //!
 //! **Ties.** Of two routes of exactly equal cost, the search keeps the one its tie rule settles
 //! first (labels of equal cost are settled in order of link number); which one that is depends
 //! on the numbering, never on chance.
 //!
 //! **Cost of a plan.** One search over the links it touches, plus a fresh search scratch of
-//! about 40 bytes per link of the network. A planner may keep searches between plans (one tree
-//! per origin and departure bin) without changing any answer.
+//! about 40 bytes per link and one byte per node of the network. A planner may keep searches
+//! between plans (one tree per origin and departure bin) without changing any answer.
 //!
 //! # Cost source
 //!
@@ -226,9 +239,13 @@ impl LegPlanner for CarPlanner<'_> {
         let mut search = Search::new(&self.context);
         // Extras are shared by handle: this copies a pointer, not the per-link values.
         search.set_extras(Some(extras.clone()));
+        let wait = |l: u32, t: f64| times.origin_wait_seconds(l, t);
         let seconds = |l: u32, t: f64| times.link_seconds(l, t);
-        let (_, _, links) =
-            search.cheapest_route_from(origin, destination, departure, f64::INFINITY, &seconds)?;
+        let mut target = vec![false; self.network.node_count() as usize];
+        target[destination.index()] = true;
+        let (_, _, _, links) = search
+            .cheapest_routes_to(origin, &target, 1, departure, f64::INFINITY, &wait, &seconds)
+            .pop()?;
         let attributes = self.price(&links, departure, times);
         Some(Leg { mode: Mode::Car, from, to, departure, attributes, links })
     }
