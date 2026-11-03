@@ -37,10 +37,15 @@ pub struct IterationReport {
     /// differs from the one before it; a trip that had no chain before counts as switching.
     pub switch_share: f64,
     /// What the switch share would be by chance alone at a stationary state:
-    /// `Σ w · α · (1 − P(chain before)) / Σ w` over the trips facing a choice, `α` the
-    /// probability of re-choosing in this iteration, `P` the choice model's probability of the
-    /// chain the trip had before the choice (0 for a trip that had none).
+    /// `Σ w · α · (1 − Σ_k P_k²) / Σ w` over the trips facing a choice, `α` the probability of
+    /// re-choosing in this iteration (1 for a trip that had no chain), `P_k` the choice model's
+    /// probability of chain `k` at this iteration's costs.
     pub switch_floor: f64,
+    /// The switch share's excess over its floor per re-chooser, `(switch share − floor) /
+    /// (Σ w · α / Σ w)`: the share of the trips that reconsidered which moved beyond chance; 0
+    /// at a stationary state, and under a deterministic model the share of trips that were not
+    /// on their best chain. The stopping rule reads it.
+    pub switch_excess: f64,
     /// The summed weight of the trips that set out (every trip with a chain).
     pub departed: f64,
     /// The summed weight of the trips that reached their destination before the loading ended.

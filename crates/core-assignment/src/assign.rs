@@ -8,8 +8,9 @@
 //!    choice set is added to it, at most one per trip per iteration. The trips something new
 //!    was found for are counted. **The stopping check** runs here, from iteration 1 on, after
 //!    the search and before anything is added: the loop stops when the share of trips with a
-//!    new chain is at most [`Params::found_tolerance`], the last iteration's switch share
-//!    exceeds its floor by at most [`Params::switch_tolerance`], and at least
+//!    new chain is at most [`Params::found_tolerance`], the mean switch excess of the last three
+//!    iterations (the share of the trips that reconsidered which moved beyond chance) is at
+//!    most [`Params::switch_tolerance`], and at least
 //!    [`Params::min_iterations`] iterations are done. It always stops after
 //!    [`Params::max_iterations`] iterations. When it stops, the state returned is the one the
 //!    last completed iteration left, without the stopped search's chains.
@@ -65,7 +66,8 @@ pub struct Params {
     pub min_iterations: u32,
     /// The most iterations the loop runs (default 20).
     pub max_iterations: u32,
-    /// How far the switch share may exceed its floor for the loop to stop (default 0.02).
+    /// The largest switch excess (the share of the trips that reconsidered which moved beyond
+    /// chance, [`IterationReport::switch_excess`]) at which the loop may stop (default 0.05).
     pub switch_tolerance: f64,
     /// The largest share of trips (weighted) the search may still find a new chain for when
     /// the loop stops (default 0: nothing new).
@@ -85,7 +87,7 @@ impl Default for Params {
         Self {
             min_iterations: 3,
             max_iterations: 20,
-            switch_tolerance: 0.02,
+            switch_tolerance: 0.05,
             found_tolerance: 0.0,
             step_offset: 3,
             cost_source: CostSource::Exact,
@@ -156,17 +158,25 @@ fn search_stage(
 
 /// Whether the loop stops at the search stage of `iteration`, given what the search found and
 /// the last iteration's report.
-fn should_stop(
-    iteration: u32,
-    found: &Found,
-    last: Option<&IterationReport>,
-    params: &Params,
-) -> bool {
+/// The mean switch excess of the last three iterations (fewer at the start), `None` before any.
+/// Three, because the excess is a share among the few trips that reconsider late in a run and
+/// one iteration's value is noisy.
+fn tail_excess(reports: &[IterationReport]) -> Option<f64> {
+    let tail = &reports[reports.len().saturating_sub(3)..];
+    if tail.is_empty() {
+        return None;
+    }
+    #[allow(clippy::cast_precision_loss, reason = "at most three reports")]
+    let n = tail.len() as f64;
+    Some(tail.iter().map(|r| r.switch_excess).sum::<f64>() / n)
+}
+
+fn should_stop(iteration: u32, found: &Found, last: Option<f64>, params: &Params) -> bool {
     let Some(last) = last else { return false };
     iteration >= 1
         && iteration >= params.min_iterations
         && found.share <= params.found_tolerance
-        && last.switch_share - last.switch_floor <= params.switch_tolerance
+        && last <= params.switch_tolerance
 }
 
 /// Stage 2: the choice, writing every trip's current chain and choice probabilities into
@@ -335,6 +345,7 @@ fn assess_stage(
         found_share: 0.0,
         switch_share: 0.0,
         switch_floor: 0.0,
+        switch_excess: 0.0,
         departed,
         arrived,
         unfinished,
@@ -410,7 +421,7 @@ pub fn assign(
     for iteration in 0..params.max_iterations {
         let clock = Instant::now();
         let found = search_stage(&search, inputs, &state, params);
-        if should_stop(iteration, &found, reports.last(), params) {
+        if should_stop(iteration, &found, tail_excess(&reports), params) {
             break;
         }
         let count = u32::try_from(found.additions.len()).expect("fewer than 2^32 trips");
@@ -438,6 +449,7 @@ pub fn assign(
         report.found_share = found.share;
         report.switch_share = switching.share;
         report.switch_floor = switching.floor;
+        report.switch_excess = switching.excess;
         report.stage_seconds = StageSeconds {
             search: t_search,
             choose: t_choose,

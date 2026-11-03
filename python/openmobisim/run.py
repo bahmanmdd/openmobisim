@@ -689,7 +689,9 @@ class Run:
         ``found_share`` (the trips the route search found a chain for that was not yet in their
         choice set: how many, and their share); ``switch_share`` (the share of trips whose
         chain after the choice differs from the one before) and ``switch_floor`` (what it would
-        be by the choice model's randomness alone at a stationary state); ``departed``,
+        be by the choice model's randomness alone at a stationary state) and ``switch_excess``
+        (of the trips that reconsidered, the share that moved beyond that chance: the stopping
+        rule's stability measure, 0 at a stationary state); ``departed``,
         ``arrived``, ``unfinished`` (people) and ``unfinished_share``; ``without_chain``
         (people whose trip had no chain: no car, or no route); ``gap`` (the relative duality
         gap within the choice sets, ``(Σ w·paid − Σ w·least) / Σ w·least``, paid the cost of the

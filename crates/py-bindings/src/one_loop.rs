@@ -628,6 +628,7 @@ fn convergence_columns(reports: &[IterationReport]) -> Vec<(&'static str, Vec<f6
         ("found_share", col(&|r| r.found_share)),
         ("switch_share", col(&|r| r.switch_share)),
         ("switch_floor", col(&|r| r.switch_floor)),
+        ("switch_excess", col(&|r| r.switch_excess)),
         ("departed", col(&|r| r.departed)),
         ("arrived", col(&|r| r.arrived)),
         ("unfinished", col(&|r| r.unfinished)),

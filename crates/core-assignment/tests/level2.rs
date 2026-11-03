@@ -461,6 +461,39 @@ fn two_routes_reach_the_bottleneck_equilibrium() {
     }
 }
 
+/// The stopping rule is not blind: with a deterministic choice the switch excess is the share of
+/// trips not on their best chain, so the two-route case at 1 800 veh/h, which is far from its
+/// equilibrium after the minimum iterations (both routes are in every set by iteration 1, so
+/// nothing new is found from then on), runs past the minimum; and when it does stop, the mean
+/// trip is within 3 % of the closed form, as after 100 iterations.
+#[test]
+fn the_loop_does_not_stop_while_the_deterministic_choice_still_moves_travellers() {
+    let net = two_routes();
+    let v = metres_per_second(TWO_KM_H);
+    let (t1, t2) = (2.0 * 1440.0 / v, 2.0 * 2305.0 / v);
+    let (q, big_t, c1) = (1800.0 / 3600.0, 3600.0, C1_VEH_H / 3600.0);
+    let t_star = (t2 - t1) * c1 / (q - c1);
+    let mean =
+        (t1 * t_star + (q - c1) * t_star * t_star / (2.0 * c1) + (big_t - t_star) * t2) / big_t;
+    let c = case(two_routes(), trips(&net, "o", "d", &departures(1800, 0, 3600)));
+    let loader = PointQueue::after_last_departure(&c.turns, &c.trips, 3600.0);
+    let params = Params { max_iterations: 100, ..Params::default() };
+    let r = run(&c, &loader, &params, false);
+    let last = r.reports.last().expect("reports");
+    println!(
+        "stopped after {} iterations; switch excess {:.4}, mean trip {:.2} s against {mean:.2} s",
+        r.reports.len(),
+        last.switch_excess,
+        last.mean_trip_seconds
+    );
+    assert!(
+        r.reports.len() > params.min_iterations as usize,
+        "the rule did not stop at the minimum"
+    );
+    assert!(last.switch_excess <= params.switch_tolerance || r.reports.len() == 100);
+    assert!((last.mean_trip_seconds / mean - 1.0).abs() <= 0.03, "the mean trip within 3 %");
+}
+
 // --- 3. the Braess paradox at steady state ------------------------------------------------
 
 /// `s → a` and `b → t`: 1 km at 1 000 veh/h; `a → t` and `s → b`: 10 km; `a → b`: 1 km; all at

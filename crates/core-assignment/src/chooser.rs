@@ -31,13 +31,22 @@
 //! (traveller, iteration), so the answer does not depend on the order or the number of threads
 //! that compute it.
 //!
-//! **The switch share and its floor.** The switch share of an iteration is the share of trips
-//! (weighted by traveller weight) whose chain after the choice differs from the one before it
-//! (a trip with no chain before counts as switching). Its **floor** is what chance alone would
-//! give if nothing changed: `Σ_t w_t · α_t · (1 − P_t(current)) / Σ_t w_t`, where `P_t(current)`
-//! is the probability the model now gives the chain the trip had before the choice (0 for a trip
-//! that had none), `α_t` the trip's re-choice probability and `w_t` its traveller's weight. At a
-//! stationary state the switch share is the floor plus sampling noise.
+//! **The switch share, its floor and the excess.** The switch share of an iteration is the
+//! share of trips (weighted by traveller weight) whose chain after the choice differs from the
+//! one before it (a trip with no chain before counts as switching). Its **floor** is what chance
+//! alone would give at a stationary state, where the trips are already spread over their chains
+//! as the model's probabilities say: a trip that re-chooses then lands on another chain with
+//! probability `1 − Σ_k P_k²` (two independent draws from the same probabilities differ), so the
+//! floor is `Σ_t w_t · α_t · (1 − Σ_k P_t,k²) / Σ_t w_t` with `α_t` the trip's re-choice
+//! probability (1 for a trip that had no chain, which switches for certain), `P_t,k` the model's
+//! probability of chain `k` for trip `t` at this iteration's costs, and `w_t` the traveller's
+//! weight. Away from a stationary state the trips sit on chains the model would not put them
+//! on, and the re-choosers switch more often than the floor says. The **excess** is that
+//! difference per re-chooser: `(switch share − floor) / Σ_t w_t · α_t / Σ_t w_t`, the share of
+//! the trips that reconsidered which moved beyond chance. Under a deterministic model the floor
+//! is 0 and the excess is the share of trips not on their best chain. The floor is never built
+//! from the chain a trip had before (that would make the switch share equal the floor by
+//! construction, whatever the state).
 //!
 //! The chooser runs on one thread; every draw is addressed by identity, so splitting it over
 //! threads would change no result.
@@ -212,11 +221,12 @@ pub(crate) fn probabilities(
         .collect())
 }
 
-/// What the choose stage measured: the switch share and its floor.
+/// What the choose stage measured: the switch share, its floor and the excess per re-chooser.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Switching {
     pub share: f64,
     pub floor: f64,
+    pub excess: f64,
 }
 
 /// The choose stage: every trip facing a choice is offered its set; the travellers the
@@ -254,15 +264,17 @@ pub(crate) fn choose(
     for (k, &s) in choosing.iter().enumerate() {
         picked[s] = Some(choices.chosen[k] as usize);
     }
-    let (mut total, mut switched, mut floor) = (0.0, 0.0, 0.0);
+    let (mut total, mut switched, mut floor, mut reconsidering) = (0.0, 0.0, 0.0, 0.0);
     for (s, &trip) in situations.iter().enumerate() {
         let w = demand.weight(demand.trips.traveller(trip));
         let entry = &mut state.trips_mut()[trip.index()];
         let before = entry.current;
         let after = picked[s].or(before);
-        let p_before = before.map_or(0.0, |c| probabilities[s][c]);
+        // The chance that two independent draws from the model's probabilities differ.
+        let differs = 1.0 - probabilities[s].iter().map(|p| p * p).sum::<f64>();
         total += w;
-        floor += w * chance[s] * (1.0 - p_before);
+        reconsidering += w * chance[s];
+        floor += w * chance[s] * if before.is_none() { 1.0 } else { differs };
         if after != before {
             switched += w;
         }
@@ -270,5 +282,6 @@ pub(crate) fn choose(
         entry.probabilities.clone_from(&probabilities[s]);
     }
     let share = |x: f64| if total > 0.0 { x / total } else { 0.0 };
-    Ok(Switching { share: share(switched), floor: share(floor) })
+    let excess = if reconsidering > 0.0 { (switched - floor) / reconsidering } else { 0.0 };
+    Ok(Switching { share: share(switched), floor: share(floor), excess })
 }
