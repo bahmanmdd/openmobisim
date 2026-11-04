@@ -311,6 +311,7 @@ def test_a_car_trip_pays_its_fixed_times_door_to_door(tmp_path, level):
 
 
 def test_the_choice_weighs_the_fixed_times_as_walking_and_parking(tmp_path):
+    pytest.importorskip("pyarrow")
     # The logit's defaults: a minute in the car costs 0.2, walking 0.2 + 0.13 = 0.33, parking
     # 0.2 + beta_parking_min (0 by default; here -0.1, so 0.3). A chain's cost is then
     # 0.2 × drive/60 + 0.33 × 120/60 + 0.3 × 300/60, its time drive + 420 s.
@@ -380,6 +381,7 @@ def stopped_run(tmp_path, name, **kw):
 
 
 def test_a_run_continued_from_its_stop_moves_nobody_beyond_chance(tmp_path):
+    pytest.importorskip("pyarrow")
     # The property (idempotence): the first run stopped by its own rule, so at its final state
     # the search finds a chain beyond the band for at most found_tolerance of the trips and the
     # expected switch excess is within the switch tolerance. A run continued from it starts from
@@ -435,6 +437,7 @@ def test_a_run_to_continue_from_that_does_not_fit_is_refused(tmp_path):
 
 
 def test_a_relabelled_network_gives_the_same_chains_by_id(tmp_path):
+    pytest.importorskip("pyarrow")
     # The two routes with every link and node renamed and the links listed in another order:
     # the network's indices change, its ids map one to one. Mapped back, every trip's chains
     # are the same, in the same order, with the same choice (a property: invariance to labels).
