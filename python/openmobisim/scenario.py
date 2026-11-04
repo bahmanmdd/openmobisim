@@ -71,6 +71,8 @@ _STATIC_ONLY = ("frank_wolfe",)
 #: car trips in one loop of five stages per assignment iteration (search, choose, load, measure,
 #: assess), at flow level 0 or 2.
 ENGINES = ("current", "one-loop")
+#: The one-loop engine's allocations (``equilibration_options`` ``allocation``).
+ONE_LOOP_ALLOCATIONS = ("draws", "choice_quota", "quota")
 
 
 class EngineNotSupportedError(ValueError):
@@ -1801,6 +1803,14 @@ class Scenario:
                     loop[name] = float(options.pop(name))
             if "cost_bin_s" in options:
                 loop["cost_bin_s"] = int(options.pop("cost_bin_s"))
+            if "allocation" in options:
+                value = options.pop("allocation")
+                if value not in ONE_LOOP_ALLOCATIONS:
+                    raise ValueError(
+                        f"equilibration_options allocation must be one of {ONE_LOOP_ALLOCATIONS}, "
+                        f"got {value!r}"
+                    )
+                loop["allocation"] = value
             for name in (
                 "gap_tolerance",
                 "gap_sample",
@@ -2034,7 +2044,14 @@ class Scenario:
                 0.01 by default and uncalibrated, below which two chains count as equal; the
                 deterministic choice splits the trips facing such a tie evenly over its chains,
                 in trip order, with no random draw, and the route search counts a new chain as
-                found only if it is cheaper than the trip's best by more than the band). The
+                found only if it is cheaper than the trip's best by more than the band), and
+                ``allocation`` (how the travellers who reconsider are chosen and spread over
+                their chains: ``"draws"``, the default, a seeded draw per traveller and the
+                choice model's own choice; ``"choice_quota"``, the trips facing the same choice
+                (the same user class, the same choice set, departing in the same cost bin) that
+                reconsider spread over the chains in the model's proportions, in trip order with
+                no random draw; ``"quota"``, also who reconsiders by quota, the averaging step's
+                share of each such group, so no random draw enters the choice at all). The
                 fixed times of reaching and leaving the car must be given as 0
                 (``mode_options`` ``car_access_s`` and ``car_egress_s``). Anything else the
                 scenario asks for that it does not have (another mode, a timetable, parkings,

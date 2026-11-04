@@ -27,8 +27,8 @@
 )]
 
 use openmobisim_core_assignment::{
-    CarPlanner, ChainSearch, Coefficients, HighestUtility, Inputs, IterationReport, Params,
-    PointQueue, StageHook, State, assign, logit,
+    Allocation, CarPlanner, ChainSearch, Coefficients, HighestUtility, Inputs, IterationReport,
+    Params, PointQueue, StageHook, State, assign, logit,
 };
 use openmobisim_core_choice::ChoiceModel;
 use openmobisim_core_demand::{
@@ -126,6 +126,16 @@ fn run(
     iterations: u32,
     hook: &mut dyn StageHook,
 ) -> (State, Vec<IterationReport>) {
+    run_allocated(c, model, iterations, hook, Allocation::Draws)
+}
+
+fn run_allocated(
+    c: &Case,
+    model: &dyn ChoiceModel,
+    iterations: u32,
+    hook: &mut dyn StageHook,
+    allocation: Allocation,
+) -> (State, Vec<IterationReport>) {
     let last = (0..c.trips.len()).map(|t| c.trips.departure(TripId::new(t)).get()).max();
     let loader = PointQueue::new(&c.turns, f64::from(last.expect("trips")) + 30.0);
     let inputs = Inputs {
@@ -140,8 +150,12 @@ fn run(
         seed: RngKey::from_seed(2026),
         initial: None,
     };
-    let params =
-        Params { min_iterations: iterations, max_iterations: iterations, ..Params::default() };
+    let params = Params {
+        min_iterations: iterations,
+        max_iterations: iterations,
+        allocation,
+        ..Params::default()
+    };
     assign(&inputs, &params, hook).expect("the run")
 }
 
@@ -200,37 +214,56 @@ fn shared_searches_answer_every_trip_as_its_own_search() {
 fn one_thread_and_several_give_the_same_run() {
     let c = case();
     let the_logit = logit();
-    for model in [&HighestUtility as &dyn ChoiceModel, &the_logit] {
-        let runs: Vec<(State, Vec<IterationReport>)> = [1, 2, 5]
-            .iter()
-            .map(|&threads| {
-                let pool = rayon::ThreadPoolBuilder::new()
-                    .num_threads(threads)
-                    .build()
-                    .expect("a thread pool");
-                pool.install(|| run(&c, model, 5, &mut openmobisim_core_assignment::NoHooks))
-            })
-            .collect();
-        let (one, rest) = runs.split_first().expect("three runs");
-        for (k, other) in rest.iter().enumerate() {
-            assert!(
-                one.0 == other.0,
-                "{}: the state differs from one thread's (run {k})",
-                model.name()
+    for allocation in Allocation::ALL {
+        for model in [&HighestUtility as &dyn ChoiceModel, &the_logit] {
+            let runs: Vec<(State, Vec<IterationReport>)> = [1, 2, 5, 0]
+                .iter()
+                .map(|&threads| {
+                    // 0: rayon's default, every logical core.
+                    let pool = rayon::ThreadPoolBuilder::new()
+                        .num_threads(threads)
+                        .build()
+                        .expect("a thread pool");
+                    pool.install(|| {
+                        run_allocated(
+                            &c,
+                            model,
+                            5,
+                            &mut openmobisim_core_assignment::NoHooks,
+                            allocation,
+                        )
+                    })
+                })
+                .collect();
+            let (one, rest) = runs.split_first().expect("four runs");
+            for (k, other) in rest.iter().enumerate() {
+                assert!(
+                    one.0 == other.0,
+                    "{} {}: the state differs from one thread's (run {k})",
+                    allocation.name(),
+                    model.name()
+                );
+                let a: Vec<IterationReport> =
+                    one.1.iter().map(IterationReport::without_times).collect();
+                let b: Vec<IterationReport> =
+                    other.1.iter().map(IterationReport::without_times).collect();
+                assert_eq!(
+                    a,
+                    b,
+                    "{} {}: the reports differ from one thread's",
+                    allocation.name(),
+                    model.name()
+                );
+            }
+            let last = one.1.last().expect("reports");
+            println!(
+                "{} {}: 1, 2, 5 and all threads agree to the bit; last iteration: duality gap {:.5}, mean trip {:.1} s, unfinished {}",
+                allocation.name(),
+                model.name(),
+                last.duality_gap,
+                last.mean_trip_seconds,
+                last.unfinished
             );
-            let a: Vec<IterationReport> =
-                one.1.iter().map(IterationReport::without_times).collect();
-            let b: Vec<IterationReport> =
-                other.1.iter().map(IterationReport::without_times).collect();
-            assert_eq!(a, b, "{}: the reports differ from one thread's", model.name());
         }
-        let last = one.1.last().expect("reports");
-        println!(
-            "{}: 1, 2 and 5 threads agree to the bit; last iteration: duality gap {:.5}, mean trip {:.1} s, unfinished {}",
-            model.name(),
-            last.duality_gap,
-            last.mean_trip_seconds,
-            last.unfinished
-        );
     }
 }

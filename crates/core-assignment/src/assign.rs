@@ -24,7 +24,9 @@
 //!    [`Params::max_iterations`] iterations. When it stops, the state returned is the one the
 //!    last completed iteration left, without the stopped search's chains.
 //! 2. **Choose** (`choose_stage`): one choice over every trip's set by the run's choice
-//!    model, with the averaging rule deciding who re-chooses ([`crate::chooser`]).
+//!    model, with the averaging rule deciding who re-chooses ([`crate::chooser`]): by seeded
+//!    draws, or by the quota allocation of each group of trips facing the same choice in the
+//!    model's proportions ([`Params::allocation`], [`crate::quota`]).
 //! 3. **Load** (`load_stage`): every chosen chain's car legs become vehicles, which the
 //!    run's [`Loader`] moves on the network.
 //! 4. **Measure** (`measure_stage`): the loading's entry-time tables become the state's link
@@ -44,7 +46,8 @@
 //! minimum and most iterations count the iterations of this run.
 //!
 //! **Reproducibility.** Every random draw is addressed by identity (the re-choice draws by
-//! traveller and iteration, the choice model's by traveller, trip, iteration and chain), so
+//! traveller and iteration, the choice model's by traveller, trip, iteration and chain; the
+//! quota allocation draws nothing and works its groups on one thread, in trip order), so
 //! the same inputs and seed give the same states and reports, to the bit, on any machine of the
 //! same platform.
 //!
@@ -77,6 +80,7 @@ use crate::hooks::StageHook;
 use crate::loader::{Loaded, Loader};
 use crate::parallel;
 use crate::planner::{CarPlanner, CostSource};
+use crate::quota::Allocation;
 use crate::report::{IterationReport, StageSeconds};
 use crate::search::ChainSearch;
 use crate::state::{State, TripState};
@@ -132,6 +136,13 @@ pub struct Params {
     /// The averaging rule's offset: in iteration `i ≥ 1` a traveller re-chooses with
     /// probability `1 / (i + 1 + step_offset)` (default 3).
     pub step_offset: u32,
+    /// How the travellers who reconsider in an iteration are selected and allocated over their
+    /// chains (default [`Allocation::Draws`]: by seeded draws, each with probability `α`, and the
+    /// choice model's own choice). [`Allocation::ChoiceQuota`] allocates each group's re-choosers
+    /// over its chains in the model's proportions, [`Allocation::Quota`] also selects who
+    /// reconsiders by quota, `⌊α N⌋` or `⌈α N⌉` of a group of `N`; both need a model that gives
+    /// its probabilities ([`crate::quota`]).
+    pub allocation: Allocation,
     /// Where the chain search reads leg costs (default exact).
     pub cost_source: CostSource,
     /// How close, in metres, a trip end must lie to a node with only motorways or trunk roads
@@ -148,6 +159,7 @@ impl Default for Params {
             switch_tolerance: 0.05,
             found_tolerance: 0.005,
             step_offset: 3,
+            allocation: Allocation::Draws,
             cost_source: CostSource::Exact,
             motorway_snap_metres: 50.0,
         }
@@ -281,6 +293,7 @@ fn choose_stage(
         iteration,
         params.step_offset,
         params.indifference_band,
+        params.allocation,
     )
 }
 
