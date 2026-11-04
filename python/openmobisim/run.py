@@ -960,6 +960,52 @@ class Run:
         gap = self._summary.gap_trips
         return None if gap is None else Columns(gap)
 
+    def trip_fastest_routes(self, departure_bin_s: float | None = None) -> Columns | None:
+        """Each trip's fastest route by car, at free flow and on the last loading's link times.
+
+        For every trip, from its origin to its destination as its car travels them (the road
+        nodes of its car pair; for a trip choosing its mode, those of its car alternative),
+        leaving when its car enters the roads (its departure plus ``mode_options``'
+        ``car_access_s``): the fastest route **at free flow**, and the fastest route
+        **time-dependent on the last loading's link times** (each link's mean travel time by the
+        time bin of entry, as the route choice reads them; free flow after a run of one loading),
+        found as the run's own searches find them: one search per origin node and departure
+        bin, at the bin's middle, the route then costed at the trip's own second (the wait to get
+        onto the first link, then each link at the moment it is entered). Turn restrictions and
+        closures known to travellers apply. A route fastest at the bin's middle can be beaten at
+        the trip's own second by at most what the link times change within a bin.
+
+        The car's drive (``trip_results()``' ``vehicle_s``) set against ``final_s`` gives each
+        trip's relative gap, ``(vehicle_s − final_s) / final_s``; against ``free_flow_s``, its
+        congestion ratio, ``vehicle_s / free_flow_s``, which is never below 1 under the point
+        queue.
+
+        Args:
+            departure_bin_s: The departure bin of the searches, in seconds; ``None``: the bin of
+                the run's own search trees (``route_update_options``' ``tree_step_s``, else the
+                equilibration's cost bin).
+
+        Returns:
+            Columns, one row per trip in the order of the demand: ``trip`` (its index in the
+            run), ``origin_node`` and ``destination_node`` (indices into the network's nodes),
+            ``car_departure_s`` (when the car enters the roads, seconds after midnight),
+            ``free_flow_s`` and ``free_flow_links`` (the route at free flow: its seconds and its
+            links, indices into the network's links in driving order), ``final_s`` and
+            ``final_links`` (the route on the last loading's link times). Every trip has a row,
+            whatever its mode: a trip not by car gets the route its car pair would take, where the
+            run made car routes for that pair. Seconds ``nan`` and links empty where no route is
+            found (no car route for the pair, or a destination the roads do not reach); 0 s and
+            no link for a trip whose origin and destination are one node. In memory, from the
+            run that produced it: a run read back with ``Run.open`` has none.
+
+        Raises:
+            ValueError: If ``departure_bin_s`` is not above 0.
+        """
+        found = self._summary.trip_fastest_routes(
+            None if departure_bin_s is None else float(departure_bin_s)
+        )
+        return None if found is None else Columns(found)
+
     def gap_pairs(self, departure_bin_s: int = 300) -> Columns | None:
         """The gap per origin, destination and departure bin, on the costs the trips paid.
 
@@ -2358,8 +2404,10 @@ class Run:
         ``"car"`` — the earliest arrival on the **last loading's link times**, congestion by
         time bin included (free flow after a run of one loading; at ``flow_level=1`` the static
         equilibrium's times, the same all day), nearest drivable node to
-        nearest — ``"bike"`` or ``"walk"`` — the time of the least-cost route on the layer, as
-        the trips ride or walk — or ``"transit"`` — the earliest arrival with at least one
+        nearest — ``"bike"`` or ``"walk"`` — the time of the fastest route on the layer (with
+        ``bike_cost="utility"``, the default, a bike trip rides the route of least generalised
+        cost, which may take longer than this time; with ``bike_cost="time"`` the two
+        coincide) — or ``"transit"`` — the earliest arrival with at least one
         vehicle, on the times the runs kept, walking to and from stops within
         ``transit_options``' ``access_walk_max_s``. Classes' own limits do not apply. The same
         point (one node) takes 0; ``nan`` where nothing arrives within ``max_s``.

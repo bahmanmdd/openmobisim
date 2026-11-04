@@ -80,6 +80,28 @@ impl Tree {
     }
 }
 
+/// A tree item, `(origin, bin, vector, key index)`, for a trip of pair `key` whose car enters the
+/// roads at second `departure`, searched by coefficient vector `vector`: `None` for a pair whose
+/// origin is its destination, or which has no route in `sets`.
+fn item_of(
+    key: RouteKey,
+    departure: f64,
+    vector: u32,
+    sets: &RouteSets,
+    step_s: f64,
+) -> Option<(u32, u64, u32, usize)> {
+    if key.origin == key.destination {
+        return None;
+    }
+    let k = sets.key_index(key)?;
+    if sets.route_range(k).is_empty() {
+        return None;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a bin count")]
+    let slot = (departure / step_s).floor() as u64;
+    Some((key.origin, slot, vector, k))
+}
+
 /// What one tree's search returns: the keys served with their best times, and the routes found.
 type Searched = (Vec<(usize, f64)>, Vec<FoundRoute>);
 
@@ -188,7 +210,6 @@ impl SearchTrees {
     /// As [`Self::build`].
     #[must_use]
     #[allow(clippy::too_many_arguments, reason = "the loading's inputs, the trips and the bin")]
-    #[allow(clippy::too_many_lines, reason = "one pass: group, search, split")]
     pub fn build_with_drives(
         (network, turns, times): (&RoadNetwork, &TurnTable, &LinkTimes),
         trips: &Trips,
@@ -207,30 +228,33 @@ impl SearchTrees {
                 c.cost.vector_of_class(c.trip_class.get(i).copied().unwrap_or(0) as usize)
             })
         };
-        // (origin, bin, vector, key), sorted and deduplicated: the trees in a fixed order, each
-        // key once per vector.
-        let mut items: Vec<(u32, u64, u32, usize)> = (0..trips.len())
+        let items: Vec<(u32, u64, u32, usize)> = (0..trips.len())
             .filter(|&i| active.is_none_or(|a| a[i as usize]))
             .filter_map(|i| {
-                let key = trip_keys[i as usize];
-                if key.origin == key.destination {
-                    return None;
-                }
-                let k = sets.key_index(key)?;
-                if sets.route_range(k).is_empty() {
-                    return None;
-                }
                 // When the car enters the roads (S295): `car_start_s` after the departure.
                 let departure = f64::from(trips.departure(TripId::new(i)).get() + car_start_s);
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    clippy::cast_sign_loss,
-                    reason = "a bin count"
-                )]
-                let slot = (departure / step_s).floor() as u64;
-                Some((key.origin, slot, vector_of(i as usize), k))
+                item_of(trip_keys[i as usize], departure, vector_of(i as usize), sets, step_s)
             })
             .collect();
+        Self::from_items((network, turns, times), items, sets, step_s, drives, cost, None)
+    }
+
+    /// The trees of `items`, one per (origin, bin, vector) among them (see
+    /// [`Self::build_with_drives`]; `cost` already left out where it is time alone), each search
+    /// bounded by `bound_s` seconds, or, `None`, by the slowest of its keys' best.
+    #[allow(clippy::too_many_arguments, reason = "the loading's inputs, the items and the bin")]
+    #[allow(clippy::too_many_lines, reason = "one pass: group, search, split")]
+    fn from_items(
+        (network, turns, times): (&RoadNetwork, &TurnTable, &LinkTimes),
+        mut items: Vec<(u32, u64, u32, usize)>,
+        sets: &RouteSets,
+        step_s: f64,
+        drives: Option<DrivesWanted<'_>>,
+        cost: Option<TreeCost<'_>>,
+        bound_s: Option<f64>,
+    ) -> (Self, Vec<TreeDrive>) {
+        // (origin, bin, vector, key), sorted and deduplicated: the trees in a fixed order, each
+        // key once per vector.
         items.sort_unstable();
         items.dedup();
         let mut heads: Vec<(u32, u64, u32)> = Vec::new();
@@ -295,7 +319,7 @@ impl SearchTrees {
                     (k, best)
                 })
                 .collect();
-            let bound = keys.iter().map(|&(_, b)| b).fold(0.0, f64::max);
+            let bound = bound_s.unwrap_or_else(|| keys.iter().map(|&(_, b)| b).fold(0.0, f64::max));
             let mut targets = vec![false; node_count];
             let mut wanted = 0;
             for &(k, _) in &keys {
@@ -479,6 +503,108 @@ impl SearchTrees {
     ) -> Option<&FoundRoute> {
         self.tree_of(origin, vector, departure)?.route_to(destination)
     }
+}
+
+/// A trip's fastest route after a run ([`trip_fastest_routes`]): its links, raw, in driving
+/// order, and its travel time in seconds, from when the trip's car enters the roads (the wait
+/// to get onto the first link included) to when it leaves the last link.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TripRoute {
+    /// The travel time, in seconds: the route walked link by link on the link times, leaving at
+    /// the trip's own second ([`LinkTimes::route_seconds`]).
+    pub seconds: f64,
+    /// The links, raw, in driving order; empty for a trip whose origin node is its destination.
+    pub links: Vec<u32>,
+}
+
+/// A run's car trips as its search trees see them, kept after the run for
+/// [`trip_fastest_routes`]: each trip's car pair of road nodes and the second its car enters the
+/// roads, by trip, and the length of the trees' departure bin in seconds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CarPairs {
+    /// By trip: its car pair (a trip choosing its mode, the pair of its car alternative) and the
+    /// second its car enters the roads (its departure plus `car_access_s`, whole seconds).
+    pub pairs: Vec<(RouteKey, f64)>,
+    /// The run's trees' departure bin, in seconds.
+    pub step_s: f64,
+}
+
+impl SearchTrees {
+    /// The trees of the pairs `pairs` (each trip's origin–destination pair and the second its
+    /// car enters the roads), those with routes in `sets` and an origin other than their
+    /// destination: one time-dependent search **by time** per origin node and departure bin of
+    /// `step_s` seconds, at the bin's middle, on `times`, as [`Self::build`] makes them for a run
+    /// whose route cost is time alone, but **unbounded**: every destination the network
+    /// reaches is found, where [`Self::build`] stops at the slowest of the sets' best. A search
+    /// with a larger bound settles the same routes in the same order up to the smaller one
+    /// ([`openmobisim_core_routes::Search::fastest_arrivals_to`]), so every route
+    /// [`Self::build`] finds is found here, the same.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `step_s` is not positive.
+    #[must_use]
+    pub fn build_unbounded(
+        inputs: (&RoadNetwork, &TurnTable, &LinkTimes),
+        pairs: &[(RouteKey, f64)],
+        sets: &RouteSets,
+        step_s: f64,
+    ) -> Self {
+        assert!(step_s > 0.0, "a departure bin has a positive length");
+        let items = pairs
+            .iter()
+            .filter_map(|&(key, departure)| item_of(key, departure, 0, sets, step_s))
+            .collect();
+        Self::from_items(inputs, items, sets, step_s, None, None, Some(f64::INFINITY)).0
+    }
+}
+
+/// **Every trip's fastest route** on one set of link times, read as the run's own searches read
+/// them (the shared search trees, [`crate::trees`]): for each trip of `pairs` (its
+/// origin–destination pair of road nodes and the second its car enters the roads), the route the
+/// tree of its origin and departure bin (`step_s` seconds) found to its destination, the fastest
+/// at the bin's middle, then **re-costed at the trip's own second** on `times`
+/// ([`LinkTimes::route_seconds`]: the wait to get onto the first link, then each link at the
+/// moment it is entered). The trees are [`SearchTrees::build_unbounded`]'s: on a run's last
+/// link times and its trees' bin, the routes its last gap and route update read.
+///
+/// On free-flow times ([`LinkTimes::free_flow`]) each route is a fastest route at free flow
+/// whatever the bin. On times that vary within a bin, a route fastest at the bin's middle can be
+/// beaten at the trip's own second by another, by at most what the times change within a bin:
+/// the run's searches make the same approximation.
+///
+/// By trip, in the order of `pairs`: `Some` with no links and 0 s for a pair whose origin is its
+/// destination; `None` for a pair without routes in `sets`, or whose destination the network
+/// does not reach from its origin.
+///
+/// **Cost:** one search per origin node and departure bin with trips, in parallel, and one
+/// route walk per trip.
+///
+/// # Panics
+///
+/// Panics if `step_s` is not positive.
+#[must_use]
+pub fn trip_fastest_routes(
+    inputs: (&RoadNetwork, &TurnTable, &LinkTimes),
+    pairs: &[(RouteKey, f64)],
+    sets: &RouteSets,
+    step_s: f64,
+) -> Vec<Option<TripRoute>> {
+    let times = inputs.2;
+    let trees = SearchTrees::build_unbounded(inputs, pairs, sets, step_s);
+    pairs
+        .iter()
+        .map(|&(key, departure)| {
+            if key.origin == key.destination {
+                return Some(TripRoute { seconds: 0.0, links: Vec::new() });
+            }
+            let found = trees.route_of(key.origin, 0, key.destination, departure)?;
+            Some(TripRoute {
+                seconds: times.route_seconds(&found.links, departure),
+                links: found.links.clone(),
+            })
+        })
+        .collect()
 }
 
 /// Perturbed trees (S298): one bounded time-dependent **generalised-cost** search per origin node,
