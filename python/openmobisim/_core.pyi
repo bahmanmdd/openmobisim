@@ -1232,6 +1232,7 @@ def run_one_loop(
     switch_tolerance: float | None = None,
     found_tolerance: float | None = None,
     indifference_band: float | None = None,
+    allocation: str | None = None,
     motorway_snap_m: float | None = None,
 ) -> dict[str, Any]:
     """Run the one-loop assignment of car trips and write its tables to `output_dir`.

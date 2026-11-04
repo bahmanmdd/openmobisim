@@ -54,8 +54,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use openmobisim_core_assignment::{
-    Coefficients, FreeFlow, HighestUtility, Inputs, IterationReport, Loaded, Loader, Params, Place,
-    PointQueue, StageHook, State, assign,
+    Allocation, Coefficients, FreeFlow, HighestUtility, Inputs, IterationReport, Loaded, Loader,
+    Params, Place, PointQueue, StageHook, State, assign,
 };
 use openmobisim_core_choice::{ChoiceModel, Logit, Options};
 use openmobisim_core_demand::{
@@ -104,7 +104,8 @@ const FINGERPRINT_COVERS: [&str; 12] = [
     "each user class's coefficients",
     "the choice model and its path-size weight",
     "the loop's parameters: minimum and maximum iterations, the switch and found tolerances, the \
-     indifference band, the averaging offset, the cost source, the snapping distance to motorways",
+     indifference band, the averaging offset, the allocation, the cost source, the snapping \
+     distance to motorways",
     "the flow level",
     "the loading step",
     "the width of the bins the link travel times are read in",
@@ -298,6 +299,11 @@ fn fingerprint(
     h.write_u32(window.0);
     h.write_u32(window.1);
     h.write_u64(seed);
+    // The allocation, after everything else and only when it is not the default, so a run with
+    // the draws keeps the fingerprint it had before the option existed.
+    if params.allocation != Allocation::Draws {
+        h.write_str(params.allocation.name());
+    }
     h.finish()
 }
 
@@ -780,7 +786,7 @@ fn write_link_bins(
     window_start_s=None, window_end_s=None, flow_level=2, flow_step_s=300, cost_bin_s=300,
     link_bin_s=None, master_seed=0, choice_model="logit", choice_options=None,
     min_iterations=None, max_iterations=None, step_offset=None, switch_tolerance=None,
-    found_tolerance=None, indifference_band=None, motorway_snap_m=None
+    found_tolerance=None, indifference_band=None, allocation=None, motorway_snap_m=None
 ))]
 #[allow(clippy::too_many_arguments, reason = "the scenario's parts, by name, as Python gives them")]
 #[allow(clippy::too_many_lines, reason = "the steps of one run, in order")]
@@ -811,6 +817,7 @@ pub fn run_one_loop(
     switch_tolerance: Option<f64>,
     found_tolerance: Option<f64>,
     indifference_band: Option<f64>,
+    allocation: Option<&str>,
     motorway_snap_m: Option<f64>,
 ) -> PyResult<Py<PyDict>> {
     let started = Instant::now();
@@ -930,6 +937,15 @@ pub fn run_one_loop(
         }
         params.indifference_band = v;
     }
+    if let Some(name) = allocation {
+        params.allocation = Allocation::from_name(name).ok_or_else(|| {
+            let names: Vec<&str> = Allocation::ALL.iter().map(|a| a.name()).collect();
+            PyValueError::new_err(format!(
+                "allocation must be one of {}, got {name:?}",
+                names.join(", ")
+            ))
+        })?;
+    }
     if let Some(v) = motorway_snap_m {
         params.motorway_snap_metres = v;
     }
@@ -1038,6 +1054,7 @@ pub fn run_one_loop(
     p.set_item("found_tolerance", params.found_tolerance)?;
     p.set_item("indifference_band", params.indifference_band)?;
     p.set_item("step_offset", params.step_offset)?;
+    p.set_item("allocation", params.allocation.name())?;
     p.set_item("cost_source", format!("{:?}", params.cost_source).to_lowercase())?;
     p.set_item("motorway_snap_m", params.motorway_snap_metres)?;
     p.set_item("flow_level", flow_level)?;

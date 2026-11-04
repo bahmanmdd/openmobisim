@@ -241,3 +241,30 @@ def test_the_indifference_band_is_passed_through_and_in_the_fingerprint(tmp_path
     assert default.fingerprint != wide.fingerprint
     with pytest.raises(ValueError, match="indifference_band"):
         run("negative", indifference_band=-0.1)
+
+
+def test_the_allocation_is_passed_through_recorded_and_refused_by_name(tmp_path):
+    net = two_routes()
+    trips = cars(net, 900, 2)
+
+    def run(name, **options):
+        s = scenario(
+            net,
+            trips,
+            equilibration="msa",
+            equilibration_options={"iterations": 3, "min_iterations": 3, **options},
+        )
+        return s, s.run(name, output_dir=str(tmp_path / name), quiet=True, engine="one-loop")
+
+    _, default = run("default")
+    _, drawn = run("draws", allocation="draws")
+    _, quota = run("quota", allocation="quota")
+    names = [
+        json.loads((tmp_path / n / "manifest.json").read_text())["parameters"]["allocation"]
+        for n in ("default", "draws", "quota")
+    ]
+    assert names == ["draws", "draws", "quota"]
+    # The default named or not is the same run; the quota is another.
+    assert default.fingerprint == drawn.fingerprint != quota.fingerprint
+    with pytest.raises(ValueError, match="allocation must be one of"):
+        run("misspelt", allocation="quotas")

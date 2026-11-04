@@ -50,7 +50,12 @@
 //! chains; in iteration 0 everyone chooses (`α_0 = 1`), and so does a trip that has no chain yet.
 //! Whether a traveller re-chooses is a draw of the run's re-selection stream addressed by
 //! (traveller, iteration), so the answer does not depend on the order or the number of threads
-//! that compute it.
+//! that compute it. That is the default allocation, [`Allocation::Draws`]; the quota allocations
+//! ([`crate::quota`], [`crate::Params::allocation`]) replace the draws by the quota of each group of
+//! trips facing the same choice: of who reconsiders (`⌊α N⌋` or `⌈α N⌉` of a group of `N`), and
+//! of what the re-choosers take (the model's probabilities, `N P_k` of them on chain `k`), without
+//! calling the model's own choice. They are worked out on one thread, group by group, in trip
+//! order.
 //!
 //! **The switch share, its floor and the excess.** The switch share of an iteration is the
 //! share of trips (weighted by traveller weight) whose chain after the choice differs from the
@@ -113,6 +118,7 @@ use crate::attributes::Coefficients;
 use crate::chain::Chain;
 use crate::error::AssignError;
 use crate::parallel;
+use crate::quota::{self, Allocation};
 use crate::state::State;
 
 /// The trips a thread takes at a time in the chooser's parallel work.
@@ -441,14 +447,30 @@ pub(crate) fn choose(
     iteration: u32,
     offset: u32,
     band: f64,
+    allocation: Allocation,
 ) -> Result<Switching, AssignError> {
     let situations = situations(state);
     let batch = batch(demand, state, sizes, &situations, iteration, band);
     batch.validate()?;
     let probabilities = probabilities(model, &batch)?;
     let alpha = rechoice_probability(iteration, offset);
+    // The quota's groups (see `crate::quota`), only when the allocation uses them.
+    let groups = if allocation == Allocation::Draws {
+        Vec::new()
+    } else {
+        if probabilities.flat.iter().any(|p| p.is_nan()) {
+            return Err(AssignError::Input(format!(
+                "the {} allocation needs a choice model that gives its probabilities; {} gives none",
+                allocation.name(),
+                model.name()
+            )));
+        }
+        group_keys(demand, state, &situations)
+    };
     // Per situation, whether its trip had no chain and whether it chooses now.
-    let drawn: Vec<(bool, bool)> = {
+    let drawn: Vec<(bool, bool)> = if allocation.quota_selection() {
+        reselection_quota(demand, state, &situations, &groups, alpha, iteration)
+    } else {
         let state = &*state;
         parallel::map(
             &situations,
@@ -469,12 +491,24 @@ pub(crate) fn choose(
             choosing.push(s);
         }
     }
-    let offered = batch.subset(&choosing);
-    let choices = model.choose(&offered, choice_rng)?;
-    choices.validate(&offered)?;
     let mut picked: Vec<Option<usize>> = vec![None; situations.len()];
-    for (k, &s) in choosing.iter().enumerate() {
-        picked[s] = Some(choices.chosen[k] as usize);
+    if allocation.quota_choice() {
+        choice_quota(
+            state,
+            &situations,
+            &groups,
+            &probabilities,
+            &choosing,
+            iteration,
+            &mut picked,
+        );
+    } else {
+        let offered = batch.subset(&choosing);
+        let choices = model.choose(&offered, choice_rng)?;
+        choices.validate(&offered)?;
+        for (k, &s) in choosing.iter().enumerate() {
+            picked[s] = Some(choices.chosen[k] as usize);
+        }
     }
     let (mut total, mut switched, mut floor, mut reconsidering) = (0.0, 0.0, 0.0, 0.0);
     let mut expected = 0.0;
@@ -502,4 +536,113 @@ pub(crate) fn choose(
     let share = |x: f64| if total > 0.0 { x / total } else { 0.0 };
     let excess = if reconsidering > 0.0 { (switched - floor) / reconsidering } else { 0.0 };
     Ok(Switching { share: share(switched), floor: share(floor), excess, expected: share(expected) })
+}
+
+/// A quota group's key: the user class, the bin of departure (in bins of the state's link travel
+/// times) and the identities of the set's chains, sorted. Equal keys, equal choice situations
+/// (see [`crate::quota`]); the keys' own order decides nothing.
+type GroupKey = (u32, u64, Vec<u64>);
+
+/// Every situation's group key.
+fn group_keys(demand: &Demand<'_>, state: &State, situations: &[TripId]) -> Vec<GroupKey> {
+    let bin = state.link_times().bin_seconds();
+    situations
+        .iter()
+        .map(|&trip| {
+            let class = demand.travellers.user_class(demand.trips.traveller(trip)).raw();
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a departure in seconds after midnight over a positive bin length"
+            )]
+            let at = (f64::from(demand.trips.departure(trip).get()) / bin).floor() as u64;
+            let mut chains: Vec<u64> = state.trip(trip).set.iter().map(Chain::identity).collect();
+            chains.sort_unstable();
+            (class, at, chains)
+        })
+        .collect()
+}
+
+/// The members of each group among `members` (indices into the situations, in trip order), each
+/// group's list in trip order; the groups in the keys' order, which decides nothing.
+fn grouped<'a>(groups: &'a [GroupKey], members: &[usize]) -> BTreeMap<&'a GroupKey, Vec<usize>> {
+    let mut out: BTreeMap<&GroupKey, Vec<usize>> = BTreeMap::new();
+    for &s in members {
+        out.entry(&groups[s]).or_default().push(s);
+    }
+    out
+}
+
+/// Form 2 (see [`crate::quota`]): per situation, whether its trip had no chain and whether it
+/// chooses now. A traveller is counted in the quota by their first trip with a chain; their other
+/// trips choose when it does; a trip with no chain always chooses.
+fn reselection_quota(
+    demand: &Demand<'_>,
+    state: &State,
+    situations: &[TripId],
+    groups: &[GroupKey],
+    alpha: f64,
+    iteration: u32,
+) -> Vec<(bool, bool)> {
+    let none: Vec<bool> = situations.iter().map(|&t| state.trip(t).current.is_none()).collect();
+    // Each traveller's first situation with a chain, in trip order.
+    let mut first: Vec<usize> = vec![usize::MAX; demand.travellers.len() as usize];
+    let mut deciding = Vec::new();
+    for (s, &trip) in situations.iter().enumerate() {
+        let traveller = demand.trips.traveller(trip).index();
+        if !none[s] && first[traveller] == usize::MAX {
+            first[traveller] = s;
+            deciding.push(s);
+        }
+    }
+    let mut decided = vec![false; situations.len()];
+    for members in grouped(groups, &deciding).values() {
+        let turn = quota::selection_turn(iteration, situations[members[0]].index());
+        for (r, &s) in members.iter().enumerate() {
+            decided[s] = quota::reselected(r, alpha, turn);
+        }
+    }
+    situations
+        .iter()
+        .enumerate()
+        .map(|(s, &trip)| {
+            let at = first[demand.trips.traveller(trip).index()];
+            (none[s], none[s] || (at != usize::MAX && decided[at]))
+        })
+        .collect()
+}
+
+/// Form 1 (see [`crate::quota`]): the chain of every re-chooser, by its group's choice quota,
+/// written into `picked` as an index into the trip's own set.
+fn choice_quota(
+    state: &State,
+    situations: &[TripId],
+    groups: &[GroupKey],
+    probabilities: &Probabilities,
+    choosing: &[usize],
+    iteration: u32,
+    picked: &mut [Option<usize>],
+) {
+    let mut ordered: Vec<f64> = Vec::new();
+    let mut position: Vec<usize> = Vec::new();
+    for members in grouped(groups, choosing).values() {
+        // The group's chains in the order of its first trip's set.
+        let order: Vec<u64> =
+            state.trip(situations[members[0]]).set.iter().map(Chain::identity).collect();
+        let first = situations[members[0]].index();
+        let ranks = quota::ranks(members.len(), iteration, first);
+        let turn = quota::choice_turn(iteration, first);
+        for (n, &s) in members.iter().enumerate() {
+            let set = &state.trip(situations[s]).set;
+            let own = probabilities.of(s);
+            ordered.clear();
+            position.clear();
+            for id in &order {
+                let k = set.iter().position(|c| c.identity() == *id).expect("the group's chain");
+                position.push(k);
+                ordered.push(own[k]);
+            }
+            picked[s] = Some(position[quota::pick(ranks[n], members.len(), turn, &ordered)]);
+        }
+    }
 }

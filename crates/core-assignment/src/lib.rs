@@ -12,7 +12,8 @@
 //!    best by more than the indifference band ([`Params::indifference_band`]); the stopping
 //!    check;
 //! 2. **choose**: one choice over every trip's set by the choice model, the averaging rule
-//!    deciding who re-chooses; the deterministic choice treats the chains within the band of
+//!    deciding who re-chooses (by seeded draws, or by the quota of each group of trips facing
+//!    the same choice, [`Params::allocation`]); the deterministic choice treats the chains within the band of
 //!    the best as tied and splits the trips facing a tie evenly over them, by trip id;
 //! 3. **load**: the chosen chains' vehicles moved on the network by the loader;
 //! 4. **measure**: the link travel times by time of day built from what the loading recorded,
@@ -42,6 +43,7 @@
 //! | [`planner`] | the [`LegPlanner`] contract, the [`CarPlanner`], the [`CostSource`] |
 //! | [`search`] | the [`ChainSearch`] and the one feasibility rule, [`feasible`] |
 //! | [`chooser`] | what the choice model is handed, [`HighestUtility`], [`logit`], the averaging rule |
+//! | [`quota`] | the quota [`Allocation`]: a group's travellers in the model's proportions |
 //! | [`loader`] | the [`Loader`] contract, [`Loaded`], level 0 [`FreeFlow`], level 2 [`PointQueue`] |
 //! | [`hooks`] | [`StageHook`], code run at fixed points of the loop, and [`NoHooks`] |
 //! | [`report`] | [`IterationReport`], the convergence measures of one iteration |
@@ -77,6 +79,7 @@ pub mod hooks;
 pub mod loader;
 mod parallel;
 pub mod planner;
+pub mod quota;
 pub mod report;
 pub mod search;
 pub mod state;
@@ -89,6 +92,7 @@ pub use error::AssignError;
 pub use hooks::{NoHooks, StageHook};
 pub use loader::{FreeFlow, Loaded, Loader, PointQueue};
 pub use planner::{CarPlanner, CostSource, LegPlanner};
+pub use quota::Allocation;
 pub use report::{IterationReport, StageSeconds};
 pub use search::{ChainSearch, feasible};
 pub use state::{State, TripState};

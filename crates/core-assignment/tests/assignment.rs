@@ -23,8 +23,8 @@
 )]
 
 use openmobisim_core_assignment::{
-    CarPlanner, Chain, Coefficients, FreeFlow, HighestUtility, Inputs, IterationReport, Params,
-    Place, StageHook, State, assign, logit,
+    Allocation, CarPlanner, Chain, Coefficients, FreeFlow, HighestUtility, Inputs, IterationReport,
+    Params, Place, StageHook, State, assign, logit,
 };
 use openmobisim_core_choice::ChoiceModel;
 use openmobisim_core_demand::{
@@ -763,4 +763,95 @@ fn the_loop_stops_at_the_first_check_the_rule_allows() {
     let never = Params { found_tolerance: -1.0, max_iterations: 7, ..Params::default() };
     let (_, reports, _) = run(&c, &HighestUtility, &never, 1, None);
     assert_eq!(reports.len(), 7);
+}
+
+// --- 7. the quota allocation -----------------------------------------------------------------
+
+/// `count` travellers from `A` to `D` of the diamond with roads of `2 × top_m` and `2 × bottom_m`,
+/// all departing at second 0 (one group: one class, one second, one set), each trip's set
+/// holding both roads, the top one first.
+fn one_group(top_m: f64, bottom_m: f64, count: u32) -> (Case, State) {
+    let net = diamond(top_m, bottom_m);
+    let raw = (0..count).map(|i| trip(&net, &format!("t{i:04}"), "A", "D", 0, 1)).collect();
+    let c = case(diamond(top_m, bottom_m), raw);
+    let mut state = State::initial(&c.net, &c.travellers, &c.trips);
+    let planner = CarPlanner::new(&c.net, &c.turns, &c.classes, &c.money).expect("planner");
+    let (a, d) = (Place::Road(node(&c.net, "A")), Place::Road(node(&c.net, "D")));
+    for t in 0..c.trips.len() {
+        let trip = TripId::new(t);
+        for road in [["ab", "bd"], ["ac", "cd"]] {
+            let links = road.iter().map(|n| link(&c.net, n)).collect();
+            let leg = planner.leg_along(a, d, 0.0, links, &state);
+            assert!(state.trip_mut(trip).add(Chain::new(vec![leg])));
+        }
+    }
+    (c, state)
+}
+
+/// The choice quota gives a group exactly its proportions. 1 000 trips of one group choose in
+/// iteration 0 (everyone chooses then) between a top road of 200 m and a bottom road of 300 m,
+/// both residential: the logit gives the top road `P = 1 / (1 + exp(−Δ))`, `Δ` the difference
+/// of the free-flow times in minutes (the time-based utility; the roads share no link, so the
+/// path-size term is 0). The m-th point is `(m + φ) / 1 000` with `φ = 0` in iteration 0 for the
+/// group of trip 0, so the top road receives the points below `P`: exactly `⌈1 000 P⌉` trips,
+/// under both quota allocations. The draws give a binomial count (printed only).
+#[test]
+fn the_choice_quota_gives_one_group_exactly_its_proportions() {
+    let (top, bottom) = (100.0, 150.0);
+    let minutes = |m: f64| 2.0 * m / metres_per_second(RESIDENTIAL_KM_H) / 60.0;
+    let p_top = 1.0 / (1.0 + (-(minutes(bottom) - minutes(top))).exp());
+    let n = 1000_u32;
+    let derived = (f64::from(n) * p_top).ceil();
+    assert!(f64::from(n) * p_top % 1.0 > 1e-6, "the derivation needs a fractional N P");
+    let model = logit();
+    for allocation in Allocation::ALL {
+        let (c, initial) = one_group(top, bottom, n);
+        let params = Params { allocation, ..exactly(1) };
+        let (state, _, _) = run(&c, &model, &params, 2026, Some(initial));
+        let ab = link(&c.net, "ab");
+        let on_top = state
+            .trips()
+            .iter()
+            .filter(|t| t.current_chain().expect("chosen").legs()[0].links[0] == ab)
+            .count();
+        println!(
+            "{}: {on_top} of {n} on the top road; derived for the quota ⌈{n} · {p_top:.6}⌉ = {derived}",
+            allocation.name()
+        );
+        if allocation != Allocation::Draws {
+            assert_eq!(on_top as f64, derived, "{}", allocation.name());
+        }
+    }
+}
+
+/// Determinism given a seed, for each allocation: the same seed twice gives the same states and
+/// reports to the bit. Another seed changes the logit's choices under the draws (the choice
+/// draws) and under the choice quota (who reconsiders is still drawn); under the full quota no
+/// random draw enters the choice at all, so another seed changes nothing (a property of its
+/// design, `quota` module docs).
+#[test]
+fn each_allocation_is_reproducible_and_only_the_draws_read_the_seed() {
+    let model = logit();
+    let times =
+        |r: &[IterationReport]| r.iter().map(IterationReport::without_times).collect::<Vec<_>>();
+    for allocation in Allocation::ALL {
+        let (c, initial) = two_equal_roads("top");
+        let params = Params { allocation, ..exactly(4) };
+        let (a, ra, _) = run(&c, &model, &params, 99, Some(initial.clone()));
+        let (b, rb, _) = run(&c, &model, &params, 99, Some(initial.clone()));
+        assert_eq!(times(&ra), times(&rb), "{}", allocation.name());
+        assert_eq!(a, b, "{}", allocation.name());
+        let (other, _, _) = run(&c, &model, &params, 100, Some(initial));
+        let differ =
+            a.trips().iter().zip(other.trips()).filter(|(x, y)| x.current != y.current).count();
+        println!(
+            "{}: trips choosing differently under another seed: {differ} of {TRAVELLERS}",
+            allocation.name()
+        );
+        if allocation == Allocation::Quota {
+            assert_eq!(differ, 0);
+        } else {
+            assert!(differ > 0, "{}", allocation.name());
+        }
+    }
 }
