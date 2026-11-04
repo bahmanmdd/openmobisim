@@ -200,12 +200,12 @@ fn a_shared_bike_to_the_stop_is_chosen_over_walking_to_it() {
     assert!(r.modes_listed().contains(&Mode::BikeShareTransit));
     let it = r.itineraries.as_ref().expect("itineraries");
     assert_eq!(it.rides, [1]);
-    // The leg on the engine: from `o` to `a` (docks by sorted id: `a` 0, `o` 1, `w` 2), served
-    // as planned.
+    // The leg on the engine: from `o` to `a` (docks by where they are, west to east, then south
+    // to north: `o` 0, `w` 1, `a` 2), served as planned.
     let services = r.services.as_ref().expect("a service");
     let day = services.last.as_ref().expect("a shared bike was ridden");
     let o = day.outcome.legs[0];
-    assert_eq!((o.picked, o.returned, o.redirections), (Some(1), Some(0), 0));
+    assert_eq!((o.picked, o.returned, o.redirections), (Some(0), Some(2), 0));
     // The closed form: at `o` at 100 (no walk), a minute to take the bike, the ride of 1 600 m
     // on the bike layer (about 384 s, as the shared-bike toy's), half a minute to dock it at
     // `a`; at the stop beside it once the stop's transfer time has passed, and on the first run

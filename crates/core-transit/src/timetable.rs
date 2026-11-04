@@ -19,8 +19,15 @@
 //! on the times, so it is made where the times are known.
 //!
 //! **Identity.** Stops, routes and runs get dense ids by sorted external id,
-//! so two builds of the same feed have the same ids; groups
-//! are numbered in the order of their smallest run id.
+//! so two builds of the same feed have the same ids. **No result may depend on those ids**
+//! (renaming a feed's stops, lines or trips is not a change of the service), so wherever stops
+//! or lines must be put in an order or told apart in a hash, the timetable gives what does it
+//! without them: a stop's **rank** ([`Timetable::stop_rank`]: by where it is, longitude then
+//! latitude, [`openmobisim_core_graph::places`]; stops at one point share theirs, and their key)
+//! and a line's **key** ([`Timetable::route_key`]: a hash of its kind of service and of the
+//! points of the stops it calls at). Groups are numbered by their stops' ranks, their line's key and their
+//! runs' times, and a group's runs come by their times, the id only for runs that share every
+//! time; RAPTOR orders its patterns the same way ([`crate::raptor`]).
 //!
 //! **Cost:** per call, a stop id, a flag byte and two times — 13 bytes; per run,
 //! a route id and an offset; per stop, a position, a name and a parent. A day
@@ -30,6 +37,8 @@
 use std::collections::HashMap;
 
 use openmobisim_core_graph::geometry::LonLat;
+use openmobisim_core_graph::places;
+use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{
     EntityId, ExternalIdTable, ExternalIdTableBuilder, NULL_ID, NodeId, TransitRunId,
 };
@@ -307,8 +316,25 @@ impl TimetableBuilder {
         transfers.sort();
         transfers.dedup_by(|b, a| a.from == b.from && a.to == b.to);
 
+        // Stops at one point share their rank and their key: nothing about them but their ids
+        // tells them apart, and an order or a hash by id would reach every result through them.
+        let stop_rank = places::dense_ranks(stop_count, |a, b| {
+            places::point_order(stop_position[a], stop_position[b])
+        });
+        let stop_key: Vec<u64> = stop_position.iter().map(|&p| places::point_key(p)).collect();
+        let route_key = route_keys(
+            &route_type,
+            &run_route,
+            &run_start,
+            &call_stop,
+            &stop_key,
+            (&arrival, &departure, &call_flags),
+        );
         let mut table = Timetable {
             date: self.date,
+            stop_rank,
+            stop_key,
+            route_key,
             stop_ids,
             stop_position,
             stop_name,
@@ -334,6 +360,64 @@ impl TimetableBuilder {
     }
 }
 
+/// Each route's key ([`Timetable::route_key`]): its `route_type` and the sorted, distinct keys
+/// of the stops its runs call at, hashed; lines equal in all of that told apart by their
+/// schedules (every run's calls: stop, times, boarding rules), and lines equal in that too by
+/// their order (by id, [`places::distinct`]).
+fn route_keys(
+    route_type: &[u16],
+    run_route: &[u32],
+    run_start: &[u32],
+    call_stop: &[NodeId],
+    stop_key: &[u64],
+    (arrival, departure, flags): (&[u32], &[u32], &[u8]),
+) -> Vec<u64> {
+    let mut points: Vec<Vec<u64>> = vec![Vec::new(); route_type.len()];
+    let mut runs: Vec<Vec<u64>> = vec![Vec::new(); route_type.len()];
+    for (run, &route) in run_route.iter().enumerate() {
+        let calls = run_start[run] as usize..run_start[run + 1] as usize;
+        points[route as usize].extend(call_stop[calls.clone()].iter().map(|s| stop_key[s.index()]));
+        let mut h = Fnv1a::new();
+        for c in calls {
+            h.write_u64(stop_key[call_stop[c].index()]);
+            h.write_u32(arrival[c]);
+            h.write_u32(departure[c]);
+            h.write_u8(flags[c]);
+        }
+        runs[route as usize].push(h.finish());
+    }
+    let mut keys: Vec<u64> = points
+        .iter_mut()
+        .zip(route_type)
+        .map(|(p, &t)| {
+            p.sort_unstable();
+            p.dedup();
+            let mut h = Fnv1a::new();
+            h.write_u32(u32::from(t));
+            h.write_u64(p.len() as u64);
+            p.iter().for_each(|&k| h.write_u64(k));
+            h.finish()
+        })
+        .collect();
+    // Lines through the same points: their schedules hashed in.
+    let mut count: HashMap<u64, u32> = HashMap::new();
+    for &k in &keys {
+        *count.entry(k).or_insert(0) += 1;
+    }
+    for (k, r) in keys.iter_mut().zip(&mut runs) {
+        if count[k] > 1 {
+            r.sort_unstable();
+            let mut h = Fnv1a::new();
+            h.write_u64(*k);
+            h.write_u64(r.len() as u64);
+            r.iter().for_each(|&x| h.write_u64(x));
+            *k = h.finish();
+        }
+    }
+    let n = keys.len();
+    places::distinct(keys, 0..n)
+}
+
 /// Arrival and departure times for every call of a [`Timetable`], by call
 /// index: the scheduled ones, or realised ones of the same shape.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -348,6 +432,12 @@ pub struct CallTimes {
 #[derive(Clone, Debug)]
 pub struct Timetable {
     date: ServiceDate,
+    /// Per stop, its rank by where it is (see the [module docs](self)).
+    stop_rank: Vec<u32>,
+    /// Per stop, its key (see [`Timetable::stop_key`]).
+    stop_key: Vec<u64>,
+    /// Per route, its key (see the [module docs](self)).
+    route_key: Vec<u64>,
     stop_ids: ExternalIdTable,
     stop_position: Vec<LonLat>,
     stop_name: Vec<Box<str>>,
@@ -401,6 +491,36 @@ impl Timetable {
     #[must_use]
     pub fn stop_name(&self, stop: NodeId) -> &str {
         &self.stop_name[stop.index()]
+    }
+
+    /// A stop's rank among the stops by where it is: longitude, then latitude, from 0, the
+    /// stops at one point sharing theirs (see the [module docs](self)). What every tie between
+    /// stops is broken by, never the stop's id.
+    #[must_use]
+    pub fn stop_rank(&self, stop: NodeId) -> u32 {
+        self.stop_rank[stop.index()]
+    }
+
+    /// The ranks of every stop ([`Self::stop_rank`]), by stop id.
+    #[must_use]
+    pub fn stop_ranks(&self) -> &[u32] {
+        &self.stop_rank
+    }
+
+    /// The 64-bit key of a stop: of its point ([`places::point_key`]; stops at one point share
+    /// it), what a hash names it by, never its id.
+    #[must_use]
+    pub fn stop_key(&self, stop: NodeId) -> u64 {
+        self.stop_key[stop.index()]
+    }
+
+    /// The 64-bit key of a route (a line): a hash of its GTFS `route_type` and of the sorted,
+    /// distinct points of the stops its runs call at; lines that share all of that are told
+    /// apart by their schedules, and lines that share those too by their rank among themselves,
+    /// by id. What a hash names a line by, never its id.
+    #[must_use]
+    pub fn route_key(&self, route: u32) -> u64 {
+        self.route_key[route as usize]
     }
 
     /// The station a stop belongs to (`parent_station`), if any.
@@ -509,7 +629,8 @@ impl Timetable {
         groups
     }
 
-    /// A group's runs, by scheduled departure from their first call.
+    /// A group's runs, by their scheduled times (departure from their first call first; the id
+    /// only for runs that share every time).
     #[must_use]
     pub fn group_runs(&self, group: u32) -> &[TransitRunId] {
         let g = group as usize;
@@ -538,6 +659,8 @@ impl Timetable {
             + self.call_stop.len() * (4 + 1 + 8)
             + self.transfers.len() * core::mem::size_of::<Transfer>()
             + (self.group_start.len() + self.group_runs.len()) * 4
+            + self.stop_rank.len() * 4
+            + (self.stop_key.len() + self.route_key.len()) * 8
     }
 
     fn group_runs_into_patterns(&mut self) {
@@ -545,7 +668,7 @@ impl Timetable {
         let mut key_of: HashMap<(u32, Vec<(u32, u8)>), u32> = HashMap::new();
         let mut members: Vec<Vec<TransitRunId>> = Vec::new();
         let mut group_of_run = vec![0u32; runs];
-        // Runs in id order, so a group's number is the order of its smallest run id.
+        // Runs in id order to gather the groups; they are put in order below.
         for (r, group_slot) in group_of_run.iter_mut().enumerate() {
             let run = TransitRunId::from_index(r);
             let key: Vec<(u32, u8)> = self
@@ -560,12 +683,45 @@ impl Timetable {
             members[g as usize].push(run);
             *group_slot = g;
         }
+        // Each group's runs by their scheduled times (the departure from the first call first),
+        // the id only for runs that share every time; the groups by their stops' ranks and
+        // boarding rules, their line's key, then their runs' times (S312): no order here, and
+        // so none of the runs on the roads or of RAPTOR's patterns, follows an id.
+        let times = |r: TransitRunId| {
+            let calls = self.run_start[r.index()] as usize..self.run_start[r.index() + 1] as usize;
+            calls.map(|c| (self.scheduled.departure[c], self.scheduled.arrival[c]))
+        };
+        for list in &mut members {
+            list.sort_by(|&a, &b| times(a).cmp(times(b)).then(a.cmp(&b)));
+        }
+        let stops = |r: TransitRunId| {
+            let calls = self.run_start[r.index()] as usize..self.run_start[r.index() + 1] as usize;
+            calls.map(|c| (self.stop_rank[self.call_stop[c].index()], self.call_flags[c]))
+        };
+        members.sort_by(|a, b| {
+            stops(a[0])
+                .cmp(stops(b[0]))
+                .then_with(|| {
+                    let line = |r: TransitRunId| self.route_key[self.run_route[r.index()] as usize];
+                    line(a[0]).cmp(&line(b[0]))
+                })
+                .then_with(|| {
+                    for (&x, &y) in a.iter().zip(b.iter()) {
+                        let o = times(x).cmp(times(y));
+                        if o != core::cmp::Ordering::Equal {
+                            return o;
+                        }
+                    }
+                    a.len().cmp(&b.len())
+                })
+                .then_with(|| a.iter().min().cmp(&b.iter().min()))
+        });
         let mut group_start = vec![0u32];
         let mut group_runs = Vec::with_capacity(runs);
-        for mut list in members {
-            list.sort_by_key(|&r| {
-                (self.scheduled.departure[self.run_start[r.index()] as usize], r)
-            });
+        for (g, list) in members.into_iter().enumerate() {
+            for &r in &list {
+                group_of_run[r.index()] = u32::try_from(g).expect("groups fit u32");
+            }
             group_runs.extend(list);
             group_start.push(u32::try_from(group_runs.len()).expect("runs fit u32"));
         }

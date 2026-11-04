@@ -6,7 +6,9 @@
 //! bike layer for a bike) and to the walk layer. The run's one hub set
 //! (`crate::services::hubs`) makes it a resource of a hub: rows sharing a
 //! `hub_id` share one, a row without one joins the nearest stop's. Here a
-//! parking is known by its index, in the order of its hub's id. **A parking need
+//! parking is known by its index, in the order of where it is (longitude, then latitude:
+//! [`openmobisim_core_graph::places`]; then its vehicle and capacity, the id only for parkings
+//! that share all of that), so no result depends on the parkings' ids or on the table's order. **A parking need
 //! not be a stop**: the traveller walks from it to the stops within
 //! [`ParkingDefaults::walk_max_s`], found here once. A parking with no stop
 //! within that walk is left out, since in this version only park-and-ride and
@@ -31,6 +33,7 @@ use std::sync::{Arc, OnceLock};
 use openmobisim_core_graph::geometry::{LonLat, ground_distance_metres};
 use openmobisim_core_graph::hubs::{ParkingKind, ParkingRow};
 use openmobisim_core_graph::network::RoadNetwork;
+use openmobisim_core_graph::places;
 use openmobisim_core_routes::NodeSnapper;
 use openmobisim_core_types::ids::{EntityId, NodeId};
 
@@ -283,6 +286,9 @@ pub struct ParkingSetup {
     node: Vec<NodeId>,
     walk_node: Vec<NodeId>,
     position: Vec<LonLat>,
+    /// Per parking: its key, of its vehicle, point and capacity (S312: what an itinerary's
+    /// identity names it by, never its id).
+    key: Vec<u64>,
     name: Vec<Option<String>>,
     /// Per parking: its fee per stay in euros, if its row gave one.
     fee_eur: Vec<Option<f64>>,
@@ -352,9 +358,17 @@ impl ParkingSetup {
         let road_snapper = NodeSnapper::new(&road);
         let bike_snapper = bike.map(|b| NodeSnapper::every_node(b.network().network()));
         let walk_graph = transit.walk().network();
-        // Rows in id order, so the result does not depend on the table's order.
+        // Rows in the order of where they are, then their vehicle and capacity, the id only for
+        // rows that share all of that (S312): a
+        // parking's index breaks every tie among parkings (the candidates tried, the choice
+        // set's order), so neither the ids nor the table's order reach a result.
         let mut order: Vec<&ParkingRow> = rows.iter().collect();
-        order.sort_by(|a, b| a.parking_id.cmp(&b.parking_id));
+        order.sort_by(|a, b| {
+            places::point_order(a.position, b.position)
+                .then(a.kind.index().cmp(&b.kind.index()))
+                .then(a.capacity.cmp(&b.capacity))
+                .then_with(|| a.parking_id.cmp(&b.parking_id))
+        });
         struct Kept<'r> {
             row: &'r ParkingRow,
             node: NodeId,
@@ -398,20 +412,8 @@ impl ParkingSetup {
             }
             kept.push(Kept { row, node, walk, stops });
         }
-        // Parkings in the order of their hub's id (a table's `hub_id`, else the parking's own),
-        // and in table order within a hub: the order the parking hubs had when each setup built
-        // a hub set of its own, so a parking's index, and every result, is unchanged.
-        let mut by_hub: Vec<(String, Vec<usize>)> = Vec::new();
-        let mut hub_index: HashMap<String, usize> = HashMap::new();
-        for (i, k) in kept.iter().enumerate() {
-            let hub = k.row.hub_id.clone().unwrap_or_else(|| k.row.parking_id.clone());
-            let slot = *hub_index.entry(hub.clone()).or_insert_with(|| {
-                by_hub.push((hub, Vec::new()));
-                by_hub.len() - 1
-            });
-            by_hub[slot].1.push(i);
-        }
-        by_hub.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let hub_of =
+            |k: &Kept<'_>| k.row.hub_id.clone().unwrap_or_else(|| k.row.parking_id.clone());
         let n = kept.len();
         let mut setup = Self {
             defaults,
@@ -424,6 +426,7 @@ impl ParkingSetup {
             node: Vec::with_capacity(n),
             walk_node: Vec::with_capacity(n),
             position: Vec::with_capacity(n),
+            key: Vec::new(),
             name: Vec::with_capacity(n),
             fee_eur: Vec::with_capacity(n),
             stops_start: vec![0],
@@ -439,12 +442,10 @@ impl ParkingSetup {
             bike.map_or(0, |b| b.network().network().node_count() as usize),
         ];
         setup.targets = [vec![false; layer_nodes[0]], vec![false; layer_nodes[1]]];
-        let order = by_hub.iter().flat_map(|(hub, members)| members.iter().map(move |&m| (hub, m)));
-        for (p, (hub, m)) in order.enumerate() {
-            let k = &kept[m];
+        for (p, k) in kept.iter().enumerate() {
             let kind = k.row.kind.index();
             setup.external.push(k.row.parking_id.clone());
-            setup.hub_external.push(hub.clone());
+            setup.hub_external.push(hub_of(k));
             setup.kind.push(k.row.kind);
             setup.capacity.push(k.row.capacity);
             setup.initial.push(k.row.initial_occupancy);
@@ -464,6 +465,25 @@ impl ParkingSetup {
                 .or_default()
                 .push(u32::try_from(p).expect("parkings fit u32"));
         }
+        let keys = setup
+            .kind
+            .iter()
+            .zip(&setup.position)
+            .map(|(k, &at)| {
+                let mut h = openmobisim_core_types::hash::Fnv1a::new();
+                h.write_u32(u32::try_from(k.index()).expect("two kinds"));
+                h.write_u64(places::point_key(at));
+                h.finish()
+            })
+            .zip(&setup.capacity)
+            .map(|(k, &c)| {
+                let mut h = openmobisim_core_types::hash::Fnv1a::new();
+                h.write_u64(k);
+                h.write_u32(c);
+                h.finish()
+            })
+            .collect();
+        setup.key = places::distinct(keys, 0..n);
         Ok(setup)
     }
 
@@ -545,6 +565,14 @@ impl ParkingSetup {
     #[must_use]
     pub fn walk_node(&self, parking: u32) -> NodeId {
         self.walk_node[parking as usize]
+    }
+
+    /// A parking's key: a hash of its vehicle, its point and its capacity, parkings that share
+    /// all of that told apart by their order ([`places::distinct`]). What an itinerary's
+    /// identity names the parking by, never its id or its index.
+    #[must_use]
+    pub fn key(&self, parking: u32) -> u64 {
+        self.key[parking as usize]
     }
 
     /// Where a parking is.
