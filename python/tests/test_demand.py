@@ -289,3 +289,24 @@ def test_random_trips_do_not_depend_on_the_network_s_ids_or_row_order() -> None:
     base = drawn(grid(False, False))
     assert drawn(grid(True, True)) == base
     assert drawn(grid(False, True)) == base
+
+
+def test_trips_from_an_od_matrix_do_not_depend_on_the_zones_names_or_row_order() -> None:
+    """The same matrix under other zone names, its rows in another order: the same trips."""
+    zones = {f"z{i}": (4.80 + 0.01 * (i % 3), 45.70 + 0.01 * (i // 3)) for i in range(6)}
+    od = [
+        {"origin_zone": f"z{a}", "destination_zone": f"z{b}", "trips": 2.5 + (a * 7 + b) % 4}
+        for a in range(6)
+        for b in range(6)
+        if a != b
+    ]
+    rename = {f"z{i}": f"zone-{9 - i}" for i in range(6)}
+    od_b = []
+    for r in reversed(od):
+        o, d = rename[r["origin_zone"]], rename[r["destination_zone"]]
+        od_b.append({**r, "origin_zone": o, "destination_zone": d})
+    zones_b = {rename[z]: p for z, p in reversed(list(zones.items()))}
+    a = ms.demand_from_od(od, zones, seed=4, spread_m=200.0)
+    b = ms.demand_from_od(od_b, zones_b, seed=4, spread_m=200.0)
+    assert len(a) == len(b) > 0
+    assert a == b

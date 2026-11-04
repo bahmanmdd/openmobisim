@@ -908,19 +908,20 @@ def _key(seed: int, *parts: object) -> int:
     return int.from_bytes(hashlib.blake2b(text.encode(), digest_size=8).digest(), "big")
 
 
-def _integerise(cells: list[tuple[tuple, float]], seed: int) -> list[int]:
+def _integerise(cells: list[tuple[tuple, float]], seed: int, place: Any = None) -> list[int]:
     """Whole trips per cell, keeping the group's total (rounded).
 
     Each cell gets its whole part, then one more for the cells with the largest remainders,
-    ties broken by a keyed draw.
+    ties broken by a draw keyed on the seed and ``place(cell)`` (the cell itself without it).
     """
+    place = place or (lambda cell: cell)
     whole = [math.floor(x) for _, x in cells]
     target = round(sum(x for _, x in cells))
     left = target - sum(whole)
     if left > 0:
         order = sorted(
             range(len(cells)),
-            key=lambda i: (-(cells[i][1] - whole[i]), _key(seed, *cells[i][0])),
+            key=lambda i: (-(cells[i][1] - whole[i]), _key(seed, *place(cells[i][0]))),
         )
         for i in order[:left]:
             whole[i] += 1
@@ -946,10 +947,11 @@ def demand_from_od(
     1. **Whole trips:** within each group of rows with the same window, class and mode, every
        cell gets the whole part of its trips, and the cells with the largest remainders one more
        each until the group's total (rounded to a whole number) is reached; a tie between
-       remainders is broken by a draw keyed on the seed and the cell, so the result never
-       depends on the order of the rows.
+       remainders is broken by a draw keyed on the seed and the cell's two zone points, so the
+       result never depends on the order of the rows nor on the zones' names.
     2. **One traveller per trip,** with one trip (a chain needs a trips table): ids ``od0000001``…
-       in the order of the sorted cells.
+       in the order of the cells, sorted by their origin's and then their destination's point
+       (longitude, then latitude), so renaming the zones gives the same trips.
     3. **When:** a departure in the row's window (``start_s``–``end_s``, else the arguments'),
        drawn from ``profile``: ``"uniform"``, or ``"am_peak"``, a bell over the window (a Beta(3, 3)
        distribution: two thirds of the trips in its middle 40%, against 40% for ``"uniform"``).
@@ -967,8 +969,9 @@ def demand_from_od(
        other than its origin's when the zone has more than one (with one point, both ends are
        that point). A zone without points keeps the rule above.
 
-    The draws (steps 3 and 4) come from one NumPy generator seeded by ``seed``, consumed in the
-    sorted order of the cells, so the same inputs and seed give the same trips on any machine for
+    The draws (steps 3 and 4) come from one NumPy generator seeded by ``seed``, consumed in that
+    order of the cells (a zone's own points in the order of their coordinates), so the same
+    inputs and seed give the same trips on any machine for
     one NumPy version: NumPy does not promise the same stream across its releases, so another
     release may give other departures and places (the whole trips of step 1 are keyed hashes and
     do not depend on it). Keep the returned trips, not only the seed, to repeat a study.
@@ -1015,6 +1018,8 @@ def demand_from_od(
             raise ValueError(f"zone_points names zone {zone!r}, which zones does not have")
         if not its:
             continue
+        # The points in the order of their coordinates, not of their rows (S312).
+        its = sorted(its, key=lambda p: (float(p[0]), float(p[1])))
         xy = np.array([[p[0], p[1]] for p in its], dtype=float)
         wo = np.array([p[2] for p in its], dtype=float)
         wd = np.array([p[3] for p in its], dtype=float)
@@ -1040,9 +1045,16 @@ def demand_from_od(
         groups[group].append(((o, d, *group), float(row["trips"])))
     rng = np.random.default_rng(seed)
     trips: list[tuple] = []
+
+    def place(cell: tuple) -> tuple:
+        # A cell by where its zones are, then their names (S312): renaming the zones, or listing
+        # them in another order, gives the same trips for a seed.
+        o, d = points[cell[0]], points[cell[1]]
+        return (float(o[0]), float(o[1]), float(d[0]), float(d[1]), *cell[2:], cell[0], cell[1])
+
     for group in sorted(groups):
-        cells = sorted(groups[group], key=lambda c: c[0])
-        counts = _integerise(cells, seed)
+        cells = sorted(groups[group], key=lambda c: place(c[0]))
+        counts = _integerise(cells, seed, lambda cell: place(cell)[:-2])
         lo, hi, cls, mode = group
         for (cell, _), n in zip(cells, counts, strict=True):
             if n == 0:
