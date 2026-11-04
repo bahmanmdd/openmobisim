@@ -9,8 +9,9 @@
 //!   the **current chain** (the one the traveller takes now, an index into the set) and the
 //!   **probabilities of the last choice** (what the choice model gave each chain of the set
 //!   when the trip last faced a choice);
-//! - per traveller, the **vehicles** they can use: for now, whether they have a car (from their
-//!   class's ownership). Where each vehicle is during the day is not tracked;
+//! - per traveller, the **vehicles** they can use: for now, whether they have a car and whether
+//!   they have a bike (from their class's or their own ownership). Where each vehicle is during
+//!   the day is not tracked;
 //! - the number of **assignment iterations completed** on the way to it, which sets the
 //!   averaging rule's step: a run continued from a state (`Inputs::initial`) goes on with the
 //!   next iteration's step, not with the first one's.
@@ -75,12 +76,13 @@ pub struct State {
     links: u32,
     trips: Vec<TripState>,
     has_car: Vec<bool>,
+    has_bike: Vec<bool>,
     iterations: u32,
 }
 
 impl State {
     /// The state before the first iteration: free-flow link times, every set empty, and each
-    /// traveller's car as their ownership says.
+    /// traveller's car and bike as their ownership says.
     #[must_use]
     pub fn initial(network: &RoadNetwork, travellers: &Travellers, trips: &Trips) -> Self {
         Self {
@@ -89,6 +91,9 @@ impl State {
             trips: vec![TripState::default(); trips.len() as usize],
             has_car: (0..travellers.len())
                 .map(|t| travellers.ownership(TravellerId::new(t)).car)
+                .collect(),
+            has_bike: (0..travellers.len())
+                .map(|t| travellers.ownership(TravellerId::new(t)).bike)
                 .collect(),
             iterations: 0,
         }
@@ -160,6 +165,16 @@ impl State {
     pub fn has_car(&self, traveller: TravellerId) -> bool {
         self.has_car[traveller.index()]
     }
+
+    /// Whether `traveller` has a bike to ride.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `traveller` is not one of the demand the state was made for.
+    #[must_use]
+    pub fn has_bike(&self, traveller: TravellerId) -> bool {
+        self.has_bike[traveller.index()]
+    }
 }
 
 /// Whether two tables of link times over `links` links give every link the same time: the
@@ -185,6 +200,7 @@ impl PartialEq for State {
         self.links == other.links
             && self.trips == other.trips
             && self.has_car == other.has_car
+            && self.has_bike == other.has_bike
             && same_link_times(&self.link_times, &other.link_times, self.links)
     }
 }

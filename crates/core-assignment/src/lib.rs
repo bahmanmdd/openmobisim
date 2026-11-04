@@ -41,6 +41,7 @@
 //! | [`chain`] | [`Place`], [`Leg`] with its [`FixedTimes`], [`Chain`] with its identity across iterations |
 //! | [`state`] | [`State`], the value carried between iterations; [`TripState`] |
 //! | [`planner`] | the [`LegPlanner`] contract, the [`CarPlanner`], the [`CostSource`] |
+//! | [`layer_planner`] | the bike and walk [`Layers`] and their [`StaticPlanner`] |
 //! | [`search`] | the [`ChainSearch`] and the one feasibility rule, [`feasible`] |
 //! | [`chooser`] | what the choice model is handed, [`HighestUtility`], [`logit`], the averaging rule |
 //! | [`quota`] | the quota [`Allocation`]: a group's travellers in the model's proportions |
@@ -52,13 +53,17 @@
 //!
 //! # What exists so far
 //!
-//! Car trips only, one leg each, loaded at free flow (level 0) or by the point queue (level 2,
+//! Car trips, one leg each, loaded at free flow (level 0) or by the point queue (level 2,
 //! queues at the links' downstream ends discharging at capacity, signals included), each car
 //! leg with its fixed times of reaching the car and of parking and leaving it
 //! ([`Params::car_fixed_times`], [`FixedTimes`]): the chain
 //! search finds one route per trip per iteration, so a choice set grows by at most one chain per
-//! iteration and nothing is enumerated in advance. A further mode is a further [`LegPlanner`],
-//! a further loading a further [`Loader`], behind the same contracts.
+//! iteration and nothing is enumerated in advance. **Bike and walking trips whose mode is
+//! given**, one leg each on their own layer ([`Inputs::layers`], [`StaticPlanner`]): the route of
+//! least cost on the layer at its static speeds, planned once, a bike leg with its fixed times
+//! ([`Params::bike_fixed_times`]); they load nothing on the road network, so their chain never
+//! changes and they never switch. A further mode is a further [`LegPlanner`], a further loading a
+//! further [`Loader`], behind the same contracts.
 //!
 //! **Threads and shared searches.** The car planner answers the trips of one origin, user class
 //! and departure window with as few searches as give every trip, link for link, the route its
@@ -69,8 +74,8 @@
 //! thread or on many (the `parallel` feature, on by default; without it everything runs on the
 //! calling thread).
 //!
-//! Nothing in the loop is specific to the car: a bicycle leg would be planned by a planner of
-//! its own on the bicycle layer, and chosen, loaded and measured by the same stages.
+//! Nothing in the loop is specific to the car: a bike leg is planned by a planner of its own on
+//! the bike layer, and chosen, measured and assessed by the same stages.
 
 pub mod assign;
 pub mod attributes;
@@ -78,6 +83,7 @@ pub mod chain;
 pub mod chooser;
 pub mod error;
 pub mod hooks;
+pub mod layer_planner;
 pub mod loader;
 mod parallel;
 pub mod planner;
@@ -92,6 +98,7 @@ pub use chain::{Chain, FixedTimes, Leg, Place};
 pub use chooser::{HighestUtility, logit, rechoice_probability, rechooses};
 pub use error::AssignError;
 pub use hooks::{NoHooks, StageHook};
+pub use layer_planner::{Layer, Layers, StaticPlanner};
 pub use loader::{FreeFlow, Loaded, Loader, PointQueue};
 pub use planner::{CarPlanner, CostSource, LegPlanner};
 pub use quota::Allocation;

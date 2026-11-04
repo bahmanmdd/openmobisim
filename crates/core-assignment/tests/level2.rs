@@ -243,6 +243,7 @@ fn run_with(
     let inputs = Inputs {
         network: &c.net,
         turns: &c.turns,
+        layers: openmobisim_core_assignment::Layers::NONE,
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,
@@ -640,6 +641,7 @@ fn continued_from_the_stop(name: &str, model: &dyn ChoiceModel, must_stop: bool)
     let inputs = Inputs {
         network: &c.net,
         turns: &c.turns,
+        layers: openmobisim_core_assignment::Layers::NONE,
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,
@@ -1329,6 +1331,7 @@ fn a_state_rebuilt_from_what_a_run_wrote_is_the_state() {
             let mut inputs = Inputs {
                 network: &c.net,
                 turns: &c.turns,
+                layers: openmobisim_core_assignment::Layers::NONE,
                 travellers: &c.travellers,
                 trips: &c.trips,
                 classes: &c.classes,
@@ -1370,6 +1373,7 @@ fn a_saved_state_that_does_not_fit_is_refused() {
     let inputs = Inputs {
         network: &c.net,
         turns: &c.turns,
+        layers: openmobisim_core_assignment::Layers::NONE,
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,

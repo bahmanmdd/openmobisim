@@ -257,24 +257,21 @@ class _OneLoopSummary:
             setattr(self, key, int(r[key]))
         self.cancelled = None
         self.total_travel_time_s = float(r["total_travel_time_s"])
-        self.total_vehicle_time_s = self.total_travel_time_s
+        # The time in the trips' own vehicles: the car's drive, the bike's ride.
+        self.total_vehicle_time_s = float(r["total_vehicle_time_s"])
         self.completed_people = float(r["completed_people"])
-        self.completion_by_mode = (
-            {
-                "car": {
-                    **{k: getattr(self, k) for k in _FILE_COMPLETION},
-                    "total_travel_time_s": self.total_travel_time_s,
-                    "people": float(r["people"]),
-                    "completed_people": self.completed_people,
-                }
-            }
-            if self.total_trips
-            else {}
-        )
+        self.completion_by_mode = {
+            mode: {k: (float(v) if isinstance(v, float) else int(v)) for k, v in row.items()}
+            for mode, row in dict(r["completion_by_mode"]).items()
+        }
         self.link_bins = r.get("link_bins")
-        self.bike_link_bins = self.walk_link_bins = None
+        self.bike_link_bins = r.get("bike_link_bins")
+        self.walk_link_bins = r.get("walk_link_bins")
         self.link_bins_path = r.get("link_bins_path")
-        self.link_bins_bike_path = self.link_bins_walk_path = None
+        self.link_bins_bike_path = r.get("link_bins_bike_path")
+        self.link_bins_walk_path = r.get("link_bins_walk_path")
+        # A bike trip rides the one route of least cost on the bike layer: no route sets.
+        self.bike_route_sets = self.bike_route_choices = None
         self.trip_results_path = r.get("trip_results_path")
         self.convergence_path = r.get("convergence_path")
         self.chains_path = r.get("chains_path")
@@ -284,7 +281,9 @@ class _OneLoopSummary:
         self.gap_currency = "utility"
         self.route_changes = {"trip": [], "second": [], "link": []}
         self.route_realised = {"trip": [], "links": []}
-        self.layer_legs = {}
+        # The legs on the bike and walk layers (the select-link analysis), only with link bins
+        # and only for the run in memory: a run read from its folder has none.
+        self.layer_legs = dict(r.get("layer_legs") or {}) if r.get("link_bins") is not None else {}
         self.itinerary_choices = None
         self.no_alternative = {"fallback_car": []}
         keys = ("traveller_id", "trip_seq", "departure_s", "mode", "mode_choice", "weight")
@@ -326,13 +325,34 @@ class _OneLoopSummary:
         outcome = list(trips["outcome"])
         weight = np.asarray(trips["weight"], dtype=float)
         travel = np.asarray(trips["travel_time_s"], dtype=float)
+        vehicle = np.asarray(trips["vehicle_s"], dtype=float)
         done = ~np.isnan(travel)
+        modes = np.asarray(trips["mode"], dtype=object)
+        by_mode: dict[str, dict[str, Any]] = {}
+        for mode in ("car", "bike", "walk"):
+            of = modes == mode
+            if not of.any():
+                continue
+            row: dict[str, Any] = {
+                k: sum(1 for o, m in zip(outcome, of, strict=True) if m and o == k)
+                for k in ("completed", "truncated", "no_vehicle_available", "no_feasible_path")
+            }
+            row["mode_not_available"] = 0
+            row["total_travel_time_s"] = float((weight[of & done] * travel[of & done]).sum())
+            row["people"] = float(weight[of].sum())
+            row["completed_people"] = float(weight[of & done].sum())
+            by_mode[mode] = row
         timings: list[tuple[str, int | None, float]] = []
         if (folder / "timings.csv").exists():
             with open(folder / "timings.csv", newline="") as f:
                 rows = list(csv.reader(f))[1:]
             timings = [(st, int(it) if it else None, float(sec)) for st, it, sec in rows]
         link_bins = folder / "link_bins.parquet"
+
+        def layer_bins(layer: str) -> str | None:
+            path = folder / f"link_bins_{layer}.parquet"
+            return str(path) if path.exists() else None
+
         result = {
             "fingerprint": m["run_fingerprint"],
             "master_seed": m["master_seed"],
@@ -347,9 +367,13 @@ class _OneLoopSummary:
             "no_feasible_path": outcome.count("no_feasible_path"),
             "mode_not_available": 0,
             "total_travel_time_s": float((weight[done] * travel[done]).sum()),
+            "total_vehicle_time_s": float((weight[done] * vehicle[done]).sum()),
+            "completion_by_mode": by_mode,
             "people": float(weight.sum()),
             "completed_people": float(weight[done].sum()),
             "link_bins_path": str(link_bins) if link_bins.exists() else None,
+            "link_bins_bike_path": layer_bins("bike"),
+            "link_bins_walk_path": layer_bins("walk"),
             "trip_results_path": str(folder / "trip_results.parquet"),
             "convergence_path": str(folder / "convergence.parquet"),
             "chains_path": str(folder / "chains.parquet"),
@@ -583,11 +607,14 @@ class Run:
         order found), ``taken`` (the chain the trip took in the last iteration), ``probability``
         (what the choice model gave it at the trip's last choice), ``cost`` (its cost in utility
         units, minus the systematic utility of the trip's user class) and ``travel_time_s`` at
-        the link travel times of the last loading (door to door: the car's fixed times
-        included), ``links`` (its road links in driving order, as the network's link ids, as
-        ``link_bins_table()``'s ``link``) and ``link_index`` (the same links as indices into the
-        network's links, as ``route_sets()`` holds them). Read from ``chains.parquet``; needs
-        pyarrow.
+        the link travel times of the last loading (door to door: the car's or the bike's fixed
+        times included), ``mode`` (``"car"``, ``"bike"`` or ``"walk"``: a trip whose mode is
+        stated as the bike or walking has one chain on its layer), ``links`` (its links in travel
+        order, as the link ids of its mode's layer: the road network's for a car, as
+        ``link_bins_table()``'s ``link``; ``network.layer("bike")``'s or ``"walk"``'s, as
+        ``link_bins_table("bike")``'s) and ``link_index`` (the same links as indices into that
+        layer's links; for a car, as ``route_sets()`` holds them). Read from ``chains.parquet``;
+        needs pyarrow.
         """
         if self.engine != "one-loop":
             raise RuntimeError('chains() is the one-loop engine\'s: run with engine="one-loop"')

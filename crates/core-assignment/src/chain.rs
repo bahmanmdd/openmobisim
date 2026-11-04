@@ -1,11 +1,17 @@
 //! Places, legs and chains: one representation for every door-to-door alternative.
 //!
-//! A **place** is where a leg begins or ends: a node of the road network that a trip end was
-//! snapped to (a transfer point would be a further kind of place).
+//! A **place** is where a leg begins or ends: a node of the network the leg's mode travels on (its
+//! **layer**: the road network for a car, the bike layer for a bike, the walk layer for walking)
+//! that a trip end was snapped to (a transfer point would be a further kind of place).
 //!
 //! A **leg** is one mode between two places, departing at a time, with its
-//! [attributes](crate::Attributes) and the links it uses. A **chain** is a traveller's
-//! door-to-door alternative: a sequence of legs. A single-mode trip is a chain of one leg.
+//! [attributes](crate::Attributes) and the links it uses, numbered as its layer numbers them. A
+//! **chain** is a traveller's door-to-door alternative: a sequence of legs. A single-mode trip is
+//! a chain of one leg.
+//!
+//! **Which legs are loaded.** Only a car leg that uses a road link puts a vehicle on the road
+//! network ([`Leg::is_loaded`]); a bike or walking leg is timed on its layer at the layer's
+//! static speeds and loads nothing (see [`crate::planner`], *static planners*).
 //!
 //! **Fixed times.** A leg in a vehicle of the traveller's own (a car, a bike) carries
 //! [`FixedTimes`]: the seconds before the vehicle sets off (reaching it: its **access time**)
@@ -32,11 +38,25 @@ use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
 use crate::attributes::Attributes;
 
-/// Where a leg begins or ends.
+/// Where a leg begins or ends: a node of one layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Place {
     /// A node of the road network (a trip end snapped to the nearest street node).
     Road(NodeId),
+    /// A node of the bike layer (a trip end snapped to the layer's nearest node).
+    Bike(NodeId),
+    /// A node of the walk layer (a trip end snapped to the layer's nearest node).
+    Walk(NodeId),
+}
+
+impl Place {
+    /// The node, on the place's own layer.
+    #[must_use]
+    pub fn node(self) -> NodeId {
+        match self {
+            Place::Road(n) | Place::Bike(n) | Place::Walk(n) => n,
+        }
+    }
 }
 
 /// The fixed seconds of a leg in a vehicle of the traveller's own: before the vehicle sets off
@@ -100,13 +120,20 @@ pub struct Leg {
     /// The fixed times before and after the leg's vehicle ([`FixedTimes::NONE`] for a leg
     /// without one).
     pub fixed: FixedTimes,
-    /// The road links the leg uses, from its upstream end to its downstream end, in driving
-    /// order (empty for a leg that does not use the road network, or one whose two places are
-    /// the same node).
+    /// The links the leg uses on its layer (the road network for a car leg, the bike or walk
+    /// layer for a bike or walking leg), from its upstream end to its downstream end, in travel
+    /// order (empty for a leg whose two places are the same node).
     pub links: Vec<LinkId>,
 }
 
 impl Leg {
+    /// Whether the leg puts a vehicle on the road network: a car leg that uses a link. The load
+    /// stage loads exactly these legs, in chain order, trip after trip.
+    #[must_use]
+    pub fn is_loaded(&self) -> bool {
+        self.mode == Mode::Car && !self.links.is_empty()
+    }
+
     /// When the leg's vehicle sets off: the departure plus the access time.
     #[must_use]
     pub fn vehicle_departure(&self) -> f64 {
@@ -186,10 +213,15 @@ impl Chain {
         matches!(self.legs.as_slice(), [leg] if leg.mode == mode && leg.links == links)
     }
 
-    /// Every road link of the chain, leg after leg, as raw link numbers.
+    /// Every road link of the chain (the links of its car legs), leg after leg, as raw link
+    /// numbers.
     #[must_use]
     pub fn road_links(&self) -> Vec<u32> {
-        self.legs.iter().flat_map(|leg| leg.links.iter().map(|l| l.raw())).collect()
+        self.legs
+            .iter()
+            .filter(|leg| leg.mode == Mode::Car)
+            .flat_map(|leg| leg.links.iter().map(|l| l.raw()))
+            .collect()
     }
 
     /// The legs, for re-pricing in place; the total is brought up to date with
