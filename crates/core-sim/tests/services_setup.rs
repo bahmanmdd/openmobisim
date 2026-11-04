@@ -138,7 +138,9 @@ fn a_taxi_fleet_and_its_chargers_snap_to_the_roads() {
     let s = ServiceSetup::taxi("taxi", &t.road, &vehicles, &chargers, TaxiDefaults::SHIPPED)
         .expect("set up");
     let ServiceParts::Taxi(fleet, d) = s.parts() else { panic!("a taxi fleet") };
-    assert_eq!(fleet.vehicle_soc, [0.8, 0.3], "the default start charge, and the row's");
+    // The vehicles by where they are (S312): `v2` at `N1` is west of `v1` at `R1`.
+    assert_eq!(fleet.vehicle_ids, ["v2", "v1"]);
+    assert_eq!(fleet.vehicle_soc, [0.3, 0.8], "the row's start charge, and the default");
     assert_eq!(
         (fleet.charger_ids.len(), s.report().empty),
         (1, 1),

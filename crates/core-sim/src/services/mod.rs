@@ -52,6 +52,7 @@ use openmobisim_core_graph::geometry::{LonLat, ground_distance_metres};
 use openmobisim_core_graph::hubs::{AccessPoint, Resource, ResourceKind};
 use openmobisim_core_graph::layers::Layer;
 use openmobisim_core_graph::network::RoadNetwork;
+use openmobisim_core_graph::places;
 use openmobisim_core_routes::{NodeSnapper, Reach};
 use openmobisim_core_types::ids::{EntityId, NodeId, ResourceId};
 
@@ -796,7 +797,9 @@ pub struct ServiceSetupReport {
     pub empty: u32,
 }
 
-/// A docked service's docks, snapped to the walk and bike layers, in dock id order.
+/// A docked service's docks, snapped to the walk and bike layers, in the order of where they are
+/// (longitude, then latitude: [`openmobisim_core_graph::places`]; then their slots and bikes, the
+/// id only for docks that share all of that).
 #[derive(Clone, Debug, Default)]
 pub struct Docks {
     /// Per dock: its id, name, hub named by its row, position, walk and bike nodes, slots and
@@ -826,9 +829,20 @@ pub struct Docks {
     pub neighbours_start: Vec<u32>,
     /// See [`Self::neighbours_start`].
     pub neighbours: Vec<(u32, f64)>,
+    /// Per dock, its key ([`Self::key`]); empty for docks given without them.
+    pub key: Vec<u64>,
 }
 
 impl Docks {
+    /// A dock's key: a hash of its point and its slots, docks that share both told apart by
+    /// their order ([`openmobisim_core_graph::places::distinct`]). What an itinerary's identity names the
+    /// dock by, never its id or its index (S312). Docks given without keys: the point's key.
+    #[must_use]
+    pub fn key(&self, dock: u32) -> u64 {
+        let d = dock as usize;
+        self.key.get(d).copied().unwrap_or_else(|| places::point_key(self.position[d]))
+    }
+
     /// How many docks.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -859,7 +873,9 @@ impl Docks {
     }
 }
 
-/// A taxi fleet's vehicles and chargers, snapped to the road network, in table order.
+/// A taxi fleet's vehicles and chargers, snapped to the road network, each in the order of where
+/// they are (longitude, then latitude: [`openmobisim_core_graph::places`]; then a vehicle's charge,
+/// a charger's plugs and power, the id only for those that share all of that).
 #[derive(Clone, Debug, Default)]
 pub struct Fleet {
     /// Per vehicle: its id, its road node and its charge at the start of the day.
@@ -938,9 +954,17 @@ impl ServiceSetup {
         let bike_graph = bike.network().network();
         let walk_snapper = NodeSnapper::every_node(walk_graph);
         let bike_snapper = NodeSnapper::every_node(bike_graph);
-        // Rows in id order, so the result does not depend on the table's order.
+        // Rows in the order of where they are, then their slots and bikes, the id only for docks
+        // that share all of that (S312): a
+        // dock's index breaks the ties among docks (the pickup and return tried), so neither
+        // the ids nor the table's order reach a result.
         let mut order: Vec<&DockRow> = rows.iter().collect();
-        order.sort_by(|a, b| a.dock_id.cmp(&b.dock_id));
+        order.sort_by(|a, b| {
+            places::point_order(a.position, b.position)
+                .then(a.capacity.cmp(&b.capacity))
+                .then(a.bikes.cmp(&b.bikes))
+                .then_with(|| a.dock_id.cmp(&b.dock_id))
+        });
         let mut docks = Docks { neighbours_start: vec![0], ..Docks::default() };
         for row in order {
             if row.capacity == 0 {
@@ -971,6 +995,20 @@ impl ServiceSetup {
         if docks.external.is_empty() {
             return Err(ServiceError::Empty(format!("service `{name}`: no dock near the layers")));
         }
+        docks.key = places::distinct(
+            docks
+                .position
+                .iter()
+                .zip(&docks.capacity)
+                .map(|(&p, &c)| {
+                    let mut h = openmobisim_core_types::hash::Fnv1a::new();
+                    h.write_u64(places::point_key(p));
+                    h.write_u32(c);
+                    h.finish()
+                })
+                .collect(),
+            0..docks.position.len(),
+        );
         if let Some(road) = road {
             let snapper = NodeSnapper::new(road);
             docks.road_node = docks.position.iter().map(|&p| snapper.nearest(road, p)).collect();
@@ -1021,7 +1059,7 @@ impl ServiceSetup {
 
     /// A taxi fleet named `name`: `vehicles` and `chargers` snapped to `road`'s nearest nodes;
     /// those farther than `snap_m`, and chargers without plugs, are left out and counted. Kept
-    /// in table order.
+    /// in the order of where they are ([`Fleet`]).
     ///
     /// # Errors
     ///
@@ -1048,6 +1086,23 @@ impl ServiceSetup {
             rows: u32::try_from(vehicles.len() + chargers.len()).expect("rows fit u32"),
             ..ServiceSetupReport::default()
         };
+        // Vehicles in the order of where they are, then their charge; chargers by where they
+        // are, then their plugs and power; the id only for those that share all of that
+        // (S312): their indices break the dispatch's and the charging's ties, so neither the
+        // ids nor the tables' order reach a result (vehicles that share all of it are alike).
+        let mut vehicles: Vec<&VehicleRow> = vehicles.iter().collect();
+        vehicles.sort_by(|a, b| {
+            places::point_order(a.position, b.position)
+                .then_with(|| a.soc.unwrap_or(-1.0).total_cmp(&b.soc.unwrap_or(-1.0)))
+                .then_with(|| a.vehicle_id.cmp(&b.vehicle_id))
+        });
+        let mut chargers: Vec<&ChargerRow> = chargers.iter().collect();
+        chargers.sort_by(|a, b| {
+            places::point_order(a.position, b.position)
+                .then(a.plugs.cmp(&b.plugs))
+                .then_with(|| a.kw.unwrap_or(-1.0).total_cmp(&b.kw.unwrap_or(-1.0)))
+                .then_with(|| a.charger_id.cmp(&b.charger_id))
+        });
         let mut seen = HashSet::new();
         for v in vehicles {
             if !seen.insert(v.vehicle_id.as_str()) {

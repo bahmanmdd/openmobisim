@@ -338,10 +338,10 @@ impl Alternative {
         u32::try_from(self.rides.len().saturating_sub(1)).unwrap_or(u32::MAX)
     }
 
-    /// The alternative's identity: a hash of its shape, its parking, its vehicle or walking leg's
-    /// links by their keys (`key(mode, link)`: [`LegKeys::key`] in a run, never the links' ids,
-    /// S312) and its rides.
-    fn identity_hash(&self, key: &dyn Fn(Mode, LinkId) -> u64) -> u32 {
+    /// The alternative's identity: a hash of its shape, its parking, its docks, its vehicle or
+    /// walking leg's links and its rides (line, boarding stop, alighting stop), each named by its
+    /// key ([`ItineraryKeys`]: where it is, never its id or its index, S312).
+    fn identity_hash(&self, keys: &dyn ItineraryKeys) -> u32 {
         let mut h = Fnv1a::new();
         match self.shape {
             Shape::Transit => h.write_u32(0),
@@ -350,24 +350,28 @@ impl Alternative {
             Shape::Direct => h.write_u32(3 + u32::try_from(self.mode.index()).unwrap_or(0)),
             Shape::Share => {
                 h.write_u32(100);
-                h.write_u32(self.share_docks.0);
-                h.write_u32(self.share_docks.1);
+                h.write_u64(keys.dock(self.share_docks.0));
+                h.write_u64(keys.dock(self.share_docks.1));
             }
             Shape::ShareTransit => {
                 h.write_u32(101);
-                h.write_u32(self.share_docks.0);
-                h.write_u32(self.share_docks.1);
+                h.write_u64(keys.dock(self.share_docks.0));
+                h.write_u64(keys.dock(self.share_docks.1));
             }
             Shape::Taxi => h.write_u32(102),
         }
-        h.write_u32(self.parking);
+        if self.parking == NO_PARKING {
+            h.write_u32(NO_PARKING);
+        } else {
+            h.write_u64(keys.parking(self.parking));
+        }
         for &l in &self.vehicle_links {
-            h.write_u64(key(self.mode, l));
+            h.write_u64(keys.link(self.mode, l));
         }
         for r in &self.rides {
-            h.write_u32(r.route);
-            h.write_u32(r.board.raw());
-            h.write_u32(r.alight.raw());
+            h.write_u64(keys.line(r.route));
+            h.write_u64(keys.stop(r.board));
+            h.write_u64(keys.stop(r.alight));
         }
         h.finish32()
     }
@@ -495,6 +499,52 @@ impl LegKeys<'_> {
         };
         debug_assert!(keys.is_some(), "a leg of {mode:?} on a layer the run has");
         keys.map_or(u64::from(link.raw()), |k| k.key(link))
+    }
+}
+
+/// What an itinerary's identity names its parts by (S312): keys made from where they are,
+/// never their ids or indices, so renaming a network's links, a feed's stops or lines, or a
+/// table's parkings or docks keeps every alternative's identity, and so its random draws.
+pub(crate) trait ItineraryKeys {
+    /// A link of the layer `mode`'s leg runs on ([`LegKeys::key`]).
+    fn link(&self, mode: Mode, link: LinkId) -> u64;
+    /// A parking, by index ([`ParkingSetup::key`]).
+    fn parking(&self, parking: u32) -> u64;
+    /// A dock of the run's docked service, by index ([`crate::services::Docks::key`]).
+    fn dock(&self, dock: u32) -> u64;
+    /// A stop ([`openmobisim_core_transit::Timetable::stop_key`]).
+    fn stop(&self, stop: NodeId) -> u64;
+    /// A line ([`openmobisim_core_transit::Timetable::route_key`]).
+    fn line(&self, route: u32) -> u64;
+}
+
+impl ItineraryKeys for Planner<'_> {
+    fn link(&self, mode: Mode, link: LinkId) -> u64 {
+        self.keys.key(mode, link)
+    }
+
+    fn parking(&self, parking: u32) -> u64 {
+        debug_assert!(self.parking.is_some(), "a parking in a run without parkings");
+        self.parking.map_or(u64::from(parking), |p| p.key(parking))
+    }
+
+    fn dock(&self, dock: u32) -> u64 {
+        match self.share.map(|s| s.setup.parts()) {
+            Some(crate::services::ServiceParts::BikeDocked(docks, _)) if dock != NO_PARKING => {
+                docks.key(dock)
+            }
+            _ => u64::from(dock),
+        }
+    }
+
+    fn stop(&self, stop: NodeId) -> u64 {
+        debug_assert!(self.transit.is_some(), "a stop in a run without a timetable");
+        self.transit.map_or(u64::from(stop.raw()), |(t, _)| t.timetable().stop_key(stop))
+    }
+
+    fn line(&self, route: u32) -> u64 {
+        debug_assert!(self.transit.is_some(), "a line in a run without a timetable");
+        self.transit.map_or(u64::from(route), |(t, _)| t.timetable().route_key(route))
     }
 }
 
@@ -1078,13 +1128,7 @@ impl<'a> Planner<'a> {
         }
         if !alts.is_empty() {
             self.measure_bike_legs(&mut alts);
-            return finalise(
-                alts,
-                &|m, l| self.keys.key(m, l),
-                self.detour_limit,
-                k,
-                self.journey_max_s(),
-            );
+            return finalise(alts, self, self.detour_limit, k, self.journey_max_s());
         }
         let (bike_legs, walk_leg) = legs;
         if let (true, Some(leg)) = (offer.walk, walk_leg) {
@@ -1141,7 +1185,7 @@ impl<'a> Planner<'a> {
             }
         }
         self.measure_bike_legs(&mut alts);
-        finalise(alts, &|m, l| self.keys.key(m, l), self.detour_limit, k, self.journey_max_s())
+        finalise(alts, self, self.detour_limit, k, self.journey_max_s())
     }
 
     /// A trip's shared-bike alternatives (S302): its dock pairs, found and routed once per run
@@ -1632,7 +1676,7 @@ impl<'a> Planner<'a> {
         }
         // Numbered and trimmed as every choice set is.
         let k = self.parking.map_or(1, |p| p.defaults().candidate_count());
-        finalise(alts, &|m, l| self.keys.key(m, l), self.detour_limit, k, self.journey_max_s())
+        finalise(alts, self, self.detour_limit, k, self.journey_max_s())
     }
 
     /// The seconds after a car trip's departure its car enters the roads: the loading's whole
@@ -2407,7 +2451,7 @@ fn transit_mode(kind: ParkingKind) -> Mode {
 /// (with its mode constants), not for a time limit.
 fn finalise(
     mut alts: Vec<Alternative>,
-    key: &dyn Fn(Mode, LinkId) -> u64,
+    keys: &dyn ItineraryKeys,
     detour_limit: f64,
     parkings: usize,
     journey_max_s: f64,
@@ -2415,7 +2459,7 @@ fn finalise(
     // A journey with transit longer than the limit is no alternative (S269).
     alts.retain(|a| a.rides.is_empty() || a.total_s <= journey_max_s);
     for a in &mut alts {
-        a.identity = a.identity_hash(key);
+        a.identity = a.identity_hash(keys);
     }
     alts.sort_by(|a, b| {
         a.total_s
@@ -4420,7 +4464,7 @@ impl Itineraries {
                 a.walk_s = planner.car_access_s;
                 a.parking_s = planner.car_egress_s;
                 a.total_s = drive_s + planner.car_access_s + planner.car_egress_s;
-                a.identity = a.identity_hash(&|m, l| planner.keys.key(m, l));
+                a.identity = a.identity_hash(planner);
                 single.begin_situation_in(
                     traveller.raw(),
                     trip.raw(),
@@ -4941,8 +4985,25 @@ mod tests {
     }
 
     /// A link's key in these tests, which have no network: its id.
-    fn by_id(_: Mode, l: LinkId) -> u64 {
-        u64::from(l.raw())
+    /// Keys that are the ids themselves: the unit tests' alternatives have no run.
+    struct ById;
+
+    impl ItineraryKeys for ById {
+        fn link(&self, _: Mode, l: LinkId) -> u64 {
+            u64::from(l.raw())
+        }
+        fn parking(&self, p: u32) -> u64 {
+            u64::from(p)
+        }
+        fn dock(&self, d: u32) -> u64 {
+            u64::from(d)
+        }
+        fn stop(&self, s: NodeId) -> u64 {
+            u64::from(s.raw())
+        }
+        fn line(&self, r: u32) -> u64 {
+            u64::from(r)
+        }
     }
 
     /// A taxi alternative with an assumed chance `p` of no taxi.
@@ -4972,7 +5033,7 @@ mod tests {
         // path size is (600 / 2 + 400) / 1 000; a drive on other links is its own.
         let alts = finalise(
             vec![park_and_ride(1, &[3, 4]), park_and_ride(2, &[3, 4]), park_and_ride(3, &[5, 6])],
-            &by_id,
+            &ById,
             0.0,
             5,
             f64::INFINITY,
@@ -4993,14 +5054,14 @@ mod tests {
         let mut seen = std::collections::HashMap::new();
         let (a, b) = (0u32..1_000_000)
             .find_map(|l| {
-                let id = park_and_ride(1, &[l]).identity_hash(&by_id);
+                let id = park_and_ride(1, &[l]).identity_hash(&ById);
                 seen.insert(id, l).map(|other| (other, l))
             })
             .expect("a collision within a million");
         assert_ne!(a, b);
         let kept = finalise(
             vec![park_and_ride(1, &[a]), park_and_ride(1, &[b]), park_and_ride(1, &[a])],
-            &by_id,
+            &ById,
             0.0,
             5,
             f64::INFINITY,

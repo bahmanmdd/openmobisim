@@ -131,7 +131,8 @@ def test_a_view_kept_after_its_step_refuses_to_be_read():
 
     class Keeper:
         def step(self, view):
-            assert view["bike_share"]["dock_id"] == list(PLACES)
+            # The docks by where they are, west to east, then south to north (S312), not by id.
+            assert view["bike_share"]["dock_id"] == ["a", "c", "b", "z"]
             assert view.t == 7.5 * 3600 + 900 * view.step
             kept.append(view)
             return []
@@ -305,7 +306,8 @@ def test_a_taxi_fleet_s_legs_by_zone_and_its_nearest_vehicles():
             if view.step == 0:
                 d = view["taxi"]
                 asked["legs"] = view.expected_legs("taxi", 1800.0)
-                asked["nearest"] = view.nearest("taxi", "vehicles", d["node"][1], 2)
+                near = list(d["vehicle_id"]).index("near")
+                asked["nearest"] = view.nearest("taxi", "vehicles", d["node"][near], 2)
                 asked["zone"] = d["zone"]
             return []
 

@@ -13,6 +13,7 @@
 //! | [`link_geometry`] | The shape of each street, kept outside `RoadNetwork` |
 //! | [`layers`] | The bike and walk layers: static-cost networks over the same geometry |
 //! | [`hubs`] | Hubs: access points on layers and the transfers between them |
+//! | [`places`] | The order and the identity of the tables' objects at a point (stops, parkings, docks), with no id in them |
 //! | [`examples`] | `manhattan_grid` and `toy_network` — the shared synthetic-network fixtures |
 //!
 //! # The one thing to know
@@ -36,6 +37,7 @@ pub mod layers;
 pub mod link_geometry;
 pub mod network;
 pub mod network_options;
+pub mod places;
 pub mod turns;
 
 pub use csr::Csr;

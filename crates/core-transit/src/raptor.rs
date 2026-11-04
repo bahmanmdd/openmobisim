@@ -49,6 +49,8 @@
 //! scanned once from the first such stop, with a binary search where a boarding
 //! is tried. **Scratch per [`Raptor`]:** about `28 × (rounds + 1)` bytes per stop.
 
+use core::cmp::Ordering;
+
 use openmobisim_core_types::ids::{EntityId, NULL_ID, NodeId, TransitRunId};
 
 use crate::timetable::{ALIGHT, BOARD, CallTimes, Timetable, UNKNOWN_TIME};
@@ -145,6 +147,8 @@ pub struct RaptorData {
     stop_patterns: Vec<(u32, u32)>,
     footpaths: Footpaths,
     board_slack: u32,
+    /// Per stop, its rank ([`Timetable::stop_rank`]): what a tie between stops goes by.
+    stop_rank: Vec<u32>,
 }
 
 impl RaptorData {
@@ -178,11 +182,14 @@ impl RaptorData {
             stop_patterns: Vec::new(),
             footpaths,
             board_slack,
+            stop_rank: timetable.stop_ranks().to_vec(),
         };
+        let mut all: Vec<Vec<TransitRunId>> = Vec::new();
         for group in 0..timetable.group_count() {
             let mut runs: Vec<TransitRunId> = timetable.group_runs(group).to_vec();
-            let first = |r: TransitRunId| timetable.run_calls(r).start;
-            runs.sort_by_key(|&r| (times.departure[first(r)], r));
+            // By their times (the departure from the first call first), the id only for runs
+            // that share every time (S312).
+            runs.sort_by(|&a, &b| run_times_order(timetable, times, a, b).then(a.cmp(&b)));
             // Greedy split: a run joins the first sub-pattern it does not overtake.
             let mut subs: Vec<Vec<TransitRunId>> = Vec::new();
             for r in runs {
@@ -199,9 +206,14 @@ impl RaptorData {
                     None => subs.push(vec![r]),
                 }
             }
-            for sub in subs {
-                data.push_pattern(timetable, times, &sub);
-            }
+            all.extend(subs);
+        }
+        // The patterns in an order with no id in it (S312): an earlier pattern wins a tie
+        // between equal arrivals, so the order is the stops' ranks, then the line's key, then
+        // the runs' times; the run id only for patterns that share all of that.
+        all.sort_by(|a, b| pattern_order(timetable, times, a, b));
+        for sub in all {
+            data.push_pattern(timetable, times, &sub);
         }
         data.index_stops();
         data
@@ -386,6 +398,52 @@ impl RaptorData {
             lo
         })
     }
+}
+
+/// Two runs by their times, call by call: departure, then arrival (a run of fewer calls first
+/// where one is the other's beginning). `Equal` for runs that share every time.
+fn run_times_order(
+    timetable: &Timetable,
+    times: &CallTimes,
+    a: TransitRunId,
+    b: TransitRunId,
+) -> Ordering {
+    let (ca, cb) = (timetable.run_calls(a), timetable.run_calls(b));
+    let key = |c: usize| (times.departure[c], times.arrival[c]);
+    ca.map(key).cmp(cb.map(key))
+}
+
+/// Two patterns (their runs, in order) in the order RAPTOR holds them: by their stops' ranks
+/// call by call (and the boarding rules there), then their line's key, then their runs' times run
+/// by run, then their first run's id (patterns that share all of that).
+fn pattern_order(
+    timetable: &Timetable,
+    times: &CallTimes,
+    a: &[TransitRunId],
+    b: &[TransitRunId],
+) -> Ordering {
+    let stops = |r: TransitRunId| {
+        timetable
+            .run_calls(r)
+            .map(move |c| (timetable.stop_rank(timetable.call_stop(c)), timetable.call_flags(c)))
+    };
+    stops(a[0])
+        .cmp(stops(b[0]))
+        .then_with(|| {
+            timetable
+                .route_key(timetable.run_route(a[0]))
+                .cmp(&timetable.route_key(timetable.run_route(b[0])))
+        })
+        .then_with(|| {
+            for (&x, &y) in a.iter().zip(b) {
+                let o = run_times_order(timetable, times, x, y);
+                if o != Ordering::Equal {
+                    return o;
+                }
+            }
+            a.len().cmp(&b.len())
+        })
+        .then_with(|| a[0].cmp(&b[0]))
 }
 
 /// One leg of a [`Journey`].
@@ -745,8 +803,13 @@ impl<'a> Raptor<'a> {
                 }
                 if t != INF {
                     let at = t.saturating_add(self.egress[i]);
-                    // A tie within the round goes to the lower stop id, whatever the order given.
-                    let tie = at == bound && round_best.is_some_and(|(fe, _, _)| i < fe);
+                    // A tie within the round goes to the stop of the lower rank (by where it
+                    // is, never by its id: S312), whatever the order given; between stops at one
+                    // point, to the one whose last ride is on the earlier pattern.
+                    let tie = at == bound
+                        && round_best.is_some_and(|(fe, _, fd)| {
+                            self.egress_order(k, (i, direct), (fe, fd)) == Ordering::Less
+                        });
                     if at < bound || tie {
                         bound = at;
                         round_best = Some((i, at, direct));
@@ -761,6 +824,27 @@ impl<'a> Raptor<'a> {
             }
         }
         found
+    }
+
+    /// Two egress stops reached in round `k` (each with whether it is taken by its own ride):
+    /// by their ranks, then by the pattern of the journey's last ride (RAPTOR's order of
+    /// patterns has no id in it), then by stop id (stops at one point reached by one pattern).
+    fn egress_order(
+        &self,
+        k: usize,
+        (a, a_direct): (usize, bool),
+        (b, b_direct): (usize, bool),
+    ) -> Ordering {
+        let rank = &self.data.stop_rank;
+        let last_ride = |s: usize, direct: bool| {
+            let from = self.walk_from[k][s];
+            let ride_stop = if direct || from == NULL_ID { s } else { from as usize };
+            self.ride[k][ride_stop].pattern
+        };
+        rank[a]
+            .cmp(&rank[b])
+            .then_with(|| last_ride(a, a_direct).cmp(&last_ride(b, b_direct)))
+            .then(a.cmp(&b))
     }
 
     fn scan(&mut self, k: usize, p: usize, pos0: u32, bound: u32) {

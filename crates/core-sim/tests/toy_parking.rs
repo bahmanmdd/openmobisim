@@ -18,7 +18,7 @@
 //! |---|---|---|
 //! | PR1 | car `W → H`, park, tram to `N1`, leaving 0 | the car leaves at 120, at `H` 300 (120 + 180.394, floored), parked 600 > 300: the 900 tram, `N1` at **1200** |
 //! | PR2 | seven cars `W → H` at 0 | all at `H` at 300; the seventh finds 6 spaces taken: overflow 1; full from 300 to the end: availability 1/3 in bin 0, so everyone pays 300 + 600 · 2/3 = **700 s** (expected 300: mismatch **400 s**), parked at 1000, the 1500 tram, **1800** |
-//! | PR3 | `W → N1`, parkings `H` and `P2` | `H`: parked 600, waits 300 for the 900 tram; `P2`: at `R2` 264, parked 564, walks 225, at the stop 789, waits 111; both **1200**. Deterministic: `H` (the tie goes to the lower parking). Logit: ΔU = −0.09·(300 − 111)/60 + 0.13·225/60 = **0.204**, P(H) = 1/(1 + e^−0.204) |
+//! | PR3 | `W → N1`, parkings `H` and `P2` | `H`: parked 600, waits 300 for the 900 tram; `P2`: at `R2` 264, parked 564, walks 225, at the stop 789, waits 111; both **1200**. Deterministic: `H` (the tie goes to the car park first by where it is, longitude then latitude: `H`'s, at `D2`). Logit: ΔU = −0.09·(300 − 111)/60 + 0.13·225/60 = **0.204**, P(H) = 1/(1 + e^−0.204) |
 //! | PR4 | out via `P2` (`P2` only), back `N1 → D2` at 1800 | out: **1200** as PR3's `P2`; back: at `N1` 1800, the 2400 tram, `H` 2700, walk 225 to `P2` 2925, fetch 120, drive 36: 3081, leave the car 300: **3381** |
 //! | PR5 | out via `H`, then a car trip `N1 → W` | the car is at `H`: **no vehicle available** |
 //! | BR1 | bike `S → H`, park, tram to `N1` | the bike leaves at 60, at `H` 308 (60 + 248.48, floored), parked 368 > 300: the 900 tram, **1200** |
@@ -215,12 +215,13 @@ fn a_stop_its_parkings_and_a_dock_beside_it_are_one_hub() {
     let h = set.id_of("H").unwrap();
     assert_eq!(hubs.stop_hub(stop_h), h);
     assert_eq!(set.kind(h), HubKind::Stop);
+    // The parkings in their order: by where they are, then by vehicle, the car first (S312).
     let kinds: Vec<ResourceKind> = set.resources(h).map(|r| set.resource_kind(r)).collect();
     assert_eq!(
         kinds,
         [
-            ResourceKind::Parking(ParkingKind::Bike),
             ResourceKind::Parking(ParkingKind::Car),
+            ResourceKind::Parking(ParkingKind::Bike),
             ResourceKind::Dock
         ],
         "the stop's hub holds both parkings (in the parkings' order) and the dock beside it"
@@ -315,7 +316,7 @@ fn pr3_the_station_is_chosen_deterministically_and_by_the_logits_closed_form() {
     let r = t.run(rows());
     let it = r.itineraries.as_ref().expect("itineraries");
     let p = t.parking(&toy_network_parkings());
-    assert_eq!(p.external_id(it.parking[0]), "H-car", "a tie on time goes to the lower parking");
+    assert_eq!(p.external_id(it.parking[0]), "H-car", "a tie on time goes to the first by place");
     assert_eq!(it.expected_s, [1200.0]);
     // Logit: H waits 300 s, P2 walks 225 s and waits 111 s.
     let r = t.run_with(rows(), &toy_network_parkings(), true);

@@ -4,7 +4,8 @@
 //!
 //! 1. **The stops** of the timetable: one `stop` hub per station (a stop's GTFS
 //!    `parent_station`), or per stop without one, holding each of its stops as a transit access
-//!    point and the first stop's walk and bike access points; transfers at it take the transit
+//!    point and the walk and bike access points of its first stop by rank (by where the stops
+//!    are, never by id: `Timetable::stop_rank`); transfers at it take the transit
 //!    defaults' `stop_transfer_s`.
 //! 2. **The user's hub table**, if any: a hub per row whose id is new (`declared`, at the row's
 //!    position), so a resource naming it is placed there.
@@ -132,12 +133,18 @@ impl RunHubs {
     ) -> Self {
         let mut drafts = Drafts::default();
         // 1. The stops: one hub per station, or per stop.
-        let mut stop_key: Vec<usize> = Vec::new();
-        let mut stop_position: Vec<LonLat> = Vec::new();
+        let stops = transit.map_or(0, |t| t.timetable().stop_count() as usize);
+        let mut stop_key: Vec<usize> = vec![0; stops];
+        let mut stop_position: Vec<LonLat> = vec![LonLat::default(); stops];
+        let mut stop_rank: Vec<u32> = vec![0; stops];
         if let Some(t) = transit {
             let timetable = t.timetable();
             let transfer = t.defaults().stop_transfer_s;
-            for s in 0..timetable.stop_count() {
+            // The stops by their rank (where they are, S312), so a station's first stop, whose
+            // walk and bike access points the hub takes, is never chosen by id.
+            let mut by_rank: Vec<u32> = (0..timetable.stop_count()).collect();
+            by_rank.sort_by_key(|&s| timetable.stop_rank(NodeId::new(s)));
+            for s in by_rank {
                 let stop = NodeId::new(s);
                 let id =
                     timetable.stop_parent(stop).unwrap_or_else(|| timetable.stop_ids().external(s));
@@ -161,18 +168,20 @@ impl RunHubs {
                         }
                     }
                 }
-                stop_key.push(d);
-                stop_position.push(at);
+                stop_key[stop.index()] = d;
+                stop_position[stop.index()] = at;
+                stop_rank[stop.index()] = timetable.stop_rank(stop);
             }
         }
-        // The hub of the nearest stop within `join_m` of `at`, if any (ties to the lower stop).
+        // The hub of the nearest stop within `join_m` of `at`, if any (ties to the stop of the
+        // lower rank).
         let nearest_stop = |at: LonLat| -> Option<usize> {
             stop_position
                 .iter()
                 .enumerate()
                 .map(|(s, &p)| (s, ground_distance_metres(at, p)))
                 .filter(|&(_, d)| d <= join_m)
-                .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+                .min_by(|a, b| a.1.total_cmp(&b.1).then(stop_rank[a.0].cmp(&stop_rank[b.0])))
                 .map(|(s, _)| stop_key[s])
         };
         // 2. The user's hub table.

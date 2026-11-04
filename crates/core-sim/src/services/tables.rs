@@ -401,7 +401,11 @@ impl BikeShareDockTable {
                 continue;
             };
             t.fleet += docks.fleet();
-            for (k, (hub, _)) in hubs[s].iter().enumerate().take(docks.len()) {
+            // The rows in dock id order (the docks are held in the order of where they are).
+            let mut by_id: Vec<usize> = (0..docks.len().min(hubs[s].len())).collect();
+            by_id.sort_by(|&a, &b| docks.external[a].cmp(&docks.external[b]));
+            for k in by_id {
+                let hub = &hubs[s][k].0;
                 for bin in 0..b.bins {
                     let cell = k * b.bins + bin;
                     #[allow(clippy::cast_precision_loss, reason = "a count of bins")]
