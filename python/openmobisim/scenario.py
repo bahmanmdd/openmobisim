@@ -511,6 +511,33 @@ def _run_arguments_refused(method: _F) -> _F:
     return cast(_F, checked)
 
 
+def _one_loop_start(start: Any) -> tuple[str, int]:
+    """The chains table and the count of iterations of a run to continue from.
+
+    ``start`` is ``Scenario.run``'s ``start_from``.
+
+    Raises:
+        ValueError: If ``start`` is not a run of the one-loop engine, or has no chains table.
+    """
+    if not isinstance(start, Run):
+        raise ValueError(f"start_from must be a Run of the one-loop engine, got {type(start)!r}")
+    if start.engine != "one-loop":
+        raise ValueError(
+            f"start_from must be a run of the one-loop engine; run {start.run_id!r} ran on the "
+            f"{start.engine} engine, whose state the one-loop engine cannot read"
+        )
+    path = start._summary.chains_path
+    if path is None or not Path(path).exists():
+        raise ValueError(
+            f"run {start.run_id!r} has no chains table to continue from (chains.parquet, "
+            f"expected at {path!r})"
+        )
+    iterations = list(start.convergence()["iteration"])
+    if not iterations:
+        raise ValueError(f"run {start.run_id!r} completed no iteration to continue from")
+    return str(path), int(iterations[-1]) + 1
+
+
 class Scenario:
     """A network, demand, and the settings of a run.
 
@@ -1763,12 +1790,10 @@ class Scenario:
         elif model not in ("deterministic", "logit"):
             lacking.append(f'choice_model {model!r} (it has "deterministic" and "logit")')
         mode_options = dict(self._mode_options or {})
-        fixed = [k for k in ("car_access_s", "car_egress_s") if mode_options.get(k) != 0]
-        if fixed:
-            lacking.append(
-                f"the fixed times of reaching and leaving the car ({', '.join(fixed)}, 120 s and "
-                "300 s by default: give mode_options car_access_s 0 and car_egress_s 0)"
-            )
+        # The car's fixed times (reaching it, parking and leaving it): the run's or the shipped.
+        fixed = {
+            k: float(mode_options.get(k, shipped[k])) for k in ("car_access_s", "car_egress_s")
+        }
         # The other options of the modes are of walking, cycling and trips with no
         # alternative: nothing in a run of car trips.
         loading = dict(self._loading_options or {})
@@ -1851,6 +1876,8 @@ class Scenario:
             "choice_model": model,
             "choice_options": self._choice_options,
             "motorway_snap_m": mode_options.get("car_snap_motorway_m"),
+            "threads": run.get("threads"),
+            **fixed,
             **loop,
         }
         return arguments, not_applied
@@ -1862,6 +1889,15 @@ class Scenario:
         from openmobisim.run import _OneLoopSummary
 
         given, not_applied = self._one_loop_arguments(arguments)
+        start = arguments.get("start_from")
+        start_record = None
+        if start is not None:
+            given["start_chains_path"], given["start_iterations"] = _one_loop_start(start)
+            start_record = {
+                "run_id": start.run_id,
+                "run_fingerprint": start.fingerprint,
+                "iterations": given["start_iterations"],
+            }
         if not_applied:
             warnings.warn(
                 "the one-loop engine stops by its own rule (the switch share near its floor and "
@@ -1882,6 +1918,8 @@ class Scenario:
             "run_id": run_id,
             "run_fingerprint": result["fingerprint"],
             "fingerprint_covers": list(result["fingerprint_covers"]),
+            "demand_network_fingerprint": result["demand_network_fingerprint"],
+            "start_from": start_record,
             "master_seed": int(result["master_seed"]),
             "choice_model": result["choice_model"],
             "equilibration": self._equilibration,
@@ -1946,6 +1984,7 @@ class Scenario:
         policy_options: Mapping[str, float] | None = None,
         config: str | Path | Any = None,
         engine: str = "current",
+        start_from: Run | None = None,
     ) -> Run:
         """Run the scenario and write its output artifacts.
 
@@ -2051,9 +2090,14 @@ class Scenario:
                 (the same user class, the same choice set, departing in the same cost bin) that
                 reconsider spread over the chains in the model's proportions, in trip order with
                 no random draw; ``"quota"``, also who reconsiders by quota, the averaging step's
-                share of each such group, so no random draw enters the choice at all). The
-                fixed times of reaching and leaving the car must be given as 0
-                (``mode_options`` ``car_access_s`` and ``car_egress_s``). Anything else the
+                share of each such group, so no random draw enters the choice at all). Every car
+                trip pays the fixed times of reaching the car and of parking and leaving it
+                (``mode_options`` ``car_access_s`` and ``car_egress_s``, rounded to whole
+                seconds): the car enters the roads ``car_access_s`` after the departure, the
+                trip ends ``car_egress_s`` after the car arrives (a trip ending after the window
+                is ``truncated``), and the choice counts them as walking and parking time
+                (``beta_walk_min`` and ``beta_parking_min``, each on top of ``beta_time_min``).
+                Anything else the
                 scenario asks for that it does not have (another mode, a timetable, parkings,
                 services, prices, disruptions, route sets, zones, a Python choice model, ...)
                 raises ``EngineNotSupportedError`` naming it; an option of ``"msa"`` that only
@@ -2064,6 +2108,17 @@ class Scenario:
                 ``trip_results.parquet``, ``convergence.parquet`` (one row per iteration),
                 ``chains.parquet`` (every trip's choice set), ``link_bins.parquet`` (with
                 ``link_bin_s``), ``timings.csv``, ``manifest.json`` and ``run.toml``.
+            start_from: A run of the one-loop engine to continue from (``engine="one-loop"``
+                only): every trip starts with the choice set, the chain and the choice
+                probabilities that run ended with (read from its ``chains.parquet``), the link
+                travel times its last loading measured (its current chains loaded once again),
+                and the iteration count it reached (its ``convergence()``), so the averaging goes
+                on with the step it had reached and the iterations are numbered on. The run
+                continued from must be of the same network and the same trips (its demand and
+                network fingerprint, ``manifest.json``'s ``demand_network_fingerprint``); its
+                other settings may differ. Its fingerprint and iteration count are in this run's
+                fingerprint and ``manifest.json`` (``start_from``), not in ``run.toml``. ``None``
+                (the default): every trip starts with an empty choice set at free flow.
 
         Returns:
             A ``Run``: the results in memory, and the output files in ``output_dir``.
@@ -2075,6 +2130,10 @@ class Scenario:
         """
         if engine not in ENGINES:
             raise ValueError(f"engine must be one of {ENGINES}, got {engine!r}")
+        if start_from is not None and engine != "one-loop":
+            raise ValueError(
+                'start_from continues a run of the one-loop engine: run with engine="one-loop"'
+            )
         if config is not None:
             call = {k: v for k, v in locals().items() if k not in ("self", "config")}
             from openmobisim.config import _run_with
@@ -2116,6 +2175,7 @@ class Scenario:
                     "policy": policy,
                     "policy_options": policy_options,
                     "engine": engine,
+                    "start_from": start_from,
                 },
             )
         summary = self._pipeline(

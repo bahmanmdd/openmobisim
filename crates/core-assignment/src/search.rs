@@ -6,8 +6,9 @@
 //! and returns them, best first. The loop adds those not yet in the trip's choice set.
 //!
 //! **What it enumerates for now:** one chain, a single car leg from the origin's road node to
-//! the destination's, departing at the trip's departure time: the route of least cost in utility
-//! units at the current link travel times (see [`crate::planner`]). A trip whose mode is given
+//! the destination's, departing at the trip's departure time, its car setting off the access
+//! time later: the route of least cost in utility units at the current link travel times, with
+//! the car's fixed times (see [`crate::planner`]). A trip whose mode is given
 //! as something other than the car has no chain. Another mode is another planner, and chains of
 //! several legs another shape, behind the same function.
 //!
@@ -210,12 +211,15 @@ impl ChainSearch<'_> {
             GROUPS_PER_CHUNK,
             || self.car.scratch(),
             |scratch, group| {
+                // Each car sets off the access time after its trip's departure: a constant, so
+                // the order of departure is the trips'.
+                let access = self.car.fixed_times().access_seconds;
                 let requests: Vec<(f64, NodeId)> = group
                     .trips
                     .iter()
                     .map(|&trip| {
                         let (_, Place::Road(to)) = self.ends(trip);
-                        (f64::from(self.trips.departure(trip).get()), to)
+                        (f64::from(self.trips.departure(trip).get()) + access, to)
                     })
                     .collect();
                 let mut routes = Vec::new();

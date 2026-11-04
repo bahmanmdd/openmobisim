@@ -76,9 +76,11 @@ pub struct IterationReport {
     pub switch_excess_expected: f64,
     /// The summed weight of the trips that set out (every trip with a chain).
     pub departed: f64,
-    /// The summed weight of the trips that reached their destination before the loading ended.
+    /// The summed weight of the trips that reached their destination before the loading ended
+    /// (a car trip once its car is parked and left: the car's arrival plus the egress time).
     pub arrived: f64,
-    /// The summed weight of the trips still under way when the loading ended.
+    /// The summed weight of the trips still under way when the loading ended (parking and
+    /// leaving the car included).
     pub unfinished: f64,
     /// [`Self::unfinished`] over [`Self::departed`] (0 when nobody set out).
     pub unfinished_share: f64,
@@ -97,7 +99,7 @@ pub struct IterationReport {
     /// The spread: the share of trips (weighted) on a chain of least cost in their set.
     pub on_cheapest_share: f64,
     /// The mean time from departure to arrival, in seconds, over the trips that arrived
-    /// (weighted), as the loading moved them.
+    /// (weighted), as the loading moved them: door to door, a car trip's fixed times included.
     pub mean_trip_seconds: f64,
     /// What each stage cost in wall-clock seconds.
     pub stage_seconds: StageSeconds,

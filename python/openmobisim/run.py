@@ -582,8 +582,11 @@ class Run:
         order found), ``taken`` (the chain the trip took in the last iteration), ``probability``
         (what the choice model gave it at the trip's last choice), ``cost`` (its cost in utility
         units, minus the systematic utility of the trip's user class) and ``travel_time_s`` at
-        the link travel times of the last loading, and ``links`` (its road links, in driving
-        order). Read from ``chains.parquet``; needs pyarrow.
+        the link travel times of the last loading (door to door: the car's fixed times
+        included), ``links`` (its road links in driving order, as the network's link ids, as
+        ``link_bins_table()``'s ``link``) and ``link_index`` (the same links as indices into the
+        network's links, as ``route_sets()`` holds them). Read from ``chains.parquet``; needs
+        pyarrow.
         """
         if self.engine != "one-loop":
             raise RuntimeError('chains() is the one-loop engine\'s: run with engine="one-loop"')
@@ -593,6 +596,8 @@ class Run:
         out: dict[str, Any] = {}
         for c in t.column_names:
             if c == "links":
+                out[c] = t.column(c).to_pylist()
+            elif c == "link_index":
                 out[c] = [np.asarray(x, dtype=np.uint32) for x in t.column(c).to_pylist()]
             else:
                 out[c] = t.column(c).to_numpy(zero_copy_only=False)

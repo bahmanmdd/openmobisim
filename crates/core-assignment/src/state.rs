@@ -15,6 +15,11 @@
 //!   averaging rule's step: a run continued from a state (`Inputs::initial`) goes on with the
 //!   next iteration's step, not with the first one's.
 //!
+//! A state can be rebuilt from what a run wrote ([`crate::restore`]): every trip's set (each
+//! chain's links), current chain and last probabilities, and the count of iterations; its link
+//! travel times are those the loading of the current chains measures, which is how the run that
+//! wrote them made its own.
+//!
 //! **Sets only grow.** A chain, once in a set, keeps its position, so its index is a stable
 //! identity across iterations: the choice model's random draws are addressed by it, and a
 //! traveller who keeps a chain keeps the same draw.
@@ -139,6 +144,11 @@ impl State {
     /// Count one more completed iteration.
     pub(crate) fn complete_iteration(&mut self) {
         self.iterations += 1;
+    }
+
+    /// Set the count of completed iterations (a state rebuilt from what a run wrote).
+    pub(crate) fn set_iterations(&mut self, iterations: u32) {
+        self.iterations = iterations;
     }
 
     /// Whether `traveller` has a car to drive.
