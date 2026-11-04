@@ -538,8 +538,9 @@ pub(crate) fn choose(
     Ok(Switching { share: share(switched), floor: share(floor), excess, expected: share(expected) })
 }
 
-/// A quota group's key: the user class, the bin of departure (in bins of the state's link travel
-/// times) and the identities of the set's chains, sorted. Equal keys, equal choice situations
+/// A quota group's key: the user class, the bin in which the vehicle of the set's first chain
+/// sets off (in bins of the state's link travel times; [`crate::Leg::vehicle_departure`]) and
+/// the identities of the set's chains, sorted. Equal keys, equal choice situations
 /// (see [`crate::quota`]); the keys' own order decides nothing.
 type GroupKey = (u32, u64, Vec<u64>);
 
@@ -555,12 +556,21 @@ fn group_keys(demand: &Demand<'_>, state: &State, situations: &[TripId]) -> Vec<
                 clippy::cast_sign_loss,
                 reason = "a departure in seconds after midnight over a positive bin length"
             )]
-            let at = (f64::from(demand.trips.departure(trip).get()) / bin).floor() as u64;
+            let at = (setting_off(demand, state, trip) / bin).floor() as u64;
             let mut chains: Vec<u64> = state.trip(trip).set.iter().map(Chain::identity).collect();
             chains.sort_unstable();
             (class, at, chains)
         })
         .collect()
+}
+
+/// When the vehicle of `trip`'s first chain sets off (its first leg's vehicle departure); the
+/// trip's departure for a trip with no chain.
+fn setting_off(demand: &Demand<'_>, state: &State, trip: TripId) -> f64 {
+    state.trip(trip).set.first().and_then(|c| c.legs().first()).map_or_else(
+        || f64::from(demand.trips.departure(trip).get()),
+        crate::chain::Leg::vehicle_departure,
+    )
 }
 
 /// The members of each group among `members` (indices into the situations, in trip order), each

@@ -12,6 +12,8 @@
 //! | 6 | a line whose first link is the bottleneck; two routes, one behind a metered origin | the deterministic queue; the wait at an origin | a late car's measured time against its planned time; the route chosen with the wait counted |
 //! | 7 | the two routes of test 2, logit and deterministic, run to the rule's stop | the fixed point of the loop | a run continued from its final state finds nothing beyond the band and keeps the expected switch excess within the tolerance |
 //! | 8 | the two routes; the Braess network | the stopping rule, at most 200 iterations | where the loop stops and the mean trip's error there (printed only) |
+//! | 9 | one car on two empty links; the two routes; the line of test 1 | free flow; the route of least cost under a constant added to every route; the deterministic queue's invariance to a shift in time | the car's fixed times of 120 s and 300 s: the door-to-door time, when the car sets off, the attributes and their cost; a trip ending after the window; no route changed; the bottleneck's delay unchanged, its pattern shifted by 120 s |
+//! | 10 | the two routes, logit and deterministic, with and without the fixed times | the loading is deterministic | a state rebuilt from what a run wrote of its final state is that state, to the bit, and a run continued from it goes on alike; a saved state that does not fit is refused |
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -25,8 +27,9 @@
 use std::time::Instant;
 
 use openmobisim_core_assignment::{
-    CarPlanner, Coefficients, CostSource, FreeFlow, HighestUtility, Inputs, IterationReport,
-    LegPlanner, Loaded, Loader, Params, Place, PointQueue, StageHook, State, assign, logit,
+    AssignError, CarPlanner, ChainSearch, Coefficients, CostSource, FixedTimes, FreeFlow,
+    HighestUtility, Inputs, IterationReport, LegPlanner, Loaded, Loader, Params, Place, PointQueue,
+    SavedTrip, StageHook, State, assign, logit, restore,
 };
 use openmobisim_core_choice::ChoiceModel;
 use openmobisim_core_demand::{
@@ -1106,4 +1109,292 @@ fn the_search_counts_the_wait_at_the_origin() {
         .cheapest_route_from(node(&net, "o"), node(&net, "d"), 0.0, f64::INFINITY, &seconds)
         .expect("a route");
     assert_eq!(route, by_x, "without the wait the queue is invisible");
+}
+
+// --- 9. the car's fixed times ---------------------------------------------------------------
+
+/// The car's fixed times of these tests: 120 s to reach the car, 300 s to park and leave it.
+const ACCESS_S: f64 = 120.0;
+const EGRESS_S: f64 = 300.0;
+
+fn with_fixed(params: Params) -> Params {
+    Params { car_fixed_times: FixedTimes::new(ACCESS_S, EGRESS_S), ..params }
+}
+
+/// `o → m → d`, two 1 000-m links at 50 km/h (72 s each), three lanes of 6 000 veh/h.
+fn two_link_links() -> [LinkDef; 2] {
+    [
+        def("om", "o", "m", LINE_M, LINE_KM_H, AMPLE_VEH_H, 3),
+        def("md", "m", "d", LINE_M, LINE_KM_H, AMPLE_VEH_H, 3),
+    ]
+}
+
+fn two_links() -> RoadNetwork {
+    network(&[("o", 0.0, 0.0), ("m", 1000.0, 0.0), ("d", 2000.0, 0.0)], &two_link_links())
+}
+
+/// One car leaving `o` for `d` at 1 000 s on the empty two-link network, at free flow (level
+/// 0) and by the point queue (level 2), with 120 s to reach the car and 300 s to leave it.
+/// Derived: the drive is 2 × 1 000 m at 50 km/h = 144 s; the car sets off at 1 000 + 120 =
+/// 1 120 s and arrives at 1 264 s; the trip ends at 1 564 s, door to door 120 + 144 + 300 =
+/// 564 s. The chain's attributes: 144 s in the vehicle, 120 s walking, 300 s parking; its cost
+/// for coefficients 1, 2 and 3 a minute in the vehicle, walking and parking: 144/60 + 2 ×
+/// 120/60 + 3 × 300/60 = 21.4.
+#[test]
+fn one_car_pays_its_fixed_times_door_to_door() {
+    let net = two_links();
+    check_free_flow(&net, &two_link_links());
+    let drive = 2.0 * LINE_M / metres_per_second(LINE_KM_H);
+    assert!((drive - 144.0).abs() < 1e-9, "the case is as stated");
+    let mut c = case(two_links(), trips(&net, "o", "d", &[1000]));
+    let k = Coefficients {
+        in_vehicle_per_minute: 1.0,
+        walk_per_minute: 2.0,
+        parking_per_minute: 3.0,
+        ..Coefficients::time_based()
+    };
+    c.classes = vec![k];
+    let point_queue = PointQueue::new(&c.turns, 10_000.0);
+    let free_flow = FreeFlow::default();
+    for (level, loader) in [(0, &free_flow as &dyn Loader), (2, &point_queue)] {
+        let r = run(&c, loader, &with_fixed(exactly(1)), false);
+        let (_, departure) = r.recorder.vehicles[0];
+        let arrival = r.recorder.arrivals[0].expect("arrived");
+        let report = &r.reports[0];
+        let chain = r.state.trip(TripId::new(0)).current_chain().expect("a chain");
+        let a = chain.total();
+        println!(
+            "level {level}: car sets off {departure} s, arrives {arrival} s; door to door {} s; \
+             attributes {a:?}; cost {}",
+            report.mean_trip_seconds,
+            k.cost(a)
+        );
+        assert_eq!(departure, 1120, "level {level}: the car sets off once reached");
+        assert_eq!(arrival, 1120.0 + drive, "level {level}: the drive at free flow");
+        assert_eq!(report.mean_trip_seconds, ACCESS_S + drive + EGRESS_S, "level {level}");
+        assert_eq!(report.arrived, 1.0);
+        assert_eq!(a.in_vehicle_seconds, drive);
+        assert_eq!(a.walk_seconds, ACCESS_S);
+        assert_eq!(a.parking_seconds, EGRESS_S);
+        assert_eq!(a.total_seconds(), 564.0);
+        assert!((k.cost(a) - 21.4).abs() < 1e-12);
+        assert_eq!(chain.legs()[0].vehicle_departure(), 1120.0);
+    }
+}
+
+/// A trip ends when its car is parked and left: a car arriving before the loading's end whose
+/// trip would end after it is unfinished. Derived: setting off at 1 120 s, the car arrives at
+/// 1 264 s, before the end at 1 400 s; the trip would end at 1 564 s, after it.
+#[test]
+fn a_trip_whose_egress_ends_after_the_window_is_unfinished() {
+    let net = two_links();
+    let c = case(two_links(), trips(&net, "o", "d", &[1000]));
+    let point_queue = PointQueue::new(&c.turns, 1400.0);
+    let free_flow = FreeFlow { end_seconds: 1400.0 };
+    for (level, loader) in [(0, &free_flow as &dyn Loader), (2, &point_queue)] {
+        let r = run(&c, loader, &with_fixed(exactly(1)), false);
+        assert_eq!(r.recorder.arrivals[0], Some(1264.0), "level {level}: the car arrived");
+        let report = &r.reports[0];
+        assert_eq!((report.departed, report.arrived, report.unfinished), (1.0, 0.0, 1.0));
+    }
+}
+
+/// The fixed times change no route: every route of a leg costs the same fixed amount more, so
+/// the route of least cost from the car's departure `t + 120` is the leg's. Checked on the
+/// states of a congested run of the two routes (1 800 veh/h for an hour, five iterations), where
+/// the link times change from bin to bin: for every trip and state, the planner with the fixed
+/// times plans at `t` the route the planner without them plans at `t + 120`; with the egress
+/// time alone, the route it plans at `t`; and every trip's search over the shared searches
+/// agrees, link for link.
+#[test]
+fn the_fixed_times_change_no_route() {
+    let net = two_routes();
+    let c = case(two_routes(), trips(&net, "o", "d", &departures(1800, 0, 3600)));
+    let loader = PointQueue::after_last_departure(&c.turns, &c.trips, 3600.0);
+    let r = run(&c, &loader, &exactly(5), true);
+    let plain = CarPlanner::new(&c.net, &c.turns, &c.classes, &c.money).expect("a planner");
+    let both = CarPlanner::new(&c.net, &c.turns, &c.classes, &c.money)
+        .and_then(|p| p.with_fixed_times(FixedTimes::new(ACCESS_S, EGRESS_S)))
+        .expect("a planner");
+    let egress = CarPlanner::new(&c.net, &c.turns, &c.classes, &c.money)
+        .and_then(|p| p.with_fixed_times(FixedTimes::new(0.0, EGRESS_S)))
+        .expect("a planner");
+    let (o, d) = (Place::Road(node(&net, "o")), Place::Road(node(&net, "d")));
+    let class = UserClassId::new(0);
+    let (mut compared, mut long) = (0, 0);
+    for state in &r.recorder.states {
+        for t in 0..c.trips.len() {
+            let at = f64::from(c.trips.departure(TripId::new(t)).get());
+            let plan = |p: &CarPlanner<'_>, at: f64| {
+                p.plan(o, d, at, class, state, CostSource::Exact).expect("a route")
+            };
+            let with = plan(&both, at);
+            assert_eq!(with.links, plan(&plain, at + ACCESS_S).links, "trip {t}: access");
+            assert_eq!(
+                with.attributes.in_vehicle_seconds,
+                plan(&plain, at + ACCESS_S).attributes.in_vehicle_seconds
+            );
+            assert_eq!(plan(&egress, at).links, plan(&plain, at).links, "trip {t}: egress");
+            long += usize::from(with.links[0] == link(&c.net, "ob"));
+            compared += 1;
+        }
+    }
+    println!(
+        "{compared} plans compared over {} states, {long} by the long route",
+        r.recorder.states.len()
+    );
+    assert!(long > 0 && long < compared, "both routes are cheapest somewhere: the test bites");
+    // The search stage (shared searches) gives each trip the leg its own plan gives.
+    let fixed = with_fixed(exactly(5));
+    let search = ChainSearch::new(&c.net, &c.travellers, &c.trips, both, &fixed);
+    for state in &r.recorder.states {
+        let all = search.search_all(state, &fixed);
+        for (t, chains) in all.iter().enumerate() {
+            let trip = TripId::new(t as u32);
+            let own = search.search(c.trips.traveller(trip), trip, state, &fixed);
+            assert_eq!(chains, &own, "trip {t}: the shared search differs");
+        }
+    }
+}
+
+/// The bottleneck of test 1 at 2 000 veh/h for 30 min, every car reaching its car for 120 s
+/// first and leaving it for 300 s after: the deterministic queue is invariant to a shift of
+/// every arrival by the same time, so every car meets the queue of test 1 120 s later. Derived:
+/// each car reaches the bottleneck's downstream end at `d + 120 + 2 × 72 s`; its queue wait is
+/// Lindley's recursion over those times, whose total is the same as without the access time
+/// (every term shifts by 120 s) and within 3 % of `½ (λ − μ) T T'`; each trip's time is its
+/// drive plus 420 s; and each car's drive is, to the second, its drive without the fixed times
+/// (the time-shift invariance of the loading, a property).
+#[test]
+fn the_access_time_shifts_the_bottleneck_queue_and_leaves_its_delay() {
+    let (t, per_hour) = (1800.0, 2000_u64);
+    let (lambda, mu) = (per_hour as f64 / 3600.0, BOTTLENECK_VEH_H / 3600.0);
+    let link_s = LINE_M / metres_per_second(LINE_KM_H);
+    let net = line();
+    let deps = departures(per_hour, 0, 1800);
+    let c = case(line(), trips(&net, "o", "d", &deps));
+    let loader = PointQueue::after_last_departure(&c.turns, &c.trips, 3600.0 + ACCESS_S + EGRESS_S);
+    let shifted = run(&c, &loader, &with_fixed(exactly(1)), false);
+    let plain = run(&c, &loader, &exactly(1), false);
+    let free = 3.0 * link_s;
+    let drives: Vec<f64> = shifted.recorder.trips().iter().map(|&(_, _, d)| d).collect();
+    let delay: f64 = drives.iter().map(|d| d - free).sum();
+    let at_server: Vec<f64> =
+        deps.iter().map(|&d| f64::from(d) + ACCESS_S + 2.0 * link_s).collect();
+    let (by_vehicle, _) = queue_delay_by_vehicle(&at_server, mu);
+    let at_server_plain: Vec<f64> = deps.iter().map(|&d| f64::from(d) + 2.0 * link_s).collect();
+    let (by_vehicle_plain, _) = queue_delay_by_vehicle(&at_server_plain, mu);
+    let formula = queue_delay(lambda, mu, t);
+    let n = deps.len() as f64;
+    println!(
+        "access 120 s: total delay {delay:.1} veh·s; Lindley {by_vehicle:.1} (without the access \
+         time {by_vehicle_plain:.1}); fluid formula {formula:.1}; mean trip {:.2} s",
+        shifted.reports[0].mean_trip_seconds
+    );
+    timing("bottleneck with fixed times", &shifted);
+    assert!((by_vehicle - by_vehicle_plain).abs() <= 1e-6 * by_vehicle, "Lindley shifts");
+    assert!((delay / formula - 1.0).abs() <= 0.03, "within 3 % of ½ (λ − μ) T T'");
+    assert!(delay <= by_vehicle + 1e-6 && delay >= by_vehicle - n, "floored to the second");
+    for (k, &(_, d, _)) in shifted.recorder.trips().iter().enumerate() {
+        assert_eq!(d, f64::from(deps[k]) + ACCESS_S, "car {k} sets off once reached");
+    }
+    let plain_drives: Vec<f64> = plain.recorder.trips().iter().map(|&(_, _, d)| d).collect();
+    assert_eq!(drives, plain_drives, "every drive the same, shifted by 120 s");
+    let mean_drive = drives.iter().sum::<f64>() / n;
+    assert!(
+        (shifted.reports[0].mean_trip_seconds - (mean_drive + ACCESS_S + EGRESS_S)).abs() < 1e-6
+    );
+}
+
+// --- 10. a state rebuilt from what a run wrote -------------------------------------------
+
+/// A state rebuilt from what a run wrote of its final state (every trip's chains as links, its
+/// current chain, its probabilities, and the count of iterations) equals that state to the bit,
+/// link travel times included, because the loading of the current chains is deterministic; and
+/// a run continued from it gives the same reports as one continued from the state itself. The
+/// two routes at 1 800 veh/h, the logit and the deterministic choice, without and with the
+/// fixed times.
+#[test]
+fn a_state_rebuilt_from_what_a_run_wrote_is_the_state() {
+    let net = two_routes();
+    let c = case(two_routes(), trips(&net, "o", "d", &departures(1800, 0, 3600)));
+    let loader = PointQueue::after_last_departure(&c.turns, &c.trips, 3600.0);
+    let the_logit = logit();
+    for (name, model) in
+        [("logit", &the_logit as &dyn ChoiceModel), ("deterministic", &HighestUtility)]
+    {
+        for params in [exactly(8), with_fixed(exactly(8))] {
+            let first = run_with(&c, &loader, &params, false, model, 2026);
+            let saved: Vec<SavedTrip> = first.state.trips().iter().map(SavedTrip::of).collect();
+            let mut inputs = Inputs {
+                network: &c.net,
+                turns: &c.turns,
+                travellers: &c.travellers,
+                trips: &c.trips,
+                classes: &c.classes,
+                money_per_link: &c.money,
+                model,
+                loader: &loader,
+                seed: RngKey::from_seed(2026),
+                initial: None,
+            };
+            let rebuilt =
+                restore(&inputs, &params, &saved, first.state.iterations()).expect("rebuilt");
+            assert!(rebuilt == first.state, "{name}: the rebuilt state is the state");
+            assert_eq!(rebuilt.iterations(), 8);
+            let mut go_on = |from: State| {
+                inputs.initial = Some(from);
+                let (s, reports) =
+                    assign(&inputs, &exactly(2), &mut Recorder::default()).expect("run");
+                (s, reports.iter().map(IterationReport::without_times).collect::<Vec<_>>())
+            };
+            let (a, ra) = go_on(first.state.clone());
+            let (b, rb) = go_on(rebuilt);
+            assert!(a == b && ra == rb, "{name}: continued alike");
+            assert_eq!(ra[0].iteration, 8, "{name}: the numbering goes on");
+            println!(
+                "{name}, fixed times {:?}: rebuilt equal; continued iterations 8–9 alike (found {}, {})",
+                params.car_fixed_times, ra[0].found, ra[1].found
+            );
+        }
+    }
+}
+
+/// What a rebuilt state refuses: chains whose links do not join the trip's ends, a chain twice,
+/// a current chain outside the set, a state for other demand.
+#[test]
+fn a_saved_state_that_does_not_fit_is_refused() {
+    let net = two_routes();
+    let c = case(two_routes(), trips(&net, "o", "d", &[0, 10]));
+    let loader = FreeFlow::default();
+    let inputs = Inputs {
+        network: &c.net,
+        turns: &c.turns,
+        travellers: &c.travellers,
+        trips: &c.trips,
+        classes: &c.classes,
+        money_per_link: &c.money,
+        model: &HighestUtility,
+        loader: &loader,
+        seed: RngKey::from_seed(1),
+        initial: None,
+    };
+    let short = links(&c.net, &["oa", "ad"]);
+    let good =
+        SavedTrip { chains: vec![short.clone()], current: Some(0), probabilities: vec![1.0] };
+    let params = Params::default();
+    assert!(restore(&inputs, &params, &[good.clone(), good.clone()], 3).is_ok());
+    let cases = [
+        ("broken", SavedTrip { chains: vec![links(&c.net, &["oa", "bd"])], ..good.clone() }),
+        ("half", SavedTrip { chains: vec![links(&c.net, &["oa"])], ..good.clone() }),
+        ("twice", SavedTrip { chains: vec![short.clone(), short.clone()], ..good.clone() }),
+        ("outside", SavedTrip { current: Some(1), ..good.clone() }),
+        ("probabilities", SavedTrip { probabilities: vec![0.5, 0.5], ..good.clone() }),
+    ];
+    for (name, bad) in cases {
+        let e = restore(&inputs, &params, &[good.clone(), bad], 3);
+        println!("{name}: {e:?}");
+        assert!(matches!(e, Err(AssignError::Input(_))), "{name}");
+    }
+    assert!(restore(&inputs, &params, &[good], 3).is_err(), "one trip for two");
 }

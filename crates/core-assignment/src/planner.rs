@@ -37,10 +37,21 @@
 //! everywhere: the same search, the same code.
 //!
 //! The leg's attributes are then priced from its links: the in-vehicle seconds are the route
-//! driven link by link from the departure time on the state's link times
+//! driven link by link from the vehicle's departure on the state's link times
 //! ([`LinkTimes::route_seconds`], the wait to get onto the first link included, read the way
 //! the search read it), the money and the length are summed over the links. So the time the
 //! search minimised and the time the leg is priced at are one number.
+//!
+//! **The fixed times.** A car leg carries the planner's [`FixedTimes`]
+//! ([`CarPlanner::with_fixed_times`]; none by default): the car sets off the access time after
+//! the leg's departure (reaching the car), and the leg ends the egress time after the car
+//! arrives (parking and leaving it). The search and the pricing of the drive run from the
+//! car's departure, `t₀ = departure + access`; the attributes then add the access time as
+//! walking time and the egress time as parking time ([`FixedTimes::added_to`]). **The search
+//! is unchanged by them:** every route of the leg costs the same fixed amount more,
+//! `β_walk / 60 · access + β_park / 60 · egress`, which does not depend on the route, so the
+//! route of least cost from `t₀` is the route of least cost of the whole leg. A leg whose two
+//! ends are one node uses no link, leaves no car, and carries no fixed time.
 //!
 //! **Ties.** Of two routes of exactly equal cost, the search keeps the one its tie rule settles
 //! first (labels of equal cost are settled in order of link number); which one that is depends
@@ -102,7 +113,7 @@ use openmobisim_core_routes::search::{Extras, Search, SearchContext};
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, UserClassId};
 
 use crate::attributes::{Attributes, Coefficients};
-use crate::chain::{Leg, Place};
+use crate::chain::{FixedTimes, Leg, Place};
 use crate::error::AssignError;
 use crate::state::State;
 
@@ -149,6 +160,8 @@ pub struct CarPlanner<'a> {
     money: &'a [f64],
     /// Per user class, the static extra per link the search adds to each link's travel time.
     extras: Vec<Extras>,
+    /// The fixed times of every car leg that uses a link.
+    fixed: FixedTimes,
 }
 
 impl<'a> CarPlanner<'a> {
@@ -215,7 +228,36 @@ impl<'a> CarPlanner<'a> {
             }
             extras.push(context.extras(seconds));
         }
-        Ok(Self { network, context, money, extras })
+        Ok(Self { network, context, money, extras, fixed: FixedTimes::NONE })
+    }
+
+    /// The planner with `fixed` times before and after every car leg that uses a link (see the
+    /// [module docs](self#the-car-planner)).
+    ///
+    /// # Errors
+    ///
+    /// [`AssignError::Input`] if a time is not a finite number of at least 0.
+    pub fn with_fixed_times(mut self, fixed: FixedTimes) -> Result<Self, AssignError> {
+        if !fixed.is_valid() {
+            return Err(AssignError::Input(format!(
+                "the car's fixed times must be finite numbers of seconds of at least 0, not \
+                 {} s before and {} s after the drive",
+                fixed.access_seconds, fixed.egress_seconds
+            )));
+        }
+        self.fixed = fixed;
+        Ok(self)
+    }
+
+    /// The fixed times of every car leg that uses a link.
+    #[must_use]
+    pub fn fixed_times(&self) -> FixedTimes {
+        self.fixed
+    }
+
+    /// The fixed times of a leg along `links`: the planner's, or none for a leg of no link.
+    fn fixed_of(&self, links: &[LinkId]) -> FixedTimes {
+        if links.is_empty() { FixedTimes::NONE } else { self.fixed }
     }
 
     /// The link travel times a leg's cost is read from under `cost_source`. Both sources read
@@ -226,21 +268,38 @@ impl<'a> CarPlanner<'a> {
         }
     }
 
-    /// The attributes of driving `links` from second `departure` on `times`.
+    /// The attributes of a car leg along `links` departing at second `departure`, on `times`:
+    /// the drive from the car's departure (`departure` plus the access time), and the fixed
+    /// times as walking and parking time.
     fn price(&self, links: &[LinkId], departure: f64, times: &LinkTimes) -> Attributes {
+        let fixed = self.fixed_of(links);
+        let setting_off = departure + fixed.access_seconds;
         // The link numbers in a buffer kept by the thread: one allocation per thread, not per leg.
         let in_vehicle_seconds = RAW_LINKS.with(|raw| {
             let mut raw = raw.borrow_mut();
             raw.clear();
             raw.extend(links.iter().map(|l| l.raw()));
-            times.route_seconds(&raw, departure)
+            times.route_seconds(&raw, setting_off)
         });
-        Attributes {
+        fixed.added_to(Attributes {
             in_vehicle_seconds,
             money: links.iter().map(|l| self.money[l.index()]).sum(),
             length_metres: links.iter().map(|&l| self.network.link_length(l).get()).sum(),
             ..Attributes::default()
-        }
+        })
+    }
+
+    /// The car leg along `links` departing at `departure`, with `attributes`.
+    fn leg(
+        &self,
+        from: Place,
+        to: Place,
+        departure: f64,
+        links: Vec<LinkId>,
+        attributes: Attributes,
+    ) -> Leg {
+        let fixed = self.fixed_of(&links);
+        Leg { mode: Mode::Car, from, to, departure, attributes, fixed, links }
     }
 
     /// The car leg along `links` (a route from `from` to `to`) departing at `departure`,
@@ -256,7 +315,7 @@ impl<'a> CarPlanner<'a> {
         state: &State,
     ) -> Leg {
         let attributes = self.price(&links, departure, state.link_times());
-        Leg { mode: Mode::Car, from, to, departure, attributes, links }
+        self.leg(from, to, departure, links, attributes)
     }
 
     /// The car leg along `links` from `from` to `to` departing at `departure`, priced where
@@ -271,7 +330,7 @@ impl<'a> CarPlanner<'a> {
         cost_source: CostSource,
     ) -> Leg {
         let attributes = self.price(&links, departure, Self::times(state, cost_source));
-        Leg { mode: Mode::Car, from, to, departure, attributes, links }
+        self.leg(from, to, departure, links, attributes)
     }
 
     /// A thread's scratch for [`Self::routes_from`].
@@ -313,10 +372,11 @@ impl<'a> CarPlanner<'a> {
     }
 
     /// The routes of legs from `origin` for a traveller of `class`, by shared searches (see the
-    /// [module docs](self#shared-searches)): `requests` holds each leg's departure (seconds after
-    /// midnight) and destination, in order of departure; the routes found are appended to
-    /// `routes`, and the answer per request is the index of its route there, `None` where no
-    /// route exists. Each answer is the route [`LegPlanner::plan`] finds for that request.
+    /// [module docs](self#shared-searches)): `requests` holds each car's departure (seconds after
+    /// midnight: the leg's departure plus the access time, [`Self::fixed_times`]) and
+    /// destination, in order of departure; the routes found are appended to `routes`, and the
+    /// answer per request is the index of its route there, `None` where no route exists. Each
+    /// answer is the route [`LegPlanner::plan`] finds for the leg of that request.
     ///
     /// # Panics
     ///
@@ -595,10 +655,12 @@ impl LegPlanner for CarPlanner<'_> {
         let mut search = Search::new(&self.context);
         let mut target = vec![false; self.network.node_count() as usize];
         // Extras are shared by handle: this copies a pointer, not the per-link values.
+        // The car sets off once it is reached: the route is searched from then on.
+        let setting_off = departure + self.fixed.access_seconds;
         let links =
-            Self::route(&mut search, extras, origin, destination, departure, times, &mut target)?;
+            Self::route(&mut search, extras, origin, destination, setting_off, times, &mut target)?;
         let attributes = self.price(&links, departure, times);
-        Some(Leg { mode: Mode::Car, from, to, departure, attributes, links })
+        Some(self.leg(from, to, departure, links, attributes))
     }
 
     fn reprice(&self, leg: &mut Leg, state: &State) {

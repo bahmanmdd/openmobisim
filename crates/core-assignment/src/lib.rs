@@ -27,8 +27,8 @@
 //! # One cost
 //!
 //! Every alternative is priced in **utility units**: minus the systematic utility of the
-//! traveller's user class, `cost = Σ coefficient × attribute` over in-vehicle, walking and
-//! waiting minutes, transfers, money and kilometres ([`Coefficients`]). The route search
+//! traveller's user class, `cost = Σ coefficient × attribute` over in-vehicle, walking,
+//! waiting and parking minutes, transfers, money and kilometres ([`Coefficients`]). The route search
 //! minimises it link by link, the choice model reads it, the duality gap is measured in it. A
 //! **time-based run** is the run whose coefficients are [`Coefficients::time_based`] (a minute
 //! of travel time costs 1, everything else 0); it runs the same code.
@@ -38,7 +38,7 @@
 //! | Module | What it holds |
 //! |---|---|
 //! | [`attributes`] | [`Attributes`] of a leg or chain, a class's [`Coefficients`], the utility |
-//! | [`chain`] | [`Place`], [`Leg`], [`Chain`] with its identity across iterations |
+//! | [`chain`] | [`Place`], [`Leg`] with its [`FixedTimes`], [`Chain`] with its identity across iterations |
 //! | [`state`] | [`State`], the value carried between iterations; [`TripState`] |
 //! | [`planner`] | the [`LegPlanner`] contract, the [`CarPlanner`], the [`CostSource`] |
 //! | [`search`] | the [`ChainSearch`] and the one feasibility rule, [`feasible`] |
@@ -47,13 +47,15 @@
 //! | [`loader`] | the [`Loader`] contract, [`Loaded`], level 0 [`FreeFlow`], level 2 [`PointQueue`] |
 //! | [`hooks`] | [`StageHook`], code run at fixed points of the loop, and [`NoHooks`] |
 //! | [`report`] | [`IterationReport`], the convergence measures of one iteration |
-//! | [`mod@assign`] | [`assign()`], its [`Inputs`] and [`Params`], the five stages |
+//! | [`mod@assign`] | [`assign()`], its [`Inputs`] and [`Params`], the five stages; [`restore`], a state rebuilt from what a run wrote ([`SavedTrip`]) |
 //! | [`error`] | [`AssignError`] |
 //!
 //! # What exists so far
 //!
 //! Car trips only, one leg each, loaded at free flow (level 0) or by the point queue (level 2,
-//! queues at the links' downstream ends discharging at capacity, signals included): the chain
+//! queues at the links' downstream ends discharging at capacity, signals included), each car
+//! leg with its fixed times of reaching the car and of parking and leaving it
+//! ([`Params::car_fixed_times`], [`FixedTimes`]): the chain
 //! search finds one route per trip per iteration, so a choice set grows by at most one chain per
 //! iteration and nothing is enumerated in advance. A further mode is a further [`LegPlanner`],
 //! a further loading a further [`Loader`], behind the same contracts.
@@ -84,9 +86,9 @@ pub mod report;
 pub mod search;
 pub mod state;
 
-pub use assign::{Inputs, Params, assign};
+pub use assign::{Inputs, Params, SavedTrip, assign, restore};
 pub use attributes::{Attributes, Coefficients};
-pub use chain::{Chain, Leg, Place};
+pub use chain::{Chain, FixedTimes, Leg, Place};
 pub use chooser::{HighestUtility, logit, rechoice_probability, rechooses};
 pub use error::AssignError;
 pub use hooks::{NoHooks, StageHook};

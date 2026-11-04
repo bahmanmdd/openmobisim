@@ -1,7 +1,8 @@
 //! Loaders: the dynamic network loading behind one contract.
 //!
 //! A [`Loader`] takes the vehicles of an assignment iteration (each with its route, its
-//! weight and its departure second) and the network, moves them, and returns what happened
+//! weight and its departure second: when it sets off, its leg's access time after the leg's
+//! departure) and the network, moves them, and returns what happened
 //! ([`Loaded`]): each vehicle's arrival second at the downstream end of its last link (or that
 //! it had not arrived when the loading ended), and the **entry-time tables** the loading
 //! recorded, from which the measure stage builds the link travel times by time of day that the
@@ -57,10 +58,18 @@ impl Loaded {
     }
 }
 
-/// A dynamic network loading. See the [module docs](self).
-pub trait Loader {
+/// A dynamic network loading. See the [module docs](self). It is shared by the threads that
+/// run an assignment (as the choice model is), so it holds nothing it changes.
+pub trait Loader: Send + Sync {
     /// Move `vehicles` on `network` and say what happened.
     fn load(&self, vehicles: &[Vehicle], network: &RoadNetwork) -> Loaded;
+
+    /// When the loading ends, in seconds after midnight: a trip whose last leg ends later (its
+    /// vehicle's arrival plus the leg's egress time) is unfinished. Unbounded unless a loader
+    /// says otherwise.
+    fn end_seconds(&self) -> f64 {
+        f64::INFINITY
+    }
 }
 
 /// Level 0: every vehicle at free flow, independently. See the [module docs](self).
@@ -90,6 +99,10 @@ impl Loader for FreeFlow {
             })
             .collect();
         Loaded { arrival, entry: None }
+    }
+
+    fn end_seconds(&self) -> f64 {
+        self.end_seconds
     }
 }
 
@@ -210,5 +223,9 @@ impl Loader for PointQueue<'_> {
             }
         }
         Loaded { arrival, entry: Some(tables) }
+    }
+
+    fn end_seconds(&self) -> f64 {
+        self.end_seconds
     }
 }

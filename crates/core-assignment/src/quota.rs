@@ -8,10 +8,12 @@
 //! takes is a draw from `P`. The quota removes both draws while keeping the per-traveller form.
 //!
 //! **The group.** Trips face the same choice when they have the same user class, the same choice
-//! set (the same chains, as a set, whatever the order each trip found them in) and depart in the
-//! same bin of the link travel times the costs are read from (the last loading's bins, 300 s
-//! by default; one second for the free-flow table of the first iteration): they read the
-//! same costs, up to where in the bin each departs. A group's trips are taken in trip order,
+//! set (the same chains, as a set, whatever the order each trip found them in) and their
+//! vehicles set off in the same bin of the link travel times the costs are read from (the last
+//! loading's bins, 300 s by default; one second for the free-flow table of the first
+//! iteration; a car sets off its access time after the trip's departure, the same for every
+//! trip of a group, whose chains are the same): they read the same costs, up to where in the
+//! bin each sets off. A group's trips are taken in trip order,
 //! and its chains in the order of its first trip's set; no link or node id decides anything.
 //!
 //! **Form 1, the choice quota** ([`pick`]). Among a group's `N` re-choosers of an iteration, the

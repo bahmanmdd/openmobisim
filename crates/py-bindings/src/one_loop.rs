@@ -7,15 +7,24 @@
 //! |---|---|
 //! | `trip_results.parquet` | one row per trip of the window: the columns of the other engine's table |
 //! | `convergence.parquet` | one row per assignment iteration: the measures of its report |
-//! | `chains.parquet` | one row per chain of every trip's choice set: its links, whether it was taken |
+//! | `chains.parquet` | one row per chain of every trip's choice set: its links (the network's ids, and their indices), whether it was taken |
 //! | `link_bins.parquet` | per link and bin of exit time, the traffic and its time (with `link_bin_s`) |
 //! | `timings.csv` | the wall-clock seconds of each stage |
 //!
 //! The manifest is written by the Python package, from what this function returns.
 //!
 //! **What it runs.** Car trips only (a trip without a stated mode is a car trip), loaded at
-//! flow level 0 (free flow) or 2 (the point queue). The scenario's other parts are checked by
-//! the Python package, which refuses by name what this engine does not have before calling it.
+//! flow level 0 (free flow) or 2 (the point queue), each car leg with its fixed times
+//! (`car_access_s` before the drive, reaching the car; `car_egress_s` after it, parking and
+//! leaving it; whole seconds, rounded, 0 when not given). The scenario's other parts are checked
+//! by the Python package, which refuses by name what this engine does not have before calling
+//! it.
+//!
+//! **A run continued from another** (`start_chains_path`, `start_iterations`): the state is
+//! rebuilt from that run's chains table (every trip's set, current chain and probabilities) and
+//! its count of iterations, its link travel times by loading its current chains once
+//! (`openmobisim_core_assignment::restore`); refused when the table's demand and network
+//! fingerprint is not this run's.
 //!
 //! **The user classes' coefficients.** The scenario states a utility per minute and per unit
 //! of each attribute (`beta_time_min` and the like, negative for what travellers dislike); the
@@ -24,14 +33,16 @@
 //!
 //! - the cost of a minute in the car: `−beta_time_min` (−0.2 for the logit when not given, its
 //!   default; 1 for the deterministic choice, whose choice does not depend on the scale);
-//! - of a minute walking or waiting: `−(beta_time_min + beta_walk_min)` and
-//!   `−(beta_time_min + beta_wait_min)` (walking and waiting count on top of the time);
+//! - of a minute walking, waiting or parking: `−(beta_time_min + beta_walk_min)`,
+//!   `−(beta_time_min + beta_wait_min)` and `−(beta_time_min + beta_parking_min)` (each counts
+//!   on top of the time; `beta_parking_min` 0 when not given);
 //! - of a transfer: `−beta_transfers`; of a unit of money: `−beta_cost_eur`, **0 when no money
 //!   coefficient is given** (a run without one is a time-based run); of a kilometre:
 //!   `−beta_length_km`, 0 when not given.
 //!
-//! `beta_ln_path_size` (1 by default) weighs the path-size term of the logit. A car route has
-//! no walking, waiting or transfer, so only time, money and distance count here.
+//! `beta_ln_path_size` (1 by default) weighs the path-size term of the logit. A car leg's
+//! access time counts as walking and its egress time as parking, as the other engine's mode
+//! choice counts them (`walk_min` and `parking_min`); it has no waiting or transfer.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -39,6 +50,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
+use arrow_array::builder::{ListBuilder, StringBuilder};
 use arrow_array::{
     Array, ArrayRef, BooleanArray, Float64Array, ListArray, RecordBatch, StringArray, UInt32Array,
     types::UInt32Type,
@@ -54,8 +66,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use openmobisim_core_assignment::{
-    Allocation, Coefficients, FreeFlow, HighestUtility, Inputs, IterationReport, Loaded, Loader,
-    Params, Place, PointQueue, StageHook, State, assign,
+    Allocation, Coefficients, FixedTimes, FreeFlow, HighestUtility, Inputs, IterationReport,
+    Loaded, Loader, Params, Place, PointQueue, SavedTrip, StageHook, State, assign, restore,
 };
 use openmobisim_core_choice::{ChoiceModel, Logit, Options};
 use openmobisim_core_demand::{
@@ -83,10 +95,11 @@ use crate::pipeline::{
 use crate::routes::PyRouteSets;
 
 /// The names of the coefficients a class's options may give, besides `beta_ln_path_size`.
-const COEFFICIENTS: [&str; 7] = [
+const COEFFICIENTS: [&str; 8] = [
     "beta_time_min",
     "beta_walk_min",
     "beta_wait_min",
+    "beta_parking_min",
     "beta_transfers",
     "beta_cost_eur",
     "beta_length_km",
@@ -95,7 +108,7 @@ const COEFFICIENTS: [&str; 7] = [
 ];
 
 /// What the fingerprint of a run of this engine covers, in words, for the manifest.
-const FINGERPRINT_COVERS: [&str; 12] = [
+const FINGERPRINT_COVERS: [&str; 14] = [
     "the network: every node's position and signal, every link's ends, class, lanes, length, \
      free-flow time, storage, capacity, jam density, wave speed, control delay and closure",
     "the trips run (those departing inside the window): traveller, place in the day, user class, \
@@ -112,6 +125,9 @@ const FINGERPRINT_COVERS: [&str; 12] = [
     "the window",
     "the master seed",
     "the engine and the code version",
+    "the fixed times of reaching and leaving the car, and each class's cost of a minute parking, \
+     when either time is not 0",
+    "the run continued from, if any: its fingerprint and its count of iterations",
 ];
 
 /// Why a class's options cannot be read, naming the class.
@@ -154,10 +170,12 @@ fn coefficients(
     let time = given("beta_time_min", if logit { -0.2 } else { -1.0 });
     let walk = given("beta_walk_min", if logit { -0.13 } else { 0.0 });
     let wait = given("beta_wait_min", if logit { -0.09 } else { 0.0 });
+    let parking = given("beta_parking_min", 0.0);
     Ok(Coefficients {
         in_vehicle_per_minute: -time,
         walk_per_minute: -(time + walk),
         wait_per_minute: -(time + wait),
+        parking_per_minute: -(time + parking),
         per_transfer: -given("beta_transfers", if logit { -1.0 } else { 0.0 }),
         per_money: -given("beta_cost_eur", 0.0),
         per_kilometre: -given("beta_length_km", 0.0),
@@ -188,6 +206,8 @@ struct LastLoading {
     vehicles: Vec<Vehicle>,
     /// Each vehicle's trip.
     trip_of: Vec<TripId>,
+    /// Each vehicle's leg's fixed times.
+    fixed: Vec<FixedTimes>,
     /// Each vehicle's arrival, `None` if unfinished.
     arrival: Vec<Option<f64>>,
 }
@@ -196,10 +216,13 @@ impl StageHook for LastLoading {
     fn before_load(&mut self, _iteration: u32, state: &State, vehicles: &[Vehicle]) {
         // The loop makes one vehicle per car leg that uses a link, trip after trip.
         self.trip_of.clear();
+        self.fixed.clear();
         for (t, entry) in state.trips().iter().enumerate() {
             if let Some(chain) = entry.current_chain() {
-                let legs = chain.legs().iter().filter(|l| !l.links.is_empty()).count();
-                self.trip_of.extend(std::iter::repeat_n(TripId::from_index(t), legs));
+                for leg in chain.legs().iter().filter(|l| !l.links.is_empty()) {
+                    self.trip_of.push(TripId::from_index(t));
+                    self.fixed.push(leg.fixed);
+                }
             }
         }
         self.vehicles = vehicles.to_vec();
@@ -210,24 +233,15 @@ impl StageHook for LastLoading {
     }
 }
 
-/// A hash of what decides the run's results ([`FINGERPRINT_COVERS`]).
-#[allow(clippy::too_many_arguments, reason = "every input of the fingerprint, by name")]
-fn fingerprint(
+/// The network (every node and link, by index) and the trips run (with each traveller's car
+/// ownership), into `h`: the part of the run's fingerprint that the demand and network
+/// fingerprint ([`demand_network_fingerprint`]) is made of.
+fn hash_demand_network(
+    h: &mut Fnv1a,
     network: &RoadNetwork,
     travellers: &Travellers,
     trips: &Trips,
-    classes: &[Coefficients],
-    model: &str,
-    path_size: f64,
-    params: &Params,
-    loading: (u32, u32, u32),
-    window: (u32, u32),
-    seed: u64,
-) -> u64 {
-    let mut h = Fnv1a::new();
-    h.write_str("one-loop");
-    h.write_str(VERSION);
-    h.write_u32(CODE_VERSION);
+) {
     h.write_bytes(network.defaults().descriptor().as_bytes());
     for raw in 0..network.node_count() {
         let node = NodeId::new(raw);
@@ -271,6 +285,42 @@ fn fingerprint(
         h.write_bool(trips.mode_given(trip));
         h.write_u8(trips.mode(trip) as u8);
     }
+}
+
+/// A hash of the network and the trips run alone ([`hash_demand_network`]): what a run
+/// continued from another must share with it.
+fn demand_network_fingerprint(
+    network: &RoadNetwork,
+    travellers: &Travellers,
+    trips: &Trips,
+) -> u64 {
+    let mut h = Fnv1a::new();
+    h.write_str("one-loop demand and network");
+    hash_demand_network(&mut h, network, travellers, trips);
+    h.finish()
+}
+
+/// A hash of what decides the run's results ([`FINGERPRINT_COVERS`]); `start` is the run
+/// continued from, by its fingerprint and count of iterations.
+#[allow(clippy::too_many_arguments, reason = "every input of the fingerprint, by name")]
+fn fingerprint(
+    network: &RoadNetwork,
+    travellers: &Travellers,
+    trips: &Trips,
+    classes: &[Coefficients],
+    model: &str,
+    path_size: f64,
+    params: &Params,
+    loading: (u32, u32, u32),
+    window: (u32, u32),
+    seed: u64,
+    start: Option<(&str, u32)>,
+) -> u64 {
+    let mut h = Fnv1a::new();
+    h.write_str("one-loop");
+    h.write_str(VERSION);
+    h.write_u32(CODE_VERSION);
+    hash_demand_network(&mut h, network, travellers, trips);
     for k in classes {
         for v in [
             k.in_vehicle_per_minute,
@@ -304,6 +354,22 @@ fn fingerprint(
     if params.allocation != Allocation::Draws {
         h.write_str(params.allocation.name());
     }
+    // Likewise the fixed times, only when either is not 0 (the parking time's cost matters
+    // only then), and the run continued from, only when there is one.
+    let fixed = params.car_fixed_times;
+    if fixed != FixedTimes::NONE {
+        h.write_str("car_fixed_times");
+        h.write_f64(fixed.access_seconds);
+        h.write_f64(fixed.egress_seconds);
+        for k in classes {
+            h.write_f64(k.parking_per_minute);
+        }
+    }
+    if let Some((print, iterations)) = start {
+        h.write_str("start_from");
+        h.write_str(print);
+        h.write_u32(iterations);
+    }
     h.finish()
 }
 
@@ -319,6 +385,10 @@ struct TripRows {
     mode: Vec<&'static str>,
     outcome: Vec<&'static str>,
     arrival_s: Vec<Option<f64>>,
+    /// A completed trip's seconds in its car (setting off to arriving).
+    vehicle_s: Vec<Option<f64>>,
+    /// A completed trip's fixed seconds around its car (reaching it, parking and leaving it).
+    access_egress_s: Vec<Option<f64>>,
 }
 
 impl TripRows {
@@ -331,29 +401,52 @@ impl TripRows {
     }
 }
 
-/// Each trip's outcome and arrival from the last loading and the final state.
+/// One trip's last leg's end (its vehicle's arrival plus the egress time), and its seconds in
+/// its vehicles and around them, summed over its loaded legs.
+#[derive(Clone, Copy)]
+struct Ended {
+    at: f64,
+    vehicle_s: f64,
+    fixed_s: f64,
+}
+
+/// Each trip's outcome and arrival from the last loading and the final state: a trip whose
+/// last leg ends after `end_s` (its vehicle's arrival plus the egress time) is truncated.
 fn trip_rows(
     travellers: &Travellers,
     trips: &Trips,
     state: &State,
     last: &LastLoading,
+    end_s: f64,
 ) -> PyResult<TripRows> {
     let n = trips.len() as usize;
     // Per trip: `None` if none of its legs was loaded; `Some(None)` if a vehicle had not
-    // arrived; `Some(Some(a))` with its last vehicle's arrival.
-    let mut loaded: Vec<Option<Option<f64>>> = vec![None; n];
-    if last.trip_of.len() != last.arrival.len() {
+    // arrived or its leg ended after the window; `Some(Some(e))` with its last leg's end.
+    let mut loaded: Vec<Option<Option<Ended>>> = vec![None; n];
+    if last.trip_of.len() != last.arrival.len() || last.fixed.len() != last.arrival.len() {
         return Err(PyValueError::new_err(format!(
             "the last loading returned {} arrivals for {} vehicles",
             last.arrival.len(),
             last.trip_of.len()
         )));
     }
-    for (trip, &at) in last.trip_of.iter().zip(&last.arrival) {
+    for (v, (trip, &at)) in last.trip_of.iter().zip(&last.arrival).enumerate() {
+        let fixed = last.fixed[v];
+        let set_off = f64::from(last.vehicles[v].departure.get());
+        let leg = at.map(|a| Ended {
+            at: a + fixed.egress_seconds,
+            vehicle_s: a - set_off,
+            fixed_s: fixed.total_seconds(),
+        });
+        let leg = leg.filter(|e| e.at <= end_s);
         let slot = &mut loaded[trip.index()];
-        *slot = Some(match (*slot, at) {
+        *slot = Some(match (*slot, leg) {
             (Some(None), _) | (_, None) => None,
-            (Some(Some(a)), Some(b)) => Some(a.max(b)),
+            (Some(Some(a)), Some(b)) => Some(Ended {
+                at: a.at.max(b.at),
+                vehicle_s: a.vehicle_s + b.vehicle_s,
+                fixed_s: a.fixed_s + b.fixed_s,
+            }),
             (None, Some(b)) => Some(b),
         });
     }
@@ -370,6 +463,8 @@ fn trip_rows(
         mode: Vec::with_capacity(n),
         outcome: Vec::with_capacity(n),
         arrival_s: Vec::with_capacity(n),
+        vehicle_s: Vec::with_capacity(n),
+        access_egress_s: Vec::with_capacity(n),
     };
     for (t, slot) in loaded.iter().enumerate() {
         let trip = TripId::from_index(t);
@@ -386,16 +481,22 @@ fn trip_rows(
         rows.departure_s.push(departure);
         rows.mode.push(Mode::Car.as_str());
         let entry = state.trip(trip);
-        let (outcome, arrival) = match (entry.current, slot) {
+        let (outcome, ended) = match (entry.current, slot) {
             (None, _) if !state.has_car(traveller) => ("no_vehicle_available", None),
             (None, _) => ("no_feasible_path", None),
-            // A chain whose ends snapped to one node uses no link: it arrives as it sets out.
-            (Some(_), None) => ("completed", Some(f64::from(departure))),
-            (Some(_), Some(Some(a))) => ("completed", Some(*a)),
+            // A chain whose ends snapped to one node uses no link and leaves no car: it arrives
+            // as it sets out.
+            (Some(_), None) => (
+                "completed",
+                Some(Ended { at: f64::from(departure), vehicle_s: 0.0, fixed_s: 0.0 }),
+            ),
+            (Some(_), Some(Some(e))) => ("completed", Some(*e)),
             (Some(_), Some(None)) => ("truncated", None),
         };
         rows.outcome.push(outcome);
-        rows.arrival_s.push(arrival);
+        rows.arrival_s.push(ended.map(|e| e.at));
+        rows.vehicle_s.push(ended.map(|e| e.vehicle_s));
+        rows.access_egress_s.push(ended.map(|e| e.fixed_s));
     }
     Ok(rows)
 }
@@ -596,12 +697,10 @@ fn write_trip_results(
         Arc::new(BooleanArray::from(vec![false; n])),
         Arc::new(StringArray::from(rows.outcome.clone())),
         Arc::new(Float64Array::from(rows.arrival_s.clone())),
-        Arc::new(Float64Array::from(travel.clone())),
-        Arc::new(UInt32Array::from(nulls)),
         Arc::new(Float64Array::from(travel)),
-        Arc::new(Float64Array::from(
-            rows.arrival_s.iter().map(|a| a.map(|_| 0.0)).collect::<Vec<_>>(),
-        )),
+        Arc::new(UInt32Array::from(nulls)),
+        Arc::new(Float64Array::from(rows.vehicle_s.clone())),
+        Arc::new(Float64Array::from(rows.access_egress_s.clone())),
     ];
     let field = |name: &str, t: DataType, nullable: bool| Field::new(name, t, nullable);
     let fields = vec![
@@ -685,10 +784,13 @@ fn write_convergence(
 
 /// One row per chain of every trip's set: `trip`, `chain` (its place in the set), `taken`,
 /// `probability` (the model's at the trip's last choice), `cost` (utility units) and
-/// `travel_time_s` at the final link travel times, and its `links`.
+/// `travel_time_s` at the final link travel times (the fixed times included), and its road
+/// links in driving order, as the network's ids (`links`) and as indices into the network's
+/// links (`link_index`).
 fn write_chains(
     path: &Path,
     state: &State,
+    network: &RoadNetwork,
     travellers: &Travellers,
     trips: &Trips,
     classes: &[Coefficients],
@@ -696,6 +798,8 @@ fn write_chains(
 ) -> PyResult<()> {
     let (mut trip, mut chain, mut taken, mut probability, mut cost, mut seconds, mut links) =
         (vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
+    let ids = network.link_external_ids();
+    let mut named = ListBuilder::new(StringBuilder::new());
     for (t, entry) in state.trips().iter().enumerate() {
         let id = TripId::from_index(t);
         let k = classes[travellers.user_class(trips.traveller(id)).index()];
@@ -706,10 +810,16 @@ fn write_chains(
             probability.push(entry.probabilities.get(c).copied().unwrap_or(f64::NAN));
             cost.push(k.cost(ch.total()));
             seconds.push(ch.total().total_seconds());
-            links.push(Some(ch.road_links().into_iter().map(Some).collect::<Vec<_>>()));
+            let road = ch.road_links();
+            for &l in &road {
+                named.values().append_value(ids.external(l));
+            }
+            named.append(true);
+            links.push(Some(road.into_iter().map(Some).collect::<Vec<_>>()));
         }
     }
-    let list = ListArray::from_iter_primitive::<UInt32Type, _, _>(links);
+    let index = ListArray::from_iter_primitive::<UInt32Type, _, _>(links);
+    let named = named.finish();
     let fields = vec![
         Field::new("trip", DataType::UInt32, false),
         Field::new("chain", DataType::UInt32, false),
@@ -717,7 +827,8 @@ fn write_chains(
         Field::new("probability", DataType::Float64, false),
         Field::new("cost", DataType::Float64, false),
         Field::new("travel_time_s", DataType::Float64, false),
-        Field::new("links", list.data_type().clone(), true),
+        Field::new("links", named.data_type().clone(), true),
+        Field::new("link_index", index.data_type().clone(), true),
     ];
     let columns: Vec<ArrayRef> = vec![
         whole(trip),
@@ -726,7 +837,8 @@ fn write_chains(
         floats(probability),
         floats(cost),
         floats(seconds),
-        Arc::new(list),
+        Arc::new(named),
+        Arc::new(index),
     ];
     write_batch(path, fields, columns, metadata)
 }
@@ -769,6 +881,104 @@ fn write_link_bins(
     write_batch(path, fields, columns, &metadata)
 }
 
+/// The metadata key of the demand and network fingerprint ([`demand_network_fingerprint`]).
+const DEMAND_NETWORK_KEY: &str = "openmobisim.demand_network_fingerprint";
+/// The metadata key of the run's fingerprint.
+const RUN_FINGERPRINT_KEY: &str = "openmobisim.run_fingerprint";
+
+/// What a run continued from another reads of it: every trip's set, current chain and
+/// probabilities, and the run's fingerprint its chains table carries.
+struct Saved {
+    trips: Vec<SavedTrip>,
+    run: Option<String>,
+}
+
+/// The chains table at `path` (as [`write_chains`] writes it) as every trip's saved set, the
+/// links read by their ids on `network`, for `trips` trips; refused unless the table's demand
+/// and network fingerprint is `demand_network`.
+fn read_chains(
+    path: &str,
+    network: &RoadNetwork,
+    trips: usize,
+    demand_network: &str,
+) -> PyResult<Saved> {
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+    let bad = |what: String| PyValueError::new_err(format!("the chains table {path:?}: {what}"));
+    let file = File::open(path).map_err(|e| bad(e.to_string()))?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| bad(e.to_string()))?;
+    let value = |key: &str| -> Option<String> {
+        builder
+            .metadata()
+            .file_metadata()
+            .key_value_metadata()?
+            .iter()
+            .find(|kv| kv.key == key)
+            .and_then(|kv| kv.value.clone())
+    };
+    let (theirs, run) = (value(DEMAND_NETWORK_KEY), value(RUN_FINGERPRINT_KEY));
+    if theirs.as_deref() != Some(demand_network) {
+        return Err(PyValueError::new_err(format!(
+            "the run to continue from is not of this scenario: its demand and network \
+             fingerprint is {}, this run's {demand_network} (the network and the trips run, with \
+             each traveller's car ownership, must be the same)",
+            theirs.as_deref().unwrap_or("not recorded in its chains table")
+        )));
+    }
+    let reader = builder.build().map_err(|e| bad(e.to_string()))?;
+    let ids = network.link_external_ids();
+    let mut out = vec![SavedTrip::default(); trips];
+    for batch in reader {
+        let batch = batch.map_err(|e| bad(e.to_string()))?;
+        let column = |name: &str| {
+            batch.column_by_name(name).ok_or_else(|| bad(format!("no column {name:?}")))
+        };
+        let (trip, chain, taken, probability, links) = (
+            column("trip")?.as_any().downcast_ref::<UInt32Array>(),
+            column("chain")?.as_any().downcast_ref::<UInt32Array>(),
+            column("taken")?.as_any().downcast_ref::<BooleanArray>(),
+            column("probability")?.as_any().downcast_ref::<Float64Array>(),
+            column("links")?.as_any().downcast_ref::<ListArray>(),
+        );
+        let (Some(trip), Some(chain), Some(taken), Some(probability), Some(links)) =
+            (trip, chain, taken, probability, links)
+        else {
+            return Err(bad("a column of another type than the engine writes".to_string()));
+        };
+        for i in 0..batch.num_rows() {
+            let t = trip.value(i) as usize;
+            let entry = out
+                .get_mut(t)
+                .ok_or_else(|| bad(format!("trip {t}, for a run of {trips} trips")))?;
+            if chain.value(i) as usize != entry.chains.len() {
+                return Err(bad(format!("trip {t}'s chains are not in their order")));
+            }
+            let row = links.value(i);
+            let names = row
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| bad("links that are not the network's ids".to_string()))?;
+            let route = (0..names.len())
+                .map(|k| {
+                    ids.typed_id_of::<LinkId>(names.value(k)).ok_or_else(|| {
+                        bad(format!("trip {t}: link {:?} is not of this network", names.value(k)))
+                    })
+                })
+                .collect::<PyResult<Vec<LinkId>>>()?;
+            if taken.value(i) {
+                entry.current = Some(entry.chains.len());
+            }
+            entry.chains.push(route);
+            // The probabilities of the trip's last choice: one per chain it had then.
+            let p = probability.value(i);
+            if !p.is_nan() && entry.probabilities.len() + 1 == entry.chains.len() {
+                entry.probabilities.push(p);
+            }
+        }
+    }
+    Ok(Saved { trips: out, run })
+}
+
 // --- the function -----------------------------------------------------------------------------
 
 /// Run the one-loop assignment on car trips and write its tables to `output_dir`; returns the
@@ -777,8 +987,9 @@ fn write_link_bins(
 /// # Errors
 ///
 /// `ValueError` for inputs that cannot be read or do not fit together (a mode other than the
-/// car, a flow level other than 0 or 2, a coefficient that cannot price a route), and if a
-/// file cannot be written.
+/// car, a flow level other than 0 or 2, a coefficient that cannot price a route, a fixed time
+/// that is not a finite number of at least 0, a run to continue from whose chains table is not
+/// of this demand and network), and if a file cannot be written.
 #[pyfunction]
 #[pyo3(signature = (
     network, run_id, output_dir, *, trips=None, trips_path=None, persons=None,
@@ -786,7 +997,9 @@ fn write_link_bins(
     window_start_s=None, window_end_s=None, flow_level=2, flow_step_s=300, cost_bin_s=300,
     link_bin_s=None, master_seed=0, choice_model="logit", choice_options=None,
     min_iterations=None, max_iterations=None, step_offset=None, switch_tolerance=None,
-    found_tolerance=None, indifference_band=None, allocation=None, motorway_snap_m=None
+    found_tolerance=None, indifference_band=None, allocation=None, motorway_snap_m=None,
+    car_access_s=None, car_egress_s=None, threads=None, start_chains_path=None,
+    start_iterations=None
 ))]
 #[allow(clippy::too_many_arguments, reason = "the scenario's parts, by name, as Python gives them")]
 #[allow(clippy::too_many_lines, reason = "the steps of one run, in order")]
@@ -819,6 +1032,11 @@ pub fn run_one_loop(
     indifference_band: Option<f64>,
     allocation: Option<&str>,
     motorway_snap_m: Option<f64>,
+    car_access_s: Option<f64>,
+    car_egress_s: Option<f64>,
+    threads: Option<usize>,
+    start_chains_path: Option<&str>,
+    start_iterations: Option<u32>,
 ) -> PyResult<Py<PyDict>> {
     let started = Instant::now();
     if flow_level != 0 && flow_level != 2 {
@@ -949,6 +1167,43 @@ pub fn run_one_loop(
     if let Some(v) = motorway_snap_m {
         params.motorway_snap_metres = v;
     }
+    // The car's fixed times, in whole seconds as the loading's clock counts them.
+    let mut fixed = [0.0; 2];
+    for (slot, (name, value)) in
+        fixed.iter_mut().zip([("car_access_s", car_access_s), ("car_egress_s", car_egress_s)])
+    {
+        let v = value.unwrap_or(0.0);
+        if !(v.is_finite() && v >= 0.0) {
+            return Err(PyValueError::new_err(format!(
+                "{name} must be a finite number of seconds of at least 0, got {v}"
+            )));
+        }
+        *slot = v.round();
+    }
+    params.car_fixed_times = FixedTimes::new(fixed[0], fixed[1]);
+    if threads == Some(0) {
+        return Err(PyValueError::new_err("threads must be at least 1, or None"));
+    }
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads.unwrap_or(0))
+        .build()
+        .map_err(|e| PyValueError::new_err(format!("the run's thread pool: {e}")))?;
+    // The run to continue from: its chains table, checked against this demand and network.
+    let demand_print =
+        fingerprint_hex(demand_network_fingerprint(&network.inner, &travellers, &trips));
+    let saved = match (start_chains_path, start_iterations) {
+        (None, None) => None,
+        (Some(path), Some(iterations)) => {
+            let saved = read_chains(path, &network.inner, trips.len() as usize, &demand_print)?;
+            Some((saved, iterations))
+        }
+        _ => {
+            return Err(PyValueError::new_err(
+                "give both start_chains_path and start_iterations, or neither",
+            ));
+        }
+    };
+    let start_print = saved.as_ref().map(|(s, i)| (s.run.clone().unwrap_or_default(), *i));
     let turns = TurnTable::build(&network.inner, network.inner.signals());
     let end_s = f64::from(window.end_s);
     let step_s = f64::from(flow_step_s);
@@ -972,8 +1227,9 @@ pub fn run_one_loop(
         (flow_level, flow_step_s, cost_bin_s),
         (window.start_s, window.end_s),
         master_seed,
+        start_print.as_ref().map(|(p, i)| (p.as_str(), *i)),
     );
-    let inputs = Inputs {
+    let mut inputs = Inputs {
         network: &network.inner,
         turns: &turns,
         travellers: &travellers,
@@ -987,12 +1243,19 @@ pub fn run_one_loop(
     };
     let clock = Instant::now();
     let mut last = LastLoading::default();
-    let (state, reports) = assign(&inputs, &params, &mut last).map_err(to_value_error)?;
+    let (state, reports) = pool
+        .install(|| {
+            if let Some((saved, iterations)) = &saved {
+                inputs.initial = Some(restore(&inputs, &params, &saved.trips, *iterations)?);
+            }
+            assign(&inputs, &params, &mut last)
+        })
+        .map_err(to_value_error)?;
     let assign_s = clock.elapsed().as_secs_f64();
 
     // The results.
     let clock = Instant::now();
-    let rows = trip_rows(&travellers, &trips, &state, &last)?;
+    let rows = trip_rows(&travellers, &trips, &state, &last, end_s)?;
     let bins = match link_bin_s {
         Some(b) => Some(link_bins(&network.inner, &turns, &last, flow_level, end_s, step_s, b)?),
         None => None,
@@ -1006,12 +1269,21 @@ pub fn run_one_loop(
     let print_hex = fingerprint_hex(print);
     let metadata = vec![
         ("openmobisim.engine".to_string(), "one-loop".to_string()),
-        ("openmobisim.run_fingerprint".to_string(), print_hex.clone()),
+        (RUN_FINGERPRINT_KEY.to_string(), print_hex.clone()),
         ("openmobisim.master_seed".to_string(), master_seed.to_string()),
+        (DEMAND_NETWORK_KEY.to_string(), demand_print.clone()),
     ];
     write_trip_results(&dir.join("trip_results.parquet"), run_id, &rows, &metadata)?;
     write_convergence(&dir.join("convergence.parquet"), run_id, &reports, &metadata)?;
-    write_chains(&dir.join("chains.parquet"), &state, &travellers, &trips, &classes, &metadata)?;
+    write_chains(
+        &dir.join("chains.parquet"),
+        &state,
+        &network.inner,
+        &travellers,
+        &trips,
+        &classes,
+        &metadata,
+    )?;
     let link_bins_path = dir.join("link_bins.parquet");
     if let Some(b) = &bins {
         write_link_bins(&link_bins_path, run_id, b, &network.inner, &metadata)?;
@@ -1041,6 +1313,8 @@ pub fn run_one_loop(
     let out = PyDict::new(py);
     out.set_item("engine", "one-loop")?;
     out.set_item("fingerprint", &print_hex)?;
+    out.set_item("demand_network_fingerprint", &demand_print)?;
+    out.set_item("start_from", start_print)?;
     out.set_item("fingerprint_covers", FINGERPRINT_COVERS.to_vec())?;
     out.set_item("master_seed", master_seed)?;
     out.set_item("choice_model", choice_model)?;
@@ -1057,6 +1331,8 @@ pub fn run_one_loop(
     p.set_item("allocation", params.allocation.name())?;
     p.set_item("cost_source", format!("{:?}", params.cost_source).to_lowercase())?;
     p.set_item("motorway_snap_m", params.motorway_snap_metres)?;
+    p.set_item("car_access_s", params.car_fixed_times.access_seconds)?;
+    p.set_item("car_egress_s", params.car_fixed_times.egress_seconds)?;
     p.set_item("flow_level", flow_level)?;
     p.set_item("flow_step_s", flow_step_s)?;
     p.set_item("cost_bin_s", cost_bin_s)?;
@@ -1070,6 +1346,7 @@ pub fn run_one_loop(
         d.set_item("in_vehicle_per_minute", v.in_vehicle_per_minute)?;
         d.set_item("walk_per_minute", v.walk_per_minute)?;
         d.set_item("wait_per_minute", v.wait_per_minute)?;
+        d.set_item("parking_per_minute", v.parking_per_minute)?;
         d.set_item("per_transfer", v.per_transfer)?;
         d.set_item("per_money", v.per_money)?;
         d.set_item("per_kilometre", v.per_kilometre)?;
@@ -1117,15 +1394,8 @@ pub fn run_one_loop(
     t.set_item("arrival_s", maybe(&rows.arrival_s).into_pyarray(py))?;
     t.set_item("travel_time_s", maybe(&travel).into_pyarray(py))?;
     t.set_item("link_at_end", vec![f64::NAN; n as usize].into_pyarray(py))?;
-    t.set_item("vehicle_s", maybe(&travel).into_pyarray(py))?;
-    t.set_item(
-        "access_egress_s",
-        rows.arrival_s
-            .iter()
-            .map(|a| a.map_or(f64::NAN, |_| 0.0))
-            .collect::<Vec<_>>()
-            .into_pyarray(py),
-    )?;
+    t.set_item("vehicle_s", maybe(&rows.vehicle_s).into_pyarray(py))?;
+    t.set_item("access_egress_s", maybe(&rows.access_egress_s).into_pyarray(py))?;
     out.set_item("trip_results", t)?;
 
     // The counts of the last loading, by outcome, and its travel time by traveller weight.
