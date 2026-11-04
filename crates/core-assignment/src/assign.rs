@@ -125,7 +125,9 @@ pub struct Params {
     /// [`Self::max_iterations`]. A run that reaches it did not stop by the rule.
     pub switch_tolerance: f64,
     /// The largest share of trips (weighted) the search may still find a new chain for when
-    /// the loop stops (default 0: nothing new).
+    /// the loop stops (default 0.005, uncalibrated: one trip in two hundred may still find a
+    /// chain cheaper than its best by more than the indifference band; at 0, a city's run
+    /// with the logit can meet every other condition and still not stop).
     pub found_tolerance: f64,
     /// The averaging rule's offset: in iteration `i ≥ 1` a traveller re-chooses with
     /// probability `1 / (i + 1 + step_offset)` (default 3).
@@ -144,7 +146,7 @@ impl Default for Params {
             max_iterations: 50,
             indifference_band: 0.01,
             switch_tolerance: 0.05,
-            found_tolerance: 0.0,
+            found_tolerance: 0.005,
             step_offset: 3,
             cost_source: CostSource::Exact,
             motorway_snap_metres: 50.0,
