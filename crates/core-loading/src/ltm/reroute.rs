@@ -206,7 +206,14 @@ impl LtmNetwork<'_> {
             // An origin has no timer of its own: its front is looked at again then.
             self.schedule_front(queue, t, due);
         } else {
-            self.events.schedule(Event { time: due, tag: due, queue: queue_u32(4 * n + queue) });
+            let vehicle = self.vehicles[slot].id.raw();
+            self.events.schedule(Event {
+                time: due,
+                tag: due,
+                waited_from: front.ready,
+                vehicle,
+                queue: queue_u32(4 * n + queue),
+            });
         }
     }
 
@@ -230,7 +237,7 @@ impl LtmNetwork<'_> {
         if self.changes.is_empty() || self.inflow_rate[j] >= self.base_rates[j].1 {
             return;
         }
-        let clear = self.curves[j].last_entry().get() + pcu / self.inflow_rate[j];
+        let clear = self.curves[j].last_entry().get() + self.inflow_headway(j, pcu);
         if clear - ready >= r.rule.after_s {
             self.offer_reroute(i, t);
         }
@@ -264,7 +271,7 @@ impl LtmNetwork<'_> {
                 (RerouteFrom::EndOf(link), net.link_to(link))
             };
             let vehicle = self.vehicles[slot].id;
-            let answer = rr.reroute(vehicle, from, &planned, t, &*self, reason);
+            let answer = rr.reroute(vehicle, from, &planned, self.of_day(t), &*self, reason);
             let end = net.link_to(*planned.last().expect("not empty"));
             // Taken only if it leaves where the vehicle is, each link follows the one before,
             // and it ends where the plan ends (X-37): a rerouter's slip never moves a vehicle.
@@ -284,6 +291,8 @@ impl LtmNetwork<'_> {
                     self.events.schedule(Event {
                         time: due,
                         tag: due,
+                        waited_from: front.ready,
+                        vehicle: self.vehicles[slot].id.raw(),
                         queue: queue_u32(4 * n + queue),
                     });
                 }
@@ -292,6 +301,7 @@ impl LtmNetwork<'_> {
             let mut whole: Vec<LinkId> = Vec::with_capacity(taken + rest.len());
             whole.extend_from_slice(&self.route(front.slot)[..taken]);
             whole.extend_from_slice(&rest);
+            let second = self.of_day(t);
             let r = self.rerouting.as_mut().expect("rerouting is on");
             match r.route_of[slot] {
                 NONE => {
@@ -304,7 +314,7 @@ impl LtmNetwork<'_> {
             r.count[slot] += 1;
             r.records.push(RerouteRecord {
                 vehicle,
-                second: t,
+                second,
                 link: if at_origin { planned[0] } else { LinkId::from_index(queue) },
                 planned_next: planned[0],
                 new_next: rest[0],

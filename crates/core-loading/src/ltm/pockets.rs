@@ -269,7 +269,7 @@ impl LtmNetwork<'_> {
                 }
                 continue;
             }
-            let headway = pcu / self.discharge_rate[i];
+            let headway = self.discharge_headway(i, pcu);
             let ready = q.ready.max(last_exit + headway);
             if ready > t + TIME_EPSILON {
                 look_again = look_again.min(ready);
@@ -280,7 +280,7 @@ impl LtmNetwork<'_> {
                 Some(j) => {
                     // On a signalised approach the inflow headway applies at the stop line;
                     // at the classic point queue only onto a closed link (`headway_applies`).
-                    let clear = self.curves[j].last_entry().get() + pcu / self.inflow_rate[j];
+                    let clear = self.curves[j].last_entry().get() + self.inflow_headway(j, pcu);
                     if self.stop_delay[i] <= 0.0
                         && self.headway_applies(j)
                         && clear > t + TIME_EPSILON

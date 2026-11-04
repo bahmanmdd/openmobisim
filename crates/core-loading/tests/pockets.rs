@@ -45,6 +45,10 @@ struct Fork {
     ed: LinkId,
 }
 
+/// What the service road `cd` lets through, veh/h: a vehicle bound for `c` waits for room on
+/// `bc` for one headway of it, 30 s, at least.
+const SERVICE_ROAD_VEH_H: f64 = 120.0;
+
 fn fork(ab_lanes: u8) -> Fork {
     let mut b = RoadNetworkBuilder::new();
     b.add_node("a", at(0.0, 0.0));
@@ -56,7 +60,10 @@ fn fork(ab_lanes: u8) -> Fork {
     ab.lanes = Some(ab_lanes);
     b.add_link("ab", "a", "b", ab);
     b.add_link("bc", "b", "c", LinkSpec::new(RoadClass::Primary));
-    b.add_link("cd", "c", "d", LinkSpec::new(RoadClass::Service));
+    // The service road lets through one vehicle every 30 s: room on `bc` appears that slowly.
+    let mut cd = LinkSpec::new(RoadClass::Service);
+    cd.capacity_veh_h = Some(SERVICE_ROAD_VEH_H);
+    b.add_link("cd", "c", "d", cd);
     b.add_link("be", "b", "e", LinkSpec::new(RoadClass::Secondary));
     b.add_link("ed", "e", "d", LinkSpec::new(RoadClass::Secondary));
     let net = build(b);

@@ -52,11 +52,23 @@
 //!
 //! **Cost of a search:** one label per touched link; the scratch is reset by
 //! visiting only what was touched, so a search costs what it explores, not the
-//! size of the network. **Scratch per thread:** 32 bytes per link (the cost, the true
-//! cost, the predecessor, the marks and the factors) plus the heap.
+//! size of the network. **Scratch per thread:** 44 bytes per link (the cost, the true
+//! cost, the predecessor, the length and link count of the route to it, the marks and the
+//! factors) plus the heap.
 //!
-//! **Determinism:** ties are broken by link id, so a search never depends on
-//! heap insertion order.
+//! **Equal-cost routes: the tie rule.** Where two routes to a link (or to a destination) cost
+//! exactly the same, the search keeps the **shorter in metres**; at the same length, the one of
+//! **fewer links**; and at that too, the one whose nodes' projected coordinates come first, read
+//! from the downstream end of the route back towards its origin (the upstream node of each
+//! route's last link compared first, east coordinate then north, then the node before, and so
+//! on). None of these depends on the ids of links or nodes, so relabelling a network gives the
+//! same routes. Only routes that coincide node for node (parallel links between the same two
+//! nodes) are left to the order of their links. The rule is applied where a label is compared
+//! (the link reached again at exactly its cost) and where a destination is reached (every link
+//! into it with exactly the least cost); the rest of the comparison costs nothing, and a tie
+//! costs two lookups and, at equal length and link count, a walk back to where the two routes
+//! part. The heap's own order among entries of equal cost (the link id) then decides nothing
+//! but which of them is looked at first.
 
 use core::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -350,6 +362,17 @@ impl Ord for Entry {
 
 const NONE: u32 = u32::MAX;
 
+/// What [`Search::relax`] did to a link's label.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Relaxed {
+    /// Nothing: the label was as good.
+    No,
+    /// A lower cost: the link is to be queued.
+    Lower,
+    /// The same cost by a route the tie rule prefers: only the way in changed.
+    Tie,
+}
+
 /// Where an earliest-arrival search starts: every link out of a node, or the turns out of a link.
 #[derive(Clone, Copy)]
 enum Start {
@@ -365,6 +388,10 @@ pub struct Search<'a> {
     /// The unpenalised cost of the route each label stands for.
     true_dist: Vec<f64>,
     pred: Vec<u32>,
+    /// The length in metres of the route each label stands for (the tie rule).
+    metres: Vec<f64>,
+    /// How many links the route each label stands for has (the tie rule).
+    hops: Vec<u32>,
     touched: Vec<u32>,
     heap: BinaryHeap<Entry>,
     /// Cost multipliers for the next searches.
@@ -383,7 +410,7 @@ pub struct Search<'a> {
 }
 
 impl<'a> Search<'a> {
-    /// A fresh scratch over `ctx`: 32 bytes per link.
+    /// A fresh scratch over `ctx`: 44 bytes per link.
     #[must_use]
     pub fn new(ctx: &'a SearchContext<'a>) -> Self {
         let n = ctx.network.link_count() as usize;
@@ -392,6 +419,8 @@ impl<'a> Search<'a> {
             dist: vec![f64::INFINITY; n],
             true_dist: vec![0.0; n],
             pred: vec![NONE; n],
+            metres: vec![0.0; n],
+            hops: vec![0; n],
             touched: Vec::new(),
             heap: BinaryHeap::new(),
             factors: LinkFactors::new(n),
@@ -581,7 +610,7 @@ impl<'a> Search<'a> {
                 continue; // stale: a cheaper way to this link was found later
             }
             if ctx.network.link_to(l) == destination {
-                found = Some(link);
+                found = Some(self.best_into(destination, link));
                 break;
             }
             let true_cost = self.true_dist[l.index()];
@@ -598,8 +627,7 @@ impl<'a> Search<'a> {
                     continue;
                 }
                 let nd = cost + raw * self.factor(m);
-                if nd < self.dist[m.index()] {
-                    self.set(m.index(), nd, true_cost + raw, link);
+                if self.relax(m.index(), nd, true_cost + raw, link) == Relaxed::Lower {
                     self.heap.push(Entry { cost: nd + h, link: m.raw() });
                 }
             }
@@ -651,7 +679,8 @@ impl<'a> Search<'a> {
     /// **What a twin is.** A route that differs from the least-cost one and whose cost (the
     /// search's cost: the free-flow time, or the generalised cost under extras) is at most
     /// `1 + tolerance` times the least cost. A least-cost tree keeps one way into each link, and
-    /// where two ways cost the same it keeps the one the order of the links gives: a twin is
+    /// where two ways cost the same it keeps the one the tie rule gives (the [module
+    /// docs](self)): a twin is
     /// what the tree threw away. **How it is found, from the tree alone (no second search):**
     /// at each node `v` of the least-cost route, every other link into `v` that the search
     /// reached (and that may turn onto the route's next link) gives a candidate, the tree's
@@ -731,8 +760,8 @@ impl<'a> Search<'a> {
                 continue; // stale: a cheaper way to this link was found later
             }
             let to = ctx.network.link_to(l);
-            if wanted[to.index()] {
-                last.entry(to.raw()).or_insert(link);
+            if wanted[to.index()] && !last.contains_key(&to.raw()) {
+                last.insert(to.raw(), self.best_into(to, link));
             }
             let true_cost = self.true_dist[l.index()];
             for &t in ctx.turns.turns_from(l) {
@@ -742,8 +771,7 @@ impl<'a> Search<'a> {
                     continue;
                 }
                 let nd = cost + raw * self.factor(m);
-                if nd < self.dist[m.index()] {
-                    self.set(m.index(), nd, true_cost + raw, link);
+                if self.relax(m.index(), nd, true_cost + raw, link) == Relaxed::Lower {
                     self.heap.push(Entry { cost: nd, link: m.raw() });
                 }
             }
@@ -896,7 +924,7 @@ impl<'a> Search<'a> {
     /// earliest-arrival route, in driving order (none if the two are one node).
     ///
     /// Same bound, same exactness. Where several routes take the least time the one
-    /// returned is fixed by link ids (the heap breaks ties by them), so the same table of
+    /// returned is fixed by the tie rule (the [module docs](self)), so the same table of
     /// times always gives the same route. Costs a walk back along the predecessors, the
     /// route's length, on top of the search.
     pub fn fastest_route(
@@ -963,7 +991,7 @@ impl<'a> Search<'a> {
     /// [`Self::fastest_routes_to`] gives, to the bit.
     ///
     /// **One search for several bounds** (S299): a label is found or not by the order in which
-    /// the search takes links off its queue, cheapest first and the link id breaking ties, and
+    /// the search takes links off its queue, cheapest first, and
     /// a search with a larger bound takes the same links in the same order up to the smaller
     /// bound. So the targets this search reaches with an arrival at most `departure + b`, for a
     /// `b` up to `bound`, are with their routes exactly those a search bounded by `b`, stopping
@@ -1017,7 +1045,7 @@ impl<'a> Search<'a> {
             let to = ctx.network.link_to(l);
             if targets[to.index()] && !seen.contains(&to.raw()) {
                 seen.push(to.raw());
-                found.push((to, cost, link));
+                found.push((to, cost, self.best_into(to, link)));
             }
             for &t in ctx.turns.turns_from(l) {
                 let m = ctx.turns.outgoing(t);
@@ -1025,8 +1053,7 @@ impl<'a> Search<'a> {
                     continue;
                 }
                 let arrive = cost + seconds(m.raw(), cost);
-                if arrive <= limit && arrive < self.dist[m.index()] {
-                    self.set(m.index(), arrive, 0.0, link);
+                if arrive <= limit && self.relax(m.index(), arrive, 0.0, link) == Relaxed::Lower {
                     self.heap.push(Entry { cost: arrive, link: m.raw() });
                 }
             }
@@ -1121,7 +1148,9 @@ impl<'a> Search<'a> {
             let (at, true_so_far) = (self.time[l.index()], self.true_dist[l.index()]);
             if targets[to.index()] && !seen.contains(&to.raw()) {
                 seen.push(to.raw());
-                found.push((to, true_so_far, at - departure, link));
+                let best = self.best_into(to, link);
+                let b = best as usize;
+                found.push((to, self.true_dist[b], self.time[b] - departure, best));
             }
             for &t in ctx.turns.turns_from(l) {
                 let m = ctx.turns.outgoing(t);
@@ -1135,9 +1164,11 @@ impl<'a> Search<'a> {
                     continue;
                 }
                 let nd = cost + step * self.factor(m);
-                if nd < self.dist[m.index()] {
-                    self.set(m.index(), nd, true_cost, link);
+                let relaxed = self.relax(m.index(), nd, true_cost, link);
+                if relaxed != Relaxed::No {
                     self.time[m.index()] = at + s;
+                }
+                if relaxed == Relaxed::Lower {
                     self.heap.push(Entry { cost: nd, link: m.raw() });
                 }
             }
@@ -1290,7 +1321,9 @@ impl<'a> Search<'a> {
             }
             let (at, true_so_far) = (self.time[l.index()], self.true_dist[l.index()]);
             if ctx.network.link_to(l) == destination {
-                found = Some((true_so_far, at - departure, at_link));
+                let best = self.best_into(destination, at_link);
+                let b = best as usize;
+                found = Some((self.true_dist[b], self.time[b] - departure, best));
                 break;
             }
             for &t in ctx.turns.turns_from(l) {
@@ -1305,9 +1338,11 @@ impl<'a> Search<'a> {
                     continue;
                 }
                 let nd = cost + step * self.factor(m);
-                if nd < self.dist[m.index()] {
-                    self.set(m.index(), nd, true_cost, at_link);
+                let relaxed = self.relax(m.index(), nd, true_cost, at_link);
+                if relaxed != Relaxed::No {
                     self.time[m.index()] = at + s;
+                }
+                if relaxed == Relaxed::Lower {
                     self.heap.push(Entry { cost: nd, link: m.raw() });
                 }
             }
@@ -1378,7 +1413,7 @@ impl<'a> Search<'a> {
                 continue;
             }
             if ctx.network.link_to(l) == destination {
-                found = Some((cost - departure, link));
+                found = Some((cost - departure, self.best_into(destination, link)));
                 break;
             }
             for &t in ctx.turns.turns_from(l) {
@@ -1388,8 +1423,8 @@ impl<'a> Search<'a> {
                 }
                 let arrive = cost + seconds(m.raw(), cost);
                 let h = rest(m);
-                if arrive + h <= limit && arrive < self.dist[m.index()] {
-                    self.set(m.index(), arrive, 0.0, link);
+                if arrive + h <= limit && self.relax(m.index(), arrive, 0.0, link) == Relaxed::Lower
+                {
                     self.heap.push(Entry { cost: arrive + h, link: m.raw() });
                 }
             }
@@ -1469,8 +1504,7 @@ impl<'a> Search<'a> {
                     continue;
                 }
                 let arrive = cost + seconds(m.raw(), cost);
-                if arrive <= limit && arrive < self.dist[m.index()] {
-                    self.set(m.index(), arrive, 0.0, link);
+                if arrive <= limit && self.relax(m.index(), arrive, 0.0, link) == Relaxed::Lower {
                     self.heap.push(Entry { cost: arrive, link: m.raw() });
                 }
             }
@@ -1486,6 +1520,83 @@ impl<'a> Search<'a> {
         self.dist[link] = dist;
         self.true_dist[link] = true_dist;
         self.pred[link] = pred;
+        let (metres, hops) = if pred == NONE {
+            (0.0, 0)
+        } else {
+            (self.metres[pred as usize], self.hops[pred as usize])
+        };
+        self.metres[link] = metres + self.ctx.network.link_lengths()[link].get();
+        self.hops[link] = hops + 1;
+    }
+
+    /// Label link `m` with cost `cost` (and `true_cost` unperturbed), reached through link
+    /// `via`, if that is better than its label: a lower cost ([`Relaxed::Lower`]: the caller
+    /// queues `m`), or exactly the same cost by a route the tie rule prefers ([`Relaxed::Tie`]:
+    /// only the way into `m` changes; it is queued already).
+    #[allow(clippy::float_cmp, reason = "the tie rule is for exact ties of cost")]
+    #[inline]
+    fn relax(&mut self, m: usize, cost: f64, true_cost: f64, via: u32) -> Relaxed {
+        let d = self.dist[m];
+        if cost < d {
+            self.set(m, cost, true_cost, via);
+            Relaxed::Lower
+        } else if cost == d && self.prefers(via, self.pred[m]) {
+            self.set(m, cost, true_cost, via);
+            Relaxed::Tie
+        } else {
+            Relaxed::No
+        }
+    }
+
+    /// Whether the route ending with link `a` is preferred, by the tie rule (the [module
+    /// docs](self)), to the route ending with link `b`, both labelled and ending at the same
+    /// node; `NONE` is the empty route at the origin. Shorter in metres, then fewer links,
+    /// then the nodes' coordinates read back from the end.
+    #[allow(clippy::float_cmp, reason = "exact ties of length fall to the next criterion")]
+    fn prefers(&self, a: u32, b: u32) -> bool {
+        if a == b {
+            return false;
+        }
+        let key = |x: u32| {
+            if x == NONE { (0.0, 0) } else { (self.metres[x as usize], self.hops[x as usize]) }
+        };
+        let ((ma, ha), (mb, hb)) = (key(a), key(b));
+        if ma != mb {
+            return ma < mb;
+        }
+        if ha != hb {
+            return ha < hb;
+        }
+        let net = self.ctx.network;
+        let (mut x, mut y) = (a, b);
+        while x != NONE && y != NONE && x != y {
+            let px = net.node_position(net.link_from(LinkId::new(x)));
+            let py = net.node_position(net.link_from(LinkId::new(y)));
+            match px.x.total_cmp(&py.x).then(px.y.total_cmp(&py.y)) {
+                Ordering::Less => return true,
+                Ordering::Greater => return false,
+                Ordering::Equal => {}
+            }
+            x = self.pred[x as usize];
+            y = self.pred[y as usize];
+        }
+        false
+    }
+
+    /// The last link of the route to `node` the search keeps, `link` having just reached it at
+    /// the least cost: of every link into `node` labelled with exactly that cost, the one the
+    /// tie rule prefers.
+    #[allow(clippy::float_cmp, reason = "the tie rule is for exact ties of cost")]
+    fn best_into(&self, node: NodeId, link: u32) -> u32 {
+        let cost = self.dist[link as usize];
+        let mut best = link;
+        for &k in self.ctx.network.in_links(node) {
+            let k = k.raw();
+            if k != best && self.dist[k as usize] == cost && self.prefers(k, best) {
+                best = k;
+            }
+        }
+        best
     }
 
     fn clean(&mut self) {
