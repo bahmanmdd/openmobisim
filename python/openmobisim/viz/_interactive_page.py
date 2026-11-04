@@ -67,7 +67,7 @@ __JS__
 </html>
 """
 
-PAGE_CSS = r""":root { --surface:#fbfcfd; --ink:#0a1626; --ink2:#3d4c5f; --muted:#55657a; --base:#c5cfda; --mark:#04938e; --sans: Inter, "Helvetica Neue", "Segoe UI", system-ui, sans-serif; --mono: "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; }
+PAGE_CSS = r""":root { --surface:#fbfcfd; --ink:#0a1626; --ink2:#3d4c5f; --muted:#55657a; --base:#c5cfda; --mark:#04938e; --panel: color-mix(in srgb, var(--base) 24%, var(--surface)); --sans: Inter, "Helvetica Neue", "Segoe UI", system-ui, sans-serif; --mono: "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--surface); color: var(--ink); font-family: var(--sans); overflow: hidden; }
 /* The pointer (S308): the arrow over the map, a pointing hand only over something to hover or click, a closed hand
@@ -83,7 +83,9 @@ canvas#map { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bl
    the scale, kept in view at the column's foot while the controls scroll. */
 #side { position: fixed; top: 14px; right: 14px; bottom: 40px; width: 344px; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
 #side > * { pointer-events: auto; }
-aside#panel { flex: 0 1 auto; min-height: 0; overflow: auto; background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--base); border-radius: 12px; padding: 12px 14px 14px; box-shadow: 0 6px 26px rgba(0,0,0,.18); font-size: 12.5px; backdrop-filter: blur(6px); }
+/* The panel and the legend on a light tint of the network's grey (S312), a little apart from the map's surface on
+   either theme: a quarter of the base colour over the surface (before: the surface itself, at 94 % and 90 %). */
+aside#panel { flex: 0 1 auto; min-height: 0; overflow: auto; background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--base); border-radius: 12px; padding: 12px 14px 14px; box-shadow: 0 6px 26px rgba(0,0,0,.18); font-size: 12.5px; backdrop-filter: blur(6px); }
 aside h2 { margin: 12px 0 7px; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 aside h2:first-child { margin-top: 0; }
 button, select, input[type=number] { font: inherit; color: var(--ink); background: transparent; border: 1px solid var(--base); border-radius: 7px; padding: 4px 9px; cursor: pointer; }
@@ -105,7 +107,7 @@ label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2);
 .legend .kinds i { width: 18px; height: 4px; border-radius: 2px; display: inline-block; margin-right: 5px; vertical-align: middle; }
 .legend .note { font: 11px var(--mono); color: var(--muted); margin-top: 3px; }
 /* The legend, a section per mode (S269) */
-#legendgroup.card { flex: 0 1 auto; margin-top: auto; max-height: 48%; display: flex; flex-direction: column; overflow: hidden; padding: 10px 14px 8px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 90%, transparent); border: 1px solid color-mix(in srgb, var(--base) 70%, transparent); backdrop-filter: blur(4px); font-size: 12px; box-shadow: 0 3px 14px rgba(0,0,0,.10); }
+#legendgroup.card { flex: 0 1 auto; margin-top: auto; max-height: 48%; display: flex; flex-direction: column; overflow: hidden; padding: 10px 14px 8px; border-radius: 12px; background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid color-mix(in srgb, var(--base) 70%, transparent); backdrop-filter: blur(4px); font-size: 12px; box-shadow: 0 3px 14px rgba(0,0,0,.10); }
 #legendbody .lg { margin: 0 0 10px; }
 #legendbody h3 { margin: 0 0 3px; font-size: 11.5px; font-weight: 600; color: var(--ink); }
 #legendbody .sub { font-size: 11px; color: var(--ink2); }
@@ -454,10 +456,13 @@ function roomPx() { return ROOM_M > 0 ? ROOM_M / S.mpp : 40; }
 // and beyond it growing with the room's square root only, between 2.5 and WCAP px (S308: on a sparse network, a
 // quarter of its wide room drew roads too wide; where the roads are dense, as in a city, nothing changes).
 const ROOM_KNEE = 32;
-function ribbonMax() { const r = roomPx(); return Math.max(2.5, Math.min(WCAP, ROOM_SHARE * Math.min(r, ROOM_KNEE) * Math.sqrt(Math.max(r, ROOM_KNEE) / ROOM_KNEE))); }
+function ribbonMaxDrawn() { const r = roomPx(); return Math.max(2.5, Math.min(WCAP, ROOM_SHARE * Math.min(r, ROOM_KNEE) * Math.sqrt(Math.max(r, ROOM_KNEE) / ROOM_KNEE))); }
+// The width asked for (`link_width`, 1 by default): the widest ribbon times it, never below the thinnest ribbon.
+const LINK_WIDTH = META.link_width || 1, LINK_GAP = META.link_gap || 1;
+function ribbonMax() { return Math.max(WFLOOR, LINK_WIDTH * ribbonMaxDrawn()); }
 // The space between a road's two directions (px): each ribbon sits on its own side of the centre line, to the
 // right of its travel, so the two read apart at every zoom (S306: 0.5 px between them read as one ribbon).
-let GAP = 2;  // set by each frame: a fifth of the widest ribbon, 1.5 to 6 px
+let GAP = 2;  // set by each frame: a fifth of the widest ribbon at the default width, 1.5 to 6 px, times `link_gap`
 function ribbonOffset(l, w) { return GAP / 2 + w / 2; }
 // Whether link l is drawn as a ribbon of road traffic now.
 function hasRibbon(l) { return S.ly.road && HAS_TRAFFIC && vol[l] > 0; }
@@ -527,7 +532,7 @@ function draw() {
   const lim = classLimit() - (MOVING ? 3 : 0), gap = MOVING ? 3 : 1.2;
   const showAll = classLimit() >= 16;
   if (!MOVING && !EXPORTING) measureRoom(cand);  // an export keeps the screen's widths
-  GAP = Math.max(1.5, Math.min(6, ribbonMax() / 5));
+  GAP = LINK_GAP * Math.max(1.5, Math.min(6, ribbonMaxDrawn() / 5));
   const base = TIERS.map(() => new Path2D()), faint = new Path2D(), buckets = new Map();
   const dimming = S.pair >= 0 && S.routes && S.dim;
   for (const l of cand) {

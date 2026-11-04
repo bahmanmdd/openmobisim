@@ -846,3 +846,61 @@ def test_the_controls_legend_compass_and_scale_share_the_right_column(tmp_path):
     width = int(re.search(r"#side \{[^}]*width: (\d+)px", text)[1])
     reserve = int(re.search(r"function panelWidth\(\) \{ return W > 760 \? (\d+) : 0; \}", text)[1])
     assert width >= 340 and reserve >= width + 14
+
+
+def test_link_width_and_link_gap_are_checked_and_one_changes_nothing(tmp_path):
+    """The two options are multiples of the page's own width and gap: 1 is the page as drawn."""
+    run = grid_run()[1]
+    _, meta, _ = decode(viz.map_interactive(run, tmp_path / "map.html"))
+    assert (meta["link_width"], meta["link_gap"]) == (1.0, 1.0)
+    for bad in (0, -1, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="must be a positive number"):
+            viz.map_interactive(run, tmp_path / "bad.html", link_width=bad)
+        with pytest.raises(ValueError, match="must be a positive number"):
+            viz.map_interactive(run, tmp_path / "bad.html", link_gap=bad)
+
+
+@pytest.mark.skipif(BROWSER is None, reason="needs a Chromium to run the page")
+def test_link_width_and_link_gap_scale_the_ribbons_and_the_space_between_directions(tmp_path):
+    """The widest ribbon and the space between a road's two directions scale with the options.
+
+    At link_width w the widest ribbon is w times the page's own (at least 1.1 px); at link_gap g
+    the space between a road's two directions is g times the page's own (a fifth of the widest
+    ribbon at link_width 1, 1.5 to 6 px), whatever the width.
+    """
+    import html
+
+    run = grid_run()[1]
+
+    def drawn(**options):
+        path = tmp_path / "map.html"
+        viz.map_interactive(run, str(path), **options)
+        dom = subprocess.run(
+            [BROWSER, "--headless=new", "--disable-gpu", "--no-sandbox",
+             "--virtual-time-budget=3000", "--window-size=1200,900", "--dump-dom",
+             f"{path.as_uri()}#export=svg"],
+            capture_output=True, text=True, timeout=90,
+        ).stdout  # fmt: skip
+        svg = html.unescape(
+            re.search(r'<textarea id="exported"[^>]*>(.*?)</textarea>', dom, re.S)[1]
+        )
+        flat = [r for r in ribbons(svg) if abs(r[1] - r[3]) < 0.01 and abs(r[0] - r[2]) > 5]
+        # The space between the edges of two ribbons side by side: the two directions.
+        spaces = []
+        for i, (ax0, ay, ax1, _, aw) in enumerate(flat):
+            for bx0, by, bx1, _, bw in flat[i + 1 :]:
+                overlap = min(max(ax0, ax1), max(bx0, bx1)) - max(min(ax0, ax1), min(bx0, bx1))
+                apart = abs(ay - by) - (aw + bw) / 2
+                if overlap >= 2 and apart < 12:
+                    spaces.append(apart)
+        return float(re.search(r'data-wmax="([\d.]+)"', dom)[1]), min(spaces)
+
+    # A ribbon is stroked at its width rounded to half a pixel, on a centre line placed by the
+    # unrounded width: each measured space is within 0.25 px of the gap.
+    wmax, space = drawn()
+    assert abs(space - min(6.0, max(1.5, wmax / 5))) <= 0.3, "the page's own gap"
+    thin, space_thin = drawn(link_width=0.5)
+    assert abs(thin - max(1.1, 0.5 * wmax)) <= 0.1 and abs(space_thin - space) <= 0.3
+    close, space_close = drawn(link_gap=0.5)
+    gap = min(6.0, max(1.5, wmax / 5))
+    assert abs(close - wmax) <= 0.1 and abs(space_close - 0.5 * gap) <= 0.3

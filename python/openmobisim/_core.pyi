@@ -1115,6 +1115,7 @@ class RunSummary:
     bike_link_bins: LinkBins | None
     #: The walk layer's, likewise.
     walk_link_bins: LinkBins | None
+    layer_legs: dict[str, dict[str, Any]]
     #: The written ``link_bins_bike.parquet``, if any.
     link_bins_bike_path: str | None
     #: The written ``link_bins_walk.parquet``, if any.

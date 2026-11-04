@@ -120,6 +120,7 @@ fn sample_result() -> RunResult {
         },
         bike_link_bins: None,
         walk_link_bins: None,
+        layer_legs: [Vec::new(), Vec::new()],
         transit: None,
         parking: None,
         itineraries: None,

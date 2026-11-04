@@ -16,6 +16,9 @@ so related ones sort and complete together: ``map_*`` draws on a map,
   slots, coloured by how full they were, ringed where mostly empty or full.
 * :func:`map_interactive` — a run and its route sets as one interactive HTML file:
   zoom levels, time, colour, hover, and route inspection. Needs no matplotlib.
+* :func:`map_link_select` — the select-link analysis as one interactive HTML file: click a
+  link to see the origin-destination pairs whose trips cross it, where they came from and
+  went. Needs no matplotlib.
 * :func:`chart_demand_matrix` — the origin-destination matrix as a heat-map.
 * :func:`chart_service` — a docked bike service's day: bikes docked and ridden, docks
   without a bike, and the travellers who found a dock empty.
@@ -35,6 +38,7 @@ from openmobisim.viz._demand import chart_demand_matrix, map_demand
 from openmobisim.viz._hubs import chart_service, map_hubs
 from openmobisim.viz._interactive import map_interactive
 from openmobisim.viz._link import map_link
+from openmobisim.viz._link_select import map_link_select
 from openmobisim.viz._modes import chart_mode_share
 from openmobisim.viz._parking import map_parking
 from openmobisim.viz._route import map_route
@@ -49,6 +53,7 @@ __all__ = [
     "map_hubs",
     "map_interactive",
     "map_link",
+    "map_link_select",
     "map_parking",
     "map_route",
     "map_transit",

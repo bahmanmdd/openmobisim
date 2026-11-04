@@ -284,6 +284,8 @@ def map_interactive(
     logo: bool = True,
     view: tuple[tuple[float, float], tuple[float, float]] | None = None,
     max_route_pairs: int = 2000,
+    link_width: float = 1.0,
+    link_gap: float = 1.0,
     quiet: bool = False,
 ) -> Path:
     """Write a run and its route sets as one interactive HTML file.
@@ -331,6 +333,11 @@ def map_interactive(
             links that touch this box, and only routes that lie wholly inside it.
         max_route_pairs: At most this many origin-destination pairs are
             embedded, those with the most alternatives first (ties by order).
+        link_width: The road ribbons' width, as a multiple of the width the page
+            chooses from the room between the roads on screen (1, the default);
+            below 1 thinner, for a network of few, wide roads.
+        link_gap: The space between a road's two directions, as a multiple of the
+            page's own (1, the default: a fifth of the widest ribbon, 1.5 to 6 px).
         quiet: Do not say where the file was written (by default a link to it
             is printed, or shown in a notebook).
 
@@ -338,10 +345,14 @@ def map_interactive(
         The path written.
 
     Raises:
-        ValueError: If `theme` is unknown, `view` is empty, or the region is too
-            large to store (over about 200 km across; pass `view`).
+        ValueError: If `theme` is unknown, `view` is empty, `link_width` or
+            `link_gap` is not a positive number, or the region is too large to
+            store (over about 200 km across; pass `view`).
     """
     get_theme(theme)
+    for name, value in (("link_width", link_width), ("link_gap", link_gap)):
+        if not (np.isfinite(value) and value > 0):
+            raise ValueError(f"{name} must be a positive number, not {value!r}")
     network = run.network
     if network is None:
         raise ValueError("this run does not carry its network")
@@ -492,6 +503,7 @@ def map_interactive(
         "arrays": blob.table, "tokens": _tokens(), "layers": layers,
         "road_tiers": list(ROAD_TIER_WIDTHS),
         "road_capacity_ref": round(capacity_ref),
+        "link_width": float(link_width), "link_gap": float(link_gap),
     }  # fmt: skip
     body = len(payload) + len(PAGE_JS) + len(PAGE_CSS) + len(PAGE_HTML)
     meta["size_note"] = f"{n_links:,} links · {body / 1e6:.1f} MB"
