@@ -214,6 +214,19 @@ pub struct ModeTotals {
     pub weighted_not_run: f64,
 }
 
+/// One leg on the bike or the walk layer: a ride on a bike (a traveller's own, or a shared one)
+/// or a walk (a whole walk trip, or a walk to, from or between stops).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LayerLeg {
+    /// The trip the leg belongs to.
+    pub trip: TripId,
+    /// When the leg enters its first link.
+    pub start: Second,
+    /// The layer's links the leg crosses, in order, up to the one it was on when the window
+    /// ended; never empty.
+    pub links: Vec<LinkId>,
+}
+
 /// Why a run could not finish.
 #[derive(Clone, PartialEq, Debug)]
 pub enum RunError {
@@ -334,6 +347,12 @@ pub struct RunResult {
     pub bike_link_bins: Option<LinkBins>,
     /// The walk layer's, likewise.
     pub walk_link_bins: Option<LinkBins>,
+    /// Every leg the run put on the bike layer, then on the walk layer, when per-link results
+    /// were asked for: the legs [`Self::bike_link_bins`] and [`Self::walk_link_bins`] count,
+    /// each with its trip and its links, up to the link it was on when the window ended. A
+    /// trip's legs on one layer keep the order they were made in. Empty when no per-link
+    /// results were asked for.
+    pub layer_legs: [Vec<LayerLeg>; 2],
     /// What transit did, if the run has a timetable: the times the runs
     /// kept and who boarded and alighted where.
     pub transit: Option<TransitResult>,
@@ -2652,7 +2671,7 @@ impl Run {
             &loaded.at_end,
             &loaded.trip_parts,
         );
-        let [bike_link_bins, walk_link_bins] = self.layer_bins(loaded.layer_vehicles);
+        let ([bike_link_bins, walk_link_bins], layer_legs) = self.layer_bins(loaded.layer_vehicles);
         let transit = loaded.transit;
         let itinerary_result = match (&itineraries, &chosen) {
             (Some(itin), Some(c)) => Some(ItineraryResult::of(
@@ -2784,6 +2803,7 @@ impl Run {
             no_alternative,
             bike_link_bins,
             walk_link_bins,
+            layer_legs,
             transit,
             parking: loaded.parking,
             itineraries: itinerary_result,
@@ -3781,23 +3801,45 @@ impl Run {
 
     /// The bike and walk layers' per-link results, from the vehicles a loading kept and the bin
     /// length (`None`: none asked for): binned for the loading whose results the run keeps
-    /// alone (S294).
-    fn layer_bins(&self, vehicles: Option<(u32, [Vec<Vehicle>; 2])>) -> [Option<LinkBins>; 2] {
+    /// alone (S294). With them, the legs binned, each by its trip (a layer vehicle's id is its
+    /// trip's index): moved out of the vehicles, not copied (S312).
+    fn layer_bins(
+        &self,
+        vehicles: Option<(u32, [Vec<Vehicle>; 2])>,
+    ) -> ([Option<LinkBins>; 2], [Vec<LayerLeg>; 2]) {
         let mut layer_bins: [Option<LinkBins>; 2] = [None, None];
+        let mut legs: [Vec<LayerLeg>; 2] = [Vec::new(), Vec::new()];
         if let Some((bin_seconds, layer_vehicles)) = vehicles {
             let window = f64::from(self.window.get());
-            for (slot, vehicles) in layer_vehicles.iter().enumerate() {
+            for (slot, vehicles) in layer_vehicles.into_iter().enumerate() {
                 let layer =
                     if slot == 0 { self.layers.bike.as_ref() } else { self.layers.walk.as_ref() };
                 if let (Some(setup), false) = (layer, vehicles.is_empty()) {
                     let graph = setup.network().network();
-                    layer_bins[slot] = Some(
-                        load_timed_binned(vehicles, graph, setup.seconds(), window, bin_seconds).1,
-                    );
+                    let (trajectories, bins) =
+                        load_timed_binned(&vehicles, graph, setup.seconds(), window, bin_seconds);
+                    layer_bins[slot] = Some(bins);
+                    // Each leg up to the link it was on when the window ended, as a car's.
+                    legs[slot] = vehicles
+                        .into_iter()
+                        .zip(&trajectories)
+                        .map(|(mut v, t)| {
+                            if let Some(on) =
+                                t.links.iter().position(|x| f64::from(x.exit.get()) >= window)
+                            {
+                                v.route.truncate(on + 1);
+                            }
+                            LayerLeg {
+                                trip: TripId::new(v.id.raw()),
+                                start: v.departure,
+                                links: v.route,
+                            }
+                        })
+                        .collect();
                 }
             }
         }
-        layer_bins
+        (layer_bins, legs)
     }
 
     /// Decide and make one bike or walk trip: whether its mode can run, whether

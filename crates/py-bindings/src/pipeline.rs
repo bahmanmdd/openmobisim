@@ -441,6 +441,12 @@ pub struct PyRunSummary {
     /// The walk layer's, likewise.
     #[pyo3(get)]
     pub walk_link_bins: Option<Py<PyLinkBins>>,
+    /// Every leg on the bike layer and on the walk layer, when per-link results were asked
+    /// for: `{"bike": columns, "walk": columns}`, each `trip`, `start_s` (when the leg enters
+    /// its first link) and its links flat, `links` by `link_offsets` (one more than legs), each
+    /// leg up to the link it was on when the window ended.
+    #[pyo3(get)]
+    pub layer_legs: Py<PyDict>,
     /// Path to `link_bins_bike.parquet`, if written.
     #[pyo3(get)]
     pub link_bins_bike_path: Option<String>,
@@ -1968,6 +1974,29 @@ pub fn run_pipeline(
         d.set_item("links", links)?;
         d.unbind()
     };
+    // The legs on the bike and walk layers (S312): what a select-link analysis of those layers
+    // reads, as flat columns.
+    let layer_legs = {
+        let d = PyDict::new(py);
+        for (name, legs) in ["bike", "walk"].into_iter().zip(&result.layer_legs) {
+            let c = PyDict::new(py);
+            let trips: Vec<u32> = legs.iter().map(|l| l.trip.raw()).collect();
+            let starts: Vec<u32> = legs.iter().map(|l| l.start.get()).collect();
+            let mut offsets: Vec<u32> = Vec::with_capacity(legs.len() + 1);
+            offsets.push(0);
+            let mut links: Vec<u32> = Vec::new();
+            for leg in legs {
+                links.extend(leg.links.iter().map(|x| x.raw()));
+                offsets.push(u32::try_from(links.len()).expect("fewer than 2^32 leg links"));
+            }
+            c.set_item("trip", trips.into_pyarray(py))?;
+            c.set_item("start_s", starts.into_pyarray(py))?;
+            c.set_item("link_offsets", offsets.into_pyarray(py))?;
+            c.set_item("links", links.into_pyarray(py))?;
+            d.set_item(name, c)?;
+        }
+        d.unbind()
+    };
     // Wall-clock time by stage (S223): the network's reading if it was recorded, this
     // function's own stages around the core's, and the whole of it.
     timings.lap("results_written", None, clock);
@@ -2099,6 +2128,7 @@ pub fn run_pipeline(
             .walk_link_bins
             .map(|inner| Py::new(py, PyLinkBins { inner }))
             .transpose()?,
+        layer_legs,
         link_bins_bike_path,
         link_bins_walk_path,
         mode_not_available: result.completion.mode_not_available,

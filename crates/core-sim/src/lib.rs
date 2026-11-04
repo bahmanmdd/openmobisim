@@ -90,7 +90,7 @@ pub use prices::{COST_ATTRIBUTES, Prices, TOLL_COLUMN};
 pub use route_cache::RouteSetCache;
 pub use route_choice::{NO_ROUTE, ROUTE_ATTRIBUTES, RouteChoices};
 pub use route_update::{BestResponse, NoRouteUpdate, RouteUpdate};
-pub use run::{FlowMotor, ModeTotals, Run, RunError, RunResult, TripCompletionStats};
+pub use run::{FlowMotor, LayerLeg, ModeTotals, Run, RunError, RunResult, TripCompletionStats};
 pub use skims::Skimmer;
 pub use timings::{Stage, Timings};
 pub use transit::{BusReport, BusSummary, TransitResult, TransitSetup};

@@ -8,7 +8,7 @@ from __future__ import annotations
 import csv
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -284,6 +284,7 @@ class _OneLoopSummary:
         self.gap_currency = "utility"
         self.route_changes = {"trip": [], "second": [], "link": []}
         self.route_realised = {"trip": [], "links": []}
+        self.layer_legs = {}
         self.itinerary_choices = None
         self.no_alternative = {"fallback_car": []}
         keys = ("traveller_id", "trip_seq", "departure_s", "mode", "mode_choice", "weight")
@@ -1152,6 +1153,61 @@ class Run:
             "bike": self._summary.bike_link_bins,
             "walk": self._summary.walk_link_bins,
         }[_check_layer(layer)]
+
+    def link_select(
+        self,
+        links: int | Sequence[int],
+        layer: str = "road",
+        *,
+        zones: Mapping[str, tuple[float, float]] | None = None,
+        departure_s: tuple[float, float] | None = None,
+        bin_s: int | None = None,
+    ) -> Columns:
+        """The select-link analysis: the origin-destination pairs whose trips cross `links`.
+
+        A trip is counted once if the route it travelled crosses at least one of the links. On
+        the road layer that is the route of its car: a car trip's chosen route, the car leg of a
+        park-and-ride trip, a taxi's ride with its passenger; for a vehicle that re-routed on the
+        way and arrived, the links it actually took (``route_realised``); for a trip still under
+        way when the window ended, its route up to the link it was on (``trip_results``'
+        ``link_at_end``). On the bike and walk layers, every leg the run put there and their
+        per-link results count: bike rides (one's own or a shared bike, the bike leg of
+        bike-and-ride), walk trips, and the walks to, from and between transit stops. A transit
+        rider uses no road link (buses are not trips of the demand), so the road layer counts
+        cars and taxis only.
+
+        Args:
+            links: One link or several, as indices into the layer's links (the road
+                network's, or ``network.layer("bike")``'s or ``"walk"``'s).
+            layer: ``"road"`` (the default), ``"bike"`` or ``"walk"``. The bike and walk layers
+                need a run with per-link results (``link_bin_s``).
+            zones: ``{zone: (lon, lat)}`` (``Case.zones()``, ``demand_read_zones``): each trip's
+                origin and destination go to the nearest zone point. ``None`` (the default): the
+                road nodes the trip is routed from and to (the pair of ``route_sets()``), for
+                every mode.
+            departure_s: ``(start, end)`` in seconds after midnight: only the trips departing
+                in ``[start, end)``. The time is the trip's departure, not the moment it reaches
+                the link: the run does not keep when each vehicle entered each link.
+            bin_s: Rows by departure time too, in bins of this many seconds from midnight.
+
+        Returns:
+            Columns by name, one row per pair and mode (and departure bin), the most people
+            first: ``departure_s`` (with `bin_s`: the start of the bin, seconds after midnight),
+            ``origin`` and ``destination`` (zone names, or road node indices), ``mode`` (the
+            mode the trip took), ``trips`` (simulated trips that cross the links), ``people``
+            (the people they stand for), ``share_link`` (their share of all the people crossing
+            the links, in the same bin) and ``share_pair`` (their share of all the people of
+            the pair, by every mode, departing in the window or the bin: how much the pair
+            depends on the links). The shares are fractions from 0 to 1.
+
+        Raises:
+            ValueError: If a link is not one of the layer's, the layer is unknown, or the run
+                does not keep what the layer needs (a run read from its folder keeps neither
+                its journeys nor its bike and walk legs).
+        """
+        from openmobisim._link_select import link_select
+
+        return link_select(self, links, layer, zones=zones, departure_s=departure_s, bin_s=bin_s)
 
     def link_bins_table(self, layer: str = "road") -> Table | None:
         """``link_bins.parquet``: the per-link results as a table, or ``None``.
