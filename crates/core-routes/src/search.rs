@@ -1593,6 +1593,7 @@ impl<'a> Search<'a> {
             if x == NONE { (0.0, 0) } else { (self.metres[x as usize], self.hops[x as usize]) }
         };
         let ((ma, ha), (mb, hb)) = (key(a), key(b));
+        let (ma, mb) = (crate::canonical::millimetres(ma), crate::canonical::millimetres(mb));
         if ma != mb {
             return ma < mb;
         }

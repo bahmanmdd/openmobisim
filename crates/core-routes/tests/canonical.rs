@@ -180,3 +180,37 @@ fn the_monte_carlo_draws_follow_the_streets_not_the_ids() {
     assert!(both[0].0.len() >= 3, "the draws find several routes: {:?}", both[0].0);
     assert_eq!(both[0], both[1]);
 }
+
+/// The keys must be the same on every platform: the projected coordinates and the lengths come
+/// from trigonometric functions whose last bit may differ between platforms' mathematical
+/// libraries, so a key is made from them rounded to whole millimetres. Nodes moved by a few
+/// nanometres (more than any such difference) give the same link keys and route identities;
+/// moved by 2 mm, other keys.
+#[test]
+fn keys_do_not_change_with_the_last_bits_of_the_geometry() {
+    let links = [
+        Def { from: "O", to: "A", metres: 1000.0, seconds: 60.0 },
+        Def { from: "A", to: "D", metres: 1000.0, seconds: 60.0 },
+        Def { from: "O", to: "B", metres: 1000.0, seconds: 60.0 },
+        Def { from: "B", to: "D", metres: 1000.0, seconds: 60.0 },
+    ];
+    let names: Vec<String> = (0..links.len()).map(|k| format!("l{k}")).collect();
+    let at = |nudge: f64| {
+        [
+            ("O", 0.0, 0.0),
+            ("A", 707.1 + nudge, 707.1),
+            ("B", 707.1, -707.1 - nudge),
+            ("D", 1414.2, nudge),
+        ]
+    };
+    let keys = |nudge: f64| {
+        let (net, _, _) = build(&at(nudge), &links, &names, "");
+        let keys = LinkKeys::new(&net);
+        let route = [LinkId::new(0), LinkId::new(1)];
+        (keys.as_slice().to_vec(), keys.route_identity(&route))
+    };
+    let base = keys(0.0);
+    assert_eq!(keys(3e-9), base, "nanometres change nothing");
+    assert_eq!(keys(-3e-9), base, "nanometres change nothing");
+    assert_ne!(keys(2e-3).0, base.0, "millimetres are a different place");
+}

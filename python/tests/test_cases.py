@@ -223,12 +223,12 @@ def test_the_benchmarks_match_the_package_s_references() -> None:
 
 @needs_bundle
 @pytest.mark.parametrize(
-    ("scenario", "mean_min"), [("base", 11.71), ("congested", 20.92)]
+    ("scenario", "mean_min"), [("base", 11.70), ("congested", 20.91)]
 )  # fmt: skip
 def test_sioux_falls_gives_its_reference_results(scenario: str, mean_min: float) -> None:
     # A change detector, not a test of correctness: the means are this build's at seed 0 (the
-    # base case's standard deviation over seeds is about 0.015 min). The case is judged against
-    # theory by the validation set.
+    # standard deviations over seeds are about 0.016 min, base, and 0.03 min, congested). The
+    # case is judged against theory by the validation set.
     run = (
         ms.examples.case("siouxfalls", root=BUNDLE)
         .scenario(scenario, mode_options=DRIVES_ONLY)
@@ -244,9 +244,9 @@ def test_nguyen_dupuis_gives_its_reference_result() -> None:
     run = case.scenario(mode_options=DRIVES_ONLY).run("nd", quiet=True)
     assert run.completion["completed"] == 2000
     # A change detector, not a test of correctness: this build's mean at seed 0 (its standard
-    # deviation over seeds is about 0.36 min). The case is judged against theory by the
+    # deviation over seeds is about 0.35 min). The case is judged against theory by the
     # validation set.
-    assert run.mean_travel_time_s / 60 == pytest.approx(39.01, abs=0.01)
+    assert run.mean_travel_time_s / 60 == pytest.approx(39.02, abs=0.01)
 
 
 @needs_bundle

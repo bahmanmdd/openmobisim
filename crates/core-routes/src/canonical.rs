@@ -25,12 +25,33 @@
 //! hash of its links' keys in driving order; the random draws of a route choice are addressed
 //! by it, so a route keeps its draws under any naming. A node's key ([`node_key`]) is a hash of
 //! its coordinates: what seeds a random draw tied to a place.
+//!
+//! **Whole millimetres.** Every coordinate and length this module compares or hashes is first
+//! rounded to a whole number of millimetres ([`millimetres`]). The projected coordinates and the
+//! lengths come from trigonometric functions whose last bit may differ between platforms'
+//! mathematical libraries; a hash of the raw bits would then differ entirely, and with it every
+//! random draw a key addresses. Rounded, a platform difference of one bit changes nothing unless
+//! the value lies within a few femtometres of a half millimetre.
 
 use core::cmp::Ordering;
 
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
+
+/// `metres` as a whole number of millimetres, rounded to the nearest (the [module docs](self)).
+#[must_use]
+#[inline]
+#[allow(clippy::cast_possible_truncation, reason = "a network spans far less than 9e12 km")]
+pub fn millimetres(metres: f64) -> i64 {
+    (metres * 1000.0).round() as i64
+}
+
+/// [`millimetres`] as the bits a hash takes.
+#[allow(clippy::cast_sign_loss, reason = "the bits of the integer, sign included")]
+fn mm_bits(metres: f64) -> u64 {
+    millimetres(metres) as u64
+}
 
 /// A link as a route holds it: a [`LinkId`] or its raw `u32`.
 pub trait RouteLink: Copy {
@@ -61,7 +82,7 @@ pub fn node_order(network: &RoadNetwork, a: NodeId, b: NodeId) -> Ordering {
         return Ordering::Equal;
     }
     let (pa, pb) = (network.node_position(a), network.node_position(b));
-    pa.x.total_cmp(&pb.x).then(pa.y.total_cmp(&pb.y))
+    millimetres(pa.x).cmp(&millimetres(pb.x)).then(millimetres(pa.y).cmp(&millimetres(pb.y)))
 }
 
 /// The length in metres of a route, summed over its links in driving order (as the searches
@@ -81,16 +102,14 @@ pub fn route_metres<L: RouteLink>(network: &RoadNetwork, links: &[L]) -> f64 {
 /// of that) their ids. `Equal` only for the same links.
 #[must_use]
 pub fn route_order<L: RouteLink>(network: &RoadNetwork, a: &[L], b: &[L]) -> Ordering {
-    route_metres(network, a)
-        .total_cmp(&route_metres(network, b))
+    millimetres(route_metres(network, a))
+        .cmp(&millimetres(route_metres(network, b)))
         .then(a.len().cmp(&b.len()))
         .then_with(|| nodes_back(network, a, b))
         .then_with(|| {
             for (&x, &y) in a.iter().rev().zip(b.iter().rev()) {
-                let o = network
-                    .link_length(x.link())
-                    .get()
-                    .total_cmp(&network.link_length(y.link()).get());
+                let o = millimetres(network.link_length(x.link()).get())
+                    .cmp(&millimetres(network.link_length(y.link()).get()));
                 if o != Ordering::Equal {
                     return o;
                 }
@@ -123,8 +142,8 @@ fn nodes_back<L: RouteLink>(network: &RoadNetwork, a: &[L], b: &[L]) -> Ordering
 pub fn node_key(network: &RoadNetwork, node: NodeId) -> u64 {
     let p = network.node_position(node);
     let mut h = Fnv1a::new();
-    h.write_f64(p.x);
-    h.write_f64(p.y);
+    h.write_u64(mm_bits(p.x));
+    h.write_u64(mm_bits(p.y));
     h.finish()
 }
 
@@ -135,11 +154,9 @@ fn link_signature(network: &RoadNetwork, link: LinkId) -> u64 {
         network.node_position(network.link_to(link)),
     );
     let mut h = Fnv1a::new();
-    h.write_f64(a.x);
-    h.write_f64(a.y);
-    h.write_f64(b.x);
-    h.write_f64(b.y);
-    h.write_f64(network.link_length(link).get());
+    for v in [a.x, a.y, b.x, b.y, network.link_length(link).get()] {
+        h.write_u64(mm_bits(v));
+    }
     h.finish()
 }
 

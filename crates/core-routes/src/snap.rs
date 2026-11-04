@@ -179,9 +179,11 @@ impl NodeSnapper {
     /// Two indexed nodes at the same distance (S312): the one further west, then further south
     /// (the order of [`crate::canonical::node_order`]), never by id; two nodes at one point by id.
     fn tie(&self, a: usize, b: usize) -> core::cmp::Ordering {
+        use crate::canonical::millimetres as mm;
         let (pa, pb) = (self.positions[a], self.positions[b]);
-        pa.0.total_cmp(&pb.0)
-            .then(pa.1.total_cmp(&pb.1))
+        mm(pa.0)
+            .cmp(&mm(pb.0))
+            .then(mm(pa.1).cmp(&mm(pb.1)))
             .then_with(|| self.nodes[a].cmp(&self.nodes[b]))
     }
 
