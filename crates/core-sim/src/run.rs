@@ -85,7 +85,7 @@ use crate::trees::{SearchTrees, TreeCost};
 use crate::trip_results::{TripOutcome, TripOutcomes};
 use openmobisim_core_graph::hubs::ParkingKind;
 use openmobisim_core_graph::layers::StaticLayer;
-use openmobisim_core_routes::{Reach, Route, SearchContext};
+use openmobisim_core_routes::{LinkKeys, Reach, Route, SearchContext};
 use openmobisim_core_transit::{JourneyLeg, Raptor};
 
 /// Which loading engine a [`Run`] uses.
@@ -1693,8 +1693,11 @@ impl Run {
         if taxi_service.is_some() {
             service_attributes.extend(itinerary_choice::TAXI_ATTRIBUTES);
         }
+        // The links' keys (S312): what a route's identity, and so its draws, is made of.
+        let road_link_keys = LinkKeys::new(&network);
         let inputs = route_choice::Inputs {
             network: &network,
+            link_keys: &road_link_keys,
             travellers: &travellers,
             trips: &trips,
             trip_keys: &trip_keys,
@@ -1737,8 +1740,10 @@ impl Run {
                             .map_or(none, |range| sets.keys()[sets.key_of_route(range.start)])
                     })
                     .collect();
+                let bike_link_keys = LinkKeys::new(graph);
                 let bike_inputs = route_choice::Inputs {
                     network: graph,
+                    link_keys: &bike_link_keys,
                     travellers: &travellers,
                     trips: &trips,
                     trip_keys: &bike_keys,
@@ -1821,6 +1826,13 @@ impl Run {
             SearchContext::with_costs(b.network().network(), b.turns(), costs)
         });
         let bike_planner = layers_arc.bike.as_ref().zip(bike_ctx.as_ref());
+        // The links' keys of each layer (S312): what an itinerary's identity is made of.
+        let walk_link_keys = layers_arc.walk.as_ref().map(|w| LinkKeys::new(w.network().network()));
+        let leg_keys = itinerary_choice::LegKeys {
+            road: &road_link_keys,
+            bike: bike_ctx.as_ref().map(|c| &**c.link_keys()),
+            walk: walk_link_keys.as_ref(),
+        };
         let window_s = f64::from(self.window.get());
         let start_s = f64::from(self.window_start.get());
         // The timetable travellers plan transit on, every choice and gap of the run (S299): the
@@ -1911,6 +1923,7 @@ impl Run {
         if let Some(itin) = &itineraries {
             let free = LinkTimes::free_flow(&network).with_closures(&known_closures);
             let planner = Planner {
+                keys: leg_keys,
                 transit: planned,
                 parking: parking_arc.as_deref(),
                 car: &car_ctx,
@@ -2048,6 +2061,7 @@ impl Run {
                     let drives_ahead = match (&itineraries, &chosen, parking_arc.as_deref()) {
                         (Some(itin), Some(current), Some(parking)) if same_step(parking) => {
                             let planner = Planner {
+                                keys: leg_keys,
                                 transit: None,
                                 parking: Some(parking),
                                 car: &car_ctx,
@@ -2144,6 +2158,7 @@ impl Run {
                 clock = timings.lap("route_choice", Some(0), clock);
                 if let (Some(itin), Some(current)) = (&itineraries, &chosen) {
                     let planner = Planner {
+                        keys: leg_keys,
                         transit: planned,
                         parking: parking_arc.as_deref(),
                         car: &car_ctx,
@@ -2257,6 +2272,7 @@ impl Run {
                     // What the itinerary choice and the gap plan on, but the timetable and the
                     // car's route sets (set below, once the sets have grown).
                     let base_planner = Planner {
+                        keys: leg_keys,
                         transit: None,
                         parking: parking_arc.as_deref(),
                         car: &car_ctx,

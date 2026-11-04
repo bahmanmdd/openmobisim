@@ -27,8 +27,9 @@
 //! A generator can also perturb every link's cost at random for the next search
 //! ([`Search::set_noise`]): each link's factor is `1 + sigma · u · bias`, `u` a uniform draw
 //! that is a **pure function of (seed, link)** — a few integer operations, no generator to
-//! carry, no array to fill — so a search is the same for any thread and order. The Monte
-//! Carlo method uses it.
+//! carry, no array to fill — so a search is the same for any thread and order. The link enters
+//! by its key ([`crate::canonical::LinkKeys`]), not its id, so a renamed network draws the same
+//! factor for the same street. The Monte Carlo method uses it.
 //!
 //! A generator can also give a search **extras** ([`Search::set_extras`], made by
 //! [`SearchContext::extras`]): a static extra cost per link, in seconds, that a user class
@@ -76,6 +77,8 @@ use std::sync::Arc;
 
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
+
+use crate::canonical::LinkKeys;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
 /// The most routes a set can hold: one bit each in a per-link mask.
@@ -108,6 +111,8 @@ pub struct SearchContext<'a> {
     cost: Vec<f64>,
     /// The least cost per metre of straight line over every usable link (A\*'s bound).
     per_metre: f64,
+    /// Every link's key, made the first time a search asks for it (the random noise).
+    link_keys: std::sync::OnceLock<Arc<LinkKeys>>,
 }
 
 /// The least cost per metre of straight-line distance between a link's ends, over
@@ -149,7 +154,7 @@ impl<'a> SearchContext<'a> {
             })
             .collect::<Vec<f64>>();
         let per_metre = lower_bound_per_metre(network, &cost);
-        Self { network, turns, cost, per_metre }
+        Self { network, turns, cost, per_metre, link_keys: std::sync::OnceLock::new() }
     }
 
     /// A search over `cost` instead of the car's free-flow times: the
@@ -163,7 +168,14 @@ impl<'a> SearchContext<'a> {
     pub fn with_costs(network: &'a RoadNetwork, turns: &'a TurnTable, cost: Vec<f64>) -> Self {
         assert_eq!(cost.len(), network.link_count() as usize, "one cost per link");
         let per_metre = lower_bound_per_metre(network, &cost);
-        Self { network, turns, cost, per_metre }
+        Self { network, turns, cost, per_metre, link_keys: std::sync::OnceLock::new() }
+    }
+
+    /// Every link's key ([`LinkKeys`]): made on the first call (one pass and a sort over the
+    /// links), then shared.
+    #[must_use]
+    pub fn link_keys(&self) -> &Arc<LinkKeys> {
+        self.link_keys.get_or_init(|| Arc::new(LinkKeys::new(self.network)))
     }
 
     /// The least cost per metre of straight-line distance over every usable link:
@@ -273,6 +285,8 @@ impl LinkFactors {
 struct Noise {
     seed: u64,
     sigma: f64,
+    /// The links' keys: what the draw of a link is a function of.
+    keys: Arc<LinkKeys>,
     /// Per link, in `[0, 1]`: how much of `sigma` the link gets. `None` is 1 everywhere.
     bias: Option<Arc<[f32]>>,
 }
@@ -281,8 +295,8 @@ impl Noise {
     /// The factor of `link`: a pure function of the seed and the link.
     #[inline]
     fn factor(&self, link: LinkId) -> f64 {
-        // The finalizer of SplitMix64 over the seed and the link id.
-        let mut x = self.seed ^ u64::from(link.raw()).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        // The finalizer of SplitMix64 over the seed and the link's key (never its id).
+        let mut x = self.seed ^ self.keys.key(link).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         x ^= x >> 30;
         x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
         x ^= x >> 27;
@@ -435,7 +449,7 @@ impl<'a> Search<'a> {
 
     /// Perturb every link's cost at random in the next searches: link `l` costs its cost
     /// times `1 + sigma · u · bias[l]`, `u` a uniform draw in `[0, 1)` that is a pure function
-    /// of `seed` and the link. `bias` is per link, in `[0, 1]` (`None` is 1 everywhere): 0
+    /// of `seed` and the link's key ([`LinkKeys`]). `bias` is per link, in `[0, 1]` (`None` is 1 everywhere): 0
     /// leaves a link's cost alone, 1 lets it change by up to `sigma` times itself. Reported
     /// costs stay the **true** ones, and a bound ([`Self::shortest_within`]) is on them.
     ///
@@ -451,7 +465,8 @@ impl<'a> Search<'a> {
             let links = self.ctx.network.link_count() as usize;
             assert_eq!(b.len(), links, "a bias has one value per link of the network (X-40)");
         }
-        self.noise = Some(Noise { seed, sigma, bias });
+        let keys = self.ctx.link_keys().clone();
+        self.noise = Some(Noise { seed, sigma, keys, bias });
     }
 
     /// Stop perturbing costs.
@@ -828,19 +843,36 @@ impl<'a> Search<'a> {
         // The candidates, nearest the origin first.
         let mut candidates: Vec<Vec<LinkId>> = Vec::new();
         let mut built = 0;
+        let mut at_node: Vec<u32> = Vec::new();
         'nodes: for j in 1..=n {
-            for &alt in network.in_links(nodes[j]) {
-                if alt == best[j - 1] || !self.dist[alt.index()].is_finite() {
-                    continue;
-                }
-                if self.dist[alt.index()] + rest[j] > limit {
-                    continue;
-                }
-                if j < n
-                    && !ctx.turns.turns_from(alt).iter().any(|&t| ctx.turns.outgoing(t) == best[j])
-                {
-                    continue;
-                }
+            // The links into node j that could start a twin, the cheapest first and, among
+            // equals, by the tie rule (the [module docs](self)): never by their ids.
+            at_node.clear();
+            at_node.extend(network.in_links(nodes[j]).iter().map(|l| l.raw()).filter(|&alt| {
+                let a = LinkId::new(alt);
+                a != best[j - 1]
+                    && self.dist[alt as usize].is_finite()
+                    && self.dist[alt as usize] + rest[j] <= limit
+                    && (j == n
+                        || ctx
+                            .turns
+                            .turns_from(a)
+                            .iter()
+                            .any(|&t| ctx.turns.outgoing(t) == best[j]))
+            }));
+            at_node.sort_by(|&x, &y| {
+                self.dist[x as usize].total_cmp(&self.dist[y as usize]).then_with(|| {
+                    if self.prefers(x, y) {
+                        Ordering::Less
+                    } else if self.prefers(y, x) {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Equal
+                    }
+                })
+            });
+            for &alt in &at_node {
+                let alt = LinkId::new(alt);
                 if built == TWIN_CANDIDATES {
                     break 'nodes;
                 }
@@ -862,8 +894,8 @@ impl<'a> Search<'a> {
                 }
             }
         }
-        // The first ones found: those that leave the route nearest the origin, where the tree's
-        // order of links decided first. Each with its overlap: the largest share of its cost it
+        // The first ones found: those that leave the route nearest the origin, at one node the
+        // cheapest (then by the tie rule). Each with its overlap: the largest share of its cost it
         // has in common with a route kept before it.
         let overlap_cost =
             |l: LinkId| if self.has_extras() { self.raw(l) } else { ctx.link_cost(l) };
@@ -1570,9 +1602,8 @@ impl<'a> Search<'a> {
         let net = self.ctx.network;
         let (mut x, mut y) = (a, b);
         while x != NONE && y != NONE && x != y {
-            let px = net.node_position(net.link_from(LinkId::new(x)));
-            let py = net.node_position(net.link_from(LinkId::new(y)));
-            match px.x.total_cmp(&py.x).then(px.y.total_cmp(&py.y)) {
+            let (nx, ny) = (net.link_from(LinkId::new(x)), net.link_from(LinkId::new(y)));
+            match crate::canonical::node_order(net, nx, ny) {
                 Ordering::Less => return true,
                 Ordering::Greater => return false,
                 Ordering::Equal => {}

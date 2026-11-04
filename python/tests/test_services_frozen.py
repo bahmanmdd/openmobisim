@@ -104,7 +104,10 @@ def test_a_run_s_taxis_replay_too(tmp_path: Path) -> None:
     net = grid()
     bikes = ms.service_bike_docked(docks(net, bikes=2))
     taxis = fleet(net, n=2, request_cancel_s=300)
-    rows = trips(net, 30, (0, 0), (9, 9)) + trips(net, 10, (9, 9), (0, 1), "back")
+    # About one traveller in fifteen takes a taxi under these fares, so 160 make some ten requests
+    # for two taxis: some are carried and some cancelled whatever the draws (S312: of 40, as
+    # before, one to three asked, and both outcomes needed a lucky draw).
+    rows = trips(net, 120, (0, 0), (9, 9)) + trips(net, 40, (9, 9), (0, 1), "back")
     classes = {"c": (False, False, False), "back": (False, False, False)}
     s = scenario(
         net,

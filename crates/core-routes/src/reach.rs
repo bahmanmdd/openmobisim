@@ -9,9 +9,13 @@
 //! that this one may use a U-turn, which a shortest walk never needs.
 //!
 //! **Cost of a search:** one label per node touched, reset by visiting only
-//! those; **scratch:** 16 bytes per node plus the heap.
+//! those; **scratch:** 28 bytes per node plus the heap.
 //!
-//! **Determinism:** ties are broken by node id.
+//! **Determinism, without ids (S312):** nodes reached at the same cost are listed by their
+//! coordinates (west first, then south: [`crate::canonical::node_order`]); where two ways reach
+//! a node at exactly the same cost, the path kept is the shorter in metres, then the one of
+//! fewer links, then the one whose node next to it comes first by its coordinates, then the
+//! shorter link; only parallel links of one length between one pair of nodes fall to their ids.
 
 use core::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -50,6 +54,9 @@ pub struct Reach<'a> {
     dist: Vec<f64>,
     /// The link each node was reached by, for [`Self::path`].
     via: Vec<u32>,
+    /// The length in metres and the number of links of the path each node was reached by.
+    metres: Vec<f64>,
+    hops: Vec<u32>,
     touched: Vec<u32>,
     heap: BinaryHeap<Entry>,
     backward: bool,
@@ -70,6 +77,8 @@ impl<'a> Reach<'a> {
             costs,
             dist: vec![f64::INFINITY; n],
             via: vec![NONE; n],
+            metres: vec![0.0; n],
+            hops: vec![0; n],
             touched: Vec::new(),
             heap: BinaryHeap::new(),
             backward: false,
@@ -110,6 +119,8 @@ impl<'a> Reach<'a> {
         let mut found = Vec::new();
         let s = start.raw();
         self.dist[s as usize] = 0.0;
+        self.metres[s as usize] = 0.0;
+        self.hops[s as usize] = 0;
         self.touched.push(s);
         self.heap.push(Entry { cost: 0.0, node: s });
         while let Some(Entry { cost, node }) = self.heap.pop() {
@@ -130,17 +141,61 @@ impl<'a> Reach<'a> {
                 };
                 let c = cost + self.costs[link.index()];
                 let n = next.index();
-                if c <= bound && c < self.dist[n] {
+                if c > bound {
+                    continue;
+                }
+                let metres = self.metres[node as usize] + self.network.link_length(link).get();
+                let hops = self.hops[node as usize] + 1;
+                #[allow(clippy::float_cmp, reason = "the tie rule is for exact ties of cost")]
+                let tie = c == self.dist[n] && self.prefers(n, link, metres, hops);
+                if c < self.dist[n] || tie {
                     if self.dist[n].is_infinite() {
                         self.touched.push(next.raw());
                     }
+                    if !tie {
+                        self.heap.push(Entry { cost: c, node: next.raw() });
+                    }
                     self.dist[n] = c;
                     self.via[n] = link.raw();
-                    self.heap.push(Entry { cost: c, node: next.raw() });
+                    self.metres[n] = metres;
+                    self.hops[n] = hops;
                 }
             }
         }
+        // At one cost, by the nodes' coordinates rather than the heap's order of ids.
+        found.sort_by(|a, b| {
+            a.1.total_cmp(&b.1)
+                .then_with(|| crate::canonical::node_order(self.network, a.0, b.0))
+                .then(a.0.cmp(&b.0))
+        });
         found
+    }
+
+    /// Whether node `n`, labelled already at the same cost, is better reached by `link` (a path
+    /// of `metres` and `hops` links): the tie rule of the [module docs](self).
+    #[allow(clippy::float_cmp, reason = "exact ties of length fall to the next criterion")]
+    fn prefers(&self, n: usize, link: LinkId, metres: f64, hops: u32) -> bool {
+        let old = self.via[n];
+        if old == NONE || old == link.raw() {
+            return false;
+        }
+        if metres != self.metres[n] {
+            return metres < self.metres[n];
+        }
+        if hops != self.hops[n] {
+            return hops < self.hops[n];
+        }
+        let old = LinkId::new(old);
+        // The node next to `n` on each path: upstream going forward, downstream going back.
+        let next_to = |l: LinkId| {
+            if self.backward { self.network.link_to(l) } else { self.network.link_from(l) }
+        };
+        crate::canonical::node_order(self.network, next_to(link), next_to(old))
+            .then_with(|| {
+                self.network.link_length(link).get().total_cmp(&self.network.link_length(old).get())
+            })
+            .then(link.cmp(&old))
+            .is_lt()
     }
 
     /// The links between the last search's start and `node`, in travel order:

@@ -191,22 +191,38 @@ impl Reroute for Rerouter<'_> {
         // The earliest arrival at the destination in the junction's tree, and its way there.
         let k = self.tree(from, now, &seconds);
         let tree = &self.trees[k];
-        let (arrival, last) = self
-            .network
-            .in_links(destination)
-            .iter()
-            .filter_map(|l| tree.reached.get(&l.raw()).map(|&(at, _)| (at, l.raw())))
-            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))?;
+        let way = |last: u32| {
+            let mut links = Vec::new();
+            let mut at = last;
+            while at != u32::MAX {
+                links.push(LinkId::new(at));
+                at = tree.reached.get(&at).map_or(u32::MAX, |&(_, pred)| pred);
+            }
+            links.reverse();
+            links
+        };
+        // The earliest; of ways arriving at exactly the same time, the one the tie rule names
+        // (`openmobisim_core_routes::route_order`), never the lower link id (S312).
+        let mut best: Option<(f64, Vec<LinkId>)> = None;
+        for l in self.network.in_links(destination) {
+            let Some(&(at, _)) = tree.reached.get(&l.raw()) else { continue };
+            let better = match &best {
+                None => true,
+                Some((b, _)) if at < *b => true,
+                #[allow(clippy::float_cmp, reason = "the tie rule is for exact ties")]
+                Some((b, links)) if at == *b => {
+                    openmobisim_core_routes::route_order(self.network, &way(l.raw()), links).is_lt()
+                }
+                Some(_) => false,
+            };
+            if better {
+                best = Some((at, way(l.raw())));
+            }
+        }
+        let (arrival, links) = best?;
         if arrival - tree.at >= bound {
             return None;
         }
-        let mut links = Vec::new();
-        let mut at = last;
-        while at != u32::MAX {
-            links.push(LinkId::new(at));
-            at = tree.reached.get(&at).map_or(u32::MAX, |&(_, pred)| pred);
-        }
-        links.reverse();
         self.changed += 1;
         Some(links)
     }

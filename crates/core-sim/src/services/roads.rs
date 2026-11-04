@@ -311,14 +311,14 @@ impl<'a> FrozenRoads<'a> {
     }
 
     /// The nodes from which `to` is reached within `bound` seconds at free flow, with those
-    /// seconds, nearest first (ties by node id).
+    /// seconds, nearest first (ties by the nodes' coordinates, west first, then south).
     #[must_use]
     pub fn reach_to(&self, to: NodeId, bound: f64) -> Vec<(NodeId, f64)> {
         self.reach(to, bound, true)
     }
 
     /// The nodes reached from `from` within `bound` seconds at free flow, with those seconds,
-    /// nearest first (ties by node id).
+    /// nearest first (ties by the nodes' coordinates, west first, then south).
     #[must_use]
     pub fn reach_from(&self, from: NodeId, bound: f64) -> Vec<(NodeId, f64)> {
         self.reach(from, bound, false)
@@ -331,7 +331,12 @@ impl<'a> FrozenRoads<'a> {
         } else {
             reach.forward(node, bound, &self.every)
         };
-        out.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.raw().cmp(&b.0.raw())));
+        // Ties by the nodes' coordinates (west first, then south), never by id (S312).
+        out.sort_by(|a, b| {
+            a.1.total_cmp(&b.1)
+                .then_with(|| openmobisim_core_routes::node_order(self.road, a.0, b.0))
+                .then(a.0.raw().cmp(&b.0.raw()))
+        });
         out
     }
 }

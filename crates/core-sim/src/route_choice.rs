@@ -31,15 +31,16 @@
 //!
 //! **Alternative identity** is a hash of the route's links, so it does not
 //! change when other routes are added to or removed from the set, and the
-//! draws of every route that stays are exactly as they were.
+//! draws of every route that stays are exactly as they were. The links enter by
+//! their keys ([`LinkKeys`]: their nodes' coordinates and their length), never by
+//! their ids, so a renamed network gives every route the same draws (S312).
 
 use std::sync::Arc;
 
 use openmobisim_core_choice::{ChoiceBatch, ChoiceError, ChoiceModel};
 use openmobisim_core_demand::{Mode, Travellers, Trips};
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_routes::{RouteKey, RouteSets};
-use openmobisim_core_types::hash::Fnv1a;
+use openmobisim_core_routes::{LinkKeys, RouteKey, RouteSets};
 use openmobisim_core_types::ids::{EntityId, LinkId, TravellerId, TripId};
 
 use crate::demand_values::DemandValues;
@@ -160,6 +161,8 @@ impl RouteChoices {
 /// Everything a route choice reads.
 pub(crate) struct Inputs<'a> {
     pub network: &'a RoadNetwork,
+    /// The keys of `network`'s links: what a route's identity is made of (never the ids).
+    pub link_keys: &'a LinkKeys,
     pub travellers: &'a Travellers,
     pub trips: &'a Trips,
     pub trip_keys: &'a [RouteKey],
@@ -201,15 +204,6 @@ pub(crate) struct Inputs<'a> {
 /// ([`Inputs::car_start_s`]), in seconds.
 fn car_departure(trips: &Trips, trip: TripId, car_start_s: u32) -> f64 {
     f64::from(trips.departure(trip).get() + car_start_s)
-}
-
-/// The identity of a route: a 32-bit hash of its links.
-fn route_identity(links: &[u32]) -> u32 {
-    let mut h = Fnv1a::new();
-    for &l in links {
-        h.write_u32(l);
-    }
-    h.finish32()
 }
 
 /// The first bit of every random key that marks a **floor** draw (below): a
@@ -374,7 +368,7 @@ impl<'a> Chooser<'a> {
         let wants_path_size = needs("ln_path_size");
         let wants_length = needs("length_km") || needs("cost_eur") || needs("cost_running_eur");
         let mut identity: Vec<u32> = (0..route_sets.route_count())
-            .map(|r| route_identity(route_sets.route(r).links))
+            .map(|r| inputs.link_keys.route_identity(route_sets.route(r).links))
             .collect();
         // Within a set, identities must differ: nudge a (vanishingly rare) clash.
         for key in 0..route_sets.keys().len() {
@@ -908,7 +902,7 @@ impl<'a> Chooser<'a> {
                 let class = self.inputs.travellers.user_class(traveller).raw();
                 single.begin_situation_in(traveller.raw(), trip.raw(), class);
                 self.route_row(&mut row, &route, trip, traveller);
-                single.push_alternative(route_identity(links), &row);
+                single.push_alternative(self.inputs.link_keys.route_identity(links), &row);
                 pending.push(t);
                 pending_seconds.push(seconds);
             }

@@ -3,6 +3,7 @@
 //! | Module | What it holds |
 //! |---|---|
 //! | [`search`] | The turn-aware shortest-path search every method is built on |
+//! | [`canonical`] | The order and the identity of routes with no link or node id in them: [`route_order`], [`LinkKeys`], one rule for every part of the code |
 //! | [`attributes`] | [`path_sizes`]: the path size of each route over the routes offered, for the choice layer |
 //! | [`generate`] | The [`RouteSetGenerator`] interface, the built-in methods (`link_penalty`, the default, `shortest`, `simulation`, biased towards congestion, and `doubly_stochastic`, by each user class's drawn generalised cost; [`PUBLIC_NAMES`]), [`ByCost`] (a method searching by the run's route cost) and the by-name [`Registry`] |
 //! | [`store`] | [`RouteSets`]: routes flat in CSR form, with identity, an inverted link index and per-route metadata; it can be [extended](RouteSets::extended) with routes found later; [`search_map`] runs a search over many items in parallel, in order |
@@ -21,6 +22,7 @@
 //! vehicles that carry theirs. Nothing in `core-loading` depends on this crate.
 
 pub mod attributes;
+pub mod canonical;
 pub mod generate;
 pub mod reach;
 pub mod search;
@@ -28,6 +30,7 @@ pub mod snap;
 pub mod store;
 
 pub use attributes::{path_sizes, path_sizes_counted};
+pub use canonical::{LinkKeys, RouteLink, node_key, node_order, route_metres, route_order};
 pub use generate::{
     ByCost, ClassExtras, DEFAULT_METHOD, DEFAULT_TWIN_TOLERANCE, Demand, ExtrasRequest, MonteCarlo,
     Options, PROPENSITY_BIN_SECONDS, PUBLIC_NAMES, Penalty, Registry, RouteError,

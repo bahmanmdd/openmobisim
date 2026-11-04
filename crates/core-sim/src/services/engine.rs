@@ -111,9 +111,10 @@ pub trait ServiceRoads: Send + Sync + std::fmt::Debug {
     /// The drive from `from` to `to` leaving at second `t`: seconds and metres (INFINITY if none).
     fn drive(&self, from: NodeId, to: NodeId, t: f64) -> (f64, f64);
     /// Nodes reaching `to` within `bound` s at free flow, with those seconds, nearest first (ties
-    /// by node id).
+    /// by the nodes' coordinates, west first, then south: never by id).
     fn reach_to(&self, to: NodeId, bound: f64) -> Vec<(NodeId, f64)>;
-    /// Nodes reached from `from` within `bound` s at free flow, nearest first (ties by node id).
+    /// Nodes reached from `from` within `bound` s at free flow, nearest first (ties by the nodes'
+    /// coordinates, as [`Self::reach_to`]).
     fn reach_from(&self, from: NodeId, bound: f64) -> Vec<(NodeId, f64)>;
     /// Seconds from each of `from` to each of `to` leaving at second `t`, row by row
     /// (`out[i * to.len() + j]`), infinite past `max_s`: by default one [`Self::drive`] per pair.

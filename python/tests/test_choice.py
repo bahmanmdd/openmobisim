@@ -105,7 +105,12 @@ def test_coefficients_change_who_takes_which_route_and_the_fingerprint():
         best = costs[sets.set_offsets()[rc.pair[routed]]]
         return float((costs[rc.route[routed]] - best).mean()), run.fingerprint
 
-    keen, fp_keen = excess_s(beta_time_min=-2.0)
+    # The sets' routes differ by about 2 s, so at -2 per minute the time barely moves the logit:
+    # worked out from the logit's probabilities on these sets, the expected excess is 0.34 s
+    # against 0.64 s for the indifferent travellers (standard deviation of the mean of 400 trips
+    # 0.14 and 0.18 s), and which side of half it lands was a matter of the draws (S312). At -20
+    # per minute it is 0.001 s.
+    keen, fp_keen = excess_s(beta_time_min=-20.0)
     lax, fp_lax = excess_s(beta_time_min=0.0, beta_ln_path_size=0.0)
     assert keen < 0.5 * lax, (
         f"time-averse travellers lose less time: {keen:.1f} s against {lax:.1f} s"

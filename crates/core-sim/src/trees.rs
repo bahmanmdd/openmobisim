@@ -642,7 +642,17 @@ impl DrawTrees {
                 let by_generalised = seconds_of.is_some();
                 search.clear_route_state();
                 search.set_extras(extra.clone());
-                search.set_noise(draw_seed(origin, slot, class, draw, seed), sigma, None);
+                search.set_noise(
+                    draw_seed(
+                        openmobisim_core_routes::node_key(network, NodeId::new(origin)),
+                        slot,
+                        class,
+                        draw,
+                        seed,
+                    ),
+                    sigma,
+                    None,
+                );
                 let mut targets = vec![false; node_count];
                 let mut wanted = 0;
                 for &(k, _) in &keys {
@@ -723,9 +733,10 @@ impl DrawTrees {
     }
 }
 
-/// The noise seed of one perturbed tree: a pure function of the tree, the draw and the seed.
-fn draw_seed(origin: u32, slot: u64, class: u32, draw: usize, seed: u64) -> u64 {
-    (u64::from(origin) << 32 | (slot & 0xFF_FFFF) << 8 | u64::from(class & 0xFF))
+/// The noise seed of one perturbed tree: a pure function of the tree (its origin by the node's
+/// key, [`openmobisim_core_routes::node_key`], never its id), the draw and the seed.
+fn draw_seed(origin_key: u64, slot: u64, class: u32, draw: usize, seed: u64) -> u64 {
+    (origin_key ^ ((slot & 0xFF_FFFF) << 8 | u64::from(class & 0xFF)))
         .wrapping_mul(0x9E37_79B9_7F4A_7C15)
         ^ (draw as u64 + 1).wrapping_mul(0xD6E8_FEB8_6659_FD93)
         ^ seed.wrapping_mul(0xA24B_AED4_963E_E407)
