@@ -28,7 +28,8 @@
 //!    draws, or by the quota allocation of each group of trips facing the same choice in the
 //!    model's proportions ([`Params::allocation`], [`crate::quota`]).
 //! 3. **Load** (`load_stage`): every chosen chain's car legs become vehicles, which the
-//!    run's [`Loader`] moves on the network.
+//!    run's [`Loader`] moves on the network. Bike and walking legs load nothing: their times
+//!    are their layer's static times ([`crate::layer_planner`]).
 //! 4. **Measure** (`measure_stage`): the loading's entry-time tables become the state's link
 //!    travel times by time of day ([`Loaded::link_times`]: per link and bin of entry time, the
 //!    mean time of the vehicles that entered then; free flow for a loading that records none),
@@ -36,6 +37,18 @@
 //!    each leg's mode, the car's driven link by link with [`LinkTimes::route_seconds`] (the
 //!    wait to get onto the first link included).
 //! 5. **Assess** (`assess_stage`): the convergence measures of the [`IterationReport`].
+//!
+//! **Bike and walking trips** (a trip whose mode is given as the bike or walking) take part in
+//! every stage as trips with a choice set of one chain: the search offers their one chain once,
+//! the choice keeps them on it, the measure stage re-prices it to the same numbers, and the
+//! assessment counts them. Every convergence measure is over **every trip** of the run, these
+//! included: they are never found anything new after their first search (the found and added
+//! shares), never switch and add nothing to the switch share's floor or its excess, cost exactly
+//! their set's least cost (nothing to the duality gap's numerator, their cost to its
+//! denominator), and count among the departed, arrived or unfinished trips and in the mean trip
+//! time, their trip ending at its departure plus its leg's time (access, ride and egress for a
+//! bike). So a run with many of them reports smaller shares for the same car traffic, and its
+//! stopping rule, which reads those shares, may stop at another iteration.
 //!
 //! Each iteration finishes its own work: nothing of iteration `i` is computed after `i + 1` has
 //! begun, and the next iteration starts from the state this one returned.
@@ -72,11 +85,15 @@ use openmobisim_core_types::rng::{RngKey, Stream, StreamRng};
 use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::Pcu;
 
+use openmobisim_core_demand::Mode;
+use openmobisim_core_graph::layers::BikeCost;
+
 use crate::attributes::Coefficients;
-use crate::chain::{Chain, FixedTimes, Place};
-use crate::chooser::{self, Demand, PathSizes, Switching};
+use crate::chain::{Chain, FixedTimes};
+use crate::chooser::{self, Demand, LinkLengths, PathSizes, Switching};
 use crate::error::AssignError;
 use crate::hooks::StageHook;
+use crate::layer_planner::{Layers, StaticPlanner};
 use crate::loader::{Loaded, Loader};
 use crate::parallel;
 use crate::planner::{CarPlanner, CostSource};
@@ -151,6 +168,12 @@ pub struct Params {
     /// The fixed times of every car leg that uses a link: reaching the car before the drive,
     /// parking and leaving it after (default [`FixedTimes::NONE`]; see [`crate::chain`]).
     pub car_fixed_times: FixedTimes,
+    /// The fixed times of every bike leg that uses a link: reaching and unlocking the bike
+    /// before the ride, parking and locking it after (default [`FixedTimes::NONE`]).
+    pub bike_fixed_times: FixedTimes,
+    /// How a bike leg's route is chosen on the bike layer (default [`BikeCost::Utility`]: the
+    /// class's own cost of the ride; see [`crate::layer_planner`]).
+    pub bike_cost: BikeCost,
 }
 
 impl Default for Params {
@@ -166,6 +189,8 @@ impl Default for Params {
             cost_source: CostSource::Exact,
             motorway_snap_metres: 50.0,
             car_fixed_times: FixedTimes::NONE,
+            bike_fixed_times: FixedTimes::NONE,
+            bike_cost: BikeCost::Utility,
         }
     }
 }
@@ -176,6 +201,9 @@ pub struct Inputs<'a> {
     pub network: &'a RoadNetwork,
     /// Its turns.
     pub turns: &'a TurnTable,
+    /// The bike and walk layers ([`Layers::NONE`] for a run of car trips): a trip whose mode is
+    /// given as the bike or walking needs its layer.
+    pub layers: Layers<'a>,
     /// The travellers.
     pub travellers: &'a Travellers,
     /// Their trips.
@@ -286,7 +314,7 @@ fn choose_stage(
     params: &Params,
 ) -> Result<Switching, AssignError> {
     let demand = demand(inputs);
-    sizes.refresh(inputs.network, state);
+    sizes.refresh(&LinkLengths::of(inputs), state);
     chooser::choose(
         &demand,
         state,
@@ -302,9 +330,9 @@ fn choose_stage(
 }
 
 /// Stage 3: the vehicles of every trip's current chain (one per car leg that uses a link,
-/// weighing its traveller's weight, setting off at the leg's vehicle departure), moved by the
-/// run's loader; returns what the loading returned and, per vehicle, its trip and its leg's
-/// egress time.
+/// [`crate::Leg::is_loaded`], weighing its traveller's weight, setting off at the leg's vehicle
+/// departure), moved by the run's loader; returns what the loading returned and, per vehicle,
+/// its trip and its leg's egress time.
 ///
 /// # Errors
 ///
@@ -321,7 +349,7 @@ fn load_stage(
         let Some(chain) = entry.current_chain() else { continue };
         let trip = TripId::from_index(t);
         let weight = f64::from(inputs.travellers.weight(inputs.trips.traveller(trip)));
-        for leg in chain.legs().iter().filter(|l| !l.links.is_empty()) {
+        for leg in chain.legs().iter().filter(|l| l.is_loaded()) {
             #[allow(
                 clippy::cast_possible_truncation,
                 clippy::cast_sign_loss,
@@ -347,7 +375,8 @@ fn load_stage(
 }
 
 /// Stage 4: the link times the loading measured become the state's, and every chain of every
-/// set is priced again on them, its legs timed one after the other from the trip's departure.
+/// set is priced again on them (a bike or walking leg on its layer's static times), its legs
+/// timed one after the other from the trip's departure.
 fn measure_stage(
     search: &ChainSearch<'_>,
     network: &RoadNetwork,
@@ -381,7 +410,9 @@ fn measure_stage(
 
 /// Stage 5: the convergence measures of `iteration`. A trip arrives when its last vehicle's leg
 /// ends (the vehicle's arrival plus the leg's egress time), if that is by the loading's end
-/// ([`Loader::end_seconds`]); otherwise it is unfinished.
+/// ([`Loader::end_seconds`]); otherwise it is unfinished. A trip whose chain loads nothing but
+/// uses links (a bike or walking trip) arrives at its departure plus its chain's time, if that
+/// is by the loading's end; a chain of no link arrives as it sets out.
 ///
 /// # Errors
 ///
@@ -417,12 +448,15 @@ fn assess_stage(
     for (t, entry) in state.trips().iter().enumerate() {
         let trip = TripId::from_index(t);
         let w = weight(trip);
-        if entry.current.is_none() {
+        let Some(chain) = entry.current_chain() else {
             without_chain += w;
             continue;
-        }
+        };
         departed += w;
         let start = f64::from(inputs.trips.departure(trip).get());
+        if last_arrival[t].is_none() {
+            last_arrival[t] = static_arrival(chain, start, end);
+        }
         match last_arrival[t] {
             // A chain with no road link arrives as it sets out.
             None => arrived += w,
@@ -494,12 +528,25 @@ fn assess_stage(
     })
 }
 
+/// When a trip leaving at `start` on `chain`, a chain that loads nothing, ends: `None` for a
+/// chain that uses no link (it arrives as it sets out); `Some(None)` if its legs, timed one after
+/// the other, end after `end`; `Some(Some(arrival))` otherwise.
+#[allow(clippy::option_option, reason = "no link, unfinished, or arrived")]
+fn static_arrival(chain: &Chain, start: f64, end: f64) -> Option<Option<f64>> {
+    if chain.legs().iter().all(|l| l.links.is_empty()) {
+        return None;
+    }
+    let at = start + chain.total().total_seconds();
+    Some((at <= end).then_some(at))
+}
+
 /// One trip's choice set as a run wrote it, to rebuild a state from ([`restore`]).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SavedTrip {
-    /// Each chain of the set, in the order it was found: the road links of its one car leg,
-    /// from the leg's upstream end to its downstream end (empty for a leg whose two ends are
-    /// one node).
+    /// Each chain of the set, in the order it was found: the links of its one leg on the leg's
+    /// layer (the road network for a car trip, the bike or walk layer for a trip whose mode is
+    /// given as the bike or walking), from the leg's upstream end to its downstream end (empty
+    /// for a leg whose two ends are one node).
     pub chains: Vec<Vec<LinkId>>,
     /// The chain the traveller takes, as an index into [`Self::chains`]; `None` if none.
     pub current: Option<usize>,
@@ -509,8 +556,7 @@ pub struct SavedTrip {
 }
 
 impl SavedTrip {
-    /// What `entry` would be written as: its chains' road links, current chain and
-    /// probabilities.
+    /// What `entry` would be written as: its chains' links, current chain and probabilities.
     #[must_use]
     pub fn of(entry: &TripState) -> Self {
         Self {
@@ -525,33 +571,70 @@ impl SavedTrip {
     }
 }
 
+/// The run's chain search: the car planner with the car's fixed times, and the bike and walking
+/// planners on the layers `inputs` has (the bike's with its fixed times and the run's bike cost),
+/// every bike and walking trip planned once.
+///
+/// # Errors
+///
+/// The planners' errors ([`AssignError::Input`], [`AssignError::Coefficients`]).
+fn chain_search<'a>(inputs: &Inputs<'a>, params: &Params) -> Result<ChainSearch<'a>, AssignError> {
+    let car = CarPlanner::new(inputs.network, inputs.turns, inputs.classes, inputs.money_per_link)?
+        .with_fixed_times(params.car_fixed_times)?;
+    let bike = match inputs.layers.bike {
+        Some(layer) => Some(StaticPlanner::bike(
+            layer,
+            inputs.classes,
+            params.bike_cost,
+            inputs.network.defaults().layers,
+            params.bike_fixed_times,
+        )?),
+        None => None,
+    };
+    let walk = match inputs.layers.walk {
+        Some(layer) => Some(StaticPlanner::walk(layer, inputs.classes)?),
+        None => None,
+    };
+    Ok(ChainSearch::new(inputs.network, inputs.travellers, inputs.trips, car, params)
+        .with_static(bike, walk))
+}
+
+/// The mode of the chains of `trip`: the bike or walking when its mode is given as one of them,
+/// the car otherwise.
+fn chain_mode(trips: &Trips, trip: TripId) -> Mode {
+    match trips.mode(trip) {
+        m @ (Mode::Bike | Mode::Walk) if trips.mode_given(trip) => m,
+        _ => Mode::Car,
+    }
+}
+
 /// The state a run left, rebuilt from what it wrote: `saved`, every trip's set, current chain
 /// and probabilities (one per trip of `inputs.trips`, in trip order), and `iterations`, the count
-/// of iterations it completed. Each chain becomes the car leg along its links from the trip's
-/// origin to its destination at the trip's departure, with the run's fixed times
-/// (`params.car_fixed_times`); then the current chains are loaded once by `inputs.loader` and
-/// the link travel times measured, and every chain priced on them, as the measure stage does.
-/// The loading is deterministic, so a state rebuilt from what a run wrote of its final state
-/// equals that state, link times included, to the bit. `inputs.initial` is not read.
+/// of iterations it completed. Each chain becomes the one leg of the trip's mode along its links
+/// (a car leg from the trip's origin to its destination on the road network, with the run's
+/// fixed times, `params.car_fixed_times`; a bike or walking leg between the trip's ends on its
+/// layer, a bike's with `params.bike_fixed_times`), at the trip's departure; then the current
+/// chains are loaded once by `inputs.loader` and the link travel times measured, and every chain
+/// priced on them, as the measure stage does. The loading is deterministic, so a state rebuilt
+/// from what a run wrote of its final state equals that state, link times included, to the bit.
+/// `inputs.initial` is not read.
 ///
 /// # Errors
 ///
 /// [`AssignError::Input`] if `saved` is not one entry per trip, a chain's links do not run in
-/// driving order from the trip's origin node to its destination node, a set holds a chain
-/// twice, a current chain is not one of the set, there are more probabilities than chains, or
-/// a traveller without a car has a chain; and the errors of [`assign`] for inputs that do not
-/// fit together.
+/// travel order from the trip's origin node to its destination node on its layer, a set holds a
+/// chain twice, a current chain is not one of the set, there are more probabilities than chains,
+/// or a traveller without the vehicle of a chain (a car, a bike) has one; and the errors of
+/// [`assign`] for inputs that do not fit together.
 pub fn restore(
     inputs: &Inputs<'_>,
     params: &Params,
     saved: &[SavedTrip],
     iterations: u32,
 ) -> Result<State, AssignError> {
-    let car = CarPlanner::new(inputs.network, inputs.turns, inputs.classes, inputs.money_per_link)?
-        .with_fixed_times(params.car_fixed_times)?;
-    let search = ChainSearch::new(inputs.network, inputs.travellers, inputs.trips, car, params);
     let mut state = State::initial(inputs.network, inputs.travellers, inputs.trips);
     check(inputs, &state, params)?;
+    let search = chain_search(inputs, params)?;
     if saved.len() != inputs.trips.len() as usize {
         return Err(AssignError::Input(format!(
             "the saved state has {} trips, the demand {}",
@@ -559,21 +642,47 @@ pub fn restore(
             inputs.trips.len()
         )));
     }
-    let network = inputs.network;
     let mut trips = Vec::with_capacity(saved.len());
     for (t, s) in saved.iter().enumerate() {
         let trip = TripId::from_index(t);
         let bad = |what: String| AssignError::Input(format!("trip {t} of the saved state: {what}"));
-        let (from, to) = search.ends(trip);
-        let (Place::Road(origin), Place::Road(destination)) = (from, to);
-        if !s.chains.is_empty() && !state.has_car(inputs.trips.traveller(trip)) {
-            return Err(bad("its traveller has no car, yet it has chains".to_string()));
+        let traveller = inputs.trips.traveller(trip);
+        let mode = chain_mode(inputs.trips, trip);
+        // The planner of a bike or walking trip's layer; `None` for a car trip.
+        let layer = match mode {
+            Mode::Car => None,
+            _ => Some(search.layer_planner(mode).ok_or_else(|| {
+                bad(format!("its mode is {}, and the run has no such layer", mode.as_str()))
+            })?),
+        };
+        let (network, from, to) = match layer {
+            None => {
+                let (from, to) = search.ends(trip);
+                (inputs.network, from, to)
+            }
+            Some(planner) => {
+                let at = |p| planner.place(p);
+                (
+                    planner.network(),
+                    at(inputs.trips.origin(trip)),
+                    at(inputs.trips.destination(trip)),
+                )
+            }
+        };
+        let owned = match mode {
+            Mode::Car => state.has_car(traveller),
+            Mode::Bike => state.has_bike(traveller),
+            _ => true,
+        };
+        if !s.chains.is_empty() && !owned {
+            return Err(bad(format!("its traveller has no {}, yet it has chains", mode.as_str())));
         }
+        let (origin, destination) = (from.node(), to.node());
         let departure = f64::from(inputs.trips.departure(trip).get());
         let mut entry = TripState::default();
         for (c, links) in s.chains.iter().enumerate() {
             if links.iter().any(|l| l.raw() >= network.link_count()) {
-                return Err(bad(format!("chain {c} has a link not of this network")));
+                return Err(bad(format!("chain {c} has a link not of its layer")));
             }
             let joined = match (links.first(), links.last()) {
                 (Some(&a), Some(&z)) => {
@@ -591,7 +700,10 @@ pub fn restore(
                      node (another network, or trip ends snapped otherwise)"
                 )));
             }
-            let leg = search.car().leg_along(from, to, departure, links.clone(), &state);
+            let leg = match layer {
+                None => search.car().leg_along(from, to, departure, links.clone(), &state),
+                Some(planner) => planner.leg_along(from, to, departure, links.clone()),
+            };
             if !entry.add(Chain::new(vec![leg])) {
                 return Err(bad(format!("chain {c} is in its set twice")));
             }
@@ -639,6 +751,21 @@ fn check(inputs: &Inputs<'_>, state: &State, params: &Params) -> Result<(), Assi
             inputs.trips.len()
         )));
     }
+    for (mode, has) in
+        [(Mode::Bike, inputs.layers.bike.is_some()), (Mode::Walk, inputs.layers.walk.is_some())]
+    {
+        let stated = (0..inputs.trips.len())
+            .map(TripId::new)
+            .filter(|&t| inputs.trips.mode_given(t) && inputs.trips.mode(t) == mode)
+            .count();
+        if stated > 0 && !has {
+            return Err(AssignError::Input(format!(
+                "{stated} trips are given the mode {}, and the run has no {} layer",
+                mode.as_str(),
+                mode.as_str()
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -660,9 +787,7 @@ pub fn assign(
     params: &Params,
     hooks: &mut dyn StageHook,
 ) -> Result<(State, Vec<IterationReport>), AssignError> {
-    let car = CarPlanner::new(inputs.network, inputs.turns, inputs.classes, inputs.money_per_link)?
-        .with_fixed_times(params.car_fixed_times)?;
-    let search = ChainSearch::new(inputs.network, inputs.travellers, inputs.trips, car, params);
+    let search = chain_search(inputs, params)?;
     let mut state = match &inputs.initial {
         Some(s) => s.clone(),
         None => State::initial(inputs.network, inputs.travellers, inputs.trips),

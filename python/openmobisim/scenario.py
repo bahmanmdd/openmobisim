@@ -68,8 +68,8 @@ _STATIC_ONLY = ("frank_wolfe",)
 
 #: The engines a scenario runs on (``Scenario.run``'s ``engine``): ``"current"``, the run of
 #: every mode, loading and option described in this package; ``"one-loop"``, the assignment of
-#: car trips in one loop of five stages per assignment iteration (search, choose, load, measure,
-#: assess), at flow level 0 or 2.
+#: car trips (and of bike and walking trips whose mode is stated) in one loop of five stages per
+#: assignment iteration (search, choose, load, measure, assess), at flow level 0 or 2.
 ENGINES = ("current", "one-loop")
 #: The one-loop engine's allocations (``equilibration_options`` ``allocation``).
 ONE_LOOP_ALLOCATIONS = ("draws", "choice_quota", "quota")
@@ -1742,14 +1742,17 @@ class Scenario:
             lacking.append(f"flow_level {self._flow_level} (it loads at 0 or 2)")
         stated: dict[str, int] = {}
         for row in self._trips or ():
-            if row[9] is not None and row[9] != "car":
+            if row[9] is not None and row[9] not in ("car", "bike", "walk"):
                 stated[row[9]] = stated.get(row[9], 0) + 1
         if stated:
             counts = ", ".join(f"{n} {m}" for m, n in sorted(stated.items()))
-            lacking.append(f"trips of modes other than the car ({counts})")
+            lacking.append(f"trips of modes other than the car, the bike and walking ({counts})")
         modes = set(self._modes or ())
         if modes - {"car"}:
-            lacking.append(f"modes {sorted(modes)} (mode choice: it runs car trips only)")
+            lacking.append(
+                f"modes {sorted(modes)} (mode choice: it runs car trips, and bike and walking "
+                "trips whose mode is stated)"
+            )
         for c, ms in (self._class_modes or {}).items():
             if set(ms) - {"car"}:
                 lacking.append(f"class {c!r}'s modes {sorted(ms)}")
@@ -1780,7 +1783,6 @@ class Scenario:
         given("choice_max_routes", self._choice_max_routes, shipped.get("choice_max_routes"))
         given("max_cost_vectors", self._max_cost_vectors, 2)
         given("route_cache", self._route_cache, False)
-        given("bike_cost", self._bike_cost, "utility")
         given("bike_route_choice", self._bike_route_choice, "shortest")
         given("bike_route_options", self._bike_route_options)
         given("class limits (walk_max_s, bike_max_s, access_walk_max_s)", self._class_limits)
@@ -1790,12 +1792,15 @@ class Scenario:
         elif model not in ("deterministic", "logit"):
             lacking.append(f'choice_model {model!r} (it has "deterministic" and "logit")')
         mode_options = dict(self._mode_options or {})
-        # The car's fixed times (reaching it, parking and leaving it): the run's or the shipped.
+        # The car's and the bike's fixed times (reaching the vehicle, parking and leaving it):
+        # the run's or the shipped.
         fixed = {
-            k: float(mode_options.get(k, shipped[k])) for k in ("car_access_s", "car_egress_s")
+            k: float(mode_options.get(k, shipped[k]))
+            for k in ("car_access_s", "car_egress_s", "bike_access_s", "bike_egress_s")
         }
-        # The other options of the modes are of walking, cycling and trips with no
-        # alternative: nothing in a run of car trips.
+        # The other options of the modes (the longest walk and ride mode choice offers, the
+        # car for trips with no alternative) are of mode choice: nothing in a run of stated
+        # modes.
         loading = dict(self._loading_options or {})
         for k, v in loading.items():
             if k not in ("node_inflow", "origin_inflow") or v != 0:
@@ -1876,6 +1881,7 @@ class Scenario:
             "choice_model": model,
             "choice_options": self._choice_options,
             "motorway_snap_m": mode_options.get("car_snap_motorway_m"),
+            "bike_cost": self._bike_cost,
             "threads": run.get("threads"),
             **fixed,
             **loop,
@@ -2097,8 +2103,21 @@ class Scenario:
                 trip ends ``car_egress_s`` after the car arrives (a trip ending after the window
                 is ``truncated``), and the choice counts them as walking and parking time
                 (``beta_walk_min`` and ``beta_parking_min``, each on top of ``beta_time_min``).
-                Anything else the
-                scenario asks for that it does not have (another mode, a timetable, parkings,
+                A trip whose mode is stated as ``"bike"`` or ``"walk"`` rides or walks its own
+                layer (``Network.layer("bike")``, ``"walk"``) on the route of least cost there
+                (a bike's by ``bike_cost``, a walk's by its time), at the layer's speeds, which
+                no traffic changes: its route is searched once and kept, it loads nothing on the
+                roads and never switches, and the convergence measures count it among every
+                trip. A bike trip pays ``mode_options`` ``bike_access_s`` and ``bike_egress_s``
+                (60 s each by default) around its ride, counted as walking and parking time, and
+                needs its traveller to own a bike; the utility weighs the ride as time in a
+                vehicle and each kilometre in mixed traffic by ``beta_bike_mixed_km`` (−0.16 for
+                the logit, 0 for the deterministic choice, by default). The trips' table gives
+                each its mode, ``vehicle_s`` (the ride) and ``access_egress_s``; with
+                ``link_bin_s``, ``link_bins_table("bike")`` and ``("walk")`` count them on their
+                layers. Anything else the
+                scenario asks for that it does not have (mode choice, another stated mode, a
+                bike route set, a timetable, parkings,
                 services, prices, disruptions, route sets, zones, a Python choice model, ...)
                 raises ``EngineNotSupportedError`` naming it; an option of ``"msa"`` that only
                 steers how the current engine measures its gaps or stops (``gap_tolerance``,

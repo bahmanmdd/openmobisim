@@ -133,6 +133,7 @@ fn main() {
     let inputs = Inputs {
         network: &net,
         turns: &turns,
+        layers: openmobisim_core_assignment::Layers::NONE,
         travellers: &travellers,
         trips: &trips,
         classes: &classes,

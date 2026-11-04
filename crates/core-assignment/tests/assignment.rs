@@ -120,6 +120,7 @@ fn inputs<'a>(
     Inputs {
         network: &c.net,
         turns: &c.turns,
+        layers: openmobisim_core_assignment::Layers::NONE,
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,

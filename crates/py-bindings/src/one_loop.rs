@@ -9,16 +9,22 @@
 //! | `convergence.parquet` | one row per assignment iteration: the measures of its report |
 //! | `chains.parquet` | one row per chain of every trip's choice set: its links (the network's ids, and their indices), whether it was taken |
 //! | `link_bins.parquet` | per link and bin of exit time, the traffic and its time (with `link_bin_s`) |
+//! | `link_bins_bike.parquet`, `link_bins_walk.parquet` | the same on the bike and walk layers, counting travellers (with `link_bin_s`, when a trip of the mode ran) |
 //! | `timings.csv` | the wall-clock seconds of each stage |
 //!
 //! The manifest is written by the Python package, from what this function returns.
 //!
-//! **What it runs.** Car trips only (a trip without a stated mode is a car trip), loaded at
-//! flow level 0 (free flow) or 2 (the point queue), each car leg with its fixed times
-//! (`car_access_s` before the drive, reaching the car; `car_egress_s` after it, parking and
-//! leaving it; whole seconds, rounded, 0 when not given). The scenario's other parts are checked
-//! by the Python package, which refuses by name what this engine does not have before calling
-//! it.
+//! **What it runs.** Car trips (a trip without a stated mode is a car trip), loaded at flow level
+//! 0 (free flow) or 2 (the point queue), each car leg with its fixed times (`car_access_s` before
+//! the drive, reaching the car; `car_egress_s` after it, parking and leaving it; whole seconds,
+//! rounded, 0 when not given). **Bike and walking trips whose mode is stated**, each on its own
+//! layer of the network (`Network.layer("bike")`, `"walk"`), on the route of least cost there
+//! (a bike's by `bike_cost`: `"utility"` by default, `"time"` or `"dedicated"`; a walk's by its
+//! time), at the layer's static speeds, a bike's ride with its fixed times (`bike_access_s`
+//! before it, reaching and unlocking the bike; `bike_egress_s` after it, parking and locking it;
+//! whole seconds, rounded, 0 when not given). They load nothing on the road network. A trip
+//! stating another mode is refused. The scenario's other parts are checked by the Python
+//! package, which refuses by name what this engine does not have before calling it.
 //!
 //! **A run continued from another** (`start_chains_path`, `start_iterations`): the state is
 //! rebuilt from that run's chains table (every trip's set, current chain and probabilities) and
@@ -38,11 +44,15 @@
 //!   on top of the time; `beta_parking_min` 0 when not given);
 //! - of a transfer: `−beta_transfers`; of a unit of money: `−beta_cost_eur`, **0 when no money
 //!   coefficient is given** (a run without one is a time-based run); of a kilometre:
-//!   `−beta_length_km`, 0 when not given.
+//!   `−beta_length_km`, 0 when not given;
+//! - of a kilometre ridden by bike in mixed traffic, on top of the ride's time:
+//!   `−beta_bike_mixed_km` (`beta_bike_mixed_km` −0.16 for the logit when not given, as the other
+//!   engine's logit; 0 for the deterministic choice). A bike's ride counts as time in a vehicle,
+//!   `−beta_time_min` a minute; a walk's minutes as walking.
 //!
-//! `beta_ln_path_size` (1 by default) weighs the path-size term of the logit. A car leg's
-//! access time counts as walking and its egress time as parking, as the other engine's mode
-//! choice counts them (`walk_min` and `parking_min`); it has no waiting or transfer.
+//! `beta_ln_path_size` (1 by default) weighs the path-size term of the logit. A car or bike
+//! leg's access time counts as walking and its egress time as parking, as the other engine's
+//! mode choice counts them (`walk_min` and `parking_min`); it has no waiting or transfer.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -66,24 +76,29 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use openmobisim_core_assignment::{
-    Allocation, Coefficients, FixedTimes, FreeFlow, HighestUtility, Inputs, IterationReport,
-    Loaded, Loader, Params, Place, PointQueue, SavedTrip, StageHook, State, assign, restore,
+    Allocation, Coefficients, FixedTimes, FreeFlow, HighestUtility, Inputs, IterationReport, Layer,
+    Layers, Loaded, Loader, Params, Place, PointQueue, SavedTrip, StageHook, State, assign,
+    restore,
 };
 use openmobisim_core_choice::{ChoiceModel, Logit, Options};
 use openmobisim_core_demand::{
     ClassDefaults, Mode, Ownership, RawTrip, Travellers, Trips, build_travellers,
     check_distinct_keys, read_persons_parquet, read_trips_parquet,
 };
+use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticNetwork};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
-use openmobisim_core_loading::{FidelityLevel, LinkBins, LinkTimes, Vehicle, run_ltm_binned};
+use openmobisim_core_loading::{
+    FidelityLevel, LinkBins, LinkTimes, Vehicle, load_timed_binned, run_ltm_binned,
+};
 use openmobisim_core_routes::{Route, RouteKey, RouteSets};
 use openmobisim_core_sim::{NO_ROUTE, RouteChoices};
 use openmobisim_core_types::diagnostics::Diagnostics;
 use openmobisim_core_types::hash::{Fnv1a, fingerprint_hex};
-use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TripId};
+use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TravellerId, TripId, VehicleId};
 use openmobisim_core_types::rng::RngKey;
-use openmobisim_core_types::units::Duration;
+use openmobisim_core_types::time::Second;
+use openmobisim_core_types::units::{Duration, Pcu};
 use openmobisim_core_types::{CODE_VERSION, VERSION};
 
 use crate::choice::PyRouteChoices;
@@ -103,12 +118,12 @@ const COEFFICIENTS: [&str; 8] = [
     "beta_transfers",
     "beta_cost_eur",
     "beta_length_km",
-    // A bike leg's weight on mixed traffic: no car route has any.
+    // A bike leg's weight on its kilometres in mixed traffic: no car route has any.
     "beta_bike_mixed_km",
 ];
 
 /// What the fingerprint of a run of this engine covers, in words, for the manifest.
-const FINGERPRINT_COVERS: [&str; 14] = [
+const FINGERPRINT_COVERS: [&str; 15] = [
     "the network: every node's position and signal, every link's ends, class, lanes, length, \
      free-flow time, storage, capacity, jam density, wave speed, control delay and closure",
     "the trips run (those departing inside the window): traveller, place in the day, user class, \
@@ -128,6 +143,10 @@ const FINGERPRINT_COVERS: [&str; 14] = [
     "the fixed times of reaching and leaving the car, and each class's cost of a minute parking, \
      when either time is not 0",
     "the run continued from, if any: its fingerprint and its count of iterations",
+    "when a trip states the bike or walking: the bike and walk layers (every node's position, \
+     every link's ends, length, speed and bike infrastructure), each traveller's bike ownership, \
+     the bike cost, the bike's fixed times and each class's cost of a kilometre ridden in mixed \
+     traffic",
 ];
 
 /// Why a class's options cannot be read, naming the class.
@@ -179,6 +198,7 @@ fn coefficients(
         per_transfer: -given("beta_transfers", if logit { -1.0 } else { 0.0 }),
         per_money: -given("beta_cost_eur", 0.0),
         per_kilometre: -given("beta_length_km", 0.0),
+        bike_mixed_per_kilometre: -given("beta_bike_mixed_km", if logit { -0.16 } else { 0.0 }),
     })
 }
 
@@ -219,7 +239,7 @@ impl StageHook for LastLoading {
         self.fixed.clear();
         for (t, entry) in state.trips().iter().enumerate() {
             if let Some(chain) = entry.current_chain() {
-                for leg in chain.legs().iter().filter(|l| !l.links.is_empty()) {
+                for leg in chain.legs().iter().filter(|l| l.is_loaded()) {
                     self.trip_of.push(TripId::from_index(t));
                     self.fixed.push(leg.fixed);
                 }
@@ -287,16 +307,80 @@ fn hash_demand_network(
     }
 }
 
-/// A hash of the network and the trips run alone ([`hash_demand_network`]): what a run
-/// continued from another must share with it.
+/// The bike and walk layers a run uses (each only when a trip states its mode), and how bikes
+/// choose their route.
+struct StaticParts {
+    bike: Option<Arc<StaticNetwork>>,
+    walk: Option<Arc<StaticNetwork>>,
+    bike_cost: BikeCost,
+}
+
+impl StaticParts {
+    /// Whether the run has a static layer (a trip states the bike or walking).
+    fn any(&self) -> bool {
+        self.bike.is_some() || self.walk.is_some()
+    }
+
+    /// The layer of `mode`, if the run has it.
+    fn of(&self, mode: Mode) -> Option<&StaticNetwork> {
+        match mode {
+            Mode::Bike => self.bike.as_deref(),
+            Mode::Walk => self.walk.as_deref(),
+            _ => None,
+        }
+    }
+}
+
+/// The static layers (every node's position, every link's ends, length, speed and bike
+/// infrastructure, by index) and each traveller's bike ownership, into `h`; nothing when the run
+/// has no static layer, so a run of car trips keeps its fingerprints.
+fn hash_static(h: &mut Fnv1a, parts: &StaticParts, travellers: &Travellers) {
+    if !parts.any() {
+        return;
+    }
+    h.write_str("static layers");
+    for layer in [&parts.bike, &parts.walk] {
+        let Some(layer) = layer else {
+            h.write_bool(false);
+            continue;
+        };
+        h.write_bool(true);
+        let graph = layer.network();
+        h.write_u32(graph.node_count());
+        for raw in 0..graph.node_count() {
+            let at = graph.node_lonlat(NodeId::new(raw));
+            h.write_f64(at.lon);
+            h.write_f64(at.lat);
+        }
+        h.write_u32(graph.link_count());
+        for raw in 0..graph.link_count() {
+            let link = LinkId::new(raw);
+            h.write_u32(graph.link_from(link).raw());
+            h.write_u32(graph.link_to(link).raw());
+            h.write_f64(graph.link_length(link).get());
+            h.write_f64(layer.speed(link));
+            h.write_u8(layer.infrastructure(link) as u8);
+            h.write_u8(graph.link_class(link) as u8);
+        }
+    }
+    for raw in 0..travellers.len() {
+        h.write_bool(travellers.ownership(TravellerId::new(raw)).bike);
+    }
+}
+
+/// A hash of the network and the trips run alone ([`hash_demand_network`]), with the static
+/// layers when the run has them ([`hash_static`]): what a run continued from another must share
+/// with it.
 fn demand_network_fingerprint(
     network: &RoadNetwork,
     travellers: &Travellers,
     trips: &Trips,
+    parts: &StaticParts,
 ) -> u64 {
     let mut h = Fnv1a::new();
     h.write_str("one-loop demand and network");
     hash_demand_network(&mut h, network, travellers, trips);
+    hash_static(&mut h, parts, travellers);
     h.finish()
 }
 
@@ -315,6 +399,7 @@ fn fingerprint(
     window: (u32, u32),
     seed: u64,
     start: Option<(&str, u32)>,
+    parts: &StaticParts,
 ) -> u64 {
     let mut h = Fnv1a::new();
     h.write_str("one-loop");
@@ -370,6 +455,17 @@ fn fingerprint(
         h.write_str(print);
         h.write_u32(iterations);
     }
+    // The bike and walk layers, only when a trip states their mode.
+    if parts.any() {
+        hash_static(&mut h, parts, travellers);
+        h.write_str(parts.bike_cost.as_str());
+        h.write_f64(params.bike_fixed_times.access_seconds);
+        h.write_f64(params.bike_fixed_times.egress_seconds);
+        for k in classes {
+            h.write_f64(k.bike_mixed_per_kilometre);
+            h.write_f64(k.parking_per_minute);
+        }
+    }
     h.finish()
 }
 
@@ -385,9 +481,11 @@ struct TripRows {
     mode: Vec<&'static str>,
     outcome: Vec<&'static str>,
     arrival_s: Vec<Option<f64>>,
-    /// A completed trip's seconds in its car (setting off to arriving).
+    /// A completed trip's seconds in its own vehicle (the car setting off to arriving, the
+    /// bike's ride; 0 for a walk).
     vehicle_s: Vec<Option<f64>>,
-    /// A completed trip's fixed seconds around its car (reaching it, parking and leaving it).
+    /// A completed trip's fixed seconds around its vehicle (reaching it, parking and leaving it;
+    /// 0 for a walk).
     access_egress_s: Vec<Option<f64>>,
 }
 
@@ -410,8 +508,19 @@ struct Ended {
     fixed_s: f64,
 }
 
+/// The mode of `trip`'s chains: the bike or walking when its mode is stated as one of them, the
+/// car otherwise (as the assignment's chain search reads it).
+fn trip_mode(trips: &Trips, trip: TripId) -> Mode {
+    match trips.mode(trip) {
+        m @ (Mode::Bike | Mode::Walk) if trips.mode_given(trip) => m,
+        _ => Mode::Car,
+    }
+}
+
 /// Each trip's outcome and arrival from the last loading and the final state: a trip whose
-/// last leg ends after `end_s` (its vehicle's arrival plus the egress time) is truncated.
+/// last leg ends after `end_s` (its vehicle's arrival plus the egress time) is truncated. A bike
+/// or walking trip, which loads nothing, ends at its departure plus its chain's time (the bike's
+/// access, ride and egress; the walk), truncated likewise.
 fn trip_rows(
     travellers: &Travellers,
     trips: &Trips,
@@ -479,10 +588,32 @@ fn trip_rows(
         rows.destination.push((d.lon, d.lat));
         let departure = trips.departure(trip).get();
         rows.departure_s.push(departure);
-        rows.mode.push(Mode::Car.as_str());
+        let mode = trip_mode(trips, trip);
+        rows.mode.push(mode.as_str());
         let entry = state.trip(trip);
+        let owned = match mode {
+            Mode::Car => state.has_car(traveller),
+            Mode::Bike => state.has_bike(traveller),
+            _ => true,
+        };
+        // A chain that loads nothing but uses links (a bike or walking trip): timed on its layer.
+        let statics = entry.current_chain().filter(|c| {
+            c.legs().iter().all(|l| !l.is_loaded()) && c.legs().iter().any(|l| !l.links.is_empty())
+        });
+        let slot = &match statics {
+            Some(chain) => {
+                let start = f64::from(departure);
+                let e = Ended {
+                    at: start + chain.total().total_seconds(),
+                    vehicle_s: chain.legs().iter().map(|l| l.attributes.in_vehicle_seconds).sum(),
+                    fixed_s: chain.legs().iter().map(|l| l.fixed.total_seconds()).sum(),
+                };
+                Some((e.at <= end_s).then_some(e))
+            }
+            None => *slot,
+        };
         let (outcome, ended) = match (entry.current, slot) {
-            (None, _) if !state.has_car(traveller) => ("no_vehicle_available", None),
+            (None, _) if !owned => ("no_vehicle_available", None),
             (None, _) => ("no_feasible_path", None),
             // A chain whose ends snapped to one node uses no link and leaves no car: it arrives
             // as it sets out.
@@ -565,9 +696,84 @@ fn link_bins(
     Ok(LinkBins::from_rows(bin_seconds, rows))
 }
 
+/// One bike or walking leg of the final state as the select-link analysis reads it: its trip,
+/// when it set off, and its links up to the one it was on when the window ended.
+struct LayerLeg {
+    trip: u32,
+    start_s: u32,
+    links: Vec<u32>,
+}
+
+/// The bike and walk layers' per-link results of the final state, in bins of `bin_seconds` by
+/// exit time, as the other engine makes them (`load_timed_binned`: every traversal at the layer's
+/// static time that finishes by `end_s`, its traveller's weight counted): from each trip's current
+/// chain's bike (walking) legs that use a link, each setting off at its leg's departure plus its
+/// access time. `None` for a layer no such leg used. With them, per layer, the legs binned, each
+/// up to the link it was on when the window ended (as the other engine keeps them).
+fn layer_bins(
+    parts: &StaticParts,
+    travellers: &Travellers,
+    trips: &Trips,
+    state: &State,
+    end_s: f64,
+    bin_seconds: u32,
+) -> ([Option<LinkBins>; 2], [Vec<LayerLeg>; 2]) {
+    let mut out = [None, None];
+    let mut legs: [Vec<LayerLeg>; 2] = [Vec::new(), Vec::new()];
+    for (slot, mode) in [Mode::Bike, Mode::Walk].into_iter().enumerate() {
+        let Some(layer) = parts.of(mode) else { continue };
+        let mut vehicles = Vec::new();
+        for (t, entry) in state.trips().iter().enumerate() {
+            let Some(chain) = entry.current_chain() else { continue };
+            let trip = TripId::from_index(t);
+            let weight = f64::from(travellers.weight(trips.traveller(trip)));
+            for leg in chain.legs().iter().filter(|l| l.mode == mode && !l.links.is_empty()) {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "a whole second of the day, non-negative, within the u32 clock"
+                )]
+                let second = Second(leg.vehicle_departure().max(0.0).floor() as u32);
+                vehicles.push(Vehicle::new(
+                    VehicleId::new(trip.raw()),
+                    leg.links.clone(),
+                    Pcu(weight),
+                    second,
+                ));
+            }
+        }
+        if vehicles.is_empty() {
+            continue;
+        }
+        let (trajectories, bins) = load_timed_binned(
+            &vehicles,
+            layer.network(),
+            &layer.link_seconds(),
+            end_s,
+            bin_seconds,
+        );
+        out[slot] = Some(bins);
+        legs[slot] = vehicles
+            .into_iter()
+            .zip(&trajectories)
+            .map(|(v, t)| {
+                let on = t.links.iter().position(|x| f64::from(x.exit.get()) >= end_s);
+                let keep = on.map_or(v.route.len(), |i| i + 1);
+                LayerLeg {
+                    trip: v.id.raw(),
+                    start_s: v.departure.get(),
+                    links: v.route[..keep].iter().map(|l| l.raw()).collect(),
+                }
+            })
+            .collect();
+    }
+    (out, legs)
+}
+
 /// The route sets and route choices of the final state: per pair of snapped trip ends, every
 /// chain any of its trips has in its choice set, in the order first found (trips in order);
-/// per trip, the chain it takes.
+/// per trip, the chain it takes. Car trips only: a bike or walking trip has no road route (its
+/// route is in the chains table, on its layer).
 fn routes(
     network: &RoadNetwork,
     travellers: &Travellers,
@@ -578,7 +784,7 @@ fn routes(
     let key_of = |t: usize| -> Option<RouteKey> {
         let chain = state.trips()[t].set.first()?;
         let (first, last) = (chain.legs().first()?, chain.legs().last()?);
-        let (Place::Road(o), Place::Road(d)) = (first.from, last.to);
+        let (Place::Road(o), Place::Road(d)) = (first.from, last.to) else { return None };
         Some(RouteKey::new(o, d))
     };
     for (t, entry) in state.trips().iter().enumerate() {
@@ -619,8 +825,9 @@ fn routes(
     for (t, entry) in state.trips().iter().enumerate() {
         let trip = TripId::from_index(t);
         choices.weight[t] = travellers.weight(trips.traveller(trip));
+        let Some(key) = key_of(t) else { continue };
         choices.alternatives[t] = u32::try_from(entry.set.len()).expect("a set fits u32");
-        let (Some(current), Some(key)) = (entry.current, key_of(t)) else { continue };
+        let Some(current) = entry.current else { continue };
         let k = store.key_index(key).expect("every trip's pair is in the sets");
         let links = entry.set[current].road_links();
         let range = store.route_range(k);
@@ -784,13 +991,16 @@ fn write_convergence(
 
 /// One row per chain of every trip's set: `trip`, `chain` (its place in the set), `taken`,
 /// `probability` (the model's at the trip's last choice), `cost` (utility units) and
-/// `travel_time_s` at the final link travel times (the fixed times included), and its road
-/// links in driving order, as the network's ids (`links`) and as indices into the network's
-/// links (`link_index`).
+/// `travel_time_s` at the final link travel times (the fixed times included), `mode` (the mode of
+/// its leg: `car`, `bike` or `walk`), and its links in travel order, on its leg's layer (the road
+/// network for a car, the bike or walk layer), as that layer's ids (`links`) and as indices into
+/// that layer's links (`link_index`).
+#[allow(clippy::too_many_arguments, reason = "the state, the networks and the demand, by name")]
 fn write_chains(
     path: &Path,
     state: &State,
     network: &RoadNetwork,
+    parts: &StaticParts,
     travellers: &Travellers,
     trips: &Trips,
     classes: &[Coefficients],
@@ -798,7 +1008,7 @@ fn write_chains(
 ) -> PyResult<()> {
     let (mut trip, mut chain, mut taken, mut probability, mut cost, mut seconds, mut links) =
         (vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
-    let ids = network.link_external_ids();
+    let mut modes: Vec<&'static str> = vec![];
     let mut named = ListBuilder::new(StringBuilder::new());
     for (t, entry) in state.trips().iter().enumerate() {
         let id = TripId::from_index(t);
@@ -810,12 +1020,18 @@ fn write_chains(
             probability.push(entry.probabilities.get(c).copied().unwrap_or(f64::NAN));
             cost.push(k.cost(ch.total()));
             seconds.push(ch.total().total_seconds());
-            let road = ch.road_links();
-            for &l in &road {
-                named.values().append_value(ids.external(l));
+            modes.push(ch.legs().first().map_or(Mode::Car, |l| l.mode).as_str());
+            let mut index = Vec::new();
+            for leg in ch.legs() {
+                let layer = parts.of(leg.mode).map_or(network, StaticNetwork::network);
+                let ids = layer.link_external_ids();
+                for &l in &leg.links {
+                    named.values().append_value(ids.external(l.raw()));
+                    index.push(Some(l.raw()));
+                }
             }
             named.append(true);
-            links.push(Some(road.into_iter().map(Some).collect::<Vec<_>>()));
+            links.push(Some(index));
         }
     }
     let index = ListArray::from_iter_primitive::<UInt32Type, _, _>(links);
@@ -829,6 +1045,7 @@ fn write_chains(
         Field::new("travel_time_s", DataType::Float64, false),
         Field::new("links", named.data_type().clone(), true),
         Field::new("link_index", index.data_type().clone(), true),
+        Field::new("mode", DataType::Utf8, false),
     ];
     let columns: Vec<ArrayRef> = vec![
         whole(trip),
@@ -839,6 +1056,7 @@ fn write_chains(
         floats(seconds),
         Arc::new(named),
         Arc::new(index),
+        Arc::new(StringArray::from(modes)),
     ];
     write_batch(path, fields, columns, metadata)
 }
@@ -881,6 +1099,48 @@ fn write_link_bins(
     write_batch(path, fields, columns, &metadata)
 }
 
+/// `link_bins_bike.parquet` or `link_bins_walk.parquet`: the other engine's columns for a layer
+/// (`travellers` and `traveller_seconds` in place of `pcu` and `pcu_seconds`), the layer's links
+/// by its ids and indices.
+fn write_layer_link_bins(
+    path: &Path,
+    run_id: &str,
+    layer: StaticLayer,
+    bins: &LinkBins,
+    graph: &RoadNetwork,
+    metadata: &[(String, String)],
+) -> PyResult<()> {
+    let n = bins.len();
+    let ids = graph.link_external_ids();
+    let b = bins.bin_seconds();
+    let fields = vec![
+        Field::new("run_id", DataType::Utf8, false),
+        Field::new("bin", DataType::UInt32, false),
+        Field::new("start_s", DataType::UInt32, false),
+        Field::new("link", DataType::Utf8, false),
+        Field::new("link_index", DataType::UInt32, false),
+        Field::new("crossings", DataType::UInt32, false),
+        Field::new("travellers", DataType::Float64, false),
+        Field::new("traveller_seconds", DataType::Float64, false),
+    ];
+    let columns: Vec<ArrayRef> = vec![
+        Arc::new(StringArray::from(vec![run_id; n])),
+        whole(bins.bins().to_vec()),
+        whole(bins.bins().iter().map(|x| x * b).collect()),
+        Arc::new(StringArray::from(
+            bins.links().iter().map(|&l| ids.external(l)).collect::<Vec<_>>(),
+        )),
+        whole(bins.links().to_vec()),
+        whole(bins.crossings().to_vec()),
+        floats(bins.pcu().to_vec()),
+        floats(bins.pcu_seconds().to_vec()),
+    ];
+    let mut metadata = metadata.to_vec();
+    metadata.push(("openmobisim.bin_seconds".to_string(), b.to_string()));
+    metadata.push(("openmobisim.layer".to_string(), layer.as_str().to_string()));
+    write_batch(path, fields, columns, &metadata)
+}
+
 /// The metadata key of the demand and network fingerprint ([`demand_network_fingerprint`]).
 const DEMAND_NETWORK_KEY: &str = "openmobisim.demand_network_fingerprint";
 /// The metadata key of the run's fingerprint.
@@ -894,14 +1154,17 @@ struct Saved {
 }
 
 /// The chains table at `path` (as [`write_chains`] writes it) as every trip's saved set, the
-/// links read by their ids on `network`, for `trips` trips; refused unless the table's demand
-/// and network fingerprint is `demand_network`.
+/// links read by their ids on the layer of each trip's mode (`network`, the road network, or a
+/// layer of `parts`), for the trips of `demand`; refused unless the table's demand and network
+/// fingerprint is `demand_network`.
 fn read_chains(
     path: &str,
     network: &RoadNetwork,
-    trips: usize,
+    parts: &StaticParts,
+    demand: &Trips,
     demand_network: &str,
 ) -> PyResult<Saved> {
+    let trips = demand.len() as usize;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
     let bad = |what: String| PyValueError::new_err(format!("the chains table {path:?}: {what}"));
@@ -926,7 +1189,6 @@ fn read_chains(
         )));
     }
     let reader = builder.build().map_err(|e| bad(e.to_string()))?;
-    let ids = network.link_external_ids();
     let mut out = vec![SavedTrip::default(); trips];
     for batch in reader {
         let batch = batch.map_err(|e| bad(e.to_string()))?;
@@ -953,6 +1215,8 @@ fn read_chains(
             if chain.value(i) as usize != entry.chains.len() {
                 return Err(bad(format!("trip {t}'s chains are not in their order")));
             }
+            let mode = trip_mode(demand, TripId::from_index(t));
+            let ids = parts.of(mode).map_or(network, StaticNetwork::network).link_external_ids();
             let row = links.value(i);
             let names = row
                 .as_any()
@@ -981,13 +1245,15 @@ fn read_chains(
 
 // --- the function -----------------------------------------------------------------------------
 
-/// Run the one-loop assignment on car trips and write its tables to `output_dir`; returns the
-/// run's results as a dict (see the module docs for what is read and written).
+/// Run the one-loop assignment on car trips, and on bike and walking trips whose mode is stated,
+/// and write its tables to `output_dir`; returns the run's results as a dict (see the module
+/// docs for what is read and written).
 ///
 /// # Errors
 ///
-/// `ValueError` for inputs that cannot be read or do not fit together (a mode other than the
-/// car, a flow level other than 0 or 2, a coefficient that cannot price a route, a fixed time
+/// `ValueError` for inputs that cannot be read or do not fit together (a stated mode other than
+/// the car, the bike or walking, a flow level other than 0 or 2, a bike cost other than
+/// `"utility"`, `"time"` or `"dedicated"`, a coefficient that cannot price a route, a fixed time
 /// that is not a finite number of at least 0, a run to continue from whose chains table is not
 /// of this demand and network), and if a file cannot be written.
 #[pyfunction]
@@ -999,7 +1265,7 @@ fn read_chains(
     min_iterations=None, max_iterations=None, step_offset=None, switch_tolerance=None,
     found_tolerance=None, indifference_band=None, allocation=None, motorway_snap_m=None,
     car_access_s=None, car_egress_s=None, threads=None, start_chains_path=None,
-    start_iterations=None
+    start_iterations=None, bike_cost=None, bike_access_s=None, bike_egress_s=None
 ))]
 #[allow(clippy::too_many_arguments, reason = "the scenario's parts, by name, as Python gives them")]
 #[allow(clippy::too_many_lines, reason = "the steps of one run, in order")]
@@ -1037,6 +1303,9 @@ pub fn run_one_loop(
     threads: Option<usize>,
     start_chains_path: Option<&str>,
     start_iterations: Option<u32>,
+    bike_cost: Option<&str>,
+    bike_access_s: Option<f64>,
+    bike_egress_s: Option<f64>,
 ) -> PyResult<Py<PyDict>> {
     let started = Instant::now();
     if flow_level != 0 && flow_level != 2 {
@@ -1059,7 +1328,7 @@ pub fn run_one_loop(
     check_distinct_keys(&raw).map_err(to_value_error)?;
     let stated: BTreeMap<&str, usize> = raw
         .iter()
-        .filter_map(|t| t.mode.filter(|m| *m != Mode::Car))
+        .filter_map(|t| t.mode.filter(|m| !matches!(m, Mode::Car | Mode::Bike | Mode::Walk)))
         .fold(BTreeMap::new(), |mut acc, m| {
             *acc.entry(m.as_str()).or_insert(0) += 1;
             acc
@@ -1067,10 +1336,19 @@ pub fn run_one_loop(
     if !stated.is_empty() {
         let list: Vec<String> = stated.iter().map(|(m, n)| format!("{n} {m}")).collect();
         return Err(PyValueError::new_err(format!(
-            "the one-loop engine runs car trips only; the demand states other modes: {} trips",
+            "the one-loop engine runs car trips, and bike and walking trips whose mode is stated; \
+             the demand states other modes: {} trips",
             list.join(", ")
         )));
     }
+    let bike_cost = match bike_cost {
+        None => BikeCost::Utility,
+        Some(name) => BikeCost::from_name(name).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "bike_cost must be \"utility\", \"dedicated\" or \"time\", not {name:?}"
+            ))
+        })?,
+    };
     let raw_persons = match (persons, persons_path) {
         (Some(rows), None) => rows.into_iter().map(person_from_row).collect(),
         (None, Some(path)) => read_persons_parquet(path).map_err(to_value_error)?,
@@ -1090,6 +1368,20 @@ pub fn run_one_loop(
         build_travellers(raw, raw_persons, &defaults, default_weight, &mut diagnostics)
             .map_err(to_value_error)?;
     let demand_s = started.elapsed().as_secs_f64();
+    // The bike and walk layers, only for a run whose trips state their mode.
+    let uses = |mode: Mode| {
+        (0..trips.len()).any(|t| {
+            let trip = TripId::new(t);
+            trips.mode_given(trip) && trips.mode(trip) == mode
+        })
+    };
+    let parts = StaticParts {
+        bike: if uses(Mode::Bike) { Some(network.static_layer(StaticLayer::Bike)?) } else { None },
+        walk: if uses(Mode::Walk) { Some(network.static_layer(StaticLayer::Walk)?) } else { None },
+        bike_cost,
+    };
+    let layer_turns: [Option<TurnTable>; 2] = [&parts.bike, &parts.walk]
+        .map(|layer| layer.as_ref().map(|l| TurnTable::build(l.network(), l.network().signals())));
 
     // The classes' coefficients and the choice model.
     let run_options: BTreeMap<String, f64> =
@@ -1181,6 +1473,21 @@ pub fn run_one_loop(
         *slot = v.round();
     }
     params.car_fixed_times = FixedTimes::new(fixed[0], fixed[1]);
+    // The bike's fixed times, likewise.
+    let mut fixed = [0.0; 2];
+    for (slot, (name, value)) in
+        fixed.iter_mut().zip([("bike_access_s", bike_access_s), ("bike_egress_s", bike_egress_s)])
+    {
+        let v = value.unwrap_or(0.0);
+        if !(v.is_finite() && v >= 0.0) {
+            return Err(PyValueError::new_err(format!(
+                "{name} must be a finite number of seconds of at least 0, got {v}"
+            )));
+        }
+        *slot = v.round();
+    }
+    params.bike_fixed_times = FixedTimes::new(fixed[0], fixed[1]);
+    params.bike_cost = bike_cost;
     if threads == Some(0) {
         return Err(PyValueError::new_err("threads must be at least 1, or None"));
     }
@@ -1190,11 +1497,11 @@ pub fn run_one_loop(
         .map_err(|e| PyValueError::new_err(format!("the run's thread pool: {e}")))?;
     // The run to continue from: its chains table, checked against this demand and network.
     let demand_print =
-        fingerprint_hex(demand_network_fingerprint(&network.inner, &travellers, &trips));
+        fingerprint_hex(demand_network_fingerprint(&network.inner, &travellers, &trips, &parts));
     let saved = match (start_chains_path, start_iterations) {
         (None, None) => None,
         (Some(path), Some(iterations)) => {
-            let saved = read_chains(path, &network.inner, trips.len() as usize, &demand_print)?;
+            let saved = read_chains(path, &network.inner, &parts, &trips, &demand_print)?;
             Some((saved, iterations))
         }
         _ => {
@@ -1228,10 +1535,21 @@ pub fn run_one_loop(
         (window.start_s, window.end_s),
         master_seed,
         start_print.as_ref().map(|(p, i)| (p.as_str(), *i)),
+        &parts,
     );
+    fn layer<'l>(l: &'l Option<Arc<StaticNetwork>>, t: &'l Option<TurnTable>) -> Option<Layer<'l>> {
+        match (l, t) {
+            (Some(network), Some(turns)) => Some(Layer { network: network.as_ref(), turns }),
+            _ => None,
+        }
+    }
     let mut inputs = Inputs {
         network: &network.inner,
         turns: &turns,
+        layers: Layers {
+            bike: layer(&parts.bike, &layer_turns[0]),
+            walk: layer(&parts.walk, &layer_turns[1]),
+        },
         travellers: &travellers,
         trips: &trips,
         classes: &classes,
@@ -1260,6 +1578,10 @@ pub fn run_one_loop(
         Some(b) => Some(link_bins(&network.inner, &turns, &last, flow_level, end_s, step_s, b)?),
         None => None,
     };
+    let ([bike_bins, walk_bins], layer_legs) = match link_bin_s {
+        Some(b) => layer_bins(&parts, &travellers, &trips, &state, end_s, b),
+        None => ([None, None], [Vec::new(), Vec::new()]),
+    };
     let (sets, choices) = routes(&network.inner, &travellers, &trips, &state);
     let results_s = clock.elapsed().as_secs_f64();
 
@@ -1279,6 +1601,7 @@ pub fn run_one_loop(
         &dir.join("chains.parquet"),
         &state,
         &network.inner,
+        &parts,
         &travellers,
         &trips,
         &classes,
@@ -1287,6 +1610,15 @@ pub fn run_one_loop(
     let link_bins_path = dir.join("link_bins.parquet");
     if let Some(b) = &bins {
         write_link_bins(&link_bins_path, run_id, b, &network.inner, &metadata)?;
+    }
+    let mut layer_paths: [Option<String>; 2] = [None, None];
+    for (i, (layer, b)) in
+        [(StaticLayer::Bike, &bike_bins), (StaticLayer::Walk, &walk_bins)].into_iter().enumerate()
+    {
+        let (Some(b), Some(graph)) = (b, [&parts.bike, &parts.walk][i]) else { continue };
+        let path = dir.join(format!("link_bins_{}.parquet", layer.as_str()));
+        write_layer_link_bins(&path, run_id, layer, b, graph.network(), &metadata)?;
+        layer_paths[i] = Some(path.to_string_lossy().into_owned());
     }
     let written_s = clock.elapsed().as_secs_f64();
     let mut timings: Vec<(String, Option<u32>, f64)> =
@@ -1333,6 +1665,9 @@ pub fn run_one_loop(
     p.set_item("motorway_snap_m", params.motorway_snap_metres)?;
     p.set_item("car_access_s", params.car_fixed_times.access_seconds)?;
     p.set_item("car_egress_s", params.car_fixed_times.egress_seconds)?;
+    p.set_item("bike_access_s", params.bike_fixed_times.access_seconds)?;
+    p.set_item("bike_egress_s", params.bike_fixed_times.egress_seconds)?;
+    p.set_item("bike_cost", params.bike_cost.as_str())?;
     p.set_item("flow_level", flow_level)?;
     p.set_item("flow_step_s", flow_step_s)?;
     p.set_item("cost_bin_s", cost_bin_s)?;
@@ -1350,6 +1685,7 @@ pub fn run_one_loop(
         d.set_item("per_transfer", v.per_transfer)?;
         d.set_item("per_money", v.per_money)?;
         d.set_item("per_kilometre", v.per_kilometre)?;
+        d.set_item("bike_mixed_per_kilometre", v.bike_mixed_per_kilometre)?;
         k.set_item(ids.external(c), d)?;
     }
     out.set_item("coefficients", k)?;
@@ -1398,9 +1734,36 @@ pub fn run_one_loop(
     t.set_item("access_egress_s", maybe(&rows.access_egress_s).into_pyarray(py))?;
     out.set_item("trip_results", t)?;
 
-    // The counts of the last loading, by outcome, and its travel time by traveller weight.
+    // The counts of the last loading, by outcome, and its travel time by traveller weight; the
+    // same by mode.
     let count = |o: &str| rows.outcome.iter().filter(|x| **x == o).count();
-    let (mut total_s, mut people, mut completed_people) = (0.0, 0.0, 0.0);
+    let (mut total_s, mut people, mut completed_people, mut vehicle_s) = (0.0, 0.0, 0.0, 0.0);
+    let by_mode = PyDict::new(py);
+    for mode in [Mode::Car, Mode::Bike, Mode::Walk] {
+        let name = mode.as_str();
+        let of_mode: Vec<usize> = (0..rows.mode.len()).filter(|&i| rows.mode[i] == name).collect();
+        if of_mode.is_empty() {
+            continue;
+        }
+        let (mut m_total, mut m_people, mut m_completed) = (0.0, 0.0, 0.0);
+        let row = PyDict::new(py);
+        for outcome in ["completed", "truncated", "no_vehicle_available", "no_feasible_path"] {
+            row.set_item(outcome, of_mode.iter().filter(|&&i| rows.outcome[i] == outcome).count())?;
+        }
+        row.set_item("mode_not_available", 0)?;
+        for &i in &of_mode {
+            let w = f64::from(rows.weight[i]);
+            m_people += w;
+            if let Some(s) = travel[i] {
+                m_total += w * s;
+                m_completed += w;
+            }
+        }
+        row.set_item("total_travel_time_s", m_total)?;
+        row.set_item("people", m_people)?;
+        row.set_item("completed_people", m_completed)?;
+        by_mode.set_item(name, row)?;
+    }
     for (i, w) in rows.weight.iter().enumerate() {
         let w = f64::from(*w);
         people += w;
@@ -1408,7 +1771,37 @@ pub fn run_one_loop(
             total_s += w * s;
             completed_people += w;
         }
+        if let Some(v) = rows.vehicle_s[i] {
+            vehicle_s += w * v;
+        }
     }
+    out.set_item("completion_by_mode", by_mode)?;
+    out.set_item("total_vehicle_time_s", vehicle_s)?;
+    let [bike_path, walk_path] = layer_paths;
+    out.set_item("bike_link_bins", bike_bins.map(PyLinkBins::new))?;
+    out.set_item("walk_link_bins", walk_bins.map(PyLinkBins::new))?;
+    out.set_item("link_bins_bike_path", bike_path)?;
+    out.set_item("link_bins_walk_path", walk_path)?;
+    // The legs on the bike and walk layers, for the select-link analysis (only with link bins).
+    let legs = PyDict::new(py);
+    for (name, of_layer) in ["bike", "walk"].into_iter().zip(&layer_legs) {
+        let c = PyDict::new(py);
+        let mut offsets: Vec<u32> = vec![0];
+        let mut links: Vec<u32> = Vec::new();
+        for leg in of_layer {
+            links.extend(&leg.links);
+            offsets.push(u32::try_from(links.len()).expect("fewer than 2^32 leg links"));
+        }
+        c.set_item("trip", of_layer.iter().map(|l| l.trip).collect::<Vec<_>>().into_pyarray(py))?;
+        c.set_item(
+            "start_s",
+            of_layer.iter().map(|l| l.start_s).collect::<Vec<_>>().into_pyarray(py),
+        )?;
+        c.set_item("link_offsets", offsets.into_pyarray(py))?;
+        c.set_item("links", links.into_pyarray(py))?;
+        legs.set_item(name, c)?;
+    }
+    out.set_item("layer_legs", legs)?;
     out.set_item("total_trips", n)?;
     out.set_item("completed", count("completed"))?;
     out.set_item("truncated", count("truncated"))?;

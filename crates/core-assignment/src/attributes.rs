@@ -1,19 +1,24 @@
 //! What an alternative is made of, and what it is worth to a user class.
 //!
 //! **Attributes** are the measurable components of a leg or of a whole chain: the seconds spent
-//! in a vehicle, walking, waiting and parking, the number of transfers, the money paid and the
-//! length in metres. A chain's attributes are the sums over its legs.
+//! in a vehicle, walking, waiting and parking, the number of transfers, the money paid, the
+//! length in metres and the metres ridden by bike in mixed traffic. A chain's attributes are the
+//! sums over its legs.
 //!
 //! **Coefficients** are a user class's weights on those components: what one minute in a
 //! vehicle, one minute walking, one minute waiting, one minute parking, one transfer, one unit
-//! of money and one kilometre cost the class. They define the **systematic utility** of an
-//! alternative,
+//! of money, one kilometre and one kilometre ridden by bike in mixed traffic cost the class. They
+//! define the **systematic utility** of an alternative,
 //!
 //! ```text
 //! V = −( β_ivt · in-vehicle minutes + β_walk · walking minutes + β_wait · waiting minutes
 //!        + β_park · parking minutes + β_transfer · transfers + β_money · money
-//!        + β_km · kilometres )
+//!        + β_km · kilometres + β_mixed · kilometres by bike in mixed traffic )
 //! ```
+//!
+//! A bike's ride is in-vehicle time (the bike is the traveller's vehicle), so a minute riding
+//! costs `β_ivt`, as a minute driving; the kilometres ridden in mixed traffic (on a link without
+//! a cycle lane or track of its own) cost `β_mixed` each **on top of** that time.
 //!
 //! a negative number in **utility units**; the **cost** of the alternative is `−V`. Each
 //! coefficient is therefore the cost, in utility units, of one unit of its attribute: positive
@@ -33,8 +38,9 @@
 /// The components of a leg or a chain, in seconds, metres, transfers and units of money.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Attributes {
-    /// Seconds spent travelling in a vehicle (driving, for a car leg), from the moment the leg
-    /// departs to the moment it arrives, including any wait to get onto the first link.
+    /// Seconds spent travelling in a vehicle (driving, for a car leg; riding, for a bike leg),
+    /// from the moment the vehicle sets off to the moment it arrives, including any wait to get
+    /// onto the first link.
     pub in_vehicle_seconds: f64,
     /// Seconds spent walking (access, egress or transfer on foot).
     pub walk_seconds: f64,
@@ -49,6 +55,9 @@ pub struct Attributes {
     pub money: f64,
     /// Distance travelled, in metres.
     pub length_metres: f64,
+    /// Metres ridden by bike in mixed traffic: on bike-layer links without a cycle lane or a
+    /// track of their own (a ferry crossing counts as none); 0 for every other leg.
+    pub bike_mixed_metres: f64,
 }
 
 impl Attributes {
@@ -70,6 +79,7 @@ impl Attributes {
             transfers: self.transfers + other.transfers,
             money: self.money + other.money,
             length_metres: self.length_metres + other.length_metres,
+            bike_mixed_metres: self.bike_mixed_metres + other.bike_mixed_metres,
         }
     }
 }
@@ -93,12 +103,15 @@ pub struct Coefficients {
     pub per_money: f64,
     /// Cost of one kilometre travelled.
     pub per_kilometre: f64,
+    /// Cost of one kilometre ridden by bike in mixed traffic, on top of the ride's time and
+    /// kilometres.
+    pub bike_mixed_per_kilometre: f64,
 }
 
 impl Coefficients {
     /// The coefficients of a time-based run: one minute of door-to-door time (in a vehicle,
-    /// walking, waiting or parking) costs 1; transfers, money and distance cost 0. A cost then
-    /// reads in minutes of travel time.
+    /// walking, waiting or parking) costs 1; transfers, money, distance and the kilometres
+    /// ridden in mixed traffic cost 0. A cost then reads in minutes of travel time.
     #[must_use]
     pub const fn time_based() -> Self {
         Self {
@@ -109,6 +122,7 @@ impl Coefficients {
             per_transfer: 0.0,
             per_money: 0.0,
             per_kilometre: 0.0,
+            bike_mixed_per_kilometre: 0.0,
         }
     }
 
@@ -129,6 +143,9 @@ impl Coefficients {
             + self.per_transfer * f64::from(attributes.transfers)
             + self.per_money * attributes.money
             + self.per_kilometre * attributes.length_metres / 1000.0
+            // Last, so a chain without a bike leg (0 here) costs what it cost without the term,
+            // to the bit.
+            + self.bike_mixed_per_kilometre * attributes.bike_mixed_metres / 1000.0
     }
 }
 

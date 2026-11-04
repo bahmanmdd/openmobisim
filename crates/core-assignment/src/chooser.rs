@@ -7,9 +7,10 @@
 //! - `utility`: the chain's systematic utility by the trip's user class's coefficients
 //!   ([`crate::Coefficients::utility`]), in utility units;
 //! - `ln_path_size`: the logarithm of the chain's path-size factor over the set (Ben-Akiva and
-//!   Bierlaire, 1999; computed by `core-routes`' `path_sizes` over the road links of the
-//!   set's chains, by length): 0 for a set of one chain or for chains that share no link,
-//!   negative for chains that overlap others;
+//!   Bierlaire, 1999; computed by `core-routes`' `path_sizes` over the links of the set's
+//!   chains, each on its own layer, by length: a road link and a bike-layer link are different
+//!   links even where they share a number): 0 for a set of one chain or for chains that share no
+//!   link, negative for chains that overlap others;
 //! - `indifference_band`: the run's indifference band ε ([`crate::Params::indifference_band`]),
 //!   the same for every alternative;
 //! - `chain_high` and `chain_low`: the upper and lower 32 bits of the chain's identity
@@ -108,7 +109,7 @@ use std::collections::BTreeMap;
 
 use openmobisim_core_choice::model::first_argmax;
 use openmobisim_core_choice::{ChoiceBatch, ChoiceError, ChoiceModel, Choices, Logit, Options};
-use openmobisim_core_demand::{Travellers, Trips};
+use openmobisim_core_demand::{Mode, Travellers, Trips};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_routes::path_sizes;
 use openmobisim_core_types::ids::{EntityId, LinkId, TravellerId, TripId};
@@ -338,7 +339,7 @@ pub(crate) struct PathSizes {
 
 impl PathSizes {
     /// Bring the factors up to date with the sets of `state`.
-    pub(crate) fn refresh(&mut self, network: &RoadNetwork, state: &State) {
+    pub(crate) fn refresh(&mut self, lengths: &LinkLengths<'_>, state: &State) {
         let trips = state.trips();
         self.ln.resize(trips.len(), Vec::new());
         let grown: Vec<usize> =
@@ -347,7 +348,7 @@ impl PathSizes {
             &grown,
             TRIPS_PER_CHUNK,
             || (),
-            |(), &t| ln_path_sizes(network, &trips[t].set),
+            |(), &t| ln_path_sizes(lengths, &trips[t].set),
         );
         for (t, ln) in grown.into_iter().zip(fresh) {
             self.ln[t] = ln;
@@ -360,12 +361,67 @@ impl PathSizes {
     }
 }
 
-/// The logarithm of each chain's path-size factor over `set`, by the length of its road links.
-fn ln_path_sizes(network: &RoadNetwork, set: &[Chain]) -> Vec<f64> {
-    let length = |l: u32| network.link_length(LinkId::new(l)).get();
-    let links: Vec<Vec<u32>> = set.iter().map(Chain::road_links).collect();
+/// The lengths of every layer's links, under one numbering: the road network's links first (by
+/// their own numbers), then the bike layer's, then the walk layer's, so a link of one layer is
+/// never taken for a link of another.
+pub(crate) struct LinkLengths<'a> {
+    road: &'a RoadNetwork,
+    bike: Option<&'a RoadNetwork>,
+    walk: Option<&'a RoadNetwork>,
+}
+
+impl<'a> LinkLengths<'a> {
+    /// The lengths of the layers of `inputs`.
+    pub(crate) fn of(inputs: &crate::assign::Inputs<'a>) -> Self {
+        Self {
+            road: inputs.network,
+            bike: inputs.layers.bike.map(|l| l.network.network()),
+            walk: inputs.layers.walk.map(|l| l.network.network()),
+        }
+    }
+
+    fn links(network: Option<&RoadNetwork>) -> u32 {
+        network.map_or(0, RoadNetwork::link_count)
+    }
+
+    /// The number of `link` of a `mode` leg under the one numbering.
+    fn key(&self, mode: Mode, link: LinkId) -> u32 {
+        match mode {
+            Mode::Bike => self.road.link_count() + link.raw(),
+            Mode::Walk => self.road.link_count() + Self::links(self.bike) + link.raw(),
+            _ => link.raw(),
+        }
+    }
+
+    /// The length in metres of the link numbered `key`.
+    fn length(&self, key: u32) -> f64 {
+        let road = self.road.link_count();
+        let bike = Self::links(self.bike);
+        let (network, link) = if key < road {
+            (Some(self.road), key)
+        } else if key < road + bike {
+            (self.bike, key - road)
+        } else {
+            (self.walk, key - road - bike)
+        };
+        network.map_or(0.0, |n| n.link_length(LinkId::new(link)).get())
+    }
+
+    /// Every link of `chain`, leg after leg, under the one numbering.
+    fn chain(&self, chain: &Chain) -> Vec<u32> {
+        chain
+            .legs()
+            .iter()
+            .flat_map(|leg| leg.links.iter().map(move |&l| self.key(leg.mode, l)))
+            .collect()
+    }
+}
+
+/// The logarithm of each chain's path-size factor over `set`, by the length of its links.
+fn ln_path_sizes(lengths: &LinkLengths<'_>, set: &[Chain]) -> Vec<f64> {
+    let links: Vec<Vec<u32>> = set.iter().map(|c| lengths.chain(c)).collect();
     let routes: Vec<&[u32]> = links.iter().map(Vec::as_slice).collect();
-    path_sizes(&routes, length).into_iter().map(f64::ln).collect()
+    path_sizes(&routes, |k| lengths.length(k)).into_iter().map(f64::ln).collect()
 }
 
 /// The batch of `situations` at `iteration`: each set's chains with their utility at the

@@ -649,7 +649,7 @@ impl LegPlanner for CarPlanner<'_> {
         state: &State,
         cost_source: CostSource,
     ) -> Option<Leg> {
-        let (Place::Road(origin), Place::Road(destination)) = (from, to);
+        let (Place::Road(origin), Place::Road(destination)) = (from, to) else { return None };
         let extras = self.extras.get(class.index())?;
         let times = Self::times(state, cost_source);
         let mut search = Search::new(&self.context);
