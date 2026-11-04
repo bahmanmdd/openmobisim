@@ -81,7 +81,7 @@ use crate::services::roads::RoadTimes;
 use crate::services::{ServiceAssumptions, ServiceKind, ServiceSetup};
 use crate::timings::{Stage, Timings};
 use crate::transit::{TransitResult, TransitSetup, par_map};
-use crate::trees::{SearchTrees, TreeCost};
+use crate::trees::{CarPairs, SearchTrees, TreeCost};
 use crate::trip_results::{TripOutcome, TripOutcomes};
 use openmobisim_core_graph::hubs::ParkingKind;
 use openmobisim_core_graph::layers::StaticLayer;
@@ -615,6 +615,9 @@ pub struct Run {
     /// The last loading's link times, kept after a run for skims: `None` before one, or
     /// for a run of one loading, which records none.
     final_times: Option<Arc<LinkTimes>>,
+    /// The last execution's car trips as its search trees saw them, kept for
+    /// [`crate::trees::trip_fastest_routes`]: `None` before one.
+    car_pairs: Option<Arc<CarPairs>>,
     /// Disruptions at a time of day: none, by default.
     disruptions: Disruptions,
     /// The prices alternatives are costed at: the shipped values, by default.
@@ -724,6 +727,7 @@ impl Run {
             class_limits: Vec::new(),
             link_values: LinkValues::new(),
             final_times: None,
+            car_pairs: None,
             disruptions: Disruptions::default(),
             prices: Prices::SHIPPED,
             demand_values: DemandValues::new(),
@@ -752,6 +756,14 @@ impl Run {
     #[must_use]
     pub fn final_link_times(&self) -> Option<Arc<LinkTimes>> {
         self.final_times.clone()
+    }
+
+    /// The last execution's car trips as its search trees saw them: each trip's car pair and the
+    /// second its car enters the roads, and the trees' departure bin
+    /// ([`crate::trees::trip_fastest_routes`] reads them). `None` before an execution.
+    #[must_use]
+    pub fn car_pairs(&self) -> Option<Arc<CarPairs>> {
+        self.car_pairs.clone()
     }
 
     /// The same run with the modes each traveller class may use, by class index (the
@@ -1993,6 +2005,18 @@ impl Run {
         // and the gaps read the same trees; the cost bin where the update reads none.
         let tree_step_s =
             route_update.tree_step_s().unwrap_or_else(|| strategy.cost_bin_seconds()).max(1);
+        // Each trip's car pair and the second its car enters the roads, as the trees read them,
+        // kept for the trips' fastest routes after the run.
+        let car_start_s = self.car_start_s();
+        self.car_pairs = Some(Arc::new(CarPairs {
+            pairs: (0..total_trips)
+                .map(|i| {
+                    let departure = self.trips.departure(TripId::new(i)).get() + car_start_s;
+                    (car_keys[i as usize], f64::from(departure))
+                })
+                .collect(),
+            step_s: f64::from(tree_step_s),
+        }));
         // Whether park-and-ride's shared drives share the trees' bin, to the bit: then a drive
         // leaves at the very second its tree does, and the trees answer it too (S299).
         let same_step = |p: &ParkingSetup| {

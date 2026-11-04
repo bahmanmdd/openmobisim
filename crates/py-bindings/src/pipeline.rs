@@ -59,7 +59,8 @@ use openmobisim_core_types::units::Duration;
 use crate::choice::{PyRouteChoices, make_choice_model_with_classes};
 use crate::network::PyNetwork;
 use crate::routes::{PyRouteSets, to_options};
-use openmobisim_core_routes::Registry;
+use openmobisim_core_routes::{Registry, RouteSets};
+use openmobisim_core_sim::trees::CarPairs;
 use openmobisim_io_parquet::manifest::Manifest;
 use openmobisim_io_parquet::{
     write_diagnostics, write_events, write_kpis, write_kpis_csv, write_layer_link_bins,
@@ -362,6 +363,9 @@ type RoadDisruptionRow = (Vec<u32>, f64, f64, f64);
 pub struct PyRunSummary {
     /// What a skim needs of the run.
     skimmer: Arc<Skimmer>,
+    /// The run's car trips as its search trees saw them, and its car route sets: what the trips'
+    /// fastest routes need of the run (`trip_fastest_routes`).
+    car_pairs: Option<(Arc<CarPairs>, Arc<RouteSets>)>,
     /// The bike cost the run routed by, for a bike layer a skim prepares itself.
     bike_cost: BikeCost,
     /// Path to the written `kpis.parquet`.
@@ -645,6 +649,63 @@ impl PyLinkBins {
 
 #[pymethods]
 impl PyRunSummary {
+    /// Each trip's fastest route by car after the run (`Run.trip_fastest_routes`), as columns
+    /// by trip: `trip`, `origin_node` and `destination_node` (the car pair's road nodes, indices
+    /// into the network's nodes), `car_departure_s` (when the car enters the roads),
+    /// `free_flow_s` and `free_flow_links` (at free flow), `final_s` and `final_links` (on the
+    /// last loading's link times), the times `nan` and the links empty where nothing is found.
+    /// `None` for a run that kept no car pairs.
+    #[pyo3(signature = (departure_bin_s=None))]
+    fn trip_fastest_routes<'py>(
+        &self,
+        py: Python<'py>,
+        departure_bin_s: Option<f64>,
+    ) -> PyResult<Option<Bound<'py, PyDict>>> {
+        if departure_bin_s.is_some_and(|s| !(s.is_finite() && s > 0.0)) {
+            return Err(PyValueError::new_err("departure_bin_s is a number of seconds above 0"));
+        }
+        let Some((pairs, sets)) = self.car_pairs.clone() else { return Ok(None) };
+        let skimmer = self.skimmer.clone();
+        let (free, last) = py.detach(|| {
+            (
+                skimmer.trip_fastest_routes(&pairs, &sets, true, departure_bin_s),
+                skimmer.trip_fastest_routes(&pairs, &sets, false, departure_bin_s),
+            )
+        });
+        let d = PyDict::new(py);
+        let n = pairs.pairs.len();
+        d.set_item(
+            "trip",
+            (0..n)
+                .map(|t| u32::try_from(t).expect("trip ids fit in 32 bits"))
+                .collect::<Vec<_>>()
+                .into_pyarray(py),
+        )?;
+        d.set_item(
+            "origin_node",
+            pairs.pairs.iter().map(|(k, _)| k.origin).collect::<Vec<u32>>().into_pyarray(py),
+        )?;
+        d.set_item(
+            "destination_node",
+            pairs.pairs.iter().map(|(k, _)| k.destination).collect::<Vec<u32>>().into_pyarray(py),
+        )?;
+        d.set_item(
+            "car_departure_s",
+            pairs.pairs.iter().map(|&(_, s)| s).collect::<Vec<f64>>().into_pyarray(py),
+        )?;
+        for (name, routes) in [("free_flow", &free), ("final", &last)] {
+            let seconds: Vec<f64> =
+                routes.iter().map(|r| r.as_ref().map_or(f64::NAN, |r| r.seconds)).collect();
+            let links: Vec<Bound<'_, PyArray1<u32>>> = routes
+                .iter()
+                .map(|r| r.as_ref().map_or_else(Vec::new, |r| r.links.clone()).into_pyarray(py))
+                .collect();
+            d.set_item(format!("{name}_s"), seconds.into_pyarray(py))?;
+            d.set_item(format!("{name}_links"), links)?;
+        }
+        Ok(Some(d))
+    }
+
     /// Seconds from each origin to each destination by `mode` (``"car"``, ``"bike"``,
     /// ``"walk"`` or ``"transit"``), leaving at `departure_s`, as a ``(origins, destinations)``
     /// float64 array: ``nan`` where nothing arrives within `max_s` (a skim; see
@@ -1540,7 +1601,7 @@ pub fn run_pipeline(
     let mut run_diagnostics = Diagnostics::new();
     // Python's lock released (S277): the run works on a pool of its own, and a choice model in
     // Python is called from that pool's thread, which takes the lock when it needs it.
-    let result = py.detach(|| run.try_execute(&mut run_diagnostics)).map_err(|e| {
+    let mut result = py.detach(|| run.try_execute(&mut run_diagnostics)).map_err(|e| {
         // A Python operator's own exception is raised as it was (S304).
         match e {
             openmobisim_core_sim::run::RunError::Operator(_) => raised
@@ -2041,7 +2102,10 @@ pub fn run_pipeline(
         None => None,
     };
 
+    let car_sets = result.route_sets.take().map(Arc::new);
+    let car_pairs = run.car_pairs().zip(car_sets.clone());
     let summary = PyRunSummary {
+        car_pairs,
         skimmer,
         bike_cost,
         spillback,
@@ -2135,9 +2199,8 @@ pub fn run_pipeline(
         cancelled: service.then_some(result.completion.cancelled),
         completion_by_mode: completion_by_mode.unbind(),
         route_choices: route_choices_py,
-        route_sets: result
-            .route_sets
-            .map(|sets| Py::new(py, PyRouteSets::new(Arc::new(sets), network.inner.link_count())))
+        route_sets: car_sets
+            .map(|sets| Py::new(py, PyRouteSets::new(sets, network.inner.link_count())))
             .transpose()?,
         bike_route_choices: bike_route_choices_py,
         bike_route_sets: result

@@ -29,13 +29,14 @@ use openmobisim_core_graph::layers::StaticLayer;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::search::{Search, SearchContext};
-use openmobisim_core_routes::{NodeSnapper, Reach};
+use openmobisim_core_routes::{NodeSnapper, Reach, RouteSets};
 use openmobisim_core_transit::{CallTimes, Raptor, RaptorData, UNKNOWN_TIME};
 use openmobisim_core_types::ids::{EntityId, NodeId};
 
 use crate::layers::{LayerSetup, StaticLayers};
 use crate::link_times::LinkTimes;
 use crate::transit::{TransitSetup, par_map};
+use crate::trees::{CarPairs, TripRoute, trip_fastest_routes};
 
 /// How many origins a thread takes at once.
 const CHUNK: usize = 8;
@@ -69,6 +70,39 @@ impl Skimmer {
             let _ = cell.set(t);
         }
         Self { road, turns: cell, times, layers, transit, raptor: OnceLock::new() }
+    }
+
+    /// Every trip's fastest route by car after the run ([`crate::trees::trip_fastest_routes`]),
+    /// for the trips of `pairs` among the routes of `sets`: on the last loading's link times, or
+    /// at free flow if `free_flow`, the departures binned by `step_s` seconds (`None`: the
+    /// trees' own bin, `pairs.step_s`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `step_s` is given and not positive.
+    #[must_use]
+    pub fn trip_fastest_routes(
+        &self,
+        pairs: &CarPairs,
+        sets: &RouteSets,
+        free_flow: bool,
+        step_s: Option<f64>,
+    ) -> Vec<Option<TripRoute>> {
+        let road = &*self.road;
+        let turns = self.turns.get_or_init(|| Arc::new(TurnTable::build(road, road.signals())));
+        let free;
+        let times = if free_flow {
+            free = LinkTimes::free_flow(road);
+            &free
+        } else {
+            &*self.times
+        };
+        trip_fastest_routes(
+            (road, turns, times),
+            &pairs.pairs,
+            sets,
+            step_s.unwrap_or(pairs.step_s),
+        )
     }
 
     /// The layer the run has for `layer`, if it prepared one.
