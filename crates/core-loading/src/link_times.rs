@@ -22,7 +22,7 @@
 //! *leave* then: in a growing queue the two differ by the queue's length, and
 //! reading the exit-time table would show the queue late (found on a
 //! hand-made bottleneck, where it hid a third of the disequilibrium). The loading
-//! records both ([`openmobisim_core_loading::LinkBinRecorder::with_entry_bins`]);
+//! records both ([`crate::LinkBinRecorder::with_entry_bins`]);
 //! only vehicles that finished the link inside the window count, so in a jam that
 //! never clears the last stretch is optimistic.
 //!
@@ -30,8 +30,8 @@
 //! is one binary search over that link's few bins, about 30 ns; a route of 150
 //! links costs about 5 µs.
 
+use crate::{EntryTables, LinkBins};
 use openmobisim_core_graph::network::RoadNetwork;
-use openmobisim_core_loading::{EntryTables, LinkBins};
 use openmobisim_core_types::ids::{EntityId, LinkId};
 
 /// Link travel times by time of entry, from a loading's entry-time table.
@@ -299,7 +299,7 @@ impl LinkTimes {
     /// The time to cross `link` when entering it at second `at`, as [`Self::link_seconds`]
     /// reads it up to the link's **last recorded bin**, and that bin's time **held** for any
     /// `at` after it, where [`Self::link_seconds`] carries it down to free flow. What costs the
-    /// rest of a trip still under way when the window ended ([`crate::gap`]): not the free flow
+    /// rest of a trip still under way when the window ended (the gap measures of the assignment): not the free flow
     /// the carry decays to, though in a queue still growing at the end the last recorded time
     /// is below what those behind it will take. Free flow on a link with no recorded time, and
     /// before its first recorded bin.

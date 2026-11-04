@@ -262,3 +262,30 @@ def test_the_grid_applied_twice_moves_nothing_more():
     assert stats1["moved"] > 0
     assert stats2["moved"] == 0 and stats2["kept"] == 80
     assert [tuple(r) for r in twice] == [tuple(r) for r in once]
+
+
+def test_random_trips_do_not_depend_on_the_network_s_ids_or_row_order() -> None:
+    """The same streets under other ids, listed in another order, give the same trips for a seed."""
+
+    def grid(rename: bool, reverse: bool) -> ms._core.Network:
+        name = (lambda i, j: f"n{8 - i}_{8 - j}") if rename else (lambda i, j: f"{i}_{j}")
+        nodes, links = [], []
+        for i in range(8):
+            for j in range(8):
+                nodes.append({"id": name(i, j), "x": 4.80 + 0.002 * i, "y": 45.70 + 0.0015 * j})
+                for di, dj in ((1, 0), (0, 1), (-1, 0), (0, -1)):
+                    if 0 <= i + di < 8 and 0 <= j + dj < 8:
+                        a, b = name(i, j), name(i + di, j + dj)
+                        links.append({"id": f"{a}>{b}", "from": a, "to": b, "class": "residential"})
+        if reverse:
+            nodes.reverse()
+            links.reverse()
+        return ms.network_read_table(links, nodes)
+
+    def drawn(net: ms._core.Network) -> list[tuple]:
+        rows = ms.examples.trips_random(net, 200, seed=7, min_m=150.0, max_m=900.0, spread_s=600)
+        return [tuple(round(v, 9) if isinstance(v, float) else v for v in r) for r in rows]
+
+    base = drawn(grid(False, False))
+    assert drawn(grid(True, True)) == base
+    assert drawn(grid(False, True)) == base

@@ -138,6 +138,7 @@ _OPTIONS = {
 _BIKE = "bike_"
 #: The arguments of ``Scenario.run`` a file holds (the others are ``Scenario.from_parts``').
 RUN_ARGUMENTS = (
+    "engine",
     "hub_join_m",
     "outputs",
     "threads",
@@ -206,6 +207,14 @@ _EXTRA: dict[str, list[tuple[str, Any, str, str, str]]] = {
         ),
         ("design_id", "default", "", "the design this run belongs to, a label of its results", ""),
         ("replication", 0, "", "which replication of its design this run is, a label", ""),
+        (
+            "engine",
+            "current",
+            "",
+            '"current", or "one-loop": the assignment of car trips in one loop, at flow level '
+            "0 or 2",
+            "",
+        ),
     ],
     "choice": [],
     "modes": [
@@ -258,7 +267,7 @@ _INTEGERS = {
     "threads",
     "replication",
 }
-_TEXTS = {"outputs", "design_id", "bike_cost", "bike_route_choice", "transit_date"}
+_TEXTS = {"outputs", "design_id", "bike_cost", "bike_route_choice", "transit_date", "engine"}
 
 #: The file's own keys that are not parameters of the registry: a service's ``kind`` and tables, and
 #: the choice table's method. Every parameter's meaning is the registry's (``parameters()``'s
@@ -1193,7 +1202,7 @@ def _stated(
             absent.append("window (one end given)")
         else:
             put("run", "window", list(window))
-    for argument in ("hub_join_m", "outputs", "threads", "design_id", "replication"):
+    for argument in ("hub_join_m", "outputs", "threads", "design_id", "replication", "engine"):
         if run.get(argument) is not None:
             put("run", argument, run[argument])
     for argument, table, key in (

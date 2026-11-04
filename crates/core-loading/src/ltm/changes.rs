@@ -4,6 +4,7 @@ use openmobisim_core_types::ids::{EntityId, LinkId};
 use openmobisim_core_types::units::Duration;
 
 use super::LtmNetwork;
+use crate::events::on_grid_up;
 
 /// A link's capacity from a second on, as a share of its own (disruptions): `factor` 0
 /// closes it (nothing enters until a later change opens it; what is on it drives out), 1
@@ -55,9 +56,10 @@ impl LtmNetwork<'_> {
         !self.changes.is_empty() && self.inflow_rate[i] <= self.base_rates[i].1 * CLOSED_FACTOR
     }
 
-    /// The time of the next capacity change, if one is left.
+    /// The time of the next capacity change, if one is left, in seconds since the loading's
+    /// origin.
     pub(super) fn next_change_time(&self) -> Option<f64> {
-        self.changes.get(self.next_change).map(|c| c.time)
+        self.changes.get(self.next_change).map(|c| self.local(c.time))
     }
 
     /// When link `i`, closed now by a capacity change, opens again: the first later change of
@@ -72,7 +74,7 @@ impl LtmNetwork<'_> {
         let opens = self.changes[self.next_change..]
             .iter()
             .find(|c| c.link == link && c.factor > 0.0)
-            .map_or(f64::INFINITY, |c| c.time);
+            .map_or(f64::INFINITY, |c| self.local(c.time));
         Some(opens)
     }
 
@@ -82,16 +84,19 @@ impl LtmNetwork<'_> {
         self.next_change += 1;
         let i = change.link.index();
         let (discharge, inflow) = self.base_rates[i];
-        let at = change.time;
+        let at = self.local(change.time);
         if change.factor > 0.0 {
             self.discharge_rate[i] = discharge * change.factor;
             self.inflow_rate[i] = inflow * change.factor;
+            self.headway_one[i] =
+                (on_grid_up(1.0 / self.discharge_rate[i]), on_grid_up(1.0 / self.inflow_rate[i]));
         } else {
             // Closed from `at` to entry alone: its discharge stays as it was, so the vehicles on
             // it drive out (S300). Its entry clock restarts there: a headway counts from the last
             // vehicle in, and with none yet (the clock at -inf) even a closed link's tiny rate
             // would let the first one in at once.
             self.inflow_rate[i] = inflow * CLOSED_FACTOR;
+            self.headway_one[i].1 = on_grid_up(1.0 / self.inflow_rate[i]);
             let curves = &mut self.curves[i];
             curves.set_last_entry(Duration(curves.last_entry().get().max(at)));
         }

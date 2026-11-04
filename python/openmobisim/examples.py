@@ -146,6 +146,11 @@ def trips_random(
     """
     coords, offsets = network.link_geometry()
     starts = coords[offsets[:-1].astype(np.int64)]
+    ends = coords[offsets[1:].astype(np.int64) - 1]
+    # The links in an order of their geometry, not of their ids or rows, so that the same
+    # network with other ids, or its rows in another order, gives the same trips for a seed.
+    canonical = np.lexsort((ends[:, 1], ends[:, 0], starts[:, 1], starts[:, 0]))
+    starts = starts[canonical]
     rng = np.random.default_rng(seed)
     n = len(starts)
     cos_lat = float(np.cos(np.radians(starts[:, 1].mean())))

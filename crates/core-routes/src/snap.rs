@@ -8,7 +8,8 @@
 //!
 //! **Cost:** build is one pass over the nodes (12 bytes per drivable node plus
 //! the grid); a query looks at a handful of cells, independent of network size.
-//! **Determinism:** ties in distance are broken by node id.
+//! **Determinism:** ties in distance are broken by the nodes' coordinates (west first, then
+//! south: `canonical::node_order`), never by node id; only nodes at one point fall to their ids.
 
 use openmobisim_core_graph::defaults::RoadClass;
 use openmobisim_core_graph::geometry::LonLat;
@@ -130,7 +131,7 @@ impl NodeSnapper {
         Self { min_x, min_y, cell, cols, rows, start, nodes, positions }
     }
 
-    /// The indexed node closest to `point`, ties broken by node id.
+    /// The indexed node closest to `point`, ties broken by the nodes' coordinates.
     ///
     /// # Panics
     ///
@@ -172,7 +173,18 @@ impl NodeSnapper {
 
     fn better(&self, x: f64, y: f64, a: usize, b: usize) -> core::cmp::Ordering {
         let d = |i: usize| (self.positions[i].0 - x).hypot(self.positions[i].1 - y);
-        d(a).total_cmp(&d(b)).then_with(|| self.nodes[a].cmp(&self.nodes[b]))
+        d(a).total_cmp(&d(b)).then_with(|| self.tie(a, b))
+    }
+
+    /// Two indexed nodes at the same distance (S312): the one further west, then further south
+    /// (the order of [`crate::canonical::node_order`]), never by id; two nodes at one point by id.
+    fn tie(&self, a: usize, b: usize) -> core::cmp::Ordering {
+        use crate::canonical::millimetres as mm;
+        let (pa, pb) = (self.positions[a], self.positions[b]);
+        mm(pa.0)
+            .cmp(&mm(pb.0))
+            .then(mm(pa.1).cmp(&mm(pb.1)))
+            .then_with(|| self.nodes[a].cmp(&self.nodes[b]))
     }
 
     /// The index into `nodes` of the nearest node, from the grid's rings; `None` off the grid.
@@ -227,7 +239,8 @@ impl NodeSnapper {
     }
 
     /// The indexed node closest to `(x, y)` (the network's projection, metres) within `radius`
-    /// metres that `accept` takes, with its distance; ties broken by node id. `None` if there is
+    /// metres that `accept` takes, with its distance; ties broken by the nodes' coordinates (west
+    /// first, then south), never by id. `None` if there is
     /// none. Looks at the grid cells the square of side `2 radius` around the point touches.
     #[must_use]
     pub fn nearest_within_where(
@@ -250,22 +263,22 @@ impl NodeSnapper {
             (cell(x - radius, self.min_x, self.cols), cell(x + radius, self.min_x, self.cols));
         let (y0, y1) =
             (cell(y - radius, self.min_y, self.rows), cell(y + radius, self.min_y, self.rows));
-        let mut best: Option<(f64, u32)> = None;
+        let mut best: Option<(f64, usize)> = None;
         for gy in y0..=y1 {
             for gx in x0..=x1 {
                 let c = gy * self.cols + gx;
                 for i in self.start[c] as usize..self.start[c + 1] as usize {
                     let d = (self.positions[i].0 - x).hypot(self.positions[i].1 - y);
-                    let node = self.nodes[i];
-                    let closer =
-                        best.is_none_or(|(bd, bn)| d.total_cmp(&bd).then(node.cmp(&bn)).is_lt());
-                    if d <= radius && closer && accept(NodeId::new(node)) {
-                        best = Some((d, node));
+                    let closer = best.is_none_or(|(bd, bi)| {
+                        d.total_cmp(&bd).then_with(|| self.tie(i, bi)).is_lt()
+                    });
+                    if d <= radius && closer && accept(NodeId::new(self.nodes[i])) {
+                        best = Some((d, i));
                     }
                 }
             }
         }
-        best.map(|(d, n)| (NodeId::new(n), d))
+        best.map(|(d, i)| (NodeId::new(self.nodes[i]), d))
     }
 
     /// How many nodes are indexed.
@@ -289,7 +302,7 @@ impl NodeSnapper {
 ///
 /// A network without a street node (a toy of motorways only) snaps as [`NodeSnapper::new`]
 /// does. **Cost:** two grids instead of one; a query is two ring searches at most.
-/// **Determinism:** each grid breaks ties by node id.
+/// **Determinism:** each grid breaks ties by the nodes' coordinates, as [`NodeSnapper`].
 #[derive(Clone, Debug)]
 pub struct TripSnapper {
     drivable: NodeSnapper,

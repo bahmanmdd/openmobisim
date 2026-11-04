@@ -1205,6 +1205,43 @@ class RunSummary:
     #: Links whose peak occupancy exceeded their storage; see ``Run.report_spillback()``.
     spillback: dict[str, Any] | None
 
+def run_one_loop(
+    network: Network,
+    run_id: str,
+    output_dir: str,
+    *,
+    trips: list[tuple] | None = None,
+    trips_path: str | None = None,
+    persons: list[tuple] | None = None,
+    persons_path: str | None = None,
+    class_defaults: dict[str, tuple[bool, bool, bool]] | None = None,
+    class_options: dict[str, dict[str, float]] | None = None,
+    default_weight: int = 1,
+    window_start_s: int | None = None,
+    window_end_s: int | None = None,
+    flow_level: int = 2,
+    flow_step_s: int = 300,
+    cost_bin_s: int = 300,
+    link_bin_s: int | None = None,
+    master_seed: int = 0,
+    choice_model: str = "logit",
+    choice_options: dict[str, float] | None = None,
+    min_iterations: int | None = None,
+    max_iterations: int | None = None,
+    step_offset: int | None = None,
+    switch_tolerance: float | None = None,
+    found_tolerance: float | None = None,
+    indifference_band: float | None = None,
+    motorway_snap_m: float | None = None,
+) -> dict[str, Any]:
+    """Run the one-loop assignment of car trips and write its tables to `output_dir`.
+
+    Prefer ``Scenario.run(engine="one-loop")``, which checks the scenario's other parts and
+    writes the manifest. Returns the run's results as a dict: the fingerprint and what it
+    covers, the per-trip results, the convergence table, the counts by outcome, the link bins,
+    the route sets and choices, the timings and the files' paths.
+    """
+
 def run_pipeline(
     network: Network,
     run_id: str,

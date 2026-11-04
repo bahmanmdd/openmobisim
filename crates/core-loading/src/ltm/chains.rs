@@ -3,7 +3,8 @@
 use super::LtmNetwork;
 
 /// Per slot: the slot released when it arrives, the release rule of a chained
-/// slot, and every slot's departure (a chained one's once released).
+/// slot, and every slot's departure (a chained one's once released), in seconds since
+/// midnight on the loading's time grid.
 #[derive(Debug, Default)]
 pub(super) struct Chains {
     pub(super) next: Vec<u32>,
@@ -13,13 +14,14 @@ pub(super) struct Chains {
 }
 
 impl LtmNetwork<'_> {
-    /// When the vehicle in `slot` departs: its own departure, or a chained
-    /// vehicle's release.
+    /// When the vehicle in `slot` departs, in seconds since the loading's origin: its own
+    /// departure, or a chained vehicle's release (both kept in seconds since midnight).
     #[inline]
     pub(super) fn departure_of(&self, slot: u32) -> f64 {
-        match &self.chains {
+        let of_day = match &self.chains {
             Some(c) => c.start[slot as usize],
             None => f64::from(self.vehicles[slot as usize].departure.get()),
-        }
+        };
+        of_day - self.origin
     }
 }

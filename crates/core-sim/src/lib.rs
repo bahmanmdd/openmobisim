@@ -49,7 +49,8 @@ pub mod identity;
 pub mod itinerary;
 pub mod itinerary_choice;
 pub mod layers;
-pub mod link_times;
+/// Link travel times by time of day, from the loading crate (the module moved there).
+pub use openmobisim_core_loading::link_times;
 pub mod link_values;
 pub mod loading_rules;
 pub mod parking;

@@ -30,7 +30,9 @@ from openmobisim.run import MODES, SERVICE_MODES, Run
 from openmobisim.table import Table
 
 __all__ = [
+    "ENGINES",
     "PRESETS",
+    "EngineNotSupportedError",
     "FallbackWarning",
     "NoAlternativeWarning",
     "Run",
@@ -62,6 +64,20 @@ BIKE_ROUTE_CHOICES = ("shortest", "doubly_stochastic")
 LEVEL_NAMES = {0: "free flow", 1: "static", 2: "point queue", 3: "spatial queue", 4: "full"}
 #: The equilibration strategies of the static assignment alone (S294).
 _STATIC_ONLY = ("frank_wolfe",)
+
+
+#: The engines a scenario runs on (``Scenario.run``'s ``engine``): ``"current"``, the run of
+#: every mode, loading and option described in this package; ``"one-loop"``, the assignment of
+#: car trips in one loop of five stages per assignment iteration (search, choose, load, measure,
+#: assess), at flow level 0 or 2.
+ENGINES = ("current", "one-loop")
+
+
+class EngineNotSupportedError(ValueError):
+    """The run's engine does not have something the scenario asks for.
+
+    The message names every such part of the scenario and the engine that has it.
+    """
 
 
 class WindowWarning(UserWarning):
@@ -1679,6 +1695,222 @@ class Scenario:
             out["class_no_taxi"] = self._class_no_taxi
         return out
 
+    def _one_loop_arguments(self, run: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
+        """The one-loop engine's arguments, and the options it does not apply.
+
+        From this scenario and ``run``'s arguments (see ``run``'s ``engine``).
+
+        Raises:
+            EngineNotSupportedError: Naming every part asked for that the engine lacks.
+        """
+        lacking: list[str] = []
+
+        def given(name: str, value: Any, default: Any = None) -> None:
+            if value is not None and value != default:
+                lacking.append(name)
+
+        if self._flow_level not in (0, 2):
+            lacking.append(f"flow_level {self._flow_level} (it loads at 0 or 2)")
+        stated: dict[str, int] = {}
+        for row in self._trips or ():
+            if row[9] is not None and row[9] != "car":
+                stated[row[9]] = stated.get(row[9], 0) + 1
+        if stated:
+            counts = ", ".join(f"{n} {m}" for m, n in sorted(stated.items()))
+            lacking.append(f"trips of modes other than the car ({counts})")
+        modes = set(self._modes or ())
+        if modes - {"car"}:
+            lacking.append(f"modes {sorted(modes)} (mode choice: it runs car trips only)")
+        for c, ms in (self._class_modes or {}).items():
+            if set(ms) - {"car"}:
+                lacking.append(f"class {c!r}'s modes {sorted(ms)}")
+        given("transit", self._transit)
+        given("transit_options", self._transit_options)
+        given("parkings", self._parkings)
+        given("parking_options", self._parking_options)
+        given("services", self._services)
+        given("price_options", self._price_options)
+        given("link_values", self._link_values)
+        given("person_values", self._person_values)
+        given("trip_values", self._trip_values or self._trip_values_keyed or None)
+        if self._road_disruptions or self._transit_disruptions:
+            lacking.append("disruptions")
+        given("zones", self._zones)
+        given("route_method", self._route_method)
+        given("route_options", self._route_options)
+        given("route_update", self._route_update)
+        given("route_update_options", self._route_update_options)
+        # A run configuration file states these at the registry's defaults. The one-loop engine
+        # applies neither (a choice set grows by one chain per trip and iteration at most, with
+        # no limit), so only a value other than the default is asked for and refused.
+        from openmobisim.parameters import parameters
+
+        table = parameters()
+        shipped = dict(zip(table["name"], table["value"], strict=True))
+        given("choice_detour_limit", self._choice_detour_limit, shipped.get("choice_detour_limit"))
+        given("choice_max_routes", self._choice_max_routes, shipped.get("choice_max_routes"))
+        given("max_cost_vectors", self._max_cost_vectors, 2)
+        given("route_cache", self._route_cache, False)
+        given("bike_cost", self._bike_cost, "utility")
+        given("bike_route_choice", self._bike_route_choice, "shortest")
+        given("bike_route_options", self._bike_route_options)
+        given("class limits (walk_max_s, bike_max_s, access_walk_max_s)", self._class_limits)
+        model = self._choice_model
+        if not isinstance(model, str):
+            lacking.append("a choice model written in Python")
+        elif model not in ("deterministic", "logit"):
+            lacking.append(f'choice_model {model!r} (it has "deterministic" and "logit")')
+        mode_options = dict(self._mode_options or {})
+        fixed = [k for k in ("car_access_s", "car_egress_s") if mode_options.get(k) != 0]
+        if fixed:
+            lacking.append(
+                f"the fixed times of reaching and leaving the car ({', '.join(fixed)}, 120 s and "
+                "300 s by default: give mode_options car_access_s 0 and car_egress_s 0)"
+            )
+        # The other options of the modes are of walking, cycling and trips with no
+        # alternative: nothing in a run of car trips.
+        loading = dict(self._loading_options or {})
+        for k, v in loading.items():
+            if k not in ("node_inflow", "origin_inflow") or v != 0:
+                lacking.append(f"loading_options {k} {v} (its point queue is the classic one)")
+        options = dict(self._equilibration_options or {})
+        loop: dict[str, Any] = {}
+        not_applied: list[str] = []
+        if options.get("increments", 1) != 1:
+            lacking.append(
+                f"equilibration_options increments {options['increments']} (the first loading "
+                "built up in groups)"
+            )
+        options.pop("increments", None)
+        options.pop("warmup", None)  # the loadings of levels 3 and 4 alone
+        if self._equilibration == "free_flow":
+            loop = {"min_iterations": 1, "max_iterations": 1}
+        elif self._equilibration == "msa":
+            for name, key in (
+                ("iterations", "max_iterations"),
+                ("min_iterations", "min_iterations"),
+                ("step_offset", "step_offset"),
+            ):
+                if name in options:
+                    value = options.pop(name)
+                    if float(value) != int(value) or value < 0:
+                        raise ValueError(f"equilibration_options {name} must be a whole number")
+                    loop[key] = int(value)
+            for name in ("switch_tolerance", "found_tolerance", "indifference_band"):
+                if name in options:
+                    loop[name] = float(options.pop(name))
+            if "cost_bin_s" in options:
+                loop["cost_bin_s"] = int(options.pop("cost_bin_s"))
+            for name in (
+                "gap_tolerance",
+                "gap_sample",
+                "gap_every",
+                "itinerary_gap_sample",
+                "route_growth_tolerance",
+            ):
+                if name in options:
+                    not_applied.append(f"{name} {options.pop(name)}")
+        else:
+            lacking.append(f"equilibration {self._equilibration!r} (it has free_flow and msa)")
+        lacking += [f"equilibration_options {k}" for k in sorted(options)]
+        if run.get("outputs", "all") != "all":
+            lacking.append(f"outputs {run['outputs']!r}")
+        given("service_assumptions", run.get("service_assumptions"))
+        given("policy", run.get("policy"))
+        given("policy_options", run.get("policy_options"))
+        if lacking:
+            raise EngineNotSupportedError(
+                "the one-loop engine does not have what this scenario asks for: "
+                + "; ".join(lacking)
+                + '. Run it with engine="current".'
+            )
+        arguments = {
+            "trips": self._trips,
+            "trips_path": self._trips_path,
+            "persons": self._persons,
+            "persons_path": self._persons_path,
+            "class_defaults": self._class_defaults,
+            "class_options": self._class_options,
+            "default_weight": self._default_weight,
+            "window_start_s": self._window[0],
+            "window_end_s": self._window[1],
+            "flow_level": self._flow_level,
+            "flow_step_s": self._flow_step_s,
+            "link_bin_s": self._link_bin_s,
+            "master_seed": self._master_seed,
+            "choice_model": model,
+            "choice_options": self._choice_options,
+            "motorway_snap_m": mode_options.get("car_snap_motorway_m"),
+            **loop,
+        }
+        return arguments, not_applied
+
+    def _run_one_loop(
+        self, run_id: str, output_dir: str, quiet: bool, arguments: dict[str, Any]
+    ) -> Run:
+        """``run`` on the one-loop engine (``engine="one-loop"``)."""
+        from openmobisim.run import _OneLoopSummary
+
+        given, not_applied = self._one_loop_arguments(arguments)
+        if not_applied:
+            warnings.warn(
+                "the one-loop engine stops by its own rule (the switch share near its floor and "
+                "no new chain found) and measures its own gaps: "
+                + ", ".join(not_applied)
+                + " not applied",
+                UserWarning,
+                stacklevel=3,
+            )
+        try:
+            result = _core.run_one_loop(self._network, run_id, output_dir, **given)
+        except ValueError as error:
+            if str(error).startswith("the one-loop engine"):  # what it lacks, found reading
+                raise EngineNotSupportedError(str(error)) from None
+            raise
+        manifest = {
+            "engine": "one-loop",
+            "run_id": run_id,
+            "run_fingerprint": result["fingerprint"],
+            "fingerprint_covers": list(result["fingerprint_covers"]),
+            "master_seed": int(result["master_seed"]),
+            "choice_model": result["choice_model"],
+            "equilibration": self._equilibration,
+            "route_update": "none",
+            "flow_level": self._flow_level,
+            "flow_step_seconds": self._flow_step_s if self._flow_level == 2 else None,
+            "iterations": int(result["iterations"]),
+            "converged": bool(result["converged"]),
+            "parameters": dict(result["parameters"]),
+            "coefficients": {k: dict(v) for k, v in result["coefficients"].items()},
+            "options_not_applied": not_applied,
+            "window": {k: v for k, v in result["window"].items()},
+            "design_id": arguments["design_id"],
+            "replication": arguments["replication"],
+            "threads": arguments["threads"],
+            "outputs": "all",
+            "build": dict(_core.build_info()),
+        }
+        manifest_path = Path(output_dir) / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+        summary = _OneLoopSummary(result, str(manifest_path))
+        run = Run(
+            summary,
+            network=self._network,
+            run_id=run_id,
+            flow_level=self._flow_level,
+            flow_step_s=self._flow_step_s,
+            car_snap_motorway_m=(self._mode_options or {}).get("car_snap_motorway_m"),
+        )
+        from openmobisim.config import _config_of
+
+        _config_of(self, arguments, manifest).write(Path(output_dir) / "run.toml")
+        if not quiet:
+            logger.info(run._summary_line())
+        left_out = run._window_text()
+        if left_out is not None:
+            warnings.warn(left_out, WindowWarning, stacklevel=3)
+        return run
+
     def _fingerprint(self) -> str:
         """The fingerprint a run of this scenario would have, without running it.
 
@@ -1703,6 +1935,7 @@ class Scenario:
         policy: Any = None,
         policy_options: Mapping[str, float] | None = None,
         config: str | Path | Any = None,
+        engine: str = "current",
     ) -> Run:
         """Run the scenario and write its output artifacts.
 
@@ -1781,13 +2014,50 @@ class Scenario:
                 (one source), and so is a file
                 whose ``[inputs]`` or ``[network]`` are not this scenario's (a scenario runs on its
                 own inputs). ``None`` (the default): no file is read.
+            engine: The engine the scenario runs on (``ENGINES``). ``"current"`` (the default):
+                everything this package describes. ``"one-loop"``: the iterated assignment of
+                car trips in one loop (each assignment iteration searches every trip's cheapest
+                route at the last loading's link travel times and adds it to the trip's choice
+                set, chooses over the sets, loads, measures the link travel times and assesses
+                the iteration), at flow level 0 (free flow) or 2 (the point queue). It reads the
+                demand, the classes' car ownership and coefficients, the window, the flow
+                level and step, ``link_bin_s``, the seed, the choice model (``"deterministic"``
+                or ``"logit"``) and the equilibration (``"free_flow"``: one loading;
+                ``"msa"``: its ``iterations`` (50 by default), ``step_offset`` and
+                ``cost_bin_s``, and the loop's ``min_iterations``, ``switch_tolerance`` (the
+                largest share of trips that would change chain beyond chance if everyone
+                reconsidered at the current costs, over the last three iterations, at which the
+                loop stops: 0.05 by default), ``found_tolerance`` (the largest share of trips for
+                which the route search may still find a chain cheaper than their best by more
+                than the band when the loop stops: 0.005 by default, uncalibrated) and
+                ``indifference_band`` (the relative cost difference,
+                0.01 by default and uncalibrated, below which two chains count as equal; the
+                deterministic choice splits the trips facing such a tie evenly over its chains,
+                in trip order, with no random draw, and the route search counts a new chain as
+                found only if it is cheaper than the trip's best by more than the band). The
+                fixed times of reaching and leaving the car must be given as 0
+                (``mode_options`` ``car_access_s`` and ``car_egress_s``). Anything else the
+                scenario asks for that it does not have (another mode, a timetable, parkings,
+                services, prices, disruptions, route sets, zones, a Python choice model, ...)
+                raises ``EngineNotSupportedError`` naming it; an option of ``"msa"`` that only
+                steers how the current engine measures its gaps or stops (``gap_tolerance``,
+                ``gap_sample``, ``gap_every``, ``itinerary_gap_sample``,
+                ``route_growth_tolerance``) is not applied, with a warning, and listed in
+                ``manifest.json`` (``options_not_applied``). The run writes
+                ``trip_results.parquet``, ``convergence.parquet`` (one row per iteration),
+                ``chains.parquet`` (every trip's choice set), ``link_bins.parquet`` (with
+                ``link_bin_s``), ``timings.csv``, ``manifest.json`` and ``run.toml``.
 
         Returns:
             A ``Run``: the results in memory, and the output files in ``output_dir``.
 
         Raises:
             FileExistsError: If ``output_dir`` already holds a run and ``overwrite`` is false.
+            EngineNotSupportedError: If ``engine`` does not have something the scenario asks
+                for.
         """
+        if engine not in ENGINES:
+            raise ValueError(f"engine must be one of {ENGINES}, got {engine!r}")
         if config is not None:
             call = {k: v for k, v in locals().items() if k not in ("self", "config")}
             from openmobisim.config import _run_with
@@ -1813,6 +2083,24 @@ class Scenario:
             raise ValueError(f"replication must be a whole number from 0, got {replication!r}")
         if outputs not in ("all", "minimal"):
             raise ValueError(f'outputs must be "all" or "minimal", got {outputs!r}')
+        if engine == "one-loop":
+            return self._run_one_loop(
+                run_id,
+                output_dir,
+                quiet=quiet,
+                arguments={
+                    "run_id": run_id,
+                    "hub_join_m": hub_join_m,
+                    "outputs": outputs,
+                    "threads": threads,
+                    "design_id": design_id,
+                    "replication": replication,
+                    "service_assumptions": service_assumptions,
+                    "policy": policy,
+                    "policy_options": policy_options,
+                    "engine": engine,
+                },
+            )
         summary = self._pipeline(
             run_id,
             output_dir,

@@ -34,6 +34,7 @@ use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_types::hash::Fnv1a;
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
 
+use crate::canonical::{node_key, route_order};
 use crate::search::{Extras, MAX_ROUTES_PER_SET, Route, Search, SearchContext};
 use crate::store::{RouteKey, RouteSets};
 
@@ -317,27 +318,32 @@ pub fn congestion_propensity(demand: &Demand<'_>) -> Vec<f32> {
     peak.iter().map(|&r| r.min(1.0) as f32).collect()
 }
 
-/// Sort routes by cost, then by their links, so the order is a function of the
-/// routes alone.
-fn sort_best_first(routes: &mut [Route]) {
-    routes
-        .sort_by(|a, b| a.cost.total_cmp(&b.cost).then_with(|| a.links.iter().cmp(b.links.iter())));
+/// Sort routes by cost, then, among equals, by the tie rule of [`crate::canonical`] (shorter,
+/// fewer links, the nodes' coordinates from the downstream end back), so the order is a
+/// function of the routes alone and not of the links' ids.
+fn sort_best_first(network: &RoadNetwork, routes: &mut [Route]) {
+    routes.sort_by(|a, b| {
+        a.cost.total_cmp(&b.cost).then_with(|| route_order(network, &a.links, &b.links))
+    });
 }
 
 /// Sort routes best first in the cost `search` judges them by ([`Search::judged`]): their time,
 /// as [`sort_best_first`], without extras.
 fn sort_judged(search: &Search<'_>, routes: &mut [Route]) {
+    let network = search.context().network;
     if search.has_extras() {
-        sort_best_first_by(routes, |r| search.generalised(&r.links));
+        sort_best_first_by(network, routes, |r| search.generalised(&r.links));
     } else {
-        sort_best_first(routes);
+        sort_best_first(network, routes);
     }
 }
 
-/// Sort routes by `cost(route)`, then by their links: [`sort_best_first`] in another cost.
-fn sort_best_first_by(routes: &mut [Route], cost: impl Fn(&Route) -> f64) {
+/// Sort routes by `cost(route)`, then by the tie rule: [`sort_best_first`] in another cost.
+fn sort_best_first_by(network: &RoadNetwork, routes: &mut [Route], cost: impl Fn(&Route) -> f64) {
     let mut keyed: Vec<(f64, Route)> = routes.iter().map(|r| (cost(r), r.clone())).collect();
-    keyed.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.links.iter().cmp(b.1.links.iter())));
+    keyed.sort_by(|a, b| {
+        a.0.total_cmp(&b.0).then_with(|| route_order(network, &a.1.links, &b.1.links))
+    });
     for (slot, (_, route)) in routes.iter_mut().zip(keyed) {
         *slot = route;
     }
@@ -836,9 +842,16 @@ impl MonteCarlo {
         self.bias.as_deref()
     }
 
-    /// The seed of one draw: a function of the pair, the draw and the method's `seed`.
-    fn draw_seed(&self, origin: NodeId, destination: NodeId, draw: usize) -> u64 {
-        (u64::from(origin.raw()) << 32 | u64::from(destination.raw()))
+    /// The seed of one draw: a function of the pair (its two nodes' keys, never their ids:
+    /// [`crate::canonical::node_key`]), the draw and the method's `seed`.
+    fn draw_seed(
+        &self,
+        network: &RoadNetwork,
+        origin: NodeId,
+        destination: NodeId,
+        draw: usize,
+    ) -> u64 {
+        (node_key(network, origin).rotate_left(32) ^ node_key(network, destination))
             .wrapping_mul(0x9E37_79B9_7F4A_7C15)
             ^ (draw as u64 + 1).wrapping_mul(0xD6E8_FEB8_6659_FD93)
             ^ self.seed.wrapping_mul(0xA24B_AED4_963E_E407)
@@ -876,7 +889,7 @@ impl RouteSetGenerator for MonteCarlo {
                 break;
             }
             search.set_noise(
-                self.draw_seed(origin, destination, draw),
+                self.draw_seed(search.context().network, origin, destination, draw),
                 self.sigma,
                 self.bias.clone(),
             );
@@ -1107,10 +1120,10 @@ impl Sampled {
         }
     }
 
-    /// The noise seed of one class and draw from one origin: a pure function of the three and
-    /// the method's `seed`.
-    fn seed_of(&self, origin: NodeId, class: usize, draw: usize) -> u64 {
-        (u64::from(origin.raw()) << 32 | (class as u64) << 8 | draw as u64)
+    /// The noise seed of one class and draw from one origin: a pure function of the three (the
+    /// origin by its key, never its id: [`crate::canonical::node_key`]) and the method's `seed`.
+    fn seed_of(&self, network: &RoadNetwork, origin: NodeId, class: usize, draw: usize) -> u64 {
+        (node_key(network, origin) ^ ((class as u64) << 8 | draw as u64))
             .wrapping_mul(0x9E37_79B9_7F4A_7C15)
             ^ self.seed.wrapping_mul(0xA24B_AED4_963E_E407)
     }
@@ -1231,7 +1244,11 @@ impl RouteSetGenerator for Sampled {
                 if draw == 0 {
                     search.clear_noise();
                 } else {
-                    search.set_noise(self.seed_of(origin, class, draw), self.sigma, None);
+                    search.set_noise(
+                        self.seed_of(ctx.network, origin, class, draw),
+                        self.sigma,
+                        None,
+                    );
                 }
                 // The bound is on the generalised cost; a route within the detour in time may
                 // carry up to `1 + max_ratio` times its time in generalised cost, so the bound
@@ -1287,8 +1304,10 @@ impl RouteSetGenerator for Sampled {
         let first = prepared.first().and_then(|row| row.first()).and_then(Option::as_ref);
         for set in &mut sets {
             match first {
-                None => sort_best_first(set),
-                Some(_) => sort_best_first_by(set, |r| generalised_route(ctx, first, &r.links)),
+                None => sort_best_first(ctx.network, set),
+                Some(_) => sort_best_first_by(ctx.network, set, |r| {
+                    generalised_route(ctx, first, &r.links)
+                }),
             }
         }
         sets
@@ -1401,7 +1420,7 @@ impl ByCost {
                 }
             }
         }
-        sort_best_first_by(&mut set, |r| generalised_route(ctx, first, &r.links));
+        sort_best_first_by(ctx.network, &mut set, |r| generalised_route(ctx, first, &r.links));
         set
     }
 }

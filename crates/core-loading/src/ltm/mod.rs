@@ -167,9 +167,13 @@
 //! earlier movement committed, the result is exact in continuous time: FIFO on
 //! every queue, spillback resolved to the second.
 //!
-//! Events are ordered by `(time, service tag, queue)` — a total order, so the
-//! result never depends on input order (the requirement, met by ordering;
-//! the event-queue convention). The **service tag** is weighted fair
+//! Events are ordered by their time and, at the same instant, by a rule that depends neither
+//! on the input order nor on the ids of links and nodes: the vehicles at links' downstream
+//! ends before departures, stop lines and the other events; among the first by their
+//! **service tag**, among the others by the instant each became due; then the vehicle that
+//! has waited longest (the earliest instant it reached the downstream end of its link, its
+//! origin or its stop line); then the lower vehicle id (the event queue's documentation). The
+//! **service tag** is weighted fair
 //! queueing's virtual finish time: an approach's tag advances by one saturation
 //! headway per vehicle it releases, and a queue that has just become
 //! backlogged starts from the link's **virtual time** — the largest tag released
@@ -181,6 +185,16 @@
 //! runs slower than the real one, and mixing them let the queue that had waited
 //! longest win merges regardless of capacity (K31). A vehicle that cannot
 //! move blocks everything behind it in its queue (the full blocking).
+//!
+//! **The clock.** Inside the loading, time is counted in seconds from its origin, the whole
+//! second of the window's start ([`LtmNetwork::starting_at`]; midnight unless set), and kept on
+//! a grid of 2⁻²⁰ s (about a microsecond): every free-flow time, control delay, backward-wave
+//! travel time and headway is rounded to the grid once, so every time the loading computes is
+//! a sum of numbers on the grid and exact. Two vehicles that reach a node at the same instant
+//! by different links reach it at the same number, and a run shifted by whole hours computes
+//! with the same numbers. What comes in (departures, chained releases, capacity changes) is
+//! converted once, and what goes out (trajectories, the per-link results, the reroutes, the
+//! clock) once, in seconds since midnight.
 //!
 //! The loading step is an output and bookkeeping boundary: nothing about
 //! a vehicle's timing depends on it. At each step's end every link forgets
@@ -232,7 +246,7 @@ use openmobisim_core_types::time::Second;
 use openmobisim_core_types::units::{Duration, Pcu};
 
 use crate::curves::{LinkCurves, ROOM_EPSILON};
-use crate::events::{Event, EventQueue};
+use crate::events::{Event, EventQueue, NO_VEHICLE, on_grid_up};
 use crate::level0::{LinkTraversal, Trajectory};
 use crate::link_bins::{EntryTables, LinkBinRecorder, LinkBins};
 use crate::vehicle::Vehicle;
@@ -434,8 +448,14 @@ pub struct LtmNetwork<'a> {
     /// Whether a departure waits for its first link's inflow headway
     /// ([`Self::with_origin_inflow`]).
     origin_inflow: bool,
+    /// The whole second of the day the loading's clock counts from (the window's start,
+    /// [`Self::starting_at`]): every time inside the loading is in seconds since it, every time
+    /// that comes in or goes out in seconds since midnight.
+    origin: f64,
+    /// The end of the last step, seconds since [`Self::origin`].
     now: f64,
-    /// The time of the movement being processed: nothing is scheduled before it.
+    /// The time of the movement being processed, seconds since [`Self::origin`]: nothing is
+    /// scheduled before it.
     clock: f64,
     links: usize,
 
@@ -444,6 +464,9 @@ pub struct LtmNetwork<'a> {
     stop_delay: Vec<f64>,
     discharge_rate: Vec<f64>,
     inflow_rate: Vec<f64>,
+    /// Per link, the discharge and inflow headways of one PCU on the time grid: the common
+    /// case of [`Self::discharge_headway`] and [`Self::inflow_headway`], kept with the rates.
+    headway_one: Vec<(f64, f64)>,
     storage: Vec<f64>,
     wave_lag: Vec<f64>,
 
@@ -540,23 +563,31 @@ impl<'a> LtmNetwork<'a> {
                 .max(f64::MIN_POSITIVE);
             let delay = params.control_delay.get().max(0.0);
             let free_flow = network.free_flow_time(link).get();
-            travel.push((free_flow - delay).max(0.0));
-            stop_delay.push(delay);
+            // On the time grid, so that every time the loading computes is exact (`events`).
+            travel.push(on_grid_up((free_flow - delay).max(0.0)));
+            stop_delay.push(on_grid_up(delay));
             discharge_rate.push(capacity * green);
             inflow_rate.push(capacity);
         }
+        let headway_one = discharge_rate
+            .iter()
+            .zip(&inflow_rate)
+            .map(|(&d, &i)| (on_grid_up(1.0 / d), on_grid_up(1.0 / i)))
+            .collect();
         let queues = 3 * n;
         let mut sim = Self {
             network,
             level: FidelityLevel::Full,
             node_inflow: false,
             origin_inflow: false,
+            origin: 0.0,
             now: 0.0,
             clock: 0.0,
             links: n,
             travel,
             stop_delay,
             discharge_rate,
+            headway_one,
             inflow_rate,
             storage: Vec::new(),
             wave_lag: Vec::new(),
@@ -578,7 +609,7 @@ impl<'a> LtmNetwork<'a> {
             pending_sorted: true,
             chains: None,
             priority_major: Vec::new(),
-            events: EventQueue::new(queues + 2 * n),
+            events: EventQueue::new(queues + 2 * n, n),
             rerouting: None,
             pockets: None,
             recorder: None,
@@ -633,19 +664,23 @@ impl<'a> LtmNetwork<'a> {
     /// free-flow lookup per vehicle still on the network, once per loading.
     pub fn record_unfinished(&mut self, end: f64) {
         let n = self.links;
+        let origin = self.origin;
+        let end_local = end - origin;
         let Some(recorder) = self.recorder.as_mut() else { return };
         for queue in 0..3 * n {
             let link = LinkId::from_index(queue % n);
             for q in &self.queues[queue] {
                 let pcu = self.vehicles[q.slot as usize].pcu.get();
+                let enter = origin + q.enter;
                 if queue < n || queue >= 2 * n {
                     // On the link, or at its stop line: still on it (X-38), for at least free
                     // flow (X-38a).
                     let free_flow = self.network.free_flow_time(link).get();
-                    recorder.record_unfinished(link, q.enter, end.max(q.enter + free_flow), pcu);
+                    let until = origin + end_local.max(q.enter + free_flow);
+                    recorder.record_unfinished(link, enter, until, pcu);
                 } else {
                     // Still waiting outside the network: `enter` is its departure.
-                    recorder.record_origin_wait(link, q.enter, end, pcu);
+                    recorder.record_origin_wait(link, enter, end, pcu);
                 }
             }
         }
@@ -760,18 +795,23 @@ impl<'a> LtmNetwork<'a> {
                 }
             };
             self.storage.push(storage);
-            self.wave_lag.push(lag);
+            self.wave_lag.push(on_grid_up(lag));
         }
     }
 
-    /// The loading clock: the end of the last step.
+    /// The loading clock: the end of the last step, in seconds since midnight.
     #[must_use]
     pub fn now(&self) -> Duration {
-        Duration(self.now)
+        Duration(self.origin + self.now)
     }
 
     /// The loading's clock started at `start` (the simulation window's start) rather
-    /// than midnight: the first step begins there. Call before any step.
+    /// than midnight: the first step begins there. Call before any vehicle is scheduled and
+    /// before any step.
+    ///
+    /// Inside the loading, time is counted from the whole second of `start` (every time that
+    /// comes in is converted once, every time that goes out once): a run shifted by whole hours
+    /// computes with the same numbers, so its results are the same, shifted.
     ///
     /// # Panics
     ///
@@ -779,12 +819,43 @@ impl<'a> LtmNetwork<'a> {
     #[must_use]
     pub fn starting_at(mut self, start: Duration) -> Self {
         assert!(start.get() >= 0.0 && start.is_finite(), "a start of {start:?}");
-        self.now = start.get();
-        self.clock = start.get();
+        self.origin = start.get().floor();
+        self.now = start.get() - self.origin;
+        self.clock = self.now;
         self
     }
 
-    /// One link's counts and recent exits, for tests and diagnostics.
+    /// A time of day (seconds since midnight) as the loading counts it: seconds since its
+    /// origin, on the time grid, never earlier than given.
+    pub(super) fn local(&self, seconds: f64) -> f64 {
+        on_grid_up(seconds) - self.origin
+    }
+
+    /// A time of the loading as a time of day, seconds since midnight. Exact for times on the
+    /// grid.
+    pub(super) fn of_day(&self, t: f64) -> f64 {
+        self.origin + t
+    }
+
+    /// The time a vehicle of `pcu` takes to pass link `i`'s downstream end (its discharge
+    /// headway), on the time grid.
+    #[allow(clippy::float_cmp, reason = "one PCU exactly, the stored case")]
+    #[inline]
+    pub(super) fn discharge_headway(&self, i: usize, pcu: f64) -> f64 {
+        if pcu == 1.0 { self.headway_one[i].0 } else { on_grid_up(pcu / self.discharge_rate[i]) }
+    }
+
+    /// The time a vehicle of `pcu` takes to enter link `j` (its inflow headway), on the time
+    /// grid.
+    #[allow(clippy::float_cmp, reason = "one PCU exactly, the stored case")]
+    #[inline]
+    pub(super) fn inflow_headway(&self, j: usize, pcu: f64) -> f64 {
+        if pcu == 1.0 { self.headway_one[j].1 } else { on_grid_up(pcu / self.inflow_rate[j]) }
+    }
+
+    /// One link's counts and recent exits, for tests and diagnostics. Its times are in seconds
+    /// since the loading's origin, the whole second of [`Self::starting_at`] (midnight unless
+    /// set).
     #[must_use]
     pub fn curve(&self, link: LinkId) -> &LinkCurves {
         &self.curves[link.index()]
@@ -902,8 +973,8 @@ impl<'a> LtmNetwork<'a> {
         let prev = &mut chains.next[after as usize];
         assert_eq!(*prev, NONE, "one vehicle is chained to another at most");
         *prev = slot;
-        chains.wait[slot as usize] = wait;
-        chains.not_before[slot as usize] = not_before;
+        chains.wait[slot as usize] = on_grid_up(wait);
+        chains.not_before[slot as usize] = on_grid_up(not_before);
         chains.start[slot as usize] = f64::NAN;
         slot
     }
@@ -1066,7 +1137,7 @@ impl<'a> LtmNetwork<'a> {
         match self.place(queue) {
             Place::Link(i) => {
                 let vehicle = self.vehicles[front.slot as usize];
-                let headway = vehicle.pcu.get() / self.discharge_rate[i];
+                let headway = self.discharge_headway(i, vehicle.pcu.get());
                 // When it can move: it has reached the end, its approach's
                 // headway has passed, and the step has begun. Real seconds.
                 let ready = front.ready.max(self.curves[i].last_exit().get() + headway).max(t0);
@@ -1094,8 +1165,14 @@ impl<'a> LtmNetwork<'a> {
     /// Schedule a queue's front vehicle, no earlier than `not_before`.
     fn schedule_front(&mut self, queue: usize, t0: f64, not_before: f64) {
         if let Some((ready, tag)) = self.front_due(queue, t0) {
-            let event =
-                Event { time: ready.max(not_before).max(self.clock), tag, queue: queue_u32(queue) };
+            let front = self.queues[queue].front().expect("front_due found one");
+            let event = Event {
+                time: ready.max(not_before).max(self.clock),
+                tag,
+                waited_from: front.ready,
+                vehicle: self.vehicles[front.slot as usize].id.raw(),
+                queue: queue_u32(queue),
+            };
             if queue < self.links && self.pocket(queue) > 0.0 {
                 // A queue with turn pockets may wait for several things at once (S217): the
                 // earliest look wins, and a look finds everything that can move.
@@ -1116,7 +1193,17 @@ impl<'a> LtmNetwork<'a> {
         }
         self.heard_due[l] = at;
         let queue = 3 * self.links + l;
-        self.events.schedule(Event { time: at, tag: at, queue: queue_u32(queue) });
+        // The vehicle straddling the link's upstream end, which the room is for first.
+        let straddler = self.straddling_in[l];
+        let vehicle =
+            if straddler == NONE { NO_VEHICLE } else { self.vehicles[straddler as usize].id.raw() };
+        self.events.schedule(Event {
+            time: at,
+            tag: at,
+            waited_from: at,
+            vehicle,
+            queue: queue_u32(queue),
+        });
     }
 
     fn process(&mut self, event: Event, t0: f64, completed: &mut Vec<Trajectory>) {
@@ -1208,7 +1295,8 @@ impl<'a> LtmNetwork<'a> {
                 }
                 self.pop_front(queue, t0);
                 self.record_link_bins(i, front.slot, front.enter, t);
-                self.traversals[front.slot as usize].push(traversal(i, front.enter, t));
+                let crossed = self.traversal(i, front.enter, t);
+                self.traversals[front.slot as usize].push(crossed);
                 if next.is_some() {
                     self.enter_from_outside(front.slot, next_leg, t, room, true, t0);
                 } else {
@@ -1234,7 +1322,7 @@ impl<'a> LtmNetwork<'a> {
     /// Whether link `j`'s inflow headway holds back a vehicle of `pcu` at `t`, wherever it
     /// comes from; if so, the queue is rescheduled for when it will not.
     fn headway_blocks(&mut self, j: usize, pcu: f64, queue: usize, t: f64, t0: f64) -> bool {
-        let clear = self.curves[j].last_entry().get() + pcu / self.inflow_rate[j];
+        let clear = self.curves[j].last_entry().get() + self.inflow_headway(j, pcu);
         if clear > t + TIME_EPSILON {
             self.schedule_front(queue, t0, clear);
             true
@@ -1284,7 +1372,8 @@ impl<'a> LtmNetwork<'a> {
             self.join(2 * self.links + i, waiting, t0);
         } else {
             self.record_link_bins(i, slot, front.enter, t);
-            self.traversals[slot as usize].push(traversal(i, front.enter, t));
+            let crossed = self.traversal(i, front.enter, t);
+            self.traversals[slot as usize].push(crossed);
             if next_leg < route_len {
                 self.enter_from_link(slot, next_leg, t, room, t0);
             } else {
@@ -1340,7 +1429,8 @@ impl<'a> LtmNetwork<'a> {
             // setting out then (S170).
             let departure = self.departure_of(slot);
             if let Some(recorder) = self.recorder.as_mut() {
-                recorder.record_origin_wait(LinkId::from_index(j), departure, t, pcu);
+                let (from, until) = (self.origin + departure, self.origin + t);
+                recorder.record_origin_wait(LinkId::from_index(j), from, until, pcu);
             }
         }
         let take = Self::part_taken(room, pcu);
@@ -1472,9 +1562,10 @@ impl<'a> LtmNetwork<'a> {
     /// File a finished link traversal in the per-bin results, if asked for.
     #[inline]
     fn record_link_bins(&mut self, link: usize, slot: u32, enter: f64, exit: f64) {
+        let origin = self.origin;
         if let Some(recorder) = self.recorder.as_mut() {
             let pcu = self.vehicles[slot as usize].pcu.get();
-            recorder.record(LinkId::from_index(link), enter, exit, pcu);
+            recorder.record(LinkId::from_index(link), origin + enter, origin + exit, pcu);
         }
     }
 
@@ -1501,7 +1592,7 @@ impl<'a> LtmNetwork<'a> {
         if next != NONE {
             let c = self.chains.as_mut().expect("chained");
             let n = next as usize;
-            c.start[n] = (t + c.wait[n]).max(c.not_before[n]);
+            c.start[n] = (self.origin + t + c.wait[n]).max(c.not_before[n]);
             let at =
                 self.pending.partition_point(|&p| self.pending_order(p, next) == Ordering::Less);
             self.pending.insert(at, next);
@@ -1606,6 +1697,16 @@ impl<'a> LtmNetwork<'a> {
         }
     }
 
+    /// A traversal of link `link` from `enter` to `exit` (seconds since the origin), in whole
+    /// seconds of the day.
+    fn traversal(&self, link: usize, enter: f64, exit: f64) -> LinkTraversal {
+        LinkTraversal {
+            link: LinkId::from_index(link),
+            enter: floor_to_second(self.of_day(enter)),
+            exit: floor_to_second(self.of_day(exit)),
+        }
+    }
+
     /// Room has been heard on link `l`, or its upstream end has cleared:
     /// reschedule everything parked on it, no earlier than `at`.
     fn wake(&mut self, l: usize, at: f64, t0: f64) {
@@ -1628,14 +1729,6 @@ impl<'a> LtmNetwork<'a> {
             let owner = p.owner[m] as usize;
             self.schedule_front(owner, t0, at);
         }
-    }
-}
-
-fn traversal(link: usize, enter: f64, exit: f64) -> LinkTraversal {
-    LinkTraversal {
-        link: LinkId::from_index(link),
-        enter: floor_to_second(enter),
-        exit: floor_to_second(exit),
     }
 }
 
@@ -1937,8 +2030,8 @@ mod tests {
 
     /// Size check: the event queue holds about one of these per busy link.
     #[test]
-    fn an_event_is_24_bytes() {
-        assert_eq!(std::mem::size_of::<Event>(), 24);
+    fn an_event_is_32_bytes() {
+        assert_eq!(std::mem::size_of::<Event>(), 32);
     }
 
     #[test]

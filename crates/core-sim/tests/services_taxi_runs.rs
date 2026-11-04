@@ -394,10 +394,13 @@ fn the_events_add_up_to_the_trips_and_the_vehicles() {
     let len = 86_400.0 / f64::from(openmobisim_core_sim::services::outcome::FLEET_BIN_S);
     let total: f64 = vehicles.seconds.iter().flatten().sum();
     assert!((total - 2.0 * 86_400.0).abs() < 1e-6, "{total}, {len} bins");
-    assert_eq!(day.day.requests.len(), 12);
+    // Each traveller chooses between the walk and the taxi by a logit draw, so how many of the
+    // twelve ask is the draws' (S312: 11 since the draws are keyed on the streets, not their
+    // ids); every request is one of the trip rows.
+    assert_eq!(day.day.requests.len(), trip_rows.len());
     // The summary in a dispatcher's words adds up and agrees with the trip rows.
     let sm = day.summary;
-    assert_eq!(sm.requests, 12.0);
+    assert_eq!(sm.requests, trip_rows.len() as f64);
     assert_eq!(sm.rides + sm.cancelled + sm.unfinished, sm.requests);
     assert_eq!(sm.rides, carried);
     let waits: Vec<f64> = trip_rows

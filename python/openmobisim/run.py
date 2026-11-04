@@ -223,6 +223,151 @@ class _Files:
         )
 
 
+class _OneLoopSummary:
+    """A run of the one-loop engine (``Scenario.run(engine="one-loop")``), for ``Run``.
+
+    In place of the core's summary: what the engine returned, or, read back by ``Run.open``,
+    what its files hold. It gives the summary's names this engine has; anything else raises,
+    naming what is missing.
+    """
+
+    engine = "one-loop"
+
+    def __init__(self, result: Mapping[str, Any], manifest_path: str) -> None:
+        self._result = dict(result)
+        self.manifest_path = manifest_path
+        self._manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+        r = self._result
+        self.fingerprint = r["fingerprint"]
+        self.master_seed = int(r["master_seed"])
+        self.choice_model = r["choice_model"]
+        self.equilibration = self._manifest.get("equilibration", "msa")
+        self.route_update = "none"
+        self.converged = bool(r["converged"])
+        self.convergence = dict(r["convergence"])
+        self.trip_results = dict(r["trip_results"])
+        for key in (
+            "total_trips",
+            "completed",
+            "truncated",
+            "no_vehicle_available",
+            "no_feasible_path",
+            "mode_not_available",
+        ):
+            setattr(self, key, int(r[key]))
+        self.cancelled = None
+        self.total_travel_time_s = float(r["total_travel_time_s"])
+        self.total_vehicle_time_s = self.total_travel_time_s
+        self.completed_people = float(r["completed_people"])
+        self.completion_by_mode = (
+            {
+                "car": {
+                    **{k: getattr(self, k) for k in _FILE_COMPLETION},
+                    "total_travel_time_s": self.total_travel_time_s,
+                    "people": float(r["people"]),
+                    "completed_people": self.completed_people,
+                }
+            }
+            if self.total_trips
+            else {}
+        )
+        self.link_bins = r.get("link_bins")
+        self.bike_link_bins = self.walk_link_bins = None
+        self.link_bins_path = r.get("link_bins_path")
+        self.link_bins_bike_path = self.link_bins_walk_path = None
+        self.trip_results_path = r.get("trip_results_path")
+        self.convergence_path = r.get("convergence_path")
+        self.chains_path = r.get("chains_path")
+        self.timings_path = r.get("timings_path")
+        self.timings = [(stage, it, float(sec)) for stage, it, sec in r.get("timings", [])]
+        self.window = dict(r["window"])
+        self.gap_currency = "utility"
+        self.route_changes = {"trip": [], "second": [], "link": []}
+        self.route_realised = {"trip": [], "links": []}
+        self.itinerary_choices = None
+        self.no_alternative = {"fallback_car": []}
+        keys = ("traveller_id", "trip_seq", "departure_s", "mode", "mode_choice", "weight")
+        self.trip_modes = {k: self.trip_results[k] for k in keys}
+        if "route_sets" in r:
+            self.route_sets = r["route_sets"]
+            self.route_choices = r["route_choices"]
+
+    @classmethod
+    def from_folder(cls, folder: Path) -> _OneLoopSummary:
+        """A finished run of this engine, from its files (needs pyarrow)."""
+        import pyarrow.parquet as pq
+
+        manifest = folder / "manifest.json"
+        m = json.loads(manifest.read_text(encoding="utf-8"))
+
+        def columns(name: str) -> dict[str, Any]:
+            t = pq.read_table(folder / name)
+            out: dict[str, Any] = {}
+            for c in t.column_names:
+                if c == "run_id":
+                    continue
+                column = t.column(c)
+                if pa_text(column.type):
+                    out[c] = column.to_pylist()
+                else:
+                    out[c] = column.to_numpy(zero_copy_only=False)
+            return out
+
+        def pa_text(kind: Any) -> bool:
+            import pyarrow as pa
+
+            return bool(pa.types.is_string(kind) or pa.types.is_boolean(kind))
+
+        trips = columns("trip_results.parquet")
+        for c in ("arrival_s", "travel_time_s", "link_at_end", "vehicle_s", "access_egress_s"):
+            trips[c] = np.asarray(trips[c], dtype=float)
+        convergence = columns("convergence.parquet")
+        outcome = list(trips["outcome"])
+        weight = np.asarray(trips["weight"], dtype=float)
+        travel = np.asarray(trips["travel_time_s"], dtype=float)
+        done = ~np.isnan(travel)
+        timings: list[tuple[str, int | None, float]] = []
+        if (folder / "timings.csv").exists():
+            with open(folder / "timings.csv", newline="") as f:
+                rows = list(csv.reader(f))[1:]
+            timings = [(st, int(it) if it else None, float(sec)) for st, it, sec in rows]
+        link_bins = folder / "link_bins.parquet"
+        result = {
+            "fingerprint": m["run_fingerprint"],
+            "master_seed": m["master_seed"],
+            "choice_model": m["choice_model"],
+            "converged": m["converged"],
+            "convergence": convergence,
+            "trip_results": trips,
+            "total_trips": len(outcome),
+            "completed": outcome.count("completed"),
+            "truncated": outcome.count("truncated"),
+            "no_vehicle_available": outcome.count("no_vehicle_available"),
+            "no_feasible_path": outcome.count("no_feasible_path"),
+            "mode_not_available": 0,
+            "total_travel_time_s": float((weight[done] * travel[done]).sum()),
+            "people": float(weight.sum()),
+            "completed_people": float(weight[done].sum()),
+            "link_bins_path": str(link_bins) if link_bins.exists() else None,
+            "trip_results_path": str(folder / "trip_results.parquet"),
+            "convergence_path": str(folder / "convergence.parquet"),
+            "chains_path": str(folder / "chains.parquet"),
+            "timings_path": str(folder / "timings.csv"),
+            "timings": timings,
+            "window": m["window"],
+        }
+        return cls(result, str(manifest))
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("__"):
+            raise AttributeError(name)
+        raise RuntimeError(
+            f"a run of the one-loop engine has no {name!r} (its results are the trips, the "
+            "convergence table, the chains, the route sets and choices, the link bins and the "
+            'timings); run the scenario with engine="current" for it'
+        )
+
+
 class Run:
     """What one run produced."""
 
@@ -285,6 +430,19 @@ class Run:
         Raises:
             FileNotFoundError: If the folder holds no ``manifest.json``.
         """
+        manifest = Path(folder) / "manifest.json"
+        if manifest.exists():
+            engine = json.loads(manifest.read_text(encoding="utf-8")).get("engine")
+            if engine == "one-loop":
+                summary = _OneLoopSummary.from_folder(Path(folder))
+                one = cls(
+                    summary,  # in place of the core's summary
+                    run_id=Path(folder).name,
+                    flow_level=int(summary._manifest.get("flow_level", 0)),
+                    flow_step_s=int(summary._manifest.get("flow_step_seconds") or 300),
+                )
+                one.run_id = summary._manifest.get("run_id", one.run_id)
+                return one
         files = _Files(Path(folder))
         m = files._manifest
         run = cls(
@@ -413,8 +571,39 @@ class Run:
         return self._summary.route_update
 
     @property
+    def engine(self) -> str:
+        """The engine the run ran on: ``"current"`` or ``"one-loop"`` (``Scenario.run``)."""
+        return "one-loop" if isinstance(self._summary, _OneLoopSummary) else "current"
+
+    def chains(self) -> Columns:
+        """Every chain of every trip's choice set, one row each (the one-loop engine only).
+
+        Columns: ``trip`` (its index in the run), ``chain`` (its place in the trip's set, in the
+        order found), ``taken`` (the chain the trip took in the last iteration), ``probability``
+        (what the choice model gave it at the trip's last choice), ``cost`` (its cost in utility
+        units, minus the systematic utility of the trip's user class) and ``travel_time_s`` at
+        the link travel times of the last loading, and ``links`` (its road links, in driving
+        order). Read from ``chains.parquet``; needs pyarrow.
+        """
+        if self.engine != "one-loop":
+            raise RuntimeError('chains() is the one-loop engine\'s: run with engine="one-loop"')
+        import pyarrow.parquet as pq
+
+        t = pq.read_table(self._summary.chains_path)
+        out: dict[str, Any] = {}
+        for c in t.column_names:
+            if c == "links":
+                out[c] = [np.asarray(x, dtype=np.uint32) for x in t.column(c).to_pylist()]
+            else:
+                out[c] = t.column(c).to_numpy(zero_copy_only=False)
+        return Columns(out)
+
+    @property
     def converged(self) -> bool:
         """Whether the run met its stopping rule by its last loading.
+
+        On the one-loop engine: whether its stopping rule stopped the loop before the most
+        iterations (``convergence()`` has fewer rows than ``max_iterations``).
 
         Under ``"msa"`` and ``"sra"``: the disequilibrium, averaged over the last three
         iterations, under ``gap_tolerance`` with the route sets no longer growing, whether that
@@ -443,6 +632,8 @@ class Run:
         ``convergence_verdict``.
         """
         c = self._summary.convergence
+        if self.engine == "one-loop":
+            return float(c["gap_deterministic"][-1]) if len(c["gap_deterministic"]) else math.nan
         values = []
         for excess, plain in (("gap_excess", "gap"), ("gap_network_excess", "gap_network")):
             value = float(c[excess][-1])
@@ -464,7 +655,12 @@ class Run:
         **``"poor"`` whatever the gap when more than 5 % of the trips did not finish**
         (``unfinished_share``): the gap is measured over the trips that finished, so a jammed
         run's few finishers can read as settled while most of its traffic is still on the road.
+
+        ``None`` on the one-loop engine, which judges nothing: its ``convergence()`` gives the
+        measures.
         """
+        if self.engine == "one-loop":
+            return None
         gap = self.convergence_gap
         if gap != gap:  # nan
             return None
@@ -486,7 +682,41 @@ class Run:
         """What each iteration showed: how far the run is from an equilibrium.
 
         NumPy arrays, one entry per iteration (a ``"free_flow"`` run has one).
-        ``nan`` marks a number that was not measured. The result of the run
+        ``nan`` marks a number that was not measured. **On the one-loop engine** the columns
+        are its own, every share weighted by the people a trip stands for and every cost in
+        utility units (minus the systematic utility of the trip's user class), read on the link
+        travel times the iteration's loading produced: ``iteration``; ``found`` and
+        ``found_share`` (the trips the route search found a chain for that was not yet in their
+        choice set and is cheaper than the cheapest chain of the set by more than the
+        indifference band, ``indifference_band``: how many, and their share; the stopping
+        rule reads the share); ``added`` and ``added_share`` (the trips that had a chain added
+        to their set, within the band or beyond it); ``switch_share`` (the share of trips whose
+        chain after the choice differs from the one before) and ``switch_floor`` (what it would
+        be by the choice model's randomness alone at a stationary state; under the
+        deterministic choice, the chance that the even split moves a trip facing a tie within
+        the band to another of the tied chains) and ``switch_excess``
+        (of the trips that reconsidered, the share that moved beyond that chance: a noisy
+        estimate, reported only), ``switch_excess_expected`` (before the choice, the share of
+        all trips that would change chain beyond the stationary chance if everyone
+        reconsidered, ``Σ w (Σ P² − P of the chain held) / Σ w``: 0 at a stationary state, the
+        stopping rule's stability measure; the loop stops when its mean over the last three
+        iterations is in absolute value at most ``switch_tolerance``, 0.05 by default) and
+        ``switch_above_floor``
+        (``switch_share − switch_floor``: the share of all trips that changed chain beyond
+        chance, reported only); ``departed``,
+        ``arrived``, ``unfinished`` (people) and ``unfinished_share``; ``without_chain``
+        (people whose trip had no chain: no car, or no route); ``gap`` (the relative duality
+        gap within the choice sets, ``(Σ w·paid − Σ w·least) / Σ w·least``, paid the cost of the
+        chain taken and least the least cost in the set); ``gap_deterministic`` (the
+        deterministic part of the duality gap, ``(Σ w·paid − Σ w·expected) / Σ w·least``,
+        expected the cost the choice model expects over the set: the gap less the part the
+        model's own dispersion produces; equal to ``gap`` under the deterministic choice);
+        ``spread`` (the share of trips on a chain of least cost in their set); ``mean_trip_s``
+        (the mean travel time of the trips that arrived, in seconds); and each stage's
+        wall-clock seconds, ``search_s``, ``choose_s``, ``load_s``, ``measure_s`` and
+        ``assess_s``. It has no verdict. The columns below are the current engine's.
+
+        The result of the run
         (``completion``, ``total_travel_time_s``, ``link_bins()``, ``route_choices()``)
         is that of the **last** iteration; with disruptions travellers did not know of, it is
         that of the one more loading made with them, which no row here describes.
@@ -2347,7 +2577,7 @@ class Run:
         For a run read back, ``kpis.parquet``'s ``"all"`` row: a mode a service serves has no
         ``completed_people`` row of its own.
         """
-        if isinstance(self._summary, _Files):
+        if isinstance(self._summary, _Files | _OneLoopSummary):
             return self._summary.completed_people
         return sum(row["completed_people"] for row in self.completion_by_mode.values())
 

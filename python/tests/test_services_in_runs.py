@@ -161,9 +161,23 @@ def test_the_docks_assumed_extra_walks_are_seconds_and_service_actual_gives_the_
     import numpy as np
 
     net = grid()
-    # Two bikes a dock for thirty trips of 2.2 km (walking is an alternative): most find a and b
-    # empty and walk on or find no bike at all.
-    bikes = ms.service_bike_docked(docks(net, bikes=2))
+    # Thirty trips of 2.2 km (walking is an alternative) from a dock with one bike (a), 200 m from
+    # one with six (b): once a is empty, a traveller who planned on it walks on to b, so some
+    # rides cost an extra walk at the pickup whatever the draws (S312: with two bikes at each,
+    # whether anyone walked on was the draws'; three seeds of six gave none). Most of the thirty
+    # find no bike at all.
+    places = {
+        "a": ((0, 0), 1),
+        "b": ((0, 1), 6),
+        "y": ((9, 8), 2),
+        "z": ((9, 9), 2),
+        "m": ((5, 5), 2),
+    }
+    table = [
+        {"dock_id": k, "lon": at(net, *p)[0], "lat": at(net, *p)[1], "capacity": 8, "bikes": n}
+        for k, (p, n) in places.items()
+    ]
+    bikes = ms.service_bike_docked(ms.dock_read_table(table))
     rows = trips(net, 30, (0, 0), (5, 6))
     prices = {"bike_share_eur_per_ride": 0.5}
     s = scenario(net, rows, services=[bikes], choice_model="logit", price_options=prices)

@@ -108,7 +108,8 @@ def test_reroutes_are_recorded_and_realised_routes_turn_where_recorded() -> None
         rows = [i for i, t in enumerate(ch["trip"].tolist()) if t == trip]
         last = rows[-1]
         at, taken = int(ch["link"][last]), int(ch["next_taken"][last])
-        assert taken in links and links[links.index(taken) - 1] == at
+        # (A vehicle that re-routes on a jammed grid may pass a link twice: any passage counts.)
+        assert any(b == taken and a == at for a, b in zip(links, links[1:], strict=False))
     again = jammed(loading_options={"reroute": 1, "reroute_after_s": 60})
     assert np.array_equal(again.route_changes()["trip"], ch["trip"]), "deterministic"
     assert run.convergence()["reroutes"].tolist() == [n]
