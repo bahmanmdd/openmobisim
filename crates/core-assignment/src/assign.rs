@@ -42,12 +42,18 @@
 //! **Bike and walking trips** (a trip whose mode is given as the bike or walking) take part in
 //! every stage as trips with a choice set of one chain: the search offers their one chain once,
 //! the choice keeps them on it, the measure stage re-prices it to the same numbers, and the
-//! assessment counts them. **The stopping shares leave them out**: the found and added shares,
+//! assessment counts them. With sampled bike route sets ([`Params::bike_routes`]) a bike trip's
+//! set holds one chain per route of its pair, all offered at the first search: the choice
+//! chooses among them in iteration 0 and the averaging rule lets the trip choose again later,
+//! always on the same static costs, so its choice probabilities never change and its switching
+//! is chance alone. **The stopping shares leave them out**: the found and added shares,
 //! the switch share, its floor and both its excesses are over the trips that could change their
 //! choice ([`IterationReport::choosing`]: car trips and trips choosing their mode), so adding
 //! such trips to a run changes neither its shares nor the iteration at which it stops, to the
-//! bit. The duality gap, its deterministic part and the spread leave them out too (each would
-//! pay exactly its set's least cost and only lower them). They count among the departed, arrived
+//! bit. The duality gap, its deterministic part and the spread leave them out too (a trip of one
+//! chain would pay exactly its set's least cost and only lower them; a stated bike trip of a
+//! sampled set pays what the choice model's spread over static costs gives, which no iteration
+//! changes). They count among the departed, arrived
 //! or unfinished trips and in the mean trip time, their trip ending at its departure plus its
 //! leg's time (access, ride and egress for a bike).
 //!
@@ -87,6 +93,7 @@ use openmobisim_core_demand::{Travellers, Trips};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{LinkTimesReading, Vehicle};
+use openmobisim_core_routes::{RouteKey, RouteSets};
 use openmobisim_core_types::ids::{EntityId, LinkId, TripId, VehicleId};
 use openmobisim_core_types::rng::{RngKey, Stream, StreamRng};
 use openmobisim_core_types::time::Second;
@@ -100,7 +107,7 @@ use crate::chain::{Chain, FixedTimes};
 use crate::chooser::{self, Demand, LinkLengths, PathSizes, Switching, mode_slot};
 use crate::error::AssignError;
 use crate::hooks::StageHook;
-use crate::layer_planner::{Layers, StaticPlanner};
+use crate::layer_planner::{BikeRoutes, Layers, StaticPlanner};
 use crate::loader::{Loaded, Loader};
 use crate::modes::{ClassModes, TripModes};
 use crate::parallel;
@@ -182,6 +189,9 @@ pub struct Params {
     /// How a bike leg's route is chosen on the bike layer (default [`BikeCost::Utility`]: the
     /// class's own cost of the ride; see [`crate::layer_planner`]).
     pub bike_cost: BikeCost,
+    /// Whether a bike leg has one route per pair or a sampled set of routes (default
+    /// [`BikeRoutes::Shortest`]: one route; see [`crate::layer_planner`]).
+    pub bike_routes: BikeRoutes,
     /// How the measured link travel times are read by the searches and the pricing (default
     /// [`LinkTimesReading::Bins`]: each bin's time; [`LinkTimesReading::Fifo`] keeps
     /// first-in-first-out between bins, see [`openmobisim_core_loading::link_times`]).
@@ -203,6 +213,7 @@ impl Default for Params {
             car_fixed_times: FixedTimes::NONE,
             bike_fixed_times: FixedTimes::NONE,
             bike_cost: BikeCost::Utility,
+            bike_routes: BikeRoutes::Shortest,
             link_times: LinkTimesReading::Bins,
         }
     }
@@ -548,7 +559,8 @@ fn assess_stage(
     for (&trip, term) in situations.iter().zip(terms) {
         let Some((taken, low, mean)) = term else { continue };
         // The gaps and the spread are over the trips that could change their choice, as the
-        // stopping shares are: a trip of one chain pays its least cost and would only lower them.
+        // stopping shares are: a stated bike or walking trip's costs are static (see the module
+        // docs).
         if !demand.could_change(trip) {
             continue;
         }
@@ -656,6 +668,7 @@ fn chain_search<'a>(inputs: &Inputs<'a>, params: &Params) -> Result<ChainSearch<
             params.bike_cost,
             inputs.network.defaults().layers,
             params.bike_fixed_times,
+            params.bike_routes,
         )?),
         None => None,
     };
@@ -888,6 +901,44 @@ pub fn left_out(
         }
     }
     Ok(out)
+}
+
+/// The bike route sets of a run of `inputs` and `params` with sampled bike route sets
+/// ([`BikeRoutes::Sampled`]): one set per pair of the ends, snapped to the bike layer, of the
+/// trips that may ride, each set best first, as the run made them (they are static, so they are
+/// made again here exactly); `None` for a run of one route per pair or without a bike layer.
+///
+/// # Errors
+///
+/// The errors of [`assign`] for inputs that do not fit together.
+pub fn bike_route_sets(
+    inputs: &Inputs<'_>,
+    params: &Params,
+) -> Result<Option<RouteSets>, AssignError> {
+    let Some(layer) = inputs.layers.bike else { return Ok(None) };
+    if params.bike_routes == BikeRoutes::Shortest {
+        return Ok(None);
+    }
+    let state = State::initial(inputs.network, inputs.travellers, inputs.trips);
+    check(inputs, &state, params)?;
+    let planner = StaticPlanner::bike(
+        layer,
+        inputs.classes,
+        params.bike_cost,
+        inputs.network.defaults().layers,
+        params.bike_fixed_times,
+        params.bike_routes,
+    )?;
+    let modes = crate::modes::trip_modes(inputs.travellers, inputs.trips, inputs.mode_choice);
+    let keys: Vec<RouteKey> = (0..inputs.trips.len())
+        .map(TripId::new)
+        .filter(|t| modes[t.index()].allows(Mode::Bike))
+        .map(|t| {
+            let at = |p| planner.place(p).node();
+            RouteKey::new(at(inputs.trips.origin(t)), at(inputs.trips.destination(t)))
+        })
+        .collect();
+    Ok(planner.route_sets(&keys))
 }
 
 fn demand<'a>(inputs: &Inputs<'a>, search: &'a ChainSearch<'_>) -> Demand<'a> {

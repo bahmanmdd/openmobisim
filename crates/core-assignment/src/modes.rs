@@ -10,7 +10,8 @@
 //!
 //! **Mode choice is a choice set whose chains have different modes**, nothing else: the chooser
 //! sees one set per trip, its car chains (the chain search adds one per iteration, as for any
-//! car trip) beside its bike chain and its walking chain (each planned once, at iteration 0, on
+//! car trip) beside its bike chain (one per route of its pair with sampled bike route sets,
+//! [`crate::BikeRoutes`]) and its walking chain (each planned once, at iteration 0, on
 //! its layer at its static speeds), every chain priced in the one vocabulary of attributes and
 //! weighed by the class's coefficients, the mode's constant among them
 //! ([`crate::Coefficients::chain_cost`]). Under the nested logit each mode is a nest
@@ -143,9 +144,10 @@ impl TripModes {
         matches!(self, Self::Choice(_))
     }
 
-    /// Whether the trip could change its choice from one iteration to the next: a car trip
-    /// (its route) or a trip choosing its mode. A trip of a stated bike or walking mode has one
-    /// chain, planned once, and never changes it.
+    /// Whether the trip could change its choice in response to the iterations: a car trip (its
+    /// route) or a trip choosing its mode. A trip of a stated bike or walking mode has its chains
+    /// planned once on static costs (one chain, or with sampled bike route sets one per route of
+    /// its pair): its choice probabilities never change, so any switch it makes is chance alone.
     #[must_use]
     pub fn could_change(&self) -> bool {
         !matches!(self, Self::Stated(Mode::Bike | Mode::Walk))

@@ -42,7 +42,7 @@
 //! | [`chain`] | [`Place`], [`Leg`] with its [`FixedTimes`], [`Chain`] with its identity across iterations |
 //! | [`state`] | [`State`], the value carried between iterations; [`TripState`] |
 //! | [`planner`] | the [`LegPlanner`] contract, the [`CarPlanner`], the [`CostSource`] |
-//! | [`layer_planner`] | the bike and walk [`Layers`] and their [`StaticPlanner`] |
+//! | [`layer_planner`] | the bike and walk [`Layers`] and their [`StaticPlanner`]; [`BikeRoutes`], one bike route per pair or a sampled set ([`SampledRoutes`]) |
 //! | [`modes`] | which modes a trip's chains may have: [`TripModes`], what mode choice offers a class ([`ClassModes`]) |
 //! | [`search`] | the [`ChainSearch`] and the one feasibility rule, [`feasible`] |
 //! | [`chooser`] | what the choice model is handed, [`HighestUtility`], [`logit`], the averaging rule |
@@ -50,7 +50,7 @@
 //! | [`loader`] | the [`Loader`] contract, [`Loaded`], level 0 [`FreeFlow`], level 2 [`PointQueue`] |
 //! | [`hooks`] | [`StageHook`], code run at fixed points of the loop, and [`NoHooks`] |
 //! | [`report`] | [`IterationReport`], the convergence measures of one iteration, overall and by mode ([`PerMode`]) |
-//! | [`mod@assign`] | [`assign()`], its [`Inputs`] and [`Params`], the five stages; [`restore`], a state rebuilt from what a run wrote ([`SavedTrip`]); [`left_out()`], the modes left out of the sets of trips choosing their mode ([`LeftOut`]) |
+//! | [`mod@assign`] | [`assign()`], its [`Inputs`] and [`Params`], the five stages; [`restore`], a state rebuilt from what a run wrote ([`SavedTrip`]); [`left_out()`], the modes left out of the sets of trips choosing their mode ([`LeftOut`]); [`bike_route_sets()`], the sampled bike route sets a run made |
 //! | [`error`] | [`AssignError`] |
 //!
 //! # What exists so far
@@ -64,7 +64,10 @@
 //! given**, one leg each on their own layer ([`Inputs::layers`], [`StaticPlanner`]): the route of
 //! least cost on the layer at its static speeds, planned once, a bike leg with its fixed times
 //! ([`Params::bike_fixed_times`]); they load nothing on the road network, so their chain never
-//! changes and they never switch. **Trips choosing their mode** among the car, the bike and
+//! changes and they never switch. With **sampled bike route sets** ([`Params::bike_routes`],
+//! [`BikeRoutes::Sampled`]) a bike leg has a set of routes per pair, made once by `core-routes`'
+//! doubly stochastic generator, each route a chain of the trip's set, and the choice model
+//! chooses among them with the path-size term. **Trips choosing their mode** among the car, the bike and
 //! walking ([`Inputs::mode_choice`], [`modes`]): their choice set holds their car chains beside
 //! their bike and walking chains, and the one chooser chooses among them (the nested logit puts
 //! each mode in a nest of its own). A further mode is a further [`LegPlanner`], a further loading
@@ -98,13 +101,13 @@ pub mod report;
 pub mod search;
 pub mod state;
 
-pub use assign::{Inputs, LeftOut, Params, SavedTrip, assign, left_out, restore};
+pub use assign::{Inputs, LeftOut, Params, SavedTrip, assign, bike_route_sets, left_out, restore};
 pub use attributes::{Attributes, Coefficients};
 pub use chain::{Chain, FixedTimes, Leg, Place};
 pub use chooser::{HighestUtility, logit, rechoice_probability, rechooses};
 pub use error::AssignError;
 pub use hooks::{NoHooks, StageHook};
-pub use layer_planner::{Layer, Layers, StaticPlanner};
+pub use layer_planner::{BikeRoutes, Layer, Layers, SampledRoutes, StaticPlanner};
 pub use loader::{FreeFlow, Loaded, Loader, PointQueue};
 pub use modes::{ClassModes, ModeSet, TripModes};
 pub use planner::{CarPlanner, CostSource, LegPlanner};

@@ -270,8 +270,11 @@ class _OneLoopSummary:
         self.link_bins_path = r.get("link_bins_path")
         self.link_bins_bike_path = r.get("link_bins_bike_path")
         self.link_bins_walk_path = r.get("link_bins_walk_path")
-        # A bike trip rides the one route of least cost on the bike layer: no route sets.
-        self.bike_route_sets = self.bike_route_choices = None
+        # The sampled bike route sets and the stated bike trips' choices among them
+        # (bike_route_choice="doubly_stochastic"); None for one route per pair, and for a run
+        # read back from its folder (its chains table holds every bike chain).
+        self.bike_route_sets = r.get("bike_route_sets")
+        self.bike_route_choices = r.get("bike_route_choices")
         self.trip_results_path = r.get("trip_results_path")
         self.convergence_path = r.get("convergence_path")
         self.chains_path = r.get("chains_path")
@@ -611,8 +614,10 @@ class Run:
         included) and ``travel_time_s`` at
         the link travel times of the last loading (door to door: the car's or the bike's fixed
         times included), ``mode`` (``"car"``, ``"bike"`` or ``"walk"``: a trip whose mode is
-        stated as the bike or walking has one chain on its layer; a trip choosing its mode has
-        its car chains, its bike chain and its walk), ``links`` (its links in travel
+        stated as the bike or walking has one chain on its layer, or with
+        ``bike_route_choice="doubly_stochastic"`` a bike trip one per route of its pair's set; a
+        trip choosing its mode has its car chains, its bike chains and its walk), ``links`` (its
+        links in travel
         order, as the link ids of its mode's layer: the road network's for a car, as
         ``link_bins_table()``'s ``link``; ``network.layer("bike")``'s or ``"walk"``'s, as
         ``link_bins_table("bike")``'s) and ``link_index`` (the same links as indices into that
@@ -1220,7 +1225,9 @@ class Run:
 
         One set per pair of bike-layer nodes, made once per run on the layer's static costs
         by the doubly stochastic method (its internal name, the sets' ``method``, is
-        ``"sampled"``); the first route of a set is the least-cost one.
+        ``"sampled"``); the first route of a set is the least-cost one. Both engines make them
+        with the same method; on the one-loop engine each route is also a bike chain of its
+        trips' choice sets (``chains()``), and a run read back with ``Run.open`` gives ``None``.
         """
         return self._summary.bike_route_sets
 
@@ -1229,7 +1236,8 @@ class Run:
 
         The same arrays as ``route_choices()``, one entry per trip of the demand; ``-1`` marks
         a trip that is not a stated bike trip or has no bike route. A trip that chose its mode
-        and took the bike is in ``itinerary_choices()`` instead.
+        and took the bike is in ``itinerary_choices()`` instead (in ``chains()`` on the one-loop
+        engine, whose ``alternatives`` count the routes in the trip's own choice set).
         """
         return self._summary.bike_route_choices
 

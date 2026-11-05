@@ -31,7 +31,9 @@
 //! and chain `k` of mode `m` with probability `exp((V_k + ln PS_k) / μ − I_m)`: μ = 1 is the
 //! logit over the whole set; a smaller μ makes the routes of one mode closer substitutes for each
 //! other than for the other modes, so a mode does not gain share from the number of its routes.
-//! Chains of different modes share no link, so a bike or walking chain's path size is 1.
+//! Chains of different modes share no link, so a bike or walking chain's path size is 1 when it
+//! is its mode's only chain; the bike chains of a sampled set ([`crate::BikeRoutes::Sampled`])
+//! share bike-layer links with one another, and their path sizes say by how much.
 //!
 //! An alternative's identity in the batch is its index in the set, which is stable across
 //! iterations because sets only grow: the model's random draws, addressed by
