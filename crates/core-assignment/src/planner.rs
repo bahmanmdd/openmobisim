@@ -299,7 +299,7 @@ impl<'a> CarPlanner<'a> {
         attributes: Attributes,
     ) -> Leg {
         let fixed = self.fixed_of(&links);
-        Leg { mode: Mode::Car, from, to, departure, attributes, fixed, links }
+        Leg { mode: Mode::Car, from, to, departure, attributes, fixed, links, rides: Vec::new() }
     }
 
     /// The car leg along `links` (a route from `from` to `to`) departing at `departure`,

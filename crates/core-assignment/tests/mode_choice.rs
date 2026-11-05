@@ -222,6 +222,7 @@ fn inputs<'a>(c: &'a Case, model: &'a dyn ChoiceModel, loader: &'a dyn Loader) -
         network: &c.net,
         turns: &c.turns,
         layers: layers(c),
+        transit: None,
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,

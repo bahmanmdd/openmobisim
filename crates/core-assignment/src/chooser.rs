@@ -458,8 +458,15 @@ impl<'a> LinkLengths<'a> {
     }
 }
 
-/// The logarithm of each chain's path-size factor over `set`, by the length of its links.
+/// The logarithm of each chain's path-size factor over `set`, by the length of its links; a
+/// transit chain's over the set's transit chains, by its shared rides
+/// ([`crate::transit::ride_path_sizes`]).
 fn ln_path_sizes(lengths: &LinkLengths<'_>, set: &[Chain]) -> Vec<f64> {
+    if set.iter().any(|c| c.mode() == Mode::Transit) {
+        // So far a set with a transit chain holds transit chains alone (a stated transit trip).
+        let transit: Vec<&Chain> = set.iter().collect();
+        return crate::transit::ride_path_sizes(&transit);
+    }
     let links: Vec<Vec<u32>> = set.iter().map(|c| lengths.chain(c)).collect();
     let routes: Vec<&[u32]> = links.iter().map(Vec::as_slice).collect();
     path_sizes(&routes, |k| lengths.length(k)).into_iter().map(f64::ln).collect()

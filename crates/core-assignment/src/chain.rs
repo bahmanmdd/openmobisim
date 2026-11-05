@@ -9,6 +9,10 @@
 //! **chain** is a traveller's door-to-door alternative: a sequence of legs. A single-mode trip is
 //! a chain of one leg.
 //!
+//! A **transit leg** runs between the trip's ends snapped to the walk layer: the walk to the first
+//! stop, the [rides](Ride) with the waits and transfer walks between them, and the walk from the
+//! last stop, all on the timetable (see [`crate::transit`]); it uses no link of any layer.
+//!
 //! **Which legs are loaded.** Only a car leg that uses a road link puts a vehicle on the road
 //! network ([`Leg::is_loaded`]); a bike or walking leg is timed on its layer at the layer's
 //! static speeds and loads nothing (see [`crate::planner`], *static planners*).
@@ -25,7 +29,8 @@
 //! uses no road link (both ends on one node) leaves no vehicle and has none.
 //!
 //! **Identity.** A chain carries an identity, a 64-bit FNV-1a hash of the mode and the link
-//! sequence of each of its legs, so the same alternative found in two assignment iterations is
+//! sequence of each of its legs (and, for a transit leg, the line, boarding stop and alighting stop
+//! of each ride, not the run, as the other engine keys its itineraries), so the same alternative found in two assignment iterations is
 //! recognised as the same object (a choice set never holds it twice). Departure times and
 //! attributes are not part of the identity: they change from one iteration to the next as the
 //! link travel times change, while the alternative stays the same. Two chains are the same
@@ -34,7 +39,7 @@
 
 use openmobisim_core_demand::Mode;
 use openmobisim_core_types::hash::Fnv1a;
-use openmobisim_core_types::ids::{EntityId, LinkId, NodeId};
+use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, TransitRunId};
 
 use crate::attributes::Attributes;
 
@@ -103,6 +108,28 @@ impl FixedTimes {
     }
 }
 
+/// One ride of a transit leg: a run of a line, from the call where it is boarded to the call where it
+/// is left, at the timetable's times. Stops, lines, runs and calls are the timetable's ids.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ride {
+    /// The line (the timetable's route).
+    pub line: u32,
+    /// The run (one vehicle's trip on the service day).
+    pub run: TransitRunId,
+    /// The stop boarded at.
+    pub board_stop: NodeId,
+    /// The stop left at.
+    pub alight_stop: NodeId,
+    /// The call boarded at (an index into the timetable's calls).
+    pub board_call: u32,
+    /// The call left at.
+    pub alight_call: u32,
+    /// When the run leaves the boarding stop, in seconds after midnight.
+    pub departure: u32,
+    /// When it reaches the alighting stop.
+    pub arrival: u32,
+}
+
 /// One mode between two places, departing at a time.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Leg {
@@ -124,6 +151,8 @@ pub struct Leg {
     /// layer for a bike or walking leg), from its upstream end to its downstream end, in travel
     /// order (empty for a leg whose two places are the same node).
     pub links: Vec<LinkId>,
+    /// The rides of a transit leg, in travel order (empty for every other leg).
+    pub rides: Vec<Ride>,
 }
 
 impl Leg {
@@ -149,6 +178,14 @@ pub struct Chain {
     identity: u64,
 }
 
+/// Whether two legs ride the same lines between the same stops (runs and times aside).
+fn same_rides(a: &Leg, b: &Leg) -> bool {
+    a.rides.len() == b.rides.len()
+        && a.rides.iter().zip(&b.rides).all(|(x, y)| {
+            (x.line, x.board_stop, x.alight_stop) == (y.line, y.board_stop, y.alight_stop)
+        })
+}
+
 /// The identity of a sequence of legs: FNV-1a over each leg's mode, link count and links.
 fn identity_of(legs: &[Leg]) -> u64 {
     let mut h = Fnv1a::new();
@@ -158,6 +195,15 @@ fn identity_of(legs: &[Leg]) -> u64 {
         h.write_u32(u32::try_from(leg.links.len()).expect("fewer than 2^32 links"));
         for link in &leg.links {
             h.write_u32(link.raw());
+        }
+        // Only a transit leg has rides, so every other chain keeps its identity.
+        if leg.mode == Mode::Transit {
+            h.write_u32(u32::try_from(leg.rides.len()).expect("fewer than 2^32 rides"));
+            for r in &leg.rides {
+                h.write_u32(r.line);
+                h.write_u32(r.board_stop.raw());
+                h.write_u32(r.alight_stop.raw());
+            }
         }
     }
     h.finish()
@@ -211,7 +257,7 @@ impl Chain {
                 .legs
                 .iter()
                 .zip(&other.legs)
-                .all(|(a, b)| a.mode == b.mode && a.links == b.links)
+                .all(|(a, b)| a.mode == b.mode && a.links == b.links && same_rides(a, b))
     }
 
     /// Whether the chain is one leg of `mode` along `links`: [`Self::same_alternative`] as the
@@ -219,6 +265,13 @@ impl Chain {
     #[must_use]
     pub fn is_single_leg(&self, mode: Mode, links: &[LinkId]) -> bool {
         matches!(self.legs.as_slice(), [leg] if leg.mode == mode && leg.links == links)
+    }
+
+    /// Whether the chain takes time to travel: a leg of it uses a link or rides a vehicle of the
+    /// timetable (a chain of neither arrives as it sets out).
+    #[must_use]
+    pub fn moves(&self) -> bool {
+        self.legs.iter().any(|l| !l.links.is_empty() || !l.rides.is_empty())
     }
 
     /// Every road link of the chain (the links of its car legs), leg after leg, as raw link

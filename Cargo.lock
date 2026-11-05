@@ -667,6 +667,7 @@ dependencies = [
  "openmobisim-core-graph",
  "openmobisim-core-loading",
  "openmobisim-core-routes",
+ "openmobisim-core-transit",
  "openmobisim-core-types",
  "rayon",
 ]

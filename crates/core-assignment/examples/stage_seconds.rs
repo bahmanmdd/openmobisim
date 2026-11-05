@@ -134,6 +134,7 @@ fn main() {
         network: &net,
         turns: &turns,
         layers: openmobisim_core_assignment::Layers::NONE,
+        transit: None,
         travellers: &travellers,
         trips: &trips,
         classes: &classes,
