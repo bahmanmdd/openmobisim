@@ -211,8 +211,8 @@ _EXTRA: dict[str, list[tuple[str, Any, str, str, str]]] = {
             "engine",
             "current",
             "",
-            '"current", or "one-loop": the assignment of car trips (and of stated bike and '
-            "walking trips) in one loop, at flow level 0 or 2",
+            '"current", or "one-loop": the assignment of car, bike and walking trips (stated, '
+            "or chosen among the three) in one loop, at flow level 0 or 2",
             "",
         ),
     ],

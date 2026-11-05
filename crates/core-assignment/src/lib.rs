@@ -18,7 +18,8 @@
 //! 3. **load**: the chosen chains' vehicles moved on the network by the loader;
 //! 4. **measure**: the link travel times by time of day built from what the loading recorded,
 //!    and every chain of every set priced again on them;
-//! 5. **assess**: the convergence measures ([`IterationReport`]).
+//! 5. **assess**: the convergence measures ([`IterationReport`]); the stopping shares count the
+//!    trips that could change their choice (car trips and trips choosing their mode).
 //!
 //! The [`State`] (link travel times, and per trip the choice set, the current chain and the
 //! last choice probabilities) is a value the loop takes and returns; nothing else holds
@@ -42,13 +43,14 @@
 //! | [`state`] | [`State`], the value carried between iterations; [`TripState`] |
 //! | [`planner`] | the [`LegPlanner`] contract, the [`CarPlanner`], the [`CostSource`] |
 //! | [`layer_planner`] | the bike and walk [`Layers`] and their [`StaticPlanner`] |
+//! | [`modes`] | which modes a trip's chains may have: [`TripModes`], what mode choice offers a class ([`ClassModes`]) |
 //! | [`search`] | the [`ChainSearch`] and the one feasibility rule, [`feasible`] |
 //! | [`chooser`] | what the choice model is handed, [`HighestUtility`], [`logit`], the averaging rule |
 //! | [`quota`] | the quota [`Allocation`]: a group's travellers in the model's proportions |
 //! | [`loader`] | the [`Loader`] contract, [`Loaded`], level 0 [`FreeFlow`], level 2 [`PointQueue`] |
 //! | [`hooks`] | [`StageHook`], code run at fixed points of the loop, and [`NoHooks`] |
-//! | [`report`] | [`IterationReport`], the convergence measures of one iteration |
-//! | [`mod@assign`] | [`assign()`], its [`Inputs`] and [`Params`], the five stages; [`restore`], a state rebuilt from what a run wrote ([`SavedTrip`]) |
+//! | [`report`] | [`IterationReport`], the convergence measures of one iteration, overall and by mode ([`PerMode`]) |
+//! | [`mod@assign`] | [`assign()`], its [`Inputs`] and [`Params`], the five stages; [`restore`], a state rebuilt from what a run wrote ([`SavedTrip`]); [`left_out()`], the modes left out of the sets of trips choosing their mode ([`LeftOut`]) |
 //! | [`error`] | [`AssignError`] |
 //!
 //! # What exists so far
@@ -62,8 +64,11 @@
 //! given**, one leg each on their own layer ([`Inputs::layers`], [`StaticPlanner`]): the route of
 //! least cost on the layer at its static speeds, planned once, a bike leg with its fixed times
 //! ([`Params::bike_fixed_times`]); they load nothing on the road network, so their chain never
-//! changes and they never switch. A further mode is a further [`LegPlanner`], a further loading a
-//! further [`Loader`], behind the same contracts.
+//! changes and they never switch. **Trips choosing their mode** among the car, the bike and
+//! walking ([`Inputs::mode_choice`], [`modes`]): their choice set holds their car chains beside
+//! their bike and walking chains, and the one chooser chooses among them (the nested logit puts
+//! each mode in a nest of its own). A further mode is a further [`LegPlanner`], a further loading
+//! a further [`Loader`], behind the same contracts.
 //!
 //! **Threads and shared searches.** The car planner answers the trips of one origin, user class
 //! and departure window with as few searches as give every trip, link for link, the route its
@@ -85,6 +90,7 @@ pub mod error;
 pub mod hooks;
 pub mod layer_planner;
 pub mod loader;
+pub mod modes;
 mod parallel;
 pub mod planner;
 pub mod quota;
@@ -92,7 +98,7 @@ pub mod report;
 pub mod search;
 pub mod state;
 
-pub use assign::{Inputs, Params, SavedTrip, assign, restore};
+pub use assign::{Inputs, LeftOut, Params, SavedTrip, assign, left_out, restore};
 pub use attributes::{Attributes, Coefficients};
 pub use chain::{Chain, FixedTimes, Leg, Place};
 pub use chooser::{HighestUtility, logit, rechoice_probability, rechooses};
@@ -100,8 +106,9 @@ pub use error::AssignError;
 pub use hooks::{NoHooks, StageHook};
 pub use layer_planner::{Layer, Layers, StaticPlanner};
 pub use loader::{FreeFlow, Loaded, Loader, PointQueue};
+pub use modes::{ClassModes, ModeSet, TripModes};
 pub use planner::{CarPlanner, CostSource, LegPlanner};
 pub use quota::Allocation;
-pub use report::{IterationReport, StageSeconds};
+pub use report::{IterationReport, PerMode, StageSeconds};
 pub use search::{ChainSearch, feasible};
 pub use state::{State, TripState};

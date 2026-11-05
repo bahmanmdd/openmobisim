@@ -137,6 +137,7 @@ fn main() {
         travellers: &travellers,
         trips: &trips,
         classes: &classes,
+        mode_choice: &[],
         money_per_link: &money,
         model,
         loader: &loader,

@@ -2,10 +2,10 @@
 //!
 //! **What the choice model sees.** For every trip with a non-empty choice set, the chooser
 //! hands the run's choice model ([`ChoiceModel`], from `core-choice`) one situation whose
-//! alternatives are the set's chains, each with five attributes:
+//! alternatives are the set's chains, each with five attributes, and a sixth for a nested logit:
 //!
-//! - `utility`: the chain's systematic utility by the trip's user class's coefficients
-//!   ([`crate::Coefficients::utility`]), in utility units;
+//! - `utility`: the chain's systematic utility by the trip's user class's coefficients, its
+//!   mode's constant included ([`crate::Coefficients::chain_utility`]), in utility units;
 //! - `ln_path_size`: the logarithm of the chain's path-size factor over the set (Ben-Akiva and
 //!   Bierlaire, 1999; computed by `core-routes`' `path_sizes` over the links of the set's
 //!   chains, each on its own layer, by length: a road link and a bike-layer link are different
@@ -15,10 +15,23 @@
 //!   the same for every alternative;
 //! - `chain_high` and `chain_low`: the upper and lower 32 bits of the chain's identity
 //!   ([`Chain::identity`]), each exact in a double, so a model can tell which trips face the
-//!   same chains.
+//!   same chains;
+//! - `nest` (only for a model that reads it): the chain's mode, as a number (the car 0, the bike 1, walking 2: `core-demand`'s
+//!   mode numbers), so a nested logit puts each mode in a nest of its own.
 //!
-//! The logit weighs only `utility` and `ln_path_size`; the other three are for the
-//! deterministic choice.
+//! The logit weighs only `utility` and `ln_path_size`; the nested logit the same, in nests by
+//! `nest`; the band and the identities are for the deterministic choice.
+//!
+//! **Mode choice is this choice.** A trip choosing its mode has chains of several modes in its
+//! set ([`crate::modes`]), and the same model chooses among them as among a car trip's routes:
+//! the deterministic choice takes the cheapest chain (ties within the band split evenly), the
+//! logit weighs every chain of the set by `exp(V + ln PS)`, and the **nested logit** with nest
+//! scale `μ` (`core-choice`'s `NestedLogit`, the alternatives nested by `nest`) takes mode `m`
+//! with probability `exp(μ I_m) / Σ_n exp(μ I_n)`, `I_m = ln Σ_{k ∈ m} exp((V_k + ln PS_k) / μ)`,
+//! and chain `k` of mode `m` with probability `exp((V_k + ln PS_k) / μ − I_m)`: μ = 1 is the
+//! logit over the whole set; a smaller μ makes the routes of one mode closer substitutes for each
+//! other than for the other modes, so a mode does not gain share from the number of its routes.
+//! Chains of different modes share no link, so a bike or walking chain's path size is 1.
 //!
 //! An alternative's identity in the batch is its index in the set, which is stable across
 //! iterations because sets only grow: the model's random draws, addressed by
@@ -118,8 +131,10 @@ use openmobisim_core_types::rng::{DrawAddress, StreamRng};
 use crate::attributes::Coefficients;
 use crate::chain::Chain;
 use crate::error::AssignError;
+use crate::modes::TripModes;
 use crate::parallel;
 use crate::quota::{self, Allocation};
+use crate::report::PerMode;
 use crate::state::State;
 
 /// The trips a thread takes at a time in the chooser's parallel work.
@@ -135,6 +150,8 @@ pub const INDIFFERENCE_BAND: &str = "indifference_band";
 pub const CHAIN_HIGH: &str = "chain_high";
 /// The name of the batch attribute holding the lower 32 bits of a chain's identity.
 pub const CHAIN_LOW: &str = "chain_low";
+/// The name of the batch attribute holding a chain's mode as a number: a nested logit's nest.
+pub const NEST: &str = "nest";
 
 /// The deterministic choice with the indifference band: every chain within the band of the
 /// best ties with it, each tied chain has probability `1 / k`, and the trips facing the same
@@ -305,6 +322,8 @@ pub(crate) struct Demand<'a> {
     pub travellers: &'a Travellers,
     pub trips: &'a Trips,
     pub classes: &'a [Coefficients],
+    /// Per trip, the modes its chains may have.
+    pub modes: &'a [TripModes],
 }
 
 impl Demand<'_> {
@@ -316,6 +335,26 @@ impl Demand<'_> {
     /// The coefficients of `traveller`'s class.
     pub fn coefficients(&self, traveller: TravellerId) -> &Coefficients {
         &self.classes[self.travellers.user_class(traveller).index()]
+    }
+
+    /// Whether `trip` could change its choice (counted in the stopping shares).
+    pub fn could_change(&self, trip: TripId) -> bool {
+        self.modes[trip.index()].could_change()
+    }
+
+    /// Whether `trip` chooses its mode.
+    pub fn chooses_mode(&self, trip: TripId) -> bool {
+        self.modes[trip.index()].chooses_mode()
+    }
+}
+
+/// The slot of `mode` in sums by mode (car, bike, walking); `None` for another mode.
+pub(crate) fn mode_slot(mode: Mode) -> Option<usize> {
+    match mode {
+        Mode::Car => Some(0),
+        Mode::Bike => Some(1),
+        Mode::Walk => Some(2),
+        _ => None,
     }
 }
 
@@ -426,7 +465,7 @@ fn ln_path_sizes(lengths: &LinkLengths<'_>, set: &[Chain]) -> Vec<f64> {
 
 /// The batch of `situations` at `iteration`: each set's chains with their utility at the
 /// state's current attributes, their path size (`sizes`, up to date with the sets), the
-/// indifference `band` and their identity.
+/// indifference `band`, their identity and, with `nest`, their mode as a number.
 pub(crate) fn batch(
     demand: &Demand<'_>,
     state: &State,
@@ -434,11 +473,16 @@ pub(crate) fn batch(
     situations: &[TripId],
     iteration: u32,
     band: f64,
+    nest: bool,
 ) -> ChoiceBatch {
-    let mut batch = ChoiceBatch::new(
-        iteration,
-        &[UTILITY, LN_PATH_SIZE, INDIFFERENCE_BAND, CHAIN_HIGH, CHAIN_LOW],
-    );
+    let names: &[&str] = if nest {
+        &[UTILITY, LN_PATH_SIZE, INDIFFERENCE_BAND, CHAIN_HIGH, CHAIN_LOW, NEST]
+    } else {
+        &[UTILITY, LN_PATH_SIZE, INDIFFERENCE_BAND, CHAIN_HIGH, CHAIN_LOW]
+    };
+    let mut batch = ChoiceBatch::new(iteration, names);
+    let mut values = [0.0; 6];
+    let width = names.len();
     for &trip in situations {
         let traveller = demand.trips.traveller(trip);
         let class = demand.travellers.user_class(traveller);
@@ -450,10 +494,17 @@ pub(crate) fn batch(
             let (high, low) = (chain.identity() >> 32, chain.identity() & 0xFFFF_FFFF);
             #[allow(clippy::cast_precision_loss, reason = "32 bits, exact in a double")]
             let (high, low) = (high as f64, low as f64);
-            batch.push_alternative(identity, &[k.utility(chain.total()), ln_size, band, high, low]);
+            values[..5].copy_from_slice(&[k.chain_utility(chain), ln_size, band, high, low]);
+            values[5] = f64::from(chain.mode() as u8);
+            batch.push_alternative(identity, &values[..width]);
         }
     }
     batch
+}
+
+/// Whether `model` reads the `nest` attribute (a nested logit): the batch carries it only then.
+pub(crate) fn wants_nest(model: &dyn ChoiceModel) -> bool {
+    model.required_attributes().is_some_and(|names| names.iter().any(|n| n == NEST))
 }
 
 /// The model's probability of every alternative of a batch, read by situation.
@@ -479,7 +530,9 @@ pub(crate) fn probabilities(
     Ok(Probabilities { flat, offsets: batch.offsets().to_vec() })
 }
 
-/// What the choose stage measured: the switch share, its floor and the excess per re-chooser.
+/// What the choose stage measured over the trips that could change: the switch share, its floor
+/// and the excess per re-chooser; the same by the mode each trip held; the mode changes and the
+/// mode split of the trips choosing their mode.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Switching {
     pub share: f64,
@@ -487,6 +540,11 @@ pub(crate) struct Switching {
     pub excess: f64,
     /// The expected excess over the whole population (see the module docs).
     pub expected: f64,
+    pub share_by_mode: PerMode,
+    /// Per mode, the expected change of its share (see [`crate::IterationReport`]).
+    pub share_change: PerMode,
+    pub mode_change: Option<f64>,
+    pub mode_split: PerMode,
 }
 
 /// The choose stage: every trip facing a choice is offered its set; the travellers the
@@ -506,7 +564,7 @@ pub(crate) fn choose(
     allocation: Allocation,
 ) -> Result<Switching, AssignError> {
     let situations = situations(state);
-    let batch = batch(demand, state, sizes, &situations, iteration, band);
+    let batch = batch(demand, state, sizes, &situations, iteration, band, wants_nest(model));
     batch.validate()?;
     let probabilities = probabilities(model, &batch)?;
     let alpha = rechoice_probability(iteration, offset);
@@ -568,22 +626,61 @@ pub(crate) fn choose(
     }
     let (mut total, mut switched, mut floor, mut reconsidering) = (0.0, 0.0, 0.0, 0.0);
     let mut expected = 0.0;
+    // By the mode held before the choice: the trips and those that switched. And per mode, the
+    // expected change of its share: Σ w (P_m − 1[the chain held is of mode m]).
+    let (mut held, mut moved, mut change) = ([0.0; 3], [0.0; 3], [0.0; 3]);
+    // The trips choosing their mode: with a chain before, and of those with another mode after;
+    // with a chain after, by its mode.
+    let (mut had, mut changed, mut after_total, mut after_mode) = (0.0, 0.0, 0.0, [0.0; 3]);
     for (s, &trip) in situations.iter().enumerate() {
         let w = demand.weight(demand.trips.traveller(trip));
+        let counted = demand.could_change(trip);
         let entry = &mut state.trips_mut()[trip.index()];
         let before = entry.current;
         let after = picked[s].or(before);
-        // The chance that two independent draws from the model's probabilities differ.
-        let differs = 1.0 - probabilities.of(s).iter().map(|p| p * p).sum::<f64>();
-        total += w;
-        reconsidering += w * chance[s];
-        floor += w * chance[s] * if before.is_none() { 1.0 } else { differs };
-        // A trip with no chain yet moves for certain, as its floor says: no excess.
-        if let Some(c) = before {
-            expected += w * (1.0 - differs - probabilities.of(s)[c]);
+        let mode_of = |c: Option<usize>| c.map(|c| entry.set[c].mode());
+        let (mode_before, mode_after) = (mode_of(before), mode_of(after));
+        // The sums over the trips that could change their choice only.
+        if counted {
+            // The chance that two independent draws from the model's probabilities differ.
+            let differs = 1.0 - probabilities.of(s).iter().map(|p| p * p).sum::<f64>();
+            total += w;
+            reconsidering += w * chance[s];
+            floor += w * chance[s] * if before.is_none() { 1.0 } else { differs };
+            let slot = mode_before.and_then(mode_slot);
+            // A trip with no chain yet moves for certain, as its floor says: no excess.
+            if let Some(c) = before {
+                expected += w * (1.0 - differs - probabilities.of(s)[c]);
+                for (chain, p) in entry.set.iter().zip(probabilities.of(s)) {
+                    if let Some(k) = mode_slot(chain.mode()) {
+                        change[k] += w * p;
+                    }
+                }
+                if let Some(k) = slot {
+                    change[k] -= w;
+                }
+            }
+            if let Some(k) = slot {
+                held[k] += w;
+                if after != before {
+                    moved[k] += w;
+                }
+            }
+            if after != before {
+                switched += w;
+            }
         }
-        if after != before {
-            switched += w;
+        if demand.chooses_mode(trip) {
+            if mode_before.is_some() {
+                had += w;
+                if mode_after != mode_before {
+                    changed += w;
+                }
+            }
+            if let Some(k) = mode_after.and_then(mode_slot) {
+                after_total += w;
+                after_mode[k] += w;
+            }
         }
         entry.current = after;
         entry.probabilities.clear();
@@ -591,7 +688,16 @@ pub(crate) fn choose(
     }
     let share = |x: f64| if total > 0.0 { x / total } else { 0.0 };
     let excess = if reconsidering > 0.0 { (switched - floor) / reconsidering } else { 0.0 };
-    Ok(Switching { share: share(switched), floor: share(floor), excess, expected: share(expected) })
+    Ok(Switching {
+        share: share(switched),
+        floor: share(floor),
+        excess,
+        expected: share(expected),
+        share_by_mode: PerMode::shares(moved, held),
+        share_change: PerMode::shares(change, [total; 3]),
+        mode_change: (had > 0.0).then(|| changed / had),
+        mode_split: PerMode::shares(after_mode, [after_total; 3]),
+    })
 }
 
 /// A quota group's key: the user class, the bin in which the vehicle of the set's first chain

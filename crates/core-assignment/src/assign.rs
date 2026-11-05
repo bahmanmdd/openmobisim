@@ -13,7 +13,8 @@
 //!    with an empty set counts as found). A chain within the band is still added, since a
 //!    choice model wants near-equal alternatives in the set, but it is no evidence that the
 //!    search missed a better route. **The stopping check** runs here, from iteration 1 on, after
-//!    the search and before anything is added: the loop stops when the share of trips with a
+//!    the search and before anything is added: the loop stops when the share of the trips that
+//!    could change their choice (car trips and trips choosing their mode; see below) with a
 //!    found chain is at most [`Params::found_tolerance`], the expected switch excess
 //!    ([`IterationReport::switch_excess_expected`]), averaged over the last three iterations,
 //!    is in absolute value at most [`Params::switch_tolerance`], and at least
@@ -41,14 +42,20 @@
 //! **Bike and walking trips** (a trip whose mode is given as the bike or walking) take part in
 //! every stage as trips with a choice set of one chain: the search offers their one chain once,
 //! the choice keeps them on it, the measure stage re-prices it to the same numbers, and the
-//! assessment counts them. Every convergence measure is over **every trip** of the run, these
-//! included: they are never found anything new after their first search (the found and added
-//! shares), never switch and add nothing to the switch share's floor or its excess, cost exactly
-//! their set's least cost (nothing to the duality gap's numerator, their cost to its
-//! denominator), and count among the departed, arrived or unfinished trips and in the mean trip
-//! time, their trip ending at its departure plus its leg's time (access, ride and egress for a
-//! bike). So a run with many of them reports smaller shares for the same car traffic, and its
-//! stopping rule, which reads those shares, may stop at another iteration.
+//! assessment counts them. **The stopping shares leave them out**: the found and added shares,
+//! the switch share, its floor and both its excesses are over the trips that could change their
+//! choice ([`IterationReport::choosing`]: car trips and trips choosing their mode), so adding
+//! such trips to a run changes neither its shares nor the iteration at which it stops, to the
+//! bit. The duality gap, its deterministic part and the spread leave them out too (each would
+//! pay exactly its set's least cost and only lower them). They count among the departed, arrived
+//! or unfinished trips and in the mean trip time, their trip ending at its departure plus its
+//! leg's time (access, ride and egress for a bike).
+//!
+//! **Trips choosing their mode** ([`Inputs::mode_choice`], [`crate::modes`]) take part as any
+//! other: their set holds a car chain from each search that finds one new (as a car trip's), and
+//! their bike and walking chains from the first search; the choice chooses among them all, a
+//! mode with them; the measure stage re-prices every chain; they count in every measure, and
+//! in each mode's shares by the mode of the chain they held ([`crate::report`]).
 //!
 //! Each iteration finishes its own work: nothing of iteration `i` is computed after `i + 1` has
 //! begun, and the next iteration starts from the state this one returned.
@@ -90,16 +97,17 @@ use openmobisim_core_graph::layers::BikeCost;
 
 use crate::attributes::Coefficients;
 use crate::chain::{Chain, FixedTimes};
-use crate::chooser::{self, Demand, LinkLengths, PathSizes, Switching};
+use crate::chooser::{self, Demand, LinkLengths, PathSizes, Switching, mode_slot};
 use crate::error::AssignError;
 use crate::hooks::StageHook;
 use crate::layer_planner::{Layers, StaticPlanner};
 use crate::loader::{Loaded, Loader};
+use crate::modes::{ClassModes, TripModes};
 use crate::parallel;
 use crate::planner::{CarPlanner, CostSource};
 use crate::quota::Allocation;
-use crate::report::{IterationReport, StageSeconds};
-use crate::search::ChainSearch;
+use crate::report::{IterationReport, PerMode, StageSeconds};
+use crate::search::{ChainSearch, Unplanned};
 use crate::state::{State, TripState};
 
 /// The trips a thread takes at a time in the measure and assess stages.
@@ -210,6 +218,9 @@ pub struct Inputs<'a> {
     pub trips: &'a Trips,
     /// Each user class's coefficients, by user class (one per class of `travellers`).
     pub classes: &'a [Coefficients],
+    /// What mode choice offers each user class's trips that state no mode, by user class
+    /// ([`crate::modes`]); empty (or shorter than the classes): such a trip is a car trip.
+    pub mode_choice: &'a [ClassModes],
     /// The money charged on each link of the network, zeros where nothing is charged.
     pub money_per_link: &'a [f64],
     /// The choice model ([`chooser::HighestUtility`], [`chooser::logit`] or any model that reads
@@ -223,16 +234,25 @@ pub struct Inputs<'a> {
     pub initial: Option<State>,
 }
 
-/// The chains the search stage found: per trip, the first chain not yet in its set.
+/// The chains the search stage found: per trip, the chains not yet in its set.
 struct Found {
-    /// `(trip, chain)` for every trip something new was found for, in trip order.
+    /// `(trip, chain)` for every chain found new, trip after trip, each trip's in the order of
+    /// its search (car, bike, walking).
     additions: Vec<(TripId, Chain)>,
-    /// The share of trips (weighted) with an addition.
+    /// How many trips that could change their choice had an addition.
+    added: u32,
+    /// The share of the trips that could change their choice (weighted) with an addition.
     added_share: f64,
-    /// How many additions beat the trip's cheapest chain by more than the band.
+    /// How many trips that could change their choice had an addition that beat the trip's
+    /// cheapest chain by more than the band.
     found: u32,
-    /// The share of trips (weighted) with such an addition: what the stopping rule reads.
+    /// The share of the trips that could change their choice (weighted) with such an addition:
+    /// what the stopping rule reads.
     share: f64,
+    /// The same share by the mode of each trip's current chain.
+    by_mode: PerMode,
+    /// The summed weight of the trips that could change their choice.
+    choosing: f64,
 }
 
 /// Whether a chain of cost `new` beats a set whose cheapest chain costs `best` by more than
@@ -241,40 +261,63 @@ fn beyond_band(new: f64, best: f64, band: f64) -> bool {
     best.is_infinite() || new < best - band * best.abs()
 }
 
-/// Stage 1 without the stopping check: the chain search of every trip at `state`.
+/// Stage 1 without the stopping check: the chain search of every trip at `state`. A trip's
+/// additions count as found when the cheapest of them beats the cheapest chain of its set before
+/// the search by more than the band. The counts and the shares are over the trips that could
+/// change their choice; every trip's additions are returned.
 fn search_stage(
     search: &ChainSearch<'_>,
     inputs: &Inputs<'_>,
     state: &State,
     params: &Params,
 ) -> Found {
-    let demand = demand(inputs);
+    let demand = demand(inputs, search);
     let (mut total, mut added, mut beyond) = (0.0, 0.0, 0.0);
-    let mut found = 0_u32;
+    let (mut held, mut beyond_by_mode) = ([0.0; 3], [0.0; 3]);
+    let (mut found, mut added_trips) = (0_u32, 0_u32);
     let mut additions = Vec::new();
     for (t, fresh) in search.fresh_chains(state, params).into_iter().enumerate() {
         let trip = TripId::from_index(t);
         let traveller = inputs.trips.traveller(trip);
         let w = demand.weight(traveller);
-        total += w;
-        if let Some(chain) = fresh {
-            let k = demand.coefficients(traveller);
-            let best = state
-                .trip(trip)
-                .set
-                .iter()
-                .map(|c| k.cost(c.total()))
-                .fold(f64::INFINITY, f64::min);
-            if beyond_band(k.cost(chain.total()), best, params.indifference_band) {
-                beyond += w;
-                found += 1;
+        let counted = demand.could_change(trip);
+        let entry = state.trip(trip);
+        let slot = entry.current_chain().map(Chain::mode).and_then(mode_slot);
+        if counted {
+            total += w;
+            if let Some(k) = slot {
+                held[k] += w;
             }
-            added += w;
-            additions.push((trip, chain));
         }
+        if fresh.is_empty() {
+            continue;
+        }
+        let k = demand.coefficients(traveller);
+        let best = entry.set.iter().map(|c| k.chain_cost(c)).fold(f64::INFINITY, f64::min);
+        let new = fresh.iter().map(|c| k.chain_cost(c)).fold(f64::INFINITY, f64::min);
+        if counted {
+            if beyond_band(new, best, params.indifference_band) {
+                found += 1;
+                beyond += w;
+                if let Some(k) = slot {
+                    beyond_by_mode[k] += w;
+                }
+            }
+            added_trips += 1;
+            added += w;
+        }
+        additions.extend(fresh.into_iter().map(|c| (trip, c)));
     }
     let share = |x: f64| if total > 0.0 { x / total } else { 0.0 };
-    Found { additions, added_share: share(added), found, share: share(beyond) }
+    Found {
+        additions,
+        added: added_trips,
+        added_share: share(added),
+        found,
+        share: share(beyond),
+        by_mode: PerMode::shares(beyond_by_mode, held),
+        choosing: total,
+    }
 }
 
 /// The rule's stability term: the absolute value of the mean expected switch excess of the last
@@ -306,6 +349,7 @@ fn should_stop(done: u32, found: &Found, last: Option<f64>, params: &Params) -> 
 ///
 /// [`AssignError::Choice`] if the choice model fails.
 fn choose_stage(
+    search: &ChainSearch<'_>,
     inputs: &Inputs<'_>,
     state: &mut State,
     sizes: &mut PathSizes,
@@ -313,7 +357,7 @@ fn choose_stage(
     iteration: u32,
     params: &Params,
 ) -> Result<Switching, AssignError> {
-    let demand = demand(inputs);
+    let demand = demand(inputs, search);
     sizes.refresh(&LinkLengths::of(inputs), state);
     chooser::choose(
         &demand,
@@ -417,7 +461,9 @@ fn measure_stage(
 /// # Errors
 ///
 /// [`AssignError::Choice`] if the choice model fails to give its probabilities.
+#[allow(clippy::too_many_arguments, reason = "the stage's inputs, each named")]
 fn assess_stage(
+    search: &ChainSearch<'_>,
     inputs: &Inputs<'_>,
     state: &State,
     sizes: &PathSizes,
@@ -426,7 +472,7 @@ fn assess_stage(
     iteration: u32,
     band: f64,
 ) -> Result<IterationReport, AssignError> {
-    let demand = demand(inputs);
+    let demand = demand(inputs, search);
     let weight = |trip: TripId| demand.weight(inputs.trips.traveller(trip));
     // Departed, arrived, unfinished and the trips' times, from the loading. Per trip: `None`
     // if none of its legs was loaded, `Some(None)` if one of its vehicles had not arrived,
@@ -470,7 +516,8 @@ fn assess_stage(
     let unfinished = departed - arrived;
     // The gaps and the spread, on the re-priced sets.
     let situations = chooser::situations(state);
-    let batch = chooser::batch(&demand, state, sizes, &situations, iteration, band);
+    let nest = chooser::wants_nest(inputs.model);
+    let batch = chooser::batch(&demand, state, sizes, &situations, iteration, band, nest);
     let probabilities = chooser::probabilities(inputs.model, &batch)?;
     // Per situation with a chain: the cost of the chain taken, the least cost of the set and the
     // expected cost under the model, unweighted; summed below in trip order.
@@ -484,7 +531,7 @@ fn assess_stage(
             let entry = state.trip(trip);
             let current = entry.current?;
             let k = demand.coefficients(inputs.trips.traveller(trip));
-            let cost = |c: &Chain| k.cost(c.total());
+            let cost = |c: &Chain| k.chain_cost(c);
             let low = entry.set.iter().map(cost).fold(f64::INFINITY, f64::min);
             let mean: f64 =
                 entry.set.iter().map(cost).zip(probabilities.of(s)).map(|(c, p)| c * p).sum();
@@ -494,6 +541,11 @@ fn assess_stage(
     let (mut paid, mut least, mut expected, mut cheapest, mut chosen) = (0.0, 0.0, 0.0, 0.0, 0.0);
     for (&trip, term) in situations.iter().zip(terms) {
         let Some((taken, low, mean)) = term else { continue };
+        // The gaps and the spread are over the trips that could change their choice, as the
+        // stopping shares are: a trip of one chain pays its least cost and would only lower them.
+        if !demand.could_change(trip) {
+            continue;
+        }
         let w = weight(trip);
         paid += w * taken;
         least += w * low;
@@ -510,11 +562,17 @@ fn assess_stage(
         found_share: 0.0,
         added: 0,
         added_share: 0.0,
+        choosing: 0.0,
         switch_share: 0.0,
         switch_floor: 0.0,
         switch_excess: 0.0,
         switch_above_floor: 0.0,
         switch_excess_expected: 0.0,
+        found_share_by_mode: PerMode::default(),
+        switch_share_by_mode: PerMode::default(),
+        mode_share_change_expected: PerMode::default(),
+        mode_change_share: None,
+        mode_split: PerMode::default(),
         departed,
         arrived,
         unfinished,
@@ -544,10 +602,13 @@ fn static_arrival(chain: &Chain, start: f64, end: f64) -> Option<Option<f64>> {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SavedTrip {
     /// Each chain of the set, in the order it was found: the links of its one leg on the leg's
-    /// layer (the road network for a car trip, the bike or walk layer for a trip whose mode is
-    /// given as the bike or walking), from the leg's upstream end to its downstream end (empty
-    /// for a leg whose two ends are one node).
+    /// layer (the road network for a car leg, the bike or walk layer for a bike or walking leg),
+    /// from the leg's upstream end to its downstream end (empty for a leg whose two ends are one
+    /// node).
     pub chains: Vec<Vec<LinkId>>,
+    /// The mode of each chain (its one leg), one per chain; empty: every chain is of the trip's
+    /// one mode (its stated mode, or the car).
+    pub modes: Vec<Mode>,
     /// The chain the traveller takes, as an index into [`Self::chains`]; `None` if none.
     pub current: Option<usize>,
     /// The probability the choice model gave each chain at the trip's last choice (as many as
@@ -565,6 +626,7 @@ impl SavedTrip {
                 .iter()
                 .map(|c| c.legs().iter().flat_map(|l| l.links.iter().copied()).collect())
                 .collect(),
+            modes: entry.set.iter().map(Chain::mode).collect(),
             current: entry.current,
             probabilities: entry.probabilities.clone(),
         }
@@ -595,17 +657,15 @@ fn chain_search<'a>(inputs: &Inputs<'a>, params: &Params) -> Result<ChainSearch<
         Some(layer) => Some(StaticPlanner::walk(layer, inputs.classes)?),
         None => None,
     };
-    Ok(ChainSearch::new(inputs.network, inputs.travellers, inputs.trips, car, params)
-        .with_static(bike, walk))
-}
-
-/// The mode of the chains of `trip`: the bike or walking when its mode is given as one of them,
-/// the car otherwise.
-fn chain_mode(trips: &Trips, trip: TripId) -> Mode {
-    match trips.mode(trip) {
-        m @ (Mode::Bike | Mode::Walk) if trips.mode_given(trip) => m,
-        _ => Mode::Car,
-    }
+    Ok(ChainSearch::with_modes(
+        inputs.network,
+        inputs.travellers,
+        inputs.trips,
+        car,
+        params,
+        inputs.mode_choice,
+    )
+    .with_static(bike, walk))
 }
 
 /// The state a run left, rebuilt from what it wrote: `saved`, every trip's set, current chain
@@ -647,40 +707,64 @@ pub fn restore(
         let trip = TripId::from_index(t);
         let bad = |what: String| AssignError::Input(format!("trip {t} of the saved state: {what}"));
         let traveller = inputs.trips.traveller(trip);
-        let mode = chain_mode(inputs.trips, trip);
-        // The planner of a bike or walking trip's layer; `None` for a car trip.
-        let layer = match mode {
-            Mode::Car => None,
-            _ => Some(search.layer_planner(mode).ok_or_else(|| {
-                bad(format!("its mode is {}, and the run has no such layer", mode.as_str()))
-            })?),
-        };
-        let (network, from, to) = match layer {
-            None => {
-                let (from, to) = search.ends(trip);
-                (inputs.network, from, to)
-            }
-            Some(planner) => {
-                let at = |p| planner.place(p);
-                (
-                    planner.network(),
-                    at(inputs.trips.origin(trip)),
-                    at(inputs.trips.destination(trip)),
-                )
-            }
-        };
-        let owned = match mode {
-            Mode::Car => state.has_car(traveller),
-            Mode::Bike => state.has_bike(traveller),
-            _ => true,
-        };
-        if !s.chains.is_empty() && !owned {
-            return Err(bad(format!("its traveller has no {}, yet it has chains", mode.as_str())));
+        let modes = search.trip_modes(trip);
+        if !s.modes.is_empty() && s.modes.len() != s.chains.len() {
+            return Err(bad(format!("{} modes for {} chains", s.modes.len(), s.chains.len())));
         }
-        let (origin, destination) = (from.node(), to.node());
         let departure = f64::from(inputs.trips.departure(trip).get());
         let mut entry = TripState::default();
         for (c, links) in s.chains.iter().enumerate() {
+            let mode = match (s.modes.get(c), modes) {
+                (Some(&m), _) => m,
+                (None, TripModes::Stated(m)) => m,
+                (None, TripModes::Choice(_)) => {
+                    return Err(bad(format!(
+                        "chain {c} has no mode, and the trip chooses its mode"
+                    )));
+                }
+            };
+            if !modes.allows(mode) {
+                return Err(bad(format!(
+                    "chain {c} is of mode {}, which the trip may not use",
+                    mode.as_str()
+                )));
+            }
+            // The planner of a bike or walking chain's layer; `None` for a car chain.
+            let layer = match mode {
+                Mode::Car => None,
+                _ => Some(search.layer_planner(mode).ok_or_else(|| {
+                    bad(format!(
+                        "chain {c} is of mode {}, and the run has no such layer",
+                        mode.as_str()
+                    ))
+                })?),
+            };
+            let (network, from, to) = match layer {
+                None => {
+                    let (from, to) = search.ends(trip);
+                    (inputs.network, from, to)
+                }
+                Some(planner) => {
+                    let at = |p| planner.place(p);
+                    (
+                        planner.network(),
+                        at(inputs.trips.origin(trip)),
+                        at(inputs.trips.destination(trip)),
+                    )
+                }
+            };
+            let owned = match mode {
+                Mode::Car => state.has_car(traveller),
+                Mode::Bike => state.has_bike(traveller),
+                _ => true,
+            };
+            if !owned {
+                return Err(bad(format!(
+                    "its traveller has no {}, yet chain {c} is of that mode",
+                    mode.as_str()
+                )));
+            }
+            let (origin, destination) = (from.node(), to.node());
             if links.iter().any(|l| l.raw() >= network.link_count()) {
                 return Err(bad(format!("chain {c} has a link not of its layer")));
             }
@@ -725,8 +809,88 @@ pub fn restore(
     Ok(state)
 }
 
-fn demand<'a>(inputs: &Inputs<'a>) -> Demand<'a> {
-    Demand { travellers: inputs.travellers, trips: inputs.trips, classes: inputs.classes }
+/// How many trips choosing their mode had each mode they are offered left out of their choice
+/// set, and why (see [`crate::modes`]). Each trip counts once per mode left out, with the first
+/// reason that applies, in the order of the fields.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LeftOut {
+    /// The trips choosing their mode.
+    pub choosing: u32,
+    /// Of them, those with no chain at all: no mode they are offered can serve them, so they do
+    /// not travel.
+    pub no_chain: u32,
+    /// Offered the car, with no car of their traveller's.
+    pub car_no_vehicle: u32,
+    /// Offered the car, with a car, and no route on the road network to the destination.
+    pub car_no_route: u32,
+    /// Offered the bike, with no bike of their traveller's.
+    pub bike_no_vehicle: u32,
+    /// Offered the bike, with a bike, and no route on the bike layer to the destination.
+    pub bike_no_route: u32,
+    /// Offered the bike, with a bike and a route, whose ride takes longer than the class's limit.
+    pub bike_too_long: u32,
+    /// Offered walking, and no route on the walk layer to the destination.
+    pub walk_no_route: u32,
+    /// Offered walking, with a route, whose walk takes longer than the class's limit.
+    pub walk_too_long: u32,
+}
+
+/// What [`LeftOut`] counts for the trips of `inputs` at `state` (the final state of a run of
+/// `inputs` and `params`): the bike and walking modes are planned again, as the run planned them
+/// (their routes are static), and a trip offered the car with a car of its own but no car chain
+/// in its set had no route.
+///
+/// # Errors
+///
+/// The errors of [`assign`] for inputs that do not fit together.
+pub fn left_out(
+    inputs: &Inputs<'_>,
+    params: &Params,
+    state: &State,
+) -> Result<LeftOut, AssignError> {
+    check(inputs, state, params)?;
+    let search = chain_search(inputs, params)?;
+    let mut out = LeftOut::default();
+    for t in 0..inputs.trips.len() {
+        let trip = TripId::new(t);
+        let TripModes::Choice(offer) = search.trip_modes(trip) else { continue };
+        out.choosing += 1;
+        let traveller = inputs.trips.traveller(trip);
+        let set = &state.trip(trip).set;
+        if set.is_empty() {
+            out.no_chain += 1;
+        }
+        if offer.modes.contains(Mode::Car) {
+            if !state.has_car(traveller) {
+                out.car_no_vehicle += 1;
+            } else if !set.iter().any(|c| c.mode() == Mode::Car) {
+                out.car_no_route += 1;
+            }
+        }
+        if offer.modes.contains(Mode::Bike) && !state.has_bike(traveller) {
+            out.bike_no_vehicle += 1;
+        }
+        for &(mode, why) in search.unplanned(trip) {
+            let slot = match (mode, why) {
+                (Mode::Bike, _) if !state.has_bike(traveller) => continue,
+                (Mode::Bike, Unplanned::NoRoute) => &mut out.bike_no_route,
+                (Mode::Bike, Unplanned::TooLong) => &mut out.bike_too_long,
+                (_, Unplanned::NoRoute) => &mut out.walk_no_route,
+                (_, Unplanned::TooLong) => &mut out.walk_too_long,
+            };
+            *slot += 1;
+        }
+    }
+    Ok(out)
+}
+
+fn demand<'a>(inputs: &Inputs<'a>, search: &'a ChainSearch<'_>) -> Demand<'a> {
+    Demand {
+        travellers: inputs.travellers,
+        trips: inputs.trips,
+        classes: inputs.classes,
+        modes: search.modes(),
+    }
 }
 
 /// Check the inputs fit together before anything runs.
@@ -751,18 +915,28 @@ fn check(inputs: &Inputs<'_>, state: &State, params: &Params) -> Result<(), Assi
             inputs.trips.len()
         )));
     }
+    let modes = crate::modes::trip_modes(inputs.travellers, inputs.trips, inputs.mode_choice);
     for (mode, has) in
         [(Mode::Bike, inputs.layers.bike.is_some()), (Mode::Walk, inputs.layers.walk.is_some())]
     {
-        let stated = (0..inputs.trips.len())
-            .map(TripId::new)
-            .filter(|&t| inputs.trips.mode_given(t) && inputs.trips.mode(t) == mode)
-            .count();
-        if stated > 0 && !has {
+        let stated = modes.iter().filter(|m| **m == TripModes::Stated(mode)).count();
+        let offered = modes.iter().filter(|m| m.chooses_mode() && m.allows(mode)).count();
+        if stated + offered > 0 && !has {
             return Err(AssignError::Input(format!(
-                "{stated} trips are given the mode {}, and the run has no {} layer",
+                "{stated} trips are given the mode {} and {offered} choosing their mode are \
+                 offered it, and the run has no {} layer",
                 mode.as_str(),
                 mode.as_str()
+            )));
+        }
+    }
+    for (c, k) in inputs.mode_choice.iter().enumerate() {
+        let limits = [k.walk_max_seconds, k.bike_max_seconds];
+        if limits.iter().any(|l| l.is_nan() || *l < 0.0) {
+            return Err(AssignError::Input(format!(
+                "user class {c}: the longest walk and ride mode choice offers must be at least 0 \
+                 seconds, not {} and {}",
+                k.walk_max_seconds, k.bike_max_seconds
             )));
         }
     }
@@ -808,15 +982,17 @@ pub fn assign(
         if should_stop(done, &found, tail_excess(&reports), params) {
             break;
         }
-        let added = u32::try_from(found.additions.len()).expect("fewer than 2^32 trips");
-        let (count, found_share, added_share) = (found.found, found.share, found.added_share);
+        let (added, count, found_share, added_share) =
+            (found.added, found.found, found.share, found.added_share);
+        let (found_by_mode, choosing) = (found.by_mode, found.choosing);
         for (trip, chain) in found.additions {
             state.trip_mut(trip).add(chain);
         }
         let t_search = clock.elapsed().as_secs_f64();
 
         let clock = Instant::now();
-        let switching = choose_stage(inputs, &mut state, &mut sizes, &rngs, iteration, params)?;
+        let switching =
+            choose_stage(&search, inputs, &mut state, &mut sizes, &rngs, iteration, params)?;
         let t_choose = clock.elapsed().as_secs_f64();
 
         let clock = Instant::now();
@@ -830,6 +1006,7 @@ pub fn assign(
 
         let clock = Instant::now();
         let mut report = assess_stage(
+            &search,
             inputs,
             &state,
             &sizes,
@@ -847,6 +1024,12 @@ pub fn assign(
         report.switch_excess = switching.excess;
         report.switch_above_floor = switching.share - switching.floor;
         report.switch_excess_expected = switching.expected;
+        report.choosing = choosing;
+        report.found_share_by_mode = found_by_mode;
+        report.switch_share_by_mode = switching.share_by_mode;
+        report.mode_share_change_expected = switching.share_change;
+        report.mode_change_share = switching.mode_change;
+        report.mode_split = switching.mode_split;
         report.stage_seconds = StageSeconds {
             search: t_search,
             choose: t_choose,

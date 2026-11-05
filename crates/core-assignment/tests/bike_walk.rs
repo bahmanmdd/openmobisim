@@ -168,6 +168,7 @@ fn inputs<'a>(
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,
+        mode_choice: &[],
         money_per_link: &c.money,
         model,
         loader,
@@ -300,8 +301,10 @@ fn a_bike_trip_on_a_cycleway_takes_its_ride_and_its_fixed_times() {
             assert_eq!((r.departed, r.arrived, r.unfinished), (1.0, 1.0, 0.0));
             assert_eq!(r.mean_trip_seconds, door, "level {level}: door to door");
         }
-        // Iteration 0 offers the chain, iteration 1 finds nothing new and nobody switches.
-        assert_eq!((reports[0].added, reports[0].found), (1, 1));
+        // Iteration 0 offers the chain, iteration 1 finds nothing new and nobody switches. A
+        // stated bike trip could never change its choice, so the stopping shares and their
+        // counts leave it out: nothing is counted as added or found, even in iteration 0.
+        assert_eq!((reports[0].added, reports[0].found, reports[0].choosing), (0, 0, 0.0));
         assert_eq!((reports[1].added, reports[1].found, reports[1].switch_share), (0, 0, 0.0));
         assert_eq!((reports[1].duality_gap, reports[1].gap_deterministic), (0.0, 0.0));
         println!(

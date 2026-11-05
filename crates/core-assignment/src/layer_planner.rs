@@ -26,9 +26,14 @@
 //!   fastest route); `Dedicated`, `t_a` times the layer's multiplier on a link in mixed traffic
 //!   (`bike_mixed_cost_factor`, 1.2 by default) or on a painted lane (`bike_lane_cost_factor`),
 //!   as [`StaticNetwork::link_costs`] gives it; `Utility` (the default of the other engine), the
-//!   class's own cost of the ride: `t_a + (β_km · ℓ_a + β_mixed · m_a) / 1000 · 60 / β_ivt`, with
-//!   `m_a` the link's metres in mixed traffic ([`StaticNetwork::is_mixed_traffic`]), `β_mixed`
-//!   [`Coefficients::bike_mixed_per_kilometre`] and `β_ivt` [`Coefficients::in_vehicle_per_minute`].
+//!   class's own cost of the ride: `t_a + (β_km · ℓ_a + β_mixed · m_a + β_lane · p_a +
+//!   β_separated · s_a) / 1000 · 60 / β_ivt`, with `m_a`, `p_a` and `s_a` the link's metres in
+//!   mixed traffic ([`StaticNetwork::is_mixed_traffic`]), on a painted lane and on a track or
+//!   path of its own (each link is one of the three, a ferry none), `β_mixed`
+//!   [`Coefficients::bike_mixed_per_kilometre`], `β_lane` [`Coefficients::bike_lane_per_kilometre`],
+//!   `β_separated` [`Coefficients::bike_separated_per_kilometre`] and `β_ivt`
+//!   [`Coefficients::in_vehicle_per_minute`] (a facility's term is left out where its coefficient
+//!   is 0).
 //!   So under `Utility` the route minimises the leg's cost in utility units (divided by the
 //!   positive `β_ivt / 60`, and less the fixed times, which every route pays alike).
 //!
@@ -37,7 +42,8 @@
 //! class serving the most people: one route per pair).
 //!
 //! **The leg.** Its links in travel order; its attributes from them: a bike leg's ride,
-//! `Σ t_a`, is in-vehicle time, its length `Σ ℓ_a`, its metres in mixed traffic `Σ m_a`, and the
+//! `Σ t_a`, is in-vehicle time, its length `Σ ℓ_a`, its metres in mixed traffic `Σ m_a`, on a
+//! painted lane `Σ p_a` and on a track or path of its own `Σ s_a`, and the
 //! bike's [`FixedTimes`] (reaching and unlocking the bike before the ride, as walking time;
 //! parking and locking it after, as parking time; [`StaticPlanner::bike`]); a walking leg's time
 //! `Σ t_a` is walking time, with its length, and no fixed time. A leg whose two ends are one node
@@ -48,8 +54,11 @@
 //! bytes per link of the layer (kept per thread across the trips of one search stage).
 
 use openmobisim_core_demand::Mode;
+use openmobisim_core_graph::defaults::RoadClass;
 use openmobisim_core_graph::geometry::LonLat;
-use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticLayerDefaults, StaticNetwork};
+use openmobisim_core_graph::layers::{
+    BikeCost, BikeInfrastructure, StaticLayer, StaticLayerDefaults, StaticNetwork,
+};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::NodeSnapper;
@@ -94,8 +103,11 @@ pub struct StaticPlanner<'a> {
     network: &'a RoadNetwork,
     /// Per link, its time in seconds at the layer's speed.
     seconds: Vec<f64>,
-    /// Per link, its metres in mixed traffic (bike layer; 0 on the walk layer).
+    /// Per link, its metres in mixed traffic, on a painted lane and on a track or path of its
+    /// own (bike layer; 0 on the walk layer).
     mixed_metres: Vec<f64>,
+    lane_metres: Vec<f64>,
+    separated_metres: Vec<f64>,
     /// The distinct search contexts, and per user class the one it searches with.
     contexts: Vec<SearchContext<'a>>,
     of_class: Vec<usize>,
@@ -150,6 +162,19 @@ impl<'a> StaticPlanner<'a> {
                 if network.is_mixed_traffic(link) { graph.link_length(link).get() } else { 0.0 }
             })
             .collect();
+        // The metres on each dedicated facility (a ferry is ridden on none).
+        let on = |kind: BikeInfrastructure| -> Vec<f64> {
+            (0..graph.link_count())
+                .map(|l| {
+                    let link = LinkId::new(l);
+                    let is = network.infrastructure(link) == kind
+                        && graph.link_class(link) != RoadClass::Ferry;
+                    if is { graph.link_length(link).get() } else { 0.0 }
+                })
+                .collect()
+        };
+        let (lane_metres, separated_metres) =
+            (on(BikeInfrastructure::Lane), on(BikeInfrastructure::Separated));
         let costs = |c: usize, k: &Coefficients| -> Result<Vec<f64>, AssignError> {
             match cost {
                 BikeCost::Time => Ok(seconds.clone()),
@@ -170,16 +195,24 @@ impl<'a> StaticPlanner<'a> {
                         ));
                     }
                     let each = |l: usize| {
-                        let extra = (k.per_kilometre * km[l]
-                            + k.bike_mixed_per_kilometre * mixed_metres[l] / 1000.0)
-                            / per_second;
-                        seconds[l] + extra
+                        let mut sum = k.per_kilometre * km[l]
+                            + k.bike_mixed_per_kilometre * mixed_metres[l] / 1000.0;
+                        // A facility's term only where the class weighs it, so a class that
+                        // weighs neither searches with the costs it had without them, to the bit.
+                        if k.bike_lane_per_kilometre != 0.0 {
+                            sum += k.bike_lane_per_kilometre * lane_metres[l] / 1000.0;
+                        }
+                        if k.bike_separated_per_kilometre != 0.0 {
+                            sum += k.bike_separated_per_kilometre * separated_metres[l] / 1000.0;
+                        }
+                        seconds[l] + sum / per_second
                     };
                     checked(c, (0..seconds.len()).map(each).collect(), &seconds)
                 }
             }
         };
-        Self::new(Mode::Bike, layer, classes, seconds.clone(), mixed_metres.clone(), fixed, costs)
+        let metres = [mixed_metres.clone(), lane_metres.clone(), separated_metres.clone()];
+        Self::new(Mode::Bike, layer, classes, seconds.clone(), metres, fixed, costs)
     }
 
     /// The walking planner on `layer` (the walk layer), for user classes weighing attributes by
@@ -217,7 +250,8 @@ impl<'a> StaticPlanner<'a> {
             checked(c, (0..seconds.len()).map(each).collect(), &seconds)
         };
         let none = vec![0.0; seconds.len()];
-        Self::new(Mode::Walk, layer, classes, seconds.clone(), none, FixedTimes::NONE, costs)
+        let metres = [none.clone(), none.clone(), none];
+        Self::new(Mode::Walk, layer, classes, seconds.clone(), metres, FixedTimes::NONE, costs)
     }
 
     fn new(
@@ -225,7 +259,7 @@ impl<'a> StaticPlanner<'a> {
         layer: Layer<'a>,
         classes: &[Coefficients],
         seconds: Vec<f64>,
-        mixed_metres: Vec<f64>,
+        [mixed_metres, lane_metres, separated_metres]: [Vec<f64>; 3],
         fixed: FixedTimes,
         costs: impl Fn(usize, &Coefficients) -> Result<Vec<f64>, AssignError>,
     ) -> Result<Self, AssignError> {
@@ -252,6 +286,8 @@ impl<'a> StaticPlanner<'a> {
             network,
             seconds,
             mixed_metres,
+            lane_metres,
+            separated_metres,
             contexts,
             of_class,
             fixed,
@@ -293,11 +329,13 @@ impl<'a> StaticPlanner<'a> {
     fn price(&self, links: &[LinkId]) -> Attributes {
         let mut time = 0.0;
         let mut length = 0.0;
-        let mut mixed = 0.0;
+        let (mut mixed, mut lane, mut separated) = (0.0, 0.0, 0.0);
         for &l in links {
             time += self.seconds[l.index()];
             length += self.network.link_length(l).get();
             mixed += self.mixed_metres[l.index()];
+            lane += self.lane_metres[l.index()];
+            separated += self.separated_metres[l.index()];
         }
         let fixed = self.fixed_of(links);
         let attributes = match self.mode {
@@ -305,6 +343,8 @@ impl<'a> StaticPlanner<'a> {
                 in_vehicle_seconds: time,
                 length_metres: length,
                 bike_mixed_metres: mixed,
+                bike_lane_metres: lane,
+                bike_separated_metres: separated,
                 ..Attributes::default()
             },
             _ => Attributes { walk_seconds: time, length_metres: length, ..Attributes::default() },
