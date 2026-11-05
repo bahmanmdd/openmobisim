@@ -24,6 +24,7 @@
 pub mod attributes;
 pub mod canonical;
 pub mod generate;
+pub mod landmarks;
 pub mod reach;
 pub mod search;
 pub mod snap;
@@ -37,6 +38,7 @@ pub use generate::{
     RouteSetGenerator, Sampled, Shortest, TripDemand, congestion_propensity, default_generator,
     generator, internal_name, public_name,
 };
+pub use landmarks::Landmarks;
 pub use reach::Reach;
 pub use search::{
     Extras, LinkFactors, MAX_ROUTES_PER_SET, Route, Search, SearchContext, TWIN_CANDIDATES,

@@ -19,7 +19,7 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_routes::{
-    DEFAULT_METHOD, NodeSnapper, Options, Penalty, Registry, RouteError, RouteKey,
+    DEFAULT_METHOD, Landmarks, NodeSnapper, Options, Penalty, Registry, RouteError, RouteKey,
     RouteSetGenerator, RouteSets, Search, SearchContext, Shortest, TripSnapper, generator,
 };
 use openmobisim_core_types::diagnostics::Diagnostics;
@@ -1813,5 +1813,137 @@ fn the_twin_leaves_the_route_nearest_the_origin() {
         assert!(parts(more[0].links, r.links) >= first, "no twin parts earlier");
         assert!(r.cost <= more[0].cost * 1.001 + 1e-3, "every twin within the tolerance");
         assert!(more[..i].iter().all(|q| q.links != r.links), "each twin once");
+    }
+}
+
+/// **The goal-directed cheapest tree gives the plain one's answers, to the bit**: on a 7×7
+/// grid of equal blocks (many routes of exactly equal cost, so the tie rule decides) with link
+/// times that rise with the clock (never below free flow), without and with hashed extras,
+/// [`Search::cheapest_routes_toward`] with the landmark bound towards the targets gives every
+/// target the plain search's generalised cost, time and route, for every origin and for one,
+/// two and five targets; and it reads fewer link times than the plain search. A consistent
+/// lower bound leaves every label as the plain search makes it (Hart, Nilsson & Raphael 1968).
+#[test]
+fn the_goal_directed_cheapest_tree_gives_the_plain_one_s_answers() {
+    let (net, _) = manhattan_grid(7, 200.0, false);
+    let turns = turns_of(&net);
+    let ctx = SearchContext::new(&net, &turns);
+    let mut search = Search::new(&ctx);
+    let reads = std::cell::Cell::new(0_u64);
+    let seconds = |l: u32, at: f64| {
+        reads.set(reads.get() + 1);
+        let base = net.free_flow_time(LinkId::new(l)).get();
+        base * (1.0 + 0.3 * f64::from((at / 60.0).floor() as u32 % 3) * f64::from(l % 2))
+    };
+    let none = |_: u32, _: f64| 0.0;
+    let n = net.node_count();
+    let (mut plain_reads, mut aimed_reads) = (0, 0);
+    for extra in [vec![0.0; net.link_count() as usize], hashed_extras(&net, 9)] {
+        let extras = ctx.extras(extra.clone());
+        let lower: Vec<f64> = (0..net.link_count())
+            .map(|l| ctx.link_cost(LinkId::new(l)) + extra[l as usize])
+            .collect();
+        let landmarks = Landmarks::new(&net, &lower, 4);
+        for o in 0..n {
+            let origin = NodeId::new(o);
+            for picks in [
+                vec![(o * 7 + 3) % n],
+                vec![(o + 11) % n, (o * 5 + 2) % n],
+                (0..5).map(|k| (o * 3 + 7 * k + 1) % n).collect(),
+            ] {
+                let mut aim: Vec<NodeId> = picks.into_iter().map(NodeId::new).collect();
+                aim.sort_unstable();
+                aim.dedup();
+                let mut targets = vec![false; n as usize];
+                for t in &aim {
+                    targets[t.index()] = true;
+                }
+                let sorted = |mut v: Vec<(NodeId, f64, f64, Vec<LinkId>)>| {
+                    v.sort_by_key(|f| f.0);
+                    v.into_iter()
+                        .map(|(n, g, t, l)| (n, g.to_bits(), t.to_bits(), l))
+                        .collect::<Vec<_>>()
+                };
+                search.set_extras(Some(extras.clone()));
+                reads.set(0);
+                let plain = sorted(search.cheapest_routes_to(
+                    origin,
+                    &targets,
+                    aim.len(),
+                    100.0,
+                    f64::INFINITY,
+                    &none,
+                    &seconds,
+                ));
+                plain_reads += reads.get();
+                search.set_extras(Some(extras.clone()));
+                reads.set(0);
+                let rest = |v: NodeId| landmarks.bound(v, &aim);
+                let aimed = sorted(search.cheapest_routes_toward(
+                    origin,
+                    &targets,
+                    aim.len(),
+                    &rest,
+                    100.0,
+                    f64::INFINITY,
+                    &none,
+                    &seconds,
+                ));
+                aimed_reads += reads.get();
+                assert_eq!(aimed, plain, "origin {o}, targets {aim:?}");
+            }
+        }
+    }
+    assert!(aimed_reads < plain_reads, "{aimed_reads} reads aimed, {plain_reads} plain");
+}
+
+/// **The landmark bound is consistent and below the true cost**: on a 7×7 grid with signals
+/// and hashed extras, for every link `u → v` and every target, the bound at `u` is at most the
+/// link's lower-bound cost plus the bound at `v`; and from every node, the bound towards every
+/// target is at most the least cost to it (a plain search).
+#[test]
+fn the_landmark_bound_is_consistent_and_below_the_true_cost() {
+    let (net, _) = manhattan_grid(7, 200.0, true);
+    let turns = turns_of(&net);
+    let ctx = SearchContext::new(&net, &turns);
+    let extra = hashed_extras(&net, 4);
+    let lower: Vec<f64> =
+        (0..net.link_count()).map(|l| ctx.link_cost(LinkId::new(l)) + extra[l as usize]).collect();
+    let landmarks = Landmarks::new(&net, &lower, 4);
+    let mut search = Search::new(&ctx);
+    search.set_extras(Some(ctx.extras(extra.clone())));
+    let seconds = |l: u32, _: f64| net.free_flow_time(LinkId::new(l)).get();
+    let none = |_: u32, _: f64| 0.0;
+    let n = net.node_count();
+    for t in 0..n {
+        let aim = [NodeId::new(t)];
+        for l in 0..net.link_count() {
+            let link = LinkId::new(l);
+            let (u, v) = (net.link_from(link), net.link_to(link));
+            let (bu, bv) = (landmarks.bound(u, &aim), landmarks.bound(v, &aim));
+            assert!(
+                bu <= lower[l as usize] + bv,
+                "link {l} towards {t}: {bu} > {} + {bv}",
+                lower[l as usize]
+            );
+        }
+        for o in 0..n {
+            if o == t {
+                continue;
+            }
+            let mut targets = vec![false; n as usize];
+            targets[t as usize] = true;
+            let found = search.cheapest_routes_to(
+                NodeId::new(o),
+                &targets,
+                1,
+                0.0,
+                f64::INFINITY,
+                &none,
+                &seconds,
+            );
+            let cost = found.first().map_or(f64::INFINITY, |f| f.1);
+            assert!(landmarks.bound(NodeId::new(o), &aim) <= cost, "{o} → {t}");
+        }
     }
 }

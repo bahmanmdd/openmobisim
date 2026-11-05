@@ -1141,7 +1141,50 @@ impl<'a> Search<'a> {
         wait: &dyn Fn(u32, f64) -> f64,
         seconds: &dyn Fn(u32, f64) -> f64,
     ) -> Vec<(NodeId, f64, f64, Vec<LinkId>)> {
+        self.cheapest_routes_toward(
+            origin,
+            targets,
+            wanted,
+            &|_| 0.0,
+            departure,
+            bound,
+            wait,
+            seconds,
+        )
+    }
+
+    /// [`Self::cheapest_routes_to`], **goal-directed (A\*)**: labels are expanded in order of
+    /// their cost plus `rest(v)`, a lower bound on the generalised cost left from node `v` to the
+    /// targets (for a link, at its downstream end). `rest` must be **consistent**: never more
+    /// than the true cost left, and for every link `u → v` the search may take, `rest(u)` at most
+    /// the link's least possible step plus `rest(v)` (a link's time is never below its free-flow
+    /// time; [`crate::Landmarks::bound`] is such a bound). Then every label is final when it is
+    /// expanded, and each target gets the label, the clock time and the route the plain search
+    /// gives it (a step of positive cost always raises the key, so the tie rule meets the same
+    /// candidates); the search only expands fewer labels. `rest` of 0 everywhere is the plain
+    /// search, operation for operation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `targets` has fewer entries than the network has nodes.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the time-dependent search's own arguments, plus the targets and the bound"
+    )]
+    pub fn cheapest_routes_toward(
+        &mut self,
+        origin: NodeId,
+        targets: &[bool],
+        wanted: usize,
+        rest: &dyn Fn(NodeId) -> f64,
+        departure: f64,
+        bound: f64,
+        wait: &dyn Fn(u32, f64) -> f64,
+        seconds: &dyn Fn(u32, f64) -> f64,
+    ) -> Vec<(NodeId, f64, f64, Vec<LinkId>)> {
         let ctx = self.ctx;
+        // The lower bound on the rest of the way from the downstream end of `l`.
+        let rest = |l: LinkId| rest(ctx.network.link_to(l));
         let mut found: Vec<(NodeId, f64, f64, u32)> = Vec::new();
         let mut seen: Vec<u32> = Vec::new();
         if targets[origin.index()] {
@@ -1166,15 +1209,16 @@ impl<'a> Search<'a> {
                 if cost < self.dist[l.index()] {
                     self.set(l.index(), cost, true_cost, NONE);
                     self.time[l.index()] = entered + s;
-                    self.heap.push(Entry { cost, link: l.raw() });
+                    self.heap.push(Entry { cost: cost + rest(l), link: l.raw() });
                 }
             }
         }
         while found.len() < wanted {
-            let Some(Entry { cost, link }) = self.heap.pop() else { break };
+            let Some(Entry { cost: priority, link }) = self.heap.pop() else { break };
             let l = LinkId::new(link);
-            if cost > self.dist[l.index()] {
-                continue;
+            let cost = self.dist[l.index()];
+            if priority > cost + rest(l) {
+                continue; // stale: a cheaper way to this link was found later
             }
             let to = ctx.network.link_to(l);
             let (at, true_so_far) = (self.time[l.index()], self.true_dist[l.index()]);
@@ -1201,7 +1245,7 @@ impl<'a> Search<'a> {
                     self.time[m.index()] = at + s;
                 }
                 if relaxed == Relaxed::Lower {
-                    self.heap.push(Entry { cost: nd, link: m.raw() });
+                    self.heap.push(Entry { cost: nd + rest(m), link: m.raw() });
                 }
             }
         }

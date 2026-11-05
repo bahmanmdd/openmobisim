@@ -88,6 +88,19 @@
 //! the class's extra whenever the extras are not negative). A search that meets a negative step
 //! answers nothing; its trips get a search each, as [`LegPlanner::plan`] makes it.
 //!
+//! The slack is tracked only while it could answer a later trip: once it falls below the gap
+//! to the next departure after `t₁`, no later trip can be answered by the search, and the rest of
+//! its reads are not looked up.
+//!
+//! **Goal-directed.** A search for at most [`MAX_AIMED_DESTINATIONS`] destinations expands its
+//! labels in order of cost plus a lower bound on the cost left to the nearest of them, from
+//! landmarks ([`Landmarks`]: the least free-flow-plus-extra costs to and from 8 nodes spread
+//! over the network, made once per class's extras). A link's time is never below its free-flow
+//! time, so the bound is consistent and every label is the one the plain search makes: the
+//! answers are the same to the bit, the search only expands fewer labels (on Delft about 40 %
+//! fewer link times read in congestion). If a time read is below its link's free-flow time or a
+//! wait below 0 (a table built otherwise), the search is made again without the bound.
+//!
 //! `TimeChanges` says when each link's time changes. It reads the link times as the table of
 //! their bins of entry time ([`LinkTimes::rows`]), which is how a loading's link times and
 //! the free-flow times are made; if a time read during a search is not the table's value for
@@ -104,11 +117,13 @@
 //! else.
 
 use std::cell::{Cell, RefCell};
+use std::sync::Arc;
 
 use openmobisim_core_demand::Mode;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::LinkTimes;
+use openmobisim_core_routes::Landmarks;
 use openmobisim_core_routes::search::{Extras, Search, SearchContext};
 use openmobisim_core_types::ids::{EntityId, LinkId, NodeId, UserClassId};
 
@@ -160,6 +175,9 @@ pub struct CarPlanner<'a> {
     money: &'a [f64],
     /// Per user class, the static extra per link the search adds to each link's travel time.
     extras: Vec<Extras>,
+    /// Per user class, the landmark bounds of its goal-directed searches (classes with the same
+    /// extras share one).
+    landmarks: Vec<Arc<Landmarks>>,
     /// The fixed times of every car leg that uses a link.
     fixed: FixedTimes,
 }
@@ -228,7 +246,25 @@ impl<'a> CarPlanner<'a> {
             }
             extras.push(context.extras(seconds));
         }
-        Ok(Self { network, context, money, extras, fixed: FixedTimes::NONE })
+        // The lower-bound cost of a link: its free-flow time plus the class's extra.
+        let mut landmarks: Vec<Arc<Landmarks>> = Vec::with_capacity(extras.len());
+        for (c, e) in extras.iter().enumerate() {
+            let same = extras[..c].iter().position(|d| d.seconds() == e.seconds());
+            landmarks.push(match same {
+                Some(d) => landmarks[d].clone(),
+                None => {
+                    let cost: Vec<f64> = (0..network.link_count())
+                        .map(|l| {
+                            let link = LinkId::new(l);
+                            context.link_cost(link) + e.seconds()[link.index()]
+                        })
+                        .map(|c| if c.is_finite() { c.max(0.0) } else { f64::INFINITY })
+                        .collect();
+                    Arc::new(Landmarks::new(network, &cost, LANDMARKS))
+                }
+            });
+        }
+        Ok(Self { network, context, money, extras, landmarks, fixed: FixedTimes::NONE })
     }
 
     /// The planner with `fixed` times before and after every car leg that uses a link (see the
@@ -339,6 +375,9 @@ impl<'a> CarPlanner<'a> {
         RouteScratch {
             search: Search::new(&self.context),
             targets: vec![false; nodes],
+            aim: Vec::new(),
+            bounds: vec![(0, 0.0); nodes],
+            epoch: 0,
             slot: vec![NO_SLOT; nodes],
             waits: Vec::new(),
         }
@@ -399,7 +438,7 @@ impl<'a> CarPlanner<'a> {
         let extras = &self.extras[class.index()];
         let extra = extras.seconds();
         let times = Self::times(state, cost_source);
-        let RouteScratch { search, targets, slot, waits } = scratch;
+        let RouteScratch { search, targets, aim, bounds, epoch, slot, waits } = scratch;
         let mut answer: Vec<Option<usize>> = vec![None; requests.len()];
         let mut answered = vec![false; requests.len()];
         let mut first = 0;
@@ -412,39 +451,92 @@ impl<'a> CarPlanner<'a> {
                 first += 1;
             }
             let Some(&(t1, _)) = requests.get(first) else { break };
-            let mut wanted = 0;
+            aim.clear();
             for (j, &(departure, to)) in requests.iter().enumerate().skip(first) {
                 if j > first && departure - t1 > horizon {
                     break;
                 }
                 if !answered[j] && !targets[to.index()] {
                     targets[to.index()] = true;
-                    wanted += 1;
+                    aim.push(to);
                 }
             }
-            // The least time, over every link time the search reads, until that time changes;
-            // and whether some step costs less than nothing.
+            let wanted = aim.len();
+            // The slack is worth tracking only while it could still answer the next departure
+            // after `t₁`: once it is below that gap, no later trip is answered by this search.
+            let next = requests[first..].iter().find(|r| r.0 > t1).map(|r| r.0 - t1);
+            let useful = next.map_or(f64::INFINITY, |gap| gap + SHARED_SEARCH_MARGIN_SECONDS);
+            // The least time, over every link time the search reads, until that time changes
+            // (while it is useful); whether some step costs less than nothing; and whether some
+            // time is below the link's free-flow time, or some wait below 0 (then the goal-directed
+            // search's bound may not hold, and the search is made again without it).
             let slack = Cell::new(f64::INFINITY);
             let negative = Cell::new(false);
-            let wait = |l: u32, t: f64| times.origin_wait_seconds(l, t);
+            let below = Cell::new(false);
+            let wait = |l: u32, t: f64| {
+                let w = times.origin_wait_seconds(l, t);
+                if w < 0.0 {
+                    below.set(true);
+                }
+                w
+            };
             let seconds = |l: u32, t: f64| {
                 let s = times.link_seconds(l, t);
-                slack.set(slack.get().min(changes.seconds_until_change(l, t, s)));
+                if next.is_some() && slack.get() >= useful {
+                    slack.set(slack.get().min(changes.seconds_until_change(l, t, s)));
+                }
                 if s + extra[l as usize] < 0.0 {
                     negative.set(true);
+                }
+                if s < self.context.link_cost(LinkId::new(l)) {
+                    below.set(true);
                 }
                 s
             };
             search.set_extras(Some(extras.clone()));
-            let found = search.cheapest_routes_to(
+            // Goal-directed towards the destinations sought, when they are few (the bound is
+            // towards the nearest of them, which says little when they surround the origin, and
+            // costs two reads per landmark and destination for every node reached, once).
+            let aimed = aim.len() <= MAX_AIMED_DESTINATIONS;
+            let landmarks = &self.landmarks[class.index()];
+            *epoch = epoch.wrapping_add(1);
+            if *epoch == 0 {
+                bounds.fill((0, 0.0));
+                *epoch = 1;
+            }
+            let cache = std::cell::RefCell::new(&mut *bounds);
+            let rest = |n: NodeId| {
+                let mut cache = cache.borrow_mut();
+                let (stamp, value) = &mut cache[n.index()];
+                if *stamp != *epoch {
+                    *stamp = *epoch;
+                    *value = landmarks.bound(n, aim);
+                }
+                *value
+            };
+            let mut found = search.cheapest_routes_toward(
                 origin,
                 targets,
                 wanted,
+                if aimed { &rest } else { &|_| 0.0 },
                 t1,
                 f64::INFINITY,
                 &wait,
                 &seconds,
             );
+            if below.get() && aimed {
+                slack.set(f64::INFINITY);
+                negative.set(false);
+                found = search.cheapest_routes_to(
+                    origin,
+                    targets,
+                    wanted,
+                    t1,
+                    f64::INFINITY,
+                    &wait,
+                    &seconds,
+                );
+            }
             if negative.get() {
                 for &(_, to) in &requests[first..] {
                     targets[to.index()] = false;
@@ -518,6 +610,13 @@ pub const SHARED_SEARCH_WINDOW_SECONDS: u32 = 300;
 /// of 10⁵ s) and far below the one second between two departures.
 const SHARED_SEARCH_MARGIN_SECONDS: f64 = 1e-3;
 
+/// The most destinations a shared search is goal-directed towards (see the [module
+/// docs](self#shared-searches)); a search for more is the plain one.
+const MAX_AIMED_DESTINATIONS: usize = 8;
+
+/// The landmarks of the goal-directed searches' bound ([`Landmarks`]).
+const LANDMARKS: usize = 8;
+
 /// A node with no route found by the current shared search.
 const NO_SLOT: u32 = u32::MAX;
 
@@ -532,6 +631,12 @@ pub(crate) struct RouteScratch<'a> {
     search: Search<'a>,
     /// Per node, whether the current search looks for it.
     targets: Vec<bool>,
+    /// The nodes the current search looks for.
+    aim: Vec<NodeId>,
+    /// Per node, the landmark bound towards `aim` and the search (`epoch`) it was worked out
+    /// for: each node's bound is worked out once per search.
+    bounds: Vec<(u32, f64)>,
+    epoch: u32,
     /// Per node, the index of the current search's route to it, [`NO_SLOT`] if none.
     slot: Vec<u32>,
     /// The origin's first links and their waits at the current search's departure, as bits.
