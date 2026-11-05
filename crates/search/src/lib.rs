@@ -1,4 +1,12 @@
-//! Search: the best alternative per mode at the current costs, time-dependent on the first-in-first-out reading.
+//! Search: the fastest route per mode at the current link times, time-dependent on the
+//! first-in-first-out reading.
 //!
-//! Empty until the module enters through its door: a README stating inputs, outputs, units and
-//! assumptions; its test against an answer from outside the simulator; the budgets met.
+//! | Module | What it holds |
+//! |---|---|
+//! | [`search`] | [`search::Search::fastest`]: the route of earliest arrival for one query, by label-setting Dijkstra over nodes with a straight-line bound (A\*); [`search::fastest_many`]: many queries in parallel |
+//!
+//! A bike and a walker cross every link in its length over their mode's speed, whatever the
+//! cars do, so their fastest route is their shortest by length. Units are metric: metres and
+//! seconds.
+
+pub mod search;

@@ -23,7 +23,8 @@ yet.
   (count), walkers (count). NaN for the entrants of a row without cars.
 
 `link_times::LinkTimes::new(network, links)` reads the table: `time(link, mode, t)` and
-`route_time(route, mode, departure)`.
+`route_time(route, mode, departure)`; `since_start(second)` places a second of the clock on
+the reading's clock, seconds since the window's start.
 
 ## Units
 Seconds and metres; vehicles per second inside (the capacity's headway is 1 / capacity).

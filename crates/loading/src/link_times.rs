@@ -217,6 +217,13 @@ impl LinkTimes {
         }
     }
 
+    /// An instant of the clock as seconds since the window's start: the clock on which
+    /// [`Self::time`] reads, and the one every walk of a route starts from.
+    #[must_use]
+    pub fn since_start(&self, at: Second) -> Duration {
+        Duration(f64::from(at.get()) - self.origin)
+    }
+
     /// The time to travel `route` by `mode`, setting out at `departure`: the route walked link
     /// by link, each link entered when the one before it ends. Zero for an empty route.
     ///
@@ -225,7 +232,7 @@ impl LinkTimes {
     /// As [`Self::time`], for any link of the route.
     #[must_use]
     pub fn route_time(&self, route: &[LinkId], mode: Mode, departure: Second) -> Duration {
-        let start = f64::from(departure.get()) - self.origin;
+        let start = self.since_start(departure).get();
         let mut t = start;
         for &link in route {
             t += self.time(link, mode, Duration(t)).get();

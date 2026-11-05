@@ -79,6 +79,12 @@ version = "0.2.0-dev"
 [[package]]
 name = "openmobisim-search"
 version = "0.2.0-dev"
+dependencies = [
+ "openmobisim-graph",
+ "openmobisim-loading",
+ "openmobisim-types",
+ "rayon",
+]
 
 [[package]]
 name = "openmobisim-transit"
