@@ -64,7 +64,10 @@ counts it at entry on every link of its route.
 bottleneck by hand (1 200 veh/h fed a car every 2 s: car k delayed k s, 44 850 veh·s, the queue
 clear at λT/μ = 900 s); the same link with unlimited capacity (every exit t + τ to the bit,
 72 s door to door); Newell's tandem (83.3 and 166.7 veh·h, reversed 250 and 0, and Vickrey's recursion car by
-car); the window's end (each bin as with a window four times longer, by hand τ + t/2); the reading
+car); the merge of two approaches into a narrower link (test 2: Daganzo's rule with demand-proportional
+priorities is the deterministic queue on the merged link, 1 800 and 600 veh/h into 1 800 veh/h, 90 300 veh·s by
+Vickrey's recursion against the fluid 90 000, both approaches delayed alike); the window's end (each bin as with a
+window four times longer, by hand τ + t/2); the reading
 by hand at each of its rules, and its properties (own time at an entrant, linear between two,
 FIFO and above free flow over random arrivals, a route's time equal to the loaded one); test 9 by
 hand (360 s, 750 s, a three-link sum, unchanged by 1 000 queued cars); conservation on a 20 × 20

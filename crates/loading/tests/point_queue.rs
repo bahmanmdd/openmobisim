@@ -1,6 +1,6 @@
 //! The point queue against answers from outside the simulator: Vickrey's (1969) deterministic
 //! bottleneck, the free-flow time with a capacity that never binds, Newell's (1982) tandem of
-//! two bottlenecks, the window's end, determinism, and the errors that refuse bad vehicles.
+//! two bottlenecks, the merge of two approaches (test 2), the window's end, determinism, and the errors that refuse bad vehicles.
 //!
 //! Every car link here is one lane at 50 km/h (13.889 m/s): 1 000 m take 72 s and 2 000 m take
 //! 144 s by hand, both exact in floating point. Capacities are given in the rows.
@@ -8,9 +8,10 @@
 mod common;
 
 use common::{
-    Draws, car_link, cycle_path, grid, grid_route, line, link, vehicle, whole_line, window,
+    Draws, VALUES, at, car_link, cycle_path, grid, grid_route, line, link, vehicle, whole_line,
+    window,
 };
-use openmobisim_graph::network::{LinkRow, Network};
+use openmobisim_graph::network::{LinkRow, Network, NetworkBuilder};
 use openmobisim_loading::input::{LoadError, Vehicle};
 use openmobisim_loading::point_queue::{Loading, load};
 use openmobisim_types::ids::{EntityId, LinkId, TripId};
@@ -148,6 +149,85 @@ fn the_reversed_tandem_delays_250_vehicle_hours_then_none() {
     assert!((first - (3.6 * 499_500.0 - departures)).abs() <= 1e-3, "first queue {first} veh·s");
     assert!(second.abs() <= 1e-6, "second queue {second} veh·s");
     assert!(within(first / 3_600.0, 250.0, 0.002_5), "{} veh·h", first / 3_600.0);
+}
+
+/// Two 1 000 m approaches, `l0` from `a` and `l1` from `b`, merging at `c` into `l2`, 1 000 m on
+/// to `d`; every link 1 800 veh/h. The network and the ids of `l0`, `l1` and `l2`.
+fn merge() -> (Network, [LinkId; 3]) {
+    let mut b = NetworkBuilder::new();
+    for (node, x, y) in
+        [("a", 0.0, 0.0), ("b", 0.0, 1_000.0), ("c", 1_000.0, 0.0), ("d", 2_000.0, 0.0)]
+    {
+        b.add_node(node, at(x, y));
+    }
+    for (id, from, to) in [("l0", "a", "c"), ("l1", "b", "c"), ("l2", "c", "d")] {
+        b.add_link(id, from, to, car_link(1_000.0, 1_800.0));
+    }
+    let net = b.build(VALUES).expect("the merge builds");
+    let ids = ["l0", "l1", "l2"].map(|id| net.link_ids().typed_id_of(id).expect("a merge link"));
+    (net, ids)
+}
+
+#[test]
+fn a_merge_of_1800_and_600_veh_h_into_1800_veh_h_queues_both_approaches_alike() {
+    // Daganzo's (1995) merge with priorities in proportion to demand is the deterministic queue
+    // on the merged link (Vickrey 1969). Approach A sends a car every 2 s (1 800 veh/h, exactly
+    // its capacity, so it never waits on l0) and approach B one every 6 s (600 veh/h), both for
+    // T = 900 s: λ = 2 400 veh/h = 2/3 veh/s into l2 against μ = 1 800 veh/h = 1/2 veh/s. The
+    // fluid queue peaks at (λ − μ)T = 150 cars; the total delay is λ(λ − μ)T²/(2μ) = 90 000 veh·s
+    // = 25 veh·h, a mean of (λ − μ)T/(2μ) = 150 s on each approach, at most 300 s.
+    // Vickrey's recursion by hand, car by car: cars reach l2 at their departure + 72 s, in the
+    // order of (instant, trip), so at a tie the A car (the lower trip) goes first. l2 is busy
+    // from its first car, so the n-th car to reach it (from 0) leaves at 144 + 2n. A's car k
+    // follows k A cars and ⌈k/3⌉ B cars: it arrives at 144 + 2(k + ⌈k/3⌉), a delay of 2⌈k/3⌉;
+    // Σ⌈k/3⌉ = 33 825 over k < 450, so 67 650 veh·s, a mean of 150.33 s, at most 300 s (k = 449).
+    // B's car j follows 3j + 1 A cars (k ≤ 3j, the tie included) and j B cars: it arrives at
+    // 144 + 2(4j + 1), a delay of 2j + 2; 22 650 veh·s over 150 cars, a mean of 151 s. In all
+    // 90 300 veh·s, within 0.5 % (one car's share) of the fluid 90 000. Under priorities in
+    // proportion to capacity (Daganzo's usual choice) B would pass free and A bear all 25 veh·h:
+    // the unequal demands are what tell the two rules apart.
+    let (net, [l0, l1, l2]) = merge();
+    let mut cars: Vec<Vehicle> =
+        (0..450).map(|k| vehicle(k, Mode::Car, &[l0, l2], 2 * k)).collect();
+    cars.extend((0..150).map(|j| vehicle(450 + j, Mode::Car, &[l1, l2], 6 * j)));
+    let run = load(&net, &cars, window(300, 3_600)).unwrap();
+    assert!(run.unfinished.is_empty());
+    for trip in 0..600_u32 {
+        let by_hand = if trip < 450 {
+            144.0 + 2.0 * f64::from(trip + trip.div_ceil(3))
+        } else {
+            144.0 + 2.0 * f64::from(4 * (trip - 450) + 1)
+        };
+        let arrival = run.finished.arrivals()[trip as usize].get();
+        assert!(
+            (arrival - by_hand).abs() <= 1e-9,
+            "trip {trip} at {arrival} s, by hand {by_hand} s"
+        );
+    }
+    for (name, l) in [("l0", l0), ("l1", l1)] {
+        let delay = delay_on(&run, l, TAU_1KM);
+        assert!(delay <= 1e-6, "delay on {name} {delay} veh·s");
+    }
+    let merged = delay_on(&run, l2, TAU_1KM);
+    assert!((merged - 90_300.0).abs() <= 1e-3, "delay on l2 {merged} veh·s, by hand 90 300");
+    assert!(within(merged, 90_000.0, 0.005), "delay on l2 {merged} veh·s, fluid 90 000");
+    let delays: Vec<f64> =
+        (0..600).map(|i| run.finished.travel_time(i).get() - 2.0 * TAU_1KM).collect();
+    let (a, b) = (delays[..450].iter().sum::<f64>(), delays[450..].iter().sum::<f64>());
+    assert!((a - 67_650.0).abs() <= 1e-3, "approach A {a} veh·s, by hand 67 650");
+    assert!((b - 22_650.0).abs() <= 1e-3, "approach B {b} veh·s, by hand 22 650");
+    let (mean_a, mean_b) = (a / 450.0, b / 150.0);
+    assert!((mean_a - 150.0).abs() <= 1.0, "approach A's mean delay {mean_a} s, fluid 150 s");
+    assert!((mean_b - 150.0).abs() <= 1.0, "approach B's mean delay {mean_b} s, fluid 150 s");
+    let worst = delays[..450].iter().copied().fold(0.0, f64::max);
+    assert!((worst - 300.0).abs() <= 1e-9, "approach A's longest delay {worst} s, by hand 300 s");
+    // l2 discharges at capacity: the 600 arrivals at d, 2 s apart, from 144 s to 1 342 s.
+    let mut at_d: Vec<f64> = run.finished.arrivals().iter().map(|a| a.get()).collect();
+    at_d.sort_by(f64::total_cmp);
+    assert!((at_d[0] - 144.0).abs() <= 1e-9 && (at_d[599] - 1_342.0).abs() <= 1e-9);
+    for w in at_d.windows(2) {
+        assert!((w[1] - w[0] - 2.0).abs() <= 1e-9, "arrivals at {} s and {} s", w[0], w[1]);
+    }
 }
 
 /// The table's rows on link 0 as (bin, cars, mean car time in s).
