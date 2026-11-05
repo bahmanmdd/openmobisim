@@ -1,0 +1,14 @@
+[package]
+name = "openmobisim-types"
+description = "Shared types: identifiers, the clock in seconds, metric units, modes (car, bike, walk, transit)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

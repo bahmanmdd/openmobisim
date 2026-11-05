@@ -1,0 +1,40 @@
+# The gate: everything here is green before a change lands. One job on one runner, no artifacts; the steps are
+# named so that a failure names its cause. The three-platform matrix and the wheel build return with the public tree.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: Format, lint, test, budgets, guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Clippy, warnings as errors (functions over 80 lines fail here)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --workspace
+      - name: Budgets
+        run: bash tools/check_limits.sh
+      - name: Leak guard, built-in rules
+        run: bash tools/guard.sh tree .

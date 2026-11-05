@@ -1,0 +1,56 @@
+# openmobisim — the Cargo workspace.
+#
+# One crate graph. A crate depends only on the crates before it in this order (checked by
+# `tools/check_limits.sh`): types, graph, loading, search, choice, transit, demand, loop,
+# io-osm, io-gtfs, io-parquet, binding. The binding is the only crate that knows Python exists.
+
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.2.0-dev"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/bahmanmdd/openmobisim"
+authors = ["The openmobisim authors"]
+
+[workspace.dependencies]
+# Internal
+openmobisim-types = { path = "crates/types", version = "0.2.0-dev" }
+openmobisim-graph = { path = "crates/graph", version = "0.2.0-dev" }
+openmobisim-loading = { path = "crates/loading", version = "0.2.0-dev" }
+openmobisim-search = { path = "crates/search", version = "0.2.0-dev" }
+openmobisim-choice = { path = "crates/choice", version = "0.2.0-dev" }
+openmobisim-transit = { path = "crates/transit", version = "0.2.0-dev" }
+openmobisim-demand = { path = "crates/demand", version = "0.2.0-dev" }
+openmobisim-loop = { path = "crates/loop", version = "0.2.0-dev" }
+openmobisim-io-osm = { path = "crates/io-osm", version = "0.2.0-dev" }
+openmobisim-io-gtfs = { path = "crates/io-gtfs", version = "0.2.0-dev" }
+openmobisim-io-parquet = { path = "crates/io-parquet", version = "0.2.0-dev" }
+
+# External: kept short. Every addition is a decision, made when a module needs it.
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+# Warnings are errors in CI. `too_many_lines` with the threshold in clippy.toml is the function budget.
+too_many_lines = "warn"
+undocumented_unsafe_blocks = "warn"
+float_cmp = "warn"
+cast_possible_truncation = "warn"
+cast_precision_loss = "warn"
+cast_sign_loss = "warn"
+needless_pass_by_value = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+
+# `panic` stays at "unwind": the Python binding turns panics into exceptions, which needs unwinding.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = 1

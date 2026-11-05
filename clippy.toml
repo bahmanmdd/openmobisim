@@ -1,0 +1,2 @@
+# The function budget: no function over 80 lines (clippy's too_many_lines, warned, and warnings are errors in CI).
+too-many-lines-threshold = 80

@@ -1,0 +1,14 @@
+[package]
+name = "openmobisim-io-parquet"
+description = "Writing the three result tables (trips, links by time bin, iterations) as Parquet."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

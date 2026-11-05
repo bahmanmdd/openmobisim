@@ -1,0 +1,14 @@
+[package]
+name = "openmobisim-choice"
+description = "Choice: the deterministic best alternative and the logit family (logit, nested logit, path-size logit) behind one interface."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

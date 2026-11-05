@@ -1,0 +1,21 @@
+# Rust
+target/
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+# Run outputs
+*.parquet
+openmobisim-runs/
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+# Never part of this repository
+/docs/
+/CLAUDE.md
+/.claude/
