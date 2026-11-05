@@ -76,7 +76,7 @@ ENGINES = ("current", "one-loop")
 ONE_LOOP_ALLOCATIONS = ("draws", "choice_quota", "quota")
 #: The one-loop engine's readings of the link travel times (``equilibration_options``
 #: ``link_times``), the default first.
-ONE_LOOP_LINK_TIMES = ("bins", "fifo")
+ONE_LOOP_LINK_TIMES = ("fifo", "bins")
 
 
 class EngineNotSupportedError(ValueError):
@@ -2151,13 +2151,13 @@ class Scenario:
                 no random draw; ``"quota"``, also who reconsiders by quota, the averaging step's
                 share of each such group, so no random draw enters the choice at all), and
                 ``link_times`` (how the route search and the pricing read the link travel times
-                the loading measured: ``"bins"``, the default, each link's mean time per bin of
+                the loading measured: ``"fifo"``, the default, the exit second read on straight
+                lines through the entry and exit seconds of the first and the last car to enter
+                each link in each bin, which the loading then records, so that no car leaves
+                before one that entered earlier; ``"bins"``, each link's mean time per bin of
                 entry time, which is not first-in-first-out where the time falls from one bin to
                 the next, so a car entering late in a bin can leave after one entering at the
-                next bin's start; ``"fifo"``, the exit second read on straight lines through the
-                entry and exit seconds of the first and the last car to enter each link in each
-                bin, which the loading then records, so that no car leaves before one that
-                entered earlier). Every car
+                next bin's start). Every car
                 trip pays the fixed times of reaching the car and of parking and leaving it
                 (``mode_options`` ``car_access_s`` and ``car_egress_s``, rounded to whole
                 seconds): the car enters the roads ``car_access_s`` after the departure, the

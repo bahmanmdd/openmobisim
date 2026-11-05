@@ -51,11 +51,17 @@
 //!   behind the last exit before (if any) at the first entrant's time;
 //! - before the link's first recorded bin, and on a link nobody entered: free flow.
 //!
-//! The time is `τ(t) = max(e(t) − t, τ_free)`. Every piece is nondecreasing in `t` and they
-//! meet without a fall, so the reading is FIFO by construction, and at a recorded entrant it is
-//! that entrant's own time. [`LinkTimes::link_seconds_held`] holds the last entrant's time after
-//! it. A read is one lookup in the link's bins and one interpolation. A table recorded without
-//! its entrants (any but the one-loop engine's under this reading) is read FIFO by a **floor**
+//! The time is `τ(t) = max(e(t) − t, τ_free)`, computed from differences of recorded seconds
+//! (`e(t) − t` itself, never `e(t)`) and rounded up to the loading's time grid of 2⁻²⁰ s, as
+//! are the origin waits under this reading (S312): every recorded second is on that grid, so a
+//! clock that starts at a whole second and adds these times stays on it and is exact, and a
+//! loading shifted by whole hours is read the same, to the bit, at the shifted second (formed at
+//! the clock's magnitude, the last bits of the time depended on the hour, and route costs tied
+//! by the reading were told apart differently). Every piece is nondecreasing in `t` and they
+//! meet without a fall, so the reading is FIFO by construction (on the grid; within a step of
+//! it off the grid), and at a recorded entrant it is that entrant's own time, rounded up.
+//! [`LinkTimes::link_seconds_held`] holds the last entrant's time after it. A read is one lookup
+//! in the link's bins and one interpolation. A table recorded without its entrants (any but the one-loop engine's under this reading) is read FIFO by a **floor**
 //! instead: `τ_FIFO(t) = max(τ(t), E(t) − t)`, `E(t)` the latest exit second, by the bins
 //! reading, of anyone entering before `t`; within bin `k`, starting at `s_k`,
 //! `E(t) = max(X_k, t + τ_k)`, `X_{k+1} = max(X_k, s_{k+1} + τ_k)` carried once at construction
@@ -71,6 +77,7 @@
 //! links costs about 5 µs. The FIFO reading adds 40 bytes per recorded (link, bin) row and 4 per
 //! cell of the times laid out (the floor: 8 per cell and 8 per link), built in one pass.
 
+use crate::events::on_grid_up;
 use crate::{Entrants, EntryTables, LinkBins};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_types::ids::{EntityId, LinkId};
@@ -184,13 +191,22 @@ fn knots_by_link(links: usize, bins: &LinkBins) -> (Vec<u32>, Vec<u32>, Vec<Entr
     (start, bin, knots)
 }
 
-/// The exit second at `t` on the line through `(a_enter, a_exit)` and `(b_enter, b_exit)`; the
-/// later exit where the two entered at the same second.
+/// The time from `t` to the exit second at `t` on the line through `(a_enter, a_exit)` and
+/// `(b_enter, b_exit)`, that is the two entrants' times interpolated linearly in the entry
+/// second; to the later exit where the two entered at the same second.
+///
+/// Computed from differences only (S312): every recorded second is on the loading's time grid,
+/// so `a_exit − a_enter`, `b_exit − b_enter`, `b_enter − a_enter` and `t − a_enter` are exact,
+/// and nothing of the order of the clock (seconds since midnight) is rounded. The exit second
+/// itself, `a_exit + …`, rounds at the clock's magnitude, so a loading shifted by whole hours
+/// read at the shifted second gave a time differing in its last bits, which broke ties between
+/// routes of equal cost differently.
 fn between(a_enter: f64, a_exit: f64, b_enter: f64, b_exit: f64, t: f64) -> f64 {
     if b_enter > a_enter {
-        a_exit + (b_exit - a_exit) * ((t - a_enter) / (b_enter - a_enter))
+        let (a, b) = (a_exit - a_enter, b_exit - b_enter);
+        a + (b - a) * ((t - a_enter) / (b_enter - a_enter))
     } else {
-        a_exit.max(b_exit)
+        a_exit.max(b_exit) - t
     }
 }
 
@@ -570,11 +586,16 @@ impl LinkTimes {
         // The latest recorded bin at or before `bin`.
         let j = if k < z - a { self.knot_of_cell[a + k] as usize } else { kz - 1 };
         let here = self.knots[j];
+        // Every piece is the time from `at` to the exit second, from differences of recorded
+        // seconds and `at` (see `between`): the same, to the bit, for a loading shifted by whole
+        // hours read at the shifted second. The time is then rounded up to the loading's time
+        // grid (S312), so a clock that starts at a whole second and adds such times stays on the
+        // grid and exact at any hour (see the module docs).
         let after = |t: f64| -> f64 {
             // After the bin's last entrant: on to the next bin's first if it is the next bin,
             // else behind the last exit, at free flow at least (the carry); held, its time.
             if held && j + 1 == kz {
-                return t + (here.last_exit - here.last_enter);
+                return here.last_exit - here.last_enter;
             }
             match self.knots.get(j + 1).filter(|_| j + 1 < kz) {
                 Some(next)
@@ -582,10 +603,10 @@ impl LinkTimes {
                 {
                     between(here.last_enter, here.last_exit, next.first_enter, next.first_exit, t)
                 }
-                _ => here.last_exit.max(t + free),
+                _ => (here.last_exit - t).max(free),
             }
         };
-        let exit = if self.knot_bin[j] == bin {
+        let seconds = if self.knot_bin[j] == bin {
             if at < here.first_enter {
                 // Before the bin's first entrant: from the last entrant of the bin before if it
                 // was recorded, else behind the last exit before, at the first entrant's time.
@@ -601,7 +622,7 @@ impl LinkTimes {
                 } else {
                     let floor =
                         if j > ka { self.knots[j - 1].last_exit } else { f64::NEG_INFINITY };
-                    floor.max(at + (here.first_exit - here.first_enter))
+                    (floor - at).max(here.first_exit - here.first_enter)
                 }
             } else if at <= here.last_enter {
                 between(here.first_enter, here.first_exit, here.last_enter, here.last_exit, at)
@@ -611,7 +632,7 @@ impl LinkTimes {
         } else {
             after(at)
         };
-        (exit - at).max(free)
+        on_grid_up(seconds.max(free))
     }
 
     /// The bytes these times hold (closures aside).
@@ -635,7 +656,10 @@ impl LinkTimes {
     pub fn origin_wait_seconds(&self, link: u32, departure: f64) -> f64 {
         let l = link as usize;
         let rows = self.wait_start[l] as usize..self.wait_start[l + 1] as usize;
-        lookup(&self.wait_bin, &self.wait_mean, rows, self.bin_of(departure)).unwrap_or(0.0)
+        let wait =
+            lookup(&self.wait_bin, &self.wait_mean, rows, self.bin_of(departure)).unwrap_or(0.0);
+        // Under the FIFO reading by the exit seconds, on the time grid like the link times.
+        if self.interpolated { on_grid_up(wait) } else { wait }
     }
 
     /// The time to drive `links` when setting out at second `departure`: the wait to
@@ -1150,6 +1174,75 @@ mod tests {
             LinkTimesReading::Fifo
         );
         assert!(close(t.with_reading(LinkTimesReading::Fifo).link_seconds(0, 450.0), 150.0));
+    }
+
+    /// **Property, from the model's definition:** nothing in the loading or in the FIFO reading
+    /// depends on the hour, so a loading whose departures and window are shifted by 3 600 s
+    /// (1 300 cars an hour for half an hour, at whole seconds, onto a link that lets one out every
+    /// 6 s: a queue that grows and clears) gives every car the same trip time, and its FIFO
+    /// reading, read at the shifted second, the same time to the bit: at every tenth of a second
+    /// (on a grid of 2⁻³⁰ s, so shifted exactly), on every link, carried and held, and a route
+    /// priced from every whole second. Before S312 the exit second was formed at the clock's
+    /// magnitude (`a_exit + …`), so its last bits depended on the hour.
+    #[test]
+    fn a_loading_shifted_by_an_hour_reads_the_same_fifo_times() {
+        let net = line(600.0);
+        let turns = TurnTable::build(&net, SignalDefaults::SHIPPED);
+        let load = |start: u32| {
+            let cars: Vec<Vehicle> = (0..650_u32)
+                .map(|i| {
+                    Vehicle::new(
+                        VehicleId::new(i),
+                        vec![LinkId::new(0), LinkId::new(1)],
+                        Pcu(1.0),
+                        Second(start + i * 3600 / 1300),
+                    )
+                })
+                .collect();
+            let (trajectories, _, tables) = run_ltm_recorded_with_entrants(
+                &net,
+                &turns,
+                &cars,
+                Duration(f64::from(start) + 7200.0),
+                Duration(60.0),
+                FidelityLevel::PointQueue,
+                60,
+            );
+            let trips: Vec<u32> =
+                trajectories.iter().map(|t| t.arrival().get() - t.departure().get()).collect();
+            (trips, LinkTimes::from_tables(&net, &tables).with_reading(LinkTimesReading::Fifo))
+        };
+        let (trips, early) = load(0);
+        let (trips_late, late) = load(3600);
+        assert_eq!(trips.len(), 650, "every car arrives");
+        assert_eq!(trips, trips_late, "the same trip times");
+        let mut checked = 0;
+        for l in 0..net.link_count() {
+            for k in 0..10 * 4500 {
+                let at = (f64::from(k) * 0.1 * 1_073_741_824.0).round() / 1_073_741_824.0;
+                for (a, b) in [
+                    (early.link_seconds(l, at), late.link_seconds(l, at + 3600.0)),
+                    (early.link_seconds_held(l, at), late.link_seconds_held(l, at + 3600.0)),
+                ] {
+                    assert_eq!(
+                        a.to_bits(),
+                        b.to_bits(),
+                        "link {l} at {at} s: {a} s, shifted {b} s"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert_eq!(checked, 2 * 2 * 45_000);
+        // And a route priced by the reading from every whole second: the same time, to the bit
+        // (the clock it walks stays on the loading's grid, so it is exact at any hour).
+        for d in 0..4500_u32 {
+            let (a, b) = (
+                early.route_seconds(&[0, 1], f64::from(d)),
+                late.route_seconds(&[0, 1], f64::from(d + 3600)),
+            );
+            assert_eq!(a.to_bits(), b.to_bits(), "a route from {d} s: {a} s, shifted {b} s");
+        }
     }
 
     #[test]

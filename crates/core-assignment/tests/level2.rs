@@ -6,7 +6,7 @@
 //! |---|---|---|---|
 //! | 1 | a line of three links, the middle one a bottleneck | the deterministic queue (Newell 1982) | the total delay `½ (λ − μ) T T'`, its change when demand rises by a fifth, when the queue clears |
 //! | 2 | two routes, the short one with a bottleneck | dynamic user equilibrium of the bottleneck (Vickrey 1969) | when the long route comes into use, the mean trip, the short route's share after that |
-//! | 3 | the Braess network | the steady state of the point-queue equilibrium (Cominetti, Correa and Olver 2022) | route shares, queue delays and trip times in the second hour, with and without the middle link (with it, the mean over master seeds 1–5), and below capacity |
+//! | 3 | the Braess network | the steady state of the point-queue equilibrium (Cominetti, Correa and Olver 2022) | route shares, queue delays and trip times in the second hour, with and without the middle link (with it, the mean over master seeds 1–20), and below capacity |
 //! | 4 | a 3 × 3 grid with a signal at its centre | Webster's uniform delay; the deterministic queue at the green share of the capacity | one car's time; the total delay of 1 200 cars an hour |
 //! | 5 | the line of test 1 below capacity | free flow | every trip at its free-flow time; a second iteration changes nothing |
 //! | 6 | a line whose first link is the bottleneck; two routes, one behind a metered origin | the deterministic queue; the wait at an origin | a late car's measured time against its planned time; the route chosen with the wait counted |
@@ -14,6 +14,7 @@
 //! | 8 | the two routes; the Braess network | the stopping rule, at most 200 iterations | where the loop stops and the mean trip's error there (printed only) |
 //! | 9 | one car on two empty links; the two routes; the line of test 1 | free flow; the route of least cost under a constant added to every route; the deterministic queue's invariance to a shift in time | the car's fixed times of 120 s and 300 s: the door-to-door time, when the car sets off, the attributes and their cost; a trip ending after the window; no route changed; the bottleneck's delay unchanged, its pattern shifted by 120 s |
 //! | 10 | the two routes, logit and deterministic, with and without the fixed times | the loading is deterministic | a state rebuilt from what a run wrote of its final state is that state, to the bit, and a run continued from it goes on alike; a saved state that does not fit is refused |
+//! | 11 | a 5 × 5 grid, four corner-to-corner flows above capacity, the logit, the FIFO reading; the two routes | the model has no hour: a shift of every departure and the window by 3 600 s; the FIFO reading reads entrants | every trip's route and time the same; a loading that records none refused under the FIFO reading |
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -41,7 +42,7 @@ use openmobisim_core_graph::geometry::LonLat;
 use openmobisim_core_graph::network::{LinkSpec, RoadNetwork, RoadNetworkBuilder};
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    FidelityLevel, LinkTimes, Recording, Rules, Vehicle, run_ltm_chained,
+    FidelityLevel, LinkTimes, LinkTimesReading, Recording, Rules, Vehicle, run_ltm_chained,
 };
 use openmobisim_core_routes::search::{Search, SearchContext};
 use openmobisim_core_types::diagnostics::Diagnostics;
@@ -828,9 +829,10 @@ fn share_of(s: &SteadyState, route: &str) -> (f64, f64) {
 /// - **with `a → b`, 900 veh/h**: below both capacities, everyone on s-a-b-t, 3 min.
 ///
 /// With the middle link, the queues, the shares and the trip times are judged on their mean
-/// over master seeds 1 to 5. The discretised point-queue process is stochastic in who
+/// over master seeds 1 to 20. The discretised point-queue process is stochastic in who
 /// reconsiders (the averaging rule's draws), so the theorem's steady state is its expectation:
-/// one seed can sit 7 % off while the mean sits within 1 %. The five values and their standard
+/// one seed can sit 7 % off while the mean sits within 1 %. Twenty seeds, not five, so that the 2 % tolerance sits about three
+/// standard errors from the mean rather than two (S312). The twenty values and their standard
 /// deviation are printed.
 #[test]
 fn the_braess_network_reaches_the_linear_programs_steady_state() {
@@ -847,9 +849,9 @@ fn the_braess_network_reaches_the_linear_programs_steady_state() {
         );
         assert!((mean / derived - 1.0).abs() <= 0.02, "{route}: {mean} s");
     }
-    // With it, over master seeds 1 to 5.
+    // With it, over master seeds 1 to 20.
     let runs: Vec<SteadyState> =
-        (1..=5).map(|seed| braess_run_seeded(true, 1500, seed).0).collect();
+        (1..=20).map(|seed| braess_run_seeded(true, 1500, seed).0).collect();
     let derived = 19.0 * minute;
     let queue = 8.0 * minute;
     // The mean and the standard deviation (n − 1) of a value over the seeds, printed.
@@ -857,7 +859,7 @@ fn the_braess_network_reaches_the_linear_programs_steady_state() {
         let v: Vec<f64> = runs.iter().map(f).collect();
         let m = v.iter().sum::<f64>() / v.len() as f64;
         let sd = (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (v.len() - 1) as f64).sqrt();
-        println!("  seeds 1–5, {name}: {v:.4?}; mean {m:.4}, standard deviation {sd:.4}");
+        println!("  seeds 1–20, {name}: {v:.4?}; mean {m:.4}, standard deviation {sd:.4}");
         m
     };
     let mean_trip = over_seeds("mean trip (s)", &|s| s.mean_trip);
@@ -1409,4 +1411,87 @@ fn a_saved_state_that_does_not_fit_is_refused() {
         assert!(matches!(e, Err(AssignError::Input(_))), "{name}");
     }
     assert!(restore(&inputs, &params, &[good], 3).is_err(), "one trip for two");
+}
+
+// --- 11. a shift in time under the FIFO reading -------------------------------------------
+
+/// **Property, from the model's definition:** nothing in the loop depends on the hour, so a run
+/// whose departures and window are shifted by 3 600 s gives every trip the same route and the
+/// same trip time, under the FIFO reading of the link times as under the bins. A 5 × 5 grid of
+/// 200-m blocks (1 800 veh/h a link), 3 000 cars an hour from each corner to the opposite one
+/// for an hour, the logit, 12 iterations, from 8 h and from 9 h (the clock passes 2¹⁵ s =
+/// 9.1 h in the later run only, so its seconds round at another magnitude). Before S312 the
+/// reading formed the exit second at the clock's magnitude, its last bits depended on the
+/// hour, and routes of equal cost were told apart differently: trips changed by minutes.
+#[test]
+fn a_run_shifted_by_an_hour_gives_the_same_trips_under_the_fifo_reading() {
+    const RATE: u64 = 3000;
+    let corners = [((0, 0), (4, 4)), ((4, 4), (0, 0)), ((0, 4), (4, 0)), ((4, 0), (0, 4))];
+    let the_logit = logit();
+    let run_from = |start: u32| {
+        let (net, _) = manhattan_grid(5, BLOCK_M, false);
+        let mut raw = Vec::new();
+        for ((r0, c0), (r1, c1)) in corners {
+            let from = node_name(r0, c0);
+            let to = node_name(r1, c1);
+            raw.extend(trips(&net, &from, &to, &departures(RATE, start, 3600)));
+        }
+        for (i, t) in raw.iter_mut().enumerate() {
+            t.traveller_id = format!("t{i:05}");
+        }
+        let c = case(net, raw);
+        // No flag: under the FIFO reading the assignment asks the loading for its entrants.
+        let loader = PointQueue::new(&c.turns, f64::from(start) + 4.0 * 3600.0);
+        let params = Params { link_times: LinkTimesReading::Fifo, ..exactly(12) };
+        let r = run_with(&c, &loader, &params, false, &the_logit, 2026);
+        timing(&format!("grid from {start} s"), &r);
+        r.recorder
+            .trips()
+            .into_iter()
+            .map(|(route, d, t)| (route.to_vec(), d - f64::from(start), t))
+            .collect::<Vec<_>>()
+    };
+    let early = run_from(8 * 3600);
+    let late = run_from(9 * 3600);
+    let mean = early.iter().map(|&(_, _, t)| t).sum::<f64>() / early.len() as f64;
+    let free = 8.0 * BLOCK_M / metres_per_second(GRID_KM_H);
+    println!("mean trip {mean:.1} s against {free:.1} s at free flow");
+    assert!(mean > 1.5 * free, "the grid is congested: {mean} s");
+    let changed = early.iter().zip(&late).filter(|(a, b)| a != b).count();
+    let worst = early.iter().zip(&late).map(|(a, b)| (a.2 - b.2).abs()).fold(0.0, f64::max);
+    assert_eq!(changed, 0, "{changed} of {} trips changed, by up to {worst} s", early.len());
+}
+
+/// A loader that records its table without the entrants whatever it is asked: refused under the
+/// FIFO reading (it would be read by the floor unnoticed), run under the bins reading.
+#[test]
+fn the_fifo_reading_refuses_a_loading_without_its_entrants() {
+    struct Plain<'a>(PointQueue<'a>);
+    impl Loader for Plain<'_> {
+        fn load(&self, vehicles: &[Vehicle], network: &RoadNetwork) -> Loaded {
+            self.0.load(vehicles, network)
+        }
+    }
+    let net = two_routes();
+    let c = case(two_routes(), trips(&net, "o", "d", &departures(1800, 0, 600)));
+    let loader = Plain(PointQueue::after_last_departure(&c.turns, &c.trips, 3600.0));
+    let inputs = Inputs {
+        network: &c.net,
+        turns: &c.turns,
+        layers: openmobisim_core_assignment::Layers::NONE,
+        travellers: &c.travellers,
+        trips: &c.trips,
+        classes: &c.classes,
+        mode_choice: &[],
+        money_per_link: &c.money,
+        model: &HighestUtility,
+        loader: &loader,
+        seed: RngKey::from_seed(1),
+        initial: None,
+    };
+    let fifo = Params { link_times: LinkTimesReading::Fifo, ..exactly(2) };
+    let e = assign(&inputs, &fifo, &mut Recorder::default()).map(|_| ());
+    assert!(matches!(&e, Err(AssignError::Input(m)) if m.contains("entrant")), "{e:?}");
+    let bins = Params { link_times: LinkTimesReading::Bins, ..exactly(2) };
+    assert!(assign(&inputs, &bins, &mut Recorder::default()).is_ok());
 }

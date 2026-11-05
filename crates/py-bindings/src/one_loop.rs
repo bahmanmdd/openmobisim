@@ -492,7 +492,9 @@ fn fingerprint(
     if params.allocation != Allocation::Draws {
         h.write_str(params.allocation.name());
     }
-    // Likewise the reading of the link times, only when it is not the bins.
+    // Likewise the reading of the link times, only when it is not the bins (the reading every run
+    // had before the option existed, so those runs keep their fingerprints; the default is now
+    // the FIFO reading, whose runs give other results and so another fingerprint).
     if params.link_times != LinkTimesReading::Bins {
         h.write_str("link_times");
         h.write_str(params.link_times.name());
