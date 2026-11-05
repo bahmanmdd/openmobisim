@@ -364,7 +364,8 @@ class _OneLoopSummary:
             "completed": outcome.count("completed"),
             "truncated": outcome.count("truncated"),
             "no_vehicle_available": outcome.count("no_vehicle_available"),
-            "no_feasible_path": outcome.count("no_feasible_path"),
+            # A trip choosing its mode with no alternative counts under no feasible path.
+            "no_feasible_path": outcome.count("no_feasible_path") + outcome.count("no_alternative"),
             "mode_not_available": 0,
             "total_travel_time_s": float((weight[done] * travel[done]).sum()),
             "total_vehicle_time_s": float((weight[done] * vehicle[done]).sum()),
@@ -606,10 +607,12 @@ class Run:
         Columns: ``trip`` (its index in the run), ``chain`` (its place in the trip's set, in the
         order found), ``taken`` (the chain the trip took in the last iteration), ``probability``
         (what the choice model gave it at the trip's last choice), ``cost`` (its cost in utility
-        units, minus the systematic utility of the trip's user class) and ``travel_time_s`` at
+        units, minus the systematic utility of the trip's user class, its mode's constant
+        included) and ``travel_time_s`` at
         the link travel times of the last loading (door to door: the car's or the bike's fixed
         times included), ``mode`` (``"car"``, ``"bike"`` or ``"walk"``: a trip whose mode is
-        stated as the bike or walking has one chain on its layer), ``links`` (its links in travel
+        stated as the bike or walking has one chain on its layer; a trip choosing its mode has
+        its car chains, its bike chain and its walk), ``links`` (its links in travel
         order, as the link ids of its mode's layer: the road network's for a car, as
         ``link_bins_table()``'s ``link``; ``network.layer("bike")``'s or ``"walk"``'s, as
         ``link_bins_table("bike")``'s) and ``link_index`` (the same links as indices into that
@@ -718,7 +721,10 @@ class Run:
         ``nan`` marks a number that was not measured. **On the one-loop engine** the columns
         are its own, every share weighted by the people a trip stands for and every cost in
         utility units (minus the systematic utility of the trip's user class), read on the link
-        travel times the iteration's loading produced: ``iteration``; ``found`` and
+        travel times the iteration's loading produced. **The stopping shares count only the
+        trips that could change their choice**, the car trips and the trips choosing their mode
+        (``choosing``: their travellers' weights, summed); a trip whose mode is stated as the
+        bike or walking keeps its one chain and is left out of them. ``iteration``; ``found`` and
         ``found_share`` (the trips the route search found a chain for that was not yet in their
         choice set and is cheaper than the cheapest chain of the set by more than the
         indifference band, ``indifference_band``: how many, and their share; the stopping
@@ -739,15 +745,36 @@ class Run:
         chance, reported only); ``departed``,
         ``arrived``, ``unfinished`` (people) and ``unfinished_share``; ``without_chain``
         (people whose trip had no chain: no car, or no route); ``gap`` (the relative duality
-        gap within the choice sets, ``(Σ w·paid − Σ w·least) / Σ w·least``, paid the cost of the
-        chain taken and least the least cost in the set); ``gap_deterministic`` (the
+        gap within the choice sets, over the trips that could change their choice, as are
+        ``gap_deterministic`` and ``spread``, ``(Σ w·paid − Σ w·least) / Σ w·least``, paid the
+        cost of the chain taken and least the least cost in the set); ``gap_deterministic`` (the
         deterministic part of the duality gap, ``(Σ w·paid − Σ w·expected) / Σ w·least``,
         expected the cost the choice model expects over the set: the gap less the part the
         model's own dispersion produces; equal to ``gap`` under the deterministic choice);
         ``spread`` (the share of trips on a chain of least cost in their set); ``mean_trip_s``
-        (the mean travel time of the trips that arrived, in seconds); and each stage's
-        wall-clock seconds, ``search_s``, ``choose_s``, ``load_s``, ``measure_s`` and
-        ``assess_s``. It has no verdict. The columns below are the current engine's.
+        (the mean travel time of the trips that arrived, in seconds); **each mode's shares**:
+        ``found_share_car``, ``found_share_bike``, ``found_share_walk``, ``switch_share_car``,
+        ``switch_share_bike`` and ``switch_share_walk`` (the same share over the trips counted in
+        it that held a chain of that mode at the start of the iteration, before its search and
+        choice: ``switch_share_bike`` is the share of the trips on a bike chain that took another
+        chain, of any mode; ``nan`` when no such trip, as in iteration 0, when no trip has a chain
+        yet; they describe who moved and are **not** measures of stationarity, since grouping by
+        the chain held conditions on the last choice's outcome);
+        ``mode_share_change_expected_car``, ``mode_share_change_expected_bike`` and
+        ``mode_share_change_expected_walk`` (the stationarity measure by mode: before the choice,
+        how much the mode's share of the trips
+        counted would change in expectation if everyone reconsidered,
+        ``Σ w (P_mode − 1[the chain held is of the mode]) / Σ w``, ``P_mode`` the choice model's
+        probability of the trip's chains of that mode; 0 in expectation at a stationary state,
+        positive for a mode still gaining trips; the three sum to 0); ``mode_change_share`` (of
+        the trips choosing their mode that held a chain before the choice, the share whose chain
+        after it is of another mode: a change of mode, not of route alone; ``nan`` without such
+        trips); ``mode_share_car``,
+        ``mode_share_bike`` and ``mode_share_walk`` (the modal split of the trips choosing their
+        mode after the choice, over those with a chain; ``nan`` when no trip chooses its mode);
+        and each stage's wall-clock seconds, ``search_s``, ``choose_s``, ``load_s``,
+        ``measure_s`` and ``assess_s``. It has no verdict. The columns below are the current
+        engine's.
 
         The result of the run
         (``completion``, ``total_travel_time_s``, ``link_bins()``, ``route_choices()``)

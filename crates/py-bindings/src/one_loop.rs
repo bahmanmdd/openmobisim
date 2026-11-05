@@ -23,8 +23,15 @@
 //! time), at the layer's static speeds, a bike's ride with its fixed times (`bike_access_s`
 //! before it, reaching and unlocking the bike; `bike_egress_s` after it, parking and locking it;
 //! whole seconds, rounded, 0 when not given). They load nothing on the road network. A trip
-//! stating another mode is refused. The scenario's other parts are checked by the Python
-//! package, which refuses by name what this engine does not have before calling it.
+//! stating another mode is refused. **Trips choosing their mode** among the car, the bike and
+//! walking: with `modes` (the run's) and `class_modes` (a class's own, `None` for every mode of the
+//! run), a trip that states no mode is offered the modes of both lists; with two or more it
+//! chooses among them ([`openmobisim_core_assignment::modes`]): its choice set holds its car chains
+//! beside its bike chain and its walking chain, each within the longest walk and ride offered
+//! (`walk_max_s` and `bike_max_s`, in seconds on the layer, the fixed times not counted, the run's
+//! unless `class_limits` gives a class its own; no limit when not given); with one it is a trip of
+//! that mode. The scenario's other parts are checked by the Python package, which refuses by name
+//! what this engine does not have before calling it.
 //!
 //! **A run continued from another** (`start_chains_path`, `start_iterations`): the state is
 //! rebuilt from that run's chains table (every trip's set, current chain and probabilities) and
@@ -37,8 +44,9 @@
 //! assignment weighs each attribute by its cost per unit, the opposite sign. Per class, the
 //! run's options are overridden by the class's own, by name, and become:
 //!
-//! - the cost of a minute in the car: `−beta_time_min` (−0.2 for the logit when not given, its
-//!   default; 1 for the deterministic choice, whose choice does not depend on the scale);
+//! - the cost of a minute in the car: `−beta_time_min` (−0.2 for the logit and the nested logit
+//!   when not given, their default; 1 for the deterministic choice, whose choice does not depend
+//!   on the scale);
 //! - of a minute walking, waiting or parking: `−(beta_time_min + beta_walk_min)`,
 //!   `−(beta_time_min + beta_wait_min)` and `−(beta_time_min + beta_parking_min)` (each counts
 //!   on top of the time; `beta_parking_min` 0 when not given);
@@ -47,10 +55,16 @@
 //!   `−beta_length_km`, 0 when not given;
 //! - of a kilometre ridden by bike in mixed traffic, on top of the ride's time:
 //!   `−beta_bike_mixed_km` (`beta_bike_mixed_km` −0.16 for the logit when not given, as the other
-//!   engine's logit; 0 for the deterministic choice). A bike's ride counts as time in a vehicle,
-//!   `−beta_time_min` a minute; a walk's minutes as walking.
+//!   engine's logit; 0 for the deterministic choice); of one on a painted lane and on a track or
+//!   path of its own: `−beta_bike_lane_km` and `−beta_bike_separated_km` (0 when not given). A
+//!   bike's ride counts as time in a vehicle, `−beta_time_min` a minute; a walk's minutes as
+//!   walking;
+//! - the constant of each mode, what a chain of it costs on top of its attributes:
+//!   `−beta_mode_car`, `−beta_mode_bike`, `−beta_mode_walk` (0 when not given: time decides).
 //!
-//! `beta_ln_path_size` (1 by default) weighs the path-size term of the logit. A car or bike
+//! `beta_ln_path_size` (1 by default) weighs the path-size term of the logit and the nested
+//! logit; `mu` (0.5 by default; above 0 and at most 1) is the nested logit's nest scale, one
+//! nest per mode. Both are the run's (`choice_options`), never a class's. A car or bike
 //! leg's access time counts as walking and its egress time as parking, as the other engine's
 //! mode choice counts them (`walk_min` and `parking_min`); it has no waiting or transfer.
 
@@ -76,11 +90,11 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use openmobisim_core_assignment::{
-    Allocation, Coefficients, FixedTimes, FreeFlow, HighestUtility, Inputs, IterationReport, Layer,
-    Layers, Loaded, Loader, Params, Place, PointQueue, SavedTrip, StageHook, State, assign,
-    restore,
+    Allocation, ClassModes, Coefficients, FixedTimes, FreeFlow, HighestUtility, Inputs,
+    IterationReport, Layer, Layers, LeftOut, Loaded, Loader, ModeSet, Params, PerMode, Place,
+    PointQueue, SavedTrip, StageHook, State, TripModes, assign, left_out, restore,
 };
-use openmobisim_core_choice::{ChoiceModel, Logit, Options};
+use openmobisim_core_choice::{ChoiceModel, Logit, NestedLogit, Options};
 use openmobisim_core_demand::{
     ClassDefaults, Mode, Ownership, RawTrip, Travellers, Trips, build_travellers,
     check_distinct_keys, read_persons_parquet, read_trips_parquet,
@@ -109,8 +123,9 @@ use crate::pipeline::{
 };
 use crate::routes::PyRouteSets;
 
-/// The names of the coefficients a class's options may give, besides `beta_ln_path_size`.
-const COEFFICIENTS: [&str; 8] = [
+/// The names of the coefficients a class's options may give, besides `beta_ln_path_size` and
+/// `mu`.
+const COEFFICIENTS: [&str; 13] = [
     "beta_time_min",
     "beta_walk_min",
     "beta_wait_min",
@@ -118,12 +133,21 @@ const COEFFICIENTS: [&str; 8] = [
     "beta_transfers",
     "beta_cost_eur",
     "beta_length_km",
-    // A bike leg's weight on its kilometres in mixed traffic: no car route has any.
+    // A bike leg's weight on its kilometres by facility: no car route has any.
     "beta_bike_mixed_km",
+    "beta_bike_lane_km",
+    "beta_bike_separated_km",
+    // The modes' constants.
+    "beta_mode_car",
+    "beta_mode_bike",
+    "beta_mode_walk",
 ];
 
+/// The options of the run's choice model that are not a class's coefficient.
+const MODEL_OPTIONS: [&str; 2] = ["beta_ln_path_size", "mu"];
+
 /// What the fingerprint of a run of this engine covers, in words, for the manifest.
-const FINGERPRINT_COVERS: [&str; 15] = [
+const FINGERPRINT_COVERS: [&str; 16] = [
     "the network: every node's position and signal, every link's ends, class, lanes, length, \
      free-flow time, storage, capacity, jam density, wave speed, control delay and closure",
     "the trips run (those departing inside the window): traveller, place in the day, user class, \
@@ -146,7 +170,10 @@ const FINGERPRINT_COVERS: [&str; 15] = [
     "when a trip states the bike or walking: the bike and walk layers (every node's position, \
      every link's ends, length, speed and bike infrastructure), each traveller's bike ownership, \
      the bike cost, the bike's fixed times and each class's cost of a kilometre ridden in mixed \
-     traffic",
+     traffic (and on a painted lane and a track of its own, when a class weighs them)",
+    "when a trip chooses its mode: the modes each user class is offered, its longest walk and \
+     ride, each class's modes' constants and costs of a kilometre by bike facility, and the \
+     nested logit's nest scale",
 ];
 
 /// Why a class's options cannot be read, naming the class.
@@ -155,7 +182,7 @@ fn class_error(class: &str, message: &str) -> PyErr {
 }
 
 /// A class's coefficients from the run's options overridden by the class's, as the module docs
-/// say; `model` is `"deterministic"` or `"logit"`.
+/// say; `model` is `"deterministic"`, `"logit"` or `"nested_logit"`.
 fn coefficients(
     model: &str,
     run: &BTreeMap<String, f64>,
@@ -167,15 +194,15 @@ fn coefficients(
         merged.insert(k.clone(), *v);
     }
     for (k, v) in &merged {
-        if k == "beta_ln_path_size" {
+        if MODEL_OPTIONS.contains(&k.as_str()) {
             continue;
         }
         if !COEFFICIENTS.contains(&k.as_str()) {
             return Err(class_error(
                 name,
                 &format!(
-                    "the one-loop engine has no coefficient {k:?}; it reads {} and \
-                     beta_ln_path_size",
+                    "the one-loop engine has no coefficient {k:?}; it reads {}, and the model's \
+                     beta_ln_path_size and mu",
                     COEFFICIENTS.join(", ")
                 ),
             ));
@@ -184,7 +211,8 @@ fn coefficients(
             return Err(class_error(name, &format!("{k} must be a finite number, got {v}")));
         }
     }
-    let logit = model == "logit";
+    // The logit's defaults for both logits; the deterministic choice's own.
+    let logit = model != "deterministic";
     let given = |k: &str, default: f64| merged.get(k).copied().unwrap_or(default);
     let time = given("beta_time_min", if logit { -0.2 } else { -1.0 });
     let walk = given("beta_walk_min", if logit { -0.13 } else { 0.0 });
@@ -199,22 +227,36 @@ fn coefficients(
         per_money: -given("beta_cost_eur", 0.0),
         per_kilometre: -given("beta_length_km", 0.0),
         bike_mixed_per_kilometre: -given("beta_bike_mixed_km", if logit { -0.16 } else { 0.0 }),
+        bike_lane_per_kilometre: -given("beta_bike_lane_km", 0.0),
+        bike_separated_per_kilometre: -given("beta_bike_separated_km", 0.0),
+        car_constant: -given("beta_mode_car", 0.0),
+        bike_constant: -given("beta_mode_bike", 0.0),
+        walk_constant: -given("beta_mode_walk", 0.0),
     })
 }
 
-/// The run's choice model: the deterministic choice, or the logit with its path-size weight.
+/// The run's choice model: the deterministic choice, the logit with its path-size weight, or
+/// the nested logit with its path-size weight and its nest scale `mu` (one nest per mode).
 fn model_of(name: &str, options: &BTreeMap<String, f64>) -> PyResult<Box<dyn ChoiceModel>> {
+    let mut o: Options = [("beta_utility".to_string(), 1.0)].into_iter().collect();
+    if let Some(&v) = options.get("beta_ln_path_size") {
+        o.insert("beta_ln_path_size".to_string(), v);
+    }
+    if name != "nested_logit" && options.contains_key("mu") {
+        return Err(PyValueError::new_err(format!(
+            "mu is the nested logit's nest scale; the choice model is {name:?}"
+        )));
+    }
     match name {
         "deterministic" => Ok(Box::new(HighestUtility)),
-        "logit" => {
-            let mut o: Options = [("beta_utility".to_string(), 1.0)].into_iter().collect();
-            if let Some(&v) = options.get("beta_ln_path_size") {
-                o.insert("beta_ln_path_size".to_string(), v);
-            }
-            Ok(Box::new(Logit::from_options(&o).map_err(to_value_error)?))
+        "logit" => Ok(Box::new(Logit::from_options(&o).map_err(to_value_error)?)),
+        "nested_logit" => {
+            o.insert("mu".to_string(), options.get("mu").copied().unwrap_or(0.5));
+            Ok(Box::new(NestedLogit::from_options(&o).map_err(to_value_error)?))
         }
         other => Err(PyValueError::new_err(format!(
-            "the one-loop engine's choice models are \"deterministic\" and \"logit\", not {other:?}"
+            "the one-loop engine's choice models are \"deterministic\", \"logit\" and \
+             \"nested_logit\", not {other:?}"
         ))),
     }
 }
@@ -400,6 +442,7 @@ fn fingerprint(
     seed: u64,
     start: Option<(&str, u32)>,
     parts: &StaticParts,
+    choice: &ModeChoice,
 ) -> u64 {
     let mut h = Fnv1a::new();
     h.write_str("one-loop");
@@ -455,7 +498,7 @@ fn fingerprint(
         h.write_str(print);
         h.write_u32(iterations);
     }
-    // The bike and walk layers, only when a trip states their mode.
+    // The bike and walk layers, only when a trip may ride or walk.
     if parts.any() {
         hash_static(&mut h, parts, travellers);
         h.write_str(parts.bike_cost.as_str());
@@ -466,7 +509,124 @@ fn fingerprint(
             h.write_f64(k.parking_per_minute);
         }
     }
+    // Mode choice, only when a trip chooses its mode; else the coefficients it adds, only when a
+    // class gives one (so a run without either keeps its fingerprint).
+    let added = |k: &Coefficients| {
+        [
+            k.car_constant,
+            k.bike_constant,
+            k.walk_constant,
+            k.bike_lane_per_kilometre,
+            k.bike_separated_per_kilometre,
+        ]
+    };
+    if choice.any {
+        h.write_str("mode choice");
+        for c in &choice.classes {
+            for mode in [Mode::Car, Mode::Bike, Mode::Walk] {
+                h.write_bool(c.modes.contains(mode));
+            }
+            h.write_f64(c.walk_max_seconds);
+            h.write_f64(c.bike_max_seconds);
+        }
+        for k in classes {
+            for v in added(k) {
+                h.write_f64(v);
+            }
+        }
+        h.write_f64(choice.mu.unwrap_or(f64::NAN));
+    } else if classes.iter().any(|k| added(k).iter().any(|v| *v != 0.0)) {
+        h.write_str("modes' constants and bike facilities");
+        for k in classes {
+            for v in added(k) {
+                h.write_f64(v);
+            }
+        }
+    }
     h.finish()
+}
+
+/// What mode choice offers each user class (by class index), whether any trip chooses its mode,
+/// and the nested logit's nest scale (`None` for another model).
+struct ModeChoice {
+    classes: Vec<ClassModes>,
+    any: bool,
+    mu: Option<f64>,
+}
+
+/// What mode choice offers each class of `travellers`: the modes of `modes` (the run's) that the
+/// class's own list (`class_modes`) also holds, each limited to the car, the bike and walking,
+/// with the longest walk and ride (`walk_max_s`, `bike_max_s`, or the class's own in
+/// `class_limits`; no limit when neither gives one). Empty when the run offers no modes.
+fn mode_choice_of(
+    travellers: &Travellers,
+    modes: Option<&[String]>,
+    class_modes: &HashMap<String, Vec<String>>,
+    limits: (Option<f64>, Option<f64>),
+    class_limits: &HashMap<String, HashMap<String, f64>>,
+) -> PyResult<Vec<ClassModes>> {
+    let parse = |names: &[String], whose: &str| -> PyResult<Vec<Mode>> {
+        names
+            .iter()
+            .map(|n| {
+                let mode = Mode::from_name(n).map_err(to_value_error)?;
+                if matches!(mode, Mode::Car | Mode::Bike | Mode::Walk) {
+                    Ok(mode)
+                } else {
+                    Err(PyValueError::new_err(format!(
+                        "the one-loop engine's mode choice is among the car, the bike and walking; \
+                         {whose} offers {n:?}"
+                    )))
+                }
+            })
+            .collect()
+    };
+    let Some(modes) = modes else { return Ok(Vec::new()) };
+    let run = parse(modes, "the run")?;
+    let limit = |name: &str, v: Option<f64>| -> PyResult<f64> {
+        let v = v.unwrap_or(f64::INFINITY);
+        if v.is_nan() || v <= 0.0 {
+            return Err(PyValueError::new_err(format!(
+                "{name} must be a positive number of seconds (inf: no limit), got {v}"
+            )));
+        }
+        Ok(v)
+    };
+    let (walk, bike) = (limit("walk_max_s", limits.0)?, limit("bike_max_s", limits.1)?);
+    let ids = travellers.class_external_ids();
+    let mut out = Vec::with_capacity(ids.count() as usize);
+    for c in 0..ids.count() {
+        let name = ids.external(c);
+        let own = match class_modes.get(name) {
+            Some(list) => parse(list, &format!("user class {name:?}"))?,
+            None => run.clone(),
+        };
+        let offered: Vec<Mode> = run.iter().copied().filter(|m| own.contains(m)).collect();
+        let mut class = ClassModes {
+            modes: ModeSet::of(&offered),
+            walk_max_seconds: walk,
+            bike_max_seconds: bike,
+        };
+        if let Some(l) = class_limits.get(name) {
+            for (k, v) in l {
+                match k.as_str() {
+                    "walk_max_s" => class.walk_max_seconds = limit(k, Some(*v))?,
+                    "bike_max_s" => class.bike_max_seconds = limit(k, Some(*v))?,
+                    other => {
+                        return Err(class_error(
+                            name,
+                            &format!(
+                                "the one-loop engine's class limits are walk_max_s and \
+                                 bike_max_s, not {other:?}"
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        out.push(class);
+    }
+    Ok(out)
 }
 
 /// The per-trip results of the last loading.
@@ -478,7 +638,10 @@ struct TripRows {
     origin: Vec<(f64, f64)>,
     destination: Vec<(f64, f64)>,
     departure_s: Vec<u32>,
-    mode: Vec<&'static str>,
+    /// The mode of the chain taken; a trip choosing its mode that took none has none.
+    mode: Vec<Option<&'static str>>,
+    /// Whether the trip chose its mode.
+    mode_choice: Vec<bool>,
     outcome: Vec<&'static str>,
     arrival_s: Vec<Option<f64>>,
     /// A completed trip's seconds in its own vehicle (the car setting off to arriving, the
@@ -508,22 +671,24 @@ struct Ended {
     fixed_s: f64,
 }
 
-/// The mode of `trip`'s chains: the bike or walking when its mode is stated as one of them, the
-/// car otherwise (as the assignment's chain search reads it).
-fn trip_mode(trips: &Trips, trip: TripId) -> Mode {
-    match trips.mode(trip) {
-        m @ (Mode::Bike | Mode::Walk) if trips.mode_given(trip) => m,
-        _ => Mode::Car,
+/// The mode of `trip`'s chains when it has one mode (stated, or the one its class is offered, or
+/// the car); `None` for a trip choosing its mode.
+fn trip_mode(modes: &[TripModes], trip: TripId) -> Option<Mode> {
+    match modes[trip.index()] {
+        TripModes::Stated(m) => Some(m),
+        TripModes::Choice(_) => None,
     }
 }
 
 /// Each trip's outcome and arrival from the last loading and the final state: a trip whose
 /// last leg ends after `end_s` (its vehicle's arrival plus the egress time) is truncated. A bike
-/// or walking trip, which loads nothing, ends at its departure plus its chain's time (the bike's
-/// access, ride and egress; the walk), truncated likewise.
+/// or walking chain, which loads nothing, ends at the trip's departure plus its time (the bike's
+/// access, ride and egress; the walk), truncated likewise. A trip choosing its mode that has no
+/// chain had no alternative (`no_alternative`), and no mode.
 fn trip_rows(
     travellers: &Travellers,
     trips: &Trips,
+    modes: &[TripModes],
     state: &State,
     last: &LastLoading,
     end_s: f64,
@@ -570,6 +735,7 @@ fn trip_rows(
         destination: Vec::with_capacity(n),
         departure_s: Vec::with_capacity(n),
         mode: Vec::with_capacity(n),
+        mode_choice: Vec::with_capacity(n),
         outcome: Vec::with_capacity(n),
         arrival_s: Vec::with_capacity(n),
         vehicle_s: Vec::with_capacity(n),
@@ -588,12 +754,14 @@ fn trip_rows(
         rows.destination.push((d.lon, d.lat));
         let departure = trips.departure(trip).get();
         rows.departure_s.push(departure);
-        let mode = trip_mode(trips, trip);
-        rows.mode.push(mode.as_str());
         let entry = state.trip(trip);
-        let owned = match mode {
-            Mode::Car => state.has_car(traveller),
-            Mode::Bike => state.has_bike(traveller),
+        let stated = trip_mode(modes, trip);
+        let mode = entry.current_chain().map(openmobisim_core_assignment::Chain::mode).or(stated);
+        rows.mode.push(mode.map(Mode::as_str));
+        rows.mode_choice.push(stated.is_none());
+        let owned = match stated {
+            Some(Mode::Car) => state.has_car(traveller),
+            Some(Mode::Bike) => state.has_bike(traveller),
             _ => true,
         };
         // A chain that loads nothing but uses links (a bike or walking trip): timed on its layer.
@@ -613,6 +781,7 @@ fn trip_rows(
             None => *slot,
         };
         let (outcome, ended) = match (entry.current, slot) {
+            (None, _) if stated.is_none() => ("no_alternative", None),
             (None, _) if !owned => ("no_vehicle_available", None),
             (None, _) => ("no_feasible_path", None),
             // A chain whose ends snapped to one node uses no link and leaves no car: it arrives
@@ -771,9 +940,10 @@ fn layer_bins(
 }
 
 /// The route sets and route choices of the final state: per pair of snapped trip ends, every
-/// chain any of its trips has in its choice set, in the order first found (trips in order);
-/// per trip, the chain it takes. Car trips only: a bike or walking trip has no road route (its
-/// route is in the chains table, on its layer).
+/// car chain any of its trips has in its choice set, in the order first found (trips in order);
+/// per trip, the car chain it takes. Car chains only: a bike or walking chain has no road route
+/// (its route is in the chains table, on its layer), and a trip choosing its mode that took one
+/// takes no route here.
 fn routes(
     network: &RoadNetwork,
     travellers: &Travellers,
@@ -781,8 +951,9 @@ fn routes(
     state: &State,
 ) -> (RouteSets, RouteChoices) {
     let mut by_key: BTreeMap<RouteKey, Vec<Vec<u32>>> = BTreeMap::new();
+    // The trip's road pair, from its first car chain.
     let key_of = |t: usize| -> Option<RouteKey> {
-        let chain = state.trips()[t].set.first()?;
+        let chain = state.trips()[t].set.iter().find(|c| c.mode() == Mode::Car)?;
         let (first, last) = (chain.legs().first()?, chain.legs().last()?);
         let (Place::Road(o), Place::Road(d)) = (first.from, last.to) else { return None };
         Some(RouteKey::new(o, d))
@@ -790,7 +961,7 @@ fn routes(
     for (t, entry) in state.trips().iter().enumerate() {
         let Some(key) = key_of(t) else { continue };
         let routes = by_key.entry(key).or_default();
-        for chain in &entry.set {
+        for chain in entry.set.iter().filter(|c| c.mode() == Mode::Car) {
             let links = chain.road_links();
             if !routes.contains(&links) {
                 routes.push(links);
@@ -826,8 +997,12 @@ fn routes(
         let trip = TripId::from_index(t);
         choices.weight[t] = travellers.weight(trips.traveller(trip));
         let Some(key) = key_of(t) else { continue };
-        choices.alternatives[t] = u32::try_from(entry.set.len()).expect("a set fits u32");
-        let Some(current) = entry.current else { continue };
+        let cars = entry.set.iter().filter(|c| c.mode() == Mode::Car).count();
+        choices.alternatives[t] = u32::try_from(cars).expect("a set fits u32");
+        // A trip on a bike or walking chain takes no road route.
+        let Some(current) = entry.current.filter(|&c| entry.set[c].mode() == Mode::Car) else {
+            continue;
+        };
         let k = store.key_index(key).expect("every trip's pair is in the sets");
         let links = entry.set[current].road_links();
         let range = store.route_range(k);
@@ -901,7 +1076,7 @@ fn write_trip_results(
         floats(rows.destination.iter().map(|p| p.1).collect()),
         whole(rows.departure_s.clone()),
         Arc::new(StringArray::from(rows.mode.clone())),
-        Arc::new(BooleanArray::from(vec![false; n])),
+        Arc::new(BooleanArray::from(rows.mode_choice.clone())),
         Arc::new(StringArray::from(rows.outcome.clone())),
         Arc::new(Float64Array::from(rows.arrival_s.clone())),
         Arc::new(Float64Array::from(travel)),
@@ -935,9 +1110,15 @@ fn write_trip_results(
 }
 
 /// The convergence table's columns that are real numbers (the iteration and the counts of
-/// trips found and added are whole numbers, written apart).
+/// trips found and added are whole numbers, written apart). A share of an empty group (a mode no
+/// trip held, or a run where no trip chooses its mode) is `NaN`.
 fn convergence_columns(reports: &[IterationReport]) -> Vec<(&'static str, Vec<f64>)> {
     let col = |f: &dyn Fn(&IterationReport) -> f64| reports.iter().map(f).collect::<Vec<f64>>();
+    let nan = |v: Option<f64>| v.unwrap_or(f64::NAN);
+    let by_mode = |f: fn(&IterationReport) -> PerMode, m: Mode| {
+        reports.iter().map(|r| nan(f(r).of(m))).collect::<Vec<f64>>()
+    };
+    let (car, bike, walk) = (Mode::Car, Mode::Bike, Mode::Walk);
     vec![
         ("found_share", col(&|r| r.found_share)),
         ("added_share", col(&|r| r.added_share)),
@@ -955,6 +1136,20 @@ fn convergence_columns(reports: &[IterationReport]) -> Vec<(&'static str, Vec<f6
         ("gap_deterministic", col(&|r| r.gap_deterministic)),
         ("spread", col(&|r| r.on_cheapest_share)),
         ("mean_trip_s", col(&|r| r.mean_trip_seconds)),
+        ("choosing", col(&|r| r.choosing)),
+        ("found_share_car", by_mode(|r| r.found_share_by_mode, car)),
+        ("found_share_bike", by_mode(|r| r.found_share_by_mode, bike)),
+        ("found_share_walk", by_mode(|r| r.found_share_by_mode, walk)),
+        ("switch_share_car", by_mode(|r| r.switch_share_by_mode, car)),
+        ("switch_share_bike", by_mode(|r| r.switch_share_by_mode, bike)),
+        ("switch_share_walk", by_mode(|r| r.switch_share_by_mode, walk)),
+        ("mode_share_change_expected_car", by_mode(|r| r.mode_share_change_expected, car)),
+        ("mode_share_change_expected_bike", by_mode(|r| r.mode_share_change_expected, bike)),
+        ("mode_share_change_expected_walk", by_mode(|r| r.mode_share_change_expected, walk)),
+        ("mode_change_share", col(&|r| nan(r.mode_change_share))),
+        ("mode_share_car", by_mode(|r| r.mode_split, car)),
+        ("mode_share_bike", by_mode(|r| r.mode_split, bike)),
+        ("mode_share_walk", by_mode(|r| r.mode_split, walk)),
         ("search_s", col(&|r| r.stage_seconds.search)),
         ("choose_s", col(&|r| r.stage_seconds.choose)),
         ("load_s", col(&|r| r.stage_seconds.load)),
@@ -1018,7 +1213,7 @@ fn write_chains(
             chain.push(u32::try_from(c).expect("a set fits u32"));
             taken.push(entry.current == Some(c));
             probability.push(entry.probabilities.get(c).copied().unwrap_or(f64::NAN));
-            cost.push(k.cost(ch.total()));
+            cost.push(k.chain_cost(ch));
             seconds.push(ch.total().total_seconds());
             modes.push(ch.legs().first().map_or(Mode::Car, |l| l.mode).as_str());
             let mut index = Vec::new();
@@ -1156,15 +1351,14 @@ struct Saved {
 /// The chains table at `path` (as [`write_chains`] writes it) as every trip's saved set, the
 /// links read by their ids on the layer of each trip's mode (`network`, the road network, or a
 /// layer of `parts`), for the trips of `demand`; refused unless the table's demand and network
-/// fingerprint is `demand_network`.
+/// fingerprint is `demand_network`. Each chain's mode is the table's `mode` column's.
 fn read_chains(
     path: &str,
     network: &RoadNetwork,
     parts: &StaticParts,
-    demand: &Trips,
+    trips: usize,
     demand_network: &str,
 ) -> PyResult<Saved> {
-    let trips = demand.len() as usize;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
     let bad = |what: String| PyValueError::new_err(format!("the chains table {path:?}: {what}"));
@@ -1202,8 +1396,9 @@ fn read_chains(
             column("probability")?.as_any().downcast_ref::<Float64Array>(),
             column("links")?.as_any().downcast_ref::<ListArray>(),
         );
-        let (Some(trip), Some(chain), Some(taken), Some(probability), Some(links)) =
-            (trip, chain, taken, probability, links)
+        let modes = column("mode")?.as_any().downcast_ref::<StringArray>();
+        let (Some(trip), Some(chain), Some(taken), Some(probability), Some(links), Some(modes)) =
+            (trip, chain, taken, probability, links, modes)
         else {
             return Err(bad("a column of another type than the engine writes".to_string()));
         };
@@ -1215,7 +1410,8 @@ fn read_chains(
             if chain.value(i) as usize != entry.chains.len() {
                 return Err(bad(format!("trip {t}'s chains are not in their order")));
             }
-            let mode = trip_mode(demand, TripId::from_index(t));
+            let mode =
+                Mode::from_name(modes.value(i)).map_err(|e| bad(format!("trip {t}: {e}")))?;
             let ids = parts.of(mode).map_or(network, StaticNetwork::network).link_external_ids();
             let row = links.value(i);
             let names = row
@@ -1233,6 +1429,7 @@ fn read_chains(
                 entry.current = Some(entry.chains.len());
             }
             entry.chains.push(route);
+            entry.modes.push(mode);
             // The probabilities of the trip's last choice: one per chain it had then.
             let p = probability.value(i);
             if !p.is_nan() && entry.probabilities.len() + 1 == entry.chains.len() {
@@ -1245,14 +1442,15 @@ fn read_chains(
 
 // --- the function -----------------------------------------------------------------------------
 
-/// Run the one-loop assignment on car trips, and on bike and walking trips whose mode is stated,
-/// and write its tables to `output_dir`; returns the run's results as a dict (see the module
-/// docs for what is read and written).
+/// Run the one-loop assignment on car trips, bike and walking trips whose mode is stated, and
+/// trips choosing their mode among the car, the bike and walking, and write its tables to
+/// `output_dir`; returns the run's results as a dict (see the module docs for what is read and
+/// written).
 ///
 /// # Errors
 ///
-/// `ValueError` for inputs that cannot be read or do not fit together (a stated mode other than
-/// the car, the bike or walking, a flow level other than 0 or 2, a bike cost other than
+/// `ValueError` for inputs that cannot be read or do not fit together (a stated or offered mode
+/// other than the car, the bike or walking, a flow level other than 0 or 2, a bike cost other than
 /// `"utility"`, `"time"` or `"dedicated"`, a coefficient that cannot price a route, a fixed time
 /// that is not a finite number of at least 0, a run to continue from whose chains table is not
 /// of this demand and network), and if a file cannot be written.
@@ -1265,7 +1463,8 @@ fn read_chains(
     min_iterations=None, max_iterations=None, step_offset=None, switch_tolerance=None,
     found_tolerance=None, indifference_band=None, allocation=None, motorway_snap_m=None,
     car_access_s=None, car_egress_s=None, threads=None, start_chains_path=None,
-    start_iterations=None, bike_cost=None, bike_access_s=None, bike_egress_s=None
+    start_iterations=None, bike_cost=None, bike_access_s=None, bike_egress_s=None, modes=None,
+    class_modes=None, walk_max_s=None, bike_max_s=None, class_limits=None
 ))]
 #[allow(clippy::too_many_arguments, reason = "the scenario's parts, by name, as Python gives them")]
 #[allow(clippy::too_many_lines, reason = "the steps of one run, in order")]
@@ -1306,6 +1505,11 @@ pub fn run_one_loop(
     bike_cost: Option<&str>,
     bike_access_s: Option<f64>,
     bike_egress_s: Option<f64>,
+    modes: Option<Vec<String>>,
+    class_modes: Option<HashMap<String, Vec<String>>>,
+    walk_max_s: Option<f64>,
+    bike_max_s: Option<f64>,
+    class_limits: Option<HashMap<String, HashMap<String, f64>>>,
 ) -> PyResult<Py<PyDict>> {
     let started = Instant::now();
     if flow_level != 0 && flow_level != 2 {
@@ -1368,13 +1572,17 @@ pub fn run_one_loop(
         build_travellers(raw, raw_persons, &defaults, default_weight, &mut diagnostics)
             .map_err(to_value_error)?;
     let demand_s = started.elapsed().as_secs_f64();
-    // The bike and walk layers, only for a run whose trips state their mode.
-    let uses = |mode: Mode| {
-        (0..trips.len()).any(|t| {
-            let trip = TripId::new(t);
-            trips.mode_given(trip) && trips.mode(trip) == mode
-        })
-    };
+    // What mode choice offers each class, and every trip's modes.
+    let offer = mode_choice_of(
+        &travellers,
+        modes.as_deref(),
+        &class_modes.unwrap_or_default(),
+        (walk_max_s, bike_max_s),
+        &class_limits.unwrap_or_default(),
+    )?;
+    let trip_modes = openmobisim_core_assignment::modes::trip_modes(&travellers, &trips, &offer);
+    // The bike and walk layers, only for a run whose trips may ride or walk.
+    let uses = |mode: Mode| trip_modes.iter().any(|m| m.allows(mode));
     let parts = StaticParts {
         bike: if uses(Mode::Bike) { Some(network.static_layer(StaticLayer::Bike)?) } else { None },
         walk: if uses(Mode::Walk) { Some(network.static_layer(StaticLayer::Walk)?) } else { None },
@@ -1409,6 +1617,11 @@ pub fn run_one_loop(
     }
     let path_size = run_options.get("beta_ln_path_size").copied().unwrap_or(1.0);
     let model = model_of(choice_model, &run_options)?;
+    let choice = ModeChoice {
+        any: trip_modes.iter().any(TripModes::chooses_mode),
+        mu: (choice_model == "nested_logit").then(|| run_options.get("mu").copied().unwrap_or(0.5)),
+        classes: offer,
+    };
 
     // The loop's parameters, the loading, the hook that keeps the last loading.
     let mut params = Params::default();
@@ -1501,7 +1714,8 @@ pub fn run_one_loop(
     let saved = match (start_chains_path, start_iterations) {
         (None, None) => None,
         (Some(path), Some(iterations)) => {
-            let saved = read_chains(path, &network.inner, &parts, &trips, &demand_print)?;
+            let saved =
+                read_chains(path, &network.inner, &parts, trips.len() as usize, &demand_print)?;
             Some((saved, iterations))
         }
         _ => {
@@ -1536,6 +1750,7 @@ pub fn run_one_loop(
         master_seed,
         start_print.as_ref().map(|(p, i)| (p.as_str(), *i)),
         &parts,
+        &choice,
     );
     fn layer<'l>(l: &'l Option<Arc<StaticNetwork>>, t: &'l Option<TurnTable>) -> Option<Layer<'l>> {
         match (l, t) {
@@ -1553,6 +1768,7 @@ pub fn run_one_loop(
         travellers: &travellers,
         trips: &trips,
         classes: &classes,
+        mode_choice: &choice.classes,
         money_per_link: &money,
         model: model.as_ref(),
         loader,
@@ -1570,10 +1786,18 @@ pub fn run_one_loop(
         })
         .map_err(to_value_error)?;
     let assign_s = clock.elapsed().as_secs_f64();
+    // The modes left out of the sets of the trips choosing their mode, and why.
+    let clock = Instant::now();
+    let left = if choice.any {
+        pool.install(|| left_out(&inputs, &params, &state)).map_err(to_value_error)?
+    } else {
+        LeftOut::default()
+    };
+    let left_s = clock.elapsed().as_secs_f64();
 
     // The results.
     let clock = Instant::now();
-    let rows = trip_rows(&travellers, &trips, &state, &last, end_s)?;
+    let rows = trip_rows(&travellers, &trips, &trip_modes, &state, &last, end_s)?;
     let bins = match link_bin_s {
         Some(b) => Some(link_bins(&network.inner, &turns, &last, flow_level, end_s, step_s, b)?),
         None => None,
@@ -1636,6 +1860,9 @@ pub fn run_one_loop(
         }
     }
     timings.push(("assignment".to_string(), None, assign_s));
+    if choice.any {
+        timings.push(("modes_left_out".to_string(), None, left_s));
+    }
     timings.push(("results_assembled".to_string(), None, results_s));
     timings.push(("results_written".to_string(), None, written_s));
     timings.push(("total".to_string(), None, started.elapsed().as_secs_f64()));
@@ -1673,6 +1900,20 @@ pub fn run_one_loop(
     p.set_item("cost_bin_s", cost_bin_s)?;
     p.set_item("link_bin_s", link_bin_s)?;
     p.set_item("path_size_weight", path_size)?;
+    p.set_item("nest_scale", choice.mu)?;
+    // What mode choice offers each class (only when a trip chooses its mode).
+    if choice.any {
+        let offered = PyDict::new(py);
+        for (c, k) in choice.classes.iter().enumerate() {
+            let d = PyDict::new(py);
+            let names: Vec<&str> = k.modes.iter().map(Mode::as_str).collect();
+            d.set_item("modes", names)?;
+            d.set_item("walk_max_s", k.walk_max_seconds)?;
+            d.set_item("bike_max_s", k.bike_max_seconds)?;
+            offered.set_item(ids.external(u32::try_from(c).expect("classes fit u32")), d)?;
+        }
+        p.set_item("mode_choice", offered)?;
+    }
     out.set_item("parameters", p)?;
     let k = PyDict::new(py);
     for c in 0..ids.count() {
@@ -1686,6 +1927,11 @@ pub fn run_one_loop(
         d.set_item("per_money", v.per_money)?;
         d.set_item("per_kilometre", v.per_kilometre)?;
         d.set_item("bike_mixed_per_kilometre", v.bike_mixed_per_kilometre)?;
+        d.set_item("bike_lane_per_kilometre", v.bike_lane_per_kilometre)?;
+        d.set_item("bike_separated_per_kilometre", v.bike_separated_per_kilometre)?;
+        d.set_item("car_constant", v.car_constant)?;
+        d.set_item("bike_constant", v.bike_constant)?;
+        d.set_item("walk_constant", v.walk_constant)?;
         k.set_item(ids.external(c), d)?;
     }
     out.set_item("coefficients", k)?;
@@ -1725,7 +1971,7 @@ pub fn run_one_loop(
     )?;
     t.set_item("departure_s", rows.departure_s.clone().into_pyarray(py))?;
     t.set_item("mode", rows.mode.clone())?;
-    t.set_item("mode_choice", vec![false; n as usize])?;
+    t.set_item("mode_choice", rows.mode_choice.clone())?;
     t.set_item("outcome", rows.outcome.clone())?;
     t.set_item("arrival_s", maybe(&rows.arrival_s).into_pyarray(py))?;
     t.set_item("travel_time_s", maybe(&travel).into_pyarray(py))?;
@@ -1741,7 +1987,8 @@ pub fn run_one_loop(
     let by_mode = PyDict::new(py);
     for mode in [Mode::Car, Mode::Bike, Mode::Walk] {
         let name = mode.as_str();
-        let of_mode: Vec<usize> = (0..rows.mode.len()).filter(|&i| rows.mode[i] == name).collect();
+        let of_mode: Vec<usize> =
+            (0..rows.mode.len()).filter(|&i| rows.mode[i] == Some(name)).collect();
         if of_mode.is_empty() {
             continue;
         }
@@ -1806,8 +2053,27 @@ pub fn run_one_loop(
     out.set_item("completed", count("completed"))?;
     out.set_item("truncated", count("truncated"))?;
     out.set_item("no_vehicle_available", count("no_vehicle_available"))?;
-    out.set_item("no_feasible_path", count("no_feasible_path"))?;
+    // A trip choosing its mode with no alternative counts under no feasible path (no mode it is
+    // offered reaches its destination), as the other engine counts it.
+    out.set_item("no_feasible_path", count("no_feasible_path") + count("no_alternative"))?;
+    out.set_item("no_alternative", count("no_alternative"))?;
     out.set_item("mode_not_available", 0)?;
+    // The trips choosing their mode, and the modes left out of their sets, by why.
+    let m = PyDict::new(py);
+    for (key, value) in [
+        ("choosing", left.choosing),
+        ("no_chain", left.no_chain),
+        ("car_no_vehicle", left.car_no_vehicle),
+        ("car_no_route", left.car_no_route),
+        ("bike_no_vehicle", left.bike_no_vehicle),
+        ("bike_no_route", left.bike_no_route),
+        ("bike_too_long", left.bike_too_long),
+        ("walk_no_route", left.walk_no_route),
+        ("walk_too_long", left.walk_too_long),
+    ] {
+        m.set_item(key, value)?;
+    }
+    out.set_item("modes_left_out", m)?;
     out.set_item("total_travel_time_s", total_s)?;
     out.set_item("people", people)?;
     out.set_item("completed_people", completed_people)?;

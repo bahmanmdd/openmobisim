@@ -124,6 +124,7 @@ fn inputs<'a>(
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,
+        mode_choice: &[],
         money_per_link: &c.money,
         model,
         loader: &c.loader,

@@ -247,6 +247,7 @@ fn run_with(
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,
+        mode_choice: &[],
         money_per_link: &c.money,
         model,
         loader,
@@ -645,6 +646,7 @@ fn continued_from_the_stop(name: &str, model: &dyn ChoiceModel, must_stop: bool)
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,
+        mode_choice: &[],
         money_per_link: &c.money,
         model,
         loader: &loader,
@@ -1335,6 +1337,7 @@ fn a_state_rebuilt_from_what_a_run_wrote_is_the_state() {
                 travellers: &c.travellers,
                 trips: &c.trips,
                 classes: &c.classes,
+                mode_choice: &[],
                 money_per_link: &c.money,
                 model,
                 loader: &loader,
@@ -1377,6 +1380,7 @@ fn a_saved_state_that_does_not_fit_is_refused() {
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,
+        mode_choice: &[],
         money_per_link: &c.money,
         model: &HighestUtility,
         loader: &loader,
@@ -1384,8 +1388,12 @@ fn a_saved_state_that_does_not_fit_is_refused() {
         initial: None,
     };
     let short = links(&c.net, &["oa", "ad"]);
-    let good =
-        SavedTrip { chains: vec![short.clone()], current: Some(0), probabilities: vec![1.0] };
+    let good = SavedTrip {
+        chains: vec![short.clone()],
+        modes: vec![],
+        current: Some(0),
+        probabilities: vec![1.0],
+    };
     let params = Params::default();
     assert!(restore(&inputs, &params, &[good.clone(), good.clone()], 3).is_ok());
     let cases = [

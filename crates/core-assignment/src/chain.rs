@@ -188,6 +188,14 @@ impl Chain {
         &self.total
     }
 
+    /// The chain's mode: the mode of its first leg (every chain the engine builds so far is of
+    /// one mode; a chain of several modes will have a mode of its own). The car for a chain of
+    /// no leg.
+    #[must_use]
+    pub fn mode(&self) -> Mode {
+        self.legs.first().map_or(Mode::Car, |l| l.mode)
+    }
+
     /// The chain's identity (see the [module docs](self)).
     #[must_use]
     pub fn identity(&self) -> u64 {
