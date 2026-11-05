@@ -1483,6 +1483,7 @@ fn the_fifo_reading_refuses_a_loading_without_its_entrants() {
         network: &c.net,
         turns: &c.turns,
         layers: openmobisim_core_assignment::Layers::NONE,
+        transit: None,
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,
