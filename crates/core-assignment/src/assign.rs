@@ -193,8 +193,9 @@ pub struct Params {
     /// [`BikeRoutes::Shortest`]: one route; see [`crate::layer_planner`]).
     pub bike_routes: BikeRoutes,
     /// How the measured link travel times are read by the searches and the pricing (default
-    /// [`LinkTimesReading::Bins`]: each bin's time; [`LinkTimesReading::Fifo`] keeps
-    /// first-in-first-out between bins, see [`openmobisim_core_loading::link_times`]).
+    /// [`LinkTimesReading::Fifo`], which keeps first-in-first-out between bins;
+    /// [`LinkTimesReading::Bins`] reads each bin's time; see
+    /// [`openmobisim_core_loading::link_times`]).
     pub link_times: LinkTimesReading,
 }
 
@@ -214,7 +215,7 @@ impl Default for Params {
             bike_fixed_times: FixedTimes::NONE,
             bike_cost: BikeCost::Utility,
             bike_routes: BikeRoutes::Shortest,
-            link_times: LinkTimesReading::Bins,
+            link_times: LinkTimesReading::Fifo,
         }
     }
 }
@@ -396,11 +397,15 @@ fn choose_stage(
 ///
 /// # Errors
 ///
-/// [`AssignError::Input`] if the loader returns other than one arrival per vehicle.
+/// [`AssignError::Input`] if the loader returns other than one arrival per vehicle, or, under
+/// [`LinkTimesReading::Fifo`], an entry-time table without its first and last entrants (S312:
+/// the loading is asked for them, [`Loader::load_with_entrants`], so the FIFO reading never
+/// falls back to its floor unnoticed).
 fn load_stage(
     inputs: &Inputs<'_>,
     state: &State,
     iteration: u32,
+    reading: LinkTimesReading,
     hooks: &mut dyn StageHook,
 ) -> Result<(Loaded, Vec<(TripId, f64)>), AssignError> {
     let mut vehicles = Vec::new();
@@ -422,13 +427,29 @@ fn load_stage(
         }
     }
     hooks.before_load(iteration, state, &vehicles);
-    let loaded = inputs.loader.load(&vehicles, inputs.network);
+    let loaded = if reading == LinkTimesReading::Fifo {
+        inputs.loader.load_with_entrants(&vehicles, inputs.network)
+    } else {
+        inputs.loader.load(&vehicles, inputs.network)
+    };
     if loaded.arrival.len() != vehicles.len() {
         return Err(AssignError::Input(format!(
             "the loading returned {} arrivals for {} vehicles",
             loaded.arrival.len(),
             vehicles.len()
         )));
+    }
+    if reading == LinkTimesReading::Fifo
+        && loaded
+            .entry
+            .as_ref()
+            .is_some_and(|t| !t.entry.is_empty() && t.entry.entrants().is_empty())
+    {
+        return Err(AssignError::Input(
+            "the FIFO reading of the link times needs a loading that records each link's first \
+             and last entrant per bin (Loader::load_with_entrants); this one recorded none"
+                .to_string(),
+        ));
     }
     hooks.after_load(iteration, &loaded);
     Ok((loaded, of_trip))
@@ -823,7 +844,8 @@ pub fn restore(
     }
     *state.trips_mut() = trips;
     state.set_iterations(iterations);
-    let (loaded, _) = load_stage(inputs, &state, iterations, &mut crate::hooks::NoHooks)?;
+    let (loaded, _) =
+        load_stage(inputs, &state, iterations, params.link_times, &mut crate::hooks::NoHooks)?;
     measure_stage(&search, inputs.network, &mut state, &loaded, params.link_times);
     Ok(state)
 }
@@ -1053,7 +1075,7 @@ pub fn assign(
         let t_choose = clock.elapsed().as_secs_f64();
 
         let clock = Instant::now();
-        let (loaded, of_trip) = load_stage(inputs, &state, iteration, hooks)?;
+        let (loaded, of_trip) = load_stage(inputs, &state, iteration, params.link_times, hooks)?;
         let t_load = clock.elapsed().as_secs_f64();
 
         let clock = Instant::now();

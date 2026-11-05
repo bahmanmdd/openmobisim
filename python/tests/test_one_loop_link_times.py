@@ -1,7 +1,7 @@
 """The one-loop engine's reading of the link travel times.
 
-The option is ``equilibration_options`` ``link_times``. What is defended: ``"bins"`` is the
-default, named or not one run, and ``"fifo"`` another, recorded in the manifest and refused when
+The option is ``equilibration_options`` ``link_times``. What is defended: ``"fifo"`` is the
+default, named or not one run, and ``"bins"`` another, recorded in the manifest and refused when
 misspelt; the current engine has no such option; under ``"fifo"`` the same seed gives the same
 run, and a relabelled network gives the same chains by id. The reading itself (its values
 derived by hand, first-in-first-out on a loading whose queue clears) is tested where it is
@@ -90,10 +90,10 @@ def test_the_reading_is_passed_through_recorded_and_refused_by_name(tmp_path):
         json.loads((tmp_path / n / "manifest.json").read_text())["parameters"]["link_times"]
         for n in ("default", "bins", "fifo")
     ]
-    assert names == ["bins", "bins", "fifo"]
-    # The default named or not is the same run, to the bit; the FIFO reading is another run.
-    assert default.fingerprint == bins.fingerprint != fifo.fingerprint
-    assert list(default.convergence()["gap"]) == list(bins.convergence()["gap"])
+    assert names == ["fifo", "bins", "fifo"]
+    # The default named or not is the same run, to the bit; the binned reading is another run.
+    assert default.fingerprint == fifo.fingerprint != bins.fingerprint
+    assert list(default.convergence()["gap"]) == list(fifo.convergence()["gap"])
     with pytest.raises(ValueError, match="link_times must be one of"):
         run(tmp_path, "misspelt", link_times="FIFO")
 

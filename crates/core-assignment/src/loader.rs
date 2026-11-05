@@ -73,6 +73,15 @@ pub trait Loader: Send + Sync {
     /// Move `vehicles` on `network` and say what happened.
     fn load(&self, vehicles: &[Vehicle], network: &RoadNetwork) -> Loaded;
 
+    /// [`Self::load`], the entry-time table also keeping per link and bin the entry and exit
+    /// seconds of its first and last entrant: what [`LinkTimesReading::Fifo`] reads, and what
+    /// an assignment under that reading calls (S312). The same as [`Self::load`] by default,
+    /// right for a loader that records no table; one that records a table without them is
+    /// refused under that reading.
+    fn load_with_entrants(&self, vehicles: &[Vehicle], network: &RoadNetwork) -> Loaded {
+        self.load(vehicles, network)
+    }
+
     /// When the loading ends, in seconds after midnight: a trip whose last leg ends later (its
     /// vehicle's arrival plus the leg's egress time) is unfinished. Unbounded unless a loader
     /// says otherwise.
@@ -161,8 +170,9 @@ pub struct PointQueue<'a> {
     /// The width of the entry-time bins, in seconds ([`DEFAULT_BIN_SECONDS`]).
     pub bin_seconds: u32,
     /// Whether the entry-time table also keeps, per link and bin, the entry and exit seconds of
-    /// its first and last entrant (default `false`): what [`LinkTimesReading::Fifo`]
-    /// reads; 32 bytes more per row. The rest of the loading is the same, to the bit.
+    /// its first and last entrant (default `false`): what [`LinkTimesReading::Fifo`] reads; 32
+    /// bytes more per row. The rest of the loading is the same, to the bit. An assignment under
+    /// that reading asks for them whatever this says ([`Loader::load_with_entrants`]).
     pub entrants: bool,
 }
 
@@ -238,6 +248,10 @@ impl Loader for PointQueue<'_> {
             }
         }
         Loaded { arrival, entry: Some(tables) }
+    }
+
+    fn load_with_entrants(&self, vehicles: &[Vehicle], network: &RoadNetwork) -> Loaded {
+        PointQueue { entrants: true, ..*self }.load(vehicles, network)
     }
 
     fn end_seconds(&self) -> f64 {
