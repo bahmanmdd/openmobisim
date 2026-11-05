@@ -7,7 +7,7 @@ park and lock it, door to door; a walk takes its length at 4.8 km/h; the bike co
 on a cycleway change no car result (trip table, chains, road link bins), and every bike crosses
 each link of its route once in the bike layer's link bins; the run is the same on 1, 2 and every
 thread; the folder is read back with the trips by mode; a run continued from one with bike trips
-rebuilds their chains; a sampled bike route set is refused by name.
+rebuilds their chains. Sampled bike route sets: ``test_one_loop_bike_route_sets.py``.
 """
 
 import json
@@ -243,13 +243,6 @@ def test_the_layers_enter_the_fingerprint_only_with_bike_or_walking_trips(tmp_pa
     c = run(scenario(net, with_bike), tmp_path / "c")
     d = run(scenario(net, with_bike, bike_cost="time"), tmp_path / "d")
     assert c.fingerprint != d.fingerprint
-
-
-def test_a_sampled_bike_route_set_is_refused_by_name(tmp_path):
-    net = network()
-    s = scenario(net, trips(net, 2, 60, "bike", "b"), bike_route_choice="doubly_stochastic")
-    with pytest.raises(ms.EngineNotSupportedError, match="bike_route_choice"):
-        run(s, tmp_path / "x")
 
 
 def test_a_traveller_without_a_bike_has_no_bike_trip(tmp_path):

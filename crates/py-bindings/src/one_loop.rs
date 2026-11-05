@@ -22,8 +22,13 @@
 //! (a bike's by `bike_cost`: `"utility"` by default, `"time"` or `"dedicated"`; a walk's by its
 //! time), at the layer's static speeds, a bike's ride with its fixed times (`bike_access_s`
 //! before it, reaching and unlocking the bike; `bike_egress_s` after it, parking and locking it;
-//! whole seconds, rounded, 0 when not given). They load nothing on the road network. A trip
-//! stating another mode is refused. **Trips choosing their mode** among the car, the bike and
+//! whole seconds, rounded, 0 when not given). They load nothing on the road network. With
+//! `bike_route_choice="doubly_stochastic"` (`"sampled"` is the same) a bike leg instead has a set
+//! of routes per pair of bike-layer nodes, made once by the doubly stochastic generator with
+//! `bike_route_options` (`draws`, `sigma`, `tau`, `max_detour`, `max_overlap`, `max_paths`,
+//! `seed`; the generator's defaults for those not given), each route a chain of the trip's set,
+//! chosen among by the choice model with the path-size term
+//! ([`openmobisim_core_assignment::layer_planner`]). A trip stating another mode is refused. **Trips choosing their mode** among the car, the bike and
 //! walking: with `modes` (the run's) and `class_modes` (a class's own, `None` for every mode of the
 //! run), a trip that states no mode is offered the modes of both lists; with two or more it
 //! chooses among them ([`openmobisim_core_assignment::modes`]): its choice set holds its car chains
@@ -89,10 +94,12 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use openmobisim_core_assignment::BikeRoutes;
 use openmobisim_core_assignment::{
     Allocation, ClassModes, Coefficients, FixedTimes, FreeFlow, HighestUtility, Inputs,
     IterationReport, Layer, Layers, LeftOut, Loaded, Loader, ModeSet, Params, PerMode, Place,
-    PointQueue, SavedTrip, StageHook, State, TripModes, assign, left_out, restore,
+    PointQueue, SampledRoutes, SavedTrip, StageHook, State, TripModes, assign, bike_route_sets,
+    left_out, restore,
 };
 use openmobisim_core_choice::{ChoiceModel, Logit, NestedLogit, Options};
 use openmobisim_core_demand::{
@@ -148,7 +155,7 @@ const COEFFICIENTS: [&str; 13] = [
 const MODEL_OPTIONS: [&str; 2] = ["beta_ln_path_size", "mu"];
 
 /// What the fingerprint of a run of this engine covers, in words, for the manifest.
-const FINGERPRINT_COVERS: [&str; 16] = [
+const FINGERPRINT_COVERS: [&str; 17] = [
     "the network: every node's position and signal, every link's ends, class, lanes, length, \
      free-flow time, storage, capacity, jam density, wave speed, control delay and closure",
     "the trips run (those departing inside the window): traveller, place in the day, user class, \
@@ -175,6 +182,8 @@ const FINGERPRINT_COVERS: [&str; 16] = [
     "when a trip chooses its mode: the modes each user class is offered, its longest walk and \
      ride, each class's modes' constants and costs of a kilometre by bike facility, and the \
      nested logit's nest scale",
+    "with sampled bike route sets (bike_route_choice \"doubly_stochastic\"): the generator's \
+     options",
 ];
 
 /// Why a class's options cannot be read, naming the class.
@@ -513,6 +522,14 @@ fn fingerprint(
         for k in classes {
             h.write_f64(k.bike_mixed_per_kilometre);
             h.write_f64(k.parking_per_minute);
+        }
+        // The bike route sets, only when sampled (a run of one route per pair keeps its
+        // fingerprint).
+        if let (BikeRoutes::Sampled(options), Some(_)) = (params.bike_routes, &parts.bike) {
+            h.write_str("bike route sets");
+            for (_, v) in options.values() {
+                h.write_f64(v);
+            }
         }
     }
     // Mode choice, only when a trip chooses its mode; else the coefficients it adds, only when a
@@ -1022,6 +1039,69 @@ fn routes(
     (store, choices)
 }
 
+/// How bike routes are made, from the scenario's `bike_route_choice` and `bike_route_options`.
+fn bike_routes(
+    choice: Option<&str>,
+    options: Option<HashMap<String, f64>>,
+) -> PyResult<BikeRoutes> {
+    match choice.unwrap_or("shortest") {
+        "shortest" => match options {
+            None => Ok(BikeRoutes::Shortest),
+            Some(_) => Err(PyValueError::new_err(
+                "bike_route_options are the doubly stochastic method's: give \
+                 bike_route_choice=\"doubly_stochastic\"",
+            )),
+        },
+        // "sampled" is the old name of "doubly_stochastic".
+        "doubly_stochastic" | "sampled" => {
+            let options: BTreeMap<String, f64> = options.unwrap_or_default().into_iter().collect();
+            Ok(BikeRoutes::Sampled(SampledRoutes::from_options(&options).map_err(to_value_error)?))
+        }
+        other => Err(PyValueError::new_err(format!(
+            "bike_route_choice must be \"shortest\" or \"doubly_stochastic\", got {other:?}"
+        ))),
+    }
+}
+
+/// Which route of the sampled bike route sets `sets` each trip whose mode is stated as the bike
+/// took in the final state: its index into the sets, the number of routes in its own set and
+/// the probability the choice model gave the route taken. Every other trip (and a bike trip
+/// with no route) is marked as having none: a trip choosing its mode is in the chains table.
+fn bike_routes_taken(
+    sets: &RouteSets,
+    travellers: &Travellers,
+    trips: &Trips,
+    modes: &[TripModes],
+    state: &State,
+) -> RouteChoices {
+    let n = trips.len() as usize;
+    let mut choices = RouteChoices {
+        route: vec![NO_ROUTE; n],
+        alternatives: vec![0; n],
+        probability: vec![f64::NAN; n],
+        weight: vec![0; n],
+    };
+    for (t, entry) in state.trips().iter().enumerate() {
+        let trip = TripId::from_index(t);
+        choices.weight[t] = travellers.weight(trips.traveller(trip));
+        if modes[t] != TripModes::Stated(Mode::Bike) {
+            continue;
+        }
+        choices.alternatives[t] = u32::try_from(entry.set.len()).expect("a set fits u32");
+        let Some(current) = entry.current else { continue };
+        let leg = &entry.set[current].legs()[0];
+        let (Place::Bike(o), Place::Bike(d)) = (leg.from, leg.to) else { continue };
+        let Some(k) = sets.key_index(RouteKey::new(o, d)) else { continue };
+        let links: Vec<u32> = leg.links.iter().map(|l| l.raw()).collect();
+        let Some(r) = sets.route_range(k).find(|&r| sets.route(r).links == links.as_slice()) else {
+            continue;
+        };
+        choices.route[t] = u32::try_from(r).expect("routes fit u32");
+        choices.probability[t] = entry.probabilities.get(current).copied().unwrap_or(f64::NAN);
+    }
+    choices
+}
+
 // --- files ----------------------------------------------------------------------------------
 
 /// Write one batch to `path` with `metadata`, Snappy-compressed.
@@ -1471,7 +1551,8 @@ fn read_chains(
     found_tolerance=None, indifference_band=None, allocation=None, motorway_snap_m=None,
     car_access_s=None, car_egress_s=None, threads=None, start_chains_path=None,
     start_iterations=None, bike_cost=None, bike_access_s=None, bike_egress_s=None, modes=None,
-    class_modes=None, walk_max_s=None, bike_max_s=None, class_limits=None, link_times=None
+    class_modes=None, walk_max_s=None, bike_max_s=None, class_limits=None, link_times=None,
+    bike_route_choice=None, bike_route_options=None
 ))]
 #[allow(clippy::too_many_arguments, reason = "the scenario's parts, by name, as Python gives them")]
 #[allow(clippy::too_many_lines, reason = "the steps of one run, in order")]
@@ -1518,6 +1599,8 @@ pub fn run_one_loop(
     bike_max_s: Option<f64>,
     class_limits: Option<HashMap<String, HashMap<String, f64>>>,
     link_times: Option<&str>,
+    bike_route_choice: Option<&str>,
+    bike_route_options: Option<HashMap<String, f64>>,
 ) -> PyResult<Py<PyDict>> {
     let started = Instant::now();
     if flow_level != 0 && flow_level != 2 {
@@ -1718,6 +1801,7 @@ pub fn run_one_loop(
     }
     params.bike_fixed_times = FixedTimes::new(fixed[0], fixed[1]);
     params.bike_cost = bike_cost;
+    params.bike_routes = bike_routes(bike_route_choice, bike_route_options)?;
     if threads == Some(0) {
         return Err(PyValueError::new_err("threads must be at least 1, or None"));
     }
@@ -1825,6 +1909,9 @@ pub fn run_one_loop(
         None => ([None, None], [Vec::new(), Vec::new()]),
     };
     let (sets, choices) = routes(&network.inner, &travellers, &trips, &state);
+    let bike_sets = pool.install(|| bike_route_sets(&inputs, &params)).map_err(to_value_error)?;
+    let bike_choices =
+        bike_sets.as_ref().map(|s| bike_routes_taken(s, &travellers, &trips, &trip_modes, &state));
     let results_s = clock.elapsed().as_secs_f64();
 
     let clock = Instant::now();
@@ -1914,6 +2001,14 @@ pub fn run_one_loop(
     p.set_item("bike_access_s", params.bike_fixed_times.access_seconds)?;
     p.set_item("bike_egress_s", params.bike_fixed_times.egress_seconds)?;
     p.set_item("bike_cost", params.bike_cost.as_str())?;
+    p.set_item("bike_route_choice", params.bike_routes.name())?;
+    if let BikeRoutes::Sampled(options) = params.bike_routes {
+        let d = PyDict::new(py);
+        for (name, value) in options.values() {
+            d.set_item(name, value)?;
+        }
+        p.set_item("bike_route_options", d)?;
+    }
     p.set_item("flow_level", flow_level)?;
     p.set_item("flow_step_s", flow_step_s)?;
     p.set_item("cost_bin_s", cost_bin_s)?;
@@ -2104,6 +2199,22 @@ pub fn run_one_loop(
     let link_count = network.inner.link_count();
     out.set_item("route_choices", PyRouteChoices::new(py, &choices, &sets)?)?;
     out.set_item("route_sets", PyRouteSets::new(Arc::new(sets), link_count))?;
+    // The sampled bike route sets and the stated bike trips' choices among them; `None` for a
+    // run of one bike route per pair.
+    match (bike_sets, bike_choices, &parts.bike) {
+        (Some(bike_sets), Some(bike_choices), Some(layer)) => {
+            out.set_item(
+                "bike_route_choices",
+                PyRouteChoices::new(py, &bike_choices, &bike_sets)?,
+            )?;
+            let links = layer.network().link_count();
+            out.set_item("bike_route_sets", PyRouteSets::new(Arc::new(bike_sets), links))?;
+        }
+        _ => {
+            out.set_item("bike_route_choices", py.None())?;
+            out.set_item("bike_route_sets", py.None())?;
+        }
+    }
     out.set_item("timings", timings)?;
     for (key, file) in [
         ("trip_results_path", "trip_results.parquet"),

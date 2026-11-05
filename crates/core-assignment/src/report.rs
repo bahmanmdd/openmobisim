@@ -8,11 +8,14 @@
 //! **The stopping shares count the trips that could change their choice** (the trips of
 //! [`IterationReport::choosing`]): car trips, which may change route, and trips choosing their
 //! mode, which may change route or mode ([`crate::modes`]). A trip whose mode is stated as the
-//! bike or walking has one chain, planned once, and never changes it, so it is left out of the
+//! bike or walking has its chains planned once, on static costs (one chain, or with sampled bike
+//! route sets one per route of its pair, among which its choice probabilities never change), so
+//! it is left out of the
 //! found, added and switch shares, the switch floor and both switch excesses; a run with many
 //! such trips reports the same shares for the same car traffic. **The duality gap, its
 //! deterministic part and the spread** are over the same trips (those of them with a chain),
-//! for the same reason: a trip of one chain pays its least cost and would only lower them. The
+//! for the same reason: a trip of one chain pays its least cost and would only lower them, and
+//! one of a sampled bike set pays the static spread of its choice model. The
 //! trips' counts (departed, arrived, unfinished, without a chain) and the mean trip time are over
 //! every trip.
 //!

@@ -1091,7 +1091,14 @@ class Scenario:
                 ``choice_max_routes`` as for car routes), and a trip choosing its mode is
                 offered every bike route as an alternative. The run's fingerprint names the
                 option; ``Run.bike_route_sets()`` and ``Run.bike_route_choices()`` show the
-                sets and the choices.
+                sets and the choices. On ``engine="one-loop"`` the same method makes the sets,
+                its generalised cost under ``bike_cost="utility"`` reading each class's
+                coefficients on ``length_km``, ``bike_mixed_km``, ``bike_lane_km`` and
+                ``bike_separated_km`` (under ``"time"`` or ``"dedicated"``, that cost alone);
+                each route is a bike chain of the trip's choice set, a bike trip with a stated
+                mode chooses among them in every iteration in which it reconsiders, always on
+                the same static times, and the whole set is offered (no
+                ``choice_detour_limit`` or ``choice_max_routes``).
             bike_route_options: The ``"doubly_stochastic"`` method's options for the bike layer,
                 numbers by name (``draws``, ``sigma``, ``tau``, ``max_detour``, ``max_overlap``,
                 ``max_paths``, ``seed``; the same defaults as for car routes). Only with
@@ -1797,8 +1804,6 @@ class Scenario:
         given("choice_max_routes", self._choice_max_routes, shipped.get("choice_max_routes"))
         given("max_cost_vectors", self._max_cost_vectors, 2)
         given("route_cache", self._route_cache, False)
-        given("bike_route_choice", self._bike_route_choice, "shortest")
-        given("bike_route_options", self._bike_route_options)
         class_limits = {c: dict(v) for c, v in (self._class_limits or {}).items()}
         for c, limits in sorted(class_limits.items()):
             for name in sorted(set(limits) - {"walk_max_s", "bike_max_s"}):
@@ -1918,6 +1923,8 @@ class Scenario:
             "choice_options": self._choice_options,
             "motorway_snap_m": mode_options.get("car_snap_motorway_m"),
             "bike_cost": self._bike_cost,
+            "bike_route_choice": self._bike_route_choice,
+            "bike_route_options": self._bike_route_options,
             "modes": modes or None,
             "class_modes": self._class_modes,
             "class_limits": class_limits or None,
