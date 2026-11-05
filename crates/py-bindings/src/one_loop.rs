@@ -116,7 +116,7 @@ use openmobisim_core_assignment::{
     Allocation, ClassModes, Coefficients, Fares, FixedTimes, FreeFlow, HighestUtility, Inputs,
     IterationReport, Layer, Layers, LeftOut, Loaded, Loader, ModeSet, Params, PerMode, Place,
     PointQueue, SampledRoutes, SavedTrip, StageHook, State, Transit, TripModes, assign,
-    bike_route_sets, left_out, restore,
+    bike_route_sets, restore,
 };
 use openmobisim_core_choice::{ChoiceModel, Logit, NestedLogit, Options};
 use openmobisim_core_demand::{
@@ -309,6 +309,8 @@ struct LastLoading {
     fixed: Vec<FixedTimes>,
     /// Each vehicle's arrival, `None` if unfinished.
     arrival: Vec<Option<f64>>,
+    /// The modes left out of the sets of the trips choosing their mode, at the end.
+    left_out: LeftOut,
 }
 
 impl StageHook for LastLoading {
@@ -329,6 +331,10 @@ impl StageHook for LastLoading {
 
     fn after_load(&mut self, _iteration: u32, loaded: &Loaded) {
         self.arrival.clone_from(&loaded.arrival);
+    }
+
+    fn after_loop(&mut self, _state: &State, left_out: &LeftOut) {
+        self.left_out = *left_out;
     }
 }
 
@@ -2216,13 +2222,10 @@ pub fn run_one_loop(
         })
         .map_err(to_value_error)?;
     let assign_s = clock.elapsed().as_secs_f64();
-    // The modes left out of the sets of the trips choosing their mode, and why.
+    // The modes left out of the sets of the trips choosing their mode, and why: counted by the
+    // loop once it ends, from its own planning (`StageHook::after_loop`).
     let clock = Instant::now();
-    let left = if choice.any {
-        pool.install(|| left_out(&inputs, &params, &state)).map_err(to_value_error)?
-    } else {
-        LeftOut::default()
-    };
+    let left = if choice.any { last.left_out } else { LeftOut::default() };
     let left_s = clock.elapsed().as_secs_f64();
 
     // The results.

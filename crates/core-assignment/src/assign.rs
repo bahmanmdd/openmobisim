@@ -924,6 +924,12 @@ pub fn left_out(
 ) -> Result<LeftOut, AssignError> {
     check(inputs, state, params)?;
     let search = chain_search(inputs, params)?;
+    Ok(count_left_out(&search, inputs, state))
+}
+
+/// What [`left_out`] counts, from the run's `search` (whose planning says which bike, walking
+/// and transit modes have no chain, and why) and its final `state`.
+fn count_left_out(search: &ChainSearch<'_>, inputs: &Inputs<'_>, state: &State) -> LeftOut {
     let mut out = LeftOut::default();
     for t in 0..inputs.trips.len() {
         let trip = TripId::new(t);
@@ -957,7 +963,7 @@ pub fn left_out(
             *slot += 1;
         }
     }
-    Ok(out)
+    out
 }
 
 /// The bike route sets of a run of `inputs` and `params` with sampled bike route sets
@@ -1162,5 +1168,6 @@ pub fn assign(
         reports.push(report);
         state.complete_iteration();
     }
+    hooks.after_loop(&state, &count_left_out(&search, inputs, &state));
     Ok((state, reports))
 }

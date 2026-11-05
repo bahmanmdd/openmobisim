@@ -1,14 +1,15 @@
 //! Stage hooks: code that runs at fixed points of the loop, absent unless given.
 //!
-//! A [`StageHook`] is called by the loop at four points: once before the first iteration, and
-//! in every iteration just before the loading, just after it, and just after the measure
-//! stage. Every method does nothing by default, and [`NoHooks`] is the hook of a run that asks
+//! A [`StageHook`] is called by the loop at five points: once before the first iteration, in
+//! every iteration just before the loading, just after it, and just after the measure stage,
+//! and once after the last iteration. Every method does nothing by default, and [`NoHooks`] is the hook of a run that asks
 //! for none. A feature that needs to act at one of these points (a recorder of every
 //! iteration's state, a disruption applied before the loading) is a hook; the loop never
 //! reads an option to decide whether to run it.
 
 use openmobisim_core_loading::Vehicle;
 
+use crate::assign::LeftOut;
 use crate::loader::Loaded;
 use crate::state::State;
 
@@ -27,6 +28,11 @@ pub trait StageHook {
     /// In `iteration`, with the state after the measure stage: the loaded link times in place
     /// and every chain of every set priced on them.
     fn after_measure(&mut self, _iteration: u32, _state: &State) {}
+
+    /// After the last iteration, with the final state and what [`crate::left_out`] counts for
+    /// it: the modes left out of the sets of the trips choosing their mode, counted from the
+    /// run's own planning instead of planning again.
+    fn after_loop(&mut self, _state: &State, _left_out: &LeftOut) {}
 }
 
 /// The hook of a run that asks for none: every stage hook does nothing.

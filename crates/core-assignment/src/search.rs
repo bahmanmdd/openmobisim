@@ -117,6 +117,10 @@ pub(crate) enum Unplanned {
     NoStop,
 }
 
+/// What the route of a bike or walking leg depends on: its mode, the search context of its
+/// class on the mode's layer, and its ends snapped to that layer (raw node numbers).
+type StaticPair = (Mode, usize, u32, u32);
+
 /// The static modes (bike, walking) whose chains `modes` allows, in that order.
 fn static_modes(modes: &TripModes) -> impl Iterator<Item = Mode> + '_ {
     [Mode::Bike, Mode::Walk].into_iter().filter(|&m| modes.allows(m))
@@ -230,8 +234,14 @@ impl<'a> ChainSearch<'a> {
     /// sampled route sets ([`crate::BikeRoutes::Sampled`]) makes one set per pair of the trips'
     /// snapped ends first, and each route of its trip's pair becomes one of its bike chains, in
     /// the set's order; a trip choosing its mode keeps those within its class's longest ride.
-    /// The trips are planned in parallel, each by its own search, so the legs do not depend on
+    /// Otherwise a leg's route depends only on its mode, its class's search context and its
+    /// snapped ends, so it is searched once per distinct such pair and shared by the trips of
+    /// the pair. The searches run in parallel, each on its own, so the legs do not depend on
     /// the number of threads.
+    ///
+    /// # Panics
+    ///
+    /// Never: every leg's pair is searched before its chain is made.
     #[must_use]
     pub fn with_static(
         mut self,
@@ -245,19 +255,62 @@ impl<'a> ChainSearch<'a> {
             .flat_map(|t| static_modes(&self.modes[t.index()]).map(move |m| (t, m)))
             .collect();
         let sets = self.bike_route_sets(&wanted);
-        let planned = parallel::map(
+        // Each searched leg's pair (all but the legs of sampled bike route sets), then each
+        // distinct pair's route.
+        let pairs: Vec<Option<StaticPair>> = parallel::map(
             &wanted,
             STATIC_TRIPS_PER_CHUNK,
-            Vec::new,
-            |searches: &mut Vec<Option<_>>, &(trip, mode)| {
+            || (),
+            |(), &(trip, mode)| {
+                let planner = self.static_planner(mode)?;
+                if sets.is_some() && mode == Mode::Bike {
+                    return None;
+                }
+                let class = self.travellers.user_class(self.trips.traveller(trip));
+                let context = planner.context_of(class)?;
+                let (from, to) = self.static_places(trip, planner);
+                Some((mode, context, from.node().raw(), to.node().raw()))
+            },
+        );
+        let mut distinct: Vec<StaticPair> = pairs.iter().flatten().copied().collect();
+        distinct.sort_unstable();
+        distinct.dedup();
+        let routes =
+            parallel::map(&distinct, STATIC_TRIPS_PER_CHUNK, Vec::new, |searches, &pair| {
+                self.static_route(pair, searches)
+            });
+        let items: Vec<usize> = (0..wanted.len()).collect();
+        let planned = parallel::map(
+            &items,
+            STATIC_TRIPS_PER_CHUNK,
+            || (),
+            |(), &i| {
+                let (trip, mode) = wanted[i];
                 // A run without the layer is refused before (`assign`'s check); a search built
                 // without it plans no chain of the mode.
                 let Some(planner) = self.static_planner(mode) else {
                     return Err(Unplanned::NoRoute);
                 };
-                let chains = match (&sets, mode) {
-                    (Some(sets), Mode::Bike) => self.chains_of_set(trip, planner, sets),
-                    _ => self.plan_static(trip, mode, planner, searches).into_iter().collect(),
+                let chains = match (&sets, mode, pairs[i]) {
+                    (Some(sets), Mode::Bike, _) => self.chains_of_set(trip, planner, sets),
+                    (_, _, Some(pair)) => {
+                        let k = distinct.binary_search(&pair).expect("every pair was searched");
+                        routes[k]
+                            .as_ref()
+                            .map(|links| {
+                                let (from, to) = self.static_places(trip, planner);
+                                let departure = f64::from(self.trips.departure(trip).get());
+                                Chain::new(vec![planner.leg_along(
+                                    from,
+                                    to,
+                                    departure,
+                                    links.clone(),
+                                )])
+                            })
+                            .into_iter()
+                            .collect()
+                    }
+                    _ => Vec::new(),
                 };
                 if chains.is_empty() {
                     return Err(Unplanned::NoRoute);
@@ -424,33 +477,23 @@ impl<'a> ChainSearch<'a> {
         }
     }
 
-    /// The `mode` chain of `trip` (bike or walking): one leg of that mode on its layer, by
-    /// `planner`'s search of its class (kept in `searches`, by the planner's mode and search
-    /// context, for the next trip the thread plans).
-    fn plan_static<'s>(
+    /// The route of a static leg's `pair` ([`StaticPair`]) on its mode's layer, by the search
+    /// of its context (kept in `searches`, by mode and context, for the next pair the thread
+    /// searches); `None` if there is none.
+    fn static_route<'s>(
         &'s self,
-        trip: TripId,
-        mode: Mode,
-        planner: &'s StaticPlanner<'a>,
-        searches: &mut Vec<Option<(Mode, usize, openmobisim_core_routes::search::Search<'s>)>>,
-    ) -> Option<Chain> {
-        let class = self.travellers.user_class(self.trips.traveller(trip));
-        let context = planner.context_of(class)?;
-        let (from, to) = self.static_places(trip, planner);
-        let slot = match searches
-            .iter()
-            .position(|s| s.as_ref().is_some_and(|(m, c, _)| *m == mode && *c == context))
-        {
+        (mode, context, from, to): StaticPair,
+        searches: &mut Vec<(Mode, usize, openmobisim_core_routes::search::Search<'s>)>,
+    ) -> Option<Vec<LinkId>> {
+        let planner = self.static_planner(mode)?;
+        let slot = match searches.iter().position(|(m, c, _)| *m == mode && *c == context) {
             Some(i) => i,
             None => {
-                searches.push(Some((mode, context, planner.search_in(context))));
+                searches.push((mode, context, planner.search_in(context)));
                 searches.len() - 1
             }
         };
-        let (_, _, search) = searches[slot].as_mut().expect("just found or made");
-        let links = StaticPlanner::route(search, from.node(), to.node())?;
-        let departure = f64::from(self.trips.departure(trip).get());
-        Some(Chain::new(vec![planner.leg_along(from, to, departure, links)]))
+        StaticPlanner::route(&mut searches[slot].2, NodeId::new(from), NodeId::new(to))
     }
 
     /// The car planner.
