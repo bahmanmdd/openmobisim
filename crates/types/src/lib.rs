@@ -1,4 +1,30 @@
-//! Shared types: identifiers, the clock in seconds, metric units, modes (car, bike, walk, transit).
+//! Shared types: identifiers, the clock in seconds, metric units, the modes of travel,
+//! fixed-order reductions and counter-based random streams. Every other crate depends on this one; it depends on
+//! `rand_chacha` and `rayon` only.
 //!
-//! Empty until the module enters through its door: a README stating inputs, outputs, units and
-//! assumptions; its test against an answer from outside the simulator; the budgets met.
+//! | Module | What it holds |
+//! |---|---|
+//! | [`ids`] | dense `u32` identifiers, one kind per entity, with a null sentinel; the table from external ids |
+//! | [`mode`] | the four modes of travel (car, bike, walk, transit), peers that nothing ranks |
+//! | [`time`] | the `u32` clock in seconds, half-open time steps over a run's window, the total order of events |
+//! | [`units`] | metres, metres per second, seconds, vehicles per second and cost, as zero-cost newtypes |
+//! | [`reduce`] | sums and reductions in a fixed order, identical at any number of threads |
+//! | [`rng`] | ChaCha8 draws addressed by seed, stream and entity identity |
+//!
+//! Units are metric throughout; vehicles per hour and kilometres per hour are converted once, as
+//! a value is read. Bikes share every type with cars and walkers: there is no passenger-car
+//! unit, and a bike's speed is a free-flow speed.
+//!
+//! Determinism: the same seed and the same binary on the same platform give bit-identical
+//! results, at any number of threads. Not across platforms: the platform's `ln` differs in its
+//! last bits, and the Gumbel draws use it.
+
+// Identifiers are `u32` widened to `usize`; a narrower pointer would make that lossy.
+const _: () = assert!(usize::BITS >= 32, "openmobisim needs a pointer width of at least 32 bits");
+
+pub mod ids;
+pub mod mode;
+pub mod reduce;
+pub mod rng;
+pub mod time;
+pub mod units;

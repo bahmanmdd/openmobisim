@@ -31,6 +31,8 @@ openmobisim-io-gtfs = { path = "crates/io-gtfs", version = "0.2.0-dev" }
 openmobisim-io-parquet = { path = "crates/io-parquet", version = "0.2.0-dev" }
 
 # External: kept short. Every addition is a decision, made when a module needs it.
+rand_chacha = { version = "0.10", default-features = false }
+rayon = "1.11"
 
 [workspace.lints.rust]
 missing_docs = "warn"
