@@ -51,6 +51,7 @@
 //! | [`hooks`] | [`StageHook`], code run at fixed points of the loop, and [`NoHooks`] |
 //! | [`report`] | [`IterationReport`], the convergence measures of one iteration, overall and by mode ([`PerMode`]) |
 //! | [`mod@assign`] | [`assign()`], its [`Inputs`] and [`Params`], the five stages; [`restore`], a state rebuilt from what a run wrote ([`SavedTrip`]); [`left_out()`], the modes left out of the sets of trips choosing their mode ([`LeftOut`]); [`bike_route_sets()`], the sampled bike route sets a run made |
+//! | [`transit`] | transit legs on the timetable: [`Transit`], the [`TransitPlanner`], the walking limits ([`walking_within_limits`]), path sizes by shared rides, boardings |
 //! | [`error`] | [`AssignError`] |
 //!
 //! # What exists so far
@@ -67,10 +68,13 @@
 //! changes and they never switch. With **sampled bike route sets** ([`Params::bike_routes`],
 //! [`BikeRoutes::Sampled`]) a bike leg has a set of routes per pair, made once by `core-routes`'
 //! doubly stochastic generator, each route a chain of the trip's set, and the choice model
-//! chooses among them with the path-size term. **Trips choosing their mode** among the car, the bike and
-//! walking ([`Inputs::mode_choice`], [`modes`]): their choice set holds their car chains beside
-//! their bike and walking chains, and the one chooser chooses among them (the nested logit puts
-//! each mode in a nest of its own). A further mode is a further [`LegPlanner`], a further loading
+//! chooses among them with the path-size term. **Trips choosing their mode** among the car, the bike,
+//! walking and transit ([`Inputs::mode_choice`], [`modes`]): their choice set holds their car
+//! chains beside their bike, walking and transit chains, and the one chooser chooses among them
+//! (the nested logit puts each mode in a nest of its own). **Transit trips** ([`Inputs::transit`],
+//! [`transit`]): one chain per journey of the timetable's Pareto set at the trip's departure
+//! (arrival against vehicles; with fares by kind of service, also the fare), planned once,
+//! ridden on the timetable's times, loading nothing on the road network. A further mode is a further [`LegPlanner`], a further loading
 //! a further [`Loader`], behind the same contracts.
 //!
 //! **Threads and shared searches.** The car planner answers the trips of one origin, user class
@@ -100,10 +104,11 @@ pub mod quota;
 pub mod report;
 pub mod search;
 pub mod state;
+pub mod transit;
 
 pub use assign::{Inputs, LeftOut, Params, SavedTrip, assign, bike_route_sets, left_out, restore};
 pub use attributes::{Attributes, Coefficients};
-pub use chain::{Chain, FixedTimes, Leg, Place};
+pub use chain::{Chain, FixedTimes, Leg, Place, Ride};
 pub use chooser::{HighestUtility, logit, rechoice_probability, rechooses};
 pub use error::AssignError;
 pub use hooks::{NoHooks, StageHook};
@@ -115,3 +120,4 @@ pub use quota::Allocation;
 pub use report::{IterationReport, PerMode, StageSeconds};
 pub use search::{ChainSearch, feasible};
 pub use state::{State, TripState};
+pub use transit::{Fares, Transit, TransitPlanner, walking_within_limits};

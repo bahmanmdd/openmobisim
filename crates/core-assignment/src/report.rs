@@ -64,7 +64,7 @@ pub struct StageSeconds {
     pub assess: f64,
 }
 
-/// One value per mode of the engine's chains: the car, the bike, walking; `None` for a mode
+/// One value per mode of the engine's chains: the car, the bike, walking, transit; `None` for a mode
 /// whose group of trips is empty (see the [module docs](self)).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PerMode {
@@ -74,10 +74,12 @@ pub struct PerMode {
     pub bike: Option<f64>,
     /// Walking's.
     pub walk: Option<f64>,
+    /// Transit's.
+    pub transit: Option<f64>,
 }
 
 impl PerMode {
-    /// The value of `mode` (`None` for a mode other than the three).
+    /// The value of `mode` (`None` for a mode other than the four).
     #[must_use]
     pub fn of(&self, mode: openmobisim_core_demand::Mode) -> Option<f64> {
         use openmobisim_core_demand::Mode;
@@ -85,15 +87,16 @@ impl PerMode {
             Mode::Car => self.car,
             Mode::Bike => self.bike,
             Mode::Walk => self.walk,
+            Mode::Transit => self.transit,
             _ => None,
         }
     }
 
     /// `part / whole` per mode, `None` where the whole is 0, from sums by mode in the order car,
-    /// bike, walking.
-    pub(crate) fn shares(part: [f64; 3], whole: [f64; 3]) -> Self {
+    /// bike, walking, transit.
+    pub(crate) fn shares(part: [f64; 4], whole: [f64; 4]) -> Self {
         let share = |k: usize| (whole[k] > 0.0).then(|| part[k] / whole[k]);
-        Self { car: share(0), bike: share(1), walk: share(2) }
+        Self { car: share(0), bike: share(1), walk: share(2), transit: share(3) }
     }
 }
 

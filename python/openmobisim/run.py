@@ -288,6 +288,13 @@ class _OneLoopSummary:
         # and only for the run in memory: a run read from its folder has none.
         self.layer_legs = dict(r.get("layer_legs") or {}) if r.get("link_bins") is not None else {}
         self.itinerary_choices = None
+        # Transit trips (stated as transit, with a timetable): every call of the timetable with
+        # its boardings, and their sum; None without transit trips, and for a run read back from
+        # its folder (its transit_lines.parquet holds the boardings by line).
+        self.transit_calls = r.get("transit_calls")
+        self.transit_summary = r.get("transit_summary")
+        self.transit_calls_path = None
+        self.transit_lines_path = r.get("transit_lines_path")
         self.no_alternative = {"fallback_car": []}
         keys = ("traveller_id", "trip_seq", "departure_s", "mode", "mode_choice", "weight")
         self.trip_modes = {k: self.trip_results[k] for k in keys}
@@ -332,7 +339,7 @@ class _OneLoopSummary:
         done = ~np.isnan(travel)
         modes = np.asarray(trips["mode"], dtype=object)
         by_mode: dict[str, dict[str, Any]] = {}
-        for mode in ("car", "bike", "walk"):
+        for mode in ("car", "bike", "walk", "transit"):
             of = modes == mode
             if not of.any():
                 continue
@@ -385,6 +392,9 @@ class _OneLoopSummary:
             "timings": timings,
             "window": m["window"],
         }
+        lines = folder / "transit_lines.parquet"
+        if lines.exists():
+            result["transit_lines_path"] = str(lines)
         return cls(result, str(manifest))
 
     def __getattr__(self, name: str) -> Any:
@@ -621,8 +631,16 @@ class Run:
         order, as the link ids of its mode's layer: the road network's for a car, as
         ``link_bins_table()``'s ``link``; ``network.layer("bike")``'s or ``"walk"``'s, as
         ``link_bins_table("bike")``'s) and ``link_index`` (the same links as indices into that
-        layer's links; for a car, as ``route_sets()`` holds them). Read from ``chains.parquet``;
-        needs pyarrow.
+        layer's links; for a car, as ``route_sets()`` holds them). A run with transit trips (their
+        mode stated as ``"transit"``, with a timetable) also has, for every chain, ``in_vehicle_s``
+        (seconds in a vehicle: driving, riding a bike, riding transit), ``walk_s``, ``wait_s``
+        (waiting for a transit run, the boarding slack included) and ``transfers``; and, for a
+        transit chain (``mode`` ``"transit"``: one per journey of the timetable kept for its trip),
+        its rides in travel order, one entry per ride in each list: ``ride_line`` (the line's short
+        name), ``ride_run`` (the GTFS ``trip_id`` of the run ridden), ``ride_board_stop`` and
+        ``ride_alight_stop`` (GTFS ``stop_id``), ``ride_board_s`` and ``ride_alight_s`` (when the
+        run leaves the one and reaches the other, seconds after midnight). Read from
+        ``chains.parquet``; needs pyarrow.
         """
         if self.engine != "one-loop":
             raise RuntimeError('chains() is the one-loop engine\'s: run with engine="one-loop"')
@@ -631,7 +649,7 @@ class Run:
         t = pq.read_table(self._summary.chains_path)
         out: dict[str, Any] = {}
         for c in t.column_names:
-            if c == "links":
+            if c == "links" or c.startswith("ride_"):
                 out[c] = t.column(c).to_pylist()
             elif c == "link_index":
                 out[c] = [np.asarray(x, dtype=np.uint32) for x in t.column(c).to_pylist()]
@@ -777,6 +795,10 @@ class Run:
         trips); ``mode_share_car``,
         ``mode_share_bike`` and ``mode_share_walk`` (the modal split of the trips choosing their
         mode after the choice, over those with a chain; ``nan`` when no trip chooses its mode);
+        when a trip choosing its mode is offered transit, each of these also for transit
+        (``found_share_transit``, ``switch_share_transit``,
+        ``mode_share_change_expected_transit``, ``mode_share_transit``), and the four
+        ``mode_share_change_expected_`` columns sum to 0;
         and each stage's wall-clock seconds, ``search_s``, ``choose_s``, ``load_s``,
         ``measure_s`` and ``assess_s``. It has no verdict. The columns below are the current
         engine's.
@@ -1796,6 +1818,31 @@ class Run:
         """
         calls = self._summary.transit_calls
         return None if calls is None else Columns(calls)
+
+    def transit_lines(self) -> Columns | None:
+        """The boardings on each line of the timetable, as columns (the one-loop engine only).
+
+        One row per line: ``line`` (its short name), ``kind`` (``"bus"``, ``"tram"``,
+        ``"metro"``, ``"rail"``, ``"ferry"``, ``"other"``) and ``boardings`` (the travellers who
+        boarded its runs in the window, weighted by traveller weight). ``None`` for a run without
+        transit trips. Read from ``transit_lines.parquet``; needs pyarrow.
+        """
+        if self.engine != "one-loop":
+            raise RuntimeError(
+                'transit_lines() is the one-loop engine\'s: run with engine="one-loop", or read '
+                "transit_calls() here"
+            )
+        path = self._summary.transit_lines_path
+        if path is None:
+            return None
+        import pyarrow.parquet as pq
+
+        t = pq.read_table(path)
+        out: dict[str, Any] = {}
+        for c in t.column_names:
+            if c != "run_id":
+                out[c] = t.column(c).to_pylist() if c != "boardings" else t.column(c).to_numpy()
+        return Columns(out)
 
     @property
     def transit_summary(self) -> dict[str, float] | None:

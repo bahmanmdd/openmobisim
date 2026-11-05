@@ -3,8 +3,8 @@
 //! **A trip's modes** ([`TripModes`]). A trip whose mode is stated keeps it: its chains are of
 //! that mode, whatever their length. A trip whose mode is not stated takes the modes **mode
 //! choice** offers its user class ([`ClassModes`], one per class in
-//! [`crate::Inputs::mode_choice`]): with two or more of the car, the bike and walking it
-//! **chooses its mode**, and its choice set holds a chain of each offered mode that can serve
+//! [`crate::Inputs::mode_choice`]): with two or more of the car, the bike, walking and transit
+//! it **chooses its mode**, and its choice set holds a chain of each offered mode that can serve
 //! it; with one, it is a trip stated of that mode (one mode is no choice); with none offered
 //! (no mode choice in the run), it is a car trip.
 //!
@@ -12,7 +12,8 @@
 //! sees one set per trip, its car chains (the chain search adds one per iteration, as for any
 //! car trip) beside its bike chain (one per route of its pair with sampled bike route sets,
 //! [`crate::BikeRoutes`]) and its walking chain (each planned once, at iteration 0, on
-//! its layer at its static speeds), every chain priced in the one vocabulary of attributes and
+//! its layer at its static speeds) and its transit chains (one per journey of the timetable kept
+//! for it, planned once, [`crate::transit`]), every chain priced in the one vocabulary of attributes and
 //! weighed by the class's coefficients, the mode's constant among them
 //! ([`crate::Coefficients::chain_cost`]). Under the nested logit each mode is a nest
 //! ([`crate::chooser`]).
@@ -23,18 +24,20 @@
 //! bike or walking when no route on its layer does, or when the ride or the walk would take
 //! longer than the class's limit ([`ClassModes::bike_max_seconds`],
 //! [`ClassModes::walk_max_seconds`], compared with the leg's seconds on its layer, its fixed
-//! times not counted). A trip whose every offered mode is left out has no chain and does not
-//! travel.
+//! times not counted); transit when no stop is within the walking limit of the origin or of
+//! the destination, or when the timetable has no journey kept for the trip. A trip whose every
+//! offered mode is left out has no chain and does not travel.
 
 use openmobisim_core_demand::{Mode, Travellers, Trips};
 use openmobisim_core_types::ids::{EntityId, TripId};
 
-/// A set of the modes a chain of the one-loop engine can have: the car, the bike, walking.
+/// A set of the modes a chain of the one-loop engine can have: the car, the bike, walking,
+/// transit.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ModeSet(u8);
 
 /// The modes a [`ModeSet`] can hold, in the order the chains of a set are added.
-pub const CHAIN_MODES: [Mode; 3] = [Mode::Car, Mode::Bike, Mode::Walk];
+pub const CHAIN_MODES: [Mode; 4] = [Mode::Car, Mode::Bike, Mode::Walk, Mode::Transit];
 
 impl ModeSet {
     /// No mode.
@@ -45,11 +48,12 @@ impl ModeSet {
             Mode::Car => 1,
             Mode::Bike => 2,
             Mode::Walk => 4,
+            Mode::Transit => 8,
             _ => 0,
         }
     }
 
-    /// The set of `modes` (a mode other than the car, the bike and walking is not held).
+    /// The set of `modes` (a mode other than the car, the bike, walking and transit is not held).
     #[must_use]
     pub fn of(modes: &[Mode]) -> Self {
         Self(modes.iter().fold(0, |acc, &m| acc | Self::bit(m)))
@@ -105,7 +109,8 @@ impl ClassModes {
         }
     }
 
-    /// The longest leg of `mode` offered, in seconds on its layer (no limit for the car).
+    /// The longest leg of `mode` offered, in seconds on its layer (no limit for the car and
+    /// transit).
     #[must_use]
     pub fn max_seconds(&self, mode: Mode) -> f64 {
         match mode {
@@ -145,12 +150,13 @@ impl TripModes {
     }
 
     /// Whether the trip could change its choice in response to the iterations: a car trip (its
-    /// route) or a trip choosing its mode. A trip of a stated bike or walking mode has its chains
-    /// planned once on static costs (one chain, or with sampled bike route sets one per route of
-    /// its pair): its choice probabilities never change, so any switch it makes is chance alone.
+    /// route) or a trip choosing its mode. A trip of a stated bike, walking or transit mode has
+    /// its chains planned once on static costs (one chain, or with sampled bike route sets one per
+    /// route of its pair, or one per journey of the timetable): its choice probabilities never
+    /// change, so any switch it makes is chance alone.
     #[must_use]
     pub fn could_change(&self) -> bool {
-        !matches!(self, Self::Stated(Mode::Bike | Mode::Walk))
+        !matches!(self, Self::Stated(Mode::Bike | Mode::Walk | Mode::Transit))
     }
 
     /// The longest leg of `mode` offered, in seconds on its layer: no limit for a stated mode.

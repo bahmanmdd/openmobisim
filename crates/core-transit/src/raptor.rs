@@ -165,6 +165,24 @@ impl RaptorData {
         footpaths: Footpaths,
         board_slack: u32,
     ) -> Self {
+        Self::new_keeping(timetable, times, footpaths, board_slack, |_| true)
+    }
+
+    /// [`Self::new`] on the runs `keep` accepts only: a view of `timetable` restricted to some
+    /// runs (for instance those of some kinds of service), its runs, calls and stops numbered as
+    /// in `timetable`, so a journey found on it reads back in `timetable`. The search is the same.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `times` does not have one entry per call of `timetable`.
+    #[must_use]
+    pub fn new_keeping(
+        timetable: &Timetable,
+        times: &CallTimes,
+        footpaths: Footpaths,
+        board_slack: u32,
+        keep: impl Fn(TransitRunId) -> bool,
+    ) -> Self {
         assert_eq!(times.arrival.len(), timetable.call_count(), "one time per call");
         assert_eq!(times.departure.len(), timetable.call_count(), "one time per call");
         let mut data = Self {
@@ -186,7 +204,8 @@ impl RaptorData {
         };
         let mut all: Vec<Vec<TransitRunId>> = Vec::new();
         for group in 0..timetable.group_count() {
-            let mut runs: Vec<TransitRunId> = timetable.group_runs(group).to_vec();
+            let mut runs: Vec<TransitRunId> =
+                timetable.group_runs(group).iter().copied().filter(|&r| keep(r)).collect();
             // By their times (the departure from the first call first), the id only for runs
             // that share every time (S312).
             runs.sort_by(|&a, &b| run_times_order(timetable, times, a, b).then(a.cmp(&b)));

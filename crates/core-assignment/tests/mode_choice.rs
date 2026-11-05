@@ -27,8 +27,8 @@
 
 use openmobisim_core_assignment::{
     CarPlanner, ClassModes, Coefficients, FreeFlow, HighestUtility, Inputs, IterationReport, Layer,
-    Layers, LeftOut, Loader, NoHooks, Params, Place, PointQueue, SavedTrip, State, assign,
-    left_out, logit, restore,
+    Layers, LeftOut, Loader, NoHooks, Params, Place, PointQueue, SavedTrip, StageHook, State,
+    assign, left_out, logit, restore,
 };
 use openmobisim_core_choice::{ChoiceModel, NestedLogit, Options};
 use openmobisim_core_demand::{
@@ -222,6 +222,7 @@ fn inputs<'a>(c: &'a Case, model: &'a dyn ChoiceModel, loader: &'a dyn Loader) -
         network: &c.net,
         turns: &c.turns,
         layers: layers(c),
+        transit: None,
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,
@@ -794,6 +795,15 @@ fn renaming_the_networks_changes_no_mode_and_no_chain() {
 /// 720 s: 30 trips, `walk_too_long` and `bike_too_long`), `none` (no car, no bike, the short
 /// limits: 40 trips with no chain at all, which do not travel), `walker` (offered walking alone:
 /// 5 trips of that mode, at any length, outside the stopping shares).
+/// Keeps what the loop counts as left out once it ends.
+struct AtTheEnd(Option<LeftOut>);
+
+impl StageHook for AtTheEnd {
+    fn after_loop(&mut self, _state: &State, left_out: &LeftOut) {
+        self.0 = Some(*left_out);
+    }
+}
+
 #[test]
 fn modes_that_cannot_serve_a_trip_are_left_out_and_counted() {
     let net = three_modes(7200.0, false);
@@ -833,8 +843,10 @@ fn modes_that_cannot_serve_a_trip_are_left_out_and_counted() {
     let model = logit();
     let i = inputs(&c, &model, &free_flow);
     let params = exactly(2);
-    let (state, reports) = assign(&i, &params, &mut NoHooks).expect("the run");
+    let mut counted = AtTheEnd(None);
+    let (state, reports) = assign(&i, &params, &mut counted).expect("the run");
     let left = left_out(&i, &params, &state).expect("the counts");
+    assert_eq!(counted.0, Some(left), "the loop's own count, at its end, is the same");
     assert_eq!(
         left,
         LeftOut {
@@ -847,6 +859,8 @@ fn modes_that_cannot_serve_a_trip_are_left_out_and_counted() {
             bike_too_long: 30,
             walk_no_route: 0,
             walk_too_long: 70,
+            transit_no_stop: 0,
+            transit_no_journey: 0,
         }
     );
     let set_modes = |class: &str| -> Vec<Mode> {

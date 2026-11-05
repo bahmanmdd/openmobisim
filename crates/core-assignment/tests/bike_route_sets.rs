@@ -162,6 +162,7 @@ fn inputs<'a>(
         network: &c.net,
         turns: &c.turns,
         layers,
+        transit: None,
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,

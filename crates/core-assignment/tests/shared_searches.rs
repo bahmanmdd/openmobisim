@@ -142,6 +142,7 @@ fn run_allocated(
         network: &c.net,
         turns: &c.turns,
         layers: openmobisim_core_assignment::Layers::NONE,
+        transit: None,
         travellers: &c.travellers,
         trips: &c.trips,
         classes: &c.classes,
